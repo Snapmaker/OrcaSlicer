@@ -2196,8 +2196,7 @@ int CLI::run(int argc, char **argv)
                         old_printable_width = (int)(old_printable_area[2].x() - old_printable_area[0].x());
                         old_printable_depth = (int)(old_printable_area[2].y() - old_printable_area[0].y());
                     }
-                    if (config.option<ConfigOptionFloat>("printable_height"))
-                        old_printable_height = (int)(config.opt_float("printable_height"));
+                    old_printable_height = cli_printable_height_or_zero(config);
 
                     if (config.option<ConfigOptionFloat>("extruder_clearance_height_to_rod"))
                         old_height_to_rod = config.opt_float("extruder_clearance_height_to_rod");
@@ -2678,7 +2677,11 @@ int CLI::run(int argc, char **argv)
                             orig_printable_width = (int)(orig_printable_area[2].x() - orig_printable_area[0].x());
                             orig_printable_depth = (int)(orig_printable_area[2].y() - orig_printable_area[0].y());
                         }
-                        orig_printable_height = (int)(config.opt_float("printable_height"));
+                        // --uptodate / --uptodate_settings (~L2640): load_config_file() uses the
+                        // 4-arg load_from_json() form and does not flatten inherits. option(
+                        // "printable_area", true) still creates the 200x200 default, so this
+                        // read used to crash on every inheriting machine JSON (P1S/X1C, …).
+                        orig_printable_height = cli_printable_height_or_zero(config);
                         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(":%1%, check printable size: old_printable_width=%2%, orig_printable_width=%3%, old_printable_depth=%4%, orig_printable_depth=%5%, old_printable_height=%6%, orig_printable_height=%7%")
                                     %__LINE__ %old_printable_width %orig_printable_width %old_printable_depth %orig_printable_depth %old_printable_height %orig_printable_height;
                         if ((orig_printable_width > 0) && (orig_printable_depth > 0) && (orig_printable_height > 0))
@@ -4187,7 +4190,10 @@ int CLI::run(int argc, char **argv)
             if (temp_printable_area.size() >= 4) {
                 printer_plate.printable_width = (int)(temp_printable_area[2].x() - temp_printable_area[0].x());
                 printer_plate.printable_depth = (int)(temp_printable_area[2].y() - temp_printable_area[0].y());
-                printer_plate.printable_height = (int)(config.opt_float("printable_height"));
+                // Same un-flattened load_config_file() path as --uptodate_settings.
+                // Height stays 0 (struct default); the ~L4236 size.z() > height check
+                // then marks the printer failed (conservative #16016 outcome).
+                printer_plate.printable_height = cli_printable_height_or_zero(config);
             }
             if (temp_exclude_area.size() >= 4) {
                 printer_plate.exclude_width = (int)(temp_exclude_area[2].x() - temp_exclude_area[0].x());

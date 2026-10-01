@@ -19,8 +19,13 @@ class CNumericLocalesSetter {
 public:
     CNumericLocalesSetter();
     ~CNumericLocalesSetter();
+    // A copy would restore the locale twice, and count down once more than up.
+    CNumericLocalesSetter(const CNumericLocalesSetter &) = delete;
+    CNumericLocalesSetter &operator=(const CNumericLocalesSetter &) = delete;
 
 private:
+    // Inside another setter on this thread, which does the setting and restoring.
+    bool m_nested{false};
 #ifdef _WIN32
     std::string m_orig_numeric_locale;
 #else
@@ -29,6 +34,13 @@ private:
 #endif
 
 };
+
+// Diagnostics / test-only: this-thread counts of actual setlocale/uselocale vs
+// nested skips. Not a production API; Catch2 uses them to prove inner setters
+// skipped setlocale. Do not call from slicer paths.
+void reset_numeric_locale_setter_counts();
+int  numeric_locale_setter_installs();
+int  numeric_locale_setter_nested_skips();
 
 // A function to check that current C locale uses decimal point as a separator.
 // Intended mostly for asserts.

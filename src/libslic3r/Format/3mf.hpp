@@ -23,7 +23,7 @@ private:
 private:
     bool       m_from_prusa         = false;
     bool       m_is_application_key = false;
-    XML_Parser m_parser;
+    XML_Parser m_parser             = nullptr;
 };
 
     /* The format for saving the SLA points was changing in the past. This enum holds the latest version that is being currently used.

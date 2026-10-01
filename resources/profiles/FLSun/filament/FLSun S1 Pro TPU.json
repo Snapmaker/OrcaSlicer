@@ -1,0 +1,70 @@
+{
+    "type": "filament",
+    "name": "FLSun S1 Pro TPU",
+    "inherits": "FLSun Generic TPU",
+    "from": "system",
+    "setting_id": "GFSA04",
+    "filament_id": "GFU99",
+    "instantiation": "true",
+    "nozzle_temperature": [
+        "220"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "220"
+    ],
+    "nozzle_temperature_range_low": [
+        "220"
+    ],
+    "nozzle_temperature_range_high": [
+        "230"
+    ],
+    "hot_plate_temp": [
+        "50"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "50"
+    ],
+    "filament_max_volumetric_speed": [
+        "5"
+    ],
+    "fan_min_speed": [
+        "45"
+    ],
+    "fan_max_speed": [
+        "55"
+    ],
+    "close_fan_the_first_x_layers": [
+        "1"
+    ],
+    "full_fan_speed_layer": [
+        "3"
+    ],
+    "overhang_fan_speed": [
+        "30"
+    ],
+    "slow_down_layer_time": [
+        "3"
+    ],
+    "slow_down_min_speed": [
+        "40"
+    ],
+    "fan_cooling_layer_time": [
+        "1000"
+    ],
+    "filament_flow_ratio": [
+        "1.1"
+    ],
+    "filament_retraction_length": [
+        "2"
+    ],
+    "filament_retraction_speed": [
+        "80"
+    ],
+    "filament_deretraction_speed": [
+        "80"
+    ],
+    "filament_density": "1.26",
+    "compatible_printers": [
+        "FLSun S1 Pro 0.4 nozzle"
+    ]
+}

@@ -12,8 +12,10 @@
 #include "../Semver.hpp"
 #include "../Time.hpp"
 #include "../BambuConfigCompat.hpp"
+#include "../BRep/CadEdit.hpp"
 
 #include "../I18N.hpp"
+#include "../UntrustedInput.hpp"
 
 #include "bbs_3mf.hpp"
 
@@ -182,6 +184,9 @@ const std::string AUXILIARY_DIR = "Auxiliaries/";
 // SHA-256, plus a manifest so a reader can tell an Image Fill asset from any other stray PNG and
 // can check the bytes it got are the bytes that were written.
 const std::string IMAGE_FILL_DIR = "Metadata/image_fill/";
+// Exact CAD bodies of parts (BRep/CadBody.hpp), one blob per part, referenced from the part's
+// CAD_BODY_FILE_KEY metadata. Versions that do not know the key ignore it and the file.
+const std::string CAD_BODY_DIR = "Metadata/cad_bodies/";
 const std::string IMAGE_FILL_MANIFEST_FILE = "Metadata/image_fill/manifest.json";
 const std::string PROJECT_EMBEDDED_PRINT_PRESETS_FILE = "Metadata/print_setting_";
 const std::string PROJECT_EMBEDDED_SLICE_PRESETS_FILE = "Metadata/process_settings_";
@@ -380,6 +385,7 @@ static constexpr const char* SOURCE_VOLUME_ID_KEY = "source_volume_id";
 static constexpr const char* SOURCE_OFFSET_X_KEY = "source_offset_x";
 static constexpr const char* SOURCE_OFFSET_Y_KEY = "source_offset_y";
 static constexpr const char* SOURCE_OFFSET_Z_KEY = "source_offset_z";
+static constexpr const char* CAD_BODY_FILE_KEY = "cad_body_file";
 static constexpr const char* SOURCE_IN_INCHES    = "source_in_inches";
 static constexpr const char* SOURCE_IN_METERS    = "source_in_meters";
 
@@ -1209,6 +1215,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         /*IdToSlaSupportPointsMap m_sla_support_points;
         IdToSlaDrainHolesMap    m_sla_drain_holes;*/
         PathToEmbossShapeFileMap m_path_to_emboss_shape_files;
+        // CAD body blobs by their path in the archive, read before the volumes are generated.
+        std::map<std::string, std::string> m_cad_body_files;
         std::string m_curr_metadata_name;
         std::string m_curr_characters;
         std::string m_name;
@@ -2053,6 +2061,14 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 else if (_is_svg_shape_file(name)) {
                     _extract_embossed_svg_shape_file(name, archive, stat);
                 }
+                else if (boost::algorithm::istarts_with(name, CAD_BODY_DIR)) {
+                    // A part's exact CAD body; attached in _generate_volumes_new() if its mesh still matches.
+                    if (stat.m_uncomp_size > 0 && stat.m_uncomp_size < 1024ull * 1024ull * 1024ull) {
+                        std::string blob(size_t(stat.m_uncomp_size), '\0');
+                        if (mz_zip_reader_extract_to_mem(&archive, stat.m_file_index, blob.data(), blob.size(), 0))
+                            m_cad_body_files[name] = std::move(blob);
+                    }
+                }
                 else if (!dont_load_config && boost::algorithm::iequals(name, SLICE_INFO_CONFIG_FILE)) {
                     m_parsing_slice_info = true;
                     //extract slice info from archive
@@ -2628,19 +2644,26 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         XML_SetElementHandler(m_xml_parser, start_handler, end_handler);
         XML_SetCharacterDataHandler(m_xml_parser, _BBS_3MF_Importer::_handle_xml_characters);
 
-        void* parser_buffer = XML_GetBuffer(m_xml_parser, (int)stat.m_uncomp_size);
+        // expat sizes its buffer with an int, so a larger entry cannot be parsed in one piece.
+        if (!untrusted::xml_entry_size_ok(stat.m_uncomp_size)) {
+            add_error("Found invalid size");
+            return false;
+        }
+        const int xml_size = static_cast<int>(stat.m_uncomp_size);
+
+        void* parser_buffer = XML_GetBuffer(m_xml_parser, xml_size);
         if (parser_buffer == nullptr) {
             add_error("Unable to create buffer");
             return false;
         }
 
-        mz_bool res = mz_zip_reader_extract_file_to_mem(&archive, stat.m_filename, parser_buffer, (size_t)stat.m_uncomp_size, 0);
+        mz_bool res = mz_zip_reader_extract_file_to_mem(&archive, stat.m_filename, parser_buffer, static_cast<size_t>(xml_size), 0);
         if (res == 0) {
             add_error("Error while reading config data to buffer");
             return false;
         }
 
-        if (!XML_ParseBuffer(m_xml_parser, (int)stat.m_uncomp_size, 1)) {
+        if (!XML_ParseBuffer(m_xml_parser, xml_size, 1)) {
             char error_buf[1024];
             ::snprintf(error_buf, 1024, "Error (%s) while parsing xml file at line %d", XML_ErrorString(XML_GetErrorCode(m_xml_parser)), (int)XML_GetCurrentLineNumber(m_xml_parser));
             add_error(error_buf);
@@ -5693,10 +5716,13 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
             // Apply the seam mode after all base-type metadata, regardless of XML key order.
             ModelVolumeType precise_seam_type = ModelVolumeType::INVALID;
+            std::string     cad_body_file;
             // apply the remaining volume's metadata
             for (const Metadata& metadata : volume_data->metadata) {
                 if (metadata.key == NAME_KEY)
                     volume->name = metadata.value;
+                else if (metadata.key == CAD_BODY_FILE_KEY)
+                    cad_body_file = metadata.value;
                 //else if ((metadata.key == MODIFIER_KEY) && (metadata.value == "1"))
 				//	volume->set_type(ModelVolumeType::PARAMETER_MODIFIER);
 				//for old format
@@ -5732,6 +5758,20 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             // Ignore seam metadata on other base types; legacy inline seam types still load above.
             if (volume->is_modifier() && is_precise_seam(precise_seam_type))
                 volume->set_type(precise_seam_type);
+
+            // The part's exact CAD body, trusted only while it still describes the loaded mesh.
+            if (!cad_body_file.empty()) {
+                auto it = m_cad_body_files.find(cad_body_file);
+                if (it != m_cad_body_files.end()) {
+                    volume->cad_body = BRep::CadBody::from_blob(it->second);
+                    // attached_cad_body() checks the mesh fingerprint and folds in the centring shift.
+                    volume->cad_body = volume->cad_body ? BRep::attached_cad_body(*volume) : nullptr;
+                    if (!volume->cad_body)
+                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": the CAD body " << cad_body_file << " of \"" << volume->name
+                                                   << "\" does not match its mesh and was dropped";
+                } else
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": the CAD body " << cad_body_file << " is missing from the archive";
+            }
 
             // Unknown seam modes must remain inert modifiers, even when dormant settings are present.
             if (volume->is_precise_seam()) {
@@ -6491,6 +6531,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         // Export Bambu 3MF (StoreParams::bambu_compat): the project config converted once up front,
         // the context the per-object conversions need, and what was changed.
         bool m_bambu_compat { false };
+        // Names the CAD body blobs of one export uniquely.
+        int  m_cad_body_count { 0 };
         BambuExport::Context m_bambu_ctx;
         BambuExport::Config  m_bambu_project;
         BambuExport::Report  m_bambu_report;
@@ -8658,6 +8700,19 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                                 else if (volume->source.is_converted_from_meters)
                                     stream << prefix << SOURCE_IN_METERS << "\" " << VALUE_ATTR << "=\"1\"/>\n";
                             }
+
+                            // stores the part's exact CAD body (fillets / chamfers / shells stay exact
+                            // and editable after a reopen). Not in a Bambu-compatible export.
+                            if (!m_bambu_compat)
+                                if (const std::shared_ptr<const BRep::CadBody> body = BRep::attached_cad_body(*volume)) {
+                                    const std::string path = CAD_BODY_DIR + "body_" + std::to_string(++m_cad_body_count) + ".bin";
+                                    const std::string blob = body->to_blob();
+                                    if (mz_zip_writer_add_mem(&archive, path.c_str(), blob.data(), blob.size(), MZ_DEFAULT_COMPRESSION))
+                                        stream << "      <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << CAD_BODY_FILE_KEY << "\" " << VALUE_ATTR
+                                               << "=\"" << xml_escape(path) << "\"/>\n";
+                                    else
+                                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": could not store the CAD body of " << volume->name;
+                                }
 
                             // stores volume's config data
                             if (m_bambu_compat) {

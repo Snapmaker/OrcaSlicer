@@ -7181,7 +7181,7 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
 
-    // Side stabilizers: resin-style pinpoint struts that touch tall, thin parts on their sides
+    // Side stabilizers: pinpoint struts on pillars that touch tall, thin parts on their sides
     // (Support/Stabilizers.hpp).
     def = this->add("stabilizer_supports", coBool);
     def->label = L("Side stabilizers");
@@ -7207,7 +7207,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Touch points per ring");
     def->category = L("Support");
     def->tooltip = L("How many struts touch the part in each ring, spread evenly around it. "
-                     "Each ring is turned by half a step against the one below.");
+                     "Every ring uses the same angles, so each pillar carries one strut per ring.");
     def->min = 1;
     def->max = 12;
     def->mode = comAdvanced;
@@ -7238,7 +7238,8 @@ void PrintConfigDef::init_fff_params()
     def = this->add("stabilizer_pillar_diameter", coFloat);
     def->label = L("Stabilizer pillar diameter");
     def->category = L("Support");
-    def->tooltip = L("Diameter of the pillars that carry the tips down to the build plate.");
+    def->tooltip = L("Diameter of the pillars that carry the tips down to the build plate. "
+                     "A pillar is never thinner than four support lines, two on each side.");
     def->sidetext = "mm";
     def->min = 1;
     def->max = 15;

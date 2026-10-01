@@ -2074,19 +2074,15 @@ std::vector<MainFrame::PrintSelectType> MainFrame::available_print_actions() con
 
 void MainFrame::apply_print_select_state(PrintSelectType select_type)
 {
-    // Every caller must: (1) set the label, (2) set m_print_select to the SAME enum the matching
-    // dropdown item uses, and (3) unconditionally recompute m_print_enable from the *new* selection.
-    //
-    // Recomputing only "if (m_print_enable)" meant that once the button had been left disabled
-    // a later call here could never re-enable it. Always recompute so the enabled state matches
-    // whatever mode is being switched to. AND can_send_gcode() for SendGcode/ExportGcode, matching
-    // Edge's previous set_print_button_to_default rule (get_enable_print_status already ANDs it
-    // for eSendGcode; eExportGcode still needs the extra gate here).
+    // Dropdown path (and the shared setup for set_print_button_to_default): (1) set the label,
+    // (2) set m_print_select to the SAME enum the matching dropdown item uses, and (3)
+    // unconditionally recompute m_print_enable from get_enable_print_status() only — the same
+    // enable rule a dropdown pick used on main. The extra can_send_gcode() gate for eExportGcode
+    // lives only in set_print_button_to_default, so picking "Export G-code file" does not grey
+    // the button when no print host is configured.
     m_print_btn->SetLabel(print_select_type_label(select_type));
     m_print_select = select_type;
     m_print_enable = get_enable_print_status();
-    if (select_type == eSendGcode || select_type == eExportGcode)
-        m_print_enable = m_print_enable && can_send_gcode();
     m_print_btn->Enable(m_print_enable);
     this->Layout();
 }
@@ -2117,6 +2113,10 @@ bool MainFrame::get_remembered_print_select(PrintSelectType &out) const
     const int resolved = PrintSelectKeys::resolve_or_default(wxGetApp().app_config->get("last_print_action"),
                                                             offered_ints.data(), offered_ints.size(), -1);
     if (resolved < 0)
+        return false;
+    // Edge: do not restore send_gcode when this printer cannot send (no host). Upstream
+    // would still restore it and leave Print greyed; we fall back to the computed default.
+    if (resolved == static_cast<int>(eSendGcode) && !can_send_gcode())
         return false;
     out = static_cast<PrintSelectType>(resolved);
     return true;
@@ -4247,6 +4247,12 @@ void MainFrame::set_print_button_to_default(PrintSelectType select_type)
     case eExportAllSlicedFile:
     case ePrintMultiMachine:
         apply_print_select_state(select_type);
+        // Same extra gate as main: only this entry point ANDs can_send_gcode() for
+        // eSendGcode / eExportGcode. The dropdown path (select_print_action) does not.
+        if (select_type == eSendGcode || select_type == eExportGcode) {
+            m_print_enable = m_print_enable && can_send_gcode();
+            m_print_btn->Enable(m_print_enable);
+        }
         break;
     default:
         // unsupported from this entry point (ePrintAll / eSendToPrinter / eSendToPrinterAll /

@@ -138,6 +138,20 @@ TEST_CASE("Print-action preference keys round-trip; unknown keys fall back to th
 {
     using namespace Slic3r::GUI::PrintSelectKeys;
 
+    SECTION("persisted key strings are pinned so a rename cannot silently break saved settings")
+    {
+        CHECK(std::string(key(ePrintAll)) == "print_all");
+        CHECK(std::string(key(ePrintPlate)) == "print_plate");
+        CHECK(std::string(key(eExportSlicedFile)) == "export_sliced_file");
+        CHECK(std::string(key(eExportGcode)) == "export_gcode");
+        CHECK(std::string(key(eSendGcode)) == "send_gcode");
+        CHECK(std::string(key(eSendToPrinter)) == "send_to_printer");
+        CHECK(std::string(key(eSendToPrinterAll)) == "send_to_printer_all");
+        CHECK(std::string(key(eExportAllSlicedFile)) == "export_all_sliced_file");
+        CHECK(std::string(key(ePrintMultiMachine)) == "print_multi_machine");
+        CHECK(std::string(key(eUploadGcode)).empty());
+    }
+
     SECTION("every persisted action round-trips through its string key, never the enum integer")
     {
         const int actions[] = {ePrintAll,           ePrintPlate,        eExportSlicedFile, eExportGcode, eSendGcode,

@@ -373,7 +373,7 @@ public:
     bool        get_remembered_print_select(PrintSelectType &out) const;
 
 private:
-    // Label + m_print_select + Edge's always-recompute enable rule (AND can_send_gcode for SendGcode/ExportGcode).
+    // Label + m_print_select + always-recompute enable via get_enable_print_status() only.
     void        apply_print_select_state(PrintSelectType select_type);
 
 public:

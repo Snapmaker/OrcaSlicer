@@ -775,6 +775,12 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
         "support_type", "support_on_build_plate_only", "support_critical_regions_only", "support_interface_not_for_body",
         "support_object_xy_distance", "support_object_first_layer_gap"/*, "independent_support_layer_height"*/})
         toggle_field(el, have_support_material);
+    toggle_line("hollow_shell_thickness", config->opt_bool("hollow_interior"));
+    // Side stabilizers print as support, so they need supports on.
+    toggle_field("stabilizer_supports", have_support_material);
+    for (auto el : {"stabilizer_ring_spacing", "stabilizer_points_per_ring", "stabilizer_tip_diameter", "stabilizer_tip_gap",
+                    "stabilizer_pillar_diameter", "stabilizer_max_island_width"})
+        toggle_line(el, have_support_material && config->opt_bool("stabilizer_supports"));
     toggle_field("support_threshold_angle", have_support_material && is_auto(support_type));
     toggle_field("support_threshold_overlap", config->opt_int("support_threshold_angle") == 0 && have_support_material && is_auto(support_type));
     //toggle_field("support_closing_radius", have_support_material && support_style == smsSnug);

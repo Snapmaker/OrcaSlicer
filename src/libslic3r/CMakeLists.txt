@@ -192,6 +192,8 @@ set(lisbslic3r_sources
     Fill/FillConcentric.hpp
     Fill/FillConcentricInternal.cpp
     Fill/FillConcentricInternal.hpp
+    FDMHollowing.cpp
+    FDMHollowing.hpp
     Fill/Fill.cpp
     Fill/FillCrossHatch.cpp
     Fill/FillCrossHatch.hpp
@@ -539,6 +541,8 @@ set(lisbslic3r_sources
     Support/SupportMaterial.cpp
     Support/SupportMaterial.hpp
     Support/SupportParameters.hpp
+    Support/Stabilizers.cpp
+    Support/Stabilizers.hpp
     Support/SupportSpotsGenerator.cpp
     Support/SupportSpotsGenerator.hpp
     Support/TreeModelVolumes.cpp

@@ -116,11 +116,14 @@ coordf_t PrintRegion::bridging_height_avg(const PrintConfig &print_config) const
     return this->nozzle_dmr_avg(print_config) * sqrt(m_config.bridge_flow.value);
 }
 
-void PrintRegion::collect_object_printing_extruders(const PrintConfig &print_config, const PrintRegionConfig &region_config, const bool has_brim, std::vector<unsigned int> &object_extruders)
+void PrintRegion::collect_object_printing_extruders(const PrintConfig &print_config, const PrintRegionConfig &region_config, const bool has_brim, std::vector<unsigned int> &object_extruders, size_t num_filaments)
 {
     // These checks reflect the same logic used in the GUI for enabling/disabling extruder selection fields.
-    // BBS
-    auto num_extruders = (int)print_config.filament_diameter.size();
+    // Bound by physical + mixed virtual filament count when the caller has a MixedFilamentManager
+    // (Print::apply accepts virtual IDs via total_filaments). The physical-only default keeps the
+    // static slicing_parameters path unchanged. Callers then expand mixed IDs to physical components
+    // via MixedFilamentManager::expand_0based_extruder_ids so GCodeWriter always has a real Extruder.
+    const int num_extruders = int(num_filaments > 0 ? num_filaments : print_config.filament_diameter.size());
     auto emplace_extruder = [num_extruders, &object_extruders](int extruder_id) {
     	int i = std::max(0, extruder_id - 1);
         object_extruders.emplace_back((i >= num_extruders) ? 0 : i);
@@ -139,16 +142,17 @@ void PrintRegion::collect_object_printing_extruders(const PrintConfig &print_con
 
 void PrintRegion::collect_object_printing_extruders(const Print &print, std::vector<unsigned int> &object_extruders) const
 {
-    // PrintRegion, if used by some PrintObject, shall have all the extruders set to an existing printer extruder.
-    // If not, then there must be something wrong with the Print::apply() function.
+    // PrintRegion, if used by some PrintObject, shall have all the extruders set to an existing
+    // printer extruder or a MixedFilamentManager virtual id. If not, then there must be something
+    // wrong with the Print::apply() function.
+    const size_t num_physical  = print.config().filament_diameter.size();
+    const size_t num_filaments = print.mixed_filament_manager().total_filaments(num_physical);
 #ifndef NDEBUG
-    // BBS
-    auto num_extruders = int(print.config().filament_diameter.size());
-    assert(this->config().wall_filament    <= num_extruders);
-    assert(this->config().sparse_infill_filament       <= num_extruders);
-    assert(this->config().solid_infill_filament <= num_extruders);
+    assert(this->config().wall_filament           <= int(num_filaments));
+    assert(this->config().sparse_infill_filament  <= int(num_filaments));
+    assert(this->config().solid_infill_filament   <= int(num_filaments));
 #endif
-    collect_object_printing_extruders(print.config(), this->config(), print.has_brim(), object_extruders);
+    collect_object_printing_extruders(print.config(), this->config(), print.has_brim(), object_extruders, num_filaments);
 }
 
 }

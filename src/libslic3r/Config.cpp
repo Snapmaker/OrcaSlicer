@@ -944,6 +944,19 @@ ConfigSubstitutions ConfigBase::load_from_json(const std::string &file, ForwardC
     return std::move(substitutions_ctxt.substitutions);
 }
 
+// Case-insensitive compare of a JSON key against a fixed ASCII one, without
+// boost::iequals, whose std::locale() takes a lock the whole process shares in the
+// MSVC runtime.
+static bool ascii_iequals(const std::string &key, const char *literal)
+{
+    auto   lower = [](char c) { return (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : c; };
+    size_t i     = 0;
+    for (; i < key.size() && literal[i] != '\0'; ++i)
+        if (lower(key[i]) != lower(literal[i]))
+            return false;
+    return i == key.size() && literal[i] == '\0';
+}
+
 // Read one preset file and turn it into a json document, resolving any "include"
 // templates. This is the expensive half of load_from_json - on the shipped profiles it
 // is ~98% of the cost - and it is pure: it touches no ConfigBase state, so it can run
@@ -1004,8 +1017,8 @@ int ConfigBase::parse_json_document(const std::string &file, json &j, std::strin
                     while (!dir.empty()) {
                         size_t s = dir.find_last_of("/\\");
                         std::string leaf = (s == std::string::npos) ? dir : dir.substr(s + 1);
-                        if (boost::iequals(leaf, std::string("filament")) || boost::iequals(leaf, std::string("process"))
-                            || boost::iequals(leaf, std::string("machine"))) {
+                        if (ascii_iequals(leaf, "filament") || ascii_iequals(leaf, "process")
+                            || ascii_iequals(leaf, "machine")) {
                             category_dir = dir + "/";
                             break;
                         }
@@ -1018,7 +1031,7 @@ int ConfigBase::parse_json_document(const std::string &file, json &j, std::strin
                     // preset meta keys the template files carry - never merge these
                     static const char* mk[] = {"name","instantiation","from","inherits","type",
                         "setting_id","filament_id","version","url","description","is_custom_defined"};
-                    for (const char* m : mk) if (boost::iequals(k, m)) return true;
+                    for (const char* m : mk) if (ascii_iequals(k, m)) return true;
                     return false;
                 };
                 for (auto& inc : *inc_it) {
@@ -1048,7 +1061,7 @@ int ConfigBase::parse_json_document(const std::string &file, json &j, std::strin
                                                          << " resolved through " << candidates[ci].second << ": " << inc_path;
                             for (auto iit = inc_j.begin(); iit != inc_j.end(); ++iit) {
                                 std::string k = iit.key();
-                                if (boost::iequals(k, std::string("include")) || is_meta_key(k))
+                                if (ascii_iequals(k, "include") || is_meta_key(k))
                                     continue;
                                 if (j.find(k) == j.end())
                                     j[k] = iit.value();
@@ -1111,41 +1124,41 @@ int ConfigBase::load_from_json_document(const std::string &file, json &j, Config
         }
         //parse the json elements
         for (auto it = j.begin(); it != j.end(); it++) {
-            if (boost::iequals(it.key(),BBL_JSON_KEY_VERSION)) {
+            if (ascii_iequals(it.key(), BBL_JSON_KEY_VERSION)) {
                 key_values.emplace(BBL_JSON_KEY_VERSION, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_IS_CUSTOM)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_IS_CUSTOM)) {
                 key_values.emplace(BBL_JSON_KEY_IS_CUSTOM, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_NAME)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_NAME)) {
                 key_values.emplace(BBL_JSON_KEY_NAME, it.value());
                 if (it.value() == "project_settings")
                     is_project_settings = true;
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_URL)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_URL)) {
                 key_values.emplace(BBL_JSON_KEY_URL, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_TYPE)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_TYPE)) {
                 key_values.emplace(BBL_JSON_KEY_TYPE, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_SETTING_ID)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_SETTING_ID)) {
                 key_values.emplace(BBL_JSON_KEY_SETTING_ID, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_FILAMENT_ID)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_FILAMENT_ID)) {
                 key_values.emplace(BBL_JSON_KEY_FILAMENT_ID, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_FROM)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_FROM)) {
                 key_values.emplace(BBL_JSON_KEY_FROM, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_DESCRIPTION)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_DESCRIPTION)) {
                 key_values.emplace(BBL_JSON_KEY_DESCRIPTION, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_INSTANTIATION)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_INSTANTIATION)) {
                 key_values.emplace(BBL_JSON_KEY_INSTANTIATION, it.value());
             }
-            else if (!load_inherits_to_config && boost::iequals(it.key(), BBL_JSON_KEY_INHERITS)) {
+            else if (!load_inherits_to_config && ascii_iequals(it.key(), BBL_JSON_KEY_INHERITS)) {
                 key_values.emplace(BBL_JSON_KEY_INHERITS, it.value());
-            } else if (boost::iequals(it.key(), ORCA_JSON_KEY_RENAMED_FROM)) {
+            } else if (ascii_iequals(it.key(), ORCA_JSON_KEY_RENAMED_FROM)) {
                 key_values.emplace(ORCA_JSON_KEY_RENAMED_FROM, it.value());
             } else if (BambuKeyAliases::shadowed_by_our_key(it.key(), [&j](const std::string &k) { return j.contains(k); })) {
                 // Bambu Studio's name for a setting this file also sets under our own name: ours

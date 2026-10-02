@@ -362,6 +362,54 @@ TEST_CASE("Flashforge /detail yields the material station slots", "[Flashforge]"
         CHECK_FALSE(ff::parse_detail_material_slots("not json at all", slots, has_station));
         CHECK(slots.empty());
     }
+
+    SECTION("slotInfos that is a number yields no slots and does not throw")
+    {
+        // Ranging a non-array JSON value iterates the primitive itself; slot.value() then throws.
+        REQUIRE_NOTHROW(ff::parse_detail_material_slots(
+            R"({"detail":{"matlStationInfo":{"slotInfos":4}}})", slots, has_station));
+        REQUIRE(ff::parse_detail_material_slots(
+            R"({"detail":{"matlStationInfo":{"slotInfos":4}}})", slots, has_station));
+        CHECK(slots.empty());
+        CHECK_FALSE(has_station);
+    }
+
+    SECTION("an array of strings yields no slots")
+    {
+        REQUIRE(ff::parse_detail_material_slots(
+            R"({"detail":{"matlStationInfo":{"slotInfos":["a","b"]}}})", slots, has_station));
+        CHECK(slots.empty());
+        CHECK(has_station); // a non-empty array still means the printer reported a station
+    }
+
+    SECTION("mixed objects and non-objects keep only the objects")
+    {
+        const std::string body = R"({"detail":{"matlStationInfo":{"slotInfos":[
+            {"slotId":1,"hasFilament":true,"materialName":"PLA","materialColor":"#FF0000"},
+            "not an object",
+            12,
+            {"slotId":3,"hasFilament":true,"materialName":"PETG"}
+        ]}}})";
+        REQUIRE(ff::parse_detail_material_slots(body, slots, has_station));
+        REQUIRE(slots.size() == 2);
+        CHECK(slots[0].material_name == "PLA");
+        CHECK(slots[0].material_color == "#FF0000");
+        CHECK(slots[1].slot_id == 3);
+        CHECK(slots[1].material_name == "PETG");
+    }
+
+    SECTION("wrong-typed fields are dropped rather than thrown")
+    {
+        const std::string body = R"({"detail":{"matlStationInfo":{"slotInfos":[
+            {"slotId":"x","hasFilament":"yes","materialName":12,"materialColor":true}
+        ]}}})";
+        REQUIRE_NOTHROW(ff::parse_detail_material_slots(body, slots, has_station));
+        REQUIRE(slots.size() == 1);
+        CHECK(slots[0].slot_id == 1); // 1-based position fallback
+        CHECK_FALSE(slots[0].has_filament);
+        CHECK(slots[0].material_name.empty());
+        CHECK(slots[0].material_color.empty());
+    }
 }
 
 // ---------------------------------------------------- the job's boolean options as headers ----

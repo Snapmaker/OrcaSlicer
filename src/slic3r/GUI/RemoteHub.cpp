@@ -4381,12 +4381,19 @@ static bool instance_api_allowed(const std::string& method, const std::string& s
     // segment is a name, not an index; keep it to what a printer id can hold and nothing else. The
     // page sends it through encodeURIComponent, so a percent escape is part of that (the instance
     // decodes it); a slash is not, encoded or otherwise, so this stays one segment.
+    // The same id also names whose timelapses: GET /api/printers/<id>/timelapses (the list),
+    // .../timelapses/thumbnail?name= and .../timelapses/video?name= (the file name is a query value,
+    // checked by the instance, so the path stays this closed set).
     if (sub.compare(0, 14, "/api/printers/") == 0) {
         const std::string rest  = sub.substr(14);
         const size_t      slash = rest.find('/');
-        if (slash == std::string::npos || rest.substr(slash) != "/control") return false;
+        if (slash == std::string::npos) return false;
+        const std::string what = rest.substr(slash);
+        const bool        ok   = (what == "/control" && post) ||
+                                 ((what == "/timelapses" || what == "/timelapses/thumbnail" || what == "/timelapses/video") && get);
+        if (!ok) return false;
         const std::string id = rest.substr(0, slash);
-        if (!post || id.empty() || id.size() > 64) return false;
+        if (id.empty() || id.size() > 64) return false;
         if (id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:%") != std::string::npos) return false;
         return id.find("%2f") == std::string::npos && id.find("%2F") == std::string::npos;
     }

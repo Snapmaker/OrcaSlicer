@@ -498,6 +498,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/BambuReprint.hpp
     GUI/GcodeArchive.cpp
     GUI/GcodeArchive.hpp
+    GUI/PrinterTimelapse.cpp
+    GUI/PrinterTimelapse.hpp
+    GUI/RemoteTimelapse.cpp
+    GUI/RemoteTimelapse.hpp
     GUI/RemoteSnapmaker.cpp
     GUI/RemoteSnapmaker.hpp
     GUI/SnapmakerLan.cpp

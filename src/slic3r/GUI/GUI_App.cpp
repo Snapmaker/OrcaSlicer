@@ -102,6 +102,7 @@
 #include "slic3r/GUI/FlashForge/MultiComMgr.hpp"
 #include "slic3r/GUI/FlashForge/FFDiagnostics.hpp"
 #include "Plater.hpp"
+#include "AccountStatus.hpp"
 #include "GLCanvas3D.hpp"
 #include "GeneratedConfig.hpp"
 
@@ -2552,6 +2553,9 @@ void GUI_App::init_networking_callbacks()
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter, m_agent=%1%")%m_agent;
     if (m_agent) {
+
+        // The plug-in's own sign-in / sign-out reports (a session it ended itself) reach the Account button.
+        m_agent->set_on_user_login_fn([](int /*online_login*/, bool /*login*/) { GUI::AccountStatus::refresh_async(); });
 
         m_agent->set_server_callback([](std::string url, int status) {
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": server_callback, url=%1%, status=%2%") % url % status;
@@ -9471,6 +9475,8 @@ void GUI_App::SMUserInfo::notify() {
 
     wxGetApp().user_login_notify(data);
 
+    // The title bar's Account button follows the Snapmaker sign-in state.
+    GUI::AccountStatus::refresh_async();
 }
 bool is_support_filament(int extruder_id)
 {

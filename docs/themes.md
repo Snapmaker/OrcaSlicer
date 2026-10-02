@@ -129,6 +129,7 @@ Everything except `name` is optional; whatever a theme leaves out keeps the stoc
 | `error` | error text |
 | `tabbar_bg`, `tabbar_hover` | the main tab bar (Home, Prepare, Preview, Device...) |
 | `titlebar_bg`, `titlebar_text` | the title bar |
+| `titlebar_warning` | the Account button's text in the title bar while you are signed out of the account your printer uses (default yellow, `#FFC83D`; pick one that reads on `titlebar_bg`) |
 | `canvas_bg`, `canvas_bg_top` | the 3D view: one colour, or a gradient up to `canvas_bg_top` |
 | `icon` | the main line colour of the built-in icons |
 

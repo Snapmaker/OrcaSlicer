@@ -175,6 +175,10 @@ public:
     int change_user(std::string user_info);
     bool is_user_login();
     int  user_logout(bool request = false);
+    // Called (from whichever thread made the change) after change_user() or user_logout() ran, so
+    // the UI can follow the Bambu sign-in state (GUI/AccountStatus.cpp). Not called when the plug-in
+    // changes the state by itself; set_on_user_login_fn covers that where the plug-in reports it.
+    static void set_login_changed_hook(std::function<void()> hook);
     std::string get_user_id();
     std::string get_user_name();
     std::string get_user_avatar();
@@ -283,6 +287,7 @@ private:
     static func_check_cert                     check_cert_ptr;
     static func_install_device_cert            install_device_cert_ptr;
     static func_start_discovery                start_discovery_ptr;
+    static std::function<void()>               s_login_changed_hook;
     static func_change_user                    change_user_ptr;
     static func_is_user_login                  is_user_login_ptr;
     static func_user_logout                    user_logout_ptr;

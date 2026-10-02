@@ -39,11 +39,13 @@ StabilizerBakeResult bake_stabilizers(const PrintObject &object, const Stabilize
     }
     // Exactly the settings of the slice, so the bake is the stabilizers the preview showed. The one
     // exception is a part's tip gap, which never goes below STABILIZER_BAKE_PART_MIN_GAP: it only
-    // moves the tip cut out along the strut, and the planner does not read the gap at all.
+    // moves the tip cut out along the strut. The struts are planned with the slice's own settings
+    // (the planner moves pillars out for a large gap) and only the mesh takes the part's gap.
+    stabilizers::StabilizerSettings mesh_st = st;
+    mesh_st.tip_gap      = stabilizer_bake_gap(options.placement, st.tip_gap);
     res.sliced_tip_gap   = st.tip_gap;
-    st.tip_gap           = stabilizer_bake_gap(options.placement, st.tip_gap);
     res.tip_diameter     = st.rings.tip_diameter;
-    res.tip_gap          = st.tip_gap;
+    res.tip_gap          = mesh_st.tip_gap;
     res.layer_height     = cfg.layer_height.value;
     res.support_filament = cfg.support_filament.value;
 
@@ -55,7 +57,7 @@ StabilizerBakeResult bake_stabilizers(const PrintObject &object, const Stabilize
 
     stabilizers::MeshOptions mopts;
     mopts.segments = options.segments;
-    res.mesh = stabilizers::stabilizer_mesh(res.struts, st, mopts, &res.mesh_report);
+    res.mesh = stabilizers::stabilizer_mesh(res.struts, mesh_st, mopts, &res.mesh_report);
     if (res.mesh.indices.empty()) {
         res.error = "the stabilizer mesh came out empty";
         return res;

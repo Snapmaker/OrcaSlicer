@@ -393,7 +393,11 @@ static bool fit_strut(const std::vector<LayerOutline> &layers, const StabilizerS
 {
     const double pillar_r  = st.pillar_radius;
     const double clearance = st.clearance;
-    for (double run = pillar_r + clearance; run <= st.max_run + EPSILON; run += 0.5) {
+    // The strut has to reach out of its pillar towards the wall and still end the tip gap short of it,
+    // so with a large gap the pillar stands further out (a gap up to half a millimetre under the
+    // clearance changes nothing).
+    const double min_run = pillar_r + std::max(clearance, st.tip_gap + 0.5);
+    for (double run = min_run; run <= st.max_run + EPSILON; run += 0.5) {
         Strut s;
         s.tip       = c.pos;
         s.dir       = dir;
@@ -527,14 +531,15 @@ std::vector<ExPolygons> slice_struts(const std::vector<LayerOutline> &layers, co
         if (throw_if_canceled)
             throw_if_canceled();
         const double z = layers[i].slice_z;
-        Polygons     polys;
+        // Pillars (with their feet) and struts apart: the tip gap is the struts' business only.
+        Polygons     pillars, polys;
         for (const Strut &s : struts) {
             if (z > s.tip_z + EPSILON)
                 continue;
             const Vec2d  pillar = s.pillar();
             const double top_z  = s.junction_z();
             if (z <= top_z + EPSILON)
-                polys.push_back(circle(pillar, pillar_r + std::max(0., foot - z)));
+                pillars.push_back(circle(pillar, pillar_r + std::max(0., foot - z)));
             // The strut. Its slice at 45 degrees is an ellipse, sqrt(2) longer along the strut than
             // across it. It continues below the pillar's top until its lower side comes out of the
             // pillar's side, and the part of it beyond the pillar's axis is cut off, so where it
@@ -547,12 +552,17 @@ std::vector<ExPolygons> slice_struts(const std::vector<LayerOutline> &layers, co
                                            Polygons{ inner_half_plane(pillar, s.dir, 4. * (s.run + pillar_r)) }));
             }
         }
-        if (polys.empty())
+        if (polys.empty() && pillars.empty())
             continue;
-        // Touch, don't fuse: clip at the part's outline, so the tip's footprint ends exactly where
-        // the outer wall begins - or stop short of it by the tip gap.
+        // Touch, don't fuse: clip the struts at the part's outline, so the tip's footprint ends exactly
+        // where the outer wall begins - or stop short of it by the tip gap. The pillars and their feet
+        // keep the planner's own clearance whatever the gap, and are only ever kept out of the part: the
+        // gap used to clip them too, which at a gap above the clearance ate the feet and the pillars.
         const ExPolygons &part = islands_at(layers, i);
-        out[i] = tip_gap > 0.f ? diff_ex(union_(polys), offset_ex(part, tip_gap)) : diff_ex(union_(polys), part);
+        ExPolygons layer = diff_ex(union_(pillars), part);
+        if (! polys.empty())
+            append(layer, tip_gap > 0.f ? diff_ex(union_(polys), offset_ex(part, tip_gap)) : diff_ex(union_(polys), part));
+        out[i] = union_ex(layer);
     }
     return out;
 }

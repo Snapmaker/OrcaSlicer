@@ -31,6 +31,7 @@
 
 using namespace Slic3r;
 using Catch::Matchers::WithinAbs;
+using Catch::Matchers::WithinRel;
 
 namespace {
 
@@ -561,5 +562,52 @@ TEST_CASE("Stabilizer report: pin and the owner's project", "[.stabilizers_repor
         ProjectPrint p;
         REQUIRE(slice_project(p));
         report("PROJECT", p.print, "project");
+    }
+}
+
+// The tip gap is the struts' business: the tips stop that far from the wall, while the pillars and
+// their feet keep their own clearance and size. (It used to clip everything near the part, so a gap
+// above the 1 mm clearance ate the feet and the pillars.)
+TEST_CASE("The tip gap moves the tips, not the pillars", "[Stabilizers]")
+{
+    PinPrint touch, apart;
+    slice_pin(touch, true, "0");
+    slice_pin(apart, true, "2");
+    const PrintObject &pt = *touch.print.objects().front();
+    const PrintObject &pa = *apart.print.objects().front();
+    REQUIRE(stabilizers::plan_struts(pa).size() == stabilizers::plan_struts(pt).size());
+
+    // Between the rings: the same pillars, whole, clear of the part.
+    const LayerCheck lt = check_layer(pt, 5.), la = check_layer(pa, 5.);
+    const double     r  = stabilizers::pillar_radius(pa);
+    INFO("pillar layer area: gap 0 " << lt.area << " mm2, gap 2 " << la.area << " mm2");
+    CHECK_THAT(la.area, WithinRel(lt.area, 0.01));
+    CHECK(la.area > 0.95 * 3. * M_PI * r * r);
+    CHECK(la.overlap < 0.01);
+    // The feet on the bed: the same size, never in the part.
+    const LayerCheck ft = check_layer(pt, 0.2), fa = check_layer(pa, 0.2);
+    INFO("first layer area: gap 0 " << ft.area << " mm2, gap 2 " << fa.area << " mm2");
+    CHECK_THAT(fa.area, WithinRel(ft.area, 0.02));
+    CHECK(fa.overlap < 0.01);
+
+    // At each ring the struts come closest to the wall just under the ring height - the tip is cut by a
+    // vertical plane the gap out from the wall, and a 45 degree strut reaches that plane a little
+    // lower - and stop exactly the gap short of it.
+    for (double ring_z : { 15., 30., 45. }) {
+        double closest = std::numeric_limits<double>::max(), area = 0.;
+        size_t paths   = 0;
+        for (const Layer *l : pa.layers())
+            if (l->print_z > ring_z - 3. && l->print_z < ring_z + 0.2) {
+                const LayerCheck at = check_layer(pa, l->print_z);
+                closest = std::min(closest, at.min_gap);
+                area += at.area;
+                paths += at.paths;
+                CHECK(at.overlap < 0.01);
+            }
+        INFO("ring at " << ring_z << " mm: closest " << closest << " mm, area " << area);
+        CHECK(area > 0.1);
+        CHECK(paths > 0);
+        CHECK(closest > 1.9);
+        CHECK(closest < 2.1);
     }
 }

@@ -493,10 +493,9 @@ TEST_CASE("Baked stabilizers are one closed mesh that slices like the live strut
         slice(b, pin_config("auto"));
         check(*b.print.objects().front(), "pin");
     }
-    // Small tip gaps: the cut moves out along the strut, nothing else. (From about 0.5 mm the live
-    // generator, which clips with the part grown by the gap, starts eating the pillar feet - it stand
-    // 1 mm off the part at the bed - and the two part ways; see the PR.)
-    for (const char *gap : { "0.15", "0.3" }) {
+    // Tip gaps from touching (above) to the largest allowed: the gap moves the tip cut out along the
+    // strut, and a large one moves the pillars out with it; live and baked agree at every gap.
+    for (const char *gap : { "0.3", "1", "2" }) {
         DYNAMIC_SECTION("the pin with a tip gap of " << gap << " mm")
         {
             Bench b;

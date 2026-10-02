@@ -162,6 +162,55 @@ std::string ff_flashnetwork_missing_text(const std::vector<std::string> &searche
 // to a 64-bit build, or a truncated download.
 std::string ff_flashnetwork_load_failed_text(const std::string &path);
 
+// ---------------------------------------------------------------------------------------------
+// Why FlashNetwork did not come up
+// ---------------------------------------------------------------------------------------------
+
+// fnet_initlize() takes the path of FlashForge's server-settings file (FLASHNETWORK9.DAT for the
+// 3.4.x library). It is not optional: given a path that does not exist, or a file that is empty or
+// from another library generation (FLASHNETWORK7.DAT), the call returns FNET_ERROR and the whole
+// FlashForge stack stays down. EdgeSlicer 2.4.2.0 shipped the DLL without it, and every install
+// failed exactly there with nothing in the log but "initalize FlashNetwork failed".
+//
+// Candidate locations for that file, in search order, duplicates dropped:
+//   1. <resources>/data/<dat>  - where the installer puts it, and where FlashForge's own client
+//                                looks (resources/data beside the executable).
+//   2. <dll dir>/<dat>         - beside the library, for a hand-placed pair in <data dir>/plugins.
+//   3. <dll dir>/resources/data/<dat> - an Orca-Flashforge install picked with Locate, which
+//                                keeps the file in its own resources/data.
+//   4. <data dir>/plugins/<dat> - hand-placed next to a hand-placed DLL that was found elsewhere.
+// An empty argument contributes nothing. The caller takes the first that exists.
+std::vector<std::string> ff_flashnetwork_dat_search_paths(const std::string &resources_dir,
+                                                          const std::string &dll_path,
+                                                          const std::string &data_dir,
+                                                          const std::string &dat_name);
+
+// The step at which bringing FlashNetwork up failed. Each has its own log line and its own
+// sentence, because "failed to initialize" alone is what made the 2.4.2.0 failure undiagnosable.
+enum class FFNetInitStage
+{
+    LoadFailed,    // LoadLibrary/dlopen refused the file; code = GetLastError() (0 on dlopen)
+    MissingSymbol, // the library lacks an export this build binds; detail = the symbol
+    InitFailed,    // fnet_initlize returned non-zero; code = its return, detail = the DAT path
+    BadVersion,    // the library reports a version this build does not speak; detail = it
+};
+
+// One line for the log and the Device tab, naming the step, the path and the code, e.g.
+//   "fnet_initlize returned -1 (FNET_ERROR) with server settings C:/.../FLASHNETWORK9.DAT"
+// For InitFailed, dat_found says whether the settings file existed; when it did not the line says
+// so, since that is the one cause a user (or the packager) can fix.
+std::string ff_flashnetwork_init_error(FFNetInitStage stage, const std::string &library_path,
+                                       const std::string &detail, long code, bool dat_found = true);
+
+// A known Windows LoadLibrary error code turned into its likely cause ("a dependency is missing",
+// "not a 64-bit library"), or an empty string for codes with no useful gloss.
+std::string ff_loadlibrary_error_hint(long code);
+
+// The Device tab text when the library was found but would not come up, carrying the reason
+// ff_flashnetwork_init_error() produced. Falls back to ff_flashnetwork_load_failed_text() when
+// there is no reason to show.
+std::string ff_flashnetwork_init_failed_text(const std::string &path, const std::string &reason);
+
 }} // namespace Slic3r::GUI
 
 #endif // slic3r_GUI_FFDiagnostics_hpp_

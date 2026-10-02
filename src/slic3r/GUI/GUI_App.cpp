@@ -4458,10 +4458,13 @@ bool GUI_App::init_flashnetwork(const std::string &explicit_path)
 
     m_flashnetwork_path = found;
     if (!MultiComMgr::inst()->initalize(found, data_dir())) {
-        // Found but would not load: wrong architecture, a truncated copy, or a DLL that needs a
-        // runtime this machine lacks. The path is the useful half of the message.
-        m_flashnetwork_error = ff_flashnetwork_load_failed_text(found);
-        BOOST_LOG_TRIVIAL(error) << "FlashNetwork found but failed to initialize: " << found;
+        // Found but would not come up. MultiComMgr knows which step failed (load, missing export,
+        // version, or fnet_initlize itself - which is what a missing FLASHNETWORK9.DAT looks
+        // like) and has logged it; carry that reason into the Device tab text.
+        const std::string &reason = MultiComMgr::inst()->lastInitError();
+        m_flashnetwork_error = ff_flashnetwork_init_failed_text(found, reason);
+        BOOST_LOG_TRIVIAL(error) << "FlashNetwork found but failed to initialize: " << found
+                                 << (reason.empty() ? std::string() : ": " + reason);
         return false;
     }
 

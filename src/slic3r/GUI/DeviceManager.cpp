@@ -5,6 +5,7 @@
 #include "AmsDrying.hpp"
 #include "AmsDualLayout.hpp"
 #include "DeviceModelCode.hpp"
+#include "ChamberLights.hpp"
 #include "BambuSendDiagnosis.hpp"
 #include "libslic3r/Time.hpp"
 #include "libslic3r/Thread.hpp"
@@ -2308,19 +2309,42 @@ int MachineObject::command_ams_control(std::string action)
 }
 
 
+bool MachineObject::has_two_chamber_lights() const
+{
+    return ChamberLights::has_two_lights(DeviceManager::get_printer_series(printer_type), chamber_light2_reported);
+}
+
+MachineObject::LIGHT_EFFECT MachineObject::chamber_light_state() const
+{
+    auto to_mode = [](LIGHT_EFFECT e) {
+        switch (e) {
+        case LIGHT_EFFECT::LIGHT_EFFECT_ON: return ChamberLights::Mode::On;
+        case LIGHT_EFFECT::LIGHT_EFFECT_OFF: return ChamberLights::Mode::Off;
+        case LIGHT_EFFECT::LIGHT_EFFECT_FLASHING: return ChamberLights::Mode::Flashing;
+        default: return ChamberLights::Mode::Unknown;
+        }
+    };
+    switch (ChamberLights::combined(to_mode(chamber_light), to_mode(chamber_light2), has_two_chamber_lights())) {
+    case ChamberLights::Mode::On: return LIGHT_EFFECT::LIGHT_EFFECT_ON;
+    case ChamberLights::Mode::Off: return LIGHT_EFFECT::LIGHT_EFFECT_OFF;
+    case ChamberLights::Mode::Flashing: return LIGHT_EFFECT::LIGHT_EFFECT_FLASHING;
+    default: return LIGHT_EFFECT::LIGHT_EFFECT_UNKOWN;
+    }
+}
+
+// One ledctrl per chamber light: "chamber_light" on every printer, and "chamber_light2" as well on
+// the H2 series, whose two interior lights are separate nodes (Bambu Studio's DevLamp sends both).
 int MachineObject::command_set_chamber_light(LIGHT_EFFECT effect, int on_time, int off_time, int loops, int interval)
 {
-    json j;
-    j["system"]["command"] = "ledctrl";
-    j["system"]["led_node"] = "chamber_light";
-    j["system"]["sequence_id"] = std::to_string(MachineObject::m_sequence_id++);
-    j["system"]["led_mode"] = light_effect_str(effect);
-    j["system"]["led_on_time"] = on_time;
-    j["system"]["led_off_time"] = off_time;
-    j["system"]["loop_times"] = loops;
-    j["system"]["interval_time"] = interval;
-
-    return this->publish_json(j.dump());
+    const ChamberLights::Mode mode = ChamberLights::parse_mode(light_effect_str(effect));
+    int                       rc   = 0;
+    for (const json& j : ChamberLights::chamber_commands(has_two_chamber_lights(), mode,
+                                                         [] { return std::to_string(MachineObject::m_sequence_id++); }, on_time,
+                                                         off_time, loops, interval)) {
+        const int r = this->publish_json(j.dump());
+        if (r != 0 && rc == 0) rc = r;
+    }
+    return rc;
 }
 
 
@@ -4041,6 +4065,10 @@ int MachineObject::parse_json(std::string payload, bool key_field_only)
                                 for (auto it = jj["lights_report"].begin(); it != jj["lights_report"].end(); it++) {
                                     if ((*it)["node"].get<std::string>().compare("chamber_light") == 0)
                                         chamber_light = light_effect_parse((*it)["mode"].get<std::string>());
+                                    if ((*it)["node"].get<std::string>().compare("chamber_light2") == 0) {
+                                        chamber_light2          = light_effect_parse((*it)["mode"].get<std::string>());
+                                        chamber_light2_reported = true;
+                                    }
                                     if ((*it)["node"].get<std::string>().compare("work_light") == 0)
                                         work_light = light_effect_parse((*it)["mode"].get<std::string>());
                                 }

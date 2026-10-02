@@ -19013,21 +19013,18 @@ void Plater::import_model_id(wxString download_info)
                         cont = false;
                         try {
                             // Another file may have taken the name while downloading.
-                            // rename_no_replace refuses to replace a dest created after the re-check.
-                            for (;;) {
-                                std::string unused_filename;
-                                if (!untrusted::find_unused_filename(target_path.parent_path(), target_path.filename().string(), tmp_path, unused_filename))
-                                    break;
-                                const fs::path dest = target_path.parent_path() / unused_filename;
-                                boost::system::error_code rename_ec;
-                                if (untrusted::rename_no_replace(tmp_path, dest, rename_ec)) {
-                                    target_path = dest;
-                                    download_ok = true;
-                                    return;
-                                }
-                                if (rename_ec != boost::system::errc::file_exists)
-                                    throw fs::filesystem_error("rename", tmp_path, dest, rename_ec);
+                            // place_download_file refuses to replace, retries on EEXIST, and
+                            // gives up on a same-name loop (a stat miss treated the dest as free).
+                            std::string unused_filename = target_path.filename().string();
+                            fs::path    dest;
+                            boost::system::error_code rename_ec;
+                            if (untrusted::place_download_file(tmp_path, target_path.parent_path(), unused_filename, dest, rename_ec)) {
+                                target_path = dest;
+                                download_ok = true;
+                                return;
                             }
+                            if (rename_ec)
+                                throw fs::filesystem_error("rename", tmp_path, dest, rename_ec);
                         } catch (const std::exception &e) {
                             BOOST_LOG_TRIVIAL(error) << "import_model_id: failed to move the download into place: " << e.what();
                         }

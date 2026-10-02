@@ -1,3 +1,12 @@
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
 #include "UntrustedInput.hpp"
 
 #include "Config.hpp"
@@ -10,15 +19,7 @@
 #include <cstdint>
 #include <cstdio>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#else
+#ifndef _WIN32
 #include <fcntl.h>
 #include <unistd.h>
 #ifdef __linux__
@@ -32,6 +33,10 @@
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/operations.hpp>
 #include <boost/system/error_code.hpp>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace Slic3r {
 namespace untrusted {
@@ -532,6 +537,8 @@ boost::filesystem::path download_marker_path(const boost::filesystem::path &dest
 
 namespace {
 
+// A stat error is treated as free. Exclusive create and no-replace rename still refuse
+// to overwrite if the name is in use, so a missed probe cannot replace an existing file.
 bool path_taken(const boost::filesystem::path &p)
 {
     boost::system::error_code ec;
@@ -630,8 +637,34 @@ bool rename_no_replace(const boost::filesystem::path &from, const boost::filesys
     }
 #endif
     if (::link(from.c_str(), to.c_str()) == 0) {
-        ::unlink(from.c_str());
-        return true;
+        if (::unlink(from.c_str()) == 0)
+            return true;
+        // dest is a new name for the same inode. A leftover source name is acceptable
+        // if dest is in place; do not fail the download after a successful link.
+        if (path_taken(to)) {
+            ec.clear();
+            return true;
+        }
+        set_posix_rename_error(ec);
+        return false;
+    }
+    // Hard links are missing on some NFS/CIFS/FUSE volumes. After a last existence
+    // check, a plain rename is the fallback.
+    if (errno == EPERM || errno == ENOTSUP || errno == EXDEV
+#ifdef EOPNOTSUPP
+        || errno == EOPNOTSUPP
+#endif
+    ) {
+        if (path_taken(to)) {
+            set_already_exists(ec);
+            return false;
+        }
+        if (::rename(from.c_str(), to.c_str()) == 0) {
+            ec.clear();
+            return true;
+        }
+        set_posix_rename_error(ec);
+        return false;
     }
     set_posix_rename_error(ec);
     return false;
@@ -649,11 +682,14 @@ FILE *claim_unused_download_name(const boost::filesystem::path &dest_folder,
         if (!find_unused_filename(dest_folder, filename, ignored_marker, result))
             return nullptr;
         const boost::filesystem::path marker = download_marker_path(dest_folder, result);
-        if (marker == ignored_marker)
-            return nullptr;
         FILE *f = open_exclusive_write(marker);
         if (f != nullptr)
             return f;
+        // The caller already holds this marker (Content-Disposition adopting the same
+        // name). A removed marker (early pause) is not this case: exclusive create
+        // succeeded above. Only a still-present ignored_marker is reused.
+        if (marker == ignored_marker)
+            return nullptr;
         if (!exclusive_open_hit_existing() || result == last) {
             result.clear();
             return nullptr;
@@ -662,6 +698,40 @@ FILE *claim_unused_download_name(const boost::filesystem::path &dest_folder,
     }
     result.clear();
     return nullptr;
+}
+
+bool place_download_file(const boost::filesystem::path &tmp_path,
+                         const boost::filesystem::path &dest_folder,
+                         std::string                   &filename,
+                         boost::filesystem::path       &dest_path,
+                         boost::system::error_code     &ec)
+{
+    dest_path.clear();
+    std::string last;
+    for (std::size_t attempt = 0; attempt <= FIND_UNUSED_FILENAME_MAX_VERSION + 1; ++attempt) {
+        std::string unused;
+        if (!find_unused_filename(dest_folder, filename, tmp_path, unused)) {
+            ec = boost::system::errc::make_error_code(boost::system::errc::io_error);
+            return false;
+        }
+        // Same name after an EEXIST: path_taken treated the dest as free (stat error).
+        // Do not spin; fail so the caller can drop the marker instead of looping forever.
+        if (!last.empty() && unused == last) {
+            set_already_exists(ec);
+            dest_path = dest_folder / unused;
+            filename  = unused;
+            return false;
+        }
+        last      = unused;
+        filename  = unused;
+        dest_path = dest_folder / unused;
+        if (rename_no_replace(tmp_path, dest_path, ec))
+            return true;
+        if (ec != boost::system::errc::file_exists)
+            return false;
+    }
+    set_already_exists(ec);
+    return false;
 }
 
 bool content_matches_extension(const std::string &file_name, const std::string &head, unsigned long long file_size, std::string *why)

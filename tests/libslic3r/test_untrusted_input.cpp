@@ -25,8 +25,10 @@
 #include <cstdint>
 #include <iterator>
 #include <limits>
+#include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -544,6 +546,75 @@ TEST_CASE("find_unused_filename treats a dangling symlink as taken", "[Untrusted
     CHECK(name == "model(1).3mf");
 }
 #endif
+
+TEST_CASE("claim_unused_download_name recreates a removed marker when the old path is still ignored", "[Untrusted][Filename]")
+{
+    // FileGet pause with m_written==0 removes the marker but used to keep m_tmp_path.
+    // Resume then passed that stale path as ignored_marker; claim must still succeed.
+    DownloadScratch scratch;
+    std::string     name;
+    FILE           *first = claim_unused_download_name(scratch.dir, "model.3mf", {}, name);
+    REQUIRE(first != nullptr);
+    fclose(first);
+    const fs::path marker = download_marker_path(scratch.dir, name);
+    REQUIRE(fs::exists(marker));
+    boost::system::error_code ec;
+    fs::remove(marker, ec);
+    REQUIRE_FALSE(fs::exists(marker));
+
+    FILE *again = claim_unused_download_name(scratch.dir, "model.3mf", marker, name);
+    REQUIRE(again != nullptr);
+    fclose(again);
+    CHECK(name == "model.3mf");
+    CHECK(fs::exists(marker));
+}
+
+TEST_CASE("claim_unused_download_name gives distinct names to concurrent claimants", "[Untrusted][Filename]")
+{
+    DownloadScratch scratch;
+    constexpr int   N = 8;
+    std::vector<std::string> names(N);
+    std::vector<FILE *>      files(N, nullptr);
+    std::vector<std::thread> threads;
+    threads.reserve(N);
+    for (int i = 0; i < N; ++i) {
+        threads.emplace_back([&, i] {
+            files[i] = claim_unused_download_name(scratch.dir, "model.3mf", {}, names[i]);
+        });
+    }
+    for (std::thread &t : threads)
+        t.join();
+
+    std::set<std::string> unique;
+    for (int i = 0; i < N; ++i) {
+        REQUIRE(files[i] != nullptr);
+        fclose(files[i]);
+        REQUIRE_FALSE(names[i].empty());
+        REQUIRE(unique.insert(names[i]).second);
+    }
+    CHECK(unique.size() == static_cast<size_t>(N));
+}
+
+TEST_CASE("place_download_file versions when the destination already exists", "[Untrusted][Filename]")
+{
+    DownloadScratch scratch;
+    std::string     name = "model.3mf";
+    FILE           *marker_file = claim_unused_download_name(scratch.dir, name, {}, name);
+    REQUIRE(marker_file != nullptr);
+    fclose(marker_file);
+    const fs::path marker = download_marker_path(scratch.dir, name);
+    touch_download_file(scratch.dir / "model.3mf");
+    touch_download_file(marker);
+
+    fs::path dest;
+    boost::system::error_code ec;
+    REQUIRE(place_download_file(marker, scratch.dir, name, dest, ec));
+    CHECK(name == "model(1).3mf");
+    CHECK(dest.filename() == "model(1).3mf");
+    CHECK(read_download_file(dest) == "existing");
+    CHECK(read_download_file(scratch.dir / "model.3mf") == "existing");
+    CHECK_FALSE(fs::exists(marker));
+}
 
 TEST_CASE("downloaded bytes must match the file type", "[Untrusted][Download]")
 {

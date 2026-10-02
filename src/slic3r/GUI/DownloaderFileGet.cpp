@@ -141,9 +141,12 @@ void FileGet::priv::get_perform()
 		// the next unused name.
 		std::string unused;
 		try {
-			file = untrusted::claim_unused_download_name(m_dest_folder, m_filename, m_tmp_path, unused);
+			// m_written == 0: we do not hold a marker (fresh start, or pause/cancel
+			// already removed it). Pass {} so a stale m_tmp_path cannot look like
+			// "caller already holds this file" and abort the claim.
+			file = untrusted::claim_unused_download_name(m_dest_folder, m_filename, {}, unused);
 			if (file == nullptr && unused.empty())
-				file = untrusted::claim_unused_download_name(m_dest_folder, "download", m_tmp_path, unused);
+				file = untrusted::claim_unused_download_name(m_dest_folder, "download", {}, unused);
 		} catch (const boost::filesystem::filesystem_error& e)
 		{
 			wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_ERROR);
@@ -182,6 +185,7 @@ void FileGet::priv::get_perform()
 	BOOST_LOG_TRIVIAL(info) << GUI::format("Starting download from %1% to %2%. Temp path is %3%",m_url, dest_path, m_tmp_path);
 
 	if (m_written != 0) {
+		// Pause after the first 10 MB chunk left the marker in place; append to it.
 #ifndef __WIN32__
 		file = fopen(m_tmp_path.c_str(), "ab");
 #else
@@ -259,6 +263,7 @@ void FileGet::priv::get_perform()
 				// remove canceled file (native path: a narrow std::remove misses non-ASCII names)
 				boost::system::error_code ec;
 				boost::filesystem::remove(m_tmp_path, ec);
+				m_tmp_path.clear();
 				m_written = 0;
 				cancel = true;
 				wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_CANCELED);
@@ -274,6 +279,7 @@ void FileGet::priv::get_perform()
 				if (m_written == 0) {
 					boost::system::error_code ec;
 					boost::filesystem::remove(m_tmp_path, ec);
+					m_tmp_path.clear();
 				}
 				wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_PAUSED);
 				evt->SetInt(m_id);
@@ -307,6 +313,7 @@ void FileGet::priv::get_perform()
 				fclose(file);
 			boost::system::error_code remove_ec;
 			boost::filesystem::remove(m_tmp_path, remove_ec);
+			m_tmp_path.clear();
 			wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_ERROR);
 			if (!error.empty())
 				evt->SetString(GUI::from_u8(error));
@@ -357,21 +364,15 @@ void FileGet::priv::get_perform()
 				}
 			}
 			try {
-				// Another file may have taken the name while downloading. rename_no_replace
-				// refuses to replace a dest created after the re-check; EEXIST tries the next name.
+				// Another file may have taken the name while downloading. place_download_file
+				// refuses to replace, retries on EEXIST, and gives up on a same-name loop.
 				if (dest_path.empty())
 					throw std::runtime_error("No unused file name.");
-				for (;;) {
-					std::string unused;
-					if (!untrusted::find_unused_filename(m_dest_folder, m_filename, m_tmp_path, unused))
-						throw std::runtime_error("No unused file name.");
-					m_filename = unused;
-					dest_path = m_dest_folder / m_filename;
-					boost::system::error_code rename_ec;
-					if (untrusted::rename_no_replace(m_tmp_path, dest_path, rename_ec))
-						break;
-					if (rename_ec != boost::system::errc::file_exists)
+				boost::system::error_code rename_ec;
+				if (!untrusted::place_download_file(m_tmp_path, m_dest_folder, m_filename, dest_path, rename_ec)) {
+					if (rename_ec)
 						throw boost::filesystem::filesystem_error("rename", m_tmp_path, dest_path, rename_ec);
+					throw std::runtime_error("No unused file name.");
 				}
 			} catch (const std::exception& e) {
 				boost::system::error_code ec;

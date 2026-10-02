@@ -145,8 +145,10 @@ constexpr std::size_t FIND_UNUSED_FILENAME_MAX_VERSION = 999;
 // entry of dest_folder nor this process's download marker uses: "name.ext", then "name(1).ext", …
 // up to max_version. The marker at ignored_marker does not count (the caller's own in-flight
 // file). Dest and marker probes use symlink_status, so a dangling symlink counts as taken.
-// Returns true and the name in result, or false and the last name tried (empty when nothing
-// usable remains after sanitizing). Never returns a name with a path separator.
+// A stat error is treated as free: exclusive create and no-replace rename still refuse to
+// overwrite if the name is in use. Returns true and the name in result, or false and the last
+// name tried (empty when nothing usable remains after sanitizing). Never returns a name with
+// a path separator.
 bool find_unused_filename(const boost::filesystem::path &dest_folder,
                           const std::string             &filename,
                           const boost::filesystem::path &ignored_marker,
@@ -158,9 +160,10 @@ bool find_unused_filename(const boost::filesystem::path &dest_folder,
 FILE *open_exclusive_write(const boost::filesystem::path &path);
 
 // Rename `from` to `to` without replacing an existing `to`. Linux: renameat2 RENAME_NOREPLACE,
-// then link+unlink. Other POSIX: link+unlink. Windows: MoveFileExW without
-// MOVEFILE_REPLACE_EXISTING. When `to` already exists, returns false and sets
-// ec to errc::file_exists.
+// then link+unlink. macOS: renameatx_np RENAME_EXCL, then link+unlink. Other POSIX: link+unlink;
+// if hard links are unsupported (EPERM / ENOTSUP / EXDEV) a plain rename is used after a final
+// existence check. Windows: MoveFileExW without MOVEFILE_REPLACE_EXISTING. When `to` already
+// exists, returns false and sets ec to errc::file_exists.
 bool rename_no_replace(const boost::filesystem::path &from,
                        const boost::filesystem::path &to,
                        boost::system::error_code     &ec);
@@ -168,12 +171,22 @@ bool rename_no_replace(const boost::filesystem::path &from,
 // Sanitize, then exclusively create this process's download marker for the first unused name.
 // On EEXIST the name is treated as taken and the next is tried. Returns the open marker FILE*
 // (caller fclose) and the claimed name in `result`. Returns nullptr if nothing usable remains.
-// When the first unused name's marker is `ignored_marker` (the caller already holds that file),
-// `result` is that name and the FILE* is nullptr.
+// When the first unused name's marker is `ignored_marker` and that file already exists (the
+// caller already holds it), `result` is that name and the FILE* is nullptr. If that marker
+// path was removed (early pause), exclusive create is retried and a new FILE* is returned.
 FILE *claim_unused_download_name(const boost::filesystem::path &dest_folder,
                                  const std::string             &filename,
                                  const boost::filesystem::path &ignored_marker,
                                  std::string                   &result);
+
+// Rename tmp_path to dest_folder/<chosen name> without replacing. On EEXIST, pick the next
+// unused name. Stops after FIND_UNUSED_FILENAME_MAX_VERSION attempts, or if the same name is
+// offered twice after an EEXIST (a stat miss: path_taken treated the dest as free).
+bool place_download_file(const boost::filesystem::path &tmp_path,
+                         const boost::filesystem::path &dest_folder,
+                         std::string                   &filename,
+                         boost::filesystem::path       &dest_path,
+                         boost::system::error_code     &ec);
 
 // Upper bound for a model download (same cap as the MakerWorld import path).
 constexpr std::size_t MODEL_DOWNLOAD_SIZE_LIMIT = std::size_t(500) * 1024 * 1024;

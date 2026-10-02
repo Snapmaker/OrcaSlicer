@@ -18926,18 +18926,25 @@ void Plater::import_model_id(wxString download_info)
             return;
         }
 
-        // never replace an existing file
-        std::string unused_filename;
+        // never replace an existing file; exclusively create this process's marker so a
+        // concurrent download sees the name as taken. On EEXIST, claim the next unused name.
+        const fs::path dest_folder = target_path;
+        std::string    unused_filename;
+        FILE          *marker = nullptr;
         try {
-            if (!untrusted::find_unused_filename(target_path, into_u8(filename), {}, unused_filename))
-                unused_filename.clear();
+            marker = untrusted::claim_unused_download_name(dest_folder, into_u8(filename), {}, unused_filename);
         } catch (const std::exception&) {
             unused_filename.clear();
+            if (marker != nullptr) {
+                fclose(marker);
+                marker = nullptr;
+            }
         }
-        if (unused_filename.empty()) {
+        if (marker == nullptr) {
             msg = _L("Importing to EdgeSlicer failed. Please download the file and manually import it.");
             return;
         }
+        fclose(marker);
         filename = from_u8(unused_filename);
 
 
@@ -18951,9 +18958,9 @@ void Plater::import_model_id(wxString download_info)
         std::string unique = to_string(uuid).substr(0, 6);
 
         //target_path /= (boost::format("%1%_%2%.3mf") % filename % unique).str();
-        target_path /= fs::path(filename.wc_str());
+        target_path = dest_folder / fs::path(filename.wc_str());
 
-        fs::path tmp_path = untrusted::download_marker_path(target_path.parent_path(), into_u8(filename));
+        fs::path tmp_path = untrusted::download_marker_path(dest_folder, unused_filename);
 
         auto filesize = 0;
         bool size_limit = false;
@@ -18985,7 +18992,7 @@ void Plater::import_model_id(wxString download_info)
                         msg = wxString::Format(_L("Project downloaded %d%%"), percent);
                     }
                 })
-                .on_error([&msg, &cont, &retry_count, max_retries](std::string body, std::string error, unsigned http_status) {
+                .on_error([&msg, &cont, &retry_count, max_retries, tmp_path](std::string body, std::string error, unsigned http_status) {
                     (void)body;
                     BOOST_LOG_TRIVIAL(error) << format("Error getting: `%1%`: HTTP %2%, %3%",
                         body,
@@ -18993,6 +19000,8 @@ void Plater::import_model_id(wxString download_info)
                         error);
 
                     if (retry_count == max_retries) {
+                        boost::system::error_code ec;
+                        fs::remove(tmp_path, ec);
                         msg = _L("Importing to EdgeSlicer failed. Please download the file and manually import it.");
                         cont = false;
                     }
@@ -19004,12 +19013,20 @@ void Plater::import_model_id(wxString download_info)
                         cont = false;
                         try {
                             // Another file may have taken the name while downloading.
-                            std::string unused_filename;
-                            if (untrusted::find_unused_filename(target_path.parent_path(), target_path.filename().string(), tmp_path, unused_filename)) {
-                                target_path = target_path.parent_path() / unused_filename;
-                                fs::rename(tmp_path, target_path);
-                                download_ok = true;
-                                return;
+                            // rename_no_replace refuses to replace a dest created after the re-check.
+                            for (;;) {
+                                std::string unused_filename;
+                                if (!untrusted::find_unused_filename(target_path.parent_path(), target_path.filename().string(), tmp_path, unused_filename))
+                                    break;
+                                const fs::path dest = target_path.parent_path() / unused_filename;
+                                boost::system::error_code rename_ec;
+                                if (untrusted::rename_no_replace(tmp_path, dest, rename_ec)) {
+                                    target_path = dest;
+                                    download_ok = true;
+                                    return;
+                                }
+                                if (rename_ec != boost::system::errc::file_exists)
+                                    throw fs::filesystem_error("rename", tmp_path, dest, rename_ec);
                             }
                         } catch (const std::exception &e) {
                             BOOST_LOG_TRIVIAL(error) << "import_model_id: failed to move the download into place: " << e.what();
@@ -19021,6 +19038,11 @@ void Plater::import_model_id(wxString download_info)
 
                 // for break while
                 //cont = false;
+        }
+
+        if (!download_ok) {
+            boost::system::error_code ec;
+            fs::remove(tmp_path, ec);
         }
 
     });

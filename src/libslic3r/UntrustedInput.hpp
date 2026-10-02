@@ -10,6 +10,7 @@
 // The GUI decides what to do with a verdict (ask, refuse, strip); this file only decides.
 
 #include <cstddef>
+#include <cstdio>
 #include <cstdint>
 #include <limits>
 #include <set>
@@ -17,6 +18,7 @@
 #include <vector>
 
 #include <boost/filesystem/path.hpp>
+#include <boost/system/error_code.hpp>
 
 namespace Slic3r {
 
@@ -131,19 +133,47 @@ bool has_model_extension(const std::string &file_name);
 // Returns "" when nothing usable is left. Never returns a name with a path separator.
 std::string sanitize_download_filename(const std::string &name);
 
-// Marker a download of this process writes before it is renamed to filename
-// (filename + "." + pid + ".download"). Concurrent downloads treat this as the name in use.
+// Marker this process writes before it is renamed to filename
+// (filename + "." + pid + ".download"). Concurrent downloads of this process treat this as
+// the name in use. Another instance uses a different pid, so its marker is a different path.
 boost::filesystem::path download_marker_path(const boost::filesystem::path &dest_folder, const std::string &filename);
 
+// Highest N tried for "name(N).ext" (the unsuffixed name is try 0).
+constexpr std::size_t FIND_UNUSED_FILENAME_MAX_VERSION = 999;
+
 // Sanitize filename first (via sanitize_download_filename), then pick a name that neither an
-// entry of dest_folder nor another download's marker uses: "name.ext", then "name(1).ext", …
-// up to 999. The marker at ignored_marker does not count (the caller's own in-flight file).
+// entry of dest_folder nor this process's download marker uses: "name.ext", then "name(1).ext", …
+// up to max_version. The marker at ignored_marker does not count (the caller's own in-flight
+// file). Dest and marker probes use symlink_status, so a dangling symlink counts as taken.
 // Returns true and the name in result, or false and the last name tried (empty when nothing
 // usable remains after sanitizing). Never returns a name with a path separator.
 bool find_unused_filename(const boost::filesystem::path &dest_folder,
                           const std::string             &filename,
                           const boost::filesystem::path &ignored_marker,
-                          std::string                   &result);
+                          std::string                   &result,
+                          std::size_t                    max_version = FIND_UNUSED_FILENAME_MAX_VERSION);
+
+// Opens `path` for writing only if it does not already exist (Windows: _wfopen L"wbx";
+// POSIX: O_CREAT|O_EXCL). Returns the FILE* (caller fclose) or nullptr.
+FILE *open_exclusive_write(const boost::filesystem::path &path);
+
+// Rename `from` to `to` without replacing an existing `to`. Linux: renameat2 RENAME_NOREPLACE,
+// then link+unlink. Other POSIX: link+unlink. Windows: MoveFileExW without
+// MOVEFILE_REPLACE_EXISTING. When `to` already exists, returns false and sets
+// ec to errc::file_exists.
+bool rename_no_replace(const boost::filesystem::path &from,
+                       const boost::filesystem::path &to,
+                       boost::system::error_code     &ec);
+
+// Sanitize, then exclusively create this process's download marker for the first unused name.
+// On EEXIST the name is treated as taken and the next is tried. Returns the open marker FILE*
+// (caller fclose) and the claimed name in `result`. Returns nullptr if nothing usable remains.
+// When the first unused name's marker is `ignored_marker` (the caller already holds that file),
+// `result` is that name and the FILE* is nullptr.
+FILE *claim_unused_download_name(const boost::filesystem::path &dest_folder,
+                                 const std::string             &filename,
+                                 const boost::filesystem::path &ignored_marker,
+                                 std::string                   &result);
 
 // Upper bound for a model download (same cap as the MakerWorld import path).
 constexpr std::size_t MODEL_DOWNLOAD_SIZE_LIMIT = std::size_t(500) * 1024 * 1024;

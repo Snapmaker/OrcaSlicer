@@ -18,8 +18,10 @@
 #include <boost/filesystem/fstream.hpp>
 #include <boost/nowide/convert.hpp>
 #include <boost/nowide/fstream.hpp>
+#include <boost/system/error_code.hpp>
 
 #include <array>
+#include <cstdio>
 #include <cstdint>
 #include <iterator>
 #include <limits>
@@ -481,20 +483,67 @@ TEST_CASE("find_unused_filename versions a name with no extension", "[Untrusted]
     CHECK(name == "readme(1)");
 }
 
-TEST_CASE("find_unused_filename gives up after 999 versions", "[Untrusted][Filename]")
+TEST_CASE("find_unused_filename gives up after the version cap", "[Untrusted][Filename]")
 {
+    CHECK(FIND_UNUSED_FILENAME_MAX_VERSION == 999);
     DownloadScratch scratch;
     touch_download_file(scratch.dir / "model.3mf");
-    for (int version = 1; version < 999; ++version)
-        touch_download_file(scratch.dir / ("model(" + std::to_string(version) + ").3mf"));
+    touch_download_file(scratch.dir / "model(1).3mf");
     std::string name;
-    REQUIRE(find_unused_filename(scratch.dir, "model.3mf", {}, name));
-    CHECK(name == "model(999).3mf");
+    REQUIRE(find_unused_filename(scratch.dir, "model.3mf", {}, name, 2));
+    CHECK(name == "model(2).3mf");
 
     touch_download_file(scratch.dir / name);
-    REQUIRE_FALSE(find_unused_filename(scratch.dir, "model.3mf", {}, name));
-    CHECK(name == "model(999).3mf");
+    REQUIRE_FALSE(find_unused_filename(scratch.dir, "model.3mf", {}, name, 2));
+    CHECK(name == "model(2).3mf");
 }
+
+TEST_CASE("open_exclusive_write cannot create the same marker twice", "[Untrusted][Filename]")
+{
+    DownloadScratch scratch;
+    const fs::path  marker = scratch.dir / "model.3mf.1.download";
+    FILE           *first  = open_exclusive_write(marker);
+    REQUIRE(first != nullptr);
+    FILE *second = open_exclusive_write(marker);
+    CHECK(second == nullptr);
+    fclose(first);
+    CHECK(fs::exists(marker));
+    FILE *again = open_exclusive_write(marker);
+    CHECK(again == nullptr);
+}
+
+TEST_CASE("rename_no_replace fails when the destination already exists", "[Untrusted][Filename]")
+{
+    DownloadScratch scratch;
+    const fs::path  src  = scratch.dir / "src.3mf";
+    const fs::path  dest = scratch.dir / "dest.3mf";
+    touch_download_file(src);
+    touch_download_file(dest);
+    boost::system::error_code ec;
+    CHECK_FALSE(rename_no_replace(src, dest, ec));
+    CHECK(ec == boost::system::errc::file_exists);
+    CHECK(read_download_file(dest) == "existing");
+    CHECK(fs::exists(src));
+    CHECK(read_download_file(src) == "existing");
+
+    const fs::path dest2 = scratch.dir / "new.3mf";
+    REQUIRE(rename_no_replace(src, dest2, ec));
+    CHECK_FALSE(fs::exists(src));
+    CHECK(read_download_file(dest2) == "existing");
+}
+
+#ifndef _WIN32
+TEST_CASE("find_unused_filename treats a dangling symlink as taken", "[Untrusted][Filename]")
+{
+    DownloadScratch scratch;
+    const fs::path  dangling = scratch.dir / "model.3mf";
+    fs::create_symlink(scratch.dir / "no_such_target.3mf", dangling);
+    REQUIRE_FALSE(fs::exists(dangling));
+    std::string name;
+    REQUIRE(find_unused_filename(scratch.dir, "model.3mf", {}, name));
+    CHECK(name == "model(1).3mf");
+}
+#endif
 
 TEST_CASE("downloaded bytes must match the file type", "[Untrusted][Download]")
 {

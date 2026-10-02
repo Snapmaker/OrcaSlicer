@@ -6,10 +6,32 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
+#include <cstdio>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1 << 0)
+#endif
+#endif
+#endif
 
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/operations.hpp>
+#include <boost/system/error_code.hpp>
 
 namespace Slic3r {
 namespace untrusted {
@@ -508,10 +530,39 @@ boost::filesystem::path download_marker_path(const boost::filesystem::path &dest
     return dest_folder / (filename + "." + std::to_string(get_current_pid()) + ".download");
 }
 
+namespace {
+
+bool path_taken(const boost::filesystem::path &p)
+{
+    boost::system::error_code ec;
+    const auto                st = boost::filesystem::symlink_status(p, ec);
+    return !ec && boost::filesystem::exists(st);
+}
+
+void set_already_exists(boost::system::error_code &ec)
+{
+    ec = boost::system::errc::make_error_code(boost::system::errc::file_exists);
+}
+
+bool exclusive_open_hit_existing() { return errno == EEXIST; }
+
+#ifndef _WIN32
+void set_posix_rename_error(boost::system::error_code &ec)
+{
+    if (errno == EEXIST)
+        set_already_exists(ec);
+    else
+        ec.assign(errno, boost::system::system_category());
+}
+#endif
+
+} // namespace
+
 bool find_unused_filename(const boost::filesystem::path &dest_folder,
                           const std::string             &filename,
                           const boost::filesystem::path &ignored_marker,
-                          std::string                   &result)
+                          std::string                   &result,
+                          std::size_t                    max_version)
 {
     // Probe the name that will be written, so a name the sanitizing maps onto an existing file is versioned too.
     const std::string sanitized = sanitize_download_filename(filename);
@@ -523,15 +574,94 @@ bool find_unused_filename(const boost::filesystem::path &dest_folder,
     const std::string stem      = sanitized.substr(0, sanitized.size() - extension.size());
     auto              is_used   = [&](const std::string &name) {
         const boost::filesystem::path marker = download_marker_path(dest_folder, name);
-        return boost::filesystem::exists(dest_folder / name) || (marker != ignored_marker && boost::filesystem::exists(marker));
+        return path_taken(dest_folder / name) || (marker != ignored_marker && path_taken(marker));
     };
     result = sanitized;
     for (size_t version = 1; is_used(result); ++version) {
-        if (version > 999)
+        if (version > max_version)
             return false;
         result = stem + "(" + std::to_string(version) + ")" + extension;
     }
     return true;
+}
+
+FILE *open_exclusive_write(const boost::filesystem::path &path)
+{
+#ifdef _WIN32
+    return _wfopen(path.wstring().c_str(), L"wbx");
+#else
+    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+    if (fd < 0)
+        return nullptr;
+    FILE *f = ::fdopen(fd, "wb");
+    if (f == nullptr)
+        ::close(fd);
+    return f;
+#endif
+}
+
+bool rename_no_replace(const boost::filesystem::path &from, const boost::filesystem::path &to, boost::system::error_code &ec)
+{
+    ec.clear();
+#ifdef _WIN32
+    if (MoveFileExW(from.wstring().c_str(), to.wstring().c_str(), 0))
+        return true;
+    const DWORD err = GetLastError();
+    if (err == ERROR_ALREADY_EXISTS || err == ERROR_FILE_EXISTS)
+        set_already_exists(ec);
+    else
+        ec.assign(static_cast<int>(err), boost::system::system_category());
+    return false;
+#else
+#if defined(__linux__) && defined(SYS_renameat2)
+    if (::syscall(SYS_renameat2, AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0)
+        return true;
+    if (errno != ENOSYS && errno != EINVAL) {
+        set_posix_rename_error(ec);
+        return false;
+    }
+#endif
+#if defined(__APPLE__)
+    if (::renameatx_np(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_EXCL) == 0)
+        return true;
+    if (errno != ENOSYS && errno != ENOTSUP) {
+        set_posix_rename_error(ec);
+        return false;
+    }
+#endif
+    if (::link(from.c_str(), to.c_str()) == 0) {
+        ::unlink(from.c_str());
+        return true;
+    }
+    set_posix_rename_error(ec);
+    return false;
+#endif
+}
+
+FILE *claim_unused_download_name(const boost::filesystem::path &dest_folder,
+                                 const std::string             &filename,
+                                 const boost::filesystem::path &ignored_marker,
+                                 std::string                   &result)
+{
+    result.clear();
+    std::string last;
+    for (std::size_t attempt = 0; attempt <= FIND_UNUSED_FILENAME_MAX_VERSION + 1; ++attempt) {
+        if (!find_unused_filename(dest_folder, filename, ignored_marker, result))
+            return nullptr;
+        const boost::filesystem::path marker = download_marker_path(dest_folder, result);
+        if (marker == ignored_marker)
+            return nullptr;
+        FILE *f = open_exclusive_write(marker);
+        if (f != nullptr)
+            return f;
+        if (!exclusive_open_hit_existing() || result == last) {
+            result.clear();
+            return nullptr;
+        }
+        last = result;
+    }
+    result.clear();
+    return nullptr;
 }
 
 bool content_matches_extension(const std::string &file_name, const std::string &head, unsigned long long file_size, std::string *why)

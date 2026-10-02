@@ -78,7 +78,7 @@ enum class SliceBakeFrame {
     // A mesh in this frame replaces a volume whose transform is identity under the object's
     // EXISTING instance transform, which re-applies the rotation and the scale.
     Object,
-    // World millimetres relative to the plate origin, with the vertices carrying the instance's
+    // World millimetres (the model space all plates share, NOT plate-local), with the vertices carrying the instance's
     // rotation and scale, and the mesh translated so its instance offset is subtracted out - i.e.
     // the part sits around the origin, and a new instance whose offset is
     // SliceBakeReport::instance_offset (and whose rotation and scale are IDENTITY, because both
@@ -172,7 +172,7 @@ struct SliceBakeReport
     // Where the baked mesh has to be placed for it to stand where the sliced object stood.
     //
     // For SliceBakeFrame::World this is the instance offset a NEW ModelObject must be given:
-    // world millimetres relative to the plate origin. Its rotation and scale must stay IDENTITY -
+    // world millimetres (plate origin included, so an object on plate 2 stays on plate 2). Its rotation and scale must stay IDENTITY -
     // both are already baked into the vertices, which is the whole point of the World frame.
     //
     // For the other two frames it is zero: an Object-frame mesh is placed by the object's existing

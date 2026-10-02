@@ -101,10 +101,14 @@ void CopyrightsDialog::fill_entries()
         // as subprocesses: go2rtc (MIT) relays the printer camera, and an LGPL-3.0 FFmpeg build
         // re-encodes it for the phone's Quality steps. Their licence texts ship beside them.
         { "FFmpeg (LGPL build)",                            "",      "https://ffmpeg.org" },
+        // Apache-2.0 stream players used by the FlashForge Device tab camera page
+        // (resources/web/orca/ff_camera) for FlashForge cloud streams; flv.js below, hls.js after go2rtc.
+        { "flv.js",                                         "",      "https://github.com/bilibili/flv.js" },
         { "glad (Multi-Language GL Loader-Generator)",      "",      "https://github.com/Dav1dde/glad" },
         { "GLFW",                                           "",      "https://www.glfw.org" },
         { "GNU gettext",                                    "",      "https://www.gnu.org/software/gettext" },
         { "go2rtc",                                         "",      "https://github.com/AlexxIT/go2rtc" },
+        { "hls.js",                                         "",      "https://github.com/video-dev/hls.js" },
         { "ImGUI",                                          "",      "https://github.com/ocornut/imgui" },
         { "ImGuizmo",                                       "",      "https://github.com/CedricGuillemet/ImGuizmo" },
         { "Libigl",                                         "",      "https://libigl.github.io" },

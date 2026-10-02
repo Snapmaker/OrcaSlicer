@@ -111,7 +111,11 @@ public:
         // because active_step_add_warning de-duplicates by id. Raised during export_gcode, after
         // the CLI's pre-export g_slicing_warnings sweep, so Snapmaker_Orca.cpp records it in the
         // post-export loop (same place as SlicingInvalidPrintSpeed) via cli_record_warning.
-        SlicingPreciseSeamWarning
+        SlicingPreciseSeamWarning,
+        // FDM hollowing (FDMHollowing.hpp): a part asked to be hollowed and its shell left no room for
+        // a cavity, or only some of its bodies were hollowed. Appended, so no existing value moves;
+        // own id because active_step_add_warning de-duplicates by id.
+        SlicingHollowingSkipped
     };
 
     typedef size_t TimeStamp;

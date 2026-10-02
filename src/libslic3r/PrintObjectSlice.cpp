@@ -15,6 +15,7 @@
 #include "format.hpp"
 #include "I18N.hpp"
 #include "Layer.hpp"
+#include "FDMHollowing.hpp"
 #include "MixedFilament.hpp"
 #include "MultiMaterialSegmentation.hpp"
 #include "Print.hpp"
@@ -5314,6 +5315,19 @@ void PrintObject::slice_volumes()
     //firstLayerObjSliceByVolume = findPartVolumes(objSliceByVolume, this->model_object()->volumes);
     //groupingVolumes(objSliceByVolumeParts, firstLayerObjSliceByGroups, scaled_resolution);
     //applyNegtiveVolumes(this->model_object()->volumes, objSliceByVolume, firstLayerObjSliceByGroups, scaled_resolution);
+    // Hollowing: each hollowed part's cavity is cut out of that part's own slices, like a negative
+    // volume of its own, before the slices are split into regions.
+    if (! objSliceByVolume.empty()) {
+        std::vector<std::string> hollowing_warnings = hollow_volume_slices(*this, slice_zs, objSliceByVolume, throw_on_cancel_callback);
+        // One notice for all parts: warnings de-duplicate by id, so separate ones would overwrite each other.
+        if (! hollowing_warnings.empty()) {
+            std::string message;
+            for (const std::string &w : hollowing_warnings)
+                message += (message.empty() ? "" : "\n") + w;
+            this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, message, PrintStateBase::SlicingHollowingSkipped);
+        }
+    }
+
     firstLayerObjSliceByVolume = objSliceByVolume;
 
     std::vector<std::vector<ExPolygons>> region_slices =

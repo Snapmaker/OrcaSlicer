@@ -1944,7 +1944,13 @@ WipeTower::ToolChangeResult WipeTower::finish_layer(bool extrude_perimeter, bool
             // limit max chamfer width to 3 mm
             int chamfer_loops_num = (int)(max_chamfer_width / spacing);
             int dist_to_1st = m_layer_info - m_plan.begin() - m_first_layer_idx;
-            loops_num = std::min(loops_num, chamfer_loops_num) - dist_to_1st;
+            // A layer below the tower's first real layer gets no chamfer. With "no sparse layers"
+            // the first real layer is the first tool change, which can sit far up the print; the
+            // layers below it are sparse and never printed, but their walls still go into
+            // m_outer_wall for the conflict checker. Counting a negative distance there added a
+            // brim loop per layer down - hundreds of loops reaching across the bed, which the
+            // checker then reported as the tower hitting the objects.
+            loops_num = dist_to_1st < 0 ? 0 : std::min(loops_num, chamfer_loops_num) - dist_to_1st;
         }
     }
 

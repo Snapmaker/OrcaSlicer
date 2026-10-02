@@ -620,6 +620,50 @@ TEST_CASE("archive entry names refuse look-alikes of dot, slash, backslash and c
     CHECK(is_safe_archive_relative_path("a\xE2\x80\xA6" "b"));                  // U+2026 ellipsis is an ordinary character
 }
 
+TEST_CASE("archive entry names are normalised before they are judged", "[Untrusted][ZipSlip]")
+{
+    auto normalized = [](const std::string &raw) {
+        std::string out;
+        return normalize_archive_entry_path(raw, out) == ArchiveEntryName::Ok ? out : std::string("<not ok>");
+    };
+    // Harmless spellings from PowerShell 5.1 Compress-Archive / .NET zippers (backslashes) and bsdtar ("./").
+    CHECK(normalized("a\\b.json") == "a/b.json");
+    CHECK(normalized("a\\b\\c.json") == "a/b/c.json");
+    CHECK(normalized("./a/b.json") == "a/b.json");
+    CHECK(normalized(".\\a\\b.json") == "a/b.json");
+    CHECK(normalized("a//b.json") == "a/b.json");
+    CHECK(normalized("a/./b.json") == "a/b.json");
+    CHECK(normalized("a\\\\b.json") == "a/b.json");
+    CHECK(normalized("dir/") == "dir");
+    CHECK(normalized("dir\\") == "dir");
+    CHECK(normalized(".//a/") == "a");
+    CHECK(normalized("..a/b..") == "..a/b..");
+    CHECK(normalized("caf\xC3\xA9\\\xE6\xB5\x8B.json") == "caf\xC3\xA9/\xE6\xB5\x8B.json");
+
+    // Nothing to extract.
+    std::string out;
+    for (const char *p : {"./", ".", ".\\", "./.", ".//"})
+        CHECK(normalize_archive_entry_path(p, out) == ArchiveEntryName::Skip);
+
+    // Everything the strict check refused is still refused, in every spelling.
+    for (const char *p : {"", "..", "../x", "a/../x", "a/..", ".\\..\\x", "a\\..\\..\\x", "./../x", "a//../../x",
+                          "/x", "//x", "\\x", "\\\\x", "\\\\server\\share\\x", "//server/share/x", "\\\\?\\C:\\x", "/C:/x",
+                          "C:", "C:x", "C:/x", "C:\\x", ".\\C:\\x", "a/b:stream", "a\\b:stream",
+                          "a/.../b", "a/.. /b", "a/. /b", "x\x01y", "x\ty",
+                          "\xEF\xBC\x8E\xEF\xBC\x8E\xEF\xBC\x8F" "x", "a\\\xEF\xBC\x8E\xEF\xBC\x8E\xEF\xBC\xBC" "x"}) {
+        INFO(p);
+        CHECK(normalize_archive_entry_path(p, out) == ArchiveEntryName::Reject);
+    }
+    // Over-long names, before and after normalisation.
+    CHECK(normalize_archive_entry_path(std::string(1025, 'a'), out) == ArchiveEntryName::Reject);
+    CHECK(normalize_archive_entry_path("./" + std::string(1025, 'a'), out) == ArchiveEntryName::Reject);
+    CHECK(normalize_archive_entry_path(std::string(5000, 'a'), out) == ArchiveEntryName::Reject);
+    CHECK(normalize_archive_entry_path(std::string(1024, 'a'), out) == ArchiveEntryName::Ok);
+
+    CHECK(archive_entry_leaf("a/b/c.json") == "c.json");
+    CHECK(archive_entry_leaf("c.json") == "c.json");
+}
+
 // ---- settings in project / preset files ---------------------------------------------------------------
 
 static DynamicPrintConfig config_with_post_process(const std::vector<std::string> &values)
@@ -1542,6 +1586,9 @@ TEST_CASE("extract_archive_confined rejects a hostile archive and writes nothing
     const char *hostile[] = {"../evil.txt", "..\\evil.txt", "sub/../../evil.txt", "C:/evil.txt", "C:evil.txt", "\\evil.txt",
                              // drive letter with a backslash, UNC, a bare "..", a "..\\.." pair
                              "C:\\evil.txt", "\\\\server\\share\\evil.txt", "..", "sub/..", "..\\..\\evil.txt",
+                             // spellings that are normalised (".\", "./", "a//b") must not hide a ".." segment
+                             ".\\..\\evil.txt", "a\\..\\..\\evil.txt", "./../evil.txt", "a/./../../evil.txt", "a//../../evil.txt",
+                             "\\\\?\\C:\\evil.txt", ".\\C:\\evil.txt", ".\\a\\b:stream",
                              // fullwidth ".." + "/" (U+FF0E U+FF0E U+FF0F): the ANSI best-fit mapping makes this "../"
                              "\xEF\xBC\x8E\xEF\xBC\x8E\xEF\xBC\x8F" "evil.txt",
                              "sub/\xEF\xBC\x8E\xEF\xBC\x8E\xEF\xBC\x8F\xEF\xBC\x8E\xEF\xBC\x8E\xEF\xBC\x8F" "evil.txt",
@@ -1645,6 +1692,93 @@ TEST_CASE("extract_archive_confined writes non-ASCII entry names and binary cont
     CHECK(got == content);
 
     boost::system::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+// Archives from PowerShell 5.1 Compress-Archive (backslashes), bsdtar ("./" prefixes and a "./" entry)
+// and tools that write "a//b" are extracted, not refused.
+TEST_CASE("extract_archive_confined normalises backslash, ./ and // spellings", "[Untrusted][ZipSlip]")
+{
+    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_confined_norm_%%%%%%%%");
+    fs::create_directories(dir);
+    const fs::path zip_file = dir / "bundle.zip";
+    boost::system::error_code ec;
+
+    SECTION("backslash-separated archive")
+    {
+        const fs::path target = dir / "cache";
+        fs::create_directories(target);
+        write_zip_entries(zip_file, {{"vendor\\", ""},
+                                     {"vendor\\machine\\", ""},
+                                     {"vendor.json", "{\"a\":1}"},
+                                     {"vendor\\machine\\printer.json", "{\"b\":2}"}});
+        std::string err;
+        REQUIRE(extract_archive_confined(zip_file, target, err));
+        CHECK(fs::is_directory(target / "vendor" / "machine"));
+        CHECK(read_text_file(target / "vendor.json") == "{\"a\":1}");
+        CHECK(read_text_file(target / "vendor" / "machine" / "printer.json") == "{\"b\":2}");
+        // No file with a backslash in its name was created.
+        for (fs::directory_iterator it(target), end; it != end; ++it)
+            CHECK(it->path().filename().string().find('\\') == std::string::npos);
+    }
+
+    SECTION("./ prefixes and a bare ./ entry")
+    {
+        const fs::path target = dir / "cache";
+        fs::create_directories(target);
+        write_zip_entries(zip_file, {{"./", ""}, {"./a/", ""}, {"./a/b.json", "{\"b\":1}"}, {"./c.json", "{\"c\":2}"}});
+        std::string err;
+        REQUIRE(extract_archive_confined(zip_file, target, err));
+        CHECK(read_text_file(target / "a" / "b.json") == "{\"b\":1}");
+        CHECK(read_text_file(target / "c.json") == "{\"c\":2}");
+    }
+
+    SECTION("a//b and interior ./ segments")
+    {
+        const fs::path target = dir / "cache";
+        fs::create_directories(target);
+        write_zip_entries(zip_file, {{"a//b.json", "{\"b\":1}"}, {"x/./y//z.json", "{\"z\":3}"}});
+        std::string err;
+        REQUIRE(extract_archive_confined(zip_file, target, err));
+        CHECK(read_text_file(target / "a" / "b.json") == "{\"b\":1}");
+        CHECK(read_text_file(target / "x" / "y" / "z.json") == "{\"z\":3}");
+    }
+
+    SECTION("a bad entry among normalised ones still refuses the whole archive")
+    {
+        const fs::path target = dir / "cache";
+        fs::create_directories(target);
+        for (const char *bad : {".\\..\\x", "a\\..\\..\\x"}) {
+            INFO(bad);
+            write_zip_entries(zip_file, {{"./ok.json", "{}"}, {"sub\\fine.json", "{}"}, {bad, "escaped"}});
+            std::string err;
+            CHECK_FALSE(extract_archive_confined(zip_file, target, err));
+            CHECK_FALSE(err.empty());
+            CHECK(fs::is_empty(target));
+            CHECK_FALSE(fs::exists(dir / "x"));
+        }
+    }
+
+    SECTION("two entries that normalise to the same path: the last one in the archive wins")
+    {
+        const fs::path target = dir / "cache";
+        fs::create_directories(target);
+        write_zip_entries(zip_file, {{"a\\b.json", "first"}, {"a/b.json", "second"}, {"./a//b.json", "third"}});
+        std::string err;
+        REQUIRE(extract_archive_confined(zip_file, target, err));
+        CHECK(read_text_file(target / "a" / "b.json") == "third");
+        // Same names, other order: still the last one.
+        write_zip_entries(zip_file, {{"./a//b.json", "third"}, {"a/b.json", "second"}, {"a\\b.json", "first"}});
+        const fs::path target2 = dir / "cache2";
+        fs::create_directories(target2);
+        REQUIRE(extract_archive_confined(zip_file, target2, err));
+        CHECK(read_text_file(target2 / "a" / "b.json") == "first");
+        // No staging leftovers.
+        for (const fs::path &t : {target, target2})
+            for (fs::recursive_directory_iterator it(t), end; it != end; ++it)
+                CHECK(it->path().filename().string().find(".part") == std::string::npos);
+    }
+
     fs::remove_all(dir, ec);
 }
 

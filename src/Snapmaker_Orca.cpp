@@ -86,6 +86,7 @@ using namespace nlohmann;
 #endif
 #include "slic3r/Utils/MeshInspect.hpp"
 #include "slic3r/Utils/PaintCLI.hpp"
+#include "slic3r/Utils/WinFirewall.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/BitmapCache.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
@@ -1397,6 +1398,14 @@ int CLI::run(int argc, char **argv)
         boost::nowide::cerr << text.c_str() << std::endl;
         return CLI_ENVIRONMENT_ERROR;
     }
+
+#ifdef _WIN32
+    // `EdgeSlicer.exe --fix-firewall`: the elevated helper Help > Check Windows Firewall starts
+    // (one UAC prompt). Headless and ahead of setup(): it reads no config and opens no window;
+    // it only rewrites the Windows Firewall rules of this exe and its go2rtc.exe.
+    if (Slic3r::WinFirewall::is_fix_cli(argc, argv))
+        return Slic3r::WinFirewall::run_fix_cli(argc, argv);
+#endif
 
     if (!this->setup(argc, argv))
     {

@@ -67,20 +67,11 @@ namespace instance_check_internal
 	static CommandLineAnalysis process_command_line(int argc, char** argv)
 	{
 		CommandLineAnalysis ret;
-		//if (argc < 2)
-		//	return ret;
-		std::vector<std::string> arguments { argv[0] };
-        for (int i = 1; i < argc; ++i) {
-			const std::string token = argv[i];
-			// Processing of boolean command line arguments shall match DynamicConfig::read_cli().
-			if (token == "--single-instance")
-				ret.should_send = true;
-			else if (token == "--no-single-instance")
-				ret.should_send = false;
-			else
-				arguments.emplace_back(token);
-		} 
-		ret.cl_string = escape_strings_cstyle(arguments);
+		// Processing of boolean command line arguments shall match DynamicConfig::read_cli()
+		// (InstanceRouting::split_command_line).
+		const InstanceRouting::CommandLine command_line = InstanceRouting::split_command_line(std::vector<std::string>(argv, argv + argc));
+		ret.should_send = command_line.single_instance;
+		ret.cl_string = escape_strings_cstyle(command_line.forwarded);
 		BOOST_LOG_TRIVIAL(debug) << "single instance: " << 
             (ret.should_send.has_value() ? (*ret.should_send ? "true" : "false") : "undefined") <<
 			". other params: " << ret.cl_string;
@@ -557,22 +548,12 @@ namespace MessageHandlerInternal
 	static boost::filesystem::path get_path(const std::string& possible_path)
 	{
 		BOOST_LOG_TRIVIAL(debug) << "message part:" << possible_path;
-
-		if (possible_path.empty() || possible_path.size() < 3) {
-			BOOST_LOG_TRIVIAL(debug) << "empty";
-			return boost::filesystem::path();
-		}
-		if (boost::filesystem::exists(possible_path)) {
-			BOOST_LOG_TRIVIAL(debug) << "is path";
-			return boost::filesystem::path(possible_path);
-		} else if (possible_path[0] == '\"') {
-			if(boost::filesystem::exists(possible_path.substr(1, possible_path.size() - 2))) {
-				BOOST_LOG_TRIVIAL(debug) << "is path in quotes";
-				return boost::filesystem::path(possible_path.substr(1, possible_path.size() - 2));
-			}
-		}
-		BOOST_LOG_TRIVIAL(debug) << "is NOT path";
-		return boost::filesystem::path();
+		const std::string file = InstanceRouting::handed_off_file(possible_path, [](const std::string &p) {
+			boost::system::error_code ec;
+			return boost::filesystem::exists(p, ec);
+		});
+		BOOST_LOG_TRIVIAL(debug) << (file.empty() ? "is NOT path" : "is path");
+		return file.empty() ? boost::filesystem::path() : boost::filesystem::path(file);
 	}
 } //namespace MessageHandlerInternal
 

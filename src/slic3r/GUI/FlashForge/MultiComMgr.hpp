@@ -50,6 +50,10 @@ public:
     // The library version string (fnet_getVersion), or empty when nothing is loaded.
     std::string libraryVersion();
 
+    // Why the last initalize() failed, naming the step (load, missing export, version, or
+    // fnet_initlize with its return code and settings path). Empty after a success.
+    const std::string &lastInitError() const { return m_lastInitError; }
+
     void uninitalize();
 
     fnet::FlashNetworkIntfc *networkIntfc();
@@ -171,6 +175,7 @@ private:
     std::string m_dllPath;
     std::string m_dataDir;
     std::string m_logFileDir;
+    std::string m_lastInitError;
     bool        m_debugLogging { false };
     std::unique_ptr<ComThreadPool>           m_threadPool;
     WaitEvent                                m_threadExitEvent;

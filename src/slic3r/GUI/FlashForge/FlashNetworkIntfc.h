@@ -1,6 +1,7 @@
 #ifndef _FNET_FLASHNETWORKINTFC_H_
 #define _FNET_FLASHNETWORKINTFC_H_
 
+#include <string>
 #include "FlashNetwork.h"
 
 #ifdef _WIN32
@@ -138,20 +139,30 @@ public:
     decltype(&fnet_freeString) freeString;
 
 public:
+    // serverSettingsFound only colours the failure text: the caller has already looked for the
+    // settings file and knows whether the path it passes exists.
     FlashNetworkIntfc(const char *libraryPath, const char *serverSettingsPath,
-        const fnet_log_settings_t &logSettings);
+        const fnet_log_settings_t &logSettings, bool serverSettingsFound = true);
 
     ~FlashNetworkIntfc();
 
     bool isOk() const { return m_isOk; }
+
+    // Why isOk() is false, as one log-ready line (see ff_flashnetwork_init_error); empty when ok.
+    // Every failure step is also logged at error level as it happens.
+    const std::string &error() const { return m_error; }
 
 private:
     library_handle_t loadLibrary(const char *libraryPath);
 
     void *getFuncPtr(library_handle_t libraryHandle, const char *funcName);
 
+    void fail(const std::string &reason);
+
 private:
     bool m_isOk;
+    std::string m_libraryPath;
+    std::string m_error;
 };
 
 } // namespace fnet

@@ -691,6 +691,48 @@ bool is_safe_archive_relative_path(const std::string &path)
     return true;
 }
 
+ArchiveEntryName normalize_archive_entry_path(const std::string &raw, std::string &out)
+{
+    // Far longer than any real name; also bounds the work below.
+    if (raw.empty() || raw.size() > 4096)
+        return ArchiveEntryName::Reject;
+    std::string s = raw;
+    for (char &c : s)
+        if (c == '\\')
+            c = '/';
+    // After the conversion an absolute path, a UNC share and "\\?\" all start with '/'.
+    if (s.front() == '/')
+        return ArchiveEntryName::Reject;
+    std::string result;
+    size_t      start = 0;
+    while (start <= s.size()) {
+        const size_t      slash = s.find('/', start);
+        const std::string seg   = s.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
+        if (seg == "..")
+            return ArchiveEntryName::Reject;
+        if (!seg.empty() && seg != ".") {
+            if (!result.empty())
+                result += '/';
+            result += seg;
+        }
+        if (slash == std::string::npos)
+            break;
+        start = slash + 1;
+    }
+    if (result.empty())
+        return ArchiveEntryName::Skip; // only "." segments and separators
+    if (!is_safe_archive_relative_path(result))
+        return ArchiveEntryName::Reject;
+    out = std::move(result);
+    return ArchiveEntryName::Ok;
+}
+
+std::string archive_entry_leaf(const std::string &normalized)
+{
+    const size_t slash = normalized.rfind('/');
+    return slash == std::string::npos ? normalized : normalized.substr(slash + 1);
+}
+
 namespace {
 
 bool has_embedded_nul(const std::string &s) { return s.find('\0') != std::string::npos; }

@@ -15,6 +15,7 @@
 #include "libslic3r/Utils.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/ServerLifetime.hpp"
+#include "slic3r/Utils/WinFirewall.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/beast/core/detail/base64.hpp>
@@ -1568,47 +1569,36 @@ static std::string join_words(const std::vector<std::string>& v, const char* sep
     return out;
 }
 
-// Windows Firewall through PowerShell rather than netsh: Get-NetFirewallRule answers with
-// property values (Allow/Inbound/Private) that are the same in every Windows display language,
-// while netsh's verbose output is localised and would have to be parsed by label.
+// Windows Firewall through its COM API (slic3r/Utils/WinFirewall, shared with Help > Check
+// Windows Firewall) rather than netsh: property values are the same in every Windows display
+// language, while netsh's verbose output is localised and would have to be parsed by label. It
+// used to be a PowerShell Get-NetFirewallRule run; same answers, without a 30 s process launch.
 //
 // `label` is the program name used in the sentences shown to the user ("go2rtc.exe", "EdgeSlicer.exe");
 // `netsh_hint` is the exact command they can paste into an elevated prompt to fix a "missing" or
-// "partial" state themselves - we only ever *look*, never run netsh add ourselves.
+// "partial" state themselves - the hub only ever *looks* (the elevated fix is the dialog's job).
 static FirewallState firewall_query(const std::string& exe, int port, const std::string& label, const std::string& netsh_hint)
 {
     FirewallState fw;
     fw.checked_at = (long long) std::time(nullptr);
 #ifdef _WIN32
-    std::string quoted = exe; // '' escapes a quote inside a PowerShell single-quoted string
-    for (size_t i = 0; i < quoted.size(); ++i)
-        if (quoted[i] == '\'') quoted.insert(i++, 1, '\'');
-    const std::string script =
-        "$p='" + quoted + "';$f=[IO.Path]::GetFullPath($p);"
-        "$r=@(Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue |"
-        " Where-Object { try { [IO.Path]::GetFullPath($_.Program) -ieq $f } catch { $false } } |"
-        " Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq 'True' -and"
-        " $_.Direction -eq 'Inbound' });"
-        "foreach ($x in $r) { $(if ($x.Action -eq 'Block') { 'BLOCK=' } else { 'RULE=' }) + $x.Profile };"
-        "foreach ($n in @(Get-NetConnectionProfile -ErrorAction SilentlyContinue)) { 'NET=' + $n.NetworkCategory };"
-        "'DONE'";
-    std::string out;
-    int         code = 0;
-    if (!run_capture({ "powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script }, out, code, 30000) ||
-        out.find("DONE") == std::string::npos) {
+    (void) port;
+    const WinFirewall::Snapshot snap = WinFirewall::read_system_snapshot();
+    if (!snap.ok) {
+        BOOST_LOG_TRIVIAL(warning) << "RemoteHub: Windows Firewall could not be read: " << snap.error;
         fw.note    = "Windows Firewall could not be checked for " + label + ".";
         fw.command = netsh_hint;
         return fw;
     }
     std::vector<std::string> rules, blocks, nets;
-    std::istringstream       is(out);
-    std::string              line;
-    while (std::getline(is, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-        if (line.compare(0, 5, "RULE=") == 0) rules.push_back(line.substr(5));
-        else if (line.compare(0, 6, "BLOCK=") == 0) blocks.push_back(line.substr(6));
-        else if (line.compare(0, 4, "NET=") == 0) nets.push_back(line.substr(4) == "DomainAuthenticated" ? "Domain" : line.substr(4));
+    for (const WinFirewall::Rule& r : snap.rules) {
+        if (!r.inbound || !r.enabled || !WinFirewall::same_program(r.program, exe)) continue;
+        const std::string profiles = (r.profiles & WinFirewall::ProfileAll) == WinFirewall::ProfileAll ? std::string("Any") :
+                                                                                                       WinFirewall::profiles_text(r.profiles);
+        (r.allow ? rules : blocks).push_back(profiles);
     }
+    for (int bit : { WinFirewall::ProfileDomain, WinFirewall::ProfilePrivate, WinFirewall::ProfilePublic })
+        if (snap.current_profiles & bit) nets.push_back(WinFirewall::profiles_text(bit));
     // Only the profiles the PC's live networks are in matter: a rule that covers Public does
     // nothing for a phone on a network Windows filed as Private.
     auto covers = [](const std::vector<std::string>& rs, const std::string& n) {
@@ -3474,11 +3464,11 @@ void HubServer::start_go2rtc()
                                 << (ff.empty() ? "off (no ffmpeg found; MJPEG fps knob only)"
                                                : "on via " + ff);
     }
-    if (webrtc_port > 0) firewall_state(true); // one PowerShell run on a detached thread; result cached
+    if (webrtc_port > 0) firewall_state(true); // one firewall read on a detached thread; result cached
 #endif
 }
 
-// Cached; a refresh runs the (slow) PowerShell query on a detached thread and never blocks a
+// Cached; a refresh runs the firewall query on a detached thread and never blocks a
 // request, so the hub page's 3 s poll always gets the last answer straight away.
 FirewallState HubServer::firewall_state(bool refresh)
 {

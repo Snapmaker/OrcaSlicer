@@ -1,7 +1,9 @@
 #include "FlashNetworkIntfc.h"
 #include <vector>
 #include <cstdio>
+#include <cstring>
 #include <boost/log/trivial.hpp>
+#include "FFDiagnostics.hpp"
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -11,11 +13,13 @@
 
 namespace fnet {
 
-// EdgeSlicer: FlashForge's Flash Studio / Orca-Flashforge installers currently ship
-// FlashNetwork 3.0.0, which exports the full fnet_* surface this wrapper binds (verified by
-// scanning the shipped DLL). The original port pinned an exact "3.4.1" string, but that
-// references a stale FlashPrint-era build and should not gate loading. Accept any 3.x.y and
-// record the loaded version in the log so a future ABI break is at least visible there.
+using Slic3r::GUI::FFNetInitStage;
+using Slic3r::GUI::ff_flashnetwork_init_error;
+
+// EdgeSlicer: the DLL shipped since 2.4.0 (Flash Studio Desktop 1.7.13) reports 3.4.2 and exports
+// the full fnet_* surface this wrapper binds. The original port pinned an exact "3.4.1" string,
+// which should not gate loading. Accept any 3.x.y and record the loaded version in the log so a
+// future ABI break is at least visible there.
 static bool fnet_version_usable(const char *version)
 {
     if (version == nullptr)
@@ -26,9 +30,16 @@ static bool fnet_version_usable(const char *version)
     return major == 3;
 }
 
+void FlashNetworkIntfc::fail(const std::string &reason)
+{
+    m_error = reason;
+    BOOST_LOG_TRIVIAL(error) << "FlashNetwork: " << reason;
+}
+
 FlashNetworkIntfc::FlashNetworkIntfc(const char *libraryPath, const char *serverSettingsPath,
-    const fnet_log_settings_t &logSettings)
+    const fnet_log_settings_t &logSettings, bool serverSettingsFound)
     : m_isOk(false)
+    , m_libraryPath(libraryPath == nullptr ? "" : libraryPath)
 {
     library_handle_t libraryHandle = loadLibrary(libraryPath);
     if (libraryHandle == INVALID_LIBRARY_HANDLE) {
@@ -37,7 +48,7 @@ FlashNetworkIntfc::FlashNetworkIntfc(const char *libraryPath, const char *server
 #define INIT_FUNC_PTR(ptr, func) \
     ptr = (decltype(&func)) getFuncPtr(libraryHandle, #func); \
     if (ptr == nullptr) { \
-        printf("INIT_FUNC_PTR %s failed\n", #func); \
+        fail(ff_flashnetwork_init_error(FFNetInitStage::MissingSymbol, m_libraryPath, #func, 0)); \
         return; \
     }
     INIT_FUNC_PTR(initlize, fnet_initlize);
@@ -159,14 +170,26 @@ FlashNetworkIntfc::FlashNetworkIntfc(const char *libraryPath, const char *server
     INIT_FUNC_PTR(freeSyncOnlineInfo, fnet_freeSyncOnlineInfo);
     INIT_FUNC_PTR(allocString, fnet_allocString);
     INIT_FUNC_PTR(freeString, fnet_freeString);
-    const char *version = getVersion();
-    if (initlize(serverSettingsPath, &logSettings) == FNET_OK && fnet_version_usable(version)) {
-        BOOST_LOG_TRIVIAL(info) << "FlashNetwork initialized, library version " << version;
-        m_isOk = true;
+#undef INIT_FUNC_PTR
+    const char *versionPtr = getVersion();
+    const std::string version = versionPtr == nullptr ? std::string() : std::string(versionPtr);
+    BOOST_LOG_TRIVIAL(info) << "FlashNetwork: loaded " << m_libraryPath << ", library version "
+                            << (version.empty() ? "(none)" : version);
+    // Checked before fnet_initlize so a library with an ABI we do not speak is never driven.
+    if (!fnet_version_usable(versionPtr)) {
+        fail(ff_flashnetwork_init_error(FFNetInitStage::BadVersion, m_libraryPath, version, 0));
+        return;
     }
-    else {
-        printf("initlize flashnetwork failed, version = %s", version);
+    const std::string settings = serverSettingsPath == nullptr ? std::string() : std::string(serverSettingsPath);
+    const int ret = initlize(serverSettingsPath, &logSettings);
+    if (ret != FNET_OK) {
+        fail(ff_flashnetwork_init_error(FFNetInitStage::InitFailed, m_libraryPath, settings, ret,
+                                        serverSettingsFound));
+        return;
     }
+    BOOST_LOG_TRIVIAL(info) << "FlashNetwork initialized, library version " << version
+                            << ", server settings " << settings;
+    m_isOk = true;
 }
 
 FlashNetworkIntfc::~FlashNetworkIntfc()
@@ -178,19 +201,40 @@ FlashNetworkIntfc::~FlashNetworkIntfc()
 
 library_handle_t FlashNetworkIntfc::loadLibrary(const char *libraryPath)
 {
+    if (libraryPath == nullptr || *libraryPath == '\0') {
+        fail(ff_flashnetwork_init_error(FFNetInitStage::LoadFailed, m_libraryPath, "no path given", 0));
+        return INVALID_LIBRARY_HANDLE;
+    }
 #ifdef _WIN32
-    std::vector<wchar_t> wpath(256, 0);
-    ::MultiByteToWideChar(CP_UTF8, NULL, libraryPath, (int)strlen(libraryPath), wpath.data(), (int)wpath.size());
+    // Sized from the input rather than a fixed buffer: a long install path used to be cut off.
+    const int len = (int)strlen(libraryPath);
+    const int wlen = ::MultiByteToWideChar(CP_UTF8, 0, libraryPath, len, nullptr, 0);
+    std::vector<wchar_t> wpath((size_t)wlen + 1, 0);
+    ::MultiByteToWideChar(CP_UTF8, 0, libraryPath, len, wpath.data(), wlen);
     library_handle_t handle = LoadLibraryW(wpath.data());
     if (handle == INVALID_LIBRARY_HANDLE) {
-        printf("load network module error: %x\n", GetLastError());
+        const DWORD code = GetLastError();
+        std::string sysText;
+        LPSTR buf = nullptr;
+        const DWORD n = ::FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                                             FORMAT_MESSAGE_IGNORE_INSERTS,
+                                         nullptr, code, 0, (LPSTR)&buf, 0, nullptr);
+        if (n != 0 && buf != nullptr) {
+            sysText.assign(buf, n);
+            while (!sysText.empty() && (sysText.back() == '\r' || sysText.back() == '\n' || sysText.back() == ' ' || sysText.back() == '.'))
+                sysText.pop_back();
+        }
+        if (buf != nullptr)
+            ::LocalFree(buf);
+        fail(ff_flashnetwork_init_error(FFNetInitStage::LoadFailed, m_libraryPath, sysText, (long)code));
     }
     return handle;
 #else
     library_handle_t handle = dlopen(libraryPath, RTLD_LAZY);
     if (handle == nullptr) {
         const char *dllError = dlerror();
-        printf("load network module error: %s\n", dllError);
+        fail(ff_flashnetwork_init_error(FFNetInitStage::LoadFailed, m_libraryPath,
+                                        dllError == nullptr ? "" : dllError, 0));
     }
     return handle;
 #endif
@@ -198,18 +242,11 @@ library_handle_t FlashNetworkIntfc::loadLibrary(const char *libraryPath)
 
 void *FlashNetworkIntfc::getFuncPtr(library_handle_t libraryHandle, const char *funcName)
 {
+    // A missing export is reported (once, with its name) by the INIT_FUNC_PTR caller.
 #ifdef _WIN32
-    void *funcPtr = GetProcAddress(libraryHandle, funcName);
-    if (funcPtr == nullptr) {
-        printf("can't find function %s\n", funcName);
-    }
-    return funcPtr;
+    return (void *)GetProcAddress(libraryHandle, funcName);
 #else
-    void *funcPtr = dlsym(libraryHandle, funcName);
-    if (funcPtr == nullptr) {
-        printf("can't find function %s\n", funcName);
-    }
-    return funcPtr;
+    return dlsym(libraryHandle, funcName);
 #endif
 }
 

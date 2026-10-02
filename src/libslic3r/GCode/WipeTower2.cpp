@@ -2475,7 +2475,9 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
             int    dist_to_1st = (int) current_idx - (int) m_first_layer_idx;
 
             // Validate m_first_layer_idx to prevent invalid index access
-            if (m_first_layer_idx == size_t(-1) || m_first_layer_idx >= m_plan.size()) {
+            // A layer below the first one with tool changes has no chamfer either: a negative
+            // distance would add a brim loop per layer down (see WipeTower::finish_layer).
+            if (m_first_layer_idx == size_t(-1) || m_first_layer_idx >= m_plan.size() || dist_to_1st < 0) {
                 // Invalid first layer index, don't print brim
                 loops_num = 0;
             } else {

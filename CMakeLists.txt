@@ -671,7 +671,12 @@ if(SLIC3R_STATIC)
     set(TBB_STATIC 1)
 endif()
 set(TBB_DEBUG 1)
-if ("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo" OR MSVC)
+# Upstream Orca #14593: only map RelWithDebInfo imported configs to Release when
+# that config is in use, or on MSVC. Non-MSVC multi-config generators with
+# CMAKE_BUILD_TYPE unset now fall back to the deps' first available config,
+# which is harmless with Edge's single-config deps.
+string(TOUPPER "${CMAKE_BUILD_TYPE}" _bt)
+if (_bt STREQUAL "RELWITHDEBINFO" OR MSVC)
     set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO RelWithDebInfo Release "")
 endif()
 find_package(TBB REQUIRED)

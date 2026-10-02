@@ -10,6 +10,7 @@
 
 #include <boost/filesystem.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <memory>
@@ -67,6 +68,10 @@ DynamicPrintConfig h2d_config(const std::string &timelapse_type, bool tower, boo
     DynamicPrintConfig cfg = b.full_config_secure();
     // The machine profile turns farthest-point timelapse on, as Bambu Studio 2.8's does.
     REQUIRE(cfg.opt_bool("farthest_point_timelapse"));
+    // Bambu Studio's clearance (its picker's) is loaded as its own key; by-object collision keeps
+    // the profile's extruder_clearance_radius as before.
+    REQUIRE(cfg.opt_float("extruder_clearance_max_radius") == Approx(96.));
+    REQUIRE(cfg.opt_float("extruder_clearance_radius") == Approx(49.));
     cfg.set_deserialize_strict({
         { "timelapse_type", timelapse_type },
         { "farthest_point_timelapse", farthest_point ? "1" : "0" },
@@ -205,6 +210,24 @@ std::vector<Photo> collect_photos(const std::string &gcode, int &layer_count)
 }
 
 // U/V of a positioned M9711 ("M9711 M0 E1 U12 V34 Z.."), as text.
+// Distance (mm, per axis, the larger) from a safe spot "U..,V.." to the object's footprint,
+// 20 x 20 mm centred on (175, 160).
+double clearance_from_object(const std::string &spot)
+{
+    const size_t comma = spot.find(',');
+    REQUIRE(comma != std::string::npos);
+    const double u  = std::stod(spot.substr(0, comma));
+    const double v  = std::stod(spot.substr(comma + 1));
+    const double dx = std::max({ 165. - u, u - 185., 0. });
+    const double dy = std::max({ 150. - v, v - 170., 0. });
+    return std::max(dx, dy);
+}
+
+// Bambu Studio's picker grows each object's footprint by half of extruder_clearance_max_radius
+// (96 mm on the H2D -> 48 mm; it used extruder_clearance_radius, 49 -> 24.5 mm, before). The spot is
+// a whole millimetre, so allow 1 mm of rounding.
+constexpr double H2D_MIN_SPOT_CLEARANCE = 96. / 2. - 1.;
+
 std::string safe_spot(const std::string &m9711)
 {
     static const std::regex re(R"( U(-?\d+) V(-?\d+))");
@@ -238,6 +261,8 @@ SCENARIO("H2D timelapse photographs right-nozzle layers like left-nozzle layers"
                     CHECK_FALSE(p.bare_m9711);
                     CHECK_FALSE(p.parked);
                     CHECK_FALSE(p.lifted);
+                    if (p.positioned)
+                        CHECK(clearance_from_object(safe_spot(p.m9711)) >= H2D_MIN_SPOT_CLEARANCE);
                 }
                 // Both nozzles were photographed (the left one for 30 layers, the right one for 10).
                 CHECK(filaments == std::set<int>{ 0, 1 });
@@ -267,6 +292,8 @@ SCENARIO("H2D timelapse photographs right-nozzle layers like left-nozzle layers"
                     else if (p.layer >= 31)
                         CHECK(p.positioned);        // the right nozzle: M9711 at a safe spot
                     CHECK((p.inline_photo || p.positioned));
+                    if (p.positioned)
+                        CHECK(clearance_from_object(safe_spot(p.m9711)) >= H2D_MIN_SPOT_CLEARANCE);
                 }
             }
         }
@@ -296,6 +323,7 @@ SCENARIO("H2D timelapse photographs right-nozzle layers like left-nozzle layers"
                     CHECK(p.positioned);
                     CHECK_FALSE(p.parked);
                     spots_above_gap.insert(safe_spot(p.m9711));
+                    CHECK(clearance_from_object(safe_spot(p.m9711)) >= H2D_MIN_SPOT_CLEARANCE);
                 } else {
                     // Below the gap Bambu Studio sends both nozzles to the chute (no safe spot).
                     CHECK_FALSE(p.positioned);

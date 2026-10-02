@@ -1781,6 +1781,9 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloat,              extruder_clearance_height_to_rod))//BBs
     ((ConfigOptionFloat,              extruder_clearance_height_to_lid))//BBS
     ((ConfigOptionFloat,              extruder_clearance_radius))
+    // Bambu Studio's clearance radius (its only one). Here read by the timelapse position picker;
+    // by-object collision and arrange keep extruder_clearance_radius.
+    ((ConfigOptionFloat,              extruder_clearance_max_radius))
     ((ConfigOptionFloat,              nozzle_height))
     ((ConfigOptionStrings,            extruder_colour))
     ((ConfigOptionPoints,             extruder_offset))

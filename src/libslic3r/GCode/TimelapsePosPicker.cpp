@@ -1,9 +1,8 @@
 // Port of Bambu Studio's src/libslic3r/GCode/TimelapsePosPicker.cpp (v02.08.04.57). Differences:
 // - the prime tower footprint comes from the generated tower outline (WipeTowerData::wipe_tower_mesh_data),
 //   the fork has no WipeTowerData::bbx;
-// - the clearance kept around the objects is extruder_clearance_radius: the fork reads Bambu's
-//   extruder_clearance_max_radius into that key (Format/BambuKeyAliases), and a BBL profile that sets
-//   both keeps its extruder_clearance_radius (H2D: 49 mm, where Bambu Studio's picker uses 96 mm);
+// - extruder_clearance_max_radius (Bambu's clearance, H2D 96 mm) falls back to Bambu's default (68 mm)
+//   when a config has 0 (Bambu Studio refuses 0 in its config check);
 // - PrintInstance::get_bounding_box() is not const here.
 #include "TimelapsePosPicker.hpp"
 
@@ -23,6 +22,13 @@ constexpr int MAX_CANDIDATE_SIZE = 5;
 
 namespace Slic3r {
 
+// Bambu Studio's extruder_clearance_max_radius; its default (68 mm) when unset or 0.
+static double clearance_max_radius(const PrintConfig &config)
+{
+    const double r = config.extruder_clearance_max_radius.value;
+    return r > 0. ? r : 68.;
+}
+
 void TimelapsePosPicker::init(const Print *print_, const Point &plate_offset)
 {
     reset();
@@ -30,7 +36,7 @@ void TimelapsePosPicker::init(const Print *print_, const Point &plate_offset)
     print          = print_;
 
     m_nozzle_height_to_rod    = print_->config().extruder_clearance_height_to_rod;
-    m_nozzle_clearance_radius = print_->config().extruder_clearance_radius;
+    m_nozzle_clearance_radius = int(clearance_max_radius(print_->config()));
     if (print_->config().nozzle_diameter.size() > 1 && print_->config().extruder_printable_height.values.size() > 1) {
         m_liftable_extruder_id = print_->config().extruder_printable_height.values[0] < print_->config().extruder_printable_height.values[1] ? 0 : 1;
         // Only honor the dual-nozzle height gap when more than one extruder is actually used.
@@ -232,7 +238,7 @@ Polygons TimelapsePosPicker::collect_limit_areas_for_rod(const std::vector<const
 // expand the object expolygon by safe distance, scaled data
 Polygon TimelapsePosPicker::expand_object_projection(const Polygon &poly, bool by_object, bool higher_than_curr)
 {
-    const double max_radius = print->config().extruder_clearance_radius.value;
+    const double max_radius = clearance_max_radius(print->config());
     float        radius     = 0;
     if (by_object && higher_than_curr)
         radius = float(scale_(max_radius));
@@ -249,7 +255,7 @@ Polygon TimelapsePosPicker::expand_object_projection(const Polygon &poly, bool b
 // unscaled data
 BoundingBoxf3 TimelapsePosPicker::expand_object_bbox(const BoundingBoxf3 &bbox, bool by_object)
 {
-    const double max_radius = print->config().extruder_clearance_radius.value;
+    const double max_radius = clearance_max_radius(print->config());
     double       radius     = by_object ? max_radius : max_radius / 2;
 
     BoundingBoxf3 ret = bbox;

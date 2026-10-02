@@ -608,6 +608,9 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "extruder_clearance_height_to_rod",
         "extruder_clearance_height_to_lid",
         "extruder_clearance_radius",
+        // Only the timelapse position picker and farthest-point timelapse read these.
+        "extruder_clearance_max_radius",
+        "farthest_point_timelapse",
         "nozzle_height",
         "extruder_colour",
         "extruder_offset",

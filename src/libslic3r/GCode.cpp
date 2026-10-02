@@ -4110,6 +4110,17 @@ GCode::TimelapseGCodeResult GCode::generate_timelapse_gcode(const Print &print, 
                                                                    current_filament->id(), &config) +
                                   "\n";
 
+    if (m_config.gcode_comments) {
+        // Verbose G-code: what the photo was placed by (plate coordinates, mm).
+        char        buf[256];
+        const Vec2f plate_offset = m_writer.get_xy_offset();
+        const Vec2d far_pt       = m_farthest_point_timelapse.farthest_gcode_pos - plate_offset.cast<double>();
+        snprintf(buf, sizeof(buf), "; timelapse: photo extruder %d, active extruder %d, farthest point %s(%.2f, %.2f), safe spot (%d, %d)%s\n",
+                 photo_extruder, curr_extruder, m_farthest_point_timelapse.enabled ? "" : "off ", far_pt.x(), far_pt.y(),
+                 int(timelapse_pos.x()), int(timelapse_pos.y()), skip_pos_pick ? ", inline" : "");
+        timelapse_gcode = buf + timelapse_gcode;
+    }
+
     const double z_before_timelapse = m_writer.get_position()(2);
     // Only the safe-position branch moves the head (in the firmware, M9711). The inline photo only
     // triggers the shutter where the head already is, so the tracked position stays valid.

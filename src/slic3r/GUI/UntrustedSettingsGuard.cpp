@@ -14,6 +14,7 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/UntrustedInput.hpp"
 
+#include <boost/filesystem/path.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/convert.hpp>
 
@@ -236,8 +237,14 @@ void open_project_attachment(const boost::filesystem::path &path)
     const std::string utf8 = boost::nowide::narrow(path.wstring());
     Plater           *plater = wxGetApp().plater();
     const std::string dir    = plater != nullptr ? plater->model().get_auxiliary_file_temp_path() : std::string();
-    std::string       key, dir_key;
-    if (dir.empty() || !page_server::resolve_final_path(utf8, &key, nullptr) || !page_server::resolve_final_path(dir, &dir_key, nullptr) ||
+    // Testable confinement (follows a last-component symlink out of Auxiliaries). The
+    // page-server check below still runs: it resolves Windows junctions / 8.3 names.
+    if (dir.empty() || !untrusted::is_safe_attachment_path(boost::filesystem::path(dir), path)) {
+        BOOST_LOG_TRIVIAL(warning) << "Refused to open a file that is not one of the project's attachments";
+        return;
+    }
+    std::string key, dir_key;
+    if (!page_server::resolve_final_path(utf8, &key, nullptr) || !page_server::resolve_final_path(dir, &dir_key, nullptr) ||
         !page_server::key_is_within(key, dir_key) || key == dir_key) {
         BOOST_LOG_TRIVIAL(warning) << "Refused to open a file that is not one of the project's attachments";
         return;

@@ -199,8 +199,9 @@ function ShowProjectInfo( p3MF )
 
 // Ultra: everything below comes out of the 3MF, i.e. from whoever made the file. Plain fields are
 // shown as text; the descriptions keep their formatting, but nothing in them may run or load from
-// this machine: scripts, frames, forms and event handlers are dropped, links and images only keep
-// http(s) addresses. Parsing in a DOMParser document is inert (no script runs, nothing loads).
+// this machine: scripts, frames, forms and event handlers are dropped. Links may keep http(s) or
+// in-page '#'; images keep https only (plain http would let a crafted project ping LAN hosts).
+// Parsing in a DOMParser document is inert (no script runs, nothing loads).
 function EscapeHtml( s )
 {
 	return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -221,7 +222,10 @@ function SafeHtml( html )
 			let name=el.attributes[j].name.toLowerCase();
 			let value=el.attributes[j].value.replace(/[\s\u0000-\u001f]/g,'').toLowerCase();
 			let isUrl=(name=='href' || name=='src' || name=='xlink:href' || name=='action' || name=='formaction' || name=='background' || name=='poster' || name=='srcset' || name=='data');
-			if( name.indexOf('on')==0 || name=='style' || (isUrl && !/^(https?:|#)/.test(value)) )
+			let isSrc=(name=='src' || name=='srcset' || name=='poster' || name=='background' || name=='data');
+			// Images load as soon as the page opens: https only. Links may stay http(s) or '#'.
+			let keepUrl=isSrc ? /^https:/.test(value) : /^(https?:|#)/.test(value);
+			if( name.indexOf('on')==0 || name=='style' || (isUrl && !keepUrl) )
 				el.removeAttribute(el.attributes[j].name);
 		}
 		if( el.tagName=='A' )

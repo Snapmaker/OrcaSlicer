@@ -172,6 +172,73 @@ TEST_CASE("only document, picture and model attachments are launched", "[Untrust
         CHECK_FALSE(is_safe_attachment_to_launch(n));
 }
 
+TEST_CASE("project-page images may only load from https", "[Untrusted][ProjectPage]")
+{
+    CHECK(is_safe_project_image_url("https://cdn.example.com/preview.png"));
+    CHECK(is_safe_project_image_url("HTTPS://CDN.Example.COM/preview.png"));
+    CHECK(is_safe_project_image_url("https://cdn.example.com:443/a/b.png?x=1#frag"));
+
+    CHECK_FALSE(is_safe_project_image_url("http://127.0.0.1:9/x"));
+    CHECK_FALSE(is_safe_project_image_url("http://example.com/preview.png"));
+    CHECK_FALSE(is_safe_project_image_url("HTTP://example.com/preview.png"));
+    CHECK_FALSE(is_safe_project_image_url("javascript:alert(1)"));
+    CHECK_FALSE(is_safe_project_image_url("JAVASCRIPT:alert(1)"));
+    CHECK_FALSE(is_safe_project_image_url("data:image/png;base64,aaaa"));
+    CHECK_FALSE(is_safe_project_image_url("data:text/html,<img src=x>"));
+    CHECK_FALSE(is_safe_project_image_url("file:///tmp/preview.png"));
+    CHECK_FALSE(is_safe_project_image_url("https://user@evil.tld/preview.png"));
+    CHECK_FALSE(is_safe_project_image_url(""));
+    CHECK_FALSE(is_safe_project_image_url("preview.png"));
+    CHECK_FALSE(is_safe_project_image_url("//cdn.example.com/preview.png"));
+}
+
+TEST_CASE("attachment paths stay inside the project auxiliary directory", "[Untrusted][Attachment]")
+{
+    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_attach_%%%%%%%%");
+    fs::create_directories(dir);
+    const fs::path root    = dir / "Auxiliaries";
+    const fs::path others  = root / "Others";
+    fs::create_directories(others);
+    const fs::path inside  = others / "note.txt";
+    const fs::path missing = others / "missing.txt";
+    const fs::path outside = dir / "secret.txt";
+    {
+        boost::nowide::ofstream out(inside.string());
+        out << "inside";
+    }
+    {
+        boost::nowide::ofstream out(outside.string());
+        out << "outside";
+    }
+
+    CHECK(is_safe_attachment_path(root, inside));
+    CHECK(is_safe_attachment_path(root, missing));
+    CHECK(is_safe_attachment_to_launch(inside.filename().string()));
+
+    CHECK_FALSE(is_safe_attachment_path(root, root));
+    CHECK_FALSE(is_safe_attachment_path(root, others / ".." / ".." / "secret.txt"));
+    CHECK_FALSE(is_safe_attachment_path(root, outside));
+    CHECK_FALSE(is_safe_attachment_path(root, dir / "Auxiliaries2" / "note.txt"));
+    CHECK_FALSE(is_safe_attachment_path(root, fs::path("Others") / "note.txt"));
+    CHECK_FALSE(is_safe_attachment_path(root, fs::path()));
+    CHECK_FALSE(is_safe_attachment_path(fs::path(), inside));
+
+#ifndef _WIN32
+    {
+        const fs::path link = others / "link.txt";
+        try {
+            fs::create_symlink(outside, link);
+            // Extraction would replace a dest-file symlink; opening must follow it.
+            CHECK(is_path_within_root(root, link));
+            CHECK_FALSE(is_safe_attachment_path(root, link));
+        } catch (const std::exception &) {}
+    }
+#endif
+
+    boost::system::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
 // ---- "Open in" links -------------------------------------------------------------------------------
 
 TEST_CASE("parse_open_link understands every scheme we accept", "[Untrusted][Link]")

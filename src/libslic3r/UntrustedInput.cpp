@@ -297,6 +297,14 @@ bool is_safe_attachment_to_launch(const std::string &file_name)
     return false;
 }
 
+bool is_safe_project_image_url(const std::string &url)
+{
+    Url u;
+    if (!parse_url(url, u) || u.has_userinfo)
+        return false;
+    return u.scheme == "https";
+}
+
 // ---- "Open in" links -----------------------------------------------------------------------
 
 std::string percent_decode(const std::string &s)
@@ -746,6 +754,25 @@ bool is_path_within_root(const boost::filesystem::path &root, const boost::files
             ++c;
         }
         return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool is_safe_attachment_path(const boost::filesystem::path &root, const boost::filesystem::path &candidate)
+{
+    try {
+        if (root.empty() || candidate.empty() || candidate.is_relative())
+            return false;
+        if (!is_path_within_root(root, candidate))
+            return false;
+        // Follow every symlink, including the last component. Opening a dest-file
+        // symlink must not launch the file outside the project's Auxiliaries.
+        const boost::filesystem::path root_c = boost::filesystem::weakly_canonical(root);
+        const boost::filesystem::path cand_c = boost::filesystem::weakly_canonical(candidate);
+        if (cand_c.empty() || cand_c == root_c)
+            return false;
+        return is_path_within_root(root_c, cand_c);
     } catch (...) {
         return false;
     }

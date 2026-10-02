@@ -78,6 +78,17 @@ std::string local_path_from_file_url(const std::string &url);
 // documents, unknown types) is shown in its folder instead.
 bool is_safe_attachment_to_launch(const std::string &file_name);
 
+// Image URL a project-page description may keep: https only, no userinfo. http, javascript:,
+// data:, file: and anything that does not parse are refused, so a crafted 3MF cannot make the
+// slicer request LAN/HTTP hosts when the description is shown.
+bool is_safe_project_image_url(const std::string &url);
+
+// True if candidate is an absolute path strictly inside root (not root itself) that still
+// resolves inside root after following every symlink, including the last component.
+// is_path_within_root does not follow a dest-file symlink (extraction replaces it); opening
+// must follow it or a project attachment that is a symlink out of Auxiliaries would be launched.
+bool is_safe_attachment_path(const boost::filesystem::path &root, const boost::filesystem::path &candidate);
+
 // ---- "Open in" links -----------------------------------------------------------------------
 
 struct OpenLink

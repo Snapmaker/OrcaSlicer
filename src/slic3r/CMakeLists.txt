@@ -16,6 +16,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/3DScene.hpp
     GUI/AboutDialog.cpp
     GUI/AboutDialog.hpp
+    GUI/AccountStatus.cpp
+    GUI/AccountStatus.hpp
     GUI/AmsMappingPopup.cpp
     GUI/AmsMappingPopup.hpp
     GUI/AMSMaterialsSetting.cpp
@@ -912,6 +914,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/ServerLifetime.hpp
     Utils/SnapmakerSilentLogin.cpp
     Utils/SnapmakerSilentLogin.hpp
+    Utils/AccountProviders.cpp
+    Utils/AccountProviders.hpp
     Utils/json_diff.cpp
     Utils/json_diff.hpp
     Utils/minilzo_extension.cpp

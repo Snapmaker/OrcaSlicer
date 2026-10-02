@@ -1,4 +1,5 @@
 #include "Plater.hpp"
+#include "AccountStatus.hpp"
 #include "MixedFilamentDialog.hpp"
 #include "MixedFilamentBatchDialog.hpp"
 #include "MixedGradientSelector.hpp"
@@ -4175,6 +4176,9 @@ void Sidebar::update_presets(Preset::Type preset_type)
 
         update_all_preset_comboboxes();
         p->show_preset_comboboxes();
+
+        // A printer of another vendor may use another account (title bar Account button).
+        AccountStatus::refresh();
 
         /* update bed shape */
         Tab* printer_tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);

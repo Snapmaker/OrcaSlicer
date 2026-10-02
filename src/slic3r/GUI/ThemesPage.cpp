@@ -73,6 +73,7 @@ static const std::vector<RoleText>& role_texts()
         {"tabbar_hover",     _L("Tab bar, hovered"), _L("A main tab under the mouse")},
         {"titlebar_bg",      _L("Title bar"),        _L("The title bar behind the banner")},
         {"titlebar_text",    _L("Title bar text"),   _L("The title and menus in the title bar")},
+        {"titlebar_warning", _L("Title bar warning"), _L("The Account button in the title bar while you are signed out (needs to read on the title bar colour)")},
         {"canvas_bg",        _L("3D view"),          _L("The 3D view background")},
         {"canvas_bg_top",    _L("3D view, top"),     _L("Makes the 3D view a gradient up to this colour")},
         {"icon",             _L("Icons"),            _L("The main line colour of the built-in icons")},
@@ -800,7 +801,7 @@ wxColour ThemesPage::role_colour(const std::string& role) const
         return stock;
     if (role == "canvas_bg" || role == "canvas_bg_top")
         return wxColour(84, 84, 90); // DEFAULT_BG_LIGHT_COLOR_DARK in GLCanvas3D.cpp
-    if (role == "titlebar_bg" || role == "titlebar_text")
+    if (role == "titlebar_bg" || role == "titlebar_text" || role == "titlebar_warning")
         return stock;
     const auto& dark_map = StateColor::GetDarkMap();
     const auto  it       = dark_map.find(stock);

@@ -195,6 +195,8 @@ TEST_CASE("theme pack: stock colours", "[ThemePack]")
     CHECK(stock_colour("accent") == "#009688");
     CHECK(stock_colour("titlebar_bg") == "#262E30");
     CHECK(stock_colour("canvas_bg") == "#E7E7E7");
+    CHECK(stock_colour("titlebar_warning") == "#FFC83D");
+    CHECK(known_role("titlebar_warning"));
     CHECK(stock_colour("nope").empty());
     for (const auto& r : roles())
         CHECK(!stock_colour(r.first).empty());

@@ -2861,6 +2861,8 @@ void MainFrame::refresh_account_menu(wxMenu* menu)
             append_menu_item(m_account_menu, wxID_ANY, _L("Log out of Bambu Account"), _L("Sign out of your Bambu Lab account"),
                 [](wxCommandEvent&) { wxGetApp().request_user_logout(); });
         } else {
+            wxMenuItem* who = m_account_menu->Append(wxID_ANY, _L("Bambu Lab") + ": " + _L("signed out"));
+            who->Enable(false);
             append_menu_item(m_account_menu, wxID_ANY, _L("Log in to Bambu Account..."), _L("Sign in to your Bambu Lab account to see your cloud printers"),
                 [](wxCommandEvent&) { wxGetApp().request_login(true); });
         }
@@ -2876,6 +2878,8 @@ void MainFrame::refresh_account_menu(wxMenu* menu)
             append_menu_item(m_account_menu, wxID_ANY, _L("Log out of Snapmaker Account"), _L("Sign out of your Snapmaker account"),
                 [](wxCommandEvent&) { wxGetApp().sm_request_user_logout(); });
         } else {
+            wxMenuItem* who = m_account_menu->Append(wxID_ANY, _L("Snapmaker") + ": " + _L("signed out"));
+            who->Enable(false);
             append_menu_item(m_account_menu, wxID_ANY, _L("Log in to Snapmaker Account..."), _L("Sign in to your Snapmaker account"),
                 [](wxCommandEvent&) { wxGetApp().sm_request_login(true); });
         }

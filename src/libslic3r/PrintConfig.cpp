@@ -2204,6 +2204,17 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(120));
 
+    // Bambu Studio's definition (PrintConfig.cpp, v02.08.04.57). Loaded from the BBL profiles as its own
+    // key; a file that sets it without extruder_clearance_radius also feeds that key, as the rename
+    // alias used to (BambuKeyAliases::load_fallbacks), so by-object clearance is unchanged.
+    def           = this->add("extruder_clearance_max_radius", coFloat);
+    def->label    = L("Max Radius");
+    def->tooltip  = L("Max clearance radius around extruder. Used for collision avoidance in by-object printing.");
+    def->sidetext = L("mm");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(68));
+
     def = this->add("extruder_clearance_radius", coFloat);
     def->label = L("Radius");
     def->tooltip = L("Clearance radius around extruder. Used for collision avoidance in by-object printing.");
@@ -6425,6 +6436,15 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloat(0));
     def->mode = comAdvanced;
 
+    // Bambu Studio 2.8 (set by the BBL machine profiles, not shown in the UI).
+    def = this->add("farthest_point_timelapse", coBool);
+    def->label = L("Farthest point timelapse");
+    def->tooltip = L("When enabled, the timelapse snapshot is taken at the farthest point from camera "
+                     "instead of traveling to the wipe tower or excess chute. "
+                     "Only effective in instant timelapse mode on non-I3 printers.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("timelapse_type", coEnum);
     def->label = L("Timelapse");
     def->tooltip = L("If smooth or traditional mode is selected, a timelapse video will be generated for each print. "
@@ -9510,6 +9530,16 @@ DynamicPrintConfig* DynamicPrintConfig::new_from_defaults_keys(const std::vector
     return out;
 }
 
+double sequential_clearance_radius(const ConfigBase &cfg)
+{
+    const auto *radius     = cfg.option<ConfigOptionFloat>("extruder_clearance_radius");
+    const auto *max_radius = cfg.option<ConfigOptionFloat>("extruder_clearance_max_radius");
+    const auto *model      = cfg.option<ConfigOptionString>("printer_model");
+    if (model != nullptr && model->value.compare(0, 9, "Bambu Lab") == 0 && max_radius != nullptr && max_radius->value > 0.)
+        return max_radius->value;
+    return radius != nullptr ? radius->value : 0.;
+}
+
 double min_object_distance(const ConfigBase &cfg)
 {
     const ConfigOptionEnum<PrinterTechnology> *opt_printer_technology = cfg.option<ConfigOptionEnum<PrinterTechnology>>("printer_technology");
@@ -9529,8 +9559,9 @@ double min_object_distance(const ConfigBase &cfg)
             ret = 0.;
         else {
             // min object distance is max(duplicate_distance, clearance_radius)
-            ret = ((co_opt->value == PrintSequence::ByObject) && ecr_opt->value > duplicate_distance) ?
-                      ecr_opt->value : duplicate_distance;
+            const double clearance = sequential_clearance_radius(cfg);
+            ret = ((co_opt->value == PrintSequence::ByObject) && clearance > duplicate_distance) ?
+                      clearance : duplicate_distance;
         }
     }
 
@@ -9985,6 +10016,10 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
     // extruder clearance
     if (cfg.extruder_clearance_radius <= 0) {
         error_message.emplace("extruder_clearance_radius", L("invalid value ") + std::to_string(cfg.extruder_clearance_radius));
+    }
+    // Bambu Studio's check of its (only) clearance radius.
+    if (cfg.extruder_clearance_max_radius <= 0) {
+        error_message.emplace("extruder_clearance_max_radius", L("invalid value ") + std::to_string(cfg.extruder_clearance_max_radius));
     }
     if (cfg.extruder_clearance_height_to_rod <= 0) {
         error_message.emplace("extruder_clearance_height_to_rod", L("invalid value ") + std::to_string(cfg.extruder_clearance_height_to_rod));

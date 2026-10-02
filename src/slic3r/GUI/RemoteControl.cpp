@@ -152,9 +152,10 @@ static DeviceControls::Caps bambu_caps(MachineObject* m)
 
     caps.has_speed = true;
     caps.speed     = Speed { "level", (int) m->printing_speed_lvl, 1, 4, m->is_in_printing() };
-    if (m->chamber_light != MachineObject::LIGHT_EFFECT::LIGHT_EFFECT_UNKOWN) {
+    const MachineObject::LIGHT_EFFECT light = m->chamber_light_state(); // both of an H2's lights
+    if (light != MachineObject::LIGHT_EFFECT::LIGHT_EFFECT_UNKOWN) {
         caps.has_light = true;
-        caps.light_on  = m->chamber_light == MachineObject::LIGHT_EFFECT::LIGHT_EFFECT_ON;
+        caps.light_on  = light == MachineObject::LIGHT_EFFECT::LIGHT_EFFECT_ON;
     }
     caps.fans.push_back(Fan { "part", "Part cooling", percent_of_byte(m->cooling_fan_speed) });
     if (m->is_support_aux_fan) caps.fans.push_back(Fan { "aux", "Aux", percent_of_byte(m->big_fan1_speed) });

@@ -1165,7 +1165,11 @@ TEST_CASE("Exporting a sliced print again gives the same G-code", "[Print][GCode
 
         const std::string first  = strip_gcode_timestamps(Test::gcode(print));
         const std::string second = strip_gcode_timestamps(Test::gcode(print));
-        if (const char *path = std::getenv("REEXPORT_FIRST_GCODE_OUT")) {
+        if (const char *dir = std::getenv("REEXPORT_FIRST_GCODE_DIR")) {
+            const char *tag = (mesh == TestMesh::overhang) ? "support" : "infill";
+            std::ofstream out(std::string(dir) + "/" + tag + "_" + std::to_string(instances) + ".gcode", std::ios::binary);
+            out << first;
+        } else if (const char *path = std::getenv("REEXPORT_FIRST_GCODE_OUT")) {
             std::ofstream out(path, std::ios::binary);
             out << first;
         }

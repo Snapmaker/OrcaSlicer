@@ -18,13 +18,17 @@
 #include <boost/filesystem/fstream.hpp>
 #include <boost/nowide/convert.hpp>
 #include <boost/nowide/fstream.hpp>
+#include <boost/system/error_code.hpp>
 
 #include <array>
+#include <cstdio>
 #include <cstdint>
 #include <iterator>
 #include <limits>
+#include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -548,19 +552,135 @@ TEST_CASE("find_unused_filename versions a name with no extension", "[Untrusted]
     CHECK(name == "readme(1)");
 }
 
-TEST_CASE("find_unused_filename gives up after 999 versions", "[Untrusted][Filename]")
+TEST_CASE("find_unused_filename gives up after the version cap", "[Untrusted][Filename]")
 {
+    CHECK(FIND_UNUSED_FILENAME_MAX_VERSION == 999);
     DownloadScratch scratch;
     touch_download_file(scratch.dir / "model.3mf");
-    for (int version = 1; version < 999; ++version)
-        touch_download_file(scratch.dir / ("model(" + std::to_string(version) + ").3mf"));
+    touch_download_file(scratch.dir / "model(1).3mf");
     std::string name;
-    REQUIRE(find_unused_filename(scratch.dir, "model.3mf", {}, name));
-    CHECK(name == "model(999).3mf");
+    REQUIRE(find_unused_filename(scratch.dir, "model.3mf", {}, name, 2));
+    CHECK(name == "model(2).3mf");
 
     touch_download_file(scratch.dir / name);
-    REQUIRE_FALSE(find_unused_filename(scratch.dir, "model.3mf", {}, name));
-    CHECK(name == "model(999).3mf");
+    REQUIRE_FALSE(find_unused_filename(scratch.dir, "model.3mf", {}, name, 2));
+    CHECK(name == "model(2).3mf");
+}
+
+TEST_CASE("open_exclusive_write cannot create the same marker twice", "[Untrusted][Filename]")
+{
+    DownloadScratch scratch;
+    const fs::path  marker = scratch.dir / "model.3mf.1.download";
+    FILE           *first  = open_exclusive_write(marker);
+    REQUIRE(first != nullptr);
+    FILE *second = open_exclusive_write(marker);
+    CHECK(second == nullptr);
+    fclose(first);
+    CHECK(fs::exists(marker));
+    FILE *again = open_exclusive_write(marker);
+    CHECK(again == nullptr);
+}
+
+TEST_CASE("rename_no_replace fails when the destination already exists", "[Untrusted][Filename]")
+{
+    DownloadScratch scratch;
+    const fs::path  src  = scratch.dir / "src.3mf";
+    const fs::path  dest = scratch.dir / "dest.3mf";
+    touch_download_file(src);
+    touch_download_file(dest);
+    boost::system::error_code ec;
+    CHECK_FALSE(rename_no_replace(src, dest, ec));
+    CHECK(ec == boost::system::errc::file_exists);
+    CHECK(read_download_file(dest) == "existing");
+    CHECK(fs::exists(src));
+    CHECK(read_download_file(src) == "existing");
+
+    const fs::path dest2 = scratch.dir / "new.3mf";
+    REQUIRE(rename_no_replace(src, dest2, ec));
+    CHECK_FALSE(fs::exists(src));
+    CHECK(read_download_file(dest2) == "existing");
+}
+
+#ifndef _WIN32
+TEST_CASE("find_unused_filename treats a dangling symlink as taken", "[Untrusted][Filename]")
+{
+    DownloadScratch scratch;
+    const fs::path  dangling = scratch.dir / "model.3mf";
+    fs::create_symlink(scratch.dir / "no_such_target.3mf", dangling);
+    REQUIRE_FALSE(fs::exists(dangling));
+    std::string name;
+    REQUIRE(find_unused_filename(scratch.dir, "model.3mf", {}, name));
+    CHECK(name == "model(1).3mf");
+}
+#endif
+
+TEST_CASE("claim_unused_download_name recreates a removed marker when the old path is still ignored", "[Untrusted][Filename]")
+{
+    // FileGet pause with m_written==0 removes the marker but used to keep m_tmp_path.
+    // Resume then passed that stale path as ignored_marker; claim must still succeed.
+    DownloadScratch scratch;
+    std::string     name;
+    FILE           *first = claim_unused_download_name(scratch.dir, "model.3mf", {}, name);
+    REQUIRE(first != nullptr);
+    fclose(first);
+    const fs::path marker = download_marker_path(scratch.dir, name);
+    REQUIRE(fs::exists(marker));
+    boost::system::error_code ec;
+    fs::remove(marker, ec);
+    REQUIRE_FALSE(fs::exists(marker));
+
+    FILE *again = claim_unused_download_name(scratch.dir, "model.3mf", marker, name);
+    REQUIRE(again != nullptr);
+    fclose(again);
+    CHECK(name == "model.3mf");
+    CHECK(fs::exists(marker));
+}
+
+TEST_CASE("claim_unused_download_name gives distinct names to concurrent claimants", "[Untrusted][Filename]")
+{
+    DownloadScratch scratch;
+    constexpr int   N = 8;
+    std::vector<std::string> names(N);
+    std::vector<FILE *>      files(N, nullptr);
+    std::vector<std::thread> threads;
+    threads.reserve(N);
+    for (int i = 0; i < N; ++i) {
+        threads.emplace_back([&, i] {
+            files[i] = claim_unused_download_name(scratch.dir, "model.3mf", {}, names[i]);
+        });
+    }
+    for (std::thread &t : threads)
+        t.join();
+
+    std::set<std::string> unique;
+    for (int i = 0; i < N; ++i) {
+        REQUIRE(files[i] != nullptr);
+        fclose(files[i]);
+        REQUIRE_FALSE(names[i].empty());
+        REQUIRE(unique.insert(names[i]).second);
+    }
+    CHECK(unique.size() == static_cast<size_t>(N));
+}
+
+TEST_CASE("place_download_file versions when the destination already exists", "[Untrusted][Filename]")
+{
+    DownloadScratch scratch;
+    std::string     name;
+    FILE           *marker_file = claim_unused_download_name(scratch.dir, "model.3mf", {}, name);
+    REQUIRE(marker_file != nullptr);
+    fclose(marker_file);
+    const fs::path marker = download_marker_path(scratch.dir, name);
+    touch_download_file(scratch.dir / "model.3mf");
+    touch_download_file(marker);
+
+    fs::path dest;
+    boost::system::error_code ec;
+    REQUIRE(place_download_file(marker, scratch.dir, name, dest, ec));
+    CHECK(name == "model(1).3mf");
+    CHECK(dest.filename() == "model(1).3mf");
+    CHECK(read_download_file(dest) == "existing");
+    CHECK(read_download_file(scratch.dir / "model.3mf") == "existing");
+    CHECK_FALSE(fs::exists(marker));
 }
 
 TEST_CASE("downloaded bytes must match the file type", "[Untrusted][Download]")
@@ -1869,6 +1989,19 @@ TEST_CASE("extract_archive_confined accepts a dest path with a trailing slash", 
     write_zip_entries(zip_file, {{"extra.json", "e"}});
     REQUIRE(extract_archive_confined(zip_file, dest_pref, err));
     CHECK(read_text_file(cache / "extra.json") == "e");
+
+    // lexically_normal("cache/./") leaves a trailing separator; strip it again so files
+    // land in cache, not in a "." child. Same for "cache/." .
+    const fs::path dest_dotslash(cache.string() + "/./");
+    write_zip_entries(zip_file, {{"dotslash.json", "d"}});
+    REQUIRE(extract_archive_confined(zip_file, dest_dotslash, err));
+    CHECK(err.empty());
+    CHECK(read_text_file(cache / "dotslash.json") == "d");
+
+    const fs::path dest_dot = cache / ".";
+    write_zip_entries(zip_file, {{"dot.json", "e2"}});
+    REQUIRE(extract_archive_confined(zip_file, dest_dot, err));
+    CHECK(read_text_file(cache / "dot.json") == "e2");
 
     boost::system::error_code ec;
     fs::remove_all(dir, ec);

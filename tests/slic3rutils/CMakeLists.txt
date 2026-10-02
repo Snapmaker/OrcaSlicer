@@ -52,6 +52,7 @@ add_executable(${_TEST_NAME}_tests
     dual_nozzle_layout_tests.cpp
     nozzle_temp_rows_tests.cpp
     device_controls_tests.cpp
+    chamber_lights_tests.cpp
     filament_commands_tests.cpp
     ams_dual_layout_tests.cpp
     gizmo_selection_object_tests.cpp
@@ -101,6 +102,8 @@ if (wxWidgets_FOUND)
     target_include_directories(${_TEST_NAME}_tests PRIVATE ${wxWidgets_INCLUDE_DIRS})
     target_compile_definitions(${_TEST_NAME}_tests PRIVATE ${wxWidgets_DEFINITIONS})
 endif ()
+# chamber_lights_tests.cpp reads the shipped resources/printers/*.json for each model's printer_series.
+target_compile_definitions(${_TEST_NAME}_tests PRIVATE SLIC3R_TEST_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources")
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")
 
 if (WIN32)

@@ -291,6 +291,14 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                         SNAP_LOG_BATCH(Info, "user login success",
                             {"eventName", "user_login_result"}, {"source", "cpp"},
                             {"success", "true"}, {"userId", user_id});
+
+                        // SM: persist the session so it survives app restarts.
+                        wxGetApp().app_config->set("sm_user", "token", token);
+                        wxGetApp().app_config->set("sm_user", "id", wxGetApp().sm_get_userinfo()->get_user_id());
+                        wxGetApp().app_config->set("sm_user", "nickname", wxGetApp().sm_get_userinfo()->get_user_name());
+                        wxGetApp().app_config->set("sm_user", "icon", wxGetApp().sm_get_userinfo()->get_user_icon_url());
+                        wxGetApp().app_config->set("sm_user", "account", wxGetApp().sm_get_userinfo()->get_user_account());
+                        wxGetApp().app_config->save();
                     }
                 })
                 .on_error([&](std::string body, std::string, unsigned status) {

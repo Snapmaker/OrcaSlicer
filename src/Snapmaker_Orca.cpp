@@ -2203,7 +2203,7 @@ int CLI::run(int argc, char **argv)
                     if (config.option<ConfigOptionFloat>("extruder_clearance_height_to_lid"))
                         old_height_to_lid = config.opt_float("extruder_clearance_height_to_lid");
                     if (config.option<ConfigOptionFloat>("extruder_clearance_radius"))
-                        old_max_radius = config.opt_float("extruder_clearance_radius");
+                        old_max_radius = float(sequential_clearance_radius(config));
                     if (config.option<ConfigOptionFloats>("max_layer_height"))
                         old_max_layer_height = config.option<ConfigOptionFloats>("max_layer_height")->values;
                     if (config.option<ConfigOptionFloats>("min_layer_height"))
@@ -3832,7 +3832,8 @@ int CLI::run(int argc, char **argv)
     double print_height = m_print_config.opt_float("printable_height");
     double height_to_lid = m_print_config.opt_float("extruder_clearance_height_to_lid");
     double height_to_rod = m_print_config.opt_float("extruder_clearance_height_to_rod");
-    double clearance_radius = m_print_config.opt_float("extruder_clearance_radius");
+    // Bambu Studio arranges with extruder_clearance_max_radius (sequential_clearance_radius on Bambu Lab printers).
+    double clearance_radius = sequential_clearance_radius(m_print_config);
     //double plate_stride;
     std::string bed_texture;
 

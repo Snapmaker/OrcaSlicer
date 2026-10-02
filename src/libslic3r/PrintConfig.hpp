@@ -778,6 +778,11 @@ class StaticPrintConfig;
 
 // Minimum object distance for arrangement, based on printer technology.
 double min_object_distance(const ConfigBase &cfg);
+// The clearance radius of print-by-object collision checks and arrange. Bambu Studio's
+// extruder_clearance_max_radius on a Bambu Lab printer (printer_model "Bambu Lab ..."), as Bambu
+// Studio uses it everywhere; extruder_clearance_radius on every other printer, whose profiles do not
+// set the max radius (its default of 68 mm would otherwise change their spacing).
+double sequential_clearance_radius(const ConfigBase &cfg);
 
 // Slic3r dynamic configuration, used to override the configuration
 // per object, per modification volume or per printing material.

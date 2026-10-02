@@ -608,7 +608,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "extruder_clearance_height_to_rod",
         "extruder_clearance_height_to_lid",
         "extruder_clearance_radius",
-        // Only the timelapse position picker and farthest-point timelapse read these.
+        // The timelapse position picker, farthest-point timelapse and (Bambu Lab printers) the
+        // by-object clearance read these.
         "extruder_clearance_max_radius",
         "farthest_point_timelapse",
         "nozzle_height",
@@ -1252,9 +1253,10 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
             polygons->clear();
         std::vector<size_t> intersecting_idxs;
 
-        // Shrink the extruder_clearance_radius a tiny bit, so that if the object arrangement algorithm placed the objects
-        // exactly by satisfying the extruder_clearance_radius, this test will not trigger collision.
-        float obj_distance = print.is_all_objects_are_short() ? scale_(std::max(0.5f * MAX_OUTER_NOZZLE_DIAMETER, object_skirt_offset) - 0.1) : scale_(0.5 * print.config().extruder_clearance_radius.value + object_skirt_offset - 0.1);
+        // Shrink the clearance radius a tiny bit, so that if the object arrangement algorithm placed the objects
+        // exactly by satisfying it, this test will not trigger collision. Bambu Lab printers use Bambu
+        // Studio's extruder_clearance_max_radius (sequential_clearance_radius).
+        float obj_distance = print.is_all_objects_are_short() ? scale_(std::max(0.5f * MAX_OUTER_NOZZLE_DIAMETER, object_skirt_offset) - 0.1) : scale_(0.5 * sequential_clearance_radius(print.config()) + object_skirt_offset - 0.1);
 
         for (const PrintObject *print_object : print.objects()) {
             assert(! print_object->model_object()->instances.empty());
@@ -1646,7 +1648,7 @@ CompactedTowerZone compacted_wipe_tower_zone(const PrintConfig &config, const Po
     // slack the sequential check applies, 0.1 mm per side. Both rings are built here; which one a
     // given object is measured against depends on its own height and is decided in
     // compacted_wipe_tower_clearance().
-    zone.body_radius  = config.extruder_clearance_radius.value;
+    zone.body_radius  = sequential_clearance_radius(config); // Bambu Studio: extruder_clearance_max_radius
     zone.grown_body   = offset(zone.hull, float(scale_(compacted_tower_half_clearance(zone.body_radius))), jtRound, scale_(0.1));
     zone.grown_nozzle = offset(zone.hull, float(scale_(compacted_tower_half_clearance(MAX_OUTER_NOZZLE_DIAMETER))), jtRound, scale_(0.1));
     return zone;
@@ -6423,8 +6425,8 @@ std::tuple<float, float> Print::object_skirt_offset(double margin_height) const
         object_skirt_offset = config().skirt_distance + object_skirt_witdh;
     else if (config().draft_shield == dsEnabled || config().skirt_height * max_layer_height > config().nozzle_height - margin_height)
         object_skirt_offset = config().skirt_distance + line_width;
-    else if (config().skirt_distance + object_skirt_witdh > config().extruder_clearance_radius/2)
-        object_skirt_offset = (config().skirt_distance + object_skirt_witdh - config().extruder_clearance_radius/2);
+    else if (config().skirt_distance + object_skirt_witdh > sequential_clearance_radius(config()) / 2)
+        object_skirt_offset = (config().skirt_distance + object_skirt_witdh - sequential_clearance_radius(config()) / 2);
     else
         return std::make_tuple(0, 0);
 

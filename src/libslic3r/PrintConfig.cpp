@@ -9530,6 +9530,16 @@ DynamicPrintConfig* DynamicPrintConfig::new_from_defaults_keys(const std::vector
     return out;
 }
 
+double sequential_clearance_radius(const ConfigBase &cfg)
+{
+    const auto *radius     = cfg.option<ConfigOptionFloat>("extruder_clearance_radius");
+    const auto *max_radius = cfg.option<ConfigOptionFloat>("extruder_clearance_max_radius");
+    const auto *model      = cfg.option<ConfigOptionString>("printer_model");
+    if (model != nullptr && model->value.compare(0, 9, "Bambu Lab") == 0 && max_radius != nullptr && max_radius->value > 0.)
+        return max_radius->value;
+    return radius != nullptr ? radius->value : 0.;
+}
+
 double min_object_distance(const ConfigBase &cfg)
 {
     const ConfigOptionEnum<PrinterTechnology> *opt_printer_technology = cfg.option<ConfigOptionEnum<PrinterTechnology>>("printer_technology");
@@ -9549,8 +9559,9 @@ double min_object_distance(const ConfigBase &cfg)
             ret = 0.;
         else {
             // min object distance is max(duplicate_distance, clearance_radius)
-            ret = ((co_opt->value == PrintSequence::ByObject) && ecr_opt->value > duplicate_distance) ?
-                      ecr_opt->value : duplicate_distance;
+            const double clearance = sequential_clearance_radius(cfg);
+            ret = ((co_opt->value == PrintSequence::ByObject) && clearance > duplicate_distance) ?
+                      clearance : duplicate_distance;
         }
     }
 
@@ -10005,6 +10016,10 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
     // extruder clearance
     if (cfg.extruder_clearance_radius <= 0) {
         error_message.emplace("extruder_clearance_radius", L("invalid value ") + std::to_string(cfg.extruder_clearance_radius));
+    }
+    // Bambu Studio's check of its (only) clearance radius.
+    if (cfg.extruder_clearance_max_radius <= 0) {
+        error_message.emplace("extruder_clearance_max_radius", L("invalid value ") + std::to_string(cfg.extruder_clearance_max_radius));
     }
     if (cfg.extruder_clearance_height_to_rod <= 0) {
         error_message.emplace("extruder_clearance_height_to_rod", L("invalid value ") + std::to_string(cfg.extruder_clearance_height_to_rod));

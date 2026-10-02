@@ -2311,23 +2311,23 @@ int MachineObject::command_ams_control(std::string action)
 
 bool MachineObject::has_two_chamber_lights() const
 {
-    return ChamberLights::has_two_lights(DeviceManager::get_printer_series(printer_type), chamber_light2_reported);
+    return GUI::ChamberLights::has_two_lights(DeviceManager::get_printer_series(printer_type), chamber_light2_reported);
 }
 
 MachineObject::LIGHT_EFFECT MachineObject::chamber_light_state() const
 {
     auto to_mode = [](LIGHT_EFFECT e) {
         switch (e) {
-        case LIGHT_EFFECT::LIGHT_EFFECT_ON: return ChamberLights::Mode::On;
-        case LIGHT_EFFECT::LIGHT_EFFECT_OFF: return ChamberLights::Mode::Off;
-        case LIGHT_EFFECT::LIGHT_EFFECT_FLASHING: return ChamberLights::Mode::Flashing;
-        default: return ChamberLights::Mode::Unknown;
+        case LIGHT_EFFECT::LIGHT_EFFECT_ON: return GUI::ChamberLights::Mode::On;
+        case LIGHT_EFFECT::LIGHT_EFFECT_OFF: return GUI::ChamberLights::Mode::Off;
+        case LIGHT_EFFECT::LIGHT_EFFECT_FLASHING: return GUI::ChamberLights::Mode::Flashing;
+        default: return GUI::ChamberLights::Mode::Unknown;
         }
     };
-    switch (ChamberLights::combined(to_mode(chamber_light), to_mode(chamber_light2), has_two_chamber_lights())) {
-    case ChamberLights::Mode::On: return LIGHT_EFFECT::LIGHT_EFFECT_ON;
-    case ChamberLights::Mode::Off: return LIGHT_EFFECT::LIGHT_EFFECT_OFF;
-    case ChamberLights::Mode::Flashing: return LIGHT_EFFECT::LIGHT_EFFECT_FLASHING;
+    switch (GUI::ChamberLights::combined(to_mode(chamber_light), to_mode(chamber_light2), has_two_chamber_lights())) {
+    case GUI::ChamberLights::Mode::On: return LIGHT_EFFECT::LIGHT_EFFECT_ON;
+    case GUI::ChamberLights::Mode::Off: return LIGHT_EFFECT::LIGHT_EFFECT_OFF;
+    case GUI::ChamberLights::Mode::Flashing: return LIGHT_EFFECT::LIGHT_EFFECT_FLASHING;
     default: return LIGHT_EFFECT::LIGHT_EFFECT_UNKOWN;
     }
 }
@@ -2336,9 +2336,9 @@ MachineObject::LIGHT_EFFECT MachineObject::chamber_light_state() const
 // the H2 series, whose two interior lights are separate nodes (Bambu Studio's DevLamp sends both).
 int MachineObject::command_set_chamber_light(LIGHT_EFFECT effect, int on_time, int off_time, int loops, int interval)
 {
-    const ChamberLights::Mode mode = ChamberLights::parse_mode(light_effect_str(effect));
+    const GUI::ChamberLights::Mode mode = GUI::ChamberLights::parse_mode(light_effect_str(effect));
     int                       rc   = 0;
-    for (const json& j : ChamberLights::chamber_commands(has_two_chamber_lights(), mode,
+    for (const json& j : GUI::ChamberLights::chamber_commands(has_two_chamber_lights(), mode,
                                                          [] { return std::to_string(MachineObject::m_sequence_id++); }, on_time,
                                                          off_time, loops, interval)) {
         const int r = this->publish_json(j.dump());

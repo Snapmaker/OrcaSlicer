@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "slic3r/GUI/ChamberLights.hpp"
+#include "slic3r/GUI/DeviceModelCode.hpp"
 
 #include <fstream>
 #include <iterator>
@@ -21,7 +22,10 @@ std::string printer_series_in_resources(const std::string& model_id)
     std::ifstream f(std::string(SLIC3R_TEST_RESOURCES_DIR) + "/printers/" + model_id + ".json");
     if (!f) return {};
     const json j = json::parse(f, nullptr, false);
-    return j.is_object() ? j.value("printer_series", std::string()) : std::string();
+    // Every printer definition keeps its fields under the "00.00.00.00" firmware-version key,
+    // the same place DeviceManager::get_value_from_config reads them from.
+    if (!j.is_object() || !j.contains("00.00.00.00") || !j["00.00.00.00"].is_object()) return {};
+    return j["00.00.00.00"].value("printer_series", std::string());
 }
 } // namespace
 
@@ -55,6 +59,21 @@ TEST_CASE("H2D, H2C and H2S are all series_o and so all have two lights", "[Cham
         CHECK(series == "series_o");
         CHECK(has_two_lights(series, false));
         CHECK(toggle(series, false, Mode::Off).size() == 2);
+    }
+}
+
+TEST_CASE("A later-batch H2 model code (-V2) still resolves to series_o and so to two lights", "[ChamberLights]")
+{
+    // The runtime path: DeviceManager::parse_printer_type maps the reported code through the
+    // subseries table to its parent model, then get_printer_series reads that parent's definition.
+    const auto table = Slic3r::GUI::load_model_subseries(std::string(SLIC3R_TEST_RESOURCES_DIR) + "/printers");
+    for (const char* code : { "O1D-V2", "O1C2-V2", "O1S-V2" }) {
+        INFO(code);
+        const std::string parent = Slic3r::GUI::resolve_model_subseries(code, table);
+        REQUIRE(!parent.empty());
+        const std::string series = printer_series_in_resources(parent);
+        CHECK(series == "series_o");
+        CHECK(toggle(series, false, Mode::On).size() == 2);
     }
 }
 

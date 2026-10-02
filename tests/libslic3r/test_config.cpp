@@ -1282,3 +1282,63 @@ TEST_CASE("filament group plate-pick continues only when grouping is accepted", 
     CHECK_FALSE(filament_group_dirty_on_invalidation(false, false));
     CHECK(filament_group_plate_pick_continues(false, required, true, false));
 }
+
+TEST_CASE("Static print configs compare, order and hash by their option values", "[Config]")
+{
+    // PrintObjectConfig comes from PRINT_CONFIG_CLASS_DEFINE; PrintConfig combines MachineEnvelopeConfig
+    // and GCodeConfig through PRINT_CONFIG_CLASS_DERIVED_DEFINE. Both generate hash(), operator==,
+    // operator< and the option registration from the same option list. The hash inequalities use fixed
+    // inputs, so they are deterministic; they check that hash() covers the changed option.
+    // Edge's PrintObjectConfig lists Ultra's print_extruder_id / print_extruder_variant first;
+    // brim_object_gap is third (Orca's first). Ordering checks use Edge's first member.
+    SECTION("default-constructed configs are equal and find their options by key")
+    {
+        PrintObjectConfig a, b;
+        REQUIRE(a == b);
+        REQUIRE(a.hash() == b.hash());
+        REQUIRE_FALSE(a < b);
+        REQUIRE_FALSE(b < a);
+        REQUIRE(a.optptr("layer_height") == &a.layer_height);
+        REQUIRE(a.optptr("print_extruder_id") == &a.print_extruder_id);
+        REQUIRE(a.optptr("brim_object_gap") == &a.brim_object_gap);
+    }
+
+    SECTION("one differing option makes the configs unequal and orders them")
+    {
+        PrintObjectConfig a, b;
+        b.layer_height.value = a.layer_height.value + 0.05;
+        REQUIRE(a != b);
+        REQUIRE(a.hash() != b.hash());
+        REQUIRE(a < b);
+        REQUIRE_FALSE(b < a);
+    }
+
+    SECTION("ordering is decided by the first option in declaration order that differs")
+    {
+        PrintObjectConfig a, b;
+        // print_extruder_id is declared first on Edge (ConfigOptionInts).
+        a.print_extruder_id.values = {2};
+        b.print_extruder_id.values = {1};
+        a.layer_height.value       = b.layer_height.value - 0.05; // declared later, points the other way
+        REQUIRE(b < a);
+        REQUIRE_FALSE(a < b);
+    }
+
+    SECTION("a derived config sees differences in its parents and in its own options")
+    {
+        PrintConfig a, b;
+        REQUIRE(a == b);
+        REQUIRE(a.hash() == b.hash());
+
+        b.gcode_flavor.value = b.gcode_flavor.value == gcfMarlinLegacy ? gcfKlipper : gcfMarlinLegacy; // GCodeConfig parent
+        REQUIRE(a != b);
+        REQUIRE(a.hash() != b.hash());
+
+        PrintConfig c, d;
+        d.skirt_distance.value = c.skirt_distance.value + 1.0; // PrintConfig's own list
+        REQUIRE(c != d);
+        REQUIRE(c.hash() != d.hash());
+        REQUIRE(c.optptr("skirt_distance") == &c.skirt_distance);
+        REQUIRE(c.optptr("gcode_flavor") == &c.gcode_flavor);
+    }
+}

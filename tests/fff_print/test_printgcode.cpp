@@ -2,11 +2,15 @@
 
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/GCodeReader.hpp"
+#include "libslic3r/PrintConfig.hpp"
 
 #include "test_data.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <regex>
+#include <sstream>
+#include <vector>
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
@@ -346,4 +350,191 @@ TEST_CASE("BBL time_lapse_gcode is emitted once per layer", "[PrintGCode][Timela
         std::string gcode = slice_bbl("i3", marker);
         REQUIRE(count(gcode, "\n;TEST_TIMELAPSE ") == count(gcode, "\n;TEST_LAYER_CHANGE "));
     }
+}
+
+// Orca #15986 / Edge flow variants: pressure_advance is stored per Standard/High-Flow column,
+// so filament id is not the array index once a filament declares both variants. Filament 2 is
+// High-Flow with Standard=0.02 and High-Flow=0.05; raw get_at(1) reads the Standard slot.
+namespace {
+
+constexpr double kPaStdF0 = 0.01;
+constexpr double kPaStdF1 = 0.02;
+constexpr double kPaHfF1  = 0.05;
+
+DynamicPrintConfig high_flow_pa_config(bool enable_std_f1, bool enable_hf_f1, bool adaptive)
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_num_extruders(2);
+    config.set_num_filaments(2);
+    config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75};
+    config.option<ConfigOptionFloats>("nozzle_diameter")->values   = {0.4, 0.4};
+    config.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#0000FF"};
+    config.option<ConfigOptionBool>("enable_prime_tower")->value   = true;
+    config.option<ConfigOptionBool>("enable_support")->value       = false;
+    config.option<ConfigOptionBool>("spiral_mode")->value          = false;
+    config.option<ConfigOptionFloats>("wipe_tower_x")->values      = {15.};
+    config.option<ConfigOptionFloats>("wipe_tower_y")->values      = {15.};
+    config.option<ConfigOptionFloat>("prime_tower_width")->value   = 35.;
+    config.option<ConfigOptionBool>("gcode_comments")->value       = true;
+    config.set_deserialize_strict({{"brim_type", "no_brim"},
+                                   {"skirt_loops", "0"},
+                                   {"wipe_tower_wall_type", "rectangle"},
+                                   {"gcode_flavor", "marlin"},
+                                   {"layer_height", "0.2"},
+                                   {"initial_layer_print_height", "0.2"}});
+
+    // F0 Standard-only (1 column) + F1 Standard/High-Flow (2 columns). Filament 2 is High-Flow,
+    // so get_config_idx(..., 1) == 2 while get_at(1) still reads the Standard 0.02 slot.
+    config.option<ConfigOptionInts>("filament_flow_step_size", true)->values = {1, 2};
+    config.option<ConfigOptionStrings>("filament_flow_support", true)->values =
+        {FLOW_MODE_STANDARD, FLOW_MODE_STANDARD, FLOW_MODE_HIGH_FLOW};
+    config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtStandard),
+                                                                                     int(fvtHighFlow)};
+    config.option<ConfigOptionFloats>("pressure_advance")->values                = {kPaStdF0, kPaStdF1, kPaHfF1};
+    config.option<ConfigOptionBools>("enable_pressure_advance")->values          = {true, enable_std_f1, enable_hf_f1};
+    config.option<ConfigOptionBools>("adaptive_pressure_advance")->values        = {adaptive, adaptive};
+    config.option<ConfigOptionBools>("adaptive_pressure_advance_overhangs")->values = {adaptive, adaptive};
+    if (adaptive)
+        config.option<ConfigOptionStrings>("adaptive_pressure_advance_model")->values = {"", ""};
+    return config;
+}
+
+void require_high_flow_columns(const ConfigBase &config)
+{
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 0) == 0);
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 1) == 2);
+    const auto *pa = config.option<ConfigOptionFloats>("pressure_advance");
+    REQUIRE(pa != nullptr);
+    REQUIRE(pa->values.size() >= 3);
+    REQUIRE_THAT(pa->get_at(1), Catch::Matchers::WithinAbs(kPaStdF1, 1e-9));
+    REQUIRE_THAT(get_value_at(config, *pa, ConfigFlowDomain::Filament, 1), Catch::Matchers::WithinAbs(kPaHfF1, 1e-9));
+}
+
+std::string slice_high_flow_pa(DynamicPrintConfig config, bool bbl)
+{
+    Print print;
+    Model model;
+    ModelObject *first = model.add_object();
+    first->name        = "cube-a.stl";
+    first->add_volume(mesh(TestMesh::cube_20x20x20));
+    first->add_instance()->set_offset(Vec3d(80., 40., 0.));
+    first->ensure_on_bed();
+    ModelObject *second = model.add_object();
+    second->name        = "cube-b.stl";
+    second->add_volume(mesh(TestMesh::cube_20x20x20));
+    second->add_instance()->set_offset(Vec3d(120., 40., 0.));
+    second->ensure_on_bed();
+    second->volumes.front()->config.set("extruder", 2);
+
+    print.apply(model, config);
+    print.is_BBL_printer() = bbl;
+    REQUIRE(print.has_wipe_tower());
+    require_high_flow_columns(print.config());
+    return Test::gcode(print);
+}
+
+struct PaAfterT1 {
+    size_t               toolchanges_to_f2 = 0;
+    size_t               pa_commands       = 0;
+    size_t               pa_high_flow      = 0;
+    size_t               pa_standard_slot  = 0;
+    std::vector<double>  values;
+};
+
+PaAfterT1 collect_pa_after_filament2(const std::string &gcode)
+{
+    static const std::regex pa_cmd(R"(^(?:M900 K|SET_PRESSURE_ADVANCE ADVANCE=)([0-9.eE+-]+))");
+    static const std::regex tool_cmd(R"(^T(\d+)\s*(;.*)?$)");
+    const double            tol = 1e-4;
+
+    PaAfterT1   result;
+    std::smatch m;
+    int         current = -1;
+    std::istringstream in(gcode);
+    std::string        line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (std::regex_match(line, m, tool_cmd)) {
+            current = std::stoi(m[1].str());
+            if (current == 1)
+                ++result.toolchanges_to_f2;
+            continue;
+        }
+        if (current != 1)
+            continue;
+        if (!std::regex_search(line, m, pa_cmd))
+            continue;
+        const double pa = std::stod(m[1].str());
+        result.values.push_back(pa);
+        ++result.pa_commands;
+        if (std::fabs(pa - kPaHfF1) <= tol)
+            ++result.pa_high_flow;
+        if (std::fabs(pa - kPaStdF1) <= tol)
+            ++result.pa_standard_slot;
+    }
+    return result;
+}
+
+void require_filament2_uses_high_flow_pa(const std::string &gcode, size_t min_pa_commands)
+{
+    const PaAfterT1 pa = collect_pa_after_filament2(gcode);
+    INFO("T1 toolchanges " << pa.toolchanges_to_f2 << ", PA commands " << pa.pa_commands << ", HF " << pa.pa_high_flow
+                           << ", std-slot " << pa.pa_standard_slot);
+    REQUIRE(pa.toolchanges_to_f2 >= 2);
+    REQUIRE(pa.pa_commands >= min_pa_commands);
+    REQUIRE(pa.pa_standard_slot == 0);
+    REQUIRE(pa.pa_high_flow == pa.pa_commands);
+}
+
+} // namespace
+
+TEST_CASE("wipe-tower and set_extruder PA follow the High-Flow column", "[PrintGCode][GCode][PAVariant]")
+{
+    const DynamicPrintConfig config = high_flow_pa_config(true, true, false);
+    require_high_flow_columns(config);
+
+    SECTION("non-BBL wipe tower hits set_extruder and append_tcr2") {
+        const std::string gcode = slice_high_flow_pa(config, false);
+        REQUIRE(gcode.find("Travel to a Wipe Tower") != std::string::npos);
+        // Two PA writes per T1 (set_extruder + wipe-tower L1178) across several layers.
+        require_filament2_uses_high_flow_pa(gcode, 4);
+    }
+    SECTION("BBL wipe tower hits append_tcr") {
+        const std::string gcode = slice_high_flow_pa(config, true);
+        REQUIRE(gcode.find("CP TOOLCHANGE") != std::string::npos);
+        require_filament2_uses_high_flow_pa(gcode, 2);
+    }
+}
+
+TEST_CASE("enable_pressure_advance follows the High-Flow column", "[PrintGCode][GCode][PAVariant]")
+{
+    // Filament 2 Standard=false, High-Flow=true. get_at(1) is false, so the unfixed readers
+    // skip PA entirely on every toolchange to filament 2.
+    const DynamicPrintConfig config = high_flow_pa_config(false, true, false);
+    require_high_flow_columns(config);
+
+    SECTION("non-BBL wipe tower") {
+        const std::string gcode = slice_high_flow_pa(config, false);
+        require_filament2_uses_high_flow_pa(gcode, 4);
+    }
+    SECTION("BBL wipe tower") {
+        const std::string gcode = slice_high_flow_pa(config, true);
+        require_filament2_uses_high_flow_pa(gcode, 2);
+    }
+}
+
+TEST_CASE("AdaptivePAProcessor base PA follows the High-Flow column", "[PrintGCode][GCode][PAVariant]")
+{
+    const DynamicPrintConfig config = high_flow_pa_config(true, true, true);
+    require_high_flow_columns(config);
+    const std::string gcode = slice_high_flow_pa(config, false);
+    REQUIRE(gcode.find("PA_CHANGE") != std::string::npos);
+    const PaAfterT1 pa = collect_pa_after_filament2(gcode);
+    INFO("T1 toolchanges " << pa.toolchanges_to_f2 << ", PA commands " << pa.pa_commands << ", HF " << pa.pa_high_flow
+                           << ", std-slot " << pa.pa_standard_slot);
+    REQUIRE(pa.toolchanges_to_f2 >= 2);
+    REQUIRE(pa.pa_commands >= 2);
+    REQUIRE(pa.pa_standard_slot == 0);
+    REQUIRE(pa.pa_high_flow >= 2);
 }

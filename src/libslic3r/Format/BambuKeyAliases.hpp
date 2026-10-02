@@ -66,6 +66,14 @@ std::string import_enum_value(const std::string &our_key, const std::string &bam
 // alias must then be skipped, so our own value wins whatever order the two are read in.
 bool shadowed_by_our_key(const std::string &key, const std::function<bool(const std::string &)> &file_has);
 
+// Import, after a whole source (file, map) is loaded. A Bambu key this fork loads as itself that
+// also feeds one of our differently named settings when the same source does not set ours
+// (extruder_clearance_max_radius -> extruder_clearance_radius, formerly a rename alias).
+} // namespace BambuKeyAliases
+class ConfigBase;
+namespace BambuKeyAliases {
+void load_fallbacks(ConfigBase &config, const std::function<bool(const std::string &)> &source_has);
+
 } // namespace BambuKeyAliases
 } // namespace Slic3r
 

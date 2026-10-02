@@ -2204,6 +2204,17 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(120));
 
+    // Bambu Studio's definition (PrintConfig.cpp, v02.08.04.57). Loaded from the BBL profiles as its own
+    // key; a file that sets it without extruder_clearance_radius also feeds that key, as the rename
+    // alias used to (BambuKeyAliases::load_fallbacks), so by-object clearance is unchanged.
+    def           = this->add("extruder_clearance_max_radius", coFloat);
+    def->label    = L("Max Radius");
+    def->tooltip  = L("Max clearance radius around extruder. Used for collision avoidance in by-object printing.");
+    def->sidetext = L("mm");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(68));
+
     def = this->add("extruder_clearance_radius", coFloat);
     def->label = L("Radius");
     def->tooltip = L("Clearance radius around extruder. Used for collision avoidance in by-object printing.");
@@ -6424,6 +6435,15 @@ void PrintConfigDef::init_fff_params()
     def->max = 1;
     def->set_default_value(new ConfigOptionFloat(0));
     def->mode = comAdvanced;
+
+    // Bambu Studio 2.8 (set by the BBL machine profiles, not shown in the UI).
+    def = this->add("farthest_point_timelapse", coBool);
+    def->label = L("Farthest point timelapse");
+    def->tooltip = L("When enabled, the timelapse snapshot is taken at the farthest point from camera "
+                     "instead of traveling to the wipe tower or excess chute. "
+                     "Only effective in instant timelapse mode on non-I3 printers.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("timelapse_type", coEnum);
     def->label = L("Timelapse");

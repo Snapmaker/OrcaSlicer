@@ -671,7 +671,7 @@ if(SLIC3R_STATIC)
     set(TBB_STATIC 1)
 endif()
 set(TBB_DEBUG 1)
-# Upstream Orca #14593: only map RelWithDebInfo imported configs to Release when
+# Adapted from Orca #14593 (case-insensitive): only map RelWithDebInfo imported configs to Release when
 # that config is in use, or on MSVC. Non-MSVC multi-config generators with
 # CMAKE_BUILD_TYPE unset now fall back to the deps' first available config,
 # which is harmless with Edge's single-config deps.

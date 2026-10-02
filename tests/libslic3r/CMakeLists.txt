@@ -60,6 +60,7 @@ add_executable(${_TEST_NAME}_tests
 	test_h2c_rack_nozzle_change.cpp
 	test_h2c_rack_park_preheat.cpp
 	test_h2d_byobject_toolchange.cpp
+	test_h2d_timelapse.cpp
 	test_filament_map_reapply.cpp
 	test_h2_preload_filaments.cpp
 	test_mixed_filament.cpp

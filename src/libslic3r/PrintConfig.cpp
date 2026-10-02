@@ -6425,6 +6425,15 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloat(0));
     def->mode = comAdvanced;
 
+    // Bambu Studio 2.8 (set by the BBL machine profiles, not shown in the UI).
+    def = this->add("farthest_point_timelapse", coBool);
+    def->label = L("Farthest point timelapse");
+    def->tooltip = L("When enabled, the timelapse snapshot is taken at the farthest point from camera "
+                     "instead of traveling to the wipe tower or excess chute. "
+                     "Only effective in instant timelapse mode on non-I3 printers.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("timelapse_type", coEnum);
     def->label = L("Timelapse");
     def->tooltip = L("If smooth or traditional mode is selected, a timelapse video will be generated for each print. "

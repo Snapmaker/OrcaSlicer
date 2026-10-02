@@ -1635,6 +1635,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,                auxiliary_fan))
     ((ConfigOptionBool,                support_air_filtration))
     ((ConfigOptionEnum<PrinterStructure>,printer_structure))
+    ((ConfigOptionBool,                farthest_point_timelapse))
     ((ConfigOptionBool,                support_chamber_temp_control))
 
 

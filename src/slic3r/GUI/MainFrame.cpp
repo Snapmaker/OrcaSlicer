@@ -2757,7 +2757,7 @@ static wxMenu* generate_help_menu()
                          [](wxCommandEvent&) { FirewallCheckDialog::show_modal(wxGetApp().mainframe); });
 
     // The checklist the first-time notice shows (account, firewall, LAN mode, access code, SD card, network).
-    append_menu_item(helpMenu, wxID_ANY, _L("Bambu printer setup..."),
+    append_menu_item(helpMenu, wxID_ANY, _L("Bambu Lab Printer Help..."),
                      _L("What a Bambu Lab printer needs to show up and connect"),
                      [](wxCommandEvent&) { BambuSetupNoticeDialog::show_modal(wxGetApp().mainframe); });
 

@@ -6,7 +6,7 @@
 // rights. Whether it pops up is decided by Utils/BambuSetupNotice (pure, unit-tested); this file
 // gathers the inputs, draws the dialog and owns the app_config flag.
 //
-// It stays reachable from Help > Bambu printer setup... and from the Device page's "Can't find my
+// It stays reachable from Help > Bambu Lab Printer Help... and from the Device page's "Can't find my
 // devices?" area.
 
 #include "GUI_Utils.hpp"

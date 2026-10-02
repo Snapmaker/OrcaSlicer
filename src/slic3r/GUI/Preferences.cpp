@@ -405,8 +405,16 @@ wxBoxSizer *PreferencesDialog::create_item_loglevel_combobox(wxString title, wxW
     std::vector<wxString>::iterator iter;
     for (iter = vlist.begin(); iter != vlist.end(); iter++) { combobox->Append(*iter); }
 
+    combobox->SetToolTip(tooltip);
+
+    // Select by index, not by text: the entries are translated but the stored value is always English.
     auto severity_level = app_config->get("log_severity_level");
-    if (!severity_level.empty()) { combobox->SetValue(severity_level); }
+    for (unsigned i = 0; i < vlist.size(); ++i) {
+        if (Slic3r::get_string_logging_level(i) == severity_level) {
+            combobox->SetSelection(int(i));
+            break;
+        }
+    }
 
     m_sizer_combox->Add(combobox, 0, wxALIGN_CENTER, 0);
 
@@ -415,6 +423,7 @@ wxBoxSizer *PreferencesDialog::create_item_loglevel_combobox(wxString title, wxW
         auto level = Slic3r::get_string_logging_level(e.GetSelection());
         Slic3r::set_logging_level(Slic3r::level_string_to_boost(level));
         app_config->set("log_severity_level",level);
+        app_config->save();
         e.Skip();
      });
     return m_sizer_combox;
@@ -2130,6 +2139,16 @@ wxWindow* PreferencesDialog::create_ultra_page()
     auto item_archive_max = create_item_gcode_archive_max(page,
         _L("How many stored files to keep. When a new file takes the count past this, the oldest ones are deleted with their details and previews."));
 
+    // Support: lets a user raise the log level without a developer build. Same app_config key and the
+    // same combobox as the internal Develop page; the level is applied immediately and persisted.
+    auto title_troubleshooting = create_item_title(_L("Troubleshooting"), page, _L("Troubleshooting"));
+    auto log_level_list = std::vector<wxString>{_L("fatal"), _L("error"), _L("warning"), _L("info"), _L("debug"), _L("trace")};
+    auto item_log_level = create_item_loglevel_combobox(_L("Log level"), page,
+        _L("How much detail goes into the log files in %APPDATA%\\EdgeSlicer\\log (Help > Show Configuration Folder). "
+           "Use 'info' or 'debug' when sending a log for support; 'warning' is the default. "
+           "Verbose levels (debug, trace) make the log files grow quickly, so set it back afterwards."),
+        log_level_list);
+
     sizer_page->Add(title_project, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_autosave, 0, wxTOP, FromDIP(3));
     item_autosave->Add(item_autosave_interval, 0, wxLEFT, 0);
@@ -2166,6 +2185,8 @@ wxWindow* PreferencesDialog::create_ultra_page()
     sizer_page->Add(item_archive, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_archive_dir, 0, wxTOP | wxEXPAND, FromDIP(3));
     sizer_page->Add(item_archive_max, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(title_troubleshooting, 0, wxTOP | wxEXPAND, FromDIP(20));
+    sizer_page->Add(item_log_level, 0, wxTOP, FromDIP(3));
 
     page->SetSizer(sizer_page);
     page->Layout();

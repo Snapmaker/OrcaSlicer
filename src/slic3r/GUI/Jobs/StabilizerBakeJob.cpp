@@ -101,7 +101,7 @@ void StabilizerBakeJob::finalize(bool canceled, std::exception_ptr &eptr)
         obj_list->notify_instance_updated(obj_idx);
         obj_list->update_info_items(size_t(obj_idx));
     }
-    // The live setting went Off on the source (or stayed as it was, if asked to).
+    // The live setting went Off on the source.
     obj_list->refresh_object_settings(obj_idx);
     m_plater->changed_object(obj_idx);
     if (PartPlate *plate = plates.get_curr_plate())
@@ -115,8 +115,10 @@ void StabilizerBakeJob::finalize(bool canceled, std::exception_ptr &eptr)
         if (target->instances.size() < source->instances.size())
             summary += " " + _u8L("Copies of the part with another rotation or scale got no stabilizers; bake those separately.");
     }
-    if (m_options.turn_off_live)
-        summary += " " + _u8L("The object's live side stabilizers are now off.");
+    summary += " " + _u8L("The object's live side stabilizers are now off.");
+    if (m_result.tip_gap > m_result.sliced_tip_gap + EPSILON)
+        summary += " " + (boost::format(_u8L("The tips keep a %1% mm gap from the part (the slice used %2% mm).")) % m_result.tip_gap
+                          % m_result.sliced_tip_gap).str();
     if (! m_result.plan_report.unreachable.empty())
         summary += " " + (boost::format(_u8L("%1% painted stabilizer point(s) could not be reached.")) % m_result.plan_report.unreachable.size()).str();
     if (! m_result.mesh_report.unioned)

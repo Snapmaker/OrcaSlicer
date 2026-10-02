@@ -10,18 +10,10 @@
 
 namespace Slic3r {
 
-StabilizerBakeOptions stabilizer_bake_defaults(const PrintObjectConfig &config)
+double stabilizer_bake_gap(StabilizerBakePlacement placement, double sliced_gap)
 {
-    StabilizerBakeOptions opts;
-    opts.tip_diameter = std::max(STABILIZER_BAKE_MIN_TIP_DIAMETER, config.stabilizer_tip_diameter.value);
-    opts.tip_gap      = config.stabilizer_tip_gap.value;
-    return opts;
-}
-
-double stabilizer_bake_effective_gap(const StabilizerBakeOptions &options)
-{
-    const double gap = std::max(0., options.tip_gap);
-    return options.placement == StabilizerBakePlacement::PartOfObject ? std::max(gap, STABILIZER_BAKE_PART_MIN_GAP) : gap;
+    const double gap = std::max(0., sliced_gap);
+    return placement == StabilizerBakePlacement::PartOfObject ? std::max(gap, STABILIZER_BAKE_PART_MIN_GAP) : gap;
 }
 
 StabilizerBakeResult bake_stabilizers(const PrintObject &object, const StabilizerBakeOptions &options)
@@ -45,9 +37,11 @@ StabilizerBakeResult bake_stabilizers(const PrintObject &object, const Stabilize
         res.error = "side stabilizers are off for this object";
         return res;
     }
-    if (options.tip_diameter > 0.)
-        st.rings.tip_diameter = options.tip_diameter;
-    st.tip_gap           = stabilizer_bake_effective_gap(options);
+    // Exactly the settings of the slice, so the bake is the stabilizers the preview showed. The one
+    // exception is a part's tip gap, which never goes below STABILIZER_BAKE_PART_MIN_GAP: it only
+    // moves the tip cut out along the strut, and the planner does not read the gap at all.
+    res.sliced_tip_gap   = st.tip_gap;
+    st.tip_gap           = stabilizer_bake_gap(options.placement, st.tip_gap);
     res.tip_diameter     = st.rings.tip_diameter;
     res.tip_gap          = st.tip_gap;
     res.layer_height     = cfg.layer_height.value;
@@ -152,8 +146,7 @@ ModelObject *apply_stabilizer_bake(Model &model, ModelObject &source, const Stab
 
     // Not twice: the source would print its live stabilizers on top of the baked ones. Only the switch
     // goes; the other stabilizer settings stay for a later bake.
-    if (options.turn_off_live)
-        source.config.set_key_value("stabilizer_supports", new ConfigOptionEnum<StabilizerMode>(smOff));
+    source.config.set_key_value("stabilizer_supports", new ConfigOptionEnum<StabilizerMode>(smOff));
     return target;
 }
 

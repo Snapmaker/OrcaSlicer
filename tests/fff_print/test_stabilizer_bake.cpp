@@ -34,6 +34,7 @@
 
 using namespace Slic3r;
 using Catch::Matchers::WithinAbs;
+using Catch::Matchers::WithinRel;
 
 namespace {
 
@@ -492,6 +493,18 @@ TEST_CASE("Baked stabilizers are one closed mesh that slices like the live strut
         slice(b, pin_config("auto"));
         check(*b.print.objects().front(), "pin");
     }
+    // Small tip gaps: the cut moves out along the strut, nothing else. (From about 0.5 mm the live
+    // generator, which clips with the part grown by the gap, starts eating the pillar feet - it stand
+    // 1 mm off the part at the bed - and the two part ways; see the PR.)
+    for (const char *gap : { "0.15", "0.3" }) {
+        DYNAMIC_SECTION("the pin with a tip gap of " << gap << " mm")
+        {
+            Bench b;
+            add_pin(b.model);
+            slice(b, pin_config("auto", "15", gap));
+            check(*b.print.objects().front(), "pin, gap");
+        }
+    }
     SECTION("the owner's project")
     {
         Bench b;
@@ -515,8 +528,7 @@ TEST_CASE("Bake stabilizers as a separate object", "[StabilizerBake]")
             slice(b, config);
             const PrintObject &po = *b.print.objects().front();
 
-            StabilizerBakeOptions opts = stabilizer_bake_defaults(po.config());
-            CHECK_THAT(opts.tip_diameter, WithinAbs(1.0, 1e-9));
+            StabilizerBakeOptions opts;
             const StabilizerBakeResult res = bake_stabilizers(po, opts);
             REQUIRE(res.error.empty());
             CHECK(res.mesh_report.closed);
@@ -577,9 +589,8 @@ TEST_CASE("Bake stabilizers as a part of the object", "[StabilizerBake]")
     slice(b, pin_config("auto"));
     const PrintObject &po = *b.print.objects().front();
 
-    StabilizerBakeOptions opts = stabilizer_bake_defaults(po.config());
+    StabilizerBakeOptions opts;
     opts.placement = StabilizerBakePlacement::PartOfObject;
-    opts.tip_gap   = 0.;
     const StabilizerBakeResult res = bake_stabilizers(po, opts);
     REQUIRE(res.error.empty());
     // Parts of one object fuse where they touch: the tips stop short.
@@ -588,7 +599,6 @@ TEST_CASE("Bake stabilizers as a part of the object", "[StabilizerBake]")
     // The same stabilizers baked as an object, for comparison in the world.
     StabilizerBakeOptions sep = opts;
     sep.placement = StabilizerBakePlacement::SeparateObject;
-    sep.tip_gap   = res.tip_gap;
     const StabilizerBakeResult res_sep = bake_stabilizers(po, sep);
     REQUIRE(res_sep.error.empty());
 
@@ -619,7 +629,7 @@ TEST_CASE("Baked stabilizers survive a 3MF round trip", "[StabilizerBake][3mf]")
         Bench        b;
         ModelObject *src = add_pin(b.model);
         slice(b, pin_config("auto"));
-        const StabilizerBakeOptions opts = stabilizer_bake_defaults(b.print.objects().front()->config());
+        const StabilizerBakeOptions opts;
         const StabilizerBakeResult  res  = bake_stabilizers(*b.print.objects().front(), opts);
         REQUIRE(apply_stabilizer_bake(b.model, *src, res, opts) != nullptr);
         const size_t triangles = b.model.objects.back()->volumes.front()->mesh().its.indices.size();
@@ -646,8 +656,8 @@ TEST_CASE("Baked stabilizers survive a 3MF round trip", "[StabilizerBake][3mf]")
         Bench        b;
         ModelObject *src = add_pin(b.model);
         slice(b, pin_config("auto"));
-        StabilizerBakeOptions opts = stabilizer_bake_defaults(b.print.objects().front()->config());
-        opts.placement             = StabilizerBakePlacement::PartOfObject;
+        StabilizerBakeOptions opts;
+        opts.placement = StabilizerBakePlacement::PartOfObject;
         const StabilizerBakeResult res = bake_stabilizers(*b.print.objects().front(), opts);
         REQUIRE(apply_stabilizer_bake(b.model, *src, res, opts) != nullptr);
 
@@ -677,4 +687,91 @@ TEST_CASE("Objects whose side stabilizers a Bambu Studio export drops", "[Stabil
     print = pin_config("off");
     a->config.set_key_value("stabilizer_supports", new ConfigOptionEnum<StabilizerMode>(smAuto));
     CHECK(objects_with_live_stabilizers(model, print) == std::vector<std::string>{ "on by preset" });
+}
+
+// The owner saw a second set of stabilizers after baking with a much larger tip gap in the dialog than
+// the slice used. Re-slicing the same Print after a bake (as the plater does) prints exactly one set,
+// whatever gap the object was sliced with.
+TEST_CASE("Re-slicing after a bake prints one set of stabilizers", "[StabilizerBake]")
+{
+    for (int placement = 0; placement < 2; ++placement)
+        for (const char *gap : { "0", "2" }) {
+            DYNAMIC_SECTION("placement " << placement << ", sliced gap " << gap)
+            {
+                Bench        b;
+                ModelObject *src = add_pin(b.model);
+                const DynamicPrintConfig config = pin_config("auto", "15", gap);
+                slice(b, config);
+                StabilizerBakeOptions opts;
+                opts.placement = placement == 0 ? StabilizerBakePlacement::SeparateObject : StabilizerBakePlacement::PartOfObject;
+                const StabilizerBakeResult res = bake_stabilizers(*b.print.objects().front(), opts);
+                REQUIRE(res.error.empty());
+                REQUIRE(apply_stabilizer_bake(b.model, *src, res, opts) != nullptr);
+
+                slice(b, config);
+                double live = 0., supports = 0.;
+                size_t baked_objects = 0;
+                for (const PrintObject *po : b.print.objects()) {
+                    live += stabilizer_support_area(*po);
+                    if (po->model_object()->name == "pin stabilizers")
+                        ++baked_objects;
+                    for (const SupportLayer *sl : po->support_layers())
+                        supports += area_of(sl->support_islands);
+                }
+                INFO("live stabilizer area " << live << ", support area " << supports << ", baked objects " << baked_objects);
+                CHECK(live < 0.01);
+                CHECK(supports < 0.01);
+                CHECK(baked_objects == (placement == 0 ? 1u : 0u));
+            }
+        }
+}
+
+// The dialog shows the tip settings and cannot change them: the bake is planned and built with
+// exactly the stabilizer settings of the slice. A part keeps at least STABILIZER_BAKE_PART_MIN_GAP.
+TEST_CASE("The bake uses the stabilizer settings the object was sliced with", "[StabilizerBake]")
+{
+    for (const char *gap : { "0", "0.3" }) {
+        DYNAMIC_SECTION("sliced gap " << gap)
+        {
+            Bench b;
+            add_pin(b.model);
+            DynamicPrintConfig config = pin_config("auto", "15", gap);
+            config.set_deserialize_strict({ { "stabilizer_tip_diameter", "0.6" }, { "stabilizer_pillar_diameter", "3" } });
+            slice(b, config);
+            const PrintObject                     &po     = *b.print.objects().front();
+            const stabilizers::StabilizerSettings  st     = stabilizers::settings_of(po);
+            const std::vector<stabilizers::Strut>  struts = stabilizers::plan_struts(po);
+            const double                           sliced = std::atof(gap);
+
+            for (int placement = 0; placement < 2; ++placement) {
+                StabilizerBakeOptions opts;
+                opts.placement = placement == 0 ? StabilizerBakePlacement::SeparateObject : StabilizerBakePlacement::PartOfObject;
+                const StabilizerBakeResult res = bake_stabilizers(po, opts);
+                REQUIRE(res.error.empty());
+                INFO("placement " << placement);
+                CHECK_THAT(res.tip_diameter, WithinAbs(0.6, 1e-9));
+                CHECK_THAT(res.sliced_tip_gap, WithinAbs(sliced, 1e-9));
+                CHECK_THAT(res.tip_gap, WithinAbs(placement == 0 ? sliced : std::max(sliced, STABILIZER_BAKE_PART_MIN_GAP), 1e-9));
+                // The same struts the slice printed...
+                REQUIRE(res.struts.size() == struts.size());
+                for (size_t i = 0; i < struts.size(); ++i) {
+                    CHECK((res.struts[i].tip - struts[i].tip).norm() < 1e-9);
+                    CHECK_THAT(res.struts[i].run, WithinAbs(struts[i].run, 1e-9));
+                }
+                // ...built from the slice's settings (with the placement's gap): the same solid.
+                stabilizers::StabilizerSettings expect = st;
+                expect.tip_gap                         = res.tip_gap;
+                stabilizers::MeshReport rep;
+                stabilizers::stabilizer_mesh(struts, expect, {}, &rep);
+                CHECK_THAT(res.mesh_report.volume, WithinRel(rep.volume, 1e-6));
+                CHECK(res.mesh_report.triangles == rep.triangles);
+                // A separate object bakes what the slice printed, layer for layer.
+                if (placement == 0) {
+                    indexed_triangle_set mesh = stabilizers::stabilizer_mesh(struts, st);
+                    const Parity p = parity(stabilizers::outlines_of(po), st, struts, mesh);
+                    CHECK(p.xor_area < 0.005 * p.live);
+                }
+            }
+        }
+    }
 }

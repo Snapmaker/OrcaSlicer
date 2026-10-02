@@ -6835,6 +6835,39 @@ void ObjectList::bake_slice_to_mesh()
 //
 // tests/research_stabilizer_bake.md
 
+// The stabilizer settings of a model object as they stand now (its own, else the print preset's)
+// against those its PrintObject was sliced with. The menu gate used to read only the PrintObject, which
+// keeps the old settings until the plate is applied again: right after a bake (source switched Off) it
+// still offered a second bake, and a second set of stabilizers.
+static const ConfigOption* stabilizer_model_option(const ModelObject* mo, const char* key)
+{
+    if (const ConfigOption* opt = mo->config.option(key); opt != nullptr)
+        return opt;
+    return wxGetApp().preset_bundle != nullptr ? wxGetApp().preset_bundle->prints.get_edited_preset().config.option(key) : nullptr;
+}
+
+static bool stabilizers_baking_allowed(const PrintObject* po, const ModelObject* mo, bool* stale = nullptr)
+{
+    if (stale != nullptr)
+        *stale = false;
+    if (po == nullptr || mo == nullptr || po->config().stabilizer_supports.value == smOff)
+        return false;
+    const ConfigOption* mode = stabilizer_model_option(mo, "stabilizer_supports");
+    if (mode == nullptr || mode->getInt() == int(smOff))
+        return false;
+    for (const char* key : { "stabilizer_supports", "stabilizer_ring_spacing", "stabilizer_points_per_ring", "stabilizer_tip_diameter",
+                             "stabilizer_tip_gap", "stabilizer_pillar_diameter", "stabilizer_max_island_width" }) {
+        const ConfigOption* now    = stabilizer_model_option(mo, key);
+        const ConfigOption* sliced = po->config().option(key);
+        if (now != nullptr && sliced != nullptr && !(*now == *sliced)) {
+            if (stale != nullptr)
+                *stale = true;
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ObjectList::can_bake_stabilizers()
 {
     ObjectList* list = wxGetApp().obj_list();
@@ -6844,9 +6877,9 @@ bool ObjectList::can_bake_stabilizers()
     list->get_selection_indexes(obj_idxs, vol_idxs);
     if (obj_idxs.size() != 1)
         return false;
-    // The struts are planned from the layer outlines, so a slice is all it takes.
-    const PrintObject* po = baked_print_object_for(obj_idxs.front(), posSlice);
-    return po != nullptr && po->config().stabilizer_supports.value != smOff;
+    // The struts are planned from the layer outlines, so a slice is all it takes - one made with the
+    // object's current stabilizer settings.
+    return stabilizers_baking_allowed(baked_print_object_for(obj_idxs.front(), posSlice), list->object(obj_idxs.front()));
 }
 
 void ObjectList::bake_stabilizers()
@@ -6861,18 +6894,18 @@ void ObjectList::bake_stabilizers()
     const int obj_idx = obj_idxs.front();
 
     const PrintObject* po = baked_print_object_for(obj_idx, posSlice);
-    if (po == nullptr || po->config().stabilizer_supports.value == smOff) {
+    ModelObject* mo = object(obj_idx);
+    bool stale = false;
+    if (!stabilizers_baking_allowed(po, mo, &stale)) {
         // The menu gate should have caught this; say why, since the plate can go stale between the
         // menu opening and the click.
-        wxGetApp().notification_manager()->push_plater_warning_notification(
+        wxGetApp().notification_manager()->push_plater_warning_notification(stale ?
+            _u8L("The object's stabilizer settings changed since the plate was sliced. Slice the plate again before baking them.") :
             _u8L("Turn on the object's side stabilizers (Auto or Manual) and slice the plate before baking them."));
         return;
     }
 
     Plater* plater = wxGetApp().plater();
-    ModelObject* mo = object(obj_idx);
-    if (mo == nullptr)
-        return;
     const std::string name = mo->name.empty() ? std::string("object") : mo->name;
 
     // One part is shared by every instance, so it can only follow instances that share the sliced
@@ -6883,8 +6916,9 @@ void ObjectList::bake_stabilizers()
 
     StabilizerBakeOptions options;
     {
-        StabilizerBakeDialog dlg(wxGetApp().mainframe, from_u8(name), mode_label, stabilizer_bake_defaults(po->config()),
-                                 by_object, part_allowed);
+        // The tip settings are shown, not chosen: the bake uses exactly those of the slice.
+        StabilizerBakeDialog dlg(wxGetApp().mainframe, from_u8(name), mode_label, po->config().stabilizer_tip_diameter.value,
+                                 po->config().stabilizer_tip_gap.value, by_object, part_allowed);
         if (dlg.ShowModal() != wxID_OK)
             return;
         options = dlg.options();

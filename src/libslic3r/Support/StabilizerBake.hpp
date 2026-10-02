@@ -43,27 +43,23 @@ enum class StabilizerBakePlacement {
     PartOfObject,
 };
 
-// Bambu Studio's default thin-wall handling can drop a 0.8 mm tip; a baked tip is at least this wide.
+// Bambu Studio's default thin-wall handling can drop a tip thinner than this; the dialog says so.
 static constexpr double STABILIZER_BAKE_MIN_TIP_DIAMETER = 1.0;  // mm
 // A part of the same object fuses with the part it touches; its tips stop at least this far short.
 static constexpr double STABILIZER_BAKE_PART_MIN_GAP     = 0.15; // mm
 
+// The bake always uses the stabilizer settings the object was sliced with (tip diameter, tip gap,
+// pillar, rings, painted points): what is baked is what the preview showed. Only the placement is a
+// choice, and the source's live stabilizers are always switched off, so the two never print together.
 struct StabilizerBakeOptions
 {
-    StabilizerBakePlacement placement     = StabilizerBakePlacement::SeparateObject;
-    double                  tip_diameter  = STABILIZER_BAKE_MIN_TIP_DIAMETER;
-    double                  tip_gap       = 0.;
-    // Switch the source object's live stabilizers off once the bake is in.
-    bool                    turn_off_live = true;
-    int                     segments      = 24;
+    StabilizerBakePlacement placement = StabilizerBakePlacement::SeparateObject;
+    int                     segments  = 24;
 };
 
-// The dialog's starting values for an object: its own tip diameter, but never under the baked
-// minimum, and its own tip gap.
-StabilizerBakeOptions stabilizer_bake_defaults(const PrintObjectConfig &config);
-
-// The tip gap a placement actually uses: a part of the same object never touches the wall.
-double stabilizer_bake_effective_gap(const StabilizerBakeOptions &options);
+// The tip gap a placement bakes with, from the gap the object was sliced with: a part of the same
+// object never touches the wall, so it gets at least STABILIZER_BAKE_PART_MIN_GAP.
+double stabilizer_bake_gap(StabilizerBakePlacement placement, double sliced_gap);
 
 struct StabilizerBakeResult
 {
@@ -75,8 +71,11 @@ struct StabilizerBakeResult
     std::vector<stabilizers::Strut> struts;
     stabilizers::MeshReport  mesh_report;
     stabilizers::PlanReport  plan_report;
+    // The settings baked with: the slice's tip diameter, and its tip gap or, for a part, at least
+    // STABILIZER_BAKE_PART_MIN_GAP.
     double                   tip_diameter     = 0.;
     double                   tip_gap          = 0.;
+    double                   sliced_tip_gap   = 0.;
     double                   layer_height     = 0.;
     // The source's support filament, 1-based; 0 = the object's own.
     int                      support_filament = 0;
@@ -89,7 +88,7 @@ struct StabilizerBakeResult
 StabilizerBakeResult bake_stabilizers(const PrintObject &object, const StabilizerBakeOptions &options);
 
 // Puts a bake into `model`: a new object after `source`'s (SeparateObject) or a new part of `source`
-// (PartOfObject), and switches `source`'s live stabilizers off when options.turn_off_live. Returns
+// (PartOfObject), and switches `source`'s live stabilizers off. Returns
 // the new object, or `source` for a part; null when the result has no mesh.
 ModelObject *apply_stabilizer_bake(Model &model, ModelObject &source, const StabilizerBakeResult &result,
                                    const StabilizerBakeOptions &options);

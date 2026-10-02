@@ -45,12 +45,14 @@ add_executable(${_TEST_NAME}_tests
     app_update_check_tests.cpp
     bambu_studio_launcher_tests.cpp
     blender_launcher_tests.cpp
+    freecad_launcher_tests.cpp
     instance_routing_tests.cpp
     page_server_security_tests.cpp
     sentry_scrub_tests.cpp
     dual_nozzle_layout_tests.cpp
     nozzle_temp_rows_tests.cpp
     device_controls_tests.cpp
+    chamber_lights_tests.cpp
     filament_commands_tests.cpp
     ams_dual_layout_tests.cpp
     gizmo_selection_object_tests.cpp
@@ -59,6 +61,7 @@ add_executable(${_TEST_NAME}_tests
     # that run before it (hms_lookup_tests) call wxGetApp() whenever an app exists.
     theme_live_tests.cpp
     bambu_send_diagnosis_tests.cpp
+    win_firewall_tests.cpp
     # The crash-report scrubber is plain C++ with no library of its own; the test compiles
     # the very file the app does.
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/sentry_wrapper/SentryScrub.cpp
@@ -99,6 +102,8 @@ if (wxWidgets_FOUND)
     target_include_directories(${_TEST_NAME}_tests PRIVATE ${wxWidgets_INCLUDE_DIRS})
     target_compile_definitions(${_TEST_NAME}_tests PRIVATE ${wxWidgets_DEFINITIONS})
 endif ()
+# chamber_lights_tests.cpp reads the shipped resources/printers/*.json for each model's printer_series.
+target_compile_definitions(${_TEST_NAME}_tests PRIVATE SLIC3R_TEST_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources")
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")
 
 if (WIN32)

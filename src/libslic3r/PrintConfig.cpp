@@ -7181,6 +7181,104 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
 
+    // Side stabilizers: pinpoint struts on pillars that touch tall, thin parts on their sides
+    // (Support/Stabilizers.hpp).
+    def = this->add("stabilizer_supports", coBool);
+    def->label = L("Side stabilizers");
+    def->category = L("Support");
+    def->tooltip = L("Add thin struts that touch tall, slender parts on their sides with a small pinpoint tip, "
+                     "in rings up the part's height, and stand on the build plate next to it. They keep the part "
+                     "from wobbling while it prints and snap off at the tip afterwards. Printed as support, so "
+                     "supports must be enabled.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("stabilizer_ring_spacing", coFloat);
+    def->label = L("Stabilizer ring spacing");
+    def->category = L("Support");
+    def->tooltip = L("Height between two rings of side touch points. The first ring is this high above the plate.");
+    def->sidetext = "mm";
+    def->min = 2;
+    def->max = 200;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(15.));
+
+    def = this->add("stabilizer_points_per_ring", coInt);
+    def->label = L("Touch points per ring");
+    def->category = L("Support");
+    def->tooltip = L("How many struts touch the part in each ring, spread evenly around it. "
+                     "Every ring uses the same angles, so each pillar carries one strut per ring.");
+    def->min = 1;
+    def->max = 12;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(3));
+
+    def = this->add("stabilizer_tip_diameter", coFloat);
+    def->label = L("Stabilizer tip diameter");
+    def->category = L("Support");
+    def->tooltip = L("Diameter of the pinpoint tip where a strut touches the part. Smaller leaves a smaller mark "
+                     "but holds less; keep it at least about twice the line width.");
+    def->sidetext = "mm";
+    def->min = 0.3;
+    def->max = 5;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.8));
+
+    def = this->add("stabilizer_tip_gap", coFloat);
+    def->label = L("Stabilizer tip gap");
+    def->category = L("Support");
+    def->tooltip = L("Space left between each tip and the part. 0 makes the tips touch the part, which is what "
+                     "stabilizes it; a small gap leaves no mark but only catches the part once it starts to sway.");
+    def->sidetext = "mm";
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.));
+
+    def = this->add("stabilizer_pillar_diameter", coFloat);
+    def->label = L("Stabilizer pillar diameter");
+    def->category = L("Support");
+    def->tooltip = L("Diameter of the pillars that carry the tips down to the build plate. "
+                     "A pillar is never thinner than four support lines, two on each side.");
+    def->sidetext = "mm";
+    def->min = 1;
+    def->max = 15;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(2.));
+
+    def = this->add("stabilizer_max_island_width", coFloat);
+    def->label = L("Stabilize parts up to width");
+    def->category = L("Support");
+    def->tooltip = L("Only sections of the part narrower than this get touch points, so a wide base under a thin "
+                     "spire stays unmarked. 0 means every section.");
+    def->sidetext = "mm";
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(20.));
+
+    // FDM hollowing: an even-thickness shell around an empty cavity (FDMHollowing.hpp).
+    def = this->add("hollow_interior", coBool);
+    def->label = L("Hollow interior");
+    def->category = L("Strength");
+    def->tooltip = L("Print the part as a closed shell of even thickness with an empty cavity inside. The shell follows "
+                     "the surface in 3D, so sloped and curved faces get the same thickness as walls, unlike top and bottom "
+                     "shell layers. The cavity's ceiling is bridged. Can be set per part: a part's own setting "
+                     "overrides the object's.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("hollow_shell_thickness", coFloat);
+    def->label = L("Hollow shell thickness");
+    def->category = L("Strength");
+    def->tooltip = L("Thickness of the shell left around the cavity, measured into the part from its surface. "
+                     "A part has to be thicker than about twice this plus 4 mm to leave a cavity; the slicer warns "
+                     "about parts it could not hollow. Can be set per part.");
+    def->sidetext = "mm";
+    def->min = 0.5;
+    def->max = 50;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(3.));
+
     def = this->add("tree_support_with_infill", coBool);
     def->label = L("Tree support with infill");
     def->category = L("Support");

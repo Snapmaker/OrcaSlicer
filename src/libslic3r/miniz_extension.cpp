@@ -136,13 +136,6 @@ std::string path_utf8(const boost::filesystem::path &p)
 #endif
 }
 
-std::string strip_trailing_separators(std::string name)
-{
-    while (!name.empty() && (name.back() == '/' || name.back() == '\\'))
-        name.pop_back();
-    return name;
-}
-
 boost::filesystem::path normalize_dir_path(boost::filesystem::path p)
 {
     std::string s = p.generic_string();
@@ -315,6 +308,9 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
     // Pass 1: validate every entry. Any bad entry rejects the whole archive (D3) so a hostile
     // bundle cannot leave a partial install behind. Dest names are reserved so a staging
     // filename cannot collide with another entry (x.json.part vs x.json).
+    // Duplicate names (two entries, or "a\\b" and "a/b", that end up as the same path) are not
+    // an error: each is staged to its own .part file and committed in archive order, so the
+    // LAST entry in the archive wins, deterministically.
     for (mz_uint i = 0; i < num_entries; ++i) {
         if (!mz_zip_reader_file_stat(&archive, i, &stat)) {
             err = "failed to read archive entry";
@@ -325,8 +321,14 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
             BOOST_LOG_TRIVIAL(error) << "Unzip: " << err;
             return fail();
         }
-        const std::string name = strip_trailing_separators(stat.m_filename);
-        if (name.empty() || !untrusted::is_safe_archive_relative_path(name) ||
+        // Backslash separators, "./" prefixes, "a//b" and a trailing separator are normalised
+        // first; the result is then judged as strictly as ever. A bare "./" entry has nothing to
+        // extract. Two entries that normalise to the same name follow the duplicate rule below.
+        std::string name;
+        const untrusted::ArchiveEntryName verdict = untrusted::normalize_archive_entry_path(stat.m_filename, name);
+        if (verdict == untrusted::ArchiveEntryName::Skip)
+            continue;
+        if (verdict == untrusted::ArchiveEntryName::Reject ||
             !untrusted::is_path_within_root(dest_root, dest_root / entry_path(name))) {
             err = std::string("entry resolves outside the extraction root: ") + stat.m_filename;
             BOOST_LOG_TRIVIAL(error) << "Unzip: rejecting archive, " << err;
@@ -343,8 +345,10 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
             err = "failed to read archive entry";
             return fail();
         }
-        const std::string name      = strip_trailing_separators(stat.m_filename);
-        const fs::path    full_dest = dest_root / entry_path(name);
+        std::string name;
+        if (untrusted::normalize_archive_entry_path(stat.m_filename, name) != untrusted::ArchiveEntryName::Ok)
+            continue; // Skip: validated as such in pass 1 (a Reject never gets here)
+        const fs::path full_dest = dest_root / entry_path(name);
         try {
             if (stat.m_is_directory) {
                 if (!ensure_dirs(dest_root, full_dest, created_dirs, err))

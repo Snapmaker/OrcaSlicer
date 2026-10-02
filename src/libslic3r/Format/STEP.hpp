@@ -45,6 +45,12 @@ extern bool load_step(const char *path, Model *model,
                       StepIsUtf8Fn isUtf8Fn = nullptr,
                       long& mesh_face_num = *(new long(-1)));
 
+// Every solid of a STEP file tessellated the way load_step() does it and merged into one mesh, in
+// the file's own coordinates (millimetres; OCCT converts other units). Used where a STEP file
+// replaces the mesh of an existing part (the FreeCAD bridge). False, with `error` set, when the
+// file cannot be read or has no triangles.
+extern bool load_step_mesh(const char *path, TriangleMesh &mesh, double linear_defletion, double angle_defletion, std::string *error = nullptr);
+
 // Read the shapes of a STEP file WITHOUT tessellating them, named and ordered exactly the way
 // load_step() turns them into volumes: `plain` as with isSplitCompound = false, `split` as with
 // isSplitCompound = true. The STEP exporter uses it to recover the exact B-rep of a volume that

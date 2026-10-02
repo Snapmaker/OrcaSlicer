@@ -91,6 +91,43 @@ carries a visible notice saying so. This is the same posture as the FlashForge p
 decision (2026-09-08): acceptable while EdgeSlicer is non-commercial, and a question to revisit if
 that changes.
 
+### The server-settings file: FLASHNETWORK9.DAT (added after 2.4.2.0)
+
+The DLL is not enough on its own. `fnet_initlize(serverSettingsPath, ...)` reads FlashForge's
+server-settings file and returns `FNET_ERROR` (-1) without it. Tested against the shipped
+`FlashNetwork.dll` (it reports version **3.4.2**) with a small harness:
+
+| `serverSettingsPath` | return |
+|---|---|
+| missing file | -1 |
+| empty file | -1 |
+| `FLASHNETWORK7.DAT` (the older generation, Orca-Flashforge `main`) | -1 |
+| `FLASHNETWORK9.DAT` | **0** |
+| `nullptr` | 0 (not used: FlashForge's client always passes the file) |
+
+2.4.0 to 2.4.2.0 shipped the DLL without the file, so every install logged
+`initalize FlashNetwork failed` and the FlashForge Device tab (and its camera) never started.
+
+| | |
+|---|---|
+| Source | FlashForge's public **Orca-Flashforge** repository (AGPL-3.0), `resources/data/FLASHNETWORK9.DAT` on `develop`, `release_0730` and `release_0817` |
+| Git blob | `8175390575a6f105f96f196b1340bd58c44dfc68` |
+| Size | 7,482 bytes (header `FNETDAT-1.2.0`, the rest encrypted) |
+| sha256 | `889d2f9a3bb1801b37a1d2a13e8914aa9d9fe1b1fb5de34bb2a684c0fb3d88ce` |
+
+FlashForge commit it to an AGPL-3.0 repository with no carve-out for `resources/data`. It is kept
+out of this tree because it is generation-matched to the DLL (a 7 file fails the 3.4.2 library), so
+it travels with the DLL in the same ship folder: put it beside `FlashNetwork.dll` in
+`FLASHNETWORK_BIN_DIR` and CMake installs it to `resources/data`, where FlashForge's own client
+reads it. The self-hosted workflow's "Verify the shipped payloads landed" step fails the run if it
+is missing.
+
+At run time `ff_flashnetwork_dat_search_paths()` looks in `<resources>/data`, then beside the DLL,
+then in `<dll dir>/resources/data` (an Orca-Flashforge install picked with Locate), then
+`<data dir>/plugins`. A missing file is logged by name, and every failure step (LoadLibrary with
+its system error, a missing export, the version, or `fnet_initlize` with its return code and
+settings path) is logged at error level and shown on the Device tab.
+
 ## Where the library is looked for
 
 `ff_flashnetwork_search_paths()` returns, in order:

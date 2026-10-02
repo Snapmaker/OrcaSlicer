@@ -2099,16 +2099,25 @@ int GUI_App::install_plugin(std::string name, std::string package_name, InstallP
     mz_zip_archive_file_stat stat;
     BOOST_LOG_TRIVIAL(error) << boost::format("[install_plugin]: %1%, got %2% files")%__LINE__ %num_entries;
 
-    auto plugin_entry_basename = [&](const mz_zip_archive_file_stat &st) {
-        std::string dest_file;
+    // The entry name goes through the same normalisation as every confined extractor (backslash
+    // separators, "./" prefixes and "a//b" are accepted; ".." anywhere, absolute / drive / UNC /
+    // ':' names and look-alikes are not), then is flattened to its file name.
+    auto plugin_entry_name = [&](const mz_zip_archive_file_stat &st, std::string &leaf) {
+        std::string raw;
         if (st.m_is_utf8)
-            dest_file = st.m_filename;
+            raw = st.m_filename;
         else {
             std::string extra(1024, 0);
             size_t      n = mz_zip_reader_get_extra(&archive, st.m_file_index, extra.data(), extra.size());
-            dest_file     = decode(extra.substr(0, n), st.m_filename);
+            raw           = decode(extra.substr(0, n), st.m_filename);
         }
-        return boost::filesystem::path(dest_file).filename().string();
+        std::string normalized;
+        const untrusted::ArchiveEntryName verdict = untrusted::normalize_archive_entry_path(raw, normalized);
+        if (verdict == untrusted::ArchiveEntryName::Ok)
+            leaf = untrusted::archive_entry_leaf(normalized);
+        else if (verdict == untrusted::ArchiveEntryName::Reject)
+            BOOST_LOG_TRIVIAL(error) << "[install_plugin] unsafe entry name " << st.m_filename;
+        return verdict;
     };
     auto plugin_entry_ok = [&](const std::string &dest_file, const boost::filesystem::path &dest_path) {
         if (dest_file.empty() || !untrusted::is_safe_archive_relative_path(dest_file) ||
@@ -2143,9 +2152,12 @@ int GUI_App::install_plugin(std::string name, std::string package_name, InstallP
         }
         if (stat.m_uncomp_size == 0)
             continue;
-        const std::string dest_file = plugin_entry_basename(stat);
-        const auto        dest_path = plugin_folder / dest_file;
-        if (!plugin_entry_ok(dest_file, dest_path)) {
+        std::string dest_file;
+        const untrusted::ArchiveEntryName verdict = plugin_entry_name(stat, dest_file);
+        if (verdict == untrusted::ArchiveEntryName::Skip)
+            continue;
+        const auto dest_path = plugin_folder / dest_file;
+        if (verdict == untrusted::ArchiveEntryName::Reject || !plugin_entry_ok(dest_file, dest_path)) {
             close_zip_reader(&archive);
             if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
             return InstallStatusUnzipFailed;
@@ -2163,7 +2175,9 @@ int GUI_App::install_plugin(std::string name, std::string package_name, InstallP
                 continue;
             }
             if (stat.m_uncomp_size > 0) {
-                const std::string dest_file = plugin_entry_basename(stat);
+                std::string dest_file;
+                if (plugin_entry_name(stat, dest_file) != untrusted::ArchiveEntryName::Ok)
+                    continue;
                 auto dest_path = plugin_folder / dest_file;
                 try {
                     // symlink_status so an existing symlink, dangling or not, is replaced rather than written through.
@@ -2297,11 +2311,12 @@ int GUI_App::install_bambu_camera_component(InstallProgressFn pro_fn, WasCancell
             size_t n = mz_zip_reader_get_extra(&archive, stat.m_file_index, extra.data(), extra.size());
             entry = decode(extra.substr(0, n), stat.m_filename);
         }
-        const std::string leaf = fs::path(entry).filename().string();
-        if (leaf.empty() || !untrusted::is_safe_archive_relative_path(leaf)) {
-            BOOST_LOG_TRIVIAL(warning) << "[camera component] skipping entry with an unsafe name: " << stat.m_filename;
+        std::string normalized_entry;
+        if (untrusted::normalize_archive_entry_path(entry, normalized_entry) != untrusted::ArchiveEntryName::Ok) {
+            BOOST_LOG_TRIVIAL(warning) << "[camera component] skipping entry with an unsafe or empty name: " << stat.m_filename;
             continue;
         }
+        const std::string leaf = untrusted::archive_entry_leaf(normalized_entry);
         const bool is_source  = boost::iequals(leaf, want_source);
         // Bambu's package carries the filter's own dependencies next to it (live555 for LAN RTSP,
         // the agora_* / libaosl set for cloud streams); the filter fails to load without them, so
@@ -4443,10 +4458,13 @@ bool GUI_App::init_flashnetwork(const std::string &explicit_path)
 
     m_flashnetwork_path = found;
     if (!MultiComMgr::inst()->initalize(found, data_dir())) {
-        // Found but would not load: wrong architecture, a truncated copy, or a DLL that needs a
-        // runtime this machine lacks. The path is the useful half of the message.
-        m_flashnetwork_error = ff_flashnetwork_load_failed_text(found);
-        BOOST_LOG_TRIVIAL(error) << "FlashNetwork found but failed to initialize: " << found;
+        // Found but would not come up. MultiComMgr knows which step failed (load, missing export,
+        // version, or fnet_initlize itself - which is what a missing FLASHNETWORK9.DAT looks
+        // like) and has logged it; carry that reason into the Device tab text.
+        const std::string &reason = MultiComMgr::inst()->lastInitError();
+        m_flashnetwork_error = ff_flashnetwork_init_failed_text(found, reason);
+        BOOST_LOG_TRIVIAL(error) << "FlashNetwork found but failed to initialize: " << found
+                                 << (reason.empty() ? std::string() : ": " + reason);
         return false;
     }
 

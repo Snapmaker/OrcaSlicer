@@ -1,9 +1,12 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/AppConfig.hpp"
+#include "../../src/slic3r/GUI/PrintSelectKeys.hpp"
 
 #include <boost/filesystem.hpp>
 #include <boost/nowide/fstream.hpp>
+
+#include <string>
 
 using namespace Slic3r;
 
@@ -120,5 +123,80 @@ TEST_CASE("AppConfig::load never throws on a malformed trailing checksum/newline
         std::string error;
         REQUIRE_NOTHROW(error = load_conf_content(config, path, "}"));
         CHECK_FALSE(error.empty());
+    }
+}
+
+TEST_CASE("remember_print_action defaults to off", "[AppConfig][PrintSelectKeys]")
+{
+    AppConfig config;
+    CHECK(config.get("remember_print_action") == "false");
+    CHECK_FALSE(config.get_bool("remember_print_action"));
+    CHECK(config.get("last_print_action").empty());
+}
+
+TEST_CASE("Print-action preference keys round-trip; unknown keys fall back to the default", "[PrintSelectKeys]")
+{
+    using namespace Slic3r::GUI::PrintSelectKeys;
+
+    SECTION("persisted key strings are pinned so a rename cannot silently break saved settings")
+    {
+        CHECK(std::string(key(ePrintAll)) == "print_all");
+        CHECK(std::string(key(ePrintPlate)) == "print_plate");
+        CHECK(std::string(key(eExportSlicedFile)) == "export_sliced_file");
+        CHECK(std::string(key(eExportGcode)) == "export_gcode");
+        CHECK(std::string(key(eSendGcode)) == "send_gcode");
+        CHECK(std::string(key(eSendToPrinter)) == "send_to_printer");
+        CHECK(std::string(key(eSendToPrinterAll)) == "send_to_printer_all");
+        CHECK(std::string(key(eExportAllSlicedFile)) == "export_all_sliced_file");
+        CHECK(std::string(key(ePrintMultiMachine)) == "print_multi_machine");
+        CHECK(std::string(key(eUploadGcode)).empty());
+    }
+
+    SECTION("every persisted action round-trips through its string key, never the enum integer")
+    {
+        const int actions[] = {ePrintAll,           ePrintPlate,        eExportSlicedFile, eExportGcode, eSendGcode,
+                               eSendToPrinter,      eSendToPrinterAll,  eExportAllSlicedFile, ePrintMultiMachine};
+        for (int action : actions) {
+            DYNAMIC_SECTION("action " << action)
+            {
+                const char *k = key(action);
+                REQUIRE(k != nullptr);
+                REQUIRE_FALSE(std::string(k).empty());
+                CHECK(std::string(k) != std::to_string(action));
+                int parsed = -1;
+                REQUIRE(from_key(std::string(k), parsed));
+                CHECK(parsed == action);
+            }
+        }
+    }
+
+    SECTION("only the print-host action needs a print host; export actions never do")
+    {
+        CHECK(requires_print_host(eSendGcode));
+        CHECK_FALSE(requires_print_host(eExportGcode));
+        CHECK_FALSE(requires_print_host(eExportSlicedFile));
+        CHECK_FALSE(requires_print_host(eExportAllSlicedFile));
+        CHECK_FALSE(requires_print_host(ePrintPlate));
+        CHECK_FALSE(requires_print_host(ePrintMultiMachine));
+    }
+
+    SECTION("eUploadGcode has no dropdown entry and no persisted key")
+    {
+        CHECK(std::string(key(eUploadGcode)).empty());
+        int parsed = 42;
+        CHECK_FALSE(from_key("", parsed));
+        CHECK(parsed == 42);
+    }
+
+    SECTION("unknown, empty, or not-offered keys fall back to the computed default")
+    {
+        const int third_party[] = {eSendGcode, eExportSlicedFile, eExportAllSlicedFile, eExportGcode};
+        const size_t n          = sizeof(third_party) / sizeof(third_party[0]);
+        CHECK(resolve_or_default("export_sliced_file", third_party, n, eSendGcode) == eExportSlicedFile);
+        CHECK(resolve_or_default("print_multi_machine", third_party, n, eSendGcode) == eSendGcode);
+        CHECK(resolve_or_default("not_a_real_action", third_party, n, ePrintPlate) == ePrintPlate);
+        CHECK(resolve_or_default("", third_party, n, ePrintPlate) == ePrintPlate);
+        CHECK(resolve_or_default("1", third_party, n, ePrintPlate) == ePrintPlate);
+        CHECK(resolve_or_default("4", third_party, n, ePrintPlate) == ePrintPlate);
     }
 }

@@ -3390,10 +3390,18 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 dest_file = dest_file.substr(found + AUXILIARY_STR_LEN);
             else
                 return;
-            // zip-slip: an entry named "Auxiliaries/../../x" must not leave the temp folder.
-            if (!untrusted::is_safe_archive_relative_path(dest_file)) {
-                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping auxiliary entry with an unsafe path: " << stat.m_filename;
-                return;
+            // zip-slip: an entry named "Auxiliaries/../../x" must not leave the temp folder. Names
+            // are normalised first (backslashes, "./", "a//b") like every confined extractor's.
+            {
+                std::string normalized;
+                const untrusted::ArchiveEntryName verdict = untrusted::normalize_archive_entry_path(dest_file, normalized);
+                if (verdict == untrusted::ArchiveEntryName::Skip)
+                    return;
+                if (verdict == untrusted::ArchiveEntryName::Reject) {
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping auxiliary entry with an unsafe path: " << stat.m_filename;
+                    return;
+                }
+                dest_file = std::move(normalized);
             }
 
             if (dest_file.find('/') != std::string::npos) {
@@ -3419,9 +3427,16 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
     {
         if (stat.m_uncomp_size > 0) {
             std::string src_file = decode_path(stat.m_filename);
-            if (!untrusted::is_safe_archive_relative_path(src_file)) {
-                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping entry with an unsafe path: " << stat.m_filename;
-                return;
+            {
+                std::string normalized;
+                const untrusted::ArchiveEntryName verdict = untrusted::normalize_archive_entry_path(src_file, normalized);
+                if (verdict == untrusted::ArchiveEntryName::Skip)
+                    return;
+                if (verdict == untrusted::ArchiveEntryName::Reject) {
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping entry with an unsafe path: " << stat.m_filename;
+                    return;
+                }
+                src_file = std::move(normalized);
             }
             // BBS: use backup path
             //aux directory from model

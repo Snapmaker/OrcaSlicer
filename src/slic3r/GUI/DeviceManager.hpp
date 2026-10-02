@@ -688,6 +688,13 @@ public:
     /* lights */
     LIGHT_EFFECT chamber_light;
     LIGHT_EFFECT work_light;
+    // The H2 series has a second chamber light (lights_report node "chamber_light2"); a toggle has
+    // to reach both (ChamberLights.hpp).
+    LIGHT_EFFECT chamber_light2 { LIGHT_EFFECT_UNKOWN };
+    bool         chamber_light2_reported { false };
+    bool         has_two_chamber_lights() const;
+    // What the light switch shows: the chamber light, or on when either of the H2's two is.
+    LIGHT_EFFECT chamber_light_state() const;
     std::string light_effect_str(LIGHT_EFFECT effect);
     LIGHT_EFFECT light_effect_parse(std::string effect_str);
 

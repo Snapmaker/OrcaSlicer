@@ -300,6 +300,8 @@ set(lisbslic3r_sources
     GCodeReader.hpp
     GCode/RetractWhenCrossingPerimeters.cpp
     GCode/RetractWhenCrossingPerimeters.hpp
+    GCode/TimelapsePosPicker.cpp
+    GCode/TimelapsePosPicker.hpp
     GCode/PreciseSeam.cpp
     GCode/PreciseSeam.hpp
     GCode/SeamPlacer.cpp

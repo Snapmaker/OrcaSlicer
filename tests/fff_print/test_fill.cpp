@@ -924,6 +924,7 @@ TEST_CASE("Support ironing spacing of 0 is clamped", "[Fill][Ironing]")
         config.set_deserialize_strict({{"enable_support", "1"},
                                        {"support_type", "normal(auto)"},
                                        {"support_style", "grid"},
+                                       {"support_on_build_plate_only", "0"},
                                        {"support_interface_top_layers", "2"},
                                        {"support_ironing", "1"},
                                        {"support_ironing_pattern", "concentric"},
@@ -932,9 +933,13 @@ TEST_CASE("Support ironing spacing of 0 is clamped", "[Fill][Ironing]")
                                        {"initial_layer_print_height", 0.2}});
         Print print;
         Model model;
-        TriangleMesh cube = make_cube(10, 10, 4);
-        cube.translate(0.f, 0.f, 4.f);
-        Slic3r::Test::init_print({cube}, print, model, config, false);
+        // init_print() calls ensure_on_bed(), so a translated cube would sit on the plate
+        // and never grow supports. A short pillar with a larger slab still has overhangs.
+        TriangleMesh mesh = make_cube(4., 4., 8.);
+        TriangleMesh slab = make_cube(12., 12., 3.);
+        slab.translate(-4.f, -4.f, 8.f);
+        mesh.merge(slab);
+        Slic3r::Test::init_print({mesh}, print, model, config, false);
         print.process();
         REQUIRE_FALSE(print.objects().front()->support_layers().empty());
         return ironing_extent(print);

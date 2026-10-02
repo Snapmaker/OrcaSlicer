@@ -2,10 +2,15 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/Utils/MacDarkMode.hpp"
 #include "slic3r/Utils/LoginUserAgent.hpp"
+#include "StateColor.hpp"
+#include "libslic3r/Utils.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <sstream>
+#include <boost/filesystem/path.hpp>
 #include <boost/log/trivial.hpp>
+#include <boost/nowide/fstream.hpp>
 
 #include <wx/webviewarchivehandler.h>
 #include <wx/webviewfshandler.h>
@@ -559,6 +564,12 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url, wxStr
 #endif
         } // script_bridge
         webView->EnableContextMenu(true);
+        // Snapmaker's Flutter pages follow the slicer's dark mode (ApplyFlutterTheme). Bound on the
+        // view itself, so it runs ahead of the hosts' handlers, which sit on their windows.
+        webView->Bind(wxEVT_WEBVIEW_LOADED, [webView](wxWebViewEvent &evt) {
+            evt.Skip();
+            WebView::ApplyFlutterTheme(webView);
+        });
     } else {
         BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__ << ": failed. Use fake web view.";
         Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL, "bury_point_create webview fail and use fakewebview", BP_WEB_VIEW);
@@ -639,9 +650,63 @@ void WebView::RecreateAll()
             Slic3r::current_login_ua_platform(), dark,
             Slic3r::GUI::wxGetApp().current_language_code().ToStdString(),
             "SM-Slicer", SLIC3R_VERSION)));
-        if (std::find(g_no_theme_reload.begin(), g_no_theme_reload.end(), webView) == g_no_theme_reload.end())
+        // A Flutter page would come back light anyway (the app forces its light theme) and a
+        // reload loses its state: it switches in place.
+        if (IsFlutterPage(webView))
+            WebView::ApplyFlutterTheme(webView);
+        else if (std::find(g_no_theme_reload.begin(), g_no_theme_reload.end(), webView) == g_no_theme_reload.end())
             webView->Reload();
     }
+}
+
+bool WebView::IsFlutterPage(wxWebView *webView)
+{
+    if (webView == nullptr)
+        return false;
+    const wxString url = webView->GetCurrentURL();
+    return url.Contains("/web/flutter_web/") && Slic3r::GUI::wxGetApp().is_own_page_url(url.ToStdString(wxConvUTF8));
+}
+
+void WebView::ApplyFlutterTheme(wxWebView *webView)
+{
+    if (!IsFlutterPage(webView))
+        return;
+    if (!Slic3r::GUI::wxGetApp().dark_mode()) {
+        // Never darkened (the script is not there) or switched back to light.
+        RunScript(webView, "window.edgeFlutterDark && window.edgeFlutterDark(null);");
+        return;
+    }
+
+    static wxString script;
+    if (script.empty()) {
+        const boost::filesystem::path path = boost::filesystem::path(Slic3r::resources_dir()) / "web" / "include" / "flutter_dark.js";
+        std::string                   text;
+        boost::nowide::ifstream       in(path.string(), std::ios::binary);
+        if (in) {
+            std::ostringstream ss;
+            ss << in.rdbuf();
+            text = ss.str();
+        }
+        if (text.empty()) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": cannot read " << path.string();
+            return;
+        }
+        script = wxString::FromUTF8(text);
+    }
+
+    // The slicer's own dark colours (a theme pack's, when one is active): the page's white goes
+    // to the window background and its black to the text colour.
+    wxColour bg = StateColor::darkModeColorFor(wxColour("#FFFFFF"));
+    wxColour fg = StateColor::darkModeColorFor(wxColour("#262E30"));
+    auto luma = [](const wxColour &c) { return 0.2126 * c.Red() + 0.7152 * c.Green() + 0.0722 * c.Blue(); };
+    if (!bg.IsOk() || !fg.IsOk() || luma(bg) + 64 > luma(fg)) {
+        // A theme whose colours would not make a readable dark page: the stock dark ones.
+        bg = wxColour("#2D2D31");
+        fg = wxColour("#EFEFF0");
+    }
+    const wxString call = wxString::Format("\nwindow.edgeFlutterDark({bg: '%s', fg: '%s'});",
+                                           bg.GetAsString(wxC2S_HTML_SYNTAX), fg.GetAsString(wxC2S_HTML_SYNTAX));
+    RunScript(webView, script + call);
 }
 
 void WebView::SetReloadOnThemeChange(wxWebView *webView, bool reload)

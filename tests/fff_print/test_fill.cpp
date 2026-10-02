@@ -4,6 +4,7 @@
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <utility>
 
 #include "libslic3r/AABBTreeLines.hpp"
 #include "libslic3r/ClipperUtils.hpp"
@@ -827,4 +828,117 @@ TEST_CASE("Gyroid multiline-1 waves stay pinned and cover the contour edge", "[F
     };
     for (const auto &xy : pins_x)
         pin_ok(pathsX, xy[0], xy[1], pin_tol);
+}
+
+// Ironing path count and total length in mm, over the object's fills and its support fills.
+static std::pair<size_t, double> ironing_extent(const Print &print)
+{
+    size_t paths  = 0;
+    double length = 0.;
+    auto   accumulate = [&](const ExtrusionEntityCollection &fills) {
+        for (const ExtrusionEntity *entity : fills.flatten().entities)
+            if (entity->role() == erIroning) {
+                ++paths;
+                length += unscale<double>(entity->length());
+            }
+    };
+    for (const Layer *layer : print.objects().front()->layers())
+        for (const LayerRegion *region : layer->regions())
+            accumulate(region->fills);
+    for (const SupportLayer *support_layer : print.objects().front()->support_layers())
+        accumulate(support_layer->support_fills);
+    return {paths, length};
+}
+
+TEST_CASE("Concentric fill with zero or invalid spacing returns without hanging", "[Fill][Regression]")
+{
+    // CLI / 3MF can still load ironing_spacing = 0 (or a negative). The inset loop in
+    // FillConcentric never shrinks the region then, so it would run forever. Tiny positive
+    // values still make progress; the clamp in make_ironing / SupportParameters is what
+    // turns those into IRONING_SPACING_MIN before this filler sees them.
+    const double spacing = GENERATE(0., -0.1);
+    const bool   arachne = GENERATE(false, true);
+    CAPTURE(spacing, arachne);
+
+    std::unique_ptr<Fill> filler(Fill::new_from_type(ipConcentric));
+    filler->spacing      = spacing;
+    filler->bounding_box = BoundingBox(Point(0, 0), Point::new_scale(20, 20));
+    PrintConfig       print_config;
+    PrintObjectConfig print_object_config;
+    filler->print_config        = &print_config;
+    filler->print_object_config = &print_object_config;
+
+    FillParams params;
+    params.density      = 1.f;
+    params.use_arachne  = arachne;
+    params.layer_height = 0.2;
+    Surface surface(stTop, ExPolygon({Point(0, 0), Point::new_scale(20, 0),
+                                      Point::new_scale(20, 20), Point::new_scale(0, 20)}));
+
+    if (arachne) {
+        CHECK(filler->fill_surface_arachne(&surface, params).empty());
+    } else {
+        CHECK(filler->fill_surface(&surface, params).empty());
+    }
+}
+
+TEST_CASE("Ironing spacing of 0 is clamped", "[Fill][Ironing]")
+{
+    // Edge has no filament_ironing_spacing, so only the process-level option is exercised.
+    const std::string pattern = GENERATE("rectilinear", "concentric");
+    const double      spacing = GENERATE(0., -0.1, 0.001);
+    CAPTURE(pattern, spacing);
+
+    auto ironing_for = [&pattern](double line_spacing) {
+        DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+        config.set_deserialize_strict({{"ironing_type", "top"},
+                                       {"ironing_pattern", pattern},
+                                       {"ironing_spacing", line_spacing},
+                                       {"layer_height", 0.2},
+                                       {"initial_layer_print_height", 0.2}});
+        Print print;
+        Model model;
+        Slic3r::Test::init_print({make_cube(20, 20, 6)}, print, model, config, false);
+        print.process();
+        return ironing_extent(print);
+    };
+
+    const std::pair<size_t, double> clamped = ironing_for(spacing);
+    const std::pair<size_t, double> minimum = ironing_for(IRONING_SPACING_MIN);
+    REQUIRE(minimum.first > 0);
+    CHECK(clamped.first == minimum.first);
+    CHECK(clamped.second == Approx(minimum.second));
+}
+
+TEST_CASE("Support ironing spacing of 0 is clamped", "[Fill][Ironing]")
+{
+    const double spacing = GENERATE(0., -0.1, 0.001);
+    CAPTURE(spacing);
+
+    auto ironing_for = [](double line_spacing) {
+        DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+        config.set_deserialize_strict({{"enable_support", "1"},
+                                       {"support_type", "normal(auto)"},
+                                       {"support_style", "grid"},
+                                       {"support_interface_top_layers", "2"},
+                                       {"support_ironing", "1"},
+                                       {"support_ironing_pattern", "concentric"},
+                                       {"support_ironing_spacing", line_spacing},
+                                       {"layer_height", 0.2},
+                                       {"initial_layer_print_height", 0.2}});
+        Print print;
+        Model model;
+        TriangleMesh cube = make_cube(10, 10, 4);
+        cube.translate(0.f, 0.f, 4.f);
+        Slic3r::Test::init_print({cube}, print, model, config, false);
+        print.process();
+        REQUIRE_FALSE(print.objects().front()->support_layers().empty());
+        return ironing_extent(print);
+    };
+
+    const std::pair<size_t, double> clamped = ironing_for(spacing);
+    const std::pair<size_t, double> minimum = ironing_for(IRONING_SPACING_MIN);
+    REQUIRE(minimum.first > 0);
+    CHECK(clamped.first == minimum.first);
+    CHECK(clamped.second == Approx(minimum.second));
 }

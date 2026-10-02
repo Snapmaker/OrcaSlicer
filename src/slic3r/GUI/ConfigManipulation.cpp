@@ -233,7 +233,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
     }
 
     //BBS: ironing_spacing shouldn't be too small or equal to zero
-    if (config->opt_float("ironing_spacing") < 0.05)
+    if (config->opt_float("ironing_spacing") < IRONING_SPACING_MIN)
     {
         const wxString msg_text = _(L("Too small ironing spacing.\nReset to 0.1."));
         MessageDialog dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);
@@ -244,7 +244,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
     }
-    if (config->opt_float("support_ironing_spacing") < 0.05)
+    if (config->opt_float("support_ironing_spacing") < IRONING_SPACING_MIN)
     {
         const wxString msg_text = _(L("Too small ironing spacing.\nReset to 0.1."));
         MessageDialog dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);

@@ -4855,7 +4855,7 @@ static inline LocalZPathHeightStats collect_local_z_path_height_stats(const Extr
     return stats;
 }
 
-static inline LocalZPathHeightStats collect_local_z_path_height_stats(const ExtrusionEntitiesPtr& source)
+static inline LocalZPathHeightStats collect_local_z_path_height_stats(const std::vector<const ExtrusionEntity*>& source)
 {
     LocalZPathHeightStats stats;
     for (const ExtrusionEntity* entity : source)
@@ -4863,6 +4863,12 @@ static inline LocalZPathHeightStats collect_local_z_path_height_stats(const Extr
             collect_local_z_path_height_stats(*entity, stats);
     finalize_local_z_path_height_stats(stats);
     return stats;
+}
+
+static inline LocalZPathHeightStats collect_local_z_path_height_stats(const ExtrusionEntitiesPtr& source)
+{
+    std::vector<const ExtrusionEntity*> consts(source.begin(), source.end());
+    return collect_local_z_path_height_stats(consts);
 }
 
 static inline Polylines collect_local_z_polylines(const ExtrusionEntityCollection& source)
@@ -8449,7 +8455,7 @@ static std::unique_ptr<EdgeGrid::Grid> calculate_layer_edge_grid(const Layer& la
 }
 
 std::string GCode::extrude_loop(
-    ExtrusionLoop loop, std::string description, double speed, const ExtrusionEntitiesPtr& region_perimeters, const Point* start_point,
+    ExtrusionLoop loop, std::string description, double speed, const ConstExtrusionEntitiesPtr& region_perimeters, const Point* start_point,
     const WipeInwardSupport* wipe_support)
 {
     // get a copy; don't modify the orientation of the original loop object otherwise
@@ -8786,11 +8792,11 @@ std::string GCode::extrude_multi_path(ExtrusionMultiPath multipath, std::string 
     return gcode;
 }
 
-std::string GCode::extrude_entity(const ExtrusionEntity&      entity,
-                                  std::string                 description,
-                                  double                      speed,
-                                  const ExtrusionEntitiesPtr& region_perimeters,
-                                  const WipeInwardSupport*    wipe_support)
+std::string GCode::extrude_entity(const ExtrusionEntity&            entity,
+                                  std::string                       description,
+                                  double                            speed,
+                                  const ConstExtrusionEntitiesPtr&  region_perimeters,
+                                  const WipeInwardSupport*          wipe_support)
 {
     if (const ExtrusionPath* path = dynamic_cast<const ExtrusionPath*>(&entity))
         return this->extrude_path(*path, description, speed);
@@ -8864,23 +8870,35 @@ std::string GCode::extrude_perimeters(const Print&                              
 // Chain the paths hierarchically by a greedy algorithm to minimize a travel distance.
 std::string GCode::extrude_infill(const Print& print, const std::vector<ObjectByExtruder::Island::Region>& by_region, bool ironing)
 {
-    std::string          gcode;
-    ExtrusionEntitiesPtr extrusions;
-    const char*          extrusion_name = ironing ? "ironing" : "infill";
+    std::string                                   gcode;
+    ConstExtrusionEntitiesPtr                     extrusions;
+    std::vector<std::unique_ptr<ExtrusionEntity>> reversed;
+    const char*                                   extrusion_name = ironing ? "ironing" : "infill";
     for (const ObjectByExtruder::Island::Region& region : by_region)
         if (!region.infills.empty()) {
             extrusions.clear();
             extrusions.reserve(region.infills.size());
-            for (ExtrusionEntity* ee : region.infills)
+            for (const ExtrusionEntity* ee : region.infills)
                 if ((ee->role() == erIroning) == ironing)
                     extrusions.emplace_back(ee);
             if (!extrusions.empty()) {
                 m_config.apply(print.get_print_region(&region - &by_region.front()).config());
-                chain_and_reorder_extrusion_entities(extrusions, &m_last_pos);
+                reversed.clear();
+                chain_and_reorder_extrusion_entities(extrusions, m_last_pos, reversed);
+                // The reversed copies are in chain order.
+                auto next_reversed = reversed.begin();
                 for (const ExtrusionEntity* fill : extrusions) {
+                    ExtrusionEntity* own_copy = next_reversed != reversed.end() && next_reversed->get() == fill ?
+                                                    (next_reversed++)->get() :
+                                                    nullptr;
                     auto* eec = dynamic_cast<const ExtrusionEntityCollection*>(fill);
                     if (eec) {
-                        for (ExtrusionEntity* ee : eec->chained_path_from(m_last_pos).entities)
+                        // A reversed copy is owned here and can be moved from.
+                        ExtrusionEntityCollection chained = own_copy ? std::move(static_cast<ExtrusionEntityCollection&>(*own_copy)) :
+                                                                       ExtrusionEntityCollection(*eec);
+                        if (!chained.no_sort)
+                            chain_and_reorder_extrusion_entities(chained.entities, &m_last_pos);
+                        for (ExtrusionEntity* ee : chained.entities)
                             gcode += this->extrude_entity(*ee, extrusion_name);
                     } else
                         gcode += this->extrude_entity(*fill, extrusion_name);
@@ -8899,9 +8917,9 @@ std::string GCode::extrude_support(const ExtrusionEntityCollection& support_fill
 
     std::string gcode;
     if (!support_fills.entities.empty()) {
-        ExtrusionEntitiesPtr extrusions;
+        ConstExtrusionEntitiesPtr extrusions;
         extrusions.reserve(support_fills.entities.size());
-        for (ExtrusionEntity* ee : support_fills.entities) {
+        for (const ExtrusionEntity* ee : support_fills.entities) {
             const auto role = ee->role();
             if ((role == support_extrusion_role) || (support_extrusion_role == erMixed && role != erIroning)) {
                 extrusions.emplace_back(ee);
@@ -8910,7 +8928,11 @@ std::string GCode::extrude_support(const ExtrusionEntityCollection& support_fill
         if (extrusions.empty())
             return gcode;
 
-        chain_and_reorder_extrusion_entities(extrusions, &m_last_pos);
+        // Keep reversed clones alive for the whole emit loop. Do not add Orca's
+        // no_sort gate here: Edge always chained support, and first-export G-code
+        // must stay byte-identical to main.
+        std::vector<std::unique_ptr<ExtrusionEntity>> reversed;
+        chain_and_reorder_extrusion_entities(extrusions, m_last_pos, reversed);
 
         const double support_speed           = this->process_flow_value(m_config.support_speed);
         const double support_interface_speed = this->process_flow_value(m_config.support_interface_speed);
@@ -11043,8 +11065,8 @@ const std::vector<GCode::ObjectByExtruder::Island::Region>& GCode::ObjectByExtru
         // Now we are going to iterate through perimeters and infills and pick ones that are supposed to be printed
         // References are used so that we don't have to repeat the same code
         for (int iter = 0; iter < 2; ++iter) {
-            const ExtrusionEntitiesPtr& entities = (iter ? reg.infills : reg.perimeters);
-            ExtrusionEntitiesPtr& target_eec = (iter ? by_region_per_copy_cache.back().infills : by_region_per_copy_cache.back().perimeters);
+            const ConstExtrusionEntitiesPtr& entities = (iter ? reg.infills : reg.perimeters);
+            ConstExtrusionEntitiesPtr& target_eec = (iter ? by_region_per_copy_cache.back().infills : by_region_per_copy_cache.back().perimeters);
             const std::vector<const WipingExtrusions::ExtruderPerCopy*>& overrides = (iter ? reg.infills_overrides :
                                                                                              reg.perimeters_overrides);
 
@@ -11083,7 +11105,7 @@ void GCode::ObjectByExtruder::Island::Region::append(const Type                 
 {
     // We are going to manipulate either perimeters or infills, exactly in the same way. Let's create pointers to the proper structure to
     // not repeat ourselves:
-    ExtrusionEntitiesPtr*                                  perimeters_or_infills;
+    ConstExtrusionEntitiesPtr*                             perimeters_or_infills;
     std::vector<const WipingExtrusions::ExtruderPerCopy*>* perimeters_or_infills_overrides;
 
     switch (type) {
@@ -11106,7 +11128,7 @@ void GCode::ObjectByExtruder::Island::Region::append(const Type                 
         for (auto* ee : eec->entities)
             perimeters_or_infills->emplace_back(ee);
     } else
-        perimeters_or_infills->emplace_back(const_cast<ExtrusionEntityCollection*>(eec));
+        perimeters_or_infills->emplace_back(eec);
 
     if (copies_extruder != nullptr) {
         // Don't reallocate overrides if not needed.

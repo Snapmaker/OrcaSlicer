@@ -435,15 +435,16 @@ private:
     std::string     preamble();
     // BBS
     std::string     change_layer(coordf_t print_z);
+    using ConstExtrusionEntitiesPtr = std::vector<const ExtrusionEntity*>;
     // Orca: pass the complete collection of region perimeters to the extrude loop to check whether the wipe before external loop
     // should be executed
     std::string     extrude_entity(const ExtrusionEntity &entity, std::string description = "", double speed = -1.,
-                                   const ExtrusionEntitiesPtr& region_perimeters = ExtrusionEntitiesPtr(),
+                                   const ConstExtrusionEntitiesPtr& region_perimeters = {},
                                    const WipeInwardSupport* wipe_support = nullptr);
     // Orca: pass the complete collection of region perimeters to the extrude loop to check whether the wipe before external loop
     // should be executed
     std::string     extrude_loop(ExtrusionLoop loop, std::string description, double speed = -1.,
-                                 const ExtrusionEntitiesPtr& region_perimeters = ExtrusionEntitiesPtr(),
+                                 const ConstExtrusionEntitiesPtr& region_perimeters = {},
                                  const Point* start_point = nullptr, const WipeInwardSupport* wipe_support = nullptr);
     std::string     extrude_multi_path(ExtrusionMultiPath multipath, std::string description = "", double speed = -1.);
     std::string     extrude_path(ExtrusionPath path, std::string description = "", double speed = -1.);
@@ -475,10 +476,9 @@ private:
         {
             struct Region {
             	// Non-owned references to LayerRegion::perimeters::entities
-            	// std::vector<const ExtrusionEntity*> would be better here, but there is no way in C++ to convert from std::vector<T*> std::vector<const T*> without copying.
-                ExtrusionEntitiesPtr perimeters;
+                ConstExtrusionEntitiesPtr perimeters;
             	// Non-owned references to LayerRegion::fills::entities
-                ExtrusionEntitiesPtr infills;
+                ConstExtrusionEntitiesPtr infills;
 
                 std::vector<const WipingExtrusions::ExtruderPerCopy*> infills_overrides;
                 std::vector<const WipingExtrusions::ExtruderPerCopy*> perimeters_overrides;

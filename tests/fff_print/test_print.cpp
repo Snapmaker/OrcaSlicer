@@ -1136,3 +1136,63 @@ TEST_CASE("ByLayer mixed walls on a tall-then-short plate stay on scheduled tool
     }
     REQUIRE(layers_above_short >= 1);
 }
+
+TEST_CASE("Exporting a sliced print again gives the same G-code", "[Print][GCode][Regression]")
+{
+    const int instances = GENERATE(1, 3);
+    CAPTURE(instances);
+
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    TestMesh           mesh   = TestMesh::cube_20x20x20;
+    SECTION("infill reversed by chaining") {
+        config.set_deserialize_strict({
+            {"sparse_infill_pattern", "gyroid"},
+            {"sparse_infill_density", "20"},
+            {"enable_support", "1"},
+            {"support_interface_pattern", "concentric"},
+            {"skirt_loops", "0"},
+            {"brim_type", "no_brim"},
+        });
+    }
+    SECTION("support reversed by chaining") {
+        mesh = TestMesh::overhang;
+        config.set_deserialize_strict({
+            {"enable_support", "1"},
+            {"support_interface_pattern", "concentric"},
+            {"skirt_loops", "0"},
+            {"brim_type", "no_brim"},
+        });
+    }
+
+    Model        model  = Test::model("reexport", Test::mesh(mesh));
+    ModelObject *object = model.objects.front();
+    for (int i = 1; i < instances; ++i)
+        object->add_instance()->set_offset(Vec3d(40. * i, 0., 0.));
+    object->ensure_on_bed();
+
+    Print print;
+    print.auto_assign_extruders(object);
+    print.apply(model, config);
+    const StringObjectException err = print.validate();
+    INFO(err.string);
+    REQUIRE(err.string.empty());
+    print.set_status_silent();
+
+    const std::string first  = strip_gcode_timestamps(Test::gcode(print));
+    const std::string second = strip_gcode_timestamps(Test::gcode(print));
+    if (const char *path = std::getenv("REEXPORT_FIRST_GCODE_OUT")) {
+        std::ofstream out(path, std::ios::binary);
+        out << first;
+    }
+
+    // Shows the first differing line on failure.
+    const size_t diff       = std::mismatch(first.begin(), first.end(), second.begin(), second.end()).first - first.begin();
+    const size_t line_start = diff == 0 ? 0 : first.rfind('\n', diff - 1) + 1;
+    const size_t line_end   = first.find('\n', diff);
+    INFO("first export:  " << first.substr(line_start, line_end == std::string::npos ? std::string::npos : line_end - line_start));
+    INFO("second export: " << second.substr(line_start, second.find('\n', diff) == std::string::npos ?
+                                                             std::string::npos :
+                                                             second.find('\n', diff) - line_start));
+    REQUIRE(first == second);
+    REQUIRE(first.size() == second.size());
+}

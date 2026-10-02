@@ -78,6 +78,7 @@
 #include "NotificationManager.hpp"
 #include "MarkdownTip.hpp"
 #include "NetworkTestDialog.hpp"
+#include "FirewallCheckDialog.hpp"
 #include "ConfigWizard.hpp"
 #include "Widgets/WebView.hpp"
 #include "DailyTips.hpp"
@@ -2745,6 +2746,14 @@ static wxMenu* generate_help_menu()
         NetworkTestDialog dlg(wxGetApp().mainframe);
         dlg.ShowModal();
     });
+
+    // Windows Firewall dropping Bambu LAN discovery (UDP 2021/1990) is the usual reason printers
+    // never show up in the Device list; the dialog reads the rules and offers a one-UAC fix.
+    // Windows only: there is no Windows Firewall to check elsewhere.
+    if (FirewallCheckDialog::supported())
+        append_menu_item(helpMenu, wxID_ANY, _L("Check Windows Firewall..."),
+                         _L("Check whether Windows Firewall blocks printer discovery, and fix its rules"),
+                         [](wxCommandEvent&) { FirewallCheckDialog::show_modal(wxGetApp().mainframe); });
 
     // About
 #ifndef __APPLE__

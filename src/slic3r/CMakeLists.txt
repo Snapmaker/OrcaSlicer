@@ -407,6 +407,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/MultiTaskModel.hpp
     GUI/NetworkTestDialog.cpp
     GUI/NetworkTestDialog.hpp
+    GUI/FirewallCheckDialog.cpp
+    GUI/FirewallCheckDialog.hpp
     GUI/Notebook.cpp
     GUI/Notebook.hpp
     GUI/NotificationManager.cpp
@@ -960,6 +962,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/TimeSyncManager.cpp
     Utils/TimeSyncManager.hpp
     Utils/TimeoutMap.hpp
+    Utils/WinFirewall.cpp
+    Utils/WinFirewall.hpp
 )
 
 add_subdirectory(GUI/DeviceTab)
@@ -1106,6 +1110,8 @@ slic3r_unity_build(libslic3r_gui SKIP
     GUI/OpenGLManager.cpp                         # includes wx/glcanvas.h (GL/gl.h) before a neighbour's glad
     GUI/Gizmos/GLGizmosManager.cpp                # includes wx/glcanvas.h (GL/gl.h) before a neighbour's glad
     GUI/MediaFilePanel.cpp                        # Windows shell headers declare UserNotification (clashes with UserNotification.hpp)
+    GUI/FirewallCheckDialog.cpp                   # Windows shell headers; ::CheckBox vs GUI::CheckBox (Field.hpp)
+    Utils/WinFirewall.cpp                         # windows.h + netfw.h (COM) ahead of neighbours' headers
     GUI/wxMediaCtrl2.cpp                          # Windows shell headers declare UserNotification (clashes with UserNotification.hpp)
     GUI/Widgets/WebView.cpp                       # Windows shell headers declare UserNotification (clashes with UserNotification.hpp)
     GUI/AMSSetting.cpp                            # ::CheckBox vs GUI::CheckBox (Field.hpp)

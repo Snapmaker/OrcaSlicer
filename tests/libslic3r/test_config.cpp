@@ -1342,3 +1342,121 @@ TEST_CASE("Static print configs compare, order and hash by their option values",
         REQUIRE(c.optptr("gcode_flavor") == &c.gcode_flavor);
     }
 }
+
+namespace {
+
+// Keys whose values differ between two full configs, compared as text so enum names count too.
+std::vector<std::string> differing_keys(const FullPrintConfig &a, const FullPrintConfig &b)
+{
+    std::vector<std::string> keys;
+    for (const std::string &key : a.keys())
+        if (a.opt_serialize(key) != b.opt_serialize(key))
+            keys.push_back(key);
+    return keys;
+}
+
+// Applies source to one full config member by member and to another key by key, as apply() did before
+// static configs could apply themselves.
+template<class Source> void check_member_apply_matches_key_apply(const Source &source)
+{
+    FullPrintConfig by_member;
+    FullPrintConfig by_key;
+    by_member.apply(source);
+    by_key.apply_only(source, source.keys());
+    CHECK(differing_keys(by_member, by_key).empty());
+    CHECK_FALSE(differing_keys(by_member, FullPrintConfig()).empty());
+}
+
+} // namespace
+
+TEST_CASE("A static config applies itself onto a config of its type as a lookup by name would", "[Config]")
+{
+    SECTION("region config")
+    {
+        PrintRegionConfig region;
+        region.sparse_infill_pattern.value = ipGyroid;
+        region.outer_wall_speed.values     = {37.};
+        region.sparse_infill_density.value = 35.;
+        region.wall_loops.value            = 4;
+        FullPrintConfig full;
+        REQUIRE(region.apply_to(full));
+        check_member_apply_matches_key_apply(region);
+    }
+    SECTION("object config")
+    {
+        PrintObjectConfig object;
+        object.seam_position.value         = spRear;
+        object.wall_generator.value        = PerimeterGeneratorType::Arachne;
+        object.support_speed.values        = {33.};
+        object.enable_support.value        = true;
+        object.print_extruder_id.values    = {1, 2};
+        object.print_extruder_variant.values = {"Direct Drive Standard", "Direct Drive High Flow"};
+        FullPrintConfig full;
+        REQUIRE(object.apply_to(full));
+        check_member_apply_matches_key_apply(object);
+    }
+    SECTION("G-code config, whose enum lists carry their names through a keys map")
+    {
+        GCodeConfig gcode;
+        gcode.z_hop_types.values                 = {int(zhtSpiral)};
+        gcode.retraction_length.values           = {1.5};
+        gcode.retraction_distances_when_ec.values = {1.25};
+        gcode.long_retractions_when_ec.values    = {static_cast<unsigned char>(1)};
+        FullPrintConfig full;
+        REQUIRE(gcode.apply_to(full));
+        check_member_apply_matches_key_apply(gcode);
+    }
+    SECTION("mutating one applied option makes the two paths differ")
+    {
+        PrintRegionConfig region;
+        region.sparse_infill_pattern.value = ipGyroid;
+        region.outer_wall_speed.values     = {37.};
+        FullPrintConfig by_member;
+        FullPrintConfig by_key;
+        by_member.apply(region);
+        by_key.apply_only(region, region.keys());
+        REQUIRE(differing_keys(by_member, by_key).empty());
+        by_member.sparse_infill_density.value = by_member.sparse_infill_density.value + 11.;
+        const auto diffs = differing_keys(by_member, by_key);
+        REQUIRE_FALSE(diffs.empty());
+        REQUIRE(std::find(diffs.begin(), diffs.end(), "sparse_infill_density") != diffs.end());
+    }
+}
+
+TEST_CASE("A static config applied onto a config of another type falls back to a lookup by name", "[Config]")
+{
+    PrintRegionConfig region;
+    region.sparse_infill_pattern.value = ipGyroid;
+    DynamicPrintConfig dynamic;
+    REQUIRE_FALSE(region.apply_to(dynamic));
+    dynamic.apply(region);
+    CHECK(dynamic.opt_serialize("sparse_infill_pattern") == "gyroid");
+}
+
+TEST_CASE("Typed apply still matches the key path for a DynamicPrintConfig source", "[Config]")
+{
+    PrintRegionConfig region;
+    region.sparse_infill_pattern.value = ipGyroid;
+    region.outer_wall_speed.values     = {41.};
+    region.sparse_infill_density.value = 22.;
+    DynamicPrintConfig dynamic;
+    dynamic.apply(region);
+
+    PrintRegionConfig from_dynamic;
+    from_dynamic.apply(dynamic);
+    PrintRegionConfig from_static;
+    from_static.apply(region);
+    CHECK(from_dynamic.opt_serialize("sparse_infill_pattern") == from_static.opt_serialize("sparse_infill_pattern"));
+    CHECK(from_dynamic.opt_serialize("outer_wall_speed") == from_static.opt_serialize("outer_wall_speed"));
+    CHECK(from_dynamic.opt_serialize("sparse_infill_density") == from_static.opt_serialize("sparse_infill_density"));
+}
+
+TEST_CASE("apply ignore_nonexistent is honoured when typed apply cannot run", "[Config]")
+{
+    PrintObjectConfig object;
+    object.layer_height.value = 0.28;
+    PrintRegionConfig region;
+    REQUIRE_FALSE(object.apply_to(region));
+    REQUIRE_NOTHROW(region.apply(object, true));
+    REQUIRE_THROWS_AS(region.apply(object, false), UnknownOptionException);
+}

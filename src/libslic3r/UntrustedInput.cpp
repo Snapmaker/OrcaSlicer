@@ -676,10 +676,11 @@ FILE *claim_unused_download_name(const boost::filesystem::path &dest_folder,
                                  const boost::filesystem::path &ignored_marker,
                                  std::string                   &result)
 {
+    const std::string requested = filename;
     result.clear();
     std::string last;
     for (std::size_t attempt = 0; attempt <= FIND_UNUSED_FILENAME_MAX_VERSION + 1; ++attempt) {
-        if (!find_unused_filename(dest_folder, filename, ignored_marker, result))
+        if (!find_unused_filename(dest_folder, requested, ignored_marker, result))
             return nullptr;
         const boost::filesystem::path marker = download_marker_path(dest_folder, result);
         FILE *f = open_exclusive_write(marker);

@@ -598,8 +598,8 @@ TEST_CASE("claim_unused_download_name gives distinct names to concurrent claiman
 TEST_CASE("place_download_file versions when the destination already exists", "[Untrusted][Filename]")
 {
     DownloadScratch scratch;
-    std::string     name = "model.3mf";
-    FILE           *marker_file = claim_unused_download_name(scratch.dir, name, {}, name);
+    std::string     name;
+    FILE           *marker_file = claim_unused_download_name(scratch.dir, "model.3mf", {}, name);
     REQUIRE(marker_file != nullptr);
     fclose(marker_file);
     const fs::path marker = download_marker_path(scratch.dir, name);

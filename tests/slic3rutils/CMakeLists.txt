@@ -63,6 +63,7 @@ add_executable(${_TEST_NAME}_tests
     theme_live_tests.cpp
     bambu_send_diagnosis_tests.cpp
     win_firewall_tests.cpp
+    bambu_setup_notice_tests.cpp
     # The crash-report scrubber is plain C++ with no library of its own; the test compiles
     # the very file the app does.
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/sentry_wrapper/SentryScrub.cpp

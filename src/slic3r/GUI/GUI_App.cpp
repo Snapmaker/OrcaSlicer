@@ -4,6 +4,7 @@
 #include "AmsUiPreview.hpp"
 #include "DarkModeBackground.hpp"
 #include "RemoteAccess.hpp"
+#include "BambuSetupNoticeDialog.hpp"
 #include "RemoteHub.hpp"
 #include "Theme.hpp"
 #include "GUI_Init.hpp"
@@ -8824,6 +8825,8 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
         mainframe->refresh_plugin_tips();
         m_fltviews.reload_all();
         // BBS: remove SLA related message
+        // First-time Bambu printer setup notice (waits for the main window; a no-op for other vendors).
+        BambuSetupNoticeDialog::on_wizard_finished();
     }
     auto isAgree = wxGetApp().app_config->get("app", PRIVACY_POLICY_FLAGS);
 

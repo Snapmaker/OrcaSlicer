@@ -1,6 +1,7 @@
 #include "SelectMachinePop.hpp"
 #include "I18N.hpp"
 #include "FirewallCheckDialog.hpp"
+#include "BambuSetupNoticeDialog.hpp"
 
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Thread.hpp"
@@ -583,10 +584,11 @@ void SelectMachinePopup::update_other_devices()
         m_placeholder_panel->Destroy();
         m_placeholder_panel = nullptr;
         m_firewall_link     = nullptr; // was a child of the panel
+        m_setup_link        = nullptr;
     }
 
     const bool firewall_link = FirewallCheckDialog::supported();
-    m_placeholder_panel = new wxWindow(m_scrolledWindow, wxID_ANY, wxDefaultPosition, wxSize(-1, FromDIP(firewall_link ? 50 : 26)));
+    m_placeholder_panel = new wxWindow(m_scrolledWindow, wxID_ANY, wxDefaultPosition, wxSize(-1, FromDIP(firewall_link ? 74 : 50)));
     wxBoxSizer* placeholder_sizer = new wxBoxSizer(wxVERTICAL);
 
     m_hyperlink = new wxHyperlinkCtrl(m_placeholder_panel, wxID_ANY, _L("Can't find my devices?"), wxT("https://wiki.bambulab.com/en/software/bambu-studio/failed-to-connect-printer"), wxDefaultPosition, wxDefaultSize, wxHL_DEFAULT_STYLE);
@@ -604,6 +606,17 @@ void SelectMachinePopup::update_other_devices()
         m_firewall_link->SetCursor(wxCURSOR_HAND);
         placeholder_sizer->Add(m_firewall_link, 0, wxALIGN_CENTER | wxLEFT | wxRIGHT | wxBOTTOM, 5);
     }
+
+    // What a Bambu Lab printer needs to show up and connect (the first-time notice's checklist).
+    m_setup_link = new wxStaticText(m_placeholder_panel, wxID_ANY, _L("Bambu printer setup"));
+    {
+        wxFont f = m_setup_link->GetFont();
+        f.SetUnderlined(true);
+        m_setup_link->SetFont(f);
+    }
+    m_setup_link->SetForegroundColour(StateColor::darkModeColorFor("#009789"));
+    m_setup_link->SetCursor(wxCURSOR_HAND);
+    placeholder_sizer->Add(m_setup_link, 0, wxALIGN_CENTER | wxLEFT | wxRIGHT | wxBOTTOM, 5);
 
 
     m_placeholder_panel->SetSizer(placeholder_sizer);
@@ -870,6 +883,16 @@ void SelectMachinePopup::OnLeftUp(wxMouseEvent &event)
                 mouse_pos.y < (f_rect.y + m_firewall_link->GetSize().y)) {
                 Dismiss();
                 wxGetApp().CallAfter([]() { FirewallCheckDialog::show_modal(wxGetApp().mainframe); });
+            }
+        }
+
+        //Bambu printer setup checklist
+        if (m_setup_link != nullptr) {
+            auto s_rect = m_setup_link->ClientToScreen(wxPoint(0, 0));
+            if (mouse_pos.x > s_rect.x && mouse_pos.y > s_rect.y && mouse_pos.x < (s_rect.x + m_setup_link->GetSize().x) &&
+                mouse_pos.y < (s_rect.y + m_setup_link->GetSize().y)) {
+                Dismiss();
+                wxGetApp().CallAfter([]() { BambuSetupNoticeDialog::show_modal(wxGetApp().mainframe); });
             }
         }
     }

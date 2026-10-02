@@ -79,6 +79,7 @@
 #include "MarkdownTip.hpp"
 #include "NetworkTestDialog.hpp"
 #include "FirewallCheckDialog.hpp"
+#include "BambuSetupNoticeDialog.hpp"
 #include "ConfigWizard.hpp"
 #include "Widgets/WebView.hpp"
 #include "DailyTips.hpp"
@@ -2754,6 +2755,11 @@ static wxMenu* generate_help_menu()
         append_menu_item(helpMenu, wxID_ANY, _L("Check Windows Firewall..."),
                          _L("Check whether Windows Firewall blocks printer discovery, and fix its rules"),
                          [](wxCommandEvent&) { FirewallCheckDialog::show_modal(wxGetApp().mainframe); });
+
+    // The checklist the first-time notice shows (account, firewall, LAN mode, access code, SD card, network).
+    append_menu_item(helpMenu, wxID_ANY, _L("Bambu Lab Printer Help..."),
+                     _L("What a Bambu Lab printer needs to show up and connect"),
+                     [](wxCommandEvent&) { BambuSetupNoticeDialog::show_modal(wxGetApp().mainframe); });
 
     // About
 #ifndef __APPLE__

@@ -34,6 +34,14 @@ static std::string slice_volume_type_end_gcode(const std::vector<int> &filament_
     const unsigned     extruders = unsigned(std::max<size_t>(nozzle_vts.size(), 2));
     config.set_num_extruders(extruders);
     config.set_num_filaments(n);
+    // GCode.cpp sizes filament_volume_type_list by physical filament_type (not
+    // MixedFilamentManager virtual IDs). set_num_filaments() does not resize
+    // filament_type, so pin it to the physical count the helper is testing.
+    {
+        auto *ft = config.option<ConfigOptionStrings>("filament_type", true);
+        REQUIRE(ft != nullptr);
+        ft->values.assign(n, std::string("PLA"));
+    }
     config.set_deserialize_strict({
         { "machine_end_gcode",              "; TEST_FVT = {filament_volume_type_list}" },
         { "machine_start_gcode",            "" },

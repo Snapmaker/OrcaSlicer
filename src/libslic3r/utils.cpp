@@ -2,7 +2,9 @@
 #include "I18N.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <cstdlib>
+#include <cstring>
 #include <locale>
 #include <memory>
 #include <mutex>
@@ -667,9 +669,59 @@ std::error_code rename_file(const std::string &from, const std::string &to)
 #ifdef _WIN32
 	return WindowsSupport::rename(from, to);
 #else
-	boost::nowide::remove(to.c_str());
-	return std::make_error_code(static_cast<std::errc>(boost::nowide::rename(from.c_str(), to.c_str())));
+	// rename(2) replaces an existing target atomically. Removing `to` first
+	// opened a window where the file did not exist at all, and wrapping the
+	// -1 return as errc(-1) produced a meaningless error code.
+	if (boost::nowide::rename(from.c_str(), to.c_str()) == 0)
+		return {};
+	return std::error_code(errno, std::generic_category());
 #endif
+}
+
+static std::atomic<unsigned> s_atomic_write_counter{0};
+
+std::string atomic_write_temp_path(const std::string &path, bool consume)
+{
+	const unsigned n = consume ? s_atomic_write_counter.fetch_add(1u) : s_atomic_write_counter.load();
+	return path + "." + std::to_string(get_current_pid()) + "." + std::to_string(n) + ".tmp";
+}
+
+bool write_file_atomically(const std::string &path, const std::string &data, std::string *err, bool binary)
+{
+	const std::string tmp = atomic_write_temp_path(path, true);
+	errno = 0;
+	FILE *file = boost::nowide::fopen(tmp.c_str(), binary ? "wb" : "w");
+	if (file == nullptr) {
+		if (err)
+			*err = std::string("cannot create temporary file ") + tmp + ": " + std::strerror(errno);
+		return false;
+	}
+
+	const size_t wrote    = data.empty() ? 0 : std::fwrite(data.data(), 1, data.size(), file);
+	const bool   ok_write = wrote == data.size();
+	const bool   ok_flush = std::fflush(file) == 0;
+#ifdef _WIN32
+	const bool ok_sync = _commit(_fileno(file)) == 0;
+#else
+	const bool ok_sync = ::fsync(::fileno(file)) == 0;
+#endif
+	const int  flush_err = ok_write && ok_flush && ok_sync ? 0 : errno;
+	const bool ok_close  = std::fclose(file) == 0;
+	if (!ok_write || !ok_flush || !ok_sync || !ok_close) {
+		boost::nowide::remove(tmp.c_str());
+		if (err)
+			*err = std::string("failed to write temporary file ") + tmp +
+			       (flush_err != 0 ? (std::string(": ") + std::strerror(flush_err)) : std::string());
+		return false;
+	}
+
+	if (const std::error_code ec = rename_file(tmp, path)) {
+		boost::nowide::remove(tmp.c_str());
+		if (err)
+			*err = std::string("failed to replace ") + path + ": " + ec.message();
+		return false;
+	}
+	return true;
 }
 
 #ifdef __linux__

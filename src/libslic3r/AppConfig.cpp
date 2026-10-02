@@ -9,6 +9,7 @@
 #include "format.hpp"
 #include "nlohmann/json.hpp"
 
+#include <sstream>
 #include <utility>
 #include <vector>
 #include <stdexcept>
@@ -959,10 +960,9 @@ void AppConfig::save()
     if (! is_main_thread_active())
         throw CriticalException("Calling AppConfig::save() from a worker thread!");
 
-    // The config is first written to a file with a PID suffix and then moved
-    // to avoid race conditions with multiple instances of Slic3r
+    // Serialized first, then written through a unique temp file and renamed
+    // so a crash or a concurrent reader never sees a half-written config.
     const auto path = config_path();
-    std::string path_pid = (boost::format("%1%.%2%") % path % get_current_pid()).str();
 
     json j;
 
@@ -1104,36 +1104,30 @@ void AppConfig::save()
 
         j["local_machines"][local_machine.first] = m_json;
     }
-    boost::nowide::ofstream c;
-    c.open(path_pid, std::ios::out | std::ios::trunc);
-    c << std::setw(4) << j << std::endl;
-
+    std::ostringstream body;
+    body << std::setw(4) << j << std::endl;
 #ifdef WIN32
-    // WIN32 specific: The final "rename_file()" call is not safe in case of an application crash, there is no atomic "rename file" API
+    // WIN32 specific: the final replace is not safe in case of an application crash, there is no atomic "rename file" API
     // provided by Windows (sic!). Therefore we save a MD5 checksum to be able to verify file corruption. In addition,
-    // we save the config file into a backup first before moving it to the final destination.
-    c << appconfig_md5_hash_line(j.dump(4));
+    // we save the config file into a backup after the main write is confirmed.
+    body << appconfig_md5_hash_line(j.dump(4));
 #endif
 
-    c.close();
-    if (c.fail()) {
-      BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path_pid << "; aborting attempt to overwrite original configuration";
-      return;
+    std::string err;
+    if (!write_file_atomically(path, body.str(), &err)) {
+        BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path << ": " << err
+                                 << "; aborting attempt to overwrite original configuration";
+        return;
     }
 
 #ifdef WIN32
-    // Make a backup of the configuration file before copying it to the final destination.
-    std::string error_message;
+    // Written after the config, so the backup never holds a state that was not confirmed written.
+    std::string backup_err;
     std::string backup_path = (boost::format("%1%.bak") % path).str();
-    // Copy configuration file with PID suffix into the configuration file with "bak" suffix.
-    if (copy_file(path_pid, backup_path, error_message, false) != SUCCESS)
-        BOOST_LOG_TRIVIAL(error) << "Copying from " << path_pid << " to " << backup_path << " failed. Failed to create a backup configuration.";
+    if (!write_file_atomically(backup_path, body.str(), &backup_err))
+        BOOST_LOG_TRIVIAL(error) << "Writing backup configuration to " << backup_path << " failed: " << backup_err;
 #endif
 
-    // Rename the config atomically.
-    // On Windows, the rename is likely NOT atomic, thus it may fail if PrusaSlicer crashes on another thread in the meanwhile.
-    // To cope with that, we already made a backup of the config on Windows.
-    rename_file(path_pid, path);
     m_dirty = false;
 }
 
@@ -1275,10 +1269,9 @@ void AppConfig::save()
     if (! is_main_thread_active())
         throw CriticalException("Calling AppConfig::save() from a worker thread!");
 
-    // The config is first written to a file with a PID suffix and then moved
-    // to avoid race conditions with multiple instances of Slic3r
+    // Serialized first, then written through a unique temp file and renamed
+    // so a crash or a concurrent reader never sees a half-written config.
     const auto path = config_path();
-    std::string path_pid = (boost::format("%1%.%2%") % path % get_current_pid()).str();
 
     std::stringstream config_ss;
     if (m_mode == EAppMode::Editor)
@@ -1315,34 +1308,28 @@ void AppConfig::save()
     config_ss << std::endl;
 
     std::string config_str = config_ss.str();
-    boost::nowide::ofstream c;
-    c.open(path_pid, std::ios::out | std::ios::trunc);
-    c << config_str;
 #ifdef WIN32
-    // WIN32 specific: The final "rename_file()" call is not safe in case of an application crash, there is no atomic "rename file" API
+    // WIN32 specific: the final replace is not safe in case of an application crash, there is no atomic "rename file" API
     // provided by Windows (sic!). Therefore we save a MD5 checksum to be able to verify file corruption. In addition,
-    // we save the config file into a backup first before moving it to the final destination.
-    c << appconfig_md5_hash_line(config_str);
+    // we save the config file into a backup after the main write is confirmed.
+    config_str += appconfig_md5_hash_line(config_ss.str());
 #endif
-    c.close();
-    if (c.fail()) {
-      BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path_pid << "; aborting attempt to overwrite original configuration";
-      return;
+
+    std::string err;
+    if (!write_file_atomically(path, config_str, &err)) {
+        BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path << ": " << err
+                                 << "; aborting attempt to overwrite original configuration";
+        return;
     }
 
 #ifdef WIN32
-    // Make a backup of the configuration file before copying it to the final destination.
-    std::string error_message;
+    // Written after the config, so the backup never holds a state that was not confirmed written.
+    std::string backup_err;
     std::string backup_path = (boost::format("%1%.bak") % path).str();
-    // Copy configuration file with PID suffix into the configuration file with "bak" suffix.
-    if (copy_file(path_pid, backup_path, error_message, false) != SUCCESS)
-        BOOST_LOG_TRIVIAL(error) << "Copying from " << path_pid << " to " << backup_path << " failed. Failed to create a backup configuration.";
+    if (!write_file_atomically(backup_path, config_str, &backup_err))
+        BOOST_LOG_TRIVIAL(error) << "Writing backup configuration to " << backup_path << " failed: " << backup_err;
 #endif
 
-    // Rename the config atomically.
-    // On Windows, the rename is likely NOT atomic, thus it may fail if PrusaSlicer crashes on another thread in the meanwhile.
-    // To cope with that, we already made a backup of the config on Windows.
-    rename_file(path_pid, path);
     m_dirty = false;
 }
 #endif

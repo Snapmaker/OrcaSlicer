@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 #include <boost/format.hpp>
@@ -589,18 +590,20 @@ void Preset::save_info(std::string file)
         file = idx_file.string();
     }
 
-    boost::nowide::ofstream c;
-    c.open(file, std::ios::out | std::ios::trunc);
     std::string sync_info_to_save;
     //BBS: hold is used for stop requesting to server this time
     if (this->sync_info.compare("hold") != 0)
         sync_info_to_save = this->sync_info;
+    std::ostringstream c;
     c << "sync_info" << " = " << sync_info_to_save << std::endl;
     c << "user_id" << " = " << this->user_id << std::endl;
     c << "setting_id" << " = " << this->setting_id << std::endl;
     c << "base_id" << " = " << this->base_id << std::endl;
     c << "updated_time" << " = " << std::to_string(this->updated_time) << std::endl;
-    c.close();
+
+    std::string err;
+    if (!write_file_atomically(file, c.str(), &err))
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": failed to save " << file << ": " << err;
 }
 
 void Preset::remove_files()

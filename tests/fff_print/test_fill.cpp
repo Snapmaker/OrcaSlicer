@@ -836,7 +836,8 @@ static std::pair<size_t, double> ironing_extent(const Print &print)
     size_t paths  = 0;
     double length = 0.;
     auto   accumulate = [&](const ExtrusionEntityCollection &fills) {
-        for (const ExtrusionEntity *entity : fills.flatten().entities)
+        const ExtrusionEntityCollection flat = fills.flatten();
+        for (const ExtrusionEntity *entity : flat.entities)
             if (entity->role() == erIroning) {
                 ++paths;
                 length += unscale<double>(entity->length());
@@ -845,8 +846,11 @@ static std::pair<size_t, double> ironing_extent(const Print &print)
     for (const Layer *layer : print.objects().front()->layers())
         for (const LayerRegion *region : layer->regions())
             accumulate(region->fills);
-    for (const SupportLayer *support_layer : print.objects().front()->support_layers())
+    for (const SupportLayer *support_layer : print.objects().front()->support_layers()) {
         accumulate(support_layer->support_fills);
+        for (const auto &kv : support_layer->interface_by_extruder)
+            accumulate(kv.second);
+    }
     return {paths, length};
 }
 

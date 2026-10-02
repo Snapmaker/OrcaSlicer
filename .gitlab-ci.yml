@@ -15,9 +15,9 @@ ai_review:
     AI_REVIEW_MODEL: "deepseek-v4-pro"
     AI_REVIEW_LLM_EFFORT: "low"
     AI_REVIEW_PROJECT_STANDARDS: "projects/snapmaker-orca"
-    DG_REF: "master"
+    DG_REF: "project/snapmaker-orca"
   script:
     - pip install --quiet pyyaml
-    - git clone --depth 1 https://github.com/zhangzhend0ng/dev-guidelines dg
+    - git clone --depth 1 --branch $env:DG_REF https://github.com/zhangzhend0ng/dev-guidelines dg
     - if ($env:DG_REF) { git -C dg checkout $env:DG_REF }
     - python dg/scripts/ai_review_gitlab.py

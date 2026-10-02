@@ -2,7 +2,9 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
+#include "libslic3r/Config.hpp"
 #include "slic3r/Utils/InstanceRouting.hpp"
 
 using namespace Slic3r::InstanceRouting;
@@ -59,4 +61,53 @@ TEST_CASE("Hidden instances do not claim the single-instance lock", "[InstanceRo
 {
     CHECK(claims_instance_lock(false));
     CHECK_FALSE(claims_instance_lock(true));
+}
+
+TEST_CASE("FreeCAD's Send to EdgeSlicer hands its STEP files over", "[InstanceRouting]")
+{
+    // What edgeslicer_bridge.py starts: EdgeSlicer.exe --single-instance <one file per body>.
+    const std::string exe   = "C:\Program Files\EdgeSlicer\EdgeSlicer.exe";
+    const std::string body  = "C:\Users\me\AppData\Local\Temp\EdgeSlicer-from-FreeCAD\20260930-101500-12\Body.step";
+    const std::string other = "C:\Users\me\AppData\Local\Temp\EdgeSlicer-from-FreeCAD\20260930-101500-12\Halterung \xc3\xa4 (2).step";
+    const CommandLine cl    = split_command_line({ exe, "--single-instance", body, other });
+    REQUIRE(cl.single_instance.has_value());
+    CHECK(*cl.single_instance);
+    // The switch itself is not passed on; the executable and the files are, in order.
+    CHECK(cl.forwarded == std::vector<std::string>{ exe, body, other });
+
+    // The message survives the trip to the running instance (spaces, parentheses, UTF-8).
+    std::vector<std::string> received;
+    REQUIRE(Slic3r::unescape_strings_cstyle(Slic3r::escape_strings_cstyle(cl.forwarded), received));
+    CHECK(received == cl.forwarded);
+
+    // The receiver loads every argument after the executable that is an existing file.
+    const auto exists = [&](const std::string &p) { return p == body || p == other || p == exe; };
+    std::vector<std::string> files;
+    for (size_t i = 1; i < received.size(); ++i)
+        if (std::string f = handed_off_file(received[i], exists); !f.empty())
+            files.push_back(f);
+    CHECK(files == std::vector<std::string>{ body, other });
+
+    // Started from FreeCAD with SNORCA_HIDDEN=0: a new instance shows its window even with "Start hidden" on.
+    CHECK_FALSE(resolve_hidden_start(std::string("0"), false, true));
+}
+
+TEST_CASE("Command line split keeps the hand-off switch rules", "[InstanceRouting]")
+{
+    CHECK_FALSE(split_command_line({ "EdgeSlicer.exe", "a.stl" }).single_instance.has_value());
+    CHECK(split_command_line({ "EdgeSlicer.exe", "--no-single-instance", "a.stl" }).single_instance == std::optional<bool>(false));
+    // The last switch wins, as in DynamicConfig::read_cli().
+    CHECK(split_command_line({ "EdgeSlicer.exe", "--single-instance", "--no-single-instance" }).single_instance == std::optional<bool>(false));
+    // argv[0] is never taken for a switch.
+    CHECK(split_command_line({ "--single-instance" }).forwarded == std::vector<std::string>{ "--single-instance" });
+}
+
+TEST_CASE("Handed-off arguments name files only when they exist", "[InstanceRouting]")
+{
+    const auto exists = [](const std::string &p) { return p == "C:\parts\a b.step"; };
+    CHECK(handed_off_file("C:\parts\a b.step", exists) == "C:\parts\a b.step");
+    CHECK(handed_off_file("\"C:\parts\a b.step\"", exists) == "C:\parts\a b.step");
+    CHECK(handed_off_file("C:\parts\missing.step", exists).empty());
+    CHECK(handed_off_file("edgeslicer://open?file=x", exists).empty());
+    CHECK(handed_off_file("ab", exists).empty());
 }

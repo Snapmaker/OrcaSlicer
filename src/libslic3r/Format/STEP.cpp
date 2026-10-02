@@ -413,6 +413,38 @@ bool load_step(const char *path, Model *model, bool& is_cancel,
     return true;
 }
 
+bool load_step_mesh(const char *path, TriangleMesh &mesh, double linear_defletion, double angle_defletion, std::string *error)
+{
+    auto fail = [error](const std::string &why) {
+        if (error)
+            *error = why;
+        return false;
+    };
+    Model model;
+    bool  cancelled = false;
+    try {
+        if (!load_step(path, &model, cancelled, linear_defletion, angle_defletion, false))
+            return fail("the STEP file has no solids with faces");
+    } catch (const std::exception &e) {
+        return fail(e.what());
+    } catch (const Standard_Failure &e) {
+        return fail(std::string("OCCT failed while reading STEP: ") + (e.GetMessageString() ? e.GetMessageString() : "unknown error"));
+    }
+    // load_step() centres each volume's mesh and moves the volume back by the same amount, so the
+    // volume matrices put the triangles where the file has them.
+    indexed_triangle_set merged;
+    for (const ModelObject *object : model.objects)
+        for (const ModelVolume *volume : object->volumes) {
+            TriangleMesh placed = volume->mesh();
+            placed.transform(volume->get_matrix());
+            its_merge(merged, placed.its);
+        }
+    if (merged.indices.empty())
+        return fail("the STEP file has no triangles");
+    mesh = TriangleMesh(std::move(merged));
+    return true;
+}
+
 bool read_step_named_shapes(const char *path, std::vector<NamedSolid> &plain, std::vector<NamedSolid> &split)
 {
     plain.clear();

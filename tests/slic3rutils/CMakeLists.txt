@@ -45,6 +45,7 @@ add_executable(${_TEST_NAME}_tests
     app_update_check_tests.cpp
     bambu_studio_launcher_tests.cpp
     blender_launcher_tests.cpp
+    freecad_launcher_tests.cpp
     instance_routing_tests.cpp
     page_server_security_tests.cpp
     sentry_scrub_tests.cpp

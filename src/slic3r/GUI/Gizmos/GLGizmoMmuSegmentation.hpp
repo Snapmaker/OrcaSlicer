@@ -72,6 +72,10 @@ public:
 
     void data_changed(bool is_serializing) override;
 
+    // Re-sync the in-memory painting session from the model after an external
+    // rewrite of mmu_segmentation_facets (e.g. batch color-match apply).
+    void refresh_from_model();
+
     // Keep this in sync with the shared triangle-selector state range.
     static const constexpr size_t EXTRUDERS_LIMIT = static_cast<size_t>(EnforcerBlockerType::ExtruderMax);
 

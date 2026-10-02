@@ -3116,8 +3116,10 @@ Sidebar::Sidebar(Plater *parent)
                     if (cnv == nullptr) continue;
                     GLGizmosManager& gizmos_mgr = cnv->get_gizmos_manager();
                     if (gizmos_mgr.get_current_type() != GLGizmosManager::EType::MmSegmentation) continue;
-                    if (auto* mmu_gizmo = dynamic_cast<GLGizmoMmuSegmentation*>(gizmos_mgr.get_gizmo(GLGizmosManager::EType::MmSegmentation)))
+                    if (auto* mmu_gizmo = dynamic_cast<GLGizmoMmuSegmentation*>(gizmos_mgr.get_gizmo(GLGizmosManager::EType::MmSegmentation))) {
                         mmu_gizmo->refresh_from_model();
+                        cnv->set_as_dirty();
+                    }
                 }
             }
         }

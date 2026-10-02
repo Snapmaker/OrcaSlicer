@@ -300,6 +300,7 @@ void GLGizmoMmuSegmentation::refresh_from_model()
     // re-deserialize the selector states, or the stale editing copy would keep
     // rendering the old mapping and its next update_model_object() would write
     // that stale copy back over the model.
+    // Also resets the pending remap table to identity and may change the selected filament.
     init_extruders_data();
     init_model_triangle_selectors();
 }

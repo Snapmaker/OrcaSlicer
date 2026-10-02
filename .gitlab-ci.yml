@@ -20,4 +20,4 @@ ai_review:
     - pip install --quiet pyyaml
     - git clone --depth 1 https://github.com/zhangzhend0ng/dev-guidelines dg
     - git -C dg checkout "%DG_REF%"
-    - python dg\scriptsi_review_gitlab.py
+    - python dg/scripts/ai_review_gitlab.py

@@ -3390,10 +3390,18 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 dest_file = dest_file.substr(found + AUXILIARY_STR_LEN);
             else
                 return;
-            // zip-slip: an entry named "Auxiliaries/../../x" must not leave the temp folder.
-            if (!untrusted::is_safe_archive_relative_path(dest_file)) {
-                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping auxiliary entry with an unsafe path: " << stat.m_filename;
-                return;
+            // zip-slip: an entry named "Auxiliaries/../../x" must not leave the temp folder. Names
+            // are normalised first (backslashes, "./", "a//b") like every confined extractor's.
+            {
+                std::string normalized;
+                const untrusted::ArchiveEntryName verdict = untrusted::normalize_archive_entry_path(dest_file, normalized);
+                if (verdict == untrusted::ArchiveEntryName::Skip)
+                    return;
+                if (verdict == untrusted::ArchiveEntryName::Reject) {
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping auxiliary entry with an unsafe path: " << stat.m_filename;
+                    return;
+                }
+                dest_file = std::move(normalized);
             }
 
             if (dest_file.find('/') != std::string::npos) {
@@ -3405,10 +3413,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     boost::filesystem::create_directories(parent_full_path);
             }
             dest_file = dir.string() + std::string("/") + dest_file;
-            std::string dest_zip_file = encode_path(dest_file.c_str());
-            mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_zip_file.c_str(), 0);
+            // Wide API on Windows: the validated UTF-8 name is never narrowed through the ANSI code page.
+            const bool res = extract_entry_to_file(archive, stat.m_file_index, dest_file);
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", extract  %1% from 3mf %2%, ret %3%\n") % dest_file % stat.m_filename % res;
-            if (res == 0) {
+            if (!res) {
                 add_error("Error while extract auxiliary file to file");
                 return;
             }
@@ -3419,17 +3427,24 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
     {
         if (stat.m_uncomp_size > 0) {
             std::string src_file = decode_path(stat.m_filename);
-            if (!untrusted::is_safe_archive_relative_path(src_file)) {
-                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping entry with an unsafe path: " << stat.m_filename;
-                return;
+            {
+                std::string normalized;
+                const untrusted::ArchiveEntryName verdict = untrusted::normalize_archive_entry_path(src_file, normalized);
+                if (verdict == untrusted::ArchiveEntryName::Skip)
+                    return;
+                if (verdict == untrusted::ArchiveEntryName::Reject) {
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping entry with an unsafe path: " << stat.m_filename;
+                    return;
+                }
+                src_file = std::move(normalized);
             }
             // BBS: use backup path
             //aux directory from model
             boost::filesystem::path dest_path = boost::filesystem::path(m_backup_path + "/" + src_file);
-            std::string dest_zip_file = encode_path(dest_path.string().c_str());
-            mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_zip_file.c_str(), 0);
+            // Wide API on Windows: the validated UTF-8 name is never narrowed through the ANSI code page.
+            const bool res = extract_entry_to_file(archive, stat.m_file_index, m_backup_path + "/" + src_file);
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", extract  %1% from 3mf %2%, ret %3%\n") % dest_path % stat.m_filename % res;
-            if (res == 0) {
+            if (!res) {
                 add_error("Error while extract file to temp directory");
                 return;
             }

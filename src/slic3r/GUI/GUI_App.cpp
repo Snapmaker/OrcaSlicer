@@ -89,6 +89,7 @@
 #include "libslic3r/StartupProfile.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/miniz_extension.hpp"
+#include "libslic3r/UntrustedInput.hpp"
 #include "libslic3r/DataDirMigration.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Color.hpp"
@@ -2097,43 +2098,102 @@ int GUI_App::install_plugin(std::string name, std::string package_name, InstallP
     mz_uint num_entries = mz_zip_reader_get_num_files(&archive);
     mz_zip_archive_file_stat stat;
     BOOST_LOG_TRIVIAL(error) << boost::format("[install_plugin]: %1%, got %2% files")%__LINE__ %num_entries;
+
+    // The entry name goes through the same normalisation as every confined extractor (backslash
+    // separators, "./" prefixes and "a//b" are accepted; ".." anywhere, absolute / drive / UNC /
+    // ':' names and look-alikes are not), then is flattened to its file name.
+    auto plugin_entry_name = [&](const mz_zip_archive_file_stat &st, std::string &leaf) {
+        std::string raw;
+        if (st.m_is_utf8)
+            raw = st.m_filename;
+        else {
+            std::string extra(1024, 0);
+            size_t      n = mz_zip_reader_get_extra(&archive, st.m_file_index, extra.data(), extra.size());
+            raw           = decode(extra.substr(0, n), st.m_filename);
+        }
+        std::string normalized;
+        const untrusted::ArchiveEntryName verdict = untrusted::normalize_archive_entry_path(raw, normalized);
+        if (verdict == untrusted::ArchiveEntryName::Ok)
+            leaf = untrusted::archive_entry_leaf(normalized);
+        else if (verdict == untrusted::ArchiveEntryName::Reject)
+            BOOST_LOG_TRIVIAL(error) << "[install_plugin] unsafe entry name " << st.m_filename;
+        return verdict;
+    };
+    auto plugin_entry_ok = [&](const std::string &dest_file, const boost::filesystem::path &dest_path) {
+        if (dest_file.empty() || !untrusted::is_safe_archive_relative_path(dest_file) ||
+            !untrusted::is_path_within_root(plugin_folder, dest_path)) {
+            BOOST_LOG_TRIVIAL(error) << "[install_plugin] entry flattened name " << dest_file << " resolves outside "
+                                     << plugin_folder.string();
+            return false;
+        }
+        return true;
+    };
+
+    // Pass 1: validate every extractable entry before writing anything. Traversal / absolute /
+    // escaping names still refuse the whole zip. Symlink entries are skipped (logged), not a
+    // whole-archive reject: names are flattened to the basename anyway, and macOS plugin
+    // packages ship dylib version symlinks. PresetUpdater / extract_archive_confined stays
+    // strict (D3).
+    for (mz_uint i = 0; i < num_entries; i++) {
+        if (m_networking_cancel_update || cancel) {
+            BOOST_LOG_TRIVIAL(info) << boost::format("[install_plugin]: %1%, cancelled by user")%__LINE__;
+            close_zip_reader(&archive);
+            return -1;
+        }
+        if (!mz_zip_reader_file_stat(&archive, i, &stat)) {
+            BOOST_LOG_TRIVIAL(error) << boost::format("[install_plugin]: %1%, mz_zip_reader_file_stat for file %2% failed")%__LINE__%i;
+            close_zip_reader(&archive);
+            if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
+            return InstallStatusUnzipFailed;
+        }
+        if (zip_entry_is_symlink(stat)) {
+            BOOST_LOG_TRIVIAL(info) << "[install_plugin] skipping symlink entry: " << stat.m_filename;
+            continue;
+        }
+        if (stat.m_uncomp_size == 0)
+            continue;
+        std::string dest_file;
+        const untrusted::ArchiveEntryName verdict = plugin_entry_name(stat, dest_file);
+        if (verdict == untrusted::ArchiveEntryName::Skip)
+            continue;
+        const auto dest_path = plugin_folder / dest_file;
+        if (verdict == untrusted::ArchiveEntryName::Reject || !plugin_entry_ok(dest_file, dest_path)) {
+            close_zip_reader(&archive);
+            if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
+            return InstallStatusUnzipFailed;
+        }
+    }
+
     for (mz_uint i = 0; i < num_entries; i++) {
         if (m_networking_cancel_update || cancel) {
             BOOST_LOG_TRIVIAL(info) << boost::format("[install_plugin]: %1%, cancelled by user")%__LINE__;
             return -1;
         }
         if (mz_zip_reader_file_stat(&archive, i, &stat)) {
+            if (zip_entry_is_symlink(stat)) {
+                BOOST_LOG_TRIVIAL(info) << "[install_plugin] skipping symlink entry: " << stat.m_filename;
+                continue;
+            }
             if (stat.m_uncomp_size > 0) {
                 std::string dest_file;
-                if (stat.m_is_utf8) {
-                    dest_file = stat.m_filename;
-                }
-                else {
-                    std::string extra(1024, 0);
-                    size_t n = mz_zip_reader_get_extra(&archive, stat.m_file_index, extra.data(), extra.size());
-                    dest_file = decode(extra.substr(0, n), stat.m_filename);
-                }
-                auto dest_file_path = boost::filesystem::path(dest_file);
-                dest_file = dest_file_path.filename().string();
-                auto dest_path = boost::filesystem::path(plugin_folder.string() + "/" + dest_file);
-                std::string dest_zip_file = encode_path(dest_path.string().c_str());
+                if (plugin_entry_name(stat, dest_file) != untrusted::ArchiveEntryName::Ok)
+                    continue;
+                auto dest_path = plugin_folder / dest_file;
                 try {
-                    if (fs::exists(dest_path))
+                    // symlink_status so an existing symlink, dangling or not, is replaced rather than written through.
+                    if (fs::is_symlink(fs::symlink_status(dest_path)) || fs::exists(dest_path))
                         fs::remove(dest_path);
-                    mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_zip_file.c_str(), 0);
+                    // Wide API on Windows: the entry name is validated as UTF-8, so it must not be
+                    // narrowed through the ANSI code page (best-fit maps fullwidth "../" look-alikes
+                    // to a real "../").
+                    const bool res = extract_entry_to_file(archive, stat.m_file_index, dest_path);
                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", extract  %1% from plugin zip %2%\n") % dest_file % stat.m_filename;
-                    if (res == 0) {
-#ifdef WIN32
-                        std::wstring new_dest_zip_file = boost::locale::conv::utf_to_utf<wchar_t>(dest_path.generic_string());
-                        res                            = mz_zip_reader_extract_to_file_w(&archive, stat.m_file_index, new_dest_zip_file.c_str(), 0);
-#endif
-                        if (res == 0) {
-                            mz_zip_error zip_error = mz_zip_get_last_error(&archive);
-                            BOOST_LOG_TRIVIAL(error) << "[install_plugin]Archive read error:" << mz_zip_get_error_string(zip_error) << std::endl;
-                            close_zip_reader(&archive);
-                            if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
-                            return InstallStatusUnzipFailed;
-                        }
+                    if (!res) {
+                        mz_zip_error zip_error = mz_zip_get_last_error(&archive);
+                        BOOST_LOG_TRIVIAL(error) << "[install_plugin]Archive read error:" << mz_zip_get_error_string(zip_error) << std::endl;
+                        close_zip_reader(&archive);
+                        if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
+                        return InstallStatusUnzipFailed;
                     }
                     else {
                         if (pro_fn) {
@@ -2251,7 +2311,12 @@ int GUI_App::install_bambu_camera_component(InstallProgressFn pro_fn, WasCancell
             size_t n = mz_zip_reader_get_extra(&archive, stat.m_file_index, extra.data(), extra.size());
             entry = decode(extra.substr(0, n), stat.m_filename);
         }
-        const std::string leaf = fs::path(entry).filename().string();
+        std::string normalized_entry;
+        if (untrusted::normalize_archive_entry_path(entry, normalized_entry) != untrusted::ArchiveEntryName::Ok) {
+            BOOST_LOG_TRIVIAL(warning) << "[camera component] skipping entry with an unsafe or empty name: " << stat.m_filename;
+            continue;
+        }
+        const std::string leaf = untrusted::archive_entry_leaf(normalized_entry);
         const bool is_source  = boost::iequals(leaf, want_source);
         // Bambu's package carries the filter's own dependencies next to it (live555 for LAN RTSP,
         // the agora_* / libaosl set for cloud streams); the filter fails to load without them, so
@@ -2265,15 +2330,9 @@ int GUI_App::install_bambu_camera_component(InstallProgressFn pro_fn, WasCancell
         // Extract to a temp file first, so a half-written download can never leave a truncated
         // filter sitting where a working one used to be.
         const fs::path staged = fs::temp_directory_path() / (std::string("edgeslicer_cam_") + leaf);
-        std::string staged_enc = encode_path(staged.string().c_str());
-        mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, staged_enc.c_str(), 0);
-#ifdef WIN32
-        if (res == 0) {
-            std::wstring staged_w = boost::locale::conv::utf_to_utf<wchar_t>(staged.generic_string());
-            res = mz_zip_reader_extract_to_file_w(&archive, stat.m_file_index, staged_w.c_str(), 0);
-        }
-#endif
-        if (res == 0) {
+        // Wide API on Windows, never narrowed through the ANSI code page (see install_plugin).
+        const bool res = extract_entry_to_file(archive, stat.m_file_index, staged);
+        if (!res) {
             BOOST_LOG_TRIVIAL(error) << "[camera component] failed to extract " << leaf;
             continue;
         }

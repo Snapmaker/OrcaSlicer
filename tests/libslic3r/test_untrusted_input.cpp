@@ -1852,6 +1852,19 @@ TEST_CASE("extract_archive_confined accepts a dest path with a trailing slash", 
     REQUIRE(extract_archive_confined(zip_file, dest_pref, err));
     CHECK(read_text_file(cache / "extra.json") == "e");
 
+    // lexically_normal("cache/./") leaves a trailing separator; strip it again so files
+    // land in cache, not in a "." child. Same for "cache/." .
+    const fs::path dest_dotslash(cache.string() + "/./");
+    write_zip_entries(zip_file, {{"dotslash.json", "d"}});
+    REQUIRE(extract_archive_confined(zip_file, dest_dotslash, err));
+    CHECK(err.empty());
+    CHECK(read_text_file(cache / "dotslash.json") == "d");
+
+    const fs::path dest_dot = cache / ".";
+    write_zip_entries(zip_file, {{"dot.json", "e2"}});
+    REQUIRE(extract_archive_confined(zip_file, dest_dot, err));
+    CHECK(read_text_file(cache / "dot.json") == "e2");
+
     boost::system::error_code ec;
     fs::remove_all(dir, ec);
 }

@@ -1263,10 +1263,12 @@ public:
     Vec3d _mouse_to_3d(const Point& mouse_pos, float* z = nullptr);
 
     bool make_current_for_postinit();
-    // Ultra: make this canvas' GL context current and finish the one-time GL init, with no
-    // dependency on the canvas ever having been shown on screen. render() does the same work but
-    // refuses to run when not on screen; an instance that serves the phone is never shown, so
-    // every offscreen path calls this first. False = OpenGL unusable (fail the request, do not draw).
+    // Ultra: make a usable GL context current and finish the one-time GL init, with no
+    // dependency on this canvas ever having been shown on screen. Prefers the visible
+    // canvas's context (GTK hidden-canvas SetCurrent fails) and falls back to this.
+    // render() does the same work but refuses to run when not on screen; an instance
+    // that serves the phone is never shown, so every offscreen path calls this first.
+    // False = OpenGL unusable (fail the request, do not draw).
     bool ensure_gl_ready();
 
 private:
@@ -1343,6 +1345,7 @@ private:
     bool _init_collapse_toolbar();
 
     bool _set_current();
+    bool _set_shown_canvas_current();
     void _resize(unsigned int w, unsigned int h);
 
     //BBS: add part plate related logic

@@ -45,11 +45,17 @@ enum TestJob {
 	TEST_JOB_MAX
 };
 
+// Runs the tests and owns everything a test worker thread touches. Worker threads keep
+// the runner alive, never the dialog, so the dialog can be destroyed (on the main thread)
+// at any time while tests are still running. Defined in NetworkTestDialog.cpp.
+class NetworkTestRunner;
+
 class NetworkTestDialog : public DPIDialog
 {
+	friend class NetworkTestRunner;
+
 protected:
-	std::shared_ptr<NetworkTestDialog> self_ptr;
-	std::weak_ptr<NetworkTestDialog> weak_this;
+	std::shared_ptr<NetworkTestRunner> m_runner;
 	Button* btn_start;
 	Button* btn_start_sequence;
 	Button* btn_download_log;
@@ -89,12 +95,6 @@ protected:
 	wxBoxSizer* create_content_sizer(wxWindow* parent);
 	wxBoxSizer* create_result_sizer(wxWindow* parent);
 
-	boost::thread* test_job[TEST_JOB_MAX];
-	boost::thread* m_sequence_job { nullptr };
-	std::atomic<bool> m_in_testing[TEST_JOB_MAX];
-	bool           m_download_cancel = false;
-	std::atomic<bool> m_closing{false};
-
 	void init_bind();
 
 public:
@@ -113,18 +113,14 @@ public:
 	void start_all_job_sequence();
 	void start_test_bing_thread();
 	void start_test_github_thread();
-	void start_test_ping_thread();
 	void start_test_lan_mqtt_thread();
 	void start_test_cloud_mqtt_thread();
 	void start_test_login_api_thread();
 	void start_test_upload_api_thread();
 
-	void start_test_url(TestJob job, wxString name, wxString url);
-	void start_test_telnet(TestJob job, wxString name, wxString server, int port);
-	void start_test_ping(wxString server, TestJob job);
-
 	void on_close(wxCloseEvent& event);
 
+	// Safe from any thread; a silent no-op once the dialog is closing or destroyed.
 	void update_status(int job_id, wxString info);
 
 	wxString get_cloud_server_address();
@@ -133,7 +129,8 @@ public:
 	void log_section_header(const wxString& title);
 
 private:
-	void cleanup_threads();
+	// Main thread only: writes a status line into the dialog's controls and the file log.
+	void apply_status(int job_id, const wxString& info);
 };
 
 } // namespace GUI

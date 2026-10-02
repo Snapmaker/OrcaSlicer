@@ -12,6 +12,7 @@ add_executable(${_TEST_NAME}_tests
 	test_aabbindirect.cpp
 	test_ams_lookup.cpp
 	test_assembly_face_pick.cpp
+	test_assembly_exact_footprint.cpp
 	test_curve_pick.cpp
 	test_chameleon_brim.cpp
 	test_paint_depth.cpp
@@ -19,6 +20,8 @@ add_executable(${_TEST_NAME}_tests
 	test_paint_penetration.cpp
 	test_color_mix_solver.cpp
 	test_color_split.cpp
+	test_code_emboss.cpp
+	test_simple_shape.cpp
 	test_image_fill.cpp
 	test_image_row_transform.cpp
 	test_image_row_dialog.cpp
@@ -45,6 +48,8 @@ add_executable(${_TEST_NAME}_tests
 	test_bambu_dual_nozzle_sync.cpp
 	test_bambu_idle_precool.cpp
 	test_export_stl_part.cpp
+	test_step_export.cpp
+	test_cad_edit.cpp
 	test_elephant_foot_compensation.cpp
 	test_fill_bed_pack.cpp
 	test_elegoo_cc2_profiles.cpp
@@ -62,6 +67,7 @@ add_executable(${_TEST_NAME}_tests
 	test_mixed_nozzle.cpp
 	test_mixed_filament_color_golden.cpp
 	test_triangle_selector.cpp
+	test_trianglemesh_slicer.cpp
 	test_locked_zag_patterns.cpp
 	test_locked_zag_identity_probe.cpp
 	test_layer_time_speed_smoothing.cpp
@@ -69,6 +75,8 @@ add_executable(${_TEST_NAME}_tests
 	test_placeholder_parser.cpp
 	test_polygon.cpp
 	test_preset_diff.cpp
+	test_print_settings_carry.cpp
+	test_filament_variant_autoenable.cpp
 	test_preset_load_determinism.cpp
 	test_profile_load_util.cpp
 	test_project_preset_switch.cpp

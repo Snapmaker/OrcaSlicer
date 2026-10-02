@@ -3,8 +3,10 @@
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 #include "Plater.hpp"
+#include "FreeCADBridge.hpp"
 #include "NotificationManager.hpp"
 #include "MsgDialog.hpp"
+#include "Theme.hpp"
 #include "PresetMirror.hpp"
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
@@ -403,8 +405,16 @@ wxBoxSizer *PreferencesDialog::create_item_loglevel_combobox(wxString title, wxW
     std::vector<wxString>::iterator iter;
     for (iter = vlist.begin(); iter != vlist.end(); iter++) { combobox->Append(*iter); }
 
+    combobox->SetToolTip(tooltip);
+
+    // Select by index, not by text: the entries are translated but the stored value is always English.
     auto severity_level = app_config->get("log_severity_level");
-    if (!severity_level.empty()) { combobox->SetValue(severity_level); }
+    for (unsigned i = 0; i < vlist.size(); ++i) {
+        if (Slic3r::get_string_logging_level(i) == severity_level) {
+            combobox->SetSelection(int(i));
+            break;
+        }
+    }
 
     m_sizer_combox->Add(combobox, 0, wxALIGN_CENTER, 0);
 
@@ -413,6 +423,7 @@ wxBoxSizer *PreferencesDialog::create_item_loglevel_combobox(wxString title, wxW
         auto level = Slic3r::get_string_logging_level(e.GetSelection());
         Slic3r::set_logging_level(Slic3r::level_string_to_boost(level));
         app_config->set("log_severity_level",level);
+        app_config->save();
         e.Skip();
      });
     return m_sizer_combox;
@@ -1551,7 +1562,7 @@ void PreferencesDialog::create()
     m_backup_interval_time = app_config->get("backup_interval");
 
     // set icon for dialog
-    std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+    std::string icon_path = (boost::format("%1%/images/EdgeSlicerTitle.ico") % resources_dir()).str();
     SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
     SetSizeHints(wxDefaultSize, wxDefaultSize);
 
@@ -1780,6 +1791,13 @@ wxWindow* PreferencesDialog::create_general_page()
         _L("If enabled, EdgeSlicer asks GitHub once per start whether a newer release has been published and offers it. "
            "Help > Check for Update works either way."),
         50, "check_for_updates_on_startup");
+    std::vector<wxString>    UpdateChannels      = { _L("Stable"), _L("Nightly") };
+    std::vector<std::string> UpdateChannelValues = { "stable", "nightly" };
+    auto item_update_channel = create_item_combobox(_L("Update channel"), page,
+        _L("Stable: offer new EdgeSlicer releases.\n"
+           "Nightly: offer the nightly build, made automatically from the latest source whenever it changed. "
+           "Nightly builds are untested and may be broken; switch back to Stable and install the latest release to return."),
+        "update_channel", UpdateChannels, UpdateChannelValues);
     auto item_sm_auto_login = create_item_checkbox(_L("Sign in to my Snapmaker account automatically at startup"), page,
         _L("If enabled, EdgeSlicer quietly reuses the Snapmaker account session saved from your last sign-in when it starts, "
            "so you do not have to sign in again. Nothing is shown; if there is no saved session you simply stay signed out."),
@@ -1788,6 +1806,9 @@ wxWindow* PreferencesDialog::create_general_page()
     auto item_calc_mode = create_item_checkbox(_L("Flushing volumes: Auto-calculate every time the color changed."), page, _L("If enabled, auto-calculate every time the color changed."), 50, "auto_calculate");
     auto item_calc_in_long_retract = create_item_checkbox(_L("Flushing volumes: Auto-calculate every time when the filament is changed."), page, _L("If enabled, auto-calculate every time when filament is changed"), 50, "auto_calculate_when_filament_change");
     auto item_remember_printer_config = create_item_checkbox(_L("Remember printer configuration"), page, _L("If enabled, Orca will remember and switch filament/process configuration for each printer automatically."), 50, "remember_printer_config");
+    auto item_remember_print_action = create_item_checkbox(_L("Remember last print action"), page,
+        _L("If enabled, EdgeSlicer will remember the last selected option in the print button's dropdown (for example Print, Print plate, Export plate sliced file, or Export G-code file) and restore it on the next startup and when the printer or preset changes, when the current printer still offers it."),
+        50, "remember_print_action");
     auto item_step_mesh_setting = create_item_checkbox(_L("Show the step mesh parameter setting dialog."), page, _L("If enabled,a parameter settings dialog will appear during STEP file import."), 50, "enable_step_mesh_setting");
     auto item_multi_machine = create_item_checkbox(_L("Multi-device Management (Take effect after restarting EdgeSlicer)."), page, _L("With this option enabled, you can send a task to multiple devices at the same time and manage multiple devices."), 50, "enable_multi_machine");
     auto item_auto_arrange  = create_item_checkbox(_L("Auto arrange plate after cloning"), page, _L("Auto arrange plate after object cloning"), 50, "auto_arrange");
@@ -1857,10 +1878,37 @@ wxWindow* PreferencesDialog::create_general_page()
            "Full path to bambu-studio.exe (Windows), the BambuStudio.app bundle (macOS), or the executable (Linux)."),
         "bambu_studio_path");
 
+    // "Edit in Blender" finds Blender on its own (file association, usual install folders, PATH,
+    // Snap, Flatpak); this is for an install it cannot find.
+    auto title_blender = create_item_title(_L("Blender"), page, _L("Blender"));
+    auto item_blender_path = create_item_text_input(_L("Blender path"), page,
+        _L("Only needed if \"Edit in Blender\" cannot find Blender automatically. "
+           "Full path to blender.exe (Windows), the Blender.app bundle (macOS), or the blender executable (Linux)."),
+        "blender_path");
+
+    // "Edit in FreeCAD" finds FreeCAD on its own (file association, installed-programs list, usual
+    // install folders, PATH, Snap, Flatpak); this is for an install it cannot find. The add-on adds
+    // "Send to EdgeSlicer" and "Update EdgeSlicer" to FreeCAD for every document.
+    auto title_freecad = create_item_title(_L("FreeCAD"), page, _L("FreeCAD"));
+    auto item_freecad_path = create_item_text_input(_L("FreeCAD path"), page,
+        _L("Only needed if \"Edit in FreeCAD\" cannot find FreeCAD automatically. "
+           "Full path to FreeCAD.exe or its install folder (Windows), the FreeCAD.app bundle (macOS), or the FreeCAD executable or AppImage (Linux)."),
+        "freecad_path");
+    auto item_freecad_addon = create_item_button(_L("FreeCAD add-on"), _L("Install FreeCAD add-on"), page,
+        _L("FreeCAD add-on"),
+        _L("Copy the EdgeSlicer add-on into FreeCAD's user Mod folder (FreeCAD 0.21 and 1.x), so \"Send to EdgeSlicer\" "
+           "and \"Update EdgeSlicer\" are on a toolbar in every FreeCAD document. Restart FreeCAD afterwards."),
+        [this]() { FreeCADBridge::install_addon(this); });
+
     //dark mode
 #ifdef _WIN32
     auto title_darkmode = create_item_title(_L("Dark Mode"), page, _L("Dark Mode"));
     auto item_darkmode = create_item_darkmode_checkbox(_L("Enable Dark mode"), page,_L("Enable dark mode"), 50, "dark_color_mode");
+    if (Theme::base_dark() >= 0 && m_dark_mode_ckeckbox != nullptr) {
+        // The running theme picks light or dark itself.
+        m_dark_mode_ckeckbox->Enable(false);
+        m_dark_mode_ckeckbox->SetToolTip(_L("The current theme chooses light or dark (main menu > Themes...)."));
+    }
 #endif
 
     // The "User Experience" section ("Join Customer Experience Improvement Program", linking to
@@ -1914,6 +1962,7 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(item_show_splash_screen, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_hints, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_check_updates, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_update_channel, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_sm_auto_login, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_calc_in_long_retract, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_multi_machine, 0, wxTOP, FromDIP(3));
@@ -1924,6 +1973,7 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(item_user_sync, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_system_sync, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_remember_printer_config, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_remember_print_action, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_save_presets, 0, wxTOP, FromDIP(3));
     //sizer_page->Add(title_network, 0, wxTOP | wxEXPAND, FromDIP(20));
     //sizer_page->Add(item_check_stable_version_only, 0, wxTOP, FromDIP(3));
@@ -1971,6 +2021,13 @@ wxWindow* PreferencesDialog::create_general_page()
 
     sizer_page->Add(title_bambu_studio, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_bambu_studio_path, 0, wxTOP, FromDIP(3));
+
+    sizer_page->Add(title_blender, 0, wxTOP | wxEXPAND, FromDIP(20));
+    sizer_page->Add(item_blender_path, 0, wxTOP, FromDIP(3));
+
+    sizer_page->Add(title_freecad, 0, wxTOP | wxEXPAND, FromDIP(20));
+    sizer_page->Add(item_freecad_path, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_freecad_addon, 0, wxTOP, FromDIP(3));
 
 #ifdef _WIN32
     sizer_page->Add(title_darkmode, 0, wxTOP | wxEXPAND, FromDIP(20));
@@ -2082,6 +2139,16 @@ wxWindow* PreferencesDialog::create_ultra_page()
     auto item_archive_max = create_item_gcode_archive_max(page,
         _L("How many stored files to keep. When a new file takes the count past this, the oldest ones are deleted with their details and previews."));
 
+    // Support: lets a user raise the log level without a developer build. Same app_config key and the
+    // same combobox as the internal Develop page; the level is applied immediately and persisted.
+    auto title_troubleshooting = create_item_title(_L("Troubleshooting"), page, _L("Troubleshooting"));
+    auto log_level_list = std::vector<wxString>{_L("fatal"), _L("error"), _L("warning"), _L("info"), _L("debug"), _L("trace")};
+    auto item_log_level = create_item_loglevel_combobox(_L("Log level"), page,
+        _L("How much detail goes into the log files in %APPDATA%\\EdgeSlicer\\log (Help > Show Configuration Folder). "
+           "Use 'info' or 'debug' when sending a log for support; 'warning' is the default. "
+           "Verbose levels (debug, trace) make the log files grow quickly, so set it back afterwards."),
+        log_level_list);
+
     sizer_page->Add(title_project, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_autosave, 0, wxTOP, FromDIP(3));
     item_autosave->Add(item_autosave_interval, 0, wxLEFT, 0);
@@ -2118,6 +2185,8 @@ wxWindow* PreferencesDialog::create_ultra_page()
     sizer_page->Add(item_archive, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_archive_dir, 0, wxTOP | wxEXPAND, FromDIP(3));
     sizer_page->Add(item_archive_max, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(title_troubleshooting, 0, wxTOP | wxEXPAND, FromDIP(20));
+    sizer_page->Add(item_log_level, 0, wxTOP, FromDIP(3));
 
     page->SetSizer(sizer_page);
     page->Layout();

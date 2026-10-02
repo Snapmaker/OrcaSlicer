@@ -141,6 +141,10 @@ struct Http::priv
 	Http::ProgressFn progressfn;
 	Http::IPResolveFn ipresolvefn;
 	Http::HeaderCallbackFn headerfn;
+	Http::BodyFn bodyfn;
+	size_t body_seen { 0 };        // bytes handed to bodyfn
+	bool body_refused { false };   // bodyfn said stop (as opposed to the size limit)
+	bool follow_location { true };
 
 	priv(const std::string &url);
 	~priv();
@@ -322,6 +326,17 @@ size_t Http::priv::writecb(void *data, size_t size, size_t nmemb, void *userp)
 	const size_t realsize = size * nmemb;
 
 	const size_t limit = self->limit > 0 ? self->limit : DEFAULT_SIZE_LIMIT;
+	if (self->bodyfn) {
+		if (self->body_seen + realsize > limit)
+			return 0;
+		self->body_seen += realsize;
+		long status = 0;
+		::curl_easy_getinfo(self->curl, CURLINFO_RESPONSE_CODE, &status);
+		if (self->bodyfn(unsigned(status), cdata, realsize))
+			return realsize;
+		self->body_refused = true;
+		return 0;
+	}
 	if (self->buffer.size() + realsize > limit) {
 		// This makes curl_easy_perform return CURLE_WRITE_ERROR
 		return 0;
@@ -523,7 +538,7 @@ void Http::priv::http_perform()
 	const bool tls_verify = Http::tls_verify_for(url, tls_policy, ca_file_set);
 	apply_tls_options(curl, tls_verify, ca_file_set, no_revoke);
 
-	::curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+	::curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, follow_location ? 1L : 0L);
 	::curl_easy_setopt(curl, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
 	::curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writecb);
 	::curl_easy_setopt(curl, CURLOPT_WRITEDATA, static_cast<void*>(this));
@@ -584,7 +599,7 @@ void Http::priv::http_perform()
 			}
 		}
 		else if (res == CURLE_WRITE_ERROR) {
-			if (errorfn) { errorfn(std::move(buffer), body_size_error(), 0); }
+			if (errorfn) { errorfn(std::move(buffer), body_refused ? std::string("The transfer was stopped") : body_size_error(), 0); }
 		} else {
 			if (tls_verify && (res == CURLE_PEER_FAILED_VERIFICATION || res == CURLE_SSL_CACERT_BADFILE))
 				BOOST_LOG_TRIVIAL(warning) << "Http: TLS certificate check failed for host " << Http::url_host(url)
@@ -606,8 +621,8 @@ void Http::priv::http_perform()
 				}
 			}
 		}
-		//BBS check error http status code
-		else if (http_status >= 400) {
+		//BBS check error http status code; a 3xx only ends up here when follow_redirects(false)
+		else if (http_status >= 300) {
 			if (errorfn) { errorfn(std::move(buffer), std::string(), http_status); }
 		}
 	}
@@ -1032,6 +1047,18 @@ Http& Http::on_ip_resolve(IPResolveFn fn)
 Http &Http::on_header_callback(HeaderCallbackFn fn)
 {
 	if (p) { p->headerfn = std::move(fn); }
+	return *this;
+}
+
+Http &Http::on_body(BodyFn fn)
+{
+	if (p) { p->bodyfn = std::move(fn); }
+	return *this;
+}
+
+Http &Http::follow_redirects(bool follow)
+{
+	if (p) { p->follow_location = follow; }
 	return *this;
 }
 

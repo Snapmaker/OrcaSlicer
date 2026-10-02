@@ -1,0 +1,41 @@
+{
+  "name": "Ember Forge",
+  "author": "EdgeSlicer",
+  "version": "1.0",
+  "description": "Charcoal and oxblood with bronze trim and a forge-glow title bar. Built on the dark look.",
+  "base": "dark",
+  "palette": {
+    "window_bg": "#1E1614",
+    "panel_bg": "#261B18",
+    "sidebar_bg": "#3A2A24",
+    "text": "#F1E4D3",
+    "text_secondary": "#C9B49A",
+    "text_disabled": "#7F6D60",
+    "accent": "#B8322A",
+    "accent_hover": "#D2463B",
+    "accent_soft": "#4A221E",
+    "accent_text": "#FFF4E6",
+    "secondary_accent": "#D99A3E",
+    "button_bg": "#3B2B25",
+    "button_hover_bg": "#4E3930",
+    "border": "#6B4F3A",
+    "separator": "#3E2E27",
+    "disabled_bg": "#2A201C",
+    "toggle_track": "#4A3830",
+    "error": "#FF5A4A",
+    "tabbar_bg": "#2A1210",
+    "tabbar_hover": "#5A2620",
+    "titlebar_bg": "#160C0A",
+    "titlebar_text": "#E9C98F",
+    "canvas_bg": "#2A1E1B",
+    "canvas_bg_top": "#4A2E28",
+    "icon": "#E4CFB3"
+  },
+  "fonts": {
+    "heading": { "files": ["fonts/Cinzel-Bold.ttf"], "face": "Cinzel" },
+    "button": { "files": ["fonts/Cinzel-Regular.ttf", "fonts/Cinzel-Bold.ttf"], "face": "Cinzel" }
+  },
+  "shapes": { "button_radius": 2, "box_radius": 2 },
+  "titlebar": { "banner": "images/banner.png", "align": "left" },
+  "home": { "--warn-bg": "#3D2A14", "--warn-fg": "#F0B35A" }
+}

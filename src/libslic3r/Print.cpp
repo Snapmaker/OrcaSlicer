@@ -993,6 +993,8 @@ std::vector<unsigned int> Print::object_extruders() const
     for (const PrintObject* object : m_objects) {
         const ModelObject* mo = object->model_object();
         for (const ModelVolume* mv : mo->volumes) {
+            if (mv->is_precise_seam())
+                continue; // non-printing helper; get_extruders() also skips these
             std::vector<int> volume_extruders = mv->get_extruders();
             for (int extruder : volume_extruders) {
                 assert(extruder > 0);
@@ -1013,6 +1015,7 @@ std::vector<unsigned int> Print::object_extruders() const
         }
     }
     sort_remove_duplicates(extruders);
+    m_mixed_filament_mgr.expand_0based_extruder_ids(extruders, m_config.filament_diameter.size());
     return extruders;
 }
 
@@ -1021,8 +1024,10 @@ std::vector<unsigned int> Print::support_material_extruders() const
 {
     std::vector<unsigned int> extruders;
     bool support_uses_current_extruder = false;
-    // BBS
-    auto num_extruders = (unsigned int)m_config.filament_diameter.size();
+    // Bound by physical + mixed virtual count so a mixed support filament is not
+    // clamped to 0 before expand_0based_extruder_ids resolves it.
+    auto num_physical  = (unsigned int)m_config.filament_diameter.size();
+    auto num_extruders = (unsigned int)m_mixed_filament_mgr.total_filaments(num_physical);
 
     for (PrintObject *object : m_objects) {
         if (object->has_support_material()) {
@@ -1048,6 +1053,7 @@ std::vector<unsigned int> Print::support_material_extruders() const
         append(extruders, this->object_extruders());
 
     sort_remove_duplicates(extruders);
+    m_mixed_filament_mgr.expand_0based_extruder_ids(extruders, m_config.filament_diameter.size());
     return extruders;
 }
 
@@ -1077,6 +1083,7 @@ std::vector<unsigned int> Print::extruders(bool conside_custom_gcode) const
     }
 
     sort_remove_duplicates(extruders);
+    m_mixed_filament_mgr.expand_0based_extruder_ids(extruders, m_config.filament_diameter.size());
 
     return extruders;
 }
@@ -4946,6 +4953,14 @@ static void chameleon_assign_support_interfaces(Print &print)
 }
 
 // Slicing process, running at a background thread.
+void Print::process_perimeters_only(PrintObject &object)
+{
+    assert(object.print() == this);
+    name_tbb_thread_pool_threads_set_locale();
+    object.clear_shared_object();
+    object.make_perimeters();
+}
+
 void Print::process(long long *time_cost_with_cache, bool use_cache)
 {
     long long start_time = 0, end_time = 0;

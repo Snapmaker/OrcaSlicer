@@ -33,7 +33,8 @@ namespace {
 void ensure_wx_gui()
 {
     static bool started = false;
-    if (started)
+    // Another test file may have started the app already (theme_live_tests.cpp).
+    if (started || wxApp::GetInstance() != nullptr)
         return;
     started = true;
     wxApp::SetInstance(new wxApp());

@@ -180,7 +180,7 @@ inline bool is_auto(SupportType stype)
 enum SeamPosition {
     // New values must be appended at the end: project files and presets store the key string,
     // but the numeric order is what old code and serialised binaries rely on.
-    spNearest, spAligned, spAlignedBack, spRear, spRandom, spLeft, spRight
+    spNearest, spAligned, spAlignedBack, spRear, spRandom, spLeft, spRight, spAlignedFront
 };
 
 // Orca
@@ -462,6 +462,53 @@ enum FilamentVolumeType {
 
 constexpr const char* FILAMENT_GROUPING_STANDARD = "standard";
 constexpr const char* FILAMENT_GROUPING_CUSTOM   = "custom";
+
+// Edge's grouping-dialog gate (Slice button and Snap #930 Preview re-slice).
+// CUSTOM grouping AND at least two distinct nozzle flow types. Snapmaker's
+// any_nozzle_high_flow() / FilamentGroupDialog(parent, all_high_flow) gate is
+// intentionally not used here.
+inline bool filament_group_dialog_required(const std::string& grouping_mode, size_t distinct_nozzle_flow_type_count)
+{
+    return grouping_mode == FILAMENT_GROUPING_CUSTOM && distinct_nozzle_flow_type_count >= 2;
+}
+
+// Snap #930: a valid→invalid slice-result transition dirties grouping so Preview
+// re-slice can re-confirm. Other transitions do not set the flag.
+inline bool filament_group_dirty_on_invalidation(bool was_slice_result_valid, bool now_valid)
+{
+    return was_slice_result_valid && !now_valid;
+}
+
+// What confirm_grouping_before_slice should do. Interactive is a person at the PC;
+// Request / Background (phone, hidden instance) must not open FilamentGroupDialog.
+enum class FilamentGroupSliceDecision {
+    Sync,          // dialog not required: normalize volume types
+    Prompt,        // show FilamentGroupDialog; Cancel aborts
+    SkipAndProceed // keep the current mapping and slice
+};
+
+inline FilamentGroupSliceDecision filament_group_slice_decision(bool dialog_required, bool interactive)
+{
+    if (!dialog_required)
+        return FilamentGroupSliceDecision::Sync;
+    return interactive ? FilamentGroupSliceDecision::Prompt : FilamentGroupSliceDecision::SkipAndProceed;
+}
+
+// Preview plate-pick after the grouping step. Dirty + Prompt + Cancel => abort
+// (N1: no switch, no slice -- Snapmaker always returns 0). Non-interactive always
+// continues (N2). A clean pick continues.
+inline bool filament_group_plate_pick_continues(bool dirty, bool dialog_required, bool interactive, bool dialog_confirmed)
+{
+    if (!dirty)
+        return true;
+    if (filament_group_slice_decision(dialog_required, interactive) != FilamentGroupSliceDecision::Prompt)
+        return true;
+    return dialog_confirmed;
+}
+
+// S1: a clean plate-pick still syncs volume types when the grouping dialog is not
+// required. CUSTOM + mixed nozzles keep the custom mapping.
+inline bool filament_group_sync_on_clean_plate_pick(bool dirty, bool dialog_required) { return !dirty && !dialog_required; }
 
 // Bounds-checked: values outside the mapping render as FLOW_MODE_STANDARD.
 const char* to_string(FilamentVolumeType type);
@@ -1186,6 +1233,14 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,               tree_support_adaptive_layer_height))
     ((ConfigOptionBool,               tree_support_auto_brim))
     ((ConfigOptionFloat,              tree_support_brim_width))
+    // Side stabilizers (Support/Stabilizers.hpp)
+    ((ConfigOptionBool,               stabilizer_supports))
+    ((ConfigOptionFloat,              stabilizer_ring_spacing))
+    ((ConfigOptionInt,                stabilizer_points_per_ring))
+    ((ConfigOptionFloat,              stabilizer_tip_diameter))
+    ((ConfigOptionFloat,              stabilizer_tip_gap))
+    ((ConfigOptionFloat,              stabilizer_pillar_diameter))
+    ((ConfigOptionFloat,              stabilizer_max_island_width))
     ((ConfigOptionBool,               detect_narrow_internal_solid_infill))
     // ((ConfigOptionBool,               adaptive_layer_height))
     ((ConfigOptionFloat,              support_bottom_interface_spacing))
@@ -1289,6 +1344,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,                lateral_lattice_angle_2))
     ((ConfigOptionFloat,                infill_overhang_angle))
     ((ConfigOptionBool,                 align_infill_direction_to_model))
+    // FDM hollowing (FDMHollowing.hpp). Region settings, so a part can override the object.
+    ((ConfigOptionBool,                 hollow_interior))
+    ((ConfigOptionFloat,                hollow_shell_thickness))
     ((ConfigOptionString,               extra_solid_infills))
     ((ConfigOptionEnum<FuzzySkinType>,  fuzzy_skin))
     ((ConfigOptionFloat,                fuzzy_skin_thickness))
@@ -2166,6 +2224,17 @@ std::string nozzle_diameter_summary(const ConfigBase &config);
 // physical_extruder_for_filament. 0 when the config has no nozzle_diameter. This is what the
 // per-slot filament preset compatibility rule measures against.
 double nozzle_diameter_for_filament(const PrintConfig &config, unsigned int filament_id);
+
+// CLI --uptodate_settings / --downward_check: load_config_file() uses
+// ConfigBase::load_from_json()'s 4-arg form, which does not flatten inherits.
+// Un-guarded opt_float("printable_height") dereferences a null option when the
+// key lives only on the parent (typical BBL nozzle variants).
+inline int cli_printable_height_or_zero(const ConfigBase &config)
+{
+    if (const auto *opt = config.option<ConfigOptionFloat>("printable_height"))
+        return static_cast<int>(opt->value);
+    return 0;
+}
 
 class CLIActionsConfigDef : public ConfigDef
 {

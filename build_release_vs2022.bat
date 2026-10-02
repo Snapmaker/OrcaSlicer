@@ -70,8 +70,16 @@ cd %WP%
 mkdir %build_dir%
 cd %build_dir%
 
+@REM Optional closed-source payloads (CMakeLists.txt install rules), from the environment: the
+@REM network plug-in (CI builds it, see .github/workflows/build_orca.yml), FlashNetwork, ffmpeg.
+@REM They go before WIN10SDK_PATH, whose trailing backslash can swallow what follows it.
+set "PAYLOAD_FLAGS="
+if defined ULTRANET_BIN_DIR set "PAYLOAD_FLAGS=%PAYLOAD_FLAGS% -DULTRANET_BIN_DIR="%ULTRANET_BIN_DIR%""
+if defined FLASHNETWORK_BIN_DIR set "PAYLOAD_FLAGS=%PAYLOAD_FLAGS% -DFLASHNETWORK_BIN_DIR="%FLASHNETWORK_BIN_DIR%""
+if defined FFMPEG_BIN_DIR set "PAYLOAD_FLAGS=%PAYLOAD_FLAGS% -DFFMPEG_BIN_DIR="%FFMPEG_BIN_DIR%""
+
 echo on
-cmake .. -G "Visual Studio 17 2022" -A x64 -DBBL_RELEASE_TO_PUBLIC=1 -DORCA_TOOLS=ON %SIG_FLAG% -DCMAKE_PREFIX_PATH="%DEPS%/usr/local" -DOPENSSL_ROOT_DIR="%DEPS%/usr/local" -DCMAKE_INSTALL_PREFIX="./Snapmaker_Orca" -DCMAKE_BUILD_TYPE=%build_type% -DWIN10SDK_PATH="%WindowsSdkDir%Include\%WindowsSDKVersion%\"
+cmake .. -G "Visual Studio 17 2022" -A x64 -DBBL_RELEASE_TO_PUBLIC=1 -DORCA_TOOLS=ON %SIG_FLAG% %PAYLOAD_FLAGS% -DCMAKE_PREFIX_PATH="%DEPS%/usr/local" -DOPENSSL_ROOT_DIR="%DEPS%/usr/local" -DCMAKE_INSTALL_PREFIX="./Snapmaker_Orca" -DCMAKE_BUILD_TYPE=%build_type% -DWIN10SDK_PATH="%WindowsSdkDir%Include\%WindowsSDKVersion%\"
 cmake --build . --config %build_type% --target ALL_BUILD -- -m
 @echo off
 cd ..

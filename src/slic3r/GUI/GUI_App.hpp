@@ -319,6 +319,10 @@ private:
     // "start_hidden"). It has no window until the hub shows it, closing hides it again,
     // and only an explicit quit (tray, hub page, POST /api/quit, File > Quit) ends it.
     bool m_hub_managed { false };
+    bool m_relaunch_pending { false };
+    bool m_relaunch_started { false }; // the new process has been started (relaunch_now)
+    void relaunch_when_idle(int attempt);
+    void relaunch_now();
     Slic3r::DeviceManager* m_device_manager { nullptr };
     Slic3r::UserManager* m_user_manager { nullptr };
     Slic3r::TaskManager* m_task_manager { nullptr };
@@ -563,6 +567,12 @@ private:
 
     void            recreate_GUI(const wxString& message);
     void            schedule_recreate_gui_when_no_modal(const wxString& message);
+    // Close EdgeSlicer the way File > Quit does (an unsaved project is offered for saving, and
+    // cancelling that cancels the restart) and start it again once it has exited, with the same
+    // command line. Call it after the window that asked has been closed (the Preferences dialog
+    // is modal). Used when a setting only takes effect at startup, such as the UI theme.
+    void            request_relaunch();
+    bool            relaunch_pending() const { return m_relaunch_pending; }
     void            system_info();
     void            keyboard_shortcuts();
     void            load_project(wxWindow *parent, wxString& input_file) const;
@@ -791,6 +801,11 @@ private:
     bool            is_localized() const { return m_wxLocale->GetLocale() != "English"; }
 
     void            open_preferences(size_t open_on_tab = 0, const std::string& highlight_option = std::string());
+    // Menu > Themes...: the themes window, built when it opens.
+    void            open_themes();
+    // Makes the theme app_config "ui_theme" names the running look without a restart: colours,
+    // corner radii, icons, title bar, 3D view and Home page. Fonts still need one (Theme::fonts_pending()).
+    void            apply_theme_live();
 
     virtual bool OnExceptionInMainLoop() override;
     // Calls wxLaunchDefaultBrowser if user confirms in dialog.
@@ -877,6 +892,8 @@ private:
     wxSingleInstanceChecker* single_instance_checker() {return m_single_instance_checker.get();}
 
 	void        init_single_instance_checker(const std::string &name, const std::string &path);
+	// A hidden instance gives the single-instance lock back right after the check (see instance_check()).
+	void        release_single_instance_checker() { m_single_instance_checker.reset(); }
 	void        set_instance_hash (const size_t hash) { m_instance_hash_int = hash; m_instance_hash_string = std::to_string(hash); }
     std::string get_instance_hash_string ()           { return m_instance_hash_string; }
 	size_t      get_instance_hash_int ()              { return m_instance_hash_int; }

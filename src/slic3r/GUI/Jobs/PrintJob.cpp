@@ -2,6 +2,7 @@
 #include "libslic3r/MTUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "slic3r/GUI/BambuSendDiagnosis.hpp"
 #include "slic3r/GUI/GcodeArchive.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/GUI.hpp"
@@ -357,6 +358,7 @@ void PrintJob::process(Ctl &ctl)
 
     bool is_try_lan_mode = false;
     bool is_try_lan_mode_failed = false;
+    std::string last_error_info; // the plug-in's own words for its last error, for BambuSendDiagnosis
 
     auto update_fn = [this, &ctl,
         &is_try_lan_mode,
@@ -365,6 +367,7 @@ void PrintJob::process(Ctl &ctl)
         &error_str, 
         &curr_percent, 
         &error_text,
+        &last_error_info,
         StagePercentPoint
     ](int stage, int code, std::string info) {
 
@@ -428,6 +431,8 @@ void PrintJob::process(Ctl &ctl)
 
                         //get errors 
                         if (code > 100 || code < 0 || stage == BBL::SendingPrintJobStage::PrintingStageERROR) {
+                            if (!info.empty())
+                                last_error_info = info;
                             if (code == BAMBU_NETWORK_ERR_PRINT_WR_FILE_OVER_SIZE || code == BAMBU_NETWORK_ERR_PRINT_SP_FILE_OVER_SIZE) {
                                 m_plater->update_print_error_info(code, desc_file_too_large, info);
                             }else if (code == BAMBU_NETWORK_ERR_PRINT_WR_FILE_NOT_EXIST || code == BAMBU_NETWORK_ERR_PRINT_SP_FILE_NOT_EXIST){
@@ -455,6 +460,10 @@ void PrintJob::process(Ctl &ctl)
     // send gets "confirmed" against a machine that was never sent anything.
     MachineObject* obj = dev->get_my_machine(m_dev_id);
     if (!obj) obj = dev->get_selected_machine();
+    // The plug-in publishes project_file itself, under a sequence id it never hands back. Tell the
+    // printer's object one is on its way, so a refusal of this job is still recognised as ours
+    // while refusals of anybody else's commands are not.
+    if (obj) obj->note_agent_command_sent("project_file");
 
     auto wait_fn = [this, curr_percent, &obj](int state, std::string job_info) {
             BOOST_LOG_TRIVIAL(info) << "print_job: get_job_info = " << job_info;
@@ -518,11 +527,17 @@ void PrintJob::process(Ctl &ctl)
     // actually taken the job.
     // Only a printer that was reporting to us before the send can be judged this way: if we
     // never had live status from it, "no job seen" says nothing, so keep the old result.
+    // A "mqtt message verify failed" answer to the print command (MachineObject counts them) is the
+    // printer refusing it outright - no point waiting out the timeout for a job that will not start.
     auto lan_started_fn = [this, &ctl, &obj](const std::string& job_id_before, bool was_printing_before,
-                                             bool was_reporting_before) {
+                                             bool was_reporting_before, int refusals_before) {
             if (!obj || !was_reporting_before) return true;
             for (int waited = 0; waited < PRINT_JOB_SENDING_TIMEOUT; waited++) {
                 if (ctl.was_canceled()) return true;
+                if (obj->project_file_refusals.load() != refusals_before) {
+                    BOOST_LOG_TRIVIAL(error) << "print_job: " << m_dev_id << " refused the print command (verify failed)";
+                    return false;
+                }
                 if (!obj->job_id_.empty() && obj->job_id_ != job_id_before) {
                     BOOST_LOG_TRIVIAL(info) << "print_job: lan send confirmed, job_id = " << obj->job_id_;
                     return true;
@@ -540,15 +555,23 @@ void PrintJob::process(Ctl &ctl)
     };
 
 
+    // Ultra: what to tell the user when a send fails for a reason the plug-in's code alone does not
+    // explain (BambuSendDiagnosis). EdgeSlicer's plug-in (UltraNet) prints over LAN only: its
+    // start_print always fails with -3120, so a cloud "fallback" with it can only hide the real cause.
+    const bool       ultranet = wxGetApp().is_ultranet_plugin_installed();
+    BambuSendFailure diag;
+    diag.cloud_supported      = bambu_cloud_print_supported(ultranet);
+    diag.ultranet_log         = ultranet;
+    diag.log_dir              = bambu_log_dir_for_display();
+    diag.log_prefix           = "print_job:";
+    bool             use_diag = false;
+    const int        refusals_before = obj ? obj->project_file_refusals.load() : 0;
+    auto             printer_refused = [&obj, refusals_before]() { return obj && obj->project_file_refusals.load() != refusals_before; };
+
     if (params.connection_type != "lan") {
-        if (params.dev_ip.empty())
-            params.comments = "no_ip";
-        else if (this->cloud_print_only)
-            params.comments = "low_version";
-        else if (!this->has_sdcard)
-            params.comments = "no_sdcard";
-        else if (params.password.empty())
-            params.comments = "no_password";
+        const BambuLanSkip lan_skip = bambu_lan_skip_reason(!params.dev_ip.empty(), this->cloud_print_only, this->has_sdcard,
+                                                            !params.password.empty());
+        params.comments = bambu_lan_skip_tag(lan_skip);
 
 
         //use ftp only
@@ -558,10 +581,14 @@ void PrintJob::process(Ctl &ctl)
             result = m_agent->start_sdcard_print(params, update_fn, cancel_fn);
         }
         else if (!wxGetApp().app_config->get("lan_mode_only").empty() && wxGetApp().app_config->get("lan_mode_only") == "1") {
-
+            diag.cloud_bound = false;
             if (params.password.empty() || params.dev_ip.empty()) {
                 error_text = wxString::Format(_L("Access code:%s IP address:%s"), params.password, params.dev_ip);
                 result = BAMBU_NETWORK_ERR_FTP_UPLOAD_FAILED;
+                diag.lan_skip     = bambu_lan_skip_reason(!params.dev_ip.empty(), false, true, !params.password.empty());
+                diag.skipped_code = result;
+                use_diag          = true;
+                BOOST_LOG_TRIVIAL(info) << "print_job: skipped LAN: " << bambu_lan_skip_tag(diag.lan_skip) << " (lan_mode_only, no cloud)";
             }
             else {
                 BOOST_LOG_TRIVIAL(info) << "print_job: use ftp send print only";
@@ -572,14 +599,15 @@ void PrintJob::process(Ctl &ctl)
                     error_text = wxString::Format(_L("Access code:%s IP address:%s"), params.password, params.dev_ip);
                     // try to send with cloud
                     BOOST_LOG_TRIVIAL(warning) << "print_job: use ftp send print failed";
+                    diag.lan_code        = result;
+                    diag.lan_detail      = last_error_info;
+                    diag.printer_refused = printer_refused();
+                    use_diag             = true;
                 }
             }
         }
         else {
-            if (!this->cloud_print_only
-                && !params.password.empty()
-                && !params.dev_ip.empty()
-                && this->has_sdcard) {
+            if (lan_skip == BambuLanSkip::None) {
                 // try to send local with record
                 BOOST_LOG_TRIVIAL(info) << "print_job: try to start local print with record";
                 ctl.update_status(curr_percent, _u8L("Sending print job over LAN"));
@@ -595,20 +623,48 @@ void PrintJob::process(Ctl &ctl)
                 }
                 if (result < 0) {
                     is_try_lan_mode_failed = true;
-                    // try to send with cloud
-                    BOOST_LOG_TRIVIAL(warning) << "print_job: try to send with cloud";
-                    ctl.update_status(curr_percent, _u8L("Sending print job through cloud service"));
-                    result = m_agent->start_print(params, update_fn, cancel_fn, wait_fn);
+                    // Keep the LAN attempt's own error: the cloud's answer would replace it.
+                    diag.lan_code        = result;
+                    diag.lan_detail      = last_error_info;
+                    diag.printer_refused = printer_refused();
+                    if (diag.cloud_supported) {
+                        // try to send with cloud
+                        BOOST_LOG_TRIVIAL(warning) << "print_job: LAN failed (" << result << "), try to send with cloud";
+                        ctl.update_status(curr_percent, _u8L("Sending print job through cloud service"));
+                        result            = m_agent->start_print(params, update_fn, cancel_fn, wait_fn);
+                        diag.cloud_tried  = true;
+                        diag.cloud_code   = result;
+                        // -3120 is what a plug-in without cloud printing answers: the LAN error is the one that matters.
+                        use_diag          = result == BAMBU_NETWORK_ERR_PRINT_SP_POST_TASK_FAILED;
+                    } else {
+                        BOOST_LOG_TRIVIAL(warning) << "print_job: LAN failed (" << result
+                                                   << "), no cloud fallback: the network plug-in has no cloud printing";
+                        use_diag = result != BAMBU_NETWORK_ERR_CANCELED;
+                    }
                 }
             }
-            else {
-                BOOST_LOG_TRIVIAL(info) << "print_job: send with cloud";
+            else if (diag.cloud_supported) {
+                BOOST_LOG_TRIVIAL(info) << "print_job: skipped LAN: " << params.comments << ", send with cloud";
                 ctl.update_status(curr_percent, _u8L("Sending print job through cloud service"));
-                result = m_agent->start_print(params, update_fn, cancel_fn, wait_fn);
+                result            = m_agent->start_print(params, update_fn, cancel_fn, wait_fn);
+                diag.lan_skip     = lan_skip;
+                diag.cloud_tried  = true;
+                diag.cloud_code   = result;
+                use_diag          = result == BAMBU_NETWORK_ERR_PRINT_SP_POST_TASK_FAILED;
+            }
+            else {
+                // The cloud route can only fail with this plug-in: say why the LAN route did not run.
+                BOOST_LOG_TRIVIAL(info) << "print_job: skipped LAN: " << params.comments
+                                        << ", no cloud fallback: the network plug-in has no cloud printing";
+                result        = BAMBU_NETWORK_ERR_PRINT_SP_POST_TASK_FAILED;
+                diag.lan_skip = lan_skip;
+                use_diag      = true;
             }
         } 
     } else {
+        diag.cloud_bound = false;
         if (this->has_sdcard) {
+            BOOST_LOG_TRIVIAL(info) << "print_job: LAN printer, send over LAN";
             ctl.update_status(curr_percent, _u8L("Sending print job over LAN"));
             const std::string job_id_before       = obj ? obj->job_id_ : std::string();
             const bool        was_printing_before = obj && obj->is_in_printing_status(obj->print_status);
@@ -623,9 +679,16 @@ void PrintJob::process(Ctl &ctl)
                 result = m_agent->start_local_print(params, update_fn, cancel_fn);
             }
             if (result == 0 && !ctl.was_canceled()
-                && !lan_started_fn(job_id_before, was_printing_before, was_reporting))
+                && !lan_started_fn(job_id_before, was_printing_before, was_reporting, refusals_before))
                 result = BAMBU_NETWORK_ERR_PRINT_LP_PUBLISH_MSG_FAILED;
+            if (result < 0 && result != BAMBU_NETWORK_ERR_CANCELED) {
+                diag.lan_code        = result;
+                diag.lan_detail      = last_error_info;
+                diag.printer_refused = printer_refused();
+                use_diag             = true;
+            }
         } else {
+            BOOST_LOG_TRIVIAL(info) << "print_job: LAN printer, no_sdcard";
             ctl.update_status(curr_percent, _u8L("An SD card needs to be inserted before printing via LAN."));
             return;
         }
@@ -634,7 +697,17 @@ void PrintJob::process(Ctl &ctl)
     if (result < 0) {
         curr_percent = -1;
 
-        if (result == BAMBU_NETWORK_ERR_PRINT_WR_FILE_NOT_EXIST || result == BAMBU_NETWORK_ERR_PRINT_SP_FILE_NOT_EXIST) {
+        if (use_diag && result != BAMBU_NETWORK_ERR_CANCELED && !ctl.was_canceled()) {
+            // The cause in plain words on the status line, what to do and where the logs are in the
+            // error panel (its "code" row keeps the number support knows the failure by).
+            const BambuSendFailureText text = bambu_send_failure_text(diag);
+            std::string                extra = text.where;
+            if (!diag.lan_detail.empty() && text.detail.find(diag.lan_detail) == std::string::npos)
+                extra += "\n" + diag.lan_detail;
+            msg_text = text.headline;
+            m_plater->update_print_error_info(text.code, text.detail, extra);
+            BOOST_LOG_TRIVIAL(error) << "print_job: " << text.full();
+        } else if (result == BAMBU_NETWORK_ERR_PRINT_WR_FILE_NOT_EXIST || result == BAMBU_NETWORK_ERR_PRINT_SP_FILE_NOT_EXIST) {
             msg_text = file_is_not_exists_str;
         } else if (result == BAMBU_NETWORK_ERR_PRINT_SP_FILE_OVER_SIZE || result == BAMBU_NETWORK_ERR_PRINT_WR_FILE_OVER_SIZE) {
             msg_text = file_over_size_str;

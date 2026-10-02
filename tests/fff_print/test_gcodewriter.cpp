@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <memory>
 
+#include "libslic3r/Exception.hpp"
 #include "libslic3r/GCodeReader.hpp"
 #include "libslic3r/GCodeWriter.hpp"
 
@@ -208,4 +209,12 @@ TEST_CASE("Custom retraction state stays per-filament when SEMM is off", "[GCode
     CHECK_THAT(writer.extruders()[0].retracted(), WithinAbs(0., 1e-9));
     CHECK_THAT(writer.extruders()[1].retracted(), WithinAbs(0.5, 1e-9));
     CHECK_THAT(writer.extruder()->restart_extra(), WithinAbs(0.2, 1e-9));
+}
+
+TEST_CASE("GCodeWriter::toolchange throws when the extruder is not registered", "[GCodeWriter][GCode]")
+{
+    GCodeWriter writer;
+    writer.set_extruders({0});
+    REQUIRE_THROWS_AS(writer.toolchange(2), SlicingError);
+    REQUIRE(writer.extruder() == nullptr);
 }

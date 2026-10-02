@@ -13,7 +13,9 @@
 
 #include "slic3r/GUI/HttpServer.hpp"
 #include "slic3r/GUI/PageServerSecurity.hpp"
+#include "slic3r/GUI/GUI.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/UntrustedInput.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/beast/core/detail/base64.hpp>
@@ -31,6 +33,8 @@
 #endif
 #include <windows.h>
 #endif
+
+#include <wx/uri.h>
 
 using namespace Slic3r::GUI;
 namespace ps = Slic3r::GUI::page_server;
@@ -551,3 +555,88 @@ TEST_CASE("page server does not share a port another process holds", "[PageServe
 #endif
     server.stop();
 }
+
+#ifndef _WIN32
+TEST_CASE("file_url_from_path percent-encodes characters special to URLs", "[FileUrl]")
+{
+    const std::string path = GENERATE(std::string("/opt/test#dir/resources/web/homepage/index.html"),
+                                      std::string("/opt/test%20x/resources/web/homepage/index.html"),
+                                      std::string("/opt/Orca Slicer/resources/web/homepage/index.html"),
+                                      std::string("/opt/what?/resources/web/homepage/index.html"),
+                                      std::string("/home/Jos\xC3\xA9/\xE8\xB5\x84\xE6\xBA\x90/resources/web/homepage/index.html"));
+
+    const wxString url = file_url_from_path(boost::filesystem::path(path));
+    CAPTURE(path, into_u8(url));
+
+    // WebView::CreateWebView() and WebView::LoadUrl() re-parse the URL before loading it.
+    const wxURI uri(wxURI(url).BuildURI());
+    CHECK(uri.GetScheme() == "file");
+    CHECK_FALSE(uri.HasQuery());
+    CHECK_FALSE(uri.HasFragment());
+    CHECK(into_u8(wxURI::Unescape(uri.GetPath())) == path);
+    CHECK(Slic3r::untrusted::local_path_from_file_url(into_u8(url)) == path);
+}
+
+TEST_CASE("file_url_from_path of a plain path is the path behind file://", "[FileUrl]")
+{
+    const std::string path = "/opt/OrcaSlicer/resources/web/homepage/index.html";
+    CHECK(into_u8(file_url_from_path(boost::filesystem::path(path))) == "file://" + path);
+}
+
+TEST_CASE("a query appended to a file URL stays separate from its path", "[FileUrl]")
+{
+    const std::string path = "/opt/test#dir%20x/resources/web/guide/0/index.html";
+    const wxURI       uri(file_url_from_path(boost::filesystem::path(path)) + "?target=21&lang=de");
+    CHECK(into_u8(wxURI::Unescape(uri.GetPath())) == path);
+    CHECK(uri.GetQuery() == "target=21&lang=de");
+    CHECK_FALSE(uri.HasFragment());
+    CHECK(Slic3r::untrusted::local_path_from_file_url(into_u8(file_url_from_path(boost::filesystem::path(path)) + "?target=21&lang=de")) == path);
+}
+
+TEST_CASE("file_url_from_path encodes space, hash, percent and non-ASCII", "[FileUrl]")
+{
+    const std::string spaced = into_u8(file_url_from_path(boost::filesystem::path("/opt/Orca Slicer/index.html")));
+    CHECK(spaced.find("%20") != std::string::npos);
+    CHECK(spaced.find(' ') == std::string::npos);
+
+    const std::string hashed = into_u8(file_url_from_path(boost::filesystem::path("/opt/test#dir/index.html")));
+    CHECK(hashed.find("%23") != std::string::npos);
+    CHECK(hashed.find('#') == std::string::npos);
+
+    const std::string percent = into_u8(file_url_from_path(boost::filesystem::path("/opt/100%/index.html")));
+    CHECK(percent.find("%25") != std::string::npos);
+
+    const std::string utf8_path = "/home/Jos\xC3\xA9/index.html";
+    const std::string utf8      = into_u8(file_url_from_path(boost::filesystem::path(utf8_path)));
+    CHECK(upper(utf8).find("%C3%A9") != std::string::npos);
+    CHECK(Slic3r::untrusted::local_path_from_file_url(utf8) == utf8_path);
+}
+#else
+TEST_CASE("file_url_from_path of a Windows path has a drive letter and forward slashes", "[FileUrl]")
+{
+    CHECK(into_u8(file_url_from_path(boost::filesystem::path(L"C:\\Program Files\\OrcaSlicer\\resources\\web\\homepage\\index.html"))) ==
+          "file:///C:/Program%20Files/OrcaSlicer/resources/web/homepage/index.html");
+    CHECK(into_u8(file_url_from_path(boost::filesystem::path(L"D:\\#OneDrive\\OrcaSlicer\\resources\\web\\guide\\0\\index.html"))) ==
+          "file:///D:/%23OneDrive/OrcaSlicer/resources/web/guide/0/index.html");
+    CHECK(into_u8(file_url_from_path(boost::filesystem::path(L"D:\\100%\\OrcaSlicer\\resources\\web\\homepage\\index.html"))) ==
+          "file:///D:/100%25/OrcaSlicer/resources/web/homepage/index.html");
+    // Callers join the resources directory with a forward-slash relative path.
+    CHECK(into_u8(file_url_from_path(boost::filesystem::path(L"D:\\#OneDrive\\OrcaSlicer\\resources/web/homepage/index.html"))) ==
+          "file:///D:/%23OneDrive/OrcaSlicer/resources/web/homepage/index.html");
+    CHECK(into_u8(file_url_from_path(boost::filesystem::path(L"\\\\server\\share\\OrcaSlicer\\resources\\web\\homepage\\index.html"))) ==
+          "file://server/share/OrcaSlicer/resources/web/homepage/index.html");
+}
+
+TEST_CASE("a query appended to a Windows file URL stays separate from its path", "[FileUrl]")
+{
+    const wxURI uri(file_url_from_path(boost::filesystem::path(L"D:\\#OneDrive\\OrcaSlicer\\resources\\web\\guide\\0\\index.html")) +
+                    "?target=21&lang=de");
+    CHECK(wxURI::Unescape(uri.GetPath()) == "/D:/#OneDrive/OrcaSlicer/resources/web/guide/0/index.html");
+    CHECK(uri.GetQuery() == "target=21&lang=de");
+    CHECK_FALSE(uri.HasFragment());
+    CHECK(Slic3r::untrusted::local_path_from_file_url(into_u8(
+              file_url_from_path(boost::filesystem::path(L"D:\\#OneDrive\\OrcaSlicer\\resources\\web\\guide\\0\\index.html")) + "?lang=en")) ==
+          "D:/#OneDrive/OrcaSlicer/resources/web/guide/0/index.html");
+}
+#endif
+

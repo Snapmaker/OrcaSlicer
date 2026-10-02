@@ -77,7 +77,7 @@
 # under test — NOT the baseline binary, which is throwaway/already removed.
 
 set -u
-cd "$(dirname "${BASH_SOURCE[0]}")"
+cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
 # ---------------------------------------------------------------------------
 # Harness fixtures

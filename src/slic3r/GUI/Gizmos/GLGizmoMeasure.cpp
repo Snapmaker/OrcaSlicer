@@ -308,7 +308,17 @@ bool GLGizmoMeasure::on_mouse(const wxMouseEvent &mouse_event)
 
                     if (!processed) {
                         remove_selected_sphere_raycaster(SEL_SPHERE_2_ID);
-                        if (m_selected_features.second == item) {
+                        // Ultra (Exact highlight): a click on the moving part anchors the footprint there; a
+                        // second click on the same face moves it rather than dropping the pick.
+                        const bool exact_anchor = ultra_exact_active() && m_ultra_exact_hover.valid && item.feature.has_value() &&
+                                                  item.feature->is_planar() && item.feature->volume == m_ultra_exact_hover.volume;
+                        if (m_selected_features.second == item && exact_anchor) {
+                            m_ultra_exact_pick = m_ultra_exact_hover;
+                            m_ultra_exact_pick_roll = m_ultra_exact_hover_roll; // the clicked footprint is the one shown
+                            m_ultra_exact_pick_roll_key = m_ultra_exact_hover_roll_key;
+                            m_ultra_exact_pick_key.clear();
+                        }
+                        else if (m_selected_features.second == item) {
                             // 2nd feature deselection
                             // m_selected_features.second.reset();
                             reset_feature2();
@@ -316,6 +326,10 @@ bool GLGizmoMeasure::on_mouse(const wxMouseEvent &mouse_event)
                         else {
                             // 2nd feature selection
                             m_selected_features.second = item;
+                            m_ultra_exact_pick = exact_anchor ? m_ultra_exact_hover : UltraExactAnchor();
+                            m_ultra_exact_pick_roll = exact_anchor ? m_ultra_exact_hover_roll : UltraFit::ExactRollState();
+                            m_ultra_exact_pick_roll_key = exact_anchor ? m_ultra_exact_hover_roll_key : std::vector<double>();
+                            m_ultra_exact_pick_key.clear();
                             if (requires_sphere_raycaster_for_picking(item)) {
                                 auto pick = std::make_shared<PickRaycaster>(SEL_SPHERE_2_ID, *m_sphere.mesh_raycaster);
                                 m_gripper_id_raycast_map[GripperType::SPHERE_2] = pick;
@@ -578,6 +592,8 @@ void GLGizmoMeasure::on_render()
 
     Vec2d mouse_position = m_parent.get_local_mouse_position();
     update_if_needed();
+    ultra_load_exact_setting();
+    m_ultra_exact_hover.valid = false; // Ultra (Exact highlight): re-armed below while the cursor is on the moving part
 
     const Camera& camera = wxGetApp().plater()->get_camera();
     const float inv_zoom = (float)camera.get_inv_zoom();
@@ -775,6 +791,26 @@ void GLGizmoMeasure::on_render()
         }
     }
 
+    // Ultra (Exact highlight): with the target picked, remember where the cursor sits on the moving part
+    // (and the facet normal there) so the target's shape can be drawn -- and later mated -- at that spot.
+    if (ultra_exact_active() && m_mode == EMode::FeatureSelection && mouse_on_object && m_curr_measuring &&
+        m_curr_feature.has_value() && m_curr_feature->volume == m_last_hit_volume &&
+        m_selected_features.first.feature.has_value() && m_selected_features.first.feature->is_planar() &&
+        m_selected_features.first.feature->volume != m_last_hit_volume) {
+        const indexed_triangle_set& its = m_curr_measuring->get_its();
+        if (model_facet_idx < its.indices.size()) {
+            const auto& f = its.indices[model_facet_idx];
+            const Vec3d a = its.vertices[f[0]].cast<double>(), b = its.vertices[f[1]].cast<double>(), c = its.vertices[f[2]].cast<double>();
+            const Vec3d n = (b - a).cross(c - a);
+            if (n.norm() > 1e-12) {
+                m_ultra_exact_hover.volume      = m_last_hit_volume;
+                m_ultra_exact_hover.hit_mesh    = position_on_model;
+                m_ultra_exact_hover.normal_mesh = n.normalized();
+                m_ultra_exact_hover.valid       = true;
+            }
+        }
+    }
+
     if (m_mode != EMode::PointSelection) {
         m_curr_point_on_feature_position.reset();
     }
@@ -845,6 +881,8 @@ void GLGizmoMeasure::on_render()
     else {
         m_curr_point_on_feature_position.reset();
     }
+
+    ultra_exact_refresh_models();
 
     if (!m_curr_feature.has_value() && !m_selected_features.first.feature.has_value()) {
         return;
@@ -968,7 +1006,11 @@ void GLGizmoMeasure::on_render()
             case Measure::SurfaceFeatureType::Curve:
             case Measure::SurfaceFeatureType::Plane: {
                 if (featura_index == -1) {
-                    render_glmodel(m_curr_plane.plane, colors.back(), feature.world_tran, hover);
+                    // Ultra (Exact highlight): only the target's shape at the cursor, not the whole face.
+                    if (m_ultra_exact_hover_shown)
+                        render_glmodel(m_ultra_exact_hover_model, colors.back(), Transform3d::Identity(), hover);
+                    else
+                        render_glmodel(m_curr_plane.plane, colors.back(), feature.world_tran, hover);
                     break;
                 }
                 //render plane feature1 or feature2
@@ -976,8 +1018,11 @@ void GLGizmoMeasure::on_render()
                     init_plane_glmodel(GripperType::PLANE_1, feature, m_feature_plane_first);
                     render_glmodel(m_feature_plane_first.plane, colors.back(), feature.world_tran, hover);
                 } else if (featura_index == 1) {//feature2
-                    init_plane_glmodel(GripperType::PLANE_2, feature, m_feature_plane_second);
-                    render_glmodel(m_feature_plane_second.plane, colors.back(), feature.world_tran, hover);
+                    init_plane_glmodel(GripperType::PLANE_2, feature, m_feature_plane_second); // keeps the face pickable
+                    if (m_ultra_exact_pick_shown) // Ultra (Exact highlight): show the clicked footprint only
+                        render_glmodel(m_ultra_exact_pick_model, colors.back(), Transform3d::Identity(), hover);
+                    else
+                        render_glmodel(m_feature_plane_second.plane, colors.back(), feature.world_tran, hover);
                 }
                 break;
             }
@@ -2438,6 +2483,10 @@ void GLGizmoMeasure::reset_feature2()
      }
      remove_selected_sphere_raycaster(SEL_SPHERE_2_ID);
      m_selected_features.second.reset();
+     m_ultra_exact_pick = UltraExactAnchor(); // Ultra (Exact highlight)
+     m_ultra_exact_pick_roll = UltraFit::ExactRollState();
+     m_ultra_exact_pick_roll_key.clear();
+     m_ultra_exact_pick_key.clear();
      m_show_reset_first_tip = false;
      m_selected_wrong_feature_waring_tip = false;
      reset_gripper_pick(GripperType::PLANE_2);
@@ -2792,6 +2841,8 @@ void GLGizmoMeasure::ultra_fit_for_print_and_merge()
     GLVolume* vt = m_hit_different_volumes[0]; // target -- stays fixed
     GLVolume* va = m_hit_different_volumes[1]; // attachment -- moves onto target
     if (!vt || !va) return;
+    // Ultra (Exact highlight): land the clicked footprint on the target; falls through when it cannot.
+    if (ultra_exact_fit()) return;
     if (vt->object_idx() == va->object_idx()) {
         // Two PARTS of one object: no merge needed (already one printable object). Mate via the proven
         // same-object path (it moves the ModelVolume transform slicing uses), then pin the free spin about
@@ -3274,6 +3325,254 @@ bool GLGizmoMeasure::is_pick_meet_assembly_mode(const SelectedFeatures::Item &it
     else {
         return true;
     }
+}
+
+// Ultra (Exact highlight): app-config key for the toggle. Off by default, so a plain Auto-fit is unchanged.
+static const char* ULTRA_EXACT_KEY = "assembly_exact_highlight";
+
+void GLGizmoMeasure::ultra_load_exact_setting()
+{
+    if (m_ultra_exact_loaded) return;
+    m_ultra_exact_loaded = true;
+    AppConfig* cfg = wxGetApp().app_config;
+    if (!cfg) return;
+    const std::string v = cfg->get(ULTRA_EXACT_KEY);
+    if (!v.empty()) m_ultra_exact = (v == "1" || v == "true");
+}
+
+bool GLGizmoMeasure::ultra_exact_active() const
+{
+    return m_ultra_exact && m_measure_mode == EMeasureMode::ONLY_ASSEMBLY &&
+           (m_assembly_mode == AssemblyMode::FACE_FACE || m_assembly_mode == AssemblyMode::CURVE_CURVE);
+}
+
+// In-plane reference axis for lining the footprint up with the moving face: a flat face's min-area
+// rectangle long side (ultra_plane_axis_world), or a Curve pick's cylinder axis. Cached per feature and
+// pose, since a hover asks for it on every cursor move.
+bool GLGizmoMeasure::ultra_exact_axis(GLVolume* v, const Measure::SurfaceFeature& f, Vec3d& axis, double& aspect)
+{
+    if (!v || !f.plane_indices) return false;
+    std::vector<double> key{ double(int(f.get_type())), f.get_value(), double(f.plane_indices->size()) };
+    for (int i = 0; i < 3; ++i) { key.push_back(f.get_pt1()[i]); key.push_back(f.get_pt2()[i]); }
+    for (int i = 0; i < 16; ++i) key.push_back(f.world_tran.matrix().data()[i]);
+    UltraExactAxisCache& c = m_ultra_exact_axis_cache[m_selected_features.first.feature.has_value() &&
+                                                      m_selected_features.first.feature->volume == v ? 0 : 1];
+    if (c.v != v || c.key != key) {
+        c = UltraExactAxisCache();
+        c.v = v; c.key = std::move(key);
+        if (f.get_type() == Measure::SurfaceFeatureType::Curve) {
+            auto it = m_mesh_measure_map.find(v);
+            if (it != m_mesh_measure_map.end() && it->second) {
+                const Measure::PatchFit fit = Measure::fit_patch(it->second->get_its(), *f.plane_indices);
+                if (fit.ok && fit.shape == Measure::PatchShape::Cylinder) {
+                    c.axis = (f.world_tran.linear() * fit.axis).normalized();
+                    c.aspect = std::numeric_limits<double>::max(); // an axis, not a square
+                    c.ok = true;
+                }
+            }
+        } else {
+            c.ok = ultra_plane_axis_world(v, f, c.axis, c.aspect);
+        }
+    }
+    axis = c.axis; aspect = c.aspect;
+    return c.ok;
+}
+
+// Footprint of the picked target face on the moving feature `fb`, anchored at `a` (view world, like the
+// features themselves).
+bool GLGizmoMeasure::ultra_exact_footprint(const UltraExactAnchor& a, const Measure::SurfaceFeature& fb, UltraFit::ExactFootprint& out,
+                                           UltraFit::ExactRollState& roll, std::vector<double>& roll_key)
+{
+    out = UltraFit::ExactFootprint();
+    if (!a.valid || !a.volume || !m_selected_features.first.feature.has_value()) return false;
+    const Measure::SurfaceFeature& fa = *m_selected_features.first.feature;
+    if (!fa.is_planar() || !fa.plane_indices || !fb.is_planar() || !fb.plane_indices) return false;
+    GLVolume* vt = static_cast<GLVolume*>(fa.volume);
+    if (!vt || vt == a.volume || fb.volume != a.volume) return false;
+    auto mt = m_mesh_measure_map.find(vt), mb = m_mesh_measure_map.find(a.volume);
+    if (mt == m_mesh_measure_map.end() || mb == m_mesh_measure_map.end() || !mt->second || !mb->second) return false;
+    Vec3d nA, cA, nB, cB;
+    if (!ultra_feature_dir_point(fa, nA, cA) || !ultra_feature_dir_point(fb, nB, cB)) return false;
+
+    // The roll belongs to one (target face, moving part) pair: a new target or part starts afresh, but moving the
+    // cursor -- even over other facets of the same curved part -- keeps it, so the footprint slides without spinning.
+    {
+        std::vector<double> k{ double(reinterpret_cast<uintptr_t>(vt)), double(reinterpret_cast<uintptr_t>(a.volume)),
+                               double(int(fa.get_type())), fa.get_value() };
+        for (int i = 0; i < 3; ++i) { k.push_back(fa.get_pt1()[i]); k.push_back(fa.get_pt2()[i]); }
+        for (int i = 0; i < 16; ++i) k.push_back(fa.world_tran.matrix().data()[i]);
+        if (k != roll_key) { roll_key = std::move(k); roll = UltraFit::ExactRollState(); }
+    }
+
+    UltraFit::ExactFootprintInput in;
+    in.t_its    = &mt->second->get_its();
+    in.t_facets = fa.plane_indices;
+    in.t_w      = fa.world_tran;
+    in.t_normal = nA;
+    in.t_centre = cA;
+    in.a_its    = &mb->second->get_its();
+    in.a_facets = fb.plane_indices;
+    in.a_w      = fb.world_tran;
+    in.a_hit    = fb.world_tran * a.hit_mesh;
+    in.a_curved = fb.get_type() == Measure::SurfaceFeatureType::Curve;
+    // A flat face has one normal; on a curved one start from the facet under the cursor (the footprint
+    // then re-estimates it from the region it covers).
+    in.a_normal = in.a_curved ? Vec3d((fb.world_tran.linear().inverse().transpose() * a.normal_mesh).normalized()) : nB;
+    in.roll_state = &roll;
+    Vec3d ta, tb; double asp_a = 1.0, asp_b = 1.0;
+    // The axes only matter while the roll is being decided; afterwards they are not even looked up.
+    if (UltraFit::exact_roll_needs_axes(&roll, in.a_normal, in.roll_hysteresis) &&
+        ultra_exact_axis(vt, fa, ta, asp_a) && ultra_exact_axis(a.volume, fb, tb, asp_b)) {
+        in.t_axis = ta; in.a_axis = tb;
+        // Two oblong faces line up long side to long side; if either is squarish any edge will do.
+        in.axis_fold = (asp_a > 1.1 && asp_b > 1.1) ? M_PI : M_PI / 2;
+    }
+    out = UltraFit::exact_footprint(in);
+    return out.ok;
+}
+
+void GLGizmoMeasure::ultra_exact_init_model(const UltraFit::ExactFootprint& fp, PickingModel& model)
+{
+    model.reset();
+    GLModel::Geometry g;
+    g.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3N3 };
+    g.reserve_vertices(fp.tris.size());
+    g.reserve_indices(fp.tris.size());
+    unsigned int k = 0;
+    for (size_t i = 0; i + 2 < fp.tris.size(); i += 3) {
+        const Vec3d& a = fp.tris[i]; const Vec3d& b = fp.tris[i + 1]; const Vec3d& c = fp.tris[i + 2];
+        Vec3d n = (b - a).cross(c - a);
+        if (n.norm() < 1e-12) continue;
+        n.normalize();
+        const Vec3d off = n * double(MEASURE_PLNE_NORMAL_OFFSET);
+        const Vec3f nf  = n.cast<float>();
+        g.add_vertex(Vec3f((a + off).cast<float>()), nf);
+        g.add_vertex(Vec3f((b + off).cast<float>()), nf);
+        g.add_vertex(Vec3f((c + off).cast<float>()), nf);
+        g.add_triangle(k, k + 1, k + 2);
+        k += 3;
+    }
+    if (k > 0) model.model.init_from(std::move(g));
+}
+
+// Rebuild the hover and picked footprint highlights when their inputs changed (cursor spot, either
+// feature, either pose); otherwise reuse them.
+void GLGizmoMeasure::ultra_exact_refresh_models()
+{
+    auto key_of = [](const UltraExactAnchor& a, const Measure::SurfaceFeature& fa, const Measure::SurfaceFeature& fb) {
+        std::vector<double> k{ double(reinterpret_cast<uintptr_t>(a.volume)), double(reinterpret_cast<uintptr_t>(fa.volume)) };
+        for (int i = 0; i < 3; ++i) { k.push_back(a.hit_mesh[i]); k.push_back(a.normal_mesh[i]); }
+        for (const Measure::SurfaceFeature* f : { &fa, &fb }) {
+            k.push_back(double(int(f->get_type()))); k.push_back(f->get_value());
+            for (int i = 0; i < 3; ++i) { k.push_back(f->get_pt1()[i]); k.push_back(f->get_pt2()[i]); }
+            for (int i = 0; i < 16; ++i) k.push_back(f->world_tran.matrix().data()[i]);
+        }
+        return k;
+    };
+    auto refresh = [&](const UltraExactAnchor& a, const Measure::SurfaceFeature& fb, std::vector<double>& key, PickingModel& model,
+                       UltraFit::ExactRollState& roll, std::vector<double>& roll_key) {
+        std::vector<double> k = key_of(a, *m_selected_features.first.feature, fb);
+        if (k != key) {
+            key = std::move(k);
+            UltraFit::ExactFootprint fp;
+            if (ultra_exact_footprint(a, fb, fp, roll, roll_key)) ultra_exact_init_model(fp, model);
+            else model.reset();
+        }
+        return model.model.is_initialized();
+    };
+
+    m_ultra_exact_hover_shown = false;
+    m_ultra_exact_pick_shown  = false;
+    if (!ultra_exact_active() || !m_selected_features.first.feature.has_value()) return;
+    if (m_ultra_exact_hover.valid && m_curr_feature.has_value() && m_curr_feature->is_planar())
+        m_ultra_exact_hover_shown = refresh(m_ultra_exact_hover, *m_curr_feature, m_ultra_exact_hover_key, m_ultra_exact_hover_model,
+                                                       m_ultra_exact_hover_roll, m_ultra_exact_hover_roll_key);
+    if (m_ultra_exact_pick.valid && m_selected_features.second.feature.has_value() &&
+        m_selected_features.second.feature->volume == m_ultra_exact_pick.volume)
+        m_ultra_exact_pick_shown = refresh(m_ultra_exact_pick, *m_selected_features.second.feature, m_ultra_exact_pick_key, m_ultra_exact_pick_model,
+                                                      m_ultra_exact_pick_roll, m_ultra_exact_pick_roll_key);
+}
+
+// Ultra (Exact highlight) Auto-fit: move the moving part so the clicked footprint lands on the target face
+// exactly as highlighted (no outline or collision roll search -- what was shown is what you get; the Adjust
+// sliders still spin / slide it afterwards). Returns false when the toggle is off or no footprint was
+// clicked, so the caller runs the normal Auto-fit.
+bool GLGizmoMeasure::ultra_exact_fit()
+{
+    if (!ultra_exact_active() || !m_ultra_exact_pick.valid) return false;
+    if (m_hit_different_volumes.size() != 2) return false;
+    if (!m_selected_features.first.feature.has_value() || !m_selected_features.second.feature.has_value()) return false;
+    GLVolume* vt = m_hit_different_volumes[0];
+    GLVolume* va = m_hit_different_volumes[1];
+    if (!vt || !va || m_ultra_exact_pick.volume != va || m_selected_features.second.feature->volume != va) return false;
+    auto notify = [](const std::string& t) {
+        wxGetApp().plater()->get_notification_manager()->push_notification(
+            NotificationType::CustomNotification, NotificationManager::NotificationLevel::RegularNotificationLevel, t);
+    };
+    UltraFit::ExactFootprint fp;
+    if (!ultra_exact_footprint(m_ultra_exact_pick, *m_selected_features.second.feature, fp, m_ultra_exact_pick_roll, m_ultra_exact_pick_roll_key)) {
+        notify(_u8L("Exact highlight: the footprint could not be placed, so the normal Auto-fit was used."));
+        return false;
+    }
+    const Vec3d move = fp.mate * fp.anchor - fp.anchor;
+    Model& model = wxGetApp().plater()->model();
+    if (vt->object_idx() == va->object_idx()) {
+        // Two parts of one object: the view frame is the object's own, so move the part's volume transform.
+        if (vt->volume_idx() == va->volume_idx()) return false;
+        auto selection = const_cast<Selection*>(&m_parent.get_selection());
+        selection->setup_cache();
+        wxGetApp().plater()->take_snapshot("Auto-fit (exact)", UndoRedo::SnapshotType::GizmoAction);
+        selection->set_mode(Selection::Volume);
+        m_pending_scale = 1;
+        const Transform3d inst = va->get_instance_transformation().get_matrix();
+        const Transform3d vol  = inst.inverse() * fp.mate * inst * va->get_volume_transformation().get_matrix();
+        selection->rotate(va->object_idx(), va->instance_idx(), va->volume_idx(), vol);
+        wxGetApp().plater()->canvas3D()->do_rotate("");
+        register_single_mesh_pick();
+        update_feature_by_tran(*m_selected_features.first.feature);
+        update_feature_by_tran(*m_selected_features.second.feature);
+    } else {
+        // Separate objects: carry the view-frame mate into PRINT world (as the normal Auto-fit does) and
+        // apply it to both the print and the assembly pose.
+        Transform3d W1, W2;
+        if (!ultra_w2p(vt, *m_selected_features.first.feature, W1) || !ultra_w2p(va, *m_selected_features.second.feature, W2)) return false;
+        ModelObject* amo = model.objects[va->object_idx()];
+        if (amo->instances.empty()) return false;
+        wxGetApp().plater()->take_snapshot("Auto-fit");
+        ultra_apply_attachment_print_pose(W1 * fp.mate * W2.inverse() * amo->instances[0]->get_transformation().get_matrix());
+    }
+    m_ultra_adjust_rot = 0.f; m_ultra_adjust_off = 0.f;
+    BOOST_LOG_TRIVIAL(warning) << "[UltraFit] exact footprint: move=" << move.norm() << " roll=" << fp.roll * 180.0 / M_PI
+                               << " contact_shift=" << fp.contact_shift << " draped=" << fp.draped << " missed=" << fp.missed;
+    std::string msg = (boost::format(_u8L("Auto-fit (exact): the highlighted footprint landed on the target face (moved %.1fmm, edge roll %.1f deg, contact shift %.2fmm)."))
+                       % move.norm() % (fp.roll * 180.0 / M_PI) % fp.contact_shift).str();
+    if (fp.missed > 0)
+        msg += " " + (boost::format(_u8L("%d footprint points hang past the edge of the moving face.")) % fp.missed).str();
+    notify(msg);
+    return true;
+}
+
+// Ultra (Exact highlight): the toggle, Face and Curve modes only. Flipping it drops the moving pick, whose
+// meaning (whole face vs footprint) just changed; the target pick stays.
+void GLGizmoMeasure::ultra_show_exact_ui()
+{
+    if (m_measure_mode != EMeasureMode::ONLY_ASSEMBLY ||
+        (m_assembly_mode != AssemblyMode::FACE_FACE && m_assembly_mode != AssemblyMode::CURVE_CURVE)) return;
+    ultra_load_exact_setting();
+    bool exact = m_ultra_exact;
+    if (m_imgui->checkbox(_L("Exact highlight"), exact)) {
+        m_ultra_exact = exact;
+        if (AppConfig* cfg = wxGetApp().app_config) cfg->set("app", ULTRA_EXACT_KEY, exact ? "1" : "0");
+        if (m_selected_features.second.feature.has_value()) reset_feature2();
+        m_ultra_exact_hover_key.clear();
+        m_ultra_exact_pick_key.clear();
+        m_ultra_exact_hover_roll = UltraFit::ExactRollState();
+        m_ultra_exact_hover_roll_key.clear();
+    }
+    if (ImGui::IsItemHovered())
+        m_imgui->tooltip(_L("For a moving part whose face is larger than the target's. Pick the target face first; the moving part "
+                            "then highlights only the target face's own shape, centred on the cursor. Click where it should touch, "
+                            "and Auto-fit lands exactly that spot on the target."), ULTRA_CURVE_TOOLTIP_WIDTH);
 }
 
 } // namespace GUI

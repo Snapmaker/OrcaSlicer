@@ -19,6 +19,14 @@
 #endif
 
 #include <cstring>
+#include <cwchar>
+#include <chrono>
+#include <thread>
+#ifndef _WIN32
+#include <csignal>
+#include <cerrno>
+#include <unistd.h>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <vector>
@@ -190,6 +198,65 @@ namespace common
 #endif
 
     std::string datadir_override() { return g_datadir_override; }
+
+    bool is_relaunch_after_arg(const char* arg) { return arg != nullptr && std::strcmp(arg, "--relaunch-after") == 0; }
+#ifdef _WIN32
+    bool is_relaunch_after_arg(const wchar_t* arg) { return arg != nullptr && std::wcscmp(arg, L"--relaunch-after") == 0; }
+#endif
+
+    static void wait_for_process(unsigned long pid)
+    {
+        if (pid == 0)
+            return;
+        const auto started = std::chrono::steady_clock::now();
+        const char* how    = "exited";
+#ifdef _WIN32
+        if (pid == ::GetCurrentProcessId())
+            return;
+        HANDLE h = ::OpenProcess(SYNCHRONIZE, FALSE, DWORD(pid));
+        if (h == nullptr)
+            how = "gone"; // already exited (or not ours to wait for)
+        else {
+            if (::WaitForSingleObject(h, 120000) == WAIT_TIMEOUT)
+                how = "timeout";
+            ::CloseHandle(h);
+        }
+#else
+        for (int i = 0; i < 2400; ++i) { // 2 minutes
+            if (::kill(pid_t(pid), 0) != 0 && errno == ESRCH)
+                break;
+            if (i == 2399)
+                how = "timeout";
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+#endif
+        const long waited = long(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
+        const std::string note = "pid=" + std::to_string(pid) + " " + how + " waited_ms=" + std::to_string(waited);
+#ifdef _WIN32
+        ::SetEnvironmentVariableA("EDGESLICER_RELAUNCH_NOTE", note.c_str());
+#else
+        ::setenv("EDGESLICER_RELAUNCH_NOTE", note.c_str(), 1);
+#endif
+    }
+
+    void wait_for_relaunch_parent(int argc, char** argv)
+    {
+        for (int i = 1; i + 1 < argc; ++i)
+            if (is_relaunch_after_arg(argv[i])) {
+                wait_for_process(std::strtoul(argv[i + 1] ? argv[i + 1] : "0", nullptr, 10));
+                return;
+            }
+    }
+#ifdef _WIN32
+    void wait_for_relaunch_parent(int argc, wchar_t** argv)
+    {
+        for (int i = 1; i + 1 < argc; ++i)
+            if (is_relaunch_after_arg(argv[i])) {
+                wait_for_process(std::wcstoul(argv[i + 1] ? argv[i + 1] : L"0", nullptr, 10));
+                return;
+            }
+    }
+#endif
 
     std::string app_config_path()
     {

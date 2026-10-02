@@ -11,6 +11,7 @@
 #include "Plater.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
 
+#include "libslic3r/LayOnFace.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -67,7 +68,7 @@ bool Selection::Clipboard::is_sla_compliant() const
             return false;
 
         for (const ModelVolume* v : o->volumes) {
-            if (v->is_modifier())
+            if (v->is_modifier() || v->is_precise_seam()) // Precise Seam not supported in SLA
                 return false;
         }
     }
@@ -445,7 +446,8 @@ void Selection::add_curr_plate()
 
     PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
     for (int obj_idx = 0; obj_idx < m_model->objects.size(); obj_idx++) {
-        if (plate && plate->contain_instance_totally(obj_idx, 0)) {
+        // Membership, not contain_instance_totally(): objects outside the bed still need selecting.
+        if (plate && plate->contain_instance(obj_idx, 0)) {
             std::vector<unsigned int> volume_idxs = get_volume_idxs_from_object(obj_idx);
             do_add_volumes(volume_idxs);
         }
@@ -1372,6 +1374,26 @@ void Selection::flattening_rotate(const Vec3d& normal)
     // but respect their possibly diffrent z-rotation.
     if (m_mode == Instance)
         synchronize_unselected_instances(SyncRotationType::GENERAL);
+#endif // !DISABLE_INSTANCES_SYNCH
+
+    this->set_bounding_boxes_dirty();
+}
+
+void Selection::flattening_rotate_part(const Vec3d& normal)
+{
+    assert(Slic3r::is_approx(normal.norm(), 1.));
+
+    if (!m_valid || !is_single_volume())
+        return;
+
+    GLVolume& v = *(*m_volumes)[*m_list.begin()];
+    const ModelVolume& model_volume = *m_model->objects[v.object_idx()]->volumes[v.volume_idx()];
+    v.set_volume_transformation(lay_part_on_face_matrix(model_volume, v.get_volume_transformation().get_matrix(),
+                                                        v.get_instance_transformation().get_matrix(), normal));
+
+#if !DISABLE_INSTANCES_SYNCH
+    // The part is shared by all instances of the object.
+    synchronize_unselected_volumes();
 #endif // !DISABLE_INSTANCES_SYNCH
 
     this->set_bounding_boxes_dirty();

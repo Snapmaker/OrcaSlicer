@@ -614,8 +614,13 @@ class PartPlateList : public ObjectBase
     bool render_cali_logo = true;
 
     bool m_is_dark = false;
+    bool m_icon_textures_dark = false;
 
     int m_filament_count = 1;
+
+    // Snap #930: set when any plate's slice result goes valid→invalid so Preview
+    // re-slice can re-show the filament grouping dialog. Cleared at reslice().
+    bool m_filament_group_dirty = false;
 
     void init();
     //compute the origin for printable plate with index i
@@ -627,6 +632,8 @@ class PartPlateList : public ObjectBase
     //generate icon textures
     void generate_icon_textures();
     void release_icon_textures();
+    bool icon_textures_loaded() const { return m_del_texture.get_id() != 0 && m_icon_textures_dark == m_is_dark; }
+    void load_icon_textures();
 
     void set_default_wipe_tower_pos_for_plate(int plate_idx);
 
@@ -746,6 +753,9 @@ public:
     int get_curr_plate_index() const { return m_current_plate; }
     PartPlate* get_curr_plate() { return m_plate_list[m_current_plate]; }
     const PartPlate* get_curr_plate() const { return m_plate_list[m_current_plate]; }
+
+    bool is_filament_group_dirty() const { return m_filament_group_dirty; }
+    void set_filament_group_dirty(bool dirty) { m_filament_group_dirty = dirty; }
 
     std::vector<PartPlate*>& get_plate_list() { return m_plate_list; };
 

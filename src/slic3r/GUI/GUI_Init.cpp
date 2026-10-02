@@ -7,6 +7,7 @@
 #include "slic3r/GUI/RemoteAccess.hpp"
 #include "slic3r/GUI/3DScene.hpp"
 #include "slic3r/GUI/InstanceCheck.hpp"
+#include "slic3r/Utils/InstanceRouting.hpp"
 #include "slic3r/GUI/format.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -57,7 +58,13 @@ int GUI_Run(GUI_InitParams &params)
             // with "New"); those must not be folded into the running one.
             if (const char* force_new = std::getenv("SNORCA_NEW_INSTANCE"); force_new && *force_new)
                 gui_single_instance_setting = false;
-            if (Slic3r::instance_check(params.argc, params.argv, gui_single_instance_setting)) {
+            // Same rule GUI_App::on_init_inner applies: a hidden instance does not take part in the
+            // single-instance hand-off as a receiver.
+            wxString hidden_env;
+            const bool hidden_start = Slic3r::InstanceRouting::resolve_hidden_start(
+                wxGetEnv("SNORCA_HIDDEN", &hidden_env) ? std::optional<std::string>(hidden_env.ToStdString()) : std::nullopt,
+                params.start_hidden, gui->app_config->get_bool("start_hidden"));
+            if (Slic3r::instance_check(params.argc, params.argv, gui_single_instance_setting, hidden_start)) {
                 //TODO: do we have delete gui and other stuff?
                 return -1;
             }

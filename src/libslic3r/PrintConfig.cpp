@@ -282,7 +282,8 @@ static t_config_enum_values s_keys_map_SeamPosition {
     { "back",           spRear },
     { "random",         spRandom },
     { "left",           spLeft },
-    { "right",          spRight }
+    { "right",          spRight },
+    { "aligned_front",  spAlignedFront }
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(SeamPosition)
 
@@ -6022,24 +6023,30 @@ void PrintConfigDef::init_fff_params()
     def->category = L("Quality");
     def->tooltip = L("The start position to print each part of outer wall. "
                      "Back places the seam toward the back of the bed. "
-                     "Aligned left/right work like Aligned back, but bias the seam toward the "
-                     "left/right of the bed instead: hidden and low-visibility points on that "
+                     "Aligned front/left/right work like Aligned back, but bias the seam toward the "
+                     "front/left/right of the bed instead: hidden and low-visibility points on that "
                      "side of the model are still preferred over an exposed point.");
     def->enum_keys_map = &ConfigOptionEnum<SeamPosition>::get_enum_values();
-    def->enum_values.push_back("nearest");
-    def->enum_values.push_back("aligned");
-    def->enum_values.push_back("aligned_back");
-    def->enum_values.push_back("back");
-    def->enum_values.push_back("left");
-    def->enum_values.push_back("right");
-    def->enum_values.push_back("random");
+    // The settings combo box maps the enum's NUMBER straight to the list index (Choice::set_value /
+    // get_value in Field.cpp), so this list must follow the SeamPosition order exactly: a value
+    // inserted in the middle makes every later one show - and save - as its neighbour.
+    // test_config.cpp checks it for every enum option.
+    def->enum_values.push_back("nearest");       // spNearest
+    def->enum_values.push_back("aligned");       // spAligned
+    def->enum_values.push_back("aligned_back");  // spAlignedBack
+    def->enum_values.push_back("back");          // spRear
+    def->enum_values.push_back("random");        // spRandom
+    def->enum_values.push_back("left");          // spLeft
+    def->enum_values.push_back("right");         // spRight
+    def->enum_values.push_back("aligned_front"); // spAlignedFront
     def->enum_labels.push_back(L("Nearest"));
     def->enum_labels.push_back(L("Aligned"));
     def->enum_labels.push_back(L("Aligned back"));
     def->enum_labels.push_back(L("Back"));
+    def->enum_labels.push_back(L("Random"));
     def->enum_labels.push_back(L("Aligned left"));
     def->enum_labels.push_back(L("Aligned right"));
-    def->enum_labels.push_back(L("Random"));
+    def->enum_labels.push_back(L("Aligned front"));
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionEnum<SeamPosition>(spAligned));
 
@@ -6052,7 +6059,7 @@ void PrintConfigDef::init_fff_params()
     def = this->add("seam_prefer_part_joints", coBool);
     def->label = L("Hide seam in part joints");
     def->category = L("Quality");
-    def->tooltip = L("For the Aligned seam positions (Aligned, Aligned back, Aligned left and Aligned right): when an object is an "
+    def->tooltip = L("For the Aligned seam positions (Aligned, Aligned back, Aligned front, Aligned left and Aligned right): when an object is an "
                      "assembly of parts, or touches another object, put the seam on the line where two parts meet, "
                      "so it hides in the joint instead of on a corner elsewhere. Painted seam enforcers and blockers "
                      "still take priority. Objects made of a single part are not affected.");
@@ -7173,6 +7180,104 @@ void PrintConfigDef::init_fff_params()
     def->max = 2;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
+
+    // Side stabilizers: pinpoint struts on pillars that touch tall, thin parts on their sides
+    // (Support/Stabilizers.hpp).
+    def = this->add("stabilizer_supports", coBool);
+    def->label = L("Side stabilizers");
+    def->category = L("Support");
+    def->tooltip = L("Add thin struts that touch tall, slender parts on their sides with a small pinpoint tip, "
+                     "in rings up the part's height, and stand on the build plate next to it. They keep the part "
+                     "from wobbling while it prints and snap off at the tip afterwards. Printed as support, so "
+                     "supports must be enabled.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("stabilizer_ring_spacing", coFloat);
+    def->label = L("Stabilizer ring spacing");
+    def->category = L("Support");
+    def->tooltip = L("Height between two rings of side touch points. The first ring is this high above the plate.");
+    def->sidetext = "mm";
+    def->min = 2;
+    def->max = 200;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(15.));
+
+    def = this->add("stabilizer_points_per_ring", coInt);
+    def->label = L("Touch points per ring");
+    def->category = L("Support");
+    def->tooltip = L("How many struts touch the part in each ring, spread evenly around it. "
+                     "Every ring uses the same angles, so each pillar carries one strut per ring.");
+    def->min = 1;
+    def->max = 12;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(3));
+
+    def = this->add("stabilizer_tip_diameter", coFloat);
+    def->label = L("Stabilizer tip diameter");
+    def->category = L("Support");
+    def->tooltip = L("Diameter of the pinpoint tip where a strut touches the part. Smaller leaves a smaller mark "
+                     "but holds less; keep it at least about twice the line width.");
+    def->sidetext = "mm";
+    def->min = 0.3;
+    def->max = 5;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.8));
+
+    def = this->add("stabilizer_tip_gap", coFloat);
+    def->label = L("Stabilizer tip gap");
+    def->category = L("Support");
+    def->tooltip = L("Space left between each tip and the part. 0 makes the tips touch the part, which is what "
+                     "stabilizes it; a small gap leaves no mark but only catches the part once it starts to sway.");
+    def->sidetext = "mm";
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.));
+
+    def = this->add("stabilizer_pillar_diameter", coFloat);
+    def->label = L("Stabilizer pillar diameter");
+    def->category = L("Support");
+    def->tooltip = L("Diameter of the pillars that carry the tips down to the build plate. "
+                     "A pillar is never thinner than four support lines, two on each side.");
+    def->sidetext = "mm";
+    def->min = 1;
+    def->max = 15;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(2.));
+
+    def = this->add("stabilizer_max_island_width", coFloat);
+    def->label = L("Stabilize parts up to width");
+    def->category = L("Support");
+    def->tooltip = L("Only sections of the part narrower than this get touch points, so a wide base under a thin "
+                     "spire stays unmarked. 0 means every section.");
+    def->sidetext = "mm";
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(20.));
+
+    // FDM hollowing: an even-thickness shell around an empty cavity (FDMHollowing.hpp).
+    def = this->add("hollow_interior", coBool);
+    def->label = L("Hollow interior");
+    def->category = L("Strength");
+    def->tooltip = L("Print the part as a closed shell of even thickness with an empty cavity inside. The shell follows "
+                     "the surface in 3D, so sloped and curved faces get the same thickness as walls, unlike top and bottom "
+                     "shell layers. The cavity's ceiling is bridged. Can be set per part: a part's own setting "
+                     "overrides the object's.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("hollow_shell_thickness", coFloat);
+    def->label = L("Hollow shell thickness");
+    def->category = L("Strength");
+    def->tooltip = L("Thickness of the shell left around the cavity, measured into the part from its surface. "
+                     "A part has to be thicker than about twice this plus 4 mm to leave a cavity; the slicer warns "
+                     "about parts it could not hollow. Can be set per part.");
+    def->sidetext = "mm";
+    def->min = 0.5;
+    def->max = 50;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(3.));
 
     def = this->add("tree_support_with_infill", coBool);
     def->label = L("Tree support with infill");
@@ -10075,6 +10180,12 @@ CLIActionsConfigDef::CLIActionsConfigDef()
     def->tooltip = L("Export the objects as multiple STLs to directory.");
     def->set_default_value(new ConfigOptionString("stl_path"));
 
+    def = this->add("export_step", coString);
+    def->label = L("Export STEP");
+    def->tooltip = L("Export all objects as one STEP file of solids (parts imported from STEP keep their exact geometry).");
+    def->cli_params = "filename.step";
+    def->set_default_value(new ConfigOptionString("output.step"));
+
     /*def = this->add("export_gcode", coBool);
     def->label = L("Export G-code");
     def->tooltip = L("Slice the model and export toolpaths as G-code.");
@@ -10445,13 +10556,17 @@ CLIMiscConfigDef::CLIMiscConfigDef()
     /*def = this->add("output", coString);
     def->label = L("Output File");
     def->tooltip = L("The file where the output will be written (if not specified, it will be based on the input file).");
-    def->cli = "output|o";
+    def->cli = "output|o";*/
 
+    // Re-enabled: InstanceCheck reads --single-instance / --no-single-instance, and the Blender bridge
+    // (and anything else handing files to a running EdgeSlicer) passes it. With it commented out the
+    // CLI parser rejected the flag as an invalid option and the process exited before the hand-off.
     def = this->add("single_instance", coBool);
     def->label = L("Single instance mode");
     def->tooltip = L("If enabled, the command line arguments are sent to an existing instance of GUI OrcaSlicer, "
                      "or an existing EdgeSlicer window is activated. "
-                     "Overrides the \"single_instance\" configuration value from application preferences.");*/
+                     "Overrides the \"single_instance\" configuration value from application preferences.");
+    def->set_default_value(new ConfigOptionBool(false));
 
 /*
     def = this->add("autosave", coString);
@@ -10755,6 +10870,8 @@ OtherSlicingStatesConfigDef::OtherSlicingStatesConfigDef()
 
     new_def("initial_no_support_extruder", coInt, "Initial no support extruder", "Zero-based index of the first extruder used for printing without support. Same as initial_no_support_tool.");
     new_def("in_head_wrap_detect_zone", coBool, "In head wrap detect zone", "Indicates if the first layer overlaps with the head wrap zone.");
+    new_def("curr_bed_type", coString, "Current bed type",
+            "Bed type of the current plate, e.g. \"Textured PEI Plate\", \"High Temp Plate\", \"Cool Plate\".");
 }
 
 PrintStatisticsConfigDef::PrintStatisticsConfigDef()

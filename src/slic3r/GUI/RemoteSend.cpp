@@ -1,5 +1,7 @@
 #include "RemoteSend.hpp"
 
+#include "BambuReprint.hpp"
+#include "BambuSendMapping.hpp"
 #include "BitmapCache.hpp"
 #include "DeviceManager.hpp"
 #include "GUI_App.hpp"
@@ -30,6 +32,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <future>
 #include <mutex>
 #include <thread>
@@ -168,91 +171,61 @@ static std::vector<FilamentInfo> plate_filaments(PartPlate* plate)
     return out;
 }
 
-// SelectMachineDialog::get_ams_mapping_result: the per-filament nozzle assignment that tells the
-// printer which nozzle each filament belongs to. project_config "filament_map" numbers the nozzles
-// 1 = left, 2 = right; the task numbers them 1 = left, 0 = right. Empty unless the printer preset
-// really has two nozzles, which is what keeps a single-nozzle payload unchanged.
-static std::vector<int> task_nozzle_ids()
+// SelectMachineDialog::sliced_filament_map: the 1-based extruder per filament the plate's G-code
+// was generated with (the plate's own Print config, the project's filament_map as the fallback).
+// Empty unless the printer preset really has two nozzles, which is what keeps a single-nozzle
+// payload unchanged.
+static std::vector<int> plate_filament_map()
 {
-    std::vector<int> ids;
-    const auto* diam = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
-    if (!diam || diam->size() != 2) return ids;
-    const auto* fm = wxGetApp().preset_bundle->project_config.option<ConfigOptionInts>("filament_map");
-    if (!fm) return ids;
-    for (int v : fm->values)
-        ids.push_back(v == (int) FilamentMapNozzleId::NOZZLE_RIGHT ? (int) CloudTaskNozzleId::NOZZLE_RIGHT
-                                                                   : (int) CloudTaskNozzleId::NOZZLE_LEFT);
-    return ids;
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    const auto*   diam   = bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (!diam || diam->size() != 2) return {};
+    std::vector<int> fm = wxGetApp().plater()->get_partplate_list().get_current_fff_print().config().filament_map.values;
+    if (fm.size() < bundle->filament_presets.size())
+        if (const auto* pfm = bundle->project_config.option<ConfigOptionInts>("filament_map")) fm = pfm->values;
+    return fm;
 }
 
-// SelectMachineDialog::do_ams_mapping + get_ams_mapping_result: the three JSON strings PrintJob
-// forwards (v0 tray list, v1 ams/slot list, per-filament info). Empty when nothing maps.
+static std::vector<int> preset_physical_extruder_map()
+{
+    if (const auto* pem = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionInts>("physical_extruder_map"))
+        return pem->values;
+    return {};
+}
+
+// SelectMachineDialog::do_ams_mapping + get_ams_mapping_result, through the code they share
+// (BambuSendMapping): the three JSON strings PrintJob forwards (v0 tray list, v1 ams/slot list,
+// per-filament info). A two-nozzle plate maps each side against its own AMS units. Empty when
+// nothing maps.
 static void ams_mapping(MachineObject* obj, const std::vector<FilamentInfo>& filaments, std::string& v0, std::string& v1, std::string& info)
 {
+    const std::vector<int>    fil_map = plate_filament_map();
     std::vector<FilamentInfo> result;
-    const int                 rc = obj->ams_filament_mapping(filaments, result);
+    const int                 rc = BambuSendMapping::auto_map(obj, filaments, fil_map, preset_physical_extruder_map(), result);
     if (rc != 0 && rc != 1 && !obj->is_valid_mapping_result(result))
         for (FilamentInfo& r : result) { r.tray_id = -1; r.distance = 99999; }
-    if (result.empty()) return;
-    size_t invalid = 0;
-    for (const FilamentInfo& r : result)
-        if (r.tray_id == -1) ++invalid;
-    if (invalid == result.size()) return;
 
-    PresetBundle*          bundle     = wxGetApp().preset_bundle;
-    const std::vector<int> nozzle_ids = task_nozzle_ids();
-    json          j0 = json::array(), j1 = json::array(), ji = json::array();
-    for (size_t i = 0; i < bundle->filament_presets.size(); ++i) {
-        int  tray_id = -1;
-        json item1;
-        item1["ams_id"]  = 0xff;
-        item1["slot_id"] = 0xff;
-        json item;
-        item["ams"]          = tray_id;
-        item["targetColor"]  = "";
-        item["filamentId"]   = "";
-        item["filamentType"] = "";
-        for (size_t k = 0; k < result.size(); ++k) {
-            if (result[k].id != (int) i) continue;
-            tray_id              = result[k].tray_id;
-            item["ams"]          = tray_id;
-            item["filamentType"] = k < filaments.size() ? filaments[k].type : result[k].type;
-            if (const Preset* p = bundle->filaments.find_preset(bundle->filament_presets[i])) item["filamentId"] = p->filament_id;
-            if (i < nozzle_ids.size()) item["nozzleId"] = nozzle_ids[i];
-            item["sourceColor"] = k < filaments.size() ? filaments[k].color : result[k].color;
-            item["targetColor"] = result[k].color;
-            try {
-                if (result[k].ams_id.empty() || result[k].slot_id.empty()) { item1["ams_id"] = 255; item1["slot_id"] = 255; }
-                else { item1["ams_id"] = std::stoi(result[k].ams_id); item1["slot_id"] = std::stoi(result[k].slot_id); }
-            } catch (...) {}
-        }
-        j0.push_back(tray_id);
-        j1.push_back(item1);
-        ji.push_back(item);
+    PresetBundle*                  bundle = wxGetApp().preset_bundle;
+    BambuSendMapping::ComposeInput in;
+    in.project_filament_count = bundle->filament_presets.size();
+    for (const std::string& name : bundle->filament_presets) {
+        const Preset* pr = bundle->filaments.find_preset(name);
+        in.filament_ids.push_back(pr ? pr->filament_id : std::string());
     }
-    v0   = j0.dump();
-    v1   = j1.dump();
-    info = ji.dump();
+    in.nozzle_filament_map = fil_map;
+    BambuSendMapping::compose(result, filaments, in, v0, v1, info);
 }
 
-// SelectMachineDialog::build_nozzles_info: only the two-nozzle printers carry this.
+// SelectMachineDialog::build_nozzles_info: only the two-nozzle printers carry this. Per-nozzle
+// flow variant from the project config: an H2C's high-flow nozzle is not "standard_flow".
 static std::string nozzles_info()
 {
-    json        arr  = json::array();
     const auto* diam = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
-    if (!diam || diam->size() != 2) return arr.dump();
-    // Per-nozzle flow variant, same source as the send dialog's build_nozzles_info. This used to
-    // be the constant "standard_flow", which is wrong for an H2C's high-flow nozzle.
-    const auto* vol = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
-    for (size_t i = 0; i < 2; ++i) {
-        json n;
-        n["id"]       = (int) (i == 0 ? CloudTaskNozzleId::NOZZLE_LEFT : CloudTaskNozzleId::NOZZLE_RIGHT);
-        n["type"]     = nullptr;
-        n["flowSize"] = (vol && i < vol->size()) ? get_nozzle_volume_type_cloud_string(vol->get_at(i)) : std::string("standard_flow");
-        n["diameter"] = diam->get_at(i);
-        arr.push_back(n);
-    }
-    return arr.dump();
+    if (!diam) return "[]";
+    std::vector<int> volume_types;
+    if (const auto* vol = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type"))
+        for (size_t i = 0; i < vol->size(); ++i) volume_types.push_back(vol->get_at(i));
+    return BambuSendMapping::nozzles_info(diam->values, volume_types);
 }
 
 static json params_json(const BBL::PrintParams& p)
@@ -283,6 +256,10 @@ static json params_json(const BBL::PrintParams& p)
     j["task_record_timelapse"] = p.task_record_timelapse;
     j["task_use_ams"]          = p.task_use_ams;
     j["task_bed_type"]         = p.task_bed_type;
+    j["auto_offset_cali"]      = p.auto_offset_cali;
+    j["extruder_cali_manual_mode"] = p.extruder_cali_manual_mode;
+    j["nozzle_mapping_request"]    = p.nozzle_mapping_request;
+    j["dst_file"]              = p.dst_file;
     return j;
 }
 
@@ -331,6 +308,72 @@ static std::string result_text(int result)
     case BAMBU_NETWORK_ERR_CANCELED:                           return "Task canceled.";
     default:                                                   return "Failed to send the print job (code " + std::to_string(result) + ")";
     }
+}
+
+// BambuSendDiagnosis's words for a failed Bambu send, in English like the rest of the hub's messages.
+static std::string diagnosis_text(BambuSendFailure f)
+{
+    f.ultranet_log = wxGetApp().is_ultranet_plugin_installed();
+    f.log_dir      = bambu_log_dir_for_display();
+    f.log_prefix   = "RemoteSend:";
+    return bambu_send_failure_text(f, false).full();
+}
+
+// The print-mode route for a cloud-bound printer (SelectMachineDialog + PrintJob::process): LAN first
+// when it can run, the cloud when the plug-in has one. EdgeSlicer's plug-in has no cloud printing,
+// so where only the cloud is left the send is refused here, with the reason the LAN route could not
+// run, instead of failing later with a bare -3120. Returns an empty string, or that refusal.
+static std::string choose_cloud_bound_print_call(Prepared& p, bool lan_only, bool cloud_print_only, bool has_sdcard)
+{
+    const BBL::PrintParams& ps              = p.params;
+    const bool              cloud_supported = bambu_cloud_print_supported(wxGetApp().is_ultranet_plugin_installed());
+    if (lan_only) {
+        const BambuLanSkip skip = bambu_lan_skip_reason(!ps.dev_ip.empty(), false, has_sdcard, !ps.password.empty());
+        if (skip != BambuLanSkip::None) {
+            BOOST_LOG_TRIVIAL(info) << "RemoteSend: skipped LAN: " << bambu_lan_skip_tag(skip) << " (lan_mode_only, no cloud)";
+            BambuSendFailure f;
+            f.cloud_bound  = false;
+            f.lan_skip     = skip;
+            f.skipped_code = BAMBU_NETWORK_ERR_FTP_UPLOAD_FAILED; // what PrintJob answers here
+            return diagnosis_text(f);
+        }
+        p.call = "start_local_print_with_record";
+        return "";
+    }
+    const BambuLanSkip skip = bambu_lan_skip_reason(!ps.dev_ip.empty(), cloud_print_only, has_sdcard, !ps.password.empty());
+    if (skip == BambuLanSkip::None) {
+        BOOST_LOG_TRIVIAL(info) << "RemoteSend: LAN first (start_local_print_with_record)"
+                                << (cloud_supported ? ", cloud fallback" : ", no cloud fallback: the network plug-in has no cloud printing");
+        p.call                  = "start_local_print_with_record";
+        p.lan_fallback_to_cloud = cloud_supported;
+        return "";
+    }
+    if (cloud_supported) {
+        BOOST_LOG_TRIVIAL(info) << "RemoteSend: skipped LAN: " << bambu_lan_skip_tag(skip) << ", send with cloud";
+        p.call     = "start_print";
+        p.lan_skip = skip;
+        return "";
+    }
+    BOOST_LOG_TRIVIAL(info) << "RemoteSend: skipped LAN: " << bambu_lan_skip_tag(skip)
+                            << ", no cloud fallback: the network plug-in has no cloud printing";
+    BambuSendFailure f;
+    f.lan_skip        = skip;
+    f.cloud_supported = false;
+    return diagnosis_text(f);
+}
+
+// Upload mode for a cloud-bound printer (SendJob::process): LAN only, so every precondition must hold.
+static std::string cloud_bound_upload_refusal(const BBL::PrintParams& ps, bool has_sdcard)
+{
+    const BambuLanSkip skip = bambu_lan_skip_reason(!ps.dev_ip.empty(), false, has_sdcard, !ps.password.empty());
+    if (skip == BambuLanSkip::None) return "";
+    BOOST_LOG_TRIVIAL(info) << "RemoteSend: skipped LAN: " << bambu_lan_skip_tag(skip) << ", nothing sent (no cloud route for uploads)";
+    BambuSendFailure f;
+    f.upload_only  = true;
+    f.cloud_bound  = false;
+    f.lan_skip     = skip;
+    f.skipped_code = -1; // SendJob's result when nothing ran
+    return diagnosis_text(f);
 }
 
 // ---------------------------------------------------------------- prepare ----
@@ -420,17 +463,9 @@ static std::pair<int, std::string> prepare_bambu(const Request& req, PartPlate* 
             p->call               = "start_local_print";
             p->verify_access_code = true;
         } else {
-            const bool lan_only  = wxGetApp().app_config->get("lan_mode_only") == "1";
-            const bool can_local = !ps.password.empty() && !ps.dev_ip.empty() && has_sdcard;
-            if (lan_only) {
-                if (!can_local) return { 409, "LAN-only mode is on but the printer has no IP address, access code or SD card" };
-                p->call = "start_local_print_with_record";
-            } else if (!obj->is_support_cloud_print_only && can_local) {
-                p->call                  = "start_local_print_with_record";
-                p->lan_fallback_to_cloud = true;
-            } else {
-                p->call = "start_print";
-            }
+            const bool        lan_only = wxGetApp().app_config->get("lan_mode_only") == "1";
+            const std::string refusal  = choose_cloud_bound_print_call(*p, lan_only, obj->is_support_cloud_print_only, has_sdcard);
+            if (!refusal.empty()) return { 409, refusal };
         }
     } else {
         // SendToPrinterDialog::on_ok_btn + SendJob::process: upload to the printer's storage only
@@ -439,8 +474,9 @@ static std::pair<int, std::string> prepare_bambu(const Request& req, PartPlate* 
         ps.task_use_ams = true;
         if (ps.connection_type == "lan") {
             if (!has_sdcard) return { 409, "An SD card needs to be inserted before sending to printer." };
-        } else if (ps.password.empty() || ps.dev_ip.empty() || !has_sdcard) {
-            return { 409, "uploading needs the printer's IP address, its access code and an SD card" };
+        } else {
+            const std::string refusal = cloud_bound_upload_refusal(ps, has_sdcard);
+            if (!refusal.empty()) return { 409, refusal };
         }
         p->call = "start_send_gcode_to_sdcard";
     }
@@ -824,6 +860,242 @@ std::string printer_kind_of(const std::string& id)
 
 static std::string kind_of_printer(const std::string& id) { return printer_kind_of(id); }
 
+// ------------------------------------------------- a Bambu reprint (BambuReprint) ----
+
+// The name the print is given: the file's name without its extension, as the desktop's send
+// dialog names a plate after its export name (print_name_for).
+static std::string print_name_of_record(const GcodeArchive::Record& rec)
+{
+    std::string name = rec.json.value("sent_name", std::string());
+    if (name.empty()) name = rec.file;
+    name = fs::path(name).filename().string();
+    for (const char* ext : { ".gcode.3mf", ".3mf" })
+        if (boost::iends_with(name, ext)) { name.resize(name.size() - std::strlen(ext)); break; }
+    name = drop_characters(name, "<>[]:/\\|?*\"");
+    return name.empty() ? std::string("reprint") : name;
+}
+
+// The printer's answer to the desktop's own get_auto_nozzle_mapping query (SelectMachineDialog::
+// check_nozzle_mapping), for the preview: advisory, exactly as there - a refusal or silence never
+// stops the send; the plug-in asks again while sending and goes without "nozzle_mapping" then.
+static json nozzle_mapping_probe(const std::string& printer, const std::string& request)
+{
+    json out = { { "applies", true }, { "state", "no_answer" } };
+    auto seq = std::make_shared<std::string>();
+    on_main([seq, printer, request]() {
+        DeviceManager* dm  = wxGetApp().getDeviceManager();
+        MachineObject* obj = dm ? find_machine(dm, printer) : nullptr;
+        if (obj) *seq = obj->command_get_auto_nozzle_mapping(request);
+    }, 5000);
+    if (seq->empty()) return out;
+    for (int i = 0; i < 24; ++i) { // up to 6 s: the phone is waiting on this answer
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        auto reply = std::make_shared<MachineObject::NozzleMappingReply>();
+        on_main([reply, printer]() {
+            DeviceManager* dm = wxGetApp().getDeviceManager();
+            if (MachineObject* obj = dm ? find_machine(dm, printer) : nullptr) *reply = obj->m_nozzle_mapping_reply;
+        }, 3000);
+        if (reply->valid && reply->sequence_id == *seq) {
+            const bool refused = BambuNozzleMapping::reply_is_refusal(reply->result);
+            out["state"] = refused ? "refused" : "accepted";
+            if (refused) out["reason"] = reply->reason.empty() ? reply->result : reply->reason;
+            return out;
+        }
+    }
+    return out;
+}
+
+// prepare_from_record() for a Bambu printer, and the preview when `preview` is set. The record's
+// .gcode.3mf is the job (BambuReprint::load_job); the printer is selected and waited for the way
+// /api/plates/{i}/send does it; BambuReprint::evaluate() makes the send dialog's checks and its AMS
+// mapping on the GUI thread; the parameters are PrintJob's, filled from the job instead of the
+// plater, for the same run_bambu().
+static std::pair<int, std::string> prepare_bambu_record(const Request& req, const GcodeArchive::Record& rec, const std::string& printer,
+                                                        const std::string& recorded, const std::string& recorded_kd,
+                                                        const std::string& record_model, bool same_printer, const std::string& mode,
+                                                        std::shared_ptr<Prepared>& out, json* preview)
+{
+    if (!boost::iends_with(rec.file, ".3mf"))
+        return { 409, "this record is not a sliced Bambu job (.gcode.3mf), so it cannot go to a Bambu printer" };
+    auto job = std::make_shared<BambuReprint::Job>(BambuReprint::load_job(rec.path));
+    if (!job->error.empty()) return { 409, job->error };
+
+    // Select the printer (which connects it) and give its status a moment, as a plate send does.
+    Request sel = req;
+    sel.printer = printer;
+    auto rc   = std::make_shared<std::pair<int, std::string>>(500, "not run");
+    auto wait = std::make_shared<bool>(false);
+    if (!on_main([rc, wait, sel]() { *rc = preselect(sel, *wait); }, 30000)) return { 503, "the slicer is busy" };
+    if (rc->first != 200) return *rc;
+    if (*wait) {
+        auto ready = std::make_shared<bool>(false);
+        for (int i = 0; i < 30 && !*ready; ++i) { // up to 15 s
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            on_main([ready, printer]() { *ready = printer_ready(printer); }, 3000);
+        }
+    }
+
+    BambuReprint::Request br;
+    br.mode               = mode;
+    br.mapping            = req.ams_mapping;
+    br.bed_leveling       = req.bed_leveling;
+    br.flow_cali          = req.flow_cali;
+    br.timelapse          = req.timelapse;
+    br.use_ams            = req.use_ams;
+    br.nozzle_offset_cali = req.nozzle_offset_cali;
+    br.force              = req.force;
+
+    auto       ev         = std::make_shared<BambuReprint::Evaluation>();
+    auto       p          = std::make_shared<Prepared>();
+    auto       tmodel     = std::make_shared<std::string>();
+    auto       lan_only   = std::make_shared<bool>(false);
+    auto       cloud_only = std::make_shared<bool>(false);
+    const bool ran        = on_main([ev, p, job, br, printer, tmodel, lan_only, cloud_only]() {
+        DeviceManager* dm = wxGetApp().getDeviceManager();
+        if (!dm) { ev->status = 503; ev->error = "no device manager"; return; }
+        if (!wxGetApp().getAgent()) { ev->status = 503; ev->error = "the network plugin is not loaded"; return; }
+        MachineObject* obj = find_machine(dm, printer);
+        if (!obj) { ev->status = 404; ev->error = "no such printer: " + printer; return; }
+        *tmodel = obj->printer_type;
+        *ev     = BambuReprint::evaluate(obj, *job, br);
+        if (ev->status != 200) return;
+        // What PrintJob reads off the printer (SelectMachineDialog::on_send_print).
+        p->printer_name       = obj->dev_name;
+        p->print_error_before = obj->print_error;
+        BBL::PrintParams& ps  = p->params;
+        ps.dev_id     = obj->dev_id;
+        ps.dev_ip     = obj->dev_ip;
+        ps.ftp_folder = obj->get_ftp_folder();
+        ps.username   = "bblp";
+        ps.password   = obj->get_access_code();
+#if !BBL_RELEASE_TO_PUBLIC
+        ps.use_ssl_for_ftp  = wxGetApp().app_config->get("enable_ssl_for_ftp") == "true";
+        ps.use_ssl_for_mqtt = wxGetApp().app_config->get("enable_ssl_for_mqtt") == "true";
+#else
+        ps.use_ssl_for_ftp  = obj->local_use_ssl_for_ftp;
+        ps.use_ssl_for_mqtt = obj->local_use_ssl_for_mqtt;
+#endif
+        ps.connection_type = obj->connection_type();
+        *lan_only          = wxGetApp().app_config->get("lan_mode_only") == "1";
+        *cloud_only        = obj->is_support_cloud_print_only;
+        // Only a printer that maps AMS slots gets the mapping (SelectMachineDialog::on_send_print).
+        if (!obj->is_support_ams_mapping()) ev->ams_mapping = ev->ams_mapping2 = ev->ams_mapping_info = "";
+        ev->use_ams = ev->use_ams && obj->has_ams();
+    }, 20000);
+    if (!ran) return { 503, "the slicer is busy" };
+    if (ev->status != 200) return { ev->status, ev->error };
+    // The record's model against the target's, by name (#159): the same rule the Reprint list applies.
+    if (!same_printer) {
+        const std::string why = GcodeArchive::reprint_target_refusal(recorded, recorded_kd, record_model, printer, "bambu", *tmodel,
+                                                                     GcodeArchive::model_names());
+        if (!why.empty()) return { 409, why };
+    }
+
+    if (preview) {
+        json& o     = *preview;
+        o           = ev->preview;
+        o["record"] = rec.id;
+        o["mode"]   = mode;
+        o["file"]   = rec.file;
+        if (!ev->nozzle_mapping_request.empty() && ev->can_send)
+            o["nozzle_mapping"] = nozzle_mapping_probe(printer, ev->nozzle_mapping_request);
+        return { 200, "" };
+    }
+
+    if (mode == "print" && !ev->can_send) {
+        const json probs = ev->preview.value("problems", json::array());
+        return { 409, probs.empty() ? std::string("the filaments cannot be mapped to this printer's AMS")
+                                    : probs.front().value("text", std::string("the filaments cannot be mapped")) };
+    }
+
+    p->kind               = "bambu";
+    p->mode               = mode;
+    p->plate              = -1;
+    p->dry_run            = req.dry_run || env_flag("SNORCA_SEND_DRYRUN");
+    p->printer_id         = printer;
+    p->from_record        = true;
+    p->record_id          = rec.id;
+    p->upload.source_path = fs::path(rec.path);
+
+    BBL::PrintParams& ps   = p->params;
+    const std::string name = print_name_of_record(rec);
+    ps.filename            = rec.path;   // the archived .gcode.3mf is the file the plug-in uploads
+    ps.config_filename     = "";         // no configuration 3mf: that only serves a cloud print
+    ps.plate_index         = job->plate; // the plate number inside the file (Metadata/plate_<n>.gcode)
+    const bool has_sdcard  = ev->has_sdcard;
+    if (mode == "print") {
+        // SelectMachineDialog::on_send_print + PrintJob::process, with the job's own data.
+        ps.print_type                = "from_normal";
+        ps.project_name              = truncate_utf8(name, 100);
+        ps.preset_name               = name + "_plate_" + std::to_string(job->plate);
+        ps.task_bed_type             = job->bed_type;
+        ps.task_bed_leveling         = ev->bed_leveling;
+        ps.task_flow_cali            = ev->flow_cali;
+        ps.task_vibration_cali       = false; // the desktop passes false here
+        ps.task_record_timelapse     = ev->timelapse;
+        ps.task_layer_inspect        = true;
+        ps.task_use_ams              = ev->use_ams;
+        ps.nozzles_info              = ev->nozzles_info;
+        ps.auto_offset_cali          = ev->auto_offset_cali;
+        ps.ams_mapping               = ev->ams_mapping;
+        ps.ams_mapping2              = ev->ams_mapping2;
+        ps.ams_mapping_info          = ev->ams_mapping_info;
+        ps.nozzle_mapping_request    = ev->nozzle_mapping_request;
+        ps.extruder_cali_manual_mode = 1; // no PA-value switch in this fork: automatic
+        if (ps.connection_type == "lan") {
+            if (!has_sdcard) return { 409, "An SD card needs to be inserted before printing via LAN." };
+            p->call               = "start_local_print";
+            p->verify_access_code = true;
+        } else {
+            const std::string refusal = choose_cloud_bound_print_call(*p, *lan_only, *cloud_only, has_sdcard);
+            if (!refusal.empty()) return { 409, refusal };
+        }
+    } else {
+        // SendToPrinterDialog::on_ok_btn + SendJob::process: upload to the printer's storage only.
+        ps.project_name = name + ".gcode.3mf";
+        ps.preset_name  = name;
+        ps.task_use_ams = true;
+        if (ps.connection_type == "lan") {
+            if (!has_sdcard) return { 409, "An SD card needs to be inserted before sending to printer." };
+        } else {
+            const std::string refusal = cloud_bound_upload_refusal(ps, has_sdcard);
+            if (!refusal.empty()) return { 409, refusal };
+        }
+        p->call = "start_send_gcode_to_sdcard";
+    }
+    out = p;
+    return { 200, "" };
+}
+
+std::pair<int, std::string> preview_record(const Request& req, json& out)
+{
+    if (req.record.empty()) return { 400, "record is required" };
+    const GcodeArchive::Record rec = GcodeArchive::find(req.record);
+    if (rec.id.empty()) return { 404, "no such record: " + req.record };
+    boost::system::error_code ec;
+    if (rec.path.empty() || !fs::is_regular_file(fs::path(rec.path), ec))
+        return { 409, "the file of record " + rec.id + " is gone (evicted, or the archive folder moved); it cannot be sent again" };
+    const json&       j           = rec.json;
+    const json        jp          = (j.contains("printer") && j["printer"].is_object()) ? j["printer"] : json::object();
+    const std::string recorded    = jp.value("id", std::string());
+    const std::string recorded_kd = jp.value("kind", std::string());
+    const std::string printer     = req.printer.empty() ? recorded : req.printer;
+    if (printer.empty()) return { 409, "this record does not say which printer it went to; name one with printer=" };
+    const std::string kind = printer_kind_of(printer);
+    if (kind != "bambu") return { 409, "only a reprint to a Bambu printer has a mapping preview; send it directly" };
+    const std::string record_model = jp.value("model", std::string());
+    const bool        same_printer = GcodeArchive::reprint_in_place_allowed(recorded, printer);
+    if (!same_printer) {
+        const std::string why = GcodeArchive::reprint_target_refusal(recorded, recorded_kd, record_model, printer, kind, record_model,
+                                                                     GcodeArchive::model_names());
+        if (!why.empty()) return { 409, why };
+    }
+    const std::string mode = req.mode.empty() ? std::string("print") : req.mode;
+    if (mode != "upload" && mode != "print") return { 400, "mode must be upload or print" };
+    std::shared_ptr<Prepared> unused;
+    return prepare_bambu_record(req, rec, printer, recorded, recorded_kd, record_model, same_printer, mode, unused, &out);
+}
+
 std::pair<int, std::string> prepare_from_record(const Request& req, std::shared_ptr<Prepared>& out)
 {
     if (req.record.empty())
@@ -858,15 +1130,20 @@ std::pair<int, std::string> prepare_from_record(const Request& req, std::shared_
                                                                      record_model, GcodeArchive::model_names());
         if (!why.empty()) return { 409, why };
     }
-    // Stage 2 stops where the design's open question 1 does: a Bambu printer handed a gcode 3mf
-    // whose PrintParams were composed for another send is unproven, and the MQTT "connect" path
-    // starts its print from the PC's own preprint page. Both wait for the hardware pass.
-    if (kind == "bambu" || kind == "connect")
-        return { 409, "reprinting to a " + kind + " printer is not supported yet; send that plate from the Prepare tab" };
+    // The MQTT "connect" path (the Snapmaker the PC's Device tab is connected to) starts its print
+    // from the PC's own preprint page; a U1 is reprinted through its LAN card (sm:<id>) instead.
+    if (kind == "connect")
+        return { 409, "reprinting over the PC's Snapmaker connection is not supported; add the printer on the home network "
+                      "(the PC's Device tab) and reprint to it there" };
 
     const std::string mode = req.mode.empty() ? j.value("mode", std::string("upload")) : req.mode;
     if (mode != "upload" && mode != "print")
         return { 400, "mode must be upload or print" };
+
+    // A Bambu printer: the job is read back from the .gcode.3mf and sent through the same
+    // parameters and plug-in calls as a plate send (prepare_bambu_record).
+    if (kind == "bambu")
+        return prepare_bambu_record(req, rec, printer, recorded, recorded_kd, record_model, same_printer, mode, out, nullptr);
 
     // The name the printer is given: the caller's, else the one it was given last time, else the
     // archived file's own name. Never a directory, whatever the sidecar holds.
@@ -1037,7 +1314,23 @@ static void archive_sent(std::shared_ptr<Prepared> p, const std::string& path, j
 {
     // A reprint replays bytes the archive already holds: recording them a second time would burn
     // one of the user's kept records on a file that is already there (stage 3 appends to sent[]).
-    if (p->from_record) { result["reprint_of"] = p->record_id; return; }
+    if (p->from_record) {
+        result["reprint_of"] = p->record_id;
+        // The record's own history of sends (GcodeArchive::note_reprint): what went where, when.
+        if (!p->dry_run) {
+            json entry;
+            entry["time"]    = (long long) std::time(nullptr);
+            entry["printer"] = { { "id", p->printer_id }, { "name", p->printer_name }, { "kind", p->kind } };
+            entry["mode"]    = p->mode;
+            entry["source"]  = "phone";
+            if (p->kind == "bambu") entry["plate"] = p->params.plate_index;
+            if (p->reuse_remote) entry["in_place"] = true;
+            if (GcodeArchive::note_reprint(p->record_id, entry)) result["history"] = true;
+            // An upload made to start later, started now: the record is a print from here on.
+            if (p->kind == "bambu" && p->mode == "print") GcodeArchive::set_mode(p->record_id, "print");
+        }
+        return;
+    }
     if (p->dry_run || !GcodeArchive::enabled()) return;
     const GcodeArchive::Record r = GcodeArchive::archive(path, p->archive_meta);
     if (!r.id.empty()) result["archived"] = r.id;
@@ -1071,6 +1364,12 @@ static void run_bambu(std::shared_ptr<Prepared> p, Sink& sink)
     result["printer"] = { { "id", p->printer_id }, { "name", p->printer_name } };
     result["call"]    = p->call;
     result["params"]  = params_json(p->params);
+    if (p->from_record) {
+        // A reprint's source is inside the archive folder, and the phone never learns where that
+        // is (no paths on the wire): its id says everything.
+        result["record"]             = p->record_id;
+        result["params"]["filename"] = "archive:" + p->record_id;
+    }
     if (!agent) { sink.done(false, "the network plugin is not loaded", result); return; }
     if (p->dry_run) {
         result["dry_run"] = true;
@@ -1104,24 +1403,74 @@ static void run_bambu(std::shared_ptr<Prepared> p, Sink& sink)
             return;
         }
     }
+    // The printer's "mqtt message verify failed" answers so far (MachineObject counts them), so a
+    // refusal of this send can be told apart from an earlier one.
+    auto refusals = [p]() {
+        auto n = std::make_shared<int>(0);
+        on_main([n, p]() {
+            DeviceManager* dm = wxGetApp().getDeviceManager();
+            if (MachineObject* obj = dm ? find_machine(dm, p->printer_id) : nullptr) *n = obj->project_file_refusals.load();
+        }, 3000);
+        return *n;
+    };
+    const int refusals_before = refusals();
+
+    // What BambuSendDiagnosis needs if this fails: the LAN attempt's own result, which the cloud
+    // fallback's answer would otherwise replace.
+    BambuSendFailure diag;
+    diag.upload_only     = upload_only;
+    diag.cloud_bound     = p->params.connection_type != "lan" && p->call != "start_send_gcode_to_sdcard";
+    diag.cloud_supported = bambu_cloud_print_supported(wxGetApp().is_ultranet_plugin_installed());
+    diag.lan_skip        = p->lan_skip;
+    bool use_diag        = false;
+    auto lan_failed      = [&](int lan_rc) {
+        diag.printer_refused = refusals() != refusals_before;
+        diag.lan_code        = lan_rc;
+        result["lan_result_code"] = lan_rc;
+        std::lock_guard<std::mutex> lock(m);
+        diag.lan_detail = last_error;
+    };
+
     sink.progress(10, p->params.connection_type == "lan" ? "Sending print job over LAN" : "Sending print job through cloud service");
     int rc = -1;
     if (p->call == "start_send_gcode_to_sdcard") {
         rc = agent->start_send_gcode_to_sdcard(p->params, update_fn, cancel_fn, nullptr);
+        if (rc < 0) { lan_failed(rc); use_diag = true; }
     } else if (p->call == "start_local_print") {
         rc = agent->start_local_print(p->params, update_fn, cancel_fn);
+        if (rc < 0) { lan_failed(rc); use_diag = true; }
     } else if (p->call == "start_local_print_with_record") {
         rc = agent->start_local_print_with_record(p->params, update_fn, cancel_fn, wait_fn);
-        if (rc < 0 && p->lan_fallback_to_cloud) {
-            result["fallback"] = "cloud";
-            sink.progress(10, "Sending print job through cloud service");
-            rc = agent->start_print(p->params, update_fn, cancel_fn, wait_fn);
+        if (rc < 0) {
+            lan_failed(rc);
+            use_diag = true;
+            if (p->lan_fallback_to_cloud) {
+                BOOST_LOG_TRIVIAL(warning) << "RemoteSend: LAN failed (" << rc << "), try to send with cloud";
+                result["fallback"] = "cloud";
+                sink.progress(10, "Sending print job through cloud service");
+                rc               = agent->start_print(p->params, update_fn, cancel_fn, wait_fn);
+                diag.cloud_tried = true;
+                diag.cloud_code  = rc;
+                // -3120 is what a plug-in without cloud printing answers: the LAN error is the one that matters.
+                use_diag = rc == BAMBU_NETWORK_ERR_PRINT_SP_POST_TASK_FAILED;
+            } else if (p->params.connection_type != "lan") {
+                BOOST_LOG_TRIVIAL(warning) << "RemoteSend: LAN failed (" << rc << "), no cloud fallback";
+            }
         }
     } else if (p->call == "start_print") {
-        rc = agent->start_print(p->params, update_fn, cancel_fn, wait_fn);
+        rc               = agent->start_print(p->params, update_fn, cancel_fn, wait_fn);
+        diag.cloud_tried = true;
+        diag.cloud_code  = rc;
+        use_diag         = p->lan_skip != BambuLanSkip::None && rc == BAMBU_NETWORK_ERR_PRINT_SP_POST_TASK_FAILED;
     }
     result["result_code"] = rc;
     if (rc < 0) {
+        if (use_diag && rc != BAMBU_NETWORK_ERR_CANCELED) {
+            const std::string text = diagnosis_text(diag);
+            BOOST_LOG_TRIVIAL(error) << "RemoteSend: " << text;
+            sink.done(false, text, result);
+            return;
+        }
         std::lock_guard<std::mutex> lock(m);
         sink.done(false, result_text(rc) + (last_error.empty() ? "" : ": " + last_error), result);
         return;
@@ -1133,18 +1482,21 @@ static void run_bambu(std::shared_ptr<Prepared> p, Sink& sink)
     // LAN-only mode with Developer Mode answers "command verification failed" on its own screen).
     // Watch what it reports for a few seconds so the phone learns about it.
     sink.progress(98, "waiting for the printer to start");
-    struct Watch { std::mutex m; std::string state { "unknown" }, err_text; int err { 0 }; };
+    struct Watch { std::mutex m; std::string state { "unknown" }, err_text; int err { 0 }; bool refused { false }; };
     auto w = std::make_shared<Watch>(); // shared: a timed-out GUI call may still run after this loop
     for (int i = 0; i < 12; ++i) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
-        on_main([w, p]() {
+        on_main([w, p, refusals_before]() {
             DeviceManager* dm = wxGetApp().getDeviceManager();
             if (!dm) return;
             MachineObject* obj = find_machine(dm, p->printer_id);
             if (!obj) return;
             std::lock_guard<std::mutex> lock(w->m);
             if (w->state != "unknown") return;
-            if (obj->print_error != 0 && obj->print_error != p->print_error_before) {
+            if (obj->project_file_refusals.load() != refusals_before) {
+                w->refused = true;
+                w->state   = "error";
+            } else if (obj->print_error != 0 && obj->print_error != p->print_error_before) {
                 w->err   = obj->print_error;
                 w->state = "error";
                 if (HMSQuery* q = wxGetApp().get_hms_query()) w->err_text = q->describe_print_error(obj->dev_id, w->err).ToUTF8().data();
@@ -1157,6 +1509,19 @@ static void run_bambu(std::shared_ptr<Prepared> p, Sink& sink)
     }
     std::lock_guard<std::mutex> lock(w->m);
     result["printer_state"] = w->state;
+    if (w->refused) {
+        // The printer answered the print command "mqtt message verify failed" (PrintJob's lan_started_fn).
+        BambuSendFailure f   = diag;
+        f.lan_skip           = BambuLanSkip::None;
+        f.lan_code           = BAMBU_NETWORK_ERR_PRINT_LP_PUBLISH_MSG_FAILED;
+        f.printer_refused    = true;
+        f.cloud_tried        = false;
+        result["printer_refused"] = true;
+        const std::string text = diagnosis_text(f);
+        BOOST_LOG_TRIVIAL(error) << "RemoteSend: " << text;
+        sink.done(false, text, result);
+        return;
+    }
     if (w->state == "error") {
         char code[16];
         std::snprintf(code, sizeof code, "%08X", (unsigned) w->err);
@@ -1435,6 +1800,10 @@ void list_hosts(json& printers, int plate)
             p["name"]         = d.display_name();
             p["model"]        = d.printer_model.empty() ? cfg.opt_string("printer_model") : d.printer_model;
             p["url"]          = d.address;
+            // Same address, reduced to a bare host: what the hub's camera join compares against
+            // (RemoteHub::summary_json), same as the "connect" card below. Never set for a device
+            // whose stored address is itself empty.
+            if (!d.address.empty()) p["ip"] = SnapmakerLan::host_of(d.address);
             p["host_type"]    = d.host_type;
             p["device_id"]    = d.id;
             p["model_key"]    = model_key;

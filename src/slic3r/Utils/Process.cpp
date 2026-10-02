@@ -8,6 +8,7 @@
 // localization
 #include "../GUI/I18N.hpp"
 
+#include <algorithm>
 #include <iostream>
 #include <fstream>
 
@@ -33,28 +34,45 @@ enum class NewSlicerInstanceType {
 
 // Start a new Slicer process instance either in a Slicer mode or in a G-code mode.
 // Optionally load a 3MF, STL or a G-code on start.
-static void start_new_slicer_or_gcodeviewer(const NewSlicerInstanceType instance_type, const std::vector<wxString> paths_to_open, bool single_instance)
+//
+// extra_args are passed on as they are (UTF-8); own_exe starts the running executable itself
+// instead of the EdgeSlicer binary next to it. Both are for relaunch_slicer().
+static void start_new_slicer_or_gcodeviewer(const NewSlicerInstanceType instance_type, const std::vector<wxString> paths_to_open, bool single_instance,
+                                            const std::vector<std::string>& extra_args = {}, bool own_exe = false)
 {
 #ifdef _WIN32
 	wxString path;
-	wxFileName::SplitPath(wxStandardPaths::Get().GetExecutablePath(), &path, nullptr, nullptr, wxPATH_NATIVE);
-	path += "\\";
-	path += (instance_type == NewSlicerInstanceType::Slicer) ? "EdgeSlicer.exe" : "bambu-gcodeviewer.exe";
+	if (own_exe)
+		path = wxStandardPaths::Get().GetExecutablePath();
+	else {
+		wxFileName::SplitPath(wxStandardPaths::Get().GetExecutablePath(), &path, nullptr, nullptr, wxPATH_NATIVE);
+		path += "\\";
+		path += (instance_type == NewSlicerInstanceType::Slicer) ? "EdgeSlicer.exe" : "bambu-gcodeviewer.exe";
+	}
+	std::vector<wxString> extra_w; // keeps the wide strings alive for args
+	extra_w.reserve(extra_args.size());
+	for (const std::string& a : extra_args)
+		extra_w.emplace_back(wxString::FromUTF8(a.c_str()));
 	std::vector<const wchar_t*> args;
-	args.reserve(4);
+	args.reserve(4 + extra_w.size());
 	args.emplace_back(path.wc_str());
 	if (!paths_to_open.empty()) {
 		for (const auto& file : paths_to_open)
 			args.emplace_back(file);
 	}
+	for (const wxString& a : extra_w)
+		args.emplace_back(a.wc_str());
 	if (instance_type == NewSlicerInstanceType::Slicer && single_instance)
 		args.emplace_back(L"--single-instance");
 	args.emplace_back(nullptr);
 	BOOST_LOG_TRIVIAL(info) << "Trying to spawn a new slicer \"" << into_u8(path) << "\"";
 	// Don't call with wxEXEC_HIDE_CONSOLE, Snapmaker_Orca in GUI mode would just show the splash screen. It would not open the main window though, it would
 	// just hang in the background.
-	if (wxExecute(const_cast<wchar_t**>(args.data()), wxEXEC_ASYNC) <= 0)
+	const long spawned = wxExecute(const_cast<wchar_t**>(args.data()), wxEXEC_ASYNC);
+	if (spawned <= 0)
 		BOOST_LOG_TRIVIAL(error) << "Failed to spawn a new slicer \"" << into_u8(path);
+	else if (own_exe)
+		BOOST_LOG_TRIVIAL(warning) << "Relaunch: started \"" << into_u8(path) << "\" as process " << spawned;
 #else 
 	// Own executable path.
 	boost::filesystem::path bin_path = into_path(wxStandardPaths::Get().GetExecutablePath());
@@ -72,11 +90,15 @@ static void start_new_slicer_or_gcodeviewer(const NewSlicerInstanceType instance
                     args.emplace_back(into_u8(file));
             }
             args.emplace_back("--args");
+			for (const std::string& a : extra_args)
+				args.emplace_back(a);
 			if (instance_type == NewSlicerInstanceType::GCodeViewer)
 				args.emplace_back("--gcodeviewer");
 			if (instance_type == NewSlicerInstanceType::Slicer && single_instance)
 				args.emplace_back("--single-instance");
 			boost::process::spawn(bin_path, args);
+			if (own_exe)
+				BOOST_LOG_TRIVIAL(warning) << "Relaunch: asked " << bin_path.string() << " to open a new instance of " << bundle_path.string();
 		}
 		catch (const std::exception& ex) {
 			BOOST_LOG_TRIVIAL(error) << "Failed to spawn a new slicer \"" << bin_path.string() << "\": " << ex.what();
@@ -102,9 +124,12 @@ static void start_new_slicer_or_gcodeviewer(const NewSlicerInstanceType instance
 		std::string my_path;
 		if (args.empty()) {
 			// Binary path was not set to the AppImage in the Linux specific block above, call the application directly.
-			my_path = (bin_path.parent_path() / ((instance_type == NewSlicerInstanceType::Slicer) ? "EdgeSlicer" : "bambu-gcodeviewer")).string();
+			my_path = own_exe ? bin_path.string()
+			                  : (bin_path.parent_path() / ((instance_type == NewSlicerInstanceType::Slicer) ? "EdgeSlicer" : "bambu-gcodeviewer")).string();
 			args.emplace_back(my_path.c_str());
 		}
+		for (const std::string& a : extra_args)
+			args.emplace_back(a.c_str());
 		std::string to_open;
 		if (!paths_to_open.empty()) {
 			for (const auto& file : paths_to_open) {
@@ -116,8 +141,11 @@ static void start_new_slicer_or_gcodeviewer(const NewSlicerInstanceType instance
 			args.emplace_back("--single-instance");
 		args.emplace_back(nullptr);
 		BOOST_LOG_TRIVIAL(info) << "Trying to spawn a new slicer \"" << args[0] << "\"";
-		if (wxExecute(const_cast<char**>(args.data()), wxEXEC_ASYNC | wxEXEC_MAKE_GROUP_LEADER) <= 0)
+		const long spawned = wxExecute(const_cast<char**>(args.data()), wxEXEC_ASYNC | wxEXEC_MAKE_GROUP_LEADER);
+		if (spawned <= 0)
 			BOOST_LOG_TRIVIAL(error) << "Failed to spawn a new slicer \"" << args[0];
+		else if (own_exe)
+			BOOST_LOG_TRIVIAL(warning) << "Relaunch: started \"" << args[0] << "\" as process " << spawned;
 	}
 #endif // Linux or Unix
 #endif // Win32
@@ -137,6 +165,38 @@ void start_new_slicer(const wxString *path_to_open, bool single_instance)
 void start_new_slicer(const std::vector<wxString>& files, bool single_instance)
 {
 	start_new_slicer_or_gcodeviewer(NewSlicerInstanceType::Slicer, files, single_instance);
+}
+
+void relaunch_slicer(int argc, char** argv, const std::vector<std::string>& skip_args)
+{
+	// The command line this process was started with, minus what must not come back: the secret
+	// of a hub-keeper launch (argv holds it masked anyway), and the files and links it was asked
+	// to open (the relaunch is a fresh start; the project was offered for saving on the way out).
+	// --datadir and the other options stay, so it comes up on the same data.
+	// "--hidden" goes too: the user just asked for this restart from a visible window, and the new
+	// process must show one (SNORCA_HIDDEN=0 below, in case the old one inherited it from the hub).
+	std::vector<std::string> args;
+	for (int i = 1; i < argc; ++i) {
+		if (argv == nullptr || argv[i] == nullptr)
+			continue;
+		const std::string a = argv[i];
+		if (a == "--hub-token" || a == "--relaunch-after") {
+			++i;
+			continue;
+		}
+		if (a.rfind("--hub-token=", 0) == 0 || a == "--hidden" || std::find(skip_args.begin(), skip_args.end(), a) != skip_args.end())
+			continue;
+		args.push_back(a);
+	}
+	// The new process waits for this one to exit before it touches the lock, the config or the ports.
+	args.emplace_back("--relaunch-after");
+	args.emplace_back(std::to_string(long(wxGetProcessId())));
+	wxSetEnv("SNORCA_HIDDEN", "0");
+	std::string shown;
+	for (const std::string& a : args)
+		shown += (shown.empty() ? "" : " ") + a;
+	BOOST_LOG_TRIVIAL(warning) << "Relaunch: starting EdgeSlicer again, arguments: " << shown;
+	start_new_slicer_or_gcodeviewer(NewSlicerInstanceType::Slicer, std::vector<wxString>{}, false, args, true);
 }
 
 void start_new_gcodeviewer(const wxString *path_to_open)

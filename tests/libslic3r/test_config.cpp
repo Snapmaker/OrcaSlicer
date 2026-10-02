@@ -1,6 +1,9 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/Preset.hpp"
+#include "libslic3r/ProjectConfigFill.hpp"
+#include "libslic3r/EnumChoice.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 
 #include <boost/filesystem.hpp>
@@ -14,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <sstream>
 
 using namespace Slic3r;
@@ -521,6 +525,95 @@ TEST_CASE("PrintConfigDef and the CLI ConfigDefs never register the same option 
     CHECK(duplicates.empty());
 }
 
+// CLI --uptodate_settings / --downward_check (Snapmaker_Orca.cpp) call
+// ConfigBase::load_from_json()'s 4-arg form, which does not flatten inherits. opt_float()
+// then dereferences a null option<>() when printable_height lives only on the parent.
+// These cases call cli_printable_height_or_zero() — the same helper as L2199 / L2684 / L4197.
+namespace {
+DynamicPrintConfig load_temp_json(const std::string &filename, const std::string &body, std::map<std::string, std::string> &key_values)
+{
+    const boost::filesystem::path dir = boost::filesystem::temp_directory_path() / "snorca_tests";
+    boost::filesystem::create_directories(dir);
+    const boost::filesystem::path path = dir / filename;
+    {
+        boost::nowide::ofstream ofs(path.string());
+        ofs << body;
+    }
+    DynamicPrintConfig config;
+    std::string        reason;
+    const ConfigSubstitutions substitutions =
+        config.load_from_json(path.string(), ForwardCompatibilitySubstitutionRule::EnableSilent, key_values, reason);
+    boost::filesystem::remove(path);
+    REQUIRE(reason.empty());
+    REQUIRE(substitutions.empty());
+    return config;
+}
+} // namespace
+
+TEST_CASE("CLI printable_height guard survives load_from_json without inherit flatten", "[Config][CLI]")
+{
+    SECTION("empty project_settings-style JSON leaves the key absent") {
+        std::map<std::string, std::string> key_values;
+        DynamicPrintConfig config = load_temp_json("empty_project_settings.json", "{}\n", key_values);
+        REQUIRE(config.option<ConfigOptionFloat>("printable_height") == nullptr);
+        REQUIRE(cli_printable_height_or_zero(config) == 0);
+    }
+
+    SECTION("4-arg load_from_json does not flatten a parent printable_height") {
+        // Mirrors BBL nozzle variants: child inherits, height lives on the parent only.
+        std::map<std::string, std::string> key_values;
+        DynamicPrintConfig config = load_temp_json(
+            "inheriting_machine.json",
+            "{\n"
+            "    \"type\": \"machine\",\n"
+            "    \"name\": \"probe child\",\n"
+            "    \"from\": \"system\",\n"
+            "    \"inherits\": \"probe parent\",\n"
+            "    \"printable_area\": [\"0x0\", \"256x0\", \"256x256\", \"0x256\"]\n"
+            "}\n",
+            key_values);
+        REQUIRE(config.option<ConfigOptionString>("inherits") != nullptr);
+        REQUIRE(config.opt_string("inherits") == "probe parent");
+        REQUIRE(config.option<ConfigOptionFloat>("printable_height") == nullptr);
+        REQUIRE(cli_printable_height_or_zero(config) == 0);
+    }
+
+    SECTION("downward-check crash shape: local printable_area of 4 points, no printable_height") {
+        std::map<std::string, std::string> key_values;
+        DynamicPrintConfig config = load_temp_json(
+            "area_without_height.json",
+            "{\n"
+            "    \"type\": \"machine\",\n"
+            "    \"name\": \"probe area only\",\n"
+            "    \"from\": \"system\",\n"
+            "    \"printable_area\": [\"0x0\", \"220x0\", \"220x220\", \"0x220\"]\n"
+            "}\n",
+            key_values);
+        const auto *area = config.option<ConfigOptionPoints>("printable_area");
+        REQUIRE(area != nullptr);
+        REQUIRE(area->values.size() >= 4);
+        REQUIRE(config.option<ConfigOptionFloat>("printable_height") == nullptr);
+        // Downward-check only reads height inside the size>=4 gate; the helper keeps the
+        // struct default of 0, so the ~L4236 check marks the printer failed.
+        REQUIRE(cli_printable_height_or_zero(config) == 0);
+    }
+
+    SECTION("present printable_height still reads through the guard") {
+        std::map<std::string, std::string> key_values;
+        DynamicPrintConfig config = load_temp_json(
+            "height_present.json",
+            "{\n"
+            "    \"type\": \"machine\",\n"
+            "    \"name\": \"probe height\",\n"
+            "    \"from\": \"system\",\n"
+            "    \"printable_height\": \"256\"\n"
+            "}\n",
+            key_values);
+        REQUIRE(config.option<ConfigOptionFloat>("printable_height") != nullptr);
+        REQUIRE(cli_printable_height_or_zero(config) == 256);
+    }
+}
+
 // Snapmaker #810: enabling small-area flow compensation must fall back to the
 // PrintConfig default model (not an empty per-preset override). The toggle
 // itself stays off until the user turns it on.
@@ -667,4 +760,525 @@ TEST_CASE("CLI --align-to-y-axis is a misc bool whose default must stay implicit
         CHECK_FALSE(config.opt_bool("align_to_y_axis"));
         CHECK(std::find(keys.begin(), keys.end(), "align_to_y_axis") == keys.end());
     }
+}
+
+// The settings combo box of a plain enum option shows the option's NUMERIC value as the list index and saves the
+// picked index back as the value (Choice::set_value / Choice::get_value in src/slic3r/GUI/Field.cpp). So
+// enum_values[i] must be the key of enum value i: a key inserted in the middle of the list (seam_position
+// "aligned_front", 2026-09-26) makes every later value show - and, once picked, save - as its neighbour. The
+// options Field.cpp maps through their keys instead (and host_type, which it shifts) are exempt.
+TEST_CASE("Enum options list their keys in the order of their values", "[Config][ConfigDefs]")
+{
+    // The GUI Choice combo stores its row index as the value unless the option is mapped by key
+    // (libslic3r/EnumChoice.hpp, used by Field.cpp). host_type has its own handling in Field.cpp and the
+    // physical printer dialogs build their own combo for it.
+    std::vector<std::string> misordered;
+    size_t                   checked = 0;
+    for (const auto &[key, def] : print_config_def.options) {
+        if ((def.type != coEnum && def.type != coEnums) || def.enum_keys_map == nullptr || def.enum_values.empty() ||
+            enum_choice_maps_by_key(key) || key == "host_type")
+            continue;
+        ++checked;
+        for (size_t i = 0; i < def.enum_values.size(); ++i) {
+            const auto it = def.enum_keys_map->find(def.enum_values[i]);
+            if (it == def.enum_keys_map->end() || it->second != int(i)) {
+                misordered.push_back(key + "[" + std::to_string(i) + "] = " + def.enum_values[i] + " -> " +
+                                     (it == def.enum_keys_map->end() ? std::string("unknown") : std::to_string(it->second)));
+                break;
+            }
+        }
+    }
+    INFO("checked " << checked << " enum options");
+    CHECK(checked > 20);
+    for (const std::string &m : misordered)
+        UNSCOPED_INFO(m);
+    CHECK(misordered.empty());
+
+    SECTION("seam_position: every listed key is its own value and round-trips")
+    {
+        const ConfigOptionDef *def = print_config_def.get("seam_position");
+        REQUIRE(def != nullptr);
+        REQUIRE(def->enum_values.size() == def->enum_labels.size());
+        REQUIRE(def->enum_values.size() == def->enum_keys_map->size());
+        CHECK(def->enum_values.back() == "aligned_front");
+        CHECK(def->get_default_value<ConfigOptionEnum<SeamPosition>>()->value == spAligned);
+        for (size_t i = 0; i < def->enum_values.size(); ++i) {
+            ConfigOptionEnum<SeamPosition> opt;
+            INFO("index " << i << ", key " << def->enum_values[i]);
+            REQUIRE(opt.deserialize(def->enum_values[i]));
+            CHECK(int(opt.value) == int(i));
+            CHECK(opt.serialize() == def->enum_values[i]);
+        }
+    }
+}
+
+TEST_CASE("Key-mapped enum choices round-trip between stored value and combo row", "[Config][ConfigDefs]")
+{
+    // Every option Field.cpp maps by key: each listed key is a known value, the row a pick stores
+    // shows that same row again, and the key survives a serialize round trip.
+    size_t mapped = 0;
+    for (const auto &[key, def] : print_config_def.options) {
+        if (!enum_choice_maps_by_key(key))
+            continue;
+        ++mapped;
+        INFO("option " << key);
+        REQUIRE((def.type == coEnum || def.type == coEnums));
+        REQUIRE(def.enum_keys_map != nullptr);
+        REQUIRE(!def.enum_values.empty());
+        REQUIRE(def.enum_labels.size() == def.enum_values.size());
+        std::set<int> seen;
+        for (size_t row = 0; row < def.enum_values.size(); ++row) {
+            INFO("row " << row << ", key " << def.enum_values[row]);
+            const int value = enum_choice_value_at_index(def, int(row));
+            REQUIRE(value >= 0);
+            CHECK(value == def.enum_keys_map->at(def.enum_values[row]));
+            CHECK(seen.insert(value).second);
+            CHECK(enum_choice_index_of_value(def, value) == int(row));
+            std::unique_ptr<ConfigOption> opt(def.create_default_option());
+            REQUIRE(opt->deserialize(def.enum_values[row]));
+            CHECK(opt->serialize() == def.enum_values[row]);
+            if (def.type == coEnum)
+                CHECK(opt->getInt() == value);
+        }
+        CHECK(enum_choice_value_at_index(def, -1) == -1);
+        CHECK(enum_choice_value_at_index(def, int(def.enum_values.size())) == -1);
+    }
+    // The helper names 16 options; a typo there would silently drop one from the mapping.
+    CHECK(mapped == 16);
+
+    SECTION("locked_*_infill_pattern: the first row is \"default\" (ipCount), not ipMonotonic")
+    {
+        for (const char *key : { "locked_skin_infill_pattern", "locked_skeleton_infill_pattern" }) {
+            INFO("option " << key);
+            const ConfigOptionDef *def = print_config_def.get(key);
+            REQUIRE(def != nullptr);
+            CHECK(def->get_default_value<ConfigOptionEnum<InfillPattern>>()->value == ipCount);
+            CHECK(enum_choice_index_of_value(*def, ipCount) == 0);
+            CHECK(enum_choice_value_at_index(*def, 0) == int(ipCount));
+            const int grid_row = int(std::find(def->enum_values.begin(), def->enum_values.end(), "grid") - def->enum_values.begin());
+            REQUIRE(grid_row < int(def->enum_values.size()));
+            CHECK(enum_choice_value_at_index(*def, grid_row) == int(ipGrid));
+            CHECK(enum_choice_index_of_value(*def, ipGrid) == grid_row);
+            // Patterns the band menus leave out show no row of their own.
+            for (InfillPattern p : { ipMonotonic, ipLockedZag, ipAdaptiveCubic, ipSupportCubic, ipLightning })
+                CHECK(enum_choice_index_of_value(*def, p) == -1);
+        }
+    }
+
+    SECTION("nozzle_volume_type & co: \"E3D High Flow\" is row 4 and value 5; no value 4")
+    {
+        for (const char *key : { "nozzle_volume_type", "default_nozzle_volume_type", "extruder_nozzle_volume_type" }) {
+            INFO("option " << key);
+            const ConfigOptionDef *def = print_config_def.get(key);
+            REQUIRE(def != nullptr);
+            REQUIRE(def->enum_values.size() == 5);
+            CHECK(def->enum_values[4] == "E3D High Flow");
+            CHECK(enum_choice_value_at_index(*def, 4) == int(nvtE3DHighFlow));
+            CHECK(enum_choice_index_of_value(*def, nvtE3DHighFlow) == 4);
+            CHECK(enum_choice_index_of_value(*def, 4) == -1);
+            for (NozzleVolumeType t : { nvtStandard, nvtHighFlow, nvtHybrid, nvtTPUHighFlow })
+                CHECK(enum_choice_value_at_index(*def, enum_choice_index_of_value(*def, t)) == int(t));
+        }
+    }
+}
+
+TEST_CASE("fill_missing_project_keys copies absent printer and process keys from the system preset", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    system.set_key_value("wall_loops", new ConfigOptionInt(4));
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+    system.set_key_value("extruder_clearance_height_to_rod", new ConfigOptionFloat(27.5));
+    project.set_key_value("wall_loops", new ConfigOptionInt(3));
+
+    std::vector<std::string> filled_keys;
+    const size_t             n = fill_missing_project_keys(project, system, Preset::print_options(), &filled_keys);
+    REQUIRE(n == 1);
+    REQUIRE(filled_keys == std::vector<std::string>{"sparse_infill_density"});
+    REQUIRE(project.opt_int("wall_loops") == 3);
+    REQUIRE(project.option<ConfigOptionPercent>("sparse_infill_density")->value == 15);
+    REQUIRE(project.option("extruder_clearance_height_to_rod") == nullptr);
+
+    const size_t n_printer = fill_missing_project_keys(project, system, Preset::printer_options());
+    REQUIRE(n_printer == 1);
+    REQUIRE_THAT(project.opt_float("extruder_clearance_height_to_rod"), Catch::Matchers::WithinAbs(27.5, 1e-9));
+}
+
+TEST_CASE("fill_missing_project_keys never overwrites a key the project already has", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    project.set_key_value("sparse_infill_density", new ConfigOptionPercent(42));
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+
+    REQUIRE(fill_missing_project_keys(project, system, Preset::print_options()) == 0);
+    REQUIRE(project.option<ConfigOptionPercent>("sparse_infill_density")->value == 42);
+}
+
+TEST_CASE("fill_missing_project_keys leaves mixed, flow-variant and mapping keys untouched", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    system.set_key_value("mixed_filament_definitions", new ConfigOptionString("0,1;1,0"));
+    system.set_key_value("filament_volume_type", new ConfigOptionEnumsGeneric{int(FilamentVolumeType::fvtHighFlow)});
+    system.set_key_value("nozzle_volume_type", new ConfigOptionEnumsGeneric{int(NozzleVolumeType::nvtHighFlow)});
+    system.set_key_value("filament_map", new ConfigOptionInts{1, 2});
+    system.set_key_value("filament_map_mode", new ConfigOptionEnum<FilamentMapMode>(FilamentMapMode::fmmManual));
+    system.set_key_value("printer_extruder_id", new ConfigOptionInts{0});
+    system.set_key_value("enable_filament_mapping", new ConfigOptionBool(true));
+    system.set_key_value("device_tool_count", new ConfigOptionInt(4));
+    system.set_key_value("device_changer", new ConfigOptionString("ams"));
+    system.set_key_value("dithering_local_z_mode", new ConfigOptionBool(true));
+    system.set_key_value("wipe_tower_rotation_angle", new ConfigOptionFloat(45));
+    system.set_key_value("mixed_filament_pointillism_pixel_size", new ConfigOptionFloat(0.2));
+    system.set_key_value("inherits", new ConfigOptionString("parent"));
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+
+    std::vector<std::string> options = Preset::print_options();
+    options.insert(options.end(),
+                   {"mixed_filament_definitions", "filament_volume_type", "nozzle_volume_type", "filament_map",
+                    "filament_map_mode", "printer_extruder_id", "enable_filament_mapping", "device_tool_count",
+                    "device_changer", "dithering_local_z_mode", "wipe_tower_rotation_angle",
+                    "mixed_filament_pointillism_pixel_size", "inherits"});
+
+    REQUIRE(fill_missing_project_keys(project, system, options) == 1);
+    REQUIRE(project.has("sparse_infill_density"));
+    REQUIRE_FALSE(project.has("mixed_filament_definitions"));
+    REQUIRE_FALSE(project.has("filament_volume_type"));
+    REQUIRE_FALSE(project.has("nozzle_volume_type"));
+    REQUIRE_FALSE(project.has("filament_map"));
+    REQUIRE_FALSE(project.has("filament_map_mode"));
+    REQUIRE_FALSE(project.has("printer_extruder_id"));
+    REQUIRE_FALSE(project.has("enable_filament_mapping"));
+    REQUIRE_FALSE(project.has("device_tool_count"));
+    REQUIRE_FALSE(project.has("device_changer"));
+    REQUIRE_FALSE(project.has("dithering_local_z_mode"));
+    REQUIRE_FALSE(project.has("wipe_tower_rotation_angle"));
+    REQUIRE_FALSE(project.has("mixed_filament_pointillism_pixel_size"));
+    REQUIRE_FALSE(project.has("inherits"));
+    REQUIRE(project_config_fill_skip_keys().count("mixed_filament_definitions") == 1);
+    REQUIRE(project_config_fill_skip_keys().count("filament_volume_type") == 1);
+    REQUIRE(project_config_fill_skip_keys().count("enable_filament_mapping") == 1);
+    REQUIRE(project_config_fill_skip_keys().count("device_tool_count") == 1);
+    REQUIRE(project_config_fill_skip_keys().count("device_changer") == 1);
+    REQUIRE(project_config_fill_skip_keys().count("filament_mapping_protocol") == 0);
+    REQUIRE(project_config_fill_skip_keys().count("physical_filament_maps") == 0);
+    REQUIRE(project_config_fill_skip_keys().count("thumbnails") == 0);
+    REQUIRE(project_config_fill_skip_keys().count("process_flow_support") == 0);
+}
+
+TEST_CASE("fill_missing_project_keys fills filament_mapping_protocol from the printer preset", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    system.set_key_value("filament_mapping_protocol", new ConfigOptionString("snapmaker"));
+    std::vector<std::string> options = {"filament_mapping_protocol"};
+    REQUIRE(fill_missing_project_keys(project, system, options) == 1);
+    REQUIRE(project.opt_string("filament_mapping_protocol") == "snapmaker");
+}
+
+TEST_CASE("fill_missing_project_keys skips keys handle_legacy drops on load", "[Config][CLI]")
+{
+    REQUIRE(project_config_key_dropped_on_load("silent_mode"));
+    REQUIRE_FALSE(project_config_key_dropped_on_load("wall_loops"));
+
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    system.set_key_value("silent_mode", new ConfigOptionBool(true));
+    system.set_key_value("layer_height", new ConfigOptionFloat(0.2));
+
+    REQUIRE(fill_missing_project_keys(project, system, Preset::printer_options()) == 0);
+    REQUIRE_FALSE(project.has("silent_mode"));
+    REQUIRE(fill_missing_project_keys(project, system, Preset::print_options()) == 1);
+    REQUIRE_THAT(project.opt_float("layer_height"), Catch::Matchers::WithinAbs(0.2, 1e-9));
+}
+
+TEST_CASE("missing_project_keys is empty when the project already has every listed key", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    project.set_key_value("wall_loops", new ConfigOptionInt(3));
+    project.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+    const auto missing = missing_project_keys(project, {"wall_loops", "sparse_infill_density"});
+    REQUIRE(missing.empty());
+    REQUIRE(fill_missing_project_keys(project, project, {"wall_loops", "sparse_infill_density"}) == 0);
+}
+
+TEST_CASE("fill_cli_system_preset does not call find_system when nothing is missing", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    project.set_key_value("wall_loops", new ConfigOptionInt(3));
+    project.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(99));
+    int find_calls = 0;
+    auto find = [&](const std::string &) -> const DynamicPrintConfig * {
+        ++find_calls;
+        return &system;
+    };
+    REQUIRE(fill_cli_system_preset(project, "Snapmaker U1 (0.4 nozzle)", {"wall_loops", "sparse_infill_density"}, find) == 0);
+    REQUIRE(find_calls == 0);
+    REQUIRE(project.option<ConfigOptionPercent>("sparse_infill_density")->value == 15);
+}
+
+TEST_CASE("snapshot is taken before create=true reads hide missing keys", "[Config][CLI]")
+{
+    DynamicPrintConfig loaded;
+    loaded.set_key_value("wall_loops", new ConfigOptionInt(3));
+    const auto present = project_config_snapshot_loaded_keys(loaded);
+    REQUIRE(present.count("printer_model") == 0);
+    REQUIRE(present.count("printable_area") == 0);
+
+    loaded.option<ConfigOptionString>("printer_model", true);
+    loaded.option<ConfigOptionPoints>("printable_area", true);
+    REQUIRE(loaded.option("printer_model") != nullptr);
+    REQUIRE(loaded.option("printable_area") != nullptr);
+
+    DynamicPrintConfig system;
+    system.set_key_value("printer_model", new ConfigOptionString("Snapmaker U1"));
+    system.set_key_value("printable_area", new ConfigOptionPoints{Vec2d(0, 0), Vec2d(250, 0), Vec2d(250, 250), Vec2d(0, 250)});
+    std::vector<std::string> options = {"printer_model", "printable_area"};
+    REQUIRE(missing_project_keys(loaded, options, &present) == options);
+    REQUIRE(fill_missing_project_keys(loaded, system, options, nullptr, &present) == 2);
+    REQUIRE(loaded.opt_string("printer_model") == "Snapmaker U1");
+    REQUIRE(loaded.option<ConfigOptionPoints>("printable_area")->values.size() == 4);
+}
+
+TEST_CASE("inherits_group resolution selects which system preset the CLI fill copies from", "[Config][CLI]")
+{
+    const std::string current_printer = "My U1 copy";
+    const std::string current_process = "My 0.20 copy";
+    const std::string system_printer  = "Snapmaker U1 (0.4 nozzle)";
+    const std::string system_process  = "0.20mm Standard @Snapmaker U1 (0.4 nozzle)";
+    const std::string other_process   = "0.20 Standard @Snapmaker J1 (0.4 nozzle)";
+
+    DynamicPrintConfig project;
+    project.set_key_value("printer_settings_id", new ConfigOptionString(current_printer));
+    project.set_key_value("print_settings_id", new ConfigOptionString(current_process));
+    DynamicPrintConfig u1_process;
+    u1_process.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+    DynamicPrintConfig j1_process;
+    j1_process.set_key_value("sparse_infill_density", new ConfigOptionPercent(20));
+
+    int find_calls = 0;
+    std::string asked;
+    auto find = [&](const std::string &name) -> const DynamicPrintConfig * {
+        ++find_calls;
+        asked = name;
+        if (name == system_process)
+            return &u1_process;
+        if (name == other_process)
+            return &j1_process;
+        if (name == current_process)
+            return &j1_process;
+        return nullptr;
+    };
+
+    const std::vector<std::string> renamed{system_process, "Generic PLA", system_printer};
+    const std::string process_name = resolve_project_system_preset_name(current_process, &renamed, 1, false);
+    REQUIRE(process_name == system_process);
+    REQUIRE(fill_cli_system_preset(project, process_name, Preset::print_options(), find) == 1);
+    REQUIRE(find_calls == 1);
+    REQUIRE(asked == system_process);
+    REQUIRE(project.option<ConfigOptionPercent>("sparse_infill_density")->value == 15);
+
+    REQUIRE(resolve_project_system_preset_name(current_printer, nullptr, 1, true) == current_printer);
+    const std::vector<std::string> empty_slots{"", "Generic PLA", ""};
+    REQUIRE(resolve_project_system_preset_name(current_printer, &empty_slots, 1, true) == current_printer);
+    const std::vector<std::string> mis_sized{system_process};
+    REQUIRE(resolve_project_system_preset_name(current_printer, &mis_sized, 1, true) == current_printer);
+    const std::vector<std::string> too_long{system_process, "a", "b", system_printer};
+    REQUIRE(resolve_project_system_preset_name(current_printer, &too_long, 1, true) == current_printer);
+}
+
+TEST_CASE("cli_fill_from_system_preset skips fill so --process-preset values win", "[Config][CLI]")
+{
+    REQUIRE(cli_fill_from_system_preset(""));
+    REQUIRE_FALSE(cli_fill_from_system_preset("Snapmaker U1 (0.4 nozzle)"));
+    REQUIRE_FALSE(cli_fill_from_system_preset("0.20mm Standard @Snapmaker U1 (0.4 nozzle)"));
+
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    project.set_key_value("wall_loops", new ConfigOptionInt(5));
+    system.set_key_value("wall_loops", new ConfigOptionInt(2));
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+    int find_calls = 0;
+    auto find = [&](const std::string &) -> const DynamicPrintConfig * {
+        ++find_calls;
+        return &system;
+    };
+
+    const std::string process_override = "0.20mm Standard @Snapmaker U1 (0.4 nozzle)";
+    if (cli_fill_from_system_preset(process_override))
+        fill_cli_system_preset(project, "ignored", Preset::print_options(), find);
+    REQUIRE(find_calls == 0);
+    REQUIRE(project.opt_int("wall_loops") == 5);
+    REQUIRE(project.option("sparse_infill_density") == nullptr);
+
+    REQUIRE(fill_cli_system_preset(project, "0.20mm Standard @Snapmaker U1 (0.4 nozzle)", Preset::print_options(), find) == 1);
+    REQUIRE(find_calls == 1);
+    REQUIRE(project.opt_int("wall_loops") == 5);
+    REQUIRE(project.option<ConfigOptionPercent>("sparse_infill_density")->value == 15);
+}
+
+TEST_CASE("fill_missing_project_keys resizes per-extruder vectors to the project's nozzle_diameter", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    project.set_key_value("nozzle_diameter", new ConfigOptionFloats{0.4});
+    system.set_key_value("nozzle_diameter", new ConfigOptionFloats{0.4, 0.4, 0.4, 0.4});
+    system.set_key_value("retraction_length", new ConfigOptionFloats{1.0, 2.0, 3.0, 4.0});
+    system.set_key_value("extruder_nozzle_count", new ConfigOptionInts{1, 1, 1, 1});
+    system.set_key_value("extruder_printable_height", new ConfigOptionFloats{250, 250, 250, 250});
+
+    REQUIRE(fill_missing_project_keys(project, system, Preset::printer_options()) >= 1);
+    const auto *retract = project.option<ConfigOptionFloats>("retraction_length");
+    REQUIRE(retract != nullptr);
+    REQUIRE(retract->values.size() == 1);
+    REQUIRE_THAT(retract->values.front(), Catch::Matchers::WithinAbs(1.0, 1e-9));
+    const auto *noz_count = project.option<ConfigOptionInts>("extruder_nozzle_count");
+    REQUIRE(noz_count != nullptr);
+    REQUIRE(noz_count->values.size() == 1);
+    REQUIRE(noz_count->values.front() == 1);
+    const auto *height = project.option<ConfigOptionFloats>("extruder_printable_height");
+    REQUIRE(height != nullptr);
+    REQUIRE(height->values.size() == 1);
+}
+
+TEST_CASE("fill_missing_project_keys copies an empty default_filament_profile without throwing", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    project.set_key_value("nozzle_diameter", new ConfigOptionFloats{0.4, 0.6});
+    system.set_key_value("nozzle_diameter", new ConfigOptionFloats{0.4});
+    system.set_key_value("default_filament_profile", new ConfigOptionStrings());
+    REQUIRE(system.option<ConfigOptionStrings>("default_filament_profile")->values.empty());
+
+    size_t n = 0;
+    REQUIRE_NOTHROW(n = fill_missing_project_keys(project, system, Preset::printer_options()));
+    REQUIRE(n >= 1);
+    const auto *dfp = project.option<ConfigOptionStrings>("default_filament_profile");
+    REQUIRE(dfp != nullptr);
+    REQUIRE(dfp->values.empty());
+}
+
+TEST_CASE("fill_missing_project_keys skips flow-variant vectors when process_flow_support differs", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    project.set_key_value("process_flow_support", new ConfigOptionStrings{"Standard"});
+    system.set_key_value("process_flow_support", new ConfigOptionStrings{"Standard", "High Flow"});
+    system.set_key_value("inner_wall_speed", new ConfigOptionFloats{300, 600});
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+
+    std::vector<std::string> filled_keys;
+    fill_missing_project_keys(project, system, Preset::print_options(), &filled_keys);
+    REQUIRE(std::find(filled_keys.begin(), filled_keys.end(), "inner_wall_speed") == filled_keys.end());
+    REQUIRE_FALSE(project.has("inner_wall_speed"));
+    REQUIRE(project.has("sparse_infill_density"));
+}
+
+TEST_CASE("fill_missing_project_keys fills process_flow_support with matching flow-variant vectors", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    system.set_key_value("process_flow_support", new ConfigOptionStrings{"Standard", "High Flow"});
+    system.set_key_value("inner_wall_speed", new ConfigOptionFloats{300, 600});
+
+    std::vector<std::string> filled_keys;
+    fill_missing_project_keys(project, system, Preset::print_options(), &filled_keys);
+    REQUIRE(std::find(filled_keys.begin(), filled_keys.end(), "process_flow_support") != filled_keys.end());
+    REQUIRE(std::find(filled_keys.begin(), filled_keys.end(), "inner_wall_speed") != filled_keys.end());
+    const auto *fs = project.option<ConfigOptionStrings>("process_flow_support");
+    REQUIRE(fs != nullptr);
+    REQUIRE(fs->values == std::vector<std::string>{"Standard", "High Flow"});
+    const auto *speed = project.option<ConfigOptionFloats>("inner_wall_speed");
+    REQUIRE(speed != nullptr);
+    REQUIRE(speed->values.size() == 2);
+    REQUIRE_THAT(speed->values[0], Catch::Matchers::WithinAbs(300, 1e-9));
+    REQUIRE_THAT(speed->values[1], Catch::Matchers::WithinAbs(600, 1e-9));
+}
+
+TEST_CASE("project_config_fill_log_value truncates long G-code strings without splitting UTF-8", "[Config][CLI]")
+{
+    ConfigOptionString gcode(std::string(200, 'G'));
+    const std::string  logged = project_config_fill_log_value(&gcode, 96);
+    REQUIRE(logged.size() == 99);
+    REQUIRE(logged.compare(96, 3, "...") == 0);
+
+    // U+4E2D CJK '中' is E4 B8 AD; place it so byte 96 lands inside a 3-byte sequence.
+    std::string wide = "x";
+    for (int i = 0; i < 40; ++i)
+        wide += "\xE4\xB8\xAD";
+    ConfigOptionString wide_opt(wide);
+    const std::string  cut = project_config_fill_log_value(&wide_opt, 96);
+    REQUIRE(cut.size() >= 3);
+    REQUIRE(cut.compare(cut.size() - 3, 3, "...") == 0);
+    const std::string prefix = cut.substr(0, cut.size() - 3);
+    REQUIRE(prefix.size() <= 96);
+    REQUIRE(prefix.size() < wide.size());
+    // Truncation landed on a code-point boundary: the next original byte is not a continuation.
+    REQUIRE((static_cast<unsigned char>(wide[prefix.size()]) & 0xC0) != 0x80);
+    REQUIRE(prefix.find('\xE4') != std::string::npos);
+}
+
+TEST_CASE("Edge grouping dialog gate is CUSTOM plus two distinct nozzle flow types", "[Config][FilamentGroup]")
+{
+    // Snapmaker's gate is any_nozzle_high_flow() plus FilamentGroupDialog(parent, all_high_flow).
+    // Edge must not follow that: dialog only when grouping is custom AND nozzles mix flow types.
+    CHECK(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2));
+    CHECK(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 3));
+    CHECK_FALSE(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 1));
+    CHECK_FALSE(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 0));
+    CHECK_FALSE(filament_group_dialog_required(FILAMENT_GROUPING_STANDARD, 2));
+    CHECK_FALSE(filament_group_dialog_required(FILAMENT_GROUPING_STANDARD, 1));
+    CHECK_FALSE(filament_group_dialog_required("unknown", 2));
+}
+
+TEST_CASE("filament group dirty flag is set only on valid-to-invalid slice result", "[Config][FilamentGroup]")
+{
+    // Snap #930: Preview re-slice should re-confirm grouping after a param change
+    // invalidates a previously sliced plate, not on first slice or re-validation.
+    CHECK(filament_group_dirty_on_invalidation(true, false));
+    CHECK_FALSE(filament_group_dirty_on_invalidation(false, false));
+    CHECK_FALSE(filament_group_dirty_on_invalidation(false, true));
+    CHECK_FALSE(filament_group_dirty_on_invalidation(true, true));
+}
+
+TEST_CASE("filament group slice decision covers prompt, remote skip, and sync", "[Config][FilamentGroup]")
+{
+    using D = FilamentGroupSliceDecision;
+
+    // CUSTOM + mixed nozzles, person at the PC: show the dialog.
+    CHECK(filament_group_slice_decision(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2), true) == D::Prompt);
+    // N2: phone / agent / hidden instance must not open the dialog.
+    CHECK(filament_group_slice_decision(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2), false) == D::SkipAndProceed);
+    // STANDARD or a single flow type: sync, never prompt.
+    CHECK(filament_group_slice_decision(filament_group_dialog_required(FILAMENT_GROUPING_STANDARD, 2), true) == D::Sync);
+    CHECK(filament_group_slice_decision(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 1), true) == D::Sync);
+    CHECK(filament_group_slice_decision(false, false) == D::Sync);
+}
+
+TEST_CASE("filament group plate-pick continues only when grouping is accepted", "[Config][FilamentGroup]")
+{
+    const bool required = filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2);
+    REQUIRE(required);
+
+    // N1: dirty + interactive Cancel always aborts (no switch, no slice), even if
+    // a sibling plate still reports is_slice_result_valid().
+    CHECK_FALSE(filament_group_plate_pick_continues(true, required, true, false));
+    CHECK(filament_group_plate_pick_continues(true, required, true, true));
+
+    // N2: non-interactive (remote / hidden) proceeds without a confirmed dialog.
+    CHECK(filament_group_plate_pick_continues(true, required, false, false));
+    CHECK(filament_group_plate_pick_continues(true, required, false, true));
+
+    // Clean pick: no grouping prompt, continue. Sync only when the dialog is not required.
+    CHECK(filament_group_plate_pick_continues(false, required, true, false));
+    CHECK_FALSE(filament_group_sync_on_clean_plate_pick(false, required));
+    CHECK(filament_group_sync_on_clean_plate_pick(false, false));
+    CHECK_FALSE(filament_group_sync_on_clean_plate_pick(true, false));
+
+    // S4: a never-sliced plate is not dirty, so tab-in / pick does not prompt.
+    CHECK_FALSE(filament_group_dirty_on_invalidation(false, false));
+    CHECK(filament_group_plate_pick_continues(false, required, true, false));
 }

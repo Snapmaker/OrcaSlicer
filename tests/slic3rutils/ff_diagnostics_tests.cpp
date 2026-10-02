@@ -21,13 +21,18 @@
 #include "slic3r/GUI/FlashForge/FFDiagnostics.hpp"
 
 using Slic3r::GUI::FFConnectionTestResult;
+using Slic3r::GUI::FFNetInitStage;
 using Slic3r::GUI::FFDiagnosticsEntry;
 using Slic3r::GUI::FFDiagnosticsInput;
 using Slic3r::GUI::ff_diagnostics_file_name;
 using Slic3r::GUI::ff_diagnostics_manifest;
 using Slic3r::GUI::ff_diagnostics_manifest_is_free_of;
 using Slic3r::GUI::ff_diagnostics_summary;
+using Slic3r::GUI::ff_flashnetwork_dat_search_paths;
+using Slic3r::GUI::ff_flashnetwork_init_error;
+using Slic3r::GUI::ff_flashnetwork_init_failed_text;
 using Slic3r::GUI::ff_flashnetwork_load_failed_text;
+using Slic3r::GUI::ff_loadlibrary_error_hint;
 using Slic3r::GUI::ff_flashnetwork_missing_text;
 using Slic3r::GUI::ff_flashnetwork_search_paths;
 using Slic3r::GUI::ff_test_fully_ok;
@@ -378,4 +383,117 @@ TEST_CASE("a load failure points at the wrong-architecture case", "[FFDiagnostic
     CHECK(contains(text, "C:/app/FlashNetwork.dll"));
     // The overwhelmingly common cause, and the one a user can check themselves.
     CHECK(contains(text, "32-bit"));
+}
+
+// ---------------------------------------------------------------------------------------------
+// FLASHNETWORK9.DAT and the init-failure reasons
+//
+// 2.4.2.0 shipped FlashNetwork.dll without its server-settings file. fnet_initlize returns -1 on a
+// missing, empty or wrong-generation file (checked against the shipped 3.4.2 DLL), and the log
+// said only "initalize FlashNetwork failed". These pin where the file is looked for, and that each
+// failure step names itself.
+// ---------------------------------------------------------------------------------------------
+
+TEST_CASE("the server-settings file is looked for in resources/data first, as upstream does", "[FFDiagnostics]")
+{
+    const auto paths = ff_flashnetwork_dat_search_paths("C:/EdgeSlicer/resources",
+                                                        "C:/Users/x/AppData/Roaming/EdgeSlicer/plugins/FlashNetwork.dll",
+                                                        "C:/Users/x/AppData/Roaming/EdgeSlicer",
+                                                        "FLASHNETWORK9.DAT");
+    REQUIRE(paths.size() == 3);
+    // Where the installer puts it and where FlashForge's own client reads it.
+    CHECK(paths[0] == "C:/EdgeSlicer/resources/data/FLASHNETWORK9.DAT");
+    // Beside a hand-placed library.
+    CHECK(paths[1] == "C:/Users/x/AppData/Roaming/EdgeSlicer/plugins/FLASHNETWORK9.DAT");
+    // An Orca-Flashforge install picked with Locate keeps it in its own resources/data.
+    CHECK(paths[2] == "C:/Users/x/AppData/Roaming/EdgeSlicer/plugins/resources/data/FLASHNETWORK9.DAT");
+    // <data dir>/plugins/<dat> was already listed as "beside the library" and is not repeated.
+}
+
+TEST_CASE("an installed library and a hand-placed settings file are both found", "[FFDiagnostics]")
+{
+    const auto paths = ff_flashnetwork_dat_search_paths("C:/app/resources", "C:/app/FlashNetwork.dll",
+                                                        "C:/data", "FLASHNETWORK9.DAT");
+    // <dll dir>/resources/data is <resources>/data here, so it appears once.
+    REQUIRE(paths.size() == 3);
+    CHECK(paths[0] == "C:/app/resources/data/FLASHNETWORK9.DAT");
+    CHECK(paths[1] == "C:/app/FLASHNETWORK9.DAT");
+    CHECK(paths[2] == "C:/data/plugins/FLASHNETWORK9.DAT");
+}
+
+TEST_CASE("a backslash library path and empty inputs are handled", "[FFDiagnostics]")
+{
+    const auto paths = ff_flashnetwork_dat_search_paths("", "C:\\app\\FlashNetwork.dll", "", "FLASHNETWORK9.DAT");
+    REQUIRE(paths.size() == 2);
+    CHECK(paths[0] == "C:\\app\\FLASHNETWORK9.DAT");
+    CHECK(paths[1] == "C:\\app\\resources/data/FLASHNETWORK9.DAT");
+
+    CHECK(ff_flashnetwork_dat_search_paths("", "", "", "FLASHNETWORK9.DAT").empty());
+    CHECK(ff_flashnetwork_dat_search_paths("C:/app/resources", "C:/app/FlashNetwork.dll", "C:/data", "").empty());
+}
+
+TEST_CASE("a missing settings file is named as the reason fnet_initlize failed", "[FFDiagnostics]")
+{
+    const std::string line = ff_flashnetwork_init_error(FFNetInitStage::InitFailed, "C:/app/FlashNetwork.dll",
+                                                        "C:/app/resources/data/FLASHNETWORK9.DAT", -1,
+                                                        /*dat_found=*/false);
+    CHECK(contains(line, "fnet_initlize returned -1"));
+    CHECK(contains(line, "FNET_ERROR"));
+    CHECK(contains(line, "C:/app/resources/data/FLASHNETWORK9.DAT"));
+    CHECK(contains(line, "does not exist"));
+
+    // With the file present the line still carries the code and path, but does not blame the file
+    // for being absent.
+    const std::string present = ff_flashnetwork_init_error(FFNetInitStage::InitFailed, "C:/app/FlashNetwork.dll",
+                                                           "C:/app/resources/data/FLASHNETWORK9.DAT", -1, true);
+    CHECK(contains(present, "returned -1"));
+    CHECK_FALSE(contains(present, "does not exist"));
+}
+
+TEST_CASE("each init failure step names itself", "[FFDiagnostics]")
+{
+    const std::string load = ff_flashnetwork_init_error(FFNetInitStage::LoadFailed, "C:/app/FlashNetwork.dll",
+                                                        "The specified module could not be found", 126);
+    CHECK(contains(load, "could not load C:/app/FlashNetwork.dll"));
+    CHECK(contains(load, "system error 126"));
+    CHECK(contains(load, "Visual C++ runtime"));
+    CHECK(contains(load, "The specified module could not be found"));
+
+    const std::string arch = ff_flashnetwork_init_error(FFNetInitStage::LoadFailed, "C:/app/FlashNetwork.dll", "", 193);
+    CHECK(contains(arch, "system error 193"));
+    CHECK(contains(arch, "64-bit"));
+
+    const std::string sym = ff_flashnetwork_init_error(FFNetInitStage::MissingSymbol, "C:/app/FlashNetwork.dll",
+                                                       "fnet_getMqttConfig", 0);
+    CHECK(contains(sym, "fnet_getMqttConfig"));
+    CHECK(contains(sym, "C:/app/FlashNetwork.dll"));
+
+    const std::string ver = ff_flashnetwork_init_error(FFNetInitStage::BadVersion, "C:/app/FlashNetwork.dll", "2.9.0", 0);
+    CHECK(contains(ver, "2.9.0"));
+    CHECK(contains(ver, "3.x"));
+}
+
+TEST_CASE("unknown LoadLibrary codes get no invented explanation", "[FFDiagnostics]")
+{
+    CHECK(ff_loadlibrary_error_hint(0).empty());
+    CHECK(ff_loadlibrary_error_hint(424242).empty());
+    CHECK_FALSE(ff_loadlibrary_error_hint(126).empty());
+    const std::string line = ff_flashnetwork_init_error(FFNetInitStage::LoadFailed, "C:/x.dll", "", 424242);
+    CHECK(contains(line, "system error 424242"));
+    CHECK_FALSE(contains(line, "()"));
+}
+
+TEST_CASE("the Device tab shows the init failure reason, not the generic 32-bit guess", "[FFDiagnostics]")
+{
+    const std::string reason = "fnet_initlize returned -1 (FNET_ERROR) with server settings "
+                               "C:/app/resources/data/FLASHNETWORK9.DAT - that file does not exist";
+    const std::string text = ff_flashnetwork_init_failed_text("C:/app/FlashNetwork.dll", reason);
+    CHECK(contains(text, "C:/app/FlashNetwork.dll"));
+    CHECK(contains(text, reason));
+    CHECK(contains(text, "FLASHNETWORK9.DAT"));
+    CHECK_FALSE(contains(text, "32-bit"));
+
+    // No reason recorded: the older text, which still names the path.
+    CHECK(ff_flashnetwork_init_failed_text("C:/app/FlashNetwork.dll", "") ==
+          ff_flashnetwork_load_failed_text("C:/app/FlashNetwork.dll"));
 }

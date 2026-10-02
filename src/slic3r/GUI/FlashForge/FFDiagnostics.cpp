@@ -316,6 +316,109 @@ std::string ff_flashnetwork_load_failed_text(const std::string &path)
     return out.str();
 }
 
+// ---------------------------------------------------------------------------------------------
+// Why FlashNetwork did not come up
+// ---------------------------------------------------------------------------------------------
+
+std::vector<std::string> ff_flashnetwork_dat_search_paths(const std::string &resources_dir,
+                                                          const std::string &dll_path,
+                                                          const std::string &data_dir,
+                                                          const std::string &dat_name)
+{
+    std::vector<std::string> paths;
+    auto add = [&paths](const std::string &path) {
+        if (std::find(paths.begin(), paths.end(), path) == paths.end())
+            paths.push_back(path);
+    };
+    if (dat_name.empty())
+        return paths;
+    if (!resources_dir.empty())
+        add(with_sep(resources_dir) + "data/" + dat_name);
+    const std::size_t slash = dll_path.find_last_of("/\\");
+    if (slash != std::string::npos) {
+        const std::string dll_dir = dll_path.substr(0, slash + 1);
+        add(dll_dir + dat_name);
+        add(dll_dir + "resources/data/" + dat_name);
+    }
+    if (!data_dir.empty())
+        add(with_sep(data_dir) + "plugins/" + dat_name);
+    return paths;
+}
+
+std::string ff_loadlibrary_error_hint(long code)
+{
+    switch (code) {
+    case 2:   // ERROR_FILE_NOT_FOUND
+    case 3:   // ERROR_PATH_NOT_FOUND
+        return "the file is not there";
+    case 5:   // ERROR_ACCESS_DENIED
+        return "access denied - security software may be blocking the library";
+    case 126: // ERROR_MOD_NOT_FOUND
+        return "a library it depends on is missing - usually the Microsoft Visual C++ runtime";
+    case 127: // ERROR_PROC_NOT_FOUND
+        return "a library it depends on is too old - usually the Microsoft Visual C++ runtime";
+    case 193: // ERROR_BAD_EXE_FORMAT
+        return "not a valid 64-bit library - a 32-bit copy, or a truncated download";
+    case 216: // ERROR_EXE_MACHINE_TYPE_MISMATCH
+        return "built for a different processor architecture";
+    case 1114: // ERROR_DLL_INIT_FAILED
+        return "the library's own start-up code failed";
+    default:
+        return std::string();
+    }
+}
+
+std::string ff_flashnetwork_init_error(FFNetInitStage stage, const std::string &library_path,
+                                       const std::string &detail, long code, bool dat_found)
+{
+    std::ostringstream out;
+    const std::string lib = trimmed_or(library_path, "(unknown path)");
+    switch (stage) {
+    case FFNetInitStage::LoadFailed: {
+        out << "could not load " << lib;
+        if (code != 0) {
+            out << ": system error " << code;
+            const std::string hint = ff_loadlibrary_error_hint(code);
+            if (!hint.empty())
+                out << " (" << hint << ")";
+        }
+        if (!detail.empty())
+            out << ": " << detail;
+        break;
+    }
+    case FFNetInitStage::MissingSymbol:
+        out << lib << " does not export " << trimmed_or(detail, "(unnamed symbol)")
+            << " - this FlashNetwork build is not one EdgeSlicer can use";
+        break;
+    case FFNetInitStage::InitFailed:
+        out << "fnet_initlize returned " << code << " (" << fnet_error_name(int(code)) << ")"
+            << " with server settings " << trimmed_or(detail, "(none)");
+        if (!dat_found)
+            out << " - that file does not exist, and the library cannot start without it";
+        break;
+    case FFNetInitStage::BadVersion:
+        out << lib << " reports version " << trimmed_or(detail, "(none)")
+            << "; EdgeSlicer needs a 3.x FlashNetwork";
+        break;
+    }
+    return out.str();
+}
+
+std::string ff_flashnetwork_init_failed_text(const std::string &path, const std::string &reason)
+{
+    if (reason.empty())
+        return ff_flashnetwork_load_failed_text(path);
+    std::ostringstream out;
+    out << "FlashForge's FlashNetwork library was found but could not be started:\n\n  "
+        << trimmed_or(path, "(unknown path)") << "\n\n"
+        << "Reason: " << reason << "\n\n"
+           "If the reason names FLASHNETWORK9.DAT, the library's server-settings file is missing "
+           "from this install: reinstall EdgeSlicer, or place the file beside FlashNetwork.dll. "
+           "FlashForge's own Orca-Flashforge keeps it in its resources\\data folder, so Locate "
+           "can also point at the FlashNetwork.dll of such an installation.";
+    return out.str();
+}
+
 bool ff_diagnostics_manifest_is_free_of(const std::vector<FFDiagnosticsEntry> &entries,
                                         const std::string                    &secret)
 {

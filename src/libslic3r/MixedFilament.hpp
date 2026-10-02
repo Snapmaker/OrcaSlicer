@@ -334,11 +334,17 @@ public:
     static std::vector<unsigned int> decode_gradient_component_ids(const std::string &components,
                                                                    size_t             num_physical = 0);
 
-    // Expand virtual mixed-filament IDs in a sorted/deduplicated vector into
-    // their physical component IDs (component_a, component_b, and gradient
-    // component IDs).  IDs ≤ num_physical are left unchanged.  The caller is
-    // responsible for re-sorting and re-deduplicating after the call.
+    // Expand virtual mixed-filament IDs into the physical IDs MixedFilamentManager::resolve
+    // can actually pick: pattern tokens (and component_a if any token is unmapped, or if none
+    // map) when a pattern is set; gradient ids when there are 3+ of them and the mode is not
+    // Simple; otherwise component_a/component_b. IDs ≤ num_physical are left unchanged. The
+    // caller is responsible for re-sorting and re-deduplicating after the call.
     void expand_virtual_extruder_ids(std::vector<int> &ids, size_t num_physical) const;
+
+    // 0-based counterpart used by Print::extruders() / GCodeWriter::set_extruders.
+    // Converts to 1-based, expands mixed virtual IDs, drops anything that is
+    // still outside the physical range, then sorts and unique's in place.
+    void expand_0based_extruder_ids(std::vector<unsigned int> &ids, size_t num_physical) const;
 
     // Normalize a gradient_component_ids string to canonical form.
     // Canonical form uses legacy encoding when all IDs ≤ 9, extended otherwise.

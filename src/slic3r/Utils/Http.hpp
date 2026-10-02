@@ -72,6 +72,8 @@ public:
 	typedef std::function<void(std::string/* address */)> IPResolveFn;
 
 	typedef std::function<void(std::string headers)> HeaderCallbackFn;
+	// Takes the body in pieces as it arrives, with the response's status; false stops the transfer.
+	typedef std::function<bool(unsigned /* http_status */, const char* /* data */, size_t /* size */)> BodyFn;
 
 	// Whether a request checks the server's TLS certificate (CURLOPT_SSL_VERIFYPEER/VERIFYHOST).
 	//  Auto      - the default: verify for internet hosts, not for loopback / private / LAN
@@ -135,6 +137,10 @@ public:
 	// constructor added (X-BBL-* client and device id). For requests to third-party hosts
 	// that must not receive them, e.g. the GitHub release check.
 	Http& clear_headers();
+	// Whether redirects are followed (the default). A caller that sends credentials in custom
+	// headers, which curl passes on to wherever a redirect points, turns this off and follows
+	// redirects itself.
+	Http& follow_redirects(bool follow);
 	// Authorization by HTTP digest, based on RFC2617.
 	Http& auth_digest(const std::string &user, const std::string &password);
     // Basic HTTP authorization
@@ -201,6 +207,9 @@ public:
 	Http& on_ip_resolve(IPResolveFn fn);
 	// Callback called when response header is received
 	Http& on_header_callback(HeaderCallbackFn fn);
+	// The body goes to `fn` instead of being kept for on_complete / on_error (which then get an empty
+	// body). size_limit() still caps the total. For downloads that should not sit in memory.
+	Http& on_body(BodyFn fn);
 
 	// Starts performing the request in a background thread
 	Ptr perform();

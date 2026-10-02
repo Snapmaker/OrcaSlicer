@@ -8,6 +8,7 @@
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "libslic3r/Geometry/ConvexHull.hpp"
+#include "libslic3r/LayOnFace.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/Utils.hpp"
@@ -26,6 +27,7 @@
 #include "Plater.hpp"
 #include "MainFrame.hpp"
 #include "GUI_App.hpp"
+#include "Theme.hpp"
 #include "GUI_ObjectList.hpp"
 #include "ParamsPanel.hpp"
 #include "GUI_Colors.hpp"
@@ -1619,7 +1621,7 @@ bool GLCanvas3D::init()
         return false;
 
     // init dark mode status
-    on_change_color_mode(wxGetApp().app_config->get("dark_color_mode") == "1", false);
+    on_change_color_mode(wxGetApp().dark_mode(), false);
 
     BOOST_LOG_TRIVIAL(info) <<__FUNCTION__<< " enter";
     glsafe(::glClearColor(1.0f, 1.0f, 1.0f, 1.0f));
@@ -3235,9 +3237,10 @@ bool GLCanvas3D::ensure_gl_ready()
 {
     if (m_canvas == nullptr || m_context == nullptr)
         return false;
-    // wglMakeCurrent on this canvas' own DC: the HWND and its pixel format exist from construction,
-    // so a never-shown window is fine on MSW (wx says so itself in wxGLCanvasBase::SetCurrent).
-    if (!_set_current())
+    // Prefer the visible canvas's context: on GTK, SetCurrent on a hidden/unrealized canvas
+    // fails (blank 3MF / phone / U1 thumbnails). Canvases share one wxGLContext (OpenGLManager).
+    // Fall back to this canvas, which is fine on MSW even if never shown (wxGLCanvasBase::SetCurrent).
+    if (!_set_shown_canvas_current())
         return false;
     // glewInit + framebuffer-type detection + shader compilation; must follow the make-current and
     // precede ANY GLEW-dispatched call.
@@ -6429,6 +6432,27 @@ void GLCanvas3D::do_rotate(const std::string& snapshot_type)
 
             wxGetApp().obj_list()->update_info_items(static_cast<size_t>(i.first));
         }
+
+        // Lay on face of a single part: whatever the drop above made of the convex hulls, the object's lowest point
+        // has to end up on the bed, as it does when the whole object is laid on a face. The object's instances all
+        // share the part, so every one of them is dropped.
+        if (snapshot_type == L("Gizmo-Place on Face") && m_selection.is_single_volume()) {
+            const int object_idx = m_selection.get_object_idx();
+            if (object_idx >= 0 && object_idx < static_cast<int>(m_model->objects.size())) {
+                ModelObject* m = m_model->objects[object_idx];
+                m->invalidate_bounding_box();
+                for (int j = 0; j < static_cast<int>(m->instances.size()); ++j) {
+                    const double z_shift = bed_drop_shift(*m, static_cast<size_t>(j));
+                    if (z_shift == 0.0)
+                        continue;
+                    const Vec3d shift(0.0, 0.0, z_shift);
+                    m_selection.translate(object_idx, j, shift);
+                    m->translate_instance(j, shift);
+                    m_selection.notify_instance_update(object_idx, j);
+                }
+                wxGetApp().obj_list()->update_info_items(static_cast<size_t>(object_idx));
+            }
+        }
     }
     //BBS: nofity object list to update
     wxGetApp().plater()->sidebar().obj_list()->update_plate_values_for_items();
@@ -8616,6 +8640,21 @@ bool GLCanvas3D::_set_current()
     return m_context != nullptr && m_canvas->SetCurrent(*m_context);
 }
 
+bool GLCanvas3D::_set_shown_canvas_current()
+{
+    // Thumbnails also render outside render(), where another library's GL context (e.g. WebKitGTK's)
+    // can be current. Prefer the on-screen canvas so GTK hidden/unrealized SetCurrent does not fail,
+    // and so a frame already in render() does not switch drawables. Canvases share one wxGLContext.
+    // Fall back to this canvas (CLI / unit / shown-canvas SetCurrent failed).
+    Plater* plater = wxGetApp().plater();
+    if (plater != nullptr) {
+        GLCanvas3D* shown = plater->get_current_canvas3D();
+        if (shown != nullptr && shown != this && shown->_set_current())
+            return true;
+    }
+    return _set_current();
+}
+
 void GLCanvas3D::_resize(unsigned int w, unsigned int h)
 {
     if (m_canvas == nullptr && m_context == nullptr)
@@ -9100,7 +9139,19 @@ void GLCanvas3D::_render_background()
 
     ColorRGBA background_color = m_is_dark ? DEFAULT_BG_LIGHT_COLOR_DARK : DEFAULT_BG_LIGHT_COLOR;
     ColorRGBA error_background_color = m_is_dark ? ERROR_BG_LIGHT_COLOR_DARK : ERROR_BG_LIGHT_COLOR;
+    // The UI theme's 3D view background (docs/themes.md): one colour, or a gradient up to canvas_bg_top.
+    // The red "outside the plate" warning keeps its colour.
+    ColorRGBA themed_top = background_color;
+    if (Theme::active()) {
+        const auto& palette = Theme::spec().palette;
+        if (auto it = palette.find("canvas_bg"); it != palette.end())
+            decode_color(it->second, background_color);
+        themed_top = background_color;
+        if (auto it = palette.find("canvas_bg_top"); it != palette.end())
+            decode_color(it->second, themed_top);
+    }
     const ColorRGBA bottom_color = use_error_color ? error_background_color : background_color;
+    const ColorRGBA top_color    = use_error_color ? error_background_color : themed_top;
 
     if (!m_background.is_initialized()) {
         m_background.reset();
@@ -9126,7 +9177,7 @@ void GLCanvas3D::_render_background()
     GLShaderProgram* shader = wxGetApp().get_shader("background");
     if (shader != nullptr) {
         shader->start_using();
-        shader->set_uniform("top_color", bottom_color);
+        shader->set_uniform("top_color", top_color);
         shader->set_uniform("bottom_color", bottom_color);
         m_background.render();
         shader->stop_using();

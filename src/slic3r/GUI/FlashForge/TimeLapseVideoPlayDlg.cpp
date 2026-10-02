@@ -1,10 +1,10 @@
 #include "TimeLapseVideoPlayDlg.hpp"
 
 #include "slic3r/GUI/I18N.hpp"
+#include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/Widgets/WebView.hpp"
 
 #include <boost/log/trivial.hpp>
-#include <wx/uri.h>
 #include <wx/dir.h>
 #include <wx/file.h>
 #include <wx/filename.h>
@@ -83,18 +83,12 @@ namespace GUI {
         , m_width(width)
         , m_height(height)
     {
-        m_filepath2 = filepath;
 #ifdef __WIN32__
         m_filepath.Replace("\\", "/");
-        m_filepath2.Replace("\\", "/");
 #endif
-        if (!m_filepath2.empty())
-        {
-            m_filepath2 = wxURI(m_filepath2).BuildURI();
-        }
         generate_html();
 
-        wxString localUrl = "file://" + m_filepath2;
+        wxString localUrl = file_url_from_path(into_path(m_filepath));
         m_webview = WebView::CreateWebView(this, localUrl);
         m_webview->SetClientSize(FromDIP(m_width), FromDIP(m_height));
         SetClientSize(wxSize(m_webview->GetSize().x + 4, m_webview->GetSize().y));

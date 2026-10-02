@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <limits>
 #include <numeric>
 #include <unordered_map>
@@ -39,7 +40,12 @@ std::vector<ExtendedPoint> estimate_points_properties(const POINTS              
                                                       const AABBTreeLines::LinesDistancer<L> &unscaled_prev_layer,
                                                       float                                   flow_width,
                                                       float                                   max_line_length = -1.0f,
-                                                      float                                   min_distance = -1.0f)
+                                                      [[maybe_unused]] float                  min_distance    = -1.0f,
+                                                      // Speed an overhang distance prints at. Without it, every line over 4mm is split.
+                                                      const std::function<float(float)>      &distance_to_speed     = {},
+                                                      // Overlap (1 - distance / flow_width) at or below which the overhang
+                                                      // fan switches on; negative when the fan does not depend on overlap.
+                                                      float                                   fan_overlap_threshold = -1.0f)
 {
     bool   looped     = input_points.front() == input_points.back();
     std::function<size_t(size_t,size_t)> get_prev_index = [](size_t idx, size_t count) {
@@ -119,6 +125,27 @@ std::vector<ExtendedPoint> estimate_points_properties(const POINTS              
         points.push_back(next_point);
     }
 
+    // ORCA: How an overhang distance prints, which is what the pass below compares. A segment is printed at the lower
+    // of the speeds at its two ends, and with the overhang fan on if the overlap at either end turns it on. A point
+    // added to a path can therefore only change the G-code where it prints at a different speed or fan state from the
+    // points either side of it, and the pass below adds points there and nowhere else.
+    const float width_inv = 1.f / flow_width;
+    // Whether an overhang distance turns the overhang fan on. The overlap test check_overhang_fan applies in GCode.cpp.
+    auto fan_on = [fan_overlap_threshold, width_inv](float distance) {
+        return fan_overlap_threshold >= 0.f && 1.f - distance * width_inv <= fan_overlap_threshold;
+    };
+    // Whether two overhang distances are interchangeable ie have the same speed (beyond a 1mm/sec threshold that gcode.cpp filters out on)
+    // and the same fan state.
+    auto same_speed_and_fan = [&distance_to_speed, &fan_on](float a, float b) {
+        return std::abs(distance_to_speed(a) - distance_to_speed(b)) <= 1.f && fan_on(a) == fan_on(b);
+    };
+    // Whether the first overhang distance prints slower than the second, beyond the 1mm/sec gcode.cpp tolerance, or turns the overhang
+    // fan on where the second does not. Against a supported point (overhang distance 0) it tells whether an end is
+    // affected by the overhang.
+    auto slower_or_cooled = [&distance_to_speed, &fan_on](float a, float b) {
+        return distance_to_speed(a) < distance_to_speed(b) - 1.f || (fan_on(a) && !fan_on(b));
+    };
+
     // Segmentation handling
     if (PREV_LAYER_BOUNDARY_OFFSET && ADD_INTERSECTIONS) {
         std::vector<ExtendedPoint> new_points;
@@ -131,52 +158,60 @@ std::vector<ExtendedPoint> estimate_points_properties(const POINTS              
             if ((curr.distance > -boundary_offset && curr.distance < boundary_offset + 2.0f) ||
                 (next.distance > -boundary_offset && next.distance < boundary_offset + 2.0f)) {
                 double line_len = (next.position - curr.position).norm();
-                
-                // ORCA: Segment path to smaller lines by adding additional points only if the path has an overhang that
-                // will trigger a slowdown and the path is also reasonably large, i.e. 2mm in length or more
-                // If there is no overhang in the start/end point, dont segment it.
-                // Ignore this check if the control of segmentation for overhangs is disabled (min_distance=-1)
-                if ((min_distance > 0 && ((std::abs(curr.distance) > min_distance) || (std::abs(next.distance) > min_distance)) && line_len >= 2.f) ||
-                    (min_distance <= 0 && line_len > 4.0f)) {
+
+                // ORCA: A line prints as slow as its slower end and is cooled if either end is, so an overhang at one
+                // end would otherwise slow down or cool the whole line. Split the line so that only the part beside
+                // that end prints that way, if the line is reasonably long (2mm or more) and at least one end prints
+                // slower or cooled compared with a supported point (overhang distance 0). Deciding on how the end
+                // prints, rather than on its overhang distance against min_distance, also catches an end whose overhang
+                // distance is exactly where the slowdown begins, such as an outline crossing at half a line width.
+                // Without distance_to_speed, split every line over 4mm.
+                const bool split_line = distance_to_speed ?
+                    line_len >= 2.f && (slower_or_cooled(curr.distance, 0.f) || slower_or_cooled(next.distance, 0.f)) :
+                    line_len > 4.0f;
+                if (split_line) {
+                    // Each end's piece is that end's overhang distance plus 1.5 line widths (3 * boundary_offset) long:
+                    // a0 ends the piece beside curr, a1 starts the piece beside next.
                     double a0 = std::clamp((curr.distance + 3 * boundary_offset) / line_len, 0.0, 1.0);
                     double a1 = std::clamp(1.0f - (next.distance + 3 * boundary_offset) / line_len, 0.0, 1.0);
                     double t0 = std::min(a0, a1);
                     double t1 = std::max(a0, a1);
 
-                    if (t0 < 1.0) {
-                        Vec2d p0     = curr.position + t0 * (next.position - curr.position);
-                        auto [p0_dist, p0_near_l,
-                              p0_x] = unscaled_prev_layer.template distance_from_lines_extra<SIGNED_DISTANCE>(p0.cast<AABBScalar>());
-                        ExtendedPoint new_p{};
-                        new_p.position = p0;
-                        new_p.distance = float(p0_dist + boundary_offset);
-                        // ORCA: only create a new point in the path if the new point overhang distance will be used to generate a speed change
-                        // or if this option is disabled (min_distance<=0)
-                        if( (std::abs(p0_dist) > min_distance) || (min_distance<=0)){
-                            // ORCA: also filter out points that are introduced to the start of the path when their distance from the start point is
-                            // not meaningful
-                            if ((p0 - curr.position).norm() > min_spacing && (next.position - p0).norm() > min_spacing) {
-                                new_points.push_back(new_p);
-                            }
-                        }
+                    // Up to two cut points, in order along the line. Each takes its own overhang distance, so every
+                    // piece prints by the overhang distances at its own two ends. t0 >= 1 or t1 <= 0 falls on the
+                    // line's own end, so there is no cut. A cut closer than min_spacing to either end of the line is
+                    // not meaningful and is filtered out (#6714).
+                    ExtendedPoint cut[2]{};
+                    bool          keep[2] = {false, false};
+                    for (int k = 0; k < 2; ++k) {
+                        const double t = k == 0 ? t0 : t1;
+                        if (k == 0 ? t >= 1.0 : t <= 0.0)
+                            continue;
+                        const Vec2d p = curr.position + t * (next.position - curr.position);
+                        auto [p_dist, p_near_l, p_x] =
+                            unscaled_prev_layer.template distance_from_lines_extra<SIGNED_DISTANCE>(p.cast<AABBScalar>());
+                        cut[k].position = p;
+                        cut[k].distance = float(p_dist + boundary_offset);
+                        keep[k]         = (p - curr.position).norm() > min_spacing && (next.position - p).norm() > min_spacing;
                     }
-                    if (t1 > 0.0) {
-                        Vec2d p1     = curr.position + t1 * (next.position - curr.position);
-                        auto [p1_dist, p1_near_l,
-                              p1_x] = unscaled_prev_layer.template distance_from_lines_extra<SIGNED_DISTANCE>(p1.cast<AABBScalar>());
-                        ExtendedPoint new_p{};
-                        new_p.position = p1;
-                        new_p.distance = float(p1_dist + boundary_offset);
-                        // ORCA: only create a new point in the path if the new point overhang distance will be used to generate a speed change
-                        // or if this option is disabled (min_distance<=0)
-                        if( (std::abs(p1_dist) > min_distance) || (min_distance<=0)){
-                            // ORCA: filter out points that are introduced to the end of the path when their distance from the end point is
-                            // not meaningful
-                            if ((p1 - curr.position).norm() > min_spacing && (next.position - p1).norm() > min_spacing) {
-                                new_points.push_back(new_p);
-                            }
-                        }
+                    if (distance_to_speed) {
+                        // Only keep a cut that changes the G-code: one that prints differently from at least one of the
+                        // points either side of it, which are the line's ends or the other cut where that is kept. A cut
+                        // that prints like both would only split a move into two identical ones.
+                        if (keep[0])
+                            keep[0] = !same_speed_and_fan(cut[0].distance, curr.distance) ||
+                                      !same_speed_and_fan(cut[0].distance, keep[1] ? cut[1].distance : next.distance);
+                        if (keep[1])
+                            keep[1] = !same_speed_and_fan(cut[1].distance, keep[0] ? cut[0].distance : curr.distance) ||
+                                      !same_speed_and_fan(cut[1].distance, next.distance);
+                        // Two cuts closer together than min_spacing would leave a micro segment between them, so only the
+                        // first is kept.
+                        if (keep[0] && keep[1] && (cut[1].position - cut[0].position).norm() <= min_spacing)
+                            keep[1] = false;
                     }
+                    for (int k = 0; k < 2; ++k)
+                        if (keep[k])
+                            new_points.push_back(cut[k]);
                 }
             }
             new_points.push_back(next);
@@ -314,7 +349,10 @@ public:
                                                            const ConfigOptionFloatsOrPercents &speeds,
                                                            float                               ext_perimeter_speed,
                                                            float                               original_speed,
-                                                           bool								   slowdown_for_curled_edges)
+                                                           bool                                slowdown_for_curled_edges,
+                                                           // Overlap at or below which the overhang fan switches on; negative when the fan
+                                                           // does not depend on overlap.
+                                                           float                               fan_overlap_threshold = -1.0f)
     {
         size_t                               speed_sections_count = std::min(overlaps.values.size(), speeds.values.size());
         std::vector<std::pair<float, float>> speed_sections;
@@ -354,17 +392,48 @@ public:
             }
         }
 
-        // If a meaningful (i.e. needing slowdown) overhang distance was not found, then we shouldn't split the lines
+        // If no overhang distance slows this path down, -1 leaves splitting to a fan switch only.
+        // Lines are only split where an end prints slower or cooled, so here only a fan switch splits them.
         if (!found)
             smallest_distance_with_lower_speed=-1.f;
 
-        // Orca: Pass to the point properties estimator the smallest ovehang distance that triggers a slowdown (smallest_distance_with_lower_speed)
+        auto calculate_speed = [&speed_sections, &original_speed](float distance) {
+            float final_speed;
+            if (distance <= speed_sections.front().first) {
+                final_speed = original_speed;
+            } else if (distance >= speed_sections.back().first) {
+                final_speed = speed_sections.back().second;
+            } else {
+                size_t section_idx = 0;
+                while (distance > speed_sections[section_idx + 1].first) {
+                    section_idx++;
+                }
+                float t = (distance - speed_sections[section_idx].first) /
+                          (speed_sections[section_idx + 1].first - speed_sections[section_idx].first);
+                t           = std::clamp(t, 0.0f, 1.0f);
+                final_speed = (1.0f - t) * speed_sections[section_idx].second + t * speed_sections[section_idx + 1].second;
+            }
+            // std::round(float) returns float. Bare round() is the C double overload on MSVC,
+            // which makes std::min(calculate_speed(d), original_speed) ambiguous (double vs float).
+            return std::round(final_speed);
+        };
+
+        // ORCA: The speed sections are built from ext_perimeter_speed, which can be above the speed this path prints at
+        // (original_speed, e.g. held down by resonance avoidance). Every segment is capped at original_speed below, so
+        // overhang distances whose speeds differ only above it print the same and must not count as a speed change when
+        // the path is split.
+        auto effective_speed = [&calculate_speed, original_speed](float distance) {
+            return std::min<float>(calculate_speed(distance), original_speed);
+        };
+
         std::vector<ExtendedPoint> extended_points = estimate_points_properties<true, true, true, true>
                                                                 (path.polyline.points,
                                                                  prev_layer_boundaries[current_object],
                                                                  path.width,
                                                                  -1,
-                                                                 smallest_distance_with_lower_speed);
+                                                                 smallest_distance_with_lower_speed,
+                                                                 effective_speed,
+                                                                 fan_overlap_threshold);
         const auto width_inv = 1.0f / path.width;
         std::vector<ProcessedPoint> processed_points;
         processed_points.reserve(extended_points.size());
@@ -421,25 +490,6 @@ public:
 					}
 				}
 			}	
-
-            auto calculate_speed = [&speed_sections, &original_speed](float distance) {
-                float final_speed;
-                if (distance <= speed_sections.front().first) {
-                    final_speed = original_speed;
-                } else if (distance >= speed_sections.back().first) {
-                    final_speed = speed_sections.back().second;
-                } else {
-                    size_t section_idx = 0;
-                    while (distance > speed_sections[section_idx + 1].first) {
-                        section_idx++;
-                    }
-                    float t = (distance - speed_sections[section_idx].first) /
-                              (speed_sections[section_idx + 1].first - speed_sections[section_idx].first);
-                    t           = std::clamp(t, 0.0f, 1.0f);
-                    final_speed = (1.0f - t) * speed_sections[section_idx].second + t * speed_sections[section_idx + 1].second;
-                }
-                return round(final_speed);
-            };
             
             float extrusion_speed = std::min(calculate_speed(curr.distance), calculate_speed(next.distance));
             // ORCA: Clamp resulting speed to lowest of calculated speed based on the overhang values and the current speed

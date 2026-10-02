@@ -20,7 +20,6 @@ namespace Slic3r { namespace GUI {
         wxWebView*  m_webview{nullptr};
         wxString    m_video_url;
         wxString    m_filepath;
-        wxString    m_filepath2;
         int         m_width;
         int         m_height;
     };

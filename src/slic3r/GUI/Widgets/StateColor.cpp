@@ -1,9 +1,9 @@
 #include "StateColor.hpp"
 #include <cmath>
+#include <set>
 
 static bool gDarkMode = false;
 
-static bool operator<(wxColour const &l, wxColour const &r) { return l.GetRGBA() < r.GetRGBA(); }
 
 static std::map<wxColour, wxColour> gDarkColors{
     {"#009688", "#00675b"}, // rgb(0, 150, 136)    ORCA color
@@ -73,7 +73,16 @@ static std::map<wxColour, wxColour> gDarkColors{
     {"#00AE42", "#21A452"}, // rgb(0, 174, 66)     Bambu green: buttons, percent text
     {"#3DCB73", "#37B865"}, // rgb(61, 203, 115)   Bambu green, hovered
     {"#1B8844", "#1C8A46"}, // rgb(27, 136, 68)    Bambu green, pressed
+    // Main tab bar hover (Notebook.cpp). Its own key, one step off #6B6B6B (disabled text), so a
+    // theme can colour the two apart.
+    {"#6B6B6C", "#818184"}, // rgb(107, 107, 108)  Main tab hover
 };
+
+// The active UI theme (GUI/Theme.cpp): stock light colour -> themed colour, applied on top of the
+// light or dark look. gThemeValues holds the themed colours so one that was already applied is
+// never looked up again (ThemePack::colour_map keeps them clear of every key and dark twin).
+static std::map<wxColour, wxColour> gThemeColors;
+static std::set<wxColour>           gThemeValues;
 
 std::tuple<double, double, double> StateColor::GetLAB(const wxColour& color) {
     // Convert color to RGB color space
@@ -211,8 +220,71 @@ std::map<wxColour, wxColour> const & StateColor::GetDarkMap()
 
 void StateColor::SetDarkMode(bool dark) { gDarkMode = dark; }
 
+bool StateColor::IsDarkMode() { return gDarkMode; }
+
+void StateColor::SetThemeMap(std::map<wxColour, wxColour> const &map)
+{
+    gThemeColors = map;
+    gThemeValues.clear();
+    for (auto &p : map) gThemeValues.insert(p.second);
+}
+
+bool StateColor::HasTheme() { return !gThemeColors.empty(); }
+
+static bool                         gUnthemeActive  = false;
+static bool                         gUnthemeWasDark = false;
+static std::map<wxColour, wxColour> gUnthemeColors;
+
+std::map<wxColour, wxColour> StateColor::ThemeInverse()
+{
+    std::map<wxColour, wxColour> inverse;
+    for (auto &p : gThemeColors) inverse.emplace(p.second, p.first); // the first key of a shared value stays
+    return inverse;
+}
+
+void StateColor::BeginUntheme(std::map<wxColour, wxColour> const &inverse, bool was_dark)
+{
+    gUnthemeColors  = inverse;
+    gUnthemeWasDark = was_dark;
+    gUnthemeActive  = true;
+}
+
+void StateColor::EndUntheme()
+{
+    gUnthemeActive = false;
+    gUnthemeColors.clear();
+}
+
+bool StateColor::UnthemeActive() { return gUnthemeActive; }
+
+wxColour StateColor::unpainted(wxColour const &color)
+{
+    if (!gUnthemeActive) return color;
+    auto themed = gUnthemeColors.find(color);
+    if (themed != gUnthemeColors.end()) return themed->second;
+    if (gUnthemeWasDark) {
+        static std::map<wxColour, wxColour> gTwins;
+        if (gTwins.empty())
+            for (auto &p : gDarkColors) gTwins.emplace(p.second, p.first);
+        auto twin = gTwins.find(color);
+        if (twin != gTwins.end()) return twin->second;
+    }
+    return color;
+}
+
+wxColour StateColor::themedColorFor(wxColour const &color, wxColour const &fallback)
+{
+    auto iter = gThemeColors.find(color);
+    return iter != gThemeColors.end() ? iter->second : fallback;
+}
+
 inline wxColour darkModeColorFor2(wxColour const &color)
 {
+    if (!gThemeColors.empty()) {
+        if (gThemeValues.count(color)) return color;
+        auto iter = gThemeColors.find(color);
+        if (iter != gThemeColors.end()) return iter->second;
+    }
     if (!gDarkMode)
         return color;
     auto iter = gDarkColors.find(color);
@@ -231,10 +303,15 @@ std::map<wxColour, wxColour> revert(std::map<wxColour, wxColour> const & map)
 wxColour StateColor::lightModeColorFor(wxColour const &color)
 {
     static std::map<wxColour, wxColour> gLightColors = revert(gDarkColors);
+    if (gThemeValues.count(color)) return color;
     auto iter = gLightColors.find(color);
-    wxASSERT(iter != gLightColors.end());
-    if (iter != gLightColors.end()) return iter->second;
-    return color;
+    wxASSERT(iter != gLightColors.end() || !gThemeColors.empty());
+    wxColour light = iter != gLightColors.end() ? iter->second : color;
+    if (!gThemeColors.empty()) {
+        auto themed = gThemeColors.find(light);
+        if (themed != gThemeColors.end()) return themed->second;
+    }
+    return light;
 }
 
 wxColour StateColor::darkModeColorFor(wxColour const &color) { return darkModeColorFor2(color); }

@@ -8,8 +8,38 @@
 #include <sstream>
 #include <iostream>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 namespace Slic3r {
+
+namespace {
+// Never reaches the output: process_layer() consumes it.
+const std::string PA_RESET_TAG = "; PA_RESET:";
+} // namespace
+
+// The value travels as the bit pattern of the double, so the reset is exact and no locale can
+// change the decimal separator between writing and reading it.
+std::string AdaptivePAProcessor::reset_marker(double PA)
+{
+    std::uint64_t bits;
+    static_assert(sizeof(bits) == sizeof(PA), "double is expected to be 64 bits");
+    std::memcpy(&bits, &PA, sizeof(bits));
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "%016llx\n", static_cast<unsigned long long>(bits));
+    return PA_RESET_TAG + buf;
+}
+
+bool AdaptivePAProcessor::applyResetMarker(const std::string &line)
+{
+    if (line.compare(0, PA_RESET_TAG.size(), PA_RESET_TAG) != 0)
+        return false;
+    const std::uint64_t bits = std::strtoull(line.c_str() + PA_RESET_TAG.size(), nullptr, 16);
+    std::memcpy(&m_last_predicted_pa, &bits, sizeof(bits));
+    return true;
+}
 
 /**
  * @brief Constructor for AdaptivePAProcessor.
@@ -74,7 +104,11 @@ std::string AdaptivePAProcessor::process_layer(std::string &&gcode) {
 
     // Iterate through each line of the layer G-code
     while (std::getline(stream, line)) {
-        
+
+        // A tool change set the PA here. Track it from this point on and drop the marker.
+        if (applyResetMarker(line))
+            continue;
+
         // If a wipe start command is found, ignore all speed changes till the wipe end part is found
         if (line.find("WIPE_START") != std::string::npos) {
             wipe_command = true;
@@ -133,6 +167,9 @@ std::string AdaptivePAProcessor::process_layer(std::string &&gcode) {
                 // Carry on searching for feedrates to find the maximum print speed
                 // until a feature change pattern or a wipe command is detected
                 while (std::getline(stream, next_line)) {
+                    // Reset markers are not G-code; the look-ahead must not count them.
+                    if (next_line.compare(0, PA_RESET_TAG.size(), PA_RESET_TAG) == 0)
+                        continue;
                     line_counter++;
                     // Found an extrude move, set extrude move found flag and move to the next line
                     if ((!extrude_move_found) && next_line.find("G1 ") == 0 &&

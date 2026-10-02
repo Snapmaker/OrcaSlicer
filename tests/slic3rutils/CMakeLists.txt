@@ -9,6 +9,12 @@ add_executable(${_TEST_NAME}_tests
     device_model_code_tests.cpp
     login_useragent_tests.cpp
     hub_home_tests.cpp
+    home_tab_tests.cpp
+    theme_pack_tests.cpp
+    library_index_tests.cpp
+    vendor_connector_tests.cpp
+    step_mesh_tests.cpp
+    http_body_redirect_tests.cpp
     snapmaker_silent_login_tests.cpp
     ff_diagnostics_tests.cpp
     elegoo_canvas_tests.cpp
@@ -18,6 +24,7 @@ add_executable(${_TEST_NAME}_tests
     hub_event_dedupe_tests.cpp
     reprint_hosts_tests.cpp
     reprint_printer_names_tests.cpp
+    bambu_reprint_tests.cpp
     shutdown_gate_tests.cpp
     hosted_push_tests.cpp
     flashforge_tests.cpp
@@ -37,6 +44,9 @@ add_executable(${_TEST_NAME}_tests
     test_flow_variant_edit.cpp
     app_update_check_tests.cpp
     bambu_studio_launcher_tests.cpp
+    blender_launcher_tests.cpp
+    freecad_launcher_tests.cpp
+    instance_routing_tests.cpp
     page_server_security_tests.cpp
     sentry_scrub_tests.cpp
     dual_nozzle_layout_tests.cpp
@@ -46,6 +56,11 @@ add_executable(${_TEST_NAME}_tests
     ams_dual_layout_tests.cpp
     gizmo_selection_object_tests.cpp
     dark_mode_background_tests.cpp
+    # After the other wx-window tests: it starts a plain wxApp when none is up, and the tests
+    # that run before it (hms_lookup_tests) call wxGetApp() whenever an app exists.
+    theme_live_tests.cpp
+    bambu_send_diagnosis_tests.cpp
+    win_firewall_tests.cpp
     # The crash-report scrubber is plain C++ with no library of its own; the test compiles
     # the very file the app does.
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/sentry_wrapper/SentryScrub.cpp

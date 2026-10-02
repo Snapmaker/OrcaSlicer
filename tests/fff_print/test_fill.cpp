@@ -10,6 +10,7 @@
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/ExtrusionEntityCollection.hpp"
 #include "libslic3r/Fill/Fill.hpp"
+#include "libslic3r/Fill/FillGyroid.hpp"
 #include "libslic3r/Flow.hpp"
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/Layer.hpp"
@@ -538,4 +539,292 @@ TEST_CASE("Sparse plane-path anchors match the printed infill", "[Fill][Internal
     // Orca: Allow only the configured simplification tolerance; infill-scale offsets
     // would hide anchors that no longer coincide with printed lines.
     CHECK(unscale<double>(max_distance) <= config.opt_float("resolution"));
+}
+
+TEST_CASE("Locked Zag bands fall back for patterns that need per-object state", "[Fill][LockedZag]")
+{
+    // adaptivecubic, supportcubic and lightning are left out of the locked_sk*_infill_pattern menus
+    // because their fillers need an octree / generator that is only built when a region's own sparse
+    // pattern asks for one. A stored value can still carry them (a Bambu preset lists them; the GUI
+    // combo stored its row index as the value before the key mapping), so slicing must not
+    // dereference the missing state - the band keeps the Locked Zag filler's own pattern instead.
+    const std::string pattern = GENERATE("adaptivecubic", "supportcubic", "lightning");
+    const bool        in_skin = GENERATE(false, true);
+    CAPTURE(pattern, in_skin);
+
+    auto config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"sparse_infill_pattern", "lockedzag"},
+                                   {"sparse_infill_density", "20%"},
+                                   {"locked_skin_infill_pattern", in_skin ? pattern : std::string("default")},
+                                   {"locked_skeleton_infill_pattern", in_skin ? std::string("default") : pattern},
+                                   {"layer_height", 0.2},
+                                   {"initial_layer_print_height", 0.2}});
+    Print print;
+    Model model;
+    Slic3r::Test::init_print({make_cube(30, 30, 6)}, print, model, config, false);
+    print.process();
+
+    const Layer &layer = *print.objects().front()->get_layer(10);
+    Polylines printed;
+    for (const LayerRegion *region : layer.regions())
+        for (const ExtrusionEntity *entity : region->fills.flatten().entities)
+            if (entity->role() == erInternalInfill)
+                entity->collect_polylines(printed);
+    CHECK_FALSE(printed.empty());
+}
+
+// Slices a 30x30x6 mm cube at 0.2 mm layers (layers 0..29) with the given surface settings.
+static void process_surface_density_cube(Print &print, Model &model, std::initializer_list<ConfigBase::SetDeserializeItem> items)
+{
+    auto config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"layer_height", 0.2},
+                                   {"initial_layer_print_height", 0.2},
+                                   {"top_shell_layers", 4},
+                                   {"bottom_shell_layers", 3},
+                                   {"sparse_infill_density", "15%"}});
+    config.set_deserialize_strict(items);
+    Slic3r::Test::init_print({make_cube(30, 30, 6)}, print, model, config, false);
+    print.process();
+}
+
+static Polylines fill_polylines(const Layer &layer, ExtrusionRole role)
+{
+    Polylines out;
+    for (const LayerRegion *region : layer.regions())
+        for (const ExtrusionEntity *entity : region->fills.flatten().entities)
+            if (entity->role() == role)
+                entity->collect_polylines(out);
+    return out;
+}
+
+static double fill_length_mm(const Polylines &polylines)
+{
+    return std::accumulate(polylines.begin(), polylines.end(), 0.,
+                           [](double acc, const Polyline &pl) { return acc + unscale<double>(pl.length()); });
+}
+
+TEST_CASE("Top and bottom surface density", "[Fill][SurfaceDensity]")
+{
+    Print print;
+    Model model;
+
+    SECTION("0% top surface density prints only the walls on the top layer") {
+        // Fillers divide their line spacing by the density, so a 0% top surface must be dropped
+        // before it reaches them rather than filled with an infinite spacing.
+        process_surface_density_cube(print, model, {{"top_surface_density", "0%"}});
+        const Layer &top = *print.objects().front()->get_layer(29);
+        CHECK(fill_polylines(top, erTopSolidInfill).empty());
+        CHECK_FALSE(top.regions().front()->perimeters.entities.empty());
+    }
+
+    SECTION("A lower top surface density spaces the top lines apart") {
+        process_surface_density_cube(print, model, {{"top_surface_density", "100%"}});
+        const double full = fill_length_mm(fill_polylines(*print.objects().front()->get_layer(29), erTopSolidInfill));
+        Print print_half;
+        Model model_half;
+        process_surface_density_cube(print_half, model_half, {{"top_surface_density", "50%"}});
+        const double half = fill_length_mm(fill_polylines(*print_half.objects().front()->get_layer(29), erTopSolidInfill));
+        CAPTURE(full, half);
+        REQUIRE(full > 0.);
+        CHECK(half > 0.3 * full);
+        CHECK(half < 0.75 * full);
+    }
+
+    SECTION("A lower bottom surface density spaces the bottom lines apart") {
+        process_surface_density_cube(print, model, {{"bottom_surface_density", "100%"}});
+        const double full = fill_length_mm(fill_polylines(*print.objects().front()->get_layer(0), erBottomSurface));
+        Print print_half;
+        Model model_half;
+        process_surface_density_cube(print_half, model_half, {{"bottom_surface_density", "50%"}});
+        const double half = fill_length_mm(fill_polylines(*print_half.objects().front()->get_layer(0), erBottomSurface));
+        CAPTURE(full, half);
+        REQUIRE(full > 0.);
+        CHECK(half > 0.3 * full);
+        CHECK(half < 0.75 * full);
+    }
+}
+
+TEST_CASE("Undertop surface pattern fills the solid layer under a sparse top", "[Fill][SurfaceDensity]")
+{
+    // Share of the printed length running parallel to the cube's X or Y edges. Concentric rings on a
+    // square are axis-aligned; the default monotonic solid infill runs at 45 degrees.
+    auto axis_aligned_share = [](const Polylines &polylines) {
+        double aligned = 0., total = 0.;
+        for (const Polyline &pl : polylines)
+            for (const Line &line : pl.lines()) {
+                const Vec2d  d   = (line.b - line.a).cast<double>();
+                const double len = d.norm();
+                total += len;
+                if (std::min(std::abs(d.x()), std::abs(d.y())) < 0.1 * len)
+                    aligned += len;
+            }
+        return total > 0. ? aligned / total : 0.;
+    };
+
+    const std::string undertop = GENERATE("default", "concentric");
+    const std::string density  = GENERATE("50%", "100%");
+    CAPTURE(undertop, density);
+
+    Print print;
+    Model model;
+    process_surface_density_cube(print, model, {{"top_surface_density", density}, {"undertop_surface_pattern", undertop}});
+    // Layer 28 is the solid layer directly under the top skin on layer 29.
+    const Polylines under_top = fill_polylines(*print.objects().front()->get_layer(28), erSolidInfill);
+    REQUIRE_FALSE(under_top.empty());
+    const double share = axis_aligned_share(under_top);
+    CAPTURE(share);
+    // The undertop pattern only takes over while the top surface is sparse enough to show it.
+    if (undertop == "concentric" && density == "50%")
+        CHECK(share > 0.8);
+    else
+        CHECK(share < 0.5);
+}
+
+TEST_CASE("Gyroid infill of an object matches the infill of a larger object with the same center", "[Fill]")
+{
+    // Orca #16002 parametric half: Edge has no marching-squares / gyroid_optimized
+    // branch, so that GENERATE dimension is dropped. DensityAdjust and
+    // AABBTreeLines::LinesDistancer both exist on Edge; the test uses them as upstream does.
+    const int    multiline = GENERATE(1, 2);
+    const float  density   = GENERATE(0.05f, 0.2f);
+    const double spacing   = 0.45;
+    CAPTURE(multiline, density);
+
+    auto circle = [](double radius) {
+        Polygon contour = make_circle_num_segments(scale_(radius), 120);
+        contour.translate(Point::new_scale(100., 60.));
+        return ExPolygon(std::move(contour));
+    };
+    const ExPolygon object = circle(20.);
+    const ExPolygon larger = circle(30.);
+    auto fill = [multiline, density, spacing](const ExPolygon &region, double z) {
+        std::unique_ptr<Fill> filler(Fill::new_from_type(ipGyroid));
+        filler->spacing = spacing;
+        filler->angle   = float(M_PI / 7.);
+        filler->z       = z;
+
+        FillParams params;
+        params.density     = density;
+        params.multiline   = multiline;
+        params.dont_adjust = true;
+        Surface surface(stInternal, region);
+        return filler->fill_surface(&surface, params);
+    };
+    // Away from the boundary of the object, where both are clipped and connected the same way.
+    const Polygons inner = shrink(to_polygons(object), scale_(1.));
+    auto farthest = [&inner](const Polylines &from, const Polylines &to) {
+        const AABBTreeLines::LinesDistancer<Line> tree(to_lines(to));
+        double distance = 0.;
+        for (const Polyline &path : intersection_pl(from, inner))
+            for (const Point &point : path.equally_spaced_points(scale_(0.2)))
+                distance = std::max(distance, tree.distance_from_lines<false>(point));
+        return unscale<double>(distance);
+    };
+
+    // Multiline 1 reproduces the larger object's waves to 10 um. With multiline > 1 the interleaved
+    // waves are generated per bounding box (the accepted G-code change of this PR for multiline
+    // 2-5: the result can move slightly with the bbox), so two bboxes of the same center differ a
+    // little more: 12.6 um at multiline 2, density 0.05, z=17.38 on MSVC (deterministic), far below
+    // the 0.45 mm line spacing. A real phase shift is a large fraction of the wave period (the
+    // pinned multiline-1 test below catches that), so 20 um stays meaningful. Multiline 1 keeps 10 um.
+    const double tolerance = multiline > 1 ? 0.02 : 0.01;
+    // Half a z period of the waves, through both switches between horizontal and vertical waves.
+    const double wave_distance = spacing * multiline / (density * FillGyroid::DensityAdjust);
+    for (int step = 0; step <= 8; ++step) {
+        const double z = wave_distance * M_PI * step / 8.;
+        CAPTURE(z);
+        const Polylines paths = fill(object, z);
+        REQUIRE_FALSE(paths.empty());
+        const Polylines reference = fill(larger, z);
+        CHECK(farthest(reference, paths) < tolerance);
+        CHECK(farthest(paths, reference) < tolerance);
+    }
+}
+
+TEST_CASE("Gyroid multiline-1 waves stay pinned and cover the contour edge", "[Fill]")
+{
+    // The same-center case above shrinks 1 mm inward, so it stays green on main and
+    // would miss a global phase shift or a dropped strip at the bbox edge. These
+    // pins are world-mm vertices of the phase-preserving generator (multiline 1,
+    // density 0.2, spacing 0.45, angle = π/4 so CorrectionAngle cancels).
+    // fill_surface insets the 10..50 mm square by 0.5*spacing first (overlap 0),
+    // so the filled region is 10.225..49.775. At z=0 the waves run along Y,
+    // ~2.90 mm apart; the last kept wave spans x=46.921..48.370 and the next
+    // (49.818..51.266) is clipped, so min_right is 1.6305 mm from x=50, not 0.225.
+    const double spacing = 0.45;
+    const float  density = 0.2f;
+    FillParams params;
+    params.density           = density;
+    params.multiline         = 1;
+    params.dont_adjust       = true;
+    params.anchor_length     = 0.f;
+    params.anchor_length_max = 0.f; // dont_connect: keep wave vertices unjoined
+
+    Polygon square{
+        Point::new_scale(10., 10.), Point::new_scale(50., 10.),
+        Point::new_scale(50., 50.), Point::new_scale(10., 50.)
+    };
+    auto fill_at = [&](double z) {
+        std::unique_ptr<Fill> filler(Fill::new_from_type(ipGyroid));
+        filler->spacing = spacing;
+        filler->angle   = float(M_PI / 4.);
+        filler->z       = z;
+        Surface surface(stInternal, ExPolygon(square));
+        return filler->fill_surface(&surface, params);
+    };
+    auto pin_ok = [](const Polylines &paths, double x, double y, double tol) {
+        const AABBTreeLines::LinesDistancer<Line> tree(to_lines(paths));
+        const Point q = Point::new_scale(x, y);
+        const double d = unscale<double>(tree.distance_from_lines<false>(q));
+        CAPTURE(x, y, d);
+        CHECK(d < tol);
+    };
+
+    const Polylines paths0 = fill_at(0.);
+    REQUIRE_FALSE(paths0.empty());
+    const double pin_tol = 0.02;
+    // z=0: waves run along Y. A shifted origin moves these by millimetres.
+    const double pins_y[][2] = {
+        {13.449314, 33.884724},
+        {15.211169, 13.606001},
+        {24.469603, 30.263524},
+        {30.263524, 30.263524},
+        {41.851366, 30.263524},
+        {46.921046, 31.712004},
+    };
+    for (const auto &xy : pins_y)
+        pin_ok(paths0, xy[0], xy[1], pin_tol);
+
+    // Reach to the original 10..50 mm sides after the 0.5*spacing inset + clip.
+    // Pin the four values (tol 0.02): a dropped strip or a looser 1 mm gate on
+    // the sparse +X side would miss the real 1.6305 mm right reach.
+    double min_left = 1e9, min_right = 1e9, min_bottom = 1e9, min_top = 1e9;
+    for (const Polyline &pl : paths0)
+        for (const Point &p : pl.points) {
+            const double x = unscale<double>(p.x());
+            const double y = unscale<double>(p.y());
+            min_left   = std::min(min_left,   std::abs(x - 10.));
+            min_right  = std::min(min_right,  std::abs(x - 50.));
+            min_bottom = std::min(min_bottom, std::abs(y - 10.));
+            min_top    = std::min(min_top,    std::abs(y - 50.));
+        }
+    CAPTURE(min_left, min_right, min_bottom, min_top);
+    CHECK(std::abs(min_left   - 0.225)  < 0.02);
+    CHECK(std::abs(min_right  - 1.6305) < 0.02);
+    CHECK(std::abs(min_bottom - 0.225)  < 0.02);
+    CHECK(std::abs(min_top    - 0.225)  < 0.02);
+
+    // Second pin set: z such that the pattern angle is π/2, so waves run along X.
+    // At z=0 some X shifts look identical; these Y-separated vertices would not.
+    const double z_along_x = (M_PI / 2.) * spacing / (density * FillGyroid::DensityAdjust);
+    const Polylines pathsX = fill_at(z_along_x);
+    REQUIRE_FALSE(pathsX.empty());
+    const double pins_x[][2] = {
+        {30.263524, 15.054482},
+        {30.263524, 29.539284},
+        {13.606001, 29.382597},
+        {30.263524, 41.127126},
+    };
+    for (const auto &xy : pins_x)
+        pin_ok(pathsX, xy[0], xy[1], pin_tol);
 }

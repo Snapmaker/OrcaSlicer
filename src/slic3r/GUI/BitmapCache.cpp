@@ -4,6 +4,7 @@
 #include "../Utils/MacDarkMode.hpp"
 #include "GUI.hpp"
 #include "GUI_Utils.hpp"
+#include "Theme.hpp"
 
 #include <boost/nowide/cstdio.hpp>
 #include <boost/filesystem.hpp>
@@ -306,6 +307,22 @@ error:
     return NULL;
 }
 
+// The UI theme's accent and icon colours recolour the SVGs (see load_svg), so a cached bitmap is
+// only good for the colours it was made under: they are part of its key, and switching theme
+// (GUI_App::apply_theme_live) finds or makes the ones for the new theme, with no cache to clear.
+// Empty when the theme leaves both alone, like no theme at all.
+static std::string theme_key()
+{
+    if (!Theme::active())
+        return {};
+    const auto& palette = Theme::spec().palette;
+    auto        accent  = palette.find("accent");
+    auto        icon    = palette.find("icon");
+    if (accent == palette.end() && icon == palette.end())
+        return {};
+    return "-th" + (accent == palette.end() ? std::string() : accent->second) + "-" + (icon == palette.end() ? std::string() : icon->second);
+}
+
 wxBitmap* BitmapCache::load_svg(const std::string &bitmap_name, unsigned target_width, unsigned target_height, 
     const bool grayscale/* = false*/, const bool dark_mode/* = false*/, const std::string& new_color /*= ""*/, const float scale_in_center/* = 0*/)
 {
@@ -315,7 +332,8 @@ wxBitmap* BitmapCache::load_svg(const std::string &bitmap_name, unsigned target_
                                          + (m_scale != 1.0f ? "-s" + float_to_string_decimal_point(m_scale) : "")
                                          + (dark_mode ? "-dm" : "")
                                          + (grayscale ? "-gs" : "")
-                                         + new_color;
+                                         + new_color
+                                         + theme_key();
 
     auto it = m_map.find(bitmap_key);
     if (it != m_map.end())
@@ -344,6 +362,19 @@ wxBitmap* BitmapCache::load_svg(const std::string &bitmap_name, unsigned target_
 
     if (strstr(bitmap_name.c_str(), "toggle_on") != NULL && dark_mode) // ORCA only replace color of toggle button
         replaces["#009688"] = "#00675b";
+
+    // The UI theme's accent and icon colours (docs/themes.md) win over both looks.
+    auto themed = [&replaces](const char *role, std::initializer_list<const char *> stock) {
+        auto it = Theme::spec().palette.find(role);
+        if (!Theme::active() || it == Theme::spec().palette.end())
+            return;
+        for (const char *c : stock) {
+            replaces[std::string("\"") + c + "\""] = "\"" + it->second + "\"";
+            replaces[c]                             = it->second;
+        }
+    };
+    themed("accent", {"#009688"});
+    themed("icon", {"#262E30", "#323A3D"});
 
     //if (!new_color.empty())
     //    replaces["\"#ED6B21\""] = "\"" + new_color + "\"";

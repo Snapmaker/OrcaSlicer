@@ -635,24 +635,86 @@ html[data-embed] #conn, html[data-embed] #via, html[data-embed] .pushbox { displ
         } catch (e) {}
         if (!Array.isArray(state.active)) state.active = [];
         if (!state.layout) state.layout = '1x1';
+        normalize();
+    }
+    // Ids for entries saved without one, the slicer's seed hosts merged in, and the active list
+    // cut to hosts that exist. True when the seed added a host the saved list did not have.
+    function normalize() {
         // Older versions keyed everything by IP: give those entries opaque ids (the phone only
         // ever sees ids) and remap the active list.
         var remap = {};
         state.hosts.forEach(function(h) { if (!h.id) { h.id = newId(); remap[h.ip] = h.id; } });
         state.active = state.active.map(function(a) { return remap[a] || a; });
         // Merge hosts handed over by the slicer (?seed=ip1,ip2)
+        var added = false;
         try {
             var seed = new URLSearchParams(location.search).get('seed');
             if (seed) seed.split(',').forEach(function(ip) {
                 ip = ip.trim();
-                if (ip && !state.hosts.some(function(h) { return h.ip === ip; }))
+                if (ip && !state.hosts.some(function(h) { return h.ip === ip; })) {
                     state.hosts.push({ id: ip, ip: ip, alias: '' });
+                    added = true;
+                }
             });
         } catch (e) {}
         var ids = {};
         state.hosts.forEach(function(h) { ids[h.id] = true; });
         state.active = state.active.filter(function(id, i, a) { return ids[id] && a.indexOf(id) === i; });
+        return added;
     }
+    // The camera list lives in the hub, not here. This page's localStorage belongs to its origin,
+    // and each slicer window serves the page on its own port (13618, or the next free one when
+    // another window holds it), so a window on another port had its own, older list - and pushed
+    // it over the hub's the moment it opened, which dropped cameras from go2rtc and the phone.
+    // So nothing is pushed until the hub's list has been read, and that list wins over the local
+    // copy. It is read again whenever this window comes back to the front, so a change made in
+    // another window is not undone by a click here.
+    var hubStateKnown = REMOTE, hubStateAsked = false;
+    function askHubState() {
+        if (REMOTE || hubStateAsked) return;
+        hubStateAsked = true;
+        postToSlicer('stream_state_get');
+        setTimeout(function() { hubStateAsked = false; }, 5000); // an answer that never came
+    }
+    function modalOpen() {
+        var bg = document.getElementById('modal-bg');
+        return !!bg && getComputedStyle(bg).display !== 'none';
+    }
+    window.__hubState = function(s) {
+        if (REMOTE) return;
+        hubStateAsked = false;
+        var first = !hubStateKnown;
+        // Null: the hub has never been given a list (a first run, or one from before the list
+        // was kept there). This window's own list becomes it.
+        if (!s || !Array.isArray(s.hosts)) {
+            if (first) { hubStateKnown = true; pushState(); }
+            return;
+        }
+        // A dialog holds a camera from the current list; swapping the list under it would lose
+        // the edit. The next focus reads the hub again.
+        if (!first && modalOpen()) return;
+        var hosts = s.hosts.map(function(h) {
+            var out = {};
+            for (var k in h) if (k !== 'rkind' && k !== 'rname' && k !== 'rsrc' && k !== 'rurl') out[k] = h[k];
+            return out;
+        });
+        var before = JSON.stringify(state.hosts);
+        state.hosts = hosts;
+        var local = state.active.slice();
+        if (first && Array.isArray(s.active) && s.active.length) state.active = s.active.slice();
+        var added = normalize();
+        // Which tiles this window shows is its own choice; keep it where the cameras still exist.
+        if (!first) {
+            var ids = {};
+            state.hosts.forEach(function(h) { ids[h.id] = true; });
+            state.active = local.filter(function(id) { return ids[id]; });
+        }
+        if (state.active.length === 0 && state.hosts.length > 0) state.active = [state.hosts[0].id];
+        hubStateKnown = true;
+        try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+        if (added) pushState();
+        if (first || JSON.stringify(state.hosts) !== before) render();
+    };
     function save() {
         if (REMOTE) {
             try { localStorage.setItem(REMOTE_KEY, JSON.stringify({ layout: state.layout, active: state.active, auto: remoteAutoLayout })); } catch (e) {}
@@ -677,6 +739,7 @@ html[data-embed] #conn, html[data-embed] #via, html[data-embed] .pushbox { displ
         return { rkind: 'go2rtc', rname: 's' + hashStr(src), rsrc: src };
     }
     function pushState() {
+        if (!hubStateKnown) { askHubState(); return; } // never over a list this window has not read
         var hosts = state.hosts.map(function(h) {
             var d = remoteDescriptor(h), out = {};
             for (var k in h) out[k] = h[k];
@@ -3820,13 +3883,12 @@ html[data-embed] #conn, html[data-embed] #via, html[data-embed] .pushbox { displ
     // A reprint replays the record's own mode: an upload stays an upload, a print stays a print.
     function rpCanSend(rec) {
         var k = rpPrinter(rec).kind;
-        return !!instSel && rec.exists !== false && (k === 'snapmaker' || k === 'printhost');
+        return !!instSel && rec.exists !== false && (k === 'snapmaker' || k === 'printhost' || k === 'bambu');
     }
     function rpWhyNot(rec) {
         if (rec.exists === false) return 'The stored file is gone - retention removed it, or the archive folder moved.';
         if (!instSel) return 'Sending a stored file again needs EdgeSlicer open on the PC. Open it there, and this button comes on.';
         var k = rpPrinter(rec).kind;
-        if (k === 'bambu') return 'Reprinting to a Bambu printer is not supported yet. Send that plate from the Prepare tab.';
         if (k === 'connect') return 'This one went out over the PC\u2019s own connection; send it from the Prepare tab.';
         return 'This record cannot be sent again.';
     }
@@ -4109,7 +4171,9 @@ html[data-embed] #conn, html[data-embed] #via, html[data-embed] .pushbox { displ
             acts.appendChild(del);
             body.appendChild(acts);
             body.appendChild(el('div', 'info' + (can ? '' : ' warn'), can
-                ? (uploadOnly
+                ? (p.kind === 'bambu'
+                    ? 'The stored file is uploaded to the printer again and started with its AMS slots matched the way the PC’s Print dialog matches them (type and colour, each filament on the nozzle it was sliced for). If a filament has no matching slot the PC says so and nothing is sent; the EdgeSlicer app lets you pick the slots. Nothing is re-sliced.'
+                    : uploadOnly
                     ? 'Uploaded without starting. Start print runs the file the printer already has when it is still there (else the stored copy goes back first), with the toolheads it was sent with. Nothing is re-sliced.'
                     : 'The file starts on that printer again, with the toolheads it used last time: the copy the printer still has when it is there, else the stored one, uploaded again. Nothing is re-sliced.')
                 : rpWhyNot(rec)));
@@ -4394,6 +4458,11 @@ html[data-embed] #conn, html[data-embed] #via, html[data-embed] .pushbox { displ
     }
 
     load();
+    if (!REMOTE) {
+        askHubState();
+        window.addEventListener('focus', function() { askHubState(); });
+        document.addEventListener('visibilitychange', function() { if (!document.hidden) askHubState(); });
+    }
     if (REMOTE) {
         // The view this page opens on, known before the first render(): opened straight onto
         // Prepare, Devices or Reprints (the app's Slice and Reprint tabs), it starts no cameras.

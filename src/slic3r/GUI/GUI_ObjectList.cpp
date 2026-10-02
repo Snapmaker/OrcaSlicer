@@ -22,6 +22,7 @@
 #include "libslic3r/Print.hpp"
 #include "GLCanvas3D.hpp"
 #include "Selection.hpp"
+#include "3DScene.hpp"
 #include "PartPlate.hpp"
 #include "format.hpp"
 #include "NotificationManager.hpp"
@@ -49,6 +50,11 @@
 #include "slic3r/Utils/FixModelByWin10.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/PrintConfig.hpp"
+
+#include <algorithm>
+#include <map>
+#include <set>
+#include <boost/log/trivial.hpp>
 
 #ifdef __WXMSW__
 #include "wx/uiaction.h"
@@ -239,16 +245,22 @@ ObjectList::ObjectList(wxWindow* parent) :
         m_last_selected_column = new_selected_column;
 #endif //__WXMSW__
 
-        ObjectDataViewModelNode* sel_node = (ObjectDataViewModelNode*)event.GetItem().GetID();
+        ObjectDataViewModelNode* sel_node = (ObjectDataViewModelNode*) event.GetItem().GetID();
         if (sel_node && (sel_node->GetType() & ItemType::itPlate)) {
-            if (wxGetApp().plater()->is_preview_shown()) {
-                wxGetApp().plater()->select_sliced_plate(sel_node->GetPlateIdx());
+            const int plate_idx = sel_node->GetPlateIdx();
+            Plater*   plater    = wxGetApp().plater();
+            if (plater->is_preview_shown()) {
+                // Defer: FilamentGroupDialog is modal. Opening it inside this
+                // DataView selection handler re-enters wx.
+                this->CallAfter([plate_idx]() {
+                    if (Plater* p = wxGetApp().plater())
+                        p->select_sliced_plate(plate_idx);
+                });
             } else {
-                wxGetApp().plater()->select_plate(sel_node->GetPlateIdx());
+                plater->select_plate(plate_idx);
             }
-            wxGetApp().plater()->deselect_all();
-        }
-        else {
+            plater->deselect_all();
+        } else {
             selection_changed();
         }
 #ifndef __WXMSW__
@@ -1873,6 +1885,28 @@ bool ObjectList::can_drop(const wxDataViewItem& item, int& src_obj_id, int& src_
 
         if (dragged_item_v_type == item_v_type && dragged_item_v_type != ModelVolumeType::MODEL_PART)
             return true;
+
+        // Special handling for Precise Seam modifiers: allow drag&drop within same group (strong↔strong or weak↔weak)
+        const int obj_idx = m_dragged_data.obj_idx();
+        const int dragged_vol_idx = m_dragged_data.sub_obj_idx();
+        const int target_vol_idx = m_objects_model->GetVolumeIdByItem(item);
+
+        if (obj_idx >= 0 && obj_idx < int(m_objects->size()) &&
+            dragged_vol_idx >= 0 && target_vol_idx >= 0) {
+            const auto& volumes = (*m_objects)[obj_idx]->volumes;
+            if (dragged_vol_idx >= int(volumes.size()) || target_vol_idx >= int(volumes.size()))
+                return false;
+            ModelVolume* dragged_vol = volumes[dragged_vol_idx];
+            ModelVolume* target_vol  = volumes[target_vol_idx];
+
+            if (dragged_vol->is_precise_seam() && target_vol->is_precise_seam()) {
+                // Allow drop only if both volumes are in the same group (strong or weak)
+                bool dragged_strong = dragged_vol->is_precise_seam_strong();
+                bool target_strong  = target_vol->is_precise_seam_strong();
+                return dragged_strong == target_strong; // same group → allow, different groups → block
+            }
+        }
+
         if ((dragged_item_v_type != item_v_type) ||   // we can't reorder volumes outside of types
             item_v_type >= ModelVolumeType::SUPPORT_BLOCKER)        // support blockers/enforcers can't change its place
             return false;
@@ -4038,7 +4072,7 @@ wxDataViewItem ObjectList::add_settings_item(wxDataViewItem parent_item, const D
     const bool is_layer_settings = m_objects_model->GetItemType(parent_item) == itLayer;
     if (!is_object_settings) {
         ModelVolumeType volume_type = m_objects_model->GetVolumeType(parent_item);
-        if (volume_type == ModelVolumeType::NEGATIVE_VOLUME || volume_type == ModelVolumeType::SUPPORT_BLOCKER || volume_type == ModelVolumeType::SUPPORT_ENFORCER)
+        if (volume_type == ModelVolumeType::NEGATIVE_VOLUME || volume_type == ModelVolumeType::SUPPORT_BLOCKER || volume_type == ModelVolumeType::SUPPORT_ENFORCER || is_precise_seam(volume_type))
             return ret;
     }
 
@@ -5666,34 +5700,245 @@ void ObjectList::change_part_type()
         }
     }
 
-    // ORCA: Fix crash when changing type of svg / text modifier
+    // Hide Support Blocker / Enforcer / Precise Seam when any selected volume is SVG or text.
+    bool hide_helpers = volume->is_svg() || volume->is_text();
+    wxDataViewItemArray sels;
+    GetSelections(sels);
+    for (const auto& item : sels) {
+        if (m_objects_model->GetItemType(item) != itVolume)
+            continue;
+        const int sel_obj = m_objects_model->GetObjectIdByItem(item);
+        const int sel_vol = m_objects_model->GetVolumeIdByItem(item);
+        if (sel_obj < 0 || sel_vol < 0 || sel_obj >= int(m_objects->size()))
+            continue;
+        const int real_idx = m_objects_model->get_real_volume_index_in_3d(sel_vol);
+        if (real_idx < 0 || real_idx >= int((*m_objects)[sel_obj]->volumes.size()))
+            continue;
+        ModelVolume* vol = (*m_objects)[sel_obj]->volumes[real_idx];
+        if (vol && (vol->is_svg() || vol->is_text()))
+            hide_helpers = true;
+    }
+
     wxArrayString names;
     names.Add(_L("Part"));
     names.Add(_L("Negative Part"));
     names.Add(_L("Modifier"));
-    if (!volume->is_svg() && !volume->is_text()) {
+    if (!hide_helpers) {
         names.Add(_L("Support Blocker"));
         names.Add(_L("Support Enforcer"));
+        names.Add(_L("Precise Seam"));
     }
 
-    SingleChoiceDialog dlg(_L("Type:"), _L("Choose part type"), names, int(type));
-    auto new_type = ModelVolumeType(dlg.GetSingleChoiceIndex());
+    int selection = model_volume_type_to_choice_index(type);
+    if (selection < 0 || selection >= int(names.size()))
+        selection = 0;
 
-	if (new_type == type || new_type == ModelVolumeType::INVALID)
+    SingleChoiceDialog dlg(_L("Type:"), _L("Choose part type"), names, selection);
+    const int choice = dlg.GetSingleChoiceIndex();
+    if (choice < 0 || choice >= int(names.size()))
         return;
 
-    take_snapshot("Change part type");
+    const ModelVolumeType new_type = model_volume_type_from_choice_index(choice);
+    if (new_type == ModelVolumeType::INVALID)
+        return;
 
-    volume->set_type(new_type);
-    wxDataViewItemArray sel = reorder_volumes_and_get_selection(obj_idx, [volume](const ModelVolume* vol) { return vol == volume; });
-    if (!sel.IsEmpty())
-        select_item(sel.front());
+    // set_volume_type preserves an existing Precise Seam subtype when the dialog
+    // maps every PS type onto the single "Precise Seam" entry (CENTER).
+    set_volume_type(new_type, /*preserve_ps_subtype=*/true);
 
     // A volume converted to a Modifier carries no overrides of its own, so it is just as able to
     // have no effect on the slice as a newly created one - the slicer warns about both. Point the
     // user at the settings, the way "Add modifier > Box" and the Emboss/SVG creation paths do.
     if (new_type == ModelVolumeType::PARAMETER_MODIFIER)
         switch_to_object_process();
+}
+
+ModelVolumeType ObjectList::get_selected_volume_type()
+{
+    ModelVolume* volume = get_selected_model_volume();
+    if (volume)
+        return volume->type();
+    return ModelVolumeType::INVALID;
+}
+
+// Detects whether a type change crosses a Precise Seam "group boundary" that requires
+// manual repositioning inside ModelObject::volumes[]:
+//   - between any non-PS type and any PS subtype, or
+//   - between strong PS (CENTER/LEFT/RIGHT) and weak PS (ENFORCED/BLOCKED/NEUTRAL).
+static bool precise_seam_group_changed(ModelVolumeType old_type, ModelVolumeType new_type)
+{
+    const bool old_is_ps = is_precise_seam(old_type);
+    const bool new_is_ps = is_precise_seam(new_type);
+    if (old_is_ps != new_is_ps)
+        return true;
+    if (!old_is_ps)
+        return false;
+    return is_precise_seam_strong(old_type) != is_precise_seam_strong(new_type);
+}
+
+static void move_volume_to_end(ModelObject* obj, ModelVolume* volume)
+{
+    if (obj == nullptr || volume == nullptr)
+        return;
+    auto it = std::find(obj->volumes.begin(), obj->volumes.end(), volume);
+    if (it != obj->volumes.end()) {
+        obj->volumes.erase(it);
+        obj->volumes.push_back(volume);
+    }
+}
+
+void ObjectList::set_volume_type(ModelVolumeType new_type, bool preserve_ps_subtype)
+{
+    struct VolumeSelection {
+        int          object_idx;
+        ModelVolume* volume;
+    };
+
+    std::vector<VolumeSelection> volumes;
+    auto add_volume = [&volumes](int obj_idx, ModelVolume* volume) {
+        if (volume == nullptr)
+            return;
+        auto it = std::find_if(volumes.begin(), volumes.end(), [volume](const VolumeSelection& other) { return other.volume == volume; });
+        if (it == volumes.end())
+            volumes.push_back({ obj_idx, volume });
+    };
+
+    wxDataViewItemArray sels;
+    GetSelections(sels);
+    for (auto item : sels) {
+        wxDataViewItem volume_item = item;
+        ItemType       type        = m_objects_model->GetItemType(item);
+        if (!(type & itVolume)) {
+            if ((type & itSettings) && (m_objects_model->GetItemType(m_objects_model->GetParent(item)) & itVolume))
+                volume_item = m_objects_model->GetParent(item);
+            else
+                continue;
+        }
+
+        const int obj_idx = m_objects_model->GetObjectIdByItem(volume_item);
+        const int vol_idx = m_objects_model->GetVolumeIdByItem(volume_item);
+        if (obj_idx < 0 || vol_idx < 0 || obj_idx >= int(m_objects->size()))
+            continue;
+
+        const int real_idx = m_objects_model->get_real_volume_index_in_3d(vol_idx);
+        if (real_idx < 0 || real_idx >= int((*m_objects)[obj_idx]->volumes.size()))
+            continue;
+
+        add_volume(obj_idx, (*m_objects)[obj_idx]->volumes[real_idx]);
+    }
+
+    auto collect_from_canvas = [&add_volume](GLCanvas3D* canvas) {
+        if (canvas == nullptr)
+            return;
+        const Selection& selection = canvas->get_selection();
+        for (auto idx : selection.get_volume_idxs()) {
+            const GLVolume* gl_volume = selection.get_volume(idx);
+            if (gl_volume == nullptr || gl_volume->object_idx() < 0)
+                continue;
+            ModelVolume* volume = get_model_volume(*gl_volume, selection.get_model()->objects);
+            add_volume(gl_volume->object_idx(), volume);
+        }
+    };
+
+    if (volumes.empty()) {
+        collect_from_canvas(wxGetApp().plater()->canvas3D());
+        if (volumes.empty()) {
+            auto canvas_type = wxGetApp().plater()->get_current_canvas3D()->get_canvas_type();
+            if (canvas_type == GLCanvas3D::ECanvasType::CanvasView3D && is_connectors_item_selected())
+                collect_from_canvas(wxGetApp().plater()->get_view3D_canvas3D());
+        }
+        if (volumes.empty())
+            return;
+    }
+
+    if (new_type == ModelVolumeType::SUPPORT_BLOCKER || new_type == ModelVolumeType::SUPPORT_ENFORCER
+        || is_precise_seam(new_type)) {
+        const bool has_text_or_svg = std::any_of(volumes.begin(), volumes.end(),
+            [](const VolumeSelection& sel) { return sel.volume->is_svg() || sel.volume->is_text(); });
+        if (has_text_or_svg) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__
+                << ": blocked attempt to set SUPPORT_BLOCKER/ENFORCER or Precise Seam on SVG/text volume; "
+                << "UI guard should have prevented this -- possible regression in the Change Type menu";
+            return;
+        }
+    }
+
+    auto effective_new_type = [new_type, preserve_ps_subtype](const ModelVolume* v) -> ModelVolumeType {
+        if (preserve_ps_subtype && new_type == ModelVolumeType::PRECISE_SEAM_CENTER && v->is_precise_seam())
+            return v->type();
+        return new_type;
+    };
+
+    const bool any_diff = std::any_of(volumes.begin(), volumes.end(),
+        [&effective_new_type](const VolumeSelection& sel) {
+            return sel.volume->type() != effective_new_type(sel.volume);
+        });
+
+    if (!any_diff)
+        return;
+
+    if (new_type != ModelVolumeType::MODEL_PART) {
+        std::map<int, int> total_part_cnt;
+        std::map<int, int> selected_part_cnt;
+
+        for (const auto& sel : volumes) {
+            if (total_part_cnt.find(sel.object_idx) == total_part_cnt.end()) {
+                int count = 0;
+                for (auto vol : (*m_objects)[sel.object_idx]->volumes)
+                    if (vol->type() == ModelVolumeType::MODEL_PART)
+                        ++count;
+                total_part_cnt.emplace(sel.object_idx, count);
+            }
+            if (sel.volume->type() == ModelVolumeType::MODEL_PART)
+                ++selected_part_cnt[sel.object_idx];
+        }
+
+        for (const auto& sel : selected_part_cnt) {
+            auto it = total_part_cnt.find(sel.first);
+            if (it != total_part_cnt.end() && it->second > 0 && sel.second == it->second) {
+                Slic3r::GUI::show_error(nullptr, _(L("The type of the last solid object part is not to be changed.")));
+                return;
+            }
+        }
+    }
+
+    take_snapshot("Change part type");
+
+    std::set<const ModelVolume*> changed_volumes;
+    std::set<int>                touched_objects;
+    for (const auto& sel : volumes) {
+        const ModelVolumeType target   = effective_new_type(sel.volume);
+        const ModelVolumeType old_type = sel.volume->type();
+
+        changed_volumes.insert(sel.volume);
+        touched_objects.insert(sel.object_idx);
+
+        if (old_type == target)
+            continue;
+
+        sel.volume->set_type(target);
+
+        if (precise_seam_group_changed(old_type, target))
+            move_volume_to_end((*m_objects)[sel.object_idx], sel.volume);
+    }
+
+    wxDataViewItemArray new_selection;
+    for (int obj_idx : touched_objects) {
+        wxDataViewItemArray sel_items = reorder_volumes_and_get_selection(obj_idx, [&changed_volumes](const ModelVolume* volume) {
+            return changed_volumes.find(volume) != changed_volumes.end();
+        });
+        if (sel_items.IsEmpty())
+            changed_object(obj_idx);
+        for (const auto& item : sel_items)
+            new_selection.push_back(item);
+    }
+
+    if (!new_selection.IsEmpty()) {
+        m_prevent_list_events = true;
+        UnselectAll();
+        SetSelections(new_selection);
+        m_prevent_list_events = false;
+    }
 }
 
 void ObjectList::last_volume_is_deleted(const int obj_idx)
@@ -6730,6 +6975,37 @@ void ObjectList::simplify()
         gizmos_mgr.open_gizmo(GLGizmosManager::EType::Simplify);
     }
     gizmos_mgr.open_gizmo(GLGizmosManager::EType::Simplify);
+}
+
+void ObjectList::open_cad_fillet(bool from_gizmo)
+{
+    GLGizmosManager &gizmos_mgr = wxGetApp().plater()->get_view3D_canvas3D()->get_gizmos_manager();
+    if (gizmos_mgr.get_current_type() == GLGizmosManager::CadFillet)
+        return;
+    // From the menu, the same rule as Simplify: another open gizmo may hold state on this mesh.
+    if (!from_gizmo && !gizmos_mgr.check_gizmos_closed_except(GLGizmosManager::EType::CadFillet))
+        return;
+    gizmos_mgr.open_gizmo(GLGizmosManager::EType::CadFillet);
+}
+
+bool ObjectList::can_open_cad_fillet()
+{
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr || plater->get_view3D_canvas3D() == nullptr)
+        return false;
+    GLCanvas3D *canvas = plater->get_view3D_canvas3D();
+    if (canvas->get_canvas_type() != GLCanvas3D::ECanvasType::CanvasView3D)
+        return false;
+    const Selection &selection = canvas->get_selection();
+    if (selection.get_volume_idxs().size() != 1)
+        return false;
+    const GLVolume *v = selection.get_first_volume();
+    if (v == nullptr)
+        return false;
+    const ModelObjectPtrs &objects = wxGetApp().model().objects;
+    const int o = v->object_idx(), vi = v->volume_idx();
+    return o >= 0 && size_t(o) < objects.size() && vi >= 0 && size_t(vi) < objects[o]->volumes.size() &&
+           objects[o]->volumes[vi]->is_model_part();
 }
 
 void ObjectList::update_item_error_icon(const int obj_idx, const int vol_idx) const

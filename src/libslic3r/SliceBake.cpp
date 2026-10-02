@@ -1437,8 +1437,10 @@ indexed_triangle_set slice_bake_to_mesh(const PrintObject       &object,
     // PrintInstance::shift, which is the instance offset PLUS the same center_offset, plus the
     // plate origin.
     //
-    // So, writing W for a point in world millimetres relative to the plate origin, P for the same
-    // point in print space and S for shift_without_plate_offset():
+    // So, writing W for a point in world millimetres (the model space every plate is laid out in,
+    // NOT relative to any one plate), P for the same point in print space and S for the instance's
+    // full shift (PrintInstance::shift, which includes the plate origin because ModelInstance
+    // offsets are world values):
     //
     //     W = P + S                        (S is XY only; Z is already right in P)
     //
@@ -1447,8 +1449,10 @@ indexed_triangle_set slice_bake_to_mesh(const PrintObject       &object,
     //
     //     offset_xy = unscaled(S - center_offset)
     //
-    // because PrintObject::set_instances adds center_offset into every shift. The two frames below
-    // fall straight out of that.
+    // because PrintObject::set_instances adds center_offset into every shift. S must NOT have the
+    // plate origin taken off (shift_without_plate_offset()): that is plate-LOCAL, and a new
+    // ModelInstance given a plate-local offset lands on plate 1 whatever plate the source is on.
+    // The two frames below fall straight out of that.
     switch (opts.frame) {
     case SliceBakeFrame::Print:
         // Nothing to do: the caller asked for exactly what was sliced.
@@ -1486,16 +1490,16 @@ indexed_triangle_set slice_bake_to_mesh(const PrintObject       &object,
         // so the new instance's Z offset is 0 and the mesh keeps the real heights. That also makes
         // "the bake sits on the bed exactly where the slice did" true without an ensure_on_bed().
         Vec2d offset_xy(0., 0.);
-        Vec2d shift_mm(0., 0.);
+        Vec2d translate(0., 0.);
         if (! object.instances().empty()) {
-            const Point s = object.instances().front().shift_without_plate_offset();
+            // The FULL shift, plate origin included: the new instance's offset is a world value.
+            const Point s_full = object.instances().front().shift;
             // Point arithmetic yields an Eigen EXPRESSION, which unscaled() has no overload for;
             // name the concrete Point first.
-            const Point own(s.x() - object.center_offset().x(), s.y() - object.center_offset().y());
-            shift_mm  = unscaled(s);
+            const Point own(s_full.x() - object.center_offset().x(), s_full.y() - object.center_offset().y());
             offset_xy = unscaled(own);
+            translate = unscaled(Point(object.center_offset().x(), object.center_offset().y()));
         }
-        const Vec2d translate = shift_mm - offset_xy;   // == unscaled(center_offset)
         for (Vec3f &v : mesh.vertices)
             v = Vec3f(v.x() + float(translate.x()), v.y() + float(translate.y()), v.z());
         rep.instance_offset = Vec3d(offset_xy.x(), offset_xy.y(), 0.);

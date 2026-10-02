@@ -1,4 +1,6 @@
 #include "StaticBox.hpp"
+
+#include <algorithm>
 #include "../GUI.hpp"
 #include <wx/dcclient.h>
 #include <wx/dcgraph.h>
@@ -44,6 +46,29 @@ bool StaticBox::Create(wxWindow* parent, wxWindowID id, const wxPoint& pos, cons
     state_handler.update_binds();
     SetBackgroundColour(GetParentBackgroundColor(parent));
     return true;
+}
+
+static int g_theme_button_radius = -1;
+static int g_theme_box_radius    = -1;
+
+void StaticBox::SetThemeRadius(int button_dip, int box_dip)
+{
+    g_theme_button_radius = button_dip;
+    g_theme_box_radius    = box_dip;
+}
+
+double StaticBox::drawn_radius() const
+{
+    if (radius <= 0)
+        return radius;
+    const int theme = IsThemeButton() ? g_theme_button_radius : g_theme_box_radius;
+    if (theme < 0)
+        return radius;
+    // A round control (a dot, a circular button) keeps its shape.
+    const wxSize size = GetSize();
+    if (radius * 2 >= std::min(size.x, size.y) - 1 && size.x * 4 <= size.y * 5)
+        return radius;
+    return FromDIP(theme);
 }
 
 void StaticBox::SetCornerRadius(double radius)
@@ -145,7 +170,7 @@ void StaticBox::paintEvent(wxPaintEvent& evt)
 void StaticBox::render(wxDC& dc)
 {
 #ifdef __WXMSW__
-    if (radius == 0) {
+    if (drawn_radius() == 0) {
         doRender(dc);
         return;
     }
@@ -205,11 +230,12 @@ void StaticBox::doRender(wxDC& dc)
                 dc.SetBrush(wxBrush(background_color.colorForStates(states)));
             else
                 dc.SetBrush(wxBrush(GetBackgroundColour()));
-            if (radius == 0) {
+            const double r = drawn_radius();
+            if (r == 0) {
                 dc.DrawRectangle(rc);
             }
             else {
-                dc.DrawRoundedRectangle(rc, radius - border_width);
+                dc.DrawRoundedRectangle(rc, r - border_width);
             }
         }
     }

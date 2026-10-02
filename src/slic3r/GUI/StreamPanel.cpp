@@ -81,6 +81,23 @@ void StreamPanel::OnScriptMessage(wxWebViewEvent& evt)
                     res.first, wxString::FromUTF8(nlohmann::json(res.second).dump())));
             });
         }).detach();
+    } else if (msg == "stream_state_get") {
+        // The page opens with the hub's camera list, not its own localStorage: that is per
+        // origin, and each window's page gets its own port, so a window on another port would
+        // otherwise push an old list over the hub's and drop cameras from go2rtc.
+        wxWeakRef<StreamPanel> weak(this);
+        std::thread([weak]() {
+            const std::string state = RemoteHub::saved_state();
+            wxGetApp().CallAfter([weak, state]() {
+                if (weak == nullptr || weak->m_browser == nullptr)
+                    return;
+                std::string arg = "null";
+                try {
+                    if (!state.empty()) arg = nlohmann::json::parse(state).dump();
+                } catch (...) {}
+                WebView::RunScript(weak->m_browser, wxString::Format("if (window.__hubState) window.__hubState(%s);", wxString::FromUTF8(arg)));
+            });
+        }).detach();
     } else if (msg.StartsWith("stream_state:")) {
         // The page's full camera list (with credentials): the hub keeps it for the phone and
         // for streams that outlive this window. Remembered here if no hub runs yet.

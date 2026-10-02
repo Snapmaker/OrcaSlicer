@@ -124,3 +124,16 @@ SCENARIO("Placeholder parser scripting", "[PlaceholderParser]") {
     SECTION("complex expression2") { REQUIRE(boolean_expression("printer_notes=~/.*PRINTER_VEwerfNDOR_PRUSA3D.*/ or printer_notes=~/.*PRINTertER_MODEL_MK2.*/ or (nozzle_diameter[0]==0.6 and num_extruders>1)")); }
     SECTION("complex expression3") { REQUIRE(! boolean_expression("printer_notes=~/.*PRINTER_VEwerfNDOR_PRUSA3D.*/ or printer_notes=~/.*PRINTertER_MODEL_MK2.*/ or (nozzle_diameter[0]==0.3 and num_extruders>1)")); }
 }
+
+TEST_CASE("curr_bed_type placeholder resolves to the enum key", "[placeholder][curr_bed_type]") {
+    OtherSlicingStatesConfigDef other_slicing_states;
+    REQUIRE(other_slicing_states.has("curr_bed_type"));
+
+    PlaceholderParser parser;
+    auto              config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"curr_bed_type", "Textured PEI Plate"}});
+    parser.apply_config(config);
+
+    REQUIRE(parser.process("[curr_bed_type]") == "Textured PEI Plate");
+    REQUIRE(parser.process("{if curr_bed_type==\"High Temp Plate\"}A{else}B{endif}") == "B");
+}

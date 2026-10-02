@@ -101,6 +101,8 @@ protected:
 
     bool AcceptsFocus() const override;
 
+    bool IsThemeButton() const override { return true; }
+
 private:
     bool m_has_style = false;
     ButtonStyle m_style;

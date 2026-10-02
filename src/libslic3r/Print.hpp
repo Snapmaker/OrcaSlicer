@@ -36,6 +36,7 @@ namespace Slic3r {
 class GCode;
 class Layer;
 class ModelObject;
+class ModelVolume;
 class Print;
 class PrintObject;
 class SupportLayer;
@@ -184,7 +185,7 @@ public:
 
     // Collect 0-based extruder indices used to print this region's object.
 	void                        collect_object_printing_extruders(const Print &print, std::vector<unsigned int> &object_extruders) const;
-	static void                 collect_object_printing_extruders(const PrintConfig &print_config, const PrintRegionConfig &region_config, const bool has_brim, std::vector<unsigned int> &object_extruders);
+	static void                 collect_object_printing_extruders(const PrintConfig &print_config, const PrintRegionConfig &region_config, const bool has_brim, std::vector<unsigned int> &object_extruders, size_t num_filaments = 0);
 
 // Methods modifying the PrintRegion's state:
 public:
@@ -207,6 +208,13 @@ private:
 
 inline bool operator==(const PrintRegion &lhs, const PrintRegion &rhs) { return lhs.config_hash() == rhs.config_hash() && lhs.config() == rhs.config(); }
 inline bool operator!=(const PrintRegion &lhs, const PrintRegion &rhs) { return ! (lhs == rhs); }
+
+// Shared by PrintApply region building and the plate filament helper. A non-zero volume/object
+// `extruder` overrides wall/sparse/solid, zeroes the outer wall, and ignores feature values of 0.
+PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config,
+                                                  const DynamicPrintConfig *layer_range_config,
+                                                  const ModelVolume        &volume,
+                                                  size_t                    num_extruders);
 
 template<typename T>
 class ConstVectorOfPtrsAdaptor {
@@ -601,6 +609,10 @@ public:
     // function is now a two-liner over it, so enforcer / blocker behaviour is unchanged by
     // construction and support_group_masks() reuses exactly the same machinery.
     std::vector<Polygons>       slice_volumes_at_layers(const std::vector<const ModelVolume*> &volumes) const;
+    // Precise Seam (Orca #12974 stage C): aliases of slice_volumes_at_layers so 7D can slice
+    // one helper at a time without merging. Edge already extracted the shared body for support groups.
+    std::vector<Polygons>       slice_modifier_volumes(const std::vector<const ModelVolume*> &volumes) const { return this->slice_volumes_at_layers(volumes); }
+    std::vector<Polygons>       slice_single_volume(const ModelVolume *volume) const { return this->slice_volumes_at_layers({volume}); }
     // Helpers to slice support enforcer / blocker meshes by the support generator.
     std::vector<Polygons>       slice_support_volumes(const ModelVolumeType model_volume_type) const;
     std::vector<Polygons>       slice_support_blockers() const { return this->slice_support_volumes(ModelVolumeType::SUPPORT_BLOCKER); }
@@ -1096,6 +1108,10 @@ public:
     ApplyStatus         apply(const Model &model, DynamicPrintConfig config) override;
 
     void                process(long long *time_cost_with_cache = nullptr, bool use_cache = false) override;
+    // Slices `object` and generates its walls (posSlice, posPerimeters) and nothing else, for tools that need an
+    // object's perimeters without a full slice of the plate (Auto-paint seam, SeamPlacer::plan_object_seams()).
+    // The other objects of the print are left unsliced. Throws CanceledException when canceled.
+    void                process_perimeters_only(PrintObject &object);
     // Exports G-code into a file name based on the path_template, returns the file path of the generated G-code file.
     // If preview_data is not null, the preview_data is filled in for the G-code visualization (not used by the command line Slic3r).
     std::string         export_gcode(const std::string& path_template, GCodeProcessorResult* result, ThumbnailsGeneratorCallback thumbnail_cb = nullptr);

@@ -140,6 +140,12 @@ set(lisbslic3r_sources
     Emboss.cpp
     Emboss.hpp
     EmbossShape.hpp
+    Barcode.cpp
+    Barcode.hpp
+    CodeEmboss.cpp
+    CodeEmboss.hpp
+    SimpleShape.cpp
+    SimpleShape.hpp
     enum_bitmask.hpp
     Execution/Execution.hpp
     Execution/ExecutionSeq.hpp
@@ -186,6 +192,8 @@ set(lisbslic3r_sources
     Fill/FillConcentric.hpp
     Fill/FillConcentricInternal.cpp
     Fill/FillConcentricInternal.hpp
+    FDMHollowing.cpp
+    FDMHollowing.hpp
     Fill/Fill.cpp
     Fill/FillCrossHatch.cpp
     Fill/FillCrossHatch.hpp
@@ -240,6 +248,15 @@ set(lisbslic3r_sources
     Format/SL1.hpp
     Format/STEP.cpp
     Format/STEP.hpp
+    Format/STEPExport.cpp
+    Format/STEPExport.hpp
+    BRep/MeshToBRep.cpp
+    BRep/MeshToBRep.hpp
+    BRep/CadBody.cpp
+    BRep/CadBody.hpp
+    BRep/CadEdit.cpp
+    BRep/CadEdit.hpp
+    BRep/CadShape.hpp
     Format/STL.cpp
     Format/STL.hpp
     Format/svg.cpp
@@ -283,8 +300,12 @@ set(lisbslic3r_sources
     GCodeReader.hpp
     GCode/RetractWhenCrossingPerimeters.cpp
     GCode/RetractWhenCrossingPerimeters.hpp
+    GCode/PreciseSeam.cpp
+    GCode/PreciseSeam.hpp
     GCode/SeamPlacer.cpp
     GCode/SeamPlacer.hpp
+    GCode/SeamAutoPaint.cpp
+    GCode/SeamAutoPaint.hpp
     #GCodeSender.cpp
     #GCodeSender.hpp
     GCode/SmallAreaInfillFlowCompensator.cpp
@@ -389,6 +410,8 @@ set(lisbslic3r_sources
     ModelArrange.hpp
     Model.cpp
     Model.hpp
+    PartMeshReplace.cpp
+    PartMeshReplace.hpp
     MTUtils.hpp
     MultiMaterialSegmentation.cpp
     MultiMaterialSegmentation.hpp
@@ -520,6 +543,8 @@ set(lisbslic3r_sources
     Support/SupportMaterial.cpp
     Support/SupportMaterial.hpp
     Support/SupportParameters.hpp
+    Support/Stabilizers.cpp
+    Support/Stabilizers.hpp
     Support/SupportSpotsGenerator.cpp
     Support/SupportSpotsGenerator.hpp
     Support/TreeModelVolumes.cpp
@@ -596,6 +621,7 @@ slic3r_unity_build(libslic3r SKIP
     utils.cpp                       # needs <windows.h> without a neighbour's lean/extra macros
     Format/bbs_3mf.cpp              # file-local tag/version constants also defined in Format/3mf.cpp
     Emboss.cpp                      # defines STB_TRUETYPE_IMPLEMENTATION before its include
+    CodeEmboss.cpp                  # file-local rectangle()/circle()/to_svg() helpers with common names
     Format/GLTF.cpp                 # defines CGLTF_IMPLEMENTATION before its include
     FilamentGroup.cpp               # namespace-scope using namespace FilamentGroupUtils - FilamentInfo ambiguity
     Format/ZipperArchiveImport.cpp  # read_ini()/CONFIG_FNAME also in Format/SL1.cpp
@@ -611,6 +637,9 @@ slic3r_unity_build(libslic3r SKIP
     SLA/Pad.cpp                     # libnest2d headers clash with neighbours
     Support/TreeSupport.cpp         # libnest2d headers clash with neighbours
     Format/STEP.cpp                 # OCCT's Handle() macro breaks CGAL headers in neighbours
+    Format/STEPExport.cpp           # OCCT's Handle() macro breaks CGAL headers in neighbours
+    BRep/MeshToBRep.cpp             # OCCT's Handle() macro breaks CGAL headers in neighbours
+    BRep/CadEdit.cpp                # OCCT's Handle() macro breaks CGAL headers in neighbours
     Shape/TextShape.cpp             # OCCT's Handle() macro breaks CGAL headers in neighbours
     Geometry/VoronoiUtilsCgal.cpp   # CGAL must come before OCCT's Handle() macro (Model.hpp -> STEP.hpp)
     FlushVolCalc.cpp                # calls RGB2HSV() from libslic3r_gui; alone it is dropped by the linker in libslic3r_tests
@@ -666,7 +695,7 @@ target_include_directories(libslic3r PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_
 target_include_directories(libslic3r SYSTEM PUBLIC ${EXPAT_INCLUDE_DIRS})
 
 # Find the OCCT and related libraries
-set(OpenCASCADE_DIR "${CMAKE_PREFIX_PATH}/lib/cmake/occt")
+set(OpenCASCADE_DIR "${OCCT_PREFIX}/lib/cmake/occt")
 find_package(OpenCASCADE REQUIRED)
 target_include_directories(libslic3r SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
 
@@ -687,6 +716,11 @@ set(OCCT_LIBS
     TKV3d
     TKService
     TKMesh
+    # ModelingAlgorithms (deps/OCCT/OCCT.cmake): B-rep fillet/chamfer, offset/shell, features.
+    TKFeat
+    TKOffset
+    TKFillet
+    TKBool
     TKBO
     TKPrim
     TKHLR

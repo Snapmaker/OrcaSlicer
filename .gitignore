@@ -47,3 +47,6 @@ CLAUDE.md__pycache__/
 # developer tree keeps it; .ultranet-src is where CI checks it out before moving it away.
 src/ultranet/
 .ultranet-src/
+
+# Nightly builds: CI writes the version suffix here (see CMakeLists.txt); never committed.
+/version_suffix.txt

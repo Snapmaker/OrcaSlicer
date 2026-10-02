@@ -5,6 +5,7 @@
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
 #include "slic3r/GUI/wxExtensions.hpp"
+#include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/DeviceManager.hpp"   // Ultra P4: post-login cloud device discovery
 #include "slic3r/GUI/HttpServer.hpp"     // LOCALHOST_PORT / BBL_LOGIN_LOCALHOST_URL
@@ -48,7 +49,7 @@ ZUserLogin::ZUserLogin() : wxDialog((wxWindow *) (wxGetApp().mainframe), wxID_AN
     // Url
     NetworkAgent* agent = wxGetApp().getAgent();
     if (!agent) {
-        std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+        std::string icon_path = (boost::format("%1%/images/EdgeSlicerTitle.ico") % resources_dir()).str();
         SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
 
         SetBackgroundColour(*wxWHITE);
@@ -498,8 +499,11 @@ void ZUserLogin::OnScriptResponseMessage(wxCommandEvent &WXUNUSED(evt))
 
 bool  ZUserLogin::ShowErrorPage()
 {
-    wxString ErrortUrl = from_u8((boost::filesystem::path(resources_dir()) / "web\\login\\error.html").make_preferred().string());
-    load_url(ErrortUrl);
+    wxString ErrorUrl = file_url_from_path(boost::filesystem::path(resources_dir()) / "web/login/error.html");
+    wxString strlang  = wxGetApp().current_language_code_safe();
+    if (strlang != "")
+        ErrorUrl += "?lang=" + strlang;
+    load_url(ErrorUrl);
 
     return true;
 }

@@ -62,6 +62,7 @@ using namespace nlohmann;
 #include "libslic3r/Format/3mf.hpp"
 #include "libslic3r/Format/BambuExport.hpp"
 #include "libslic3r/Format/STL.hpp"
+#include "libslic3r/Format/STEPExport.hpp"
 #include "libslic3r/Format/OBJ.hpp"
 #include "libslic3r/Format/SL1.hpp"
 #include "libslic3r/Utils.hpp"
@@ -85,10 +86,12 @@ using namespace nlohmann;
 #endif
 #include "slic3r/Utils/MeshInspect.hpp"
 #include "slic3r/Utils/PaintCLI.hpp"
+#include "slic3r/Utils/WinFirewall.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/BitmapCache.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/ProjectConfigFill.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -166,6 +169,7 @@ std::map<int, std::string> cli_errors = {
     {CLI_OBJECT_COLLISION_IN_LAYER_PRINT, "Object conflicts were detected. Please verify the slicing of all plates in EdgeSlicer before uploading."},
     {CLI_SPIRAL_MODE_INVALID_PARAMS, "Some slicing parameters cannot work with Spiral Vase mode. Please solve the issue in EdgeSlicer before uploading."},
     {CLI_MIXED_FILAMENT_INVALID, "A mixed filament is invalid: its components are different filament types, or it has no filament of its own."},
+    {CLI_EXPORT_STEP_ERROR, "Failed exporting the STEP file."},
     {CLI_SLICING_ERROR, "Failed slicing the model. Please verify the slicing of all plates on EdgeSlicer before uploading."},
     {CLI_GCODE_PATH_CONFLICTS, " G-code conflicts detected after slicing. Please make sure the 3mf file can be successfully sliced in the latest EdgeSlicer."}
 };
@@ -1395,6 +1399,14 @@ int CLI::run(int argc, char **argv)
         return CLI_ENVIRONMENT_ERROR;
     }
 
+#ifdef _WIN32
+    // `EdgeSlicer.exe --fix-firewall`: the elevated helper Help > Check Windows Firewall starts
+    // (one UAC prompt). Headless and ahead of setup(): it reads no config and opens no window;
+    // it only rewrites the Windows Firewall rules of this exe and its go2rtc.exe.
+    if (Slic3r::WinFirewall::is_fix_cli(argc, argv))
+        return Slic3r::WinFirewall::run_fix_cli(argc, argv);
+#endif
+
     if (!this->setup(argc, argv))
     {
         boost::nowide::cerr << "setup params error" << std::endl;
@@ -1527,6 +1539,9 @@ int CLI::run(int argc, char **argv)
             boost::nowide::cerr << "--inspect-paint cannot be combined with --hub" << std::endl;
             return CLI_INVALID_PARAMS;
         }
+        // The hub is headless: it never reaches the single-instance check, so it holds no lock and owns
+        // no window, and files another process hands over (Send to EdgeSlicer) can never end up in it.
+        BOOST_LOG_TRIVIAL(info) << "hub instance: ignores single-instance messages (no lock, no window)";
         return Slic3r::GUI::RemoteHub::run_server(m_config.opt_string("hub_token"), m_config.opt_bool("hub_phone"));
     }
 #endif
@@ -1589,6 +1604,10 @@ int CLI::run(int argc, char **argv)
     // --load-filaments lists, so everything downstream stays as it was.
     std::vector<std::string> load_configs_all(load_configs.begin(), load_configs.end());
     std::vector<std::string> load_filaments_all(load_filaments.begin(), load_filaments.end());
+    // NamedPresets for --printer-preset lives in this block so vendor bundles are gone
+    // before a GUI launch (S8). The CLI missing-key fill constructs its own store later.
+    // Scans resources_dir()/profiles only; user-installed data_dir()/system vendors are
+    // not consulted, same as --printer-preset today.
     {
         const std::string printer_name = m_config.opt_string("printer_preset", true);
         const std::string process_name = m_config.opt_string("process_preset", true);
@@ -1596,7 +1615,7 @@ int CLI::run(int argc, char **argv)
         if (auto* opt = m_config.option<ConfigOptionStrings>("filament_presets"))
             filament_names = opt->values;
         if (!printer_name.empty() || !process_name.empty() || !filament_names.empty()) {
-            NamedPresets      presets;
+            NamedPresets presets;
             const std::string preset_dir = (boost::filesystem::path(temporary_dir()) / ("ultra_cli_presets_" + std::to_string(get_current_pid()))).string();
             auto resolve = [&](const std::string& name, Preset::Type t, int ordinal, std::vector<std::string>& into) -> bool {
                 if (name.empty()) return true;
@@ -1829,6 +1848,14 @@ int CLI::run(int argc, char **argv)
         }
     }
 
+    // CLI-only: vendor bundles for the missing-key fill. Not constructed on a GUI launch (S8).
+    std::optional<NamedPresets> named_presets_store;
+    auto named_presets = [&named_presets_store]() -> NamedPresets & {
+        if (!named_presets_store)
+            named_presets_store.emplace();
+        return *named_presets_store;
+    };
+
     global_begin_time = (long long)Slic3r::Utils::get_current_time_utc();
     BOOST_LOG_TRIVIAL(warning) << boost::format("cli mode, Current Snapmaker_Orca Version %1%")%SLIC3R_VERSION;
 
@@ -1844,6 +1871,8 @@ int CLI::run(int argc, char **argv)
     std::string new_printer_name, current_printer_name, new_process_name, current_process_name, current_printer_system_name, current_process_system_name, new_process_system_name, new_printer_system_name, printer_model_id, current_printer_model, printer_model;//, printer_inherits, print_inherits;
     std::vector<std::string> upward_compatible_printers, new_print_compatible_printers, current_print_compatible_printers, current_different_settings;
     std::vector<std::string> current_filaments_name, current_filaments_system_name, current_inherits_group;
+    // Keys present in the 3MF right after read_from_file, before create=true inserts defaults (S2).
+    std::set<std::string> project_file_keys;
     DynamicPrintConfig load_process_config, load_machine_config;
     bool new_process_config_is_system = true, new_printer_config_is_system = true;
     std::string pipe_name, makerlab_name, makerlab_version, different_process_setting;
@@ -2042,7 +2071,17 @@ int CLI::run(int argc, char **argv)
                 // BBS: adjust whebackup
                 //LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig|LoadStrategy::AddDefaultInstances;
                 //if (load_aux) strategy = strategy | LoadStrategy::LoadAuxiliary;
-                model = Model::read_from_file(file, &config, &config_substitutions, strategy, &plate_data_src, &project_presets, &is_bbl_3mf, &file_version, nullptr, nullptr, nullptr, plate_to_slice);
+                if (boost::algorithm::iends_with(file, ".step") || boost::algorithm::iends_with(file, ".stp")) {
+                    // STEP, tessellated with the GUI's default precision (linear 0.003 mm, angular
+                    // 0.5 rad), compounds kept whole: the GUI import without its dialog.
+                    model = Model::read_from_step(file, strategy, nullptr, nullptr, nullptr, 0.003, 0.5, false);
+                } else {
+                    model = Model::read_from_file(file, &config, &config_substitutions, strategy, &plate_data_src, &project_presets, &is_bbl_3mf, &file_version, nullptr, nullptr, nullptr, plate_to_slice);
+                    // Snapshot keys the file actually carried before create=true reads insert defaults
+                    // (printer_model, printable_area, bed_exclude_area, upward_compatible_machine, …).
+                    if (project_file_keys.empty() && !config.empty())
+                        project_file_keys = project_config_snapshot_loaded_keys(config);
+                }
                 // The importer flags any 3mf written by Bambu Studio / Orca / this fork as a project file,
                 // including geometry-only ones without Metadata/project_settings.config (the bundled handy
                 // models, for instance). Only a file that actually carried a config is a project: the GUI
@@ -2123,27 +2162,22 @@ int CLI::run(int argc, char **argv)
                     // its end; a shorter one leaves current_filaments_system_name smaller than
                     // filament_count for the --uptodate-filaments check that indexes it later.
                     // Treat any mis-sized vector the same as a missing one and fall back to the
-                    // current names.
-                    if (option_strings && option_strings->values.size() == current_filaments_name.size() + 2) {
+                    // current names. No renamed_from / alias lookup.
+                    const std::vector<std::string> *inherits_group_values = option_strings ? &option_strings->values : nullptr;
+                    const size_t filament_name_count = current_filaments_name.size();
+                    current_printer_system_name = resolve_project_system_preset_name(current_printer_name, inherits_group_values, filament_name_count, true);
+                    current_process_system_name = resolve_project_system_preset_name(current_process_name, inherits_group_values, filament_name_count, false);
+                    if (option_strings && option_strings->values.size() == filament_name_count + 2) {
                         current_inherits_group = option_strings->values;
                         size_t size = current_inherits_group.size();
-                        if (current_inherits_group[size-1].empty()) {
-                            current_printer_system_name = current_printer_name;
+                        if (current_inherits_group[size-1].empty())
                             BOOST_LOG_TRIVIAL(info) << boost::format("inherits of printer is null, should be system preset");
-                        }
-                        else {
-                            current_printer_system_name = current_inherits_group[size-1];
+                        else
                             BOOST_LOG_TRIVIAL(info) << boost::format("inherits of printer valid, current_printer_system_name is %1%") %current_printer_system_name;
-                        }
-
-                        if (current_inherits_group[0].empty()) {
-                            current_process_system_name = current_process_name;
+                        if (current_inherits_group[0].empty())
                             BOOST_LOG_TRIVIAL(info) << boost::format("inherits of process is null, should be system preset");
-                        }
-                        else {
-                            current_process_system_name = current_inherits_group[0];
+                        else
                             BOOST_LOG_TRIVIAL(info) << boost::format("inherits of process valid, current_process_system_name is %1%") %current_process_system_name;
-                        }
 
                         current_filaments_system_name.resize(size - 2);
                         for (int index = 1; index < (size - 1); index++) {
@@ -2156,8 +2190,6 @@ int CLI::run(int argc, char **argv)
                         }
                     }
                     else {
-                        current_printer_system_name = current_printer_name;
-                        current_process_system_name = current_process_name;
                         current_filaments_system_name = current_filaments_name;
                         BOOST_LOG_TRIVIAL(info) << boost::format("no inherits_group: use system name the same as current name");
                     }
@@ -2173,8 +2205,7 @@ int CLI::run(int argc, char **argv)
                         old_printable_width = (int)(old_printable_area[2].x() - old_printable_area[0].x());
                         old_printable_depth = (int)(old_printable_area[2].y() - old_printable_area[0].y());
                     }
-                    if (config.option<ConfigOptionFloat>("printable_height"))
-                        old_printable_height = (int)(config.opt_float("printable_height"));
+                    old_printable_height = cli_printable_height_or_zero(config);
 
                     if (config.option<ConfigOptionFloat>("extruder_clearance_height_to_rod"))
                         old_height_to_rod = config.opt_float("extruder_clearance_height_to_rod");
@@ -2655,7 +2686,11 @@ int CLI::run(int argc, char **argv)
                             orig_printable_width = (int)(orig_printable_area[2].x() - orig_printable_area[0].x());
                             orig_printable_depth = (int)(orig_printable_area[2].y() - orig_printable_area[0].y());
                         }
-                        orig_printable_height = (int)(config.opt_float("printable_height"));
+                        // --uptodate / --uptodate_settings (~L2640): load_config_file() uses the
+                        // 4-arg load_from_json() form and does not flatten inherits. option(
+                        // "printable_area", true) still creates the 200x200 default, so this
+                        // read used to crash on every inheriting machine JSON (P1S/X1C, …).
+                        orig_printable_height = cli_printable_height_or_zero(config);
                         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(":%1%, check printable size: old_printable_width=%2%, orig_printable_width=%3%, old_printable_depth=%4%, orig_printable_depth=%5%, old_printable_height=%6%, orig_printable_height=%7%")
                                     %__LINE__ %old_printable_width %orig_printable_width %old_printable_depth %orig_printable_depth %old_printable_height %orig_printable_height;
                         if ((orig_printable_width > 0) && (orig_printable_depth > 0) && (orig_printable_height > 0))
@@ -2975,6 +3010,46 @@ int CLI::run(int argc, char **argv)
         flush_and_exit(CLI_PROCESS_NOT_COMPATIBLE);
     }
     sliced_info.upward_machines = upward_compatible_printers;
+
+    // A project saved before a printer or process option existed has no value for it. The GUI
+    // takes such keys from the project's system preset (load_external_preset refreshes every
+    // key the project did not override). Fill them from NamedPresets too instead of leaving
+    // them to the option default. Printer and process only — filament vector keys are a
+    // follow-up. Runs here so the embedded (auto) process preset below sees the filled keys.
+    {
+        size_t filled = 0;
+        const std::set<std::string> *present = project_file_keys.empty() ? nullptr : &project_file_keys;
+        auto fill_from_system = [&](const std::string &system_name, Preset::Type type) {
+            const std::vector<std::string> &options =
+                type == Preset::TYPE_PRINTER ? Preset::printer_options() : Preset::print_options();
+            std::vector<std::string> filled_keys;
+            const size_t n = fill_cli_system_preset(
+                m_print_config, system_name, options,
+                [&](const std::string &name) -> const DynamicPrintConfig * {
+                    const Preset *sys = named_presets().find_system(name, type);
+                    if (sys == nullptr) {
+                        BOOST_LOG_TRIVIAL(warning)
+                            << boost::format("CLI: system preset '%1%' not resolved; keys missing from the project keep their defaults")
+                                   % name;
+                        return nullptr;
+                    }
+                    return &sys->config;
+                },
+                &filled_keys, present);
+            filled += n;
+            for (const std::string &key : filled_keys) {
+                const ConfigOption *opt = m_print_config.option(key);
+                BOOST_LOG_TRIVIAL(info) << boost::format("CLI: %1% missing from the project, taken from '%2%': %3%")
+                    % key % system_name % project_config_fill_log_value(opt);
+            }
+        };
+        if (cli_fill_from_system_preset(new_printer_name))
+            fill_from_system(current_printer_system_name, Preset::TYPE_PRINTER);
+        if (cli_fill_from_system_preset(new_process_name))
+            fill_from_system(current_process_system_name, Preset::TYPE_PRINT);
+        if (filled > 0)
+            BOOST_LOG_TRIVIAL(info) << "CLI: filled " << filled << " missing project keys from system presets";
+    }
 
     //create project embedded preset if needed
     Preset *new_preset = NULL;
@@ -4124,7 +4199,10 @@ int CLI::run(int argc, char **argv)
             if (temp_printable_area.size() >= 4) {
                 printer_plate.printable_width = (int)(temp_printable_area[2].x() - temp_printable_area[0].x());
                 printer_plate.printable_depth = (int)(temp_printable_area[2].y() - temp_printable_area[0].y());
-                printer_plate.printable_height = (int)(config.opt_float("printable_height"));
+                // Same un-flattened load_config_file() path as --uptodate_settings.
+                // Height stays 0 (struct default); the ~L4236 size.z() > height check
+                // then marks the printer failed (conservative #16016 outcome).
+                printer_plate.printable_height = cli_printable_height_or_zero(config);
             }
             if (temp_exclude_area.size() >= 4) {
                 printer_plate.exclude_width = (int)(temp_exclude_area[2].x() - temp_exclude_area[0].x());
@@ -5650,6 +5728,33 @@ int CLI::run(int argc, char **argv)
                 record_exit_reson(outfile_dir, CLI_EXPORT_STL_ERROR, 0, cli_errors[CLI_EXPORT_STL_ERROR], sliced_info);
                 flush_and_exit(CLI_EXPORT_STL_ERROR);
             }
+        } else if (opt_key == "export_step") {
+            // Every object of every loaded model, all instances, into ONE STEP file.
+            boost::filesystem::path step_path(m_config.opt_string(opt_key));
+            const std::string outdir = m_config.opt_string("outputdir");
+            if (step_path.is_relative() && !outdir.empty())
+                step_path = boost::filesystem::path(outdir) / step_path;
+            std::vector<StepExportItem> items;
+            for (auto &model : m_models) {
+                model.add_default_instances();
+                for (const ModelObject *object : model.objects)
+                    items.push_back({object, -1});
+            }
+            StepExportParams step_params;
+            if (const ConfigOptionStrings *colours = m_print_config.option<ConfigOptionStrings>("filament_colour"))
+                step_params.extruder_colours = colours->values;
+            step_params.product_name = step_path.stem().string();
+            StepExportReport step_report;
+            if (! store_step(step_path.string(), items, step_params, step_report)) {
+                boost::nowide::cerr << "STEP export to " << step_path.string() << " failed: " << step_report.error << std::endl;
+                record_exit_reson(outfile_dir, CLI_EXPORT_STEP_ERROR, 0, cli_errors[CLI_EXPORT_STEP_ERROR], sliced_info);
+                flush_and_exit(CLI_EXPORT_STEP_ERROR);
+            }
+            for (const std::string &warning : step_report.warnings)
+                BOOST_LOG_TRIVIAL(warning) << "STEP export: " << warning;
+            boost::nowide::cout << "Exported " << step_report.parts << " parts (" << step_report.exact_parts << " exact from STEP, "
+                                << step_report.mesh_parts << " from mesh, " << step_report.open_parts << " open) to "
+                                << step_path.string() << " in " << step_report.seconds << " s" << std::endl;
         } else if (opt_key == "export_obj") {
             for (auto &model : m_models)
                 model.add_default_instances();
@@ -6128,11 +6233,37 @@ int CLI::run(int argc, char **argv)
                                     // invalid print speed would exit 0. CI and scripted slicing
                                     // have no notification UI at all, so this is the only place
                                     // the message can reach them.
-                                    for (unsigned int i = 0; i < g_slicing_warnings.size(); i++) {
+                                    // Precise Seam warnings are also raised during export_gcode
+                                    // (SeamPlacer::init), so they miss the pre-export sweep too.
+                                    // Record them as non-fatal NON_CRITICAL; --strict still fails.
+                                    // Do not clear the whole list afterwards: other post-export
+                                    // statuses (invalid print speed among them) must stay. Drop
+                                    // only the Precise Seam entries we just recorded, or a later
+                                    // plate's pre-export sweep would re-emit them under plate N+1.
+                                    for (unsigned int i = 0; i < g_slicing_warnings.size(); ) {
                                         PrintBase::SlicingStatus& status = g_slicing_warnings[i];
-                                        if (status.warning_step == -1 ||
-                                            status.message_type != PrintStateBase::SlicingInvalidPrintSpeed)
+                                        if (status.warning_step == -1) {
+                                            ++i;
                                             continue;
+                                        }
+                                        if (status.message_type == PrintStateBase::SlicingPreciseSeamWarning) {
+                                            sliced_plate_info.warning_message = status.text;
+                                            sliced_plate_info.warnings.push_back(status.text);
+                                            cli_record_warning(sliced_info, "slicing_warning_non_critical",
+                                                               nlohmann::json{{"plate_id", index+1}, {"text", status.text}});
+                                            BOOST_LOG_TRIVIAL(warning) << "plate "<< index+1<< ": found NON_CRITICAL slicing warnings: "<<status.text <<std::endl;
+                                            if (sliced_info.strict_mode) {
+                                                sliced_info.sliced_plates.push_back(sliced_plate_info);
+                                                record_exit_reson(outfile_dir, CLI_SLICING_ERROR, index+1, cli_errors[CLI_SLICING_ERROR], sliced_info);
+                                                flush_and_exit(CLI_SLICING_ERROR);
+                                            }
+                                            g_slicing_warnings.erase(g_slicing_warnings.begin() + i);
+                                            continue;
+                                        }
+                                        if (status.message_type != PrintStateBase::SlicingInvalidPrintSpeed) {
+                                            ++i;
+                                            continue;
+                                        }
                                         sliced_plate_info.warning_message = status.text;
                                         sliced_plate_info.warnings.push_back(status.text);
                                         cli_record_warning(sliced_info, "invalid_print_speed",
@@ -7404,18 +7535,27 @@ int main(int argc, char **argv)
 {
     // Before initSentry(): it reads the crash-report preference from the EdgeSlicer.conf that
     // --datadir points at.
+    // A relaunch waits for the instance it replaces first (see common_func.hpp).
+    common::wait_for_relaunch_parent(argc, argv);
     common::set_datadir_from_command_line(argc, argv);
     initSentry();
     auto soft_start_time = get_time_timestamp();    
     // Parse from copies, then blank secret option values in the originals: those sit at the
     // top of the main thread's stack, which a crash minidump includes.
-    std::vector<std::string> arg_copies(argv, argv + argc);
+    std::vector<std::string> arg_copies;
+    for (int i = 0; i < argc; ++i) {
+        if (i > 0 && common::is_relaunch_after_arg(argv[i])) { // handled above, not a CLI option
+            ++i;
+            continue;
+        }
+        arg_copies.emplace_back(argv[i]);
+    }
     std::vector<char*>       arg_ptrs;
     for (std::string& a : arg_copies)
         arg_ptrs.push_back(a.data());
     arg_ptrs.push_back(nullptr);
     common::mask_secret_args(argc, argv);
-    auto res = CLI().run(argc, arg_ptrs.data());
+    auto res = CLI().run(int(arg_copies.size()), arg_ptrs.data());
     auto soft_end_time = get_time_timestamp();    
 
     std::string softEndTime = BP_SOFT_WORKS_TIME + std::string(":") + get_works_time(soft_end_time - soft_start_time);

@@ -5,6 +5,7 @@
 #include "AmsDrying.hpp"
 #include "AmsDualLayout.hpp"
 #include "DeviceModelCode.hpp"
+#include "BambuSendDiagnosis.hpp"
 #include "libslic3r/Time.hpp"
 #include "libslic3r/Thread.hpp"
 #include "slic3r/Utils/ColorSpaceConvert.hpp"
@@ -1930,11 +1931,12 @@ std::string MachineObject::command_error_ignore_key(const std::string& dev_id, i
 // thread and a wxWindow may not be made there. The weak token is what makes that safe: a
 // MachineObject destroyed between the reply and the callback (the printer went away, the user
 // switched devices) drops the token, and the callback returns without touching `this`.
-void MachineObject::add_command_error_code_dlg(int command_err, const nlohmann::json& action_json)
+void MachineObject::add_command_error_code_dlg(int command_err, const nlohmann::json& action_json, const std::string& command)
 {
     if (command_err <= 0) return;
 
-    BOOST_LOG_TRIVIAL(error) << "add_command_error_code_dlg: dev " << dev_id << " refused a command, err_code "
+    BOOST_LOG_TRIVIAL(error) << "add_command_error_code_dlg: dev " << dev_id << " refused a command"
+                             << (command.empty() ? std::string() : " \"" + command + "\"") << ", err_code "
                              << GUI::HMSQuery::print_error_code(command_err)
                              << (action_json.is_null() ? " (no action json)" : " (with action json)");
 
@@ -1951,7 +1953,12 @@ void MachineObject::add_command_error_code_dlg(int command_err, const nlohmann::
     m_command_error_code        = command_err;
     m_command_error_action_json = action_json;
 
-    GUI::wxGetApp().CallAfter([this, command_err, action_json, token = std::weak_ptr<int>(m_token)] {
+    // Stop / Resume Printing only make sense when what was refused was a print action. A refused
+    // anything-else (a light, a fan, an AMS setting) has no print to stop or resume, so it gets OK.
+    // An empty name is a caller that does not know which command it was; that keeps the old set.
+    const bool print_action = command.empty() || GUI::is_print_action_command(command);
+
+    GUI::wxGetApp().CallAfter([this, command_err, action_json, print_action, token = std::weak_ptr<int>(m_token)] {
         if (token.expired()) return;
 
         GUI::HMSQuery* q = GUI::wxGetApp().get_hms_query();
@@ -1964,8 +1971,9 @@ void MachineObject::add_command_error_code_dlg(int command_err, const nlohmann::
         std::vector<int> table_actions;
         const wxString   image_url = q->query_print_error_url_action(dev_id, command_err, table_actions);
         bool             used_fallback = false;
-        const std::vector<int> used_button = GUI::resolve_print_error_actions(table_actions, used_fallback);
-        BOOST_LOG_TRIVIAL(info) << "command error " << code << ": table actions ["
+        const std::vector<int> used_button = GUI::resolve_command_error_actions(table_actions, print_action, used_fallback);
+        BOOST_LOG_TRIVIAL(info) << "command error " << code << (print_action ? " (print action)" : " (not a print action)")
+                                << ": table actions ["
                                 << GUI::format_action_ids(table_actions) << "] -> buttons ["
                                 << GUI::format_action_ids(used_button) << "]"
                                 << (used_fallback ? " (generic fallback)" : "");
@@ -2924,6 +2932,7 @@ void MachineObject::reset()
     BOOST_LOG_TRIVIAL(trace) << "reset dev_id=" << dev_id;
     last_update_time = std::chrono::system_clock::now();
     m_push_count = 0;
+    m_full_report_seen = false;
     is_220V_voltage = false;
     get_version_retry = 0;
     camera_recording = false;
@@ -3058,11 +3067,22 @@ int MachineObject::publish_json(std::string json_str, int qos, int flag)
 
     if (rtn == 0) {
         BOOST_LOG_TRIVIAL(info) << "publish_json: " << json_str << " code: " << rtn;
+        // Remember what went out under which sequence id, so a reply naming it can be told apart
+        // from replies to other slicers' commands that share the same id range. Parsed without
+        // exceptions: a payload that is not JSON is simply not tracked.
+        const json sent = json::parse(json_str, nullptr, false);
+        if (!sent.is_discarded())
+            m_sent_commands.note_sent_payload(sent, GUI::SentCommandTracker::Clock::now());
     } else {
         BOOST_LOG_TRIVIAL(error) << "publish_json: " << json_str << " code: " << rtn;
     }
 
     return rtn;
+}
+
+void MachineObject::note_agent_command_sent(const std::string& command)
+{
+    m_sent_commands.note_sent_by_agent(command, GUI::SentCommandTracker::Clock::now());
 }
 
 std::string MachineObject::command_get_auto_nozzle_mapping(const std::string& request_json)
@@ -3593,11 +3613,17 @@ int MachineObject::parse_json(std::string payload, bool key_field_only)
 
                 // ---- a command the slicer sent came back refused ----
                 //
-                // Any reply on the "print" topic that carries our own sequence id together with an
-                // "err_code" is the printer saying no to something this slicer asked for, and
-                // until now the fork dropped it on the floor: the command simply appeared to do
-                // nothing. The dialog is the same PrintErrorDialog the status-push errors use, so
-                // the text and the button set come from the shipped hms_action tables either way.
+                // A reply on the "print" topic that answers a command this slicer published - same
+                // command name, same sequence id, sent within the last minute and not yet refused -
+                // together with an "err_code" is the printer saying no to something we asked for.
+                // The sequence-id range alone is not enough: Bambu Studio and OrcaSlicer use the
+                // same range, and the push_status answering our own pushall echoes its sequence id
+                // alongside the printer's standing error, which is how a leftover 0502 4007 from an
+                // earlier task used to open this dialog the moment the Device page connected.
+                // Status and info replies never count (accept_command_refusal).
+                //
+                // The dialog is the same PrintErrorDialog the status-push errors use, so the text
+                // and the button set come from the shipped hms_action tables either way.
                 //
                 // "err_index" is what makes the error answerable. When it is there the whole reply
                 // is the action_json blob - it names the command to re-send and the index to
@@ -3605,10 +3631,20 @@ int MachineObject::parse_json(std::string payload, bool key_field_only)
                 // absent the dialog still shows, with those two buttons greyed: there is nothing
                 // to build them from. Upstream passes an empty json in exactly that case.
                 if (!key_field_only) {
-                    int  command_err = 0;
-                    json action_json;
-                    if (GUI::parse_command_error_reply(jj, is_studio_cmd(sequence_id), command_err, action_json))
-                        add_command_error_code_dlg(command_err, action_json);
+                    int         command_err = 0;
+                    json        action_json;
+                    std::string refused_command;
+                    if (GUI::accept_command_refusal(jj, m_sent_commands, GUI::SentCommandTracker::Clock::now(),
+                                                    command_err, action_json, refused_command)) {
+                        add_command_error_code_dlg(command_err, action_json, refused_command);
+                    } else if (!refused_command.empty() && !GUI::is_status_or_info_command(refused_command)) {
+                        // Somebody else's refusal (another slicer, the printer's screen, a previous
+                        // session). Logged so it can be told apart from ours, never shown.
+                        BOOST_LOG_TRIVIAL(info) << "parse_json: dev " << dev_id << " ignoring err_code "
+                                                << GUI::HMSQuery::print_error_code(jj["err_code"].get<int>())
+                                                << " on \"" << refused_command << "\" seq " << sequence_id
+                                                << ": not a command this slicer is waiting on";
+                    }
                 }
 
                 if (jj["command"].get<std::string>() == "push_status") {
@@ -4358,6 +4394,8 @@ int MachineObject::parse_json(std::string payload, bool key_field_only)
                     }
                     update_printer_preset_name();
                     update_filament_list();
+                    if (!key_field_only && (jj.contains("ams") || jj.contains("vt_tray")))
+                        m_full_report_seen = true; // DeviceManager::full_report_tick
                     if (jj.contains("ams")) {
                         if (jj["ams"].contains("ams")) {
                             long int last_ams_exist_bits = ams_exist_bits;
@@ -4811,6 +4849,16 @@ int MachineObject::parse_json(std::string payload, bool key_field_only)
                         if (result == "FAIL") {
                             wxString text = _L("Failed to start print job");
                             GUI::wxGetApp().push_notification(text);
+                        }
+                        // Ultra: firmware with Authorization Control answers an unsigned command
+                        // with result "failed", reason "mqtt message verify failed". Count it so the
+                        // send job can say why the printer did not start (BambuSendDiagnosis).
+                        const std::string reason = jj.contains("reason") && jj["reason"].is_string() ? jj["reason"].get<std::string>() : std::string();
+                        if (GUI::bambu_reply_is_auth_refusal(result, reason)) {
+                            ++project_file_refusals;
+                            BOOST_LOG_TRIVIAL(warning) << "parse_json, " << dev_id << " refused project_file: result=" << result
+                                                       << ", reason=" << reason
+                                                       << ", err_code=" << (jj.contains("err_code") ? jj["err_code"].dump() : std::string("none"));
                         }
                     }
                 } else if (jj["command"].get<std::string>() == "ams_filament_setting" && !key_field_only) {
@@ -6345,8 +6393,16 @@ void MachineObject::check_ams_filament_valid()
     /*for (auto vt_tray : vt_slot)*/ do{
         int vt_id = std::stoi(vt_tray.id);
         int index = 255 - vt_id;
-        if (index >= m_extder_data.total_extder_count) {
-            BOOST_LOG_TRIVIAL(error) << " vt_tray id map for nozzle id is not exist, index is: " << index << " nozzle count" << m_extder_data.total_extder_count;
+        if (index < 0 || index >= m_extder_data.total_extder_count) {
+            // Single-nozzle printers (P1S among them) report their external spool as id 254, which
+            // this mapping reads as nozzle 1. Nothing to check there, and it is the same answer on
+            // every status push, so it is noted once rather than logged as an error every second.
+            if (!m_vt_tray_unmapped_logged) {
+                m_vt_tray_unmapped_logged = true;
+                BOOST_LOG_TRIVIAL(debug) << "check_ams_filament_valid: dev " << dev_id << " vt_tray " << vt_tray.id
+                                         << " maps to nozzle index " << index << ", printer has "
+                                         << m_extder_data.total_extder_count << " nozzle(s); not checked";
+            }
             continue;
         }
         auto diameter = m_extder_data.extders[index].current_nozzle_diameter;
@@ -6679,6 +6735,54 @@ void DeviceManager::lan_reconnect_tick()
             lan_reconnect_now(obj, !session_up ? "session lost" : "no report for two minutes");
             break;
         }
+    }
+}
+
+void DeviceManager::full_report_tick()
+{
+    // Only the cloud printers: a LAN printer is reached over the one LAN session the agent holds,
+    // which lan_reconnect_tick already keeps asking for reports.
+    const auto now = std::chrono::steady_clock::now();
+    for (const auto& kv : userMachineList) {
+        MachineObject* m = kv.second;
+        if (!m || m->is_lan_mode_printer() || !m->is_online() || m->m_full_report_seen)
+            continue;
+        if (m->m_full_report_asked != std::chrono::steady_clock::time_point{} &&
+            now - m->m_full_report_asked < std::chrono::milliseconds(FULL_REPORT_RETRY_MS))
+            continue;
+        m->m_full_report_asked = now;
+        const int rc = m->command_request_push_all();
+        BOOST_LOG_TRIVIAL(info) << "full_report: dev_id=" << m->dev_id << " has sent no AMS / spool report yet, asked for one (rc="
+                                << rc << ")";
+    }
+}
+
+void DeviceManager::lan_watch_tick()
+{
+    if (!m_agent || Slic3r::GUI::wxGetApp().is_hub_managed()) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (m_lan_watch_set_at != std::chrono::steady_clock::time_point{} &&
+        now - m_lan_watch_set_at < std::chrono::milliseconds(LAN_WATCH_SET_MS))
+        return;
+    m_lan_watch_set_at = now;
+
+    // The selected printer is on the agent's own session and is left out; the plug-in skips it
+    // too, but naming it here would only log a set that is not what is being watched.
+    const MachineObject* sel = get_selected_machine();
+    json        targets = json::array();
+    std::string ids;
+    for (const auto& kv : get_my_machine_list()) {
+        MachineObject* m = kv.second;
+        if (!m || !m->is_lan_mode_printer() || m == sel) continue;
+        if (!m->has_access_right() || m->dev_ip.empty()) continue;
+        targets.push_back({{"dev_id", m->dev_id}, {"dev_ip", m->dev_ip}, {"username", "bblp"}, {"password", m->get_access_code()}});
+        ids += (ids.empty() ? "" : ",") + m->dev_id;
+    }
+    const int n = m_agent->watch_printers(targets.dump());
+    if (ids != m_lan_watch_set) {
+        m_lan_watch_set = ids;
+        BOOST_LOG_TRIVIAL(info) << "lan_watch: watching [" << ids << "] besides the selected printer (plug-in says " << n
+                                << (n < 0 ? ": not supported" : "") << ")";
     }
 }
 

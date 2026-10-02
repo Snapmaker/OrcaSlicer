@@ -428,6 +428,13 @@ public:
 
     ModelVolume* get_selected_model_volume();
     void change_part_type();
+    // preserve_ps_subtype = true: when new_type is PRECISE_SEAM_CENTER, volumes that are
+    //   already Precise Seam keep their existing subtype (LEFT/RIGHT/etc.). Used by the
+    //   modal "Change type" dialog where CENTER is a default fallback.
+    // preserve_ps_subtype = false: no preservation — target type is applied verbatim. Used
+    //   by the "Precise Seam Type" subtype picker where the user explicitly wants CENTER.
+    void set_volume_type(ModelVolumeType new_type, bool preserve_ps_subtype = true);
+    ModelVolumeType get_selected_volume_type();
 
     void last_volume_is_deleted(const int obj_idx);
     void update_and_show_object_settings_item();
@@ -463,6 +470,10 @@ public:
     // Ultra (support groups): resync every part row's group badge with ModelVolume::config.
     void update_support_group_badges();
     void simplify();
+    // Open the exact CAD fillet / chamfer / shell gizmo on the selected part. from_gizmo: switch
+    // over from another open gizmo (the Edit panel's button) instead of refusing.
+    void open_cad_fillet(bool from_gizmo = false);
+    static bool can_open_cad_fillet();
     void update_item_error_icon(const int obj_idx, int vol_idx) const ;
 
     void copy_layers_to_clipboard();

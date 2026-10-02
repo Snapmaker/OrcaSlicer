@@ -15,6 +15,7 @@
 #include "libslic3r/Utils.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/ServerLifetime.hpp"
+#include "slic3r/Utils/WinFirewall.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/beast/core/detail/base64.hpp>
@@ -1142,6 +1143,83 @@ bool Testing::trusted_proxy_headers(bool peer_is_loopback, bool via_relay)
     return peer_is_loopback && !via_relay;
 }
 
+// summary_json's "camera" field: the camera's own id first (a camera someone added *as* this
+// printer, id == id), then a LAN camera that sits on the same address - by the camera's recorded
+// `ip`, or, failing that, by the host inside its own stream URL. Pure and address-only: it never
+// falls back to matching by name (the alias vs. the printer's display name), because that half of
+// the join is the app's own and happens on the phone once this has said "no camera by address".
+// An empty printer_ip (a row nothing above ever set an address on) or an empty candidate address
+// matches nothing, on either side - two blanks are not "the same address".
+std::string Testing::camera_for_printer(const std::string& printer_id, const std::string& printer_ip,
+                                        const std::vector<CameraCandidate>& cams)
+{
+    for (const CameraCandidate& c : cams)
+        if (!c.id.empty() && c.id == printer_id) return c.id;
+    if (printer_ip.empty()) return {};
+    for (const CameraCandidate& c : cams) {
+        // A camera keyed by address (its `id` is the LAN ip it was auto-added under, streams.json's
+        // "auto" kind) as well as one with a separately recorded `ip`, and, last, one only its own
+        // stream URL names an address for.
+        if (c.id == printer_ip) return c.id;
+        if (!c.ip.empty() && c.ip == printer_ip) return c.id;
+        if (!c.url_host.empty() && c.url_host == printer_ip) return c.id;
+    }
+    return {};
+}
+
+static bool row_has_filament(const json& row)
+{
+    if (row.contains("ams") && row["ams"].is_array())
+        for (const json& u : row["ams"])
+            if (u.is_object() && u.contains("trays") && u["trays"].is_array() && !u["trays"].empty()) return true;
+    if (row.contains("ext_spools") && row["ext_spools"].is_array())
+        for (const json& t : row["ext_spools"])
+            if (t.is_object() && t.value("exists", false)) return true;
+    return false;
+}
+
+static void last_reading_only(json& slot)
+{
+    slot["can_load"]     = false;
+    slot["can_unload"]   = false;
+    slot["filament_why"] = "The last reading: the PC is not connected to this printer right now.";
+}
+
+Testing::MergedPrinterRow Testing::merge_printer_row(const std::string& cached_row_json, long cached_instance, bool cached_fresh,
+                                                     const std::string& incoming_row_json, long incoming_instance)
+{
+    MergedPrinterRow out;
+    out.row = incoming_row_json;
+    try {
+        json incoming = json::parse(incoming_row_json);
+        if (cached_row_json.empty()) return out;
+        const json cached = json::parse(cached_row_json);
+        if (!cached.is_object() || !incoming.is_object()) return out;
+        const bool bambu = incoming.value("kind", std::string()) == "bambu";
+        if (bambu && cached_fresh && cached_instance != incoming_instance && cached.value("connected", false) &&
+            !incoming.value("connected", false)) {
+            out.keep_cached = true;
+            return out;
+        }
+        if (!row_has_filament(incoming) && row_has_filament(cached)) {
+            for (const char* k : { "ams", "ext_spools" }) {
+                if (!cached.contains(k)) continue;
+                json v = cached[k];
+                if (v.is_array())
+                    for (json& e : v) {
+                        if (!e.is_object()) continue;
+                        if (std::string(k) == "ams" && e.contains("trays") && e["trays"].is_array())
+                            for (json& t : e["trays"]) if (t.is_object()) last_reading_only(t);
+                        if (std::string(k) == "ext_spools") last_reading_only(e);
+                    }
+                incoming[k] = v;
+            }
+            out.row = incoming.dump();
+        }
+    } catch (...) {}
+    return out;
+}
+
 // The pairing document's origins and identity, pure so the shape can be tested without a hub.
 // Three named origins, one of them always empty today, and the public half of the hub identity.
 std::string Testing::pair_identity_json(const std::string& lan_url, const std::string& remote_url,
@@ -1491,47 +1569,36 @@ static std::string join_words(const std::vector<std::string>& v, const char* sep
     return out;
 }
 
-// Windows Firewall through PowerShell rather than netsh: Get-NetFirewallRule answers with
-// property values (Allow/Inbound/Private) that are the same in every Windows display language,
-// while netsh's verbose output is localised and would have to be parsed by label.
+// Windows Firewall through its COM API (slic3r/Utils/WinFirewall, shared with Help > Check
+// Windows Firewall) rather than netsh: property values are the same in every Windows display
+// language, while netsh's verbose output is localised and would have to be parsed by label. It
+// used to be a PowerShell Get-NetFirewallRule run; same answers, without a 30 s process launch.
 //
 // `label` is the program name used in the sentences shown to the user ("go2rtc.exe", "EdgeSlicer.exe");
 // `netsh_hint` is the exact command they can paste into an elevated prompt to fix a "missing" or
-// "partial" state themselves - we only ever *look*, never run netsh add ourselves.
+// "partial" state themselves - the hub only ever *looks* (the elevated fix is the dialog's job).
 static FirewallState firewall_query(const std::string& exe, int port, const std::string& label, const std::string& netsh_hint)
 {
     FirewallState fw;
     fw.checked_at = (long long) std::time(nullptr);
 #ifdef _WIN32
-    std::string quoted = exe; // '' escapes a quote inside a PowerShell single-quoted string
-    for (size_t i = 0; i < quoted.size(); ++i)
-        if (quoted[i] == '\'') quoted.insert(i++, 1, '\'');
-    const std::string script =
-        "$p='" + quoted + "';$f=[IO.Path]::GetFullPath($p);"
-        "$r=@(Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue |"
-        " Where-Object { try { [IO.Path]::GetFullPath($_.Program) -ieq $f } catch { $false } } |"
-        " Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq 'True' -and"
-        " $_.Direction -eq 'Inbound' });"
-        "foreach ($x in $r) { $(if ($x.Action -eq 'Block') { 'BLOCK=' } else { 'RULE=' }) + $x.Profile };"
-        "foreach ($n in @(Get-NetConnectionProfile -ErrorAction SilentlyContinue)) { 'NET=' + $n.NetworkCategory };"
-        "'DONE'";
-    std::string out;
-    int         code = 0;
-    if (!run_capture({ "powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script }, out, code, 30000) ||
-        out.find("DONE") == std::string::npos) {
+    (void) port;
+    const WinFirewall::Snapshot snap = WinFirewall::read_system_snapshot();
+    if (!snap.ok) {
+        BOOST_LOG_TRIVIAL(warning) << "RemoteHub: Windows Firewall could not be read: " << snap.error;
         fw.note    = "Windows Firewall could not be checked for " + label + ".";
         fw.command = netsh_hint;
         return fw;
     }
     std::vector<std::string> rules, blocks, nets;
-    std::istringstream       is(out);
-    std::string              line;
-    while (std::getline(is, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-        if (line.compare(0, 5, "RULE=") == 0) rules.push_back(line.substr(5));
-        else if (line.compare(0, 6, "BLOCK=") == 0) blocks.push_back(line.substr(6));
-        else if (line.compare(0, 4, "NET=") == 0) nets.push_back(line.substr(4) == "DomainAuthenticated" ? "Domain" : line.substr(4));
+    for (const WinFirewall::Rule& r : snap.rules) {
+        if (!r.inbound || !r.enabled || !WinFirewall::same_program(r.program, exe)) continue;
+        const std::string profiles = (r.profiles & WinFirewall::ProfileAll) == WinFirewall::ProfileAll ? std::string("Any") :
+                                                                                                       WinFirewall::profiles_text(r.profiles);
+        (r.allow ? rules : blocks).push_back(profiles);
     }
+    for (int bit : { WinFirewall::ProfileDomain, WinFirewall::ProfilePrivate, WinFirewall::ProfilePublic })
+        if (snap.current_profiles & bit) nets.push_back(WinFirewall::profiles_text(bit));
     // Only the profiles the PC's live networks are in matter: a rule that covers Public does
     // nothing for a phone on a network Windows filed as Private.
     auto covers = [](const std::vector<std::string>& rs, const std::string& n) {
@@ -2570,10 +2637,16 @@ void HubServer::poll_printers()
             const std::string id = row.value("id", std::string());
             if (id.empty() || id.size() > 200) continue;
             CachedPrinter& c = m_printers[id];
-            c.row      = row;
+            reported.insert(id);
+            // Several windows report the same printer; keep the one that is connected to it
+            // (Testing::merge_printer_row).
+            const bool fresh = c.at > 0 && at - c.at <= PRINTERS_STALE_MS;
+            const Testing::MergedPrinterRow m = Testing::merge_printer_row(
+                c.row.is_object() ? c.row.dump() : std::string(), c.instance, fresh, row.dump(), inst.pid);
+            if (m.keep_cached) continue;
+            try { c.row = json::parse(m.row); } catch (...) { c.row = row; }
             c.at       = at;
             c.instance = inst.pid;
-            reported.insert(id);
         }
         // A Snapmaker row this window (or the hub's previous run) reported and no longer does is
         // gone, not stale: the Device tab's connect card after a disconnect, or one that now gives
@@ -2930,11 +3003,19 @@ json HubServer::summary_json()
     }
     // The camera wall, so a printer row can name the camera that watches it. Joined by id and, for
     // a LAN printer, by the address the camera sits on - which is the join the app was doing by
-    // hand out of /state, and the one that is easy to get wrong.
+    // hand out of /state, and the one that is easy to get wrong. `url_host` is the fallback address:
+    // the host inside the camera's own stream URL (rurl for a browser source, rsrc for a go2rtc
+    // one), for the rare camera whose recorded `ip` is blank but whose URL still names an address.
     try {
         json j = json::parse(state);
-        for (const auto& h : j.value("hosts", json::array()))
-            cams.push_back(json{ { "id", h.value("id", "") }, { "alias", h.value("alias", "") }, { "ip", h.value("ip", "") } });
+        for (const auto& h : j.value("hosts", json::array())) {
+            std::string url_host = SnapmakerLan::host_of(h.value("rurl", ""));
+            if (url_host.empty()) url_host = SnapmakerLan::host_of(h.value("rsrc", ""));
+            cams.push_back(json{ { "id", h.value("id", "") },
+                                 { "alias", h.value("alias", "") },
+                                 { "ip", h.value("ip", "") },
+                                 { "url_host", url_host } });
+        }
     } catch (...) {}
 
     json out;
@@ -3009,13 +3090,13 @@ json HubServer::summary_json()
         p["age_s"]    = row.value("age_s", 0);
         p["instance"] = row.value("instance", 0);
         // The camera that watches this printer, if any: its own id first, then a LAN camera on the
-        // same address.
-        std::string cam;
-        const std::string ip = row.value("ip", std::string());
-        for (const json& c : cams) {
-            if (c.value("id", std::string()) == id) { cam = id; break; }
-            if (!ip.empty() && (c.value("id", std::string()) == ip || c.value("ip", std::string()) == ip)) cam = c.value("id", std::string());
-        }
+        // same address (Testing::camera_for_printer - see there for the fallback order).
+        std::vector<Testing::CameraCandidate> cam_candidates;
+        cam_candidates.reserve(cams.size());
+        for (const json& c : cams)
+            cam_candidates.push_back({ c.value("id", std::string()), c.value("alias", std::string()),
+                                       c.value("ip", std::string()), c.value("url_host", std::string()) });
+        const std::string cam = Testing::camera_for_printer(id, row.value("ip", std::string()), cam_candidates);
         if (!cam.empty()) p["camera"] = cam;
         // The thumbnail URL is offered whenever there is a picture to serve, so the app can draw
         // it without a probe that would 404 most of the time.
@@ -3383,11 +3464,11 @@ void HubServer::start_go2rtc()
                                 << (ff.empty() ? "off (no ffmpeg found; MJPEG fps knob only)"
                                                : "on via " + ff);
     }
-    if (webrtc_port > 0) firewall_state(true); // one PowerShell run on a detached thread; result cached
+    if (webrtc_port > 0) firewall_state(true); // one firewall read on a detached thread; result cached
 #endif
 }
 
-// Cached; a refresh runs the (slow) PowerShell query on a detached thread and never blocks a
+// Cached; a refresh runs the firewall query on a detached thread and never blocks a
 // request, so the hub page's 3 s poll always gets the last answer straight away.
 FirewallState HubServer::firewall_state(bool refresh)
 {
@@ -4061,6 +4142,16 @@ void HubServer::handle_hub(tcp::socket& client, Request& r)
         j["ok"]  = pid > 0;
         j["pid"] = pid;
         respond_json(client, pid > 0 ? 200 : 500, pid > 0 ? j.dump() : json_error("could not start a slicer"));
+    } else if (r.path == "/hub/state" && r.method == "GET") {
+        // The camera list as last saved, for a Stream tab to open with. Each window's page runs
+        // on its own port (13618 or the next free one), so its localStorage is its own; the hub
+        // is the one copy they all share.
+        std::string state;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            state = m_state;
+        }
+        respond_json(client, 200, state.empty() ? "{}" : state);
     } else if (r.path == "/hub/state" && r.method == "POST") {
         if (r.content_type.compare(0, 16, "application/json") != 0) { respond_json(client, 415, json_error("Content-Type must be application/json")); return; }
         std::string body;
@@ -4300,8 +4391,9 @@ static bool instance_api_allowed(const std::string& method, const std::string& s
         return id.find("%2f") == std::string::npos && id.find("%2F") == std::string::npos;
     }
 
-    // /api/archive/<id> (GET the record, DELETE it), /api/archive/<id>/thumbnail.png, and the
-    // stage 2 pair /api/archive/<id>/send and /api/archive/<id>/delete. The id is a name the
+    // /api/archive/<id> (GET the record, DELETE it), /api/archive/<id>/thumbnail.png, the stage 2
+    // pair /api/archive/<id>/send and /api/archive/<id>/delete, and a Bambu reprint's mapping
+    // sheet /api/archive/<id>/preview. The id is a name the
     // archive itself made: letters, digits, dot, dash and underscore, one segment, nothing to
     // decode - checked here before it reaches a file system, and again by GcodeArchive::find.
     if (sub.compare(0, 13, "/api/archive/") == 0) {
@@ -4314,7 +4406,7 @@ static bool instance_api_allowed(const std::string& method, const std::string& s
         if (slash == std::string::npos) return get || del;
         const std::string what = rest.substr(slash);
         if (what == "/thumbnail.png") return get;
-        if (what == "/send" || what == "/delete") return post;
+        if (what == "/send" || what == "/delete" || what == "/preview") return post;
         return false;
     }
 
@@ -4515,7 +4607,7 @@ void HubServer::handle_phone(tcp::socket& client, Request& r, const std::string&
         j["version"] = 2;
         j["routes"]  = json::array({
             { {"method", "GET"},  {"path", "/api/instances"},       {"description", "running slicer instances: id (pid), index, title, project path, slicing"} },
-            { {"method", "GET"},  {"path", "/api/archive[?offset=&limit=&printer={id}&model={key}]"}, {"description", "the G-code archive, read by the hub (no slicer window needed): {enabled?, max?, total, offset, limit, next_offset, printers [{id, name, kind}], models [{key, name, count, printers [{id, name, kind, online}]}], records}, newest first; records are the same rows /i/{id}/api/archive lists plus model_key / model_name (the model the file was sliced for; \"other\" when unknown), and a printer is never named by an address. models[].printers are where a record of that model may be reprinted (send with printer={id}). Sending or deleting one still goes through a slicer window (/i/{id}/api/archive/{id}/send)"} },
+            { {"method", "GET"},  {"path", "/api/archive[?offset=&limit=&printer={id}&model={key}]"}, {"description", "the G-code archive, read by the hub (no slicer window needed): {enabled?, max?, total, offset, limit, next_offset, printers [{id, name, kind}], models [{key, name, count, printers [{id, name, kind, online}]}], records}, newest first; records are the same rows /i/{id}/api/archive lists plus model_key / model_name (the model the file was sliced for; \"other\" when unknown), and a printer is never named by an address. models[].printers are where a record of that model may be reprinted (send with printer={id}). Sending or deleting one still goes through a slicer window (/i/{id}/api/archive/{id}/send; a Bambu one takes /i/{id}/api/archive/{id}/preview first for its AMS mapping)"} },
             { {"method", "GET"},  {"path", "/api/archive/{id}/thumbnail.png"}, {"description", "one record's preview; cacheable, since a record's preview never changes"} },
             { {"method", "POST"}, {"path", "/api/instances/open"},  {"description", "body = a .3mf/.stl/.obj/.step/.glb file, header X-File-Name = its name; starts a new (hidden) slicer instance with it; ?visible=1 opens a window"} },
             { {"method", "POST"}, {"path", "/i/{id}/open?mode=load|import"}, {"description", "same upload, opened in instance {id}: load = save the current project, then open this project (default for .3mf); import = add the model to the current plate (default otherwise)"} },
@@ -5167,7 +5259,7 @@ public:
             return false;
         }
         m_icon = new HubTaskBarIcon(m_server, [this]() { m_server.request_quit("tray"); });
-        wxIcon icon(wxString::FromUTF8(Slic3r::var("Snapmaker_Orca.ico")), wxBITMAP_TYPE_ICO);
+        wxIcon icon(wxString::FromUTF8(Slic3r::var("EdgeSlicer.ico")), wxBITMAP_TYPE_ICO);
         if (!icon.IsOk()) icon = wxIcon(wxString::FromUTF8(Slic3r::var("Snapmaker_Orca_128px.png")), wxBITMAP_TYPE_PNG);
         m_icon->set_icon(icon);
         // From here on a printer event shows on the PC as well (accept_event decides which ones).
@@ -5388,6 +5480,27 @@ Info set_phone(bool on, const std::string& token)
 Info new_link() { return hub_call("POST", "/hub/newlink", "", 5); }
 
 void quit() { hub_call("POST", "/hub/quit", "", 3); }
+
+std::string saved_state()
+{
+    const HubFile hf = hub_file();
+    if (hf.admin_port != 0) {
+        std::string body;
+        bool        ok = false;
+        Http::get("http://127.0.0.1:" + std::to_string(hf.admin_port) + "/hub/state")
+            .header("X-Hub-Secret", hf.secret)
+            .timeout_connect(1).timeout_max(5)
+            .on_complete([&](std::string b, unsigned status) { ok = status == 200; body = b; })
+            .perform_sync();
+        if (ok) return body == "{}" ? std::string() : body;
+    }
+    // No hub: what this process last handed over, else what the last hub saved.
+    {
+        std::lock_guard<std::mutex> lock(s_state_mutex);
+        if (!s_last_state.empty()) return s_last_state;
+    }
+    return read_file(streams_json_path());
+}
 
 bool post_state(const std::string& state_json)
 {

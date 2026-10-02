@@ -18,6 +18,9 @@
 // reason: a builder that reaches for a global counter is not a pure function and its output is
 // not comparable.
 
+#include <chrono>
+#include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -224,8 +227,99 @@ std::string normalize_error_code(const std::string& code);
 // names, and `action_json` is the whole reply when it carried an err_index and null when it did
 // not - null being the case where the dialog shows with Proceed and Don't remind greyed, since
 // there is nothing to build them from.
+//
+// This is the shape check only. MachineObject decides through accept_command_refusal below, which
+// also requires the reply to answer a command this slicer actually sent.
 bool parse_command_error_reply(const nlohmann::json& print_block, bool is_studio_seq,
                                int& err_code, nlohmann::json& action_json);
+
+// ---- which replies are answers to something this slicer actually sent ----
+//
+// The sequence-id range alone cannot say that. START_SEQ_ID..END_SEQ_ID is the range Bambu Studio
+// and OrcaSlicer use too, so a reply to *their* command (or to one from a previous session of
+// ours) lands in it; and the printer's push_status answer to our own "pushall" echoes the
+// pushall's sequence id while carrying status-level error fields. Both used to open "the printer
+// refused a command" the moment the Device page connected, over a leftover error from an earlier
+// task that nobody here had asked for.
+//
+// So the slicer records what it publishes - sequence id -> command name, with a short expiry - and
+// a refusal is only reported when the reply names a command we sent under that id and have not
+// yet seen refused. Status and info requests are never recorded: their answers are status, not a
+// verdict on a command.
+
+// push_status, pushall, get_version, get_access_code and the other "get" requests. Their replies
+// may carry error fields describing the printer, never a refusal of the request itself.
+bool is_status_or_info_command(const std::string& command);
+
+// The commands that start, pause, resume, stop or ignore-and-continue a print. Only a refusal of
+// one of these is allowed to offer Stop Printing / Resume Printing: refusing anything else says
+// nothing about a print that could be stopped or resumed.
+bool is_print_action_command(const std::string& command);
+
+class SentCommandTracker
+{
+public:
+    using Clock = std::chrono::steady_clock;
+    // Long enough for any printer to answer, short enough that an id is not held for the session.
+    static constexpr std::chrono::seconds DEFAULT_TTL { 60 };
+    // The network plug-in uploads the file before it publishes project_file, and the upload can
+    // take minutes, so a send it makes on our behalf is held for longer.
+    static constexpr std::chrono::seconds AGENT_TTL { 15 * 60 };
+
+    SentCommandTracker() = default;
+    SentCommandTracker(const SentCommandTracker& other);
+    SentCommandTracker& operator=(const SentCommandTracker& other);
+
+    // A command this slicer published under `sequence_id`. Status and info requests, and an empty
+    // id or command, are not recorded.
+    void note_sent(const std::string& sequence_id, const std::string& command, Clock::time_point now,
+                   std::chrono::seconds ttl = DEFAULT_TTL);
+
+    // The same, read out of a payload exactly as it was published ({"print":{...}}, {"system":{...}},
+    // ...). Every top-level block carrying both "command" and "sequence_id" is recorded.
+    void note_sent_payload(const nlohmann::json& payload, Clock::time_point now);
+
+    // A command the network plug-in publishes for us (project_file, gcode_file) under a sequence id
+    // it never hands back. Matched by command name alone, once, within `ttl`.
+    void note_sent_by_agent(const std::string& command, Clock::time_point now, std::chrono::seconds ttl = AGENT_TTL);
+
+    // True when a reply naming `command` under `sequence_id` answers something we sent and is still
+    // waiting on. Does not consume the entry: most commands are answered with a success first.
+    bool is_awaiting(const std::string& sequence_id, const std::string& command, Clock::time_point now);
+
+    // The reply refused it: drop the entry, so one refusal opens one window.
+    void forget(const std::string& sequence_id, const std::string& command);
+
+    size_t pending_count(Clock::time_point now);
+
+private:
+    struct Entry
+    {
+        std::string       command;
+        Clock::time_point expires;
+    };
+    void expire_locked(Clock::time_point now);
+
+    mutable std::mutex                       m_mutex;
+    std::map<std::string, Entry>             m_by_seq;   // sequence id -> what we sent under it
+    std::map<std::string, Clock::time_point> m_by_agent; // command -> until when a plug-in send is awaited
+};
+
+// The whole decision for one reply on the "print" topic: parse_command_error_reply's checks, plus
+// "the command is one we sent under this sequence id and are still waiting on", minus status and
+// info replies of any kind. On true, `command` is the refused command's name and the tracker has
+// forgotten it; the caller shows the dialog. On false nothing is shown - `command` is still filled
+// in when the reply carried an err_code, so the caller can log what it ignored.
+bool accept_command_refusal(const nlohmann::json& print_block, SentCommandTracker& tracker,
+                            SentCommandTracker::Clock::time_point now,
+                            int& err_code, nlohmann::json& action_json, std::string& command);
+
+// The button set for a refused command. A refused print action gets what the status-push dialog
+// gets (resolve_print_error_actions, generic Stop/Resume/OK fallback included). Any other refusal
+// is only information about a command that did not happen: Stop Printing and every Resume
+// variant are removed from the table's set, and when nothing else is left the answer is OK alone.
+std::vector<int> resolve_command_error_actions(const std::vector<int>& table_actions, bool print_action,
+                                               bool& used_fallback);
 
 // ---- payload builders ----
 //

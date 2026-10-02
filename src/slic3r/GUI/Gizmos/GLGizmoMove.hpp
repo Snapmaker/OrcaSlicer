@@ -2,8 +2,12 @@
 #define slic3r_GLGizmoMove_hpp_
 
 #include "GLGizmoBase.hpp"
+#include "libslic3r/ObjectID.hpp"
 //BBS: add size adjust related
 #include "GizmoObjectManipulation.hpp"
+
+#include <map>
+#include <vector>
 
 
 namespace Slic3r {
@@ -33,6 +37,71 @@ class GLGizmoMove3D : public GLGizmoBase
     //BBS: add size adjust related
     GizmoObjectManipulation* m_object_manipulation;
 
+    // EdgeSlicer: "Snap face to surface" (Blender's face project snapping with align rotation).
+    // The user picks one face of the selected object or part, then drags; the picked face is kept
+    // flush against whatever other object is under the cursor and the selection rotates so the face
+    // follows the target surface's normal. The mouse wheel spins it around that normal mid-drag.
+    struct SurfaceHit
+    {
+        int         volume_idx{ -1 };   // index into GLCanvas3D::get_volumes()
+        size_t      facet{ 0 };
+        Vec3d       mesh_point{ Vec3d::Zero() };  // mesh coords of the hit volume
+        Vec3d       mesh_normal{ Vec3d::Zero() };
+        Vec3d       point{ Vec3d::Zero() };       // world coords
+        Vec3d       normal{ Vec3d::Zero() };
+    };
+    struct SnapFace
+    {
+        bool        valid{ false };
+        // identifies the GLVolume the face was picked on; GLVolume indices do not survive reload_scene()
+        int         object_idx{ -1 };
+        int         instance_idx{ -1 };
+        int         volume_idx{ -1 };
+        Vec3d       mesh_point{ Vec3d::Zero() };
+        Vec3d       mesh_normal{ Vec3d::Zero() };
+        GLModel     region;             // coplanar facets around the picked one, mesh coords
+        // Stable identity of the picked volume (unlike the indices above, these survive objects
+        // being added or deleted) and the facet count of its mesh when picked.
+        ObjectID    object_id;
+        ObjectID    instance_id;
+        ObjectID    volume_id;
+        size_t      facet_count{ 0 };
+    };
+    enum class SnapState { Idle, Pressed, Dragging };
+
+    bool        m_snap_enabled{ false };
+    SnapFace    m_snap_face;
+    SnapFace    m_snap_hover;           // face under the cursor on the selection, drawn as a preview
+    size_t      m_snap_hover_facet{ 0 };
+    std::vector<size_t> m_snap_hover_region_facets;
+    SnapState   m_snap_state{ SnapState::Idle };
+    Vec2d       m_snap_press_pos{ Vec2d::Zero() };
+    SurfaceHit  m_snap_press_hit;
+    bool        m_snap_moved{ false };
+    double      m_snap_spin{ 0.0 };
+    // Spin step sizes in degrees (Fine / Coarse), and "always use Fine". Persisted in AppConfig
+    // (move_snap_spin_fine, move_snap_spin_coarse, move_snap_spin_always_fine); loaded lazily.
+    double      m_snap_spin_fine{ 1.0 };
+    double      m_snap_spin_coarse{ 5.0 };
+    bool        m_snap_spin_always_fine{ false };
+    bool        m_snap_prefs_loaded{ false };
+    SurfaceHit  m_snap_last_target;
+    // Optional target surface: when set, dragging projects onto this face of another object/part
+    // only (its plane, without an edge stop; Alt releases it while dragging). Held by model ids,
+    // cleared when its object goes away or the gizmo closes.
+    SnapFace    m_snap_target;
+    std::string m_snap_target_name;
+    bool        m_snap_pick_target{ false };    // next click on another object's face sets the target
+    SnapFace    m_snap_target_hover;            // preview while picking
+    std::vector<size_t> m_snap_target_hover_facets;
+    bool        m_snap_has_target{ false };
+    Vec3d       m_snap_start_point{ Vec3d::Zero() };  // picked face at drag start, world coords
+    Vec3d       m_snap_start_normal{ Vec3d::Zero() };
+    Transform3d m_snap_start_instance{ Transform3d::Identity() };
+    Transform3d m_snap_start_volume{ Transform3d::Identity() };
+    // face adjacency per mesh, keyed by the mesh pointer and checked against its facet count
+    std::map<const indexed_triangle_set*, std::vector<Vec3i32>> m_snap_neighbors;
+
 public:
     //BBS: add obj manipulation logic
     //GLGizmoMove3D(GLCanvas3D& parent, const std::string& icon_filename, unsigned int sprite_id);
@@ -40,6 +109,12 @@ public:
     virtual ~GLGizmoMove3D() = default;
 
     double get_snap_step(double step) const { return m_snap_step; }
+
+    // EdgeSlicer: Snap face to surface UI (drawn inside the Move panel) and mid-drag wheel spin.
+    void render_snap_to_surface_ui(ImGuiWrapper* imgui, float wrap_width);
+    bool on_mouse_wheel_snap(const wxMouseEvent& evt);
+    // Esc while picking a target surface cancels the pick mode; returns true when it did.
+    bool on_snap_escape();
     void set_snap_step(double step) { m_snap_step = step; }
 
     std::string get_tooltip() const override;
@@ -72,6 +147,32 @@ protected:
 private:
     double calc_projection(const UpdateData& data) const;
     void   change_cs_by_selection(); //cs mean Coordinate System
+
+    bool snap_available() const;
+    bool on_mouse_snap(const wxMouseEvent& mouse_event);
+    bool snap_raycast(bool on_selection, SurfaceHit& hit) const;
+    bool snap_face_world(Vec3d& point, Vec3d& normal) const;
+    const GLVolume* snap_face_volume() const;
+    void snap_set_face(SnapFace& face, const SurfaceHit& hit, std::vector<size_t>* region_out = nullptr);
+    const GLVolume* snap_target_volume() const;
+    bool snap_target_hit(SurfaceHit& hit) const;
+    void snap_set_target(const SurfaceHit& hit);
+    void snap_clear_target();
+    void snap_update_target_hover();
+    void render_snap_target_row(ImGuiWrapper* imgui, float wrap_width);
+    void snap_update_hover();
+    void snap_begin_drag();
+    void snap_apply(const Transform3d& world_delta);
+    void snap_update_drag();
+    void snap_commit();
+    void snap_spin_in_place(double angle);
+    void snap_load_prefs();
+    void snap_save_prefs() const;
+    // Spin amount in degrees (clamped): Fine when "always use fine" is on or `want_fine`, else Coarse.
+    double snap_spin_step_deg(bool want_fine) const;
+    void snap_reset();        // everything, including the target surface and pick mode
+    void snap_reset_face();   // the contact face and drag state only; the target surface stays
+    void render_snap_faces();
 private:
     int m_last_selected_obejct_idx, m_last_selected_volume_idx;
 };

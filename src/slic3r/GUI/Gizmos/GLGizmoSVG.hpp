@@ -15,6 +15,8 @@
 #include <atomic>
 
 #include "libslic3r/Emboss.hpp"
+#include "libslic3r/CodeEmboss.hpp"
+#include "libslic3r/SimpleShape.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/Model.hpp"
 
@@ -63,6 +65,22 @@ public:
     /// <returns>True on succesfull start creation otherwise False</returns>
     bool create_volume(std::string_view svg_file, const Vec2d &mouse_pos, ModelVolumeType volume_type = ModelVolumeType::MODEL_PART);
     bool create_volume(std::string_view svg_file, ModelVolumeType volume_type = ModelVolumeType::MODEL_PART);
+
+    /// <summary>
+    /// Ask user for QR code / barcode and create its parts (dark, light, logo) as SVG volumes
+    /// </summary>
+    /// <param name="volume_type">Object part / Negative volume / Modifier, INVALID means new object</param>
+    /// <param name="mouse_pos">Position on screen where to create volumes, when not set it is near the selection</param>
+    /// <returns>True on succesfull start creation otherwise False</returns>
+    bool create_code(ModelVolumeType volume_type, const std::optional<Vec2d> &mouse_pos = {});
+
+    /// <summary>
+    /// Ask user for simple shape (circle, square, star, ...) and create it as SVG volume
+    /// </summary>
+    /// <param name="volume_type">Object part / Negative volume / Modifier, INVALID means new object</param>
+    /// <param name="mouse_pos">Position on screen where to create volume, when not set it is near the selection</param>
+    /// <returns>True on succesfull start creation otherwise False</returns>
+    bool create_shape(ModelVolumeType volume_type, const std::optional<Vec2d> &mouse_pos = {});
 
     /// <summary>
     /// Check whether volume is object containing only emboss volume
@@ -125,6 +143,15 @@ private:
     void draw_mirroring();
     void draw_face_the_camera();
     void draw_model_type();
+    void draw_code();
+    void draw_simple_shape();
+    void edit_simple_shape();
+
+    // Parts of QR code / barcode keep the same transformation and surface projection
+    void sync_code_parts();
+    void edit_code();
+    // Start job to recreate mesh of other code part than edited one
+    bool start_code_part_update(ModelVolume &volume, EmbossShape &&shape);
 
     // process mouse event
     bool on_mouse_for_rotation(const wxMouseEvent &mouse_event);
@@ -191,6 +218,19 @@ private:
 
     IconManager m_icon_manager;
     IconManager::VIcons m_icons;
+
+    // Set when edited volume is a simple shape (circle, star, ...)
+    std::optional<SimpleShapeParams> m_simple_shape;
+
+    // Set when edited volume is part of QR code / barcode
+    std::optional<CodeEmbossMeta> m_code;
+    // Transformation and surface projection of edited volume, which is already copied to other parts
+    Transform3d m_code_synced_tr = Transform3d::Identity();
+    bool        m_code_synced_use_surface = false;
+    // Other than code parts are in object to project on
+    bool m_code_can_use_surface = false;
+    // cancel of jobs which update other parts of code
+    std::vector<std::shared_ptr<std::atomic<bool>>> m_code_job_cancels;
 
     // only temporary solution
     static const std::string M_ICON_FILENAME;

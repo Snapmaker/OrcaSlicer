@@ -491,13 +491,19 @@ function ResponseFilamentResult()
 	let FilaArray=new Array();
 	for(let n=0;n<nAll;n++)
 	{
+		// A checkbox stands for one vendor+filatype+name group (see SortUI), so only
+		// save presets from that same group - matching on the alias alone would also
+		// pull in other vendors' presets that share the name (e.g. "Generic PLA").
 		let sName=FilaSelectedList[n].getAttribute("name");
+		let sVendor=FilaSelectedList[n].getAttribute("vendor");
+		let sType=FilaSelectedList[n].getAttribute("filatype");
 		
 	    for( let key in m_ProfileItem['filament'] )
 	    {
+			let OneFila=m_ProfileItem['filament'][key];
 			let FName=GetFilamentShortname(key);
 			
-			if(FName==sName)
+			if(FName==sName && OneFila['vendor']==sVendor && OneFila['type']==sType && FilaArray.indexOf(key)<0)
 				FilaArray.push(key);
 		}
 	}

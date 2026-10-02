@@ -157,7 +157,9 @@ std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::OBJECT_C
                     {"support_top_z_distance", "",13},{"support_bottom_z_distance", "",12},{"support_base_pattern", "",14},{"support_base_pattern_spacing", "",15},
                     {"support_interface_top_layers", "",16},{"support_interface_bottom_layers", "",17},{"support_interface_spacing", "",18},{"support_bottom_interface_spacing", "",19},
                     {"support_object_xy_distance", "",20}, {"bridge_no_support", "",21},{"max_bridge_length", "",22},{"support_critical_regions_only", "",23},{"support_remove_small_overhang","",27},
-                    {"support_object_first_layer_gap","",28}
+                    {"support_object_first_layer_gap","",28},
+                    {"stabilizer_supports","",29},{"stabilizer_ring_spacing","",30},{"stabilizer_points_per_ring","",31},
+                    {"stabilizer_tip_diameter","",32},{"stabilizer_tip_gap","",32},{"stabilizer_pillar_diameter","",33},{"stabilizer_max_island_width","",34}
                             }},
     { L("Speed"), {{"support_speed", "",12}, {"support_interface_speed", "",13}
                     }}
@@ -174,6 +176,7 @@ std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::PART_CAT
                     {"bottom_shell_layers", L("Bottom Solid Layers"),1}, {"bottom_shell_thickness", L("Bottom Minimum Shell Thickness"),1},{"bottom_color_penetration_layers", "",1},{"bottom_surface_density", L("Bottom Surface Density"),1},
                     {"sparse_infill_density", "",1},{"sparse_infill_pattern", "",1},{"sparse_infill_filament", "",1},{"lateral_lattice_angle_1", "",1},{"lateral_lattice_angle_2", "",1},{"infill_overhang_angle", "",1},{"infill_anchor", "",1},{"infill_anchor_max", "",1},{"top_surface_pattern", "",1},{"undertop_surface_pattern", "",1},{"bottom_surface_pattern", "",1}, {"internal_solid_infill_pattern", "",1},
                     {"align_infill_direction_to_model", "", 1},
+                    {"hollow_interior", "", 1}, {"hollow_shell_thickness", "", 1},
                     {"extra_solid_infills", "", 1},
         {"infill_combination", "",1}, {"infill_combination_max_layer_height", "",1}, {"infill_wall_overlap", "",1},{"top_bottom_infill_wall_overlap", "",1}, {"solid_infill_direction", "",1}, {"infill_direction", "",1}, {"bridge_angle", "",1}, {"internal_bridge_angle", "",1}, {"minimum_sparse_infill_area", "",1}
                     }},
@@ -414,13 +417,30 @@ wxBitmap SettingsFactory::get_category_bitmap(const std::string& category_name, 
 //-------------------------------------
 
 // Note: id accords to type of the sub-object (adding volume), so sequence of the menu items is important
-static const constexpr std::array<std::pair<const char *, const char *>, 5> ADD_VOLUME_MENU_ITEMS = {{
+static const constexpr std::array<std::pair<const char *, const char *>, 11> ADD_VOLUME_MENU_ITEMS = {{
     //       menu_item Name              menu_item bitmap name
         {L("Add part"),              "menu_add_part" },           // ~ModelVolumeType::MODEL_PART
         {L("Add negative part"),     "menu_add_negative" },       // ~ModelVolumeType::NEGATIVE_VOLUME
         {L("Add modifier"),          "menu_add_modifier"},         // ~ModelVolumeType::PARAMETER_MODIFIER
         {L("Add support blocker"),   "menu_support_blocker"},     // ~ModelVolumeType::SUPPORT_BLOCKER
         {L("Add support enforcer"),  "menu_support_enforcer"},     // ~ModelVolumeType::SUPPORT_ENFORCER
+        // Precise Seam modifiers (all 6 subtypes - tree icons; add menu uses a nested submenu)
+        {L("Add precise seam"),      "menu_precise_seam_center"},     // ~ModelVolumeType::PRECISE_SEAM_CENTER
+        {L("Add precise seam"),      "menu_precise_seam_left"},       // ~ModelVolumeType::PRECISE_SEAM_LEFT
+        {L("Add precise seam"),      "menu_precise_seam_right"},      // ~ModelVolumeType::PRECISE_SEAM_RIGHT
+        {L("Add precise seam"),      "menu_precise_seam_enforced"},   // ~ModelVolumeType::PRECISE_SEAM_ENFORCED
+        {L("Add precise seam"),      "menu_precise_seam_blocked"},    // ~ModelVolumeType::PRECISE_SEAM_BLOCKED
+        {L("Add precise seam"),      "menu_precise_seam_neutral"},    // ~ModelVolumeType::PRECISE_SEAM_NEUTRAL
+}};
+
+// "Seam ..." prefix disambiguates from other i18n contexts (extruder Left/Right, "Center on bed", etc.)
+static const std::array<std::pair<const char*, ModelVolumeType>, 6> PRECISE_SEAM_MENU_TYPES = {{
+    {L("Seam Center"),   ModelVolumeType::PRECISE_SEAM_CENTER},
+    {L("Seam Left"),     ModelVolumeType::PRECISE_SEAM_LEFT},
+    {L("Seam Right"),    ModelVolumeType::PRECISE_SEAM_RIGHT},
+    {L("Seam Enforced"), ModelVolumeType::PRECISE_SEAM_ENFORCED},
+    {L("Seam Blocked"),  ModelVolumeType::PRECISE_SEAM_BLOCKED},
+    {L("Seam Neutral"),  ModelVolumeType::PRECISE_SEAM_NEUTRAL},
 }};
 
 // Note: id accords to type of the sub-object (adding volume), so sequence of the menu items is important
@@ -660,6 +680,8 @@ wxMenu* MenuFactory::append_submenu_add_generic(wxMenu* menu, ModelVolumeType ty
 
     append_menu_item_add_text(sub_menu, type);
     append_menu_item_add_svg(sub_menu, type);
+    append_menu_item_add_code(sub_menu, type);
+    append_menu_item_add_shape(sub_menu, type);
 
     return sub_menu;
 }
@@ -797,6 +819,42 @@ void MenuFactory::append_menu_item_add_svg(wxMenu *menu, ModelVolumeType type, b
     append_menu_itemm_add_(_L("SVG"), GLGizmosManager::Svg, menu, type, is_submenu_item);
 }
 
+void MenuFactory::append_menu_item_add_code(wxMenu *menu, ModelVolumeType type)
+{
+    if (type != ModelVolumeType::MODEL_PART && type != ModelVolumeType::NEGATIVE_VOLUME &&
+        type != ModelVolumeType::PARAMETER_MODIFIER && type != ModelVolumeType::INVALID)
+        return;
+    auto add_code = [type](const wxCommandEvent & /*unnamed*/) {
+        const GLCanvas3D *canvas = plater()->canvas3D();
+        auto *svg = dynamic_cast<GLGizmoSVG *>(canvas->get_gizmos_manager().get_gizmo(GLGizmosManager::Svg));
+        assert(svg != nullptr);
+        if (svg == nullptr)
+            return;
+        // INVALID .. no selected object, code is created as new object
+        svg->create_code(type, canvas->get_popup_menu_position());
+    };
+    append_menu_item(menu, wxID_ANY, _L("QR code / Barcode") + dots, _L("Emboss QR code or barcode, parts can use different filaments or depths"),
+                     add_code, "menu_obj_svg", menu);
+}
+
+void MenuFactory::append_menu_item_add_shape(wxMenu *menu, ModelVolumeType type)
+{
+    if (type != ModelVolumeType::MODEL_PART && type != ModelVolumeType::NEGATIVE_VOLUME &&
+        type != ModelVolumeType::PARAMETER_MODIFIER && type != ModelVolumeType::INVALID)
+        return;
+    auto add_shape = [type](const wxCommandEvent & /*unnamed*/) {
+        const GLCanvas3D *canvas = plater()->canvas3D();
+        auto *svg = dynamic_cast<GLGizmoSVG *>(canvas->get_gizmos_manager().get_gizmo(GLGizmosManager::Svg));
+        assert(svg != nullptr);
+        if (svg == nullptr)
+            return;
+        // INVALID .. no selected object, shape is created as new object
+        svg->create_shape(type, canvas->get_popup_menu_position());
+    };
+    append_menu_item(menu, wxID_ANY, _L("Shape") + dots, _L("Emboss a circle, square, star or other simple shape"), add_shape,
+                     "menu_obj_svg", menu);
+}
+
 void MenuFactory::append_menu_items_add_volume(wxMenu* menu)
 {
     // Update "add" items(delete old & create new)  settings popupmenu
@@ -813,7 +871,26 @@ void MenuFactory::append_menu_items_add_volume(wxMenu* menu)
 
     for (size_t type = 0; type < ADD_VOLUME_MENU_ITEMS.size(); type++)
     {
+        // Skip Precise Seam subtypes except CENTER — they only supply tree icons.
+        // CENTER is expanded into a nested "Add precise seam" submenu of the six types.
+        if (type >= size_t(int(ModelVolumeType::PRECISE_SEAM_LEFT)) &&
+            type <= size_t(int(ModelVolumeType::PRECISE_SEAM_NEUTRAL)))
+            continue;
+
         auto& item = ADD_VOLUME_MENU_ITEMS[type];
+
+        if (type == size_t(int(ModelVolumeType::PRECISE_SEAM_CENTER))) {
+            wxMenu* ps_root = new wxMenu;
+            for (const auto& ps_type : PRECISE_SEAM_MENU_TYPES) {
+                wxMenu* sub_menu = append_submenu_add_generic(ps_root, ps_type.second);
+                append_submenu(ps_root, sub_menu, wxID_ANY, _(ps_type.first), "",
+                    ADD_VOLUME_MENU_ITEMS[int(ps_type.second)].second,
+                    []() { return obj_list()->is_instance_or_object_selected(); }, m_parent);
+            }
+            append_submenu(menu, ps_root, wxID_ANY, _(item.first), "", "menu_precise_seam_add",
+                []() { return obj_list()->is_instance_or_object_selected(); }, m_parent);
+            continue;
+        }
 
         wxMenu* sub_menu = append_submenu_add_generic(menu, ModelVolumeType(type));
         append_submenu(menu, sub_menu, wxID_ANY, _(item.first), "", item.second,
@@ -906,6 +983,69 @@ wxMenuItem* MenuFactory::append_menu_item_change_type(wxMenu* menu)
             wxDataViewItem item = obj_list()->GetSelection();
             return item.IsOk() || obj_list()->GetModel()->GetItemType(item) == itVolume;
         }, m_parent);
+}
+
+void MenuFactory::append_menu_item_precise_seam_submenu(wxMenu* menu)
+{
+    wxString submenu_name = _L("Precise Seam Type");
+
+    // Remove existing submenu if present (menu is rebuilt on every right-click)
+    const int menu_item_id = menu->FindItem(submenu_name);
+    if (menu_item_id != wxNOT_FOUND)
+        menu->Destroy(menu_item_id);
+
+    // --- Precondition: ALL selected volumes must be Precise Seam ---
+    // Mixed selections (PS + non-PS) are ambiguous for subtype switching: applying a subtype
+    // would implicitly convert the non-PS volumes to PS, which is not what the user expects
+    // from a subtype picker. For mixed selections the user should first use
+    // "Change type" → "Precise Seam" to unify them, then come back to this submenu.
+    wxDataViewItemArray sels;
+    obj_list()->GetSelections(sels);
+    if (sels.IsEmpty())
+        return;
+
+    std::vector<ModelVolumeType> selected_ps_types;
+    selected_ps_types.reserve(sels.size());
+
+    auto* model = obj_list()->GetModel();
+    for (const auto& sel_item : sels) {
+        wxDataViewItem vol_item  = sel_item;
+        const ItemType type_mask = model->GetItemType(sel_item);
+        if (!(type_mask & itVolume)) {
+            if ((type_mask & itSettings) && (model->GetItemType(model->GetParent(sel_item)) & itVolume))
+                vol_item = model->GetParent(sel_item);
+            else
+                return;
+        }
+        const ModelVolumeType vol_type = model->GetVolumeType(vol_item);
+        if (!is_precise_seam(vol_type))
+            return;
+        selected_ps_types.push_back(vol_type);
+    }
+
+    wxMenu* ps_menu = new wxMenu();
+
+    for (const auto& ps_type : PRECISE_SEAM_MENU_TYPES) {
+        wxString label = _(ps_type.first);
+
+        wxMenuItem* item = append_menu_check_item(ps_menu, wxID_ANY, label, "",
+            [ps_type](wxCommandEvent&) {
+                obj_list()->set_volume_type(ps_type.second, /*preserve_ps_subtype=*/false);
+            },
+            ps_menu);
+
+        const bool is_present = std::find(selected_ps_types.begin(), selected_ps_types.end(),
+                                          ps_type.second) != selected_ps_types.end();
+        if (is_present && item)
+            item->Check(true);
+    }
+
+    append_submenu(menu, ps_menu, wxID_ANY,
+                   submenu_name,
+                   _L("Choose precise seam subtype"),
+                   "menu_precise_seam_type",
+                   []() { return true; },
+                   m_parent);
 }
 
 wxMenuItem* MenuFactory::append_menu_item_instance_to_object(wxMenu* menu)
@@ -1045,6 +1185,19 @@ void MenuFactory::append_menu_item_export_stl(wxMenu* menu, bool is_mulity_menu)
         }, m_parent);
 }
 
+// Export the selected object(s)/instance(s) as a STEP file of solids.
+void MenuFactory::append_menu_item_export_step(wxMenu* menu)
+{
+    append_menu_item(menu, wxID_ANY, _L("Export as STEP") + dots,
+        _L("Export the selection as a STEP file of solids; parts imported from STEP keep their exact geometry"),
+        [](wxCommandEvent&) { plater()->export_step(true); }, "", nullptr,
+        []() {
+            const Selection& selection = plater()->canvas3D()->get_selection();
+            return selection.is_single_full_instance() || selection.is_single_full_object() ||
+                   selection.is_multiple_full_instance() || selection.is_multiple_full_object();
+        }, m_parent);
+}
+
 // Ultra: export the ONE selected part. The object menu's "Export as one STL" only ever
 // handled whole objects/instances, so a single selected ModelVolume had no export at all.
 // Enabled for exactly one volume - modifiers, negative volumes and support blockers or
@@ -1072,6 +1225,29 @@ void MenuFactory::append_menu_item_replace_with_stl(wxMenu *menu)
     append_menu_item(menu, wxID_ANY, _L("Replace with STL"), _L("Replace the selected part with new STL"),
         [](wxCommandEvent &) { plater()->replace_with_stl(); }, "", menu,
         []() { return plater()->can_replace_with_stl(); }, m_parent);
+}
+
+// Exact B-rep fillet / chamfer / shell of the selected part (GLGizmoCadFillet).
+void MenuFactory::append_menu_item_cad_fillet(wxMenu *menu)
+{
+    append_menu_item(menu, wxID_ANY, _L("Fillet / chamfer (CAD)") + dots,
+        _L("Exact fillet, chamfer or shell of the part's CAD body: STEP parts keep their exact shape, meshes are converted first"),
+        [](wxCommandEvent &) { obj_list()->open_cad_fillet(); }, "", menu,
+        []() { return ObjectList::can_open_cad_fillet(); }, m_parent);
+}
+
+void MenuFactory::append_menu_item_edit_in_blender(wxMenu *menu)
+{
+    append_menu_item(menu, wxID_ANY, _L("Edit in Blender"), _L("Open the selected part in Blender. Saving in Blender updates the part here"),
+        [](wxCommandEvent &) { plater()->edit_in_blender(); }, "", menu,
+        []() { return plater()->can_edit_in_blender(); }, m_parent);
+}
+
+void MenuFactory::append_menu_item_edit_in_freecad(wxMenu *menu)
+{
+    append_menu_item(menu, wxID_ANY, _L("Edit in FreeCAD"), _L("Open the selected part in FreeCAD. Saving in FreeCAD updates the part here"),
+        [](wxCommandEvent &) { plater()->edit_in_freecad(); }, "", menu,
+        []() { return plater()->can_edit_in_freecad(); }, m_parent);
 }
 
 void MenuFactory::append_menu_item_change_extruder(wxMenu* menu)
@@ -1945,6 +2121,8 @@ void MenuFactory::create_common_object_menu(wxMenu* menu)
     // BBS
     append_menu_item_reload_from_disk(menu);
     append_menu_item_export_stl(menu);
+    append_menu_item_export_step(menu);
+    append_menu_item_cad_fillet(menu);
     // "Scale to print volume" makes a sense just for whole object
     append_menu_item_scale_selection_to_fit_print_volume(menu);
 
@@ -2054,7 +2232,11 @@ void MenuFactory::create_extra_object_menu()
     m_object_menu.AppendSeparator();
     append_menu_item_reload_from_disk(&m_object_menu);
     append_menu_item_replace_with_stl(&m_object_menu);
+    append_menu_item_edit_in_blender(&m_object_menu);
+    append_menu_item_edit_in_freecad(&m_object_menu);
+    append_menu_item_cad_fillet(&m_object_menu);
     append_menu_item_export_stl(&m_object_menu);
+    append_menu_item_export_step(&m_object_menu);
 }
 
 void MenuFactory::create_bbl_assemble_object_menu()
@@ -2089,6 +2271,7 @@ void MenuFactory::create_part_menu()
     append_menu_item_delete(menu);
     append_menu_item_reload_from_disk(menu);
     append_menu_item_export_stl(menu);
+    append_menu_item_cad_fillet(menu);
     append_menu_item_export_stl_part(menu);
     append_menu_item_fix_through_netfabb(menu);
     append_menu_items_mirror(menu);
@@ -2189,6 +2372,9 @@ void MenuFactory::create_bbl_part_menu()
     append_menu_item_change_type(menu);
     append_menu_item_reload_from_disk(menu);
     append_menu_item_replace_with_stl(menu);
+    append_menu_item_edit_in_blender(menu);
+    append_menu_item_edit_in_freecad(menu);
+    append_menu_item_cad_fillet(menu);
     append_menu_item_export_stl_part(menu);
 }
 
@@ -2485,6 +2671,7 @@ wxMenu* MenuFactory::part_menu()
     // Ultra (support groups): rebuilt per open, like Change Filament above it.
     append_menu_items_support_group(&m_part_menu);
     append_menu_item_per_object_settings(&m_part_menu);
+    append_menu_item_precise_seam_submenu(&m_part_menu);
     return &m_part_menu;
 }
 
@@ -2560,6 +2747,7 @@ wxMenu* MenuFactory::multi_selection_menu()
         append_menu_item_change_filament(menu);
         menu->AppendSeparator();
         append_menu_item_export_stl(menu, true);
+        append_menu_item_export_step(menu);
     }
     else {
         append_menu_item_center(menu);
@@ -2592,6 +2780,8 @@ wxMenu* MenuFactory::multi_selection_menu()
         }
         menu->AppendSeparator();
         append_menu_item_change_filament(menu);
+        append_menu_item_change_type(menu);
+        append_menu_item_precise_seam_submenu(menu);
     }
     return menu;
 }

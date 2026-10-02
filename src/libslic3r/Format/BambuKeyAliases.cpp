@@ -146,13 +146,14 @@ std::vector<EnumAlias> make_enum_aliases()
         { "ensure_vertical_shell_thickness", "ensure_critical_only", "partial",  false },
         { "ensure_vertical_shell_thickness", "ensure_moderate",      "partial",  true },
         { "ensure_vertical_shell_thickness", "ensure_all",           "enabled",  true },
-        // Left/Right are Aligned biased toward one side; Bambu Studio has no such concept, so on
+        // Front/Left/Right are Aligned biased toward one side; Bambu Studio has no such concept, so on
         // export they fall back to its closest equivalent, plain Aligned (Aligned back has no
         // Bambu equivalent either, but is handled by the generated table, which maps it to "").
         // Not reversible (import=false): loading a Bambu project that says "aligned" must stay
         // "aligned" for us, not turn into "left".
-        { "seam_position", "left",  "aligned", false },
-        { "seam_position", "right", "aligned", false },
+        { "seam_position", "left",          "aligned", false },
+        { "seam_position", "right",         "aligned", false },
+        { "seam_position", "aligned_front", "aligned", false },
     };
     for (const char *key : { "sparse_infill_pattern", "top_surface_pattern", "bottom_surface_pattern", "internal_solid_infill_pattern",
                              "ironing_pattern", "support_ironing_pattern", "locked_skin_infill_pattern", "locked_skeleton_infill_pattern" })

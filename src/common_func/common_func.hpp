@@ -24,7 +24,7 @@
 // "the directory this fork started out in".
 #define SLIC3R_LEGACY_APP_KEY "Snapmaker_Orca"
 #define SLIC3R_VERSION "01.10.01.50"
-#define Snapmaker_VERSION "2.4.1.0" // the one version number; version.inc reads it back for CMake/CPack
+#define Snapmaker_VERSION "2.4.2.0" // the one version number; version.inc reads it back for CMake/CPack
 #define MIN_FIRM_VER "1.5.0"
 #ifndef GIT_COMMIT_HASH
 #define GIT_COMMIT_HASH "0000000" // 0000000 means uninitialized
@@ -46,6 +46,23 @@ namespace common
 
 	// That --datadir (UTF-8), or "" when the command line had none.
 	std::string datadir_override();
+
+	// EdgeSlicer relaunching itself (GUI_App::request_relaunch) starts the new process with
+	// "--relaunch-after <pid of the old one>". Call this first thing in main(): it waits until
+	// that process has exited (at most two minutes; at once when it is gone already), so the new
+	// one can never hand its launch to, or fight for ports and files with, the dying instance.
+	// It leaves a one-line note in the environment variable EDGESLICER_RELAUNCH_NOTE for the log.
+	// The option itself is not something the command line parser knows: drop it with
+	// is_relaunch_after_arg() when copying the arguments on.
+	void wait_for_relaunch_parent(int argc, char** argv);
+#ifdef _WIN32
+	void wait_for_relaunch_parent(int argc, wchar_t** argv);
+#endif
+	// True for "--relaunch-after" itself; the argument after it is its value (skip it too).
+	bool is_relaunch_after_arg(const char* arg);
+#ifdef _WIN32
+	bool is_relaunch_after_arg(const wchar_t* arg);
+#endif
 
 	// The EdgeSlicer.conf AppConfig will use: --datadir, else a portable "data_dir" next to
 	// the application, else the per-user default (%APPDATA%\EdgeSlicer on Windows). UTF-8.

@@ -229,6 +229,8 @@ int wmain(int argc, wchar_t** argv)
 
     // Before initSentry(): it reads the crash-report preference from the EdgeSlicer.conf that
     // --datadir points at.
+    // A relaunch waits for the instance it replaces first (see common_func.hpp).
+    common::wait_for_relaunch_parent(argc, argv);
     common::set_datadir_from_command_line(argc, argv);
     initSentry();
     // argv above is CommandLineToArgvW's own copy; blank secret option values in the original
@@ -248,6 +250,10 @@ int wmain(int argc, wchar_t** argv)
     bool force_mesa = false;
 #endif /* SLIC3R_GUI */
     for (int i = 1; i < argc; ++i) {
+        if (common::is_relaunch_after_arg(argv[i])) { // handled above, not a CLI option
+            ++i;
+            continue;
+        }
 #ifdef SLIC3R_GUI
         if (wcscmp(argv[i], L"--sw-renderer") == 0)
             force_mesa = true;

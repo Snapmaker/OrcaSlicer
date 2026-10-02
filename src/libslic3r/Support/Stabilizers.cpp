@@ -509,6 +509,18 @@ std::vector<Strut> plan_struts(const PrintObject &object, PlanReport *report)
     return plan_struts(outlines_of(object), settings_of(object), painted_spots(object), report);
 }
 
+Strut gapped(const Strut &s, double gap)
+{
+    // Never past the pillar's axis: some strut has to remain (the planner keeps run >= gap + 0.5 plus
+    // the pillar radius, so this only guards odd inputs).
+    const double g = std::clamp(gap, 0., std::max(0., s.run - 0.1));
+    Strut out = s;
+    out.tip   = s.tip + s.dir * g;
+    out.tip_z = s.tip_z - g;
+    out.run   = s.run - g;
+    return out;
+}
+
 double pillar_radius(const PrintObject &object)
 {
     return settings_of(object).pillar_radius;
@@ -533,7 +545,9 @@ std::vector<ExPolygons> slice_struts(const std::vector<LayerOutline> &layers, co
         const double z = layers[i].slice_z;
         // Pillars (with their feet) and struts apart: the tip gap is the struts' business only.
         Polygons     pillars, polys;
-        for (const Strut &s : struts) {
+        for (const Strut &strut : struts) {
+            // Built set back by the tip gap, so it tapers to its tip at the trimmed end.
+            const Strut s = gapped(strut, st.tip_gap);
             if (z > s.tip_z + EPSILON)
                 continue;
             const Vec2d  pillar = s.pillar();

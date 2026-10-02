@@ -123,6 +123,22 @@ LayerCheck check_layer(const PrintObject &po, double print_z)
     return out;
 }
 
+// The same over the layers just under a ring: with a tip gap the strut is set back along its axis
+// (stabilizers::gapped), so its tip ends the gap below the ring height as well as the gap off the wall.
+LayerCheck near_ring(const PrintObject &po, double ring_z)
+{
+    LayerCheck out;
+    for (const Layer *l : po.layers())
+        if (l->print_z > ring_z - 3. && l->print_z < ring_z + 0.2) {
+            const LayerCheck at = check_layer(po, l->print_z);
+            out.area += at.area;
+            out.overlap += at.overlap;
+            out.paths += at.paths;
+            out.min_gap = std::min(out.min_gap, at.min_gap);
+        }
+    return out;
+}
+
 // The owner's repro project (tests/data/stabilizers/stabilizer_v1.3mf): a 6 x 60 mm cylinder on a
 // Snapmaker U1 with 0.12 mm layers, tree(auto) supports, and the stabilizers switched on for the
 // object with a 3 mm pillar and a 0.2 mm tip gap.
@@ -318,7 +334,7 @@ TEST_CASE("Stabilizers touch a thin pin at the ring heights and stand on the bed
         slice_pin(p, true, "0.3");
         const PrintObject &po = *p.print.objects().front();
         for (double ring_z : { 15., 30., 45. }) {
-            const LayerCheck at = check_layer(po, ring_z);
+            const LayerCheck at = near_ring(po, ring_z);
             INFO("ring at " << ring_z << " mm: area " << at.area << ", gap " << at.min_gap);
             CHECK(at.area > 0.1);
             CHECK(at.min_gap > 0.25);
@@ -431,7 +447,7 @@ TEST_CASE("Stabilizers on the owner's project reach every ring", "[Stabilizers]"
 
     const std::vector<ExPolygons> stab = printed_stabilizers(po);
     for (double ring_z : { 15., 30., 45. }) {
-        const LayerCheck at = check_layer(po, ring_z);
+        const LayerCheck at = near_ring(po, ring_z);
         INFO("ring at " << ring_z << " mm: area " << at.area << ", gap " << at.min_gap << ", overlap " << at.overlap);
         CHECK(at.area > 0.1);
         CHECK(at.paths > 0);
@@ -609,5 +625,59 @@ TEST_CASE("The tip gap moves the tips, not the pillars", "[Stabilizers]")
         CHECK(paths > 0);
         CHECK(closest > 1.9);
         CHECK(closest < 2.1);
+    }
+}
+
+// With a tip gap the strut is set back along its axis and tapers to its tip at the trimmed end - the
+// same cone to a point as at gap 0, not a wide strut cut off with a knob of material on its end. Seen
+// one strut at a time: over its last layers its cross-section only shrinks towards the tip, and its
+// end is no bigger than a touching tip's.
+TEST_CASE("A gapped strut tapers to its tip", "[Stabilizers]")
+{
+    // The strut area per layer from its top down, `count` layers, for the first top-ring strut.
+    auto tip_profile = [](const PrintObject &po, size_t count) {
+        const std::vector<stabilizers::Strut> struts = stabilizers::plan_struts(po);
+        REQUIRE_FALSE(struts.empty());
+        const stabilizers::Strut *top = &struts.front();
+        for (const stabilizers::Strut &s : struts)
+            if (s.tip_z > top->tip_z + EPSILON)
+                top = &s;
+        const std::vector<ExPolygons> slices =
+            stabilizers::slice_struts(stabilizers::outlines_of(po), stabilizers::settings_of(po), { *top }, {});
+        size_t last = 0;
+        for (size_t i = 0; i < slices.size(); ++i)
+            if (total_area(slices[i]) > 0.)
+                last = i;
+        std::vector<double> out;
+        for (size_t k = 0; k < count && k <= last; ++k)
+            out.push_back(total_area(slices[last - k]));
+        return out;
+    };
+
+    PinPrint touch;
+    slice_pin(touch, true, "0");
+    const std::vector<double> at0 = tip_profile(*touch.print.objects().front(), 8);
+    REQUIRE(at0.size() == 8);
+
+    for (const char *gap : { "0.5", "1", "2" }) {
+        DYNAMIC_SECTION("tip gap " << gap << " mm")
+        {
+            PinPrint p;
+            slice_pin(p, true, gap);
+            // 8 layers of 0.2 mm: well below the junction of a top-ring strut, so the strut alone.
+            const std::vector<double> prof = tip_profile(*p.print.objects().front(), 8);
+            REQUIRE(prof.size() == 8);
+            std::string s;
+            for (double a : prof)
+                s += std::to_string(a) + " ";
+            INFO("strut area from its end down (mm2): " << s << "; at gap 0: " << at0.front() << " " << at0[1] << " ...");
+            // Non-increasing towards the tip: each layer at most as big as the one under it.
+            for (size_t k = 0; k + 1 < prof.size(); ++k)
+                CHECK(prof[k] <= prof[k + 1] + 1e-3);
+            // The end is a tip, not a cut-off strut: no bigger than a touching tip's, layer for layer. (The
+            // set-back tip need not sit on a slicing plane, so allow it up to one layer of its taper.)
+            for (size_t k = 0; k + 1 < 4; ++k)
+                CHECK(prof[k] <= 1.1 * at0[k + 1] + 0.02);
+        }
     }
 }

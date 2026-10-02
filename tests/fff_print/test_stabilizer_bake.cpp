@@ -495,7 +495,7 @@ TEST_CASE("Baked stabilizers are one closed mesh that slices like the live strut
     }
     // Tip gaps from touching (above) to the largest allowed: the gap moves the tip cut out along the
     // strut, and a large one moves the pillars out with it; live and baked agree at every gap.
-    for (const char *gap : { "0.3", "1", "2" }) {
+    for (const char *gap : { "0.3", "0.5", "1", "2" }) {
         DYNAMIC_SECTION("the pin with a tip gap of " << gap << " mm")
         {
             Bench b;
@@ -585,7 +585,8 @@ TEST_CASE("Bake stabilizers as a part of the object", "[StabilizerBake]")
 {
     Bench        b;
     ModelObject *src = add_pin(b.model, 0.3);
-    slice(b, pin_config("auto"));
+    // Sliced with the part's minimum gap, so both placements bake the same tips and can be compared.
+    slice(b, pin_config("auto", "15", "0.15"));
     const PrintObject &po = *b.print.objects().front();
 
     StabilizerBakeOptions opts;

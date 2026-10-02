@@ -97,8 +97,10 @@ class StrutTube
 {
 public:
     StrutTube(const Strut &s, const StabilizerSettings &st, double cap)
-        : m_s(s), m_tip_r(0.5 * st.rings.tip_diameter), m_pillar_r(st.pillar_radius), m_gap(st.tip_gap),
-          m_z_top(s.tip_z + cap), m_perp(-s.dir.y(), s.dir.x())
+        // Built set back along its axis by the tip gap (gapped()), as slice_struts builds it: it tapers
+        // to the tip diameter at the trimmed end. The wall cut still measures from the wall contact.
+        : m_s(gapped(s, st.tip_gap)), m_contact(s.tip), m_tip_r(0.5 * st.rings.tip_diameter), m_pillar_r(st.pillar_radius),
+          m_gap(st.tip_gap), m_z_top(m_s.tip_z + cap), m_perp(-s.dir.y(), s.dir.x())
     {
         // The tip is cut along the wall: its outward normal there, or `dir` when unknown or when the
         // wall is so oblique to the strut that the cut would be a sliver.
@@ -136,7 +138,7 @@ public:
         switch (cut) {
         case 0: {
             const Vec3d p = point(s, phi);
-            return (Vec2d(p.x(), p.y()) - m_s.tip).dot(m_wall) - m_gap;
+            return (Vec2d(p.x(), p.y()) - m_contact).dot(m_wall) - m_gap;
         }
         case 1: return m_z_top - (m_s.tip_z - s);
         case 2: return m_s.run - (s + M_SQRT2 * rho(s) * std::cos(phi));
@@ -305,7 +307,8 @@ private:
         fan(its, b);
     }
 
-    const Strut &m_s;
+    Strut        m_s;
+    Vec2d        m_contact;
     double       m_tip_r, m_pillar_r, m_gap, m_z_top;
     Vec2d        m_perp;
     Vec2d        m_wall;

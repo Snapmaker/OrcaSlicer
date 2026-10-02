@@ -142,6 +142,12 @@ struct Strut
     Vec2d  axis_at(double z) const { return tip + dir * (tip_z - z); }
 };
 
+// The strut as it is built with a tip gap: its tip moved back along its own axis by the gap - out
+// from the wall and down by as much - so it tapers to the tip diameter at the gap-trimmed end and
+// is the same cone to a point at every gap, only set back. Pillar and junction stay where they are.
+// slice_struts and the baked mesh both build from this.
+Strut gapped(const Strut &s, double gap);
+
 // What the planner did with the painted spots.
 struct PlanReport
 {

@@ -1,9 +1,17 @@
 #include "PresetMirrorCore.hpp"
 
+#include "libslic3r/Utils.hpp"
+
+#include <boost/filesystem.hpp>
+#include <boost/nowide/cstdio.hpp>
+#include <boost/nowide/fstream.hpp>
 #include <nlohmann/json.hpp>
+
+#include <atomic>
 
 #include <algorithm>
 #include <set>
+#include <sstream>
 
 using json = nlohmann::json;
 
@@ -186,6 +194,149 @@ bool sanitize_nil_arrays(const std::string&              json_text,
     return true;
 }
 
+// ---- dest matching (content-hash adoption) ----------------------------------------------------
+
+std::string info_inert(const std::string& src_info)
+{
+    std::istringstream       in(src_info);
+    std::vector<std::string> lines;
+    std::string              line;
+    bool                     had_sync = false;
+    while (std::getline(in, line)) {
+        std::string trimmed = line;
+        trimmed.erase(0, trimmed.find_first_not_of(" \t"));
+        if (trimmed.rfind("sync_info", 0) == 0) {
+            lines.push_back("sync_info = ");
+            had_sync = true;
+        } else {
+            lines.push_back(line);
+        }
+    }
+    if (!had_sync)
+        lines.push_back("sync_info = ");
+    std::string out;
+    for (const auto& l : lines)
+        out += l + "\n";
+    return out;
+}
+
+bool info_is_parseable(const std::string& text)
+{
+    if (text.empty())
+        return false;
+    std::istringstream in(text);
+    std::string        line;
+    int                known = 0;
+    bool               any   = false;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        std::string trimmed = line;
+        trimmed.erase(0, trimmed.find_first_not_of(" \t"));
+        if (trimmed.empty())
+            continue;
+        any      = true;
+        auto eq  = trimmed.find('=');
+        if (eq == std::string::npos || eq == 0)
+            return false;
+        std::string key = trimmed.substr(0, eq);
+        const auto  end = key.find_last_not_of(" \t");
+        if (end == std::string::npos)
+            return false;
+        key.resize(end + 1);
+        if (key == "user_id" || key == "setting_id" || key == "sync_info" || key == "base_id" || key == "updated_time")
+            ++known;
+    }
+    return any && known > 0;
+}
+
+static bool mirror_would_write(const SourceFile& f, const DestState& dst, std::string* out)
+{
+    if (f.body.empty())
+        return false;
+    if (preset_is_parseable(f.body, dst.nullable_keys)) {
+        if (out)
+            *out = f.body;
+        return true;
+    }
+    std::string fixed;
+    if (!sanitize_nil_arrays(f.body, dst.nullable_keys, &fixed) || !preset_is_parseable(fixed, dst.nullable_keys))
+        return false;
+    if (out)
+        *out = fixed;
+    return true;
+}
+
+static bool writes_info_sidecar(const SourceFile& f)
+{
+    return f.rel.find("/base/") == std::string::npos && !f.info.empty();
+}
+
+bool dest_info_needs_rewrite(const SourceFile& f, const DestState& dst)
+{
+    if (!writes_info_sidecar(f))
+        return false;
+    auto iit = dst.info_bytes.find(f.rel);
+    if (iit == dst.info_bytes.end() || iit->second.empty())
+        return true;
+    if (iit->second == info_inert(f.info))
+        return false;
+    return !info_is_parseable(iit->second);
+}
+
+bool dest_matches_mirror(const SourceFile& f, const DestState& dst)
+{
+    // Unusable source: the mirror would skip, so we never adopt (S5).
+    if (!f.parseable)
+        return false;
+    auto bit = dst.bytes.find(f.rel);
+    if (bit == dst.bytes.end() || bit->second.empty())
+        return false;
+
+    std::string want;
+    if (!mirror_would_write(f, dst, &want) || bit->second != want)
+        return false;
+
+    if (!writes_info_sidecar(f))
+        return true;
+
+    auto iit = dst.info_bytes.find(f.rel);
+    if (iit == dst.info_bytes.end() || iit->second.empty())
+        return true;   // S4: JSON landed, sidecar never did
+    if (iit->second == info_inert(f.info))
+        return true;
+    return !info_is_parseable(iit->second);   // S4: torn sidecar
+}
+
+bool replace_file_bytes(const std::string& path, const std::string& bytes, std::string* err)
+{
+    static std::atomic<unsigned> counter{0};
+    const std::string tmp = path + "." + std::to_string(get_current_pid()) + "." + std::to_string(counter++) + ".tmp";
+    {
+        boost::nowide::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        out.write(bytes.data(), std::streamsize(bytes.size()));
+        out.close();
+        if (!out) {
+            boost::nowide::remove(tmp.c_str());
+            if (err)
+                *err = "cannot write " + tmp;
+            return false;
+        }
+    }
+    if (const std::error_code ec = rename_file(tmp, path)) {
+        boost::nowide::remove(tmp.c_str());
+        if (err)
+            *err = "cannot replace " + path + ": " + ec.message();
+        return false;
+    }
+    return true;
+}
+
+bool write_info_inert(const std::string& path, const std::string& src_info, std::string* err)
+{
+    return replace_file_bytes(path, info_inert(src_info), err);
+}
+
 // ---- the plan ---------------------------------------------------------------------------------
 
 std::vector<PlanItem> build_plan(const SourceListing&                src,
@@ -218,10 +369,17 @@ std::vector<PlanItem> build_plan(const SourceListing&                src,
         item.t   = f.t;
 
         if (exists && !tracked) {
-            // Someone else's file at our path. We never own it, never overwrite it.
-            item.action = Action::ProtectNative;
-            item.t      = 0;
-            plan.push_back(item);
+            // Untracked dest whose bytes already equal what this run would write.
+            // Missing/torn dest .info still matches (rewritten after Adopt).
+            // A byte-different dest, or a raw unparseable dest, stays ProtectNative.
+            if (dest_matches_mirror(f, dst)) {
+                item.action = Action::Adopt;
+                plan.push_back(item);
+            } else {
+                item.action = Action::ProtectNative;
+                item.t      = 0;
+                plan.push_back(item);
+            }
             continue;
         }
 
@@ -275,12 +433,22 @@ std::vector<PlanItem> build_plan(const SourceListing&                src,
 }
 
 std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& manifest,
-                                        const std::vector<PlanItem>&        plan)
+                                        const std::vector<PlanItem>&        plan,
+                                        const std::set<std::string>&        copied)
 {
     std::map<std::string, Entry> out = manifest;
     for (const PlanItem& p : plan) {
         switch (p.action) {
         case Action::Copy:
+            // Only copies that actually landed. Recording a refused Copy marks
+            // a missing file as mirrored, and the next run RespectDeletes it.
+            if (copied.count(p.rel))
+                out[p.rel] = Entry{p.t, false};
+            break;
+        case Action::Adopt:
+            // Dest already matches; no file write. Always record so the next
+            // run treats it as ours (UpToDate / Copy-on-edit) instead of
+            // ProtectNative forever.
             out[p.rel] = Entry{p.t, false};
             break;
         case Action::RespectDelete:
@@ -297,6 +465,31 @@ std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& mani
         }
     }
     return out;
+}
+
+bool write_manifest_bytes(const std::string& path, const std::string& dump, std::string* err)
+{
+    return replace_file_bytes(path, dump, err);
+}
+
+bool commit_pending_copies(std::set<std::string>&              copied,
+                           std::vector<std::string>&           pending,
+                           const std::map<std::string, Entry>& manifest,
+                           const std::vector<PlanItem>&        plan,
+                           const std::string&                  path,
+                           std::string*                        err,
+                           ManifestWriteFn                     write)
+{
+    std::set<std::string> next = copied;
+    for (const auto& rel : pending)
+        next.insert(rel);
+    const std::string dump = dump_manifest(apply_plan(manifest, plan, next));
+    const bool        ok   = write ? write(path, dump, err) : write_manifest_bytes(path, dump, err);
+    if (!ok)
+        return false;
+    copied = std::move(next);
+    pending.clear();
+    return true;
 }
 
 // ---- source directory resolution ---------------------------------------------------------------

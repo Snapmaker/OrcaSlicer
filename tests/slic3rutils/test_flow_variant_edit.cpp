@@ -338,18 +338,52 @@ TEST_CASE("calib volume type follows filament_volume_type not nozzle_volume_type
     REQUIRE(preset.option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0) == 0.98);
 }
 
-// G1 (reviewer harness): `temperature > range_high` → `>=`. Equality at the
-// recommended high bound must stay in range; `>=` would flag 230 as out of range.
-TEST_CASE("recommended nozzle temp high bound is inclusive", "[FlowVariantEdit][G1]")
+TEST_CASE("filament_volume_type_at returns High Flow when that slot is High Flow", "[FlowVariantEdit][N2b]")
+{
+    DynamicPrintConfig project = DynamicPrintConfig::full_print_config();
+    project.set_key_value("filament_volume_type", new ConfigOptionEnumsGeneric{int(fvtHighFlow)});
+    REQUIRE(filament_volume_type_at(project, 0) == fvtHighFlow);
+}
+
+TEST_CASE("filament_volume_type_at past the vector falls back to Standard", "[FlowVariantEdit][N2c]")
+{
+    DynamicPrintConfig project = DynamicPrintConfig::full_print_config();
+    project.set_key_value("filament_volume_type", new ConfigOptionEnumsGeneric{int(fvtHighFlow)});
+    REQUIRE(filament_volume_type_at(project, 1) == fvtStandard);
+    REQUIRE(filament_volume_type_at(project, 5) == fvtStandard);
+}
+
+TEST_CASE("slice sync target follows uniform nozzle type before the first slice", "[FlowVariantEdit][SliceSync]")
+{
+    REQUIRE(slice_sync_target_filament_volume_type(FILAMENT_GROUPING_STANDARD, 1, fvtHighFlow, fvtStandard) == fvtHighFlow);
+    REQUIRE(slice_sync_target_filament_volume_type(FILAMENT_GROUPING_STANDARD, 1, fvtStandard, fvtHighFlow) == fvtStandard);
+    REQUIRE(slice_sync_target_filament_volume_type(FILAMENT_GROUPING_STANDARD, 2, fvtHighFlow, fvtHighFlow) == fvtStandard);
+    REQUIRE(slice_sync_target_filament_volume_type(FILAMENT_GROUPING_CUSTOM, 1, fvtHighFlow, fvtStandard) == fvtHighFlow);
+    REQUIRE(slice_sync_target_filament_volume_type(FILAMENT_GROUPING_CUSTOM, 2, fvtHighFlow, fvtStandard) == fvtStandard);
+    REQUIRE(slice_sync_target_filament_volume_type(FILAMENT_GROUPING_CUSTOM, 2, fvtHighFlow, fvtHighFlow) == fvtHighFlow);
+}
+
+// G1 / G1L: `>` → `>=` flags 230; `<` → `<=` flags 200. 199 and 231 stay out.
+TEST_CASE("recommended nozzle temp range bounds are inclusive", "[FlowVariantEdit][G1][G1L]")
 {
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
     config.set_key_value("nozzle_temperature_range_low", new ConfigOptionInts{200});
     config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts{230});
-    config.set_key_value("nozzle_temperature", new ConfigOptionInts{230});
-    config.set_key_value("nozzle_temperature_initial_layer", new ConfigOptionInts{230});
 
+    config.set_key_value("nozzle_temperature", new ConfigOptionInts{200});
+    config.set_key_value("nozzle_temperature_initial_layer", new ConfigOptionInts{200});
     REQUIRE_FALSE(filament_nozzle_temperature_out_of_range(config, 0));
     REQUIRE_FALSE(filament_nozzle_temperature_initial_layer_out_of_range(config, 0));
+
+    config.option<ConfigOptionInts>("nozzle_temperature")->values[0] = 230;
+    config.option<ConfigOptionInts>("nozzle_temperature_initial_layer")->values[0] = 230;
+    REQUIRE_FALSE(filament_nozzle_temperature_out_of_range(config, 0));
+    REQUIRE_FALSE(filament_nozzle_temperature_initial_layer_out_of_range(config, 0));
+
+    config.option<ConfigOptionInts>("nozzle_temperature")->values[0] = 199;
+    config.option<ConfigOptionInts>("nozzle_temperature_initial_layer")->values[0] = 231;
+    REQUIRE(filament_nozzle_temperature_out_of_range(config, 0));
+    REQUIRE(filament_nozzle_temperature_initial_layer_out_of_range(config, 0));
 }
 
 // G4 (reviewer harness): filament_flow_ratio_at missing/empty fallback `1.0` → `0.0`.

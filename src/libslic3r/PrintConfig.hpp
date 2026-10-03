@@ -510,6 +510,24 @@ inline bool filament_group_plate_pick_continues(bool dirty, bool dialog_required
 // required. CUSTOM + mixed nozzles keep the custom mapping.
 inline bool filament_group_sync_on_clean_plate_pick(bool dirty, bool dialog_required) { return !dirty && !dialog_required; }
 
+// Target filament_volume_type that sync_filament_volume_types_for_slice writes
+// (or keeps, when the grouping dialog owns the mapping). Calib reads this
+// before the first slice so a U1 nozzle switched to High-Flow is not still
+// Standard. CUSTOM + mixed nozzles keep current_filament_type. Uniform nozzles
+// follow that single type. Mixed nozzles in standard grouping fall back to Standard.
+inline FilamentVolumeType slice_sync_target_filament_volume_type(
+    const std::string     &grouping_mode,
+    size_t                 distinct_nozzle_flow_type_count,
+    FilamentVolumeType     uniform_nozzle_type,
+    FilamentVolumeType     current_filament_type)
+{
+    if (filament_group_dialog_required(grouping_mode, distinct_nozzle_flow_type_count))
+        return current_filament_type;
+    if (distinct_nozzle_flow_type_count < 2 && uniform_nozzle_type == fvtHighFlow)
+        return fvtHighFlow;
+    return fvtStandard;
+}
+
 // Bounds-checked: values outside the mapping render as FLOW_MODE_STANDARD.
 const char* to_string(FilamentVolumeType type);
 

@@ -1,6 +1,7 @@
 #include "CalibUtils.hpp"
 #include "../GUI/I18N.hpp"
 #include "../GUI/GUI_App.hpp"
+#include "../GUI/FlowTypeHelper.hpp"
 #include "../GUI/DeviceManager.hpp"
 #include "../GUI/Jobs/ProgressIndicator.hpp"
 #include "../GUI/PartPlate.hpp"
@@ -37,14 +38,12 @@ static std::string MachineBedTypeString[7] = {
 };
 
 
-// Slicing's get_config_idx reads filament_volume_type, not the printer nozzle type.
+// Same target the slice sync would write. Project filament_volume_type is stale
+// until the first slice (U1 nozzle switched to HF still reads Standard).
 static FilamentVolumeType calib_filament_volume_type(const CalibInfo &calib_info, unsigned int filament_id = 0)
 {
-    if (wxGetApp().preset_bundle != nullptr) {
-        const auto *types = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("filament_volume_type");
-        if (types != nullptr && !types->values.empty())
-            return filament_volume_type_at(wxGetApp().preset_bundle->project_config, filament_id);
-    }
+    if (wxGetApp().preset_bundle != nullptr)
+        return FlowType::synced_filament_volume_type(filament_id);
     if (calib_info.filament_prest != nullptr)
         return filament_volume_type_at(calib_info.filament_prest->config, filament_id);
     return fvtStandard;

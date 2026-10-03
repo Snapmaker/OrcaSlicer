@@ -6,6 +6,7 @@
 #include "RemoteAccess.hpp"
 
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/PresetFlowVariant.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
 #include <boost/algorithm/string.hpp>
@@ -179,21 +180,29 @@ void apply_custom_mapping(const std::vector<FilamentVolumeType> &mapping)
     notify_plater();
 }
 
+static FilamentVolumeType uniform_nozzle_volume_type()
+{
+    const std::vector<std::string> nozzles = nozzle_volume_types();
+    return !nozzles.empty() && nozzles.front() == FLOW_MODE_HIGH_FLOW ? fvtHighFlow : fvtStandard;
+}
+
+FilamentVolumeType synced_filament_volume_type(unsigned int filament_id)
+{
+    if (wxGetApp().preset_bundle == nullptr)
+        return fvtStandard;
+    return slice_sync_target_filament_volume_type(
+        grouping_mode(),
+        distinct_nozzle_flow_type_count(),
+        uniform_nozzle_volume_type(),
+        filament_volume_type_at(wxGetApp().preset_bundle->project_config, filament_id));
+}
+
 void sync_filament_volume_types_for_slice()
 {
     // Custom + mixed nozzles: the dialog mapping is the source of truth.
     if (filament_group_dialog_required(grouping_mode(), distinct_nozzle_flow_type_count()))
         return;
-    // Flow type every filament should use when the custom per-filament mapping does
-    // not apply: follow the single nozzle type when the nozzles are not mixing types
-    // (all standard -> standard, all high flow -> high flow); in standard mode with
-    // mixed nozzles, fall back to standard.
-    FilamentVolumeType type = fvtStandard;
-    if (distinct_nozzle_flow_type_count() < 2) {
-        const std::vector<std::string> nozzles = nozzle_volume_types();
-        if (!nozzles.empty() && nozzles.front() == FLOW_MODE_HIGH_FLOW)
-            type = fvtHighFlow;
-    }
+    const FilamentVolumeType type = synced_filament_volume_type(0);
     const std::vector<FilamentVolumeType> current = wxGetApp().preset_bundle->get_filament_volume_types();
     if (std::all_of(current.begin(), current.end(), [type](FilamentVolumeType t) { return t == type; }))
         return; // already uniform at the target type

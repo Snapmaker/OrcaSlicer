@@ -72,6 +72,11 @@ void apply_custom_mapping(const std::vector<FilamentVolumeType> &mapping);
 // mapping already matches. Only meaningful outside the custom+mixed case.
 void sync_filament_volume_types_for_slice();
 
+// Same target sync_filament_volume_types_for_slice would produce for one
+// filament, without writing project_config or opening FilamentGroupDialog.
+// Calib reads this before the first slice, when filament_volume_type is still stale.
+FilamentVolumeType synced_filament_volume_type(unsigned int filament_id = 0);
+
 // Edge Slice-button / Preview-reslice gate: show FilamentGroupDialog when
 // filament_group_dialog_required() and a person is at the PC; skip the dialog
 // (keep the current mapping) for phone / agent / hidden slices; otherwise sync

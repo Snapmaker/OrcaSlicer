@@ -19527,13 +19527,11 @@ void Plater::_calib_pa_select_added_objects() {
 
 // Preset-sized filament configs have no filament_flow_step_size, so
 // filament_flow_ratio_at() would stay on get_at(0). Use the same
-// filament_volume_type slot slicing's get_config_idx() uses.
+// target the slice sync would write — project filament_volume_type is
+// stale until the first slice.
 static FilamentVolumeType plater_calib_filament_volume_type()
 {
-    const PresetBundle *bundle = wxGetApp().preset_bundle;
-    if (bundle == nullptr)
-        return fvtStandard;
-    return filament_volume_type_at(bundle->project_config, 0);
+    return FlowType::synced_filament_volume_type(0);
 }
 
 // Adjust settings for flowrate calibration

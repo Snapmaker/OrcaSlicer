@@ -912,13 +912,10 @@ TEST_CASE("non-SEMM U1 2-tool High-Flow uses per-filament temps retract and plac
 
     // GCodeWriter emits "M104 S<temp> T<tool> ; preheat T<tool> ...". Packed get_at(1) would
     // preheat T1 at F0's High-Flow 230/225.
-    const bool preheat_t1 = gcode.find("preheat T1") != std::string::npos;
-    const bool preheat_t1_ok = gcode.find("M104 S" + std::to_string(kTempF1) + " T1") != std::string::npos
-                            || gcode.find("M104 S" + std::to_string(kInitF1) + " T1") != std::string::npos;
-    INFO("preheat T1 present=" << preheat_t1 << " ok=" << preheat_t1_ok);
-    if (preheat_t1) {
-        REQUIRE(preheat_t1_ok);
-        REQUIRE(gcode.find("M104 S" + std::to_string(kTempHfF0) + " T1 ; preheat") == std::string::npos);
-        REQUIRE(gcode.find("M104 S" + std::to_string(kInitHfF0) + " T1 ; preheat") == std::string::npos);
-    }
+    REQUIRE(gcode.find("preheat T1") != std::string::npos);
+    const bool preheat_t1_ok = gcode.find("M104 S" + std::to_string(kTempF1) + " T1 ; preheat") != std::string::npos
+                            || gcode.find("M104 S" + std::to_string(kInitF1) + " T1 ; preheat") != std::string::npos;
+    REQUIRE(preheat_t1_ok);
+    REQUIRE(gcode.find("M104 S" + std::to_string(kTempHfF0) + " T1 ; preheat") == std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(kInitHfF0) + " T1 ; preheat") == std::string::npos);
 }

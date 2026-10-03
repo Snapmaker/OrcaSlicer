@@ -1,35 +1,148 @@
 #include "GLGizmoAlignment.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "libslic3r/Model.hpp"
 
+#include <algorithm>
+
 namespace Slic3r {
 namespace GUI {
+
+namespace {
+
+
+// One thing that gets moved: a whole instance (volume_idx < 0) or one part of an instance.
+struct AlignItem {
+    int           object_idx;
+    int           instance_idx;
+    int           volume_idx;
+    BoundingBoxf3 box; // world space axis-aligned box (rotation is already baked in)
+};
+
+} // namespace
+
+// AlignType already encodes the axis and the side, so nothing is parsed out of a name.
+bool GLGizmoAlignment::decode_align_type(AlignType type, int &axis, AlignMath::Side &side)
+{
+    using T = AlignType;
+    using S = AlignMath::Side;
+    switch (type) {
+    case T::X_MIN:    axis = 0; side = S::Min;    return true;
+    case T::CENTER_X: axis = 0; side = S::Center; return true;
+    case T::X_MAX:    axis = 0; side = S::Max;    return true;
+    case T::Y_MIN:    axis = 1; side = S::Min;    return true;
+    case T::CENTER_Y: axis = 1; side = S::Center; return true;
+    case T::Y_MAX:    axis = 1; side = S::Max;    return true;
+    case T::Z_MIN:    axis = 2; side = S::Min;    return true;
+    case T::CENTER_Z: axis = 2; side = S::Center; return true;
+    case T::Z_MAX:    axis = 2; side = S::Max;    return true;
+    default:          return false;
+    }
+}
 
 GLGizmoAlignment::GLGizmoAlignment(GLCanvas3D& canvas) : m_canvas(canvas)
 {
 }
 
-bool GLGizmoAlignment::align_objects(AlignType type, bool align_parent)
+bool GLGizmoAlignment::items_are_parts(bool to_parent) const
 {
-    if (!validate_selection_for_align()) {
+    const Selection &selection = get_selection();
+    if (to_parent)
+        return is_part_align_parent();
+    // Inter-item: parts of one object, or several loose parts / modifiers.
+    return selection.is_single_full_object() || selection.is_multiple_volume() || selection.is_multiple_modifier() ||
+           selection.is_single_volume() || selection.is_single_modifier();
+}
+
+bool GLGizmoAlignment::align_objects(AlignType type, const AlignOptions &options)
+{
+    int             axis = 0;
+    AlignMath::Side side = AlignMath::Side::Min;
+    if (!decode_align_type(type, axis, side) || !validate_selection_for_align())
         return false;
+
+    Selection &selection = get_selection();
+    const bool parts     = items_are_parts(options.to_parent);
+
+    // Collect the items with their world boxes.
+    std::vector<AlignItem> items;
+    if (parts) {
+        for (unsigned int idx : selection.get_volume_idxs()) {
+            const GLVolume *volume = selection.get_volume(idx);
+            if (volume != nullptr)
+                items.push_back({volume->object_idx(), volume->instance_idx(), volume->volume_idx(), volume->transformed_convex_hull_bounding_box()});
+        }
+    } else {
+        BoundingBoxf3 big_bb;
+        for (const ObjectInfo &info : get_selected_objects_info(big_bb))
+            items.push_back({info.object_idx, info.instance_idx, -1, info.bbox});
+    }
+    if (items.empty())
+        return false;
+
+    // The anchor (inter-item mode only): the last-selected item, else the first one.
+    size_t anchor = 0;
+    {
+        const int anchor_volume_idx = selection.get_anchor_volume_idx();
+        if (anchor_volume_idx >= 0) {
+            if (const GLVolume *av = selection.get_volume((unsigned int) anchor_volume_idx)) {
+                for (size_t i = 0; i < items.size(); ++i) {
+                    if (items[i].object_idx == av->object_idx() && items[i].instance_idx == av->instance_idx() &&
+                        (!parts || items[i].volume_idx == av->volume_idx())) {
+                        anchor = i;
+                        break;
+                    }
+                }
+            }
+        }
     }
 
-    switch (type) {
-        case AlignType::CENTER_X: return align_to_center(type, align_parent);
-        case AlignType::CENTER_Y: return align_to_center(type, align_parent);
-        case AlignType::CENTER_Z: return align_to_center(type, align_parent);
-        case AlignType::Y_MAX: return align_to_y_max(align_parent);
-        case AlignType::Y_MIN: return align_to_y_min(align_parent);
-        case AlignType::X_MAX: return align_to_x_max(align_parent);
-        case AlignType::X_MIN: return align_to_x_min(align_parent);
-        case AlignType::Z_MAX: return align_to_z_max(align_parent);
-        case AlignType::Z_MIN: return align_to_z_min(align_parent);
-        default:
-            return false;
+    AlignMath::AxisRequest request;
+    request.button = side;
+    request.origin = options.origin[axis];
+    if (options.to_parent) {
+        request.reference  = AlignMath::Reference::Fixed;
+        request.fixed      = {m_parent_box.min[axis], m_parent_box.max[axis]};
+        request.edge_inset = m_parent_inset[axis];
+    } else if (request.origin != AlignMath::Origin::Auto) {
+        request.reference = AlignMath::Reference::Anchor;
+        request.anchor    = anchor;
+    } else {
+        request.reference = AlignMath::Reference::Union;
     }
+
+    std::vector<AlignMath::Span> spans;
+    spans.reserve(items.size());
+    for (const AlignItem &item : items)
+        spans.push_back({item.box.min[axis], item.box.max[axis]});
+    const std::vector<double> offsets = AlignMath::axis_offsets(spans, request);
+
+    selection.setup_cache();
+    bool moved = false;
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (offsets[i] == 0.)
+            continue;
+        Vec3d displacement = Vec3d::Zero();
+        displacement[axis] = offsets[i];
+        if (parts)
+            selection.translate(items[i].object_idx, items[i].instance_idx, items[i].volume_idx, displacement, false);
+        else
+            apply_transformation(items[i].object_idx, items[i].instance_idx, displacement);
+        moved = true;
+    }
+    if (!moved)
+        return true; // already aligned: no model change, so no empty undo step either
+
+    // The Move gizmo's own translate does this too: without it the same part of the object's
+    // other instances keeps its old transform and do_move() may write that one back.
+    if (parts)
+        selection.synchronize_unselected_volumes();
+
+    const std::string name = options.to_parent ? (parts ? _u8L("Align to object") : _u8L("Align to plate")) : _u8L("Align selected");
+    finish_operation(name, parts);
+    return true;
 }
 
 bool GLGizmoAlignment::distribute_objects(AlignType type)
@@ -50,176 +163,12 @@ bool GLGizmoAlignment::distribute_objects(AlignType type)
     }
 }
 
-bool GLGizmoAlignment::align_to_y_max(bool align_parent)
-{
-    return align_objects_generic(
-        [](const ObjectInfo& obj) { return obj.bbox.max.y(); },
-        [](Vec3d& displacement, double target, double current_max) {
-            displacement.y() = target - current_max;
-        }, "Align Y Max", align_parent
-    );
-}
-
-bool GLGizmoAlignment::align_to_y_min(bool align_parent)
-{
-    return align_objects_generic(
-        [](const ObjectInfo& obj) { return obj.bbox.min.y(); },
-        [](Vec3d& displacement, double target, double current_min) {
-            displacement.y() = target - current_min;
-        }, "Align Y Min", align_parent
-    );
-}
-
-bool GLGizmoAlignment::align_to_x_max(bool align_parent)
-{
-    return align_objects_generic(
-        [](const ObjectInfo& obj) { return obj.bbox.max.x(); },
-        [](Vec3d& displacement, double target, double current_max) {
-            displacement.x() = target - current_max;
-        }, "Align X Max", align_parent
-    );
-}
-
-bool GLGizmoAlignment::align_to_x_min(bool align_parent)
-{
-    return align_objects_generic(
-        [](const ObjectInfo& obj) { return obj.bbox.min.x(); },
-        [](Vec3d& displacement, double target, double current_min) {
-            displacement.x() = target - current_min;
-        }, "Align X Min", align_parent
-    );
-}
-
-bool GLGizmoAlignment::align_to_center(AlignType type,bool align_parent)
-{
-    const Selection& selection = get_selection();
-    std::string type_str = type == AlignType::CENTER_X ? "X" : (type == AlignType::CENTER_Y ? "Y" : "Z");
-    std::string      operation_name   = type == AlignType::CENTER_X ? "X Center" : (type == AlignType::CENTER_Y ? "Y Center" : "Z Center");
-    double           selection_center = 0.f;
-    if (align_parent) {
-        selection_center = get_current_coord(operation_name, m_parent_box);
-
-        // Handle multiple volume selection
-        if (is_part_align_parent()) {
-            if (!take_snapshot("Align to parent center " + type_str)) {
-                return false;
-            }
-
-            get_selection().setup_cache();
-
-            auto selection_bbox     = selection.get_bounding_box();
-            double               current_coord  = get_current_coord(operation_name, selection_bbox);
-            Vec3d                displacement       = generate_displacement(operation_name, selection_center - current_coord);
-            // Move each selected volume to align to the center of their collective bounding box
-            for (unsigned int idx : selection.get_volume_idxs()) {
-                const GLVolume *volume = selection.get_volume(idx);
-                if (volume) {
-                    get_selection().translate(volume->object_idx(), volume->instance_idx(), volume->volume_idx(), displacement, false);
-                }
-            }
-            finish_operation("Align to parent center " + type_str);
-            return true;
-        }
-        BoundingBoxf3 big_bb;
-        auto          objects = get_selected_objects_info(big_bb);
-        if (objects.empty()) return false;
-        // Handle multiple objects or parts selection
-
-        BoundingBoxf3 selection_bbox     = selection.get_bounding_box();
-        if (!take_snapshot("Align to parent center " + type_str)) {
-            return false;
-        }
-
-        get_selection().setup_cache();
-        double current_coord = get_current_coord(operation_name, big_bb);
-        Vec3d  displacement  = generate_displacement(operation_name, selection_center - current_coord);
-        // Multiple objects: use selection bounding box for alignment
-        for (const auto &obj : objects) {
-            apply_transformation(obj.object_idx, obj.instance_idx, displacement);
-        }
-
-        finish_operation("Align to parent center " + type_str);
-        return true;
-    }
-    // Handle single object selection// Handle multiple volume selection
-    if (selection.is_single_full_object() ||
-        selection.is_multiple_volume() || selection.is_multiple_modifier() || selection.is_single_volume() || selection.is_single_modifier()) {
-        if (!take_snapshot("Align Parts Center " + type_str)){
-            return false;
-        }
-
-        get_selection().setup_cache();
-
-        BoundingBoxf3 selection_bbox = selection.get_bounding_box();
-        selection_center                    = get_current_coord(operation_name, selection_bbox);
-
-        // Move each selected volume to align to the center of their collective bounding box
-        for (unsigned int idx : selection.get_volume_idxs()) {
-            const GLVolume* volume = selection.get_volume(idx);
-            if (volume) {
-                auto temp_box = volume->transformed_convex_hull_bounding_box();
-                double current  = get_current_coord(operation_name, temp_box);
-                double offset = selection_center - current;
-                Vec3d displacement = generate_displacement(operation_name, offset);
-                get_selection().translate(volume->object_idx(), volume->instance_idx(), volume->volume_idx(), displacement, false);
-            }
-        }
-
-        finish_operation("Align Parts Center" + type_str, true);
-        return true;
-    }
-    BoundingBoxf3 big_bb;
-    auto          objects = get_selected_objects_info(big_bb);
-    if (objects.empty()) return false;
-    // Handle multiple objects or parts selection
-    if (selection.is_multiple_full_object()) {
-        BoundingBoxf3 selection_bbox = selection.get_bounding_box();
-        double        selection_center = get_current_coord(operation_name, selection_bbox);
-
-        if (!take_snapshot("Align Objects Center" + type_str)) {
-            return false;
-        }
-
-        get_selection().setup_cache();
-        // Multiple objects: use selection bounding box for alignment
-        for (const auto& obj : objects) {
-            BoundingBoxf3 temp_bbox     = obj.bbox;
-            double        current_coord = get_current_coord(operation_name, temp_bbox);
-            Vec3d  displacement  = generate_displacement(operation_name, selection_center - current_coord);
-            apply_transformation(obj.object_idx, obj.instance_idx, displacement);
-        }
-        finish_operation("Align Objects Center" + type_str);
-        return true;
-    }
-    return false;
-}
-
-bool GLGizmoAlignment::align_to_z_max(bool align_parent)
-{
-    return align_objects_generic(
-        [](const ObjectInfo& obj) { return obj.bbox.max.z(); },
-        [](Vec3d& displacement, double target, double current_max) {
-            displacement.z() = target - current_max;
-        }, "Align Z Max", align_parent
-    );
-}
-
-bool GLGizmoAlignment::align_to_z_min(bool align_parent)
-{
-    return align_objects_generic(
-        [](const ObjectInfo& obj) { return obj.bbox.min.z(); },
-        [](Vec3d& displacement, double target, double current_min) {
-            displacement.z() = target - current_min;
-        }, "Align Z Min", align_parent
-    );
-}
-
 bool GLGizmoAlignment::distribute_y()
 {
     return distribute_objects_generic(
         [](const ObjectInfo& obj) { return obj.center.y(); },
         1,
-        "Distribute Y"
+        _u8L("Distribute")
     );
 }
 
@@ -228,7 +177,7 @@ bool GLGizmoAlignment::distribute_x()
     return distribute_objects_generic(
         [](const ObjectInfo& obj) { return obj.center.x(); },
         0,
-        "Distribute X"
+        _u8L("Distribute")
     );
 }
 
@@ -237,191 +186,8 @@ bool GLGizmoAlignment::distribute_z()
     return distribute_objects_generic(
         [](const ObjectInfo& obj) { return obj.center.z(); },
         2,
-        "Distribute Z"
+        _u8L("Distribute")
     );
-}
-
-template<typename GetCoordFunc, typename SetCoordFunc>
-bool GLGizmoAlignment::align_objects_generic(GetCoordFunc get_coord, SetCoordFunc set_coord, const std::string &operation_name ,bool align_parent)
-{
-    const Selection& selection = get_selection();
-    if (align_parent) {
-        // Find reference coordinate
-        double reference_coord = get_current_coord(operation_name, m_parent_box);
-        // Handle parts selection differently
-        if (is_part_align_parent()) {
-            if (!take_snapshot("align to parent node " + operation_name)) {
-                return false;
-            }
-
-            get_selection().setup_cache();
-
-            // Get all selected volumes
-            std::vector<const GLVolume *> volumes;
-            for (unsigned int idx : selection.get_volume_idxs()) {
-                const GLVolume *volume = selection.get_volume(idx);
-                if (volume) { volumes.push_back(volume); }
-            }
-
-            if (volumes.empty())
-                return false;
-            BoundingBoxf3 selection_bbox = selection.get_bounding_box();
-            double        current_coord  = get_current_coord(operation_name, selection_bbox);
-            Vec3d  displacement  = generate_displacement(operation_name, reference_coord - current_coord);
-            for (const GLVolume *volume : volumes) {
-                if (displacement.norm() > 1e-6) {
-                    get_selection().translate(volume->object_idx(), volume->instance_idx(), volume->volume_idx(), displacement, false);
-                }
-            }
-
-            finish_operation("align to parent node " + operation_name);
-            return true;
-        }
-
-        // Handle objects selection (original logic)
-        BoundingBoxf3 big_bb;
-        auto          objects = get_selected_objects_info(big_bb);
-        if (objects.empty()) return false;
-
-        if (!take_snapshot("align to parent node " + operation_name)) { return false; }
-
-        get_selection().setup_cache();
-
-        double current_coord = get_current_coord(operation_name, big_bb);
-        Vec3d  displacement  = generate_displacement(operation_name, reference_coord - current_coord);
-
-        for (const auto &obj : objects) {
-            if (displacement.norm() > 1e-6) {
-                apply_transformation(obj.object_idx, obj.instance_idx, displacement);
-            }
-        }
-
-        finish_operation("align to parent node " + operation_name);
-        return true;
-    }
-    // Handle parts selection differently
-    if (selection.is_single_full_object() || selection.is_multiple_volume() || selection.is_multiple_modifier()) {
-        if (!take_snapshot(operation_name)) {
-            return false;
-        }
-
-        get_selection().setup_cache();
-
-        // Get all selected volumes
-        std::vector<const GLVolume*> volumes;
-        for (unsigned int idx : selection.get_volume_idxs()) {
-            const GLVolume* volume = selection.get_volume(idx);
-            if (volume) {
-                volumes.push_back(volume);
-            }
-        }
-
-        if (volumes.empty()) return false;
-
-        // Find reference coordinate
-        double reference_coord = 0.0;
-        bool first = true;
-
-        for (const GLVolume* volume : volumes) {
-            BoundingBoxf3 bbox = volume->transformed_convex_hull_bounding_box();
-            double coord = 0.0;
-
-            if (operation_name.find("X Max") != std::string::npos) {
-                coord = bbox.max.x();
-            } else if (operation_name.find("X Min") != std::string::npos) {
-                coord = bbox.min.x();
-            } else if (operation_name.find("Y Max") != std::string::npos) {
-                coord = bbox.max.y();
-            } else if (operation_name.find("Y Min") != std::string::npos) {
-                coord = bbox.min.y();
-            } else if (operation_name.find("Z Max") != std::string::npos) {
-                coord = bbox.max.z();
-            } else if (operation_name.find("Z Min") != std::string::npos) {
-                coord = bbox.min.z();
-            }
-
-            if (first) {
-                reference_coord = coord;
-                first = false;
-            } else {
-                if (operation_name.find("Max") != std::string::npos) {
-                    reference_coord = std::max(reference_coord, coord);
-                } else if (operation_name.find("Min") != std::string::npos) {
-                    reference_coord = std::min(reference_coord, coord);
-                }
-            }
-        }
-
-        for (const GLVolume* volume : volumes) {
-            BoundingBoxf3 bbox = volume->transformed_convex_hull_bounding_box();
-            double current_coord = 0.0;
-
-            if (operation_name.find("X Max") != std::string::npos) {
-                current_coord = bbox.max.x();
-            } else if (operation_name.find("X Min") != std::string::npos) {
-                current_coord = bbox.min.x();
-            } else if (operation_name.find("Y Max") != std::string::npos) {
-                current_coord = bbox.max.y();
-            } else if (operation_name.find("Y Min") != std::string::npos) {
-                current_coord = bbox.min.y();
-            } else if (operation_name.find("Z Max") != std::string::npos) {
-                current_coord = bbox.max.z();
-            } else if (operation_name.find("Z Min") != std::string::npos) {
-                current_coord = bbox.min.z();
-            }
-
-            Vec3d displacement = Vec3d::Zero();
-
-            if (operation_name.find("X") != std::string::npos) {
-                displacement.x() = reference_coord - current_coord;
-            } else if (operation_name.find("Y") != std::string::npos) {
-                displacement.y() = reference_coord - current_coord;
-            } else if (operation_name.find("Z") != std::string::npos) {
-                displacement.z() = reference_coord - current_coord;
-            }
-
-            if (displacement.norm() > 1e-6) {
-                get_selection().translate(volume->object_idx(), volume->instance_idx(), volume->volume_idx(), displacement, false);
-            }
-        }
-
-        finish_operation(operation_name,true);
-        return true;
-    }
-
-    // Handle objects selection (original logic)
-    BoundingBoxf3 big_bb;
-    auto          objects = get_selected_objects_info(big_bb);
-    if (objects.empty()) return false;
-
-    if (!take_snapshot(operation_name)) {
-        return false;
-    }
-
-    get_selection().setup_cache();
-
-    double reference_coord = get_coord(objects[0]);
-    for (const auto& obj : objects) {
-        double coord = get_coord(obj);
-        if (operation_name.find("Max") != std::string::npos) {
-            reference_coord = std::max(reference_coord, coord);
-        } else if (operation_name.find("Min") != std::string::npos) {
-            reference_coord = std::min(reference_coord, coord);
-        }
-    }
-
-    for (const auto& obj : objects) {
-        double current_coord = get_coord(obj);
-        Vec3d displacement = Vec3d::Zero();
-        set_coord(displacement, reference_coord, current_coord);
-
-        if (displacement.norm() > 1e-6) {
-            apply_transformation(obj.object_idx, obj.instance_idx, displacement);
-        }
-    }
-
-    finish_operation(operation_name);
-    return true;
 }
 
 template<typename GetCoordFunc>
@@ -437,9 +203,6 @@ bool GLGizmoAlignment::distribute_objects_generic(GetCoordFunc get_coord, int ax
         }
 
         if (volumes.size() < 3) return false;
-        if (!take_snapshot(operation_name)) {
-            return false;
-        }
         get_selection().setup_cache();
 
         struct VolEntry { const GLVolume* v; double coord; };
@@ -479,16 +242,13 @@ bool GLGizmoAlignment::distribute_objects_generic(GetCoordFunc get_coord, int ax
             }
         }
 
+        get_selection().synchronize_unselected_volumes();
         finish_operation(operation_name,true);
         return true;
     }
     BoundingBoxf3 big_bb;
     auto          objects = get_selected_objects_info(big_bb);
     if (objects.size() < 3) return false;
-
-    if (!take_snapshot(operation_name)) {
-        return false;
-    }
 
     get_selection().setup_cache();
 
@@ -519,14 +279,6 @@ bool GLGizmoAlignment::distribute_objects_generic(GetCoordFunc get_coord, int ax
 
 bool GLGizmoAlignment::can_align(AlignType type) const
 {
-    const Selection& selection = get_selection();
-
-    bool is_single_object = selection.is_single_full_object();
-    bool is_multiple_objects = selection.is_multiple_full_object();
-    bool is_single_part = selection.is_single_volume() || selection.is_single_modifier();
-    bool is_multiple_parts = selection.is_multiple_volume() || selection.is_multiple_modifier();
-
-
     return validate_selection_for_align();
 }
 
@@ -561,46 +313,9 @@ bool GLGizmoAlignment::can_distribute(AlignType type) const
     return validate_selection_for_distribute();
 }
 
-double GLGizmoAlignment::get_current_coord(std::string operation_name, BoundingBoxf3 &bbox)
+bool GLGizmoAlignment::is_part_align_parent() const
 {
-    double current_coord = 0.0;
-    if (operation_name.find("X Max") != std::string::npos) {
-        current_coord = bbox.max.x();
-    } else if (operation_name.find("X Min") != std::string::npos) {
-        current_coord = bbox.min.x();
-    } else if (operation_name.find("Y Max") != std::string::npos) {
-        current_coord = bbox.max.y();
-    } else if (operation_name.find("Y Min") != std::string::npos) {
-        current_coord = bbox.min.y();
-    } else if (operation_name.find("Z Max") != std::string::npos) {
-        current_coord = bbox.max.z();
-    } else if (operation_name.find("Z Min") != std::string::npos) {
-        current_coord = bbox.min.z();
-    } else if (operation_name.find("X Center") != std::string::npos) {
-        current_coord = bbox.center().x();
-    } else if (operation_name.find("Y Center") != std::string::npos) {
-        current_coord = bbox.center().y();
-    } else if (operation_name.find("Z Center") != std::string::npos) {
-        current_coord = bbox.center().z();
-    }
-    return current_coord;
-}
-
-Vec3d GLGizmoAlignment::generate_displacement(std::string operation_name, double offset) {
-    Vec3d displacement = Vec3d::Zero();
-    if (operation_name.find("X") != std::string::npos) {
-        displacement.x() = offset;
-    } else if (operation_name.find("Y") != std::string::npos) {
-        displacement.y() = offset;
-    } else if (operation_name.find("Z") != std::string::npos) {
-        displacement.z() = offset;
-    }
-    return displacement;
-}
-
-bool GLGizmoAlignment::is_part_align_parent()
-{
-    Selection &selection = get_selection();
+    const Selection &selection = get_selection();
     if (selection.is_multiple_volume() || selection.is_multiple_modifier() || selection.is_single_volume() || selection.is_single_modifier()) {
         return true;
     }
@@ -633,19 +348,39 @@ std::vector<GLGizmoAlignment::ObjectInfo> GLGizmoAlignment::get_selected_objects
     return objects;
 }
 
-void GLGizmoAlignment::set_parent_box(const BoundingBoxf3 &bb) {
-    m_parent_box = bb;
+void GLGizmoAlignment::set_parent_box(const BoundingBoxf3 &bb, const Vec3d &edge_inset) {
+    m_parent_box   = bb;
+    m_parent_inset = edge_inset;
+}
+
+std::string GLGizmoAlignment::anchor_description() const
+{
+    const Selection &selection = get_selection();
+    const int        idx       = selection.get_anchor_volume_idx();
+    const GLVolume * volume    = idx >= 0 ? selection.get_volume((unsigned int) idx) : nullptr;
+    const Model *    model     = selection.get_model();
+    if (volume == nullptr || model == nullptr)
+        return {};
+
+    const int obj_idx = volume->object_idx();
+    if (obj_idx < 0 || obj_idx >= (int) model->objects.size())
+        return {};
+    const ModelObject *object = model->objects[(size_t) obj_idx];
+
+    std::string name = object->name;
+    if (items_are_parts(false)) {
+        const int vol_idx = volume->volume_idx();
+        if (vol_idx >= 0 && vol_idx < (int) object->volumes.size() && !object->volumes[(size_t) vol_idx]->name.empty())
+            name += " / " + object->volumes[(size_t) vol_idx]->name;
+    } else if (object->instances.size() > 1) {
+        name += " #" + std::to_string(volume->instance_idx() + 1);
+    }
+    return name;
 }
 
 Selection& GLGizmoAlignment::get_selection() const
 {
     return m_canvas.get_selection();
-}
-
-bool GLGizmoAlignment::take_snapshot(const std::string& name)
-{
-    wxGetApp().plater()->take_snapshot(name);
-    return true;
 }
 
 void GLGizmoAlignment::apply_transformation(int obj_idx, int inst_idx, const Vec3d& displacement)
@@ -656,7 +391,9 @@ void GLGizmoAlignment::apply_transformation(int obj_idx, int inst_idx, const Vec
 void GLGizmoAlignment::finish_operation(const std::string &operation_name, bool force_volume_move)
 {
     get_selection().notify_instance_update(-1, -1);
-    m_canvas.do_move(operation_name, force_volume_move);
+    // do_move() takes the one and only undo snapshot (the model is still unchanged at that point).
+    // Whole objects skip the "fix flying instances" pass, parts keep it.
+    m_canvas.do_move(operation_name, force_volume_move, /*fix_flying_instances=*/force_volume_move);
 }
 
 bool GLGizmoAlignment::validate_selection_for_align() const

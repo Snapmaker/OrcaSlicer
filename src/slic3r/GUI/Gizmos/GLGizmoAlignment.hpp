@@ -3,7 +3,9 @@
 
 #include "libslic3r/Point.hpp"
 #include "libslic3r/BoundingBox.hpp"
+#include "libslic3r/AlignMath.hpp"
 #include "slic3r/GUI/Selection.hpp"
+#include <string>
 #include <vector>
 #include <functional>
 
@@ -40,19 +42,24 @@ public:
             : object_idx(obj_idx), instance_idx(inst_idx), bbox(bb), center(bb.center()) {}
     };
 
+    // What the Align row asks for besides the button itself.
+    struct AlignOptions {
+        // Per axis (X, Y, Z): which point of each moved item (or of the whole selection in
+        // plate / object mode) is brought to the target. Auto = the same side as the button.
+        AlignMath::Origin origin[3] = {AlignMath::Origin::Auto, AlignMath::Origin::Auto, AlignMath::Origin::Auto};
+        // true: align the selection (as one rigid group) to the plate / parent object box set with
+        // set_parent_box(). false: align the selected items to each other.
+        bool to_parent = false;
+    };
+
     explicit GLGizmoAlignment(GLCanvas3D& canvas);
     ~GLGizmoAlignment() = default;
 
-    bool align_objects(AlignType type,bool align_parent = false);
-    bool distribute_objects(AlignType type);
+    // AlignType already encodes axis (0 X, 1 Y, 2 Z) and side; false for NONE and Distribute.
+    static bool decode_align_type(AlignType type, int &axis, AlignMath::Side &side);
 
-    bool align_to_center(AlignType type,bool align_parent = false);
-    bool align_to_y_max(bool align_parent = false);
-    bool align_to_y_min(bool align_parent = false);
-    bool align_to_x_max(bool align_parent = false);
-    bool align_to_x_min(bool align_parent = false);
-    bool align_to_z_max(bool align_parent = false);
-    bool align_to_z_min(bool align_parent = false);
+    bool align_objects(AlignType type, const AlignOptions &options);
+    bool distribute_objects(AlignType type);
 
     bool distribute_x();
     bool distribute_y();
@@ -62,31 +69,39 @@ public:
     bool can_distribute(AlignType type) const;
 
     std::vector<ObjectInfo> get_selected_objects_info(BoundingBoxf3 &big_bb) const;
-    double                  get_current_coord(std::string operation_name, BoundingBoxf3 &bbox);
-    Vec3d                   generate_displacement(std::string operation_name, double offset);
-    bool                    is_part_align_parent();
-    void                    set_parent_box(const BoundingBoxf3 &bb);
+    bool                    is_part_align_parent() const;
+    // The reference for plate / object mode. `edge_inset` pulls edge targets inward per axis (the
+    // 0.1 mm plate shrink); see AlignMath::AxisRequest::edge_inset.
+    void                    set_parent_box(const BoundingBoxf3 &bb, const Vec3d &edge_inset = Vec3d::Zero());
+
+    // The item that stays put in inter-item mode when an origin is not Auto: the last-selected
+    // object (or part). Empty when it cannot be determined (the lowest index is then used).
+    // The text is UTF-8 and ready to show.
+    std::string             anchor_description() const;
 
 private:
     GLCanvas3D& m_canvas;
-
-    template<typename GetCoordFunc, typename SetCoordFunc>
-    bool align_objects_generic(GetCoordFunc get_coord, SetCoordFunc set_coord, const std::string &operation_name, bool align_parent = false);
 
     template<typename GetCoordFunc>
     bool distribute_objects_generic(GetCoordFunc get_coord, int axis,
                                   const std::string& operation_name);
 
     Selection& get_selection() const;
-    bool take_snapshot(const std::string& name);
     void apply_transformation(int obj_idx, int inst_idx, const Vec3d& displacement);
+    // Commits the moved GLVolumes into the model through ONE undo snapshot named `operation_name`.
+    // Parts (force_volume_move) keep the "fix flying instances" pass; whole objects skip it so an
+    // object can be placed on top of another and stay there (as Snap to surface does).
     void       finish_operation(const std::string &operation_name, bool force_volume_move = false);
+
+    // True when the items of this alignment are volumes (parts) rather than whole instances.
+    bool items_are_parts(bool to_parent) const;
 
     bool validate_selection_for_align() const;
     bool validate_selection_for_distribute() const;
 
 private:
     BoundingBoxf3 m_parent_box;
+    Vec3d         m_parent_inset{Vec3d::Zero()};
 };
 
 } // namespace GUI

@@ -633,9 +633,23 @@ void Selection::set_deserialized(EMode mode, const std::vector<std::pair<size_t,
     for (unsigned int i : m_list)
         (*m_volumes)[i]->selected = false;
     m_list.clear();
+    // Volumes are re-added in index order; keep the previous click order (the alignment anchor
+    // is the last-selected item) for those that stay selected.
+    const std::vector<SelectionOrderKey> previous_order = std::move(m_selection_order);
+    m_selection_order.clear();
     for (unsigned int i = 0; i < (unsigned int)m_volumes->size(); ++ i)
 		if (std::binary_search(volumes_and_instances.begin(), volumes_and_instances.end(), (*m_volumes)[i]->geometry_id))
 			do_add_volume(i);
+    {
+        std::vector<SelectionOrderKey> reordered;
+        for (const SelectionOrderKey& k : m_selection_order)
+            if (std::find(previous_order.begin(), previous_order.end(), k) == previous_order.end())
+                reordered.push_back(k);
+        for (const SelectionOrderKey& k : previous_order)
+            if (std::find(m_selection_order.begin(), m_selection_order.end(), k) != m_selection_order.end())
+                reordered.push_back(k);
+        m_selection_order = std::move(reordered);
+    }
     update_type();
     set_bounding_boxes_dirty();
 }
@@ -644,6 +658,8 @@ void Selection::clear(bool notify_sidebar)
 {
     if (!m_valid)
         return;
+
+    m_selection_order.clear();
 
     if (m_list.empty())
         return;
@@ -2574,10 +2590,31 @@ void Selection::set_caches()
     m_cache.rotation_pivot = get_bounding_sphere().first;
 }
 
+int Selection::get_anchor_volume_idx() const
+{
+    if (!m_valid)
+        return -1;
+    for (auto it = m_selection_order.rbegin(); it != m_selection_order.rend(); ++it) {
+        for (unsigned int i : m_list) {
+            if (i >= (unsigned int) m_volumes->size())
+                continue;
+            const GLVolume& v = *(*m_volumes)[i];
+            if (v.object_idx() == it->object_idx && v.instance_idx() == it->instance_idx && v.volume_idx() == it->volume_idx)
+                return (int) i;
+        }
+    }
+    return -1;
+}
+
 void Selection::do_add_volume(unsigned int volume_idx)
 {
     m_list.insert(volume_idx);
     GLVolume* v = (*m_volumes)[volume_idx];
+    {
+        const SelectionOrderKey key{v->object_idx(), v->instance_idx(), v->volume_idx()};
+        m_selection_order.erase(std::remove(m_selection_order.begin(), m_selection_order.end(), key), m_selection_order.end());
+        m_selection_order.push_back(key);
+    }
     v->selected = true;
     if (v->hover == GLVolume::HS_Select || v->hover == GLVolume::HS_Deselect)
         v->hover = GLVolume::HS_Hover;
@@ -2600,6 +2637,11 @@ void Selection::do_remove_volume(unsigned int volume_idx)
 
     m_list.erase(v_it);
 
+    {
+        const GLVolume& rv = *(*m_volumes)[volume_idx];
+        const SelectionOrderKey key{rv.object_idx(), rv.instance_idx(), rv.volume_idx()};
+        m_selection_order.erase(std::remove(m_selection_order.begin(), m_selection_order.end(), key), m_selection_order.end());
+    }
     (*m_volumes)[volume_idx]->selected = false;
 }
 

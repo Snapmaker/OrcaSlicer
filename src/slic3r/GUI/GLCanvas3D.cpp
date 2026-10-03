@@ -6240,7 +6240,7 @@ void GLCanvas3D::set_tooltip(const std::string& tooltip)
         m_tooltip.set_text(tooltip);
 }
 
-void GLCanvas3D::do_move(const std::string& snapshot_type, bool force_volume_move)
+void GLCanvas3D::do_move(const std::string& snapshot_type, bool force_volume_move, bool fix_flying_instances)
 {
     if (m_model == nullptr)
         return;
@@ -6304,12 +6304,12 @@ void GLCanvas3D::do_move(const std::string& snapshot_type, bool force_volume_mov
     //BBS: notify instance updates to part plater list
     m_selection.notify_instance_update(-1, 0);
 
-    // Fixes flying instances
+    // Fixes flying instances (skipped when the caller wants an instance to stay where it was put)
     for (const std::pair<int, int>& i : done) {
         ModelObject* m = m_model->objects[i.first];
         const double shift_z = m->get_instance_min_z(i.second);
         //BBS: don't call translate if the z is zero
-        if ((current_printer_technology() == ptSLA || shift_z > SINKING_Z_THRESHOLD) && (shift_z != 0.0f)) {
+        if (fix_flying_instances && (current_printer_technology() == ptSLA || shift_z > SINKING_Z_THRESHOLD) && (shift_z != 0.0f)) {
             const Vec3d shift(0.0, 0.0, -shift_z);
             m_selection.translate(i.first, i.second, shift);
             m->translate_instance(i.second, shift);

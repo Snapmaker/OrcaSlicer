@@ -150,6 +150,16 @@ private:
     EType m_type;
     // set of indices to m_volumes
     IndicesList m_list;
+    // Volumes in the order they joined the selection, most recent last. Identified by (object,
+    // instance, volume) rather than by index so it survives scene reloads; entries that are no
+    // longer selected are skipped when read. Feeds get_anchor_volume_idx().
+    struct SelectionOrderKey {
+        int object_idx;
+        int instance_idx;
+        int volume_idx;
+        bool operator==(const SelectionOrderKey &o) const { return object_idx == o.object_idx && instance_idx == o.instance_idx && volume_idx == o.volume_idx; }
+    };
+    std::vector<SelectionOrderKey> m_selection_order;
     Cache m_cache;
     Clipboard m_clipboard;
     std::optional<BoundingBoxf3> m_bounding_box;
@@ -296,6 +306,8 @@ public:
     const InstanceIdxsList& get_instance_idxs() const;
 
     const IndicesList& get_volume_idxs() const { return m_list; }
+    // The most recently selected volume that is still selected (the alignment anchor), or -1.
+    int get_anchor_volume_idx() const;
     const GLVolume* get_volume(unsigned int volume_idx) const;
     const GLVolume* get_first_volume() const { return get_volume(*m_list.begin()); }
     GLVolume* get_volume(unsigned int volume_idx);

@@ -175,6 +175,7 @@ set(lisbslic3r_sources
     Feature/Interlocking/VoxelUtils.hpp
     FileParserError.hpp
     AllowlistManager.cpp
+    AlignMath.hpp
     AllowlistManager.hpp
     FilamentColorLibrary.cpp
     FilamentColorLibrary.hpp

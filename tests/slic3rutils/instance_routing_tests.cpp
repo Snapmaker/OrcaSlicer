@@ -78,9 +78,9 @@ TEST_CASE("data-dir InstanceLock is independent of single-instance hand-off", "[
 TEST_CASE("FreeCAD's Send to EdgeSlicer hands its STEP files over", "[InstanceRouting]")
 {
     // What edgeslicer_bridge.py starts: EdgeSlicer.exe --single-instance <one file per body>.
-    const std::string exe   = "C:\Program Files\EdgeSlicer\EdgeSlicer.exe";
-    const std::string body  = "C:\Users\me\AppData\Local\Temp\EdgeSlicer-from-FreeCAD\20260930-101500-12\Body.step";
-    const std::string other = "C:\Users\me\AppData\Local\Temp\EdgeSlicer-from-FreeCAD\20260930-101500-12\Halterung \xc3\xa4 (2).step";
+    const std::string exe   = R"(C:\Program Files\EdgeSlicer\EdgeSlicer.exe)";
+    const std::string body  = R"(C:\Users\me\AppData\Local\Temp\EdgeSlicer-from-FreeCAD\20260930-101500-12\Body.step)";
+    const std::string other = "C:\\Users\\me\\AppData\\Local\\Temp\\EdgeSlicer-from-FreeCAD\\20260930-101500-12\\Halterung \xc3\xa4 (2).step";
     const CommandLine cl    = split_command_line({ exe, "--single-instance", body, other });
     REQUIRE(cl.single_instance.has_value());
     CHECK(*cl.single_instance);

@@ -9,6 +9,7 @@
 #include <functional>
 #include <atomic>
 #include <mutex>
+#include <memory>
 #include <chrono>
 
 #include "ObjectID.hpp"
@@ -489,19 +490,33 @@ public:
     // the state of the finished or running calculations.
     void                       set_cancel_callback(cancel_callback_type cancel_callback) { m_cancel_callback = cancel_callback; }
 
-    // Memory guard threshold: when available physical memory drops below this
-    // value (512 MB), the guard pauses slicing and asks the user whether to continue.
-    // "Available" = min(physical RAM available, system commit available),
-    // so the guard catches both page-fault thrashing and OOM crashes.
-    // Adjust this constant to change the warning threshold.
+    // Memory guard threshold: when available physical RAM or available system
+    // commit drops below this value (512 MB) for long enough, the guard drops
+    // slicing to a single thread and tells the user.
     static constexpr size_t MEM_GUARD_THRESHOLD = 512ULL * 1024 * 1024; // 512 MB
+    // Below this the guard acts at once, without waiting for the low reading
+    // to persist: memory is falling fast enough that waiting risks a stall
+    // (physical) or a failed allocation (commit).
+    static constexpr size_t MEM_GUARD_CRITICAL = 128ULL * 1024 * 1024; // 128 MB
+    // How long a low reading must persist before the guard acts.
+    // Low physical RAM only means the OS starts paging, which an SSD absorbs
+    // for a few seconds, so short spikes (another process briefly allocating,
+    // the file cache being trimmed) are ignored. Low commit means allocations
+    // are about to fail, so it gets a shorter window.
+    static constexpr std::chrono::milliseconds MEM_GUARD_SUSTAIN_PHYSICAL{3000};
+    static constexpr std::chrono::milliseconds MEM_GUARD_SUSTAIN_COMMIT{1000};
+    static constexpr std::chrono::milliseconds MEM_GUARD_SAMPLE_INTERVAL{500};
 
-    // Runtime memory guard: callback invoked from throw_if_canceled() when
-    // available physical memory drops below a threshold during slicing.
-    // Returns true to continue, false to cancel. The callback may block
-    // (e.g., to show a UI dialog and wait for user response).
-    typedef std::function<bool()>  memory_guard_callback_type;
+    // Runtime memory guard: callback invoked once per slice, from a slicing
+    // thread, right after the guard dropped slicing to a single thread. It
+    // must not block; slicing carries on while the user decides.
+    typedef std::function<void()>  memory_guard_callback_type;
     void                       set_memory_guard_callback(memory_guard_callback_type cb) { m_memory_guard_callback = std::move(cb); }
+    // True while the memory guard holds slicing to a single thread.
+    bool                       memory_guard_throttled() const;
+    // Lift the single-thread limit (the user chose to continue at full
+    // speed, or the slice ended). Safe to call from any thread.
+    void                       release_memory_guard_throttle();
     // Has the calculation been canceled?
 	enum CancelStatus {
 		// No cancelation, background processing should run.
@@ -521,7 +536,8 @@ public:
 	void                       restart() {
         m_cancel_status.store(NOT_CANCELED, std::memory_order_release);
         m_memory_guard_acknowledged.store(false, std::memory_order_relaxed);
-        m_low_mem_count.store(0, std::memory_order_relaxed);
+        m_low_mem_since_ns.store(0, std::memory_order_relaxed);
+        release_memory_guard_throttle();
     }
     // Returns true if the last step was finished with success.
     virtual bool               finished() const = 0;
@@ -568,46 +584,11 @@ protected:
     }
 
     // Runtime memory guard: samples available system memory every 500ms.
-    // If below MEM_GUARD_THRESHOLD (512 MB), invokes m_memory_guard_callback.
-    // The callback may block (e.g., to show a UI dialog). If it returns
-    // false, sets CANCELED_INTERNAL and throws CanceledException.
-    // An atomic flag prevents concurrent dialog invocations from TBB workers.
-    void                   check_memory_guard() {
-        auto now = std::chrono::steady_clock::now();
-        // Throttle to one sample per 500ms per Print instance.
-        if (now - m_last_mem_check < std::chrono::milliseconds(500))
-            return;
-        m_last_mem_check = now;
-
-        size_t avail = Slic3r::get_available_physical_memory();
-        if (avail == 0)
-            return;
-
-        if (avail < MEM_GUARD_THRESHOLD) {
-            // Require sustained low memory (2 consecutive samples = 1 second)
-            // to avoid false triggers from transient OS cache fluctuations.
-            int prev = m_low_mem_count.fetch_add(1, std::memory_order_relaxed);
-            if (prev < 1)
-                return;
-            // User already acknowledged the warning — don't ask again this slice.
-            if (m_memory_guard_acknowledged.load(std::memory_order_relaxed))
-                return;
-            static std::atomic<bool> s_dialog_active{false};
-            bool expected = false;
-            if (s_dialog_active.compare_exchange_strong(expected, true)) {
-                bool cont = m_memory_guard_callback();
-                s_dialog_active.store(false);
-                if (!cont) {
-                    m_cancel_status.store(CANCELED_BY_USER, std::memory_order_release);
-                    throw CanceledException();
-                }
-                m_memory_guard_acknowledged.store(true, std::memory_order_relaxed);
-            }
-        } else {
-            // Memory recovered -- reset the sustained-low counter.
-            m_low_mem_count.store(0, std::memory_order_relaxed);
-        }
-    }
+    // When memory stays low (see MEM_GUARD_* above), limits TBB to a single
+    // thread, so the per-thread working memory of parallel slicing stops
+    // piling up, and invokes m_memory_guard_callback. Acts at most once per
+    // slice.
+    void                   check_memory_guard();
     // Wrapper around this->throw_if_canceled(), so that throw_if_canceled() may be passed to a function without making throw_if_canceled() public.
     PrintTryCancel         make_try_cancel() const { return PrintTryCancel(this); }
 
@@ -638,19 +619,24 @@ private:
 
     // Callback invoked by the runtime memory guard when available physical
     // memory drops below threshold. Default: no-op (always continue).
-    memory_guard_callback_type              m_memory_guard_callback = []() { return true; };
+    memory_guard_callback_type              m_memory_guard_callback = []() {};
 
-    // Set to true when the user acknowledges the memory warning once.
-    // Prevents repeated dialogs within the same slicing session.
+    // Set once the memory guard has acted, so it acts only once per slice.
     // Reset to false by restart() at the start of each new slice.
     std::atomic<bool>                       m_memory_guard_acknowledged{false};
 
-    // Sustained low-memory sample counter for the memory guard.
-    // Requires 2 consecutive low samples before triggering the dialog.
-    std::atomic<int>                        m_low_mem_count{0};
+    // steady_clock time (ns) at which memory first read low in the current
+    // low stretch; 0 while memory is fine.
+    std::atomic<int64_t>                    m_low_mem_since_ns{0};
 
-    // Last memory-guard sample timestamp (throttle: 1 sample / 500ms).
-    std::chrono::steady_clock::time_point   m_last_mem_check{std::chrono::steady_clock::now()};
+    // steady_clock time (ns) of the last memory-guard sample
+    // (throttle: 1 sample / MEM_GUARD_SAMPLE_INTERVAL across all threads).
+    std::atomic<int64_t>                    m_last_mem_check_ns{0};
+
+    // tbb::global_control limiting TBB to one thread while memory is low;
+    // null otherwise. Held as shared_ptr<void> to keep TBB out of this header.
+    std::shared_ptr<void>                   m_memory_guard_throttle;
+    mutable std::mutex                      m_memory_guard_throttle_mutex;
 
     // Mutex used for synchronization of the worker thread with the UI thread:
     // The mutex will be used to guard the worker thread against entering a stage

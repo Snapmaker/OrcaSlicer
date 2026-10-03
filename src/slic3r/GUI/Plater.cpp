@@ -10164,6 +10164,8 @@ struct Plater::priv
     PartPlateList partplate_list;
     //BBS: add a flag to ignore cancel event
     bool m_ignore_event{false};
+    // Low-memory dialog while it is open, so the end of slicing can close it.
+    RichMessageDialog* memory_guard_dialog{nullptr};
     bool m_slice_all{false};
     bool m_is_slicing {false};
     bool m_is_publishing {false};
@@ -15317,6 +15319,10 @@ bool Plater::priv::warnings_dialog()
 void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": enter, m_ignore_event %1%, status %2%")%m_ignore_event %evt.status();
+    // Slicing ended with the low-memory dialog unanswered: close it as
+    // "Continue", so the preview is built if enough memory is free.
+    if (memory_guard_dialog != nullptr)
+        memory_guard_dialog->EndModal(wxID_YES);
     //BBS:ignore cancel event for some special case
     if (m_ignore_event)
     {
@@ -21315,51 +21321,53 @@ bool Plater::reslice()
         return true;
     }
 
-    // Runtime memory guard: register a callback that fires DURING slicing
-    // when available physical memory drops below the threshold (PrintBase.hpp).
-    // The guard checks every 500ms at the 138 throw_if_canceled() checkpoints.
+    // Runtime memory guard: when available memory stays below the threshold
+    // during slicing (PrintBase.hpp), slicing drops to a single thread and
+    // carries on while this dialog asks what to do. The dialog does not hold
+    // up slicing, and closes itself as "Continue" if slicing ends first.
     p->preview->set_skip_toolpath_preview(false);
+    p->preview->set_low_memory_during_slicing(false);
+    p->notification_manager->close_notification_of_type(NotificationType::PreviewSkippedLowMemory);
     if (printer_technology() == ptFFF) {
         Print* print_ptr = p->background_process.fff_print();
         if (print_ptr) {
-            print_ptr->set_memory_guard_callback([this]() -> bool {
-                auto promise = std::make_shared<std::promise<bool>>();
-                auto future  = promise->get_future();
-
-                this->CallAfter([this, promise]() {
-                    wxString msg = _L("Available system memory is critically low during slicing. "
-                                      "Continuing may cause the application to freeze or crash.")
-                        + "\n\n"
-                        + _L("Do you want to continue slicing?")
-                        + "\n\n"
+            print_ptr->set_memory_guard_callback([this, print_ptr]() {
+                // Called from a slicing thread; ask on the UI thread.
+                this->CallAfter([this, print_ptr]() {
+                    p->preview->set_low_memory_during_slicing(true);
+                    if (! print_ptr->memory_guard_throttled() || p->memory_guard_dialog != nullptr)
+                        return; // slice already ended, or already asking
+                    wxString msg = _L("Available system memory is critically low. Slicing continues on a single thread "
+                                      "to use less memory until you choose an option.")
+                        + "\n\n- "
+                        + _L("\"Continue\": finish slicing on a single thread (slower, uses the least memory). The preview is "
+                             "built if enough memory is free once slicing finishes.")
                         + "\n- "
-                        + _L("Select \"Yes\" to attempt slicing, but the software may lag or freeze.")
+                        + _L("\"Generate G-code Only\": finish slicing at full speed and skip the preview. You can load "
+                             "the preview afterwards from the notification.")
                         + "\n- "
-                        + _L("Select \"No\" to terminate the slicing task immediately.");
-                    RichMessageDialog dlg(this, msg,
-                        _L("Memory Usage Warning"), wxYES_NO | wxNO_DEFAULT | wxICON_WARNING);
-                    dlg.SetYesNoLabels(_L("Yes, Continue"), _L("No, Stop"));
+                        + _L("\"Stop\": stop slicing now.");
+                    RichMessageDialog dlg(this, msg, _L("Memory Usage Warning"), wxYES_NO | wxCANCEL | wxICON_WARNING);
+                    dlg.SetYesNoCancelLabels(_L("Continue"), _L("Generate G-code Only"), _L("Stop"));
+                    p->memory_guard_dialog = &dlg;
+                    const int answer = dlg.ShowModal();
+                    p->memory_guard_dialog = nullptr;
 
-                    bool result = (dlg.ShowModal() == wxID_YES);
-                    if (result) {
-                        // Skip toolpath preview to reduce memory usage on
-                        // the subsequent load_toolpaths / load_shells phase.
-                        this->p->preview->set_skip_toolpath_preview(true);
+                    if (answer == wxID_YES) {
+                        // Continue: stay on a single thread until slicing ends.
+                        BOOST_LOG_TRIVIAL(warning) << "Memory guard: user chose Continue";
+                    } else if (answer == wxID_NO) {
+                        BOOST_LOG_TRIVIAL(warning) << "Memory guard: user chose Generate G-code Only";
+                        p->preview->set_skip_toolpath_preview(true);
+                        print_ptr->release_memory_guard_throttle();
                     } else {
-                        // User chose to cancel: aggressively free the partial
-                        // slicing data to reclaim memory before the preview
-                        // page loads any rendering buffers.
-                        this->p->preview->set_skip_toolpath_preview(true);
-                        GCodeProcessorResult* gcode_res = this->p->preview->get_gcode_result();
-                        if (gcode_res != nullptr) {
-                            gcode_res->moves.clear();
-                            gcode_res->moves.shrink_to_fit();
-                        }
+                        // Stop, or the dialog was closed: as before, anything
+                        // but an explicit choice to go on stops slicing.
+                        BOOST_LOG_TRIVIAL(warning) << "Memory guard: user chose Stop";
+                        if (! p->background_process.idle())
+                            p->background_process.stop();
                     }
-                    promise->set_value(result);
                 });
-
-                return future.get();
             });
         }
     }

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <set>
+#include <sstream>
 
 using json = nlohmann::json;
 
@@ -188,6 +189,57 @@ bool sanitize_nil_arrays(const std::string&              json_text,
     return true;
 }
 
+// ---- dest matching (content-hash adoption) ----------------------------------------------------
+
+std::string info_inert(const std::string& src_info)
+{
+    std::istringstream       in(src_info);
+    std::vector<std::string> lines;
+    std::string              line;
+    bool                     had_sync = false;
+    while (std::getline(in, line)) {
+        std::string trimmed = line;
+        trimmed.erase(0, trimmed.find_first_not_of(" \t"));
+        if (trimmed.rfind("sync_info", 0) == 0) {
+            lines.push_back("sync_info = ");
+            had_sync = true;
+        } else {
+            lines.push_back(line);
+        }
+    }
+    if (!had_sync)
+        lines.push_back("sync_info = ");
+    std::string out;
+    for (const auto& l : lines)
+        out += l + "\n";
+    return out;
+}
+
+bool dest_matches_mirror(const SourceFile& f, const DestState& dst)
+{
+    auto bit = dst.bytes.find(f.rel);
+    if (bit == dst.bytes.end() || bit->second.empty() || f.body.empty())
+        return false;
+
+    const bool raw = bit->second == f.body;
+    bool       sanitized = false;
+    if (!raw) {
+        std::string fixed;
+        sanitized = sanitize_nil_arrays(f.body, dst.nullable_keys, &fixed) && bit->second == fixed;
+    }
+    if (!raw && !sanitized)
+        return false;
+
+    // base\ entries have no .info; a source with no sidecar is not rewritten either.
+    if (f.rel.find("/base/") != std::string::npos || f.info.empty())
+        return true;
+
+    auto iit = dst.info_bytes.find(f.rel);
+    if (iit == dst.info_bytes.end())
+        return false;
+    return iit->second == info_inert(f.info);
+}
+
 // ---- the plan ---------------------------------------------------------------------------------
 
 std::vector<PlanItem> build_plan(const SourceListing&                src,
@@ -220,10 +272,19 @@ std::vector<PlanItem> build_plan(const SourceListing&                src,
         item.t   = f.t;
 
         if (exists && !tracked) {
-            // Someone else's file at our path. We never own it, never overwrite it.
-            item.action = Action::ProtectNative;
-            item.t      = 0;
-            plan.push_back(item);
+            // Untracked dest whose bytes already equal what this run would write
+            // (raw, or the sanitized rewrite, plus the inert .info). Adopt it so
+            // a crash after the copy and before persist — or main's old
+            // non-atomic write — does not strand the file as ProtectNative.
+            // A byte-different dest stays someone else's file.
+            if (dest_matches_mirror(f, dst)) {
+                item.action = Action::Adopt;
+                plan.push_back(item);
+            } else {
+                item.action = Action::ProtectNative;
+                item.t      = 0;
+                plan.push_back(item);
+            }
             continue;
         }
 
@@ -289,6 +350,12 @@ std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& mani
             if (copied.count(p.rel))
                 out[p.rel] = Entry{p.t, false};
             break;
+        case Action::Adopt:
+            // Dest already matches; no file write. Always record so the next
+            // run treats it as ours (UpToDate / Copy-on-edit) instead of
+            // ProtectNative forever.
+            out[p.rel] = Entry{p.t, false};
+            break;
         case Action::RespectDelete:
             out[p.rel] = Entry{p.t, true};
             break;
@@ -328,6 +395,18 @@ bool commit_pending_copies(std::set<std::string>&              copied,
     copied = std::move(next);
     pending.clear();
     return true;
+}
+
+bool copy_run_ends_at(const std::vector<PlanItem>& plan, size_t i)
+{
+    if (i >= plan.size() || plan[i].action != Action::Copy)
+        return false;
+    return i + 1 == plan.size() || plan[i + 1].action != Action::Copy;
+}
+
+bool CopyBatch::should_flush(const std::vector<PlanItem>& plan, size_t i) const
+{
+    return !skip_remaining && copy_run_ends_at(plan, i);
 }
 
 // ---- source directory resolution ---------------------------------------------------------------

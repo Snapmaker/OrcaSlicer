@@ -244,7 +244,8 @@ TEST_CASE("a deletion is re-pulled once Bambu Studio edits the preset again", "[
 
 TEST_CASE("a fork-native preset is never touched", "[PresetMirror]")
 {
-    // Present on disk, absent from the manifest: we do not own it, even on a name collision.
+    // Present on disk, absent from the manifest, and not byte-equal to the source:
+    // we do not own it, even on a name collision. (Matching bytes are Adopt, below.)
     DestState dst;
     dst.present["filament/My Own.json"] = true;
 
@@ -543,4 +544,203 @@ TEST_CASE("write_manifest_bytes is atomic and a torn file is not produced", "[Pr
     src.files.push_back(sf("filament/A.json", 10));
     auto plan = build_plan(src, parse_manifest("{\"files\":{\"filament/A.json\":{\"t\":10"), dst);
     CHECK(action_for(plan, "filament/A.json") == Action::ProtectNative);
+}
+
+// ---- content-hash adoption (S1) + batch flush (S2) --------------------------------------------
+
+TEST_CASE("info_inert blanks sync_info the way the mirror writes the sidecar", "[PresetMirror]")
+{
+    CHECK(info_inert("user_id = 1\nsync_info = upload\nsetting_id = x\n")
+          == "user_id = 1\nsync_info = \nsetting_id = x\n");
+    CHECK(info_inert("user_id = 1\n") == "user_id = 1\nsync_info = \n");
+}
+
+TEST_CASE("dest_matches_mirror accepts raw or sanitized JSON and the inert .info", "[PresetMirror]")
+{
+    const std::string raw        = R"({"name":"A","nozzle_temperature":["230","nil"]})";
+    std::string       sanitized;
+    REQUIRE(sanitize_nil_arrays(raw, {}, &sanitized));
+    const std::string src_info   = "user_id = 1\nsync_info = upload\n";
+    const std::string dest_info  = info_inert(src_info);
+
+    SourceFile f = sf("filament/A.json", 10);
+    f.body = raw;
+    f.info = src_info;
+
+    DestState dst;
+    dst.present["filament/A.json"]    = true;
+    dst.bytes["filament/A.json"]      = raw;
+    dst.info_bytes["filament/A.json"] = dest_info;
+    CHECK(dest_matches_mirror(f, dst));
+
+    dst.bytes["filament/A.json"] = sanitized;
+    CHECK(dest_matches_mirror(f, dst));
+
+    dst.bytes["filament/A.json"] = R"({"name":"edited"})";
+    CHECK_FALSE(dest_matches_mirror(f, dst));
+
+    dst.bytes["filament/A.json"]      = raw;
+    dst.info_bytes["filament/A.json"] = src_info;   // raw sidecar, not inert
+    CHECK_FALSE(dest_matches_mirror(f, dst));
+
+    DestState no_info = dst;
+    no_info.bytes["filament/A.json"] = raw;
+    no_info.info_bytes.clear();
+    CHECK_FALSE(dest_matches_mirror(f, no_info));
+
+    SourceFile base = sf("filament/base/A.json", 10);
+    base.body = raw;
+    DestState base_dst;
+    base_dst.bytes["filament/base/A.json"] = raw;
+    CHECK(dest_matches_mirror(base, base_dst));   // base/ writes no .info
+
+    SourceFile empty;
+    empty.rel  = "filament/A.json";
+    empty.body = raw;
+    DestState missing;
+    missing.present["filament/A.json"] = true;
+    CHECK_FALSE(dest_matches_mirror(empty, missing));   // no dest bytes
+}
+
+TEST_CASE("a crash after copies land but before persist is healed by adoption", "[PresetMirror]")
+{
+    // Simulated kill: A, B, C landed on disk; the batch persist never ran.
+    // D and E were not copied. User.json is a byte-different untracked file.
+    const std::string info  = "user_id = 1\nsync_info = upload\n";
+    const std::string inert = info_inert(info);
+    auto mk = [&](const std::string& rel, long long t, const std::string& body) {
+        SourceFile f = sf(rel, t);
+        f.body       = body;
+        f.info       = info;
+        return f;
+    };
+
+    SourceListing src;
+    src.ok = true;
+    src.files.push_back(mk("filament/A.json", 10, R"({"name":"A"})"));
+    src.files.push_back(mk("filament/B.json", 10, R"({"name":"B"})"));
+    src.files.push_back(mk("filament/C.json", 10, R"({"name":"C"})"));
+    src.files.push_back(mk("filament/D.json", 10, R"({"name":"D"})"));
+    src.files.push_back(mk("filament/E.json", 10, R"({"name":"E"})"));
+    src.files.push_back(mk("filament/User.json", 10, R"({"name":"User"})"));
+
+    // Run 1 planned Copy of all five plus User. Only A,B,C landed; persist skipped.
+    auto plan1 = build_plan(src, {}, DestState{});
+    CHECK(action_for(plan1, "filament/A.json") == Action::Copy);
+    CHECK(action_for(plan1, "filament/E.json") == Action::Copy);
+    CHECK(apply_plan({}, plan1, {}).empty());   // kill: nothing recorded
+
+    DestState after_kill;
+    auto land = [&](const std::string& rel, const std::string& body) {
+        after_kill.present[rel]    = true;
+        after_kill.bytes[rel]      = body;
+        after_kill.info_bytes[rel] = inert;
+    };
+    land("filament/A.json", R"({"name":"A"})");
+    land("filament/B.json", R"({"name":"B"})");
+    land("filament/C.json", R"({"name":"C"})");
+    // User.json exists but is the user's own bytes — never adopt, never overwrite.
+    after_kill.present["filament/User.json"]    = true;
+    after_kill.bytes["filament/User.json"]      = R"({"name":"User-edited"})";
+    after_kill.info_bytes["filament/User.json"] = inert;
+
+    auto plan2 = build_plan(src, {}, after_kill);
+    CHECK(action_for(plan2, "filament/A.json") == Action::Adopt);
+    CHECK(action_for(plan2, "filament/B.json") == Action::Adopt);
+    CHECK(action_for(plan2, "filament/C.json") == Action::Adopt);
+    CHECK(action_for(plan2, "filament/D.json") == Action::Copy);
+    CHECK(action_for(plan2, "filament/E.json") == Action::Copy);
+    CHECK(action_for(plan2, "filament/User.json") == Action::ProtectNative);
+
+    // Adopt is recorded even though those rels are not in `copied`.
+    auto man = apply_plan({}, plan2, copies_of(plan2));
+    CHECK(man.count("filament/A.json"));
+    CHECK(man.count("filament/B.json"));
+    CHECK(man.count("filament/C.json"));
+    CHECK(man.count("filament/D.json"));
+    CHECK(man.count("filament/E.json"));
+    CHECK_FALSE(man.count("filament/User.json"));
+    CHECK(dump_manifest(man).find("\"deleted\"") != std::string::npos);   // format unchanged
+
+    // Later source edit of A, B, C: they are ours, so they update. User stays protected.
+    SourceListing edited = src;
+    edited.files[0].t    = 20;
+    edited.files[0].body = R"({"name":"A2"})";
+    edited.files[1].t    = 20;
+    edited.files[1].body = R"({"name":"B2"})";
+    edited.files[2].t    = 20;
+    edited.files[2].body = R"({"name":"C2"})";
+
+    DestState dest2 = after_kill;
+    dest2.present["filament/D.json"]    = true;
+    dest2.bytes["filament/D.json"]      = R"({"name":"D"})";
+    dest2.info_bytes["filament/D.json"] = inert;
+    dest2.present["filament/E.json"]    = true;
+    dest2.bytes["filament/E.json"]      = R"({"name":"E"})";
+    dest2.info_bytes["filament/E.json"] = inert;
+
+    auto plan3 = build_plan(edited, man, dest2);
+    CHECK(action_for(plan3, "filament/A.json") == Action::Copy);
+    CHECK(action_for(plan3, "filament/B.json") == Action::Copy);
+    CHECK(action_for(plan3, "filament/C.json") == Action::Copy);
+    CHECK(action_for(plan3, "filament/D.json") == Action::UpToDate);
+    CHECK(action_for(plan3, "filament/E.json") == Action::UpToDate);
+    CHECK(action_for(plan3, "filament/User.json") == Action::ProtectNative);
+    CHECK_FALSE(apply_plan(man, plan3, copies_of(plan3)).count("filament/User.json"));
+}
+
+TEST_CASE("an empty manifest plus matching dest bytes is adopted, not ProtectNative", "[PresetMirror]")
+{
+    // Heals files stranded by main's old non-atomic persist (torn -> empty manifest).
+    SourceFile f = sf("filament/A.json", 10);
+    f.body       = R"({"name":"A"})";
+    f.info       = "user_id = 1\n";
+    SourceListing src;
+    src.ok = true;
+    src.files.push_back(f);
+
+    DestState dst;
+    dst.present["filament/A.json"]    = true;
+    dst.bytes["filament/A.json"]      = f.body;
+    dst.info_bytes["filament/A.json"] = info_inert(f.info);
+
+    auto plan = build_plan(src, parse_manifest("{{{"), dst);
+    CHECK(action_for(plan, "filament/A.json") == Action::Adopt);
+    auto after = apply_plan({}, plan, {});
+    REQUIRE(after.count("filament/A.json") == 1);
+    CHECK(after["filament/A.json"].t == 10);
+    CHECK_FALSE(after["filament/A.json"].deleted);
+}
+
+TEST_CASE("copy_run_ends_at flushes the last Copy and a failed flush skips the rest", "[PresetMirror]")
+{
+    auto item = [](const std::string& rel, Action a) {
+        PlanItem p;
+        p.rel    = rel;
+        p.action = a;
+        p.t      = 10;
+        return p;
+    };
+    const std::vector<PlanItem> plan{
+        item("filament/A.json", Action::Copy),
+        item("filament/B.json", Action::Copy),
+        item("filament/C.json", Action::UpToDate),
+        item("filament/D.json", Action::Copy),
+        item("filament/E.json", Action::Copy),
+    };
+
+    CHECK_FALSE(copy_run_ends_at(plan, 0));
+    CHECK(copy_run_ends_at(plan, 1));
+    CHECK_FALSE(copy_run_ends_at(plan, 2));
+    CHECK_FALSE(copy_run_ends_at(plan, 3));
+    CHECK(copy_run_ends_at(plan, 4));
+    CHECK_FALSE(copy_run_ends_at(plan, 99));
+
+    CopyBatch batch;
+    CHECK_FALSE(batch.should_flush(plan, 0));
+    CHECK(batch.should_flush(plan, 1));
+    // Flush of A+B failed: D and E must not be copied.
+    batch.on_flush_failed();
+    CHECK(batch.skip_remaining);
+    CHECK_FALSE(batch.should_flush(plan, 4));
 }

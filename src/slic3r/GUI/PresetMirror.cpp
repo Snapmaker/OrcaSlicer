@@ -46,33 +46,22 @@ long long read_updated_time(const bfs::path& info_path)
     return 0;
 }
 
-// Copy an .info, forcing sync_info blank so the mirrored preset is inert to the fork's cloud
-// delete/upload gates (keeps user_id + setting_id + base_id).
-void copy_info_inert(const bfs::path& src_info, const bfs::path& dst_info)
-{
-    boost::system::error_code ec;
-    if (!bfs::exists(src_info, ec)) return;
-    std::ifstream in(src_info.string());
-    std::vector<std::string> lines;
-    std::string line;
-    bool had_sync = false;
-    while (std::getline(in, line)) {
-        std::string trimmed = line;
-        trimmed.erase(0, trimmed.find_first_not_of(" \t"));
-        if (trimmed.rfind("sync_info", 0) == 0) { lines.push_back("sync_info = "); had_sync = true; }
-        else lines.push_back(line);
-    }
-    if (!had_sync) lines.push_back("sync_info = ");
-    std::ofstream out(dst_info.string(), std::ios::binary | std::ios::trunc);
-    for (auto& l : lines) out << l << "\n";
-}
-
 std::string read_file(const bfs::path& p)
 {
     std::ifstream in(p.string(), std::ios::binary);
     std::ostringstream ss;
     ss << in.rdbuf();
     return ss.str();
+}
+
+// Copy an .info, forcing sync_info blank so the mirrored preset is inert to the fork's cloud
+// delete/upload gates (keeps user_id + setting_id + base_id).
+void copy_info_inert(const bfs::path& src_info, const bfs::path& dst_info)
+{
+    boost::system::error_code ec;
+    if (!bfs::exists(src_info, ec)) return;
+    std::ofstream out(dst_info.string(), std::ios::binary | std::ios::trunc);
+    out << mirror::info_inert(read_file(src_info));
 }
 
 // Every option this fork declares nullable, i.e. where a literal "nil" is a legal value. Any other
@@ -159,7 +148,8 @@ mirror::SourceListing list_source(const bfs::path& src_uid)
                 mirror::SourceFile f;
                 f.rel = std::string(typ) + "/base/" + it->path().filename().string();
                 f.t   = (long long) bfs::last_write_time(it->path(), ec);
-                f.parseable = source_is_usable(read_file(it->path()), nullable);
+                f.body = read_file(it->path());
+                f.parseable = source_is_usable(f.body, nullable);
                 out.files.push_back(f);
             }
         }
@@ -178,7 +168,10 @@ mirror::SourceListing list_source(const bfs::path& src_uid)
                 bfs::path info = it->path(); info.replace_extension(".info");
                 f.t = read_updated_time(info);
                 if (f.t == 0) f.t = (long long) bfs::last_write_time(it->path(), ec);
-                f.parseable = source_is_usable(read_file(it->path()), nullable);
+                f.body = read_file(it->path());
+                if (bfs::exists(info, ec))
+                    f.info = read_file(info);
+                f.parseable = source_is_usable(f.body, nullable);
                 out.files.push_back(f);
             }
         }
@@ -218,11 +211,21 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
             return 0;
         }
 
-        // Which of our tracked/listed files are on disk right now.
+        // Which of our tracked/listed files are on disk right now. Bytes are
+        // needed so an untracked dest that already matches can be adopted.
         mirror::DestState dst;
+        dst.nullable_keys = nullable_option_keys();
         auto note_present = [&](const std::string& rel) {
             bfs::path p = dst_root / bfs::path(rel);
-            dst.present[rel] = bfs::exists(p, ec);
+            const bool exists = bfs::exists(p, ec);
+            dst.present[rel] = exists;
+            if (!exists)
+                return;
+            dst.bytes[rel] = read_file(p);
+            bfs::path info = p;
+            info.replace_extension(".info");
+            if (bfs::exists(info, ec))
+                dst.info_bytes[rel] = read_file(info);
         };
         for (const auto& f : src.files) note_present(f.rel);
         for (const auto& kv : manifest) note_present(kv.first);
@@ -233,10 +236,10 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
         std::map<std::string, const mirror::SourceFile*> by_rel;
         for (const auto& f : src.files) by_rel[f.rel] = &f;
 
-        int copied = 0, uptodate = 0, native_protected = 0, respected = 0, skipped = 0, retired = 0, errors = 0, sanitized = 0;
+        int copied = 0, uptodate = 0, adopted = 0, native_protected = 0, respected = 0, skipped = 0, retired = 0, errors = 0, sanitized = 0;
         std::set<std::string>    copied_rels;
         std::vector<std::string> pending;
-        bool                     copies_refused = false;
+        mirror::CopyBatch        batch;
 
         auto flush_pending = [&]() -> bool {
             if (pending.empty())
@@ -253,14 +256,14 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
             const auto& item = plan[i];
             switch (item.action) {
             case mirror::Action::Copy: {
-                if (copies_refused) {
+                if (batch.skip_remaining) {
                     ++errors;
                     break;
                 }
                 InstanceLock::WriteScope write_scope;
                 if (!write_scope.allows()) {
                     BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] data directory became read-only; aborting remaining copies";
-                    copies_refused = true;
+                    batch.abort();
                     ++errors;
                     break;
                 }
@@ -301,18 +304,18 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
                 pending.push_back(item.rel);
                 // One atomic write at the end of a contiguous Copy run, under
                 // this scope, so a later lock steal cannot drop recorded entries.
-                const bool end_of_run = (i + 1 == plan.size() || plan[i + 1].action != mirror::Action::Copy);
-                if (end_of_run) {
+                if (batch.should_flush(plan, i)) {
                     if (flush_pending())
                         copied = static_cast<int>(copied_rels.size());
                     else {
                         ++errors;
-                        copies_refused = true;
+                        batch.on_flush_failed();
                     }
                 }
                 break;
             }
             case mirror::Action::UpToDate:        ++uptodate;         break;
+            case mirror::Action::Adopt:           ++adopted;          break;
             case mirror::Action::ProtectNative:   ++native_protected; break;
             case mirror::Action::RespectDelete:   ++respected;        break;
             case mirror::Action::SkipUnparseable: ++skipped;          break;
@@ -332,7 +335,7 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
         }
 
         BOOST_LOG_TRIVIAL(info) << "[preset-mirror] from " << src_uid.string()
-            << " -> copied=" << copied << " uptodate=" << uptodate
+            << " -> copied=" << copied << " uptodate=" << uptodate << " adopted=" << adopted
             << " fork_native_protected=" << native_protected << " user_deletions_respected=" << respected
             << " skipped_unparseable=" << skipped << " retired=" << retired
             << " nil_collapsed=" << sanitized

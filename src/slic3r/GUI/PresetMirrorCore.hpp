@@ -1,6 +1,7 @@
 #ifndef slic3r_GUI_PresetMirrorCore_hpp_
 #define slic3r_GUI_PresetMirrorCore_hpp_
 
+#include <cstddef>
 #include <functional>
 #include <string>
 #include <vector>
@@ -49,6 +50,8 @@ struct SourceFile {
     std::string rel;        // manifest key, always '/'-separated, e.g. "filament/Foo.json"
     long long   t = 0;      // updated_time from the .info, else mtime
     bool        parseable = true;  // the fork's config loader can read it (see preset_is_parseable)
+    std::string body;       // raw source JSON; needed to adopt an untracked dest by content
+    std::string info;       // raw source .info (empty when the source has none, e.g. base/)
 };
 
 // Outcome of listing the source tree. `ok` is the safety gate: false means we could not read the
@@ -92,6 +95,7 @@ bool sanitize_nil_arrays(const std::string&              json_text,
 enum class Action {
     Copy,          // new, or the source is newer than what we copied
     UpToDate,      // our copy matches the source
+    Adopt,         // untracked dest whose bytes already equal what we would write -> record, don't overwrite
     ProtectNative, // a fork-native file sits at this path and we don't own it -> never touch
     RespectDelete, // the user deleted our copy and the source has not changed -> record, don't re-pull
     SkipUnparseable, // the fork's loader would reject (and then delete) it -> never copy
@@ -108,7 +112,23 @@ struct PlanItem {
 struct DestState {
     // rel -> exists on disk in the fork's user\default
     std::map<std::string, bool> present;
+    // dest JSON bytes, keyed by rel. Only untracked dests with a populated
+    // entry can be adopted; missing/empty bytes stay ProtectNative.
+    std::map<std::string, std::string> bytes;
+    // dest .info bytes, keyed by the preset rel (not the .info path).
+    std::map<std::string, std::string> info_bytes;
+    // fork-nullable option keys, used when matching a sanitized dest.
+    std::vector<std::string>           nullable_keys;
 };
+
+// Blank sync_info the way the mirror writes a copied .info. Used both to write
+// the sidecar and to decide whether an untracked dest already matches it.
+std::string info_inert(const std::string& src_info);
+
+// True when dest JSON equals the raw source body or the sanitized rewrite the
+// mirror would write, and (when the mirror writes an .info) dest .info equals
+// info_inert(source .info). Empty/missing dest or source bytes never match.
+bool dest_matches_mirror(const SourceFile& f, const DestState& dst);
 
 // Build the full plan. This is the whole decision procedure, and it is total: every rel in the
 // listing and every rel in the manifest gets exactly one PlanItem.
@@ -121,14 +141,30 @@ std::vector<PlanItem> build_plan(const SourceListing&               src,
                                  const DestState&                   dst);
 
 // Apply a plan to a manifest, returning the new manifest. RespectDelete updates
-// entries, Retire drops them, everything else except Copy leaves the manifest
-// alone. Copy is recorded only for rels in `copied` — a refused or failed copy
-// (or a copy whose manifest write failed) stays pending so the next run retries
-// it instead of treating it as done or as a user deletion. There is no
-// two-argument overload: omitting `copied` used to record every planned Copy.
+// entries, Retire drops them, Adopt is always recorded (the dest already
+// matches; no file write). Copy is recorded only for rels in `copied` — a
+// refused or failed copy (or a copy whose manifest write failed) stays pending
+// so the next run retries it instead of treating it as done or as a user
+// deletion. There is no two-argument overload: omitting `copied` used to
+// record every planned Copy.
 std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& manifest,
                                         const std::vector<PlanItem>&        plan,
                                         const std::set<std::string>&        copied);
+
+// True when plan[i] is Copy and the next item is not (or i is last). The GUI
+// flushes the pending batch at that boundary so a later lock steal cannot
+// drop already-landed copies.
+bool copy_run_ends_at(const std::vector<PlanItem>& plan, size_t i);
+
+// End-of-run flush + "flush failed, skip remaining copies". Factored out of
+// the GUI so the skip decision is testable without wxWidgets.
+struct CopyBatch {
+    bool skip_remaining = false;
+
+    bool should_flush(const std::vector<PlanItem>& plan, size_t i) const;
+    void on_flush_failed() { skip_remaining = true; }
+    void abort() { skip_remaining = true; }
+};
 
 // Atomic replace of the manifest file (write_file_atomically, binary). A
 // crash or full disk leaves the previous complete file, which parse_manifest

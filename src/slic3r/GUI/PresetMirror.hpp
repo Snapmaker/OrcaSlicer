@@ -11,6 +11,8 @@ namespace Slic3r { namespace GUI {
 //  - copies only when the fork copy is missing OR older than the BS preset (updated_time / mtime);
 //  - manifest-tracked (user\default\.bs_mirror_manifest.json): it only ever touches files it owns,
 //    so fork-native presets are never overwritten (name collisions: fork-native wins at load);
+//    an untracked dest whose bytes already equal what this run would write (raw or sanitized,
+//    plus the inert .info) is adopted as mirrored rather than stranded as ProtectNative;
 //  - respects a user deletion of a mirrored preset (won't re-pull it unless BS edited it since);
 //  - blanks sync_info in the copied .info so the mirrored presets are inert to the fork's cloud
 //    delete/upload paths; carries the base\ inheritance cache so inherits resolve;

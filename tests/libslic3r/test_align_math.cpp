@@ -425,3 +425,43 @@ TEST_CASE("AlignMath origin config keys round-trip", "[AlignMath]")
     REQUIRE(int(Origin::Min) == 2);
     REQUIRE(int(Origin::Max) == 3);
 }
+
+TEST_CASE("AlignMath origin dropdown spans exactly its button group", "[AlignMath]")
+{
+    // Window-local item edges of three groups of 3 buttons (37 px wide), 16 px apart, at any scale.
+    for (double scale : {1.0, 1.5, 2.0}) {
+        const double button = 37. * scale, gap = 16. * scale, start = 120. * scale;
+        double       left[3], right[3];
+        for (int g = 0; g < 3; ++g) {
+            left[g]  = start + g * (3. * button + gap);
+            right[g] = left[g] + 3. * button;
+            REQUIRE_THAT(combo_frame_width(left[g], right[g]), WithinAbs(3. * button, TOL));
+        }
+        // The dropdown row never reaches past the last group's right edge.
+        REQUIRE_THAT(left[2] + combo_frame_width(left[2], right[2]), WithinAbs(right[2], TOL));
+        // Groups with a fourth (Distribute) button are simply wider.
+        REQUIRE_THAT(combo_frame_width(left[0], right[0] + button), WithinAbs(4. * button, TOL));
+    }
+    REQUIRE(combo_frame_width(50., 40.) == 0.); // degenerate input never goes negative
+}
+
+TEST_CASE("AlignMath ellipsize", "[AlignMath]")
+{
+    const auto mono = [](const std::string &s) {
+        double n = 0;
+        for (unsigned char c : s)
+            if ((c & 0xC0) != 0x80) n += 10.; // 10 px per code point
+        return n;
+    };
+    REQUIRE(ellipsize("Bottom", 60., mono) == "Bottom");  // fits exactly
+    REQUIRE(ellipsize("Bottom", 59., mono) == "Bo...");   // 5 code points = 50 px
+    REQUIRE(ellipsize("Bottom", 30., mono) == "...");
+    REQUIRE(ellipsize("Bottom", 5., mono) == "...");      // even the dots do not fit: still just dots
+    REQUIRE(ellipsize("", 0., mono) == "");
+    // UTF-8: never cuts inside a code point.
+    const std::string r = ellipsize("\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9", 50., mono); // four e-acute, 40 px
+    REQUIRE(r == "\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9");
+    const std::string c = ellipsize("éééééé", 45., mono); // six e-acute, 60 px
+    REQUIRE(c == "\xC3\xA9...");
+    REQUIRE(mono(c) <= 45.);
+}

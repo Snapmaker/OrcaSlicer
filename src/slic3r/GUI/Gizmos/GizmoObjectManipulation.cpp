@@ -1011,12 +1011,11 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
             if (selection.is_single_full_object() || selection.is_multiple_full_object()) {
                 auto *plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
                 parent_box  = plate->get_plate_box();
-                // Z: the floor is the bed itself and the ceiling is the selection's own top (so Z
-                // is a no-op for an object resting on the bed, as before). The build volume's
-                // small safety margin and the 0.1 mm shrink are not wanted in Z: the alignment
-                // commit no longer drops floating instances back onto the bed afterwards.
+                // Z: floor = the bed itself, ceiling = the build height, so Z works like X/Y: Bottom
+                // sits on the bed, Top touches the ceiling, Center is mid-height. No 0.1 mm shrink in Z,
+                // and the alignment commit does not drop floating instances back onto the bed, so a
+                // result above or below the bed stays where the user put it.
                 parent_box.min[2] = plate->get_origin().z();
-                parent_box.max[2] = std::max(parent_box.min[2], selection.get_bounding_box().max[2]);
                 // X/Y: keep the objects 0.1 mm inside the plate when an edge goes to the same-side
                 // plate edge (AlignMath applies it only there; centre targets stay exact).
                 edge_inset = Vec3d(0.1, 0.1, 0.0);
@@ -1038,9 +1037,8 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
         if (!m_align_origin_loaded)
             load_align_origins();
         const bool inter_item = m_align_choice_type == AlignChoiceType::AlignPartOrObject;
-        const bool show_z     = show_align_parts_objects || is_part_node;
         const bool any_origin = m_align_origin[0] != AlignMath::Origin::Auto || m_align_origin[1] != AlignMath::Origin::Auto ||
-                                (show_z && m_align_origin[2] != AlignMath::Origin::Auto);
+                                m_align_origin[2] != AlignMath::Origin::Auto;
         const float row_left_x = ImGui::GetCursorPosX();
 
         // Inter-item mode: say which item stays put (the last one selected).
@@ -1075,7 +1073,11 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
         // reserved here, the icons are drawn below it, and the dropdowns are drawn afterwards.
         const float origin_row_y = ImGui::GetCursorPosY();
         const float start_y      = origin_row_y + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
-        float       group_x[3]   = {0.f, 0.f, 0.f};
+        float       group_l[3]   = {0.f, 0.f, 0.f};
+        float       group_r[3]   = {0.f, 0.f, 0.f};
+        // Screen-space item rect edges converted to the window-local coordinates SetCursorPos uses.
+        auto item_left  = [] { return ImGui::GetItemRectMin().x - ImGui::GetWindowPos().x + ImGui::GetScrollX(); };
+        auto item_right = [] { return ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetScrollX(); };
         float       text_height   = ImGui::GetTextLineHeight();
         float       button_height = icon_size + ImGui::GetStyle().FramePadding.y * 2.0f;
         float       max_h         = std::max(text_height, button_height);
@@ -1090,11 +1092,11 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
         float start_x = caption_max + space_size * 1.5;
         ImGui::SameLine(start_x);
         ImGui::SetCursorPosY(start_y + (max_h - button_height) * 0.5f);
-        group_x[0] = ImGui::GetCursorPosX();
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(61.f / 255.f, 203.f / 255.f, 115.f / 255.f, 1.f));
         show_align_icon(imgui_wrapper, temp_tip_caption_max, GLGizmoAlignment::AlignType::X_MIN,
                         (int) (is_dark_mode ? GLGizmosManager::MENU_ICON_NAME::IC_ALIGN_X_MIN_DARK : GLGizmosManager::MENU_ICON_NAME::IC_ALIGN_X_MIN), icon_size,
                         _L("Align left") + " (-X)", "");
+        group_l[0] = item_left();
         ImGui::SameLine(0, button_spacing);
         show_align_icon(imgui_wrapper, temp_tip_caption_max, GLGizmoAlignment::AlignType::CENTER_X,
                         (int) (is_dark_mode ? GLGizmosManager::MENU_ICON_NAME::IC_ALIGN_X_CENTER_DARK : GLGizmosManager::MENU_ICON_NAME::IC_ALIGN_X_CENTER), icon_size,
@@ -1110,15 +1112,16 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
                             _L("Distribute left-right") + " (X)", _L("Please select at least 3 parts or objects"), true);
         }
 
+        group_r[0] = item_right();
         // Chain the Y/Z groups after the X group with an explicit gap instead of absolute
         // offsets: BBS's unit_size-based offsets land short of the X row's end with this
         // panel's metrics, drawing "Align front" on top of "Align right".
         float group_gap = space_size * 2.0f;
         ImGui::SameLine(0, group_gap);
-        group_x[1] = ImGui::GetCursorPosX();
         show_align_icon(imgui_wrapper, temp_tip_caption_max, GLGizmoAlignment::AlignType::Y_MIN,
                         (int) (is_dark_mode ? GLGizmosManager::MENU_ICON_NAME::IC_ALIGN_Y_MIN_DARK : GLGizmosManager::MENU_ICON_NAME::IC_ALIGN_Y_MIN), icon_size,
                         _L("Align front") + " (-Y)", "");
+        group_l[1] = item_left();
         ImGui::SameLine(0, button_spacing);
         show_align_icon(imgui_wrapper, temp_tip_caption_max, GLGizmoAlignment::AlignType::CENTER_Y,
                         (int) (is_dark_mode ? GLGizmosManager::MENU_ICON_NAME::IC_ALIGN_Y_CENTER_DARK : GLGizmosManager::MENU_ICON_NAME::IC_ALIGN_Y_CENTER), icon_size,
@@ -1133,12 +1136,13 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
                             (int) (is_dark_mode ? GLGizmosManager::MENU_ICON_NAME::IC_DISTRIBUTE_Y_DARK : GLGizmosManager::MENU_ICON_NAME::IC_DISTRIBUTE_Y), icon_size,
                             _L("Distribute front-back") + " (Y)", _L("Please select at least 3 parts or objects"), true);
         }
-        if (show_z) {
+        group_r[1] = item_right();
+        {
             ImGui::SameLine(0, group_gap);
-            group_x[2] = ImGui::GetCursorPosX();
             show_align_icon(imgui_wrapper, temp_tip_caption_max, GLGizmoAlignment::AlignType::Z_MIN,
                             (int) (is_dark_mode ? GLGizmosManager::MENU_ICON_NAME::IC_ALIGN_Z_MIN_DARK : GLGizmosManager::MENU_ICON_NAME::IC_ALIGN_Z_MIN), icon_size,
                             _L("Align bottom") + " (-Z)", "");
+            group_l[2] = item_left();
             ImGui::SameLine(0, button_spacing);
             show_align_icon(imgui_wrapper, temp_tip_caption_max, GLGizmoAlignment::AlignType::CENTER_Z,
                             (int) (is_dark_mode ? GLGizmosManager::MENU_ICON_NAME::IC_ALIGN_Z_CENTER_DARK : GLGizmosManager::MENU_ICON_NAME::IC_ALIGN_Z_CENTER), icon_size,
@@ -1154,15 +1158,14 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
                             (int) (is_dark_mode ? GLGizmosManager::MENU_ICON_NAME::IC_DISTRIBUTE_Z_DARK : GLGizmosManager::MENU_ICON_NAME::IC_DISTRIBUTE_Z), icon_size,
                             _L("Distribute top-bottom") + " (Z)", _L("Please select at least 3 parts or objects"), true);
         }
+        group_r[2] = item_right();
         ImGui::PopStyleColor();
 
-        // Origin dropdowns, one over each axis group. Width comes from the longest entry measured
-        // in the current font (so it follows DPI scaling and translations) and is capped at the
-        // group's three buttons so the row can never widen the panel.
+        // Origin dropdowns, one over each axis group. Each spans exactly its group: left edge on
+        // the first button's left edge, right edge on the last button's right edge, taken from the
+        // item rects drawn above, so it holds at any DPI scale and for any translation. A text
+        // that does not fit is ellipsised, never allowed to widen the panel.
         {
-            const ImGuiStyle &style      = ImGui::GetStyle();
-            const float       frame_h    = ImGui::GetFrameHeight();
-            const float       group_w    = 3.f * (icon_size + 2.f * style.FramePadding.x);
             ImGuiWrapper::push_combo_style(m_glcanvas.get_scale());
             ImGui::SetCursorPos(ImVec2(row_left_x, origin_row_y));
             ImGui::AlignTextToFramePadding();
@@ -1173,13 +1176,8 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
                                                   : _L("Which point of the selection's bounding box is brought to the target. Auto uses the same "
                                                        "side as the button (edge to edge, center to center)."),
                                        ImGui::GetFontSize() * 20.0f);
-            for (int axis = 0; axis < (show_z ? 3 : 2); ++axis) {
-                float text_w = 0.f;
-                for (const std::string &entry : align_origin_labels(axis))
-                    text_w = std::max(text_w, imgui_wrapper->calc_text_size(entry).x);
-                const float frame_w = std::min(text_w + 2.f * style.FramePadding.x + frame_h, group_w);
-                render_align_origin_combo(imgui_wrapper, axis, group_x[axis], origin_row_y, frame_w);
-            }
+            for (int axis = 0; axis < 3; ++axis)
+                render_align_origin_combo(imgui_wrapper, axis, group_l[axis], origin_row_y, AlignMath::combo_frame_width(group_l[axis], group_r[axis]));
             ImGuiWrapper::pop_combo_style();
         }
         ImGui::SetCursorPosY(start_y + max_h + ImGui::GetStyle().ItemSpacing.y);
@@ -1368,7 +1366,10 @@ bool GizmoObjectManipulation::render_align_origin_combo(ImGuiWrapper *imgui_wrap
         ImGui::PushStyleColor(ImGuiCol_Border, ImGuiWrapper::COL_ORCA);
         pushed = 3;
     }
-    const bool open = ImGui::BBLBeginCombo("##align_origin", lines[idx].c_str(), 0);
+    // Text space in the preview: after the arrow block, between the frame paddings. Ellipsise, never widen.
+    const float text_space = frame_width - arrow - 2.f * ImGui::GetStyle().FramePadding.x;
+    const std::string preview = AlignMath::ellipsize(lines[idx], text_space, [&](const std::string &s) { return (double) imgui_wrapper->calc_text_size(s).x; });
+    const bool open = ImGui::BBLBeginCombo("##align_origin", preview.c_str(), 0);
     if (pushed > 0)
         ImGui::PopStyleColor(pushed);
     const bool hovered = ImGui::IsItemHovered();

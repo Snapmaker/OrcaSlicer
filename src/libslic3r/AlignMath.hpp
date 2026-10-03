@@ -158,5 +158,37 @@ inline std::vector<double> axis_offsets(const std::vector<Span> &spans, const Ax
     return out;
 }
 
+// ---- Panel layout helpers (pure, so they can be tested without an ImGui context) ----
+
+// An origin dropdown spans exactly its button group: from the first button's left edge to the
+// last button's right edge (both window-local x). The result is the combo's visible frame width.
+inline double combo_frame_width(double group_left, double group_right)
+{
+    return std::max(0., group_right - group_left);
+}
+
+// Shortens `text` with a trailing "..." until measure(text) <= max_width, removing whole UTF-8
+// code points. Text that already fits is returned unchanged; if even "..." does not fit, the
+// result is "...". `measure` returns the rendered width of a string.
+template<class Measure>
+std::string ellipsize(const std::string &text, double max_width, Measure measure)
+{
+    if (measure(text) <= max_width)
+        return text;
+    static const std::string dots = "...";
+    std::string              cut  = text;
+    while (!cut.empty()) {
+        // Drop the last code point: the continuation bytes (10xxxxxx) and then its lead byte.
+        unsigned char removed;
+        do {
+            removed = static_cast<unsigned char>(cut.back());
+            cut.pop_back();
+        } while (!cut.empty() && (removed & 0xC0) == 0x80);
+        if (measure(cut + dots) <= max_width)
+            return cut + dots;
+    }
+    return dots;
+}
+
 } // namespace AlignMath
 } // namespace Slic3r

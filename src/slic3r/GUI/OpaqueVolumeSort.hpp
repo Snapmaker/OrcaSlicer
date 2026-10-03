@@ -8,8 +8,8 @@ namespace Slic3r {
 // Transparent volumes keep their existing far-to-near sort in volumes_to_render.
 //
 // The comparator is pure so Catch2 can pin the order without a GL harness.
-// Equal keys compare equivalent (neither is less), so a stable sort keeps
-// input order when selected and eye_z both match.
+// Equal keys compare equivalent (neither is less). volumes_to_render uses
+// std::sort, so equal-depth order is unspecified.
 
 struct OpaqueVolumeSortKey
 {

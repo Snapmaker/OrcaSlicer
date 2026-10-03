@@ -53,7 +53,8 @@ TEST_CASE("A single-object selection gives the gizmo that object", "[GizmoSelect
 }
 
 // Orca #15884 Stage A: opaque draw order is selected first, then nearest (higher
-// eye-space z) first. Equal z is equivalent so a stable sort keeps input order.
+// eye-space z) first. Equal keys compare equivalent; equal-depth order is
+// unspecified (volumes_to_render uses std::sort).
 TEST_CASE("Opaque volumes draw selected first, then nearest first", "[OpaqueVolumeSort]")
 {
     REQUIRE(opaque_volume_front_to_back_less({true, -100.0}, {false, -1.0}));

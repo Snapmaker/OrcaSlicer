@@ -147,6 +147,13 @@ TEST_CASE("write_file_atomically writes the full content and leaves no temporary
     std::string err;
     REQUIRE(write_file_atomically(target.string(), body, &err));
     REQUIRE(err.empty());
+#ifdef _WIN32
+    // Text mode, like the ofstreams this replaces: Windows writes CRLF.
+    REQUIRE(slurp(target) == "{\r\n  \"name\": \"atomic\"\r\n}\r\n");
+#else
+    REQUIRE(slurp(target) == body);
+#endif
+    REQUIRE(write_file_atomically(target.string(), body, &err, /*binary=*/true));
     REQUIRE(slurp(target) == body);
 
     size_t entries = 0;

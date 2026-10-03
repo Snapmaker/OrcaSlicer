@@ -143,8 +143,13 @@ view. Textured (image) panels and buttons are not supported.
 
 The U1 Device tab and the pre-print / pre-send pages are Snapmaker's compiled Flutter app
 (`resources/web/flutter_web`). They use the app's own light or dark theme, following the
-slicer's dark mode (a dark theme pack counts), and switch live on a theme change. Theme pack
-colours do not reach them: the app's dark theme has its own fixed colours.
+slicer's dark mode (a dark theme pack counts), and switch live on a theme change. In dark mode
+their near-black page, panel and title-bar colours are replaced by the slicer's window background,
+panel background and button background (stock `#2D2D31`, `#36363C`, `#3E3E45`, or the active
+theme's `window_bg`, `panel_bg` and `button_bg`), sent by `WebView::FlutterDarkColours` as URL
+parameters and through `edgeSetDarkMode`. The app builds its dark colours once, so a change of
+those colours (another dark theme) reloads the page; switching between light and dark does not.
+Text, accent and filament colours stay the app's own.
 
 Snapmaker's bundle always starts in light mode, so it is patched by
 `scripts/patch_flutter_web_dark.py`: one statement in `main.<hash>.js` (theme follows
@@ -152,8 +157,9 @@ Snapmaker's bundle always starts in light mode, so it is patched by
 `dark_mode=` parameter and adds `window.edgeSetDarkMode()` (called by
 `WebView::ApplyFlutterTheme`), a set of widget colour patches for the places Snapmaker's dark
 theme leaves bright (the Device tab's title bars and empty panels, the pre-print page's printer
-dropdown, image boxes, check circles and progress bar; light mode is untouched), dark copies of
-the two empty-panel pictures (`*_dark.png`, made with Pillow), and new content-hash names for the
+dropdown, image boxes, check circles and progress bar; light mode is untouched), the slicer's
+greys in the app's dark ColorScheme, dark copies of the two empty-panel pictures (`*_dark.png`,
+light drawing on a transparent background, made with Pillow), and new content-hash names for the
 patched files.
 
 **Re-run `python scripts/patch_flutter_web_dark.py` after every update of the Snapmaker web

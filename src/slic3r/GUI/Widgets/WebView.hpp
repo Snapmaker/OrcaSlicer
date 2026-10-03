@@ -3,6 +3,10 @@
 
 #include <wx/webview.h>
 
+#include <string>
+#include <utility>
+#include <vector>
+
 class WebView
 {
 public:
@@ -32,11 +36,16 @@ public:
 
     // True while the view shows one of the bundled Flutter pages (resources/web/flutter_web).
     static bool IsFlutterPage(wxWebView *webView);
-    // Dark mode for a Flutter page: tells the page the slicer's dark mode (window.edgeSetDarkMode,
-    // added by scripts/patch_flutter_web_dark.py), and the app switches to its own dark or light
-    // theme live. Runs on every page load of every view and on theme changes; does nothing on
-    // other pages.
+    // Dark mode for a Flutter page: tells the page the slicer's dark mode and dark greys
+    // (window.edgeSetDarkMode, added by scripts/patch_flutter_web_dark.py), and the app switches to
+    // its own dark or light theme live (new greys, after a theme pack change, reload the page).
+    // Runs on every page load of every view and on theme changes; does nothing on other pages.
     static void ApplyFlutterTheme(wxWebView *webView);
+    // The greys those pages use in dark mode in place of the app's near-black ones, as
+    // (role, "#RRGGBB"): "bg" the window background, "card" the panel background, "strip" the
+    // button background - a dark theme pack's colours when one is active, else the stock dark
+    // ones (also in light mode, so a later switch to dark matches what the page started with).
+    static std::vector<std::pair<std::string, std::string>> FlutterDarkColours();
 };
 
 #endif // !slic3r_GUI_WebView_hpp_

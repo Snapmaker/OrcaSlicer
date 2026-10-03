@@ -667,10 +667,39 @@ void WebView::ApplyFlutterTheme(wxWebView *webView)
     if (!IsFlutterPage(webView))
         return;
     // index.html defines edgeSetDarkMode (scripts/patch_flutter_web_dark.py); the app follows it
-    // with its own dark theme, live. The page also starts from its dark_mode= URL parameter, which
-    // can be out of date after a theme change, hence on every load too.
-    RunScript(webView, wxString::Format("window.edgeSetDarkMode && window.edgeSetDarkMode(%s);",
-                                        Slic3r::GUI::wxGetApp().dark_mode() ? "true" : "false"));
+    // with its own dark theme, live. The page also starts from its dark_mode= and dark_<role>= URL
+    // parameters, which can be out of date after a theme change, hence on every load too.
+    std::string colours;
+    for (const auto &[role, hex] : FlutterDarkColours())
+        colours += (colours.empty() ? "" : ",") + role + ":'" + hex + "'";
+    RunScript(webView, wxString::Format("window.edgeSetDarkMode && window.edgeSetDarkMode(%s, {%s});",
+                                        Slic3r::GUI::wxGetApp().dark_mode() ? "true" : "false", wxString::FromUTF8(colours)));
+}
+
+std::vector<std::pair<std::string, std::string>> WebView::FlutterDarkColours()
+{
+    // The stock light colour each role stands for (GUI/Widgets/StateColor.cpp): the window
+    // background (dark #2D2D31), the panel background (#36363C) and the button background (#3E3E45),
+    // which a theme pack recolours as window_bg, panel_bg and button_bg.
+    static const std::pair<const char *, const char *> roles[] = {{"bg", "#FFFFFF"}, {"card", "#F8F8F8"}, {"strip", "#DFDFDF"}};
+    const auto &stock = StateColor::GetDarkMap();
+    auto stock_dark = [&stock](const wxColour &light) {
+        auto it = stock.find(light);
+        return it != stock.end() ? it->second : light;
+    };
+    const bool dark = Slic3r::GUI::wxGetApp().dark_mode();
+    std::vector<std::pair<std::string, wxColour>> picked;
+    for (const auto &[role, light] : roles)
+        picked.emplace_back(role, dark ? StateColor::darkModeColorFor(wxColour(light)) : stock_dark(wxColour(light)));
+    // A dark look whose window background is not dark after all: the stock greys.
+    const wxColour &bg = picked.front().second;
+    if (!bg.IsOk() || 0.2126 * bg.Red() + 0.7152 * bg.Green() + 0.0722 * bg.Blue() > 110)
+        for (size_t i = 0; i < picked.size(); ++i)
+            picked[i].second = stock_dark(wxColour(roles[i].second));
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const auto &[role, colour] : picked)
+        out.emplace_back(role, colour.GetAsString(wxC2S_HTML_SYNTAX).ToStdString());
+    return out;
 }
 
 void WebView::SetReloadOnThemeChange(wxWebView *webView, bool reload)

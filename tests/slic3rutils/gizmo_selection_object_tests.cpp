@@ -1,10 +1,15 @@
 #include <catch2/catch.hpp>
 
+#include <algorithm>
+#include <utility>
+#include <vector>
+
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "slic3r/GUI/Gizmos/GizmoSelectionObject.hpp"
+#include "slic3r/GUI/OpaqueVolumeSort.hpp"
 #include "slic3r/GUI/SequentialPrintClearance.hpp"
 
 #include <algorithm>
@@ -304,4 +309,37 @@ TEST_CASE("Sequential clearance keeps object order when sorting copies", "[Seque
     CHECK(instances[1].instance_id == ObjectID(4));
     CHECK(instances[2].instance_id == ObjectID(1));
     CHECK(instances[3].instance_id == ObjectID(2));
+}
+
+// Orca #15884 Stage A: opaque draw order is selected first, then nearest (higher
+// eye-space z) first. Equal keys compare equivalent; equal-depth order is
+// unspecified (volumes_to_render uses std::sort).
+TEST_CASE("Opaque volumes draw selected first, then nearest first", "[OpaqueVolumeSort]")
+{
+    REQUIRE(opaque_volume_front_to_back_less({true, -100.0}, {false, -1.0}));
+    REQUIRE_FALSE(opaque_volume_front_to_back_less({false, -1.0}, {true, -100.0}));
+
+    REQUIRE(opaque_volume_front_to_back_less({false, -1.0}, {false, -10.0}));
+    REQUIRE_FALSE(opaque_volume_front_to_back_less({false, -10.0}, {false, -1.0}));
+    REQUIRE(opaque_volume_front_to_back_less({true, -1.0}, {true, -10.0}));
+
+    REQUIRE_FALSE(opaque_volume_front_to_back_less({false, -3.0}, {false, -3.0}));
+    REQUIRE_FALSE(opaque_volume_front_to_back_less({true, 1.0}, {true, 1.0}));
+
+    std::vector<std::pair<OpaqueVolumeSortKey, int>> items = {
+        {{false, -10.0}, 0},
+        {{true, -50.0},  1},
+        {{false, -1.0},  2},
+        {{true, -2.0},   3},
+        {{false, -1.0},  4},
+    };
+    std::stable_sort(items.begin(), items.end(), [](const auto &a, const auto &b) {
+        return opaque_volume_front_to_back_less(a.first, b.first);
+    });
+
+    REQUIRE(items[0].second == 3);
+    REQUIRE(items[1].second == 1);
+    REQUIRE(items[2].second == 2);
+    REQUIRE(items[3].second == 4);
+    REQUIRE(items[4].second == 0);
 }

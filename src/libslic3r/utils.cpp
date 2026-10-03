@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <locale>
@@ -701,6 +702,7 @@ bool posix_rename_worth_retrying(int err)
 
 static std::atomic<AtomicPosixRenameFn> s_posix_rename_hook{nullptr};
 static std::atomic<AtomicWriteTempInspectFn> s_temp_inspect_hook{nullptr};
+static std::atomic<AtomicWriteTempInspectFn> s_temp_create_hook{nullptr};
 
 void set_atomic_posix_rename_hook(AtomicPosixRenameFn hook)
 {
@@ -710,6 +712,11 @@ void set_atomic_posix_rename_hook(AtomicPosixRenameFn hook)
 void set_atomic_write_temp_inspect_hook(AtomicWriteTempInspectFn hook)
 {
 	s_temp_inspect_hook.store(hook);
+}
+
+void set_atomic_write_temp_create_hook(AtomicWriteTempInspectFn hook)
+{
+	s_temp_create_hook.store(hook);
 }
 
 static int atomic_posix_rename(const char *from, const char *to)
@@ -790,10 +797,27 @@ std::error_code rename_file(const std::string &from, const std::string &to)
 #endif
 }
 
+static const std::string &atomic_write_launch_token()
+{
+	static const std::string token = [] {
+		const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+		                    std::chrono::steady_clock::now().time_since_epoch())
+		                    .count();
+		return std::to_string(static_cast<unsigned long long>(ns));
+	}();
+	return token;
+}
+
+static std::string format_atomic_write_temp_path(const std::string &path, unsigned n)
+{
+	return path + "." + std::to_string(get_current_pid()) + "." + atomic_write_launch_token() + "." +
+	       std::to_string(n) + ".tmp";
+}
+
 std::string atomic_write_temp_path(const std::string &path, bool consume)
 {
 	const unsigned n = consume ? s_atomic_write_counter.fetch_add(1u) : s_atomic_write_counter.load();
-	return path + "." + std::to_string(get_current_pid()) + "." + std::to_string(n) + ".tmp";
+	return format_atomic_write_temp_path(path, n);
 }
 
 bool write_file_atomically(const std::string &path, const std::string &data, std::string *err, bool binary)
@@ -817,13 +841,17 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 	const boost::filesystem::file_status target_st = boost::filesystem::status(path, bec);
 	const bool target_exists = !bec && boost::filesystem::exists(target_st);
 
-	const std::string tmp = atomic_write_temp_path(path, true);
+	std::string tmp;
 	errno = 0;
 #ifdef _WIN32
 	// rename_file tries ReplaceFileW first so the destination DACL, attributes
 	// and ADS are kept; MoveFileEx is only the missing-target / unsupported-fs
 	// fallback and does not preserve the DACL.
-	FILE *file = boost::nowide::fopen(tmp.c_str(), binary ? "wb" : "w");
+	FILE *file = nullptr;
+	for (int attempt = 0; attempt < ATOMIC_WRITE_TEMP_ATTEMPTS && file == nullptr; ++attempt) {
+		tmp  = atomic_write_temp_path(path, true);
+		file = boost::nowide::fopen(tmp.c_str(), binary ? "wb" : "w");
+	}
 	if (file == nullptr) {
 		if (err)
 			*err = std::string("cannot create temporary file ") + tmp + ": " + std::strerror(errno);
@@ -835,19 +863,36 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 #ifdef O_CLOEXEC
 	flags |= O_CLOEXEC;
 #endif
-	// Kernel applies the process umask; we never call umask() ourselves.
-	const int fd = ::open(tmp.c_str(), flags, 0666);
+	// Existing targets are created 0600 so a racing open cannot grab a
+	// world-readable fd. New files use 0666 and the kernel applies the umask.
+	const mode_t create_mode = target_exists ? static_cast<mode_t>(0600) : static_cast<mode_t>(0666);
+	int          fd          = -1;
+	int          last_err    = 0;
+	for (int attempt = 0; attempt < ATOMIC_WRITE_TEMP_ATTEMPTS; ++attempt) {
+		tmp       = atomic_write_temp_path(path, true);
+		errno     = 0;
+		fd        = ::open(tmp.c_str(), flags, create_mode);
+		last_err  = errno;
+		if (fd >= 0)
+			break;
+		if (last_err != EEXIST)
+			break;
+	}
 	if (fd < 0) {
 		if (err)
-			*err = std::string("cannot create temporary file ") + tmp + ": " + std::strerror(errno);
+			*err = std::string("cannot create temporary file ") + tmp + ": " + std::strerror(last_err);
 		return false;
 	}
 	struct stat created_st;
-	mode_t      default_mode = 0666;
+	// Never fall back to 0666: a failed fstat must not invent a world-writable mode.
+	mode_t default_mode = 0644;
 	if (::fstat(fd, &created_st) == 0)
-		default_mode = created_st.st_mode & 0777;
+		default_mode = created_st.st_mode & 07777;
 	else
 		BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: fstat failed for " << tmp;
+
+	if (AtomicWriteTempInspectFn create = s_temp_create_hook.load())
+		create(tmp.c_str(), fd);
 
 	// Restrict the temp before any payload is written so a crash cannot leave
 	// a world-readable sibling. Restore default_mode or the target's mode later.
@@ -879,7 +924,7 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 		if (target_exists) {
 			struct stat ts;
 			if (::stat(path.c_str(), &ts) == 0)
-				restore_mode = ts.st_mode & 0777;
+				restore_mode = ts.st_mode & 07777;
 		}
 		if (::fchmod(::fileno(file), restore_mode) != 0)
 			BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: fchmod restore failed for " << tmp;

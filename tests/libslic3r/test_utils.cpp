@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <system_error>
@@ -151,6 +152,23 @@ TEST_CASE("write_file_atomically writes the full content and leaves no temporary
     REQUIRE(entries == 1);
 }
 
+namespace {
+
+void plant_atomic_temp_blockers(const std::string &target, int count)
+{
+    const std::string peek    = atomic_write_temp_path(target, false);
+    const auto        tmp_pos = peek.rfind(".tmp");
+    REQUIRE(tmp_pos != std::string::npos);
+    const auto dot = peek.rfind('.', tmp_pos - 1);
+    REQUIRE(dot != std::string::npos);
+    const unsigned    n      = static_cast<unsigned>(std::stoul(peek.substr(dot + 1, tmp_pos - dot - 1)));
+    const std::string prefix = peek.substr(0, dot + 1);
+    for (int i = 0; i < count; ++i)
+        boost::filesystem::create_directory(prefix + std::to_string(n + static_cast<unsigned>(i)) + ".tmp");
+}
+
+} // namespace
+
 TEST_CASE("write_file_atomically leaves the original file intact when the write fails", "[utils][atomic]")
 {
     ScopedTempDir                 dir;
@@ -158,15 +176,13 @@ TEST_CASE("write_file_atomically leaves the original file intact when the write 
     const std::string             original = "keep-me";
     REQUIRE(write_file_atomically(target.string(), original));
 
-    // Plant a directory on the next temporary so fopen of that sibling fails.
-    const boost::filesystem::path blocker = atomic_write_temp_path(target.string(), /*consume=*/false);
-    boost::filesystem::create_directory(blocker);
+    // Occupy the whole EEXIST retry budget so the save cannot create a temp.
+    plant_atomic_temp_blockers(target.string(), ATOMIC_WRITE_TEMP_ATTEMPTS);
 
     std::string err;
     REQUIRE_FALSE(write_file_atomically(target.string(), "replacement", &err));
     REQUIRE_FALSE(err.empty());
     REQUIRE(slurp(target) == original);
-    REQUIRE(boost::filesystem::is_directory(blocker));
 }
 
 TEST_CASE("atomic write temp names are unique per call and include the process id", "[utils][atomic]")
@@ -300,13 +316,27 @@ struct ScopedInspectHook
     ~ScopedInspectHook() { set_atomic_write_temp_inspect_hook(nullptr); }
 };
 
-static mode_t s_inspected_tmp_mode = 0;
+struct ScopedCreateHook
+{
+    explicit ScopedCreateHook(AtomicWriteTempInspectFn fn) { set_atomic_write_temp_create_hook(fn); }
+    ~ScopedCreateHook() { set_atomic_write_temp_create_hook(nullptr); }
+};
+
+static mode_t s_inspected_tmp_mode  = 0;
+static mode_t s_created_tmp_mode    = 0;
 
 void inspect_tmp_mode(const char *, int fd)
 {
     struct stat st;
     if (::fstat(fd, &st) == 0)
         s_inspected_tmp_mode = st.st_mode & 0777;
+}
+
+void inspect_create_mode(const char *, int fd)
+{
+    struct stat st;
+    if (::fstat(fd, &st) == 0)
+        s_created_tmp_mode = st.st_mode & 07777;
 }
 
 size_t count_atomic_baks(const boost::filesystem::path &dir)
@@ -520,6 +550,34 @@ TEST_CASE("write_file_atomically preserves 0644 and 0640 modes", "[utils][atomic
     }
 }
 
+TEST_CASE("write_file_atomically keeps suid sgid and sticky bits", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path target = dir.path / "special.json";
+    REQUIRE(write_file_atomically(target.string(), "first"));
+    const mode_t want = 04644; // suid + 0644
+    REQUIRE(::chmod(target.string().c_str(), want) == 0);
+    REQUIRE(write_file_atomically(target.string(), "second"));
+    struct stat st;
+    REQUIRE(::stat(target.string().c_str(), &st) == 0);
+    REQUIRE((st.st_mode & 07777) == want);
+    REQUIRE(slurp(target) == "second");
+}
+
+TEST_CASE("an existing target's temp is created 0600 before fchmod", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path target = dir.path / "secret.json";
+    REQUIRE(write_file_atomically(target.string(), "first"));
+    REQUIRE(::chmod(target.string().c_str(), 0644) == 0);
+
+    s_created_tmp_mode = 0;
+    ScopedCreateHook              hook(inspect_create_mode);
+    REQUIRE(write_file_atomically(target.string(), "second"));
+    REQUIRE((s_created_tmp_mode & 0777) == 0600);
+    REQUIRE(slurp(target) == "second");
+}
+
 TEST_CASE("a successful fallback save leaves no atomic.bak", "[utils][atomic]")
 {
     ScopedTempDir                 dir;
@@ -531,8 +589,9 @@ TEST_CASE("a successful fallback save leaves no atomic.bak", "[utils][atomic]")
     REQUIRE(count_atomic_baks(dir.path) == 0);
 }
 
-TEST_CASE("write_file_atomically does not make concurrent creates world-writable", "[utils][atomic]")
+TEST_CASE("write_file_atomically never clears the process umask", "[utils][atomic]")
 {
+#ifdef __linux__
     ScopedTempDir dir;
     struct ScopedUmask
     {
@@ -541,37 +600,66 @@ TEST_CASE("write_file_atomically does not make concurrent creates world-writable
         ~ScopedUmask() { ::umask(prev); }
     } umask_022{0022};
 
-    constexpr int kWrites = 48;
+    constexpr int     kWrites = 256;
     std::atomic<bool> writing{true};
-    std::atomic<int>  created{0};
-    std::atomic<int>  world_writable{0};
+    std::atomic<int>  samples{0};
+    std::atomic<int>  saw_zero{0};
 
-    std::thread creator([&] {
-        int i = 0;
-        // Run for the whole writer loop. A create-count cap would finish first
-        // and miss the umask window on later writes.
+    std::thread checker([&] {
+        const int fd = ::open("/proc/self/status", O_RDONLY);
+        if (fd < 0)
+            return;
+        char buf[8192];
         while (writing.load(std::memory_order_relaxed)) {
-            const boost::filesystem::path p = dir.path / ("race-c-" + std::to_string(i++) + ".dat");
-            const int fd = ::open(p.string().c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
-            if (fd >= 0) {
-                struct stat st;
-                if (::fstat(fd, &st) == 0 && (st.st_mode & 0002) != 0)
-                    world_writable.fetch_add(1, std::memory_order_relaxed);
-                ::close(fd);
-                created.fetch_add(1, std::memory_order_relaxed);
+            if (::lseek(fd, 0, SEEK_SET) < 0)
+                break;
+            const ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+            if (n <= 0)
+                continue;
+            buf[n] = '\0';
+            const char *p = std::strstr(buf, "Umask:");
+            if (p != nullptr) {
+                p += 6;
+                while (*p == ' ' || *p == '\t')
+                    ++p;
+                if (p[0] == '0' && p[1] == '0' && p[2] == '0' && p[3] == '0')
+                    saw_zero.fetch_add(1, std::memory_order_relaxed);
             }
+            samples.fetch_add(1, std::memory_order_relaxed);
         }
+        ::close(fd);
     });
 
     for (int i = 0; i < kWrites; ++i) {
-        const boost::filesystem::path target = dir.path / ("race-w-" + std::to_string(i) + ".json");
+        const boost::filesystem::path target = dir.path / "umask.json";
         REQUIRE(write_file_atomically(target.string(), "x"));
     }
     writing.store(false, std::memory_order_relaxed);
-    creator.join();
+    checker.join();
 
-    REQUIRE(created.load() > 0);
-    REQUIRE(world_writable.load() == 0);
+    REQUIRE(samples.load() > 0);
+    REQUIRE(saw_zero.load() == 0);
+#else
+    SUCCEED("Umask: is only on /proc/self/status");
+#endif
+}
+
+TEST_CASE("a leftover temp name is retried and left untouched", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path target = dir.path / "preset.json";
+    REQUIRE(write_file_atomically(target.string(), "old-bytes"));
+
+    const boost::filesystem::path leftover = atomic_write_temp_path(target.string(), /*consume=*/false);
+    {
+        std::ofstream out(leftover.string());
+        out << "planted-leftover";
+    }
+
+    REQUIRE(write_file_atomically(target.string(), "new-bytes"));
+    REQUIRE(slurp(target) == "new-bytes");
+    REQUIRE(boost::filesystem::exists(leftover));
+    REQUIRE(slurp(leftover) == "planted-leftover");
 }
 #endif
 
@@ -601,14 +689,12 @@ TEST_CASE("a failed binary atomic write keeps the previous cache", "[utils][atom
     const std::string             original = std::string("\x00\x01\x02""keep-cbor", 12);
     REQUIRE(write_file_atomically(target.string(), original, nullptr, true));
 
-    const boost::filesystem::path blocker = atomic_write_temp_path(target.string(), /*consume=*/false);
-    boost::filesystem::create_directory(blocker);
+    plant_atomic_temp_blockers(target.string(), ATOMIC_WRITE_TEMP_ATTEMPTS);
 
     std::string err;
     REQUIRE_FALSE(write_file_atomically(target.string(), "replacement-cbor", &err, true));
     REQUIRE_FALSE(err.empty());
     REQUIRE(slurp(target) == original);
-    REQUIRE(boost::filesystem::is_directory(blocker));
 }
 
 TEST_CASE("AppConfig save round-trips through the atomic helper", "[utils][atomic][AppConfig]")

@@ -238,16 +238,25 @@ extern void set_atomic_posix_rename_hook(AtomicPosixRenameFn hook);
 // written. nullptr disables the hook.
 using AtomicWriteTempInspectFn = void (*)(const char *tmp_path, int fd);
 extern void set_atomic_write_temp_inspect_hook(AtomicWriteTempInspectFn hook);
+// Test seam: called immediately after open (before fchmod) so a test can see
+// the kernel-applied create mode. nullptr disables the hook.
+extern void set_atomic_write_temp_create_hook(AtomicWriteTempInspectFn hook);
 #endif
-// Unique sibling used by write_file_atomically: <path>.<pid>.<counter>.tmp.
-// consume=true advances the process-wide counter (same generator the helper uses);
-// consume=false peeks so a test can plant a blocker on the next temporary.
+// Unique sibling used by write_file_atomically:
+// <path>.<pid>.<launch>.<counter>.tmp. consume=true advances the process-wide
+// counter (same generator the helper uses); consume=false peeks so a test can
+// plant a blocker on the next temporary. `launch` is a per-process token so a
+// leftover from a previous run with the same pid does not collide.
 extern std::string atomic_write_temp_path(const std::string &path, bool consume = true);
+// How many O_EXCL EEXIST retries write_file_atomically will make.
+constexpr int ATOMIC_WRITE_TEMP_ATTEMPTS = 100;
 // Write `data` through that temporary, flush/fsync, then rename over `path`.
-// POSIX creates the temp with open(0666) so the kernel applies the umask,
-// fstat-captures that default, then fchmod 0600 before the payload. Before
-// the rename the temp is fchmod'd to the existing target's mode, or back to
-// the captured default for a new file. umask() is never called.
+// POSIX opens an existing target's temp with mode 0600 (no world-readable
+// window) and a new file with 0666 (kernel applies the umask). fstat captures
+// the create mode (0644 if fstat fails, never 0666). The fd is then fchmod
+// 0600 before the payload. Before the rename the temp is fchmod'd to the
+// existing target's mode (07777, keeping suid/sgid/sticky), or back to the
+// captured default for a new file. umask() is never called.
 // On a failed replace the temporary is removed only if the target is still
 // there. If the target is already gone the temporary is kept so the new
 // contents survive. A dangling or looping symlink is a hard error (the link

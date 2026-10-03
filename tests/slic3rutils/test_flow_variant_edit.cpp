@@ -318,3 +318,52 @@ TEST_CASE("filament preset flow ratio follows the selected volume type", "[FlowV
     REQUIRE(filament_preset_flow_ratio(preset, fvtHighFlow) == 0.88);
     REQUIRE(preset.option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0) == 0.98);
 }
+
+TEST_CASE("calib volume type follows filament_volume_type not nozzle_volume_type", "[FlowVariantEdit][N2]")
+{
+    DynamicPrintConfig project = DynamicPrintConfig::full_print_config();
+    project.set_key_value("filament_volume_type", new ConfigOptionEnumsGeneric{int(fvtStandard)});
+    project.set_key_value("nozzle_volume_type", new ConfigOptionEnumsGeneric{int(fvtHighFlow)});
+
+    DynamicPrintConfig preset = DynamicPrintConfig::full_print_config();
+    preset.set_key_value("filament_flow_support", new ConfigOptionStrings{FLOW_MODE_STANDARD, FLOW_MODE_HIGH_FLOW});
+    preset.set_key_value("filament_flow_ratio", new ConfigOptionFloats{0.98, 0.88});
+    preset.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats{12.0, 24.0});
+
+    REQUIRE(filament_volume_type_at(project, 0) == fvtStandard);
+    REQUIRE(get_nozzle_volume_type(project, 0) == fvtHighFlow);
+    REQUIRE(filament_preset_flow_ratio(preset, filament_volume_type_at(project, 0)) == 0.98);
+    REQUIRE(get_preset_value_at(preset, *preset.option<ConfigOptionFloats>("filament_max_volumetric_speed"),
+                                ConfigFlowDomain::Filament, filament_volume_type_at(project, 0)) == 12.0);
+    REQUIRE(preset.option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0) == 0.98);
+}
+
+TEST_CASE("nozzle temp at the recommended range bounds is not out of range", "[FlowVariantEdit][FilamentTabIndex][G1]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_key_value("nozzle_temperature_range_low", new ConfigOptionInts{200});
+    config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts{230});
+    config.set_key_value("nozzle_temperature", new ConfigOptionInts{200});
+    config.set_key_value("nozzle_temperature_initial_layer", new ConfigOptionInts{230});
+
+    REQUIRE_FALSE(filament_nozzle_temperature_out_of_range(config, 0));
+    REQUIRE_FALSE(filament_nozzle_temperature_initial_layer_out_of_range(config, 0));
+
+    config.option<ConfigOptionInts>("nozzle_temperature")->values[0] = 199;
+    config.option<ConfigOptionInts>("nozzle_temperature_initial_layer")->values[0] = 231;
+    REQUIRE(filament_nozzle_temperature_out_of_range(config, 0));
+    REQUIRE(filament_nozzle_temperature_initial_layer_out_of_range(config, 0));
+}
+
+TEST_CASE("missing filament_flow_ratio falls back to 1.0 not 0.0", "[FlowVariantEdit][N4][G4][G5]")
+{
+    DynamicPrintConfig empty;
+    REQUIRE(filament_flow_ratio_at(empty) == 1.0);
+    REQUIRE(filament_preset_flow_ratio(empty, fvtStandard) == 1.0);
+    REQUIRE(filament_preset_flow_ratio(empty, fvtHighFlow) == 1.0);
+
+    DynamicPrintConfig cleared = DynamicPrintConfig::full_print_config();
+    cleared.set_key_value("filament_flow_ratio", new ConfigOptionFloats{});
+    REQUIRE(filament_flow_ratio_at(cleared) == 1.0);
+    REQUIRE(filament_preset_flow_ratio(cleared, fvtHighFlow) == 1.0);
+}

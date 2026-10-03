@@ -155,6 +155,35 @@ TEST_CASE("setExtruderParams reads the active flow variant nozzle temp", "[Arran
     REQUIRE(cfg.opt_int("nozzle_temperature", 0) == 190);
 }
 
+TEST_CASE("Arrange bed and vitrify temps use the guarded filament id", "[ArrangeClearance][FilamentTabIndex]")
+{
+    DynamicPrintConfig cfg = packed_std_hf_temp_config();
+    cfg.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(btPEI));
+    cfg.option<ConfigOptionInts>("hot_plate_temp")->values = {50, 60};
+    cfg.option<ConfigOptionInts>("hot_plate_temp_initial_layer")->values = {55, 65};
+    cfg.option<ConfigOptionInts>("temperature_vitrification")->values = {40, 80};
+
+    Model model;
+    ModelInstance *f0 = single_instance(model, its_make_cube(10., 10., 10.));
+    const auto f0_poly = get_instance_arrange_poly(f0, cfg);
+    REQUIRE_FALSE(f0_poly.extrude_ids.empty());
+    REQUIRE(f0_poly.bed_temp == 50);
+    REQUIRE(f0_poly.first_bed_temp == 55);
+    REQUIRE(f0_poly.vitrify_temp == 40);
+
+    Model model_f1;
+    ModelObject *obj = model_f1.add_object();
+    obj->name = "f1";
+    obj->add_volume(TriangleMesh(its_make_cube(10., 10., 10.)));
+    obj->config.set_key_value("extruder", new ConfigOptionInt(2));
+    ModelInstance *f1 = obj->add_instance();
+    const auto f1_poly = get_instance_arrange_poly(f1, cfg);
+    REQUIRE(f1_poly.extrude_ids.front() == 2);
+    REQUIRE(f1_poly.bed_temp == 60);
+    REQUIRE(f1_poly.first_bed_temp == 65);
+    REQUIRE(f1_poly.vitrify_temp == 80);
+}
+
 TEST_CASE("Arrange and setExtruderParams stay on index 0 without packed variants", "[ArrangeClearance][FilamentTabIndex]")
 {
     DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();

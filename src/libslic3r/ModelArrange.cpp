@@ -183,6 +183,8 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
 {
     ArrangePolygon ap = get_arrange_poly(PtrWrapper{ instance }, config);
 
+    const unsigned int filament_id = ap.extrude_ids.empty() ? 0u : unsigned(std::max(0, ap.extrude_ids.front() - 1));
+
     //BBS: add temperature information
     if (config.has("curr_bed_type")) {
         ap.bed_temp = 0;
@@ -191,21 +193,20 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
 
         const ConfigOptionInts* bed_opt = config.option<ConfigOptionInts>(get_bed_temp_key(curr_bed_type));
         if (bed_opt != nullptr)
-            ap.bed_temp = bed_opt->get_at(ap.extrude_ids.front()-1);
+            ap.bed_temp = bed_opt->get_at(filament_id);
 
         const ConfigOptionInts* bed_opt_1st_layer = config.option<ConfigOptionInts>(get_bed_temp_1st_layer_key(curr_bed_type));
         if (bed_opt_1st_layer != nullptr)
-            ap.first_bed_temp = bed_opt_1st_layer->get_at(ap.extrude_ids.front()-1);
+            ap.first_bed_temp = bed_opt_1st_layer->get_at(filament_id);
     }
 
-    const unsigned int filament_id = ap.extrude_ids.empty() ? 0u : unsigned(std::max(0, ap.extrude_ids.front() - 1));
     if (const auto *nozzle_temp = config.option<ConfigOptionInts>("nozzle_temperature"))
         ap.print_temp = get_value_at(config, *nozzle_temp, ConfigFlowDomain::Filament, filament_id);
     if (const auto *initial_temp = config.option<ConfigOptionInts>("nozzle_temperature_initial_layer"))
         ap.first_print_temp = get_value_at(config, *initial_temp, ConfigFlowDomain::Filament, filament_id);
 
     if (config.has("temperature_vitrification")) {
-        ap.vitrify_temp = config.opt_int("temperature_vitrification", ap.extrude_ids.front() - 1);
+        ap.vitrify_temp = config.opt_int("temperature_vitrification", filament_id);
     }
 
     // get filament temp types

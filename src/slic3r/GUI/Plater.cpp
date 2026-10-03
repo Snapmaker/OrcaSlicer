@@ -19525,6 +19525,17 @@ void Plater::_calib_pa_select_added_objects() {
     }
 }
 
+// Preset-sized filament configs have no filament_flow_step_size, so
+// filament_flow_ratio_at() would stay on get_at(0). Use the same
+// filament_volume_type slot slicing's get_config_idx() uses.
+static FilamentVolumeType plater_calib_filament_volume_type()
+{
+    const PresetBundle *bundle = wxGetApp().preset_bundle;
+    if (bundle == nullptr)
+        return fvtStandard;
+    return filament_volume_type_at(bundle->project_config, 0);
+}
+
 // Adjust settings for flowrate calibration
 // For linear mode, pass 1 means normal version while pass 2 mean "for perfectionists" version
 void adjust_settings_for_flowrate_calib(ModelObjectPtrs& objects, bool linear, int pass)
@@ -19559,9 +19570,14 @@ void adjust_settings_for_flowrate_calib(ModelObjectPtrs& objects, bool linear, i
     }
     canvas->do_scale("");
 
-    auto cur_flowrate = filament_config->option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0);
+    const FilamentVolumeType volume_type = plater_calib_filament_volume_type();
+    const double cur_flowrate = filament_preset_flow_ratio(*filament_config, volume_type);
     Flow infill_flow = Flow(nozzle_diameter * 1.2f, layer_height, nozzle_diameter);
-    double filament_max_volumetric_speed = filament_config->option<ConfigOptionFloats>("filament_max_volumetric_speed")->get_at(0);
+    const auto *max_volumetric_speed_opt = filament_config->option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    double filament_max_volumetric_speed = (max_volumetric_speed_opt == nullptr || max_volumetric_speed_opt->values.empty())
+                                               ? 0.0
+                                               : get_preset_value_at(*filament_config, *max_volumetric_speed_opt,
+                                                                     ConfigFlowDomain::Filament, volume_type);
     double max_infill_speed;
     if (linear)
         max_infill_speed = filament_max_volumetric_speed /
@@ -19803,7 +19819,7 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
 
     auto new_params = params;
     auto mm3_per_mm = Flow(line_width, layer_height, nozzle_diameter).mm3_per_mm() *
-                      filament_config->option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0);
+                      filament_preset_flow_ratio(*filament_config, plater_calib_filament_volume_type());
     new_params.end = params.end / mm3_per_mm;
     new_params.start = params.start / mm3_per_mm;
     new_params.step = params.step / mm3_per_mm;

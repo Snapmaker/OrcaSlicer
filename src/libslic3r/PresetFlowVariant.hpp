@@ -7,6 +7,20 @@ namespace Slic3r {
 // Read the per-extruder nozzle flow type from a printer preset; missing or invalid values are standard.
 FilamentVolumeType get_nozzle_volume_type(const ConfigBase &printer_config, unsigned int extruder_id = 0);
 
+// Same type get_config_idx() uses for Filament / Process / Printer: project
+// filament_volume_type[filament_id]. Missing or out-of-range values are Standard.
+// Do not substitute nozzle_volume_type: a Standard filament on an HF nozzle
+// still slices the Standard column.
+inline FilamentVolumeType filament_volume_type_at(const ConfigBase &config, unsigned int filament_id = 0)
+{
+    const auto *types = config.option<ConfigOptionEnumsGeneric>("filament_volume_type");
+    if (types == nullptr || types->values.empty())
+        return fvtStandard;
+    if (filament_id >= types->values.size())
+        return fvtStandard;
+    return types->values[filament_id] == int(fvtHighFlow) ? fvtHighFlow : fvtStandard;
+}
+
 // Resolve an index inside a single preset's variant array. Unlike get_config_idx(), this helper
 // does not expect filament_flow_step_size or a composed multi-filament config.
 size_t get_preset_flow_variant_idx(const ConfigBase &preset_config, ConfigFlowDomain domain, FilamentVolumeType type);

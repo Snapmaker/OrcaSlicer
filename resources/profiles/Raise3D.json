@@ -1,7 +1,7 @@
 {
     "name": "Raise3D",
     "url": "",
-    "version": "02.03.01.11",
+    "version": "02.03.01.12",
     "force_update": "0",
     "description": "Raise3D configurations",
     "machine_model_list": [
@@ -64,7 +64,36 @@
             "sub_path": "process/0.25mm Draft @Raise3D N2 Series.json"
         }
     ],
-    "filament_list": [],
+    "filament_list": [
+        {
+            "name": "Raise3D Premium PLA",
+            "sub_path": "filament/Raise3D Premium PLA.json"
+        },
+        {
+            "name": "Raise3D Hyper Speed PLA",
+            "sub_path": "filament/Raise3D Hyper Speed PLA.json"
+        },
+        {
+            "name": "Raise3D Premium PETG",
+            "sub_path": "filament/Raise3D Premium PETG.json"
+        },
+        {
+            "name": "Raise3D Premium ABS",
+            "sub_path": "filament/Raise3D Premium ABS.json"
+        },
+        {
+            "name": "Raise3D Premium ASA",
+            "sub_path": "filament/Raise3D Premium ASA.json"
+        },
+        {
+            "name": "Raise3D Premium TPU-95A",
+            "sub_path": "filament/Raise3D Premium TPU-95A.json"
+        },
+        {
+            "name": "Raise3D Premium PC",
+            "sub_path": "filament/Raise3D Premium PC.json"
+        }
+    ],
     "machine_list": [
         {
             "name": "fdm_machine_common",

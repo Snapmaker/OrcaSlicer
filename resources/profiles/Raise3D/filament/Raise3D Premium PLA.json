@@ -1,0 +1,67 @@
+{
+    "type": "filament",
+    "name": "Raise3D Premium PLA",
+    "inherits": "Generic PLA @System",
+    "from": "system",
+    "setting_id": "GFS_RAISE3D_PLA",
+    "filament_id": "R3DPLA",
+    "instantiation": "true",
+    "filament_vendor": [
+        "Raise3D"
+    ],
+    "filament_density": [
+        "1.2"
+    ],
+    "nozzle_temperature": [
+        "210"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "210"
+    ],
+    "nozzle_temperature_range_low": [
+        "190"
+    ],
+    "nozzle_temperature_range_high": [
+        "220"
+    ],
+    "cool_plate_temp": [
+        "60"
+    ],
+    "cool_plate_temp_initial_layer": [
+        "60"
+    ],
+    "eng_plate_temp": [
+        "60"
+    ],
+    "eng_plate_temp_initial_layer": [
+        "60"
+    ],
+    "hot_plate_temp": [
+        "60"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "60"
+    ],
+    "textured_plate_temp": [
+        "60"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "60"
+    ],
+    "temperature_vitrification": [
+        "63"
+    ],
+    "filament_notes": [
+        "Raise3D Premium PLA TDS V6.0: nozzle 190-220 C, bed 30-60 C, cooling fan on. Dry at 55 C before printing if the filament has absorbed moisture."
+    ],
+    "compatible_printers": [
+        "Raise3D N2 0.4 nozzle",
+        "Raise3D N2 Plus 0.4 nozzle",
+        "Raise3D Pro3 0.4 nozzle (Dual)",
+        "Raise3D Pro3 0.4 nozzle (Left)",
+        "Raise3D Pro3 0.4 nozzle (Right)",
+        "Raise3D Pro3 Plus 0.4 nozzle (Dual)",
+        "Raise3D Pro3 Plus 0.4 nozzle (Left)",
+        "Raise3D Pro3 Plus 0.4 nozzle (Right)"
+    ]
+}

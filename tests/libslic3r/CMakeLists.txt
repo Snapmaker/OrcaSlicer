@@ -98,6 +98,7 @@ add_executable(${_TEST_NAME}_tests
 	# test_marchingsquares.cpp
 	test_timeutils.cpp
 	test_utils.cpp
+	test_instance_lock.cpp
 	TestMD5.cpp
 	test_voronoi.cpp
     test_optimizers.cpp

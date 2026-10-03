@@ -1,5 +1,6 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/InstanceLock.hpp"
 #include "AppConfig.hpp"
 //BBS
 #include "Preset.hpp"
@@ -960,6 +961,12 @@ void AppConfig::save()
     if (! is_main_thread_active())
         throw CriticalException("Calling AppConfig::save() from a worker thread!");
 
+    // Best-effort cross-instance lock (upstream Orca #15861), held from the
+    // merge_shared_from_disk() read to the last write so two instances'
+    // read-merge-write cycles do not interleave. Never refuses: if another
+    // instance holds it past the timeout this logs and saves anyway.
+    InstanceLock instance_lock(lock_path());
+
     // Serialized first, then written through a unique temp file and renamed
     // so a crash or a concurrent reader never sees a half-written config.
     // Not flushed to the device (no fsync): the idle handler saves on the GUI
@@ -1272,6 +1279,12 @@ void AppConfig::save()
 {
     if (! is_main_thread_active())
         throw CriticalException("Calling AppConfig::save() from a worker thread!");
+
+    // Best-effort cross-instance lock (upstream Orca #15861), held from the
+    // merge_shared_from_disk() read to the last write so two instances'
+    // read-merge-write cycles do not interleave. Never refuses: if another
+    // instance holds it past the timeout this logs and saves anyway.
+    InstanceLock instance_lock(lock_path());
 
     // Serialized first, then written through a unique temp file and renamed
     // so a crash or a concurrent reader never sees a half-written config.
@@ -1680,6 +1693,11 @@ void AppConfig::reset_selections()
         it->second.erase("physical_printer");
         m_dirty = true;
     }
+}
+
+std::string AppConfig::lock_path()
+{
+    return Slic3r::data_dir().empty() ? std::string() : config_path() + ".lock";
 }
 
 std::string AppConfig::config_path()

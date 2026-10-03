@@ -1147,12 +1147,15 @@ TEST_CASE("Exporting a sliced print again gives the same G-code", "[Print][GCode
         {"layer_change_gcode", "G92 E0"},
         {"skirt_loops", "0"},
         {"brim_type", "no_brim"},
+        // ipadstand is ~98 mm in X; 3 copies need a plate wider than the default 200 mm.
+        {"printable_area", "0x0,400x0,400x400,0x400"},
     });
     auto check_reexport = [&](TestMesh mesh) {
         Model        model  = Test::model("reexport", Test::mesh(mesh));
         ModelObject *object = model.objects.front();
+        const double spacing = (mesh == TestMesh::ipadstand) ? 110. : 40.;
         for (int i = 1; i < instances; ++i)
-            object->add_instance()->set_offset(Vec3d(40. * i, 0., 0.));
+            object->add_instance()->set_offset(Vec3d(spacing * i, 0., 0.));
         object->ensure_on_bed();
 
         Print print;
@@ -1165,14 +1168,6 @@ TEST_CASE("Exporting a sliced print again gives the same G-code", "[Print][GCode
 
         const std::string first  = strip_gcode_timestamps(Test::gcode(print));
         const std::string second = strip_gcode_timestamps(Test::gcode(print));
-        if (const char *dir = std::getenv("REEXPORT_FIRST_GCODE_DIR")) {
-            const char *tag = (mesh == TestMesh::overhang) ? "support" : "infill";
-            std::ofstream out(std::string(dir) + "/" + tag + "_" + std::to_string(instances) + ".gcode", std::ios::binary);
-            out << first;
-        } else if (const char *path = std::getenv("REEXPORT_FIRST_GCODE_OUT")) {
-            std::ofstream out(path, std::ios::binary);
-            out << first;
-        }
 
         // Shows the first differing line on failure.
         const size_t diff       = std::mismatch(first.begin(), first.end(), second.begin(), second.end()).first - first.begin();
@@ -1187,13 +1182,13 @@ TEST_CASE("Exporting a sliced print again gives the same G-code", "[Print][GCode
     };
 
     SECTION("infill reversed by chaining") {
+        // Upstream Orca #16025 uses ipadstand + gyroid so chain_and_reorder actually
+        // reverses infill. The cube fixture passed on main and did not exercise that hunk.
         config.set_deserialize_strict({
             {"sparse_infill_pattern", "gyroid"},
             {"sparse_infill_density", "20"},
-            {"enable_support", "1"},
-            {"support_interface_pattern", "concentric"},
         });
-        check_reexport(TestMesh::cube_20x20x20);
+        check_reexport(TestMesh::ipadstand);
     }
     SECTION("support reversed by chaining") {
         config.set_deserialize_strict({

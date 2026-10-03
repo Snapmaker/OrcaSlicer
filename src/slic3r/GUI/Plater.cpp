@@ -15477,13 +15477,21 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                     // Page-switch auto-slice must run the same pre-slice guard as
                     // the slice button, or the by-object red error never shows.
                     // Snap #930 / S4: tab-in prompts only when dirty (valid-to-invalid).
-                    // A never-sliced plate skips the dialog.
-                    if (this->partplate_list.is_filament_group_dirty() && !this->q->confirm_filament_grouping_before_slice())
+                    // A never-sliced plate skips the dialog, but still needs the
+                    // same clean-plate volume-type sync as select_sliced_plate.
+                    const bool dirty = this->partplate_list.is_filament_group_dirty();
+                    const bool dialog_required = filament_group_dialog_required(
+                        GUI::FlowType::grouping_mode(), GUI::FlowType::distinct_nozzle_flow_type_count());
+                    if (dirty && !this->q->confirm_filament_grouping_before_slice())
                         slice_cancelled = true;
-                    else if (this->q->guard_before_slice_plate())
-                        slice_cancelled = !(this->q->reslice());
-                    else
-                        slice_cancelled = true;
+                    else {
+                        if (filament_group_sync_on_clean_plate_pick(dirty, dialog_required))
+                            GUI::FlowType::sync_filament_volume_types_for_slice();
+                        if (this->q->guard_before_slice_plate())
+                            slice_cancelled = !(this->q->reslice());
+                        else
+                            slice_cancelled = true;
+                    }
                }
                 else {
                     //reset current plate to the slicing plate

@@ -40,12 +40,11 @@ static std::string MachineBedTypeString[7] = {
 
 // Same target the slice sync would write. Project filament_volume_type is stale
 // until the first slice (U1 nozzle switched to HF still reads Standard).
-static FilamentVolumeType calib_filament_volume_type(const CalibInfo &calib_info, unsigned int filament_id = 0)
+// Filament presets never carry filament_volume_type; do not read them here.
+static FilamentVolumeType calib_filament_volume_type(unsigned int filament_id = 0)
 {
     if (wxGetApp().preset_bundle != nullptr)
         return FlowType::synced_filament_volume_type(filament_id);
-    if (calib_info.filament_prest != nullptr)
-        return filament_volume_type_at(calib_info.filament_prest->config, filament_id);
     return fvtStandard;
 }
 
@@ -539,7 +538,7 @@ bool CalibUtils::calib_flowrate(int pass, const CalibInfo &calib_info, wxString 
 
     Flow   infill_flow                   = Flow(nozzle_diameter * 1.2f, layer_height, nozzle_diameter);
     const auto *max_volumetric_speed_opt = filament_config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
-    const FilamentVolumeType filament_volume_type = calib_filament_volume_type(calib_info);
+    const FilamentVolumeType filament_volume_type = calib_filament_volume_type();
     double filament_max_volumetric_speed = get_preset_value_at(filament_config, *max_volumetric_speed_opt,
                                                                 ConfigFlowDomain::Filament, filament_volume_type);
     double max_infill_speed              = filament_max_volumetric_speed / (infill_flow.mm3_per_mm() * (pass == 1 ? 1.2 : 1));
@@ -839,7 +838,7 @@ void CalibUtils::calib_max_vol_speed(const CalibInfo &calib_info, wxString &erro
     }
 
     auto new_params  = params;
-    const FilamentVolumeType volume_type = calib_filament_volume_type(calib_info);
+    const FilamentVolumeType volume_type = calib_filament_volume_type();
     auto mm3_per_mm  = Flow(line_width, layer_height, nozzle_diameter).mm3_per_mm() * filament_preset_flow_ratio(filament_config, volume_type);
     new_params.end   = params.end / mm3_per_mm;
     new_params.start = params.start / mm3_per_mm;

@@ -1418,6 +1418,30 @@ TEST_CASE("A static config applies itself onto a config of its type as a lookup 
         REQUIRE(dest.sparse_infill_density.value == 35.);
         REQUIRE(dest.sparse_infill_density.value != PrintRegionConfig().sparse_infill_density.value);
     }
+    SECTION("machine envelope config")
+    {
+        MachineEnvelopeConfig envelope;
+        envelope.emit_machine_limits_to_gcode.value = !envelope.emit_machine_limits_to_gcode.value;
+        envelope.machine_max_speed_x.values         = {999.};
+        FullPrintConfig full;
+        REQUIRE(envelope.apply_to(full));
+        check_member_apply_matches_key_apply(envelope);
+    }
+    SECTION("SLA print config")
+    {
+        SLAPrintConfig sla;
+        sla.filename_format.value = "sla_{input_filename_base}.gcode";
+        SLAFullPrintConfig dest;
+        REQUIRE(sla.apply_to(dest));
+        REQUIRE(dest.filename_format.value == sla.filename_format.value);
+
+        SLAFullPrintConfig by_member;
+        SLAFullPrintConfig by_key;
+        by_member.apply(sla);
+        by_key.apply_only(sla, sla.keys());
+        CHECK(by_member.filename_format.value == by_key.filename_format.value);
+        CHECK(by_member.filename_format.value != SLAFullPrintConfig().filename_format.value);
+    }
 }
 
 TEST_CASE("A static config applied onto a config of another type falls back to a lookup by name", "[Config]")

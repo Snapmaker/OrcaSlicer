@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <initializer_list>
+#include <memory>
 
 namespace Slic3r {
 
@@ -251,6 +252,24 @@ static inline bool config_options_equal(const ConfigOption *lhs, const ConfigOpt
     return *lhs == *rhs;
 }
 
+// Filament flow-variant keys are packed by filament_flow_step_size. Printer retract
+// vectors are 1:1 with filament / tool id. Copying the packed override (apply_override
+// by raw index) makes T1 read F0's High-Flow slot. Unpack to per-filament values first.
+static ConfigOption *unpack_filament_flow_override(const ConfigOption *filament_opt, const ConfigBase &config)
+{
+    auto *unpacked = filament_opt->clone();
+    auto *vec      = dynamic_cast<ConfigOptionVectorBase *>(unpacked);
+    if (vec == nullptr)
+        return unpacked;
+    const size_t n = flow_variant_filament_count(config);
+    vec->resize(n);
+    for (size_t i = 0; i < n; ++i) {
+        const size_t packed = get_config_idx(config, ConfigFlowDomain::Filament, static_cast<unsigned int>(i));
+        vec->set_at(filament_opt, i, packed);
+    }
+    return unpacked;
+}
+
 static t_config_option_keys print_config_diffs(
     const PrintConfig        &current_config,
     const DynamicPrintConfig &new_full_config,
@@ -276,6 +295,11 @@ static t_config_option_keys print_config_diffs(
         // const ConfigOption *opt_new_filament = std::binary_search(extruder_retract_keys.begin(), extruder_retract_keys.end(), opt_key) ? new_full_config.option(filament_prefix + opt_key) : nullptr;
         const ConfigOption* opt_new_filament = (iter == extruder_retract_keys.end()) ? nullptr :
                                                                                        new_full_config.option(filament_prefix + opt_key);
+        std::unique_ptr<ConfigOption> unpacked_filament;
+        if (opt_new_filament != nullptr && is_filament_flow_variant_option(filament_prefix + opt_key)) {
+            unpacked_filament.reset(unpack_filament_flow_override(opt_new_filament, new_full_config));
+            opt_new_filament = unpacked_filament.get();
+        }
         if (opt_new_filament != nullptr && ! opt_new_filament->is_nil()) {
             // An extruder retract override is available at some of the filament presets.
             bool overriden = opt_new->overriden_by(opt_new_filament);

@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/libslic3r.h"
+#include "libslic3r/Extruder.hpp"
 #include "libslic3r/GCode/WipeTower2.hpp"
 #include "libslic3r/GCodeReader.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -526,6 +527,16 @@ constexpr double kRamVolF1     = 8.;
 constexpr double kRamFlowStdF0 = 1.;
 constexpr double kRamFlowHfF0  = 10.;
 constexpr double kRamFlowF1    = 4.;
+constexpr double kFlowStdF0    = 0.98;
+constexpr double kFlowHfF0     = 0.95;
+constexpr double kFlowF1       = 1.01;
+constexpr double kRetractStdF0 = 0.8;
+constexpr double kRetractHfF0  = 3.0;
+constexpr double kRetractF1    = 1.5;
+constexpr double kRetractSpeedStdF0 = 30.;
+constexpr double kRetractSpeedHfF0  = 40.;
+constexpr double kRetractSpeedF1    = 25.;
+constexpr int    kStandbyDelta = -15;
 
 DynamicPrintConfig step_size_2_f0_config()
 {
@@ -549,7 +560,42 @@ DynamicPrintConfig step_size_2_f0_config()
                                                                                         kRamFlowF1};
     // 2x2 flush matrix so extract_wipe_volumes walks two filament ids, not the 4x4 default.
     config.option<ConfigOptionFloats>("flush_volumes_matrix")->values = {0.f, 0.f, 0.f, 0.f};
+    config.option<ConfigOptionFloats>("filament_flow_ratio")->values = {kFlowStdF0, kFlowHfF0, kFlowF1};
+    config.option<ConfigOptionFloats>("retraction_length")->values   = {0.4, 0.4};
+    config.option<ConfigOptionFloats>("retraction_speed")->values    = {10., 10.};
+    config.option<ConfigOptionFloatsNullable>("filament_retraction_length", true)->values = {kRetractStdF0, kRetractHfF0,
+                                                                                             kRetractF1};
+    config.option<ConfigOptionFloatsNullable>("filament_retraction_speed", true)->values = {kRetractSpeedStdF0,
+                                                                                            kRetractSpeedHfF0,
+                                                                                            kRetractSpeedF1};
     return config;
+}
+
+void require_applied_tool_retract_and_flow(Print &print)
+{
+    REQUIRE(print.config().retraction_length.size() == 2);
+    REQUIRE_THAT(print.config().retraction_length.get_at(0), Catch::Matchers::WithinAbs(kRetractHfF0, 1e-9));
+    REQUIRE_THAT(print.config().retraction_length.get_at(1), Catch::Matchers::WithinAbs(kRetractF1, 1e-9));
+    REQUIRE_THAT(print.config().retraction_speed.get_at(0), Catch::Matchers::WithinAbs(kRetractSpeedHfF0, 1e-9));
+    REQUIRE_THAT(print.config().retraction_speed.get_at(1), Catch::Matchers::WithinAbs(kRetractSpeedF1, 1e-9));
+
+    GCodeConfig gc;
+    gc.apply(print.config(), true);
+    Extruder e0(0, &gc, false);
+    Extruder e1(1, &gc, false);
+    REQUIRE_THAT(e0.filament_flow_ratio(), Catch::Matchers::WithinAbs(kFlowHfF0, 1e-9));
+    REQUIRE_THAT(e1.filament_flow_ratio(), Catch::Matchers::WithinAbs(kFlowF1, 1e-9));
+    REQUIRE_THAT(e0.retraction_length(), Catch::Matchers::WithinAbs(kRetractHfF0, 1e-9));
+    REQUIRE_THAT(e1.retraction_length(), Catch::Matchers::WithinAbs(kRetractF1, 1e-9));
+    REQUIRE(e0.retract_speed() == int(kRetractSpeedHfF0));
+    REQUIRE(e1.retract_speed() == int(kRetractSpeedF1));
+}
+
+int e_feedrate_from_vol(double vol)
+{
+    const double area = (M_PI / 4.) * 1.75 * 1.75;
+    const int    feed = int(60.0 * vol / area);
+    return feed == 0 ? 100 : feed;
 }
 
 void require_step_size_2_f0_columns(const ConfigBase &config)
@@ -752,4 +798,117 @@ TEST_CASE("Standard-only flow columns stay get_at-identical after variant reader
     REQUIRE(gcode.find("; first_layer_temperature = 195") != std::string::npos);
     REQUIRE(count_substr(gcode, "S211") >= 1);
     REQUIRE(count_substr(gcode, "S215") >= 1);
+}
+
+TEST_CASE("apply_override unpacks flow-variant retract keys by filament id",
+          "[PrintGCode][GCode][PAVariant][FilamentVariants]")
+{
+    DynamicPrintConfig config = step_size_2_f0_config();
+    Print              print;
+    Model              model;
+    ModelObject *      first = model.add_object();
+    first->name              = "cube-a.stl";
+    first->add_volume(mesh(TestMesh::cube_20x20x20));
+    first->add_instance()->set_offset(Vec3d(80., 40., 0.));
+    first->ensure_on_bed();
+    ModelObject *second = model.add_object();
+    second->name        = "cube-b.stl";
+    second->add_volume(mesh(TestMesh::cube_20x20x20));
+    second->add_instance()->set_offset(Vec3d(120., 40., 0.));
+    second->ensure_on_bed();
+    second->volumes.front()->config.set("extruder", 2);
+
+    print.apply(model, config);
+    require_applied_tool_retract_and_flow(print);
+    REQUIRE(get_config_idx(print.config(), ConfigFlowDomain::Filament, (unsigned int) -1) == 0);
+}
+
+TEST_CASE("non-SEMM U1 2-tool High-Flow uses per-filament temps retract and placeholders",
+          "[PrintGCode][GCode][PAVariant][FilamentVariants]")
+{
+    DynamicPrintConfig config = step_size_2_f0_config();
+    config.option<ConfigOptionBool>("single_extruder_multi_material")->value = false;
+    config.option<ConfigOptionBool>("ooze_prevention")->value               = true;
+    config.option<ConfigOptionInt>("standby_temperature_delta")->value      = kStandbyDelta;
+    config.option<ConfigOptionFloat>("preheat_time")->value                 = 30.;
+    config.option<ConfigOptionString>("machine_start_gcode")->value =
+        "; U1_START init={nozzle_temperature_initial_layer[initial_extruder]} "
+        "fl0={first_layer_temperature[0]} fl1={first_layer_temperature[1]} "
+        "nt0={nozzle_temperature[0]} nt1={nozzle_temperature[1]} "
+        "rl0={retract_length[0]} rl1={retract_length[1]} "
+        "ram0={filament_multitool_ramming[0]} ram1={filament_multitool_ramming[1]} "
+        "flush0={flush_volumetric_speeds[0]} flush1={flush_volumetric_speeds[1]}\n"
+        "M104 S{nozzle_temperature_initial_layer[initial_extruder]}\n";
+    config.option<ConfigOptionString>("change_filament_gcode")->value =
+        "; U1_TC next={next_extruder} layer={layer_num}\n"
+        "{if layer_num < 1}\n"
+        "M109 S{first_layer_temperature[next_extruder]} T{next_extruder} ; U1_WAIT_L0\n"
+        "{else}\n"
+        "M109 S{temperature[next_extruder]} T{next_extruder} ; U1_WAIT_LX\n"
+        "{endif}\n"
+        "; U1_FULL NT={nozzle_temperature[next_extruder]} "
+        "NTI={nozzle_temperature_initial_layer[next_extruder]} "
+        "RL={retract_length[next_extruder]} RAM={filament_multitool_ramming[next_extruder]} "
+        "FLUSH={flush_volumetric_speeds[next_extruder]} FEED={new_filament_e_feedrate}\n";
+
+    Print print;
+    Model model;
+    ModelObject *first = model.add_object();
+    first->name        = "cube-a.stl";
+    first->add_volume(mesh(TestMesh::cube_20x20x20));
+    first->add_instance()->set_offset(Vec3d(80., 40., 0.));
+    first->ensure_on_bed();
+    ModelObject *second = model.add_object();
+    second->name        = "cube-b.stl";
+    second->add_volume(mesh(TestMesh::cube_20x20x20));
+    second->add_instance()->set_offset(Vec3d(120., 40., 0.));
+    second->ensure_on_bed();
+    second->volumes.front()->config.set("extruder", 2);
+
+    print.apply(model, config);
+    print.is_BBL_printer() = false;
+    REQUIRE(print.has_wipe_tower());
+    require_applied_tool_retract_and_flow(print);
+
+    const std::string gcode = Test::gcode(print);
+    REQUIRE(gcode.find("Travel to a Wipe Tower") != std::string::npos);
+
+    const size_t start_pos = gcode.find("; U1_START ");
+    REQUIRE(start_pos != std::string::npos);
+    const size_t start_eol = gcode.find('\n', start_pos);
+    const std::string start_line = gcode.substr(start_pos, start_eol - start_pos);
+    REQUIRE(start_line.find("init=" + std::to_string(kInitHfF0)) != std::string::npos);
+    REQUIRE(start_line.find("fl0=" + std::to_string(kInitHfF0)) != std::string::npos);
+    REQUIRE(start_line.find("fl1=" + std::to_string(kInitF1)) != std::string::npos);
+    REQUIRE(start_line.find("nt0=" + std::to_string(kTempHfF0)) != std::string::npos);
+    REQUIRE(start_line.find("nt1=" + std::to_string(kTempF1)) != std::string::npos);
+    REQUIRE(start_line.find("rl0=") != std::string::npos);
+    REQUIRE(start_line.find("rl1=") != std::string::npos);
+    REQUIRE(start_line.find("rl0=0.4") == std::string::npos);
+    REQUIRE(start_line.find("ram0=1") != std::string::npos);
+    REQUIRE(start_line.find("ram1=1") != std::string::npos);
+    REQUIRE(start_line.find("flush0=" + std::to_string(int(kVolHfF0))) != std::string::npos);
+    REQUIRE(start_line.find("flush1=" + std::to_string(int(kVolF1))) != std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(kInitHfF0)) != std::string::npos);
+
+    REQUIRE(gcode.find("M109 S" + std::to_string(kInitF1) + " T1") != std::string::npos);
+    REQUIRE(gcode.find("M109 S" + std::to_string(kTempF1) + " T1") != std::string::npos);
+    REQUIRE(gcode.find("M109 S" + std::to_string(kTempHfF0) + " T0") != std::string::npos);
+    REQUIRE(gcode.find("M109 S" + std::to_string(kTempHfF0) + " T1") == std::string::npos);
+    REQUIRE(gcode.find("M109 S" + std::to_string(kInitHfF0) + " T1") == std::string::npos);
+    REQUIRE(gcode.find("M109 S" + std::to_string(kTempStdF0) + " T0") == std::string::npos);
+
+    REQUIRE(gcode.find("FEED=" + std::to_string(e_feedrate_from_vol(kVolF1))) != std::string::npos);
+    REQUIRE(gcode.find("FEED=" + std::to_string(e_feedrate_from_vol(kVolHfF0))) != std::string::npos);
+    REQUIRE(gcode.find("FLUSH=" + std::to_string(int(kVolF1))) != std::string::npos);
+    REQUIRE(gcode.find("FLUSH=" + std::to_string(int(kVolHfF0))) != std::string::npos);
+
+    const int ooze_t0 = kTempHfF0 + kStandbyDelta;
+    REQUIRE(gcode.find("M104 S" + std::to_string(ooze_t0) + " T0") != std::string::npos);
+    REQUIRE(gcode.find(";cooldown") != std::string::npos);
+
+    REQUIRE(gcode.find("M104 T1 S" + std::to_string(kTempF1)) != std::string::npos ||
+            gcode.find("M104 T1 S" + std::to_string(kInitF1)) != std::string::npos);
+    REQUIRE(gcode.find("M104 T1 S" + std::to_string(kTempHfF0)) == std::string::npos);
+    REQUIRE(gcode.find("M104 T1 S" + std::to_string(kInitHfF0)) == std::string::npos);
 }

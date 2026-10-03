@@ -541,6 +541,30 @@ inline auto get_value_at(const ConfigBase &config, const VectorOption &opt, Conf
     return opt.get_at(get_config_idx(config, domain, filament_id));
 }
 
+// Packed flow-variant vectors are segmented by filament_flow_step_size. Filament / tool id
+// count is filament_diameter, not the packed length.
+inline size_t flow_variant_filament_count(const ConfigBase &config)
+{
+    if (const auto *opt = config.option<ConfigOptionFloats>("filament_diameter")) {
+        if (!opt->values.empty())
+            return opt->values.size();
+    }
+    return 1;
+}
+
+template<typename VectorOption>
+inline auto unpack_filament_values(const ConfigBase &config, const VectorOption &opt)
+    -> std::vector<typename std::decay<decltype(opt.get_at(0))>::type>
+{
+    using T = typename std::decay<decltype(opt.get_at(0))>::type;
+    const size_t n = flow_variant_filament_count(config);
+    std::vector<T> out;
+    out.reserve(n);
+    for (size_t i = 0; i < n; ++i)
+        out.push_back(get_value_at(config, opt, ConfigFlowDomain::Filament, static_cast<unsigned int>(i)));
+    return out;
+}
+
 // end Snapmaker: flow variant------------------------------------------------------------------------
 
 enum class GCodeThumbnailsFormat {

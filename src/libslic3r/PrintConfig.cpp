@@ -9108,6 +9108,10 @@ bool is_machine_flow_variant_option(const std::string &key)
 
 size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigned int filament_id)
 {
+    // An id of -1 (unsigned wrap) used to run the Filament segment loop ~4e9 times.
+    if (filament_id == (unsigned int) -1)
+        return 0;
+
     const ConfigOptionEnumsGeneric* volume_types = enums_option(config, "filament_volume_type");
     const ConfigOptionStrings*      flow_support = strings_option(config, flow_support_key(domain));
 

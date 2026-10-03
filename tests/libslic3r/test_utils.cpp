@@ -555,18 +555,43 @@ TEST_CASE("write_file_atomically keeps suid sgid and sticky bits", "[utils][atom
     ScopedTempDir                 dir;
     const boost::filesystem::path target = dir.path / "special.json";
     REQUIRE(write_file_atomically(target.string(), "first"));
-    const mode_t want = 04644; // suid + 0644
-    REQUIRE(::chmod(target.string().c_str(), want) == 0);
-    REQUIRE(write_file_atomically(target.string(), "second"));
-    struct stat st;
-    REQUIRE(::stat(target.string().c_str(), &st) == 0);
-    REQUIRE((st.st_mode & 07777) == want);
-    REQUIRE(slurp(target) == "second");
+
+    const struct {
+        mode_t      bit;
+        const char *name;
+    } specials[] = {{S_ISUID, "suid"}, {S_ISGID, "sgid"}, {S_ISVTX, "sticky"}};
+    int kept = 0;
+    for (const auto &sp : specials) {
+        const mode_t want = static_cast<mode_t>(0644) | sp.bit;
+        REQUIRE(::chmod(target.string().c_str(), want) == 0);
+        struct stat after_chmod;
+        REQUIRE(::stat(target.string().c_str(), &after_chmod) == 0);
+        if ((after_chmod.st_mode & 07777) != want) {
+            WARN("filesystem dropped " << sp.name << " (mode "
+                                       << (after_chmod.st_mode & 07777) << "); skipping that bit");
+            continue;
+        }
+        ++kept;
+        REQUIRE(write_file_atomically(target.string(), sp.name));
+        struct stat st;
+        REQUIRE(::stat(target.string().c_str(), &st) == 0);
+        REQUIRE((st.st_mode & 07777) == want);
+        REQUIRE(slurp(target) == sp.name);
+    }
+    if (kept == 0)
+        WARN("filesystem dropped suid, sgid and sticky; nothing to assert");
 }
 
 TEST_CASE("an existing target's temp is created 0600 before fchmod", "[utils][atomic]")
 {
-    ScopedTempDir                 dir;
+    ScopedTempDir dir;
+    struct ScopedUmask
+    {
+        const mode_t prev;
+        explicit ScopedUmask(mode_t mask) : prev(::umask(mask)) {}
+        ~ScopedUmask() { ::umask(prev); }
+    } umask_022{0022};
+
     const boost::filesystem::path target = dir.path / "secret.json";
     REQUIRE(write_file_atomically(target.string(), "first"));
     REQUIRE(::chmod(target.string().c_str(), 0644) == 0);
@@ -588,6 +613,8 @@ TEST_CASE("a successful fallback save leaves no atomic.bak", "[utils][atomic]")
     REQUIRE(slurp(target) == "new-bytes");
     REQUIRE(count_atomic_baks(dir.path) == 0);
 }
+
+#endif
 
 TEST_CASE("write_file_atomically never clears the process umask", "[utils][atomic]")
 {
@@ -640,12 +667,14 @@ TEST_CASE("write_file_atomically never clears the process umask", "[utils][atomi
     REQUIRE(samples.load() > 0);
     REQUIRE(saw_zero.load() == 0);
 #else
-    SUCCEED("Umask: is only on /proc/self/status");
+    WARN("S3 polls /proc/self/status Umask: and is Linux-only; skipping on this platform");
+    return;
 #endif
 }
 
 TEST_CASE("a leftover temp name is retried and left untouched", "[utils][atomic]")
 {
+    // POSIX uses O_CREAT|O_EXCL; Windows uses fopen "wx"/"wbx" (VS2015+).
     ScopedTempDir                 dir;
     const boost::filesystem::path target = dir.path / "preset.json";
     REQUIRE(write_file_atomically(target.string(), "old-bytes"));
@@ -661,7 +690,6 @@ TEST_CASE("a leftover temp name is retried and left untouched", "[utils][atomic]
     REQUIRE(boost::filesystem::exists(leftover));
     REQUIRE(slurp(leftover) == "planted-leftover");
 }
-#endif
 
 TEST_CASE("write_file_atomically removes the temporary when rename fails", "[utils][atomic]")
 {

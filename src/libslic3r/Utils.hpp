@@ -245,8 +245,9 @@ extern void set_atomic_write_temp_create_hook(AtomicWriteTempInspectFn hook);
 // Unique sibling used by write_file_atomically:
 // <path>.<pid>.<launch>.<counter>.tmp. consume=true advances the process-wide
 // counter (same generator the helper uses); consume=false peeks so a test can
-// plant a blocker on the next temporary. `launch` is a per-process token so a
-// leftover from a previous run with the same pid does not collide.
+// plant a blocker on the next temporary. `launch` is steady_clock mixed with
+// std::random_device, so two processes that share a pid (Flatpak) and start
+// in the same clock tick still get different temp names.
 extern std::string atomic_write_temp_path(const std::string &path, bool consume = true);
 // How many O_EXCL EEXIST retries write_file_atomically will make.
 constexpr int ATOMIC_WRITE_TEMP_ATTEMPTS = 100;
@@ -254,9 +255,12 @@ constexpr int ATOMIC_WRITE_TEMP_ATTEMPTS = 100;
 // POSIX opens an existing target's temp with mode 0600 (no world-readable
 // window) and a new file with 0666 (kernel applies the umask). fstat captures
 // the create mode (0644 if fstat fails, never 0666). The fd is then fchmod
-// 0600 before the payload. Before the rename the temp is fchmod'd to the
-// existing target's mode (07777, keeping suid/sgid/sticky), or back to the
-// captured default for a new file. umask() is never called.
+// 0600 before the payload. Mode restore is after fsync, so a crash mid-write
+// leaves the temp at 0600 (the safe direction); a target that vanishes
+// mid-save is also restored as 0600 / the captured default. Before the rename
+// the temp is fchmod'd to the existing target's mode (07777, keeping
+// suid/sgid/sticky), or back to the captured default for a new file.
+// umask() is never called.
 // On a failed replace the temporary is removed only if the target is still
 // there. If the target is already gone the temporary is kept so the new
 // contents survive. A dangling or looping symlink is a hard error (the link

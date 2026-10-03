@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <random>
 #include <locale>
 #include <memory>
 #include <mutex>
@@ -799,11 +800,19 @@ std::error_code rename_file(const std::string &from, const std::string &to)
 
 static const std::string &atomic_write_launch_token()
 {
+	// Clock plus random_device so two launches in the same tick still differ
+	// (steady_clock alone is not unique if the first save races).
 	static const std::string token = [] {
 		const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
 		                    std::chrono::steady_clock::now().time_since_epoch())
 		                    .count();
-		return std::to_string(static_cast<unsigned long long>(ns));
+		unsigned rnd = 0;
+		try {
+			rnd = std::random_device{}();
+		} catch (...) {
+			rnd = static_cast<unsigned>(ns);
+		}
+		return std::to_string(static_cast<unsigned long long>(ns)) + "." + std::to_string(rnd);
 	}();
 	return token;
 }
@@ -847,14 +856,25 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 	// rename_file tries ReplaceFileW first so the destination DACL, attributes
 	// and ADS are kept; MoveFileEx is only the missing-target / unsupported-fs
 	// fallback and does not preserve the DACL.
-	FILE *file = nullptr;
-	for (int attempt = 0; attempt < ATOMIC_WRITE_TEMP_ATTEMPTS && file == nullptr; ++attempt) {
-		tmp  = atomic_write_temp_path(path, true);
-		file = boost::nowide::fopen(tmp.c_str(), binary ? "wb" : "w");
+	// "wx" / "wbx" is C11 exclusive create (VS2015+ / UCRT). A same-name leftover
+	// must not be truncated; only EEXIST / ERROR_FILE_EXISTS is retried.
+	FILE *file     = nullptr;
+	int   last_err = 0;
+	for (int attempt = 0; attempt < ATOMIC_WRITE_TEMP_ATTEMPTS; ++attempt) {
+		tmp     = atomic_write_temp_path(path, true);
+		errno   = 0;
+		file    = boost::nowide::fopen(tmp.c_str(), binary ? "wbx" : "wx");
+		last_err = errno;
+		if (file != nullptr)
+			break;
+		const DWORD werr = ::GetLastError();
+		if (last_err != EEXIST && werr != ERROR_FILE_EXISTS && werr != ERROR_ALREADY_EXISTS)
+			break;
 	}
 	if (file == nullptr) {
 		if (err)
-			*err = std::string("cannot create temporary file ") + tmp + ": " + std::strerror(errno);
+			*err = std::string("cannot create temporary file ") + tmp + ": " +
+			       (last_err != 0 ? std::strerror(last_err) : std::string("exclusive create failed"));
 		return false;
 	}
 	(void) target_exists;

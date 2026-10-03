@@ -115,7 +115,13 @@ public:
         // FDM hollowing (FDMHollowing.hpp): a part asked to be hollowed and its shell left no room for
         // a cavity, or only some of its bodies were hollowed. Appended, so no existing value moves;
         // own id because active_step_add_warning de-duplicates by id.
-        SlicingHollowingSkipped
+        SlicingHollowingSkipped,
+        // Side stabilizers (Support/Stabilizers.hpp): painted stabilizer points that no strut can reach
+        // under the printability rules. Appended, so no existing value moves; own id because
+        // active_step_add_warning de-duplicates by id.
+        SlicingStabilizerPaintUnreachable,
+        // Side stabilizers set to Manual on an object with no painted stabilizer points. Appended; own id.
+        SlicingStabilizerManualUnpainted
     };
 
     typedef size_t TimeStamp;

@@ -781,9 +781,24 @@ void PrintObject::generate_support_material()
             m_print->throw_if_canceled();
 
             // Side stabilizers ride on the support layers the generator above just made.
-            if (m_config.stabilizer_supports.value && !m_shared_object) {
+            if (m_config.stabilizer_supports.value != smOff && !m_shared_object) {
                 m_print->set_status(50, L("Generating side stabilizers"));
-                generate_stabilizer_supports(*this, [this]() { this->throw_if_canceled(); });
+                const stabilizers::PlanReport stab = generate_stabilizer_supports(*this, [this]() { this->throw_if_canceled(); });
+                // Painted stabilizer points are an explicit ask: say so when one cannot be honoured.
+                if (! stab.unreachable.empty()) {
+                    const Vec3d &p = stab.unreachable.front();
+                    this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL,
+                        Slic3r::format(_u8L("Object %1%: %2% painted stabilizer point(s) cannot be reached by a printable strut (the first at a height of %3% mm). "
+                                            "Move the paint higher, away from the bed or out of recesses, or give the struts more room."),
+                                       this->model_object()->name, stab.unreachable.size(), std::round(p.z() * 10.) / 10.),
+                        PrintStateBase::SlicingStabilizerPaintUnreachable);
+                }
+                if (stab.manual_without_paint)
+                    this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL,
+                        Slic3r::format(_u8L("Object %1%: side stabilizers are set to Manual but no stabilizer points are painted, so none were generated. "
+                                            "Paint them with the support painting tool, or set the stabilizers to Auto."),
+                                       this->model_object()->name),
+                        PrintStateBase::SlicingStabilizerManualUnpainted);
             }
         }
         // Ultra (support groups, plan 2026-09-02 3.7): both this feature and support filament
@@ -1280,7 +1295,18 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "stabilizer_tip_diameter"
             || opt_key == "stabilizer_tip_gap"
             || opt_key == "stabilizer_pillar_diameter"
-            || opt_key == "stabilizer_max_island_width") {
+            || opt_key == "stabilizer_max_island_width"
+            || opt_key == "stabilizer_pillar_base_diameter"
+            || opt_key == "stabilizer_bracing"
+            || opt_key == "stabilizer_brace_max_unbraced"
+            || opt_key == "stabilizer_brace_max_span"
+            || opt_key == "stabilizer_column_shape"
+            || opt_key == "stabilizer_column_width"
+            || opt_key == "stabilizer_column_length"
+            || opt_key == "stabilizer_column_min_height"
+            || opt_key == "stabilizer_wall_loops"
+            || opt_key == "stabilizer_infill_density"
+            || opt_key == "stabilizer_infill_pattern") {
             steps.emplace_back(posSupportMaterial);
         } else if (
                opt_key == "hollow_interior"

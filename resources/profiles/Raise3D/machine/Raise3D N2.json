@@ -1,0 +1,12 @@
+{
+    "type": "machine_model",
+    "name": "Raise3D N2",
+    "model_id": "Raise3D-N2",
+    "nozzle_diameter": "0.4",
+    "machine_tech": "FFF",
+    "family": "Raise3D",
+    "bed_model": "",
+    "bed_texture": "",
+    "hotend_model": "",
+    "default_materials": "Generic ASA @System;Generic PETG @System;Generic PLA @System;Generic PVA @System;Generic TPU @System;Raise3D Premium ABS;Raise3D Premium ASA;Raise3D Premium PETG;Raise3D Premium PLA;Raise3D Premium TPU-95A"
+}

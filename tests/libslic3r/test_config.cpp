@@ -843,8 +843,8 @@ TEST_CASE("Key-mapped enum choices round-trip between stored value and combo row
         CHECK(enum_choice_value_at_index(def, -1) == -1);
         CHECK(enum_choice_value_at_index(def, int(def.enum_values.size())) == -1);
     }
-    // The helper names 16 options; a typo there would silently drop one from the mapping.
-    CHECK(mapped == 16);
+    // The helper names 17 options; a typo there would silently drop one from the mapping.
+    CHECK(mapped == 17);
 
     SECTION("locked_*_infill_pattern: the first row is \"default\" (ipCount), not ipMonotonic")
     {
@@ -1281,4 +1281,203 @@ TEST_CASE("filament group plate-pick continues only when grouping is accepted", 
     // S4: a never-sliced plate is not dirty, so tab-in / pick does not prompt.
     CHECK_FALSE(filament_group_dirty_on_invalidation(false, false));
     CHECK(filament_group_plate_pick_continues(false, required, true, false));
+}
+
+TEST_CASE("Static print configs compare, order and hash by their option values", "[Config]")
+{
+    // PrintObjectConfig comes from PRINT_CONFIG_CLASS_DEFINE; PrintConfig combines MachineEnvelopeConfig
+    // and GCodeConfig through PRINT_CONFIG_CLASS_DERIVED_DEFINE. Both generate hash(), operator==,
+    // operator< and the option registration from the same option list. The hash inequalities use fixed
+    // inputs, so they are deterministic; they check that hash() covers the changed option.
+    // Edge's PrintObjectConfig lists Ultra's print_extruder_id / print_extruder_variant first;
+    // brim_object_gap is third (Orca's first). Ordering checks use Edge's first member.
+    SECTION("default-constructed configs are equal and find their options by key")
+    {
+        PrintObjectConfig a, b;
+        REQUIRE(a == b);
+        REQUIRE(a.hash() == b.hash());
+        REQUIRE_FALSE(a < b);
+        REQUIRE_FALSE(b < a);
+        REQUIRE(a.optptr("layer_height") == &a.layer_height);
+        REQUIRE(a.optptr("print_extruder_id") == &a.print_extruder_id);
+        REQUIRE(a.optptr("brim_object_gap") == &a.brim_object_gap);
+    }
+
+    SECTION("one differing option makes the configs unequal and orders them")
+    {
+        PrintObjectConfig a, b;
+        b.layer_height.value = a.layer_height.value + 0.05;
+        REQUIRE(a != b);
+        REQUIRE(a.hash() != b.hash());
+        REQUIRE(a < b);
+        REQUIRE_FALSE(b < a);
+    }
+
+    SECTION("ordering is decided by the first option in declaration order that differs")
+    {
+        PrintObjectConfig a, b;
+        // print_extruder_id is declared first on Edge (ConfigOptionInts).
+        a.print_extruder_id.values = {2};
+        b.print_extruder_id.values = {1};
+        a.layer_height.value       = b.layer_height.value - 0.05; // declared later, points the other way
+        REQUIRE(b < a);
+        REQUIRE_FALSE(a < b);
+    }
+
+    SECTION("a derived config sees differences in its parents and in its own options")
+    {
+        PrintConfig a, b;
+        REQUIRE(a == b);
+        REQUIRE(a.hash() == b.hash());
+
+        b.gcode_flavor.value = b.gcode_flavor.value == gcfMarlinLegacy ? gcfKlipper : gcfMarlinLegacy; // GCodeConfig parent
+        REQUIRE(a != b);
+        REQUIRE(a.hash() != b.hash());
+
+        PrintConfig c, d;
+        d.skirt_distance.value = c.skirt_distance.value + 1.0; // PrintConfig's own list
+        REQUIRE(c != d);
+        REQUIRE(c.hash() != d.hash());
+        REQUIRE(c.optptr("skirt_distance") == &c.skirt_distance);
+        REQUIRE(c.optptr("gcode_flavor") == &c.gcode_flavor);
+    }
+}
+
+namespace {
+
+// Keys whose values differ between two full configs, compared as text so enum names count too.
+std::vector<std::string> differing_keys(const FullPrintConfig &a, const FullPrintConfig &b)
+{
+    std::vector<std::string> keys;
+    for (const std::string &key : a.keys())
+        if (a.opt_serialize(key) != b.opt_serialize(key))
+            keys.push_back(key);
+    return keys;
+}
+
+// Applies source to one full config member by member and to another key by key, as apply() did before
+// static configs could apply themselves. Matching the two paths is not enough (both could be no-ops).
+// The real guard that apply copied something is CHECK_FALSE against a default-constructed dest.
+template<class Source> void check_member_apply_matches_key_apply(const Source &source)
+{
+    FullPrintConfig by_member;
+    FullPrintConfig by_key;
+    by_member.apply(source);
+    by_key.apply_only(source, source.keys());
+    CHECK(differing_keys(by_member, by_key).empty());
+    CHECK_FALSE(differing_keys(by_member, FullPrintConfig()).empty());
+}
+
+} // namespace
+
+TEST_CASE("A static config applies itself onto a config of its type as a lookup by name would", "[Config]")
+{
+    SECTION("region config")
+    {
+        PrintRegionConfig region;
+        region.sparse_infill_pattern.value = ipGyroid;
+        region.outer_wall_speed.values     = {37.};
+        region.sparse_infill_density.value = 35.;
+        region.wall_loops.value            = 4;
+        FullPrintConfig full;
+        REQUIRE(region.apply_to(full));
+        check_member_apply_matches_key_apply(region);
+    }
+    SECTION("object config")
+    {
+        PrintObjectConfig object;
+        object.seam_position.value         = spRear;
+        object.wall_generator.value        = PerimeterGeneratorType::Arachne;
+        object.support_speed.values        = {33.};
+        object.enable_support.value        = true;
+        object.print_extruder_id.values    = {1, 2};
+        object.print_extruder_variant.values = {"Direct Drive Standard", "Direct Drive High Flow"};
+        FullPrintConfig full;
+        REQUIRE(object.apply_to(full));
+        check_member_apply_matches_key_apply(object);
+    }
+    SECTION("G-code config, whose enum lists carry their names through a keys map")
+    {
+        GCodeConfig gcode;
+        gcode.z_hop_types.values                 = {int(zhtSpiral)};
+        gcode.retraction_length.values           = {1.5};
+        gcode.retraction_distances_when_ec.values = {1.25};
+        gcode.long_retractions_when_ec.values    = {static_cast<unsigned char>(1)};
+        FullPrintConfig full;
+        REQUIRE(gcode.apply_to(full));
+        check_member_apply_matches_key_apply(gcode);
+    }
+    SECTION("apply_to writes a same-type dest member that started at its default")
+    {
+        // A post-apply mutation of dest only proves differing_keys works. This requires apply_to
+        // itself: dest starts at default, apply_to must write the source value onto it.
+        PrintRegionConfig source;
+        source.sparse_infill_density.value = 35.;
+        PrintRegionConfig dest;
+        REQUIRE(source.apply_to(dest));
+        REQUIRE(dest.sparse_infill_density.value == 35.);
+        REQUIRE(dest.sparse_infill_density.value != PrintRegionConfig().sparse_infill_density.value);
+    }
+    SECTION("machine envelope config")
+    {
+        MachineEnvelopeConfig envelope;
+        envelope.emit_machine_limits_to_gcode.value = !envelope.emit_machine_limits_to_gcode.value;
+        envelope.machine_max_speed_x.values         = {999.};
+        FullPrintConfig full;
+        REQUIRE(envelope.apply_to(full));
+        check_member_apply_matches_key_apply(envelope);
+    }
+    SECTION("SLA print config")
+    {
+        SLAPrintConfig sla;
+        sla.filename_format.value = "sla_{input_filename_base}.gcode";
+        SLAFullPrintConfig dest;
+        REQUIRE(sla.apply_to(dest));
+        REQUIRE(dest.filename_format.value == sla.filename_format.value);
+
+        SLAFullPrintConfig by_member;
+        SLAFullPrintConfig by_key;
+        by_member.apply(sla);
+        by_key.apply_only(sla, sla.keys());
+        CHECK(by_member.filename_format.value == by_key.filename_format.value);
+        CHECK(by_member.filename_format.value != SLAFullPrintConfig().filename_format.value);
+    }
+}
+
+TEST_CASE("A static config applied onto a config of another type falls back to a lookup by name", "[Config]")
+{
+    PrintRegionConfig region;
+    region.sparse_infill_pattern.value = ipGyroid;
+    DynamicPrintConfig dynamic;
+    REQUIRE_FALSE(region.apply_to(dynamic));
+    dynamic.apply(region);
+    CHECK(dynamic.opt_serialize("sparse_infill_pattern") == "gyroid");
+}
+
+TEST_CASE("Typed apply still matches the key path for a DynamicPrintConfig source", "[Config]")
+{
+    PrintRegionConfig region;
+    region.sparse_infill_pattern.value = ipGyroid;
+    region.outer_wall_speed.values     = {41.};
+    region.sparse_infill_density.value = 22.;
+    DynamicPrintConfig dynamic;
+    dynamic.apply(region);
+
+    PrintRegionConfig from_dynamic;
+    from_dynamic.apply(dynamic);
+    PrintRegionConfig from_static;
+    from_static.apply(region);
+    CHECK(from_dynamic.opt_serialize("sparse_infill_pattern") == from_static.opt_serialize("sparse_infill_pattern"));
+    CHECK(from_dynamic.opt_serialize("outer_wall_speed") == from_static.opt_serialize("outer_wall_speed"));
+    CHECK(from_dynamic.opt_serialize("sparse_infill_density") == from_static.opt_serialize("sparse_infill_density"));
+}
+
+TEST_CASE("apply ignore_nonexistent is honoured when typed apply cannot run", "[Config]")
+{
+    PrintObjectConfig object;
+    object.layer_height.value = 0.28;
+    PrintRegionConfig region;
+    REQUIRE_FALSE(object.apply_to(region));
+    REQUIRE_NOTHROW(region.apply(object, true));
+    REQUIRE_THROWS_AS(region.apply(object, false), UnknownOptionException);
 }

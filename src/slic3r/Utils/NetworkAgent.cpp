@@ -75,6 +75,7 @@ func_send_message_to_printer        NetworkAgent::send_message_to_printer_ptr = 
 func_check_cert                     NetworkAgent::check_cert_ptr = nullptr;
 func_install_device_cert            NetworkAgent::install_device_cert_ptr = nullptr;
 func_start_discovery                NetworkAgent::start_discovery_ptr = nullptr;
+std::function<void()>               NetworkAgent::s_login_changed_hook;
 func_change_user                    NetworkAgent::change_user_ptr = nullptr;
 func_is_user_login                  NetworkAgent::is_user_login_ptr = nullptr;
 func_user_logout                    NetworkAgent::user_logout_ptr = nullptr;
@@ -1005,8 +1006,15 @@ int  NetworkAgent::change_user(std::string user_info)
         ret = change_user_ptr(network_agent, user_info);
         if (ret)
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" error: network_agent=%1%, ret=%2%, user_info=%3%")%network_agent %ret %user_info ;
+        if (s_login_changed_hook)
+            s_login_changed_hook();
     }
     return ret;
+}
+
+void NetworkAgent::set_login_changed_hook(std::function<void()> hook)
+{
+    s_login_changed_hook = std::move(hook);
 }
 
 bool NetworkAgent::is_user_login()
@@ -1025,6 +1033,8 @@ int  NetworkAgent::user_logout(bool request)
         ret = user_logout_ptr(network_agent, request);
         if (ret)
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" error: network_agent=%1%, ret=%2%")%network_agent %ret;
+        if (s_login_changed_hook)
+            s_login_changed_hook();
     }
     return ret;
 }

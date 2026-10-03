@@ -25,6 +25,7 @@ inline bool enum_choice_maps_by_key(const std::string &opt_key)
         opt_key == "internal_solid_infill_pattern" || opt_key == "sparse_infill_pattern" ||
         opt_key == "support_base_pattern" || opt_key == "support_interface_pattern" ||
         opt_key == "ironing_pattern" || opt_key == "support_ironing_pattern" ||
+        opt_key == "stabilizer_infill_pattern" ||
         // Locked Zag per-band patterns: a subset that starts with "default" (ipCount = 30).
         opt_key == "locked_skin_infill_pattern" || opt_key == "locked_skeleton_infill_pattern" ||
         opt_key == "support_style" || opt_key == "curr_bed_type" ||

@@ -251,7 +251,7 @@ TEST_CASE("Mesh Boolean gizmo: the result stays where the boolean geometry is", 
                 CHECK(nv->name == std::string("A - ") + c.suffix);
                 // Stored centred, like every other volume.
                 CHECK(nv->mesh().bounding_box().center().norm() < 1e-3);
-                CHECK(std::abs(nv->mesh().volume()) * std::abs(nv->get_matrix().matrix().block<3, 3>(0, 0).determinant()) ==
+                CHECK(std::abs(its_volume(nv->mesh().its)) * std::abs(nv->get_matrix().matrix().block<3, 3>(0, 0).determinant()) ==
                       Approx(expected_volume).epsilon(1e-4));
 
                 // The regression: the result moved by (source offset - result centre).

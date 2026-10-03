@@ -521,11 +521,11 @@ TEST_CASE("write_manifest_bytes is atomic and a torn file is not produced", "[Pr
         return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }()) == man);
 
-    set_atomic_write_force_fail_hook([](const char*) { return true; });
+    Slic3r::set_atomic_write_force_fail_hook([](const char*) { return true; });
     std::string err;
     std::map<std::string, Entry> newer{{"filament/A.json", {10, false}}, {"filament/B.json", {11, false}}};
     REQUIRE_FALSE(write_manifest_bytes(path, dump_manifest(newer), &err));
-    set_atomic_write_force_fail_hook(nullptr);
+    Slic3r::set_atomic_write_force_fail_hook(nullptr);
     REQUIRE_FALSE(err.empty());
 
     std::ifstream in(path, std::ios::binary);

@@ -33,7 +33,7 @@
 
 namespace Slic3r {
 
-enum class LockAttempt { Acquired, Busy, Unsupported };
+enum class LockAttempt { Acquired, Busy, Unsupported, Denied };
 
 #ifdef _WIN32
 struct InstanceLock::Native
@@ -77,7 +77,9 @@ struct InstanceLock::Native
     {
         if (!open_shared()) {
             const DWORD err = GetLastError();
-            if (err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION || err == ERROR_ACCESS_DENIED)
+            if (err == ERROR_ACCESS_DENIED)
+                return LockAttempt::Denied;
+            if (err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION)
                 return LockAttempt::Busy;
             if (err == ERROR_NOT_SUPPORTED || err == ERROR_INVALID_FUNCTION)
                 return LockAttempt::Unsupported;
@@ -199,13 +201,15 @@ struct InstanceLock::Native
 
 namespace {
 
-enum class SessionState { NotAttempted, Held, ReadOnly, Released, Unsupported };
+enum class SessionState { NotAttempted, Held, Transient, ReadOnly, Released, Unsupported };
 
 std::atomic<SessionState>        s_session_state{SessionState::NotAttempted};
-std::mutex                       s_session_mutex;
+std::recursive_mutex             s_session_mutex;
 std::unique_ptr<InstanceLock>    s_session_lock;
 std::string                      s_session_data_dir;
 std::string                      s_session_error;
+int                              s_transient_refs{0};
+bool                             s_permission_denied{false};
 
 void set_session_error(const std::string &msg)
 {
@@ -220,17 +224,25 @@ bool try_reacquire_locked()
     auto lock = std::make_unique<InstanceLock>(InstanceLock::lock_path_for_data_dir(s_session_data_dir),
                                                std::chrono::milliseconds(0));
     if (lock->locked()) {
-        s_session_lock  = std::move(lock);
-        s_session_state = SessionState::Held;
+        s_session_lock      = std::move(lock);
+        s_session_state     = SessionState::Held;
+        s_permission_denied = false;
         BOOST_LOG_TRIVIAL(info) << "InstanceLock: re-acquired data-dir lock";
         return true;
     }
     if (lock->unsupported()) {
         s_session_lock.reset();
         s_session_state = SessionState::Unsupported;
+        s_permission_denied = false;
         set_session_error("This filesystem does not support instance locks; "
                           "saves are allowed but not exclusive.");
         return true;
+    }
+    if (lock->permission_denied()) {
+        s_session_lock.reset();
+        s_permission_denied = true;
+        set_session_error("Cannot lock the data directory (permission denied).");
+        return false;
     }
     return false;
 }
@@ -252,9 +264,11 @@ InstanceLock::InstanceLock(InstanceLock &&other) noexcept
     , m_native(std::move(other.m_native))
     , m_locked(other.m_locked)
     , m_unsupported(other.m_unsupported)
+    , m_denied(other.m_denied)
 {
     other.m_locked      = false;
     other.m_unsupported = false;
+    other.m_denied      = false;
 }
 
 InstanceLock &InstanceLock::operator=(InstanceLock &&other) noexcept
@@ -265,8 +279,10 @@ InstanceLock &InstanceLock::operator=(InstanceLock &&other) noexcept
         m_native            = std::move(other.m_native);
         m_locked            = other.m_locked;
         m_unsupported       = other.m_unsupported;
+        m_denied            = other.m_denied;
         other.m_locked      = false;
         other.m_unsupported = false;
+        other.m_denied      = false;
     }
     return *this;
 }
@@ -292,8 +308,15 @@ bool InstanceLock::try_lock(std::chrono::milliseconds timeout)
                 m_native.reset();
                 return false;
             }
+            if (r == LockAttempt::Denied) {
+                m_denied = true;
+                m_native.reset();
+                return false;
+            }
             if (timeout.count() <= 0 || std::chrono::steady_clock::now() >= deadline)
                 break;
+            // Brief hidden/hub saves drop the lock between retries; the next
+            // LockFileEx/flock in this wait must win once they release.
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         m_native.reset();
@@ -317,6 +340,7 @@ void InstanceLock::unlock()
     }
     m_locked      = false;
     m_unsupported = false;
+    m_denied      = false;
 }
 
 std::string InstanceLock::lock_path_for_data_dir(const std::string &data_dir)
@@ -326,8 +350,10 @@ std::string InstanceLock::lock_path_for_data_dir(const std::string &data_dir)
 
 bool InstanceLock::try_acquire_data_dir(const std::string &data_dir, bool claim, std::chrono::milliseconds timeout)
 {
-    std::lock_guard<std::mutex> guard(s_session_mutex);
+    std::lock_guard<std::recursive_mutex> guard(s_session_mutex);
     s_session_error.clear();
+    s_permission_denied = false;
+    s_transient_refs    = 0;
     if (!claim || data_dir.empty()) {
         s_session_state = SessionState::NotAttempted;
         s_session_lock.reset();
@@ -348,6 +374,13 @@ bool InstanceLock::try_acquire_data_dir(const std::string &data_dir, bool claim,
         s_session_lock.reset();
         return false;
     }
+    if (s_session_lock->permission_denied()) {
+        s_session_state     = SessionState::ReadOnly;
+        s_permission_denied = true;
+        set_session_error("Cannot lock the data directory (permission denied).");
+        s_session_lock.reset();
+        return false;
+    }
     s_session_state = SessionState::ReadOnly;
     set_session_error("Another EdgeSlicer instance is using this data directory; "
                       "this instance will not save config, presets or printers.");
@@ -355,29 +388,58 @@ bool InstanceLock::try_acquire_data_dir(const std::string &data_dir, bool claim,
     return false;
 }
 
+bool InstanceLock::enable_transient_saves(const std::string &data_dir)
+{
+    std::lock_guard<std::recursive_mutex> guard(s_session_mutex);
+    s_session_error.clear();
+    s_permission_denied = false;
+    s_transient_refs    = 0;
+    s_session_lock.reset();
+    if (data_dir.empty()) {
+        s_session_state = SessionState::NotAttempted;
+        s_session_data_dir.clear();
+        return false;
+    }
+    s_session_data_dir = data_dir;
+    s_session_state    = SessionState::Transient;
+    BOOST_LOG_TRIVIAL(info) << "InstanceLock: hidden/hub will lock only around each save";
+    return true;
+}
+
+bool InstanceLock::is_transient()
+{
+    return s_session_state.load(std::memory_order_acquire) == SessionState::Transient;
+}
+
 void InstanceLock::release_data_dir()
 {
-    std::lock_guard<std::mutex> guard(s_session_mutex);
+    std::lock_guard<std::recursive_mutex> guard(s_session_mutex);
     s_session_lock.reset();
-    s_session_state = SessionState::Released;
-    s_session_error = "InstanceLock released";
+    s_transient_refs    = 0;
+    s_permission_denied = false;
+    s_session_state     = SessionState::Released;
+    s_session_error     = "InstanceLock released";
 }
 
 bool InstanceLock::holds_data_dir()
 {
-    std::lock_guard<std::mutex> guard(s_session_mutex);
-    return s_session_state == SessionState::Held && s_session_lock && s_session_lock->locked();
+    std::lock_guard<std::recursive_mutex> guard(s_session_mutex);
+    if (!s_session_lock || !s_session_lock->locked())
+        return false;
+    const SessionState st = s_session_state.load(std::memory_order_relaxed);
+    return st == SessionState::Held || (st == SessionState::Transient && s_transient_refs > 0);
 }
 
 bool InstanceLock::allows_saves()
 {
     const SessionState st = s_session_state.load(std::memory_order_acquire);
-    if (st == SessionState::Held || st == SessionState::NotAttempted || st == SessionState::Unsupported)
+    if (st == SessionState::Held || st == SessionState::NotAttempted || st == SessionState::Unsupported ||
+        st == SessionState::Transient)
         return true;
     if (st == SessionState::Released)
         return false;
     if (st == SessionState::ReadOnly) {
-        std::lock_guard<std::mutex> guard(s_session_mutex);
+        std::lock_guard<std::recursive_mutex> guard(s_session_mutex);
         if (s_session_state.load(std::memory_order_relaxed) != SessionState::ReadOnly)
             return s_session_state.load(std::memory_order_relaxed) != SessionState::Released &&
                    s_session_state.load(std::memory_order_relaxed) != SessionState::ReadOnly;
@@ -393,10 +455,83 @@ bool InstanceLock::lock_unsupported()
     return s_session_state.load(std::memory_order_acquire) == SessionState::Unsupported;
 }
 
-const std::string &InstanceLock::last_error()
+bool InstanceLock::lock_permission_denied()
 {
-    std::lock_guard<std::mutex> guard(s_session_mutex);
+    std::lock_guard<std::recursive_mutex> guard(s_session_mutex);
+    return s_permission_denied;
+}
+
+std::string InstanceLock::last_error()
+{
+    std::lock_guard<std::recursive_mutex> guard(s_session_mutex);
     return s_session_error;
+}
+
+InstanceLock::WriteScope::WriteScope()
+{
+    std::lock_guard<std::recursive_mutex> guard(s_session_mutex);
+    const SessionState                    st = s_session_state.load(std::memory_order_relaxed);
+    if (st == SessionState::Held || st == SessionState::NotAttempted || st == SessionState::Unsupported) {
+        m_allows = true;
+        return;
+    }
+    if (st == SessionState::Released) {
+        m_allows = false;
+        return;
+    }
+    if (st == SessionState::ReadOnly) {
+        m_allows = try_reacquire_locked();
+        return;
+    }
+    if (st != SessionState::Transient)
+        return;
+    if (s_transient_refs > 0 && s_session_lock && s_session_lock->locked()) {
+        ++s_transient_refs;
+        m_owns_transient = true;
+        m_allows         = true;
+        return;
+    }
+    if (s_session_data_dir.empty()) {
+        m_allows = false;
+        return;
+    }
+    auto lock = std::make_unique<InstanceLock>(lock_path_for_data_dir(s_session_data_dir),
+                                               std::chrono::milliseconds(0));
+    if (lock->locked()) {
+        s_session_lock   = std::move(lock);
+        s_transient_refs = 1;
+        m_owns_transient = true;
+        m_allows         = true;
+        return;
+    }
+    if (lock->unsupported()) {
+        s_session_lock.reset();
+        s_session_state     = SessionState::Unsupported;
+        s_permission_denied = false;
+        set_session_error("This filesystem does not support instance locks; "
+                          "saves are allowed but not exclusive.");
+        m_allows = true;
+        return;
+    }
+    if (lock->permission_denied()) {
+        s_session_lock.reset();
+        s_permission_denied = true;
+        set_session_error("Cannot lock the data directory (permission denied).");
+        m_allows = false;
+        return;
+    }
+    set_session_error("Another EdgeSlicer instance is using this data directory; "
+                      "this instance will not save config, presets or printers.");
+    m_allows = false;
+}
+
+InstanceLock::WriteScope::~WriteScope()
+{
+    if (!m_owns_transient)
+        return;
+    std::lock_guard<std::recursive_mutex> guard(s_session_mutex);
+    if (s_transient_refs > 0 && --s_transient_refs == 0)
+        s_session_lock.reset();
 }
 
 namespace {

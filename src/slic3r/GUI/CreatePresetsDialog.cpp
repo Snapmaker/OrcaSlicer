@@ -4419,7 +4419,16 @@ void ExportConfigsDialog::data_init()
             }
             
             Preset *new_printer_preset     = new Preset(printer_preset);
-            earse_preset_fields_for_safe(new_printer_preset);
+            if (!earse_preset_fields_for_safe(new_printer_preset)) {
+                delete new_printer_preset;
+                MessageDialog dlg(this,
+                                  _L("Failed to prepare the printer preset for export. The file was left unchanged."),
+                                  wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Info"),
+                                  wxOK | wxICON_ERROR | wxCENTRE);
+                dlg.ShowModal();
+                EndModal(wxID_CANCEL);
+                return;
+            }
             m_printer_presets[preset_name] = new_printer_preset;
         }
     }

@@ -3239,7 +3239,7 @@ void GUI_App::init_single_instance_checker(const std::string &name, const std::s
     m_single_instance_checker = std::make_unique<wxSingleInstanceChecker>(boost::nowide::widen(name), boost::nowide::widen(path));
 }
 
-bool GUI_App::is_data_dir_read_only() const { return !InstanceLock::allows_saves(); }
+bool GUI_App::is_data_dir_read_only() const { return InstanceLock::is_read_only(); }
 
 bool GUI_App::OnInit()
 {
@@ -3594,24 +3594,24 @@ bool GUI_App::on_init_inner()
     profiler.mark("preset_bundle->setup_directories");
 
     // After instance_check() has already decided this process stays (hand-off
-    // never reaches here). Hidden / hub instances take the lock non-blocking so
-    // they cannot save alongside a holder. A visible instance waits ~1.5 s for
-    // the previous process to finish OnExit teardown.
-    {
-        const auto timeout = m_hub_managed ? std::chrono::milliseconds(0) : InstanceLock::default_timeout;
-        if (InstanceLock::try_acquire_data_dir(data_dir(), true, timeout)) {
-            const size_t n = scavenge_stale_atomic_temps({data_dir()}, true);
-            if (n > 0)
-                BOOST_LOG_TRIVIAL(info) << "InstanceLock: scavenged " << n << " stale atomic temp(s)";
-        } else if (InstanceLock::lock_unsupported()) {
-            m_instance_lock_notice =
-                _u8L("This filesystem does not support instance locks; saves are allowed but not exclusive.");
-        } else {
-            m_data_dir_read_only   = true;
-            m_instance_lock_notice =
-                _u8L("Another EdgeSlicer instance is already using this data directory. "
-                     "This instance will not save application settings, presets or printers until that instance exits.");
-        }
+    // never reaches here). Hidden / hub instances never hold the lock for life:
+    // they take it only around each gated write. A visible instance waits ~1.5 s
+    // for the previous process to finish OnExit teardown.
+    if (m_hub_managed) {
+        InstanceLock::enable_transient_saves(data_dir());
+    } else if (InstanceLock::try_acquire_data_dir(data_dir())) {
+        const size_t n = scavenge_stale_atomic_temps({data_dir()}, true);
+        if (n > 0)
+            BOOST_LOG_TRIVIAL(info) << "InstanceLock: scavenged " << n << " stale atomic temp(s)";
+    } else if (InstanceLock::lock_unsupported()) {
+        m_instance_lock_notice =
+            _u8L("This filesystem does not support instance locks; saves are allowed but not exclusive.");
+    } else if (InstanceLock::lock_permission_denied()) {
+        m_instance_lock_notice = _u8L("Cannot lock the data directory (permission denied). Saves are disabled.");
+    } else {
+        m_instance_lock_notice =
+            _u8L("Another EdgeSlicer instance is already using this data directory. "
+                 "This instance will not save application settings, presets or printers until that instance exits.");
     }
 
     copy_web_resources();
@@ -4143,8 +4143,20 @@ bool GUI_App::on_init_inner()
         }
 
         if (m_post_initialized && app_config->dirty() && app_config->save_due()) {
-            if (!app_config->save())
-                BOOST_LOG_TRIVIAL(error) << "Failed to save application settings: " << app_config->last_save_error();
+            if (!app_config->save()) {
+                if (!m_appconfig_save_notice_shown) {
+                    m_appconfig_save_notice_shown = true;
+                    const std::string err         = app_config->last_save_error();
+                    const std::string text        = err.empty()
+                                                 ? _u8L("Failed to save application settings.")
+                                                 : (_u8L("Failed to save application settings.") + "\n" + err);
+                    if (NotificationManager *nm = notification_manager())
+                        nm->push_notification(NotificationType::CustomNotification,
+                                              NotificationManager::NotificationLevel::WarningNotificationLevel, text);
+                }
+            } else {
+                m_appconfig_save_notice_shown = false;
+            }
         }
 
     });

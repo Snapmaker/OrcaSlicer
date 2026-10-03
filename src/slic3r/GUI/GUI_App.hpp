@@ -315,8 +315,8 @@ private:
 
     //BBS
     bool m_is_closing {false};
-    bool m_data_dir_read_only {false};
     std::string m_instance_lock_notice;
+    bool m_appconfig_save_notice_shown {false};
     // Ultra: this instance was started hidden (--hidden / SNORCA_HIDDEN / app_config
     // "start_hidden"). It has no window until the hub shows it, closing hides it again,
     // and only an explicit quit (tray, hub page, POST /api/quit, File > Quit) ends it.

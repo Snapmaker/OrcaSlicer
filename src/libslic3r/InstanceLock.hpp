@@ -18,19 +18,21 @@ namespace Slic3r {
 // fork-without-exec; O_CLOEXEC only covers exec. Windows: CreateFileW with
 // FILE_SHARE_READ|WRITE|DELETE, then LockFileEx. Share-mode 0 is not used:
 // the old instance's OnExit handle, Defender, the indexer or OneDrive would
-// otherwise defeat the wait and force a spurious read-only session. The OS
+// otherwise defeat the wait and force a spurious read-only session. CreateFileW
+// ACCESS_DENIED is a permission error, not "another instance". The OS
 // releases the lock when the holder exits. The lock file is created once and
 // kept; deleting it on release would let a third instance lock a fresh inode
 // while the second still holds the old one.
 //
-// try_acquire never waits longer than `timeout` (default 1.5 s — the previous
-// instance releases only after OnExit teardown). Startup must not block
-// forever. If another instance holds the lock this process is read-only, but
-// that is not permanent: allows_saves() retries a non-blocking acquire and
-// restores writes once the lock is free. Hidden / hub instances take the same
-// lock non-blocking so they cannot save alongside the holder. On filesystems
-// that do not support flock/LockFileEx (NFS/SMB/FUSE ENOLCK/EOPNOTSUPP),
-// saves stay allowed and a warning is recorded. Tests and the CLI never call
+// Visible instances take a long-held session lock (default wait 1.5 s — the
+// previous instance releases only after OnExit teardown). Hidden / hub
+// instances never hold that lock for life: they take it only around each
+// gated write (non-blocking try, write, release). If the try fails, that
+// write is refused. A visible wait / later re-acquire that collides with a
+// hidden save window retries every 5 ms; the next attempt wins once the
+// hidden write drops the lock. On filesystems that do not support
+// flock/LockFileEx (NFS/SMB/FUSE ENOLCK/EOPNOTSUPP), saves stay allowed
+// and a warning is recorded. Tests and the CLI never call
 // try_acquire_data_dir, so allows_saves() stays true until release_data_dir().
 class InstanceLock
 {
@@ -50,30 +52,56 @@ public:
 
     bool locked() const { return m_locked; }
     bool unsupported() const { return m_unsupported; }
+    bool permission_denied() const { return m_denied; }
 
     static std::string lock_path_for_data_dir(const std::string &data_dir);
 
-    // Session lock. `claim` false (empty path / test reset) leaves NotAttempted
-    // so later tests stay writable. Hidden / hub still claim with timeout 0.
+    // Long-held session lock for a visible instance. `claim` false (empty
+    // path / test reset) leaves NotAttempted so later tests stay writable.
     static bool try_acquire_data_dir(const std::string &       data_dir,
                                      bool                      claim   = true,
                                      std::chrono::milliseconds timeout = default_timeout);
+    // Hidden / hub: remember the data dir but do not hold the lock. Writes
+    // go through WriteScope (non-blocking try, release in the destructor).
+    static bool enable_transient_saves(const std::string &data_dir);
+    static bool is_transient();
     static void release_data_dir();
     static bool holds_data_dir();
-    // True while Held, NotAttempted (tests/CLI) or Unsupported (no lock API).
-    // ReadOnly retries a non-blocking acquire. Released (OnExit / release)
-    // stays false.
+    // True while Held, NotAttempted (tests/CLI), Unsupported, or Transient
+    // (hidden may still attempt a per-save lock). ReadOnly retries a
+    // non-blocking acquire. Released stays false.
     static bool allows_saves();
+    // Session is ReadOnly right now. Does not re-acquire.
     static bool is_read_only();
     static bool lock_unsupported();
-    static const std::string &last_error();
+    static bool lock_permission_denied();
+    static std::string last_error();
+
+    // Holds the session mutex for the scope. Transient sessions take the
+    // flock only here and release it in the destructor. Nesting is OK
+    // (refcount). Use this around every gated write; save_current_preset
+    // keeps one scope across the disk write and the in-memory commit.
+    class WriteScope
+    {
+    public:
+        WriteScope();
+        ~WriteScope();
+        WriteScope(const WriteScope &)            = delete;
+        WriteScope &operator=(const WriteScope &) = delete;
+        bool        allows() const { return m_allows; }
+
+    private:
+        bool m_allows{false};
+        bool m_owns_transient{false};
+    };
 
 private:
     struct Native;
-    std::string              m_path;
-    std::unique_ptr<Native>  m_native;
-    bool                     m_locked{false};
-    bool                     m_unsupported{false};
+    std::string             m_path;
+    std::unique_ptr<Native> m_native;
+    bool                    m_locked{false};
+    bool                    m_unsupported{false};
+    bool                    m_denied{false};
 
     bool try_lock(std::chrono::milliseconds timeout);
     void unlock();

@@ -7369,9 +7369,11 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
     if (m_presets->type() == Preset::TYPE_FILAMENT) {
         _current_printer = const_cast<Preset*>(&wxGetApp().preset_bundle->printers.get_selected_preset_base());
     }
+    // Capture before save_current_preset: that path can re-acquire the lock.
+    const bool read_only_before_save = wxGetApp().is_data_dir_read_only();
     // Save the preset into Slic3r::data_dir / presets / section_name / preset_name.json
     if (!m_presets->save_current_preset(name, detach, save_to_project, nullptr, _current_printer)) {
-        const wxString why = wxGetApp().is_data_dir_read_only()
+        const wxString why = read_only_before_save
                                  ? _L("Another EdgeSlicer instance is using this data directory; presets cannot be saved.")
                                  : _L("Failed to save the preset. The file was left unchanged.");
         MessageDialog(m_parent, why, _L("Save preset"), wxOK | wxICON_ERROR).ShowModal();
@@ -7400,8 +7402,9 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
             new_preset->user_id = wxGetApp().getAgent()->get_user_id();
         BOOST_LOG_TRIVIAL(info) << "sync_preset: create preset = " << new_preset->name;
     }
+    const bool read_only_before_info = wxGetApp().is_data_dir_read_only();
     if (!new_preset->save_info()) {
-        const wxString why = wxGetApp().is_data_dir_read_only()
+        const wxString why = read_only_before_info
                                  ? _L("Another EdgeSlicer instance is using this data directory; presets cannot be saved.")
                                  : _L("Failed to save the preset info file.");
         MessageDialog(m_parent, why, _L("Save preset"), wxOK | wxICON_ERROR).ShowModal();

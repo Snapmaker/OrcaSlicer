@@ -962,7 +962,8 @@ bool AppConfig::save()
         throw CriticalException("Calling AppConfig::save() from a worker thread!");
 
     m_last_save_error.clear();
-    if (!InstanceLock::allows_saves()) {
+    InstanceLock::WriteScope write_scope;
+    if (!write_scope.allows()) {
         m_last_save_error = InstanceLock::last_error().empty()
                                 ? std::string("data directory is read-only (another instance holds the lock)")
                                 : InstanceLock::last_error();
@@ -1287,7 +1288,8 @@ bool AppConfig::save()
         throw CriticalException("Calling AppConfig::save() from a worker thread!");
 
     m_last_save_error.clear();
-    if (!InstanceLock::allows_saves()) {
+    InstanceLock::WriteScope write_scope;
+    if (!write_scope.allows()) {
         m_last_save_error = InstanceLock::last_error().empty()
                                 ? std::string("data directory is read-only (another instance holds the lock)")
                                 : InstanceLock::last_error();

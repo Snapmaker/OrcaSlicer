@@ -18,6 +18,7 @@
 #include <string>
 #include <system_error>
 #include <thread>
+#include <vector>
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -1035,4 +1036,126 @@ TEST_CASE("allows_saves re-acquires after the holder releases, and stays false a
     REQUIRE_FALSE(InstanceLock::holds_data_dir());
     InstanceLock::try_acquire_data_dir("", false);
     REQUIRE(InstanceLock::allows_saves());
+}
+
+TEST_CASE("hidden transient mode does not hold the data-dir lock between saves", "[utils][atomic][InstanceLock]")
+{
+    ScopedTempDir dir;
+    struct Reset
+    {
+        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
+    } reset;
+
+    REQUIRE(InstanceLock::enable_transient_saves(dir.path.string()));
+    REQUIRE(InstanceLock::is_transient());
+    REQUIRE_FALSE(InstanceLock::holds_data_dir());
+    REQUIRE(InstanceLock::allows_saves());
+    {
+        InstanceLock::WriteScope scope;
+        REQUIRE(scope.allows());
+        REQUIRE(InstanceLock::holds_data_dir());
+    }
+    REQUIRE_FALSE(InstanceLock::holds_data_dir());
+    REQUIRE(InstanceLock::is_transient());
+}
+
+TEST_CASE("a visible holder refuses a hidden save without writing the file", "[utils][atomic][InstanceLock]")
+{
+    ScopedTempDir dir;
+    struct Reset
+    {
+        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
+    } reset;
+
+    InstanceLock visible(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
+    REQUIRE(visible.locked());
+    REQUIRE(InstanceLock::enable_transient_saves(dir.path.string()));
+    REQUIRE_FALSE(InstanceLock::holds_data_dir());
+    {
+        InstanceLock::WriteScope scope;
+        REQUIRE_FALSE(scope.allows());
+    }
+
+    Preset preset(Preset::TYPE_PRINT, "n");
+    preset.file = (dir.path / "n.json").string();
+    REQUIRE_FALSE(preset.save(nullptr));
+    REQUIRE_FALSE(boost::filesystem::exists(preset.file));
+}
+
+#ifndef _WIN32
+TEST_CASE("hidden per-save locking does not stop a visible acquire within the wait", "[utils][atomic][InstanceLock]")
+{
+    ScopedTempDir dir;
+    struct Reset
+    {
+        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
+    } reset;
+
+    int fds[2];
+    REQUIRE(pipe(fds) == 0);
+    const pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (child == 0) {
+        close(fds[0]);
+        InstanceLock::enable_transient_saves(dir.path.string());
+        {
+            InstanceLock::WriteScope scope;
+            const char               c = scope.allows() ? '1' : '0';
+            (void) write(fds[1], &c, 1);
+            usleep(80000);
+        }
+        pause();
+        _exit(0);
+    }
+    close(fds[1]);
+    char c = '0';
+    REQUIRE(read(fds[0], &c, 1) == 1);
+    close(fds[0]);
+    REQUIRE(c == '1');
+    REQUIRE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(200)));
+    REQUIRE(InstanceLock::holds_data_dir());
+    REQUIRE(kill(child, SIGKILL) == 0);
+    int status = 0;
+    REQUIRE(waitpid(child, &status, 0) == child);
+    InstanceLock::try_acquire_data_dir("", false);
+}
+#endif
+
+TEST_CASE("remove_files and delete_printer are refused while the data-dir lock is read-only", "[utils][atomic][InstanceLock]")
+{
+    ScopedTempDir dir;
+    struct Reset
+    {
+        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
+    } reset;
+
+    const boost::filesystem::path preset_file  = dir.path / "preset.json";
+    const boost::filesystem::path printer_file = dir.path / "printer.json";
+    {
+        boost::nowide::ofstream out(preset_file.string());
+        out << "x";
+    }
+    {
+        boost::nowide::ofstream out(printer_file.string());
+        out << "x";
+    }
+
+    InstanceLock holder(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
+    REQUIRE(holder.locked());
+    REQUIRE_FALSE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(50)));
+    REQUIRE(InstanceLock::is_read_only());
+
+    Preset preset(Preset::TYPE_PRINT, "preset");
+    preset.file = preset_file.string();
+    REQUIRE_FALSE(preset.remove_files());
+    REQUIRE(boost::filesystem::exists(preset_file));
+
+    PhysicalPrinterCollection printers(std::vector<std::string>{});
+    DynamicPrintConfig        printer_cfg;
+    printer_cfg.set_key_value("preset_names", new ConfigOptionStrings());
+    printers.load_printer(printer_file.string(), "p", std::move(printer_cfg), false, false);
+    REQUIRE_FALSE(printers.delete_printer("p"));
+    REQUIRE(boost::filesystem::exists(printer_file));
+
+    InstanceLock::try_acquire_data_dir("", false);
 }

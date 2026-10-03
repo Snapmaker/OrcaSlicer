@@ -191,7 +191,8 @@ mirror::SourceListing list_source(const bfs::path& src_uid)
 
 int mirror_bambu_user_presets(const std::string& logged_in_uid)
 {
-    if (!InstanceLock::allows_saves()) {
+    InstanceLock::WriteScope write_scope;
+    if (!write_scope.allows()) {
         BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] data directory is read-only; skipping Bambu user-preset mirror";
         return 0;
     }
@@ -305,7 +306,8 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
 
 int repull_mirrored_presets()
 {
-    if (!InstanceLock::allows_saves()) {
+    InstanceLock::WriteScope write_scope;
+    if (!write_scope.allows()) {
         BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] data directory is read-only; skipping re-pull";
         return 0;
     }

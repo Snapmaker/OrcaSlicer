@@ -587,7 +587,8 @@ bool Preset::save_info(std::string file)
     //BBS: add project embedded preset logic
     if (this->is_project_embedded)
         return true;
-    if (!InstanceLock::allows_saves()) {
+    InstanceLock::WriteScope write_scope;
+    if (!write_scope.allows()) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": data directory is read-only; not saving " << this->file;
         return false;
     }
@@ -621,7 +622,8 @@ bool Preset::remove_files()
     //BBS: add project embedded preset logic
     if (this->is_project_embedded)
         return true;
-    if (!InstanceLock::allows_saves()) {
+    InstanceLock::WriteScope write_scope;
+    if (!write_scope.allows()) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": data directory is read-only; not removing " << this->file;
         return false;
     }
@@ -640,7 +642,8 @@ bool Preset::save(DynamicPrintConfig* parent_config)
     //BBS: add project embedded preset logic
     if (this->is_project_embedded)
         return true;
-    if (!InstanceLock::allows_saves()) {
+    InstanceLock::WriteScope write_scope;
+    if (!write_scope.allows()) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " data directory is read-only; not saving " << this->name;
         return false;
     }
@@ -2602,6 +2605,9 @@ std::map<std::string, std::vector<Preset const *>> PresetCollection::get_filamen
 // new preset selected (or an overwrite applied) in memory.
 bool PresetCollection::save_current_preset(const std::string &new_name, bool detach, bool save_to_project, Preset* _curr_preset, const Preset* _current_printer)
 {
+    InstanceLock::WriteScope write_scope;
+    if (!write_scope.allows())
+        return false;
     Preset      curr_preset = _curr_preset ? *_curr_preset : m_edited_preset;
     std::string final_inherits;
     lock();
@@ -3752,7 +3758,8 @@ void PhysicalPrinter::update_preset_names_in_config()
 
 bool PhysicalPrinter::save(DynamicPrintConfig* /*parent_config*/)
 {
-    if (!InstanceLock::allows_saves()) {
+    InstanceLock::WriteScope write_scope;
+    if (!write_scope.allows()) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " data directory is read-only; not saving " << this->file;
         return false;
     }
@@ -3765,7 +3772,8 @@ bool PhysicalPrinter::save(DynamicPrintConfig* /*parent_config*/)
 
 bool PhysicalPrinter::save(const std::string& file_name_from, const std::string& file_name_to)
 {
-    if (!InstanceLock::allows_saves()) {
+    InstanceLock::WriteScope write_scope;
+    if (!write_scope.allows()) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " data directory is read-only; not renaming " << file_name_from;
         return false;
     }
@@ -4100,7 +4108,8 @@ bool PhysicalPrinterCollection::delete_printer(const std::string& name)
     auto it = this->find_printer_internal(name);
     if (it == m_printers.end())
         return false;
-    if (!InstanceLock::allows_saves()) {
+    InstanceLock::WriteScope write_scope;
+    if (!write_scope.allows()) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": data directory is read-only; not deleting " << name;
         return false;
     }
@@ -4116,7 +4125,8 @@ bool PhysicalPrinterCollection::delete_selected_printer()
 {
     if (!has_selection())
         return false;
-    if (!InstanceLock::allows_saves()) {
+    InstanceLock::WriteScope write_scope;
+    if (!write_scope.allows()) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": data directory is read-only; not deleting the selected printer";
         return false;
     }

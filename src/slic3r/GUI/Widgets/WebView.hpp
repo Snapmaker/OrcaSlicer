@@ -32,10 +32,10 @@ public:
 
     // True while the view shows one of the bundled Flutter pages (resources/web/flutter_web).
     static bool IsFlutterPage(wxWebView *webView);
-    // Dark mode for a Flutter page: the app forces its light theme and draws into a canvas, so in
-    // dark mode a colour filter (resources/web/include/flutter_dark.js) goes over that canvas, mapped
-    // onto the slicer's dark background and text colours; in light mode it comes off again. Runs on
-    // every page load of every view and on theme changes; does nothing on other pages.
+    // Dark mode for a Flutter page: tells the page the slicer's dark mode (window.edgeSetDarkMode,
+    // added by scripts/patch_flutter_web_dark.py), and the app switches to its own dark or light
+    // theme live. Runs on every page load of every view and on theme changes; does nothing on
+    // other pages.
     static void ApplyFlutterTheme(wxWebView *webView);
 };
 

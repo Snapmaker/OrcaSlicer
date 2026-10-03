@@ -172016,7 +172016,7 @@ return A.l($async$HO,r)},
 IH(a,b){return this.bjT(!1,!1)},
 bjT(a,b){var s=0,r=A.m(t.H),q=this,p
 var $async$IH=A.i(function(c,d){if(c===1)return A.j(d,r)
-for(;;)switch(s){case 0:q.a=q.b=!1
+for(;;)switch(s){case 0:q.a=!0,q.b=!1/*edgeslicer:system-theme*/
 A.Hx("[ThemeVM] toggleTheme, isDark: false, isSystemTheme: false")
 if(q.a)q.d=A.wL($.M4(),!1)
 else q.d=q.b?A.wL($.bGf(),!0):A.wL($.M4(),!1)

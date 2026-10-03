@@ -200,8 +200,9 @@ function ShowProjectInfo( p3MF )
 // Ultra: everything below comes out of the 3MF, i.e. from whoever made the file. Plain fields are
 // shown as text; the descriptions keep their formatting, but nothing in them may run or load from
 // this machine. Tags not on the allowlist keep their text but lose every attribute. Listed tags
-// keep only the named attributes: img src (https only), alt, width, height, title; a href
-// (http(s) or '#') and title. Formatting tags keep no attributes. srcset, <source>, on*, dynsrc,
+// keep only the named attributes: img src (https only, no userinfo), alt, width, height, title;
+// a href (http(s) or '#', no userinfo) and title. Formatting tags keep no attributes. srcset,
+// <source>, on*, dynsrc,
 // lowsrc, imagesrcset, style, svg, ping and longdesc are therefore dropped. The page is file://
 // so mixed content is not blocked — that is why srcset/<source> are removed, not prefix-checked.
 // Parsing in a DOMParser document is inert (no script runs, nothing loads).
@@ -210,11 +211,29 @@ function EscapeHtml( s )
 	return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// Path used in a single-quoted onClick handler inside HTML. & first so a name containing
+// &quot; cannot become a real quote after HTML decode.
+function EscapeClickPath( s )
+{
+	return String(s).replace(/&/g,'&amp;').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
 // Browsers strip tab / CR / LF (and form-feed) from URL attributes. They do not strip a regular
-// space, so 'ht tps://' must not collapse to https.
+// space, so 'ht tps://' must not collapse to https. Userinfo (user:pw@) is refused the way the
+// old C++ helper did.
 function SafeUrlValue( raw )
 {
 	return String(raw).replace(/[\t\r\n\f\u0000]/g,'').replace(/^ +| +$/g,'').toLowerCase();
+}
+
+function SafeKeepUrl( raw, httpsOnly )
+{
+	let v=SafeUrlValue(raw);
+	if( httpsOnly ? !/^https:/.test(v) : !/^(https?:|#)/.test(v) )
+		return false;
+	if( /^https?:\/\/[^/#?]*@/.test(v) )
+		return false;
+	return true;
 }
 
 function SafeHtml( html )
@@ -252,9 +271,9 @@ function SafeHtml( html )
 				el.removeAttribute(el.attributes[j].name);
 				continue;
 			}
-			if( name=='src' && !/^https:/.test(SafeUrlValue(el.attributes[j].value)) )
+			if( name=='src' && !SafeKeepUrl(el.attributes[j].value, true) )
 				el.removeAttribute(el.attributes[j].name);
-			else if( name=='href' && !/^(https?:|#)/.test(SafeUrlValue(el.attributes[j].value)) )
+			else if( name=='href' && !SafeKeepUrl(el.attributes[j].value, false) )
 				el.removeAttribute(el.attributes[j].name);
 		}
 		if( tag=='a' )
@@ -487,7 +506,7 @@ function ConstructFileHtml( ID, pItem )
 		// Attachment names come from the 3MF: escape them for HTML, and the path for the
 		// single-quoted JS string inside onClick (a name may contain ' on Windows).
 		let tPathRaw=String(pOne['filepath']);
-		let tPath=tPathRaw.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/</g,'&lt;');
+		let tPath=EscapeClickPath(tPathRaw);
 		let tName=EscapeHtml(decodeURIComponent(pOne['filename']));
 		
 		let sTail=getFileTail(tName).toLowerCase();

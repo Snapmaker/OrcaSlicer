@@ -1,15 +1,18 @@
-// Headless check of the project page's SafeHtml (resources/web/model/model.js).
-// Loads the real EscapeHtml / SafeUrlValue / SafeHtml from that file into jsdom
-// (no reimplementation).
+// Headless check of the project page's SafeHtml / EscapeHtml / EscapeClickPath
+// (resources/web/model/model.js). Loads the real functions into jsdom (no reimplementation).
 //
 // Not wired into CMake/CI (Edge rule: no test CMake edits). Owed follow-up: hook this
 // into CI. Pin: tests/slic3rutils/package.json + package-lock.json.
 //
 // Run: npm install --prefix tests/slic3rutils && node tests/slic3rutils/safehtml_model_test.js
-// Missing node or jsdom: exit 0 with SKIP (so an unwired CI job does not go red).
+// Missing node or jsdom: exit 0 with SKIP, unless CI is set (then exit 1).
 'use strict';
 
 function skip(why) {
+    if (process.env.CI) {
+        console.error('FAIL: ' + why + ' (CI is set; jsdom is required)');
+        process.exit(1);
+    }
     console.log('SKIP: ' + why);
     process.exit(0);
 }
@@ -21,6 +24,7 @@ const fs = require('fs');
 const path = require('path');
 
 const MODEL_JS = path.join(__dirname, '..', '..', 'resources', 'web', 'model', 'model.js');
+const INDEX_HTML = path.join(__dirname, '..', '..', 'resources', 'web', 'model', 'index.html');
 const JSDOM_PATH = path.join(__dirname, 'node_modules', 'jsdom');
 
 let JSDOM;
@@ -31,6 +35,7 @@ try {
 }
 
 const source = fs.readFileSync(MODEL_JS, 'utf8');
+const indexHtml = fs.readFileSync(INDEX_HTML, 'utf8');
 
 function extractSafeHtmlBlock(src) {
     const start = src.indexOf('function EscapeHtml');
@@ -57,13 +62,21 @@ function extractSafeHtmlBlock(src) {
 const extracted = extractSafeHtmlBlock(source);
 if (extracted.indexOf('function SafeUrlValue') < 0)
     throw new Error('SafeUrlValue must sit between EscapeHtml and SafeHtml so this test loads the real helper');
+if (extracted.indexOf('function EscapeClickPath') < 0)
+    throw new Error('EscapeClickPath must sit between EscapeHtml and SafeHtml so this test loads the real helper');
+if (extracted.indexOf('function SafeKeepUrl') < 0)
+    throw new Error('SafeKeepUrl must sit between EscapeHtml and SafeHtml so this test loads the real helper');
 
 const dom = new JSDOM(
     '<!DOCTYPE html><html><head></head><body></body></html><script>' + extracted + '</script>',
     { runScripts: 'dangerously', url: 'file:///resources/web/model/index.html' }
 );
 const SafeHtml = dom.window.SafeHtml;
+const EscapeHtml = dom.window.EscapeHtml;
+const EscapeClickPath = dom.window.EscapeClickPath;
 if (typeof SafeHtml !== 'function') throw new Error('SafeHtml did not install on the jsdom window');
+if (typeof EscapeHtml !== 'function') throw new Error('EscapeHtml did not install on the jsdom window');
+if (typeof EscapeClickPath !== 'function') throw new Error('EscapeClickPath did not install on the jsdom window');
 
 let failures = 0;
 let passed = 0;
@@ -103,8 +116,23 @@ function check(label, cond) {
 }
 
 {
+    const out = SafeHtml('<img src="http://cdn.example.com/a.png">');
+    check('plain http img src is dropped', !/src/i.test(out) && !/http:\/\/cdn\.example\.com/i.test(out));
+}
+
+{
+    const out = SafeHtml('<img src="https://user:pw@cdn.example.com/a.png">');
+    check('https img src with userinfo is dropped', !/src/i.test(out) && !/user:pw/i.test(out));
+}
+
+{
     const out = SafeHtml('<img src="https://cdn/a.png" style="background:url(http://10.0.0.1/x.png)">');
     check('style url() is dropped', !/style/i.test(out) && !/10\.0\.0\.1/.test(out));
+}
+
+{
+    const out = SafeHtml('<div style="background:url(http://10.0.0.1/x.png)">x</div>');
+    check('style on div is dropped', !/style/i.test(out) && !/10\.0\.0\.1/.test(out) && /<div/i.test(out));
 }
 
 {
@@ -130,6 +158,29 @@ function check(label, cond) {
 }
 
 {
+    const js = SafeHtml('<a href="javascript:alert(1)">x</a>');
+    const tab = SafeHtml('<a href="java&#x09;script:alert(1)">x</a>');
+    const data = SafeHtml('<a href="data:text/html,hi">x</a>');
+    const vbs = SafeHtml('<a href="vbscript:msgbox(1)">x</a>');
+    check('javascript: href is dropped', !/href/i.test(js) || !/javascript:/i.test(js));
+    check('javascript: payload is gone', !/alert/i.test(js));
+    check('obfuscated java&#x09;script: href is dropped', !/href/i.test(tab) || !/javascript:/i.test(tab));
+    check('obfuscated javascript payload is gone', !/alert/i.test(tab));
+    check('data: href is dropped', !/href/i.test(data) || !/data:/i.test(data));
+    check('vbscript: href is dropped', !/href/i.test(vbs) || !/vbscript:/i.test(vbs));
+}
+
+{
+    const out = SafeHtml('<a href="https://user:pw@example.com/">x</a>');
+    check('https href with userinfo is dropped', !/href/i.test(out) || !/user:pw/i.test(out));
+}
+
+{
+    const out = SafeHtml('<a href="https://example.com">x</a>');
+    check('a target=_blank gets rel=noopener', /rel\s*=\s*["'][^"']*noopener/i.test(out));
+}
+
+{
     const img = SafeHtml('<img src="https://cdn/a.png" onerror="alert(1)">');
     const a = SafeHtml('<a href="https://example.com" onclick="alert(1)">x</a>');
     const div = SafeHtml('<div onclick="alert(1)">x</div>');
@@ -143,6 +194,49 @@ function check(label, cond) {
     check('dynsrc is dropped', !/dynsrc/i.test(out) && !/10\.0\.0\.1/.test(out));
     check('lowsrc is dropped', !/lowsrc/i.test(out));
     check('imagesrcset is dropped', !/imagesrcset/i.test(out));
+}
+
+{
+    const out = SafeHtml('<noscript><img src="http://10.0.0.1/x"></noscript><template><img src="http://10.0.0.1/y"></template><p>ok</p>');
+    check('noscript is removed', !/<noscript/i.test(out));
+    check('template is removed', !/<template/i.test(out));
+    check('noscript/template http is gone', !/10\.0\.0\.1/.test(out));
+}
+
+{
+    const src = 'data:image/png;base64,xx" onclick=alert(1) x="';
+    const name = 'Bob\'s <file>&x.pdf';
+    check('EscapeHtml preview src encodes quotes and <',
+        EscapeHtml(src).indexOf('"') < 0 && EscapeHtml(src).indexOf('<') < 0 && /&quot;/.test(EscapeHtml(src)));
+    check('EscapeHtml file name encodes quotes, < and &',
+        EscapeHtml(name) === 'Bob&#39;s &lt;file&gt;&amp;x.pdf');
+}
+
+{
+    const raw = 'C:\\dir\\a&b"c\'d<e';
+    const out = EscapeClickPath(raw);
+    check('EscapeClickPath encodes & first', out.indexOf('&amp;') >= 0 && !/&b/.test(out.replace(/&amp;/g, '')));
+    check('EscapeClickPath encodes quote, apostrophe and <',
+        /&quot;/.test(out) && /\\'/.test(out) && /&lt;/.test(out) && out.indexOf('<') < 0 && out.indexOf('"') < 0);
+}
+
+{
+    check('CSP has default-src none', /default-src\s+'none'/.test(indexHtml));
+    check('CSP has base-uri none', /base-uri\s+'none'/.test(indexHtml));
+    check('CSP has form-action none', /form-action\s+'none'/.test(indexHtml));
+    check('CSP has frame-src none', /frame-src\s+'none'/.test(indexHtml));
+    check('CSP script-src allows self', /script-src[^;]*'self'/.test(indexHtml));
+    check('CSP style-src allows self', /style-src[^;]*'self'/.test(indexHtml));
+}
+
+{
+    const page = new JSDOM(indexHtml, { url: 'file:///resources/web/model/index.html' });
+    const scripts = page.window.document.querySelectorAll('script[src]');
+    const links = page.window.document.querySelectorAll('link[rel="stylesheet"]');
+    check('page chrome scripts are relative (self)',
+        scripts.length > 0 && Array.prototype.every.call(scripts, function (s) { return !/^[a-z]+:/i.test(s.getAttribute('src') || ''); }));
+    check('page chrome stylesheets are relative (self)',
+        links.length > 0 && Array.prototype.every.call(links, function (s) { return !/^[a-z]+:/i.test(s.getAttribute('href') || ''); }));
 }
 
 console.log(passed + ' passed, ' + failures + ' failed');

@@ -1295,7 +1295,18 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "stabilizer_tip_diameter"
             || opt_key == "stabilizer_tip_gap"
             || opt_key == "stabilizer_pillar_diameter"
-            || opt_key == "stabilizer_max_island_width") {
+            || opt_key == "stabilizer_max_island_width"
+            || opt_key == "stabilizer_pillar_base_diameter"
+            || opt_key == "stabilizer_bracing"
+            || opt_key == "stabilizer_brace_max_unbraced"
+            || opt_key == "stabilizer_brace_max_span"
+            || opt_key == "stabilizer_column_shape"
+            || opt_key == "stabilizer_column_width"
+            || opt_key == "stabilizer_column_length"
+            || opt_key == "stabilizer_column_min_height"
+            || opt_key == "stabilizer_wall_loops"
+            || opt_key == "stabilizer_infill_density"
+            || opt_key == "stabilizer_infill_pattern") {
             steps.emplace_back(posSupportMaterial);
         } else if (
                opt_key == "hollow_interior"

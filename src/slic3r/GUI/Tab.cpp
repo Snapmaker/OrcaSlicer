@@ -3096,6 +3096,17 @@ void TabPrint::build()
         optgroup->append_single_option_line("stabilizer_tip_gap");
         optgroup->append_single_option_line("stabilizer_pillar_diameter");
         optgroup->append_single_option_line("stabilizer_max_island_width");
+        optgroup->append_single_option_line("stabilizer_pillar_base_diameter");
+        optgroup->append_single_option_line("stabilizer_bracing");
+        optgroup->append_single_option_line("stabilizer_brace_max_unbraced");
+        optgroup->append_single_option_line("stabilizer_brace_max_span");
+        optgroup->append_single_option_line("stabilizer_column_shape");
+        optgroup->append_single_option_line("stabilizer_column_width");
+        optgroup->append_single_option_line("stabilizer_column_length");
+        optgroup->append_single_option_line("stabilizer_column_min_height");
+        optgroup->append_single_option_line("stabilizer_wall_loops");
+        optgroup->append_single_option_line("stabilizer_infill_density");
+        optgroup->append_single_option_line("stabilizer_infill_pattern");
 
     page = add_options_page(L("Multimaterial"), "custom-gcode_multi_material"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Prime tower"), L"param_tower");

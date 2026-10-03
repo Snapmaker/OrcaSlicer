@@ -56,32 +56,102 @@ static void fan(indexed_triangle_set &its, const std::vector<int> &loop)
         add_triangle(its, centre, loop[k], loop[(k + 1) % loop.size()]);
 }
 
-// Rings of `segments` points around an axis (the frame e1, e2 spans each ring), lofted ring to ring
-// and capped at both ends. The rings must be ordered along the axis.
-static indexed_triangle_set loft(const std::vector<std::pair<Vec3d, double>> &rings, const Vec3d &e1, const Vec3d &e2,
-                                 int segments)
+// Closed loops of the same number of vertices, lofted loop to loop (vertex k to vertex k) and capped
+// at both ends. The loops must be ordered along the solid and each be convex.
+static indexed_triangle_set loft_loops(const std::vector<std::vector<Vec3d>> &loops)
 {
     indexed_triangle_set its;
-    if (rings.size() < 2 || segments < 3)
+    if (loops.size() < 2 || loops.front().size() < 3)
         return its;
-    std::vector<std::vector<int>> idx(rings.size(), std::vector<int>(size_t(segments)));
-    for (size_t r = 0; r < rings.size(); ++r)
-        for (int i = 0; i < segments; ++i) {
-            const double phi = 2. * M_PI * i / segments;
-            idx[r][size_t(i)] = add_vertex(its, rings[r].first + rings[r].second * (std::cos(phi) * e1 + std::sin(phi) * e2));
-        }
-    for (size_t r = 0; r + 1 < rings.size(); ++r)
-        for (int i = 0; i < segments; ++i) {
-            const int j = (i + 1) % segments;
+    const size_t segments = loops.front().size();
+    std::vector<std::vector<int>> idx(loops.size(), std::vector<int>(segments));
+    for (size_t r = 0; r < loops.size(); ++r)
+        for (size_t i = 0; i < segments; ++i)
+            idx[r][i] = add_vertex(its, loops[r][i]);
+    for (size_t r = 0; r + 1 < loops.size(); ++r)
+        for (size_t i = 0; i < segments; ++i) {
+            const size_t j = (i + 1) % segments;
             add_triangle(its, idx[r][i], idx[r][j], idx[r + 1][j]);
             add_triangle(its, idx[r][i], idx[r + 1][j], idx[r + 1][i]);
         }
-    // Lateral edges run i -> j on the first ring and j -> i on the last, so the caps run the other way.
+    // Lateral edges run i -> j on the first loop and j -> i on the last, so the caps run the other way.
     std::vector<int> first(idx.front().rbegin(), idx.front().rend());
     fan(its, first);
     fan(its, idx.back());
     orient_outward(its);
     return its;
+}
+
+// Rings of `segments` points around an axis (the frame e1, e2 spans each ring), lofted ring to ring
+// and capped at both ends. The rings must be ordered along the axis.
+static indexed_triangle_set loft(const std::vector<std::pair<Vec3d, double>> &rings, const Vec3d &e1, const Vec3d &e2,
+                                 int segments)
+{
+    if (rings.size() < 2 || segments < 3)
+        return {};
+    std::vector<std::vector<Vec3d>> loops(rings.size(), std::vector<Vec3d>(size_t(segments)));
+    for (size_t r = 0; r < rings.size(); ++r)
+        for (int i = 0; i < segments; ++i) {
+            const double phi = 2. * M_PI * i / segments;
+            loops[r][size_t(i)] = rings[r].first + rings[r].second * (std::cos(phi) * e1 + std::sin(phi) * e2);
+        }
+    return loft_loops(loops);
+}
+
+// A pillar: its section at every height is pillar_section's - a circle or a column outline grown by the
+// taper and the foot. That growth is piecewise linear in z with kinks at the foot's top and (tapered)
+// at the pillar's top, so loops at those heights and at both ends make it exact.
+static indexed_triangle_set pillar_shell(const Pillar &p, const StabilizerSettings &st, double cap, int segments)
+{
+    const double top = p.top_z + cap;
+    if (top <= EPSILON)
+        return {}; // a strut that reaches the bed by itself
+    const double foot = pillar_foot_at(st, 0.);
+    std::vector<double> zs{ 0. };
+    if (foot > EPSILON && foot < top - EPSILON)
+        zs.push_back(foot);
+    if (st.tapered() && p.top_z > zs.back() + EPSILON && p.top_z < top - EPSILON)
+        zs.push_back(p.top_z);
+    zs.push_back(top);
+    std::vector<std::vector<Vec3d>> loops;
+    for (double z : zs) {
+        const double grow = pillar_growth_at(p, st, z);
+        std::vector<Vec3d> loop;
+        if (p.column) {
+            for (const Vec2d &v : column_outline(column_frame(p, st), grow))
+                loop.emplace_back(v.x(), v.y(), z);
+        } else {
+            // The X axis first, as the live generator's circles start, so the two polygonize alike.
+            const double r = st.pillar_radius + grow;
+            for (int i = 0; i < segments; ++i) {
+                const double phi = 2. * M_PI * i / segments;
+                loop.emplace_back(p.pos.x() + r * std::cos(phi), p.pos.y() + r * std::sin(phi), z);
+            }
+        }
+        loops.emplace_back(std::move(loop));
+    }
+    return loft_loops(loops);
+}
+
+// A brace: the 45 degree rod cut at the two pillars' axes. Every generator of the rod is parallel to its
+// axis, and the cuts are vertical planes, so it is a prism - the cut at the lower pillar's axis (an
+// ellipse in that vertical plane, starting sqrt(2) radii below z_low) moved along the axis to the
+// upper pillar's. Its section at any height is the live generator's cut ellipse.
+static indexed_triangle_set brace_shell(const Brace &b, int segments)
+{
+    const Vec2d  dir = b.dir();
+    const Vec2d  perp(-dir.y(), dir.x());
+    const double d   = b.span();
+    std::vector<std::vector<Vec3d>> loops(2);
+    for (int i = 0; i < segments; ++i) {
+        const double phi = 2. * M_PI * i / segments;
+        // Generator phi meets the lower cut (along-axis offset 0) at s = -sqrt(2) r cos(phi).
+        const Vec2d  xy  = b.from + perp * (b.radius * std::sin(phi));
+        const double z   = b.z_low - M_SQRT2 * b.radius * std::cos(phi);
+        loops[0].emplace_back(xy.x(), xy.y(), z);
+        loops[1].emplace_back(xy.x() + dir.x() * d, xy.y() + dir.y() * d, z + d);
+    }
+    return loft_loops(loops);
 }
 
 // A frame perpendicular to the unit axis u.
@@ -325,42 +395,32 @@ indexed_triangle_set frustum_between(const Vec3d &a, double ra, const Vec3d &b, 
     return stab_mesh_detail::loft({ { a, ra }, { b, rb } }, e1, e2, segments);
 }
 
-std::vector<indexed_triangle_set> stabilizer_shells(const std::vector<Strut> &struts, const StabilizerSettings &st,
-                                                    const MeshOptions &opts, MeshReport *report)
+std::vector<indexed_triangle_set> stabilizer_shells(const Plan &plan, const StabilizerSettings &st, const MeshOptions &opts,
+                                                    MeshReport *report)
 {
     std::vector<indexed_triangle_set> shells;
     MeshReport rep;
-    const int    n        = std::max(3, opts.segments);
-    const double pillar_r = st.pillar_radius;
-    // The same foot slice_struts prints: the pillar widens by this much over the same height.
-    const double foot     = std::min(1.0, pillar_r);
+    const int n = std::max(3, opts.segments);
 
     // Pillars: struts of different rings come down onto the same pillar; one shell up to the highest
     // junction, never two coincident ones.
-    std::map<std::pair<long long, long long>, std::pair<Vec2d, double>> pillars;
-    for (const Strut &s : struts) {
-        const Vec2d p   = s.pillar();
-        const auto  key = std::make_pair(std::llround(p.x() * 1000.), std::llround(p.y() * 1000.));
-        auto [it, inserted] = pillars.emplace(key, std::make_pair(p, s.junction_z()));
-        if (! inserted)
-            it->second.second = std::max(it->second.second, s.junction_z());
-    }
-    for (const auto &[key, pillar] : pillars) {
-        const double top = pillar.second + opts.cap;
-        if (top <= EPSILON)
-            continue; // a strut that reaches the bed by itself
-        const Vec3d base(pillar.first.x(), pillar.first.y(), 0.);
-        std::vector<std::pair<Vec3d, double>> rings;
-        rings.emplace_back(base, pillar_r + foot);
-        if (top > foot + EPSILON) {
-            rings.emplace_back(base + Vec3d(0., 0., foot), pillar_r);
-            rings.emplace_back(base + Vec3d(0., 0., top), pillar_r);
-        } else {
-            rings.emplace_back(base + Vec3d(0., 0., top), pillar_r + foot - top);
-        }
-        // The X axis first, as the live generator's circles start, so the two polygonize alike.
-        shells.emplace_back(stab_mesh_detail::loft(rings, Vec3d::UnitX(), Vec3d::UnitY(), n));
+    for (const Pillar &p : plan.pillars) {
+        indexed_triangle_set shell = stab_mesh_detail::pillar_shell(p, st, opts.cap, n);
+        if (shell.indices.empty())
+            continue;
+        shells.emplace_back(std::move(shell));
         ++rep.pillars;
+        if (p.column)
+            ++rep.columns;
+    }
+
+    // Braces between the pillars.
+    for (const Brace &b : plan.braces) {
+        indexed_triangle_set shell = stab_mesh_detail::brace_shell(b, n);
+        if (shell.indices.empty())
+            continue;
+        shells.emplace_back(std::move(shell));
+        ++rep.braces;
     }
 
     // Struts: the oblique tube from the tip down past the pillar's axis, its radius tapering from the
@@ -368,7 +428,7 @@ std::vector<indexed_triangle_set> stabilizer_shells(const std::vector<Strut> &st
     // tip by the vertical plane across the strut through the tip (moved out by the tip gap, so the tip
     // touches, or stops short of, the wall), and just above the tip layer; at the pillar by the
     // vertical plane through the pillar's axis, and by the bed.
-    for (const Strut &s : struts) {
+    for (const Strut &s : plan.struts) {
         indexed_triangle_set tube = stab_mesh_detail::StrutTube(s, st, opts.cap).build(n);
         if (tube.indices.empty()) {
             ++rep.skipped;
@@ -383,11 +443,22 @@ std::vector<indexed_triangle_set> stabilizer_shells(const std::vector<Strut> &st
     return shells;
 }
 
+std::vector<indexed_triangle_set> stabilizer_shells(const std::vector<Strut> &struts, const StabilizerSettings &st,
+                                                    const MeshOptions &opts, MeshReport *report)
+{
+    return stabilizer_shells(plan_from_struts(st, struts), st, opts, report);
+}
+
 indexed_triangle_set stabilizer_mesh(const std::vector<Strut> &struts, const StabilizerSettings &st,
                                      const MeshOptions &opts, MeshReport *report)
 {
+    return stabilizer_mesh(plan_from_struts(st, struts), st, opts, report);
+}
+
+indexed_triangle_set stabilizer_mesh(const Plan &plan, const StabilizerSettings &st, const MeshOptions &opts, MeshReport *report)
+{
     MeshReport rep;
-    std::vector<indexed_triangle_set> shells = stabilizer_shells(struts, st, opts, &rep);
+    std::vector<indexed_triangle_set> shells = stabilizer_shells(plan, st, opts, &rep);
     indexed_triangle_set out;
     if (shells.empty()) {
         if (report != nullptr)

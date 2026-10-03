@@ -30,6 +30,7 @@ add_executable(${_TEST_NAME}_tests
 	test_tree_support_determinism.cpp
 	test_stabilizers.cpp
 	test_stabilizer_bake.cpp
+	test_stabilizers_v2.cpp
 	test_fdm_hollowing.cpp
 	test_extra_bridge_layer_determinism.cpp
 	test_bed_temperature.cpp

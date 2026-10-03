@@ -411,6 +411,13 @@ static const t_config_enum_values s_keys_map_StabilizerMode = {
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(StabilizerMode)
 
+static const t_config_enum_values s_keys_map_StabilizerColumnShape = {
+    { "round",        scsRound       },
+    { "rounded_rect", scsRoundedRect },
+    { "auto",         scsAuto        }
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(StabilizerColumnShape)
+
 static const t_config_enum_values s_keys_map_ForwardCompatibilitySubstitutionRule = {
     { "disable",        ForwardCompatibilitySubstitutionRule::Disable },
     { "enable",         ForwardCompatibilitySubstitutionRule::Enable },
@@ -7292,6 +7299,141 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(20.));
+
+    // Side stabilizers v2: tapered pillars, pillar-to-pillar bracing, rounded-rectangle columns and
+    // walls / infill for the stabilizer bodies. Every default leaves the v1 stabilizers unchanged.
+    def = this->add("stabilizer_pillar_base_diameter", coFloat);
+    def->label = L("Stabilizer pillar base diameter");
+    def->category = L("Support");
+    def->tooltip = L("Diameter of the stabilizer pillars at the build plate. Pillars taper from this diameter at the "
+                     "plate to the pillar diameter at their top, like tree supports, which makes tall pillars much "
+                     "stiffer. 0, or anything not larger than the pillar diameter, keeps the pillars straight.");
+    def->sidetext = "mm";
+    def->min = 0;
+    def->max = 20;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.));
+
+    def = this->add("stabilizer_bracing", coBool);
+    def->label = L("Brace stabilizer pillars");
+    def->category = L("Support");
+    def->tooltip = L("Tie neighbouring stabilizer pillars together with 45 degree diagonal braces wherever a pillar "
+                     "would otherwise stand unbraced for longer than the maximum unbraced height. Braces climb at "
+                     "45 degrees from one pillar to the next, so they print without bridges, and never pass closer "
+                     "to the part than the support XY distance.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("stabilizer_brace_max_unbraced", coFloat);
+    def->label = L("Max unbraced pillar height");
+    def->category = L("Support");
+    def->tooltip = L("The longest stretch of a stabilizer pillar between two ties - the plate, a strut or a brace - "
+                     "before a brace is added. Also what the Auto column shape calls a long unbraced pillar.");
+    def->sidetext = "mm";
+    def->min = 3;
+    def->max = 200;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(10.));
+
+    def = this->add("stabilizer_brace_max_span", coFloat);
+    def->label = L("Max bracing span");
+    def->category = L("Support");
+    def->tooltip = L("Pillars farther apart than this (axis to axis) are never braced to each other. A brace "
+                     "rises as much as it spans, so a long span also needs a long stretch of both pillars.");
+    def->sidetext = "mm";
+    def->min = 2;
+    def->max = 100;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(25.));
+
+    def = this->add("stabilizer_column_shape", coEnum);
+    def->label = L("Stabilizer column shape");
+    def->category = L("Support");
+    def->tooltip = L("Cross-section of the stabilizer pillars.\n\n"
+                     "Round: round pillars.\n"
+                     "Rounded rectangle: every pillar is a column with a filleted rectangular cross-section, like a "
+                     "prime tower, which is much stiffer than a thin round pillar.\n"
+                     "Auto: round pillars, and a rounded-rectangle column for a pillar at least the column height "
+                     "tall that stands alone or still has a stretch longer than the max unbraced height.");
+    def->enum_keys_map = &ConfigOptionEnum<StabilizerColumnShape>::get_enum_values();
+    def->enum_values.push_back("round");
+    def->enum_values.push_back("rounded_rect");
+    def->enum_values.push_back("auto");
+    def->enum_labels.push_back(L("Round"));
+    def->enum_labels.push_back(L("Rounded rectangle"));
+    def->enum_labels.push_back(L("Auto"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<StabilizerColumnShape>(scsRound));
+
+    def = this->add("stabilizer_column_width", coFloat);
+    def->label = L("Stabilizer column width");
+    def->category = L("Support");
+    def->tooltip = L("Size of a rounded-rectangle column along its struts, towards the part. The column's side "
+                     "facing the part stays where a round pillar's would, so a wider column grows away from the part. "
+                     "Never less than the pillar diameter.");
+    def->sidetext = "mm";
+    def->min = 1;
+    def->max = 30;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(6.));
+
+    def = this->add("stabilizer_column_length", coFloat);
+    def->label = L("Stabilizer column length");
+    def->category = L("Support");
+    def->tooltip = L("Size of a rounded-rectangle column across its struts, along the part's side. "
+                     "Never less than the pillar diameter.");
+    def->sidetext = "mm";
+    def->min = 1;
+    def->max = 50;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(10.));
+
+    def = this->add("stabilizer_column_min_height", coFloat);
+    def->label = L("Auto column height");
+    def->category = L("Support");
+    def->tooltip = L("With the Auto column shape, only pillars at least this tall can become rounded-rectangle columns.");
+    def->sidetext = "mm";
+    def->min = 0;
+    def->max = 500;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(30.));
+
+    def = this->add("stabilizer_wall_loops", coInt);
+    def->label = L("Stabilizer walls");
+    def->category = L("Support");
+    def->tooltip = L("Number of walls around the stabilizer pillars, columns and braces, with sparse infill inside. "
+                     "0 prints them solid. Parts too narrow for infill (thin pillars and the tips) always print solid.");
+    def->min = 0;
+    def->max = 10;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("stabilizer_infill_density", coPercent);
+    def->label = L("Stabilizer infill density");
+    def->category = L("Support");
+    // xgettext:no-c-format, no-boost-format
+    def->tooltip = L("Density of the sparse infill inside the stabilizer walls. 100% prints them solid.");
+    def->sidetext = "%";
+    def->min = 0;
+    def->max = 100;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionPercent(15));
+
+    def = this->add("stabilizer_infill_pattern", coEnum);
+    def->label = L("Stabilizer infill pattern");
+    def->category = L("Support");
+    def->tooltip = L("Line pattern of the sparse infill inside the stabilizer walls.");
+    def->enum_keys_map = &ConfigOptionEnum<InfillPattern>::get_enum_values();
+    def->enum_values.push_back("rectilinear");
+    def->enum_values.push_back("grid");
+    def->enum_values.push_back("honeycomb");
+    def->enum_values.push_back("gyroid");
+    def->enum_labels.push_back(L("Rectilinear"));
+    def->enum_labels.push_back(L("Grid"));
+    def->enum_labels.push_back(L("Honeycomb"));
+    def->enum_labels.push_back(L("Gyroid"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipRectilinear));
 
     // FDM hollowing: an even-thickness shell around an empty cavity (FDMHollowing.hpp).
     def = this->add("hollow_interior", coBool);

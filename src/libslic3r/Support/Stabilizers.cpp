@@ -2,6 +2,7 @@
 
 #include "../ClipperUtils.hpp"
 #include "../ExtrusionEntityCollection.hpp"
+#include "../Fill/FillBase.hpp"
 #include "../Flow.hpp"
 #include "../Layer.hpp"
 #include "../Model.hpp"
@@ -13,6 +14,9 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
+#include <memory>
+#include <set>
 #include <tuple>
 #include <unordered_map>
 
@@ -130,6 +134,22 @@ StabilizerSettings StabilizerSettings::from_config(const PrintObjectConfig &cfg,
     const StabilizerMode mode = cfg.stabilizer_supports.value;
     s.ring_struts            = mode == smAuto;
     s.painted_points         = mode != smOff;
+
+    // v2. Each default leaves v1 as it was.
+    s.pillar_base_radius     = 0.5 * cfg.stabilizer_pillar_base_diameter.value;
+    s.bracing                = cfg.stabilizer_bracing.value;
+    s.max_unbraced           = std::max(1., cfg.stabilizer_brace_max_unbraced.value);
+    s.max_brace_span         = std::max(1., cfg.stabilizer_brace_max_span.value);
+    s.column_shape           = cfg.stabilizer_column_shape.value;
+    s.column_width           = cfg.stabilizer_column_width.value;
+    s.column_length          = cfg.stabilizer_column_length.value;
+    s.column_min_height      = cfg.stabilizer_column_min_height.value;
+    s.wall_loops             = std::max(0, cfg.stabilizer_wall_loops.value);
+    s.infill_density         = std::clamp(cfg.stabilizer_infill_density.value / 100., 0., 1.);
+    s.infill_pattern         = cfg.stabilizer_infill_pattern.value;
+    // A wide base stands further out; give its strut the room to reach it.
+    if (s.tapered())
+        s.max_run = std::max(s.max_run, s.pillar_base_radius + s.clearance + 4.);
     return s;
 }
 
@@ -385,6 +405,159 @@ static const ExPolygons &islands_at(const std::vector<LayerOutline> &layers, siz
     return layers[i].islands != nullptr ? *layers[i].islands : none;
 }
 
+// --- v2 pillar geometry ---------------------------------------------------------------------------
+
+// How much wider than at its top a tapered pillar of height `top` is at height z (0 when not tapered).
+static double taper_growth(const StabilizerSettings &st, double z, double top)
+{
+    if (! st.tapered() || top <= EPSILON)
+        return 0.;
+    return (st.pillar_base_radius - st.pillar_radius) * std::clamp(1. - z / top, 0., 1.);
+}
+
+double pillar_foot_at(const StabilizerSettings &st, double z)
+{
+    // A small foot on the bed: the pillar widens by this much over the same height, at 45 degrees.
+    const double foot = std::min(1.0, st.pillar_radius);
+    return std::max(0., foot - z);
+}
+
+double pillar_growth_at(const Pillar &pillar, const StabilizerSettings &st, double z)
+{
+    return taper_growth(st, z, pillar.top_z) + pillar_foot_at(st, z);
+}
+
+double pillar_radius_at(const Pillar &pillar, const StabilizerSettings &st, double z)
+{
+    return st.pillar_radius + taper_growth(st, z, pillar.top_z);
+}
+
+static ColumnFrame column_frame_at(const Vec2d &pos, const Vec2d &dir, const StabilizerSettings &st)
+{
+    const double r  = st.pillar_radius;
+    const double hu = 0.5 * std::max(st.column_width, 2. * r);
+    const double hv = 0.5 * std::max(st.column_length, 2. * r);
+    const double f  = std::min(1.0, 0.5 * std::min(hu, hv));
+    ColumnFrame out;
+    out.along  = dir.norm() > EPSILON ? Vec2d(dir.normalized()) : Vec2d(1., 0.);
+    // The side facing the part where a round pillar's is: the column grows outwards.
+    out.centre = pos + out.along * (hu - r);
+    out.core_u = hu - f;
+    out.core_v = hv - f;
+    out.fillet = f;
+    return out;
+}
+
+ColumnFrame column_frame(const Pillar &pillar, const StabilizerSettings &st) { return column_frame_at(pillar.pos, pillar.dir, st); }
+
+std::vector<Vec2d> column_outline(const ColumnFrame &f, double grow)
+{
+    std::vector<Vec2d> out;
+    out.reserve(4 * (COLUMN_CORNER_SEGMENTS + 1));
+    const Vec2d  perp(-f.along.y(), f.along.x());
+    const double rho = f.fillet + grow;
+    static const double su[4] = { 1., -1., -1., 1. }, sv[4] = { 1., 1., -1., -1. };
+    for (int c = 0; c < 4; ++c)
+        for (int k = 0; k <= COLUMN_CORNER_SEGMENTS; ++k) {
+            const double th = 0.5 * M_PI * (c + double(k) / COLUMN_CORNER_SEGMENTS);
+            out.emplace_back(f.centre + f.along * (su[c] * f.core_u + rho * std::cos(th)) + perp * (sv[c] * f.core_v + rho * std::sin(th)));
+        }
+    return out;
+}
+
+Polygon pillar_section(const Pillar &pillar, const StabilizerSettings &st, double z)
+{
+    const double grow = pillar_growth_at(pillar, st, z);
+    if (! pillar.column)
+        return circle(pillar.pos, st.pillar_radius + grow);
+    Polygon poly;
+    for (const Vec2d &v : column_outline(column_frame(pillar, st), grow))
+        poly.points.emplace_back(scaled(v.x()), scaled(v.y()));
+    return poly;
+}
+
+// Distances in mm, on unscaled points.
+static double point_segment_distance(const Vec2d &p, const Vec2d &a, const Vec2d &b)
+{
+    const Vec2d  ab = b - a;
+    const double l2 = ab.squaredNorm();
+    const double t  = l2 > 0. ? std::clamp((p - a).dot(ab) / l2, 0., 1.) : 0.;
+    return (a + ab * t - p).norm();
+}
+
+static double perp_dot(const Vec2d &a, const Vec2d &b) { return a.x() * b.y() - a.y() * b.x(); }
+
+static double segment_segment_distance(const Vec2d &p1, const Vec2d &q1, const Vec2d &p2, const Vec2d &q2)
+{
+    const Vec2d  r = q1 - p1, s = q2 - p2;
+    const double d1 = perp_dot(r, p2 - p1), d2 = perp_dot(r, q2 - p1), d3 = perp_dot(s, p1 - p2), d4 = perp_dot(s, q1 - p2);
+    if (((d1 > 0. && d2 < 0.) || (d1 < 0. && d2 > 0.)) && ((d3 > 0. && d4 < 0.) || (d3 < 0. && d4 > 0.)))
+        return 0.;
+    return std::min({ point_segment_distance(p1, p2, q2), point_segment_distance(q1, p2, q2), point_segment_distance(p2, p1, q1),
+                      point_segment_distance(q2, p1, q1) });
+}
+
+// Distance from the segment pq to the islands, mm: 0 where it touches or lies inside one. Only
+// islands within `limit` are looked at; farther than that it returns `limit`.
+static double segment_distance(const ExPolygons &islands, const Vec2d &p, const Vec2d &q, double limit)
+{
+    double      best = limit;
+    BoundingBox sbb;
+    sbb.merge(Point(scaled(p.x()), scaled(p.y())));
+    sbb.merge(Point(scaled(q.x()), scaled(q.y())));
+    sbb.offset(scaled<double>(limit) + 1);
+    for (const ExPolygon &island : islands) {
+        if (! sbb.overlap(get_extents(island.contour)))
+            continue;
+        if (island.contains(Point(scaled(p.x()), scaled(p.y()))))
+            return 0.;
+        auto edges = [&best, &p, &q](const Polygon &poly) {
+            const size_t n = poly.size();
+            for (size_t i = 0; i < n && best > 0.; ++i)
+                best = std::min(best, segment_segment_distance(p, q, unscaled(poly[i]), unscaled(poly[(i + 1) % n])));
+        };
+        edges(island.contour);
+        for (const Polygon &h : island.holes)
+            edges(h);
+        if (best <= 0.)
+            return 0.;
+    }
+    return best;
+}
+
+// Distance from a column's core rectangle to the islands, mm (0 inside), up to `limit`.
+static double core_distance(const ExPolygons &islands, const ColumnFrame &f, double limit)
+{
+    const Vec2d perp(-f.along.y(), f.along.x());
+    const Vec2d c[4] = { f.centre + f.along * f.core_u + perp * f.core_v, f.centre - f.along * f.core_u + perp * f.core_v,
+                         f.centre - f.along * f.core_u - perp * f.core_v, f.centre + f.along * f.core_u - perp * f.core_v };
+    double best = limit;
+    for (int i = 0; i < 4 && best > 0.; ++i)
+        best = std::min(best, segment_distance(islands, c[i], c[(i + 1) % 4], best));
+    if (best > 0.)
+        // An island wholly inside the core (it never is: the column stands off the part).
+        for (const ExPolygon &island : islands) {
+            const Vec2d v = unscaled(island.contour.points.front()) - f.centre;
+            if (std::abs(v.dot(f.along)) < f.core_u && std::abs(v.dot(perp)) < f.core_v)
+                return 0.;
+        }
+    return best;
+}
+
+// True when a pillar at `pos`, its struts running out along `dir`, comes closer than the clearance (less a
+// little slack: on a round part it is met exactly) to the islands at height z. A tapered pillar is
+// checked as if it reached `taper_top`: every pillar is at most as tall as the part, so checking the
+// part's height keeps any later, taller pillar on that spot clear too.
+static bool pillar_hits(const ExPolygons &islands, const StabilizerSettings &st, const Vec2d &pos, const Vec2d &dir, bool column,
+                        double z, double taper_top)
+{
+    const double grow = taper_growth(st, z, taper_top) + st.clearance - 0.1;
+    if (! column)
+        return disc_hits(islands, pos, st.pillar_radius + grow);
+    const ColumnFrame f = column_frame_at(pos, dir, st);
+    return core_distance(islands, f, f.fillet + grow + 1.) < f.fillet + grow;
+}
+
 // The shortest strut from contact `c` out along `dir` whose pillar has a clear way down to the bed,
 // and whose own path from the pillar up to the tip stays off the part. False when none fits within
 // the settings' max_run.
@@ -393,6 +566,9 @@ static bool fit_strut(const std::vector<LayerOutline> &layers, const StabilizerS
 {
     const double pillar_r  = st.pillar_radius;
     const double clearance = st.clearance;
+    // Every pillar a column (a forced shape: Auto decides after planning, and checks then).
+    const bool   column    = st.column_shape == scsRoundedRect;
+    const double taper_top = layers.back().slice_z;
     // The strut has to reach out of its pillar towards the wall and still end the tip gap short of it,
     // so with a large gap the pillar stands further out (a gap up to half a millimetre under the
     // clearance changes nothing).
@@ -412,7 +588,7 @@ static bool fit_strut(const std::vector<LayerOutline> &layers, const StabilizerS
             const double z = layers[i].slice_z;
             if (z <= top_z + EPSILON) {
                 // (A little slack: on a round part the clearance is exactly met.)
-                ok = !disc_hits(islands_at(layers, i), pillar, pillar_r + clearance - 0.1);
+                ok = ! pillar_hits(islands_at(layers, i), st, pillar, dir, column, z, taper_top);
             } else {
                 // Along the strut: its axis must stay outside the part and move away from the
                 // wall at least half as fast as it drops - true of any wall that does not lean
@@ -526,34 +702,322 @@ double pillar_radius(const PrintObject &object)
     return settings_of(object).pillar_radius;
 }
 
-std::vector<ExPolygons> slice_struts(const std::vector<LayerOutline> &layers, const StabilizerSettings &st,
-                                     const std::vector<Strut> &struts, const std::function<void()> &throw_if_canceled)
+// --- v2 planning: pillars, braces, columns -----------------------------------------------------
+
+Plan plan_from_struts(const StabilizerSettings &st, const std::vector<Strut> &struts)
+{
+    Plan plan;
+    plan.struts = struts;
+    plan.strut_pillar.reserve(struts.size());
+    // Struts of different rings come down onto the same pillar: one pillar up to the highest junction.
+    // The rings' contacts are found on each ring's own layer outline, so the same pillar comes out a few
+    // microns apart from ring to ring; anything within PILLAR_MERGE_DISTANCE is that one pillar.
+    for (const Strut &s : struts) {
+        const Vec2d p     = s.pillar();
+        size_t      found = plan.pillars.size();
+        for (size_t k = 0; k < plan.pillars.size() && found == plan.pillars.size(); ++k)
+            if ((plan.pillars[k].pos - p).squaredNorm() < sqr(PILLAR_MERGE_DISTANCE))
+                found = k;
+        if (found == plan.pillars.size()) {
+            Pillar pillar;
+            pillar.pos    = p;
+            pillar.dir    = s.dir;
+            pillar.top_z  = s.junction_z();
+            pillar.column = st.column_shape == scsRoundedRect;
+            plan.pillars.push_back(pillar);
+        } else
+            plan.pillars[found].top_z = std::max(plan.pillars[found].top_z, s.junction_z());
+        plan.strut_pillar.push_back(found);
+    }
+    return plan;
+}
+
+std::vector<double> pillar_ties(const Plan &plan, size_t i)
+{
+    const Pillar       &pillar = plan.pillars[i];
+    std::vector<double> ties{ 0. };
+    for (size_t k = 0; k < plan.struts.size() && k < plan.strut_pillar.size(); ++k)
+        if (plan.strut_pillar[k] == i)
+            ties.push_back(plan.struts[k].junction_z());
+    for (const Brace &b : plan.braces) {
+        if (b.lower == i)
+            ties.push_back(b.z_low);
+        if (b.upper == i)
+            ties.push_back(b.z_high());
+    }
+    for (double &t : ties)
+        t = std::clamp(t, 0., std::max(0., pillar.top_z));
+    std::sort(ties.begin(), ties.end());
+    ties.erase(std::unique(ties.begin(), ties.end(), [](double a, double b) { return std::abs(a - b) < EPSILON; }), ties.end());
+    return ties;
+}
+
+static double longest_gap(const std::vector<double> &ties)
+{
+    double out = 0.;
+    for (size_t k = 1; k < ties.size(); ++k)
+        out = std::max(out, ties[k] - ties[k - 1]);
+    return out;
+}
+
+double longest_unbraced(const Plan &plan, size_t pillar) { return longest_gap(pillar_ties(plan, pillar)); }
+
+// The layers whose slicing planes lie in [z0, z1].
+static std::pair<size_t, size_t> layer_range(const std::vector<LayerOutline> &layers, double z0, double z1)
+{
+    auto lo = std::lower_bound(layers.begin(), layers.end(), float(z0), [](const LayerOutline &l, float z) { return l.slice_z < z; });
+    auto hi = std::upper_bound(layers.begin(), layers.end(), float(z1), [](float z, const LayerOutline &l) { return z < l.slice_z; });
+    return { size_t(lo - layers.begin()), size_t(hi - layers.begin()) };
+}
+
+// A brace stays the clearance (less the same slack as the pillars) off the part at every layer it
+// prints on. Its section at a layer (an ellipse cut at the two pillar axes) lies within the brace's
+// radius of a short piece of its axis, so the check is that piece's distance to the part.
+static bool brace_clear(const std::vector<LayerOutline> &layers, const StabilizerSettings &st, const Brace &b)
+{
+    const double need = b.radius + st.clearance - 0.1;
+    const double half = (M_SQRT2 - 1.) * b.radius;
+    const double span = b.span();
+    const Vec2d  dir  = b.dir();
+    const auto [i0, i1] = layer_range(layers, b.z_bottom(), b.z_top());
+    for (size_t i = i0; i < i1; ++i) {
+        const ExPolygons &islands = islands_at(layers, i);
+        if (islands.empty())
+            continue;
+        const double u = layers[i].slice_z - b.z_low;
+        const Vec2d  p = b.from + dir * std::clamp(u - half, 0., span);
+        const Vec2d  q = b.from + dir * std::clamp(u + half, 0., span);
+        if (segment_distance(islands, p, q, need) < need)
+            return false;
+    }
+    return true;
+}
+
+// Bracing: while some pillar stands unbraced for longer than max_unbraced, tie it to a neighbour with a
+// 45 degree diagonal - up from it to the neighbour, or up from the neighbour to it - at the top of the
+// first max_unbraced of that stretch, or lower if that one would cross the part. One diagonal per bay,
+// alternating as the stretches above get braced in turn: a zigzag. An X (two diagonals crossing in one
+// bay) prints too, but doubles the material and the blob where they cross, and a zigzag already makes
+// every bay a rigid triangle.
+static void place_braces(const std::vector<LayerOutline> &layers, const StabilizerSettings &st, Plan &plan)
+{
+    const size_t n      = plan.pillars.size();
+    const double rb     = st.pillar_radius;
+    const double L      = st.max_unbraced;
+    // The brace's lower end, which reaches sqrt(2) radii below its axis, stays off the bed and the foot.
+    const double z_min  = M_SQRT2 * rb + 0.5;
+    const double step   = 0.5;
+
+    // Neighbours within the span, nearest first. Pillars closer than two radii and a millimetre are
+    // practically one and need no brace.
+    std::vector<std::vector<std::pair<double, size_t>>> nb(n);
+    for (size_t i = 0; i < n; ++i)
+        for (size_t j = i + 1; j < n; ++j) {
+            const double dist = (plan.pillars[i].pos - plan.pillars[j].pos).norm();
+            if (dist > st.max_brace_span + EPSILON || dist < 2. * rb + 1.)
+                continue;
+            if (plan.pillars[i].top_z <= z_min || plan.pillars[j].top_z <= z_min)
+                continue;
+            nb[i].emplace_back(dist, j);
+            nb[j].emplace_back(dist, i);
+        }
+    for (auto &v : nb)
+        std::sort(v.begin(), v.end());
+
+    std::vector<std::vector<double>> ties(n);
+    for (size_t i = 0; i < n; ++i)
+        ties[i] = pillar_ties(plan, i);
+
+    auto overlaps_pair = [&plan](const Brace &c) {
+        for (const Brace &b : plan.braces)
+            if (std::min(b.lower, b.upper) == std::min(c.lower, c.upper) && std::max(b.lower, b.upper) == std::max(c.lower, c.upper) &&
+                c.z_low < b.z_high() - EPSILON && b.z_low < c.z_high() - EPSILON)
+                return true;
+        return false;
+    };
+    auto make = [&plan, rb](size_t lower, size_t upper, double z_low) {
+        Brace b;
+        b.lower  = lower;
+        b.upper  = upper;
+        b.from   = plan.pillars[lower].pos;
+        b.to     = plan.pillars[upper].pos;
+        b.z_low  = z_low;
+        b.radius = rb;
+        return b;
+    };
+    auto add_tie = [](std::vector<double> &t, double z) {
+        t.insert(std::upper_bound(t.begin(), t.end(), z), z);
+    };
+
+    std::set<std::tuple<size_t, long long, long long>> failed;
+    const size_t max_braces = 2000;
+    while (plan.braces.size() < max_braces) {
+        // The lowest stretch longer than the limit, on any pillar that has a neighbour.
+        size_t best_i = n;
+        double best_a = 0., best_b = 0.;
+        for (size_t i = 0; i < n; ++i) {
+            if (nb[i].empty())
+                continue;
+            for (size_t k = 1; k < ties[i].size(); ++k) {
+                const double a = ties[i][k - 1], b = ties[i][k];
+                if (b - a <= L + EPSILON || failed.count({ i, std::llround(a * 1000.), std::llround(b * 1000.) }))
+                    continue;
+                if (best_i == n || a < best_a - EPSILON) {
+                    best_i = i;
+                    best_a = a;
+                    best_b = b;
+                }
+                break;
+            }
+        }
+        if (best_i == n)
+            break;
+
+        const size_t i      = best_i;
+        bool         placed = false;
+        // Up from this pillar to a neighbour first, anywhere in the stretch: its high end lands higher up
+        // the neighbour, where that one usually needs a tie too, so a ring of pillars gets a ring of
+        // braces. Only then up from a neighbour to this pillar, which ties the neighbour lower down.
+        for (int option = 0; option < 2 && ! placed; ++option)
+            for (double z = std::min(best_a + L, best_b - step); ! placed && z >= best_a + step - EPSILON; z -= step)
+                for (const auto &[dist, j] : nb[i]) {
+                    const double top_j = plan.pillars[j].top_z;
+                    const bool   fits  = option == 0 ? z >= z_min && z + dist <= top_j + EPSILON :
+                                                       z - dist >= z_min && z - dist <= top_j + EPSILON;
+                    if (! fits)
+                        continue;
+                    const Brace cand = option == 0 ? make(i, j, z) : make(j, i, z - dist);
+                    if (! overlaps_pair(cand) && brace_clear(layers, st, cand)) {
+                        plan.braces.push_back(cand);
+                        add_tie(ties[cand.lower], cand.z_low);
+                        add_tie(ties[cand.upper], cand.z_high());
+                        placed = true;
+                        break;
+                    }
+                }
+        if (! placed)
+            failed.insert({ i, std::llround(best_a * 1000.), std::llround(best_b * 1000.) });
+    }
+}
+
+// Auto columns: a pillar at least column_min_height tall that stands alone (no other pillar within the
+// bracing span) or is still unbraced for longer than max_unbraced becomes a rounded-rectangle column,
+// if the column stays the clearance off the part all the way down; otherwise it stays round.
+static void auto_columns(const std::vector<LayerOutline> &layers, const StabilizerSettings &st, Plan &plan, PlanReport &rep)
+{
+    for (size_t i = 0; i < plan.pillars.size(); ++i) {
+        Pillar &p = plan.pillars[i];
+        if (p.column || p.top_z < st.column_min_height - EPSILON || p.top_z <= 0.)
+            continue;
+        bool single = true;
+        for (size_t j = 0; j < plan.pillars.size() && single; ++j)
+            if (j != i && (plan.pillars[j].pos - p.pos).norm() <= st.max_brace_span + EPSILON)
+                single = false;
+        if (! single && longest_unbraced(plan, i) <= st.max_unbraced + EPSILON)
+            continue;
+        const ColumnFrame f   = column_frame(p, st);
+        const auto [i0, i1]   = layer_range(layers, -1., p.top_z + EPSILON);
+        bool              clear = true;
+        for (size_t k = i0; k < i1 && clear; ++k) {
+            const double grow = taper_growth(st, layers[k].slice_z, p.top_z) + st.clearance - 0.1;
+            clear = core_distance(islands_at(layers, k), f, f.fillet + grow + 1.) >= f.fillet + grow;
+        }
+        if (clear)
+            p.column = true;
+        else
+            ++rep.column_fallbacks;
+    }
+}
+
+Plan complete_plan(const std::vector<LayerOutline> &layers, const StabilizerSettings &st, const std::vector<Strut> &struts,
+                   PlanReport *report)
+{
+    Plan       plan = plan_from_struts(st, struts);
+    PlanReport rep;
+    if (! layers.empty()) {
+        if (st.bracing)
+            place_braces(layers, st, plan);
+        if (st.column_shape == scsAuto)
+            auto_columns(layers, st, plan, rep);
+    }
+    rep.braces = plan.braces.size();
+    for (size_t i = 0; i < plan.pillars.size(); ++i) {
+        if (plan.pillars[i].column)
+            ++rep.columns;
+        if (st.bracing && plan.pillars[i].top_z > 0. && longest_unbraced(plan, i) > st.max_unbraced + EPSILON)
+            ++rep.unbraced_pillars;
+    }
+    if (report != nullptr) {
+        report->braces           = rep.braces;
+        report->unbraced_pillars = rep.unbraced_pillars;
+        report->columns          = rep.columns;
+        report->column_fallbacks = rep.column_fallbacks;
+    }
+    return plan;
+}
+
+Plan plan_stabilizers(const std::vector<LayerOutline> &layers, const StabilizerSettings &st, const std::vector<PaintedSpot> &painted,
+                      PlanReport *report)
+{
+    const std::vector<Strut> struts = plan_struts(layers, st, painted, report);
+    return complete_plan(layers, st, struts, report);
+}
+
+Plan plan_stabilizers(const PrintObject &object, PlanReport *report)
+{
+    if (object.layers().size() < 2) {
+        if (report != nullptr)
+            *report = PlanReport();
+        return {};
+    }
+    return plan_stabilizers(outlines_of(object), settings_of(object), painted_spots(object), report);
+}
+
+// The band between the vertical planes through `from` and `from + dir * span`, as a wide rectangle.
+static Polygon strip(const Vec2d &from, const Vec2d &dir, double span, double half_width)
+{
+    const Vec2d perp(-dir.y(), dir.x());
+    Polygon     poly;
+    for (const Vec2d &p : { Vec2d(from - perp * half_width), Vec2d(from + dir * span - perp * half_width),
+                            Vec2d(from + dir * span + perp * half_width), Vec2d(from + perp * half_width) })
+        poly.points.emplace_back(scaled(p.x()), scaled(p.y()));
+    if (poly.is_clockwise())
+        poly.reverse();
+    return poly;
+}
+
+std::vector<ExPolygons> slice_plan(const std::vector<LayerOutline> &layers, const StabilizerSettings &st, const Plan &plan,
+                                   const std::function<void()> &throw_if_canceled)
 {
     std::vector<ExPolygons> out(layers.size());
-    if (struts.empty())
+    if (plan.struts.empty() && plan.pillars.empty())
         return out;
 
     const double tip_r    = 0.5 * st.rings.tip_diameter;
     const double pillar_r = st.pillar_radius;
-    // A small foot on the bed: the pillar widens by this much over the same height, at 45 degrees.
-    const double foot     = std::min(1.0, pillar_r);
     const float  tip_gap  = scaled<float>(st.tip_gap);
 
     for (size_t i = 0; i < layers.size(); ++i) {
         if (throw_if_canceled)
             throw_if_canceled();
         const double z = layers[i].slice_z;
-        // Pillars (with their feet) and struts apart: the tip gap is the struts' business only.
+        // Pillars (with their feet) and braces apart from the struts: the tip gap is the struts' business only.
         Polygons     pillars, polys;
-        for (const Strut &strut : struts) {
+        for (const Pillar &p : plan.pillars)
+            if (z <= p.top_z + EPSILON)
+                pillars.push_back(pillar_section(p, st, z));
+        // Braces: the rod's ellipse at this height, cut at the two pillars' axes.
+        for (const Brace &b : plan.braces)
+            if (z >= b.z_bottom() - EPSILON && z <= b.z_top() + EPSILON)
+                append(pillars, intersection(Polygons{ ellipse(b.axis_at(z), b.dir(), b.radius * M_SQRT2, b.radius) },
+                                             Polygons{ strip(b.from, b.dir(), b.span(), 4. * b.radius) }));
+        for (const Strut &strut : plan.struts) {
             // Built set back by the tip gap, so it tapers to its tip at the trimmed end.
             const Strut s = gapped(strut, st.tip_gap);
             if (z > s.tip_z + EPSILON)
                 continue;
             const Vec2d  pillar = s.pillar();
             const double top_z  = s.junction_z();
-            if (z <= top_z + EPSILON)
-                pillars.push_back(circle(pillar, pillar_r + std::max(0., foot - z)));
             // The strut. Its slice at 45 degrees is an ellipse, sqrt(2) longer along the strut than
             // across it. It continues below the pillar's top until its lower side comes out of the
             // pillar's side, and the part of it beyond the pillar's axis is cut off, so where it
@@ -569,9 +1033,10 @@ std::vector<ExPolygons> slice_struts(const std::vector<LayerOutline> &layers, co
         if (polys.empty() && pillars.empty())
             continue;
         // Touch, don't fuse: clip the struts at the part's outline, so the tip's footprint ends exactly
-        // where the outer wall begins - or stop short of it by the tip gap. The pillars and their feet
-        // keep the planner's own clearance whatever the gap, and are only ever kept out of the part: the
-        // gap used to clip them too, which at a gap above the clearance ate the feet and the pillars.
+        // where the outer wall begins - or stop short of it by the tip gap. The pillars, their feet and the
+        // braces keep the planner's own clearance whatever the gap, and are only ever kept out of the
+        // part: the gap used to clip them too, which at a gap above the clearance ate the feet and the
+        // pillars.
         const ExPolygons &part = islands_at(layers, i);
         ExPolygons layer = diff_ex(union_(pillars), part);
         if (! polys.empty())
@@ -581,10 +1046,51 @@ std::vector<ExPolygons> slice_struts(const std::vector<LayerOutline> &layers, co
     return out;
 }
 
+std::vector<ExPolygons> slice_struts(const std::vector<LayerOutline> &layers, const StabilizerSettings &st,
+                                     const std::vector<Strut> &struts, const std::function<void()> &throw_if_canceled)
+{
+    if (struts.empty())
+        return std::vector<ExPolygons>(layers.size());
+    return slice_plan(layers, st, complete_plan(layers, st, struts), throw_if_canceled);
+}
+
 std::vector<ExPolygons> slice_struts(const PrintObject &object, const std::vector<Strut> &struts,
                                      const std::function<void()> &throw_if_canceled)
 {
     return slice_struts(outlines_of(object), settings_of(object), struts, throw_if_canceled);
+}
+
+std::vector<ExPolygons> sparse_infill_areas(const std::vector<ExPolygons> &slices, const StabilizerSettings &st, double line_width,
+                                            double spacing)
+{
+    std::vector<ExPolygons> out(slices.size());
+    if (st.wall_loops <= 0 || st.infill_density >= 0.999 || slices.size() < 2)
+        return out;
+    // Inside the walls: the last wall's inner edge.
+    const float inset = scaled<float>(line_width + (st.wall_loops - 1) * spacing);
+    // Too narrow for infill: a region that sparse lines this far apart (or three lines) would hardly
+    // cross stays solid - thin pillars, struts and tips.
+    const float narrow = scaled<float>(0.5 * std::max(3. * spacing, spacing / std::max(0.01, st.infill_density)));
+    std::vector<ExPolygons> wide(slices.size());
+    for (size_t i = 0; i < slices.size(); ++i) {
+        if (slices[i].empty())
+            continue;
+        for (ExPolygon &e : offset_ex(slices[i], -inset))
+            if (! offset(e, -narrow).empty())
+                wide[i].emplace_back(std::move(e));
+    }
+    // Solid shells: sparse infill only where the layers below and above are sparse too, so it never
+    // ends in the air nor carries a strut or a pillar's end on bare infill lines.
+    for (size_t i = STABILIZER_BOTTOM_SOLID_LAYERS; i + STABILIZER_TOP_SOLID_LAYERS < slices.size(); ++i) {
+        if (wide[i].empty())
+            continue;
+        ExPolygons a = wide[i];
+        for (size_t k = i - STABILIZER_BOTTOM_SOLID_LAYERS; k <= i + STABILIZER_TOP_SOLID_LAYERS && ! a.empty(); ++k)
+            if (k != i)
+                a = intersection_ex(a, wide[k]);
+        out[i] = std::move(a);
+    }
+    return out;
 }
 
 // The support layer at `layer`'s print_z, or null when the support generators made none.
@@ -619,14 +1125,32 @@ stabilizers::PlanReport generate_stabilizer_supports(PrintObject &object, const 
     if (cfg.stabilizer_supports.value == smOff || object.layers().size() < 2)
         return report;
 
-    const std::vector<stabilizers::Strut> struts = stabilizers::plan_struts(object, &report);
-    BOOST_LOG_TRIVIAL(debug) << "Stabilizers: " << struts.size() << " struts, " << report.painted << " painted point(s), "
+    const stabilizers::Plan plan = stabilizers::plan_stabilizers(object, &report);
+    BOOST_LOG_TRIVIAL(debug) << "Stabilizers: " << plan.struts.size() << " struts, " << plan.pillars.size() << " pillars, "
+                             << plan.braces.size() << " braces, " << report.columns << " columns, " << report.unbraced_pillars
+                             << " pillar(s) left long-unbraced, " << report.painted << " painted point(s), "
                              << report.unreachable.size() << " unreachable";
-    if (struts.empty())
+    if (plan.struts.empty())
         return report;
     throw_if_canceled();
 
-    std::vector<ExPolygons> slices = stabilizers::slice_struts(object, struts, throw_if_canceled);
+    const std::vector<stabilizers::LayerOutline> outlines = stabilizers::outlines_of(object);
+    const stabilizers::StabilizerSettings        st       = stabilizers::settings_of(object);
+    std::vector<ExPolygons> slices = stabilizers::slice_plan(outlines, st, plan, throw_if_canceled);
+
+    // Walls and sparse infill (stabilizer_wall_loops > 0): where the bodies are wide enough, and not on
+    // their first and last few layers.
+    const Flow              base_flow    = support_material_flow(&object);
+    const std::vector<ExPolygons> sparse = stabilizers::sparse_infill_areas(slices, st, base_flow.width(), base_flow.spacing());
+    std::unique_ptr<Fill>   filler;
+    if (std::any_of(sparse.begin(), sparse.end(), [](const ExPolygons &e) { return ! e.empty(); })) {
+        filler.reset(Fill::new_from_type(st.infill_pattern));
+        BoundingBox bbox;
+        for (const ExPolygons &s : slices)
+            for (const ExPolygon &e : s)
+                bbox.merge(get_extents(e.contour));
+        filler->set_bounding_box(bbox);
+    }
 
     // Specks left by clipping at the wall, too small to print a line into.
     const double min_island_area = sqr(scaled<double>(0.2));
@@ -658,10 +1182,54 @@ stabilizers::PlanReport generate_stabilizer_supports(PrintObject &object, const 
             Polygons loop = offset(island, -half_w);
             if (loop.empty())
                 loop = to_polygons(island);
-            while (!loop.empty()) {
-                Polygons next = offset(loop, -spacing);
-                extrusion_entities_append_loops(coll->entities, std::move(loop), erSupportMaterial, flow.mm3_per_mm(), flow.width(), flow.height());
-                loop = std::move(next);
+            // With walls: the region inside them that is sparse on this layer.
+            ExPolygons sparse_here, inner;
+            if (filler && i < sparse.size() && ! sparse[i].empty()) {
+                inner       = offset_ex(island, -(2.f * half_w + float(st.wall_loops - 1) * spacing));
+                sparse_here = intersection_ex(inner, sparse[i]);
+                sparse_here.erase(std::remove_if(sparse_here.begin(), sparse_here.end(),
+                                                 [spacing](const ExPolygon &e) { return e.area() < 4. * double(spacing) * double(spacing); }),
+                                  sparse_here.end());
+            }
+            if (sparse_here.empty()) {
+                while (!loop.empty()) {
+                    Polygons next = offset(loop, -spacing);
+                    extrusion_entities_append_loops(coll->entities, std::move(loop), erSupportMaterial, flow.mm3_per_mm(), flow.width(), flow.height());
+                    loop = std::move(next);
+                }
+            } else {
+                // The walls...
+                for (int w = 0; w < st.wall_loops && ! loop.empty(); ++w) {
+                    Polygons next = offset(loop, -spacing);
+                    extrusion_entities_append_loops(coll->entities, std::move(loop), erSupportMaterial, flow.mm3_per_mm(), flow.width(), flow.height());
+                    loop = std::move(next);
+                }
+                // ...what is inside them but not sparse here (too narrow, or a solid shell layer) solid...
+                Polygons rest = offset(diff_ex(inner, sparse_here), -half_w);
+                while (! rest.empty()) {
+                    Polygons next = offset(rest, -spacing);
+                    extrusion_entities_append_loops(coll->entities, std::move(rest), erSupportMaterial, flow.mm3_per_mm(), flow.width(), flow.height());
+                    rest = std::move(next);
+                }
+                // ...and sparse infill in the rest.
+                filler->layer_id = i;
+                filler->z        = layer.print_z;
+                filler->spacing  = flow.spacing();
+                filler->angle    = float(M_PI / 4. + (st.infill_pattern == ipRectilinear && (i % 2) == 1 ? M_PI / 2. : 0.));
+                FillParams params;
+                params.density     = float(st.infill_density);
+                params.dont_adjust = true;
+                for (ExPolygon &e : sparse_here) {
+                    Surface   surface(stInternal, std::move(e));
+                    Polylines lines;
+                    try {
+                        lines = filler->fill_surface(&surface, params);
+                    } catch (InfillFailedException &) {
+                    }
+                    if (! lines.empty())
+                        extrusion_entities_append_paths(coll->entities, std::move(lines), erSupportMaterial, flow.mm3_per_mm(), flow.width(),
+                                                        flow.height());
+                }
             }
             printed.emplace_back(std::move(island));
         }

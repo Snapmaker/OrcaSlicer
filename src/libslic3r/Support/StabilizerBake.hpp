@@ -12,7 +12,7 @@
 //
 //  * a separate object "<name> stabilizers" (the default): the tips stay separate bodies, so they
 //    touch the wall and snap off, and the object carries its own settings (no supports, no brim,
-//    solid, the support filament). It does not move with the part - arrange and drag treat it as an
+//    solid or the stabilizer walls and infill, the support filament). It does not move with the part - arrange and drag treat it as an
 //    object of its own.
 //  * an extra part of the same object: it moves with the part, but parts of one object are unioned
 //    layer by layer, so a tip that touched the wall would fuse into it; the tip gap is forced up to
@@ -68,6 +68,8 @@ struct StabilizerBakeResult
     // the vertices). PartOfObject: in the source object's own coordinates, for a new part.
     indexed_triangle_set     mesh;
     std::vector<Vec3d>       instance_offsets;
+    // What was baked: the plan (struts, pillars, braces) and its struts.
+    stabilizers::Plan        plan;
     std::vector<stabilizers::Strut> struts;
     stabilizers::MeshReport  mesh_report;
     stabilizers::PlanReport  plan_report;
@@ -79,6 +81,11 @@ struct StabilizerBakeResult
     double                   layer_height     = 0.;
     // The source's support filament, 1-based; 0 = the object's own.
     int                      support_filament = 0;
+    // The stabilizer walls and infill (stabilizer_wall_loops, _infill_density 0..1, _infill_pattern) the
+    // baked body is given as its own wall_loops / sparse_infill_*; 0 walls = solid.
+    int                      wall_loops       = 0;
+    double                   infill_density   = 1.;
+    InfillPattern            infill_pattern   = ipRectilinear;
     // Why there is no mesh, when there is none.
     std::string              error;
 };

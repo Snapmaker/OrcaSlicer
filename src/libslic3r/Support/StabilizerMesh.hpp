@@ -3,8 +3,9 @@
 // Side stabilizers as real geometry: the struts and pillars Support/Stabilizers.hpp plans, built
 // as a closed triangle mesh that any slicer can print (the stabilizer bake, StabilizerBake.hpp).
 //
-// The geometry is exact rather than stacked from layer slices: a pillar is a cylinder standing on a
-// 45 degree foot, a strut is an oblique tapered tube along its 45 degree axis whose every horizontal
+// The geometry is exact rather than stacked from layer slices: a pillar is a cylinder (a frustum when
+// tapered, or a filleted-rectangle column) standing on a 45 degree foot, a brace a 45 degree prism cut
+// at its two pillars' axes, a strut is an oblique tapered tube along its 45 degree axis whose every horizontal
 // section is the ellipse the live generator prints at that height (slice_struts), cut flat by the
 // wall plane through its tip (set back by the tip gap), just above its tip layer, and by the vertical
 // plane through its pillar's axis. A few hundred triangles per strut, and the 45
@@ -46,7 +47,9 @@ struct MeshReport
 {
     size_t pillars   = 0;
     size_t struts    = 0;
-    size_t shells    = 0;   // closed primitives built (pillars + struts)
+    size_t braces    = 0;
+    size_t columns   = 0;   // pillars built as rounded-rectangle columns
+    size_t shells    = 0;   // closed primitives built (pillars + braces + struts)
     size_t skipped   = 0;   // struts whose cut left nothing (a tip at the bed)
     size_t triangles = 0;
     bool   unioned   = false; // the Manifold union succeeded
@@ -54,13 +57,20 @@ struct MeshReport
     double volume    = 0.;   // mm^3
 };
 
-// The closed shells: one per pillar (foot included, struts sharing a pillar share the shell) and one
-// per strut.
+// The closed shells of a plan: one per pillar (foot and taper included, a round frustum stack or a
+// rounded-rectangle column; struts sharing a pillar share the shell), one per brace (a 45 degree prism
+// cut at the two pillars' axes) and one per strut.
+std::vector<indexed_triangle_set> stabilizer_shells(const Plan &plan, const StabilizerSettings &settings,
+                                                    const MeshOptions &options = {}, MeshReport *report = nullptr);
+// The same for bare struts: their pillars without the part (plan_from_struts), so no braces and no
+// Auto columns. Use the Plan overload for what the live generator prints.
 std::vector<indexed_triangle_set> stabilizer_shells(const std::vector<Strut> &struts, const StabilizerSettings &settings,
                                                     const MeshOptions &options = {}, MeshReport *report = nullptr);
 
 // The shells as one mesh: unioned when options.union_shells and the union succeeds, merged as
 // separate overlapping shells otherwise.
+indexed_triangle_set stabilizer_mesh(const Plan &plan, const StabilizerSettings &settings,
+                                     const MeshOptions &options = {}, MeshReport *report = nullptr);
 indexed_triangle_set stabilizer_mesh(const std::vector<Strut> &struts, const StabilizerSettings &settings,
                                      const MeshOptions &options = {}, MeshReport *report = nullptr);
 

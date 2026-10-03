@@ -564,7 +564,10 @@ TEST_CASE("AdaptivePA enable follows the High-Flow column", "[PrintGCode][GCode]
     require_high_flow_columns(config);
     const std::string gcode = slice_high_flow_pa(config, false);
     REQUIRE(gcode.find("PA_CHANGE") != std::string::npos);
-    REQUIRE(gcode.find("; APA: Interpolator setup failed") != std::string::npos);
+    // Empty model still marks the interpolator initialised, so interpolation
+    // returns -1 and process_layer falls back. That path only runs if the ctor
+    // installed a per-tool interpolator via get_value_at (High-Flow true).
+    REQUIRE(gcode.find("; APA: Interpolation failed") != std::string::npos);
     REQUIRE(gcode.find("; APA: Tool doesnt have APA enabled") == std::string::npos);
     require_filament2_uses_high_flow_pa(gcode, 2);
 }

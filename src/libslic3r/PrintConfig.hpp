@@ -300,6 +300,12 @@ enum DraftShield {
     dsDisabled, dsEnabled
 };
 
+// Side stabilizers (Support/Stabilizers.hpp): off, the automatic rings plus any painted points, or the
+// painted points only. Replaced a bool; PrintConfigDef::handle_legacy maps 1 to auto and 0 to off.
+enum StabilizerMode {
+    smOff, smAuto, smManual
+};
+
 enum class PerimeterGeneratorType
 {
     // Classic perimeter generator using Clipper offsets with constant extrusion width.
@@ -680,6 +686,7 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(TimelapseType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(BedType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SkirtType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(DraftShield)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(StabilizerMode)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ForwardCompatibilitySubstitutionRule)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(GCodeThumbnailsFormat)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(CounterboreHoleBridgingOption)
@@ -778,6 +785,11 @@ class StaticPrintConfig;
 
 // Minimum object distance for arrangement, based on printer technology.
 double min_object_distance(const ConfigBase &cfg);
+// The clearance radius of print-by-object collision checks and arrange. Bambu Studio's
+// extruder_clearance_max_radius on a Bambu Lab printer (printer_model "Bambu Lab ..."), as Bambu
+// Studio uses it everywhere; extruder_clearance_radius on every other printer, whose profiles do not
+// set the max radius (its default of 68 mm would otherwise change their spacing).
+double sequential_clearance_radius(const ConfigBase &cfg);
 
 // Slic3r dynamic configuration, used to override the configuration
 // per object, per modification volume or per printing material.
@@ -1234,7 +1246,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,               tree_support_auto_brim))
     ((ConfigOptionFloat,              tree_support_brim_width))
     // Side stabilizers (Support/Stabilizers.hpp)
-    ((ConfigOptionBool,               stabilizer_supports))
+    ((ConfigOptionEnum<StabilizerMode>, stabilizer_supports))
     ((ConfigOptionFloat,              stabilizer_ring_spacing))
     ((ConfigOptionInt,                stabilizer_points_per_ring))
     ((ConfigOptionFloat,              stabilizer_tip_diameter))
@@ -1635,6 +1647,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,                auxiliary_fan))
     ((ConfigOptionBool,                support_air_filtration))
     ((ConfigOptionEnum<PrinterStructure>,printer_structure))
+    ((ConfigOptionBool,                farthest_point_timelapse))
     ((ConfigOptionBool,                support_chamber_temp_control))
 
 
@@ -1780,6 +1793,9 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloat,              extruder_clearance_height_to_rod))//BBs
     ((ConfigOptionFloat,              extruder_clearance_height_to_lid))//BBS
     ((ConfigOptionFloat,              extruder_clearance_radius))
+    // Bambu Studio's clearance radius (its only one). Here read by the timelapse position picker;
+    // by-object collision and arrange keep extruder_clearance_radius.
+    ((ConfigOptionFloat,              extruder_clearance_max_radius))
     ((ConfigOptionFloat,              nozzle_height))
     ((ConfigOptionStrings,            extruder_colour))
     ((ConfigOptionPoints,             extruder_offset))

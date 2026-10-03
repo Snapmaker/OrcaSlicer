@@ -148148,19 +148148,19 @@ A.OR.prototype={
 H(){return"DownloadItemStatus."+this.b}}
 A.w1.prototype={}
 A.aj5.prototype={
-G(a){var s=this,r=null,q=A.du(r,A.a1(r,A.L(s.c,r,r,r,r,A.bK(r,r,B.h1,r,r,r,r,r,r,r,r,14,r,r,B.K,r,r,!0,r,r,r,r,r,r,r,r),r,r),B.h,r,r,r,r,r,r,r,B.oF,r,r,r),B.M,!1,r,r,r,r,r,r,r,r,r,r,r,r,r,r,r,r,r,new A.b9K(s),r,r,r,r,r,r,!1,B.ai),p=s.d,o=p.length>1?A.L("|",r,r,r,r,A.bK(r,r,B.a7C,r,r,r,r,r,r,r,r,14,r,r,r,r,r,!0,r,r,r,r,r,r,r,r),r,r):B.af
+G(a){var s=this,r=null,q=A.du(r,A.a1(r,A.L(s.c,r,r,r,r,/*edgeslicer:dark-widgets*/A.bK(r,r,(A.u(a).ax.a===B.aZ?A.u(a).ax.e:B.h1),r,r,r,r,r,r,r,r,14,r,r,B.K,r,r,!0,r,r,r,r,r,r,r,r),r,r),B.h,r,r,r,r,r,r,r,B.oF,r,r,r),B.M,!1,r,r,r,r,r,r,r,r,r,r,r,r,r,r,r,r,r,new A.b9K(s),r,r,r,r,r,r,!1,B.ai),p=s.d,o=p.length>1?A.L("|",r,r,r,r,A.bK(r,r,(A.u(a).ax.a===B.aZ?A.u(a).ax.w:B.a7C),r,r,r,r,r,r,r,r,14,r,r,r,r,r,!0,r,r,r,r,r,r,r,r),r,r):B.af
 p=new A.ib(p,A.a7(p).i("ib<1>"))
 p=A.c([q,B.b8,o,B.eG,A.bA(A.a1(r,A.aD(p.gef(p).dP(0,new A.b9L(s),t.iF).ds(0),B.i1,B.k,B.l,0,r),B.h,r,r,r,r,1/0,r,r,r,r,r,r),1)],t.p)
 q=s.z
 if(q!=null)p.push(q)
-return new A.al(r,40,A.a1(r,A.aD(p,B.o,B.k,B.l,0,r),B.h,r,r,new A.aL(s.x,r,r,new A.dC(new A.bp(8,8),new A.bp(8,8),B.V,B.V),r,r,r,B.D),r,r,r,r,B.cv,r,r,r),r)}}
+return new A.al(r,40,A.a1(r,A.aD(p,B.o,B.k,B.l,0,r),B.h,r,r,new A.aL((A.u(a).ax.a===B.aZ?A.u(a).ax.ry:s.x),r,r,new A.dC(new A.bp(8,8),new A.bp(8,8),B.V,B.V),r,r,r,B.D),r,r,r,r,B.cv,r,r,r),r)}}
 A.b9K.prototype={
 $0(){var s=this.a.r
 return A.cP([s==null?null:s.$0()],t.H)},
 $S:0}
 A.b9L.prototype={
 $1(a){var s=null,r=a.a,q=this.a,p=q.e===r,o=p?B.m2:B.eU
-p=p?B.v:B.B
+p=p?(A.ake()?A.u($.bHJ).ax.d:B.v):B.B
 return new A.ay(B.oE,A.du(s,A.a1(s,a.b.a,B.h,s,s,new A.aL(p,s,s,B.a1c,s,s,s,B.D),s,s,s,s,o,s,s,s),B.M,!1,s,s,s,s,s,s,s,s,s,s,s,s,s,s,s,s,s,new A.b9J(q,r),s,s,s,s,s,s,!1,B.ai),s)},
 $S:834}
 A.b9J.prototype={
@@ -157148,7 +157148,7 @@ A.aEw.prototype={
 $3(a,b,c){var s,r,q,p,o,n,m,l=null
 if(!b.kh(b.ga7())){s=A.u(a).ax
 r=s.p4
-return A.a1(l,B.a4h,B.h,r==null?s.k2:r,l,l,l,l,l,l,l,l,l,l)}s=A.u(a).ax
+return A.a1(l,(A.u(a).ax.a===B.aZ?new A.jd(B.H,null,null,new A.ew("assets/images/controlDefault_dark.png",null,null,B.F,null,null,null,null),null):B.a4h),B.h,r==null?s.k2:r,l,l,l,l,l,l,l,l,l,l)}s=A.u(a).ax
 r=s.p4
 s=r==null?s.k2:r
 r=A.u(a).ax
@@ -157561,7 +157561,7 @@ q=A.u(a).ok.w
 p=t.p
 q=A.c([new A.al(26,26,s,o),B.b8,new A.eu(B.a1A,A.L(r,o,B.a4,o,o,q==null?o:q.k0(B.b4),o,o),o)],p)
 if(l.r)B.b.I(q,A.c([B.b8,new A.al(14,14,A.ES(o,A.u(a).ax.b,o,o,o,o,o,1,o,o),o)],p))
-q.push(A.ds(l.x?B.vD:B.ig,B.aB,o,20))
+q.push(A.ds(l.x?B.vD:B.ig,(A.u(a).ax.a===B.aZ?A.u(a).ax.w:B.aB),o,20))
 q.push(B.as)
 if(b.kh(n))q.push(A.ds(B.ade,A.c63(m),o,26))
 l=A.du(o,A.a1(o,A.aD(q,B.o,B.k,B.l,0,o),B.h,o,o,o,o,98,o,o,B.abO,o,o,o),B.M,!1,l.e,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,o,l.gaUV(),o,o,o,o,o,o,!1,B.ai)
@@ -158128,7 +158128,7 @@ b_X(){var s=this.c
 s.toString
 s=A.cr(s,!1,t.g).Q
 this.f=new A.aG(s,A.B(s).i("aG<1>")).bV(new A.bzc(this))},
-G(a){var s,r,q=this,p=null,o=A.E("Printing Task",p,p),n=A.c([new A.pv(A.cd("assets/svgs/device/exclamationMark.svg",p,p,B.F,20,p,20),"info"),new A.pv(A.cd("assets/svgs/device/iconFile.svg",p,p,B.F,20,p,20),"folder")],t.Jp)
+G(a){var s,r,q=this,p=null,o=A.E("Printing Task",p,p),n=A.c([new A.pv(A.cd("assets/svgs/device/exclamationMark.svg",(A.u(a).ax.a===B.aZ?A.u(a).ax.e:p),p,B.F,20,p,20),"info"),new A.pv(A.cd("assets/svgs/device/iconFile.svg",(A.u(a).ax.a===B.aZ?A.u(a).ax.e:p),p,B.F,20,p,20),"folder")],t.Jp)
 o=A.b9I(A.u(a).ax.z,new A.bzf(q),p,p,q.e,n,o)
 n=A.u(a).ax
 s=n.p4
@@ -158283,7 +158283,7 @@ return s.b_7(r,this.b)},
 $S:0}
 A.bz2.prototype={
 $3(a,b,c){var s
-if(!b.kh(b.ga7()))return B.xH
+if(!b.kh(b.ga7()))return (A.u(a).ax.a===B.aZ?new A.ay(B.a6,new A.ew("assets/images/deviceNotConnected_dark.png",null,null,B.F,null,null,null,null),null):B.xH)
 s=A.bHG(b.as.dy.a)===B.us?B.b0B:B.adZ
 return new A.bJ(B.a3,null,B.Y,B.A,A.c([s,b.kh(b.ga7())?this.a.aFr():B.af],t.p),null)},
 $C:"$3",
@@ -158621,7 +158621,7 @@ $S:0}
 A.br6.prototype={
 $3(a,b,c){var s,r,q,p,o,n,m,l,k=null
 if(!b.kh(b.ga7())){this.a.f=!1
-return B.xH}s=b.as.y.ga3n()
+return (A.u(a).ax.a===B.aZ?new A.ay(B.a6,new A.ew("assets/images/deviceNotConnected_dark.png",null,null,B.F,null,null,null,null),null):B.xH)}s=b.as.y.ga3n()
 r=A.u(a).ax
 q=r.p4
 r=q==null?r.k2:q
@@ -158780,7 +158780,7 @@ s=$.cM
 r=(s==null?$.cM=A.fg():s).b
 if(r!==q.w){q.w=r
 q.M(new A.bBL())}},
-G(a){var s,r,q=this,p=null,o=A.E("Camera",p,p),n=A.c([new A.pv(A.cd("assets/svgs/device/liveCamera.svg",p,p,B.F,20,p,20),"liveCamera"),new A.pv(A.cd("assets/svgs/device/videoCall.svg",p,p,B.F,20,p,20),"videoCall")],t.Jp)
+G(a){var s,r,q=this,p=null,o=A.E("Camera",p,p),n=A.c([new A.pv(A.cd("assets/svgs/device/liveCamera.svg",(A.u(a).ax.a===B.aZ?A.u(a).ax.e:p),p,B.F,20,p,20),"liveCamera"),new A.pv(A.cd("assets/svgs/device/videoCall.svg",(A.u(a).ax.a===B.aZ?A.u(a).ax.e:p),p,B.F,20,p,20),"videoCall")],t.Jp)
 o=A.b9I(A.u(a).ax.z,new A.bBO(q),new A.bBP(),p,q.e,n,o)
 n=A.u(a).ax
 s=n.p4
@@ -158820,7 +158820,7 @@ $0(){this.a.e=this.b},
 $S:0}
 A.bBK.prototype={
 $3(a,b,c){var s,r,q,p,o,n,m,l=this
-if(!b.kh(b.ga7()))return B.xH
+if(!b.kh(b.ga7()))return (A.u(a).ax.a===B.aZ?new A.ay(B.a6,new A.ew("assets/images/deviceNotConnected_dark.png",null,null,B.F,null,null,null,null),null):B.xH)
 s=$.cM
 if(s==null){s=$.cM=A.fg()
 r=s}else r=s
@@ -158885,7 +158885,7 @@ l=A.u(a1).ok.w
 m=A.L(m,a,a,a,a,l==null?a:l.f5(14,B.b4),a,a)
 l=A.aB(16)
 k=r==null?a:r.cy
-l=A.a1(a,A.cd(k==null?"assets/images/defaultEmpty.png":k,a,a,B.F,100,a,100),B.h,a,a,new A.aL(B.c9,a,a,l,a,a,a,B.D),a,100,a,a,a,a,a,100)
+l=A.a1(a,A.cd(k==null?"assets/images/defaultEmpty.png":k,a,a,B.F,100,a,100),B.h,a,a,new A.aL((A.u(a1).ax.a===B.aZ?A.u(a1).ax.ry:B.c9),a,a,l,a,a,a,B.D),a,100,a,a,a,a,a,100)
 if(s!=="add device")k=(s==null?a:s.length===0)===!0
 else k=!0
 k=k?a:s
@@ -158893,13 +158893,13 @@ j=this.a
 i=A.a7(a0).i("a0<1,lD<p>>")
 i=A.R(new A.a0(a0,new A.bdc(a1),i),i.i("a9.E"))
 h=A.aB(0)
-g=A.da(B.c9,-1,1)
+g=A.da((A.u(a1).ax.a===B.aZ?A.u(a1).ax.ry:B.c9),-1,1)
 f=A.aB(0)
-f=A.aJt(new A.aL(B.v,a,A.da(A.az(30,B.r.A()>>>16&255,B.r.A()>>>8&255,B.r.A()&255),-1,1),f,a,a,a,B.D),0,a,B.t,B.a6,a,300)
-e=A.bQT(A.ds(j.d?B.acV:B.vA,B.r,a,28))
+f=A.aJt(new A.aL((A.u(a1).ax.a===B.aZ?A.u(a1).ax.d:B.v),a,A.da(A.az(30,B.r.A()>>>16&255,B.r.A()>>>8&255,B.r.A()&255),-1,1),f,a,a,a,B.D),0,a,B.t,B.a6,a,300)
+e=A.bQT(A.ds(j.d?B.acV:B.vA,(A.u(a1).ax.a===B.aZ?A.u(a1).ax.e:B.r),a,28))
 d=A.E("Click to select printer",a,a)
 c=A.u(a1).ax.k3
-return A.a1(a,A.aD(A.c([new A.eu(B.nJ,m,a),B.b7,l,B.n9,A.bA(A.aJi(new A.a3F(50,300,B.cv,new A.aL(B.v,a,g,h,a,a,a,B.D),0),a,f,A.L(d,a,a,a,a,A.bK(a,a,A.az(204,c.A()>>>16&255,c.A()>>>8&255,c.A()&255),a,a,a,a,a,a,a,a,12,a,a,B.y,a,a,!0,a,a,a,a,a,a,a,a),a,a),e,!1,i,B.aY2,new A.bdd(j,a0),j.r,new A.bde(a0),A.a1(a,a,B.h,a,a,a,a,a,a,a,a,a,a,a),k,t.N),1)],t.p),B.U,B.k,B.l,0,a),B.h,a,a,new A.aL(a,a,q,n,a,a,a,B.D),a,a,a,a,B.bX,a,a,a)},
+return A.a1(a,A.aD(A.c([new A.eu(B.nJ,m,a),B.b7,l,B.n9,A.bA(A.aJi(new A.a3F(50,300,B.cv,new A.aL((A.u(a1).ax.a===B.aZ?A.u(a1).ax.d:B.v),a,g,h,a,a,a,B.D),0),a,f,A.L(d,a,a,a,a,A.bK(a,a,A.az(204,c.A()>>>16&255,c.A()>>>8&255,c.A()&255),a,a,a,a,a,a,a,a,12,a,a,B.y,a,a,!0,a,a,a,a,a,a,a,a),a,a),e,!1,i,B.aY2,new A.bdd(j,a0),j.r,new A.bde(a0),A.a1(a,a,B.h,a,a,a,a,a,a,a,a,a,a,a),k,t.N),1)],t.p),B.U,B.k,B.l,0,a),B.h,a,a,new A.aL(a,a,q,n,a,a,a,B.D),a,a,a,a,B.bX,a,a,a)},
 $C:"$3",
 $R:3,
 $S:345}
@@ -158956,7 +158956,7 @@ if(o!==0){p=J.v(B.b.gN(p),"url")
 n=p==null?m:J.t(p)
 if(n==null)n=l}else n=l
 p=A.aB(16)
-return new A.i8(1,B.cw,A.aD(A.c([A.a1(m,A.cd(n,m,m,B.F,100,m,100),B.ab,m,m,new A.aL(B.c9,m,m,p,m,m,m,B.D),m,100,m,m,m,m,m,100),B.n9,new A.i8(1,B.cw,new A.ako(b,q,this.r,m),m)],t.p),B.U,B.k,B.l,0,m),m)},
+return new A.i8(1,B.cw,A.aD(A.c([A.a1(m,A.cd(n,m,m,B.F,100,m,100),B.ab,m,m,new A.aL((A.u(a).ax.a===B.aZ?A.u(a).ax.ry:B.c9),m,m,p,m,m,m,B.D),m,100,m,m,m,m,m,100),B.n9,new A.i8(1,B.cw,new A.ako(b,q,this.r,m),m)],t.p),B.U,B.k,B.l,0,m),m)},
 aG1(a){var s,r,q,p,o,n,m,l,k,j,i,h,g=null,f="thumbnails",e="filament_weight_total",d="estimated_time",c=""
 try{c=A.cr(a,!1,t.g).ga7().y}catch(o){s=A.z(o)
 A.as().$1("[WebFileInfoWidget] LavaDeviceViewModel not found: "+A.d(s))}n=A.d(c)
@@ -158971,7 +158971,7 @@ if(n.h(0,e)!=null)try{q=n.h(0,e)
 if(typeof q=="number")r=B.d.aE(q,2)+" g"}catch(o){p=A.z(o)
 A.bB("buildFileMetaInfo error: "+A.d(p),g,g,g,g,g,B.I)}j=n.h(0,d)!=null?B.d.aJ(A.e8(n.h(0,d))):-1
 m=A.aB(16)
-m=A.a1(g,A.cd(k,g,g,B.F,100,g,100),B.h,g,g,new A.aL(B.c9,g,g,m,g,g,g,B.D),g,100,g,g,g,g,g,100)
+m=A.a1(g,A.cd(k,g,g,B.F,100,g,100),B.h,g,g,new A.aL((A.u(a).ax.a===B.aZ?A.u(a).ax.ry:B.c9),g,g,m,g,g,g,B.D),g,100,g,g,g,g,g,100)
 l=A.E("Filename",g,g)
 n=n.h(0,"filename")
 n=A.L(l+": "+A.d(n==null?"N/A":n),g,g,g,g,A.u(a).ok.z,g,g)
@@ -159125,7 +159125,7 @@ if(r==null){r=s.v
 s=r==null?s.k3:r}else s=r
 m.push(new A.ay(B.abT,A.du(n,A.ds(B.De,s,n,20),B.M,!1,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,e,n,n,n,n,n,n,!1,B.ai),n))}m=A.bA(A.aD(m,B.o,B.k,B.l,0,n),1)
 s=A.aB(9)
-r=c?B.hA:B.v
+r=c?B.hA:(A.u(a).ax.a===B.aZ?A.u(a).ax.d:B.v)
 q=A.u(a).ax
 p=q.ry
 if(p==null){p=q.v
@@ -159173,7 +159173,7 @@ if(this.c.gRd())return B.b4P
 return A.L(A.E("Send",s,s),s,s,s,s,B.b7h,s,s)}}
 A.bdH.prototype={
 $2(a,b){var s,r,q=null,p=A.aB(4),o=this.a,n=o.c.c
-p=A.bA(A.fa(p,A.ab7(B.c9,q,q,8,n,B.a02),B.ab),1)
+p=A.bA(A.fa(p,A.ab7((A.u(a).ax.a===B.aZ?A.u(a).ax.ry:B.c9),q,q,8,n,B.a02),B.ab),1)
 n=A.L(B.d.aE(n*100,0)+"%",q,q,q,q,q,q,q)
 s=A.jF(q,q,o.aLC(),q,q,q,q,q,q,B.v,q,q,q,q,q,q,new A.df(A.aB(4),B.G),q,q,q,q,q,q)
 r=o.f?o.e:q
@@ -172016,7 +172016,7 @@ return A.l($async$HO,r)},
 IH(a,b){return this.bjT(!1,!1)},
 bjT(a,b){var s=0,r=A.m(t.H),q=this,p
 var $async$IH=A.i(function(c,d){if(c===1)return A.j(d,r)
-for(;;)switch(s){case 0:q.a=q.b=!1
+for(;;)switch(s){case 0:q.a=!0,q.b=!1/*edgeslicer:system-theme*/
 A.Hx("[ThemeVM] toggleTheme, isDark: false, isSystemTheme: false")
 if(q.a)q.d=A.wL($.M4(),!1)
 else q.d=q.b?A.wL($.bGf(),!0):A.wL($.M4(),!1)

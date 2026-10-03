@@ -1,8 +1,41 @@
-<!DOCTYPE html><html><head><base href="/web/flutter_web/"><meta charset="UTF-8"><meta content="IE=Edge" http-equiv="X-UA-Compatible"><meta name="description" content="Snapmaker Orca"><meta http-equiv="Permissions-Policy" content="local-files-write=*"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><meta name="apple-mobile-web-app-title" content="web"><link rel="apple-touch-icon" href="icons/Icon-192.png"><link rel="icon" type="image/png" href="favicon.png"/><title>Snapmaker Orca</title><link rel="manifest" href="manifest.json"> <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="theme-color" content="#ffffff"><link rel="apple-touch-startup-image" href="splash.png"> <style>html,body{overflow:hidden;height:100%;margin:0;padding:0}</style> <link rel="preload" href="main.8c1e336f107a452a.js" as="script"></head><body> <script src="flutter_overlay.e82843210477bf96.js"></script> <script>
+<!DOCTYPE html><html><head><base href="/web/flutter_web/"><meta charset="UTF-8"><meta content="IE=Edge" http-equiv="X-UA-Compatible"><meta name="description" content="Snapmaker Orca"><meta http-equiv="Permissions-Policy" content="local-files-write=*"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><meta name="apple-mobile-web-app-title" content="web"><link rel="apple-touch-icon" href="icons/Icon-192.png"><link rel="icon" type="image/png" href="favicon.png"/><title>Snapmaker Orca</title><link rel="manifest" href="manifest.json"> <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="theme-color" content="#ffffff"><link rel="apple-touch-startup-image" href="splash.png"> <style>html,body{overflow:hidden;height:100%;margin:0;padding:0}</style> <link rel="preload" href="main.8a3ee7b57089b33b.js" as="script"><script>/* edgeslicer:dark-mode: written by scripts/patch_flutter_web_dark.py.
+  The app follows "(prefers-color-scheme: dark)" (ThemeMode.system). Answer that query from the
+  slicer's dark_mode=1|0 URL parameter, and let the slicer switch it live:
+  window.edgeSetDarkMode(true|false). Other media queries go to the browser. */
+(function () {
+  var Q = '(prefers-color-scheme: dark)';
+  var real = window.matchMedia ? window.matchMedia.bind(window) : null;
+  var m = /[?&]dark_mode=([01])\b/.exec(location.search + '&' + location.hash);
+  var dark = m ? m[1] === '1' : !!(real && real(Q).matches);
+  var listeners = [];
+  var mql = {
+    media: Q,
+    onchange: null,
+    get matches() { return dark; },
+    addListener: function (f) { if (typeof f === 'function') listeners.push(f); },
+    removeListener: function (f) { listeners = listeners.filter(function (g) { return g !== f; }); },
+    addEventListener: function (t, f) { if (t === 'change') this.addListener(f); },
+    removeEventListener: function (t, f) { if (t === 'change') this.removeListener(f); },
+    dispatchEvent: function () { return true; }
+  };
+  window.matchMedia = function (q) {
+    return String(q).replace(/\s+/g, ' ').trim() === Q ? mql : real(q);
+  };
+  window.edgeSetDarkMode = function (d) {
+    d = !!d;
+    document.documentElement.setAttribute('data-theme', d ? 'dark' : 'light');
+    if (d === dark) return;
+    dark = d;
+    var ev = { matches: d, media: Q };
+    listeners.slice().forEach(function (f) { try { f.call(mql, ev); } catch (e) {} });
+    if (typeof mql.onchange === 'function') mql.onchange(ev);
+  };
+})();
+</script></head><body> <script src="flutter_overlay.e82843210477bf96.js"></script> <script>
     window.sendMessage = function (message) {
       window.wx && window.wx.postMessage(message);
       if (!window.wx) {
         console.log('i dont find window.wx, so i simulate a return by postMessage');
       }
     };
-  </script> <script src="flutter_bootstrap.8411d9d1e47b24e7.js" async></script> </body></html>
+  </script> <script src="flutter_bootstrap.bccf3ae86760c4d4.js" async></script> </body></html>

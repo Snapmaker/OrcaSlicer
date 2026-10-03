@@ -16,6 +16,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/3DScene.hpp
     GUI/AboutDialog.cpp
     GUI/AboutDialog.hpp
+    GUI/AccountStatus.cpp
+    GUI/AccountStatus.hpp
     GUI/AmsMappingPopup.cpp
     GUI/AmsMappingPopup.hpp
     GUI/AMSMaterialsSetting.cpp
@@ -94,6 +96,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/QuadRemeshDialog.hpp
     GUI/SliceBakeDialog.cpp
     GUI/SliceBakeDialog.hpp
+    GUI/StabilizerBakeDialog.cpp
+    GUI/StabilizerBakeDialog.hpp
     GUI/ColorSplitDialog.cpp
     GUI/ColorSplitDialog.hpp
     GUI/ImageFillDialog.cpp
@@ -323,6 +327,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Jobs/ColorSplitJob.hpp
     GUI/Jobs/SliceBakeJob.cpp
     GUI/Jobs/SliceBakeJob.hpp
+    GUI/Jobs/StabilizerBakeJob.cpp
+    GUI/Jobs/StabilizerBakeJob.hpp
     GUI/Jobs/SeamAutoPaintJob.cpp
     GUI/Jobs/SeamAutoPaintJob.hpp
     GUI/Jobs/QuadRemeshJob.cpp
@@ -409,6 +415,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/NetworkTestDialog.hpp
     GUI/FirewallCheckDialog.cpp
     GUI/FirewallCheckDialog.hpp
+    GUI/BambuSetupNoticeDialog.cpp
+    GUI/BambuSetupNoticeDialog.hpp
     GUI/Notebook.cpp
     GUI/Notebook.hpp
     GUI/NotificationManager.cpp
@@ -517,6 +525,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/DeviceModelCode.cpp
     GUI/NozzleTempRows.hpp
     GUI/DeviceControls.hpp
+    GUI/ChamberLights.hpp
     GUI/FilamentCommands.hpp
     GUI/SnapmakerLan.hpp
     GUI/RemoteHub.cpp
@@ -915,6 +924,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/ServerLifetime.hpp
     Utils/SnapmakerSilentLogin.cpp
     Utils/SnapmakerSilentLogin.hpp
+    Utils/AccountProviders.cpp
+    Utils/AccountProviders.hpp
     Utils/json_diff.cpp
     Utils/json_diff.hpp
     Utils/minilzo_extension.cpp
@@ -968,6 +979,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/TimeoutMap.hpp
     Utils/WinFirewall.cpp
     Utils/WinFirewall.hpp
+    Utils/BambuSetupNotice.cpp
+    Utils/BambuSetupNotice.hpp
 )
 
 add_subdirectory(GUI/DeviceTab)
@@ -1115,6 +1128,7 @@ slic3r_unity_build(libslic3r_gui SKIP
     GUI/Gizmos/GLGizmosManager.cpp                # includes wx/glcanvas.h (GL/gl.h) before a neighbour's glad
     GUI/MediaFilePanel.cpp                        # Windows shell headers declare UserNotification (clashes with UserNotification.hpp)
     GUI/FirewallCheckDialog.cpp                   # Windows shell headers; ::CheckBox vs GUI::CheckBox (Field.hpp)
+    GUI/BambuSetupNoticeDialog.cpp                # ::CheckBox vs GUI::CheckBox (Field.hpp)
     Utils/WinFirewall.cpp                         # windows.h + netfw.h (COM) ahead of neighbours' headers
     GUI/wxMediaCtrl2.cpp                          # Windows shell headers declare UserNotification (clashes with UserNotification.hpp)
     GUI/Widgets/WebView.cpp                       # Windows shell headers declare UserNotification (clashes with UserNotification.hpp)

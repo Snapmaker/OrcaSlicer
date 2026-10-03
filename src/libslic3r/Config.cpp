@@ -4,6 +4,7 @@
 #include "LocalesUtils.hpp"
 #include "Preset.hpp"
 
+#include <set>
 #include <algorithm>
 #include <assert.h>
 #include <cstdlib>
@@ -914,6 +915,7 @@ ConfigSubstitutions ConfigBase::load_string_map(std::map<std::string, std::strin
             // ignore
         }
     }
+    BambuKeyAliases::load_fallbacks(*this, [&key_values](const std::string &k) { return key_values.count(k) > 0; });
     return std::move(substitutions_ctxt.substitutions);
 }
 
@@ -1454,6 +1456,8 @@ int ConfigBase::load_from_json_document(const std::string &file, json &j, Config
             }
         }
         
+        // Bambu keys that also feed one of ours when this file does not set ours.
+        BambuKeyAliases::load_fallbacks(*this, [&j](const std::string &k) { return j.contains(k); });
         // Do legacy conversion on a completely loaded dictionary.
         // Perform composite conversions, for example merging multiple keys into one key.
         this->handle_legacy_composite();
@@ -1557,6 +1561,7 @@ ConfigSubstitutions ConfigBase::load(const boost::property_tree::ptree &tree, Fo
             // ignore
         }
     }
+    BambuKeyAliases::load_fallbacks(*this, [&tree](const std::string &k) { return tree.find(k) != tree.not_found(); });
     // Do legacy conversion on a completely loaded dictionary.
     // Perform composite conversions, for example merging multiple keys into one key.
     this->handle_legacy_composite();
@@ -1602,6 +1607,7 @@ size_t ConfigBase::load_from_gcode_string_legacy(ConfigBase& config, const char*
     // boost::nowide::ifstream seems to cook the text data somehow, so less then the 64k of characters may be retrieved.
     const char *end = data_start + strlen(data_start);
     size_t num_key_value_pairs = 0;
+    std::set<std::string> loaded_keys;
     for (;;) {
         // Extract next line.
         for (--end; end > data_start && (*end == '\r' || *end == '\n'); --end);
@@ -1637,6 +1643,7 @@ size_t ConfigBase::load_from_gcode_string_legacy(ConfigBase& config, const char*
         if (key == nullptr)
             break;
         try {
+            loaded_keys.emplace(key, key_end);
             config.set_deserialize(std::string(key, key_end), std::string(value, end), substitutions);
             ++num_key_value_pairs;
         }
@@ -1646,6 +1653,7 @@ size_t ConfigBase::load_from_gcode_string_legacy(ConfigBase& config, const char*
         end = start;
     }
 
+    BambuKeyAliases::load_fallbacks(config, [&loaded_keys](const std::string &k) { return loaded_keys.count(k) > 0; });
     // Do legacy conversion on a completely loaded dictionary.
     // Perform composite conversions, for example merging multiple keys into one key.
     config.handle_legacy_composite();

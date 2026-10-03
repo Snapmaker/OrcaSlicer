@@ -1,6 +1,7 @@
 // #include "libslic3r/GCodeSender.hpp"
 //#include "slic3r/Utils/Serial.hpp"
 #include "Tab.hpp"
+#include "BambuSetupNoticeDialog.hpp"
 #include "PresetHints.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -5325,6 +5326,7 @@ void TabPrinter::build_fff()
 
         optgroup = page->new_optgroup(L("Extruder Clearance"), "param_extruder_clearence");
         optgroup->append_single_option_line("extruder_clearance_radius");
+        optgroup->append_single_option_line("extruder_clearance_max_radius");
         optgroup->append_single_option_line("extruder_clearance_dist_to_rod");
         optgroup->append_single_option_line("extruder_clearance_height_to_rod");
         optgroup->append_single_option_line("extruder_clearance_height_to_lid");
@@ -6906,6 +6908,10 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
     if (!canceled && m_presets->type() == Preset::TYPE_FILAMENT)
         validate_filament_hot_bed_nozzle_relation(parent());
     BOOST_LOG_TRIVIAL(info) << boost::format("select preset, exit");
+
+    // First-time Bambu printer setup notice: a printer picked by hand (not a project load or a remote switch).
+    if (!canceled && !force_select && m_presets->type() == Preset::TYPE_PRINTER)
+        BambuSetupNoticeDialog::on_printer_preset_selected();
 
     return !canceled;
 }

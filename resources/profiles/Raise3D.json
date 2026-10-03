@@ -1,7 +1,7 @@
 {
     "name": "Raise3D",
     "url": "",
-    "version": "02.03.01.10",
+    "version": "02.03.01.12",
     "force_update": "0",
     "description": "Raise3D configurations",
     "machine_model_list": [
@@ -12,6 +12,14 @@
         {
             "name": "Raise3D Pro3 Plus",
             "sub_path": "machine/Raise3D Pro3 Plus.json"
+        },
+        {
+            "name": "Raise3D N2",
+            "sub_path": "machine/Raise3D N2.json"
+        },
+        {
+            "name": "Raise3D N2 Plus",
+            "sub_path": "machine/Raise3D N2 Plus.json"
         }
     ],
     "process_list": [
@@ -42,9 +50,50 @@
         {
             "name": "0.25mm Draft @Raise3D Pro3Plus",
             "sub_path": "process/0.25mm Draft @Raise3D Pro3Plus.json"
+        },
+        {
+            "name": "0.10mm Fine @Raise3D N2 Series",
+            "sub_path": "process/0.10mm Fine @Raise3D N2 Series.json"
+        },
+        {
+            "name": "0.20mm Standard @Raise3D N2 Series",
+            "sub_path": "process/0.20mm Standard @Raise3D N2 Series.json"
+        },
+        {
+            "name": "0.25mm Draft @Raise3D N2 Series",
+            "sub_path": "process/0.25mm Draft @Raise3D N2 Series.json"
         }
     ],
-    "filament_list": [],
+    "filament_list": [
+        {
+            "name": "Raise3D Premium PLA",
+            "sub_path": "filament/Raise3D Premium PLA.json"
+        },
+        {
+            "name": "Raise3D Hyper Speed PLA",
+            "sub_path": "filament/Raise3D Hyper Speed PLA.json"
+        },
+        {
+            "name": "Raise3D Premium PETG",
+            "sub_path": "filament/Raise3D Premium PETG.json"
+        },
+        {
+            "name": "Raise3D Premium ABS",
+            "sub_path": "filament/Raise3D Premium ABS.json"
+        },
+        {
+            "name": "Raise3D Premium ASA",
+            "sub_path": "filament/Raise3D Premium ASA.json"
+        },
+        {
+            "name": "Raise3D Premium TPU-95A",
+            "sub_path": "filament/Raise3D Premium TPU-95A.json"
+        },
+        {
+            "name": "Raise3D Premium PC",
+            "sub_path": "filament/Raise3D Premium PC.json"
+        }
+    ],
     "machine_list": [
         {
             "name": "fdm_machine_common",
@@ -73,6 +122,14 @@
         {
             "name": "Raise3D Pro3 Plus 0.4 nozzle (Right)",
             "sub_path": "machine/Raise3D Pro3 Plus 0.4 nozzle (Right).json"
+        },
+        {
+            "name": "Raise3D N2 0.4 nozzle",
+            "sub_path": "machine/Raise3D N2 0.4 nozzle.json"
+        },
+        {
+            "name": "Raise3D N2 Plus 0.4 nozzle",
+            "sub_path": "machine/Raise3D N2 Plus 0.4 nozzle.json"
         }
     ]
 }

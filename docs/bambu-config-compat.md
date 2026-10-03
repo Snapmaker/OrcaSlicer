@@ -400,7 +400,6 @@ in each direction:
 | `ironing_direction` | `ironing_angle` | same (export leaves our `-1` = "default" out) | before |
 | `top_one_wall_type` | `only_one_wall_top` | `not apply` -> 0, `all top` / `topmost` -> 1 (topmost is approximate) | before |
 | `enable_support_ironing` | `support_ironing` | same | **new** |
-| `extruder_clearance_max_radius` | `extruder_clearance_radius` | same (was in the ignore set) | **new** |
 | `no_slow_down_for_cooling_on_outwalls` | `dont_slow_down_outer_wall` | same | **new** |
 | `role_base_wipe_speed` | `role_based_wipe_speed` | same | **new** |
 | `reduce_infill_retraction_mode` | `reduce_infill_retraction` | `Enabled` -> 1, `Disabled` -> 0, `Auto` -> not loaded | **new** |
@@ -464,6 +463,16 @@ Consequence for `extruder_clearance_radius`: Bambu's own machine profiles still 
 our shipped copy of the same profile has always loaded as. Bambu projects and user presets only
 ever carry `extruder_clearance_max_radius` (Bambu does not write keys it does not declare), so
 they get Bambu's value.
+
+Since the H2D timelapse fix (PR #240) `extruder_clearance_max_radius` is no longer a rename: it is
+a printer setting of ours too (Printer settings > Extruder Clearance > Max Radius; Bambu's default
+68), read by the timelapse position picker exactly as Bambu Studio's picker reads it. It still
+feeds `extruder_clearance_radius` wherever the rename used to: a file (JSON document, INI, G-code
+config block, string map) that sets Bambu's key but not ours loads the value into both
+(`BambuKeyAliases::load_fallbacks`). A file that sets both keeps each. So the by-object clearance
+(`extruder_clearance_radius`) loads exactly as before. "Export Bambu 3MF" now writes our
+`extruder_clearance_max_radius` (the machine profile's Bambu value, 96 on the H2D) instead of
+`extruder_clearance_radius` under Bambu's name.
 
 ### Effect on this fork's shipped profiles
 

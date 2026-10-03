@@ -59,8 +59,15 @@ static const size_t MASK_LEN      = 4;
 static const char*  MASK          = "****";
 
 // A "finished" that arrives two days later is noise, not news; a "started" is stale even sooner.
+// A failure is the exception: a phone that was off or out of coverage when the print failed at
+// 03:10 should still be told at 04:00 (research note H3). The push service accepts up to 86400.
 static const int TTL_ALERT   = 1800;
 static const int TTL_ROUTINE = 300;
+static const int TTL_FAILURE = 14400;
+
+// The phone-plane test route (test_device): one at a time, and not more often than this.
+static const long long TEST_MIN_GAP_MS = 3000;
+static const int       TEST_MAX_DELAY_S = 30;
 
 struct Device
 {
@@ -70,6 +77,8 @@ struct Device
     int         last_status { 0 };
     int         failures { 0 };
     std::string last_error, last_host;
+    // What this device asked for when it registered (notification levels; see AppPush.hpp).
+    policy::DevicePrefs prefs;
 };
 
 static std::mutex           g_mutex;
@@ -389,13 +398,70 @@ static std::string plaintext_for(const json& e)
     return out;
 }
 
-// Priority mirrors the Urgency rule WebPush.cpp already applies: anything the person needs to see
-// now breaks through, a "started" can wait for the phone to wake on its own.
-static int priority_for(const std::string& severity) { return severity_rank(severity) >= 1 ? 10 : 5; }
+// ------------------------------------------------------- per-device policy ----
 
-static int ttl_for(const std::string& kind)
+namespace policy {
+
+DevicePrefs read_prefs(const json& in)
 {
-    return (kind == "started" || kind == "resumed") ? TTL_ROUTINE : TTL_ALERT;
+    DevicePrefs p;
+    if (!in.is_object()) return p;
+    if (in.contains("priority_kinds") && in["priority_kinds"].is_array()) {
+        // Kept in the canonical order and deduplicated; a kind this hub does not know is dropped
+        // (a newer app may name one), never a reason to refuse the registration.
+        for (const std::string& k : RemoteEvents::all_kinds())
+            for (const auto& v : in["priority_kinds"])
+                if (v.is_string() && v.get<std::string>() == k) { p.priority_kinds.push_back(k); break; }
+    }
+    if (in.contains("all_events") && in["all_events"].is_boolean()) p.all_events = in["all_events"].get<bool>();
+    if (in.contains("level_hint") && in["level_hint"].is_boolean()) p.level_hint = in["level_hint"].get<bool>();
+    return p;
+}
+
+static bool listed(const DevicePrefs& d, const std::string& kind)
+{
+    return std::find(d.priority_kinds.begin(), d.priority_kinds.end(), kind) != d.priority_kinds.end();
+}
+
+bool wants(const DevicePrefs& d, const std::string& severity, const std::string& kind,
+           const std::string& min_severity, const std::vector<std::string>& kinds)
+{
+    // The phone that asked for everything decides on the phone (decision D2); every other device
+    // gets the hub's filter, severity and kind as an AND, as on every other channel.
+    if (d.all_events) return true;
+    return severity_rank(severity) >= severity_rank(min_severity) && RemoteEvents::kind_allowed(kinds, kind);
+}
+
+// Priority mirrors the Urgency rule WebPush.cpp already applies: anything the person needs to see
+// now breaks through, a "started" can wait for the phone to wake on its own - unless this device
+// made that kind urgent, in which case it must not ride a batched priority-5 push.
+int priority(const DevicePrefs& d, const std::string& severity, const std::string& kind)
+{
+    if (severity_rank(severity) >= 1) return 10;
+    return listed(d, kind) ? 10 : 5;
+}
+
+int ttl(const std::string& kind)
+{
+    if (kind == "started" || kind == "resumed") return TTL_ROUTINE;
+    if (kind == "failed" || kind == "error" || kind == "runout") return TTL_FAILURE;
+    return TTL_ALERT;
+}
+
+std::string interruption_level(const DevicePrefs& d, const std::string& kind)
+{
+    return d.level_hint && listed(d, kind) ? std::string("time-sensitive") : std::string();
+}
+
+} // namespace policy
+
+static json prefs_json(const policy::DevicePrefs& p)
+{
+    json j;
+    j["priority_kinds"] = p.priority_kinds;
+    j["all_events"]     = p.all_events;
+    j["level_hint"]     = p.level_hint;
+    return j;
 }
 
 // ------------------------------------------------------------------- persistence ----
@@ -427,6 +493,9 @@ static json device_json(const Device& d, bool masked)
     j["last_error"]  = d.last_error;
     j["last_host"]   = d.last_host;
     j["failures"]    = d.failures;
+    // Not secrets: which kinds the phone made urgent, and whether it takes every event. Persisted
+    // so a hub restart keeps them until the app's next launch re-posts its registration.
+    j["levels"]      = prefs_json(d.prefs);
     return j;
 }
 
@@ -595,8 +664,9 @@ static PushRequest request_for(const Device& d, const json& event, const std::st
     const std::string kind = ev_str(event, "kind");
     req.collapse_id = collapse_for(pid, kind);
     req.thread_id   = pid;
-    req.priority    = priority_for(ev_str(event, "severity", "info"));
-    req.ttl_seconds = ttl_for(kind);
+    req.priority    = policy::priority(d.prefs, ev_str(event, "severity", "info"), kind);
+    req.ttl_seconds = policy::ttl(kind);
+    if (d.platform == "apns") req.interruption_level = policy::interruption_level(d.prefs, kind);
     return req;
 }
 
@@ -717,13 +787,17 @@ void deliver(const json& event)
         hosted   = hosted_mode_locked();
     }
     const std::string severity = ev_str(event, "severity", "info");
-    // Severity and kind are an AND, as on every other channel.
-    if (severity_rank(severity) < severity_rank(min_sev)) return;
-    if (!RemoteEvents::kind_allowed(kinds, ev_str(event, "kind"))) return;
+    const std::string kind     = ev_str(event, "kind");
+    // Severity and kind are an AND, as on every other channel - per device now, because a phone
+    // with its own notification levels asked for every event and decides on the phone (D2).
+    if (std::none_of(targets.begin(), targets.end(),
+                     [&](const Device& d) { return policy::wants(d.prefs, severity, kind, min_sev, kinds); }))
+        return;
     const std::string plaintext = plaintext_for(event);
 
     for (const Device& d : targets) {
         if (g_stopping) return;
+        if (!policy::wants(d.prefs, severity, kind, min_sev, kinds)) continue;
         Provider* p = provider_for(d.platform, hosted);
         if (!p) continue;
         std::string why;
@@ -800,6 +874,13 @@ std::pair<int, std::string> register_device(const std::string& body)
     std::string env = trim(in.value("env", ""));
     if (env != "sandbox" && env != "production") env = "production";
 
+    // Absent fields mean the defaults, so an app that does not send them (or stopped sending
+    // them) is treated exactly as before notification levels existed.
+    const policy::DevicePrefs prefs = policy::read_prefs(in);
+    // What this hub understands, so the app can tell the person when the PC needs an update
+    // before its own notification levels take full effect.
+    const json features = json::array({ "priority_kinds", "all_events", "level_hint", "push_test" });
+
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         const std::string bundle = header_safe(in.value("bundle", ""), 200);
@@ -812,10 +893,12 @@ std::pair<int, std::string> register_device(const std::string& body)
             if (d.platform == platform && d.token == token) {
                 d.env = env; d.bundle = bundle; d.p256dh = p256dh; d.auth = auth;
                 d.label = label; d.app = appv; d.os = osv;
+                d.prefs = prefs;
                 d.failures = 0;
                 d.last_error.clear();
                 g_dirty = true;
-                return { 200, json({ { "ok", true }, { "id", d.id }, { "count", (int) g_devices.size() } }).dump() };
+                return { 200, json({ { "ok", true }, { "id", d.id }, { "count", (int) g_devices.size() },
+                                     { "features", features } }).dump() };
             }
         if (g_devices.size() >= MAX_DEVICES)
             return { 429, json({ { "error", "this hub is already pushing to as many devices as it will" } }).dump() };
@@ -830,11 +913,13 @@ std::pair<int, std::string> register_device(const std::string& body)
         d.label    = label;
         d.app      = appv;
         d.os       = osv;
+        d.prefs    = prefs;
         d.added    = now_ms();
         g_devices.push_back(d);
         g_dirty = true;
         BOOST_LOG_TRIVIAL(info) << "AppPush: a " << platform << " device registered (" << g_devices.size() << " total)";
-        return { 200, json({ { "ok", true }, { "id", d.id }, { "count", (int) g_devices.size() } }).dump() };
+        return { 200, json({ { "ok", true }, { "id", d.id }, { "count", (int) g_devices.size() },
+                             { "features", features } }).dump() };
     }
 }
 
@@ -1068,6 +1153,92 @@ std::pair<int, std::string> test()
                          { "events", RemoteEvents::events_map(kinds) } }).dump() };
 }
 
+// The severity a real event of this kind carries (RemoteEvents.cpp's make_event calls), so a test
+// is sent at the priority, and decided on the phone at the level, the real one would be.
+static const char* severity_of_kind(const std::string& kind)
+{
+    if (kind == "failed" || kind == "error") return "error";
+    if (kind == "paused" || kind == "runout" || kind == "cancelled") return "warning";
+    return "info";
+}
+
+std::pair<int, std::string> test_device(const std::string& body)
+{
+    static std::atomic<bool>      busy { false };
+    static std::atomic<long long> last_ms { 0 };
+
+    json in;
+    try {
+        in = json::parse(body);
+    } catch (...) {
+        return { 400, json({ { "error", "the body must be JSON" } }).dump() };
+    }
+    if (!in.is_object()) return { 400, json({ { "error", "the body must be a JSON object" } }).dump() };
+    const std::string platform = trim(in.value("platform", ""));
+    const std::string token    = trim(in.value("token", ""));
+    std::string       kind     = trim(in.value("kind", ""));
+    if (kind.empty()) kind = "failed";
+    if (!RemoteEvents::is_kind(kind)) return { 400, json({ { "error", "kind must be one of the event kinds" } }).dump() };
+    int delay_s = 0;
+    if (in.contains("delay_s") && in["delay_s"].is_number_integer()) delay_s = in["delay_s"].get<int>();
+    delay_s = std::max(0, std::min(TEST_MAX_DELAY_S, delay_s));
+    if (token.empty()) return { 400, json({ { "error", "name this device's push token" } }).dump() };
+
+    Device d;
+    bool   hosted = false;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        auto it = std::find_if(g_devices.begin(), g_devices.end(), [&](const Device& row) {
+            return row.token == token && (platform.empty() || row.platform == platform);
+        });
+        // The caller already holds the hub token, and a push token is not guessable; this answer
+        // says only that this phone has not registered (yet), which is what it needs to know.
+        if (it == g_devices.end())
+            return { 404, json({ { "error", "this device is not registered with the hub; open the app once so it registers" } }).dump() };
+        d      = *it;
+        hosted = hosted_mode_locked();
+    }
+
+    const long long now = now_ms();
+    if (now - last_ms.load() < TEST_MIN_GAP_MS || busy.exchange(true))
+        return { 429, json({ { "error", "one test at a time; try again in a few seconds" } }).dump() };
+    struct Release { ~Release() { last_ms = now_ms(); busy = false; } } release;
+
+    // Waited out on this request thread (the hub serves each connection on its own), in slices so
+    // a hub that is quitting does not have to wait for it.
+    for (int slept = 0; slept < delay_s * 1000; slept += 100) {
+        if (g_stopping) return { 503, json({ { "error", "the hub is stopping" } }).dump() };
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    json e;
+    // Id 0: no app stores it in its history (HubEvent.fromPush needs an id above 0).
+    e["id"]       = 0;
+    e["time"]     = now_ms();
+    e["printer"]  = json{ { "id", "test" }, { "name", "Test printer" }, { "kind", "printhost" } };
+    e["kind"]     = kind;
+    e["severity"] = severity_of_kind(kind);
+    e["title"]    = "Test: " + kind;
+    e["text"]     = "A test \"" + kind + "\" notification from the hub, sent to this phone only.";
+    const std::string plaintext = plaintext_for(e);
+
+    Provider*   p = provider_for(d.platform, hosted);
+    std::string why;
+    if (!p || !p->available(why))
+        return { 200, json({ { "ok", false }, { "status", 0 }, { "error", p ? why : "no provider for that platform" } }).dump() };
+    std::string blob, err;
+    if (!encrypt_for(d, plaintext, blob, err))
+        return { 200, json({ { "ok", false }, { "status", 0 }, { "error", scrub(err, d) } }).dump() };
+    const PushRequest req = request_for(d, e, blob);
+    // Once, no retries, like the page's test button: somebody is watching for the answer.
+    const PushResult  r   = p->send(req);
+    record(d, r);
+    return { 200, json({ { "ok", r.ok }, { "status", r.status }, { "host", r.host }, { "error", scrub(r.error, d) },
+                         { "kind", kind }, { "severity", e["severity"] }, { "priority", req.priority },
+                         { "ttl", req.ttl_seconds }, { "interruption_level", req.interruption_level },
+                         { "mode", hosted ? "hosted" : "own" } }).dump() };
+}
+
 // ------------------------------------------------------------------ the debug route ----
 
 std::pair<int, std::string> debug_op(const std::string& body)
@@ -1150,6 +1321,7 @@ void start(const json& saved)
                     d.last_error  = e.value("last_error", "");
                     d.last_host   = e.value("last_host", "");
                     d.failures    = e.value("failures", 0);
+                    if (e.contains("levels")) d.prefs = policy::read_prefs(e["levels"]);
                     if (d.id.empty()) d.id = random_id();
                     if ((d.platform == "apns" || d.platform == "fcm") && !d.token.empty() &&
                         !d.p256dh.empty() && !d.auth.empty())

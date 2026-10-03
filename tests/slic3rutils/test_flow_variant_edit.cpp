@@ -363,6 +363,27 @@ TEST_CASE("slice sync target follows uniform nozzle type before the first slice"
     REQUIRE(slice_sync_target_filament_volume_type(FILAMENT_GROUPING_CUSTOM, 2, fvtHighFlow, fvtHighFlow) == fvtHighFlow);
 }
 
+// CalibUtils::calib_flowrate / calib_max_vol_speed read the column of the nozzle on
+// calib_info.extruder_id, not filament 0's slice-sync target.
+TEST_CASE("calibration flow type follows the chosen extruder's nozzle", "[FlowVariantEdit][Calib]")
+{
+    const std::vector<std::string> single_hf{FLOW_MODE_HIGH_FLOW};
+    REQUIRE(nozzle_flow_type_at(single_hf, 0, fvtStandard) == fvtHighFlow);
+    const std::vector<std::string> uniform_std{FLOW_MODE_STANDARD, FLOW_MODE_STANDARD};
+    REQUIRE(nozzle_flow_type_at(uniform_std, 0, fvtHighFlow) == fvtStandard);
+    REQUIRE(nozzle_flow_type_at(uniform_std, 1, fvtHighFlow) == fvtStandard);
+    // Mixed H2D/H2C: each extruder gets its own nozzle's column. The slice-sync
+    // target for this layout (standard grouping) is Standard for every filament.
+    const std::vector<std::string> mixed{FLOW_MODE_STANDARD, FLOW_MODE_HIGH_FLOW};
+    REQUIRE(nozzle_flow_type_at(mixed, 0, fvtHighFlow) == fvtStandard);
+    REQUIRE(nozzle_flow_type_at(mixed, 1, fvtStandard) == fvtHighFlow);
+    REQUIRE(slice_sync_target_filament_volume_type(FILAMENT_GROUPING_STANDARD, 2, fvtStandard, fvtStandard) == fvtStandard);
+    // Beyond the selected printer's nozzles: the printer preset's value.
+    REQUIRE(nozzle_flow_type_at(single_hf, 1, fvtStandard) == fvtStandard);
+    REQUIRE(nozzle_flow_type_at(single_hf, 1, fvtHighFlow) == fvtHighFlow);
+    REQUIRE(nozzle_flow_type_at({}, 0, fvtHighFlow) == fvtHighFlow);
+}
+
 // G1 / G1L: `>` → `>=` flags 230; `<` → `<=` flags 200. 199 and 231 stay out.
 TEST_CASE("recommended nozzle temp range bounds are inclusive", "[FlowVariantEdit][G1][G1L]")
 {

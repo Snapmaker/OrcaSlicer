@@ -7,6 +7,17 @@ namespace Slic3r {
 // Read the per-extruder nozzle flow type from a printer preset; missing or invalid values are standard.
 FilamentVolumeType get_nozzle_volume_type(const ConfigBase &printer_config, unsigned int extruder_id = 0);
 
+// Flow type of one extruder's nozzle from per-extruder flow names (FLOW_MODE_*,
+// e.g. GUI::FlowType::nozzle_volume_types()). `fallback` when the list does not
+// reach `extruder_id`. Calibration on a chosen extruder reads this.
+inline FilamentVolumeType nozzle_flow_type_at(const std::vector<std::string> &nozzle_types, unsigned int extruder_id,
+                                              FilamentVolumeType fallback)
+{
+    if (extruder_id >= nozzle_types.size())
+        return fallback;
+    return nozzle_types[extruder_id] == FLOW_MODE_HIGH_FLOW ? fvtHighFlow : fvtStandard;
+}
+
 // Same type get_config_idx() uses for Filament / Process / Printer: project
 // filament_volume_type[filament_id]. Missing or out-of-range values are Standard.
 // Do not substitute nozzle_volume_type: a Standard filament on an HF nozzle

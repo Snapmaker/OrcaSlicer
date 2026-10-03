@@ -76,9 +76,10 @@ public:
     static bool lock_unsupported();
     static bool lock_permission_denied();
     static std::string last_error();
-    // True when the most recently constructed WriteScope refused the write
-    // (busy, permission, released). Survives the scope destructor so a
-    // caller can pick a dialog after Preset::save / save_current_preset.
+    // True when this thread's most recently constructed WriteScope refused
+    // the write (busy, permission, released). thread_local so another
+    // thread's scope cannot clobber it. Survives the destructor so a caller
+    // can pick a dialog after Preset::save / save_current_preset.
     static bool last_write_refused();
 
     // RAII gate around a write. The session mutex is held only in the

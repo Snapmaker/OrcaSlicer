@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 
 // GUI-free core of the Bambu Studio user-preset mirror. Everything here is pure logic over plain
 // values (no wxWidgets, no AppConfig, no PresetBundle), so tests/slic3rutils can exercise it.
@@ -118,10 +119,17 @@ std::vector<PlanItem> build_plan(const SourceListing&               src,
                                  const std::map<std::string, Entry>& manifest,
                                  const DestState&                   dst);
 
-// Convenience: apply a plan to a manifest, returning the new manifest. Copy/RespectDelete update
-// entries, Retire drops them, everything else leaves the manifest alone.
+// Apply a plan to a manifest, returning the new manifest. RespectDelete updates
+// entries, Retire drops them, everything else except Copy leaves the manifest
+// alone. Copy is recorded only for rels in `copied` — a refused or failed copy
+// stays pending so the next run retries it instead of treating it as done or
+// as a user deletion. The two-argument overload treats every planned Copy as
+// successful (fully executed run).
 std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& manifest,
                                         const std::vector<PlanItem>&        plan);
+std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& manifest,
+                                        const std::vector<PlanItem>&        plan,
+                                        const std::set<std::string>&        copied);
 
 // ---- source directory resolution ---------------------------------------------------------------
 

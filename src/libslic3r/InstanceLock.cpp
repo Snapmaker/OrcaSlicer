@@ -77,6 +77,9 @@ struct InstanceLock::Native
     {
         if (!open_shared()) {
             const DWORD err = GetLastError();
+            // Delete-pending lock files (old instance OnExit) also surface as
+            // ACCESS_DENIED. Treat it as retryable; try_lock() reports Denied
+            // only if it is still failing at the end of the wait.
             if (err == ERROR_ACCESS_DENIED)
                 return LockAttempt::Denied;
             if (err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION)
@@ -212,7 +215,7 @@ std::string                      s_session_data_dir;
 std::string                      s_session_error;
 int                              s_transient_refs{0};
 bool                             s_permission_denied{false};
-std::atomic<bool>                s_last_write_refused{false};
+thread_local bool                s_last_write_refused{false};
 
 void set_session_error(const std::string &msg)
 {
@@ -300,21 +303,31 @@ bool InstanceLock::try_lock(std::chrono::milliseconds timeout)
             boost::filesystem::create_directories(parent);
         m_native            = std::make_unique<Native>(m_path);
         const auto deadline = std::chrono::steady_clock::now() + timeout;
+        LockAttempt last    = LockAttempt::Busy;
         for (;;) {
-            const LockAttempt r = m_native->try_lock();
-            if (r == LockAttempt::Acquired) {
+            last = m_native->try_lock();
+            if (last == LockAttempt::Acquired) {
                 m_locked = true;
                 return true;
             }
-            if (r == LockAttempt::Unsupported) {
+            if (last == LockAttempt::Unsupported) {
                 m_unsupported = true;
                 m_native.reset();
                 return false;
             }
-            if (r == LockAttempt::Denied) {
+            if (last == LockAttempt::Denied) {
+#ifndef _WIN32
                 m_denied = true;
                 m_native.reset();
                 return false;
+#else
+                // ACCESS_DENIED on a delete-pending lock file is transient.
+                // Retry inside the wait; only the last Denied becomes m_denied.
+                if (timeout.count() <= 0 || std::chrono::steady_clock::now() >= deadline)
+                    break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                continue;
+#endif
             }
             if (timeout.count() <= 0 || std::chrono::steady_clock::now() >= deadline)
                 break;
@@ -322,6 +335,10 @@ bool InstanceLock::try_lock(std::chrono::milliseconds timeout)
             // LockFileEx/flock in this wait must win once they release.
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
+#ifdef _WIN32
+        if (last == LockAttempt::Denied)
+            m_denied = true;
+#endif
         m_native.reset();
         return false;
     } catch (const std::exception &e) {
@@ -421,7 +438,9 @@ void InstanceLock::release_data_dir()
     s_transient_refs    = 0;
     s_permission_denied = false;
     s_session_state     = SessionState::Released;
-    s_session_error     = "InstanceLock released";
+    // Not a write-failure reason. Tab/dialogs key off last_error() after a
+    // refused WriteScope; "InstanceLock released" must not appear there.
+    s_session_error.clear();
 }
 
 bool InstanceLock::holds_data_dir()
@@ -470,7 +489,7 @@ std::string InstanceLock::last_error()
     return s_session_error;
 }
 
-bool InstanceLock::last_write_refused() { return s_last_write_refused.load(std::memory_order_acquire); }
+bool InstanceLock::last_write_refused() { return s_last_write_refused; }
 
 InstanceLock::WriteScope::WriteScope()
 {
@@ -516,7 +535,7 @@ InstanceLock::WriteScope::WriteScope()
             }
         }
     }
-    s_last_write_refused.store(!m_allows, std::memory_order_release);
+    s_last_write_refused = !m_allows;
 }
 
 InstanceLock::WriteScope::~WriteScope()

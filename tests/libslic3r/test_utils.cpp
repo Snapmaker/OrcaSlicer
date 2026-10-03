@@ -1034,6 +1034,8 @@ TEST_CASE("allows_saves re-acquires after the holder releases, and stays false a
     InstanceLock::release_data_dir();
     REQUIRE_FALSE(InstanceLock::allows_saves());
     REQUIRE_FALSE(InstanceLock::holds_data_dir());
+    REQUIRE(InstanceLock::last_error().empty());
+    REQUIRE(InstanceLock::last_error().find("released") == std::string::npos);
     InstanceLock::try_acquire_data_dir("", false);
     REQUIRE(InstanceLock::allows_saves());
 }
@@ -1263,3 +1265,29 @@ TEST_CASE("save_current_preset is refused while the data-dir lock is read-only",
 
     InstanceLock::try_acquire_data_dir("", false);
 }
+
+#ifndef _WIN32
+TEST_CASE("POSIX EACCES on the lock file is permission denied, not busy", "[utils][atomic][InstanceLock]")
+{
+    ScopedTempDir dir;
+    struct Reset
+    {
+        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
+    } reset;
+
+    const std::string lock_path = InstanceLock::lock_path_for_data_dir(dir.path.string());
+    {
+        InstanceLock maker(lock_path, std::chrono::milliseconds(50));
+        REQUIRE(maker.locked());
+    }
+    REQUIRE(::chmod(lock_path.c_str(), 0) == 0);
+    REQUIRE_FALSE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(50)));
+    REQUIRE(InstanceLock::lock_permission_denied());
+    REQUIRE(InstanceLock::is_read_only());
+    const std::string err = InstanceLock::last_error();
+    REQUIRE(err.find("permission") != std::string::npos);
+    REQUIRE(err.find("Another") == std::string::npos);
+    ::chmod(lock_path.c_str(), 0644);
+    InstanceLock::try_acquire_data_dir("", false);
+}
+#endif

@@ -13,6 +13,7 @@
 #include <sstream>
 #include <vector>
 #include <map>
+#include <set>
 #include <ctime>
 
 namespace bfs = boost::filesystem;
@@ -233,13 +234,28 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
         for (const auto& f : src.files) by_rel[f.rel] = &f;
 
         int copied = 0, uptodate = 0, native_protected = 0, respected = 0, skipped = 0, retired = 0, errors = 0, sanitized = 0;
+        std::set<std::string> copied_rels;
+        bool                  copies_refused = false;
+
+        auto persist_manifest = [&]() {
+            try {
+                const auto snap = mirror::apply_plan(manifest, plan, copied_rels);
+                std::ofstream out(man_path.string(), std::ios::binary | std::ios::trunc);
+                out << mirror::dump_manifest(snap);
+            } catch (...) {}
+        };
 
         for (const auto& item : plan) {
             switch (item.action) {
             case mirror::Action::Copy: {
+                if (copies_refused) {
+                    ++errors;
+                    break;
+                }
                 InstanceLock::WriteScope write_scope;
                 if (!write_scope.allows()) {
                     BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] data directory became read-only; aborting remaining copies";
+                    copies_refused = true;
                     ++errors;
                     break;
                 }
@@ -278,6 +294,10 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
                     copy_info_inert(si, di);
                 }
                 ++copied;
+                copied_rels.insert(item.rel);
+                // Same scope as the copy: a later lock steal cannot drop this
+                // entry, and a refused later copy is not recorded as done.
+                persist_manifest();
                 break;
             }
             case mirror::Action::UpToDate:        ++uptodate;         break;
@@ -288,15 +308,10 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
             }
         }
 
-        auto updated = mirror::apply_plan(manifest, plan);
         {
             InstanceLock::WriteScope write_scope;
-            if (write_scope.allows()) {
-                try {
-                    std::ofstream out(man_path.string(), std::ios::binary | std::ios::trunc);
-                    out << mirror::dump_manifest(updated);
-                } catch (...) {}
-            }
+            if (write_scope.allows())
+                persist_manifest();
         }
 
         BOOST_LOG_TRIVIAL(info) << "[preset-mirror] from " << src_uid.string()

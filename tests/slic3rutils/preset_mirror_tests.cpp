@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <set>
 
 using namespace Slic3r::GUI::mirror;
 
@@ -411,4 +412,49 @@ TEST_CASE("the reported mass-delete cannot happen", "[PresetMirror]")
     CHECK(std::none_of(plan2.begin(), plan2.end(), [](const PlanItem& p) {
         return p.action == Action::Retire || p.action == Action::RespectDelete;
     }));
+}
+
+TEST_CASE("a mid-mirror refusal leaves refused copies pending and the next run converges", "[PresetMirror]")
+{
+    SourceListing src;
+    src.ok = true;
+    src.files.push_back(sf("filament/A.json", 10));
+    src.files.push_back(sf("filament/B.json", 10));
+    src.files.push_back(sf("filament/C.json", 10));
+
+    std::map<std::string, Entry> man;
+    DestState                    empty;
+    auto                         plan = build_plan(src, man, empty);
+    CHECK(action_for(plan, "filament/A.json") == Action::Copy);
+    CHECK(action_for(plan, "filament/B.json") == Action::Copy);
+    CHECK(action_for(plan, "filament/C.json") == Action::Copy);
+
+    // A landed. B, C and the batch manifest write were refused (visible
+    // instance took the lock). Only A may be recorded.
+    const std::set<std::string> copied_a{"filament/A.json"};
+    auto                        after = apply_plan(man, plan, copied_a);
+    REQUIRE(after.count("filament/A.json") == 1);
+    CHECK_FALSE(after.count("filament/B.json"));
+    CHECK_FALSE(after.count("filament/C.json"));
+
+    DestState dest_after;
+    dest_after.present["filament/A.json"] = true;
+    auto plan2                            = build_plan(src, after, dest_after);
+    CHECK(action_for(plan2, "filament/A.json") == Action::UpToDate);
+    CHECK(action_for(plan2, "filament/B.json") == Action::Copy);
+    CHECK(action_for(plan2, "filament/C.json") == Action::Copy);
+
+    const std::set<std::string> copied_rest{"filament/B.json", "filament/C.json"};
+    auto                        done = apply_plan(after, plan2, copied_rest);
+    CHECK(done.size() == 3);
+    CHECK(done.count("filament/A.json"));
+    CHECK(done.count("filament/B.json"));
+    CHECK(done.count("filament/C.json"));
+
+    // Mutation: apply_plan records every planned Copy. B and C then look
+    // mirrored-but-missing and the next run RespectDeletes them as user deletions.
+    auto recorded_all = apply_plan(man, plan);
+    auto poisoned     = build_plan(src, recorded_all, dest_after);
+    CHECK(action_for(poisoned, "filament/B.json") == Action::RespectDelete);
+    CHECK(action_for(poisoned, "filament/C.json") == Action::RespectDelete);
 }

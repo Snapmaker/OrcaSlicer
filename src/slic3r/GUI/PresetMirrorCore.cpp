@@ -277,11 +277,25 @@ std::vector<PlanItem> build_plan(const SourceListing&                src,
 std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& manifest,
                                         const std::vector<PlanItem>&        plan)
 {
+    std::set<std::string> copied;
+    for (const PlanItem& p : plan)
+        if (p.action == Action::Copy)
+            copied.insert(p.rel);
+    return apply_plan(manifest, plan, copied);
+}
+
+std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& manifest,
+                                        const std::vector<PlanItem>&        plan,
+                                        const std::set<std::string>&        copied)
+{
     std::map<std::string, Entry> out = manifest;
     for (const PlanItem& p : plan) {
         switch (p.action) {
         case Action::Copy:
-            out[p.rel] = Entry{p.t, false};
+            // Only copies that actually landed. Recording a refused Copy marks
+            // a missing file as mirrored, and the next run RespectDeletes it.
+            if (copied.count(p.rel))
+                out[p.rel] = Entry{p.t, false};
             break;
         case Action::RespectDelete:
             out[p.rel] = Entry{p.t, true};

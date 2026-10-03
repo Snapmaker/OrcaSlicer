@@ -8,6 +8,7 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "MsgDialog.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "FlowVariantEdit.hpp"
 
 #include <wx/msgdlg.h>
 
@@ -78,7 +79,7 @@ void ConfigManipulation::check_nozzle_recommended_temperature_range(DynamicPrint
     }
 }
 
-void ConfigManipulation::check_nozzle_temperature_range(DynamicPrintConfig *config)
+void ConfigManipulation::check_nozzle_temperature_range(DynamicPrintConfig *config, int variant_index)
 {
     if (is_msg_dlg_already_exist)
         return;
@@ -86,20 +87,18 @@ void ConfigManipulation::check_nozzle_temperature_range(DynamicPrintConfig *conf
     int temperature_range_low, temperature_range_high;
     if (!get_temperature_range(config, temperature_range_low, temperature_range_high)) return;
 
-    if (config->has("nozzle_temperature")) {
-        if (config->opt_int("nozzle_temperature", 0) < temperature_range_low || config->opt_int("nozzle_temperature", 0) > temperature_range_high) {
-            wxString msg_text = _(L("Nozzle may be blocked when the temperature is out of recommended range.\n"
-                "Please make sure whether to use the temperature to print.\n\n"));
-            msg_text += wxString::Format(_L("The recommended nozzle temperature for this filament type is [%d, %d] degrees Celsius."), temperature_range_low, temperature_range_high);
-            MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
-            is_msg_dlg_already_exist = true;
-            dialog.ShowModal();
-            is_msg_dlg_already_exist = false;
-        }
+    if (filament_nozzle_temperature_out_of_range(*config, variant_index)) {
+        wxString msg_text = _(L("Nozzle may be blocked when the temperature is out of recommended range.\n"
+            "Please make sure whether to use the temperature to print.\n\n"));
+        msg_text += wxString::Format(_L("The recommended nozzle temperature for this filament type is [%d, %d] degrees Celsius."), temperature_range_low, temperature_range_high);
+        MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
+        is_msg_dlg_already_exist = true;
+        dialog.ShowModal();
+        is_msg_dlg_already_exist = false;
     }
 }
 
-void ConfigManipulation::check_nozzle_temperature_initial_layer_range(DynamicPrintConfig* config)
+void ConfigManipulation::check_nozzle_temperature_initial_layer_range(DynamicPrintConfig* config, int variant_index)
 {
     if (is_msg_dlg_already_exist)
         return;
@@ -107,18 +106,14 @@ void ConfigManipulation::check_nozzle_temperature_initial_layer_range(DynamicPri
     int temperature_range_low, temperature_range_high;
     if (!get_temperature_range(config, temperature_range_low, temperature_range_high)) return;
 
-    if (config->has("nozzle_temperature_initial_layer")) {
-        if (config->opt_int("nozzle_temperature_initial_layer", 0) < temperature_range_low ||
-            config->opt_int("nozzle_temperature_initial_layer", 0) > temperature_range_high)
-        {
-            wxString msg_text = _(L("Nozzle may be blocked when the temperature is out of recommended range.\n"
-                "Please make sure whether to use the temperature to print.\n\n"));
-            msg_text += wxString::Format(_L("The recommended nozzle temperature for this filament type is [%d, %d] degrees Celsius."), temperature_range_low, temperature_range_high);
-            MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
-            is_msg_dlg_already_exist = true;
-            dialog.ShowModal();
-            is_msg_dlg_already_exist = false;
-        }
+    if (filament_nozzle_temperature_initial_layer_out_of_range(*config, variant_index)) {
+        wxString msg_text = _(L("Nozzle may be blocked when the temperature is out of recommended range.\n"
+            "Please make sure whether to use the temperature to print.\n\n"));
+        msg_text += wxString::Format(_L("The recommended nozzle temperature for this filament type is [%d, %d] degrees Celsius."), temperature_range_low, temperature_range_high);
+        MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
+        is_msg_dlg_already_exist = true;
+        dialog.ShowModal();
+        is_msg_dlg_already_exist = false;
     }
 }
 

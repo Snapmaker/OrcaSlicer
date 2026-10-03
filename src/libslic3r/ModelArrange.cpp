@@ -5,6 +5,7 @@
 #include <libslic3r/Print.hpp>
 #include "MTUtils.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -197,10 +198,11 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
             ap.first_bed_temp = bed_opt_1st_layer->get_at(ap.extrude_ids.front()-1);
     }
 
-    if (config.has("nozzle_temperature")) //get the print temperature
-        ap.print_temp = config.opt_int("nozzle_temperature", ap.extrude_ids.front() - 1);
-    if (config.has("nozzle_temperature_initial_layer")) //get the nozzle_temperature_initial_layer
-        ap.first_print_temp = config.opt_int("nozzle_temperature_initial_layer", ap.extrude_ids.front() - 1);
+    const unsigned int filament_id = ap.extrude_ids.empty() ? 0u : unsigned(std::max(0, ap.extrude_ids.front() - 1));
+    if (const auto *nozzle_temp = config.option<ConfigOptionInts>("nozzle_temperature"))
+        ap.print_temp = get_value_at(config, *nozzle_temp, ConfigFlowDomain::Filament, filament_id);
+    if (const auto *initial_temp = config.option<ConfigOptionInts>("nozzle_temperature_initial_layer"))
+        ap.first_print_temp = get_value_at(config, *initial_temp, ConfigFlowDomain::Filament, filament_id);
 
     if (config.has("temperature_vitrification")) {
         ap.vitrify_temp = config.opt_int("temperature_vitrification", ap.extrude_ids.front() - 1);

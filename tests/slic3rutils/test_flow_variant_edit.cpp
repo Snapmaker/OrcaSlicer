@@ -2,6 +2,7 @@
 
 #include "slic3r/GUI/FlowVariantEdit.hpp"
 
+#include "libslic3r/PresetFlowVariant.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
 using namespace Slic3r;
@@ -213,4 +214,107 @@ TEST_CASE("copy_flow_variant_slot visits every filament_flow_variant_options key
         const std::string high_flow = values.size() > 1 ? values[1] : values.front();
         REQUIRE(values.front() == high_flow);
     }
+}
+
+static DynamicPrintConfig make_std_hf_filament_tab_config()
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_key_value("filament_flow_support", new ConfigOptionStrings{FLOW_MODE_STANDARD, FLOW_MODE_HIGH_FLOW});
+    config.set_key_value("enable_pressure_advance", new ConfigOptionBools{true, false});
+    config.set_key_value("pressure_advance", new ConfigOptionFloats{0.04, 0.02});
+    config.set_key_value("nozzle_temperature", new ConfigOptionInts{210, 250});
+    config.set_key_value("nozzle_temperature_initial_layer", new ConfigOptionInts{215, 180});
+    config.set_key_value("nozzle_temperature_range_low", new ConfigOptionInts{200});
+    config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts{230});
+    config.set_key_value("filament_multitool_ramming", new ConfigOptionBools{false, true});
+    config.set_key_value("filament_multitool_ramming_volume", new ConfigOptionFloats{2.0, 20.0});
+    config.set_key_value("filament_multitool_ramming_flow", new ConfigOptionFloats{1.0, 10.0});
+    config.set_key_value("fan_min_speed", new ConfigOptionInts{30, 80});
+    config.set_key_value("fan_max_speed", new ConfigOptionInts{60, 100});
+    config.set_key_value("additional_cooling_fan_speed", new ConfigOptionInts{0, 70});
+    config.set_key_value("filament_retraction_length", new ConfigOptionFloats{0.8, 3.0});
+    config.set_key_value("filament_flow_ratio", new ConfigOptionFloats{0.98, 0.88});
+    return config;
+}
+
+TEST_CASE("filament tab option index follows the view for every flow-variant key", "[FlowVariantEdit][FilamentTabIndex]")
+{
+    for (const std::string &key : filament_flow_variant_options()) {
+        REQUIRE(filament_tab_option_index(key, 0) == 0);
+        REQUIRE(filament_tab_option_index(key, 1) == 1);
+    }
+    REQUIRE(filament_tab_option_index("adaptive_pressure_advance", 1) == 0);
+    REQUIRE(filament_tab_option_index("nozzle_temperature_range_low", 1) == 0);
+}
+
+TEST_CASE("filament tab PA ramming and temp-range checks follow the selected view", "[FlowVariantEdit][FilamentTabIndex]")
+{
+    const DynamicPrintConfig config = make_std_hf_filament_tab_config();
+
+    const int standard_index = filament_tab_option_index("enable_pressure_advance", 0);
+    const int high_flow_index = filament_tab_option_index("enable_pressure_advance", 1);
+    REQUIRE(standard_index == 0);
+    REQUIRE(high_flow_index == 1);
+
+    REQUIRE(config.opt_bool("enable_pressure_advance", standard_index));
+    REQUIRE_FALSE(config.opt_bool("enable_pressure_advance", high_flow_index));
+
+    REQUIRE_FALSE(config.opt_bool("filament_multitool_ramming", filament_tab_option_index("filament_multitool_ramming", 0)));
+    REQUIRE(config.opt_bool("filament_multitool_ramming", filament_tab_option_index("filament_multitool_ramming", 1)));
+
+    REQUIRE_FALSE(filament_nozzle_temperature_out_of_range(config, standard_index));
+    REQUIRE(filament_nozzle_temperature_out_of_range(config, high_flow_index));
+    REQUIRE_FALSE(filament_nozzle_temperature_initial_layer_out_of_range(config, standard_index));
+    REQUIRE(filament_nozzle_temperature_initial_layer_out_of_range(config, high_flow_index));
+
+    REQUIRE(config.opt_int("fan_min_speed", filament_tab_option_index("fan_min_speed", 0)) == 30);
+    REQUIRE(config.opt_int("fan_min_speed", filament_tab_option_index("fan_min_speed", 1)) == 80);
+    REQUIRE(config.opt_float("filament_retraction_length", filament_tab_option_index("filament_retraction_length", 0)) == 0.8);
+    REQUIRE(config.opt_float("filament_retraction_length", filament_tab_option_index("filament_retraction_length", 1)) == 3.0);
+}
+
+TEST_CASE("filament tab view index 0 on a single-column filament matches the historic index-0 reads", "[FlowVariantEdit][FilamentTabIndex]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_key_value("filament_flow_support", new ConfigOptionStrings{FLOW_MODE_STANDARD});
+    config.set_key_value("enable_pressure_advance", new ConfigOptionBools{true});
+    config.set_key_value("nozzle_temperature", new ConfigOptionInts{210});
+    config.set_key_value("nozzle_temperature_initial_layer", new ConfigOptionInts{215});
+    config.set_key_value("nozzle_temperature_range_low", new ConfigOptionInts{200});
+    config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts{230});
+    config.set_key_value("filament_multitool_ramming", new ConfigOptionBools{false});
+
+    const int variant_index = filament_tab_option_index("enable_pressure_advance", 0);
+    REQUIRE(variant_index == 0);
+    REQUIRE(config.opt_bool("enable_pressure_advance", variant_index) == config.opt_bool("enable_pressure_advance", 0));
+    REQUIRE(config.opt_int("nozzle_temperature", variant_index) == config.opt_int("nozzle_temperature", 0));
+    REQUIRE_FALSE(filament_nozzle_temperature_out_of_range(config, variant_index));
+    REQUIRE_FALSE(filament_nozzle_temperature_initial_layer_out_of_range(config, variant_index));
+    REQUIRE_FALSE(config.opt_bool("filament_multitool_ramming", variant_index));
+}
+
+TEST_CASE("calib filament_flow_ratio_at follows the packed High-Flow column", "[FlowVariantEdit][N4]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75};
+    config.option<ConfigOptionInts>("filament_flow_step_size", true)->values = {2, 1};
+    config.option<ConfigOptionStrings>("filament_flow_support", true)->values =
+        {FLOW_MODE_STANDARD, FLOW_MODE_HIGH_FLOW, FLOW_MODE_STANDARD};
+    config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtHighFlow), int(fvtStandard)};
+    config.option<ConfigOptionFloats>("filament_flow_ratio")->values = {0.98, 0.88, 1.05};
+
+    REQUIRE(filament_flow_ratio_at(config, 0) == 0.88);
+    REQUIRE(filament_flow_ratio_at(config, 1) == 1.05);
+    REQUIRE(config.option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0) == 0.98);
+}
+
+TEST_CASE("filament preset flow ratio follows the selected volume type", "[FlowVariantEdit][N4]")
+{
+    DynamicPrintConfig preset = DynamicPrintConfig::full_print_config();
+    preset.set_key_value("filament_flow_support", new ConfigOptionStrings{FLOW_MODE_STANDARD, FLOW_MODE_HIGH_FLOW});
+    preset.set_key_value("filament_flow_ratio", new ConfigOptionFloats{0.98, 0.88});
+
+    REQUIRE(filament_preset_flow_ratio(preset, fvtStandard) == 0.98);
+    REQUIRE(filament_preset_flow_ratio(preset, fvtHighFlow) == 0.88);
+    REQUIRE(preset.option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0) == 0.98);
 }

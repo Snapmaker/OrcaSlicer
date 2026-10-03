@@ -3260,8 +3260,8 @@ void Model::setExtruderParams(const DynamicPrintConfig& config, int extruders_co
         if (config.has("filament_type")) {
             matName = config.opt_string("filament_type", i);
         }
-        if (config.has("nozzle_temperature")) {
-            endTemp = config.opt_int("nozzle_temperature", i);
+        if (const auto *nozzle_temp = config.option<ConfigOptionInts>("nozzle_temperature")) {
+            endTemp = get_value_at(config, *nozzle_temp, ConfigFlowDomain::Filament, i);
         }
 
         // FIXME: curr_bed_type is now a plate config rather than a global config.

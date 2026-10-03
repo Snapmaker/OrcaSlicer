@@ -18,4 +18,12 @@ inline auto get_preset_value_at(const ConfigBase &preset_config, const VectorOpt
     return opt.get_at(get_preset_flow_variant_idx(preset_config, domain, type));
 }
 
+inline double filament_preset_flow_ratio(const ConfigBase &preset_config, FilamentVolumeType type)
+{
+    const auto *opt = preset_config.option<ConfigOptionFloats>("filament_flow_ratio");
+    if (opt == nullptr || opt->values.empty())
+        return 1.0;
+    return get_preset_value_at(preset_config, *opt, ConfigFlowDomain::Filament, type);
+}
+
 } // namespace Slic3r

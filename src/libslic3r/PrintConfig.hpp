@@ -541,6 +541,16 @@ inline auto get_value_at(const ConfigBase &config, const VectorOption &opt, Conf
     return opt.get_at(get_config_idx(config, domain, filament_id));
 }
 
+// Packed filament_flow_ratio for calib / G-code-adjacent readers. get_at(filament_id)
+// is the wrong slot when an earlier filament declares Standard+High-Flow.
+inline double filament_flow_ratio_at(const ConfigBase &config, unsigned int filament_id = 0)
+{
+    const auto *opt = config.option<ConfigOptionFloats>("filament_flow_ratio");
+    if (opt == nullptr || opt->values.empty())
+        return 1.0;
+    return get_value_at(config, *opt, ConfigFlowDomain::Filament, filament_id);
+}
+
 // Packed flow-variant vectors are segmented by filament_flow_step_size. Filament / tool id
 // count is filament_diameter, not the packed length.
 inline size_t flow_variant_filament_count(const ConfigBase &config)

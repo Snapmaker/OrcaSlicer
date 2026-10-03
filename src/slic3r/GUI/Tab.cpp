@@ -4806,10 +4806,10 @@ void TabFilament::build()
                 m_config_manipulation.check_bed_temperature_difference(BedType::btPTE, &filament_config);
             }
             else */if (opt_key == "nozzle_temperature") {
-                m_config_manipulation.check_nozzle_temperature_range(&filament_config);
+                m_config_manipulation.check_nozzle_temperature_range(&filament_config, int(flow_variant_view_index()));
             }
             else if (opt_key == "nozzle_temperature_initial_layer") {
-                m_config_manipulation.check_nozzle_temperature_initial_layer_range(&filament_config);
+                m_config_manipulation.check_nozzle_temperature_initial_layer_range(&filament_config, int(flow_variant_view_index()));
             }
             else if (opt_key == "chamber_temperatures") {
                 m_config_manipulation.check_chamber_temperature(&filament_config);
@@ -5052,7 +5052,8 @@ void TabFilament::toggle_options()
     }
     if (m_active_page->title() == L("Filament"))
     {
-        bool pa = m_config->opt_bool("enable_pressure_advance", 0);
+        const int variant_index = int(flow_variant_view_index());
+        bool pa = m_config->opt_bool("enable_pressure_advance", variant_index);
         toggle_option("pressure_advance", pa);
 
         // BBS: 控制床温选项的显示
@@ -5156,7 +5157,7 @@ void TabFilament::toggle_options()
                         "filament_cooling_initial_speed", "filament_cooling_final_speed"})
             toggle_option(el, !is_BBL_printer);
 
-        bool multitool_ramming = m_config->opt_bool("filament_multitool_ramming", 0);
+        bool multitool_ramming = m_config->opt_bool("filament_multitool_ramming", int(flow_variant_view_index()));
         toggle_option("filament_multitool_ramming_volume", multitool_ramming);
         toggle_option("filament_multitool_ramming_flow", multitool_ramming);
     }

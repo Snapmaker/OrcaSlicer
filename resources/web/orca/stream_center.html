@@ -1721,6 +1721,109 @@ html[data-embed] #conn, html[data-embed] #via, html[data-embed] .pushbox { displ
         if (!grid) return;
         Array.prototype.slice.call(grid.children).forEach(function(cell) { cell.remove(); });
     }
+
+    // ---- tiles that are not on screen do not stream ---------------------------------------
+    // Every tile is a live connection: an iframe with its own WebRTC / MSE WebSocket, an <img> that
+    // pulls the Bambu MJPEG relay, or the printer's own page. Left running they cost the hub a
+    // go2rtc consumer each (and on a small hub the one ffmpeg transcode it can afford), a camera
+    // client slot on printers that allow only a few, and the phone its battery and data - whether
+    // the tile is scrolled out of view, the browser tab is in the background, or the phone's screen
+    // is locked. So a tile is *parked* - its iframe taken out of the document (which closes its
+    // sockets), its <img> emptied (which aborts the fetch) - whenever it is not both in the viewport
+    // and on a page that is showing, and put back when it is. The cell itself, its label and its
+    // size stay, so nothing jumps.
+    //
+    //   page hidden / app in the background   parked at once (a hidden page's timers may not run)
+    //   tile scrolled out of view             parked after TILE_STOP_MS, so a scroll back does not thrash
+    //   tile scrolled into view / page back   started after TILE_START_MS, so a fling past does not start every tile it crosses
+    //
+    // The app (and the slicer's own tab, which gets no visibilitychange) says the same thing through
+    // window.__snorcaTilesActive(on) - see __edgeActive further down.
+    var TILE_STOP_MS = 1500, TILE_START_MS = 250;
+    var tilesHostActive = true, tilesPageGone = false;
+    function tilesShowing() { return tilesHostActive && !tilesPageGone && !document.hidden; }
+    // The media element of a tile: its iframe or its image (the label, expand button and mode
+    // picker are other elements).
+    function tileMedia(cell) {
+        for (var i = 0; i < cell.children.length; i++) {
+            var t = cell.children[i].tagName;
+            if (t === 'IFRAME' || t === 'IMG') return cell.children[i];
+        }
+        return null;
+    }
+    function parkTile(cell) {
+        if (cell._parked) return;
+        var m = tileMedia(cell);
+        if (!m) return;
+        if (m.tagName === 'IMG') {
+            // Detached images keep downloading; emptying the source is what aborts the request.
+            cell._parked = { el: m, src: m.getAttribute('src') };
+            m.removeAttribute('src');
+        } else {
+            // An iframe taken out of the document unloads, closing its WebSocket / peer connection.
+            cell._parked = { el: m };
+        }
+        cell.removeChild(m);
+    }
+    function unparkTile(cell) {
+        var p = cell._parked;
+        if (!p) return;
+        cell._parked = null;
+        if (p.src) p.el.setAttribute('src', p.src);
+        cell.insertBefore(p.el, cell.firstChild);
+    }
+    var tileIO = null;
+    function tileWanted(cell) {
+        return tilesShowing() && (!tileIO || cell._inView === true);
+    }
+    function tileSchedule(cell) {
+        if (cell._tileTimer) { clearTimeout(cell._tileTimer); cell._tileTimer = 0; }
+        if (!cell.isConnected) { if (tileIO) tileIO.unobserve(cell); return; }
+        var want = tileWanted(cell), live = !cell._parked;
+        if (want === live) return;
+        if (want) {
+            cell._tileTimer = setTimeout(function() {
+                cell._tileTimer = 0;
+                if (cell.isConnected && tileWanted(cell)) unparkTile(cell);
+            }, TILE_START_MS);
+        } else if (!tilesShowing()) {
+            parkTile(cell);
+        } else {
+            cell._tileTimer = setTimeout(function() {
+                cell._tileTimer = 0;
+                if (cell.isConnected && !tileWanted(cell)) parkTile(cell);
+            }, TILE_STOP_MS);
+        }
+    }
+    function tilesSweep() {
+        var cells = document.querySelectorAll('#grid .cell');
+        for (var i = 0; i < cells.length; i++) tileSchedule(cells[i]);
+    }
+    if ('IntersectionObserver' in window) {
+        tileIO = new IntersectionObserver(function(entries) {
+            entries.forEach(function(en) { en.target._inView = en.isIntersecting; tileSchedule(en.target); });
+        }, { rootMargin: '48px' });
+    }
+    // Called by render() for each cell it builds. With an IntersectionObserver the cell starts
+    // parked and the observer's first report (before the first paint) starts the ones in view, so
+    // a wall with more tiles than fit on screen only opens the ones you can see.
+    function watchTile(cell) {
+        if (tileIO) {
+            cell._inView = false;
+            parkTile(cell);
+            tileIO.observe(cell);
+        } else if (!tilesShowing()) {
+            parkTile(cell);
+        }
+    }
+    document.addEventListener('visibilitychange', tilesSweep);
+    // iOS keeps a page in its back/forward cache without a visibilitychange: pagehide / pageshow
+    // are the signal there.
+    window.addEventListener('pagehide', function() { tilesPageGone = true; tilesSweep(); });
+    window.addEventListener('pageshow', function() { tilesPageGone = false; tilesSweep(); });
+    // The hosts that cannot send visibilitychange (the slicer's tab, the app's WebView while a
+    // tab is hidden or the app is in the background) call this.
+    window.__snorcaTilesActive = function(on) { tilesHostActive = !!on; tilesSweep(); };
     function render() {
         var chips = document.getElementById('chips');
         chips.innerHTML = '';
@@ -1876,6 +1979,7 @@ html[data-embed] #conn, html[data-embed] #via, html[data-embed] .pushbox { displ
                     ex.title = 'Expand';
                     (function(c) { ex.onclick = function(e) { e.stopPropagation(); toggleExpand(c); }; })(cell);
                     cell.appendChild(ex);
+                    watchTile(cell);
                 }
                 cell.querySelector('.label').textContent = (h && h.alias) ? h.alias : (h ? (h.ip || 'Camera') : id);
             } else {
@@ -4490,6 +4594,7 @@ html[data-embed] #conn, html[data-embed] #via, html[data-embed] .pushbox { displ
         window.__edgeActive = function(on) {
             var was = edgePaused;
             edgePaused = !on;
+            window.__snorcaTilesActive(on);
             if (on && was) { fetchRemoteState(); refreshEvents(); if (view !== 'streams') setView(view); }
         };
         pushInit();

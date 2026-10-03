@@ -140,6 +140,62 @@ function loadProjectPage() {
     return w;
 }
 
+function findFilesNamed(dir, name, out) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (let i = 0; i < entries.length; i++) {
+        const p = path.join(dir, entries[i].name);
+        if (entries[i].isDirectory()) findFilesNamed(p, name, out);
+        else if (entries[i].name === name) out.push(p);
+    }
+    return out;
+}
+
+// First arg is a string / template / identifier (not a function expression).
+const STRING_TIMER_RE = /set(?:Interval|Timeout)\s*\(\s*(?:(["'`])|(?!function\b)[A-Za-z_$][A-Za-z0-9_$]*)/;
+
+function loadDarkModePage() {
+    const page = new JSDOM(indexHtml, {
+        url: 'file:///resources/web/model/index.html',
+        runScripts: 'dangerously',
+        pretendToBeVisual: true
+    });
+    const w = page.window;
+    Object.defineProperty(w.navigator, 'userAgent', {
+        configurable: true,
+        get: function () { return 'Mozilla/5.0 Headless LightMode'; }
+    });
+    const intervalFns = [];
+    w.setInterval = function (fn) {
+        intervalFns.push(fn);
+        return intervalFns.length;
+    };
+    injectScript(w, jquerySrc);
+    if (typeof w.jQuery !== 'function') throw new Error('jQuery did not install');
+    injectScript(w, extractFunction(globalapiSrc, 'RemoveCssLink'));
+    injectScript(w, extractFunction(globalapiSrc, 'AddCssLink'));
+    injectScript(w, extractFunction(globalapiSrc, 'CheckCssLinkExist'));
+    injectScript(w, extractFunction(globalapiSrc, 'ExecuteDarkMode'));
+    injectScript(w, extractFunction(globalapiSrc, 'SwitchDarkMode'));
+    if (typeof w.SwitchDarkMode !== 'function') throw new Error('SwitchDarkMode did not install');
+    return { w: w, intervalFns: intervalFns };
+}
+
+function descIsSanitized(box) {
+    if (!box) return false;
+    const html = box.innerHTML;
+    const img = box.querySelector('img');
+    const a = box.querySelector('a');
+    if (/onerror/i.test(html)) return false;
+    if (img && img.hasAttribute('onerror')) return false;
+    if (img && (img.getAttribute('src') || '') === 'x') return false;
+    if (a && /javascript:/i.test(a.getAttribute('href') || '')) return false;
+    if (/javascript:/i.test(html)) return false;
+    if (box.querySelector('script')) return false;
+    return /ok/i.test(box.textContent);
+}
+
+const HOSTILE_DESC = '<img src=x onerror=alert(1)><script>alert(2)</script><a href="javascript:alert(3)">x</a><p>ok</p>';
+
 let failures = 0;
 let passed = 0;
 function check(label, cond) {
@@ -293,6 +349,13 @@ function check(label, cond) {
     check('CSP has connect-src', /connect-src/.test(indexHtml));
     check('CSP has object-src', /object-src/.test(indexHtml));
     check('CSP has no unsafe-eval', !/unsafe-eval/.test(indexHtml));
+    const imgSrc = ((indexHtml.match(/img-src\s+([^;]+)/) || [])[1] || '').trim();
+    const imgTokens = imgSrc.split(/\s+/).filter(Boolean);
+    const imgAllowed = ['https:', "'self'", 'data:'];
+    check('CSP img-src is https: self data: only',
+        imgTokens.length === 3
+        && imgAllowed.every(function (t) { return imgTokens.indexOf(t) >= 0; })
+        && imgTokens.every(function (t) { return imgAllowed.indexOf(t) >= 0; }));
 }
 
 {
@@ -300,6 +363,16 @@ function check(label, cond) {
     check('globalapi.js has no string-form setTimeout', !/setTimeout\s*\(\s*["']/.test(globalapiSrc));
     check('globalapi.js has no eval(', !/\beval\s*\(/.test(globalapiSrc));
     check('globalapi.js has no new Function', !/new\s+Function\s*\(/.test(globalapiSrc));
+    const webRoot = path.join(__dirname, '..', '..', 'resources', 'web');
+    const copies = findFilesNamed(webRoot, 'globalapi.js', []);
+    check('found every globalapi.js copy', copies.length >= 4);
+    for (let i = 0; i < copies.length; i++) {
+        const src = fs.readFileSync(copies[i], 'utf8');
+        const rel = path.relative(webRoot, copies[i]);
+        check(rel + ' has no string/template/variable timer', !STRING_TIMER_RE.test(src));
+        check(rel + ' has no eval(', !/\beval\s*\(/.test(src));
+        check(rel + ' has no new Function', !/new\s+Function\s*\(/.test(src));
+    }
 }
 
 {
@@ -326,6 +399,9 @@ function check(label, cond) {
         const out = SafeHtml('<img src="' + raw + '/x.png">');
         check('SafeHtml drops img src ' + label, !/src/i.test(out) && !/u:p/i.test(out));
     }
+    check('SafeKeepUrl rejects https://:pw@host', SafeKeepUrl('https://:pw@host', true) === false);
+    const pwOnly = SafeHtml('<img src="https://:pw@host/x.png">');
+    check('SafeHtml drops img src https://:pw@host', !/src/i.test(pwOnly) && !/:pw@/i.test(pwOnly));
 }
 
 {
@@ -389,6 +465,61 @@ function check(label, cond) {
     check('ConstructFileHtml image path escapes quotes and <',
         imgs.length === 1 && !imgs[0].hasAttribute('onclick') && !imgs[0].hasAttribute('onerror')
         && src.indexOf('"') >= 0 && src.indexOf('<') >= 0);
+}
+
+{
+    const w = loadProjectPage();
+    w.ShowModelInfo({
+        name: 'n',
+        author: 'a',
+        upload_type: 'origin',
+        license: 'CC0',
+        description: HOSTILE_DESC,
+        preview_img: []
+    });
+    check('ShowModelInfo description is sanitized', descIsSanitized(w.document.getElementById('Model_Desc')));
+}
+
+{
+    const w = loadProjectPage();
+    w.ShowProfilelInfo({
+        name: 'n',
+        author: 'a',
+        description: HOSTILE_DESC,
+        preview_img: []
+    });
+    check('ShowProfilelInfo description is sanitized', descIsSanitized(w.document.getElementById('Profile_Desc')));
+}
+
+{
+    const w = loadProjectPage();
+    w.ShowModelInfo({
+        name: '<img src=x onerror=alert(1)>Evil',
+        author: 'a',
+        upload_type: 'origin',
+        license: 'CC0',
+        description: 'd',
+        preview_img: []
+    });
+    const el = w.document.getElementById('ModelName');
+    check('ShowModelInfo ModelName renders as text',
+        !!el && el.children.length === 0 && !el.querySelector('img')
+        && el.textContent.indexOf('<img') >= 0 && el.textContent.indexOf('Evil') >= 0);
+}
+
+{
+    const dark = loadDarkModePage();
+    const href = './css/dark.css';
+    check('light mode chrome starts with dark.css', dark.w.CheckCssLinkExist(href) > 0);
+    dark.w.SwitchDarkMode(href);
+    check('SwitchDarkMode registers a dark-mode interval', dark.intervalFns.length >= 1);
+    const putBack = dark.w.document.createElement('link');
+    putBack.setAttribute('href', href);
+    putBack.rel = 'stylesheet';
+    dark.w.document.head.appendChild(putBack);
+    check('dark.css can be put back after the first pass', dark.w.CheckCssLinkExist(href) > 0);
+    dark.intervalFns[dark.intervalFns.length - 1]();
+    check('dark-mode interval removes dark.css in light mode', dark.w.CheckCssLinkExist(href) === 0);
 }
 
 console.log(passed + ' passed, ' + failures + ' failed');

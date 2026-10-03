@@ -62,7 +62,7 @@ function HandStatusPercent( pVal )
 		//下载完成
 		$('#PercentTip').css("width",100+'%');
 		
-		setTimeout("SendInstallPluginCmd()",100);
+		setTimeout(function(){SendInstallPluginCmd();},100);
 	}
 	else if(nStatus==3)
 	{

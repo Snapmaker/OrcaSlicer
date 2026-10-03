@@ -5,11 +5,19 @@
 // into CI. Pin: tests/slic3rutils/package.json + package-lock.json.
 //
 // Run: npm install --prefix tests/slic3rutils && node tests/slic3rutils/safehtml_model_test.js
-// Missing node or jsdom: exit 0 with SKIP, unless CI is set (then exit 1).
+// Missing node or jsdom: exit 0 with SKIP, unless CI is a truthy value (then exit 1).
+// CI=0, CI=false, CI=no, CI=off, or an empty CI must not hard-fail.
 'use strict';
 
+function ciIsSet() {
+    const v = process.env.CI;
+    if (v == null) return false;
+    const s = String(v).trim().toLowerCase();
+    return s !== '' && s !== '0' && s !== 'false' && s !== 'no' && s !== 'off';
+}
+
 function skip(why) {
-    if (process.env.CI) {
+    if (ciIsSet()) {
         console.error('FAIL: ' + why + ' (CI is set; jsdom is required)');
         process.exit(1);
     }
@@ -25,6 +33,8 @@ const path = require('path');
 
 const MODEL_JS = path.join(__dirname, '..', '..', 'resources', 'web', 'model', 'model.js');
 const INDEX_HTML = path.join(__dirname, '..', '..', 'resources', 'web', 'model', 'index.html');
+const JQUERY_JS = path.join(__dirname, '..', '..', 'resources', 'web', 'include', 'jquery-2.1.1.min.js');
+const GLOBALAPI_JS = path.join(__dirname, '..', '..', 'resources', 'web', 'include', 'globalapi.js');
 const JSDOM_PATH = path.join(__dirname, 'node_modules', 'jsdom');
 
 let JSDOM;
@@ -36,6 +46,8 @@ try {
 
 const source = fs.readFileSync(MODEL_JS, 'utf8');
 const indexHtml = fs.readFileSync(INDEX_HTML, 'utf8');
+const globalapiSrc = fs.readFileSync(GLOBALAPI_JS, 'utf8');
+const jquerySrc = fs.readFileSync(JQUERY_JS, 'utf8');
 
 function extractSafeHtmlBlock(src) {
     const start = src.indexOf('function EscapeHtml');
@@ -74,9 +86,59 @@ const dom = new JSDOM(
 const SafeHtml = dom.window.SafeHtml;
 const EscapeHtml = dom.window.EscapeHtml;
 const EscapeClickPath = dom.window.EscapeClickPath;
+const SafeKeepUrl = dom.window.SafeKeepUrl;
 if (typeof SafeHtml !== 'function') throw new Error('SafeHtml did not install on the jsdom window');
 if (typeof EscapeHtml !== 'function') throw new Error('EscapeHtml did not install on the jsdom window');
 if (typeof EscapeClickPath !== 'function') throw new Error('EscapeClickPath did not install on the jsdom window');
+if (typeof SafeKeepUrl !== 'function') throw new Error('SafeKeepUrl did not install on the jsdom window');
+
+function extractFunction(src, name) {
+    const start = src.indexOf('function ' + name);
+    if (start < 0) throw new Error(name + ' not found - file structure changed');
+    let i = src.indexOf('{', start);
+    let depth = 0;
+    for (; i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}') {
+            depth--;
+            if (depth === 0) return src.slice(start, i + 1);
+        }
+    }
+    throw new Error('could not find end of ' + name + '()');
+}
+
+function injectScript(win, text) {
+    const el = win.document.createElement('script');
+    el.textContent = text;
+    win.document.head.appendChild(el);
+}
+
+// Load the real ShowModelInfo / ShowProfilelInfo / ConstructFileHtml (not a reimplementation)
+// so removing EscapeHtml at those call sites fails this file.
+function loadProjectPage() {
+    const page = new JSDOM(indexHtml, {
+        url: 'file:///resources/web/model/index.html',
+        runScripts: 'dangerously',
+        pretendToBeVisual: true
+    });
+    const w = page.window;
+    w.SendWXDebugInfo = function () {};
+    w.SendWXMessage = function () {};
+    w.UpdateModelID = function () {};
+    w.TranslatePage = function () {};
+    w.RequestProjectInfo = function () {};
+    w.Swiper = function () { return { destroy: function () {} }; };
+    injectScript(w, jquerySrc);
+    if (typeof w.jQuery !== 'function') throw new Error('jQuery did not install');
+    w.jQuery.fn.viewer = function () { return this; };
+    injectScript(w, extractFunction(globalapiSrc, 'getFileTail'));
+    injectScript(w, extractFunction(globalapiSrc, 'html_decode'));
+    injectScript(w, source);
+    if (typeof w.ShowModelInfo !== 'function') throw new Error('ShowModelInfo did not install');
+    if (typeof w.ShowProfilelInfo !== 'function') throw new Error('ShowProfilelInfo did not install');
+    if (typeof w.ConstructFileHtml !== 'function') throw new Error('ConstructFileHtml did not install');
+    return w;
+}
 
 let failures = 0;
 let passed = 0;
@@ -227,6 +289,17 @@ function check(label, cond) {
     check('CSP has frame-src none', /frame-src\s+'none'/.test(indexHtml));
     check('CSP script-src allows self', /script-src[^;]*'self'/.test(indexHtml));
     check('CSP style-src allows self', /style-src[^;]*'self'/.test(indexHtml));
+    check('CSP has font-src data:', /font-src[^;]*data:/.test(indexHtml));
+    check('CSP has connect-src', /connect-src/.test(indexHtml));
+    check('CSP has object-src', /object-src/.test(indexHtml));
+    check('CSP has no unsafe-eval', !/unsafe-eval/.test(indexHtml));
+}
+
+{
+    check('globalapi.js has no string-form setInterval', !/setInterval\s*\(\s*["']/.test(globalapiSrc));
+    check('globalapi.js has no string-form setTimeout', !/setTimeout\s*\(\s*["']/.test(globalapiSrc));
+    check('globalapi.js has no eval(', !/\beval\s*\(/.test(globalapiSrc));
+    check('globalapi.js has no new Function', !/new\s+Function\s*\(/.test(globalapiSrc));
 }
 
 {
@@ -237,6 +310,85 @@ function check(label, cond) {
         scripts.length > 0 && Array.prototype.every.call(scripts, function (s) { return !/^[a-z]+:/i.test(s.getAttribute('src') || ''); }));
     check('page chrome stylesheets are relative (self)',
         links.length > 0 && Array.prototype.every.call(links, function (s) { return !/^[a-z]+:/i.test(s.getAttribute('href') || ''); }));
+}
+
+{
+    const forms = [
+        ['https:///u:p@h', 'https:///u:p@h'],
+        ['https:\\\\u:p@h', 'https:\\u:p@h'],
+        ['https:/u:p@h', 'https:/u:p@h'],
+        ['https:u:p@h', 'https:u:p@h']
+    ];
+    for (let i = 0; i < forms.length; i++) {
+        const label = forms[i][0];
+        const raw = forms[i][1];
+        check('SafeKeepUrl rejects ' + label, SafeKeepUrl(raw, true) === false);
+        const out = SafeHtml('<img src="' + raw + '/x.png">');
+        check('SafeHtml drops img src ' + label, !/src/i.test(out) && !/u:p/i.test(out));
+    }
+}
+
+{
+    const hostile = 'data:image/png;base64,xx" onclick=alert(1)><img src=x onerror=alert(2) x="';
+    const w = loadProjectPage();
+    w.ShowModelInfo({
+        name: 'n',
+        author: 'a',
+        upload_type: 'origin',
+        license: 'CC0',
+        description: 'd',
+        preview_img: [{ filepath: hostile }]
+    });
+    const imgs = w.document.querySelectorAll('#ModelPreviewList img');
+    const src = imgs[0] ? imgs[0].getAttribute('src') || '' : '';
+    check('ShowModelInfo preview src escapes quotes and <',
+        imgs.length === 1 && !imgs[0].hasAttribute('onclick') && !imgs[0].hasAttribute('onerror')
+        && src.indexOf('"') >= 0 && src.indexOf('<') >= 0);
+}
+
+{
+    const hostile = 'data:image/png;base64,yy" onclick=alert(1)><img src=x onerror=alert(2) y="';
+    const w = loadProjectPage();
+    w.ShowProfilelInfo({
+        name: 'n',
+        author: 'a',
+        description: 'd',
+        preview_img: [{ filepath: hostile }]
+    });
+    const imgs = w.document.querySelectorAll('#ProfilePreviewList img');
+    const src = imgs[0] ? imgs[0].getAttribute('src') || '' : '';
+    check('ShowProfilelInfo preview src escapes quotes and <',
+        imgs.length === 1 && !imgs[0].hasAttribute('onclick') && !imgs[0].hasAttribute('onerror')
+        && src.indexOf('"') >= 0 && src.indexOf('<') >= 0);
+}
+
+{
+    const w = loadProjectPage();
+    w.ConstructFileHtml('FILE_OTHER_List', [
+        { filepath: 'C:\\dir\\a&b"c\'d<e.pdf', filename: "Bob's <file>&x.pdf" }
+    ]);
+    const nameEl = w.document.querySelector('#FILE_OTHER_List .FileName');
+    const menu = w.document.querySelector('#FILE_OTHER_List .FileMenu');
+    const oc = menu ? menu.getAttribute('onclick') || '' : '';
+    check('ConstructFileHtml file name escapes quotes, < and &',
+        !!nameEl && nameEl.children.length === 0
+        && /&lt;file&gt;/.test(nameEl.innerHTML) && /&amp;x/.test(nameEl.innerHTML)
+        && nameEl.textContent.indexOf("Bob's") >= 0);
+    check('ConstructFileHtml onClick path uses EscapeClickPath',
+        /^OnClickOpenFile\('/.test(oc) && oc.indexOf('&') >= 0 && oc.indexOf('"') >= 0
+        && oc.indexOf('<') >= 0 && /\\'/.test(oc));
+}
+
+{
+    const w = loadProjectPage();
+    w.ConstructFileHtml('FILE_OTHER_List', [
+        { filepath: 'data:image/png;base64,xx" onclick=alert(1)><img src=x onerror=alert(2) x="', filename: 'evil.png' }
+    ]);
+    const imgs = w.document.querySelectorAll('#FILE_OTHER_List .ImageIcon img');
+    const src = imgs[0] ? imgs[0].getAttribute('src') || '' : '';
+    check('ConstructFileHtml image path escapes quotes and <',
+        imgs.length === 1 && !imgs[0].hasAttribute('onclick') && !imgs[0].hasAttribute('onerror')
+        && src.indexOf('"') >= 0 && src.indexOf('<') >= 0);
 }
 
 console.log(passed + ' passed, ' + failures + ' failed');

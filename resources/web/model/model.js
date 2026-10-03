@@ -219,8 +219,8 @@ function EscapeClickPath( s )
 }
 
 // Browsers strip tab / CR / LF (and form-feed) from URL attributes. They do not strip a regular
-// space, so 'ht tps://' must not collapse to https. Userinfo (user:pw@) is refused the way the
-// old C++ helper did.
+// space, so 'ht tps://' must not collapse to https. Userinfo is refused via the URL parser
+// (username/password), so https:///u:p@h and https:\\u:p@h cannot slip past a regex.
 function SafeUrlValue( raw )
 {
 	return String(raw).replace(/[\t\r\n\f\u0000]/g,'').replace(/^ +| +$/g,'').toLowerCase();
@@ -229,11 +229,18 @@ function SafeUrlValue( raw )
 function SafeKeepUrl( raw, httpsOnly )
 {
 	let v=SafeUrlValue(raw);
-	if( httpsOnly ? !/^https:/.test(v) : !/^(https?:|#)/.test(v) )
+	if( v.charAt(0)=='#' )
+		return !httpsOnly;
+	try {
+		let u=new URL(v);
+		if( u.username || u.password )
+			return false;
+		if( httpsOnly )
+			return u.protocol=='https:';
+		return u.protocol=='https:' || u.protocol=='http:';
+	} catch(e) {
 		return false;
-	if( /^https?:\/\/[^/#?]*@/.test(v) )
-		return false;
-	return true;
+	}
 }
 
 function SafeHtml( html )

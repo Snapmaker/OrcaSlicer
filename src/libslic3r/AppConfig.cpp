@@ -1,5 +1,6 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/InstanceLock.hpp"
 #include "AppConfig.hpp"
 //BBS
 #include "Preset.hpp"
@@ -955,10 +956,20 @@ void AppConfig::merge_shared_from_disk(const std::string& path)
     } catch (...) {}
 }
 
-void AppConfig::save()
+bool AppConfig::save()
 {
     if (! is_main_thread_active())
         throw CriticalException("Calling AppConfig::save() from a worker thread!");
+
+    m_last_save_error.clear();
+    if (!InstanceLock::allows_saves()) {
+        m_last_save_error = InstanceLock::last_error().empty()
+                                ? std::string("data directory is read-only (another instance holds the lock)")
+                                : InstanceLock::last_error();
+        BOOST_LOG_TRIVIAL(error) << "AppConfig::save: " << m_last_save_error;
+        m_retry_save_at = std::chrono::steady_clock::now() + SAVE_RETRY_BACKOFF;
+        return false;
+    }
 
     // Serialized first, then written through a unique temp file and renamed
     // so a crash or a concurrent reader never sees a half-written config.
@@ -1115,10 +1126,11 @@ void AppConfig::save()
 
     std::string err;
     if (!write_file_atomically(path, body.str(), &err)) {
+        m_last_save_error = err;
         BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path << ": " << err
                                  << "; aborting attempt to overwrite original configuration";
         m_retry_save_at = std::chrono::steady_clock::now() + SAVE_RETRY_BACKOFF;
-        return;
+        return false;
     }
 
 #ifdef WIN32
@@ -1131,6 +1143,7 @@ void AppConfig::save()
 
     m_retry_save_at = {};
     m_dirty = false;
+    return true;
 }
 
 #else
@@ -1266,10 +1279,20 @@ std::string AppConfig::load()
     return "";
 }
 
-void AppConfig::save()
+bool AppConfig::save()
 {
     if (! is_main_thread_active())
         throw CriticalException("Calling AppConfig::save() from a worker thread!");
+
+    m_last_save_error.clear();
+    if (!InstanceLock::allows_saves()) {
+        m_last_save_error = InstanceLock::last_error().empty()
+                                ? std::string("data directory is read-only (another instance holds the lock)")
+                                : InstanceLock::last_error();
+        BOOST_LOG_TRIVIAL(error) << "AppConfig::save: " << m_last_save_error;
+        m_retry_save_at = std::chrono::steady_clock::now() + SAVE_RETRY_BACKOFF;
+        return false;
+    }
 
     // Serialized first, then written through a unique temp file and renamed
     // so a crash or a concurrent reader never sees a half-written config.
@@ -1319,10 +1342,11 @@ void AppConfig::save()
 
     std::string err;
     if (!write_file_atomically(path, config_str, &err)) {
+        m_last_save_error = err;
         BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path << ": " << err
                                  << "; aborting attempt to overwrite original configuration";
         m_retry_save_at = std::chrono::steady_clock::now() + SAVE_RETRY_BACKOFF;
-        return;
+        return false;
     }
 
 #ifdef WIN32
@@ -1335,6 +1359,7 @@ void AppConfig::save()
 
     m_retry_save_at = {};
     m_dirty = false;
+    return true;
 }
 #endif
 

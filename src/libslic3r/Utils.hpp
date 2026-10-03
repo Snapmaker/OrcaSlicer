@@ -241,7 +241,20 @@ extern void set_atomic_write_temp_inspect_hook(AtomicWriteTempInspectFn hook);
 // Test seam: called immediately after open (before fchmod) so a test can see
 // the kernel-applied create mode. nullptr disables the hook.
 extern void set_atomic_write_temp_create_hook(AtomicWriteTempInspectFn hook);
+
+// After a successful POSIX rename the parent directory is fsync'd so the
+// directory entry is durable. Windows ReplaceFileW updates the directory
+// entry as part of the replace; a separate parent flush is not required
+// (and not available). The hook is called with the target path; nullptr
+// restores the real fsync.
+using AtomicDirFsyncFn = bool (*)(const char *target_path);
+extern void set_atomic_dir_fsync_hook(AtomicDirFsyncFn hook);
 #endif
+
+// Test seam: when set and the hook returns true, write_file_atomically
+// fails immediately without touching the target. nullptr disables it.
+using AtomicWriteForceFailFn = bool (*)(const char *path);
+extern void set_atomic_write_force_fail_hook(AtomicWriteForceFailFn hook);
 // Unique sibling used by write_file_atomically:
 // <path>.<pid>.<launch>.<counter>.tmp. consume=true advances the process-wide
 // counter (same generator the helper uses); consume=false peeks so a test can

@@ -48,6 +48,7 @@
 
 #include "libslic3r.h"
 #include "Utils.hpp"
+#include "InstanceLock.hpp"
 #include "Time.hpp"
 #include "PlaceholderParser.hpp"
 #include "libslic3r/GCode/Thumbnails.hpp"
@@ -581,11 +582,15 @@ void Preset::load_info(const std::string& file)
     }
 }
 
-void Preset::save_info(std::string file)
+bool Preset::save_info(std::string file)
 {
     //BBS: add project embedded preset logic
     if (this->is_project_embedded)
-        return;
+        return true;
+    if (!InstanceLock::allows_saves()) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": data directory is read-only; not saving " << this->file;
+        return false;
+    }
     if (file.empty()) {
         fs::path idx_file(this->file);
         idx_file.replace_extension(".info");
@@ -604,8 +609,11 @@ void Preset::save_info(std::string file)
     c << "updated_time" << " = " << std::to_string(this->updated_time) << std::endl;
 
     std::string err;
-    if (!write_file_atomically(file, c.str(), &err))
+    if (!write_file_atomically(file, c.str(), &err)) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": failed to save " << file << ": " << err;
+        return false;
+    }
+    return true;
 }
 
 void Preset::remove_files()
@@ -622,11 +630,15 @@ void Preset::remove_files()
 }
 
 //BBS: add logic for only difference save
-void Preset::save(DynamicPrintConfig* parent_config)
+bool Preset::save(DynamicPrintConfig* parent_config)
 {
     //BBS: add project embedded preset logic
     if (this->is_project_embedded)
-        return;
+        return true;
+    if (!InstanceLock::allows_saves()) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " data directory is read-only; not saving " << this->name;
+        return false;
+    }
     //BBS: change to json format
     //this->config.save(this->file);
     std::string from_str;
@@ -680,26 +692,26 @@ void Preset::save(DynamicPrintConfig* parent_config)
         }
         if (!temp_config.save_to_json(this->file, this->name, from_str, this->version.to_string(), this->custom_defined)) {
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save config for: " << this->name << " file: " << this->file;
-            return;
+            return false;
         }
     } else if (!filament_id.empty() && inherits().empty()) {
         DynamicPrintConfig temp_config = config;
         temp_config.set_key_value(BBL_JSON_KEY_FILAMENT_ID, new ConfigOptionString(filament_id));
         if (!temp_config.save_to_json(this->file, this->name, from_str, this->version.to_string(), this->custom_defined)) {
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save config for: " << this->name << " file: " << this->file;
-            return;
+            return false;
         }
     } else {
         if (!this->config.save_to_json(this->file, this->name, from_str, this->version.to_string(), this->custom_defined)) {
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save config for: " << this->name << " file: " << this->file;
-            return;
+            return false;
         }
     }
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " save config for: " << this->name << " and filament_id: " << filament_id << " and base_id: " << this->base_id;
 
     fs::path idx_file(this->file);
     idx_file.replace_extension(".info");
-    this->save_info(idx_file.string());
+    return this->save_info(idx_file.string());
 }
 
 void Preset::reload(Preset const &parent)
@@ -2582,7 +2594,7 @@ std::map<std::string, std::vector<Preset const *>> PresetCollection::get_filamen
 }
 
 //BBS: add project embedded preset logic
-void PresetCollection::save_current_preset(const std::string &new_name, bool detach, bool save_to_project, Preset* _curr_preset, const Preset* _current_printer)
+bool PresetCollection::save_current_preset(const std::string &new_name, bool detach, bool save_to_project, Preset* _curr_preset, const Preset* _current_printer)
 {
     Preset curr_preset = _curr_preset ? *_curr_preset : m_edited_preset;
     //BBS: add lock logic for sync preset in background
@@ -2600,7 +2612,7 @@ void PresetCollection::save_current_preset(const std::string &new_name, bool det
             // Cannot overwrite the default preset.
             //BBS: add lock logic for sync preset in background
             unlock();
-            return;
+            return false;
         }
         // Overwriting an existing preset.
         preset.config = std::move(curr_preset.config);
@@ -2695,9 +2707,8 @@ void PresetCollection::save_current_preset(const std::string &new_name, bool det
         }
     }
     if (parent_preset)
-        this->get_selected_preset().save(&(parent_preset->config));
-    else
-        this->get_selected_preset().save(nullptr);
+        return this->get_selected_preset().save(&(parent_preset->config));
+    return this->get_selected_preset().save(nullptr);
 }
 
 bool PresetCollection::delete_current_preset()
@@ -3749,25 +3760,41 @@ void PhysicalPrinter::update_preset_names_in_config()
     }
 }
 
-void PhysicalPrinter::save(DynamicPrintConfig* /*parent_config*/)
+bool PhysicalPrinter::save(DynamicPrintConfig* /*parent_config*/)
 {
-    if (!this->config.save_to_json(this->file, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION)))
+    if (!InstanceLock::allows_saves()) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " data directory is read-only; not saving " << this->file;
+        return false;
+    }
+    if (!this->config.save_to_json(this->file, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION))) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save physical printer to " << this->file;
+        return false;
+    }
+    return true;
 }
 
-void PhysicalPrinter::save(const std::string& file_name_from, const std::string& file_name_to)
+bool PhysicalPrinter::save(const std::string& file_name_from, const std::string& file_name_to)
 {
+    if (!InstanceLock::allows_saves()) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " data directory is read-only; not renaming " << file_name_from;
+        return false;
+    }
     if (boost::nowide::rename(file_name_from.data(), file_name_to.data()) != 0) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to rename " << file_name_from
                                  << " to " << file_name_to << ": " << std::strerror(errno);
         // Stay on the old path so a failed rename cannot leave two printer files.
-        if (!this->config.save_to_json(file_name_from, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION)))
+        if (!this->config.save_to_json(file_name_from, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION))) {
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save physical printer to " << file_name_from;
-        return;
+            return false;
+        }
+        return false;
     }
     this->file = file_name_to;
-    if (!this->config.save_to_json(this->file, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION)))
+    if (!this->config.save_to_json(this->file, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION))) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save physical printer to " << this->file;
+        return false;
+    }
+    return true;
 }
 
 void PhysicalPrinter::update_from_preset(const Preset& preset)
@@ -4036,7 +4063,7 @@ std::string PhysicalPrinterCollection::path_from_name(const std::string& new_nam
     return (boost::filesystem::path(m_dir_path) / file_name).make_preferred().string();
 }
 
-void PhysicalPrinterCollection::save_printer(PhysicalPrinter& edited_printer, const std::string& renamed_from/* = ""*/)
+bool PhysicalPrinterCollection::save_printer(PhysicalPrinter& edited_printer, const std::string& renamed_from/* = ""*/)
 {
     // controll and update preset_names in edited_printer config
     edited_printer.update_preset_names_in_config();
@@ -4066,14 +4093,16 @@ void PhysicalPrinterCollection::save_printer(PhysicalPrinter& edited_printer, co
     if (printer.file.empty())
         printer.file = this->path_from_name(printer.name);
 
+    bool ok = false;
     if (printer.file == this->path_from_name(printer.name))
-        printer.save(nullptr);
+        ok = printer.save(nullptr);
     else
         // if printer was renamed, we should rename a file and than save the config
-        printer.save(printer.file, this->path_from_name(printer.name));
+        ok = printer.save(printer.file, this->path_from_name(printer.name));
 
     // update idx_selected
     m_idx_selected = it - m_printers.begin();
+    return ok;
 }
 
 bool PhysicalPrinterCollection::delete_printer(const std::string& name)

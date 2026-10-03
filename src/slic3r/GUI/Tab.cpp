@@ -7370,7 +7370,13 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
         _current_printer = const_cast<Preset*>(&wxGetApp().preset_bundle->printers.get_selected_preset_base());
     }
     // Save the preset into Slic3r::data_dir / presets / section_name / preset_name.json
-    m_presets->save_current_preset(name, detach, save_to_project, nullptr, _current_printer);
+    if (!m_presets->save_current_preset(name, detach, save_to_project, nullptr, _current_printer)) {
+        const wxString why = wxGetApp().is_data_dir_read_only()
+                                 ? _L("Another EdgeSlicer instance is using this data directory; presets cannot be saved.")
+                                 : _L("Failed to save the preset. The file was left unchanged.");
+        MessageDialog(m_parent, why, _L("Save preset"), wxOK | wxICON_ERROR).ShowModal();
+        return;
+    }
 
     //BBS create new settings
     new_preset = m_presets->find_preset(name, false, true);

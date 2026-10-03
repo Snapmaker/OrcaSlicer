@@ -691,6 +691,12 @@ namespace WindowsSupport
 #endif /* _WIN32 */
 
 static std::atomic<unsigned> s_atomic_write_counter{0};
+static std::atomic<AtomicWriteForceFailFn> s_atomic_write_force_fail_hook{nullptr};
+
+void set_atomic_write_force_fail_hook(AtomicWriteForceFailFn hook)
+{
+	s_atomic_write_force_fail_hook.store(hook);
+}
 
 #ifndef _WIN32
 bool posix_rename_worth_retrying(int err)
@@ -718,6 +724,45 @@ void set_atomic_write_temp_inspect_hook(AtomicWriteTempInspectFn hook)
 void set_atomic_write_temp_create_hook(AtomicWriteTempInspectFn hook)
 {
 	s_temp_create_hook.store(hook);
+}
+
+static std::atomic<AtomicDirFsyncFn> s_dir_fsync_hook{nullptr};
+
+void set_atomic_dir_fsync_hook(AtomicDirFsyncFn hook)
+{
+	s_dir_fsync_hook.store(hook);
+}
+
+// Directory-entry durability after rename(2). A crash between rename and this
+// fsync can leave the new name missing after a power loss; the complete old
+// or new file is still on disk. Failure is logged, not fatal: the rename
+// already succeeded. Windows ReplaceFileW updates the directory entry as
+// part of the replace, so no parent flush is done there.
+static bool fsync_parent_directory(const std::string &path)
+{
+	if (AtomicDirFsyncFn hook = s_dir_fsync_hook.load())
+		return hook(path.c_str());
+	const boost::filesystem::path parent = boost::filesystem::path(path).parent_path();
+	const std::string             dir    = parent.empty() ? std::string(".") : parent.string();
+	int flags = O_RDONLY;
+#ifdef O_DIRECTORY
+	flags |= O_DIRECTORY;
+#endif
+#ifdef O_CLOEXEC
+	flags |= O_CLOEXEC;
+#endif
+	const int dfd = ::open(dir.c_str(), flags);
+	if (dfd < 0) {
+		BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: cannot open parent directory of " << path
+		                           << ": " << std::strerror(errno);
+		return false;
+	}
+	const int rc = ::fsync(dfd);
+	if (rc != 0)
+		BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: parent directory fsync failed for " << path
+		                           << ": " << std::strerror(errno);
+	::close(dfd);
+	return rc == 0;
 }
 
 static int atomic_posix_rename(const char *from, const char *to)
@@ -831,6 +876,14 @@ std::string atomic_write_temp_path(const std::string &path, bool consume)
 
 bool write_file_atomically(const std::string &path, const std::string &data, std::string *err, bool binary)
 {
+	if (AtomicWriteForceFailFn fail = s_atomic_write_force_fail_hook.load()) {
+		if (fail(path.c_str())) {
+			if (err)
+				*err = "atomic write forced to fail";
+			BOOST_LOG_TRIVIAL(error) << "write_file_atomically: forced failure for " << path;
+			return false;
+		}
+	}
 	boost::system::error_code bec;
 	const boost::filesystem::file_status link_st = boost::filesystem::symlink_status(path, bec);
 	if (!bec && boost::filesystem::is_symlink(link_st)) {
@@ -858,11 +911,15 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 	// fallback and does not preserve the DACL.
 	// "wx" / "wbx" is C11 exclusive create (VS2015+ / UCRT). A same-name leftover
 	// must not be truncated; only EEXIST / ERROR_FILE_EXISTS is retried.
+	// MinGW: the "x" exclusive suffix needs UCRT (_wfopen from msvcrt does not
+	// honour it). An MSVCRT MinGW build should use _wopen(_O_CREAT|_O_EXCL) +
+	// _fdopen instead of relying on "wx".
 	FILE *file     = nullptr;
 	int   last_err = 0;
 	for (int attempt = 0; attempt < ATOMIC_WRITE_TEMP_ATTEMPTS; ++attempt) {
 		tmp     = atomic_write_temp_path(path, true);
 		errno   = 0;
+		::SetLastError(0);
 		file    = boost::nowide::fopen(tmp.c_str(), binary ? "wbx" : "wx");
 		last_err = errno;
 		if (file != nullptr)
@@ -981,8 +1038,13 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 		}
 		return false;
 	}
+	// Parent-directory fsync so the rename is durable. Failure is not fatal:
+	// the file is already in place.
+	(void) fsync_parent_directory(path);
 	return true;
 #else
+	// ReplaceFileW updates the directory entry as part of the replace; a
+	// separate parent-directory flush is not required (and not available).
 	if (const std::error_code ec = rename_file(tmp, path)) {
 		boost::system::error_code exists_ec;
 		const bool target_still = boost::filesystem::exists(path, exists_ec);

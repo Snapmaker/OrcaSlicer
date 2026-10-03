@@ -127,6 +127,7 @@
 #include "RemovableDriveManager.hpp"
 #include "InstanceCheck.hpp"
 #include "slic3r/Utils/InstanceRouting.hpp"
+#include "libslic3r/InstanceLock.hpp"
 #include "NotificationManager.hpp"
 #include "UnsavedChangesDialog.hpp"
 #include "SavePresetDialog.hpp"
@@ -3302,6 +3303,8 @@ int GUI_App::OnExit()
 
     // A restart was asked for (request_relaunch). It was started once the window closed; if that
     // did not happen (the window went some other way), start it now.
+    InstanceLock::release_data_dir();
+
     if (m_relaunch_pending) {
         BOOST_LOG_TRIVIAL(warning) << "OnExit: relaunch " << (m_relaunch_started ? "already started" : "starting now");
         m_single_instance_checker.reset(); // the lock is let go before the process is gone
@@ -3587,6 +3590,28 @@ bool GUI_App::on_init_inner()
     // supplied as argument to --datadir; in that case we should still run the wizard
     preset_bundle->setup_directories();
     profiler.mark("preset_bundle->setup_directories");
+
+    // After instance_check() has already decided this process stays (hand-off
+    // never reaches here). Hidden / hub instances do not claim the data-dir
+    // lock, matching claims_instance_lock, so they cannot starve a visible one.
+    if (!m_hub_managed) {
+        if (InstanceLock::try_acquire_data_dir(data_dir())) {
+            const std::vector<std::string> sweep = {
+                data_dir(),
+                data_dir() + "/" + PRESET_USER_DIR,
+            };
+            const size_t n = scavenge_stale_atomic_temps(sweep, true);
+            if (n > 0)
+                BOOST_LOG_TRIVIAL(info) << "InstanceLock: scavenged " << n << " stale atomic temp(s)";
+        } else {
+            m_data_dir_read_only = true;
+            MessageDialog dlg(nullptr,
+                              _L("Another EdgeSlicer instance is already using this data directory. "
+                                 "This instance will not save application settings, presets or printers."),
+                              _L("EdgeSlicer"), wxOK | wxICON_WARNING);
+            dlg.ShowModal();
+        }
+    }
 
     copy_web_resources();
     profiler.mark("copy_web_resources");
@@ -4108,8 +4133,17 @@ bool GUI_App::on_init_inner()
             update_publish_status();
         }
 
-        if (m_post_initialized && app_config->dirty() && app_config->save_due())
-            app_config->save();
+        if (m_post_initialized && app_config->dirty() && app_config->save_due()) {
+            if (!app_config->save() && !m_appconfig_save_error_shown) {
+                m_appconfig_save_error_shown = true;
+                const std::string &err = app_config->last_save_error();
+                MessageDialog dlg(mainframe,
+                                  from_u8(std::string(_u8L("Failed to save application settings.")) +
+                                          (err.empty() ? std::string() : ("\n" + err))),
+                                  _L("EdgeSlicer"), wxOK | wxICON_ERROR);
+                dlg.ShowModal();
+            }
+        }
 
     });
 

@@ -112,7 +112,10 @@ public:
 	// return error string or empty strinf
 	std::string         load();
 	// Store the slic3r.ini into a user profile directory (or a datadir, if configured).
-	void 			   	save();
+	// Returns false on a write failure or when the data-dir InstanceLock is
+	// read-only; dirty stays set. last_save_error() has the message.
+	bool 			   	save();
+	const std::string  &last_save_error() const { return m_last_save_error; }
 
 	// Does this config need to be saved?
 	bool 				dirty() const { return m_dirty; }
@@ -442,6 +445,7 @@ private:
 	bool														m_dirty;
 	// After a failed save(), idle retries wait until this instant. Epoch means "no back-off".
 	std::chrono::steady_clock::time_point						m_retry_save_at{};
+	std::string                                                 m_last_save_error;
 	// Original version found in the ini file before it was overwritten
 	Semver                                                      m_orig_version;
 	// Whether the existing version is before system profiles & configuration updating

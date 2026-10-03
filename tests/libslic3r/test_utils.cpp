@@ -1,12 +1,15 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/InstanceLock.hpp"
+#include "libslic3r/Preset.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/Utils.hpp"
 #include <test_utils.hpp>
 
 #include <boost/filesystem.hpp>
 #include <boost/nowide/cstdio.hpp>
+#include <boost/nowide/fstream.hpp>
 
 #include <atomic>
 #include <cerrno>
@@ -18,7 +21,9 @@
 
 #ifndef _WIN32
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -563,7 +568,14 @@ TEST_CASE("write_file_atomically keeps suid sgid and sticky bits", "[utils][atom
     int kept = 0;
     for (const auto &sp : specials) {
         const mode_t want = static_cast<mode_t>(0644) | sp.bit;
-        REQUIRE(::chmod(target.string().c_str(), want) == 0);
+        if (::chmod(target.string().c_str(), want) != 0) {
+            // BSD (and some NFS) refuse sticky on a regular file with EFTYPE.
+            if (sp.bit == S_ISVTX) {
+                WARN("chmod refused sticky on a regular file (errno " << errno << "); skipping");
+                continue;
+            }
+            REQUIRE(::chmod(target.string().c_str(), want) == 0);
+        }
         struct stat after_chmod;
         REQUIRE(::stat(target.string().c_str(), &after_chmod) == 0);
         if ((after_chmod.st_mode & 07777) != want) {
@@ -738,7 +750,7 @@ TEST_CASE("AppConfig save round-trips through the atomic helper", "[utils][atomi
 
     AppConfig writer;
     writer.set("atomic_roundtrip_key", "atomic-value");
-    writer.save();
+    REQUIRE(writer.save());
     REQUIRE_FALSE(writer.dirty());
     REQUIRE(boost::filesystem::exists(writer.config_path()));
 #ifdef WIN32
@@ -749,4 +761,198 @@ TEST_CASE("AppConfig save round-trips through the atomic helper", "[utils][atomi
     const std::string load_err = reader.load();
     REQUIRE(load_err.empty());
     REQUIRE(reader.get("atomic_roundtrip_key") == "atomic-value");
+}
+
+TEST_CASE("InstanceLock is acquired, refused while held, then reacquired after release", "[utils][atomic][InstanceLock]")
+{
+    ScopedTempDir dir;
+    const std::string path = (dir.path / "instance.lock").string();
+    {
+        InstanceLock first(path, std::chrono::milliseconds(50));
+        REQUIRE(first.locked());
+        InstanceLock second(path, std::chrono::milliseconds(50));
+        REQUIRE_FALSE(second.locked());
+    }
+    InstanceLock again(path, std::chrono::milliseconds(50));
+    REQUIRE(again.locked());
+}
+
+#ifndef _WIN32
+TEST_CASE("InstanceLock is released when the holder process is killed", "[utils][atomic][InstanceLock]")
+{
+    ScopedTempDir dir;
+    const std::string path = (dir.path / "instance.lock").string();
+    int fds[2];
+    REQUIRE(pipe(fds) == 0);
+    const pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (child == 0) {
+        close(fds[0]);
+        InstanceLock lock(path, std::chrono::milliseconds(200));
+        const char    c = lock.locked() ? '1' : '0';
+        (void) write(fds[1], &c, 1);
+        pause();
+        _exit(0);
+    }
+    close(fds[1]);
+    char c = '0';
+    REQUIRE(read(fds[0], &c, 1) == 1);
+    close(fds[0]);
+    REQUIRE(c == '1');
+    InstanceLock blocked(path, std::chrono::milliseconds(50));
+    REQUIRE_FALSE(blocked.locked());
+    REQUIRE(kill(child, SIGKILL) == 0);
+    int status = 0;
+    REQUIRE(waitpid(child, &status, 0) == child);
+    InstanceLock after(path, std::chrono::milliseconds(200));
+    REQUIRE(after.locked());
+}
+#endif
+
+TEST_CASE("the stale temp scavenger removes only matching leftovers while the lock is held", "[utils][atomic][InstanceLock]")
+{
+    ScopedTempDir dir;
+    const auto plant = [&](const std::string &name) {
+        const boost::filesystem::path p = dir.path / name;
+        boost::nowide::ofstream       out(p.string());
+        out << "x";
+        return p;
+    };
+
+    const boost::filesystem::path bak     = plant("preset.json.bak");
+    const boost::filesystem::path foreign = plant("notes.tmp");
+    const boost::filesystem::path user    = plant("user.json");
+    const boost::filesystem::path live    = plant(std::string("live.json.") + std::to_string(get_current_pid()) +
+                                               ".1.2.0.tmp");
+#ifndef _WIN32
+    int fds[2];
+    REQUIRE(pipe(fds) == 0);
+    const pid_t dead = fork();
+    REQUIRE(dead >= 0);
+    if (dead == 0) {
+        close(fds[0]);
+        _exit(0);
+    }
+    close(fds[1]);
+    char waitc = 0;
+    (void) read(fds[0], &waitc, 1);
+    close(fds[0]);
+    int st = 0;
+    REQUIRE(waitpid(dead, &st, 0) == dead);
+    const boost::filesystem::path stale = plant(std::string("stale.json.") + std::to_string(dead) + ".1.2.0.tmp");
+#else
+    // A pid that is not this process and is almost certainly not running.
+    const boost::filesystem::path stale = plant("stale.json.4294967294.1.2.0.tmp");
+#endif
+
+    REQUIRE(is_atomic_write_temp_name(stale.filename().string()));
+    REQUIRE(is_atomic_write_temp_name(live.filename().string()));
+    REQUIRE_FALSE(is_atomic_write_temp_name(bak.filename().string()));
+    REQUIRE_FALSE(is_atomic_write_temp_name(foreign.filename().string()));
+
+    REQUIRE(scavenge_stale_atomic_temps({dir.path.string()}, false) == 0);
+    REQUIRE(boost::filesystem::exists(stale));
+    REQUIRE(boost::filesystem::exists(live));
+    REQUIRE(boost::filesystem::exists(bak));
+    REQUIRE(boost::filesystem::exists(foreign));
+    REQUIRE(boost::filesystem::exists(user));
+
+    REQUIRE(scavenge_stale_atomic_temps({dir.path.string()}, true) == 1);
+    REQUIRE_FALSE(boost::filesystem::exists(stale));
+    REQUIRE(boost::filesystem::exists(live));
+    REQUIRE(boost::filesystem::exists(bak));
+    REQUIRE(boost::filesystem::exists(foreign));
+    REQUIRE(boost::filesystem::exists(user));
+}
+
+#ifndef _WIN32
+TEST_CASE("write_file_atomically fsyncs the parent directory after rename", "[utils][atomic]")
+{
+    ScopedTempDir dir;
+    static std::string last;
+    last.clear();
+    struct ScopedDirHook
+    {
+        ScopedDirHook()
+        {
+            set_atomic_dir_fsync_hook([](const char *p) {
+                last = p;
+                return true;
+            });
+        }
+        ~ScopedDirHook() { set_atomic_dir_fsync_hook(nullptr); }
+    } hook;
+    const boost::filesystem::path target = dir.path / "preset.json";
+    REQUIRE(write_file_atomically(target.string(), "payload"));
+    REQUIRE(last == target.string());
+    REQUIRE(slurp(target) == "payload");
+}
+#endif
+
+TEST_CASE("a failed atomic write propagates through AppConfig, preset and printer saves", "[utils][atomic][AppConfig]")
+{
+    ScopedTempDir dir;
+    struct ScopedDataDir
+    {
+        std::string prev;
+        explicit ScopedDataDir(const std::string &next) : prev(data_dir()) { set_data_dir(next); }
+        ~ScopedDataDir() { set_data_dir(prev); }
+    } data{dir.path.string()};
+    save_main_thread_id();
+
+    struct ScopedFail
+    {
+        ScopedFail()
+        {
+            set_atomic_write_force_fail_hook([](const char *) { return true; });
+        }
+        ~ScopedFail() { set_atomic_write_force_fail_hook(nullptr); }
+    } fail;
+
+    AppConfig cfg;
+    cfg.set("k", "v");
+    REQUIRE_FALSE(cfg.save());
+    REQUIRE(cfg.dirty());
+    REQUIRE_FALSE(cfg.last_save_error().empty());
+
+    Preset preset(Preset::TYPE_PRINT, "n");
+    preset.file = (dir.path / "n.json").string();
+    REQUIRE_FALSE(preset.save(nullptr));
+
+    DynamicPrintConfig printer_cfg;
+    printer_cfg.set_key_value("preset_names", new ConfigOptionStrings());
+    PhysicalPrinter printer("p", printer_cfg);
+    printer.file = (dir.path / "p.json").string();
+    REQUIRE_FALSE(printer.save(nullptr));
+}
+
+TEST_CASE("AppConfig save is refused while the data-dir InstanceLock is read-only", "[utils][atomic][AppConfig][InstanceLock]")
+{
+    ScopedTempDir dir;
+    struct ScopedDataDir
+    {
+        std::string prev;
+        explicit ScopedDataDir(const std::string &next) : prev(data_dir()) { set_data_dir(next); }
+        ~ScopedDataDir()
+        {
+            InstanceLock::release_data_dir();
+            set_data_dir(prev);
+        }
+    } data{dir.path.string()};
+    save_main_thread_id();
+
+    InstanceLock holder(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
+    REQUIRE(holder.locked());
+    REQUIRE_FALSE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(50)));
+    REQUIRE(InstanceLock::is_read_only());
+    REQUIRE_FALSE(InstanceLock::allows_saves());
+
+    AppConfig cfg;
+    cfg.set("k", "v");
+    REQUIRE_FALSE(cfg.save());
+    REQUIRE(cfg.dirty());
+    REQUIRE_FALSE(cfg.last_save_error().empty());
+
+    InstanceLock::release_data_dir();
+    REQUIRE(InstanceLock::allows_saves());
 }

@@ -63,6 +63,18 @@ TEST_CASE("Hidden instances do not claim the single-instance lock", "[InstanceRo
     CHECK_FALSE(claims_instance_lock(true));
 }
 
+TEST_CASE("data-dir InstanceLock is independent of single-instance hand-off", "[InstanceRouting][InstanceLock]")
+{
+    // Hand-off still uses the routing lock and a visible target. A second
+    // visible instance that is allowed to start (single_instance=false) is
+    // what the data-dir lock turns read-only; it must not change this path.
+    CHECK(should_hand_off(true, true, true));
+    CHECK_FALSE(should_hand_off(true, false, true));
+    CHECK_FALSE(should_hand_off(false, true, true));
+    CHECK_FALSE(claims_instance_lock(true));
+    CHECK(claims_instance_lock(false));
+}
+
 TEST_CASE("FreeCAD's Send to EdgeSlicer hands its STEP files over", "[InstanceRouting]")
 {
     // What edgeslicer_bridge.py starts: EdgeSlicer.exe --single-instance <one file per body>.

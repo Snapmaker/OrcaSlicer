@@ -1722,3 +1722,28 @@ TEST_CASE("Seam metadata restores only recognized modes on compatible base types
         CHECK_FALSE(helper.config.has("notes"));
     }
 }
+
+TEST_CASE("a failed atomic write of the project config fails the 3MF save", "[3mf][atomic]")
+{
+    prepare_3mf_temp_dir();
+    const boost::filesystem::path tmp_root = boost::filesystem::temp_directory_path() / "snorca_tests";
+    Model                         model;
+    ModelObject                  *object = model.add_object();
+    object->name                         = "cube";
+    object->add_volume(make_cube(10., 10., 10.))->name = "cube";
+    object->add_instance();
+    DynamicPrintConfig store_config = DynamicPrintConfig::full_print_config();
+    const std::string  test_file    = (tmp_root / "atomic_fail_project.3mf").string();
+    StoreParams        store_params;
+    store_params.path   = test_file.c_str();
+    store_params.model  = &model;
+    store_params.config = &store_config;
+    store_params.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary;
+
+    set_atomic_write_force_fail_hook([](const char *path) {
+        return std::string(path).find("_temp_1.config") != std::string::npos;
+    });
+    const bool ok = store_bbs_3mf(store_params);
+    set_atomic_write_force_fail_hook(nullptr);
+    REQUIRE_FALSE(ok);
+}

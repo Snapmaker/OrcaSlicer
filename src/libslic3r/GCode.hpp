@@ -549,6 +549,10 @@ private:
        methods. */
     Vec2d                               m_origin;
     FullPrintConfig                     m_config;
+    // Per-filament flow ratio / max volumetric speed / PA enable that _extrude
+    // reads on every path, resolved in apply_print_config (the only place the
+    // filament options of m_config change during an export).
+    ResolvedFilamentFlow                m_filament_flow;
     DynamicConfig                       m_calib_config;
     // scaled G-code resolution
     double                              m_scaled_resolution;

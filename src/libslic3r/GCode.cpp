@@ -8290,6 +8290,7 @@ void GCode::apply_print_config(const PrintConfig& print_config)
 {
     m_writer.apply_print_config(print_config);
     m_config.apply(print_config);
+    m_filament_flow = ResolvedFilamentFlow::resolve(m_config);
     m_scaled_resolution     = scaled<double>(print_config.resolution.value);
     m_enable_exclude_object = m_config.exclude_object;
 
@@ -9236,10 +9237,8 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
     // any filament declares variants (step_size > 1) or get_config_idx remaps ids.
     // The generic get_at(0) bug on non-variant multi-filament printers is a follow-up.
     const unsigned int flow_filament_id = m_writer.extruder() != nullptr ? m_writer.extruder()->id() : 0;
-    double filament_flow_ratio          = filament_flow_variants_active(m_config) ?
-                                              get_value_at(m_config, m_config.filament_flow_ratio, ConfigFlowDomain::Filament,
-                                                flow_filament_id) :
-                                              m_config.filament_flow_ratio.get_at(0);
+    // Resolved once per export (m_filament_flow), same value as the per-path lookup.
+    double filament_flow_ratio          = m_filament_flow.flow_ratio_for(m_config, flow_filament_id);
     // We set _mm3_per_mm to effectove flow = Geometric volume * print flow ratio * filament flow ratio * role-based-flow-ratios
     auto _mm3_per_mm = path.mm3_per_mm * path.extrusion_multiplier * this->config().print_flow_ratio;
     _mm3_per_mm *= filament_flow_ratio;
@@ -9364,8 +9363,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
     // silently prints ~3.6x too fast. Report it here, with the setting name, for exactly the
     // reason the writer guard reports: the user must be told WHICH value was ignored.
     const double filament_max_volumetric_speed =
-        get_value_at(m_config, m_config.filament_max_volumetric_speed, ConfigFlowDomain::Filament,
-                     m_writer.extruder()->id());
+        m_filament_flow.max_volumetric_speed_for(m_config, m_writer.extruder()->id());
     const bool speed_was_invalid = !(speed >= 1e-6);
     if (speed_was_invalid)
         speed = filament_max_volumetric_speed / _mm3_per_mm;
@@ -9593,8 +9591,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
                        m_curr_print->calib_mode() == CalibMode::Calib_PA_Pattern || m_curr_print->calib_mode() == CalibMode::Calib_PA_Tower;
     bool evaluate_adaptive_pa = false;
     bool role_change          = (m_last_extrusion_role != path.role());
-    const bool enable_pressure_advance = get_value_at(m_config, m_config.enable_pressure_advance, ConfigFlowDomain::Filament,
-                                                      m_writer.extruder()->id());
+    const bool enable_pressure_advance = m_filament_flow.enable_pressure_advance_for(m_config, m_writer.extruder()->id());
     if (!is_pa_calib && EXTRUDER_CONFIG(adaptive_pressure_advance) && enable_pressure_advance) {
         evaluate_adaptive_pa = true;
         // If we have already emmited a PA change because the m_multi_flow_segment_path_pa_set is set

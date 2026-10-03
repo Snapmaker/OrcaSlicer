@@ -571,6 +571,42 @@ inline bool filament_flow_variants_active(const ConfigBase &config)
     return false;
 }
 
+// The per-filament values GCode::_extrude reads on every extrusion path, resolved
+// once per export (GCode::apply_print_config) instead of through string-keyed
+// option lookups and get_config_idx on every path. The *_for accessors return the
+// same value the uncached expression gives, falling back to it for an id outside
+// the resolved range, so the G-code is identical either way.
+struct ResolvedFilamentFlow
+{
+    bool                       variants_active{false};
+    std::vector<double>        flow_ratio;
+    std::vector<double>        max_volumetric_speed;
+    std::vector<unsigned char> enable_pressure_advance;
+
+    static ResolvedFilamentFlow resolve(const ConfigBase &config);
+
+    // The uncached expressions, one lookup each: what _extrude computed per path.
+    // _extrude's flow ratio stays get_at(0) unless flow variants are active (S5).
+    static double uncached_flow_ratio(const ConfigBase &config, unsigned int filament_id);
+    static double uncached_max_volumetric_speed(const ConfigBase &config, unsigned int filament_id);
+    static bool   uncached_enable_pressure_advance(const ConfigBase &config, unsigned int filament_id);
+
+    double flow_ratio_for(const ConfigBase &config, unsigned int filament_id) const
+    {
+        return filament_id < flow_ratio.size() ? flow_ratio[filament_id] : uncached_flow_ratio(config, filament_id);
+    }
+    double max_volumetric_speed_for(const ConfigBase &config, unsigned int filament_id) const
+    {
+        return filament_id < max_volumetric_speed.size() ? max_volumetric_speed[filament_id] :
+                                                           uncached_max_volumetric_speed(config, filament_id);
+    }
+    bool enable_pressure_advance_for(const ConfigBase &config, unsigned int filament_id) const
+    {
+        return filament_id < enable_pressure_advance.size() ? enable_pressure_advance[filament_id] != 0 :
+                                                              uncached_enable_pressure_advance(config, filament_id);
+    }
+};
+
 template<typename VectorOption>
 inline auto unpack_filament_values(const ConfigBase &config, const VectorOption &opt)
     -> std::vector<typename std::decay<decltype(opt.get_at(0))>::type>

@@ -631,7 +631,7 @@ TEST_CASE("write_file_atomically never clears the process umask", "[utils][atomi
     });
 
     for (int i = 0; i < kWrites; ++i) {
-        const boost::filesystem::path target = dir.path / "umask.json";
+        const boost::filesystem::path target = dir.path / ("umask-" + std::to_string(i) + ".json");
         REQUIRE(write_file_atomically(target.string(), "x"));
     }
     writing.store(false, std::memory_order_relaxed);

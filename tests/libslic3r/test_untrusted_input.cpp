@@ -1005,6 +1005,29 @@ TEST_CASE("Texture coordinates follow the corners of an inward-wound cube that i
     check_uvs_follow_vertices(loaded);
 }
 
+TEST_CASE("Texture coordinates follow the corners of an inward-wound quad cube that is flipped on load", "[obj][uv]")
+{
+    // Same 10 mm cube, but each face is a quad (split into {0,1,2} and {0,2,3}).
+    // Faces wound inward so load_obj flips them. Vertex n uses vt n.
+    LoadedObj loaded = load_textured_obj(
+        "v 0 0 0\nv 10 0 0\nv 10 10 0\nv 0 10 0\n"
+        "v 0 0 10\nv 10 0 10\nv 10 10 10\nv 0 10 10\n"
+        "vt 0.1 0.05\nvt 0.2 0.1\nvt 0.3 0.15\nvt 0.4 0.2\n"
+        "vt 0.5 0.25\nvt 0.6 0.3\nvt 0.7 0.35\nvt 0.8 0.4\n"
+        "usemtl a\n"
+        "f 1/1 2/2 3/3 4/4\n"
+        "f 5/5 8/8 7/7 6/6\n"
+        "f 1/1 5/5 6/6 2/2\n"
+        "f 4/4 3/3 7/7 8/8\n"
+        "f 1/1 4/4 8/8 5/5\n"
+        "f 2/2 6/6 7/7 3/3\n");
+
+    REQUIRE(loaded.ok);
+    CHECK(loaded.mesh.volume() > 0.f);
+    REQUIRE(loaded.mesh.facets_count() == 12);
+    check_uvs_follow_vertices(loaded);
+}
+
 TEST_CASE("A plain outward textured tetrahedron keeps file-order UVs", "[obj][uv]")
 {
     // Outward-wound; vertex n uses vt n. A swap that always runs would break the pairing.

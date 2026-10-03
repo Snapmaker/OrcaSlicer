@@ -123,7 +123,7 @@ bool load_obj(const char *path, TriangleMesh *meshptr, ObjInfo& obj_info, std::s
                 if (const ObjParser::ObjVertex &vertex = data.vertices[i ++]; vertex.coordIdx == -1) {
                     break;
                 } else {
-                    assert(cnt < OBJ_VERTEX_LENGTH);
+                    assert(cnt < ONE_FACE_SIZE);
                     if (vertex.coordIdx < 0 || vertex.coordIdx >= int(its.vertices.size())) {
                         BOOST_LOG_TRIVIAL(error) << "load_obj: failed to parse " << path << ". The file contains invalid vertex index.";
                         message = _L("The file contains invalid vertex index.");

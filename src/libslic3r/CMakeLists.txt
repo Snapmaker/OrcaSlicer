@@ -547,6 +547,10 @@ set(lisbslic3r_sources
     Support/SupportParameters.hpp
     Support/Stabilizers.cpp
     Support/Stabilizers.hpp
+    Support/StabilizerMesh.cpp
+    Support/StabilizerMesh.hpp
+    Support/StabilizerBake.cpp
+    Support/StabilizerBake.hpp
     Support/SupportSpotsGenerator.cpp
     Support/SupportSpotsGenerator.hpp
     Support/TreeModelVolumes.cpp

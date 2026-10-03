@@ -778,9 +778,16 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("hollow_shell_thickness", config->opt_bool("hollow_interior"));
     // Side stabilizers print as support, so they need supports on.
     toggle_field("stabilizer_supports", have_support_material);
-    for (auto el : {"stabilizer_ring_spacing", "stabilizer_points_per_ring", "stabilizer_tip_diameter", "stabilizer_tip_gap",
-                    "stabilizer_pillar_diameter", "stabilizer_max_island_width"})
-        toggle_line(el, have_support_material && config->opt_bool("stabilizer_supports"));
+    {
+        const StabilizerMode stab_mode = config->opt_enum<StabilizerMode>("stabilizer_supports");
+        const bool           stab_on   = have_support_material && stab_mode != smOff;
+        for (auto el : {"stabilizer_ring_spacing", "stabilizer_points_per_ring", "stabilizer_tip_diameter", "stabilizer_tip_gap",
+                        "stabilizer_pillar_diameter", "stabilizer_max_island_width"})
+            toggle_line(el, stab_on);
+        // Manual places struts at the painted points only: the ring settings have nothing to say there.
+        for (auto el : {"stabilizer_ring_spacing", "stabilizer_points_per_ring", "stabilizer_max_island_width"})
+            toggle_field(el, stab_on && stab_mode == smAuto);
+    }
     toggle_field("support_threshold_angle", have_support_material && is_auto(support_type));
     toggle_field("support_threshold_overlap", config->opt_int("support_threshold_angle") == 0 && have_support_material && is_auto(support_type));
     //toggle_field("support_closing_radius", have_support_material && support_style == smsSnug);

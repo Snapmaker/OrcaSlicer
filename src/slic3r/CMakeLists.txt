@@ -96,6 +96,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/QuadRemeshDialog.hpp
     GUI/SliceBakeDialog.cpp
     GUI/SliceBakeDialog.hpp
+    GUI/StabilizerBakeDialog.cpp
+    GUI/StabilizerBakeDialog.hpp
     GUI/ColorSplitDialog.cpp
     GUI/ColorSplitDialog.hpp
     GUI/ImageFillDialog.cpp
@@ -325,6 +327,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Jobs/ColorSplitJob.hpp
     GUI/Jobs/SliceBakeJob.cpp
     GUI/Jobs/SliceBakeJob.hpp
+    GUI/Jobs/StabilizerBakeJob.cpp
+    GUI/Jobs/StabilizerBakeJob.hpp
     GUI/Jobs/SeamAutoPaintJob.cpp
     GUI/Jobs/SeamAutoPaintJob.hpp
     GUI/Jobs/QuadRemeshJob.cpp

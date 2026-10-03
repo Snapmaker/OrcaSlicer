@@ -209,6 +209,7 @@
 
 #include "libslic3r/CustomGCode.hpp"
 #include "libslic3r/Platform.hpp"
+#include "libslic3r/Support/StabilizerBake.hpp"
 #include "nlohmann/json.hpp"
 
 #include "PhysicalPrinterDialog.hpp"
@@ -21723,6 +21724,25 @@ void Plater::export_core_3mf()
     export_3mf(path_u8, SaveStrategy::Silence);
 }
 
+// Side stabilizers are EdgeSlicer-only settings: an export for Bambu Studio leaves them out, so the
+// objects would print there without them. Say which, and point at the bake.
+static void warn_live_stabilizers_dropped(NotificationManager *notifications, const Model &model)
+{
+    const std::vector<std::string> names =
+        objects_with_live_stabilizers(model, wxGetApp().preset_bundle->prints.get_edited_preset().config);
+    if (names.empty() || notifications == nullptr)
+        return;
+    std::string list;
+    for (size_t i = 0; i < names.size() && i < 3; ++i)
+        list += (i == 0 ? "\"" : ", \"") + names[i] + "\"";
+    if (names.size() > 3)
+        list += " " + format(_u8L("and %1% more"), names.size() - 3);
+    notifications->push_plater_warning_notification(
+        format(_u8L("The side stabilizers of %1% are EdgeSlicer settings and were left out, so Bambu Studio will not print them. "
+                    "Right-click the object and choose \"Bake stabilizers...\" to keep them as geometry, then export again."),
+               list));
+}
+
 void Plater::export_bambu_3mf()
 {
     wxString path = p->get_export_file(FT_3MF);
@@ -21739,6 +21759,7 @@ void Plater::export_bambu_3mf()
         wxString::Format(_L("Exported for Bambu Studio: %d settings not supported by Bambu Studio were left out."), int(report.dropped.size()));
     p->notification_manager->push_notification(NotificationType::CustomNotification,
                                                NotificationManager::NotificationLevel::RegularNotificationLevel, into_u8(msg));
+    warn_live_stabilizers_dropped(p->notification_manager.get(), p->model);
 }
 
 void Plater::export_and_open_in_bambu_studio()
@@ -21757,6 +21778,7 @@ void Plater::export_and_open_in_bambu_studio()
         wxString::Format(_L("Exported for Bambu Studio: %d settings not supported by Bambu Studio were left out."), int(report.dropped.size()));
     p->notification_manager->push_notification(NotificationType::CustomNotification,
                                                NotificationManager::NotificationLevel::RegularNotificationLevel, into_u8(msg));
+    warn_live_stabilizers_dropped(p->notification_manager.get(), p->model);
 
     // The export succeeded regardless of what happens below - never turn a launch problem into
     // an export failure.

@@ -292,6 +292,9 @@ public:
     std::string     retract(bool toolchange = false, bool is_last_retraction = false, LiftType lift_type = LiftType::NormalLift, ExtrusionRole role = erNone);
     std::string     unretract() { return m_writer.unlift() + m_writer.unretract(); }
     std::string     set_extruder(unsigned int extruder_id, double print_z, bool by_object=false);
+    // Emit PA for this filament's active flow variant (Standard / High-Flow), not raw column = id.
+    // reset_adaptive=false keeps the two set_extruder sites that historically skipped the reset.
+    std::string     set_filament_pressure_advance(unsigned filament_id, bool reset_adaptive = true);
     // Orca: Adaptive PA. Tell the adaptive PA processor a tool change has just set the PA to `pa`.
     // Returns G-code to append right after that PA command (empty outside the layer pipeline).
     std::string     reset_adaptive_pa(double pa);

@@ -1038,13 +1038,9 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
     }
     check_add_eol(toolchange_gcode_str);
 
-    // SoftFever: set new PA for new filament
-    if (gcodegen.config().enable_pressure_advance.get_at(new_extruder_id)) {
-        gcode += gcodegen.writer().set_pressure_advance(gcodegen.config().pressure_advance.get_at(new_extruder_id));
-        // Orca: Adaptive PA
-        // Reset Adaptive PA processor last PA value
-        gcode += gcodegen.reset_adaptive_pa(gcodegen.config().pressure_advance.get_at(new_extruder_id));
-    }
+    // SoftFever: set new PA for new filament (flow-variant column, not raw filament id)
+    if (new_extruder_id != -1)
+        gcode += gcodegen.set_filament_pressure_advance(static_cast<unsigned>(new_extruder_id));
 
     // A phony move to the end position at the wipe tower.
     gcodegen.writer().travel_to_xy((end_pos + plate_origin_2d).cast<double>());
@@ -1195,13 +1191,9 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     gcode += tcr_gcode;
     check_add_eol(toolchange_gcode_str);
 
-    // SoftFever: set new PA for new filament
-    if (new_extruder_id != -1 && gcodegen.config().enable_pressure_advance.get_at(new_extruder_id)) {
-        gcode += gcodegen.writer().set_pressure_advance(gcodegen.config().pressure_advance.get_at(new_extruder_id));
-        // Orca: Adaptive PA
-        // Reset Adaptive PA processor last PA value
-        gcode += gcodegen.reset_adaptive_pa(gcodegen.config().pressure_advance.get_at(new_extruder_id));
-    }
+    // SoftFever: set new PA for new filament (flow-variant column, not raw filament id)
+    if (new_extruder_id != -1)
+        gcode += gcodegen.set_filament_pressure_advance(static_cast<unsigned>(new_extruder_id));
 
     // A phony move to the end position at the wipe tower.
     gcodegen.writer().travel_to_xy((end_pos + plate_origin_2d).cast<double>());
@@ -9886,7 +9878,9 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
                        m_curr_print->calib_mode() == CalibMode::Calib_PA_Pattern || m_curr_print->calib_mode() == CalibMode::Calib_PA_Tower;
     bool evaluate_adaptive_pa = false;
     bool role_change          = (m_last_extrusion_role != path.role());
-    if (!is_pa_calib && EXTRUDER_CONFIG(adaptive_pressure_advance) && EXTRUDER_CONFIG(enable_pressure_advance)) {
+    const bool enable_pressure_advance = get_value_at(m_config, m_config.enable_pressure_advance, ConfigFlowDomain::Filament,
+                                                      m_writer.extruder()->id());
+    if (!is_pa_calib && EXTRUDER_CONFIG(adaptive_pressure_advance) && enable_pressure_advance) {
         evaluate_adaptive_pa = true;
         // If we have already emmited a PA change because the m_multi_flow_segment_path_pa_set is set
         // skip re-issuing the PA change tag.
@@ -10053,7 +10047,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
             // or a flow change, so emit the flag to evaluate PA for the upcomming extrusion
             // Emit tag before new speed is set so the post processor reads the next speed immediately and uses it.
             // Dont emit tag if it has just already been emitted from a role change above
-            if (_mm3_per_mm > 0 && EXTRUDER_CONFIG(adaptive_pressure_advance) && EXTRUDER_CONFIG(enable_pressure_advance) &&
+            if (_mm3_per_mm > 0 && EXTRUDER_CONFIG(adaptive_pressure_advance) && enable_pressure_advance &&
                 EXTRUDER_CONFIG(adaptive_pressure_advance_overhangs) && !evaluate_adaptive_pa) {
                 if (writer().get_current_speed() >
                     F) { // Ramping down speed - use overhang logic where the minimum speed is used between current and upcoming extrusion
@@ -10301,7 +10295,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
                 // ORCA: Adaptive PA code segment when adjusting PA within the same feature
                 // There is a speed change or flow change so emit the flag to evaluate PA for the upcomming extrusion
                 // Emit tag before new speed is set so the post processor reads the next speed immediately and uses it.
-                if (_mm3_per_mm > 0 && EXTRUDER_CONFIG(adaptive_pressure_advance) && EXTRUDER_CONFIG(enable_pressure_advance) &&
+                if (_mm3_per_mm > 0 && EXTRUDER_CONFIG(adaptive_pressure_advance) && enable_pressure_advance &&
                     EXTRUDER_CONFIG(adaptive_pressure_advance_overhangs)) {
                     if (last_set_speed > new_speed) { // Ramping down speed - use overhang logic where the minimum speed is used between
                                                       // current and upcoming extrusion
@@ -10897,6 +10891,17 @@ bool GCode::cross_extruder_flush_volume(int old_filament_id, int new_filament_id
     return true;
 }
 
+std::string GCode::set_filament_pressure_advance(unsigned filament_id, bool reset_adaptive)
+{
+    if (!get_value_at(m_config, m_config.enable_pressure_advance, ConfigFlowDomain::Filament, filament_id))
+        return {};
+    const double pa    = get_value_at(m_config, m_config.pressure_advance, ConfigFlowDomain::Filament, filament_id);
+    std::string  gcode = m_writer.set_pressure_advance(pa);
+    if (reset_adaptive)
+        gcode += this->reset_adaptive_pa(pa);
+    return gcode;
+}
+
 // Orca: Adaptive PA. Inside the layer pipeline the processor runs concurrently with the generator
 // that calls this, so the reset goes into the G-code and the processor applies it in order.
 std::string GCode::reset_adaptive_pa(double pa)
@@ -10935,12 +10940,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
             gcode += this->placeholder_parser_process("filament_start_gcode", filament_start_gcode, extruder_id, &config);
             check_add_eol(gcode);
         }
-        if (get_value_at(m_config, m_config.enable_pressure_advance, ConfigFlowDomain::Filament, extruder_id)) {
-            gcode += m_writer.set_pressure_advance(get_value_at(m_config, m_config.pressure_advance, ConfigFlowDomain::Filament, extruder_id));
-            // Orca: Adaptive PA
-            // Reset Adaptive PA processor last PA value
-            gcode += this->reset_adaptive_pa(get_value_at(m_config, m_config.pressure_advance, ConfigFlowDomain::Filament, extruder_id));
-        }
+        gcode += this->set_filament_pressure_advance(extruder_id);
 
         gcode += m_writer.toolchange(extruder_id);
         return gcode;
@@ -10976,8 +10976,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
             gcode += this->placeholder_parser_process("filament_start_gcode", filament_start_gcode, extruder_id, &config);
             check_add_eol(gcode);
         }
-        if (get_value_at(m_config, m_config.enable_pressure_advance, ConfigFlowDomain::Filament, extruder_id))
-            gcode += m_writer.set_pressure_advance(get_value_at(m_config, m_config.pressure_advance, ConfigFlowDomain::Filament, extruder_id));
+        gcode += this->set_filament_pressure_advance(extruder_id, false);
         m_last_pos_defined = false;
         return gcode;
     }
@@ -11256,9 +11255,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
     if (m_ooze_prevention.enable)
         gcode += m_ooze_prevention.post_toolchange(*this);
 
-    if (get_value_at(m_config, m_config.enable_pressure_advance, ConfigFlowDomain::Filament, extruder_id)) {
-        gcode += m_writer.set_pressure_advance(get_value_at(m_config, m_config.pressure_advance, ConfigFlowDomain::Filament, extruder_id));
-    }
+    gcode += this->set_filament_pressure_advance(extruder_id, false);
     // Orca: tool changer or IDEX's firmware may change Z position, so we set it to unknown/undefined
     m_last_pos_defined = false;
 

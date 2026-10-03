@@ -438,7 +438,8 @@ struct PaAfterT1 {
     size_t              pa_commands       = 0;
     size_t              pa_high_flow      = 0;
     size_t              pa_standard_slot  = 0;
-    size_t              first_pa_high_flow = 0;
+    size_t              pa_ramming_zero   = 0;
+    size_t              pa_unexpected     = 0;
     std::vector<double> values;
 };
 
@@ -450,16 +451,14 @@ PaAfterT1 collect_pa_after_filament2(const std::string &gcode)
 
     PaAfterT1          result;
     std::smatch        m;
-    int                current      = -1;
-    bool               await_first  = false;
+    int                current = -1;
     std::istringstream in(gcode);
     std::string        line;
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r')
             line.pop_back();
         if (std::regex_match(line, m, tool_cmd)) {
-            current     = std::stoi(m[1].str());
-            await_first = (current == 1);
+            current = std::stoi(m[1].str());
             if (current == 1)
                 ++result.toolchanges_to_f2;
             continue;
@@ -471,17 +470,19 @@ PaAfterT1 collect_pa_after_filament2(const std::string &gcode)
         const double pa = std::stod(m[1].str());
         result.values.push_back(pa);
         ++result.pa_commands;
-        const bool is_hf  = std::fabs(pa - kPaHfF1) <= tol;
-        const bool is_std = std::fabs(pa - kPaStdF1) <= tol;
+        const bool is_hf      = std::fabs(pa - kPaHfF1) <= tol;
+        const bool is_std     = std::fabs(pa - kPaStdF1) <= tol;
+        // WipeTower2 ramming writes M900 K0 / SET_PRESSURE_ADVANCE ADVANCE=0 because
+        // ramming_pressure_advance_value defaults to 0 (WipeTower2.cpp disable_linear_advance_value).
+        const bool is_ramming = std::fabs(pa) <= tol;
         if (is_hf)
             ++result.pa_high_flow;
         if (is_std)
             ++result.pa_standard_slot;
-        if (await_first) {
-            if (is_hf)
-                ++result.first_pa_high_flow;
-            await_first = false;
-        }
+        if (is_ramming)
+            ++result.pa_ramming_zero;
+        if (!is_hf && !is_ramming)
+            ++result.pa_unexpected;
     }
     return result;
 }
@@ -490,15 +491,18 @@ void require_filament2_uses_high_flow_pa(const std::string &gcode, size_t min_pa
 {
     const PaAfterT1 pa = collect_pa_after_filament2(gcode);
     INFO("T1 toolchanges " << pa.toolchanges_to_f2 << ", PA commands " << pa.pa_commands << ", HF " << pa.pa_high_flow
-                           << ", std-slot " << pa.pa_standard_slot << ", first-HF " << pa.first_pa_high_flow);
+                           << ", std-slot " << pa.pa_standard_slot << ", ramming-0 " << pa.pa_ramming_zero
+                           << ", unexpected " << pa.pa_unexpected);
     REQUIRE(pa.toolchanges_to_f2 >= 2);
     REQUIRE(pa.pa_commands >= min_pa_commands);
     REQUIRE(pa.pa_standard_slot == 0);
+    // Every PA inside a T1 block is High-Flow 0.05, except WipeTower2 ramming M900 K0.
+    // A wrong-column read of filament 2's Standard slot is 0.02; a silent fallback to
+    // filament 0 (or get_at(0)) is 0.01. On the multi-extruder path T (~GCode.cpp:10882)
+    // is emitted before PA (~:10921), so a later filament's 0.01 cannot appear here.
+    REQUIRE(pa.pa_unexpected == 0);
+    REQUIRE(pa.pa_high_flow + pa.pa_ramming_zero == pa.pa_commands);
     REQUIRE(pa.pa_high_flow >= min_pa_commands);
-    // set_extruder writes the next filament's PA before its T command, so a T0
-    // toolchange can emit 0.01 while the parser still thinks the tool is T1.
-    // The first PA after every T1 must still be the High-Flow column.
-    REQUIRE(pa.first_pa_high_flow == pa.toolchanges_to_f2);
 }
 
 } // namespace
@@ -511,7 +515,6 @@ TEST_CASE("wipe-tower and set_extruder PA follow the High-Flow column", "[PrintG
     SECTION("non-BBL wipe tower hits set_extruder and append_tcr2") {
         const std::string gcode = slice_high_flow_pa(config, false);
         REQUIRE(gcode.find("Travel to a Wipe Tower") != std::string::npos);
-        // Two PA writes per T1 (set_extruder + wipe-tower L1178) across several layers.
         require_filament2_uses_high_flow_pa(gcode, 4);
     }
     SECTION("BBL wipe tower hits append_tcr") {
@@ -544,11 +547,24 @@ TEST_CASE("AdaptivePAProcessor base PA follows the High-Flow column", "[PrintGCo
     require_high_flow_columns(config);
     const std::string gcode = slice_high_flow_pa(config, false);
     REQUIRE(gcode.find("PA_CHANGE") != std::string::npos);
-    const PaAfterT1 pa = collect_pa_after_filament2(gcode);
-    INFO("T1 toolchanges " << pa.toolchanges_to_f2 << ", PA commands " << pa.pa_commands << ", HF " << pa.pa_high_flow
-                           << ", std-slot " << pa.pa_standard_slot);
-    REQUIRE(pa.toolchanges_to_f2 >= 2);
-    REQUIRE(pa.pa_commands >= 2);
-    REQUIRE(pa.pa_standard_slot == 0);
-    REQUIRE(pa.pa_high_flow >= 2);
+    require_filament2_uses_high_flow_pa(gcode, 2);
+}
+
+TEST_CASE("AdaptivePA enable follows the High-Flow column", "[PrintGCode][GCode][PAVariant]")
+{
+    // Standard=false, High-Flow=true. get_at(1) is false, so this fails if:
+    //   * _extrude (~GCode.cpp:9548) reads enable_pressure_advance by raw filament id
+    //     (no PA_CHANGE tags for filament 2), or
+    //   * AdaptivePAProcessor ctor (~:78) does the same (interpolator never installed;
+    //     "; APA: Tool doesnt have APA enabled" instead of the empty-model fallback).
+    // set_extruder ~:10606 is the single-extruder path (PA then T) and ~:10642 is the
+    // BBL start-gcode first-filament path; this 2-extruder wipe-tower fixture hits
+    // the multi-extruder set_extruder site (~:10921) instead.
+    const DynamicPrintConfig config = high_flow_pa_config(false, true, true);
+    require_high_flow_columns(config);
+    const std::string gcode = slice_high_flow_pa(config, false);
+    REQUIRE(gcode.find("PA_CHANGE") != std::string::npos);
+    REQUIRE(gcode.find("; APA: Interpolator setup failed") != std::string::npos);
+    REQUIRE(gcode.find("; APA: Tool doesnt have APA enabled") == std::string::npos);
+    require_filament2_uses_high_flow_pa(gcode, 2);
 }

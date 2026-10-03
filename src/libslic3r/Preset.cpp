@@ -616,17 +616,22 @@ bool Preset::save_info(std::string file)
     return true;
 }
 
-void Preset::remove_files()
+bool Preset::remove_files()
 {
     //BBS: add project embedded preset logic
     if (this->is_project_embedded)
-        return;
+        return true;
+    if (!InstanceLock::allows_saves()) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": data directory is read-only; not removing " << this->file;
+        return false;
+    }
     // Erase the preset file.
     boost::nowide::remove(this->file.c_str());
     fs::path idx_path(this->file);
     idx_path.replace_extension(".info");
     if (fs::exists(idx_path))
         boost::nowide::remove(idx_path.string().c_str());
+    return true;
 }
 
 //BBS: add logic for only difference save
@@ -2593,122 +2598,105 @@ std::map<std::string, std::vector<Preset const *>> PresetCollection::get_filamen
     return filament_presets;
 }
 
-//BBS: add project embedded preset logic
+// Write the file first, then insert/select. A failed write must not leave a
+// new preset selected (or an overwrite applied) in memory.
 bool PresetCollection::save_current_preset(const std::string &new_name, bool detach, bool save_to_project, Preset* _curr_preset, const Preset* _current_printer)
 {
-    Preset curr_preset = _curr_preset ? *_curr_preset : m_edited_preset;
-    //BBS: add lock logic for sync preset in background
+    Preset      curr_preset = _curr_preset ? *_curr_preset : m_edited_preset;
     std::string final_inherits;
     lock();
-    // 1) Find the preset with a new_name or create a new one,
-    // initialize it with the edited config.
-    auto it = this->find_preset_internal(new_name);
-    if (it != m_presets.end() && it->name == new_name) {
-        // Preset with the same name found.
-        Preset &preset = *it;
-        //BBS: add project embedded preset logic
-        if (preset.is_default || preset.is_system) {
-        //if (preset.is_default || preset.is_external || preset.is_system)
-            // Cannot overwrite the default preset.
-            //BBS: add lock logic for sync preset in background
-            unlock();
-            return false;
-        }
-        // Overwriting an existing preset.
-        preset.config = std::move(curr_preset.config);
-        // The newly saved preset will be activated -> make it visible.
-        preset.is_visible = true;
-        //TODO: remove the detach logic
-        if (detach) {
-            // Clear the link to the parent profile.
-            preset.vendor = nullptr;
-			preset.inherits().clear();
-			preset.alias.clear();
-			preset.renamed_from.clear();
-            preset.m_excluded_from.clear();
-            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": save preset %1% , with detach")%new_name;
-        }
-        //BBS: add lock logic for sync preset in background
-
-        if (m_type == Preset::TYPE_PRINT)
-            preset.config.option<ConfigOptionString>("print_settings_id", true)->value = new_name;
-        else if (m_type == Preset::TYPE_FILAMENT)
-            preset.config.option<ConfigOptionStrings>("filament_settings_id", true)->values[0] = new_name;
-        else if (m_type == Preset::TYPE_PRINTER)
-            preset.config.option<ConfigOptionString>("printer_settings_id", true)->value = new_name;
-        final_inherits = preset.inherits();
+    auto       it     = this->find_preset_internal(new_name);
+    const bool exists = it != m_presets.end() && it->name == new_name;
+    if (exists && (it->is_default || it->is_system)) {
         unlock();
-        // TODO: apply change from custom root to devided presets.
-        if (preset.inherits().empty()) {
-            for (auto &preset2 : m_presets)
-                if (preset2.inherits() == preset.name)
-                    preset2.reload(preset);
-        }
-    } else {
-        // Creating a new preset.
-        Preset       &preset   = *m_presets.insert(it, curr_preset);
-        std::string  &inherits = preset.inherits();
-        std::string   old_name = preset.name;
-        preset.name = new_name;
-        preset.vendor = nullptr;
-		preset.alias.clear();
-        preset.renamed_from.clear();
-        preset.m_excluded_from.clear();
-        preset.setting_id.clear();
+        return false;
+    }
+
+    Preset to_write = exists ? *it : curr_preset;
+    if (exists) {
+        to_write.config     = std::move(curr_preset.config);
+        to_write.is_visible = true;
         if (detach) {
-        	// Clear the link to the parent profile.
-        	inherits.clear();
-            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": save preset %1% , with detach")%new_name;
-        } else if (is_base_preset(preset)) {
+            to_write.vendor = nullptr;
+            to_write.inherits().clear();
+            to_write.alias.clear();
+            to_write.renamed_from.clear();
+            to_write.m_excluded_from.clear();
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": save preset %1% , with detach") % new_name;
+        }
+        if (m_type == Preset::TYPE_PRINT)
+            to_write.config.option<ConfigOptionString>("print_settings_id", true)->value = new_name;
+        else if (m_type == Preset::TYPE_FILAMENT)
+            to_write.config.option<ConfigOptionStrings>("filament_settings_id", true)->values[0] = new_name;
+        else if (m_type == Preset::TYPE_PRINTER)
+            to_write.config.option<ConfigOptionString>("printer_settings_id", true)->value = new_name;
+        final_inherits = to_write.inherits();
+    } else {
+        std::string &inherits = to_write.inherits();
+        std::string  old_name = to_write.name;
+        to_write.name         = new_name;
+        to_write.vendor       = nullptr;
+        to_write.alias.clear();
+        to_write.renamed_from.clear();
+        to_write.m_excluded_from.clear();
+        to_write.setting_id.clear();
+        if (detach) {
+            inherits.clear();
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": save preset %1% , with detach") % new_name;
+        } else if (is_base_preset(to_write)) {
             inherits = old_name;
         }
-        // Orca: check if compatible_printers exists and is not empty, set it to the current printer if it is empty
-        if (nullptr != _current_printer && preset.is_system && m_type == Preset::TYPE_FILAMENT) {
-            ConfigOptionStrings* compatible_printers = preset.config.option<ConfigOptionStrings>("compatible_printers");
-            if (compatible_printers && compatible_printers->values.empty()) {
+        if (nullptr != _current_printer && to_write.is_system && m_type == Preset::TYPE_FILAMENT) {
+            ConfigOptionStrings *compatible_printers = to_write.config.option<ConfigOptionStrings>("compatible_printers");
+            if (compatible_printers && compatible_printers->values.empty())
                 compatible_printers->values.push_back(_current_printer->name);
-            }
         }
-
-        preset.is_default  = false;
-        preset.is_system   = false;
-        preset.is_external = false;
-        preset.file        = this->path_for_preset(preset);
-        // The newly saved preset will be activated -> make it visible.
-        preset.is_visible  = true;
-        // Just system presets have aliases
-        preset.alias.clear();
-        //BBS: add project embedded preset logic
-        if (save_to_project) {
-            preset.is_project_embedded = true;
-        }
-        else
-            preset.is_project_embedded = false;
+        to_write.is_default           = false;
+        to_write.is_system            = false;
+        to_write.is_external          = false;
+        to_write.file                 = this->path_for_preset(to_write);
+        to_write.is_visible           = true;
+        to_write.alias.clear();
+        to_write.is_project_embedded  = save_to_project;
         if (m_type == Preset::TYPE_PRINT)
-            preset.config.option<ConfigOptionString>("print_settings_id", true)->value = new_name;
+            to_write.config.option<ConfigOptionString>("print_settings_id", true)->value = new_name;
         else if (m_type == Preset::TYPE_FILAMENT)
-            preset.config.option<ConfigOptionStrings>("filament_settings_id", true)->values[0] = new_name;
+            to_write.config.option<ConfigOptionStrings>("filament_settings_id", true)->values[0] = new_name;
         else if (m_type == Preset::TYPE_PRINTER)
-            preset.config.option<ConfigOptionString>("printer_settings_id", true)->value = new_name;
-        //BBS: add lock logic for sync preset in background
+            to_write.config.option<ConfigOptionString>("printer_settings_id", true)->value = new_name;
         final_inherits = inherits;
-        unlock();
     }
-    // 2) Activate the saved preset.
-    this->select_preset_by_name(new_name, true);
-    // 2) Store the active preset to disk.
-    //BBS: only save difference for user preset
-    Preset* parent_preset = nullptr;
+    unlock();
+
+    Preset *parent_preset = nullptr;
     if (!final_inherits.empty()) {
         parent_preset = this->find_preset(final_inherits, false, true);
-        if (parent_preset && this->get_selected_preset().base_id.empty()) {
-            this->get_selected_preset().base_id = parent_preset->setting_id;
+        if (parent_preset && to_write.base_id.empty()) {
+            to_write.base_id = parent_preset->setting_id;
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " base_id: " << parent_preset->setting_id;
         }
     }
-    if (parent_preset)
-        return this->get_selected_preset().save(&(parent_preset->config));
-    return this->get_selected_preset().save(nullptr);
+    if (!(parent_preset ? to_write.save(&(parent_preset->config)) : to_write.save(nullptr)))
+        return false;
+
+    lock();
+    it = this->find_preset_internal(new_name);
+    if (it != m_presets.end() && it->name == new_name)
+        *it = std::move(to_write);
+    else
+        it = m_presets.insert(it, std::move(to_write));
+    const std::string committed_name = it->name;
+    const bool        reload_children = it->inherits().empty();
+    unlock();
+    if (reload_children) {
+        if (Preset *written = this->find_preset(committed_name, false, true)) {
+            for (auto &preset2 : m_presets)
+                if (preset2.inherits() == committed_name)
+                    preset2.reload(*written);
+        }
+    }
+    this->select_preset_by_name(new_name, true);
+    return true;
 }
 
 bool PresetCollection::delete_current_preset()
@@ -2727,7 +2715,8 @@ bool PresetCollection::delete_current_preset()
     //if (! selected.is_external && ! selected.is_system) {
     if (! selected.is_system) {
         //BBS Erase the preset file.
-        selected.remove_files();
+        if (!selected.remove_files())
+            return false;
     }
     //BBS: add lock logic for sync preset in background
     lock();
@@ -2755,7 +2744,8 @@ bool PresetCollection::delete_preset(const std::string& name)
     //BBS: add project embedded preset logic and refine is_external
     //if (!preset.is_external && !preset.is_system) {
     if (! preset.is_system) {
-        preset.remove_files();
+        if (!preset.remove_files())
+            return false;
     }
     //BBS: add lock logic for sync preset in background
     lock();
@@ -4110,6 +4100,10 @@ bool PhysicalPrinterCollection::delete_printer(const std::string& name)
     auto it = this->find_printer_internal(name);
     if (it == m_printers.end())
         return false;
+    if (!InstanceLock::allows_saves()) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": data directory is read-only; not deleting " << name;
+        return false;
+    }
 
     const PhysicalPrinter& printer = *it;
     // Erase the preset file.
@@ -4122,6 +4116,10 @@ bool PhysicalPrinterCollection::delete_selected_printer()
 {
     if (!has_selection())
         return false;
+    if (!InstanceLock::allows_saves()) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": data directory is read-only; not deleting the selected printer";
+        return false;
+    }
     const PhysicalPrinter& printer = this->get_selected_printer();
 
     // Erase the preset file.

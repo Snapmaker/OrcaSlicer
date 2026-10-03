@@ -3078,7 +3078,14 @@ wxWindow *CreatePrinterPresetDialog::create_page2_dialog_buttons(wxWindow *paren
         catch (...) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " bisic info is not rewritten, may be printer_model, printer_variant, or nozzle_diameter";
         }
-        preset_bundle->printers.save_current_preset(printer_preset_name, true, false, m_printer_preset);
+        if (!preset_bundle->printers.save_current_preset(printer_preset_name, true, false, m_printer_preset)) {
+            MessageDialog dlg(this,
+                              _L("Failed to save the printer preset."),
+                              wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Info"),
+                              wxOK | wxICON_ERROR | wxCENTRE);
+            dlg.ShowModal();
+            return;
+        }
         preset_bundle->update_compatible(PresetSelectCompatibleType::Always);
         EndModal(wxID_OK);
         
@@ -3695,7 +3702,8 @@ bool ExportConfigsDialog::earse_preset_fields_for_safe(Preset *preset)
     config.erase("printhost_password");
     config.erase("printhost_port");
 
-    preset->save(nullptr);
+    if (!preset->save(nullptr))
+        return false;
     return true; 
 }
 

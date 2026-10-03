@@ -809,21 +809,41 @@ TEST_CASE("InstanceLock is released when the holder process is killed", "[utils]
 }
 #endif
 
+TEST_CASE("atomic temp names require the writer format, a live pid and a 9-digit launch_ns", "[utils][atomic][InstanceLock]")
+{
+    unsigned pid = 0;
+    REQUIRE(is_atomic_write_temp_name("preset.json.12.1000000000.2.0.tmp", &pid));
+    REQUIRE(pid == 12);
+    // Fewer than four trailing decimal fields (M_PARSE_LOOSE).
+    REQUIRE_FALSE(is_atomic_write_temp_name("1.1000000000.2.0.tmp"));
+    REQUIRE_FALSE(is_atomic_write_temp_name("preset.json.12.1000000000.2.tmp"));
+    // Date stamps look like four decimals but launch_ns is only 4 digits.
+    REQUIRE_FALSE(is_atomic_write_temp_name("photo.1234.2024.06.01.tmp"));
+    REQUIRE_FALSE(is_atomic_write_temp_name("x.12.1.2.0.tmp"));
+    REQUIRE_FALSE(is_atomic_write_temp_name("x.0.1000000000.2.0.tmp"));
+    REQUIRE_FALSE(is_atomic_write_temp_name("x.99999999999999999999.1000000000.2.0.tmp"));
+    REQUIRE_FALSE(is_atomic_write_temp_name("notes.tmp"));
+    REQUIRE_FALSE(is_atomic_write_temp_name("preset.json.bak"));
+}
+
 TEST_CASE("the stale temp scavenger removes only matching leftovers while the lock is held", "[utils][atomic][InstanceLock]")
 {
     ScopedTempDir dir;
-    const auto plant = [&](const std::string &name) {
-        const boost::filesystem::path p = dir.path / name;
+    const auto plant = [&](const boost::filesystem::path &parent, const std::string &name) {
+        const boost::filesystem::path p = parent / name;
         boost::nowide::ofstream       out(p.string());
         out << "x";
         return p;
     };
 
-    const boost::filesystem::path bak     = plant("preset.json.bak");
-    const boost::filesystem::path foreign = plant("notes.tmp");
-    const boost::filesystem::path user    = plant("user.json");
-    const boost::filesystem::path live    = plant(std::string("live.json.") + std::to_string(get_current_pid()) +
-                                               ".1.2.0.tmp");
+    const boost::filesystem::path bak     = plant(dir.path, "preset.json.bak");
+    const boost::filesystem::path foreign = plant(dir.path, "notes.tmp");
+    const boost::filesystem::path user    = plant(dir.path, "user.json");
+    const boost::filesystem::path photo   = plant(dir.path, "photo." + std::to_string(get_current_pid()) + ".2024.06.01.tmp");
+    const boost::filesystem::path pid0    = plant(dir.path, "x.0.1000000000.2.0.tmp");
+    const boost::filesystem::path overflow = plant(dir.path, "x.99999999999999999999.1000000000.2.0.tmp");
+    const boost::filesystem::path live    = plant(dir.path, std::string("live.json.") + std::to_string(get_current_pid()) +
+                                               ".1000000000.2.0.tmp");
 #ifndef _WIN32
     int fds[2];
     REQUIRE(pipe(fds) == 0);
@@ -839,16 +859,26 @@ TEST_CASE("the stale temp scavenger removes only matching leftovers while the lo
     close(fds[0]);
     int st = 0;
     REQUIRE(waitpid(dead, &st, 0) == dead);
-    const boost::filesystem::path stale = plant(std::string("stale.json.") + std::to_string(dead) + ".1.2.0.tmp");
+    const std::string             stale_name = std::string("stale.json.") + std::to_string(dead) + ".1000000000.2.0.tmp";
+    const boost::filesystem::path stale      = plant(dir.path, stale_name);
+    ScopedTempDir                 outside;
+    const boost::filesystem::path outside_stale = plant(outside.path, stale_name);
+    const boost::filesystem::path link_dir      = dir.path / "outside_link";
+    boost::system::error_code     link_ec;
+    boost::filesystem::create_directory_symlink(outside.path, link_dir, link_ec);
+    REQUIRE_FALSE(link_ec);
 #else
     // A pid that is not this process and is almost certainly not running.
-    const boost::filesystem::path stale = plant("stale.json.4294967294.1.2.0.tmp");
+    const boost::filesystem::path stale = plant(dir.path, "stale.json.4294967294.1000000000.2.0.tmp");
 #endif
 
     REQUIRE(is_atomic_write_temp_name(stale.filename().string()));
     REQUIRE(is_atomic_write_temp_name(live.filename().string()));
     REQUIRE_FALSE(is_atomic_write_temp_name(bak.filename().string()));
     REQUIRE_FALSE(is_atomic_write_temp_name(foreign.filename().string()));
+    REQUIRE_FALSE(is_atomic_write_temp_name(photo.filename().string()));
+    REQUIRE_FALSE(is_atomic_write_temp_name(pid0.filename().string()));
+    REQUIRE_FALSE(is_atomic_write_temp_name(overflow.filename().string()));
 
     REQUIRE(scavenge_stale_atomic_temps({dir.path.string()}, false) == 0);
     REQUIRE(boost::filesystem::exists(stale));
@@ -856,6 +886,9 @@ TEST_CASE("the stale temp scavenger removes only matching leftovers while the lo
     REQUIRE(boost::filesystem::exists(bak));
     REQUIRE(boost::filesystem::exists(foreign));
     REQUIRE(boost::filesystem::exists(user));
+    REQUIRE(boost::filesystem::exists(photo));
+    REQUIRE(boost::filesystem::exists(pid0));
+    REQUIRE(boost::filesystem::exists(overflow));
 
     REQUIRE(scavenge_stale_atomic_temps({dir.path.string()}, true) == 1);
     REQUIRE_FALSE(boost::filesystem::exists(stale));
@@ -863,6 +896,13 @@ TEST_CASE("the stale temp scavenger removes only matching leftovers while the lo
     REQUIRE(boost::filesystem::exists(bak));
     REQUIRE(boost::filesystem::exists(foreign));
     REQUIRE(boost::filesystem::exists(user));
+    REQUIRE(boost::filesystem::exists(photo));
+    REQUIRE(boost::filesystem::exists(pid0));
+    REQUIRE(boost::filesystem::exists(overflow));
+#ifndef _WIN32
+    REQUIRE(boost::filesystem::exists(outside_stale));
+    REQUIRE(boost::filesystem::is_symlink(link_dir));
+#endif
 }
 
 #ifndef _WIN32
@@ -935,7 +975,7 @@ TEST_CASE("AppConfig save is refused while the data-dir InstanceLock is read-onl
         explicit ScopedDataDir(const std::string &next) : prev(data_dir()) { set_data_dir(next); }
         ~ScopedDataDir()
         {
-            InstanceLock::release_data_dir();
+            InstanceLock::try_acquire_data_dir("", false);
             set_data_dir(prev);
         }
     } data{dir.path.string()};
@@ -953,6 +993,43 @@ TEST_CASE("AppConfig save is refused while the data-dir InstanceLock is read-onl
     REQUIRE(cfg.dirty());
     REQUIRE_FALSE(cfg.last_save_error().empty());
 
+    Preset preset(Preset::TYPE_PRINT, "n");
+    preset.file = (dir.path / "n.json").string();
+    REQUIRE_FALSE(preset.save(nullptr));
+
+    DynamicPrintConfig printer_cfg;
+    printer_cfg.set_key_value("preset_names", new ConfigOptionStrings());
+    PhysicalPrinter printer("p", printer_cfg);
+    printer.file = (dir.path / "p.json").string();
+    REQUIRE_FALSE(printer.save(nullptr));
+
     InstanceLock::release_data_dir();
+    REQUIRE_FALSE(InstanceLock::allows_saves());
+    InstanceLock::try_acquire_data_dir("", false);
+    REQUIRE(InstanceLock::allows_saves());
+}
+
+TEST_CASE("allows_saves re-acquires after the holder releases, and stays false after release_data_dir", "[utils][atomic][InstanceLock]")
+{
+    ScopedTempDir dir;
+    struct Reset
+    {
+        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
+    } reset;
+
+    {
+        InstanceLock holder(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
+        REQUIRE(holder.locked());
+        REQUIRE_FALSE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(50)));
+        REQUIRE(InstanceLock::is_read_only());
+        REQUIRE_FALSE(InstanceLock::allows_saves());
+    }
+    REQUIRE(InstanceLock::allows_saves());
+    REQUIRE(InstanceLock::holds_data_dir());
+
+    InstanceLock::release_data_dir();
+    REQUIRE_FALSE(InstanceLock::allows_saves());
+    REQUIRE_FALSE(InstanceLock::holds_data_dir());
+    InstanceLock::try_acquire_data_dir("", false);
     REQUIRE(InstanceLock::allows_saves());
 }

@@ -3239,6 +3239,8 @@ void GUI_App::init_single_instance_checker(const std::string &name, const std::s
     m_single_instance_checker = std::make_unique<wxSingleInstanceChecker>(boost::nowide::widen(name), boost::nowide::widen(path));
 }
 
+bool GUI_App::is_data_dir_read_only() const { return !InstanceLock::allows_saves(); }
+
 bool GUI_App::OnInit()
 {
     try {
@@ -3592,24 +3594,23 @@ bool GUI_App::on_init_inner()
     profiler.mark("preset_bundle->setup_directories");
 
     // After instance_check() has already decided this process stays (hand-off
-    // never reaches here). Hidden / hub instances do not claim the data-dir
-    // lock, matching claims_instance_lock, so they cannot starve a visible one.
-    if (!m_hub_managed) {
-        if (InstanceLock::try_acquire_data_dir(data_dir())) {
-            const std::vector<std::string> sweep = {
-                data_dir(),
-                data_dir() + "/" + PRESET_USER_DIR,
-            };
-            const size_t n = scavenge_stale_atomic_temps(sweep, true);
+    // never reaches here). Hidden / hub instances take the lock non-blocking so
+    // they cannot save alongside a holder. A visible instance waits ~1.5 s for
+    // the previous process to finish OnExit teardown.
+    {
+        const auto timeout = m_hub_managed ? std::chrono::milliseconds(0) : InstanceLock::default_timeout;
+        if (InstanceLock::try_acquire_data_dir(data_dir(), true, timeout)) {
+            const size_t n = scavenge_stale_atomic_temps({data_dir()}, true);
             if (n > 0)
                 BOOST_LOG_TRIVIAL(info) << "InstanceLock: scavenged " << n << " stale atomic temp(s)";
+        } else if (InstanceLock::lock_unsupported()) {
+            m_instance_lock_notice =
+                _u8L("This filesystem does not support instance locks; saves are allowed but not exclusive.");
         } else {
-            m_data_dir_read_only = true;
-            MessageDialog dlg(nullptr,
-                              _L("Another EdgeSlicer instance is already using this data directory. "
-                                 "This instance will not save application settings, presets or printers."),
-                              _L("EdgeSlicer"), wxOK | wxICON_WARNING);
-            dlg.ShowModal();
+            m_data_dir_read_only   = true;
+            m_instance_lock_notice =
+                _u8L("Another EdgeSlicer instance is already using this data directory. "
+                     "This instance will not save application settings, presets or printers until that instance exits.");
         }
     }
 
@@ -4044,6 +4045,14 @@ bool GUI_App::on_init_inner()
     SetTopWindow(mainframe);
 
     plater_->init_notification_manager();
+    if (!m_instance_lock_notice.empty()) {
+        if (NotificationManager *nm = notification_manager())
+            nm->push_notification(NotificationType::CustomNotification,
+                                  NotificationManager::NotificationLevel::WarningNotificationLevel,
+                                  m_instance_lock_notice);
+        else
+            BOOST_LOG_TRIVIAL(warning) << m_instance_lock_notice;
+    }
 
     m_printhost_job_queue.reset(new PrintHostJobQueue(mainframe->printhost_queue_dlg()));
 
@@ -4134,15 +4143,8 @@ bool GUI_App::on_init_inner()
         }
 
         if (m_post_initialized && app_config->dirty() && app_config->save_due()) {
-            if (!app_config->save() && !m_appconfig_save_error_shown) {
-                m_appconfig_save_error_shown = true;
-                const std::string &err = app_config->last_save_error();
-                MessageDialog dlg(mainframe,
-                                  from_u8(std::string(_u8L("Failed to save application settings.")) +
-                                          (err.empty() ? std::string() : ("\n" + err))),
-                                  _L("EdgeSlicer"), wxOK | wxICON_ERROR);
-                dlg.ShowModal();
-            }
+            if (!app_config->save())
+                BOOST_LOG_TRIVIAL(error) << "Failed to save application settings: " << app_config->last_save_error();
         }
 
     });

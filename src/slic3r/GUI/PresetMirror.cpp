@@ -2,6 +2,7 @@
 #include "PresetMirrorCore.hpp"
 
 #include "libslic3r/libslic3r.h"   // Slic3r::data_dir()
+#include "libslic3r/InstanceLock.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
@@ -190,6 +191,10 @@ mirror::SourceListing list_source(const bfs::path& src_uid)
 
 int mirror_bambu_user_presets(const std::string& logged_in_uid)
 {
+    if (!InstanceLock::allows_saves()) {
+        BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] data directory is read-only; skipping Bambu user-preset mirror";
+        return 0;
+    }
     try {
         bfs::path src_uid = find_bambu_user_dir(logged_in_uid);
         if (src_uid.empty()) { BOOST_LOG_TRIVIAL(info) << "[preset-mirror] no Bambu Studio user dir found; skipping"; return 0; }
@@ -300,6 +305,10 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
 
 int repull_mirrored_presets()
 {
+    if (!InstanceLock::allows_saves()) {
+        BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] data directory is read-only; skipping re-pull";
+        return 0;
+    }
     // Recovery affordance: clear every "deleted" flag so the next sync re-pulls anything that was
     // removed from this slicer but that Bambu Studio still has.
     try {

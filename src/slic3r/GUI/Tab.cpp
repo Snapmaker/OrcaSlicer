@@ -7375,6 +7375,9 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
                                  ? _L("Another EdgeSlicer instance is using this data directory; presets cannot be saved.")
                                  : _L("Failed to save the preset. The file was left unchanged.");
         MessageDialog(m_parent, why, _L("Save preset"), wxOK | wxICON_ERROR).ShowModal();
+        update_tab_ui();
+        on_presets_changed();
+        update_changed_ui();
         return;
     }
 
@@ -7397,7 +7400,16 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
             new_preset->user_id = wxGetApp().getAgent()->get_user_id();
         BOOST_LOG_TRIVIAL(info) << "sync_preset: create preset = " << new_preset->name;
     }
-    new_preset->save_info();
+    if (!new_preset->save_info()) {
+        const wxString why = wxGetApp().is_data_dir_read_only()
+                                 ? _L("Another EdgeSlicer instance is using this data directory; presets cannot be saved.")
+                                 : _L("Failed to save the preset info file.");
+        MessageDialog(m_parent, why, _L("Save preset"), wxOK | wxICON_ERROR).ShowModal();
+        update_tab_ui();
+        on_presets_changed();
+        update_changed_ui();
+        return;
+    }
 
     // Mark the print & filament enabled if they are compatible with the currently selected preset.
     // If saving the preset changes compatibility with other presets, keep the now incompatible dependent presets selected, however with a "red flag" icon showing that they are no more compatible.

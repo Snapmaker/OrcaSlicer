@@ -266,7 +266,7 @@ public:
     static Preset::Type get_type_from_string(std::string type_str);
     void                load_info(const std::string& file);
     bool                save_info(std::string file = "");
-    void                remove_files();
+    bool                remove_files();
 
     //BBS: add logic for only difference save
     //if parent_config is null, save all keys, otherwise, only save difference

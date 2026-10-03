@@ -316,7 +316,7 @@ private:
     //BBS
     bool m_is_closing {false};
     bool m_data_dir_read_only {false};
-    bool m_appconfig_save_error_shown {false};
+    std::string m_instance_lock_notice;
     // Ultra: this instance was started hidden (--hidden / SNORCA_HIDDEN / app_config
     // "start_hidden"). It has no window until the hub shows it, closing hides it again,
     // and only an explicit quit (tray, hub page, POST /api/quit, File > Quit) ends it.
@@ -461,7 +461,7 @@ private:
     bool is_gcode_viewer() const { return m_app_mode == EAppMode::GCodeViewer; }
     bool is_recreating_gui() const { return m_is_recreating_gui; }
     bool is_hub_managed() const { return m_hub_managed; }
-    bool is_data_dir_read_only() const { return m_data_dir_read_only; }
+    bool is_data_dir_read_only() const;
     // Ultra: this instance's loopback API + the hub handshake (was the Stream tab's job).
     void start_remote_access();
     bool flutter_web_config_update_dlg_open() const

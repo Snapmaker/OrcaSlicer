@@ -966,8 +966,10 @@ bool AppConfig::save()
         m_last_save_error = InstanceLock::last_error().empty()
                                 ? std::string("data directory is read-only (another instance holds the lock)")
                                 : InstanceLock::last_error();
-        BOOST_LOG_TRIVIAL(error) << "AppConfig::save: " << m_last_save_error;
-        m_retry_save_at = std::chrono::steady_clock::now() + SAVE_RETRY_BACKOFF;
+        const auto now = std::chrono::steady_clock::now();
+        if (m_retry_save_at == std::chrono::steady_clock::time_point{} || now >= m_retry_save_at)
+            BOOST_LOG_TRIVIAL(error) << "AppConfig::save: " << m_last_save_error;
+        m_retry_save_at = now + SAVE_RETRY_BACKOFF;
         return false;
     }
 
@@ -1289,8 +1291,10 @@ bool AppConfig::save()
         m_last_save_error = InstanceLock::last_error().empty()
                                 ? std::string("data directory is read-only (another instance holds the lock)")
                                 : InstanceLock::last_error();
-        BOOST_LOG_TRIVIAL(error) << "AppConfig::save: " << m_last_save_error;
-        m_retry_save_at = std::chrono::steady_clock::now() + SAVE_RETRY_BACKOFF;
+        const auto now = std::chrono::steady_clock::now();
+        if (m_retry_save_at == std::chrono::steady_clock::time_point{} || now >= m_retry_save_at)
+            BOOST_LOG_TRIVIAL(error) << "AppConfig::save: " << m_last_save_error;
+        m_retry_save_at = now + SAVE_RETRY_BACKOFF;
         return false;
     }
 

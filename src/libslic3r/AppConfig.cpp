@@ -1117,7 +1117,7 @@ void AppConfig::save()
     if (!write_file_atomically(path, body.str(), &err)) {
         BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path << ": " << err
                                  << "; aborting attempt to overwrite original configuration";
-        m_retry_save_at = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        m_retry_save_at = std::chrono::steady_clock::now() + SAVE_RETRY_BACKOFF;
         return;
     }
 
@@ -1321,7 +1321,7 @@ void AppConfig::save()
     if (!write_file_atomically(path, config_str, &err)) {
         BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path << ": " << err
                                  << "; aborting attempt to overwrite original configuration";
-        m_retry_save_at = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        m_retry_save_at = std::chrono::steady_clock::now() + SAVE_RETRY_BACKOFF;
         return;
     }
 

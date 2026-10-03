@@ -6,6 +6,7 @@
 #include <test_utils.hpp>
 
 #include <boost/filesystem.hpp>
+#include <boost/nowide/cstdio.hpp>
 
 #include <cerrno>
 #include <fstream>
@@ -232,6 +233,120 @@ TEST_CASE("posix remove-then-rename fallback replaces after a refused first rena
     REQUIRE(skip.value() == ENOENT);
     REQUIRE(slurp(keep_from) == "left");
     REQUIRE(slurp(keep_to) == "right");
+}
+
+namespace {
+
+struct ScopedRenameHook
+{
+    explicit ScopedRenameHook(AtomicPosixRenameFn fn) { set_atomic_posix_rename_hook(fn); }
+    ~ScopedRenameHook() { set_atomic_posix_rename_hook(nullptr); }
+};
+
+int refuse_existing_dest(const char *from, const char *to)
+{
+    boost::system::error_code bec;
+    if (boost::filesystem::is_regular_file(to, bec)) {
+        errno = EPERM;
+        return -1;
+    }
+    return boost::nowide::rename(from, to);
+}
+
+int fail_tmp_renames(const char *from, const char *to)
+{
+    const std::string f(from);
+    if (f.size() >= 4 && f.compare(f.size() - 4, 4, ".tmp") == 0) {
+        errno = EPERM;
+        return -1;
+    }
+    return boost::nowide::rename(from, to);
+}
+
+bool dir_holds_payload(const boost::filesystem::path &dir, const std::string &payload)
+{
+    for (auto &entry : boost::filesystem::directory_iterator(dir)) {
+        if (!boost::filesystem::is_regular_file(entry))
+            continue;
+        if (slurp(entry.path()) == payload)
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("posix fallback keeps the target when the source is missing", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path from = dir.path / "missing.json";
+    const boost::filesystem::path to   = dir.path / "to.json";
+    {
+        std::ofstream out_to(to.string());
+        out_to << "old-bytes";
+    }
+
+    PosixRenameFallbackFate fate = PosixRenameFallbackFate::NotAttempted;
+    const std::error_code   ec   = posix_rename_retry_after_replace_refused(from.string(), to.string(), EEXIST, &fate);
+    REQUIRE(ec);
+    REQUIRE(ec.value() == ENOENT);
+    REQUIRE(fate == PosixRenameFallbackFate::TargetRestored);
+    REQUIRE(boost::filesystem::exists(to));
+    REQUIRE(slurp(to) == "old-bytes");
+}
+
+TEST_CASE("posix fallback keeps old or new contents when the second rename fails", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path target = dir.path / "preset.json";
+    REQUIRE(write_file_atomically(target.string(), "old-bytes"));
+
+    ScopedRenameHook hook(fail_tmp_renames);
+    std::string      err;
+    REQUIRE_FALSE(write_file_atomically(target.string(), "new-bytes", &err));
+    REQUIRE_FALSE(err.empty());
+    REQUIRE(err.find("target intact") != std::string::npos);
+    REQUIRE((dir_holds_payload(dir.path, "old-bytes") || dir_holds_payload(dir.path, "new-bytes")));
+    REQUIRE(boost::filesystem::exists(target));
+    REQUIRE(slurp(target) == "old-bytes");
+}
+
+TEST_CASE("rename_file and write_file_atomically succeed when replace is refused", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    ScopedRenameHook              hook(refuse_existing_dest);
+
+    const boost::filesystem::path from = dir.path / "from.json";
+    const boost::filesystem::path to   = dir.path / "to.json";
+    {
+        std::ofstream out_from(from.string());
+        out_from << "new-bytes";
+        std::ofstream out_to(to.string());
+        out_to << "old-bytes";
+    }
+    const std::error_code ec = rename_file(from.string(), to.string());
+    REQUIRE_FALSE(ec);
+    REQUIRE_FALSE(boost::filesystem::exists(from));
+    REQUIRE(slurp(to) == "new-bytes");
+
+    const boost::filesystem::path target = dir.path / "preset.json";
+    REQUIRE(write_file_atomically(target.string(), "old-bytes"));
+    REQUIRE(write_file_atomically(target.string(), "new-bytes"));
+    REQUIRE(slurp(target) == "new-bytes");
+}
+
+TEST_CASE("write_file_atomically fails a dangling symlink instead of replacing it", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path missing = dir.path / "gone.json";
+    const boost::filesystem::path link    = dir.path / "link.json";
+    boost::filesystem::create_symlink(missing, link);
+
+    std::string err;
+    REQUIRE_FALSE(write_file_atomically(link.string(), "payload", &err));
+    REQUIRE(err.find("symlink") != std::string::npos);
+    REQUIRE(boost::filesystem::is_symlink(link));
+    REQUIRE_FALSE(boost::filesystem::exists(missing));
 }
 
 TEST_CASE("write_file_atomically through a symlink keeps the link and updates the target", "[utils][atomic]")

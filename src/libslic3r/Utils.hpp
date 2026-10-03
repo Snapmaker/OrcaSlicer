@@ -204,19 +204,41 @@ extern std::string normalize_utf8_nfc(const char *src);
 // for a short while, so the file may not be movable. Retry while we see recoverable errors.
 extern std::error_code rename_file(const std::string &from, const std::string &to);
 #ifndef _WIN32
-// True for a first-rename errno that is worth remove-then-rename (sshfs / gvfs / MTP / SMB).
-// ENOENT / EXDEV / ENOTDIR / EISDIR cannot be helped by removing the target.
+// True for a first-rename errno that is worth the bak-then-rename fallback
+// (sshfs / gvfs / MTP / SMB). ENOENT / EXDEV / ENOTDIR / EISDIR cannot be
+// helped by moving the target aside.
 extern bool posix_rename_worth_retrying(int err);
-// After a replace-refused first rename, remove `to` and retry. Used by rename_file
-// and by tests that inject a first-rename errno.
-extern std::error_code posix_rename_retry_after_replace_refused(const std::string &from, const std::string &to, int first_errno);
+
+enum class PosixRenameFallbackFate {
+	NotAttempted,
+	Replaced,
+	TargetRestored,
+	TargetRemoved
+};
+
+// After a replace-refused first rename, move `to` to `to.atomic.bak`, rename
+// `from` into place, then delete the bak. On a failed second rename the bak is
+// restored when possible; the second errno is returned (not first_errno).
+// `fate` reports whether the target was replaced, restored, or left only in the bak.
+extern std::error_code posix_rename_retry_after_replace_refused(const std::string &from,
+                                                                const std::string &to,
+                                                                int                first_errno,
+                                                                PosixRenameFallbackFate *fate = nullptr);
+
+// Test seam: when set, every POSIX rename in rename_file / the fallback goes
+// through this hook (return 0 or -1+errno). nullptr restores libc rename.
+using AtomicPosixRenameFn = int (*)(const char *from, const char *to);
+extern void set_atomic_posix_rename_hook(AtomicPosixRenameFn hook);
 #endif
 // Unique sibling used by write_file_atomically: <path>.<pid>.<counter>.tmp.
 // consume=true advances the process-wide counter (same generator the helper uses);
 // consume=false peeks so a test can plant a blocker on the next temporary.
 extern std::string atomic_write_temp_path(const std::string &path, bool consume = true);
 // Write `data` through that temporary, flush/fsync, then rename over `path`.
-// On failure the temporary is removed and an existing target is left untouched.
+// On a failed replace the temporary is removed only if the target is still
+// there. If the target is already gone the temporary is kept so the new
+// contents survive. A dangling or looping symlink is a hard error (the link
+// is not replaced with a regular file).
 // Text mode unless `binary` (Windows CRLF translation matches the ofstreams this replaces).
 // Returns true on success. If `err` is non-null it receives a message on failure.
 extern bool write_file_atomically(const std::string &path, const std::string &data, std::string *err = nullptr, bool binary = false);

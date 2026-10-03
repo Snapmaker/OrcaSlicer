@@ -117,6 +117,8 @@ public:
 	// Does this config need to be saved?
 	bool 				dirty() const { return m_dirty; }
 
+	static constexpr std::chrono::seconds SAVE_RETRY_BACKOFF{10};
+
 	// Idle path only: a lasting write failure must not retry write+fsync on
 	// every idle event. Explicit save() always attempts.
 	bool				save_due() const

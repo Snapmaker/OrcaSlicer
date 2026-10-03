@@ -8542,7 +8542,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         }
         const std::string& temp_path = model.get_backup_path();
         std::string temp_file = temp_path + std::string("/") + "_temp_1.config";
-        config.save_to_json(temp_file, std::string("project_settings"), std::string("project"), std::string(Snapmaker_VERSION));
+        if (!config.save_to_json(temp_file, std::string("project_settings"), std::string("project"), std::string(Snapmaker_VERSION))) {
+            add_error("Unable to write project config file");
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << " failed to write " << temp_file;
+            return false;
+        }
         return _add_file_to_archive(archive, BBS_PROJECT_CONFIG_FILE, temp_file);
     }
 
@@ -8569,8 +8573,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                                                                                              BambuExport::Scope::Printer;
                     const BambuExport::Config converted = BambuExport::convert(config, m_bambu_ctx, scope, m_bambu_report, "preset " + preset->name);
                     save_string_file(preset->file, BambuExport::to_json(converted, preset->name, "project", BambuExport::export_version()));
-                } else
-                config.save_to_json(preset->file, preset->name, std::string("project"), preset->version.to_string());
+                } else if (!config.save_to_json(preset->file, preset->name, std::string("project"), preset->version.to_string())) {
+                    add_error("Unable to write project embedded preset " + preset->name);
+                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << " failed to write " << preset->file;
+                    return false;
+                }
 
                 std::string dest_file;
                 if (preset->type == Preset::TYPE_PRINT) {

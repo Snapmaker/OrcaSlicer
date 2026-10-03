@@ -5642,8 +5642,11 @@ int CLI::run(int argc, char **argv)
             const std::string &settings_file = m_config.opt_string(opt_key);
             if (settings_file == "-")
                 m_print_config.save_to_json(boost::nowide::cout, "project_settings", "project", Snapmaker_VERSION, /*replace_invalid_utf8=*/true);
-            else
-                m_print_config.save_to_json(settings_file, std::string("project_settings"), std::string("project"), std::string(Snapmaker_VERSION));
+            else if (!m_print_config.save_to_json(settings_file, std::string("project_settings"), std::string("project"), std::string(Snapmaker_VERSION))) {
+                BOOST_LOG_TRIVIAL(error) << "Failed to export settings to " << settings_file;
+                record_exit_reson(outfile_dir, CLI_EXPORT_CACHE_WRITE_FAILED, 0, "Failed to export settings.", sliced_info);
+                flush_and_exit(CLI_EXPORT_CACHE_WRITE_FAILED);
+            }
         } else if (opt_key == "info") {
             // --info works on unrepaired model
             for (Model &model : m_models) {

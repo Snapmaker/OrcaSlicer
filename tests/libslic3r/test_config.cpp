@@ -1356,7 +1356,8 @@ std::vector<std::string> differing_keys(const FullPrintConfig &a, const FullPrin
 }
 
 // Applies source to one full config member by member and to another key by key, as apply() did before
-// static configs could apply themselves.
+// static configs could apply themselves. Matching the two paths is not enough (both could be no-ops).
+// The real guard that apply copied something is CHECK_FALSE against a default-constructed dest.
 template<class Source> void check_member_apply_matches_key_apply(const Source &source)
 {
     FullPrintConfig by_member;
@@ -1406,20 +1407,16 @@ TEST_CASE("A static config applies itself onto a config of its type as a lookup 
         REQUIRE(gcode.apply_to(full));
         check_member_apply_matches_key_apply(gcode);
     }
-    SECTION("mutating one applied option makes the two paths differ")
+    SECTION("apply_to writes a same-type dest member that started at its default")
     {
-        PrintRegionConfig region;
-        region.sparse_infill_pattern.value = ipGyroid;
-        region.outer_wall_speed.values     = {37.};
-        FullPrintConfig by_member;
-        FullPrintConfig by_key;
-        by_member.apply(region);
-        by_key.apply_only(region, region.keys());
-        REQUIRE(differing_keys(by_member, by_key).empty());
-        by_member.sparse_infill_density.value = by_member.sparse_infill_density.value + 11.;
-        const auto diffs = differing_keys(by_member, by_key);
-        REQUIRE_FALSE(diffs.empty());
-        REQUIRE(std::find(diffs.begin(), diffs.end(), "sparse_infill_density") != diffs.end());
+        // A post-apply mutation of dest only proves differing_keys works. This requires apply_to
+        // itself: dest starts at default, apply_to must write the source value onto it.
+        PrintRegionConfig source;
+        source.sparse_infill_density.value = 35.;
+        PrintRegionConfig dest;
+        REQUIRE(source.apply_to(dest));
+        REQUIRE(dest.sparse_infill_density.value == 35.);
+        REQUIRE(dest.sparse_infill_density.value != PrintRegionConfig().sparse_infill_density.value);
     }
 }
 

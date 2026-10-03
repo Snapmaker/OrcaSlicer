@@ -1478,6 +1478,24 @@ ModelVolume* ModelObject::add_volume_with_shared_mesh(const ModelVolume &other, 
     return v;
 }
 
+ModelVolume* ModelObject::replace_volume_with_object_mesh(size_t src_idx, TriangleMesh &&mesh_in_object_coords, const std::string &name_suffix)
+{
+    assert(src_idx < this->volumes.size());
+    const ModelVolume *old_volume = this->volumes[src_idx];
+    ModelVolume       *new_volume = this->add_volume(std::move(mesh_in_object_coords));
+    new_volume->name = old_volume->name + " - " + name_suffix;
+    new_volume->set_new_unique_id();
+    new_volume->config.apply(old_volume->config);
+    new_volume->set_type(old_volume->type());
+    new_volume->set_material_id(old_volume->material_id());
+    new_volume->set_offset(old_volume->get_transformation().get_offset());
+
+    // The new volume takes the source's slot; the source is deleted.
+    std::swap(this->volumes[src_idx], this->volumes.back());
+    this->delete_volume(this->volumes.size() - 1);
+    return new_volume;
+}
+
 void ModelObject::delete_volume(size_t idx)
 {
     ModelVolumePtrs::iterator i = this->volumes.begin() + idx;

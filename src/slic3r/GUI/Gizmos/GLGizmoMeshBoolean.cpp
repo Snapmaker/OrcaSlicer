@@ -475,11 +475,6 @@ void GLGizmoMeshBoolean::generate_new_volume(bool delete_input, const TriangleMe
 
     ModelObject* curr_model_object = m_c->selection_info()->model_object();
 
-    // generate new volume
-    ModelVolume* new_volume = curr_model_object->add_volume(std::move(mesh_result));
-
-    // assign to new_volume from old_volume
-    ModelVolume* old_volume = m_src.mv;
     std::string suffix;
     switch (m_operation_mode)
     {
@@ -493,21 +488,8 @@ void GLGizmoMeshBoolean::generate_new_volume(bool delete_input, const TriangleMe
         suffix = "intersection";
         break;
     }
-    new_volume->name = old_volume->name + " - " + suffix;
-    new_volume->set_new_unique_id();
-    new_volume->config.apply(old_volume->config);
-    new_volume->set_type(old_volume->type());
-    new_volume->set_material_id(old_volume->material_id());
-    new_volume->set_offset(old_volume->get_transformation().get_offset());
-    //Vec3d translate_z = { 0,0, (new_volume->source.mesh_offset - old_volume->source.mesh_offset).z() };
-    //new_volume->translate(new_volume->get_transformation().get_matrix_no_offset() * translate_z);
-    //new_volume->supported_facets.assign(old_volume->supported_facets);
-    //new_volume->seam_facets.assign(old_volume->seam_facets);
-    //new_volume->mmu_segmentation_facets.assign(old_volume->mmu_segmentation_facets);
-
-    // delete old_volume
-    std::swap(curr_model_object->volumes[m_src.volume_idx], curr_model_object->volumes.back());
-    curr_model_object->delete_volume(curr_model_object->volumes.size() - 1);
+    // The new volume replaces the source volume in its slot (libslic3r, unit-tested).
+    ModelVolume* new_volume = curr_model_object->replace_volume_with_object_mesh(size_t(m_src.volume_idx), TriangleMesh(mesh_result), suffix);
 
     if (delete_input) {
         std::vector<ItemForDelete> items;

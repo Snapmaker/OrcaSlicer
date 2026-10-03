@@ -37,6 +37,7 @@
 #include "format.hpp"
 #include "DailyTips.hpp"
 #include "PlateFocusHide.hpp"
+#include "FrameProfiler.hpp"
 
 #include "slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
@@ -1573,6 +1574,8 @@ GLCanvas3D::GLCanvas3D(wxGLCanvas* canvas, Bed3D &bed)
 
     m_selection.set_volumes(&m_volumes.volumes);
 
+    m_frame_profiler = std::make_unique<FrameProfiler>();
+
     m_assembly_view_desc["object_selection_caption"] = _L("Left mouse button");
     m_assembly_view_desc["object_selection"]         = _L("object selection");
     // FIXME: maybe should be using GUI::shortkey_alt_prefix() or equivalent?
@@ -1597,8 +1600,12 @@ GLCanvas3D::~GLCanvas3D()
         m_selectionHighlightResources.glowBlurPingPongTexture != 0 ||
         m_selectionHighlightResources.glowFramebuffer != 0 ||
         m_selectionHighlightResources.glowTexture != 0;
-    if (hasSelectionHighlightResources && m_canvas != nullptr && _set_current())
-        ReleaseSelectionHighlightResources();
+    if ((hasSelectionHighlightResources || m_frame_profiler) && m_canvas != nullptr && _set_current()) {
+        if (hasSelectionHighlightResources)
+            ReleaseSelectionHighlightResources();
+        if (m_frame_profiler)
+            m_frame_profiler->reset();
+    }
 
     reset_volumes(ResetVolumesMode::CanvasDestruction);
 
@@ -3367,6 +3374,18 @@ void GLCanvas3D::render(bool only_init)
 
     const ESelectionHighlightMode highlightMode = ResolveSelectionHighlightMode();
 
+    // Per-pass timings live in the existing Render statistics window (D2).
+    // Hidden (the default) is a bool check + no-op Scope ctors — no queries, no glFlush.
+    const bool show_render_stats = wxGetApp().plater()->is_render_statistic_dialog_visible();
+    if (m_frame_profiler_armed && !show_render_stats) {
+        m_frame_profiler->reset();
+        m_frame_profiler_armed = false;
+    }
+    if (show_render_stats) {
+        m_frame_profiler_armed = true;
+        m_frame_profiler->begin_frame();
+    }
+
     // draw scene
     glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
     _render_background();
@@ -3397,24 +3416,42 @@ void GLCanvas3D::render(bool only_init)
     int hover_id = (m_hover_plate_idxs.size() > 0)?m_hover_plate_idxs.front():-1;
     if (m_canvas_type == ECanvasType::CanvasView3D) {
         //BBS: add outline logic
-        _render_objects(GLVolumeCollection::ERenderType::Opaque, !m_gizmos.is_running());
+        {
+            FrameProfiler::Scope scope(*m_frame_profiler, "objects");
+            _render_objects(GLVolumeCollection::ERenderType::Opaque, !m_gizmos.is_running());
+        }
         _render_sla_slices();
         _render_selection();
-        if (!no_partplate)
-            _render_bed(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), show_axes);
-        if (!no_partplate) //BBS: add outline logic
-            _render_platelist(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), only_current, only_body, hover_id, true, show_grid, m_plate_focus_visible_plates);
-        _render_objects(GLVolumeCollection::ERenderType::Transparent, !m_gizmos.is_running());
+        {
+            FrameProfiler::Scope scope(*m_frame_profiler, "bed");
+            if (!no_partplate)
+                _render_bed(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), show_axes);
+            if (!no_partplate) //BBS: add outline logic
+                _render_platelist(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), only_current, only_body, hover_id, true, show_grid, m_plate_focus_visible_plates);
+        }
+        {
+            FrameProfiler::Scope scope(*m_frame_profiler, "transparent");
+            _render_objects(GLVolumeCollection::ERenderType::Transparent, !m_gizmos.is_running());
+        }
     }
     /* preview render */
     else if (m_canvas_type == ECanvasType::CanvasPreview && m_render_preview) {
-        _render_objects(GLVolumeCollection::ERenderType::Opaque, !m_gizmos.is_running());
-        _render_sla_slices();
-        _render_selection();
-        _render_bed(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), show_axes);
-        _render_platelist(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), only_current, true, hover_id);
-        // BBS: GUI refactor: add canvas size as parameters
-        _render_gcode(cnv_size.get_width(), cnv_size.get_height());
+        {
+            FrameProfiler::Scope scope(*m_frame_profiler, "objects");
+            _render_objects(GLVolumeCollection::ERenderType::Opaque, !m_gizmos.is_running());
+            _render_sla_slices();
+            _render_selection();
+        }
+        {
+            FrameProfiler::Scope scope(*m_frame_profiler, "bed");
+            _render_bed(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), show_axes);
+            _render_platelist(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), only_current, true, hover_id);
+        }
+        {
+            FrameProfiler::Scope scope(*m_frame_profiler, "gcode");
+            // BBS: GUI refactor: add canvas size as parameters
+            _render_gcode(cnv_size.get_width(), cnv_size.get_height());
+        }
     }
     /* assemble render*/
     else if (m_canvas_type == ECanvasType::CanvasAssembleView) {
@@ -3422,14 +3459,23 @@ void GLCanvas3D::render(bool only_init)
         if (m_show_world_axes) {
             m_axes.render();
         }
-        _render_objects(GLVolumeCollection::ERenderType::Opaque, !m_gizmos.is_running());
-        _render_selection();
-        //_render_bed(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), show_axes);
-        _render_plane();
+        {
+            FrameProfiler::Scope scope(*m_frame_profiler, "objects");
+            _render_objects(GLVolumeCollection::ERenderType::Opaque, !m_gizmos.is_running());
+            _render_selection();
+        }
+        {
+            FrameProfiler::Scope scope(*m_frame_profiler, "bed");
+            //_render_bed(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), show_axes);
+            _render_plane();
+        }
         //BBS: add outline logic insteadof selection under assemble view
         //_render_selection();
         // BBS: add outline logic
-        _render_objects(GLVolumeCollection::ERenderType::Transparent, !m_gizmos.is_running());
+        {
+            FrameProfiler::Scope scope(*m_frame_profiler, "transparent");
+            _render_objects(GLVolumeCollection::ERenderType::Transparent, !m_gizmos.is_running());
+        }
     }
 
     if (highlightMode == ESelectionHighlightMode::UnifiedFramebuffer)
@@ -3449,7 +3495,10 @@ void GLCanvas3D::render(bool only_init)
     // sidebar hints need to be rendered before the gizmos because the depth buffer
     // could be invalidated by the following gizmo render methods
     _render_selection_sidebar_hints();
-    _render_current_gizmo();
+    {
+        FrameProfiler::Scope scope(*m_frame_profiler, "gizmos");
+        _render_current_gizmo();
+    }
 
 #if ENABLE_RAYCAST_PICKING_DEBUG
     if (m_picking_enabled && !m_mouse.dragging && !m_gizmos.is_dragging() && !m_rectangle_selection.is_dragging())
@@ -3464,9 +3513,12 @@ void GLCanvas3D::render(bool only_init)
         m_rectangle_selection.render(*this);
 
     // draw overlays
-    _render_overlays();
+    {
+        FrameProfiler::Scope scope(*m_frame_profiler, "overlays");
+        _render_overlays();
+    }
 
-    if (wxGetApp().plater()->is_render_statistic_dialog_visible()) {
+    if (show_render_stats) {
         ImGui::ShowMetricsWindow();
 
         ImGuiWrapper& imgui = *wxGetApp().imgui();
@@ -3481,6 +3533,29 @@ void GLCanvas3D::render(bool only_init)
         imgui.text("Max texture size:");
         ImGui::SameLine();
         imgui.text(std::to_string(OpenGLManager::get_gl_info().get_max_tex_size()));
+        ImGui::Separator();
+        imgui.text("Per-pass timings (smoothed):");
+        imgui.text(std::string("GPU timer queries: ") + m_frame_profiler->gpu_timer_mode_label());
+        const std::vector<FrameTimingSection> &passes = m_frame_profiler->sections();
+        if (passes.empty()) {
+            imgui.text("Collecting...");
+        } else {
+            const bool show_gpu = m_frame_profiler->gpu_queries_active();
+            double     cpu_total = 0.0;
+            double     gpu_total = 0.0;
+            for (const FrameTimingSection &pass : passes) {
+                cpu_total += pass.cpu_ms;
+                gpu_total += pass.gpu_ms;
+                if (show_gpu)
+                    imgui.text((boost::format("%-12s  CPU %6.2f ms  GPU %6.2f ms") % pass.name % pass.cpu_ms % pass.gpu_ms).str());
+                else
+                    imgui.text((boost::format("%-12s  CPU %6.2f ms") % pass.name % pass.cpu_ms).str());
+            }
+            if (show_gpu)
+                imgui.text((boost::format("%-12s  CPU %6.2f ms  GPU %6.2f ms") % "total" % cpu_total % gpu_total).str());
+            else
+                imgui.text((boost::format("%-12s  CPU %6.2f ms") % "total" % cpu_total).str());
+        }
         imgui.end();
     }
 
@@ -3550,9 +3625,14 @@ void GLCanvas3D::render(bool only_init)
         wxGetApp().plater()->get_dailytips()->render();
     }
 
-    wxGetApp().imgui()->render();
+    {
+        FrameProfiler::Scope scope(*m_frame_profiler, "imgui");
+        wxGetApp().imgui()->render();
+    }
 
     m_canvas->SwapBuffers();
+    if (show_render_stats)
+        m_frame_profiler->end_frame();
     m_render_stats.increment_fps_counter();
 }
 

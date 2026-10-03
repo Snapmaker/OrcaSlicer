@@ -59,6 +59,7 @@ namespace GUI {
 
 class Bed3D;
 class PartPlateList;
+class FrameProfiler;
 
 #if ENABLE_RETINA_GL
 class RetinaHelper;
@@ -660,6 +661,10 @@ private:
     bool m_reload_delayed;
 
     RenderStats m_render_stats;
+    // Orca #15884 Stage B: per-pass timings inside the existing Render statistics
+    // window. Armed only while that window is visible (no Preferences toggle).
+    std::unique_ptr<FrameProfiler> m_frame_profiler;
+    bool                           m_frame_profiler_armed{false};
 
     int m_imgui_undo_redo_hovered_pos{ -1 };
     int m_mouse_wheel{ 0 };

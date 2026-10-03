@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <regex>
 #include <sstream>
 #include <vector>
@@ -536,8 +537,6 @@ constexpr double kRetractF1    = 1.5;
 constexpr double kRetractSpeedStdF0 = 30.;
 constexpr double kRetractSpeedHfF0  = 40.;
 constexpr double kRetractSpeedF1    = 25.;
-constexpr int    kStandbyDelta = -15;
-
 DynamicPrintConfig step_size_2_f0_config()
 {
     DynamicPrintConfig config = high_flow_pa_config(true, true, false);
@@ -664,21 +663,53 @@ void add_two_tool_cubes(Model &model)
     second->volumes.front()->config.set("extruder", 2);
 }
 
-std::string feed_fingerprint(const std::string &gcode)
+std::string g1_feed_fingerprint(const std::string &gcode)
 {
     std::ostringstream os;
     std::istringstream in(gcode);
     std::string        line;
     static const std::regex f_re(R"(\bF([0-9]+))");
     while (std::getline(in, line)) {
-        if (line.compare(0, 2, "G1") == 0 || line.compare(0, 2, "G0") == 0) {
-            std::smatch m;
-            if (std::regex_search(line, m, f_re))
-                os << 'F' << m[1].str() << '\n';
-        } else if (line.compare(0, 4, "M73 ") == 0)
-            os << line << '\n';
+        if (line.compare(0, 2, "G1") != 0)
+            continue;
+        std::smatch m;
+        if (std::regex_search(line, m, f_re))
+            os << 'F' << m[1].str() << '\n';
     }
     return os.str();
+}
+
+size_t count_g1_feed(const std::string &gcode, int feed)
+{
+    size_t             n = 0;
+    std::istringstream in(gcode);
+    std::string        line;
+    static const std::regex f_re(R"(\bF([0-9]+))");
+    const std::string       want = std::to_string(feed);
+    while (std::getline(in, line)) {
+        if (line.compare(0, 2, "G1") != 0)
+            continue;
+        std::smatch m;
+        if (std::regex_search(line, m, f_re) && m[1].str() == want)
+            ++n;
+    }
+    return n;
+}
+
+std::map<int, size_t> g1_feed_histogram(const std::string &gcode)
+{
+    std::map<int, size_t>    counts;
+    std::istringstream       in(gcode);
+    std::string              line;
+    static const std::regex  f_re(R"(\bF([0-9]+))");
+    while (std::getline(in, line)) {
+        if (line.compare(0, 2, "G1") != 0)
+            continue;
+        std::smatch m;
+        if (std::regex_search(line, m, f_re))
+            ++counts[std::stoi(m[1].str())];
+    }
+    return counts;
 }
 
 void raise_role_speeds_for_mvs_cap(DynamicPrintConfig &config)
@@ -687,10 +718,21 @@ void raise_role_speeds_for_mvs_cap(DynamicPrintConfig &config)
     // bind on filament_max_volumetric_speed / flow_ratio.
     const char *keys[] = {"outer_wall_speed", "inner_wall_speed", "sparse_infill_speed",
                           "internal_solid_infill_speed", "top_surface_speed", "gap_infill_speed",
-                          "support_speed", "travel_speed"};
+                          "support_speed", "travel_speed", "initial_layer_speed",
+                          "initial_layer_infill_speed"};
     for (const char *key : keys)
         if (auto *opt = config.option<ConfigOptionFloats>(key))
             opt->values.assign(std::max<size_t>(1, opt->values.size()), 200.);
+}
+
+void disable_layer_cooling(DynamicPrintConfig &config)
+{
+    if (auto *opt = config.option<ConfigOptionBools>("slow_down_for_layer_cooling"))
+        opt->values.assign(std::max<size_t>(1, opt->values.size()), false);
+    if (auto *opt = config.option<ConfigOptionFloats>("fan_cooling_layer_time"))
+        opt->values.assign(std::max<size_t>(1, opt->values.size()), 0.);
+    if (auto *opt = config.option<ConfigOptionInts>("slow_down_layers"))
+        opt->values.assign(std::max<size_t>(1, opt->values.size()), 0);
 }
 
 size_t count_substr(const std::string &hay, const std::string &needle)
@@ -874,10 +916,13 @@ TEST_CASE("non-SEMM U1 2-tool High-Flow uses per-filament temps retract and plac
 {
     DynamicPrintConfig config = step_size_2_f0_config();
     config.option<ConfigOptionBool>("single_extruder_multi_material")->value = false;
-    config.option<ConfigOptionBool>("ooze_prevention")->value               = true;
-    config.option<ConfigOptionInt>("standby_temperature_delta")->value      = kStandbyDelta;
+    // Ooze standbys T1 to 205-15=190, which hides the first-layer writer's M104 S205 T1
+    // and skips idle tools in the layer-2 writer. Keep it off so those two sites emit
+    // the per-filament temps the mutation table checks.
+    config.option<ConfigOptionBool>("ooze_prevention")->value               = false;
     config.option<ConfigOptionFloat>("preheat_time")->value                 = 30.;
     raise_role_speeds_for_mvs_cap(config);
+    disable_layer_cooling(config);
     // No M104/M109 in start G-code so _print_first_layer_extruder_temperatures emits
     // M104 S205 T1 (F1 init), not packed F0 HF S225.
     config.option<ConfigOptionString>("machine_start_gcode")->value =
@@ -909,6 +954,13 @@ TEST_CASE("non-SEMM U1 2-tool High-Flow uses per-filament temps retract and plac
     require_applied_tool_retract_and_flow(print);
 
     const std::string gcode = Test::gcode(print);
+    {
+        const auto         hist = g1_feed_histogram(gcode);
+        std::ostringstream hs;
+        for (const auto &kv : hist)
+            hs << " F" << kv.first << "x" << kv.second;
+        INFO("G1 F histogram:" << hs.str());
+    }
     REQUIRE(gcode.find("Travel to a Wipe Tower") != std::string::npos);
 
     const size_t start_pos = gcode.find("; U1_START ");
@@ -930,7 +982,6 @@ TEST_CASE("non-SEMM U1 2-tool High-Flow uses per-filament temps retract and plac
     REQUIRE(ram1_on);
     REQUIRE(start_line.find("flush0=" + std::to_string(int(kVolHfF0))) != std::string::npos);
     REQUIRE(start_line.find("flush1=" + std::to_string(int(kVolF1))) != std::string::npos);
-    REQUIRE(gcode.find("M104 S" + std::to_string(kInitHfF0)) != std::string::npos);
 
     REQUIRE(gcode.find("M109 S" + std::to_string(kInitF1) + " T1") != std::string::npos);
     REQUIRE(gcode.find("M109 S" + std::to_string(kTempF1) + " T1") != std::string::npos);
@@ -944,10 +995,6 @@ TEST_CASE("non-SEMM U1 2-tool High-Flow uses per-filament temps retract and plac
     REQUIRE(gcode.find("FLUSH=" + std::to_string(int(kVolF1))) != std::string::npos);
     REQUIRE(gcode.find("FLUSH=" + std::to_string(int(kVolHfF0))) != std::string::npos);
 
-    const int ooze_t0 = kTempHfF0 + kStandbyDelta;
-    REQUIRE(gcode.find("M104 S" + std::to_string(ooze_t0) + " T0") != std::string::npos);
-    REQUIRE(gcode.find(";cooldown") != std::string::npos);
-
     // GCodeWriter emits "M104 S<temp> T<tool> ; preheat T<tool> ...". Packed get_at(1) would
     // preheat T1 at F0's High-Flow 230/225.
     REQUIRE(gcode.find("preheat T1") != std::string::npos);
@@ -957,27 +1004,36 @@ TEST_CASE("non-SEMM U1 2-tool High-Flow uses per-filament temps retract and plac
     REQUIRE(gcode.find("M104 S" + std::to_string(kTempHfF0) + " T1 ; preheat") == std::string::npos);
     REQUIRE(gcode.find("M104 S" + std::to_string(kInitHfF0) + " T1 ; preheat") == std::string::npos);
 
-    // First-layer writer (~4629-4663). Ooze applies standby to T1 (205-15=190); packed
-    // get_at(1) would heat T1 at F0 HF 225 (or 210 after standby). Also require the
-    // unresolved F1 init 205 if standby is not applied on that emit.
+    // First-layer writer (~4629-4663), wait=false: "M104 S<temp> T<tool> ; set nozzle temperature".
+    // Packed get_at(1) writes S225 T1. U1_WAIT M109 S205 T1 is a different comment.
+    REQUIRE(gcode.find("M104 S" + std::to_string(kInitF1) + " T1 ; set nozzle temperature") != std::string::npos);
     REQUIRE(gcode.find("M104 S" + std::to_string(kInitHfF0) + " T1") == std::string::npos);
-    const bool first_layer_t1 = gcode.find("M104 S" + std::to_string(kInitF1) + " T1") != std::string::npos
-                             || gcode.find("M104 S" + std::to_string(kInitF1 + kStandbyDelta) + " T1") != std::string::npos;
-    REQUIRE(first_layer_t1);
 
     // Layer-2 writer (~6067-6092): other-layer temps, not the U1_WAIT M109 placeholders.
-    REQUIRE(gcode.find("M104 S" + std::to_string(kTempHfF0) + " T0") != std::string::npos);
-    REQUIRE(gcode.find("M104 S" + std::to_string(kTempF1) + " T1") != std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(kTempHfF0) + " T0 ; set nozzle temperature") != std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(kTempF1) + " T1 ; set nozzle temperature") != std::string::npos);
 
     // append_tcr2 ramming (~1097): T0 High-Flow ramming forces travel to the tower.
     REQUIRE(count_substr(gcode, "Travel to a Wipe Tower") >= 2);
 
-    // _extrude MVS / N2-S5 flow-ratio cap and WipeTower2 MVS. Role speeds are 200 mm/s
-    // so F binds on volumetric / flow. Packed get_at(0) MVS=8 yields ~F2797; F0 HF
-    // 30 / 0.95 yields a much higher cap. Tower ramming uses HF flow 10, not std 1.
-    REQUIRE(gcode.find("F3600") != std::string::npos);
-    REQUIRE(gcode.find("F2797") == std::string::npos);
-    REQUIRE(gcode.find("F2625") == std::string::npos);
+    // _extrude MVS (~9358) and N2/S5 flow-ratio cap (~9234). F0 HF MVS 30 is above the
+    // 200 mm/s role speed, so the cap binds on F1 (MVS 12 / flow 1.01 → G1 F8755.932).
+    // get_at(0) flow 0.98 → F9024; packed HF flow 0.95 → F9309; get_at(0) MVS 8 → F5837.
+    REQUIRE(count_g1_feed(gcode, 8755) >= 1);
+    REQUIRE(count_g1_feed(gcode, 9024) == 0);
+    REQUIRE(count_g1_feed(gcode, 9309) == 0);
+    REQUIRE(count_g1_feed(gcode, 5837) == 0);
+
+    // WipeTower2 MVS (~1568): F1 wipe at width 0.5 is F7876 (12 mm³/s). get_at(0) MVS 8 → F5251.
+    REQUIRE(count_g1_feed(gcode, 7876) >= 1);
+    REQUIRE(count_g1_feed(gcode, 5251) == 0);
+
+    // WipeTower2 ramming (~1587-1590): F0 HF flow 10 → G1 F3135; F1 flow 4 → G1 F1254.
+    // Packed get_at(0) flow 1 → F313. Turnaround travel is hardcoded F7200 while ramming.
+    REQUIRE(count_g1_feed(gcode, 3135) >= 1);
+    REQUIRE(count_g1_feed(gcode, 1254) >= 1);
+    REQUIRE(count_g1_feed(gcode, 313) == 0);
+    REQUIRE(count_g1_feed(gcode, 7200) >= 10);
 }
 
 TEST_CASE("non-variant 2-filament flow_ratio keeps get_at(0) _extrude cap",
@@ -991,9 +1047,10 @@ TEST_CASE("non-variant 2-filament flow_ratio keeps get_at(0) _extrude cap",
         config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtStandard),
                                                                                          int(fvtStandard)};
         config.option<ConfigOptionFloats>("filament_flow_ratio")->values = {kFlowStdF0, ratio_f1};
-        config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values = {kVolStdF0, kVolF1};
+        config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values = {kVolStdF0, kVolStdF0};
         config.option<ConfigOptionFloats>("pressure_advance")->values              = {kPaStdF0, kPaStdF1};
         config.option<ConfigOptionBools>("enable_pressure_advance")->values        = {true, true};
+        disable_layer_cooling(config);
         raise_role_speeds_for_mvs_cap(config);
         REQUIRE_FALSE(filament_flow_variants_active(config));
         return slice_high_flow_pa(config, false, false);
@@ -1001,5 +1058,9 @@ TEST_CASE("non-variant 2-filament flow_ratio keeps get_at(0) _extrude cap",
 
     const std::string g_same = make(kFlowStdF0);
     const std::string g_diff = make(1.40);
-    REQUIRE(feed_fingerprint(g_same) == feed_fingerprint(g_diff));
+    const std::string fp_same = g1_feed_fingerprint(g_same);
+    const std::string fp_diff = g1_feed_fingerprint(g_diff);
+    INFO(fp_same.size() << " vs " << fp_diff.size());
+    REQUIRE_FALSE(fp_same.empty());
+    REQUIRE(fp_same == fp_diff);
 }

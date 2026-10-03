@@ -541,16 +541,17 @@ TEST_CASE("write_file_atomically does not make concurrent creates world-writable
         ~ScopedUmask() { ::umask(prev); }
     } umask_022{0022};
 
-    constexpr int kWrites     = 48;
-    constexpr int kCreateCap  = 8000;
+    constexpr int kWrites = 48;
     std::atomic<bool> writing{true};
     std::atomic<int>  created{0};
     std::atomic<int>  world_writable{0};
 
     std::thread creator([&] {
         int i = 0;
-        while (writing.load(std::memory_order_relaxed) && i < kCreateCap) {
-            const boost::filesystem::path p = dir.path / ("race-c-" + std::to_string(i) + ".dat");
+        // Run for the whole writer loop. A create-count cap would finish first
+        // and miss the umask window on later writes.
+        while (writing.load(std::memory_order_relaxed)) {
+            const boost::filesystem::path p = dir.path / ("race-c-" + std::to_string(i++) + ".dat");
             const int fd = ::open(p.string().c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
             if (fd >= 0) {
                 struct stat st;
@@ -559,7 +560,6 @@ TEST_CASE("write_file_atomically does not make concurrent creates world-writable
                 ::close(fd);
                 created.fetch_add(1, std::memory_order_relaxed);
             }
-            ++i;
         }
     });
 

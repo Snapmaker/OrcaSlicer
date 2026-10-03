@@ -48,7 +48,6 @@
 
 #include "libslic3r.h"
 #include "Utils.hpp"
-#include "InstanceLock.hpp"
 #include "Time.hpp"
 #include "PlaceholderParser.hpp"
 #include "libslic3r/GCode/Thumbnails.hpp"
@@ -582,16 +581,11 @@ void Preset::load_info(const std::string& file)
     }
 }
 
-bool Preset::save_info(std::string file)
+void Preset::save_info(std::string file)
 {
     //BBS: add project embedded preset logic
     if (this->is_project_embedded)
-        return true;
-    InstanceLock::WriteScope write_scope;
-    if (!write_scope.allows()) {
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": data directory is read-only; not saving " << this->file;
-        return false;
-    }
+        return;
     if (file.empty()) {
         fs::path idx_file(this->file);
         idx_file.replace_extension(".info");
@@ -610,43 +604,29 @@ bool Preset::save_info(std::string file)
     c << "updated_time" << " = " << std::to_string(this->updated_time) << std::endl;
 
     std::string err;
-    if (!write_file_atomically(file, c.str(), &err)) {
+    if (!write_file_atomically(file, c.str(), &err))
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": failed to save " << file << ": " << err;
-        return false;
-    }
-    return true;
 }
 
-bool Preset::remove_files()
+void Preset::remove_files()
 {
     //BBS: add project embedded preset logic
     if (this->is_project_embedded)
-        return true;
-    InstanceLock::WriteScope write_scope;
-    if (!write_scope.allows()) {
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": data directory is read-only; not removing " << this->file;
-        return false;
-    }
+        return;
     // Erase the preset file.
     boost::nowide::remove(this->file.c_str());
     fs::path idx_path(this->file);
     idx_path.replace_extension(".info");
     if (fs::exists(idx_path))
         boost::nowide::remove(idx_path.string().c_str());
-    return true;
 }
 
 //BBS: add logic for only difference save
-bool Preset::save(DynamicPrintConfig* parent_config)
+void Preset::save(DynamicPrintConfig* parent_config)
 {
     //BBS: add project embedded preset logic
     if (this->is_project_embedded)
-        return true;
-    InstanceLock::WriteScope write_scope;
-    if (!write_scope.allows()) {
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " data directory is read-only; not saving " << this->name;
-        return false;
-    }
+        return;
     //BBS: change to json format
     //this->config.save(this->file);
     std::string from_str;
@@ -700,26 +680,26 @@ bool Preset::save(DynamicPrintConfig* parent_config)
         }
         if (!temp_config.save_to_json(this->file, this->name, from_str, this->version.to_string(), this->custom_defined)) {
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save config for: " << this->name << " file: " << this->file;
-            return false;
+            return;
         }
     } else if (!filament_id.empty() && inherits().empty()) {
         DynamicPrintConfig temp_config = config;
         temp_config.set_key_value(BBL_JSON_KEY_FILAMENT_ID, new ConfigOptionString(filament_id));
         if (!temp_config.save_to_json(this->file, this->name, from_str, this->version.to_string(), this->custom_defined)) {
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save config for: " << this->name << " file: " << this->file;
-            return false;
+            return;
         }
     } else {
         if (!this->config.save_to_json(this->file, this->name, from_str, this->version.to_string(), this->custom_defined)) {
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save config for: " << this->name << " file: " << this->file;
-            return false;
+            return;
         }
     }
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " save config for: " << this->name << " and filament_id: " << filament_id << " and base_id: " << this->base_id;
 
     fs::path idx_file(this->file);
     idx_file.replace_extension(".info");
-    return this->save_info(idx_file.string());
+    this->save_info(idx_file.string());
 }
 
 void Preset::reload(Preset const &parent)
@@ -2601,108 +2581,123 @@ std::map<std::string, std::vector<Preset const *>> PresetCollection::get_filamen
     return filament_presets;
 }
 
-// Write the file first, then insert/select. A failed write must not leave a
-// new preset selected (or an overwrite applied) in memory.
-bool PresetCollection::save_current_preset(const std::string &new_name, bool detach, bool save_to_project, Preset* _curr_preset, const Preset* _current_printer)
+//BBS: add project embedded preset logic
+void PresetCollection::save_current_preset(const std::string &new_name, bool detach, bool save_to_project, Preset* _curr_preset, const Preset* _current_printer)
 {
-    InstanceLock::WriteScope write_scope;
-    if (!write_scope.allows())
-        return false;
-    Preset      curr_preset = _curr_preset ? *_curr_preset : m_edited_preset;
+    Preset curr_preset = _curr_preset ? *_curr_preset : m_edited_preset;
+    //BBS: add lock logic for sync preset in background
     std::string final_inherits;
     lock();
-    auto       it     = this->find_preset_internal(new_name);
-    const bool exists = it != m_presets.end() && it->name == new_name;
-    if (exists && (it->is_default || it->is_system)) {
-        unlock();
-        return false;
-    }
-
-    Preset to_write = exists ? *it : curr_preset;
-    if (exists) {
-        to_write.config     = std::move(curr_preset.config);
-        to_write.is_visible = true;
-        if (detach) {
-            to_write.vendor = nullptr;
-            to_write.inherits().clear();
-            to_write.alias.clear();
-            to_write.renamed_from.clear();
-            to_write.m_excluded_from.clear();
-            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": save preset %1% , with detach") % new_name;
+    // 1) Find the preset with a new_name or create a new one,
+    // initialize it with the edited config.
+    auto it = this->find_preset_internal(new_name);
+    if (it != m_presets.end() && it->name == new_name) {
+        // Preset with the same name found.
+        Preset &preset = *it;
+        //BBS: add project embedded preset logic
+        if (preset.is_default || preset.is_system) {
+        //if (preset.is_default || preset.is_external || preset.is_system)
+            // Cannot overwrite the default preset.
+            //BBS: add lock logic for sync preset in background
+            unlock();
+            return;
         }
-        if (m_type == Preset::TYPE_PRINT)
-            to_write.config.option<ConfigOptionString>("print_settings_id", true)->value = new_name;
-        else if (m_type == Preset::TYPE_FILAMENT)
-            to_write.config.option<ConfigOptionStrings>("filament_settings_id", true)->values[0] = new_name;
-        else if (m_type == Preset::TYPE_PRINTER)
-            to_write.config.option<ConfigOptionString>("printer_settings_id", true)->value = new_name;
-        final_inherits = to_write.inherits();
-    } else {
-        std::string &inherits = to_write.inherits();
-        std::string  old_name = to_write.name;
-        to_write.name         = new_name;
-        to_write.vendor       = nullptr;
-        to_write.alias.clear();
-        to_write.renamed_from.clear();
-        to_write.m_excluded_from.clear();
-        to_write.setting_id.clear();
+        // Overwriting an existing preset.
+        preset.config = std::move(curr_preset.config);
+        // The newly saved preset will be activated -> make it visible.
+        preset.is_visible = true;
+        //TODO: remove the detach logic
         if (detach) {
-            inherits.clear();
-            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": save preset %1% , with detach") % new_name;
-        } else if (is_base_preset(to_write)) {
+            // Clear the link to the parent profile.
+            preset.vendor = nullptr;
+			preset.inherits().clear();
+			preset.alias.clear();
+			preset.renamed_from.clear();
+            preset.m_excluded_from.clear();
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": save preset %1% , with detach")%new_name;
+        }
+        //BBS: add lock logic for sync preset in background
+
+        if (m_type == Preset::TYPE_PRINT)
+            preset.config.option<ConfigOptionString>("print_settings_id", true)->value = new_name;
+        else if (m_type == Preset::TYPE_FILAMENT)
+            preset.config.option<ConfigOptionStrings>("filament_settings_id", true)->values[0] = new_name;
+        else if (m_type == Preset::TYPE_PRINTER)
+            preset.config.option<ConfigOptionString>("printer_settings_id", true)->value = new_name;
+        final_inherits = preset.inherits();
+        unlock();
+        // TODO: apply change from custom root to devided presets.
+        if (preset.inherits().empty()) {
+            for (auto &preset2 : m_presets)
+                if (preset2.inherits() == preset.name)
+                    preset2.reload(preset);
+        }
+    } else {
+        // Creating a new preset.
+        Preset       &preset   = *m_presets.insert(it, curr_preset);
+        std::string  &inherits = preset.inherits();
+        std::string   old_name = preset.name;
+        preset.name = new_name;
+        preset.vendor = nullptr;
+		preset.alias.clear();
+        preset.renamed_from.clear();
+        preset.m_excluded_from.clear();
+        preset.setting_id.clear();
+        if (detach) {
+        	// Clear the link to the parent profile.
+        	inherits.clear();
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": save preset %1% , with detach")%new_name;
+        } else if (is_base_preset(preset)) {
             inherits = old_name;
         }
-        if (nullptr != _current_printer && to_write.is_system && m_type == Preset::TYPE_FILAMENT) {
-            ConfigOptionStrings *compatible_printers = to_write.config.option<ConfigOptionStrings>("compatible_printers");
-            if (compatible_printers && compatible_printers->values.empty())
+        // Orca: check if compatible_printers exists and is not empty, set it to the current printer if it is empty
+        if (nullptr != _current_printer && preset.is_system && m_type == Preset::TYPE_FILAMENT) {
+            ConfigOptionStrings* compatible_printers = preset.config.option<ConfigOptionStrings>("compatible_printers");
+            if (compatible_printers && compatible_printers->values.empty()) {
                 compatible_printers->values.push_back(_current_printer->name);
+            }
         }
-        to_write.is_default           = false;
-        to_write.is_system            = false;
-        to_write.is_external          = false;
-        to_write.file                 = this->path_for_preset(to_write);
-        to_write.is_visible           = true;
-        to_write.alias.clear();
-        to_write.is_project_embedded  = save_to_project;
-        if (m_type == Preset::TYPE_PRINT)
-            to_write.config.option<ConfigOptionString>("print_settings_id", true)->value = new_name;
-        else if (m_type == Preset::TYPE_FILAMENT)
-            to_write.config.option<ConfigOptionStrings>("filament_settings_id", true)->values[0] = new_name;
-        else if (m_type == Preset::TYPE_PRINTER)
-            to_write.config.option<ConfigOptionString>("printer_settings_id", true)->value = new_name;
-        final_inherits = inherits;
-    }
-    unlock();
 
-    Preset *parent_preset = nullptr;
+        preset.is_default  = false;
+        preset.is_system   = false;
+        preset.is_external = false;
+        preset.file        = this->path_for_preset(preset);
+        // The newly saved preset will be activated -> make it visible.
+        preset.is_visible  = true;
+        // Just system presets have aliases
+        preset.alias.clear();
+        //BBS: add project embedded preset logic
+        if (save_to_project) {
+            preset.is_project_embedded = true;
+        }
+        else
+            preset.is_project_embedded = false;
+        if (m_type == Preset::TYPE_PRINT)
+            preset.config.option<ConfigOptionString>("print_settings_id", true)->value = new_name;
+        else if (m_type == Preset::TYPE_FILAMENT)
+            preset.config.option<ConfigOptionStrings>("filament_settings_id", true)->values[0] = new_name;
+        else if (m_type == Preset::TYPE_PRINTER)
+            preset.config.option<ConfigOptionString>("printer_settings_id", true)->value = new_name;
+        //BBS: add lock logic for sync preset in background
+        final_inherits = inherits;
+        unlock();
+    }
+    // 2) Activate the saved preset.
+    this->select_preset_by_name(new_name, true);
+    // 2) Store the active preset to disk.
+    //BBS: only save difference for user preset
+    Preset* parent_preset = nullptr;
     if (!final_inherits.empty()) {
         parent_preset = this->find_preset(final_inherits, false, true);
-        if (parent_preset && to_write.base_id.empty()) {
-            to_write.base_id = parent_preset->setting_id;
+        if (parent_preset && this->get_selected_preset().base_id.empty()) {
+            this->get_selected_preset().base_id = parent_preset->setting_id;
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " base_id: " << parent_preset->setting_id;
         }
     }
-    if (!(parent_preset ? to_write.save(&(parent_preset->config)) : to_write.save(nullptr)))
-        return false;
-
-    lock();
-    it = this->find_preset_internal(new_name);
-    if (it != m_presets.end() && it->name == new_name)
-        *it = std::move(to_write);
+    if (parent_preset)
+        this->get_selected_preset().save(&(parent_preset->config));
     else
-        it = m_presets.insert(it, std::move(to_write));
-    const std::string committed_name = it->name;
-    const bool        reload_children = it->inherits().empty();
-    unlock();
-    if (reload_children) {
-        if (Preset *written = this->find_preset(committed_name, false, true)) {
-            for (auto &preset2 : m_presets)
-                if (preset2.inherits() == committed_name)
-                    preset2.reload(*written);
-        }
-    }
-    this->select_preset_by_name(new_name, true);
-    return true;
+        this->get_selected_preset().save(nullptr);
 }
 
 bool PresetCollection::delete_current_preset()
@@ -2721,8 +2716,7 @@ bool PresetCollection::delete_current_preset()
     //if (! selected.is_external && ! selected.is_system) {
     if (! selected.is_system) {
         //BBS Erase the preset file.
-        if (!selected.remove_files())
-            return false;
+        selected.remove_files();
     }
     //BBS: add lock logic for sync preset in background
     lock();
@@ -2750,8 +2744,7 @@ bool PresetCollection::delete_preset(const std::string& name)
     //BBS: add project embedded preset logic and refine is_external
     //if (!preset.is_external && !preset.is_system) {
     if (! preset.is_system) {
-        if (!preset.remove_files())
-            return false;
+        preset.remove_files();
     }
     //BBS: add lock logic for sync preset in background
     lock();
@@ -3756,43 +3749,25 @@ void PhysicalPrinter::update_preset_names_in_config()
     }
 }
 
-bool PhysicalPrinter::save(DynamicPrintConfig* /*parent_config*/)
+void PhysicalPrinter::save(DynamicPrintConfig* /*parent_config*/)
 {
-    InstanceLock::WriteScope write_scope;
-    if (!write_scope.allows()) {
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " data directory is read-only; not saving " << this->file;
-        return false;
-    }
-    if (!this->config.save_to_json(this->file, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION))) {
+    if (!this->config.save_to_json(this->file, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION)))
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save physical printer to " << this->file;
-        return false;
-    }
-    return true;
 }
 
-bool PhysicalPrinter::save(const std::string& file_name_from, const std::string& file_name_to)
+void PhysicalPrinter::save(const std::string& file_name_from, const std::string& file_name_to)
 {
-    InstanceLock::WriteScope write_scope;
-    if (!write_scope.allows()) {
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " data directory is read-only; not renaming " << file_name_from;
-        return false;
-    }
     if (boost::nowide::rename(file_name_from.data(), file_name_to.data()) != 0) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to rename " << file_name_from
                                  << " to " << file_name_to << ": " << std::strerror(errno);
         // Stay on the old path so a failed rename cannot leave two printer files.
-        if (!this->config.save_to_json(file_name_from, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION))) {
+        if (!this->config.save_to_json(file_name_from, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION)))
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save physical printer to " << file_name_from;
-            return false;
-        }
-        return false;
+        return;
     }
     this->file = file_name_to;
-    if (!this->config.save_to_json(this->file, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION))) {
+    if (!this->config.save_to_json(this->file, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION)))
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save physical printer to " << this->file;
-        return false;
-    }
-    return true;
 }
 
 void PhysicalPrinter::update_from_preset(const Preset& preset)
@@ -4061,7 +4036,7 @@ std::string PhysicalPrinterCollection::path_from_name(const std::string& new_nam
     return (boost::filesystem::path(m_dir_path) / file_name).make_preferred().string();
 }
 
-bool PhysicalPrinterCollection::save_printer(PhysicalPrinter& edited_printer, const std::string& renamed_from/* = ""*/)
+void PhysicalPrinterCollection::save_printer(PhysicalPrinter& edited_printer, const std::string& renamed_from/* = ""*/)
 {
     // controll and update preset_names in edited_printer config
     edited_printer.update_preset_names_in_config();
@@ -4091,16 +4066,14 @@ bool PhysicalPrinterCollection::save_printer(PhysicalPrinter& edited_printer, co
     if (printer.file.empty())
         printer.file = this->path_from_name(printer.name);
 
-    bool ok = false;
     if (printer.file == this->path_from_name(printer.name))
-        ok = printer.save(nullptr);
+        printer.save(nullptr);
     else
         // if printer was renamed, we should rename a file and than save the config
-        ok = printer.save(printer.file, this->path_from_name(printer.name));
+        printer.save(printer.file, this->path_from_name(printer.name));
 
     // update idx_selected
     m_idx_selected = it - m_printers.begin();
-    return ok;
 }
 
 bool PhysicalPrinterCollection::delete_printer(const std::string& name)
@@ -4108,11 +4081,6 @@ bool PhysicalPrinterCollection::delete_printer(const std::string& name)
     auto it = this->find_printer_internal(name);
     if (it == m_printers.end())
         return false;
-    InstanceLock::WriteScope write_scope;
-    if (!write_scope.allows()) {
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": data directory is read-only; not deleting " << name;
-        return false;
-    }
 
     const PhysicalPrinter& printer = *it;
     // Erase the preset file.
@@ -4125,11 +4093,6 @@ bool PhysicalPrinterCollection::delete_selected_printer()
 {
     if (!has_selection())
         return false;
-    InstanceLock::WriteScope write_scope;
-    if (!write_scope.allows()) {
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": data directory is read-only; not deleting the selected printer";
-        return false;
-    }
     const PhysicalPrinter& printer = this->get_selected_printer();
 
     // Erase the preset file.

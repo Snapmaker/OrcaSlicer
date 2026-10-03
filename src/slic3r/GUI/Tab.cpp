@@ -4,7 +4,6 @@
 #include "PresetHints.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
-#include "libslic3r/InstanceLock.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
@@ -7371,21 +7370,7 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
         _current_printer = const_cast<Preset*>(&wxGetApp().preset_bundle->printers.get_selected_preset_base());
     }
     // Save the preset into Slic3r::data_dir / presets / section_name / preset_name.json
-    if (!m_presets->save_current_preset(name, detach, save_to_project, nullptr, _current_printer)) {
-        // WriteScope sets last_write_refused / last_error for hub (transient)
-        // refusals as well as a visible read-only session. is_read_only() is
-        // false for a hub, so do not key the dialog off that.
-        const wxString why = InstanceLock::last_write_refused()
-                                 ? (InstanceLock::last_error().empty()
-                                        ? _L("Another EdgeSlicer instance is using this data directory; presets cannot be saved.")
-                                        : wxString::FromUTF8(InstanceLock::last_error().c_str()))
-                                 : _L("Failed to save the preset. The file was left unchanged.");
-        MessageDialog(m_parent, why, _L("Save preset"), wxOK | wxICON_ERROR).ShowModal();
-        update_tab_ui();
-        on_presets_changed();
-        update_changed_ui();
-        return;
-    }
+    m_presets->save_current_preset(name, detach, save_to_project, nullptr, _current_printer);
 
     //BBS create new settings
     new_preset = m_presets->find_preset(name, false, true);
@@ -7406,18 +7391,7 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
             new_preset->user_id = wxGetApp().getAgent()->get_user_id();
         BOOST_LOG_TRIVIAL(info) << "sync_preset: create preset = " << new_preset->name;
     }
-    if (!new_preset->save_info()) {
-        const wxString why = InstanceLock::last_write_refused()
-                                 ? (InstanceLock::last_error().empty()
-                                        ? _L("Another EdgeSlicer instance is using this data directory; presets cannot be saved.")
-                                        : wxString::FromUTF8(InstanceLock::last_error().c_str()))
-                                 : _L("Failed to save the preset info file.");
-        MessageDialog(m_parent, why, _L("Save preset"), wxOK | wxICON_ERROR).ShowModal();
-        update_tab_ui();
-        on_presets_changed();
-        update_changed_ui();
-        return;
-    }
+    new_preset->save_info();
 
     // Mark the print & filament enabled if they are compatible with the currently selected preset.
     // If saving the preset changes compatibility with other presets, keep the now incompatible dependent presets selected, however with a "red flag" icon showing that they are no more compatible.

@@ -1,15 +1,12 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/AppConfig.hpp"
-#include "libslic3r/InstanceLock.hpp"
-#include "libslic3r/Preset.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/Utils.hpp"
 #include <test_utils.hpp>
 
 #include <boost/filesystem.hpp>
 #include <boost/nowide/cstdio.hpp>
-#include <boost/nowide/fstream.hpp>
 
 #include <atomic>
 #include <cerrno>
@@ -18,13 +15,15 @@
 #include <string>
 #include <system_error>
 #include <thread>
-#include <vector>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <fcntl.h>
-#include <signal.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -201,6 +200,64 @@ TEST_CASE("atomic write temp names are unique per call and include the process i
     REQUIRE(a.find(".tmp") != std::string::npos);
     REQUIRE(b.find(".tmp") != std::string::npos);
 }
+
+TEST_CASE("atomic write temp names add only a short suffix", "[utils][atomic]")
+{
+    // A preset path that fitted under MAX_PATH must still fit with its
+    // temporary: `.<pid>.<counter>.tmp`, at most 1+10+1+10+4 = 26 characters.
+    const std::string target = "C:/Users/someone/AppData/Roaming/EdgeSlicer/user/default/filament/My filament.json";
+    const std::string tmp    = atomic_write_temp_path(target);
+    REQUIRE(tmp.compare(0, target.size(), target) == 0);
+    const std::string suffix = tmp.substr(target.size());
+    REQUIRE(suffix.size() <= 26);
+    REQUIRE(suffix.rfind("." + std::to_string(get_current_pid()) + ".", 0) == 0);
+    REQUIRE(suffix.size() > 4);
+    REQUIRE(suffix.compare(suffix.size() - 4, 4, ".tmp") == 0);
+    // Only digits and dots between the target and ".tmp".
+    for (size_t i = 0; i + 4 < suffix.size(); ++i)
+        REQUIRE((suffix[i] == '.' || (suffix[i] >= '0' && suffix[i] <= '9')));
+}
+
+#ifdef _WIN32
+TEST_CASE("a replace refused by a reader without FILE_SHARE_DELETE falls back to an in-place write", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path target = dir.path / "preset.json";
+    REQUIRE(write_file_atomically(target.string(), "old-bytes"));
+
+    // An indexer / AV style reader: shares read and write but not delete, so
+    // ReplaceFileW, SetFileInformationByHandle and MoveFileEx are all refused.
+    HANDLE reader = ::CreateFileW(target.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE(reader != INVALID_HANDLE_VALUE);
+    BY_HANDLE_FILE_INFORMATION before{};
+    REQUIRE(::GetFileInformationByHandle(reader, &before));
+    std::string err;
+    const bool  ok = write_file_atomically(target.string(), "new-bytes", &err);
+    ::CloseHandle(reader);
+
+    REQUIRE(ok);
+    // Same file (index) as the one the reader held: written in place, not replaced.
+    HANDLE after_handle = ::CreateFileW(target.wstring().c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE(after_handle != INVALID_HANDLE_VALUE);
+    BY_HANDLE_FILE_INFORMATION after{};
+    const bool got_after = ::GetFileInformationByHandle(after_handle, &after) != 0;
+    ::CloseHandle(after_handle);
+    REQUIRE(got_after);
+    REQUIRE(after.nFileIndexHigh == before.nFileIndexHigh);
+    REQUIRE(after.nFileIndexLow == before.nFileIndexLow);
+    REQUIRE(err.empty());
+    REQUIRE(slurp(target) == "new-bytes");
+    size_t entries = 0;
+    for (auto &entry : boost::filesystem::directory_iterator(dir.path)) {
+        (void) entry;
+        ++entries;
+    }
+    // No temporary and no moved-aside copy left behind.
+    REQUIRE(entries == 1);
+}
+#endif
 
 #ifndef _WIN32
 TEST_CASE("rename_file replaces an existing POSIX file and reports success", "[utils][atomic]")
@@ -388,20 +445,26 @@ TEST_CASE("posix fallback keeps the target when the source is missing", "[utils]
     REQUIRE(slurp(to) == "old-bytes");
 }
 
-TEST_CASE("posix fallback keeps old or new contents when the second rename fails", "[utils][atomic]")
+TEST_CASE("a refused POSIX replace falls back to an in-place write", "[utils][atomic]")
 {
     ScopedTempDir                 dir;
     const boost::filesystem::path target = dir.path / "preset.json";
     REQUIRE(write_file_atomically(target.string(), "old-bytes"));
 
+    // Both the direct rename and the bak-then-rename retry refuse the temp:
+    // the target is restored from the bak, then written in place (upstream).
     ScopedRenameHook hook(fail_tmp_renames);
     std::string      err;
-    REQUIRE_FALSE(write_file_atomically(target.string(), "new-bytes", &err));
-    REQUIRE_FALSE(err.empty());
-    REQUIRE(err.find("target intact") != std::string::npos);
-    REQUIRE((dir_holds_payload(dir.path, "old-bytes") || dir_holds_payload(dir.path, "new-bytes")));
-    REQUIRE(boost::filesystem::exists(target));
-    REQUIRE(slurp(target) == "old-bytes");
+    REQUIRE(write_file_atomically(target.string(), "new-bytes", &err));
+    REQUIRE(err.empty());
+    REQUIRE(slurp(target) == "new-bytes");
+    REQUIRE_FALSE(dir_holds_payload(dir.path, "old-bytes"));
+    size_t entries = 0;
+    for (auto &entry : boost::filesystem::directory_iterator(dir.path)) {
+        (void) entry;
+        ++entries;
+    }
+    REQUIRE(entries == 1);
 }
 
 TEST_CASE("rename_file and write_file_atomically succeed when replace is refused", "[utils][atomic]")
@@ -470,7 +533,7 @@ TEST_CASE("write_file_atomically preserves a 0600 mode", "[utils][atomic]")
     REQUIRE(slurp(target) == "second");
 }
 
-TEST_CASE("posix fallback keeps temp and bak when both renames fail", "[utils][atomic]")
+TEST_CASE("posix fallback that loses the target writes it in place and keeps the old bytes in the bak", "[utils][atomic]")
 {
     ScopedTempDir                 dir;
     const boost::filesystem::path target = dir.path / "preset.json";
@@ -478,8 +541,9 @@ TEST_CASE("posix fallback keeps temp and bak when both renames fail", "[utils][a
 
     ScopedRenameHook hook(fail_tmp_and_restore);
     std::string      err;
-    REQUIRE_FALSE(write_file_atomically(target.string(), "new-bytes", &err));
-    REQUIRE(err.find("target removed") != std::string::npos);
+    REQUIRE(write_file_atomically(target.string(), "new-bytes", &err));
+    REQUIRE(err.empty());
+    REQUIRE(slurp(target) == "new-bytes");
 
     bool saw_tmp = false;
     bool saw_unique_bak = false;
@@ -500,12 +564,11 @@ TEST_CASE("posix fallback keeps temp and bak when both renames fail", "[utils][a
             saw_unique_bak = true;
         }
     }
-    REQUIRE(saw_tmp);
+    REQUIRE_FALSE(saw_tmp);
     REQUIRE(saw_unique_bak);
-    REQUIRE_FALSE(boost::filesystem::exists(target));
 }
 
-TEST_CASE("posix fallback reports when the target cannot be moved aside", "[utils][atomic]")
+TEST_CASE("posix fallback writes in place when the target cannot be moved aside", "[utils][atomic]")
 {
     ScopedTempDir                 dir;
     const boost::filesystem::path target = dir.path / "preset.json";
@@ -513,11 +576,10 @@ TEST_CASE("posix fallback reports when the target cannot be moved aside", "[util
 
     ScopedRenameHook hook(fail_target_to_bak);
     std::string      err;
-    REQUIRE_FALSE(write_file_atomically(target.string(), "new-bytes", &err));
-    REQUIRE(err.find("cannot move target aside") != std::string::npos);
-    REQUIRE(err.find("target intact") != std::string::npos);
-    REQUIRE(boost::filesystem::exists(target));
-    REQUIRE(slurp(target) == "old-bytes");
+    REQUIRE(write_file_atomically(target.string(), "new-bytes", &err));
+    REQUIRE(err.empty());
+    REQUIRE(slurp(target) == "new-bytes");
+    REQUIRE(count_atomic_baks(dir.path) == 0);
 }
 
 TEST_CASE("atomic write temp is 0600 while writing and a new file gets the umask mode", "[utils][atomic]")
@@ -569,14 +631,7 @@ TEST_CASE("write_file_atomically keeps suid sgid and sticky bits", "[utils][atom
     int kept = 0;
     for (const auto &sp : specials) {
         const mode_t want = static_cast<mode_t>(0644) | sp.bit;
-        if (::chmod(target.string().c_str(), want) != 0) {
-            // BSD (and some NFS) refuse sticky on a regular file with EFTYPE.
-            if (sp.bit == S_ISVTX) {
-                WARN("chmod refused sticky on a regular file (errno " << errno << "); skipping");
-                continue;
-            }
-            REQUIRE(::chmod(target.string().c_str(), want) == 0);
-        }
+        REQUIRE(::chmod(target.string().c_str(), want) == 0);
         struct stat after_chmod;
         REQUIRE(::stat(target.string().c_str(), &after_chmod) == 0);
         if ((after_chmod.st_mode & 07777) != want) {
@@ -751,7 +806,7 @@ TEST_CASE("AppConfig save round-trips through the atomic helper", "[utils][atomi
 
     AppConfig writer;
     writer.set("atomic_roundtrip_key", "atomic-value");
-    REQUIRE(writer.save());
+    writer.save();
     REQUIRE_FALSE(writer.dirty());
     REQUIRE(boost::filesystem::exists(writer.config_path()));
 #ifdef WIN32
@@ -762,504 +817,4 @@ TEST_CASE("AppConfig save round-trips through the atomic helper", "[utils][atomi
     const std::string load_err = reader.load();
     REQUIRE(load_err.empty());
     REQUIRE(reader.get("atomic_roundtrip_key") == "atomic-value");
-}
-
-TEST_CASE("InstanceLock is acquired, refused while held, then reacquired after release", "[utils][atomic][InstanceLock]")
-{
-    ScopedTempDir dir;
-    const std::string path = (dir.path / "instance.lock").string();
-    {
-        InstanceLock first(path, std::chrono::milliseconds(50));
-        REQUIRE(first.locked());
-        InstanceLock second(path, std::chrono::milliseconds(50));
-        REQUIRE_FALSE(second.locked());
-    }
-    InstanceLock again(path, std::chrono::milliseconds(50));
-    REQUIRE(again.locked());
-}
-
-#ifndef _WIN32
-TEST_CASE("InstanceLock is released when the holder process is killed", "[utils][atomic][InstanceLock]")
-{
-    ScopedTempDir dir;
-    const std::string path = (dir.path / "instance.lock").string();
-    int fds[2];
-    REQUIRE(pipe(fds) == 0);
-    const pid_t child = fork();
-    REQUIRE(child >= 0);
-    if (child == 0) {
-        close(fds[0]);
-        InstanceLock lock(path, std::chrono::milliseconds(200));
-        const char    c = lock.locked() ? '1' : '0';
-        (void) write(fds[1], &c, 1);
-        pause();
-        _exit(0);
-    }
-    close(fds[1]);
-    char c = '0';
-    REQUIRE(read(fds[0], &c, 1) == 1);
-    close(fds[0]);
-    REQUIRE(c == '1');
-    InstanceLock blocked(path, std::chrono::milliseconds(50));
-    REQUIRE_FALSE(blocked.locked());
-    REQUIRE(kill(child, SIGKILL) == 0);
-    int status = 0;
-    REQUIRE(waitpid(child, &status, 0) == child);
-    InstanceLock after(path, std::chrono::milliseconds(200));
-    REQUIRE(after.locked());
-}
-#endif
-
-TEST_CASE("atomic temp names require the writer format, a live pid and a 9-digit launch_ns", "[utils][atomic][InstanceLock]")
-{
-    unsigned pid = 0;
-    REQUIRE(is_atomic_write_temp_name("preset.json.12.1000000000.2.0.tmp", &pid));
-    REQUIRE(pid == 12);
-    // Fewer than four trailing decimal fields (M_PARSE_LOOSE).
-    REQUIRE_FALSE(is_atomic_write_temp_name("1.1000000000.2.0.tmp"));
-    REQUIRE_FALSE(is_atomic_write_temp_name("preset.json.12.1000000000.2.tmp"));
-    // Date stamps look like four decimals but launch_ns is only 4 digits.
-    REQUIRE_FALSE(is_atomic_write_temp_name("photo.1234.2024.06.01.tmp"));
-    REQUIRE_FALSE(is_atomic_write_temp_name("x.12.1.2.0.tmp"));
-    REQUIRE_FALSE(is_atomic_write_temp_name("x.0.1000000000.2.0.tmp"));
-    REQUIRE_FALSE(is_atomic_write_temp_name("x.99999999999999999999.1000000000.2.0.tmp"));
-    REQUIRE_FALSE(is_atomic_write_temp_name("notes.tmp"));
-    REQUIRE_FALSE(is_atomic_write_temp_name("preset.json.bak"));
-}
-
-TEST_CASE("the stale temp scavenger removes only matching leftovers while the lock is held", "[utils][atomic][InstanceLock]")
-{
-    ScopedTempDir dir;
-    const auto plant = [&](const boost::filesystem::path &parent, const std::string &name) {
-        const boost::filesystem::path p = parent / name;
-        boost::nowide::ofstream       out(p.string());
-        out << "x";
-        return p;
-    };
-
-    const boost::filesystem::path bak     = plant(dir.path, "preset.json.bak");
-    const boost::filesystem::path foreign = plant(dir.path, "notes.tmp");
-    const boost::filesystem::path user    = plant(dir.path, "user.json");
-    const boost::filesystem::path photo   = plant(dir.path, "photo." + std::to_string(get_current_pid()) + ".2024.06.01.tmp");
-    const boost::filesystem::path pid0    = plant(dir.path, "x.0.1000000000.2.0.tmp");
-    const boost::filesystem::path overflow = plant(dir.path, "x.99999999999999999999.1000000000.2.0.tmp");
-    const boost::filesystem::path live    = plant(dir.path, std::string("live.json.") + std::to_string(get_current_pid()) +
-                                               ".1000000000.2.0.tmp");
-#ifndef _WIN32
-    int fds[2];
-    REQUIRE(pipe(fds) == 0);
-    const pid_t dead = fork();
-    REQUIRE(dead >= 0);
-    if (dead == 0) {
-        close(fds[0]);
-        _exit(0);
-    }
-    close(fds[1]);
-    char waitc = 0;
-    (void) read(fds[0], &waitc, 1);
-    close(fds[0]);
-    int st = 0;
-    REQUIRE(waitpid(dead, &st, 0) == dead);
-    const std::string             stale_name = std::string("stale.json.") + std::to_string(dead) + ".1000000000.2.0.tmp";
-    const boost::filesystem::path stale      = plant(dir.path, stale_name);
-    ScopedTempDir                 outside;
-    const boost::filesystem::path outside_stale = plant(outside.path, stale_name);
-    const boost::filesystem::path link_dir      = dir.path / "outside_link";
-    boost::system::error_code     link_ec;
-    boost::filesystem::create_directory_symlink(outside.path, link_dir, link_ec);
-    REQUIRE_FALSE(link_ec);
-#else
-    // A pid that is not this process and is almost certainly not running.
-    const boost::filesystem::path stale = plant(dir.path, "stale.json.4294967294.1000000000.2.0.tmp");
-#endif
-
-    REQUIRE(is_atomic_write_temp_name(stale.filename().string()));
-    REQUIRE(is_atomic_write_temp_name(live.filename().string()));
-    REQUIRE_FALSE(is_atomic_write_temp_name(bak.filename().string()));
-    REQUIRE_FALSE(is_atomic_write_temp_name(foreign.filename().string()));
-    REQUIRE_FALSE(is_atomic_write_temp_name(photo.filename().string()));
-    REQUIRE_FALSE(is_atomic_write_temp_name(pid0.filename().string()));
-    REQUIRE_FALSE(is_atomic_write_temp_name(overflow.filename().string()));
-
-    REQUIRE(scavenge_stale_atomic_temps({dir.path.string()}, false) == 0);
-    REQUIRE(boost::filesystem::exists(stale));
-    REQUIRE(boost::filesystem::exists(live));
-    REQUIRE(boost::filesystem::exists(bak));
-    REQUIRE(boost::filesystem::exists(foreign));
-    REQUIRE(boost::filesystem::exists(user));
-    REQUIRE(boost::filesystem::exists(photo));
-    REQUIRE(boost::filesystem::exists(pid0));
-    REQUIRE(boost::filesystem::exists(overflow));
-
-    REQUIRE(scavenge_stale_atomic_temps({dir.path.string()}, true) == 1);
-    REQUIRE_FALSE(boost::filesystem::exists(stale));
-    REQUIRE(boost::filesystem::exists(live));
-    REQUIRE(boost::filesystem::exists(bak));
-    REQUIRE(boost::filesystem::exists(foreign));
-    REQUIRE(boost::filesystem::exists(user));
-    REQUIRE(boost::filesystem::exists(photo));
-    REQUIRE(boost::filesystem::exists(pid0));
-    REQUIRE(boost::filesystem::exists(overflow));
-#ifndef _WIN32
-    REQUIRE(boost::filesystem::exists(outside_stale));
-    REQUIRE(boost::filesystem::is_symlink(link_dir));
-#endif
-}
-
-#ifndef _WIN32
-TEST_CASE("write_file_atomically fsyncs the parent directory after rename", "[utils][atomic]")
-{
-    ScopedTempDir dir;
-    static std::string last;
-    last.clear();
-    struct ScopedDirHook
-    {
-        ScopedDirHook()
-        {
-            set_atomic_dir_fsync_hook([](const char *p) {
-                last = p;
-                return true;
-            });
-        }
-        ~ScopedDirHook() { set_atomic_dir_fsync_hook(nullptr); }
-    } hook;
-    const boost::filesystem::path target = dir.path / "preset.json";
-    REQUIRE(write_file_atomically(target.string(), "payload"));
-    REQUIRE(last == target.string());
-    REQUIRE(slurp(target) == "payload");
-}
-#endif
-
-TEST_CASE("a failed atomic write propagates through AppConfig, preset and printer saves", "[utils][atomic][AppConfig]")
-{
-    ScopedTempDir dir;
-    struct ScopedDataDir
-    {
-        std::string prev;
-        explicit ScopedDataDir(const std::string &next) : prev(data_dir()) { set_data_dir(next); }
-        ~ScopedDataDir() { set_data_dir(prev); }
-    } data{dir.path.string()};
-    save_main_thread_id();
-
-    struct ScopedFail
-    {
-        ScopedFail()
-        {
-            set_atomic_write_force_fail_hook([](const char *) { return true; });
-        }
-        ~ScopedFail() { set_atomic_write_force_fail_hook(nullptr); }
-    } fail;
-
-    AppConfig cfg;
-    cfg.set("k", "v");
-    REQUIRE_FALSE(cfg.save());
-    REQUIRE(cfg.dirty());
-    REQUIRE_FALSE(cfg.last_save_error().empty());
-
-    Preset preset(Preset::TYPE_PRINT, "n");
-    preset.file = (dir.path / "n.json").string();
-    REQUIRE_FALSE(preset.save(nullptr));
-
-    DynamicPrintConfig printer_cfg;
-    printer_cfg.set_key_value("preset_names", new ConfigOptionStrings());
-    PhysicalPrinter printer("p", printer_cfg);
-    printer.file = (dir.path / "p.json").string();
-    REQUIRE_FALSE(printer.save(nullptr));
-}
-
-TEST_CASE("AppConfig save is refused while the data-dir InstanceLock is read-only", "[utils][atomic][AppConfig][InstanceLock]")
-{
-    ScopedTempDir dir;
-    struct ScopedDataDir
-    {
-        std::string prev;
-        explicit ScopedDataDir(const std::string &next) : prev(data_dir()) { set_data_dir(next); }
-        ~ScopedDataDir()
-        {
-            InstanceLock::try_acquire_data_dir("", false);
-            set_data_dir(prev);
-        }
-    } data{dir.path.string()};
-    save_main_thread_id();
-
-    InstanceLock holder(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
-    REQUIRE(holder.locked());
-    REQUIRE_FALSE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(50)));
-    REQUIRE(InstanceLock::is_read_only());
-    REQUIRE_FALSE(InstanceLock::allows_saves());
-
-    AppConfig cfg;
-    cfg.set("k", "v");
-    REQUIRE_FALSE(cfg.save());
-    REQUIRE(cfg.dirty());
-    REQUIRE_FALSE(cfg.last_save_error().empty());
-
-    Preset preset(Preset::TYPE_PRINT, "n");
-    preset.file = (dir.path / "n.json").string();
-    REQUIRE_FALSE(preset.save(nullptr));
-    // Must not write the json and then fail in save_info (M_PRESET_GATE).
-    REQUIRE_FALSE(boost::filesystem::exists(preset.file));
-
-    DynamicPrintConfig printer_cfg;
-    printer_cfg.set_key_value("preset_names", new ConfigOptionStrings());
-    PhysicalPrinter printer("p", printer_cfg);
-    printer.file = (dir.path / "p.json").string();
-    REQUIRE_FALSE(printer.save(nullptr));
-    REQUIRE_FALSE(boost::filesystem::exists(printer.file));
-
-    InstanceLock::release_data_dir();
-    REQUIRE_FALSE(InstanceLock::allows_saves());
-    InstanceLock::try_acquire_data_dir("", false);
-    REQUIRE(InstanceLock::allows_saves());
-}
-
-TEST_CASE("allows_saves re-acquires after the holder releases, and stays false after release_data_dir", "[utils][atomic][InstanceLock]")
-{
-    ScopedTempDir dir;
-    struct Reset
-    {
-        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
-    } reset;
-
-    {
-        InstanceLock holder(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
-        REQUIRE(holder.locked());
-        REQUIRE_FALSE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(50)));
-        REQUIRE(InstanceLock::is_read_only());
-        REQUIRE_FALSE(InstanceLock::allows_saves());
-    }
-    REQUIRE(InstanceLock::allows_saves());
-    REQUIRE(InstanceLock::holds_data_dir());
-
-    InstanceLock::release_data_dir();
-    REQUIRE_FALSE(InstanceLock::allows_saves());
-    REQUIRE_FALSE(InstanceLock::holds_data_dir());
-    InstanceLock::try_acquire_data_dir("", false);
-    REQUIRE(InstanceLock::allows_saves());
-}
-
-TEST_CASE("hidden transient mode does not hold the data-dir lock between saves", "[utils][atomic][InstanceLock]")
-{
-    ScopedTempDir dir;
-    struct Reset
-    {
-        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
-    } reset;
-
-    REQUIRE(InstanceLock::enable_transient_saves(dir.path.string()));
-    REQUIRE(InstanceLock::is_transient());
-    REQUIRE_FALSE(InstanceLock::holds_data_dir());
-    REQUIRE(InstanceLock::allows_saves());
-    {
-        InstanceLock::WriteScope scope;
-        REQUIRE(scope.allows());
-        REQUIRE(InstanceLock::holds_data_dir());
-    }
-    REQUIRE_FALSE(InstanceLock::holds_data_dir());
-    REQUIRE(InstanceLock::is_transient());
-}
-
-TEST_CASE("a visible holder refuses a hidden save without writing the file", "[utils][atomic][InstanceLock]")
-{
-    ScopedTempDir dir;
-    struct Reset
-    {
-        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
-    } reset;
-
-    InstanceLock visible(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
-    REQUIRE(visible.locked());
-    REQUIRE(InstanceLock::enable_transient_saves(dir.path.string()));
-    REQUIRE_FALSE(InstanceLock::holds_data_dir());
-    {
-        InstanceLock::WriteScope scope;
-        REQUIRE_FALSE(scope.allows());
-    }
-
-    Preset preset(Preset::TYPE_PRINT, "n");
-    preset.file = (dir.path / "n.json").string();
-    REQUIRE_FALSE(preset.save(nullptr));
-    REQUIRE_FALSE(boost::filesystem::exists(preset.file));
-}
-
-#ifndef _WIN32
-TEST_CASE("hidden per-save locking does not stop a visible acquire within the wait", "[utils][atomic][InstanceLock]")
-{
-    ScopedTempDir dir;
-    struct Reset
-    {
-        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
-    } reset;
-
-    int fds[2];
-    REQUIRE(pipe(fds) == 0);
-    const pid_t child = fork();
-    REQUIRE(child >= 0);
-    if (child == 0) {
-        close(fds[0]);
-        InstanceLock::enable_transient_saves(dir.path.string());
-        {
-            InstanceLock::WriteScope scope;
-            const char               c = scope.allows() ? '1' : '0';
-            (void) write(fds[1], &c, 1);
-            usleep(80000);
-        }
-        pause();
-        _exit(0);
-    }
-    close(fds[1]);
-    char c = '0';
-    REQUIRE(read(fds[0], &c, 1) == 1);
-    close(fds[0]);
-    REQUIRE(c == '1');
-    REQUIRE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(200)));
-    REQUIRE(InstanceLock::holds_data_dir());
-    REQUIRE(kill(child, SIGKILL) == 0);
-    int status = 0;
-    REQUIRE(waitpid(child, &status, 0) == child);
-    InstanceLock::try_acquire_data_dir("", false);
-}
-#endif
-
-TEST_CASE("remove_files and delete_printer are refused while the data-dir lock is read-only", "[utils][atomic][InstanceLock]")
-{
-    ScopedTempDir dir;
-    struct Reset
-    {
-        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
-    } reset;
-
-    const boost::filesystem::path preset_file  = dir.path / "preset.json";
-    const boost::filesystem::path printer_file = dir.path / "printer.json";
-    {
-        boost::nowide::ofstream out(preset_file.string());
-        out << "x";
-    }
-    {
-        boost::nowide::ofstream out(printer_file.string());
-        out << "x";
-    }
-
-    InstanceLock holder(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
-    REQUIRE(holder.locked());
-    REQUIRE_FALSE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(50)));
-    REQUIRE(InstanceLock::is_read_only());
-
-    Preset preset(Preset::TYPE_PRINT, "preset");
-    preset.file = preset_file.string();
-    REQUIRE_FALSE(preset.remove_files());
-    REQUIRE(boost::filesystem::exists(preset_file));
-
-    PhysicalPrinterCollection printers(std::vector<std::string>{});
-    DynamicPrintConfig        printer_cfg;
-    printer_cfg.set_key_value("preset_names", new ConfigOptionStrings());
-    printers.load_printer(printer_file.string(), "p", std::move(printer_cfg), false, false);
-    REQUIRE_FALSE(printers.delete_printer("p"));
-    REQUIRE(boost::filesystem::exists(printer_file));
-
-    InstanceLock::try_acquire_data_dir("", false);
-}
-
-TEST_CASE("an inner WriteScope does not release the outer transient lock", "[utils][atomic][InstanceLock]")
-{
-    ScopedTempDir dir;
-    struct Reset
-    {
-        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
-    } reset;
-
-    REQUIRE(InstanceLock::enable_transient_saves(dir.path.string()));
-    {
-        InstanceLock::WriteScope outer;
-        REQUIRE(outer.allows());
-        REQUIRE(InstanceLock::holds_data_dir());
-        {
-            InstanceLock::WriteScope inner;
-            REQUIRE(inner.allows());
-            REQUIRE(InstanceLock::holds_data_dir());
-        }
-        // Inner destructor must drop only its ref, not the flock.
-        REQUIRE(InstanceLock::holds_data_dir());
-        REQUIRE(outer.allows());
-    }
-    REQUIRE_FALSE(InstanceLock::holds_data_dir());
-}
-
-TEST_CASE("WriteScope re-acquires after the visible holder exits", "[utils][atomic][InstanceLock]")
-{
-    ScopedTempDir dir;
-    struct Reset
-    {
-        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
-    } reset;
-
-    {
-        InstanceLock holder(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
-        REQUIRE(holder.locked());
-        REQUIRE_FALSE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(50)));
-        REQUIRE(InstanceLock::is_read_only());
-        {
-            InstanceLock::WriteScope refused;
-            REQUIRE_FALSE(refused.allows());
-            REQUIRE(InstanceLock::last_write_refused());
-        }
-    }
-    {
-        InstanceLock::WriteScope recovered;
-        REQUIRE(recovered.allows());
-        REQUIRE_FALSE(InstanceLock::last_write_refused());
-        REQUIRE(InstanceLock::holds_data_dir());
-        REQUIRE_FALSE(InstanceLock::is_read_only());
-    }
-}
-
-TEST_CASE("save_info is refused while the data-dir lock is read-only", "[utils][atomic][InstanceLock]")
-{
-    ScopedTempDir dir;
-    struct Reset
-    {
-        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
-    } reset;
-
-    InstanceLock holder(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
-    REQUIRE(holder.locked());
-    REQUIRE_FALSE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(50)));
-    REQUIRE(InstanceLock::is_read_only());
-
-    const boost::filesystem::path json = dir.path / "n.json";
-    const boost::filesystem::path info = dir.path / "n.info";
-    Preset                        preset(Preset::TYPE_PRINT, "n");
-    preset.file = json.string();
-    REQUIRE_FALSE(preset.save_info());
-    REQUIRE_FALSE(boost::filesystem::exists(info));
-    REQUIRE_FALSE(boost::filesystem::exists(json));
-
-    InstanceLock::try_acquire_data_dir("", false);
-}
-
-TEST_CASE("save_current_preset is refused while the data-dir lock is read-only", "[utils][atomic][InstanceLock]")
-{
-    ScopedTempDir dir;
-    struct Reset
-    {
-        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
-    } reset;
-
-    PresetCollection collection(Preset::TYPE_PRINT, Preset::print_options(),
-                                static_cast<const PrintRegionConfig &>(FullPrintConfig::defaults()), "Default Setting");
-    collection.update_user_presets_directory(dir.path.string(), "process");
-    const std::string selected_before = collection.get_selected_preset().name;
-
-    InstanceLock holder(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
-    REQUIRE(holder.locked());
-    REQUIRE_FALSE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(50)));
-    REQUIRE(InstanceLock::is_read_only());
-
-    // save_to_project skips Preset::save's disk gate (embedded presets return
-    // true). The collection WriteScope is the only refusal on this path.
-    REQUIRE_FALSE(collection.save_current_preset("proj-preset", false, true));
-    REQUIRE(collection.find_preset("proj-preset", false) == nullptr);
-    REQUIRE(collection.get_selected_preset().name == selected_before);
-
-    InstanceLock::try_acquire_data_dir("", false);
 }

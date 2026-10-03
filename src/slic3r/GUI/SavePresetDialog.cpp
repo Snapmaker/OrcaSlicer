@@ -14,7 +14,6 @@
 
 #include "GUI.hpp"
 #include "GUI_App.hpp"
-#include "MsgDialog.hpp"
 #include "format.hpp"
 #include "Tab.hpp"
 
@@ -436,15 +435,7 @@ void SavePresetDialog::update_physical_printers(const std::string &preset_name)
 
         if (m_action == ChangePreset) printer.delete_preset(printer_preset_name);
 
-        if (printer.add_preset(preset_name)) {
-            if (!physical_printers.save_printer(printer)) {
-                MessageDialog(m_parent,
-                              _L("Failed to save the physical printer. The file was left unchanged."),
-                              _L("Save preset"), wxOK | wxICON_ERROR)
-                    .ShowModal();
-                return;
-            }
-        }
+        if (printer.add_preset(preset_name)) physical_printers.save_printer(printer);
 
         physical_printers.select_printer(printer.get_full_name(preset_name));
     }

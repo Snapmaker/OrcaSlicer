@@ -265,13 +265,12 @@ public:
     static std::string  get_iot_type_string(Preset::Type type);
     static Preset::Type get_type_from_string(std::string type_str);
     void                load_info(const std::string& file);
-    bool                save_info(std::string file = "");
-    bool                remove_files();
+    void                save_info(std::string file = "");
+    void                remove_files();
 
     //BBS: add logic for only difference save
     //if parent_config is null, save all keys, otherwise, only save difference
-    // Returns false on a write failure or when the data-dir InstanceLock is read-only.
-    bool                save(DynamicPrintConfig* parent_config);
+    void                save(DynamicPrintConfig* parent_config);
     void                reload(Preset const & parent);
 
     // Return a label of this preset, consisting of a name and a "(modified)" suffix, if this preset is dirty.
@@ -554,7 +553,7 @@ public:
     // a new preset is stored into the list of presets.
     // All presets are marked as not modified and the new preset is activated.
     //BBS: add project embedded preset logic
-    bool            save_current_preset(const std::string &new_name, bool detach = false, bool save_to_project = false, Preset* _curr_preset = nullptr, const Preset* _current_printer = nullptr);
+    void            save_current_preset(const std::string &new_name, bool detach = false, bool save_to_project = false, Preset* _curr_preset = nullptr, const Preset* _current_printer = nullptr);
 
     // Delete the current preset, activate the first visible preset.
     // returns true if the preset was deleted successfully.
@@ -927,8 +926,8 @@ public:
 
     //BBS: change to json format
     //void                save() { this->config.save(this->file); }
-    bool                save(DynamicPrintConfig* parent_config);
-    bool                save(const std::string& file_name_from, const std::string& file_name_to);
+    void                save(DynamicPrintConfig* parent_config);
+    void                save(const std::string& file_name_from, const std::string& file_name_to);
 
     void                update_from_preset(const Preset& preset);
     void                update_from_config(const DynamicPrintConfig &new_config);
@@ -999,7 +998,7 @@ public:
     // Save the printer under a new name. If the name is different from the old one,
     // a new printer is stored into the list of printers.
     // New printer is activated.
-    bool            save_printer(PhysicalPrinter& printer, const std::string& renamed_from = "");
+    void            save_printer(PhysicalPrinter& printer, const std::string& renamed_from = "");
 
     // Delete the current preset, activate the first visible preset.
     // returns true if the preset was deleted successfully.

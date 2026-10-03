@@ -127,7 +127,6 @@
 #include "RemovableDriveManager.hpp"
 #include "InstanceCheck.hpp"
 #include "slic3r/Utils/InstanceRouting.hpp"
-#include "libslic3r/InstanceLock.hpp"
 #include "NotificationManager.hpp"
 #include "UnsavedChangesDialog.hpp"
 #include "SavePresetDialog.hpp"
@@ -3239,8 +3238,6 @@ void GUI_App::init_single_instance_checker(const std::string &name, const std::s
     m_single_instance_checker = std::make_unique<wxSingleInstanceChecker>(boost::nowide::widen(name), boost::nowide::widen(path));
 }
 
-bool GUI_App::is_data_dir_read_only() const { return InstanceLock::is_read_only(); }
-
 bool GUI_App::OnInit()
 {
     try {
@@ -3305,8 +3302,6 @@ int GUI_App::OnExit()
 
     // A restart was asked for (request_relaunch). It was started once the window closed; if that
     // did not happen (the window went some other way), start it now.
-    InstanceLock::release_data_dir();
-
     if (m_relaunch_pending) {
         BOOST_LOG_TRIVIAL(warning) << "OnExit: relaunch " << (m_relaunch_started ? "already started" : "starting now");
         m_single_instance_checker.reset(); // the lock is let go before the process is gone
@@ -3592,27 +3587,6 @@ bool GUI_App::on_init_inner()
     // supplied as argument to --datadir; in that case we should still run the wizard
     preset_bundle->setup_directories();
     profiler.mark("preset_bundle->setup_directories");
-
-    // After instance_check() has already decided this process stays (hand-off
-    // never reaches here). Hidden / hub instances never hold the lock for life:
-    // they take it only around each gated write. A visible instance waits ~1.5 s
-    // for the previous process to finish OnExit teardown.
-    if (m_hub_managed) {
-        InstanceLock::enable_transient_saves(data_dir());
-    } else if (InstanceLock::try_acquire_data_dir(data_dir())) {
-        const size_t n = scavenge_stale_atomic_temps({data_dir()}, true);
-        if (n > 0)
-            BOOST_LOG_TRIVIAL(info) << "InstanceLock: scavenged " << n << " stale atomic temp(s)";
-    } else if (InstanceLock::lock_unsupported()) {
-        m_instance_lock_notice =
-            _u8L("This filesystem does not support instance locks; saves are allowed but not exclusive.");
-    } else if (InstanceLock::lock_permission_denied()) {
-        m_instance_lock_notice = _u8L("Cannot lock the data directory (permission denied). Saves are disabled.");
-    } else {
-        m_instance_lock_notice =
-            _u8L("Another EdgeSlicer instance is already using this data directory. "
-                 "This instance will not save application settings, presets or printers until that instance exits.");
-    }
 
     copy_web_resources();
     profiler.mark("copy_web_resources");
@@ -4045,14 +4019,6 @@ bool GUI_App::on_init_inner()
     SetTopWindow(mainframe);
 
     plater_->init_notification_manager();
-    if (!m_instance_lock_notice.empty()) {
-        if (NotificationManager *nm = notification_manager())
-            nm->push_notification(NotificationType::CustomNotification,
-                                  NotificationManager::NotificationLevel::WarningNotificationLevel,
-                                  m_instance_lock_notice);
-        else
-            BOOST_LOG_TRIVIAL(warning) << m_instance_lock_notice;
-    }
 
     m_printhost_job_queue.reset(new PrintHostJobQueue(mainframe->printhost_queue_dlg()));
 
@@ -4142,28 +4108,8 @@ bool GUI_App::on_init_inner()
             update_publish_status();
         }
 
-        if (m_post_initialized && app_config->dirty() && app_config->save_due()) {
-            if (!app_config->save()) {
-                // Startup already explained a read-only / permission / busy
-                // data dir. A second AppConfig notice on the same session is
-                // the same fact with a worse message.
-                if (!m_appconfig_save_notice_shown && m_instance_lock_notice.empty() &&
-                    !InstanceLock::is_read_only()) {
-                    m_appconfig_save_notice_shown = true;
-                    const std::string err         = app_config->last_save_error();
-                    const std::string text        = err.empty()
-                                                 ? _u8L("Failed to save application settings.")
-                                                 : (_u8L("Failed to save application settings.") + "\n" + err);
-                    if (NotificationManager *nm = notification_manager())
-                        nm->push_notification(NotificationType::CustomNotification,
-                                              NotificationManager::NotificationLevel::WarningNotificationLevel, text);
-                } else {
-                    m_appconfig_save_notice_shown = true;
-                }
-            } else {
-                m_appconfig_save_notice_shown = false;
-            }
-        }
+        if (m_post_initialized && app_config->dirty() && app_config->save_due())
+            app_config->save();
 
     });
 

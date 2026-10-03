@@ -1,6 +1,5 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Utils.hpp"
-#include "libslic3r/InstanceLock.hpp"
 #include "AppConfig.hpp"
 //BBS
 #include "Preset.hpp"
@@ -956,26 +955,15 @@ void AppConfig::merge_shared_from_disk(const std::string& path)
     } catch (...) {}
 }
 
-bool AppConfig::save()
+void AppConfig::save()
 {
     if (! is_main_thread_active())
         throw CriticalException("Calling AppConfig::save() from a worker thread!");
 
-    m_last_save_error.clear();
-    InstanceLock::WriteScope write_scope;
-    if (!write_scope.allows()) {
-        m_last_save_error = InstanceLock::last_error().empty()
-                                ? std::string("data directory is read-only (another instance holds the lock)")
-                                : InstanceLock::last_error();
-        const auto now = std::chrono::steady_clock::now();
-        if (m_retry_save_at == std::chrono::steady_clock::time_point{} || now >= m_retry_save_at)
-            BOOST_LOG_TRIVIAL(error) << "AppConfig::save: " << m_last_save_error;
-        m_retry_save_at = now + SAVE_RETRY_BACKOFF;
-        return false;
-    }
-
     // Serialized first, then written through a unique temp file and renamed
     // so a crash or a concurrent reader never sees a half-written config.
+    // Not flushed to the device (no fsync): the idle handler saves on the GUI
+    // thread after any change, and the rename already gives a complete old or new file.
     const auto path = config_path();
 
     json j;
@@ -1129,11 +1117,10 @@ bool AppConfig::save()
 
     std::string err;
     if (!write_file_atomically(path, body.str(), &err)) {
-        m_last_save_error = err;
         BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path << ": " << err
                                  << "; aborting attempt to overwrite original configuration";
         m_retry_save_at = std::chrono::steady_clock::now() + SAVE_RETRY_BACKOFF;
-        return false;
+        return;
     }
 
 #ifdef WIN32
@@ -1146,7 +1133,6 @@ bool AppConfig::save()
 
     m_retry_save_at = {};
     m_dirty = false;
-    return true;
 }
 
 #else
@@ -1282,26 +1268,15 @@ std::string AppConfig::load()
     return "";
 }
 
-bool AppConfig::save()
+void AppConfig::save()
 {
     if (! is_main_thread_active())
         throw CriticalException("Calling AppConfig::save() from a worker thread!");
 
-    m_last_save_error.clear();
-    InstanceLock::WriteScope write_scope;
-    if (!write_scope.allows()) {
-        m_last_save_error = InstanceLock::last_error().empty()
-                                ? std::string("data directory is read-only (another instance holds the lock)")
-                                : InstanceLock::last_error();
-        const auto now = std::chrono::steady_clock::now();
-        if (m_retry_save_at == std::chrono::steady_clock::time_point{} || now >= m_retry_save_at)
-            BOOST_LOG_TRIVIAL(error) << "AppConfig::save: " << m_last_save_error;
-        m_retry_save_at = now + SAVE_RETRY_BACKOFF;
-        return false;
-    }
-
     // Serialized first, then written through a unique temp file and renamed
     // so a crash or a concurrent reader never sees a half-written config.
+    // Not flushed to the device (no fsync): the idle handler saves on the GUI
+    // thread after any change, and the rename already gives a complete old or new file.
     const auto path = config_path();
 
     std::stringstream config_ss;
@@ -1348,11 +1323,10 @@ bool AppConfig::save()
 
     std::string err;
     if (!write_file_atomically(path, config_str, &err)) {
-        m_last_save_error = err;
         BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path << ": " << err
                                  << "; aborting attempt to overwrite original configuration";
         m_retry_save_at = std::chrono::steady_clock::now() + SAVE_RETRY_BACKOFF;
-        return false;
+        return;
     }
 
 #ifdef WIN32
@@ -1365,7 +1339,6 @@ bool AppConfig::save()
 
     m_retry_save_at = {};
     m_dirty = false;
-    return true;
 }
 #endif
 

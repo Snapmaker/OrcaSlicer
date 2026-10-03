@@ -1,8 +1,6 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/AppConfig.hpp"
-#include "libslic3r/Thread.hpp"
-#include "libslic3r/Utils.hpp"
 #include "../../src/slic3r/GUI/PrintSelectKeys.hpp"
 
 #include <boost/filesystem.hpp>
@@ -201,30 +199,4 @@ TEST_CASE("Print-action preference keys round-trip; unknown keys fall back to th
         CHECK(resolve_or_default("1", third_party, n, ePrintPlate) == ePrintPlate);
         CHECK(resolve_or_default("4", third_party, n, ePrintPlate) == ePrintPlate);
     }
-}
-
-TEST_CASE("AppConfig::save returns false when the atomic write fails", "[AppConfig][atomic]")
-{
-    const boost::filesystem::path dir =
-        boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("appconfig_save_%%%%%%%%");
-    boost::filesystem::create_directories(dir);
-    const std::string prev = data_dir();
-    set_data_dir(dir.string());
-    save_main_thread_id();
-    set_atomic_write_force_fail_hook([](const char *) { return true; });
-
-    AppConfig config;
-    config.set("k", "v");
-    const bool ok = config.save();
-    const std::string err = config.last_save_error();
-    const bool dirty = config.dirty();
-
-    set_atomic_write_force_fail_hook(nullptr);
-    set_data_dir(prev);
-    boost::system::error_code ec;
-    boost::filesystem::remove_all(dir, ec);
-
-    REQUIRE_FALSE(ok);
-    REQUIRE_FALSE(err.empty());
-    REQUIRE(dirty);
 }

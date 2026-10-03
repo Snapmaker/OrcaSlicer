@@ -261,10 +261,7 @@ bool CalibrationWizard::save_preset(const std::string &old_preset_name, const st
     }
 
     // Save the preset into Slic3r::data_dir / presets / section_name / preset_name.ini
-    if (!filament_presets->save_current_preset(new_name, false, false, new_preset)) {
-        message = _L("Failed to save the preset.");
-        return false;
-    }
+    filament_presets->save_current_preset(new_name, false, false, new_preset);
 
     // BBS create new settings
     new_preset = filament_presets->find_preset(new_name, false, true);
@@ -284,10 +281,7 @@ bool CalibrationWizard::save_preset(const std::string &old_preset_name, const st
         if (wxGetApp().is_user_login()) new_preset->user_id = wxGetApp().getAgent()->get_user_id();
         BOOST_LOG_TRIVIAL(info) << "sync_preset: create preset = " << new_preset->name;
     }
-    if (!new_preset->save_info()) {
-        message = _L("Failed to save the preset.");
-        return false;
-    }
+    new_preset->save_info();
 
     // Mark the print & filament enabled if they are compatible with the currently selected preset.
     // If saving the preset changes compatibility with other presets, keep the now incompatible dependent presets selected, however with a "red flag" icon showing that they are

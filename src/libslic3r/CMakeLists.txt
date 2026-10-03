@@ -352,8 +352,6 @@ set(lisbslic3r_sources
     Geometry/VoronoiUtils.hpp
     Geometry/VoronoiVisualUtils.hpp
     Int128.hpp
-    InstanceLock.cpp
-    InstanceLock.hpp
     KDTreeIndirect.hpp
     Layer.cpp
     Layer.hpp
@@ -621,7 +619,6 @@ slic3r_unity_build(libslic3r SKIP
     SLA/SupportTreeMesher.cpp       # sphere()/Portion clash with a neighbour
     Support/SupportMaterial.cpp     # support_types_interface also defined in SupportCommon.cpp
     utils.cpp                       # needs <windows.h> without a neighbour's lean/extra macros
-    InstanceLock.cpp                # CreateFileW / flock; keep out of unity batches
     Format/bbs_3mf.cpp              # file-local tag/version constants also defined in Format/3mf.cpp
     Emboss.cpp                      # defines STB_TRUETYPE_IMPLEMENTATION before its include
     CodeEmboss.cpp                  # file-local rectangle()/circle()/to_svg() helpers with common names

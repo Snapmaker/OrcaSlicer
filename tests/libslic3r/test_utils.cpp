@@ -15,6 +15,7 @@
 
 #ifndef _WIN32
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 using namespace Slic3r;
@@ -263,6 +264,59 @@ int fail_tmp_renames(const char *from, const char *to)
     return boost::nowide::rename(from, to);
 }
 
+int fail_tmp_and_restore(const char *from, const char *to)
+{
+    const std::string f(from);
+    const bool is_tmp = f.size() >= 4 && f.compare(f.size() - 4, 4, ".tmp") == 0;
+    const bool is_bak = f.size() >= 11 && f.compare(f.size() - 11, 11, ".atomic.bak") == 0;
+    if (is_tmp || is_bak) {
+        errno = EPERM;
+        return -1;
+    }
+    return boost::nowide::rename(from, to);
+}
+
+int fail_target_to_bak(const char *from, const char *to)
+{
+    const std::string t(to);
+    if (t.size() >= 11 && t.compare(t.size() - 11, 11, ".atomic.bak") == 0) {
+        errno = EACCES;
+        return -1;
+    }
+    boost::system::error_code bec;
+    if (boost::filesystem::is_regular_file(to, bec)) {
+        errno = EPERM;
+        return -1;
+    }
+    return boost::nowide::rename(from, to);
+}
+
+struct ScopedInspectHook
+{
+    explicit ScopedInspectHook(AtomicWriteTempInspectFn fn) { set_atomic_write_temp_inspect_hook(fn); }
+    ~ScopedInspectHook() { set_atomic_write_temp_inspect_hook(nullptr); }
+};
+
+static mode_t s_inspected_tmp_mode = 0;
+
+void inspect_tmp_mode(const char *, int fd)
+{
+    struct stat st;
+    if (::fstat(fd, &st) == 0)
+        s_inspected_tmp_mode = st.st_mode & 0777;
+}
+
+size_t count_atomic_baks(const boost::filesystem::path &dir)
+{
+    size_t n = 0;
+    for (auto &entry : boost::filesystem::directory_iterator(dir)) {
+        const std::string name = entry.path().filename().string();
+        if (name.size() >= 11 && name.compare(name.size() - 11, 11, ".atomic.bak") == 0)
+            ++n;
+    }
+    return n;
+}
+
 bool dir_holds_payload(const boost::filesystem::path &dir, const std::string &payload)
 {
     for (auto &entry : boost::filesystem::directory_iterator(dir)) {
@@ -375,6 +429,103 @@ TEST_CASE("write_file_atomically preserves a 0600 mode", "[utils][atomic]")
     REQUIRE(::stat(target.string().c_str(), &st) == 0);
     REQUIRE((st.st_mode & 0777) == 0600);
     REQUIRE(slurp(target) == "second");
+}
+
+TEST_CASE("posix fallback keeps temp and bak when both renames fail", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path target = dir.path / "preset.json";
+    REQUIRE(write_file_atomically(target.string(), "old-bytes"));
+
+    ScopedRenameHook hook(fail_tmp_and_restore);
+    std::string      err;
+    REQUIRE_FALSE(write_file_atomically(target.string(), "new-bytes", &err));
+    REQUIRE(err.find("target removed") != std::string::npos);
+
+    bool saw_tmp = false;
+    bool saw_unique_bak = false;
+    const std::string plain_bak = target.string() + ".atomic.bak";
+    REQUIRE_FALSE(boost::filesystem::exists(plain_bak));
+    for (auto &entry : boost::filesystem::directory_iterator(dir.path)) {
+        const std::string name = entry.path().filename().string();
+        if (!boost::filesystem::is_regular_file(entry))
+            continue;
+        if (name.size() >= 4 && name.compare(name.size() - 4, 4, ".tmp") == 0) {
+            REQUIRE(slurp(entry.path()) == "new-bytes");
+            saw_tmp = true;
+        }
+        if (name.size() >= 11 && name.compare(name.size() - 11, 11, ".atomic.bak") == 0) {
+            REQUIRE(slurp(entry.path()) == "old-bytes");
+            REQUIRE(name.find(std::to_string(get_current_pid())) != std::string::npos);
+            REQUIRE(entry.path().string() != plain_bak);
+            saw_unique_bak = true;
+        }
+    }
+    REQUIRE(saw_tmp);
+    REQUIRE(saw_unique_bak);
+    REQUIRE_FALSE(boost::filesystem::exists(target));
+}
+
+TEST_CASE("posix fallback reports when the target cannot be moved aside", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path target = dir.path / "preset.json";
+    REQUIRE(write_file_atomically(target.string(), "old-bytes"));
+
+    ScopedRenameHook hook(fail_target_to_bak);
+    std::string      err;
+    REQUIRE_FALSE(write_file_atomically(target.string(), "new-bytes", &err));
+    REQUIRE(err.find("cannot move target aside") != std::string::npos);
+    REQUIRE(err.find("target intact") != std::string::npos);
+    REQUIRE(boost::filesystem::exists(target));
+    REQUIRE(slurp(target) == "old-bytes");
+}
+
+TEST_CASE("atomic write temp is 0600 while writing and a new file gets the umask mode", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path target = dir.path / "fresh.json";
+    s_inspected_tmp_mode = 0;
+    ScopedInspectHook             hook(inspect_tmp_mode);
+    REQUIRE(write_file_atomically(target.string(), "payload"));
+    REQUIRE(s_inspected_tmp_mode == 0600);
+
+    const mode_t mask = ::umask(0);
+    ::umask(mask);
+    struct stat st;
+    REQUIRE(::stat(target.string().c_str(), &st) == 0);
+    REQUIRE((st.st_mode & 0777) == (0666 & ~mask));
+    REQUIRE(slurp(target) == "payload");
+}
+
+TEST_CASE("write_file_atomically preserves 0644 and 0640 modes", "[utils][atomic]")
+{
+    ScopedTempDir dir;
+    const struct {
+        const char *name;
+        mode_t      want;
+    } cases[] = {{"mode-644.json", 0644}, {"mode-640.json", 0640}};
+    for (const auto &c : cases) {
+        const boost::filesystem::path target = dir.path / c.name;
+        REQUIRE(write_file_atomically(target.string(), "first"));
+        REQUIRE(::chmod(target.string().c_str(), c.want) == 0);
+        REQUIRE(write_file_atomically(target.string(), "second"));
+        struct stat st;
+        REQUIRE(::stat(target.string().c_str(), &st) == 0);
+        REQUIRE((st.st_mode & 0777) == c.want);
+        REQUIRE(slurp(target) == "second");
+    }
+}
+
+TEST_CASE("a successful fallback save leaves no atomic.bak", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    ScopedRenameHook              hook(refuse_existing_dest);
+    const boost::filesystem::path target = dir.path / "preset.json";
+    REQUIRE(write_file_atomically(target.string(), "old-bytes"));
+    REQUIRE(write_file_atomically(target.string(), "new-bytes"));
+    REQUIRE(slurp(target) == "new-bytes");
+    REQUIRE(count_atomic_baks(dir.path) == 0);
 }
 #endif
 

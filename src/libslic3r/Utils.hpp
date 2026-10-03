@@ -213,13 +213,17 @@ enum class PosixRenameFallbackFate {
 	NotAttempted,
 	Replaced,
 	TargetRestored,
-	TargetRemoved
+	TargetRemoved,
+	BakMoveFailed
 };
 
-// After a replace-refused first rename, move `to` to `to.atomic.bak`, rename
-// `from` into place, then delete the bak. On a failed second rename the bak is
-// restored when possible; the second errno is returned (not first_errno).
-// `fate` reports whether the target was replaced, restored, or left only in the bak.
+// After a replace-refused first rename, move `to` aside to a unique
+// `<to>.<pid>.<n>.atomic.bak` (reusing the temp's pid/counter suffix when
+// `from` is `<to>.<pid>.<n>.tmp`), then rename `from` into place and delete
+// the bak. A stale bak at that exact path is removed first. On a failed
+// second rename the bak is restored when possible and the second errno is
+// returned. If the target cannot be moved aside, BakMoveFailed is reported
+// with that errno. A leftover bak after a successful replace is logged.
 extern std::error_code posix_rename_retry_after_replace_refused(const std::string &from,
                                                                 const std::string &to,
                                                                 int                first_errno,
@@ -229,12 +233,19 @@ extern std::error_code posix_rename_retry_after_replace_refused(const std::strin
 // through this hook (return 0 or -1+errno). nullptr restores libc rename.
 using AtomicPosixRenameFn = int (*)(const char *from, const char *to);
 extern void set_atomic_posix_rename_hook(AtomicPosixRenameFn hook);
+
+// Test seam: called after the temp is fchmod 0600 and before the payload is
+// written. nullptr disables the hook.
+using AtomicWriteTempInspectFn = void (*)(const char *tmp_path, int fd);
+extern void set_atomic_write_temp_inspect_hook(AtomicWriteTempInspectFn hook);
 #endif
 // Unique sibling used by write_file_atomically: <path>.<pid>.<counter>.tmp.
 // consume=true advances the process-wide counter (same generator the helper uses);
 // consume=false peeks so a test can plant a blocker on the next temporary.
 extern std::string atomic_write_temp_path(const std::string &path, bool consume = true);
 // Write `data` through that temporary, flush/fsync, then rename over `path`.
+// The temp is 0600 while writing. An existing target's mode is copied on;
+// a new file is restored to 0666 & ~umask before the rename.
 // On a failed replace the temporary is removed only if the target is still
 // there. If the target is already gone the temporary is kept so the new
 // contents survive. A dangling or looping symlink is a hard error (the link

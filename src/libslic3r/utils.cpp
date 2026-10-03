@@ -561,7 +561,14 @@ namespace WindowsSupport
 		// filesystem does not implement ReplaceFile.
 		const DWORD dest_attr = ::GetFileAttributesW(wide_to.c_str());
 		if (dest_attr != INVALID_FILE_ATTRIBUTES && !(dest_attr & FILE_ATTRIBUTE_DIRECTORY)) {
-			if (::ReplaceFileW(wide_to.c_str(), wide_from.c_str(), nullptr, 0, nullptr, nullptr))
+			DWORD replace_flags = 0;
+#ifdef REPLACEFILE_IGNORE_MERGE_ERRORS
+			replace_flags |= REPLACEFILE_IGNORE_MERGE_ERRORS;
+#endif
+#ifdef REPLACEFILE_IGNORE_ACL_ERRORS
+			replace_flags |= REPLACEFILE_IGNORE_ACL_ERRORS;
+#endif
+			if (::ReplaceFileW(wide_to.c_str(), wide_from.c_str(), nullptr, replace_flags, nullptr, nullptr))
 				return {};
 			const DWORD err = ::GetLastError();
 			if (err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND &&
@@ -680,6 +687,8 @@ namespace WindowsSupport
 } // namespace WindowsSupport
 #endif /* _WIN32 */
 
+static std::atomic<unsigned> s_atomic_write_counter{0};
+
 #ifndef _WIN32
 bool posix_rename_worth_retrying(int err)
 {
@@ -690,10 +699,16 @@ bool posix_rename_worth_retrying(int err)
 }
 
 static std::atomic<AtomicPosixRenameFn> s_posix_rename_hook{nullptr};
+static std::atomic<AtomicWriteTempInspectFn> s_temp_inspect_hook{nullptr};
 
 void set_atomic_posix_rename_hook(AtomicPosixRenameFn hook)
 {
 	s_posix_rename_hook.store(hook);
+}
+
+void set_atomic_write_temp_inspect_hook(AtomicWriteTempInspectFn hook)
+{
+	s_temp_inspect_hook.store(hook);
 }
 
 static int atomic_posix_rename(const char *from, const char *to)
@@ -701,6 +716,22 @@ static int atomic_posix_rename(const char *from, const char *to)
 	if (AtomicPosixRenameFn hook = s_posix_rename_hook.load())
 		return hook(from, to);
 	return boost::nowide::rename(from, to);
+}
+
+// `<to>.<pid>.<n>.atomic.bak`. Reuse the temp suffix when `from` is
+// `<to>.<pid>.<n>.tmp`; otherwise mint a fresh pid/counter pair.
+static std::string atomic_write_backup_path(const std::string &to, const std::string &from)
+{
+	static constexpr const char kTmp[] = ".tmp";
+	static constexpr size_t     kTmpLen = 4;
+	if (from.size() > kTmpLen &&
+	    from.compare(from.size() - kTmpLen, kTmpLen, kTmp) == 0 &&
+	    from.size() > to.size() + 1 &&
+	    from.compare(0, to.size(), to) == 0 &&
+	    from[to.size()] == '.')
+		return from.substr(0, from.size() - kTmpLen) + ".atomic.bak";
+	const unsigned n = s_atomic_write_counter.fetch_add(1u);
+	return to + "." + std::to_string(get_current_pid()) + "." + std::to_string(n) + ".atomic.bak";
 }
 
 std::error_code posix_rename_retry_after_replace_refused(const std::string &from,
@@ -715,12 +746,19 @@ std::error_code posix_rename_retry_after_replace_refused(const std::string &from
 
 	// Move the target aside instead of unlinking it. If the retry then fails,
 	// the bak can be put back so the old contents are not lost.
-	const std::string bak = to + ".atomic.bak";
-	if (atomic_posix_rename(to.c_str(), bak.c_str()) != 0)
-		return std::error_code(first_errno, std::generic_category());
+	const std::string bak = atomic_write_backup_path(to, from);
+	boost::nowide::remove(bak.c_str());
+	errno = 0;
+	if (atomic_posix_rename(to.c_str(), bak.c_str()) != 0) {
+		if (fate)
+			*fate = PosixRenameFallbackFate::BakMoveFailed;
+		return std::error_code(errno, std::generic_category());
+	}
 
 	if (atomic_posix_rename(from.c_str(), to.c_str()) == 0) {
-		boost::nowide::remove(bak.c_str());
+		if (boost::nowide::remove(bak.c_str()) != 0)
+			BOOST_LOG_TRIVIAL(warning) << "posix_rename_retry_after_replace_refused: leftover backup "
+			                           << bak << ": " << std::strerror(errno);
 		if (fate)
 			*fate = PosixRenameFallbackFate::Replaced;
 		return {};
@@ -750,8 +788,6 @@ std::error_code rename_file(const std::string &from, const std::string &to)
 	return posix_rename_retry_after_replace_refused(from, to, errno);
 #endif
 }
-
-static std::atomic<unsigned> s_atomic_write_counter{0};
 
 std::string atomic_write_temp_path(const std::string &path, bool consume)
 {
@@ -791,9 +827,12 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 
 #ifndef _WIN32
 	// Restrict the temp before any payload is written so a crash cannot leave
-	// a world-readable sibling. The existing target's mode is copied later.
+	// a world-readable sibling. The existing target's mode is copied later;
+	// a new file is restored to 0666 & ~umask after the write.
 	if (::fchmod(::fileno(file), S_IRUSR | S_IWUSR) != 0)
 		BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: fchmod 0600 failed for " << tmp;
+	if (AtomicWriteTempInspectFn inspect = s_temp_inspect_hook.load())
+		inspect(tmp.c_str(), ::fileno(file));
 #endif
 
 	const size_t wrote    = data.empty() ? 0 : std::fwrite(data.data(), 1, data.size(), file);
@@ -816,9 +855,16 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 
 #ifndef _WIN32
 	// Copy the existing file's mode onto the temporary so replace keeps 0600
-	// (and any other bits) instead of the umask of this process.
-	if (target_exists)
+	// (and any other bits) instead of the umask of this process. A new file
+	// gets the normal create mode (0666 & ~umask), not the 0600 write mask.
+	if (target_exists) {
 		boost::filesystem::permissions(tmp, target_st.permissions(), bec);
+	} else {
+		const mode_t mask = ::umask(0);
+		::umask(mask);
+		if (::chmod(tmp.c_str(), 0666 & ~mask) != 0)
+			BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: chmod default mode failed for " << tmp;
+	}
 #else
 	// On Windows a read-only bit on the temporary would stop the rename itself.
 	// rename_file tries ReplaceFileW first so the destination DACL, attributes
@@ -827,11 +873,32 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 	(void) target_exists;
 #endif
 
-	if (const std::error_code ec = rename_file(tmp, path)) {
+#ifndef _WIN32
+	PosixRenameFallbackFate fate = PosixRenameFallbackFate::NotAttempted;
+	std::error_code         ec;
+	if (atomic_posix_rename(tmp.c_str(), path.c_str()) != 0)
+		ec = posix_rename_retry_after_replace_refused(tmp, path, errno, &fate);
+	if (ec) {
 		boost::system::error_code exists_ec;
 		const bool target_still = boost::filesystem::exists(path, exists_ec);
 		// Never drop the temp once the target is gone: that is the last copy
 		// of the new contents (and the bak holds the old ones, if any).
+		if (target_still)
+			boost::nowide::remove(tmp.c_str());
+		if (err) {
+			*err = std::string("failed to replace ") + path + ": ";
+			if (fate == PosixRenameFallbackFate::BakMoveFailed)
+				*err += std::string("cannot move target aside: ");
+			*err += ec.message();
+			*err += target_still ? " (target intact)" : " (target removed; temporary kept)";
+		}
+		return false;
+	}
+	return true;
+#else
+	if (const std::error_code ec = rename_file(tmp, path)) {
+		boost::system::error_code exists_ec;
+		const bool target_still = boost::filesystem::exists(path, exists_ec);
 		if (target_still)
 			boost::nowide::remove(tmp.c_str());
 		if (err)
@@ -840,6 +907,7 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 		return false;
 	}
 	return true;
+#endif
 }
 
 #ifdef __linux__

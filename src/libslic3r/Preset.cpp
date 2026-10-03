@@ -24,6 +24,8 @@
 #endif /* L */
 
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -3756,7 +3758,9 @@ void PhysicalPrinter::save(DynamicPrintConfig* /*parent_config*/)
 void PhysicalPrinter::save(const std::string& file_name_from, const std::string& file_name_to)
 {
     // rename the file
-    boost::nowide::rename(file_name_from.data(), file_name_to.data());
+    if (boost::nowide::rename(file_name_from.data(), file_name_to.data()) != 0)
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to rename " << file_name_from
+                                 << " to " << file_name_to << ": " << std::strerror(errno);
     this->file = file_name_to;
     if (!this->config.save_to_json(this->file, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION)))
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save physical printer to " << this->file;

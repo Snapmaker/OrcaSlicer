@@ -1511,9 +1511,13 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 if (boost::filesystem::exists(model.get_backup_path() + "/origin.txt"))
                     load_string_file(model.get_backup_path() + "/origin.txt", m_origin_file);
             } catch (...) {}
-            save_string_file(
-                model.get_backup_path() + "/lock.txt",
-                boost::lexical_cast<std::string>(get_current_pid()));
+            try {
+                save_string_file(
+                    model.get_backup_path() + "/lock.txt",
+                    boost::lexical_cast<std::string>(get_current_pid()));
+            } catch (const std::exception &e) {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to write lock.txt: " << e.what();
+            }
         }
         else {
             m_backup_path = model.get_backup_path();
@@ -1524,7 +1528,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             file_version = *m_bambuslicer_generator_version;
         // save for restore
         if (result && m_load_aux && !m_load_restore) {
-            save_string_file(model.get_backup_path() + "/origin.txt", filename);
+            try {
+                save_string_file(model.get_backup_path() + "/origin.txt", filename);
+            } catch (const std::exception &e) {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to write origin.txt: " << e.what();
+            }
         }
         if (m_load_restore && !result) // not clear failed backup data for later analyze
             model.set_backup_path("detach");
@@ -6689,8 +6697,13 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 boost::filesystem::remove(filename + ".tmp", ec);
                 return false;
             }
-            if (!(store_params.strategy & SaveStrategy::Silence))
-                save_string_file(store_params.model->get_backup_path() + "/origin.txt", filename);
+            if (!(store_params.strategy & SaveStrategy::Silence)) {
+                try {
+                    save_string_file(store_params.model->get_backup_path() + "/origin.txt", filename);
+                } catch (const std::exception &e) {
+                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to write origin.txt: " << e.what();
+                }
+            }
         }
         if (m_bambu_compat) {
             BOOST_LOG_TRIVIAL(info) << "Export Bambu 3MF " << filename << ": " << m_bambu_report.summary();
@@ -8572,7 +8585,13 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                                                      preset->type == Preset::TYPE_FILAMENT ? BambuExport::Scope::Filament :
                                                                                              BambuExport::Scope::Printer;
                     const BambuExport::Config converted = BambuExport::convert(config, m_bambu_ctx, scope, m_bambu_report, "preset " + preset->name);
-                    save_string_file(preset->file, BambuExport::to_json(converted, preset->name, "project", BambuExport::export_version()));
+                    try {
+                        save_string_file(preset->file, BambuExport::to_json(converted, preset->name, "project", BambuExport::export_version()));
+                    } catch (const std::exception &e) {
+                        add_error("Unable to write project embedded preset " + preset->name);
+                        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << " failed to write " << preset->file << ": " << e.what();
+                        return false;
+                    }
                 } else if (!config.save_to_json(preset->file, preset->name, std::string("project"), preset->version.to_string())) {
                     add_error("Unable to write project embedded preset " + preset->name);
                     BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << " failed to write " << preset->file;

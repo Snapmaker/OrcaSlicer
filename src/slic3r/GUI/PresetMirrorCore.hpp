@@ -125,10 +125,30 @@ struct DestState {
 // the sidecar and to decide whether an untracked dest already matches it.
 std::string info_inert(const std::string& src_info);
 
-// True when dest JSON equals the raw source body or the sanitized rewrite the
-// mirror would write, and (when the mirror writes an .info) dest .info equals
-// info_inert(source .info). Empty/missing dest or source bytes never match.
+// True when every non-empty line is `key = value` and at least one known
+// sidecar key is present. Empty, truncated, or garbage text is not.
+bool info_is_parseable(const std::string& text);
+
+// True when dest JSON equals exactly what this run would write (raw if
+// preset_is_parseable, else the sanitized rewrite) and the source is usable
+// (`f.parseable`). A missing, empty, or unparseable dest .info still matches
+// (S4: kill between JSON and sidecar, or a torn sidecar); a parseable .info
+// that is not inert does not. `!f.parseable` never matches (S5).
 bool dest_matches_mirror(const SourceFile& f, const DestState& dst);
+
+// Dest JSON matches, but the sidecar is missing/torn and the mirror would
+// write one. Callers rewrite it atomically after Adopt.
+bool dest_info_needs_rewrite(const SourceFile& f, const DestState& dst);
+
+// Atomic write of info_inert(src_info). Tests inject the force-fail hook.
+bool write_info_inert(const std::string& path, const std::string& src_info, std::string* err = nullptr);
+
+// A copy is recorded only when the JSON landed and, if a sidecar is required,
+// that write succeeded too.
+inline bool copy_ready_to_record(bool json_ok, bool info_required, bool info_ok)
+{
+    return json_ok && (!info_required || info_ok);
+}
 
 // Build the full plan. This is the whole decision procedure, and it is total: every rel in the
 // listing and every rel in the manifest gets exactly one PlanItem.

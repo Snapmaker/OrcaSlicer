@@ -215,29 +215,97 @@ std::string info_inert(const std::string& src_info)
     return out;
 }
 
+bool info_is_parseable(const std::string& text)
+{
+    if (text.empty())
+        return false;
+    std::istringstream in(text);
+    std::string        line;
+    int                known = 0;
+    bool               any   = false;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        std::string trimmed = line;
+        trimmed.erase(0, trimmed.find_first_not_of(" \t"));
+        if (trimmed.empty())
+            continue;
+        any      = true;
+        auto eq  = trimmed.find('=');
+        if (eq == std::string::npos || eq == 0)
+            return false;
+        std::string key = trimmed.substr(0, eq);
+        const auto  end = key.find_last_not_of(" \t");
+        if (end == std::string::npos)
+            return false;
+        key.resize(end + 1);
+        if (key == "user_id" || key == "setting_id" || key == "sync_info" || key == "base_id" || key == "updated_time")
+            ++known;
+    }
+    return any && known > 0;
+}
+
+static bool mirror_would_write(const SourceFile& f, const DestState& dst, std::string* out)
+{
+    if (f.body.empty())
+        return false;
+    if (preset_is_parseable(f.body, dst.nullable_keys)) {
+        if (out)
+            *out = f.body;
+        return true;
+    }
+    std::string fixed;
+    if (!sanitize_nil_arrays(f.body, dst.nullable_keys, &fixed) || !preset_is_parseable(fixed, dst.nullable_keys))
+        return false;
+    if (out)
+        *out = fixed;
+    return true;
+}
+
+static bool writes_info_sidecar(const SourceFile& f)
+{
+    return f.rel.find("/base/") == std::string::npos && !f.info.empty();
+}
+
+bool dest_info_needs_rewrite(const SourceFile& f, const DestState& dst)
+{
+    if (!writes_info_sidecar(f))
+        return false;
+    auto iit = dst.info_bytes.find(f.rel);
+    if (iit == dst.info_bytes.end() || iit->second.empty())
+        return true;
+    if (iit->second == info_inert(f.info))
+        return false;
+    return !info_is_parseable(iit->second);
+}
+
 bool dest_matches_mirror(const SourceFile& f, const DestState& dst)
 {
+    // Unusable source: the mirror would skip, so we never adopt (S5).
+    if (!f.parseable)
+        return false;
     auto bit = dst.bytes.find(f.rel);
-    if (bit == dst.bytes.end() || bit->second.empty() || f.body.empty())
+    if (bit == dst.bytes.end() || bit->second.empty())
         return false;
 
-    const bool raw = bit->second == f.body;
-    bool       sanitized = false;
-    if (!raw) {
-        std::string fixed;
-        sanitized = sanitize_nil_arrays(f.body, dst.nullable_keys, &fixed) && bit->second == fixed;
-    }
-    if (!raw && !sanitized)
+    std::string want;
+    if (!mirror_would_write(f, dst, &want) || bit->second != want)
         return false;
 
-    // base\ entries have no .info; a source with no sidecar is not rewritten either.
-    if (f.rel.find("/base/") != std::string::npos || f.info.empty())
+    if (!writes_info_sidecar(f))
         return true;
 
     auto iit = dst.info_bytes.find(f.rel);
-    if (iit == dst.info_bytes.end())
-        return false;
-    return iit->second == info_inert(f.info);
+    if (iit == dst.info_bytes.end() || iit->second.empty())
+        return true;   // S4: JSON landed, sidecar never did
+    if (iit->second == info_inert(f.info))
+        return true;
+    return !info_is_parseable(iit->second);   // S4: torn sidecar
+}
+
+bool write_info_inert(const std::string& path, const std::string& src_info, std::string* err)
+{
+    return write_file_atomically(path, info_inert(src_info), err, true);
 }
 
 // ---- the plan ---------------------------------------------------------------------------------
@@ -272,11 +340,9 @@ std::vector<PlanItem> build_plan(const SourceListing&                src,
         item.t   = f.t;
 
         if (exists && !tracked) {
-            // Untracked dest whose bytes already equal what this run would write
-            // (raw, or the sanitized rewrite, plus the inert .info). Adopt it so
-            // a crash after the copy and before persist — or main's old
-            // non-atomic write — does not strand the file as ProtectNative.
-            // A byte-different dest stays someone else's file.
+            // Untracked dest whose bytes already equal what this run would write.
+            // Missing/torn dest .info still matches (rewritten after Adopt).
+            // A byte-different dest, or a raw unparseable dest, stays ProtectNative.
             if (dest_matches_mirror(f, dst)) {
                 item.action = Action::Adopt;
                 plan.push_back(item);

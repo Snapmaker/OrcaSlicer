@@ -55,13 +55,13 @@ std::string read_file(const bfs::path& p)
 }
 
 // Copy an .info, forcing sync_info blank so the mirrored preset is inert to the fork's cloud
-// delete/upload gates (keeps user_id + setting_id + base_id).
-void copy_info_inert(const bfs::path& src_info, const bfs::path& dst_info)
+// delete/upload gates (keeps user_id + setting_id + base_id). Atomic: a crash leaves the
+// previous sidecar, not a torn one. Returns false when the write failed.
+bool copy_info_inert(const bfs::path& src_info, const bfs::path& dst_info, std::string* err = nullptr)
 {
     boost::system::error_code ec;
-    if (!bfs::exists(src_info, ec)) return;
-    std::ofstream out(dst_info.string(), std::ios::binary | std::ios::trunc);
-    out << mirror::info_inert(read_file(src_info));
+    if (!bfs::exists(src_info, ec)) return true;
+    return mirror::write_info_inert(dst_info.string(), read_file(src_info), err);
 }
 
 // Every option this fork declares nullable, i.e. where a literal "nil" is a legal value. Any other
@@ -272,35 +272,50 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
                 bfs::path dstp = dst_root / bfs::path(item.rel);
                 bfs::create_directories(dstp.parent_path(), ec);
 
-                // Collapse Bambu's per-extruder "nil" padding where it is unambiguous, so the
-                // preset loads here instead of being rejected (and then deleted) by the loader.
-                std::string text = read_file(srcp);
+                // Sidecar first: a kill between the two writes leaves no dest JSON,
+                // so the next run Copies again instead of ProtectNative. A leftover
+                // JSON-without-info (older write order, or a torn sidecar) is Adopted
+                // and the sidecar rewritten. A failed sidecar must not be recorded.
+                const bool writes_info = item.rel.find("/base/") == std::string::npos;
+                bool       info_ok     = true;
+                if (writes_info) {
+                    bfs::path si = srcp; si.replace_extension(".info");
+                    bfs::path di = dstp; di.replace_extension(".info");
+                    std::string info_err;
+                    info_ok = copy_info_inert(si, di, &info_err);
+                    if (!info_ok) {
+                        BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] .info write failed " << di.string()
+                                                   << (info_err.empty() ? "" : (": " + info_err));
+                        ++errors;
+                    }
+                }
+
+                bool        json_ok   = false;
+                std::string text      = read_file(srcp);
                 std::string fixed;
                 int         collapsed = 0;
-                if (!mirror::preset_is_parseable(text, nullable_option_keys())
+                if (info_ok && !mirror::preset_is_parseable(text, nullable_option_keys())
                     && mirror::sanitize_nil_arrays(text, nullable_option_keys(), &fixed, &collapsed)) {
                     std::ofstream o(dstp.string(), std::ios::binary | std::ios::trunc);
                     o << fixed;
                     if (!o) {
                         BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] write failed " << dstp.string();
                         ++errors;
-                        break;
+                    } else {
+                        json_ok = true;
+                        sanitized += collapsed ? 1 : 0;
                     }
-                    sanitized += collapsed ? 1 : 0;
-                } else {
+                } else if (info_ok) {
                     bfs::copy_file(srcp, dstp, bfs::copy_option::overwrite_if_exists, ec);
                     if (ec) {
                         BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] copy failed " << srcp.string() << ": " << ec.message();
                         ++errors;
-                        break;
+                    } else {
+                        json_ok = true;
                     }
                 }
-                // base\ entries have no .info; only the top-level user presets carry one.
-                if (item.rel.find("/base/") == std::string::npos) {
-                    bfs::path si = srcp; si.replace_extension(".info");
-                    bfs::path di = dstp; di.replace_extension(".info");
-                    copy_info_inert(si, di);
-                }
+                if (!mirror::copy_ready_to_record(json_ok, writes_info, info_ok))
+                    break;
                 pending.push_back(item.rel);
                 // One atomic write at the end of a contiguous Copy run, under
                 // this scope, so a later lock steal cannot drop recorded entries.
@@ -315,7 +330,22 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
                 break;
             }
             case mirror::Action::UpToDate:        ++uptodate;         break;
-            case mirror::Action::Adopt:           ++adopted;          break;
+            case mirror::Action::Adopt: {
+                ++adopted;
+                auto sit = by_rel.find(item.rel);
+                if (sit != by_rel.end() && mirror::dest_info_needs_rewrite(*sit->second, dst)) {
+                    InstanceLock::WriteScope write_scope;
+                    bfs::path di = dst_root / bfs::path(item.rel);
+                    di.replace_extension(".info");
+                    std::string err;
+                    if (!write_scope.allows() || !mirror::write_info_inert(di.string(), sit->second->info, &err)) {
+                        BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] adopt .info rewrite failed " << di.string()
+                                                   << (err.empty() ? "" : (": " + err));
+                        ++errors;
+                    }
+                }
+                break;
+            }
             case mirror::Action::ProtectNative:   ++native_protected; break;
             case mirror::Action::RespectDelete:   ++respected;        break;
             case mirror::Action::SkipUnparseable: ++skipped;          break;

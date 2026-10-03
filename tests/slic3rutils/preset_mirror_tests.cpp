@@ -555,48 +555,52 @@ TEST_CASE("info_inert blanks sync_info the way the mirror writes the sidecar", "
     CHECK(info_inert("user_id = 1\n") == "user_id = 1\nsync_info = \n");
 }
 
-TEST_CASE("dest_matches_mirror accepts raw or sanitized JSON and the inert .info", "[PresetMirror]")
+TEST_CASE("dest_matches_mirror accepts exactly what the mirror would write", "[PresetMirror]")
 {
-    const std::string raw        = R"({"name":"A","nozzle_temperature":["230","nil"]})";
+    const std::string raw = R"({"name":"A","nozzle_temperature":["230","nil"]})";
     std::string       sanitized;
     REQUIRE(sanitize_nil_arrays(raw, {}, &sanitized));
-    const std::string src_info   = "user_id = 1\nsync_info = upload\n";
-    const std::string dest_info  = info_inert(src_info);
+    const std::string src_info  = "user_id = 1\nsync_info = upload\n";
+    const std::string dest_info = info_inert(src_info);
 
     SourceFile f = sf("filament/A.json", 10);
-    f.body = raw;
-    f.info = src_info;
+    f.body       = raw;
+    f.info       = src_info;
 
     DestState dst;
     dst.present["filament/A.json"]    = true;
-    dst.bytes["filament/A.json"]      = raw;
+    dst.bytes["filament/A.json"]      = sanitized;
     dst.info_bytes["filament/A.json"] = dest_info;
     CHECK(dest_matches_mirror(f, dst));
 
-    dst.bytes["filament/A.json"] = sanitized;
-    CHECK(dest_matches_mirror(f, dst));
+    // Raw unparseable is not what this run would write (S5).
+    dst.bytes["filament/A.json"] = raw;
+    CHECK_FALSE(dest_matches_mirror(f, dst));
 
     dst.bytes["filament/A.json"] = R"({"name":"edited"})";
     CHECK_FALSE(dest_matches_mirror(f, dst));
 
-    dst.bytes["filament/A.json"]      = raw;
-    dst.info_bytes["filament/A.json"] = src_info;   // raw sidecar, not inert
+    dst.bytes["filament/A.json"]      = sanitized;
+    dst.info_bytes["filament/A.json"] = src_info;   // parseable sidecar, not inert
     CHECK_FALSE(dest_matches_mirror(f, dst));
 
+    // S4: matching JSON + missing sidecar still matches; rewrite is separate.
     DestState no_info = dst;
-    no_info.bytes["filament/A.json"] = raw;
+    no_info.bytes["filament/A.json"] = sanitized;
     no_info.info_bytes.clear();
-    CHECK_FALSE(dest_matches_mirror(f, no_info));
+    CHECK(dest_matches_mirror(f, no_info));
+    CHECK(dest_info_needs_rewrite(f, no_info));
 
     SourceFile base = sf("filament/base/A.json", 10);
-    base.body = raw;
+    base.body       = R"({"name":"A"})";
     DestState base_dst;
-    base_dst.bytes["filament/base/A.json"] = raw;
+    base_dst.bytes["filament/base/A.json"] = base.body;
     CHECK(dest_matches_mirror(base, base_dst));   // base/ writes no .info
+    CHECK_FALSE(dest_info_needs_rewrite(base, base_dst));
 
     SourceFile empty;
     empty.rel  = "filament/A.json";
-    empty.body = raw;
+    empty.body = sanitized;
     DestState missing;
     missing.present["filament/A.json"] = true;
     CHECK_FALSE(dest_matches_mirror(empty, missing));   // no dest bytes
@@ -710,6 +714,146 @@ TEST_CASE("an empty manifest plus matching dest bytes is adopted, not ProtectNat
     REQUIRE(after.count("filament/A.json") == 1);
     CHECK(after["filament/A.json"].t == 10);
     CHECK_FALSE(after["filament/A.json"].deleted);
+}
+
+TEST_CASE("a kill between JSON and .info, or a torn .info, is adopted and rewritten", "[PresetMirror]")
+{
+    const std::string body  = R"({"name":"A"})";
+    const std::string info  = "user_id = 1\nsync_info = upload\nsetting_id = x\n";
+    const std::string inert = info_inert(info);
+
+    SourceFile f = sf("filament/A.json", 10);
+    f.body       = body;
+    f.info       = info;
+    SourceListing src;
+    src.ok = true;
+    src.files.push_back(f);
+
+    DestState missing_info;
+    missing_info.present["filament/A.json"] = true;
+    missing_info.bytes["filament/A.json"]   = body;
+    auto plan_missing                       = build_plan(src, {}, missing_info);
+    CHECK(action_for(plan_missing, "filament/A.json") == Action::Adopt);
+    CHECK(dest_info_needs_rewrite(f, missing_info));
+    CHECK(apply_plan({}, plan_missing, {}).count("filament/A.json"));
+
+    DestState torn;
+    torn.present["filament/A.json"]    = true;
+    torn.bytes["filament/A.json"]      = body;
+    torn.info_bytes["filament/A.json"] = "user_id = 1\nsync_inf";
+    CHECK_FALSE(info_is_parseable(torn.info_bytes["filament/A.json"]));
+    auto plan_torn = build_plan(src, {}, torn);
+    CHECK(action_for(plan_torn, "filament/A.json") == Action::Adopt);
+    CHECK(dest_info_needs_rewrite(f, torn));
+
+    // A complete user sidecar is someone else's file, even if the JSON matches.
+    DestState user_info;
+    user_info.present["filament/A.json"]    = true;
+    user_info.bytes["filament/A.json"]      = body;
+    user_info.info_bytes["filament/A.json"] = "user_id = 9\nsync_info = upload\nsetting_id = mine\n";
+    CHECK(info_is_parseable(user_info.info_bytes["filament/A.json"]));
+    CHECK(action_for(build_plan(src, {}, user_info), "filament/A.json") == Action::ProtectNative);
+
+    // After adopt, a later source edit updates the file (cross-run).
+    auto man = apply_plan({}, plan_missing, {});
+    SourceListing edited = src;
+    edited.files[0].t    = 20;
+    edited.files[0].body = R"({"name":"A2"})";
+    DestState dest2      = missing_info;
+    CHECK(action_for(build_plan(edited, man, dest2), "filament/A.json") == Action::Copy);
+}
+
+TEST_CASE("a raw unparseable dest is not adopted; only the sanitized bytes are", "[PresetMirror]")
+{
+    const std::string raw = R"({"name":"A","nozzle_temperature":["230","nil"]})";
+    std::string       sanitized;
+    REQUIRE(sanitize_nil_arrays(raw, {}, &sanitized));
+    REQUIRE_FALSE(preset_is_parseable(raw, {}));
+    REQUIRE(preset_is_parseable(sanitized, {}));
+
+    SourceFile f = sf("filament/A.json", 10, /*parseable*/ true);
+    f.body       = raw;
+    f.info       = "user_id = 1\n";
+    SourceListing src;
+    src.ok = true;
+    src.files.push_back(f);
+
+    DestState raw_dst;
+    raw_dst.present["filament/A.json"]    = true;
+    raw_dst.bytes["filament/A.json"]      = raw;
+    raw_dst.info_bytes["filament/A.json"] = info_inert(f.info);
+    CHECK_FALSE(dest_matches_mirror(f, raw_dst));
+    CHECK(action_for(build_plan(src, {}, raw_dst), "filament/A.json") == Action::ProtectNative);
+
+    DestState san_dst = raw_dst;
+    san_dst.bytes["filament/A.json"] = sanitized;
+    CHECK(dest_matches_mirror(f, san_dst));
+    CHECK(action_for(build_plan(src, {}, san_dst), "filament/A.json") == Action::Adopt);
+
+    SourceFile skipped = f;
+    skipped.parseable  = false;
+    src.files[0]       = skipped;
+    CHECK_FALSE(dest_matches_mirror(skipped, san_dst));
+    CHECK(action_for(build_plan(src, {}, san_dst), "filament/A.json") == Action::ProtectNative);
+}
+
+TEST_CASE("same-length dest JSON that is not byte-identical is not adopted", "[PresetMirror]")
+{
+    const std::string older = R"({"name":"AA"})";
+    const std::string newer = R"({"name":"BB"})";
+    REQUIRE(older.size() == newer.size());
+    REQUIRE(older != newer);
+
+    SourceFile f = sf("filament/A.json", 20);
+    f.body       = newer;
+    f.info       = "user_id = 1\n";
+    SourceListing src;
+    src.ok = true;
+    src.files.push_back(f);
+
+    DestState dst;
+    dst.present["filament/A.json"]    = true;
+    dst.bytes["filament/A.json"]      = older;
+    dst.info_bytes["filament/A.json"] = info_inert(f.info);
+    CHECK_FALSE(dest_matches_mirror(f, dst));
+    CHECK(action_for(build_plan(src, {}, dst), "filament/A.json") == Action::ProtectNative);
+    CHECK(apply_plan({}, build_plan(src, {}, dst), {}).empty());
+}
+
+TEST_CASE("a failed .info write is not recorded as a successful copy", "[PresetMirror]")
+{
+    CHECK(copy_ready_to_record(true, true, true));
+    CHECK_FALSE(copy_ready_to_record(true, true, false));
+    CHECK(copy_ready_to_record(true, false, false));
+    CHECK_FALSE(copy_ready_to_record(false, true, true));
+
+    const auto dir = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("info_%%%%%%%%");
+    boost::filesystem::create_directories(dir);
+    const auto path = (dir / "A.info").string();
+    struct Cleanup
+    {
+        boost::filesystem::path p;
+        ~Cleanup()
+        {
+            boost::system::error_code ec;
+            boost::filesystem::remove_all(p, ec);
+        }
+    } cleanup{dir};
+
+    REQUIRE(write_info_inert(path, "user_id = 1\nsync_info = upload\n", nullptr));
+    std::ifstream in0(path, std::ios::binary);
+    const std::string first((std::istreambuf_iterator<char>(in0)), std::istreambuf_iterator<char>());
+    CHECK(first == info_inert("user_id = 1\nsync_info = upload\n"));
+
+    Slic3r::set_atomic_write_force_fail_hook([](const char*) { return true; });
+    std::string err;
+    REQUIRE_FALSE(write_info_inert(path, "user_id = 2\nsync_info = upload\n", &err));
+    Slic3r::set_atomic_write_force_fail_hook(nullptr);
+    REQUIRE_FALSE(err.empty());
+    std::ifstream in1(path, std::ios::binary);
+    const std::string still((std::istreambuf_iterator<char>(in1)), std::istreambuf_iterator<char>());
+    CHECK(still == first);
+    CHECK(still.find("user_id = 2") == std::string::npos);
 }
 
 TEST_CASE("copy_run_ends_at flushes the last Copy and a failed flush skips the rest", "[PresetMirror]")

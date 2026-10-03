@@ -996,12 +996,15 @@ TEST_CASE("AppConfig save is refused while the data-dir InstanceLock is read-onl
     Preset preset(Preset::TYPE_PRINT, "n");
     preset.file = (dir.path / "n.json").string();
     REQUIRE_FALSE(preset.save(nullptr));
+    // Must not write the json and then fail in save_info (M_PRESET_GATE).
+    REQUIRE_FALSE(boost::filesystem::exists(preset.file));
 
     DynamicPrintConfig printer_cfg;
     printer_cfg.set_key_value("preset_names", new ConfigOptionStrings());
     PhysicalPrinter printer("p", printer_cfg);
     printer.file = (dir.path / "p.json").string();
     REQUIRE_FALSE(printer.save(nullptr));
+    REQUIRE_FALSE(boost::filesystem::exists(printer.file));
 
     InstanceLock::release_data_dir();
     REQUIRE_FALSE(InstanceLock::allows_saves());

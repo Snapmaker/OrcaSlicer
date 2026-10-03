@@ -1034,8 +1034,10 @@ TEST_CASE("allows_saves re-acquires after the holder releases, and stays false a
     InstanceLock::release_data_dir();
     REQUIRE_FALSE(InstanceLock::allows_saves());
     REQUIRE_FALSE(InstanceLock::holds_data_dir());
-    REQUIRE(InstanceLock::last_error().empty());
+    REQUIRE(InstanceLock::last_error().find("another") == std::string::npos);
+    REQUIRE(InstanceLock::last_error().find("Another") == std::string::npos);
     REQUIRE(InstanceLock::last_error().find("released") == std::string::npos);
+    REQUIRE_FALSE(InstanceLock::last_error().empty());
     InstanceLock::try_acquire_data_dir("", false);
     REQUIRE(InstanceLock::allows_saves());
 }

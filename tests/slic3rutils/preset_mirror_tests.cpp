@@ -13,10 +13,13 @@
 #include <catch2/catch.hpp>
 
 #include "slic3r/GUI/PresetMirrorCore.hpp"
+#include "libslic3r/Utils.hpp"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <boost/filesystem.hpp>
+#include <fstream>
 #include <set>
 
 using namespace Slic3r::GUI::mirror;
@@ -44,6 +47,15 @@ SourceFile sf(const std::string& rel, long long t, bool parseable = true)
     return f;
 }
 
+std::set<std::string> copies_of(const std::vector<PlanItem>& plan)
+{
+    std::set<std::string> s;
+    for (const auto& p : plan)
+        if (p.action == Action::Copy)
+            s.insert(p.rel);
+    return s;
+}
+
 } // namespace
 
 // ---- the regression: a bad source listing must never delete ------------------------------------
@@ -65,7 +77,7 @@ TEST_CASE("an unreadable source directory is a strict no-op", "[PresetMirror]")
 
     CHECK(plan.empty());
     // and nothing is retired or flagged deleted
-    auto after = apply_plan(man, plan);
+    auto after = apply_plan(man, plan, {});
     CHECK(after == man);
 }
 
@@ -88,7 +100,7 @@ TEST_CASE("an empty-but-failed listing never retires tracked presets", "[PresetM
     auto plan = build_plan(good, man, gone);
     REQUIRE(has(plan, "filament/A.json"));
     CHECK(action_for(plan, "filament/A.json") == Action::Retire);
-    CHECK(apply_plan(man, plan).empty());
+    CHECK(apply_plan(man, plan, {}).empty());
 }
 
 // ---- the parse guard ---------------------------------------------------------------------------
@@ -113,7 +125,7 @@ TEST_CASE("a preset with a nil hole in a non-nullable option is never copied", "
 
     auto plan = build_plan(src, {}, DestState{});
     CHECK(action_for(plan, "process/0.08mm @H2D - Minis.json") == Action::SkipUnparseable);
-    CHECK(apply_plan({}, plan).empty());   // and it is not recorded as mirrored
+    CHECK(apply_plan({}, plan, {}).empty());   // and it is not recorded as mirrored
 }
 
 TEST_CASE("nil is accepted for options this fork defines as nullable", "[PresetMirror]")
@@ -202,7 +214,7 @@ TEST_CASE("a genuine upstream deletion is respected and not re-pulled", "[Preset
     auto plan = build_plan(src, man, dst);
     CHECK(action_for(plan, "filament/Gone.json") == Action::RespectDelete);
 
-    auto after = apply_plan(man, plan);
+    auto after = apply_plan(man, plan, {});
     REQUIRE(after.count("filament/Gone.json") == 1);
     CHECK(after["filament/Gone.json"].deleted);
 
@@ -225,7 +237,7 @@ TEST_CASE("a deletion is re-pulled once Bambu Studio edits the preset again", "[
 
     auto plan = build_plan(src, man, dst);
     CHECK(action_for(plan, "filament/Gone.json") == Action::Copy);
-    auto after = apply_plan(man, plan);
+    auto after = apply_plan(man, plan, copies_of(plan));
     CHECK_FALSE(after["filament/Gone.json"].deleted);
     CHECK(after["filament/Gone.json"].t == 99);
 }
@@ -242,7 +254,7 @@ TEST_CASE("a fork-native preset is never touched", "[PresetMirror]")
 
     auto plan = build_plan(src, {}, dst);
     CHECK(action_for(plan, "filament/My Own.json") == Action::ProtectNative);
-    CHECK(apply_plan({}, plan).empty());   // never adopted into the manifest
+    CHECK(apply_plan({}, plan, {}).empty());   // never adopted into the manifest
 }
 
 TEST_CASE("unchanged and newer sources are classified correctly", "[PresetMirror]")
@@ -276,7 +288,7 @@ TEST_CASE("a tracked preset still on disk but unlisted upstream is left alone", 
 
     auto plan = build_plan(src, man, dst);
     CHECK_FALSE(has(plan, "filament/Kept.json"));   // no Retire while the file is on disk
-    CHECK(apply_plan(man, plan) == man);
+    CHECK(apply_plan(man, plan, {}) == man);
 }
 
 // ---- manifest round-trip -------------------------------------------------------------------------
@@ -396,7 +408,7 @@ TEST_CASE("the reported mass-delete cannot happen", "[PresetMirror]")
     failed.ok = false;
     auto plan = build_plan(failed, man, dst);
     CHECK(plan.empty());
-    CHECK(apply_plan(man, plan) == man);
+    CHECK(apply_plan(man, plan, {}) == man);
 
     // Even a successful listing where every preset is unparseable leaves the copies in place.
     SourceListing unparseable;
@@ -405,7 +417,7 @@ TEST_CASE("the reported mass-delete cannot happen", "[PresetMirror]")
         unparseable.files.push_back(sf("filament/P" + std::to_string(i) + ".json", 2000, false));
 
     auto plan2  = build_plan(unparseable, man, dst);
-    auto after2 = apply_plan(man, plan2);
+    auto after2 = apply_plan(man, plan2, {});
     CHECK(after2.size() == man.size());
     for (const auto& kv : after2)
         CHECK_FALSE(kv.second.deleted);
@@ -450,11 +462,85 @@ TEST_CASE("a mid-mirror refusal leaves refused copies pending and the next run c
     CHECK(done.count("filament/A.json"));
     CHECK(done.count("filament/B.json"));
     CHECK(done.count("filament/C.json"));
+}
 
-    // Mutation: apply_plan records every planned Copy. B and C then look
-    // mirrored-but-missing and the next run RespectDeletes them as user deletions.
-    auto recorded_all = apply_plan(man, plan);
-    auto poisoned     = build_plan(src, recorded_all, dest_after);
-    CHECK(action_for(poisoned, "filament/B.json") == Action::RespectDelete);
-    CHECK(action_for(poisoned, "filament/C.json") == Action::RespectDelete);
+TEST_CASE("a failed manifest write does not record the pending copies", "[PresetMirror]")
+{
+    SourceListing src;
+    src.ok = true;
+    src.files.push_back(sf("filament/A.json", 10));
+    src.files.push_back(sf("filament/B.json", 10));
+    auto plan = build_plan(src, {}, DestState{});
+
+    std::set<std::string>    copied;
+    std::vector<std::string> pending{"filament/A.json"};
+    int                      writes = 0;
+    auto fail_write = [&](const std::string&, const std::string& dump, std::string* err) {
+        ++writes;
+        REQUIRE(dump.find("filament/A.json") != std::string::npos);
+        if (err)
+            *err = "forced";
+        return false;
+    };
+    std::string err;
+    REQUIRE_FALSE(commit_pending_copies(copied, pending, {}, plan, "unused", &err, fail_write));
+    REQUIRE(writes == 1);
+    CHECK(copied.empty());
+    CHECK(pending == std::vector<std::string>{"filament/A.json"});
+    CHECK(apply_plan({}, plan, copied).empty());
+
+    auto ok_write = [&](const std::string&, const std::string&, std::string*) {
+        ++writes;
+        return true;
+    };
+    REQUIRE(commit_pending_copies(copied, pending, {}, plan, "unused", &err, ok_write));
+    CHECK(copied.count("filament/A.json"));
+    CHECK(pending.empty());
+}
+
+TEST_CASE("write_manifest_bytes is atomic and a torn file is not produced", "[PresetMirror]")
+{
+    const auto dir  = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("mirror_%%%%%%%%");
+    boost::filesystem::create_directories(dir);
+    const auto path = (dir / ".bs_mirror_manifest.json").string();
+    struct Cleanup
+    {
+        boost::filesystem::path p;
+        ~Cleanup()
+        {
+            boost::system::error_code ec;
+            boost::filesystem::remove_all(p, ec);
+        }
+    } cleanup{dir};
+
+    std::map<std::string, Entry> man{{"filament/A.json", {10, false}}};
+    const std::string            good = dump_manifest(man);
+    REQUIRE(write_manifest_bytes(path, good, nullptr));
+    REQUIRE(parse_manifest([&] {
+        std::ifstream in(path, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }()) == man);
+
+    set_atomic_write_force_fail_hook([](const char*) { return true; });
+    std::string err;
+    std::map<std::string, Entry> newer{{"filament/A.json", {10, false}}, {"filament/B.json", {11, false}}};
+    REQUIRE_FALSE(write_manifest_bytes(path, dump_manifest(newer), &err));
+    set_atomic_write_force_fail_hook(nullptr);
+    REQUIRE_FALSE(err.empty());
+
+    std::ifstream in(path, std::ios::binary);
+    const std::string on_disk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(parse_manifest(on_disk) == man);
+    CHECK(on_disk.find("filament/B.json") == std::string::npos);
+
+    // A torn prefix parses as empty, so every file looks fork-native (ProtectNative).
+    // Atomic persist makes that file unproducible; this pins the parse behaviour.
+    CHECK(parse_manifest("{\"files\":{\"filament/A.json\":{\"t\":10").empty());
+    DestState dst;
+    dst.present["filament/A.json"] = true;
+    SourceListing src;
+    src.ok = true;
+    src.files.push_back(sf("filament/A.json", 10));
+    auto plan = build_plan(src, parse_manifest("{\"files\":{\"filament/A.json\":{\"t\":10"), dst);
+    CHECK(action_for(plan, "filament/A.json") == Action::ProtectNative);
 }

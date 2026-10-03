@@ -234,18 +234,23 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
         for (const auto& f : src.files) by_rel[f.rel] = &f;
 
         int copied = 0, uptodate = 0, native_protected = 0, respected = 0, skipped = 0, retired = 0, errors = 0, sanitized = 0;
-        std::set<std::string> copied_rels;
-        bool                  copies_refused = false;
+        std::set<std::string>    copied_rels;
+        std::vector<std::string> pending;
+        bool                     copies_refused = false;
 
-        auto persist_manifest = [&]() {
-            try {
-                const auto snap = mirror::apply_plan(manifest, plan, copied_rels);
-                std::ofstream out(man_path.string(), std::ios::binary | std::ios::trunc);
-                out << mirror::dump_manifest(snap);
-            } catch (...) {}
+        auto flush_pending = [&]() -> bool {
+            if (pending.empty())
+                return true;
+            std::string err;
+            if (!mirror::commit_pending_copies(copied_rels, pending, manifest, plan, man_path.string(), &err)) {
+                BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] atomic manifest write failed: " << err;
+                return false;
+            }
+            return true;
         };
 
-        for (const auto& item : plan) {
+        for (size_t i = 0; i < plan.size(); ++i) {
+            const auto& item = plan[i];
             switch (item.action) {
             case mirror::Action::Copy: {
                 if (copies_refused) {
@@ -293,11 +298,18 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
                     bfs::path di = dstp; di.replace_extension(".info");
                     copy_info_inert(si, di);
                 }
-                ++copied;
-                copied_rels.insert(item.rel);
-                // Same scope as the copy: a later lock steal cannot drop this
-                // entry, and a refused later copy is not recorded as done.
-                persist_manifest();
+                pending.push_back(item.rel);
+                // One atomic write at the end of a contiguous Copy run, under
+                // this scope, so a later lock steal cannot drop recorded entries.
+                const bool end_of_run = (i + 1 == plan.size() || plan[i + 1].action != mirror::Action::Copy);
+                if (end_of_run) {
+                    if (flush_pending())
+                        copied = static_cast<int>(copied_rels.size());
+                    else {
+                        ++errors;
+                        copies_refused = true;
+                    }
+                }
                 break;
             }
             case mirror::Action::UpToDate:        ++uptodate;         break;
@@ -310,8 +322,13 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
 
         {
             InstanceLock::WriteScope write_scope;
-            if (write_scope.allows())
-                persist_manifest();
+            if (write_scope.allows()) {
+                std::string err;
+                if (!mirror::commit_pending_copies(copied_rels, pending, manifest, plan, man_path.string(), &err))
+                    BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] final atomic manifest write failed: " << err;
+                else
+                    copied = static_cast<int>(copied_rels.size());
+            }
         }
 
         BOOST_LOG_TRIVIAL(info) << "[preset-mirror] from " << src_uid.string()
@@ -348,8 +365,11 @@ int repull_mirrored_presets()
         for (auto& kv : manifest)
             if (kv.second.deleted) { kv.second.deleted = false; kv.second.t = 0; ++cleared; }
         if (cleared > 0) {
-            std::ofstream out(man_path.string(), std::ios::binary | std::ios::trunc);
-            out << mirror::dump_manifest(manifest);
+            std::string err;
+            if (!mirror::write_manifest_bytes(man_path.string(), mirror::dump_manifest(manifest), &err)) {
+                BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] re-pull atomic manifest write failed: " << err;
+                return 0;
+            }
         }
         BOOST_LOG_TRIVIAL(info) << "[preset-mirror] re-pull requested: cleared " << cleared << " deletion flag(s)";
         return cleared;

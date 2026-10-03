@@ -1,5 +1,7 @@
 #include "PresetMirrorCore.hpp"
 
+#include "libslic3r/Utils.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -275,16 +277,6 @@ std::vector<PlanItem> build_plan(const SourceListing&                src,
 }
 
 std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& manifest,
-                                        const std::vector<PlanItem>&        plan)
-{
-    std::set<std::string> copied;
-    for (const PlanItem& p : plan)
-        if (p.action == Action::Copy)
-            copied.insert(p.rel);
-    return apply_plan(manifest, plan, copied);
-}
-
-std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& manifest,
                                         const std::vector<PlanItem>&        plan,
                                         const std::set<std::string>&        copied)
 {
@@ -311,6 +303,31 @@ std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& mani
         }
     }
     return out;
+}
+
+bool write_manifest_bytes(const std::string& path, const std::string& dump, std::string* err)
+{
+    return write_file_atomically(path, dump, err, true);
+}
+
+bool commit_pending_copies(std::set<std::string>&              copied,
+                           std::vector<std::string>&           pending,
+                           const std::map<std::string, Entry>& manifest,
+                           const std::vector<PlanItem>&        plan,
+                           const std::string&                  path,
+                           std::string*                        err,
+                           ManifestWriteFn                     write)
+{
+    std::set<std::string> next = copied;
+    for (const auto& rel : pending)
+        next.insert(rel);
+    const std::string dump = dump_manifest(apply_plan(manifest, plan, next));
+    const bool        ok   = write ? write(path, dump, err) : write_manifest_bytes(path, dump, err);
+    if (!ok)
+        return false;
+    copied = std::move(next);
+    pending.clear();
+    return true;
 }
 
 // ---- source directory resolution ---------------------------------------------------------------

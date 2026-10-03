@@ -1,6 +1,7 @@
 #ifndef slic3r_GUI_PresetMirrorCore_hpp_
 #define slic3r_GUI_PresetMirrorCore_hpp_
 
+#include <functional>
 #include <string>
 #include <vector>
 #include <map>
@@ -122,14 +123,30 @@ std::vector<PlanItem> build_plan(const SourceListing&               src,
 // Apply a plan to a manifest, returning the new manifest. RespectDelete updates
 // entries, Retire drops them, everything else except Copy leaves the manifest
 // alone. Copy is recorded only for rels in `copied` — a refused or failed copy
-// stays pending so the next run retries it instead of treating it as done or
-// as a user deletion. The two-argument overload treats every planned Copy as
-// successful (fully executed run).
-std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& manifest,
-                                        const std::vector<PlanItem>&        plan);
+// (or a copy whose manifest write failed) stays pending so the next run retries
+// it instead of treating it as done or as a user deletion. There is no
+// two-argument overload: omitting `copied` used to record every planned Copy.
 std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& manifest,
                                         const std::vector<PlanItem>&        plan,
                                         const std::set<std::string>&        copied);
+
+// Atomic replace of the manifest file (write_file_atomically, binary). A
+// crash or full disk leaves the previous complete file, which parse_manifest
+// can read. A truncate-write can leave a torn file that parses as empty.
+bool write_manifest_bytes(const std::string& path, const std::string& dump, std::string* err = nullptr);
+
+// Persist apply_plan(manifest, plan, copied ∪ pending). On success, pending
+// rels are moved into `copied` and cleared. On failure `copied` and `pending`
+// are unchanged — those copies are not recorded. `write` defaults to
+// write_manifest_bytes; tests inject a failing or inspecting writer.
+using ManifestWriteFn = std::function<bool(const std::string& path, const std::string& dump, std::string* err)>;
+bool commit_pending_copies(std::set<std::string>&              copied,
+                           std::vector<std::string>&           pending,
+                           const std::map<std::string, Entry>& manifest,
+                           const std::vector<PlanItem>&        plan,
+                           const std::string&                  path,
+                           std::string*                        err   = nullptr,
+                           ManifestWriteFn                     write = {});
 
 // ---- source directory resolution ---------------------------------------------------------------
 

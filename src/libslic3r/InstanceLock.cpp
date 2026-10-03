@@ -77,9 +77,9 @@ struct InstanceLock::Native
     {
         if (!open_shared()) {
             const DWORD err = GetLastError();
-            // Delete-pending lock files (old instance OnExit) also surface as
-            // ACCESS_DENIED. Treat it as retryable; try_lock() reports Denied
-            // only if it is still failing at the end of the wait.
+            // ACCESS_DENIED is returned as Denied. The wait loop retries it
+            // (delete-pending lock files from OnExit) and only keeps Denied
+            // if it is still failing at the deadline.
             if (err == ERROR_ACCESS_DENIED)
                 return LockAttempt::Denied;
             if (err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION)
@@ -437,10 +437,11 @@ void InstanceLock::release_data_dir()
     s_session_lock.reset();
     s_transient_refs    = 0;
     s_permission_denied = false;
-    s_session_state     = SessionState::Released;
-    // Not a write-failure reason. Tab/dialogs key off last_error() after a
-    // refused WriteScope; "InstanceLock released" must not appear there.
-    s_session_error.clear();
+    s_session_state = SessionState::Released;
+    // Neutral: Tab uses last_error() after a refused WriteScope. Empty
+    // would fall back to "another instance"; "InstanceLock released" reads
+    // like a failure. This is just "we are not writing any more".
+    s_session_error = "This instance is no longer writing to the data directory.";
 }
 
 bool InstanceLock::holds_data_dir()

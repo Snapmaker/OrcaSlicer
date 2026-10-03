@@ -559,6 +559,12 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url, wxStr
 #endif
         } // script_bridge
         webView->EnableContextMenu(true);
+        // Snapmaker's Flutter pages follow the slicer's dark mode (ApplyFlutterTheme). Bound on the
+        // view itself, so it runs ahead of the hosts' handlers, which sit on their windows.
+        webView->Bind(wxEVT_WEBVIEW_LOADED, [webView](wxWebViewEvent &evt) {
+            evt.Skip();
+            WebView::ApplyFlutterTheme(webView);
+        });
     } else {
         BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__ << ": failed. Use fake web view.";
         Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL, "bury_point_create webview fail and use fakewebview", BP_WEB_VIEW);
@@ -639,9 +645,32 @@ void WebView::RecreateAll()
             Slic3r::current_login_ua_platform(), dark,
             Slic3r::GUI::wxGetApp().current_language_code().ToStdString(),
             "SM-Slicer", SLIC3R_VERSION)));
-        if (std::find(g_no_theme_reload.begin(), g_no_theme_reload.end(), webView) == g_no_theme_reload.end())
+        // A Flutter page switches its theme live (ApplyFlutterTheme); a reload would lose its
+        // state (a pre-print page's filament mapping, the Device tab's connection).
+        if (IsFlutterPage(webView))
+            WebView::ApplyFlutterTheme(webView);
+        else if (std::find(g_no_theme_reload.begin(), g_no_theme_reload.end(), webView) == g_no_theme_reload.end())
             webView->Reload();
     }
+}
+
+bool WebView::IsFlutterPage(wxWebView *webView)
+{
+    if (webView == nullptr)
+        return false;
+    const wxString url = webView->GetCurrentURL();
+    return url.Contains("/web/flutter_web/") && Slic3r::GUI::wxGetApp().is_own_page_url(url.ToStdString(wxConvUTF8));
+}
+
+void WebView::ApplyFlutterTheme(wxWebView *webView)
+{
+    if (!IsFlutterPage(webView))
+        return;
+    // index.html defines edgeSetDarkMode (scripts/patch_flutter_web_dark.py); the app follows it
+    // with its own dark theme, live. The page also starts from its dark_mode= URL parameter, which
+    // can be out of date after a theme change, hence on every load too.
+    RunScript(webView, wxString::Format("window.edgeSetDarkMode && window.edgeSetDarkMode(%s);",
+                                        Slic3r::GUI::wxGetApp().dark_mode() ? "true" : "false"));
 }
 
 void WebView::SetReloadOnThemeChange(wxWebView *webView, bool reload)

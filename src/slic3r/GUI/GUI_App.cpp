@@ -5921,14 +5921,16 @@ wxString GUI_App::get_international_url(const wxString& origin_url) {
         region = "US";
     }
 
-    string dark_mode = wxGetApp().app_config->get("dark_color_mode");
+    // The look the slicer shows (a dark theme pack, or macOS in dark mode, count too): the Snapmaker
+    // pages take their theme from it (scripts/patch_flutter_web_dark.py).
+    const string dark = dark_mode() ? "1" : "0";
 
     if (baseUrl.find("?") != std::string::npos) {
         return baseUrl + wxString::FromUTF8("&locale=") + lang + wxString::FromUTF8("-") + region +
-               wxString::FromUTF8("&dark_mode=" + dark_mode);
+               wxString::FromUTF8("&dark_mode=" + dark);
     } else {
         return baseUrl + wxString::FromUTF8("?locale=") + lang + wxString::FromUTF8("-") + region +
-               wxString::FromUTF8("&dark_mode=" + dark_mode);
+               wxString::FromUTF8("&dark_mode=" + dark);
     }
 
 }

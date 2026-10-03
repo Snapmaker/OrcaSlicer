@@ -25,8 +25,18 @@ public:
     // After a theme change: refresh every view's User-Agent (it carries the theme token) and
     // reload it - except views that opted out with SetReloadOnThemeChange(view, false), which
     // switch theme live instead (a reload would restart the hub view's camera streams).
+    // Snapmaker's Flutter pages (/web/flutter_web/: the U1 Device tab, the pre-print and pre-send
+    // pages) are skipped too: they take the theme through ApplyFlutterTheme without a reload.
     static void RecreateAll();
     static void SetReloadOnThemeChange(wxWebView *webView, bool reload);
+
+    // True while the view shows one of the bundled Flutter pages (resources/web/flutter_web).
+    static bool IsFlutterPage(wxWebView *webView);
+    // Dark mode for a Flutter page: tells the page the slicer's dark mode (window.edgeSetDarkMode,
+    // added by scripts/patch_flutter_web_dark.py), and the app switches to its own dark or light
+    // theme live. Runs on every page load of every view and on theme changes; does nothing on
+    // other pages.
+    static void ApplyFlutterTheme(wxWebView *webView);
 };
 
 #endif // !slic3r_GUI_WebView_hpp_

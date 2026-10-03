@@ -649,6 +649,50 @@ PrintConfig as_print_config(const DynamicPrintConfig &dyn)
     return print_cfg;
 }
 
+void add_two_tool_cubes(Model &model)
+{
+    ModelObject *first = model.add_object();
+    first->name        = "cube-a.stl";
+    first->add_volume(mesh(TestMesh::cube_20x20x20));
+    first->add_instance()->set_offset(Vec3d(80., 40., 0.));
+    first->ensure_on_bed();
+    ModelObject *second = model.add_object();
+    second->name        = "cube-b.stl";
+    second->add_volume(mesh(TestMesh::cube_20x20x20));
+    second->add_instance()->set_offset(Vec3d(120., 40., 0.));
+    second->ensure_on_bed();
+    second->volumes.front()->config.set("extruder", 2);
+}
+
+std::string feed_fingerprint(const std::string &gcode)
+{
+    std::ostringstream os;
+    std::istringstream in(gcode);
+    std::string        line;
+    static const std::regex f_re(R"(\bF([0-9]+))");
+    while (std::getline(in, line)) {
+        if (line.compare(0, 2, "G1") == 0 || line.compare(0, 2, "G0") == 0) {
+            std::smatch m;
+            if (std::regex_search(line, m, f_re))
+                os << 'F' << m[1].str() << '\n';
+        } else if (line.compare(0, 4, "M73 ") == 0)
+            os << line << '\n';
+    }
+    return os.str();
+}
+
+void raise_role_speeds_for_mvs_cap(DynamicPrintConfig &config)
+{
+    // Push role speeds above the HF volumetric cap so _extrude F and wipe-tower F
+    // bind on filament_max_volumetric_speed / flow_ratio.
+    const char *keys[] = {"outer_wall_speed", "inner_wall_speed", "sparse_infill_speed",
+                          "internal_solid_infill_speed", "top_surface_speed", "gap_infill_speed",
+                          "support_speed", "travel_speed"};
+    for (const char *key : keys)
+        if (auto *opt = config.option<ConfigOptionFloats>(key))
+            opt->values.assign(std::max<size_t>(1, opt->values.size()), 200.);
+}
+
 size_t count_substr(const std::string &hay, const std::string &needle)
 {
     size_t n = 0;
@@ -806,21 +850,23 @@ TEST_CASE("apply_override unpacks flow-variant retract keys by filament id",
     DynamicPrintConfig config = step_size_2_f0_config();
     Print              print;
     Model              model;
-    ModelObject *      first = model.add_object();
-    first->name              = "cube-a.stl";
-    first->add_volume(mesh(TestMesh::cube_20x20x20));
-    first->add_instance()->set_offset(Vec3d(80., 40., 0.));
-    first->ensure_on_bed();
-    ModelObject *second = model.add_object();
-    second->name        = "cube-b.stl";
-    second->add_volume(mesh(TestMesh::cube_20x20x20));
-    second->add_instance()->set_offset(Vec3d(120., 40., 0.));
-    second->ensure_on_bed();
-    second->volumes.front()->config.set("extruder", 2);
+    add_two_tool_cubes(model);
 
     print.apply(model, config);
     require_applied_tool_retract_and_flow(print);
     REQUIRE(get_config_idx(print.config(), ConfigFlowDomain::Filament, (unsigned int) -1) == 0);
+}
+
+TEST_CASE("unpack_filament_flow_override falls back on an empty filament override",
+          "[PrintGCode][GCode][FilamentVariants]")
+{
+    DynamicPrintConfig config = step_size_2_f0_config();
+    config.option<ConfigOptionFloatsNullable>("filament_retraction_length", true)->values.clear();
+    Print print;
+    Model model;
+    add_two_tool_cubes(model);
+    REQUIRE_NOTHROW(print.apply(model, config));
+    REQUIRE(print.config().retraction_length.size() == 2);
 }
 
 TEST_CASE("non-SEMM U1 2-tool High-Flow uses per-filament temps retract and placeholders",
@@ -831,14 +877,16 @@ TEST_CASE("non-SEMM U1 2-tool High-Flow uses per-filament temps retract and plac
     config.option<ConfigOptionBool>("ooze_prevention")->value               = true;
     config.option<ConfigOptionInt>("standby_temperature_delta")->value      = kStandbyDelta;
     config.option<ConfigOptionFloat>("preheat_time")->value                 = 30.;
+    raise_role_speeds_for_mvs_cap(config);
+    // No M104/M109 in start G-code so _print_first_layer_extruder_temperatures emits
+    // M104 S205 T1 (F1 init), not packed F0 HF S225.
     config.option<ConfigOptionString>("machine_start_gcode")->value =
         "; U1_START init={nozzle_temperature_initial_layer[initial_extruder]} "
         "fl0={first_layer_temperature[0]} fl1={first_layer_temperature[1]} "
         "nt0={nozzle_temperature[0]} nt1={nozzle_temperature[1]} "
         "rl0={retract_length[0]} rl1={retract_length[1]} "
         "ram0={filament_multitool_ramming[0]} ram1={filament_multitool_ramming[1]} "
-        "flush0={flush_volumetric_speeds[0]} flush1={flush_volumetric_speeds[1]}\n"
-        "M104 S{nozzle_temperature_initial_layer[initial_extruder]}\n";
+        "flush0={flush_volumetric_speeds[0]} flush1={flush_volumetric_speeds[1]}\n";
     config.option<ConfigOptionString>("change_filament_gcode")->value =
         "; U1_TC next={next_extruder} layer={layer_num}\n"
         "{if layer_num < 1}\n"
@@ -853,17 +901,7 @@ TEST_CASE("non-SEMM U1 2-tool High-Flow uses per-filament temps retract and plac
 
     Print print;
     Model model;
-    ModelObject *first = model.add_object();
-    first->name        = "cube-a.stl";
-    first->add_volume(mesh(TestMesh::cube_20x20x20));
-    first->add_instance()->set_offset(Vec3d(80., 40., 0.));
-    first->ensure_on_bed();
-    ModelObject *second = model.add_object();
-    second->name        = "cube-b.stl";
-    second->add_volume(mesh(TestMesh::cube_20x20x20));
-    second->add_instance()->set_offset(Vec3d(120., 40., 0.));
-    second->ensure_on_bed();
-    second->volumes.front()->config.set("extruder", 2);
+    add_two_tool_cubes(model);
 
     print.apply(model, config);
     print.is_BBL_printer() = false;
@@ -918,4 +956,50 @@ TEST_CASE("non-SEMM U1 2-tool High-Flow uses per-filament temps retract and plac
     REQUIRE(preheat_t1_ok);
     REQUIRE(gcode.find("M104 S" + std::to_string(kTempHfF0) + " T1 ; preheat") == std::string::npos);
     REQUIRE(gcode.find("M104 S" + std::to_string(kInitHfF0) + " T1 ; preheat") == std::string::npos);
+
+    // First-layer writer (~4629-4663). Ooze applies standby to T1 (205-15=190); packed
+    // get_at(1) would heat T1 at F0 HF 225 (or 210 after standby). Also require the
+    // unresolved F1 init 205 if standby is not applied on that emit.
+    REQUIRE(gcode.find("M104 S" + std::to_string(kInitHfF0) + " T1") == std::string::npos);
+    const bool first_layer_t1 = gcode.find("M104 S" + std::to_string(kInitF1) + " T1") != std::string::npos
+                             || gcode.find("M104 S" + std::to_string(kInitF1 + kStandbyDelta) + " T1") != std::string::npos;
+    REQUIRE(first_layer_t1);
+
+    // Layer-2 writer (~6067-6092): other-layer temps, not the U1_WAIT M109 placeholders.
+    REQUIRE(gcode.find("M104 S" + std::to_string(kTempHfF0) + " T0") != std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(kTempF1) + " T1") != std::string::npos);
+
+    // append_tcr2 ramming (~1097): T0 High-Flow ramming forces travel to the tower.
+    REQUIRE(count_substr(gcode, "Travel to a Wipe Tower") >= 2);
+
+    // _extrude MVS / N2-S5 flow-ratio cap and WipeTower2 MVS. Role speeds are 200 mm/s
+    // so F binds on volumetric / flow. Packed get_at(0) MVS=8 yields ~F2797; F0 HF
+    // 30 / 0.95 yields a much higher cap. Tower ramming uses HF flow 10, not std 1.
+    REQUIRE(gcode.find("F3600") != std::string::npos);
+    REQUIRE(gcode.find("F2797") == std::string::npos);
+    REQUIRE(gcode.find("F2625") == std::string::npos);
+}
+
+TEST_CASE("non-variant 2-filament flow_ratio keeps get_at(0) _extrude cap",
+          "[PrintGCode][GCode][FilamentVariants][slice_compare]")
+{
+    auto make = [](double ratio_f1) {
+        DynamicPrintConfig config = high_flow_pa_config(true, true, false);
+        config.option<ConfigOptionInts>("filament_flow_step_size", true)->values = {1, 1};
+        config.option<ConfigOptionStrings>("filament_flow_support", true)->values =
+            {FLOW_MODE_STANDARD, FLOW_MODE_STANDARD};
+        config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtStandard),
+                                                                                         int(fvtStandard)};
+        config.option<ConfigOptionFloats>("filament_flow_ratio")->values = {kFlowStdF0, ratio_f1};
+        config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values = {kVolStdF0, kVolF1};
+        config.option<ConfigOptionFloats>("pressure_advance")->values              = {kPaStdF0, kPaStdF1};
+        config.option<ConfigOptionBools>("enable_pressure_advance")->values        = {true, true};
+        raise_role_speeds_for_mvs_cap(config);
+        REQUIRE_FALSE(filament_flow_variants_active(config));
+        return slice_high_flow_pa(config, false, false);
+    };
+
+    const std::string g_same = make(kFlowStdF0);
+    const std::string g_diff = make(1.40);
+    REQUIRE(feed_fingerprint(g_same) == feed_fingerprint(g_diff));
 }

@@ -552,6 +552,17 @@ inline size_t flow_variant_filament_count(const ConfigBase &config)
     return 1;
 }
 
+// True when get_config_idx remaps any filament id (packed Standard/High-Flow). Used to keep
+// historical get_at(0) _extrude flow-ratio behavior on non-variant multi-filament printers.
+inline bool filament_flow_variants_active(const ConfigBase &config)
+{
+    const size_t n = flow_variant_filament_count(config);
+    for (size_t i = 0; i < n; ++i)
+        if (get_config_idx(config, ConfigFlowDomain::Filament, static_cast<unsigned int>(i)) != i)
+            return true;
+    return false;
+}
+
 template<typename VectorOption>
 inline auto unpack_filament_values(const ConfigBase &config, const VectorOption &opt)
     -> std::vector<typename std::decay<decltype(opt.get_at(0))>::type>

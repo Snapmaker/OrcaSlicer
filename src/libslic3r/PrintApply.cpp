@@ -261,6 +261,10 @@ static ConfigOption *unpack_filament_flow_override(const ConfigOption *filament_
     auto *vec      = dynamic_cast<ConfigOptionVectorBase *>(unpacked);
     if (vec == nullptr)
         return unpacked;
+    // set_at throws ConfigurationError on an empty source vector. Fall back to the clone.
+    const auto *src = dynamic_cast<const ConfigOptionVectorBase *>(filament_opt);
+    if (src == nullptr || src->empty())
+        return unpacked;
     const size_t n = flow_variant_filament_count(config);
     vec->resize(n);
     for (size_t i = 0; i < n; ++i) {

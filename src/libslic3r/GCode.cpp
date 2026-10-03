@@ -9230,8 +9230,15 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
     }
 
     // calculate effective extrusion length per distance unit (e_per_mm)
+    // Historical get_at(0) is wrong for any multi-filament printer with different
+    // filament_flow_ratio values (it also feeds the volumetric F / M73 cap). Keep that
+    // byte-identical on configs with no packed flow variants; resolve per filament only
+    // when get_config_idx remaps ids. The generic get_at(0) bug is a follow-up.
     const unsigned int flow_filament_id = m_writer.extruder() != nullptr ? m_writer.extruder()->id() : 0;
-    double filament_flow_ratio = get_value_at(m_config, m_config.filament_flow_ratio, ConfigFlowDomain::Filament, flow_filament_id);
+    double filament_flow_ratio          = filament_flow_variants_active(m_config) ?
+                                              get_value_at(m_config, m_config.filament_flow_ratio, ConfigFlowDomain::Filament,
+                                                flow_filament_id) :
+                                              m_config.filament_flow_ratio.get_at(0);
     // We set _mm3_per_mm to effectove flow = Geometric volume * print flow ratio * filament flow ratio * role-based-flow-ratios
     auto _mm3_per_mm = path.mm3_per_mm * path.extrusion_multiplier * this->config().print_flow_ratio;
     _mm3_per_mm *= filament_flow_ratio;

@@ -552,10 +552,18 @@ inline size_t flow_variant_filament_count(const ConfigBase &config)
     return 1;
 }
 
-// True when get_config_idx remaps any filament id (packed Standard/High-Flow). Used to keep
-// historical get_at(0) _extrude flow-ratio behavior on non-variant multi-filament printers.
+// True when any filament declares packed Standard/High-Flow columns (step_size > 1) or
+// get_config_idx remaps an id. T0 Standard-only + T1 [std,hf] set to Standard remaps
+// nothing (idx 0/1), but T1's ratio still lives at packed slot 1, not get_at(0).
+// Stay false when every filament is a single column so S5 non-variant F / M73 stay
+// byte-identical.
 inline bool filament_flow_variants_active(const ConfigBase &config)
 {
+    if (const auto *steps = config.option<ConfigOptionInts>("filament_flow_step_size")) {
+        for (int step : steps->values)
+            if (step > 1)
+                return true;
+    }
     const size_t n = flow_variant_filament_count(config);
     for (size_t i = 0; i < n; ++i)
         if (get_config_idx(config, ConfigFlowDomain::Filament, static_cast<unsigned int>(i)) != i)

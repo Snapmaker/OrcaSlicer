@@ -537,6 +537,8 @@ constexpr double kRetractF1    = 1.5;
 constexpr double kRetractSpeedStdF0 = 30.;
 constexpr double kRetractSpeedHfF0  = 40.;
 constexpr double kRetractSpeedF1    = 25.;
+constexpr int    kStandbyDelta      = -15;
+constexpr double kFlowT1StdPacked   = 1.40;
 DynamicPrintConfig step_size_2_f0_config()
 {
     DynamicPrintConfig config = high_flow_pa_config(true, true, false);
@@ -741,6 +743,56 @@ size_t count_substr(const std::string &hay, const std::string &needle)
     for (size_t pos = 0; (pos = hay.find(needle, pos)) != std::string::npos; pos += needle.size())
         ++n;
     return n;
+}
+
+// Count "Travel to a Wipe Tower" whose next U1_TC is next=<id>. append_tcr2 ~1097
+// travels before set_extruder only when the departing tool rams.
+size_t count_travel_then_tc_next(const std::string &gcode, int next)
+{
+    const std::string travel = "Travel to a Wipe Tower";
+    const std::string marker = "; U1_TC next=" + std::to_string(next);
+    size_t            n      = 0;
+    for (size_t pos = 0; (pos = gcode.find(travel, pos)) != std::string::npos; pos += travel.size()) {
+        const size_t tc = gcode.find("; U1_TC next=", pos);
+        if (tc != std::string::npos && tc < pos + 2500 && gcode.compare(tc, marker.size(), marker) == 0)
+            ++n;
+    }
+    return n;
+}
+
+void apply_u1_toolchange_markers(DynamicPrintConfig &config)
+{
+    config.option<ConfigOptionBool>("single_extruder_multi_material")->value = false;
+    config.option<ConfigOptionFloat>("preheat_time")->value                 = 30.;
+    config.option<ConfigOptionString>("machine_start_gcode")->value =
+        "; U1_START init={nozzle_temperature_initial_layer[initial_extruder]} "
+        "fl0={first_layer_temperature[0]} fl1={first_layer_temperature[1]} "
+        "nt0={nozzle_temperature[0]} nt1={nozzle_temperature[1]} "
+        "rl0={retract_length[0]} rl1={retract_length[1]} "
+        "ram0={filament_multitool_ramming[0]} ram1={filament_multitool_ramming[1]} "
+        "flush0={flush_volumetric_speeds[0]} flush1={flush_volumetric_speeds[1]}\n";
+    config.option<ConfigOptionString>("change_filament_gcode")->value =
+        "; U1_TC next={next_extruder} layer={layer_num}\n"
+        "{if layer_num < 1}\n"
+        "M109 S{first_layer_temperature[next_extruder]} T{next_extruder} ; U1_WAIT_L0\n"
+        "{else}\n"
+        "M109 S{temperature[next_extruder]} T{next_extruder} ; U1_WAIT_LX\n"
+        "{endif}\n"
+        "; U1_FULL NT={nozzle_temperature[next_extruder]} "
+        "NTI={nozzle_temperature_initial_layer[next_extruder]} "
+        "RL={retract_length[next_extruder]} RAM={filament_multitool_ramming[next_extruder]} "
+        "FLUSH={flush_volumetric_speeds[next_extruder]} FEED={new_filament_e_feedrate}\n";
+}
+
+std::string slice_u1_two_tool(DynamicPrintConfig config)
+{
+    Print print;
+    Model model;
+    add_two_tool_cubes(model);
+    print.apply(model, config);
+    print.is_BBL_printer() = false;
+    REQUIRE(print.has_wipe_tower());
+    return Test::gcode(print);
 }
 
 } // namespace
@@ -1063,4 +1115,76 @@ TEST_CASE("non-variant 2-filament flow_ratio keeps get_at(0) _extrude cap",
     INFO(fp_same.size() << " vs " << fp_diff.size());
     REQUIRE_FALSE(fp_same.empty());
     REQUIRE(fp_same == fp_diff);
+}
+
+// S7: T0 Standard-only (TPU/PC) + T1 [std,hf] set to Standard. Nothing remaps
+// (get_config_idx is 0/1), but T1's ratio is packed slot 1. The old remap-only
+// gate used T0's get_at(0) for T1's MVS / M73 cap.
+TEST_CASE("T0 Standard-only plus T1 packed-std uses T1 flow_ratio cap",
+          "[PrintGCode][GCode][FilamentVariants][slice_compare]")
+{
+    DynamicPrintConfig config = high_flow_pa_config(true, true, false);
+    config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtStandard),
+                                                                                     int(fvtStandard)};
+    config.option<ConfigOptionFloats>("filament_flow_ratio")->values = {kFlowStdF0, kFlowT1StdPacked, kFlowHfF0};
+    config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values = {kVolHfF0, kVolF1, kVolF1};
+    config.option<ConfigOptionFloats>("pressure_advance")->values              = {kPaStdF0, kPaStdF1, kPaHfF1};
+    config.option<ConfigOptionBools>("enable_pressure_advance")->values        = {true, true, true};
+    disable_layer_cooling(config);
+    raise_role_speeds_for_mvs_cap(config);
+
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 0) == 0);
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 1) == 1);
+    REQUIRE(filament_flow_variants_active(config));
+
+    apply_u1_toolchange_markers(config);
+    const std::string gcode = slice_u1_two_tool(config);
+    // T1 MVS 12 / flow 1.40 on a 0.45×0.2 perimeter → G1 F6316. Old remap-only
+    // gate uses T0's 0.98 → F9024; packed HF 0.95 → F9309.
+    REQUIRE(count_g1_feed(gcode, 6316) >= 1);
+    REQUIRE(count_g1_feed(gcode, 9024) == 0);
+    REQUIRE(count_g1_feed(gcode, 9309) == 0);
+}
+
+TEST_CASE("ooze-on U1 2-tool High-Flow standbys use the active variant",
+          "[PrintGCode][GCode][PAVariant][FilamentVariants]")
+{
+    DynamicPrintConfig config = step_size_2_f0_config();
+    apply_u1_toolchange_markers(config);
+    config.option<ConfigOptionBool>("ooze_prevention")->value          = true;
+    config.option<ConfigOptionInt>("standby_temperature_delta")->value = kStandbyDelta;
+    raise_role_speeds_for_mvs_cap(config);
+    disable_layer_cooling(config);
+
+    const std::string gcode = slice_u1_two_tool(config);
+    REQUIRE(gcode.find(";cooldown") != std::string::npos);
+    // pre_toolchange: _get_temp + standby. T0 HF other-layer 230-15=215; T1 210-15=195.
+    // Raw get_at uses T0 Standard 190-15=175 and T1 packed HF 230-15=215.
+    const int t0_hf_standby  = kTempHfF0 + kStandbyDelta;
+    const int t0_std_standby = kTempStdF0 + kStandbyDelta;
+    const int t1_standby     = kTempF1 + kStandbyDelta;
+    const int t1_hf_standby  = kTempHfF0 + kStandbyDelta;
+    REQUIRE(gcode.find("M104 S" + std::to_string(t0_hf_standby) + " T0") != std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(t1_standby) + " T1") != std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(t0_std_standby) + " T0") == std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(t1_hf_standby) + " T1") == std::string::npos);
+}
+
+// F0 [std,hf] HF rams, F1 does not. get_at(0) is F0 Standard (off); get_at(1) is
+// F0 HF (on). ~1097 must use get_value_at so only leaving T0 travels to the tower.
+TEST_CASE("append_tcr2 ramming flag follows the departing tool variant",
+          "[PrintGCode][GCode][PAVariant][FilamentVariants]")
+{
+    DynamicPrintConfig config = step_size_2_f0_config();
+    config.option<ConfigOptionBools>("filament_multitool_ramming")->values = {false, true, false};
+    apply_u1_toolchange_markers(config);
+    raise_role_speeds_for_mvs_cap(config);
+    disable_layer_cooling(config);
+
+    const std::string gcode = slice_u1_two_tool(config);
+    const size_t      leave_t0 = count_travel_then_tc_next(gcode, 1);
+    const size_t      leave_t1 = count_travel_then_tc_next(gcode, 0);
+    INFO("travel-then-T1 " << leave_t0 << " travel-then-T0 " << leave_t1);
+    REQUIRE(leave_t0 >= 10);
+    REQUIRE(leave_t0 > leave_t1);
 }

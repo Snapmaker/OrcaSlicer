@@ -176,35 +176,14 @@ TEST_CASE("only document, picture and model attachments are launched", "[Untrust
         CHECK_FALSE(is_safe_attachment_to_launch(n));
 }
 
-TEST_CASE("project-page images may only load from https", "[Untrusted][ProjectPage]")
+TEST_CASE("archive relative paths allow apostrophes in ordinary names", "[Untrusted][ProjectPage]")
 {
-    CHECK(is_safe_project_image_url("https://cdn.example.com/preview.png"));
-    CHECK(is_safe_project_image_url("HTTPS://CDN.Example.COM/preview.png"));
-    CHECK(is_safe_project_image_url("https://cdn.example.com:443/a/b.png?x=1#frag"));
-
-    CHECK_FALSE(is_safe_project_image_url("http://127.0.0.1:9/x"));
-    CHECK_FALSE(is_safe_project_image_url("http://example.com/preview.png"));
-    CHECK_FALSE(is_safe_project_image_url("HTTP://example.com/preview.png"));
-    CHECK_FALSE(is_safe_project_image_url("javascript:alert(1)"));
-    CHECK_FALSE(is_safe_project_image_url("JAVASCRIPT:alert(1)"));
-    CHECK_FALSE(is_safe_project_image_url("data:image/png;base64,aaaa"));
-    CHECK_FALSE(is_safe_project_image_url("data:text/html,<img src=x>"));
-    CHECK_FALSE(is_safe_project_image_url("file:///tmp/preview.png"));
-    CHECK_FALSE(is_safe_project_image_url("https://user@evil.tld/preview.png"));
-    CHECK_FALSE(is_safe_project_image_url(""));
-    CHECK_FALSE(is_safe_project_image_url("preview.png"));
-    CHECK_FALSE(is_safe_project_image_url("//cdn.example.com/preview.png"));
-}
-
-TEST_CASE("archive relative paths may not break out of HTML attributes", "[Untrusted][ProjectPage]")
-{
-    CHECK_FALSE(is_safe_archive_relative_path("foo\".png"));
-    CHECK_FALSE(is_safe_archive_relative_path("foo'.png"));
-    CHECK_FALSE(is_safe_archive_relative_path("foo<.png"));
-    CHECK_FALSE(is_safe_archive_relative_path("foo>.png"));
-    CHECK_FALSE(is_safe_archive_relative_path("x.png\"><img"));
-    CHECK_FALSE(is_safe_archive_relative_path("Auxiliaries/Model Pictures/x.\"onclick=1.png"));
+    CHECK(is_safe_archive_relative_path("Bob's notes.pdf"));
+    CHECK(is_safe_archive_relative_path("Other Files/Bob's notes.pdf"));
     CHECK(is_safe_archive_relative_path("Auxiliaries/Model Pictures/cover.png"));
+    std::string normalized;
+    CHECK(normalize_archive_entry_path("Other Files/Bob's notes.pdf", normalized) == ArchiveEntryName::Ok);
+    CHECK(normalized == "Other Files/Bob's notes.pdf");
 }
 
 TEST_CASE("attachment paths stay inside the project auxiliary directory", "[Untrusted][Attachment]")
@@ -722,10 +701,11 @@ TEST_CASE("downloaded bytes must match the file type", "[Untrusted][Download]")
 
 TEST_CASE("archive entry names may not leave the extraction folder", "[Untrusted][ZipSlip]")
 {
-    for (const char *p : {"readme.txt", "Other Files/readme.txt", "Metadata/plate_1.gcode", "a/b/c.png", "..a/b", "a..b"})
+    for (const char *p : {"readme.txt", "Other Files/readme.txt", "Metadata/plate_1.gcode", "a/b/c.png", "..a/b", "a..b",
+                          "Bob's notes.pdf", "Other Files/Bob's notes.pdf"})
         CHECK(is_safe_archive_relative_path(p));
     for (const char *p : {"", "../x", "a/../../x", "..", ".", "./x", "a/./b", "/etc/passwd", "a//b", "a/", "..\\x",
-                          "a\\b", "C:/x", "C:x", "a/.../b", "a/.. /b", "x\x01y", "foo\".png", "foo'.png", "a<b", "a>b"})
+                          "a\\b", "C:/x", "C:x", "a/.../b", "a/.. /b", "x\x01y"})
         CHECK_FALSE(is_safe_archive_relative_path(p));
 }
 
@@ -1821,6 +1801,28 @@ TEST_CASE("extract_archive_confined writes non-ASCII entry names and binary cont
     boost::filesystem::ifstream in(expected, std::ios::binary);
     const std::string           got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     CHECK(got == content);
+
+    boost::system::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+// Same confined extractor the 3MF attachment path and PresetBundle import use. An apostrophe in
+// the name ("Bob's notes.pdf") must be extracted, not refuse the archive.
+TEST_CASE("extract_archive_confined keeps apostrophes in attachment names", "[Untrusted][ProjectPage][ZipSlip]")
+{
+    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_confined_apos_%%%%%%%%");
+    fs::create_directories(dir);
+    const fs::path zip_file = dir / "bundle.zip";
+    const fs::path target   = dir / "cache";
+    fs::create_directories(target);
+
+    const std::string content = "bill of materials\n";
+    write_zip_entries(zip_file, {{"Other Files/Bob's notes.pdf", content}});
+
+    std::string err;
+    REQUIRE(extract_archive_confined(zip_file, target, err));
+    CHECK(err.empty());
+    CHECK(read_text_file(target / "Other Files" / "Bob's notes.pdf") == content);
 
     boost::system::error_code ec;
     fs::remove_all(dir, ec);

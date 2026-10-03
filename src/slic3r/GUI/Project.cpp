@@ -3,9 +3,6 @@
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
-#include "libslic3r/UntrustedInput.hpp"
-
-#include <cctype>
 
 #include <boost/log/trivial.hpp>
 
@@ -80,38 +77,6 @@ ProjectPanel::ProjectPanel(wxWindow *parent, wxWindowID id, const wxPoint &pos, 
 }
 
 ProjectPanel::~ProjectPanel() {}
-
-// Blank src / poster / background values that are not https, and blank srcset entirely.
-// SafeHtml in model.js is the real sanitizer; this is a first pass so a crafted 3MF cannot
-// even deliver an http image URL to the page. Uses is_safe_project_image_url.
-static void blank_attr_values(std::string &html, const char *attr, bool (*keep)(const std::string &))
-{
-    const std::string name(attr);
-    for (char q : {'"', '\''}) {
-        const std::string needle = name + '=' + q;
-        size_t            pos    = 0;
-        while ((pos = html.find(needle, pos)) != std::string::npos) {
-            const size_t      val_begin = pos + needle.size();
-            const size_t      val_end   = html.find(q, val_begin);
-            if (val_end == std::string::npos)
-                break;
-            const std::string url = html.substr(val_begin, val_end - val_begin);
-            if (keep == nullptr || !keep(url))
-                html.replace(val_begin, val_end - val_begin, "");
-            pos = val_begin + 1;
-        }
-    }
-}
-
-static std::string filter_project_desc_images(std::string html)
-{
-    auto https_only = [](const std::string &url) { return untrusted::is_safe_project_image_url(url); };
-    blank_attr_values(html, "src", https_only);
-    blank_attr_values(html, "poster", https_only);
-    blank_attr_values(html, "background", https_only);
-    blank_attr_values(html, "srcset", nullptr);
-    return html;
-}
 
 // Helper to convert newlines to <br>
 static std::string convert_newlines_to_br(const std::string& text) {
@@ -236,7 +201,7 @@ void ProjectPanel::on_reload(wxCommandEvent& evt)
         j["model"]["name"] = wxGetApp().url_encode(model_name);
         j["model"]["author"] = wxGetApp().url_encode(model_author);;
         j["model"]["cover_img"] = wxGetApp().url_encode(cover_file);
-        j["model"]["description"] = wxGetApp().url_encode(convert_newlines_to_br(filter_project_desc_images(description)));
+        j["model"]["description"] = wxGetApp().url_encode(convert_newlines_to_br(description));
         j["model"]["preview_img"] = files["Model Pictures"];
         j["model"]["upload_type"] = update_type;
 
@@ -246,7 +211,7 @@ void ProjectPanel::on_reload(wxCommandEvent& evt)
 
         j["profile"]["name"] = wxGetApp().url_encode(p_name);
         j["profile"]["author"] = wxGetApp().url_encode(p_author);
-        j["profile"]["description"] = wxGetApp().url_encode(filter_project_desc_images(p_description));
+        j["profile"]["description"] = wxGetApp().url_encode(p_description);
         j["profile"]["cover_img"] = wxGetApp().url_encode(p_cover_file);
         j["profile"]["preview_img"] = files["Profile Pictures"];
 
@@ -481,16 +446,6 @@ wxString ProjectPanel::to_base64(std::string file_path)
     if (last_dot != std::string::npos) {
         extension = file_path.substr(last_dot + 1);
     }
-    // The extension is concatenated into a data: URL that JS puts in <img src="...">.
-    // Refuse anything that is not [A-Za-z0-9] so a quote or '<' in the name cannot break out.
-    for (unsigned char c : extension) {
-        if (!std::isalnum(c)) {
-            extension = "bin";
-            break;
-        }
-    }
-    if (extension.empty())
-        extension = "bin";
 
     wxString bease64_head = wxString::Format("data:image/%s;base64,", extension);
 

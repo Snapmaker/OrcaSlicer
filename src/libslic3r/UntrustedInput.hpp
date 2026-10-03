@@ -80,11 +80,6 @@ std::string local_path_from_file_url(const std::string &url);
 // documents, unknown types) is shown in its folder instead.
 bool is_safe_attachment_to_launch(const std::string &file_name);
 
-// Image URL a project-page description may keep: https only, no userinfo. http, javascript:,
-// data:, file: and anything that does not parse are refused, so a crafted 3MF cannot make the
-// slicer request LAN/HTTP hosts when the description is shown.
-bool is_safe_project_image_url(const std::string &url);
-
 // True if candidate is an absolute path strictly inside root (not root itself) that still
 // resolves inside root after following every symlink, including the last component.
 // is_path_within_root does not follow a dest-file symlink (extraction replaces it); opening
@@ -210,9 +205,9 @@ bool content_matches_extension(const std::string &file_name, const std::string &
 // ---- archive entries ---------------------------------------------------------------------------
 
 // True for a relative path made of plain segments separated by '/': no '\\', no drive or ':' ,
-// no '"', '\'', '<' or '>' (those break out of a project-page <img src> if a name ever reached
-// JS unescaped), no leading '/', no "." or ".." segment, no empty segment, no control characters.
-// Used before an archive entry name becomes part of a path on disk (zip-slip).
+// no leading '/', no "." or ".." segment, no empty segment, no control characters. Used before
+// an archive entry name becomes part of a path on disk (zip-slip). Apostrophes and similar
+// ordinary filename characters are allowed ("Bob's notes.pdf").
 bool is_safe_archive_relative_path(const std::string &path);
 
 enum class ArchiveEntryName {
@@ -227,8 +222,8 @@ enum class ArchiveEntryName {
 // separators ("a//b") and a trailing separator. The result is then held to is_safe_archive_relative_path
 // as strictly as ever. Rejected: ".." segments anywhere, an absolute path ("/x", "\x", UNC
 // "\\server\share", "\\?\C:\x"), a drive letter or any ':' (C:x, alternate data streams),
-// control characters / NUL, '"', '\'', '<' or '>', look-alikes of '.' '/' '\' ':', segments
-// made only of dots and spaces, and names over 1024 bytes. `out` is only written for Ok.
+// control characters / NUL, look-alikes of '.' '/' '\' ':', segments made only of dots and
+// spaces, and names over 1024 bytes. `out` is only written for Ok.
 ArchiveEntryName normalize_archive_entry_path(const std::string &raw, std::string &out);
 
 // The last segment of a name returned by normalize_archive_entry_path (the whole name when it

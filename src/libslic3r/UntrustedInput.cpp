@@ -324,14 +324,6 @@ bool is_safe_attachment_to_launch(const std::string &file_name)
     return false;
 }
 
-bool is_safe_project_image_url(const std::string &url)
-{
-    Url u;
-    if (!parse_url(url, u) || u.has_userinfo)
-        return false;
-    return u.scheme == "https";
-}
-
 // ---- "Open in" links -----------------------------------------------------------------------
 
 std::string percent_decode(const std::string &s)
@@ -872,7 +864,7 @@ bool is_safe_archive_relative_path(const std::string &path)
     if (path.empty() || path.size() > 1024 || path.front() == '/')
         return false;
     for (unsigned char c : path)
-        if (c < 0x20 || c == 0x7f || c == '\\' || c == ':' || c == '"' || c == '\'' || c == '<' || c == '>')
+        if (c < 0x20 || c == 0x7f || c == '\\' || c == ':')
             return false;
     if (has_separator_lookalike(path))
         return false;

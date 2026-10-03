@@ -563,7 +563,10 @@ TEST_CASE("AdaptivePA enable follows the High-Flow column", "[PrintGCode][GCode]
     const DynamicPrintConfig config = high_flow_pa_config(false, true, true);
     require_high_flow_columns(config);
     const std::string gcode = slice_high_flow_pa(config, false);
-    REQUIRE(gcode.find("PA_CHANGE") != std::string::npos);
+    // PA_CHANGE:T1 is emitted only when _extrude's enable check uses the High-Flow
+    // column. A bare "PA_CHANGE" match is not enough: filament 0 still tags T0
+    // after a get_at(1) revert at ~:9548.
+    REQUIRE(gcode.find("PA_CHANGE:T1") != std::string::npos);
     // Empty model still marks the interpolator initialised, so interpolation
     // returns -1 and process_layer falls back. That path only runs if the ctor
     // installed a per-tool interpolator via get_value_at (High-Flow true).

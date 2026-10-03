@@ -54,14 +54,14 @@ SHIM = """<script>/* {mark}: written by scripts/patch_flutter_web_dark.py.
   The app follows "(prefers-color-scheme: dark)" (ThemeMode.system). Answer that query from the
   slicer's dark_mode=1|0 URL parameter, and let the slicer switch it live:
   window.edgeSetDarkMode(true|false, colours). Other media queries go to the browser.
-  colours = {bg, card, strip} (#RRGGBB): the slicer's dark greys (or its theme's), from the
-  dark_bg / dark_card / dark_strip URL parameters or the last edgeSetDarkMode call. The app's dark
+  colours = {bg, card, strip, title} (#RRGGBB): the slicer's dark colours (or its theme's), from
+  the dark_<role> URL parameters or the last edgeSetDarkMode call. The app's dark
   ColorScheme reads them through window.edgeDarkColor when it is built, so new ones need a
   reload: edgeSetDarkMode does that itself when they change. */
 (function () {
   var Q = '(prefers-color-scheme: dark)';
   var KEY = 'edgeslicer.darkColours';
-  var ROLES = ['bg', 'card', 'strip'];
+  var ROLES = ['bg', 'card', 'strip', 'title'];
   var real = window.matchMedia ? window.matchMedia.bind(window) : null;
   var q = location.search + '&' + location.hash;
   var m = /[?&]dark_mode=([01])\\b/.exec(q);
@@ -228,6 +228,27 @@ class Names:
         t = "A.%s(%s).%s" % (self.theme_of, ctx, self.scheme)
         return "(%s.%s===B.%s?%s:%s)" % (t, self.brightness, self.dark, dark_expr, orig)
 
+    def rgb_fields(self):
+        """The minified names of the Color class's red, green and blue fields."""
+        m = re.search(r'\nB\.%s=new A\.(%s)\(1,1,1,1,B\.%s\)\n' % (ID, ID, ID), self.js)
+        if not m:
+            fail("cannot find the Color class (no white constant)")
+        cls = m.group(1)
+        ctor = re.search(r'\n%s:function %s\(([^)]*)\)\{var _=this\n(.*?)\}' % (re.escape(cls), re.escape(cls)), self.js, re.S)
+        if not ctor or len(ctor.group(1).split(",")) != 5:
+            fail("the Color class %s is not (alpha, red, green, blue, colour space)" % cls)
+        params = ctor.group(1).split(",")
+        field_of = dict((p, f) for f, p in re.findall(r'_\.(%s)=(%s)\n' % (ID, ID), ctor.group(2) + "\n"))
+        rgb = [field_of.get(p) for p in params[1:4]]
+        if None in rgb:
+            fail("cannot read the Color class's fields")
+        return rgb
+
+    def slicer_colour(self, expr, role):
+        """expr, or the slicer's colour for `role` when it sent one (window.edgeDarkColor, index.html)."""
+        r, g, b = self.rgb_fields()
+        return '(self.edgeDarkColor?self.edgeDarkColor(%s,"%s","%s","%s","%s"):%s)' % (expr, role, r, g, b, expr)
+
     def cond(self, ctx, role, orig):
         return self.cond_expr(ctx, "A.%s(%s).%s.%s" % (self.theme_of, ctx, self.scheme, self.fields[role]), orig)
 
@@ -322,9 +343,10 @@ def patch_widgets(js):
     p.sub(mstart, mend, r'new A\.(%s)\((%s\.%s),(%s),\3,new A\.' % (ID, ID, ID, ID),
           lambda m, _: "new A.%s(%s,%s,%s,new A." % (m.group(1), n.cond(ctx, "strip", m.group(2)), m.group(3), m.group(3)),
           1, "title bar background")
-    # title text (#333333) and the "|" (#666666)
+    # title text (#333333; the slicer's title colour when it sends one) and the "|" (#666666)
+    title = n.slicer_colour("A.%s(%s).%s.%s" % (n.theme_of, ctx, n.scheme, n.fields["text"]), "title")
     sub_if(mstart, mend, r'A\.(?P<f>%s)\((?P<r>%s),(?P=r),(?P<c>B\.%s),' % (ID, ID, ID), colour_is("#333333"),
-           lambda m, _: "A.%s(%s,%s,%s," % (m.group("f"), m.group("r"), m.group("r"), n.cond(ctx, "text", m.group("c"))),
+           lambda m, _: "A.%s(%s,%s,%s," % (m.group("f"), m.group("r"), m.group("r"), n.cond_expr(ctx, title, m.group("c"))),
            1, "title bar text")
     sub_if(mstart, mend, r'A\.(?P<f>%s)\((?P<r>%s),(?P=r),(?P<c>B\.%s),' % (ID, ID, ID), colour_is("#666666"),
            lambda m, _: "A.%s(%s,%s,%s," % (m.group("f"), m.group("r"), m.group("r"), n.cond(ctx, "subtext", m.group("c"))),
@@ -444,8 +466,8 @@ COLOUR_MARK = "/*edgeslicer:dark-colours*/"
 
 # The app's dark ColorScheme colours that become the slicer's (window.edgeDarkColor, index.html):
 # role -> the app's own value. bg is the page behind everything (near black), card the panels and
-# cards, strip the title bars, image boxes and outlines. The slicer sends its window background,
-# panel background and button background for them (WebView::FlutterDarkColours).
+# cards, strip the title bars, image boxes and outlines. The slicer sends the colours of its own
+# (Bambu) Device page for them (WebView::FlutterDarkColours), and "title" for the bar titles.
 SCHEME_ROLES = {"bg": "#060607", "card": "#18181B", "strip": "#28282C"}
 
 
@@ -462,26 +484,13 @@ def patch_scheme_colours(js):
         fail("found %d dark ColorScheme constants with the app's dark colours (expected 1)" % len(found))
     best = found[0]
     args = best.group(1).split(",")
-    # The Color class and the names of its red, green and blue fields.
-    sample = next((a for a in args if a.startswith("B.") and n.color(a[2:])), None)
-    cm = re.search(r'\nB\.%s=new A\.(%s)\(' % (re.escape(sample[2:]), ID), js) if sample else None
-    if not cm:
-        fail("cannot find the Color class")
-    ctor = re.search(r'\n%s:function %s\(([^)]*)\)\{var _=this\n(.*?)\}' % (re.escape(cm.group(1)), re.escape(cm.group(1))), js, re.S)
-    if not ctor or len(ctor.group(1).split(",")) != 5:
-        fail("the Color class %s is not (alpha, red, green, blue, colour space)" % cm.group(1))
-    params = ctor.group(1).split(",")
-    field_of = dict((p, f) for f, p in re.findall(r'_\.(%s)=(%s)\n' % (ID, ID), ctor.group(2) + "\n"))
-    rgb = [field_of.get(p) for p in params[1:4]]
-    if None in rgb:
-        fail("cannot read the Color class's fields")
     done = {role: 0 for role in SCHEME_ROLES}
     for i, a in enumerate(args):
         if not a.startswith("B."):
             continue
         for role, value in SCHEME_ROLES.items():
             if n.color(a[2:]) == value:
-                args[i] = '(self.edgeDarkColor?self.edgeDarkColor(%s,"%s","%s","%s","%s"):%s)' % (a, role, rgb[0], rgb[1], rgb[2], a)
+                args[i] = n.slicer_colour(a, role)
                 done[role] += 1
     missing = [r for r, k in done.items() if k == 0]
     if missing:

@@ -148148,7 +148148,7 @@ A.OR.prototype={
 H(){return"DownloadItemStatus."+this.b}}
 A.w1.prototype={}
 A.aj5.prototype={
-G(a){var s=this,r=null,q=A.du(r,A.a1(r,A.L(s.c,r,r,r,r,/*edgeslicer:dark-widgets*/A.bK(r,r,(A.u(a).ax.a===B.aZ?A.u(a).ax.e:B.h1),r,r,r,r,r,r,r,r,14,r,r,B.K,r,r,!0,r,r,r,r,r,r,r,r),r,r),B.h,r,r,r,r,r,r,r,B.oF,r,r,r),B.M,!1,r,r,r,r,r,r,r,r,r,r,r,r,r,r,r,r,r,new A.b9K(s),r,r,r,r,r,r,!1,B.ai),p=s.d,o=p.length>1?A.L("|",r,r,r,r,A.bK(r,r,(A.u(a).ax.a===B.aZ?A.u(a).ax.w:B.a7C),r,r,r,r,r,r,r,r,14,r,r,r,r,r,!0,r,r,r,r,r,r,r,r),r,r):B.af
+G(a){var s=this,r=null,q=A.du(r,A.a1(r,A.L(s.c,r,r,r,r,/*edgeslicer:dark-widgets*/A.bK(r,r,(A.u(a).ax.a===B.aZ?(self.edgeDarkColor?self.edgeDarkColor(A.u(a).ax.e,"title","b","c","d"):A.u(a).ax.e):B.h1),r,r,r,r,r,r,r,r,14,r,r,B.K,r,r,!0,r,r,r,r,r,r,r,r),r,r),B.h,r,r,r,r,r,r,r,B.oF,r,r,r),B.M,!1,r,r,r,r,r,r,r,r,r,r,r,r,r,r,r,r,r,new A.b9K(s),r,r,r,r,r,r,!1,B.ai),p=s.d,o=p.length>1?A.L("|",r,r,r,r,A.bK(r,r,(A.u(a).ax.a===B.aZ?A.u(a).ax.w:B.a7C),r,r,r,r,r,r,r,r,14,r,r,r,r,r,!0,r,r,r,r,r,r,r,r),r,r):B.af
 p=new A.ib(p,A.a7(p).i("ib<1>"))
 p=A.c([q,B.b8,o,B.eG,A.bA(A.a1(r,A.aD(p.gef(p).dP(0,new A.b9L(s),t.iF).ds(0),B.i1,B.k,B.l,0,r),B.h,r,r,r,r,1/0,r,r,r,r,r,r),1)],t.p)
 q=s.z

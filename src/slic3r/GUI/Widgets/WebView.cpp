@@ -678,10 +678,14 @@ void WebView::ApplyFlutterTheme(wxWebView *webView)
 
 std::vector<std::pair<std::string, std::string>> WebView::FlutterDarkColours()
 {
-    // The stock light colour each role stands for (GUI/Widgets/StateColor.cpp): the window
-    // background (dark #2D2D31), the panel background (#36363C) and the button background (#3E3E45),
-    // which a theme pack recolours as window_bg, panel_bg and button_bg.
-    static const std::pair<const char *, const char *> roles[] = {{"bg", "#FFFFFF"}, {"card", "#F8F8F8"}, {"strip", "#DFDFDF"}};
+    // The pages look like the slicer's own (Bambu) Device page, StatusPanel.cpp, whose light colours
+    // UpdateDarkUI turns dark through StateColor's table (or a theme pack's map):
+    //   bg    - the page behind the panels, STATUS_PANEL_BG #EEEEEE -> #4C4C55 (theme: separator)
+    //   card  - the panels, white #FFFFFF                           -> #2D2D31 (theme: window_bg)
+    //   strip - the panel title bars, STATUS_TITLE_BG #F8F8F8       -> #36363C (theme: panel_bg)
+    //   title - the panel titles, PAGE_TITLE_FONT_COL #6B6B6B        -> #818183 (theme: text_disabled)
+    static const std::pair<const char *, const char *> roles[] = {
+        {"bg", "#EEEEEE"}, {"card", "#FFFFFF"}, {"strip", "#F8F8F8"}, {"title", "#6B6B6B"}};
     const auto &stock = StateColor::GetDarkMap();
     auto stock_dark = [&stock](const wxColour &light) {
         auto it = stock.find(light);

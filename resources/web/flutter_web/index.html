@@ -1,15 +1,15 @@
-<!DOCTYPE html><html><head><base href="/web/flutter_web/"><meta charset="UTF-8"><meta content="IE=Edge" http-equiv="X-UA-Compatible"><meta name="description" content="Snapmaker Orca"><meta http-equiv="Permissions-Policy" content="local-files-write=*"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><meta name="apple-mobile-web-app-title" content="web"><link rel="apple-touch-icon" href="icons/Icon-192.png"><link rel="icon" type="image/png" href="favicon.png"/><title>Snapmaker Orca</title><link rel="manifest" href="manifest.json"> <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="theme-color" content="#ffffff"><link rel="apple-touch-startup-image" href="splash.png"> <style>html,body{overflow:hidden;height:100%;margin:0;padding:0}</style> <link rel="preload" href="main.b269d3ca6a5f4299.js" as="script"><script>/* edgeslicer:dark-mode: written by scripts/patch_flutter_web_dark.py.
+<!DOCTYPE html><html><head><base href="/web/flutter_web/"><meta charset="UTF-8"><meta content="IE=Edge" http-equiv="X-UA-Compatible"><meta name="description" content="Snapmaker Orca"><meta http-equiv="Permissions-Policy" content="local-files-write=*"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black"><meta name="apple-mobile-web-app-title" content="web"><link rel="apple-touch-icon" href="icons/Icon-192.png"><link rel="icon" type="image/png" href="favicon.png"/><title>Snapmaker Orca</title><link rel="manifest" href="manifest.json"> <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="theme-color" content="#ffffff"><link rel="apple-touch-startup-image" href="splash.png"> <style>html,body{overflow:hidden;height:100%;margin:0;padding:0}</style> <link rel="preload" href="main.97ef57681e2d9121.js" as="script"><script>/* edgeslicer:dark-mode: written by scripts/patch_flutter_web_dark.py.
   The app follows "(prefers-color-scheme: dark)" (ThemeMode.system). Answer that query from the
   slicer's dark_mode=1|0 URL parameter, and let the slicer switch it live:
   window.edgeSetDarkMode(true|false, colours). Other media queries go to the browser.
-  colours = {bg, card, strip} (#RRGGBB): the slicer's dark greys (or its theme's), from the
-  dark_bg / dark_card / dark_strip URL parameters or the last edgeSetDarkMode call. The app's dark
+  colours = {bg, card, strip, title} (#RRGGBB): the slicer's dark colours (or its theme's), from
+  the dark_<role> URL parameters or the last edgeSetDarkMode call. The app's dark
   ColorScheme reads them through window.edgeDarkColor when it is built, so new ones need a
   reload: edgeSetDarkMode does that itself when they change. */
 (function () {
   var Q = '(prefers-color-scheme: dark)';
   var KEY = 'edgeslicer.darkColours';
-  var ROLES = ['bg', 'card', 'strip'];
+  var ROLES = ['bg', 'card', 'strip', 'title'];
   var real = window.matchMedia ? window.matchMedia.bind(window) : null;
   var q = location.search + '&' + location.hash;
   var m = /[?&]dark_mode=([01])\b/.exec(q);
@@ -77,4 +77,4 @@
         console.log('i dont find window.wx, so i simulate a return by postMessage');
       }
     };
-  </script> <script src="flutter_bootstrap.1a5e5e6d239d119b.js" async></script> </body></html>
+  </script> <script src="flutter_bootstrap.efb189880a92c3ca.js" async></script> </body></html>

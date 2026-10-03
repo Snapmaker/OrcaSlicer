@@ -144,12 +144,14 @@ view. Textured (image) panels and buttons are not supported.
 The U1 Device tab and the pre-print / pre-send pages are Snapmaker's compiled Flutter app
 (`resources/web/flutter_web`). They use the app's own light or dark theme, following the
 slicer's dark mode (a dark theme pack counts), and switch live on a theme change. In dark mode
-their near-black page, panel and title-bar colours are replaced by the slicer's window background,
-panel background and button background (stock `#2D2D31`, `#36363C`, `#3E3E45`, or the active
-theme's `window_bg`, `panel_bg` and `button_bg`), sent by `WebView::FlutterDarkColours` as URL
-parameters and through `edgeSetDarkMode`. The app builds its dark colours once, so a change of
-those colours (another dark theme) reloads the page; switching between light and dark does not.
-Text, accent and filament colours stay the app's own.
+they take the look of the slicer's own (Bambu) Device page instead of the app's near-black: the
+page behind the panels `#4C4C55`, the panels `#2D2D31`, their title bars `#36363C` and titles
+`#818183` (StatusPanel's `#EEEEEE`, white, `#F8F8F8` and `#6B6B6B` through StateColor's dark
+table; with a theme pack, its `separator`, `window_bg`, `panel_bg` and `text_disabled`). They are
+sent by `WebView::FlutterDarkColours` as URL parameters and through `edgeSetDarkMode`. The app
+builds its dark colours once, so a change of those colours (another dark theme) reloads the page;
+switching between light and dark does not. Body text, accent and filament colours stay the app's
+own.
 
 Snapmaker's bundle always starts in light mode, so it is patched by
 `scripts/patch_flutter_web_dark.py`: one statement in `main.<hash>.js` (theme follows

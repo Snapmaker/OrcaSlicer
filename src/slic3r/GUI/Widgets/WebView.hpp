@@ -41,10 +41,11 @@ public:
     // its own dark or light theme live (new greys, after a theme pack change, reload the page).
     // Runs on every page load of every view and on theme changes; does nothing on other pages.
     static void ApplyFlutterTheme(wxWebView *webView);
-    // The greys those pages use in dark mode in place of the app's near-black ones, as
-    // (role, "#RRGGBB"): "bg" the window background, "card" the panel background, "strip" the
-    // button background - a dark theme pack's colours when one is active, else the stock dark
-    // ones (also in light mode, so a later switch to dark matches what the page started with).
+    // The colours those pages use in dark mode in place of the app's near-black ones, as
+    // (role, "#RRGGBB"), taken from the slicer's own (Bambu) Device page: "bg" the page behind the
+    // panels, "card" the panels, "strip" their title bars, "title" the titles - a dark theme pack's
+    // colours when one is active, else the stock dark ones (also in light mode, so a later switch
+    // to dark matches what the page started with).
     static std::vector<std::pair<std::string, std::string>> FlutterDarkColours();
 };
 

@@ -148,19 +148,22 @@ they take the look of the slicer's own (Bambu) Device page instead of the app's 
 page behind the panels `#4C4C55`, the panels `#2D2D31`, their title bars `#36363C` and titles
 `#818183` (StatusPanel's `#EEEEEE`, white, `#F8F8F8` and `#6B6B6B` through StateColor's dark
 table; with a theme pack, its `separator`, `window_bg`, `panel_bg` and `text_disabled`). They are
-sent by `WebView::FlutterDarkColours` as URL parameters and through `edgeSetDarkMode`. The app
-builds its dark colours once, so a change of those colours (another dark theme) reloads the page;
-switching between light and dark does not. Body text, accent and filament colours stay the app's
-own.
+sent by `WebView::FlutterDarkColours` as URL parameters and through `edgeSetDarkMode`. The Control
+panel's buttons (extruder and heated bed up / down, home, park extruder) take the slicer's dark
+accent `#00675B` with `#FEFEFE` icons and labels (the Orca accent `#009688` and `#FEFEFE` through
+the same table; with a theme pack, its `accent` and `accent_text`). The app builds its dark
+colours once, so a change of those colours (another dark theme) reloads the page; switching
+between light and dark does not. Body text and filament colours stay the app's own.
 
 Snapmaker's bundle always starts in light mode, so it is patched by
 `scripts/patch_flutter_web_dark.py`: one statement in `main.<hash>.js` (theme follows
 "prefers-color-scheme"), a small script in `index.html` that answers that query from the page's
 `dark_mode=` parameter and adds `window.edgeSetDarkMode()` (called by
 `WebView::ApplyFlutterTheme`), a set of widget colour patches for the places Snapmaker's dark
-theme leaves bright (the Device tab's title bars and empty panels, the pre-print page's printer
-dropdown, image boxes, check circles and progress bar; light mode is untouched), the slicer's
-greys in the app's dark ColorScheme, dark copies of the two empty-panel pictures (`*_dark.png`,
+theme leaves bright (the Device tab's title bars, empty panels, Control buttons, tool and distance
+selectors and printer picker, the pre-print page's printer dropdown, image boxes, check circles
+and progress bar; light mode is untouched), the slicer's greys in the app's dark ColorScheme, dark
+copies of the three empty-panel pictures (`*_dark.png`,
 light drawing on a transparent background, made with Pillow), and new content-hash names for the
 patched files.
 

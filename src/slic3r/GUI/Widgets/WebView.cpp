@@ -684,8 +684,12 @@ std::vector<std::pair<std::string, std::string>> WebView::FlutterDarkColours()
     //   card  - the panels, white #FFFFFF                           -> #2D2D31 (theme: window_bg)
     //   strip - the panel title bars, STATUS_TITLE_BG #F8F8F8       -> #36363C (theme: panel_bg)
     //   title - the panel titles, PAGE_TITLE_FONT_COL #6B6B6B        -> #818183 (theme: text_disabled)
+    // and the slicer's accent for the Control panel's buttons:
+    //   accent      - the Orca accent #009688                        -> #00675B (theme: accent)
+    //   accent_text - text and icons on it #FEFEFE                   -> #FEFEFE (theme: accent_text)
     static const std::pair<const char *, const char *> roles[] = {
-        {"bg", "#EEEEEE"}, {"card", "#FFFFFF"}, {"strip", "#F8F8F8"}, {"title", "#6B6B6B"}};
+        {"bg", "#EEEEEE"}, {"card", "#FFFFFF"}, {"strip", "#F8F8F8"}, {"title", "#6B6B6B"},
+        {"accent", "#009688"}, {"accent_text", "#FEFEFE"}};
     const auto &stock = StateColor::GetDarkMap();
     auto stock_dark = [&stock](const wxColour &light) {
         auto it = stock.find(light);

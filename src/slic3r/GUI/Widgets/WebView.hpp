@@ -43,7 +43,8 @@ public:
     static void ApplyFlutterTheme(wxWebView *webView);
     // The colours those pages use in dark mode in place of the app's near-black ones, as
     // (role, "#RRGGBB"), taken from the slicer's own (Bambu) Device page: "bg" the page behind the
-    // panels, "card" the panels, "strip" their title bars, "title" the titles - a dark theme pack's
+    // panels, "card" the panels, "strip" their title bars, "title" the titles; "accent" and
+    // "accent_text" the slicer's accent for the Control panel's buttons - a dark theme pack's
     // colours when one is active, else the stock dark ones (also in light mode, so a later switch
     // to dark matches what the page started with).
     static std::vector<std::pair<std::string, std::string>> FlutterDarkColours();

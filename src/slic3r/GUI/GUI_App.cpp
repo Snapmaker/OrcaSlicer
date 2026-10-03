@@ -5923,7 +5923,8 @@ wxString GUI_App::get_international_url(const wxString& origin_url) {
 
     // The look the slicer shows (a dark theme pack, or macOS in dark mode, count too): the Snapmaker
     // pages take their theme from it, and in dark mode the colours of the slicer's Device page
-    // (dark_bg, dark_card, dark_strip, dark_title: WebView::FlutterDarkColours,
+    // and its accent (dark_bg, dark_card, dark_strip, dark_title, dark_accent, dark_accent_text:
+    // WebView::FlutterDarkColours,
     // scripts/patch_flutter_web_dark.py).
     string dark = dark_mode() ? "1" : "0";
     for (const auto &[role, hex] : WebView::FlutterDarkColours())

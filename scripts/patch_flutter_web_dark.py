@@ -54,14 +54,15 @@ SHIM = """<script>/* {mark}: written by scripts/patch_flutter_web_dark.py.
   The app follows "(prefers-color-scheme: dark)" (ThemeMode.system). Answer that query from the
   slicer's dark_mode=1|0 URL parameter, and let the slicer switch it live:
   window.edgeSetDarkMode(true|false, colours). Other media queries go to the browser.
-  colours = {bg, card, strip, title} (#RRGGBB): the slicer's dark colours (or its theme's), from
+  colours = {bg, card, strip, title, accent, accent_text} (#RRGGBB): the slicer's dark colours
+  (or its theme's), from
   the dark_<role> URL parameters or the last edgeSetDarkMode call. The app's dark
   ColorScheme reads them through window.edgeDarkColor when it is built, so new ones need a
   reload: edgeSetDarkMode does that itself when they change. */
 (function () {
   var Q = '(prefers-color-scheme: dark)';
   var KEY = 'edgeslicer.darkColours';
-  var ROLES = ['bg', 'card', 'strip', 'title'];
+  var ROLES = ['bg', 'card', 'strip', 'title', 'accent', 'accent_text'];
   var real = window.matchMedia ? window.matchMedia.bind(window) : null;
   var q = location.search + '&' + location.hash;
   var m = /[?&]dark_mode=([01])\\b/.exec(q);
@@ -165,12 +166,15 @@ DARK_FIELDS = {
     "strip": "#28282C",  # title bars, image boxes, tracks (light: #E4E4E7)
     "text": "#E4E4E7",   # body text
     "subtext": "#C1C1C1",
+    "primary": "#4379FC",    # the app's accent: stands in for the slicer's when it sends none
+    "on_primary": "#FCFCFC",
 }
 
-# The two empty-panel pictures that are white all over.
+# The empty-panel pictures that are white all over (camera, control, idle printing task).
 DARK_PICTURES = {
     "assets/images/deviceNotConnected.webp": "assets/images/deviceNotConnected_dark.png",
     "assets/images/controlDefault.png": "assets/images/controlDefault_dark.png",
+    "assets/images/printtaskDefault.png": "assets/images/printtaskDefault_dark.png",
 }
 
 
@@ -228,6 +232,16 @@ class Names:
         t = "A.%s(%s).%s" % (self.theme_of, ctx, self.scheme)
         return "(%s.%s===B.%s?%s:%s)" % (t, self.brightness, self.dark, dark_expr, orig)
 
+    def scheme_of(self, ctx):
+        return "A.%s(%s).%s" % (self.theme_of, ctx, self.scheme)
+
+    def accent(self, ctx):
+        """The slicer's accent (its dark-mode or theme accent), else the app's primary colour."""
+        return self.slicer_colour("%s.%s" % (self.scheme_of(ctx), self.fields["primary"]), "accent")
+
+    def accent_text(self, ctx):
+        return self.slicer_colour("%s.%s" % (self.scheme_of(ctx), self.fields["on_primary"]), "accent_text")
+
     def rgb_fields(self):
         """The minified names of the Color class's red, green and blue fields."""
         m = re.search(r'\nB\.%s=new A\.(%s)\(1,1,1,1,B\.%s\)\n' % (ID, ID, ID), self.js)
@@ -280,6 +294,15 @@ def anchor(js, text):
     if i < 0 or js.find(text, i + 1) >= 0:
         fail("anchor %r found %d times (expected 1)" % (text, js.count(text)))
     return i
+
+
+def class_body(js, cls):
+    """(start, end) of the A.<cls>.prototype={...} block."""
+    head = LF + "A.%s.prototype={" % cls
+    i = js.find(head)
+    if i < 0:
+        fail("no prototype for A." + cls)
+    return prototype_at(js, i + len(head))
 
 
 def anchor_re(js, pattern):
@@ -460,6 +483,137 @@ def patch_widgets(js):
     return p.result()
 
 
+# ------------------------------------- the Device tab's controls and printer picker (step 3) ----
+
+CONTROLS_MARK = "/*edgeslicer:dark-controls*/"
+
+
+def const_def(js, name):
+    """(class, [args]) of a B.<name>=new A.<class>(args) constant whose args hold no call."""
+    m = re.search(r'\nB\.%s=new A\.(%s)\(([^()\n]*)\)\n' % (re.escape(name), ID), js)
+    if not m:
+        fail("cannot read the constant B.%s" % name)
+    return m.group(1), m.group(2).split(",")
+
+
+def patch_controls(js):
+    """The Control panel's buttons (extruder / heated bed up and down, home, park extruder) take
+    the slicer's accent with light icons and labels in the dark theme; the tool and distance
+    selectors' frames and the printer picker's popup take the slicer's dark colours."""
+    p = Patcher(js)
+    n = p.n
+
+    def sub_if(start, end, pattern, check, make, count, what):
+        hits = [m for m in re.finditer(pattern, js[start:end]) if check(m)]
+        if len(hits) != count:
+            fail("%s: pattern found %d times (expected %d)" % (what, len(hits), count))
+        for m in hits:
+            p.edits.append((start + m.start(), start + m.end(), make(m)))
+
+    def colour(m, group, want):
+        return n.color(m.group(group)[2:]) == want
+
+    def with_arg(cls, args, i, value):
+        a = list(args)
+        a[i] = value
+        return "new A.%s(%s)" % (cls, ",".join(a))
+
+    # -- Extruder and Heated Bed: up / down round buttons, new UpDown("Extruder"|"Heated Bed", ...).
+    m = re.search(r'new A\.(%s)\(A\.%s\("Extruder",null,null\),new A\.' % (ID, ID), js)
+    if not m:
+        fail("the Extruder up/down control was not found")
+    s, e = class_body(js, m.group(1))
+    hits = list(re.finditer(r'A\.(?P<f>%s)\((?P<sz>\d+),(?P<c>A\.%s\(a\)\.%s\.%s),(?P<w>\d+),B\.(?P<icon>%s),'
+                            % (ID, re.escape(n.theme_of), re.escape(n.scheme), ID, ID), js[s:e]))
+    if len(hits) != 2:
+        fail("up/down buttons: pattern found %d times (expected 2)" % len(hits))
+    # The picture class and where its tint goes: from the svg helper the tab bars call with a tint
+    # second, e.g. svg(path, tint, ...) { return new Picture(path, ..., tint, ...) }.
+    m = re.search(r'new A\.%s\(A\.(%s)\("assets/svgs/device/liveCamera\.svg",' % (ID, ID), js)
+    helper = m and re.search(r'\n%s\(([^)]*)\)\{return new A\.(%s)\(([^)]*)\)\}' % (re.escape(m.group(1)), ID), js)
+    if not helper or len(helper.group(1).split(",")) < 2 or helper.group(1).split(",")[1] not in helper.group(3).split(","):
+        fail("cannot find the svg picture helper")
+    picture_cls = helper.group(2)
+    tint_at = helper.group(3).split(",").index(helper.group(1).split(",")[1])
+    for m in hits:
+        cls, args = const_def(js, m.group("icon"))
+        if cls != picture_cls or len(args) <= tint_at:
+            fail("up/down button icon B.%s is not a picture" % m.group("icon"))
+        icon = with_arg(cls, args, tint_at, n.accent_text("a"))  # the picture's tint
+        p.edits.append((s + m.start(), s + m.end(), "A.%s(%s,%s,%s,%s," % (
+            m.group("f"), m.group("sz"), n.cond_expr("a", n.accent("a"), m.group("c")), m.group("w"),
+            n.cond_expr("a", icon, "B." + m.group("icon")))))
+
+    # -- Home (next to the distance selector) and Park / Pick Extruder: in the control panel state.
+    s, e = prototype_at(js, anchor_re(js, r'A\.%s\("Park Extruder"' % ID))
+
+    def icon_tint(name):
+        """B.<name>, an Icon constant, with the accent text colour: where the colour goes comes
+        from the icon helper, icon(icon, colour, ..., size) { return new Icon(...) }."""
+        cls, args = const_def(js, name)
+        h = re.search(r'\n%s\(a,b,c,d\)\{return new A\.%s\(([^)]*)\)\}' % (ID, re.escape(cls)), js)
+        if not h or "b" not in h.group(1).split(","):
+            fail("cannot find the icon helper for B.%s" % name)
+        return with_arg(cls, args, h.group(1).split(",").index("b"), n.accent_text("this.c"))
+
+    sub_if(s, e, r'A\.(?P<f>%s)\((?P<sz>\d+),(?P<t>%s)\.%s\.(?P<c>%s),(?P<w>\d+),B\.(?P<icon>%s),'
+           % (ID, ID, re.escape(n.scheme), ID, ID), lambda m: True,
+           lambda m: "A.%s(%s,%s,%s,%s," % (
+               m.group("f"), m.group("sz"), n.cond_expr("this.c", n.accent("this.c"), "%s.%s.%s" % (m.group("t"), n.scheme, m.group("c"))),
+               m.group("w"), n.cond_expr("this.c", icon_tint(m.group("icon")), "B." + m.group("icon"))),
+           1, "home button")
+    park = re.search(r'return new A\.(%s)\(!\w+,new A\.%s\(this,a\),\w+,8,4,\w+\)' % (ID, ID), js[s:e])
+    if not park:
+        fail("the Park Extruder button was not found")
+    s2, e2 = class_body(js, park.group(1))
+    # fill (white, or #FAFAFA when disabled) and frame (#F5F6FA, or #E0E0E0 when disabled)
+    sub_if(s2, e2, r'(?P<v>%s)=(?P<f>%s)\?(?P<on>B\.%s):(?P<off>B\.%s)\n' % (ID, ID, ID, ID),
+           lambda m: colour(m, "on", "#FFFFFF") and colour(m, "off", "#FAFAFA"),
+           lambda m: "%s=%s?%s:%s\n" % (m.group("v"), m.group("f"), n.cond_expr("a", n.accent("a"), m.group("on")),
+                                         n.cond("a", "strip", m.group("off"))),
+           1, "park button fill")
+    sub_if(s2, e2, r'(?P<v>%s)=(?P<f>%s)\?(?P<on>B\.%s):(?P<off>B\.%s)\n' % (ID, ID, ID, ID),
+           lambda m: colour(m, "on", "#F5F6FA") and colour(m, "off", "#E0E0E0"),
+           lambda m: "%s=%s?%s:%s\n" % (m.group("v"), m.group("f"), n.cond_expr("a", n.accent("a"), m.group("on")),
+                                         n.cond("a", "strip", m.group("off"))),
+           1, "park button frame")
+    sub_if(s2, e2, r'if\((?P<f>%s)\)(?P=f)=(?P<c>A\.%s\(a\)\.%s\.%s)\n' % (ID, re.escape(n.theme_of), re.escape(n.scheme), ID),
+           lambda m: True,
+           lambda m: "if(%s)%s=%s\n" % (m.group("f"), m.group("f"), n.cond_expr("a", n.accent_text("a"), m.group("c"))),
+           1, "park button label")
+
+    # -- Tool1-4 and 10mm/1mm/0.1mm selectors: their frame is #F5F6FA.
+    sel = set(re.findall(r'new A\.(%s)\(\w+,this\.\w+,new A\.%s\(this\),null\)' % (ID, ID), js[s:e]))
+    if len(sel) != 1:
+        fail("the tool / distance selector was not found (%d candidates)" % len(sel))
+    s3, e3 = class_body(js, sel.pop())
+    sub_if(s3, e3, r'new A\.(?P<k>%s)\((?P<c>B\.%s),(?P<r>%s),(?P=r),' % (ID, ID, ID), lambda m: colour(m, "c", "#F5F6FA"),
+           lambda m: "new A.%s(%s,%s,%s," % (m.group("k"), n.cond("a", "strip", m.group("c")), m.group("r"), m.group("r")),
+           1, "selector frame")
+
+    # -- The printer picker ("U1 v": My Devices, the printers, Add Device): white popup, its divider.
+    at = anchor_re(js, r'=A\.%s\("add device",q,q\)' % ID)
+    name, ctx, ms = method_at(js, at)
+    me = js.find("\n$S:", at)
+    sub_if(ms, me, r'new A\.(?P<k>%s)\((?P<c>B\.%s),q,q,(?P<r>%s),' % (ID, ID, ID), lambda m: colour(m, "c", "#FFFFFF"),
+           lambda m: "new A.%s(%s,q,q,%s," % (m.group("k"), n.cond(ctx, "card", m.group("c")), m.group("r")),
+           1, "printer picker popup")
+    dividers = [m for m in re.finditer(r'\bB\.(%s)\]' % ID, js[ms:me])
+                if re.search(r'\nB\.%s=new A\.%s\(1,null,null,null,null,null\)\n' % (re.escape(m.group(1)), ID), js)]
+    if len(dividers) != 1:
+        fail("printer picker divider: found %d (expected 1)" % len(dividers))
+    m = dividers[0]
+    cls, args = const_def(js, m.group(1))
+    p.edits.append((ms + m.start(), ms + m.end(), n.cond_expr(ctx, with_arg(cls, args, 4, "%s.%s" % (n.scheme_of(ctx), n.fields["strip"])),
+                                                              "B." + m.group(1)) + "]"))
+
+    p.edits.sort()
+    s0, e0, r0 = p.edits[0]
+    p.edits[0] = (s0, e0, CONTROLS_MARK + r0)
+    print("controls: %d colour patches" % len(p.edits))
+    return p.result()
+
+
 # ------------------------------------------------- the slicer's dark greys (step 3, colours) ----
 
 COLOUR_MARK = "/*edgeslicer:dark-colours*/"
@@ -571,6 +725,8 @@ def check(path):
     js = js.replace(CRLF, LF)
     if WIDGET_MARK not in js:
         js = patch_widgets(js)
+    if CONTROLS_MARK not in js:
+        js = patch_controls(js)
     if COLOUR_MARK not in js:
         patch_scheme_colours(js)
     print("ok: every patch finds its place in " + path)
@@ -613,6 +769,12 @@ def main():
         print("%s: widget colours already patched" % main_js)
     else:
         main_text = patch_widgets(main_text)
+    if CONTROLS_MARK in main_text:
+        print("%s: control colours already patched" % main_js)
+    elif COLOUR_MARK in main_text:
+        fail("%s has the scheme colours patched but not the controls; start from Snapmaker's original bundle" % main_js)
+    else:
+        main_text = patch_controls(main_text)
     #    The slicer's greys (and its theme's) in place of the app's near-black dark colours. After
     #    the widget patches: those read the dark ColorScheme constant as the app wrote it.
     if COLOUR_MARK in main_text:
@@ -666,7 +828,7 @@ def main():
     boot_text = read(os.path.join(bundle, boot))
     main_js = one_name(r'main\.[0-9a-f]{16,}\.js', boot_text, "main.<hash>.js in " + boot)
     main_text = read(os.path.join(bundle, main_js))
-    if MARK not in main_text or WIDGET_MARK not in main_text or COLOUR_MARK not in main_text or main_js not in index or SHIM_MARK not in index:
+    if MARK not in main_text or WIDGET_MARK not in main_text or CONTROLS_MARK not in main_text or COLOUR_MARK not in main_text or main_js not in index or SHIM_MARK not in index:
         fail("the patched bundle does not check out")
     if main_js != "main.%s.js" % content_hash(main_text) or boot != "flutter_bootstrap.%s.js" % content_hash(boot_text):
         fail("a patched file's name does not match its content hash")

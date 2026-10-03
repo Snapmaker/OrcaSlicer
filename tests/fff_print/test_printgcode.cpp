@@ -434,11 +434,12 @@ std::string slice_high_flow_pa(DynamicPrintConfig config, bool bbl)
 }
 
 struct PaAfterT1 {
-    size_t               toolchanges_to_f2 = 0;
-    size_t               pa_commands       = 0;
-    size_t               pa_high_flow      = 0;
-    size_t               pa_standard_slot  = 0;
-    std::vector<double>  values;
+    size_t              toolchanges_to_f2 = 0;
+    size_t              pa_commands       = 0;
+    size_t              pa_high_flow      = 0;
+    size_t              pa_standard_slot  = 0;
+    size_t              first_pa_high_flow = 0;
+    std::vector<double> values;
 };
 
 PaAfterT1 collect_pa_after_filament2(const std::string &gcode)
@@ -447,16 +448,18 @@ PaAfterT1 collect_pa_after_filament2(const std::string &gcode)
     static const std::regex tool_cmd(R"(^T(\d+)\s*(;.*)?$)");
     const double            tol = 1e-4;
 
-    PaAfterT1   result;
-    std::smatch m;
-    int         current = -1;
+    PaAfterT1          result;
+    std::smatch        m;
+    int                current      = -1;
+    bool               await_first  = false;
     std::istringstream in(gcode);
     std::string        line;
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r')
             line.pop_back();
         if (std::regex_match(line, m, tool_cmd)) {
-            current = std::stoi(m[1].str());
+            current     = std::stoi(m[1].str());
+            await_first = (current == 1);
             if (current == 1)
                 ++result.toolchanges_to_f2;
             continue;
@@ -468,10 +471,17 @@ PaAfterT1 collect_pa_after_filament2(const std::string &gcode)
         const double pa = std::stod(m[1].str());
         result.values.push_back(pa);
         ++result.pa_commands;
-        if (std::fabs(pa - kPaHfF1) <= tol)
+        const bool is_hf  = std::fabs(pa - kPaHfF1) <= tol;
+        const bool is_std = std::fabs(pa - kPaStdF1) <= tol;
+        if (is_hf)
             ++result.pa_high_flow;
-        if (std::fabs(pa - kPaStdF1) <= tol)
+        if (is_std)
             ++result.pa_standard_slot;
+        if (await_first) {
+            if (is_hf)
+                ++result.first_pa_high_flow;
+            await_first = false;
+        }
     }
     return result;
 }
@@ -480,11 +490,15 @@ void require_filament2_uses_high_flow_pa(const std::string &gcode, size_t min_pa
 {
     const PaAfterT1 pa = collect_pa_after_filament2(gcode);
     INFO("T1 toolchanges " << pa.toolchanges_to_f2 << ", PA commands " << pa.pa_commands << ", HF " << pa.pa_high_flow
-                           << ", std-slot " << pa.pa_standard_slot);
+                           << ", std-slot " << pa.pa_standard_slot << ", first-HF " << pa.first_pa_high_flow);
     REQUIRE(pa.toolchanges_to_f2 >= 2);
     REQUIRE(pa.pa_commands >= min_pa_commands);
     REQUIRE(pa.pa_standard_slot == 0);
-    REQUIRE(pa.pa_high_flow == pa.pa_commands);
+    REQUIRE(pa.pa_high_flow >= min_pa_commands);
+    // set_extruder writes the next filament's PA before its T command, so a T0
+    // toolchange can emit 0.01 while the parser still thinks the tool is T1.
+    // The first PA after every T1 must still be the High-Flow column.
+    REQUIRE(pa.first_pa_high_flow == pa.toolchanges_to_f2);
 }
 
 } // namespace

@@ -1188,3 +1188,74 @@ TEST_CASE("append_tcr2 ramming flag follows the departing tool variant",
     REQUIRE(leave_t0 >= 10);
     REQUIRE(leave_t0 > leave_t1);
 }
+
+// _extrude reads flow ratio, max volumetric speed and the PA enable flag from
+// m_filament_flow, resolved once per export. Every id must give what the old
+// per-path expressions gave, including an id past the resolved range.
+TEST_CASE("resolved per-filament flow values match the per-path lookups",
+          "[PrintGCode][GCode][FilamentVariants]")
+{
+    auto check = [](const DynamicPrintConfig &config) {
+        const ResolvedFilamentFlow cache = ResolvedFilamentFlow::resolve(config);
+        const auto &ratio = *config.option<ConfigOptionFloats>("filament_flow_ratio");
+        const auto &mvs   = *config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+        const auto &pa    = *config.option<ConfigOptionBools>("enable_pressure_advance");
+        const size_t n    = flow_variant_filament_count(config);
+        REQUIRE(cache.flow_ratio.size() == n);
+        REQUIRE(cache.variants_active == filament_flow_variants_active(config));
+        for (unsigned int id = 0; id <= n; ++id) {
+            INFO("filament id " << id);
+            // The expressions _extrude used before the cache.
+            const double old_ratio = filament_flow_variants_active(config) ?
+                                         get_value_at(config, ratio, ConfigFlowDomain::Filament, id) :
+                                         ratio.get_at(0);
+            const double old_mvs = get_value_at(config, mvs, ConfigFlowDomain::Filament, id);
+            const bool   old_pa  = get_value_at(config, pa, ConfigFlowDomain::Filament, id);
+            CHECK(cache.flow_ratio_for(config, id) == old_ratio);
+            CHECK(cache.max_volumetric_speed_for(config, id) == old_mvs);
+            CHECK(cache.enable_pressure_advance_for(config, id) == old_pa);
+            CHECK(ResolvedFilamentFlow::uncached_flow_ratio(config, id) == old_ratio);
+        }
+        // Default-constructed (before apply_print_config): every id falls back.
+        const ResolvedFilamentFlow empty;
+        for (unsigned int id = 0; id <= n; ++id) {
+            CHECK(empty.flow_ratio_for(config, id) == cache.flow_ratio_for(config, id));
+            CHECK(empty.max_volumetric_speed_for(config, id) == cache.max_volumetric_speed_for(config, id));
+            CHECK(empty.enable_pressure_advance_for(config, id) == cache.enable_pressure_advance_for(config, id));
+        }
+    };
+
+    SECTION("F0 Standard-only, F1 Standard/High-Flow set to High-Flow")
+    {
+        DynamicPrintConfig config = high_flow_pa_config(true, false, false);
+        config.option<ConfigOptionFloats>("filament_flow_ratio")->values           = {kFlowStdF0, kFlowT1StdPacked, kFlowHfF0};
+        config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values = {kVolStdF0, kVolF1, kVolHfF0};
+        REQUIRE(filament_flow_variants_active(config));
+        check(config);
+    }
+    SECTION("F0 Standard/High-Flow set to High-Flow, F1 Standard-only")
+    {
+        const DynamicPrintConfig config = step_size_2_f0_config();
+        REQUIRE(filament_flow_variants_active(config));
+        check(config);
+    }
+    SECTION("no packed variants keeps get_at(0) for the flow ratio")
+    {
+        DynamicPrintConfig config = high_flow_pa_config(true, true, false);
+        config.option<ConfigOptionInts>("filament_flow_step_size", true)->values = {1, 1};
+        config.option<ConfigOptionStrings>("filament_flow_support", true)->values = {FLOW_MODE_STANDARD, FLOW_MODE_STANDARD};
+        config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtStandard), int(fvtStandard)};
+        config.option<ConfigOptionFloats>("filament_flow_ratio")->values           = {kFlowStdF0, 1.40};
+        config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values = {kVolStdF0, kVolF1};
+        config.option<ConfigOptionBools>("enable_pressure_advance")->values        = {true, false};
+        REQUIRE_FALSE(filament_flow_variants_active(config));
+        check(config);
+        REQUIRE(ResolvedFilamentFlow::resolve(config).flow_ratio_for(config, 1) == kFlowStdF0);
+    }
+    SECTION("a plain full print config")
+    {
+        DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+        config.set_num_filaments(3);
+        check(config);
+    }
+}

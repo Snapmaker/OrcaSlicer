@@ -144,8 +144,10 @@ struct InstanceLock::Native
     LockAttempt try_lock()
     {
         if (!open_fd()) {
-            if (errno == EAGAIN || errno == EINTR || errno == EACCES)
+            if (errno == EAGAIN || errno == EINTR)
                 return LockAttempt::Busy;
+            if (errno == EACCES || errno == EROFS)
+                return LockAttempt::Denied;
 #ifdef ENOLCK
             if (errno == ENOLCK)
                 return LockAttempt::Unsupported;
@@ -210,6 +212,7 @@ std::string                      s_session_data_dir;
 std::string                      s_session_error;
 int                              s_transient_refs{0};
 bool                             s_permission_denied{false};
+std::atomic<bool>                s_last_write_refused{false};
 
 void set_session_error(const std::string &msg)
 {
@@ -467,62 +470,53 @@ std::string InstanceLock::last_error()
     return s_session_error;
 }
 
+bool InstanceLock::last_write_refused() { return s_last_write_refused.load(std::memory_order_acquire); }
+
 InstanceLock::WriteScope::WriteScope()
 {
     std::lock_guard<std::recursive_mutex> guard(s_session_mutex);
     const SessionState                    st = s_session_state.load(std::memory_order_relaxed);
     if (st == SessionState::Held || st == SessionState::NotAttempted || st == SessionState::Unsupported) {
         m_allows = true;
-        return;
-    }
-    if (st == SessionState::Released) {
+    } else if (st == SessionState::Released) {
         m_allows = false;
-        return;
-    }
-    if (st == SessionState::ReadOnly) {
+    } else if (st == SessionState::ReadOnly) {
         m_allows = try_reacquire_locked();
-        return;
+    } else if (st == SessionState::Transient) {
+        if (s_transient_refs > 0 && s_session_lock && s_session_lock->locked()) {
+            ++s_transient_refs;
+            m_owns_transient = true;
+            m_allows         = true;
+        } else if (s_session_data_dir.empty()) {
+            m_allows = false;
+        } else {
+            auto lock = std::make_unique<InstanceLock>(lock_path_for_data_dir(s_session_data_dir),
+                                                       std::chrono::milliseconds(0));
+            if (lock->locked()) {
+                s_session_lock   = std::move(lock);
+                s_transient_refs = 1;
+                m_owns_transient = true;
+                m_allows         = true;
+            } else if (lock->unsupported()) {
+                s_session_lock.reset();
+                s_session_state     = SessionState::Unsupported;
+                s_permission_denied = false;
+                set_session_error("This filesystem does not support instance locks; "
+                                  "saves are allowed but not exclusive.");
+                m_allows = true;
+            } else if (lock->permission_denied()) {
+                s_session_lock.reset();
+                s_permission_denied = true;
+                set_session_error("Cannot lock the data directory (permission denied).");
+                m_allows = false;
+            } else {
+                set_session_error("Another EdgeSlicer instance is using this data directory; "
+                                  "this instance will not save config, presets or printers.");
+                m_allows = false;
+            }
+        }
     }
-    if (st != SessionState::Transient)
-        return;
-    if (s_transient_refs > 0 && s_session_lock && s_session_lock->locked()) {
-        ++s_transient_refs;
-        m_owns_transient = true;
-        m_allows         = true;
-        return;
-    }
-    if (s_session_data_dir.empty()) {
-        m_allows = false;
-        return;
-    }
-    auto lock = std::make_unique<InstanceLock>(lock_path_for_data_dir(s_session_data_dir),
-                                               std::chrono::milliseconds(0));
-    if (lock->locked()) {
-        s_session_lock   = std::move(lock);
-        s_transient_refs = 1;
-        m_owns_transient = true;
-        m_allows         = true;
-        return;
-    }
-    if (lock->unsupported()) {
-        s_session_lock.reset();
-        s_session_state     = SessionState::Unsupported;
-        s_permission_denied = false;
-        set_session_error("This filesystem does not support instance locks; "
-                          "saves are allowed but not exclusive.");
-        m_allows = true;
-        return;
-    }
-    if (lock->permission_denied()) {
-        s_session_lock.reset();
-        s_permission_denied = true;
-        set_session_error("Cannot lock the data directory (permission denied).");
-        m_allows = false;
-        return;
-    }
-    set_session_error("Another EdgeSlicer instance is using this data directory; "
-                      "this instance will not save config, presets or printers.");
-    m_allows = false;
+    s_last_write_refused.store(!m_allows, std::memory_order_release);
 }
 
 InstanceLock::WriteScope::~WriteScope()

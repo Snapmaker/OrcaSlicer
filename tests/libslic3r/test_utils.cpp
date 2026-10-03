@@ -1159,3 +1159,107 @@ TEST_CASE("remove_files and delete_printer are refused while the data-dir lock i
 
     InstanceLock::try_acquire_data_dir("", false);
 }
+
+TEST_CASE("an inner WriteScope does not release the outer transient lock", "[utils][atomic][InstanceLock]")
+{
+    ScopedTempDir dir;
+    struct Reset
+    {
+        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
+    } reset;
+
+    REQUIRE(InstanceLock::enable_transient_saves(dir.path.string()));
+    {
+        InstanceLock::WriteScope outer;
+        REQUIRE(outer.allows());
+        REQUIRE(InstanceLock::holds_data_dir());
+        {
+            InstanceLock::WriteScope inner;
+            REQUIRE(inner.allows());
+            REQUIRE(InstanceLock::holds_data_dir());
+        }
+        // Inner destructor must drop only its ref, not the flock.
+        REQUIRE(InstanceLock::holds_data_dir());
+        REQUIRE(outer.allows());
+    }
+    REQUIRE_FALSE(InstanceLock::holds_data_dir());
+}
+
+TEST_CASE("WriteScope re-acquires after the visible holder exits", "[utils][atomic][InstanceLock]")
+{
+    ScopedTempDir dir;
+    struct Reset
+    {
+        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
+    } reset;
+
+    {
+        InstanceLock holder(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
+        REQUIRE(holder.locked());
+        REQUIRE_FALSE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(50)));
+        REQUIRE(InstanceLock::is_read_only());
+        {
+            InstanceLock::WriteScope refused;
+            REQUIRE_FALSE(refused.allows());
+            REQUIRE(InstanceLock::last_write_refused());
+        }
+    }
+    {
+        InstanceLock::WriteScope recovered;
+        REQUIRE(recovered.allows());
+        REQUIRE_FALSE(InstanceLock::last_write_refused());
+        REQUIRE(InstanceLock::holds_data_dir());
+        REQUIRE_FALSE(InstanceLock::is_read_only());
+    }
+}
+
+TEST_CASE("save_info is refused while the data-dir lock is read-only", "[utils][atomic][InstanceLock]")
+{
+    ScopedTempDir dir;
+    struct Reset
+    {
+        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
+    } reset;
+
+    InstanceLock holder(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
+    REQUIRE(holder.locked());
+    REQUIRE_FALSE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(50)));
+    REQUIRE(InstanceLock::is_read_only());
+
+    const boost::filesystem::path json = dir.path / "n.json";
+    const boost::filesystem::path info = dir.path / "n.info";
+    Preset                        preset(Preset::TYPE_PRINT, "n");
+    preset.file = json.string();
+    REQUIRE_FALSE(preset.save_info());
+    REQUIRE_FALSE(boost::filesystem::exists(info));
+    REQUIRE_FALSE(boost::filesystem::exists(json));
+
+    InstanceLock::try_acquire_data_dir("", false);
+}
+
+TEST_CASE("save_current_preset is refused while the data-dir lock is read-only", "[utils][atomic][InstanceLock]")
+{
+    ScopedTempDir dir;
+    struct Reset
+    {
+        ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
+    } reset;
+
+    PresetCollection collection(Preset::TYPE_PRINT, Preset::print_options(), FullPrintConfig::defaults(),
+                                "Default Setting");
+    collection.update_user_presets_directory(dir.path.string(), "process");
+    const std::string selected_before = collection.get_selected_preset().name;
+
+    InstanceLock holder(InstanceLock::lock_path_for_data_dir(dir.path.string()), std::chrono::milliseconds(50));
+    REQUIRE(holder.locked());
+    REQUIRE_FALSE(InstanceLock::try_acquire_data_dir(dir.path.string(), true, std::chrono::milliseconds(50)));
+    REQUIRE(InstanceLock::is_read_only());
+
+    // save_to_project skips Preset::save's disk gate (embedded presets return
+    // true). The collection WriteScope is the only refusal on this path.
+    REQUIRE_FALSE(collection.save_current_preset("proj-preset", false, true));
+    REQUIRE(collection.find_preset("proj-preset", false) == nullptr);
+    REQUIRE(collection.get_selected_preset().name == selected_before);
+
+    InstanceLock::try_acquire_data_dir("", false);
+}

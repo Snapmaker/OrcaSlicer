@@ -4144,7 +4144,11 @@ bool GUI_App::on_init_inner()
 
         if (m_post_initialized && app_config->dirty() && app_config->save_due()) {
             if (!app_config->save()) {
-                if (!m_appconfig_save_notice_shown) {
+                // Startup already explained a read-only / permission / busy
+                // data dir. A second AppConfig notice on the same session is
+                // the same fact with a worse message.
+                if (!m_appconfig_save_notice_shown && m_instance_lock_notice.empty() &&
+                    !InstanceLock::is_read_only()) {
                     m_appconfig_save_notice_shown = true;
                     const std::string err         = app_config->last_save_error();
                     const std::string text        = err.empty()
@@ -4153,6 +4157,8 @@ bool GUI_App::on_init_inner()
                     if (NotificationManager *nm = notification_manager())
                         nm->push_notification(NotificationType::CustomNotification,
                                               NotificationManager::NotificationLevel::WarningNotificationLevel, text);
+                } else {
+                    m_appconfig_save_notice_shown = true;
                 }
             } else {
                 m_appconfig_save_notice_shown = false;

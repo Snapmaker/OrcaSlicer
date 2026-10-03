@@ -76,11 +76,17 @@ public:
     static bool lock_unsupported();
     static bool lock_permission_denied();
     static std::string last_error();
+    // True when the most recently constructed WriteScope refused the write
+    // (busy, permission, released). Survives the scope destructor so a
+    // caller can pick a dialog after Preset::save / save_current_preset.
+    static bool last_write_refused();
 
-    // Holds the session mutex for the scope. Transient sessions take the
-    // flock only here and release it in the destructor. Nesting is OK
-    // (refcount). Use this around every gated write; save_current_preset
-    // keeps one scope across the disk write and the in-memory commit.
+    // RAII gate around a write. The session mutex is held only in the
+    // constructor and destructor, not across the write. Transient sessions
+    // take the flock in the constructor and release it in the destructor
+    // when the last nested scope exits. Nesting is OK (refcount). Use this
+    // around every gated write; save_current_preset keeps one scope across
+    // the disk write and the in-memory commit.
     class WriteScope
     {
     public:

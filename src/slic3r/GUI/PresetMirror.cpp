@@ -191,10 +191,12 @@ mirror::SourceListing list_source(const bfs::path& src_uid)
 
 int mirror_bambu_user_presets(const std::string& logged_in_uid)
 {
-    InstanceLock::WriteScope write_scope;
-    if (!write_scope.allows()) {
-        BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] data directory is read-only; skipping Bambu user-preset mirror";
-        return 0;
+    {
+        InstanceLock::WriteScope probe;
+        if (!probe.allows()) {
+            BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] data directory is read-only; skipping Bambu user-preset mirror";
+            return 0;
+        }
     }
     try {
         bfs::path src_uid = find_bambu_user_dir(logged_in_uid);
@@ -235,6 +237,12 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
         for (const auto& item : plan) {
             switch (item.action) {
             case mirror::Action::Copy: {
+                InstanceLock::WriteScope write_scope;
+                if (!write_scope.allows()) {
+                    BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] data directory became read-only; aborting remaining copies";
+                    ++errors;
+                    break;
+                }
                 if (by_rel.find(item.rel) == by_rel.end()) { ++errors; break; }
                 bfs::path srcp = src_uid / bfs::path(item.rel);
                 bfs::path dstp = dst_root / bfs::path(item.rel);
@@ -281,10 +289,15 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
         }
 
         auto updated = mirror::apply_plan(manifest, plan);
-        try {
-            std::ofstream out(man_path.string(), std::ios::binary | std::ios::trunc);
-            out << mirror::dump_manifest(updated);
-        } catch (...) {}
+        {
+            InstanceLock::WriteScope write_scope;
+            if (write_scope.allows()) {
+                try {
+                    std::ofstream out(man_path.string(), std::ios::binary | std::ios::trunc);
+                    out << mirror::dump_manifest(updated);
+                } catch (...) {}
+            }
+        }
 
         BOOST_LOG_TRIVIAL(info) << "[preset-mirror] from " << src_uid.string()
             << " -> copied=" << copied << " uptodate=" << uptodate

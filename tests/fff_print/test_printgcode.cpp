@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/libslic3r.h"
+#include "libslic3r/GCode/WipeTower2.hpp"
 #include "libslic3r/GCodeReader.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
@@ -410,7 +411,7 @@ void require_high_flow_columns(const ConfigBase &config)
     REQUIRE_THAT(get_value_at(config, *pa, ConfigFlowDomain::Filament, 1), Catch::Matchers::WithinAbs(kPaHfF1, 1e-9));
 }
 
-std::string slice_high_flow_pa(DynamicPrintConfig config, bool bbl)
+std::string slice_high_flow_pa(DynamicPrintConfig config, bool bbl, bool check_pa_columns = true)
 {
     Print print;
     Model model;
@@ -429,7 +430,8 @@ std::string slice_high_flow_pa(DynamicPrintConfig config, bool bbl)
     print.apply(model, config);
     print.is_BBL_printer() = bbl;
     REQUIRE(print.has_wipe_tower());
-    require_high_flow_columns(print.config());
+    if (check_pa_columns)
+        require_high_flow_columns(print.config());
     return Test::gcode(print);
 }
 
@@ -505,6 +507,110 @@ void require_filament2_uses_high_flow_pa(const std::string &gcode, size_t min_pa
     REQUIRE(pa.pa_high_flow >= min_pa_commands);
 }
 
+// Orca #16007: F0 packed Standard+High-Flow, F1 single. get_at(1) is F0's High-Flow slot.
+constexpr int    kTempStdF0    = 190;
+constexpr int    kTempHfF0     = 230;
+constexpr int    kTempF1       = 210;
+constexpr int    kInitStdF0    = 185;
+constexpr int    kInitHfF0     = 225;
+constexpr int    kInitF1       = 205;
+constexpr double kPurgeStdF0   = 1.;
+constexpr double kPurgeHfF0    = 15.;
+constexpr double kPurgeF1      = 5.;
+constexpr double kVolStdF0     = 8.;
+constexpr double kVolHfF0      = 30.;
+constexpr double kVolF1        = 12.;
+constexpr double kRamVolStdF0  = 1.;
+constexpr double kRamVolHfF0   = 20.;
+constexpr double kRamVolF1     = 8.;
+constexpr double kRamFlowStdF0 = 1.;
+constexpr double kRamFlowHfF0  = 10.;
+constexpr double kRamFlowF1    = 4.;
+
+DynamicPrintConfig step_size_2_f0_config()
+{
+    DynamicPrintConfig config = high_flow_pa_config(true, true, false);
+    // F0 Standard+High-Flow (2 columns) + F1 Standard-only (1 column). F0 is High-Flow, so
+    // get_config_idx(..., 0) == 1 and get_config_idx(..., 1) == 2. get_at(1) is F0's HF slot.
+    config.option<ConfigOptionInts>("filament_flow_step_size", true)->values = {2, 1};
+    config.option<ConfigOptionStrings>("filament_flow_support", true)->values =
+        {FLOW_MODE_STANDARD, FLOW_MODE_HIGH_FLOW, FLOW_MODE_STANDARD};
+    config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtHighFlow),
+                                                                                     int(fvtStandard)};
+    config.option<ConfigOptionInts>("nozzle_temperature")->values               = {kTempStdF0, kTempHfF0, kTempF1};
+    config.option<ConfigOptionInts>("nozzle_temperature_initial_layer")->values = {kInitStdF0, kInitHfF0, kInitF1};
+    config.option<ConfigOptionFloats>("filament_minimal_purge_on_wipe_tower")->values = {kPurgeStdF0, kPurgeHfF0,
+                                                                                         kPurgeF1};
+    config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values        = {kVolStdF0, kVolHfF0, kVolF1};
+    config.option<ConfigOptionBools>("filament_multitool_ramming")->values            = {false, true, true};
+    config.option<ConfigOptionFloats>("filament_multitool_ramming_volume")->values    = {kRamVolStdF0, kRamVolHfF0,
+                                                                                        kRamVolF1};
+    config.option<ConfigOptionFloats>("filament_multitool_ramming_flow")->values      = {kRamFlowStdF0, kRamFlowHfF0,
+                                                                                        kRamFlowF1};
+    // 2x2 flush matrix so extract_wipe_volumes walks two filament ids, not the 4x4 default.
+    config.option<ConfigOptionFloats>("flush_volumes_matrix")->values = {0.f, 0.f, 0.f, 0.f};
+    return config;
+}
+
+void require_step_size_2_f0_columns(const ConfigBase &config)
+{
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 0) == 1);
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 1) == 2);
+
+    const auto *temps  = config.option<ConfigOptionInts>("nozzle_temperature");
+    const auto *inits  = config.option<ConfigOptionInts>("nozzle_temperature_initial_layer");
+    const auto *purge  = config.option<ConfigOptionFloats>("filament_minimal_purge_on_wipe_tower");
+    const auto *vol    = config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    const auto *ram_on = config.option<ConfigOptionBools>("filament_multitool_ramming");
+    const auto *ram_v  = config.option<ConfigOptionFloats>("filament_multitool_ramming_volume");
+    const auto *ram_f  = config.option<ConfigOptionFloats>("filament_multitool_ramming_flow");
+    REQUIRE(temps != nullptr);
+    REQUIRE(inits != nullptr);
+    REQUIRE(purge != nullptr);
+    REQUIRE(vol != nullptr);
+    REQUIRE(ram_on != nullptr);
+    REQUIRE(ram_v != nullptr);
+    REQUIRE(ram_f != nullptr);
+
+    // Raw filament-id reads land in F0's High-Flow column.
+    REQUIRE(temps->get_at(1) == kTempHfF0);
+    REQUIRE(inits->get_at(1) == kInitHfF0);
+    REQUIRE_THAT(purge->get_at(1), Catch::Matchers::WithinAbs(kPurgeHfF0, 1e-9));
+    REQUIRE_THAT(vol->get_at(1), Catch::Matchers::WithinAbs(kVolHfF0, 1e-9));
+    REQUIRE(ram_on->get_at(1));
+    REQUIRE_THAT(ram_v->get_at(1), Catch::Matchers::WithinAbs(kRamVolHfF0, 1e-9));
+    REQUIRE_THAT(ram_f->get_at(1), Catch::Matchers::WithinAbs(kRamFlowHfF0, 1e-9));
+
+    REQUIRE(get_value_at(config, *temps, ConfigFlowDomain::Filament, 1) == kTempF1);
+    REQUIRE(get_value_at(config, *inits, ConfigFlowDomain::Filament, 1) == kInitF1);
+    REQUIRE_THAT(get_value_at(config, *purge, ConfigFlowDomain::Filament, 1),
+                 Catch::Matchers::WithinAbs(kPurgeF1, 1e-9));
+    REQUIRE_THAT(get_value_at(config, *vol, ConfigFlowDomain::Filament, 1), Catch::Matchers::WithinAbs(kVolF1, 1e-9));
+    REQUIRE(get_value_at(config, *ram_on, ConfigFlowDomain::Filament, 1));
+    REQUIRE_THAT(get_value_at(config, *ram_v, ConfigFlowDomain::Filament, 1),
+                 Catch::Matchers::WithinAbs(kRamVolF1, 1e-9));
+    REQUIRE_THAT(get_value_at(config, *ram_f, ConfigFlowDomain::Filament, 1),
+                 Catch::Matchers::WithinAbs(kRamFlowF1, 1e-9));
+
+    REQUIRE(get_value_at(config, *temps, ConfigFlowDomain::Filament, 0) == kTempHfF0);
+    REQUIRE(temps->get_at(0) == kTempStdF0);
+}
+
+PrintConfig as_print_config(const DynamicPrintConfig &dyn)
+{
+    PrintConfig print_cfg;
+    print_cfg.apply(dyn, true);
+    return print_cfg;
+}
+
+size_t count_substr(const std::string &hay, const std::string &needle)
+{
+    size_t n = 0;
+    for (size_t pos = 0; (pos = hay.find(needle, pos)) != std::string::npos; pos += needle.size())
+        ++n;
+    return n;
+}
+
 } // namespace
 
 TEST_CASE("wipe-tower and set_extruder PA follow the High-Flow column", "[PrintGCode][GCode][PAVariant]")
@@ -573,4 +679,77 @@ TEST_CASE("AdaptivePA enable follows the High-Flow column", "[PrintGCode][GCode]
     REQUIRE(gcode.find("; APA: Interpolation failed") != std::string::npos);
     REQUIRE(gcode.find("; APA: Tool doesnt have APA enabled") == std::string::npos);
     require_filament2_uses_high_flow_pa(gcode, 2);
+}
+
+// Orca #16007 Stage A / Edge flow variants: when F0 declares both Standard and High-Flow, the
+// packed filament arrays are [F0-std, F0-hf, F1, ...]. A raw get_at(1) for filament 1 reads
+// F0's High-Flow slot (wrong filament), not F1's own column.
+TEST_CASE("step-size-2 F0 variants misindex F1 on raw get_at", "[PrintGCode][GCode][PAVariant][FilamentVariants]")
+{
+    const DynamicPrintConfig config = step_size_2_f0_config();
+    require_step_size_2_f0_columns(config);
+
+    const PrintConfig print_cfg = as_print_config(config);
+    const auto        vols      = WipeTower2::extract_wipe_volumes(print_cfg);
+    REQUIRE(vols.size() == 2);
+    REQUIRE(vols[0].size() == 2);
+    // F1 is column j=1. get_at(1) is F0's High-Flow 15 mm3; the variant reader is F1's 5 mm3.
+    REQUIRE_THAT(vols[0][1], Catch::Matchers::WithinAbs(float(kPurgeF1), 1e-4f));
+    REQUIRE_THAT(vols[1][1], Catch::Matchers::WithinAbs(float(kPurgeF1), 1e-4f));
+    REQUIRE_THAT(vols[0][0], Catch::Matchers::WithinAbs(float(kPurgeHfF0), 1e-4f));
+
+    const std::string gcode = slice_high_flow_pa(config, false, false);
+    REQUIRE(gcode.find("Travel to a Wipe Tower") != std::string::npos);
+    // Header comment is filament 0. get_at(0) is Standard 185; F0 is High-Flow so 225.
+    REQUIRE(gcode.find("; first_layer_temperature = " + std::to_string(kInitHfF0)) != std::string::npos);
+    REQUIRE(gcode.find("; first_layer_temperature = " + std::to_string(kInitStdF0)) == std::string::npos);
+    // F1's own first-layer / other-layer temps must appear. F0's High-Flow pair (225/230) is
+    // what a raw get_at(1) would write for filament 1.
+    REQUIRE(count_substr(gcode, "S" + std::to_string(kInitF1)) >= 1);
+    REQUIRE(count_substr(gcode, "S" + std::to_string(kTempF1)) >= 1);
+}
+
+TEST_CASE("Standard-only flow columns stay get_at-identical after variant readers",
+          "[PrintGCode][GCode][slice_compare]")
+{
+    DynamicPrintConfig config = high_flow_pa_config(true, true, false);
+    config.option<ConfigOptionInts>("filament_flow_step_size", true)->values = {1, 1};
+    config.option<ConfigOptionStrings>("filament_flow_support", true)->values = {FLOW_MODE_STANDARD,
+                                                                                FLOW_MODE_STANDARD};
+    config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtStandard),
+                                                                                     int(fvtStandard)};
+    config.option<ConfigOptionInts>("nozzle_temperature")->values               = {200, 215};
+    config.option<ConfigOptionInts>("nozzle_temperature_initial_layer")->values = {195, 211};
+    config.option<ConfigOptionFloats>("filament_minimal_purge_on_wipe_tower")->values = {3., 7.};
+    config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values  = {11., 13.};
+    config.option<ConfigOptionBools>("filament_multitool_ramming")->values      = {true, true};
+    config.option<ConfigOptionFloats>("filament_multitool_ramming_volume")->values = {6., 9.};
+    config.option<ConfigOptionFloats>("filament_multitool_ramming_flow")->values   = {3., 4.};
+    config.option<ConfigOptionFloats>("flush_volumes_matrix")->values              = {0.f, 0.f, 0.f, 0.f};
+    config.option<ConfigOptionFloats>("pressure_advance")->values                 = {kPaStdF0, kPaStdF1};
+    config.option<ConfigOptionBools>("enable_pressure_advance")->values           = {true, true};
+
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 0) == 0);
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 1) == 1);
+    const auto *temps = config.option<ConfigOptionInts>("nozzle_temperature");
+    const auto *inits = config.option<ConfigOptionInts>("nozzle_temperature_initial_layer");
+    const auto *purge = config.option<ConfigOptionFloats>("filament_minimal_purge_on_wipe_tower");
+    const auto *vol   = config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    REQUIRE(get_value_at(config, *temps, ConfigFlowDomain::Filament, 0) == temps->get_at(0));
+    REQUIRE(get_value_at(config, *temps, ConfigFlowDomain::Filament, 1) == temps->get_at(1));
+    REQUIRE(get_value_at(config, *inits, ConfigFlowDomain::Filament, 0) == inits->get_at(0));
+    REQUIRE(get_value_at(config, *inits, ConfigFlowDomain::Filament, 1) == inits->get_at(1));
+    REQUIRE_THAT(get_value_at(config, *purge, ConfigFlowDomain::Filament, 1),
+                 Catch::Matchers::WithinAbs(purge->get_at(1), 1e-9));
+    REQUIRE_THAT(get_value_at(config, *vol, ConfigFlowDomain::Filament, 1),
+                 Catch::Matchers::WithinAbs(vol->get_at(1), 1e-9));
+
+    const auto vols = WipeTower2::extract_wipe_volumes(as_print_config(config));
+    REQUIRE_THAT(vols[0][1], Catch::Matchers::WithinAbs(7.f, 1e-4f));
+    REQUIRE_THAT(vols[1][0], Catch::Matchers::WithinAbs(3.f, 1e-4f));
+
+    const std::string gcode = slice_high_flow_pa(config, false, false);
+    REQUIRE(gcode.find("; first_layer_temperature = 195") != std::string::npos);
+    REQUIRE(count_substr(gcode, "S211") >= 1);
+    REQUIRE(count_substr(gcode, "S215") >= 1);
 }

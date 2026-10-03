@@ -1245,8 +1245,8 @@ TEST_CASE("save_current_preset is refused while the data-dir lock is read-only",
         ~Reset() { InstanceLock::try_acquire_data_dir("", false); }
     } reset;
 
-    PresetCollection collection(Preset::TYPE_PRINT, Preset::print_options(), FullPrintConfig::defaults(),
-                                "Default Setting");
+    PresetCollection collection(Preset::TYPE_PRINT, Preset::print_options(),
+                                static_cast<const PrintRegionConfig &>(FullPrintConfig::defaults()), "Default Setting");
     collection.update_user_presets_directory(dir.path.string(), "process");
     const std::string selected_before = collection.get_selected_preset().name;
 

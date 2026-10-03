@@ -158,6 +158,81 @@ inline std::vector<double> axis_offsets(const std::vector<Span> &spans, const Ax
     return out;
 }
 
+// ---- Anchor choice (Align selected, origin not Auto) ----
+
+// Which item stays put. None = the selection's own extremes (Reference::Union), nothing fixed.
+enum class AnchorMode { Last = 0, First = 1, None = 2 };
+
+constexpr std::size_t NO_ITEM = static_cast<std::size_t>(-1);
+
+inline const char *anchor_mode_key(AnchorMode mode)
+{
+    switch (mode) {
+    case AnchorMode::First: return "first";
+    case AnchorMode::None:  return "none";
+    case AnchorMode::Last:
+    default:                return "last";
+    }
+}
+
+inline AnchorMode anchor_mode_from_key(const std::string &key)
+{
+    if (key == "first") return AnchorMode::First;
+    if (key == "none")  return AnchorMode::None;
+    return AnchorMode::Last;
+}
+
+struct AnchorPick
+{
+    // Index of the anchor in the item list (meaningless when use_union).
+    std::size_t index = 0;
+    // No anchor: align to the selection's extremes.
+    bool use_union = false;
+    // An explicitly chosen item is no longer in the selection; the pick fell back to Last.
+    bool explicit_missing = false;
+};
+
+// last / first / explicit_index are indices into the current item list, or NO_ITEM when unknown
+// (click order lost, item not selected any more). An unknown last / first uses the first item.
+// An explicit choice wins while its item is present; otherwise it falls back to Last, whatever
+// the mode was.
+inline AnchorPick resolve_anchor(AnchorMode mode, bool explicit_requested, std::size_t explicit_index, std::size_t last_index, std::size_t first_index)
+{
+    const auto known = [](std::size_t i) { return i == NO_ITEM ? std::size_t(0) : i; };
+    AnchorPick pick;
+    if (explicit_requested) {
+        if (explicit_index != NO_ITEM) {
+            pick.index = explicit_index;
+        } else {
+            pick.explicit_missing = true;
+            pick.index            = known(last_index);
+        }
+        return pick;
+    }
+    switch (mode) {
+    case AnchorMode::None:  pick.use_union = true; break;
+    case AnchorMode::First: pick.index = known(first_index); break;
+    case AnchorMode::Last:
+    default:                pick.index = known(last_index); break;
+    }
+    return pick;
+}
+
+// Names for the anchor list: a name that occurs more than once gets " #<number>" (the instance or
+// part number) so the entries can be told apart; unique names stay as they are.
+inline std::vector<std::string> disambiguate_names(const std::vector<std::string> &names, const std::vector<int> &numbers)
+{
+    std::vector<std::string> out = names;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        std::size_t same = 0;
+        for (const std::string &n : names)
+            same += n == names[i] ? 1 : 0;
+        if (same > 1 && i < numbers.size())
+            out[i] += " #" + std::to_string(numbers[i]);
+    }
+    return out;
+}
+
 // ---- Panel layout helpers (pure, so they can be tested without an ImGui context) ----
 
 // An origin dropdown spans exactly its button group: from the first button's left edge to the

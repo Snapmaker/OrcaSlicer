@@ -1037,33 +1037,8 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
         if (!m_align_origin_loaded)
             load_align_origins();
         const bool inter_item = m_align_choice_type == AlignChoiceType::AlignPartOrObject;
-        const bool any_origin = m_align_origin[0] != AlignMath::Origin::Auto || m_align_origin[1] != AlignMath::Origin::Auto ||
-                                m_align_origin[2] != AlignMath::Origin::Auto;
         const float row_left_x = ImGui::GetCursorPosX();
 
-        // Inter-item mode: say which item stays put (the last one selected).
-        if (inter_item) {
-            std::string anchor_name = m_alignment_helper->anchor_description();
-            wxString    anchor_text = anchor_name.empty() ? _L("first selected item") : wxString::FromUTF8(anchor_name);
-            // Keep a long name from widening the dock: clip it to a DPI-independent width.
-            const float max_w = ImGui::GetFontSize() * 14.0f;
-            if (imgui_wrapper->calc_text_size(anchor_text).x > max_w) {
-                while (anchor_text.length() > 1 && imgui_wrapper->calc_text_size(anchor_text + L"...").x > max_w)
-                    anchor_text.RemoveLast();
-                anchor_text += L"...";
-            }
-            ImVec4 anchor_col = any_origin ? ImGuiWrapper::COL_ORCA : ImGui::GetStyleColorVec4(ImGuiCol_Text);
-            if (!any_origin)
-                anchor_col.w = 0.55f; // not used while every origin is Auto
-            ImGui::AlignTextToFramePadding();
-            ImGui::PushStyleColor(ImGuiCol_Text, anchor_col);
-            imgui_wrapper->text(" " + _L("Anchor") + ": " + anchor_text);
-            ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered())
-                imgui_wrapper->tooltip(_L("The anchor is the object (or part) you selected last. It stays where it is and the other "
-                                          "selected items move to it. It is only used when an origin below is not Auto."),
-                                       ImGui::GetFontSize() * 20.0f);
-        }
 
         float scale_icon = 1.2f;
         float icon_size  = ImGui::GetFrameHeight() * scale_icon;
@@ -1071,8 +1046,10 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
         // Row layout: the origin dropdowns sit in a row above the icons, each over its axis group.
         // The groups' x positions are only known once the icon row is laid out, so that row is
         // reserved here, the icons are drawn below it, and the dropdowns are drawn afterwards.
-        const float origin_row_y = ImGui::GetCursorPosY();
-        const float start_y      = origin_row_y + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
+        const float anchor_row_y = ImGui::GetCursorPosY();
+        const float row_h        = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
+        const float origin_row_y = anchor_row_y + (inter_item ? row_h : 0.f);
+        const float start_y      = origin_row_y + row_h;
         float       group_l[3]   = {0.f, 0.f, 0.f};
         float       group_r[3]   = {0.f, 0.f, 0.f};
         // Screen-space item rect edges converted to the window-local coordinates SetCursorPos uses.
@@ -1167,6 +1144,13 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
         // that does not fit is ellipsised, never allowed to widen the panel.
         {
             ImGuiWrapper::push_combo_style(m_glcanvas.get_scale());
+            if (inter_item) {
+                ImGui::SetCursorPos(ImVec2(row_left_x, anchor_row_y));
+                ImGui::AlignTextToFramePadding();
+                imgui_wrapper->text(" " + _L("Anchor"));
+                // Spans all three axis groups, from the first button to the last.
+                render_align_anchor_combo(imgui_wrapper, group_l[0], anchor_row_y, AlignMath::combo_frame_width(group_l[0], group_r[2]));
+            }
             ImGui::SetCursorPos(ImVec2(row_left_x, origin_row_y));
             ImGui::AlignTextToFramePadding();
             imgui_wrapper->text(" " + _L("Origin"));
@@ -1251,11 +1235,7 @@ void GizmoObjectManipulation::show_align_icon(ImGuiWrapper *              imgui_
             if (GLGizmoAlignment::AlignType::DISTRIBUTE_X <= align_type) {
                 m_alignment_helper->distribute_objects(align_type);
             } else {
-                GLGizmoAlignment::AlignOptions options;
-                for (int axis = 0; axis < 3; ++axis)
-                    options.origin[axis] = m_align_origin[axis];
-                options.to_parent = m_align_choice_type == AlignChoiceType::AlignParent;
-                m_alignment_helper->align_objects(align_type, options);
+                m_alignment_helper->align_objects(align_type, make_align_options());
             }
         }
     }
@@ -1284,13 +1264,18 @@ void GizmoObjectManipulation::show_align_icon(ImGuiWrapper *              imgui_
                 const bool parts      = m_glcanvas.get_selection().is_single_volume_or_modifier() || m_glcanvas.get_selection().is_multiple_volume() ||
                                         m_glcanvas.get_selection().is_multiple_modifier();
                 wxString moved  = inter_item ? _L("each moved item") : _L("the selection");
-                wxString target = inter_item ? wxString::FromUTF8(m_alignment_helper->anchor_description()) : (parts ? _L("the object") : _L("the plate"));
-                if (target.empty())
-                    target = _L("the anchor");
+                wxString target = parts ? _L("the object") : _L("the plate");
+                bool     anchored = false;
+                if (inter_item) {
+                    const auto cands = m_alignment_helper->anchor_candidates();
+                    const int  a     = m_alignment_helper->resolve_anchor_candidate(make_align_options());
+                    anchored         = a >= 0 && a < (int) cands.size();
+                    target           = anchored ? wxString::FromUTF8(cands[(size_t) a].label) : _L("the selection bounds");
+                }
                 tip += "\n" + wxString::Format(_L("Brings the %s of %s to the %s of %s."),
                                                align_face_name(axis, AlignMath::pick_side(m_align_origin[axis], side)), moved,
                                                align_face_name(axis, side), target);
-                if (inter_item)
+                if (anchored)
                     tip += "\n" + _L("The anchor stays in place.");
             }
             ImGui::SetTooltip("%s", tip.ToUTF8().data());
@@ -1328,12 +1313,15 @@ wxString GizmoObjectManipulation::align_face_name(int axis, AlignMath::Side side
 }
 
 static const char *const ALIGN_ORIGIN_KEYS[3] = {"align_origin_x", "align_origin_y", "align_origin_z"};
+static const char *const ALIGN_ANCHOR_MODE_KEY = "align_anchor_mode";
 
 void GizmoObjectManipulation::load_align_origins()
 {
     const AppConfig *cfg = wxGetApp().app_config;
     for (int axis = 0; axis < 3; ++axis)
         m_align_origin[axis] = cfg != nullptr ? AlignMath::origin_from_key(cfg->get(ALIGN_ORIGIN_KEYS[axis])) : AlignMath::Origin::Auto;
+    // Only the mode is remembered across sessions, never a specific item.
+    m_align_anchor_mode   = cfg != nullptr ? AlignMath::anchor_mode_from_key(cfg->get(ALIGN_ANCHOR_MODE_KEY)) : AlignMath::AnchorMode::Last;
     m_align_origin_loaded = true;
 }
 
@@ -1343,20 +1331,48 @@ void GizmoObjectManipulation::save_align_origin(int axis)
         cfg->set(ALIGN_ORIGIN_KEYS[axis], AlignMath::origin_key(m_align_origin[axis]));
 }
 
-bool GizmoObjectManipulation::render_align_origin_combo(ImGuiWrapper *imgui_wrapper, int axis, float x, float y, float frame_width)
+void GizmoObjectManipulation::save_align_anchor_mode()
 {
-    const std::vector<std::string> lines = align_origin_labels(axis);
-    size_t                         idx   = std::min((size_t) m_align_origin[axis], lines.size() - 1);
-    const bool                     tinted = m_align_origin[axis] != AlignMath::Origin::Auto;
+    if (AppConfig *cfg = wxGetApp().app_config)
+        cfg->set(ALIGN_ANCHOR_MODE_KEY, AlignMath::anchor_mode_key(m_align_anchor_mode));
+}
+
+GLGizmoAlignment::AlignOptions GizmoObjectManipulation::make_align_options() const
+{
+    GLGizmoAlignment::AlignOptions options;
+    for (int axis = 0; axis < 3; ++axis)
+        options.origin[axis] = m_align_origin[axis];
+    options.to_parent           = m_align_choice_type == AlignChoiceType::AlignParent;
+    options.anchor_mode         = m_align_anchor_mode;
+    options.anchor_item_set     = m_align_anchor_item_set;
+    options.anchor_object_idx   = m_align_anchor_object_idx;
+    options.anchor_instance_idx = m_align_anchor_instance_idx;
+    options.anchor_volume_idx   = m_align_anchor_volume_idx;
+    return options;
+}
+
+// A dropdown whose visible frame is exactly `frame_width` wide at window-local (x, y). The preview
+// text is already ellipsised by the caller. Returns true (and updates selection_idx) on a change.
+bool GizmoObjectManipulation::render_spanning_combo(ImGuiWrapper *                  imgui_wrapper,
+                                                    const char *                    id,
+                                                    const std::vector<std::string> &lines,
+                                                    size_t &                        selection_idx,
+                                                    const std::string &             preview,
+                                                    bool                            tinted,
+                                                    float                           x,
+                                                    float                           y,
+                                                    float                           frame_width,
+                                                    const wxString &                tooltip)
+{
     // BBLBeginCombo draws a frame that is `width - 2 * frame height` wide (the arrow block counts twice).
     const float arrow = ImGui::GetFrameHeight();
 
     ImGui::SetCursorPos(ImVec2(x, y));
     ImGui::PushItemWidth(frame_width + 2.f * arrow);
-    ImGui::PushID(100 + axis);
+    ImGui::PushID(id);
     int pushed = 0;
     if (tinted) {
-        // A non-default origin changes what the three buttons do, so it is tinted with the app accent.
+        // A non-default choice changes what the buttons do, so it is tinted with the app accent.
         ImVec4 bg = ImGuiWrapper::COL_ORCA;
         bg.w      = 0.30f;
         ImVec4 bg_hover = ImGuiWrapper::COL_ORCA;
@@ -1366,19 +1382,16 @@ bool GizmoObjectManipulation::render_align_origin_combo(ImGuiWrapper *imgui_wrap
         ImGui::PushStyleColor(ImGuiCol_Border, ImGuiWrapper::COL_ORCA);
         pushed = 3;
     }
-    // Text space in the preview: after the arrow block, between the frame paddings. Ellipsise, never widen.
-    const float text_space = frame_width - arrow - 2.f * ImGui::GetStyle().FramePadding.x;
-    const std::string preview = AlignMath::ellipsize(lines[idx], text_space, [&](const std::string &s) { return (double) imgui_wrapper->calc_text_size(s).x; });
-    const bool open = ImGui::BBLBeginCombo("##align_origin", preview.c_str(), 0);
+    const bool open = ImGui::BBLBeginCombo("##combo", preview.c_str(), 0);
     if (pushed > 0)
         ImGui::PopStyleColor(pushed);
     const bool hovered = ImGui::IsItemHovered();
 
-    size_t selection_out = idx;
+    size_t selection_out = selection_idx;
     if (open) {
         for (size_t line_idx = 0; line_idx < lines.size(); ++line_idx) {
             ImGui::PushID(int(line_idx));
-            if (ImGui::Selectable("", line_idx == idx))
+            if (ImGui::Selectable("", line_idx == selection_idx))
                 selection_out = line_idx;
             ImGui::SameLine();
             ImGui::Text("%s", lines[line_idx].c_str());
@@ -1389,19 +1402,87 @@ bool GizmoObjectManipulation::render_align_origin_combo(ImGuiWrapper *imgui_wrap
     ImGui::PopID();
     ImGui::PopItemWidth();
 
-    if (hovered && !open) {
-        imgui_wrapper->tooltip(m_align_choice_type == AlignChoiceType::AlignPartOrObject ?
-                                   _L("Which point of each moved item is brought to the target. Auto uses the same side as the button "
-                                      "(edge to edge, center to center). Anything else is applied against the anchor.") :
-                                   _L("Which point of the selection's bounding box is brought to the target. Auto uses the same side as "
-                                      "the button (edge to edge, center to center)."),
-                               ImGui::GetFontSize() * 20.0f);
+    if (hovered && !open && !tooltip.empty())
+        imgui_wrapper->tooltip(tooltip, ImGui::GetFontSize() * 20.0f);
+
+    const bool changed = selection_out != selection_idx;
+    selection_idx      = selection_out;
+    return changed;
+}
+
+bool GizmoObjectManipulation::render_align_origin_combo(ImGuiWrapper *imgui_wrapper, int axis, float x, float y, float frame_width)
+{
+    const std::vector<std::string> lines = align_origin_labels(axis);
+    size_t                         idx   = std::min((size_t) m_align_origin[axis], lines.size() - 1);
+    // Text space in the preview: after the arrow block, between the frame paddings. Ellipsise, never widen.
+    const float       text_space = frame_width - ImGui::GetFrameHeight() - 2.f * ImGui::GetStyle().FramePadding.x;
+    const std::string preview    = AlignMath::ellipsize(lines[idx], text_space, [&](const std::string &s) { return (double) imgui_wrapper->calc_text_size(s).x; });
+    const wxString    tip = m_align_choice_type == AlignChoiceType::AlignPartOrObject ?
+                                _L("Which point of each moved item is brought to the target. Auto uses the same side as the button "
+                                   "(edge to edge, center to center). Anything else is applied against the anchor.") :
+                                _L("Which point of the selection's bounding box is brought to the target. Auto uses the same side as "
+                                   "the button (edge to edge, center to center).");
+    const std::string id  = "origin" + std::to_string(axis);
+    if (!render_spanning_combo(imgui_wrapper, id.c_str(), lines, idx, preview, m_align_origin[axis] != AlignMath::Origin::Auto, x, y, frame_width, tip))
+        return false;
+    m_align_origin[axis] = (AlignMath::Origin) idx;
+    save_align_origin(axis);
+    return true;
+}
+
+// The Anchor dropdown of Align selected: Last selected, First selected, one entry per selected item,
+// None (selection bounds). Same width rules as the origin dropdowns.
+bool GizmoObjectManipulation::render_align_anchor_combo(ImGuiWrapper *imgui_wrapper, float x, float y, float frame_width)
+{
+    const std::vector<GLGizmoAlignment::AnchorCandidate> candidates = m_alignment_helper->anchor_candidates();
+    std::vector<std::string> lines = {_u8L("Last selected"), _u8L("First selected")};
+    for (const auto &c : candidates)
+        lines.push_back(c.label);
+    lines.push_back(_u8L("None (selection bounds)"));
+
+    // An explicit item only counts while it is still selected; otherwise fall back to Last selected.
+    const GLGizmoAlignment::AlignOptions options = make_align_options();
+    bool                                 missing = false;
+    const int                            anchor  = m_alignment_helper->resolve_anchor_candidate(options, &missing);
+    if (missing) {
+        m_align_anchor_item_set = false;
+        m_align_anchor_mode     = AlignMath::AnchorMode::Last;
+        save_align_anchor_mode();
     }
 
-    if (selection_out == idx)
+    size_t      idx = 0;
+    std::string preview;
+    const std::string anchor_name = anchor >= 0 && anchor < (int) candidates.size() ? candidates[(size_t) anchor].label : std::string();
+    if (m_align_anchor_item_set && anchor >= 0) {
+        idx     = 2 + (size_t) anchor;
+        preview = anchor_name;
+    } else if (m_align_anchor_mode == AlignMath::AnchorMode::None) {
+        idx     = lines.size() - 1;
+        preview = lines[idx];
+    } else {
+        idx     = m_align_anchor_mode == AlignMath::AnchorMode::First ? 1 : 0;
+        preview = anchor_name.empty() ? lines[idx] : lines[idx] + ": " + anchor_name;
+    }
+    const float text_space = frame_width - ImGui::GetFrameHeight() - 2.f * ImGui::GetStyle().FramePadding.x;
+    preview                = AlignMath::ellipsize(preview, text_space, [&](const std::string &s) { return (double) imgui_wrapper->calc_text_size(s).x; });
+
+    const bool non_default = m_align_anchor_item_set || m_align_anchor_mode != AlignMath::AnchorMode::Last;
+    if (!render_spanning_combo(imgui_wrapper, "anchor", lines, idx, preview, non_default, x, y, frame_width,
+                               _L("The item that stays where it is while the other selected items move to it. It is only used when an origin "
+                                  "below is not Auto. None aligns every item to the selection's own extremes with nothing fixed.")))
         return false;
-    m_align_origin[axis] = (AlignMath::Origin) selection_out;
-    save_align_origin(axis);
+
+    if (idx >= 2 && idx < 2 + candidates.size()) {
+        const auto &c               = candidates[idx - 2];
+        m_align_anchor_item_set     = true;
+        m_align_anchor_object_idx   = c.object_idx;
+        m_align_anchor_instance_idx = c.instance_idx;
+        m_align_anchor_volume_idx   = c.volume_idx;
+        return true; // a specific item is never persisted
+    }
+    m_align_anchor_item_set = false;
+    m_align_anchor_mode     = idx == 1 ? AlignMath::AnchorMode::First : (idx == 0 ? AlignMath::AnchorMode::Last : AlignMath::AnchorMode::None);
+    save_align_anchor_mode();
     return true;
 }
 

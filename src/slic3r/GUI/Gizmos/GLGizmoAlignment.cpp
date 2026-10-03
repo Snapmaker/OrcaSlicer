@@ -10,18 +10,6 @@
 namespace Slic3r {
 namespace GUI {
 
-namespace {
-
-
-// One thing that gets moved: a whole instance (volume_idx < 0) or one part of an instance.
-struct AlignItem {
-    int           object_idx;
-    int           instance_idx;
-    int           volume_idx;
-    BoundingBoxf3 box; // world space axis-aligned box (rotation is already baked in)
-};
-
-} // namespace
 
 // AlignType already encodes the axis and the side, so nothing is parsed out of a name.
 bool GLGizmoAlignment::decode_align_type(AlignType type, int &axis, AlignMath::Side &side)
@@ -66,38 +54,9 @@ bool GLGizmoAlignment::align_objects(AlignType type, const AlignOptions &options
     Selection &selection = get_selection();
     const bool parts     = items_are_parts(options.to_parent);
 
-    // Collect the items with their world boxes.
-    std::vector<AlignItem> items;
-    if (parts) {
-        for (unsigned int idx : selection.get_volume_idxs()) {
-            const GLVolume *volume = selection.get_volume(idx);
-            if (volume != nullptr)
-                items.push_back({volume->object_idx(), volume->instance_idx(), volume->volume_idx(), volume->transformed_convex_hull_bounding_box()});
-        }
-    } else {
-        BoundingBoxf3 big_bb;
-        for (const ObjectInfo &info : get_selected_objects_info(big_bb))
-            items.push_back({info.object_idx, info.instance_idx, -1, info.bbox});
-    }
+    const std::vector<AlignItem> items = collect_items(parts);
     if (items.empty())
         return false;
-
-    // The anchor (inter-item mode only): the last-selected item, else the first one.
-    size_t anchor = 0;
-    {
-        const int anchor_volume_idx = selection.get_anchor_volume_idx();
-        if (anchor_volume_idx >= 0) {
-            if (const GLVolume *av = selection.get_volume((unsigned int) anchor_volume_idx)) {
-                for (size_t i = 0; i < items.size(); ++i) {
-                    if (items[i].object_idx == av->object_idx() && items[i].instance_idx == av->instance_idx() &&
-                        (!parts || items[i].volume_idx == av->volume_idx())) {
-                        anchor = i;
-                        break;
-                    }
-                }
-            }
-        }
-    }
 
     AlignMath::AxisRequest request;
     request.button = side;
@@ -107,8 +66,15 @@ bool GLGizmoAlignment::align_objects(AlignType type, const AlignOptions &options
         request.fixed      = {m_parent_box.min[axis], m_parent_box.max[axis]};
         request.edge_inset = m_parent_inset[axis];
     } else if (request.origin != AlignMath::Origin::Auto) {
-        request.reference = AlignMath::Reference::Anchor;
-        request.anchor    = anchor;
+        // The anchor stays put (Last / First / a chosen item), or with mode None nothing is
+        // fixed and the items go to the selection's own extremes.
+        const AlignMath::AnchorPick anchor = pick_anchor(items, parts, options);
+        if (anchor.use_union) {
+            request.reference = AlignMath::Reference::Union;
+        } else {
+            request.reference = AlignMath::Reference::Anchor;
+            request.anchor    = anchor.index;
+        }
     } else {
         request.reference = AlignMath::Reference::Union;
     }
@@ -353,29 +319,89 @@ void GLGizmoAlignment::set_parent_box(const BoundingBoxf3 &bb, const Vec3d &edge
     m_parent_inset = edge_inset;
 }
 
-std::string GLGizmoAlignment::anchor_description() const
+std::vector<GLGizmoAlignment::AlignItem> GLGizmoAlignment::collect_items(bool parts) const
+{
+    const Selection &       selection = get_selection();
+    std::vector<AlignItem> items;
+    if (parts) {
+        for (unsigned int idx : selection.get_volume_idxs()) {
+            const GLVolume *volume = selection.get_volume(idx);
+            if (volume != nullptr)
+                items.push_back({volume->object_idx(), volume->instance_idx(), volume->volume_idx(), volume->transformed_convex_hull_bounding_box()});
+        }
+    } else {
+        BoundingBoxf3 big_bb;
+        for (const ObjectInfo &info : get_selected_objects_info(big_bb))
+            items.push_back({info.object_idx, info.instance_idx, -1, info.bbox});
+    }
+    return items;
+}
+
+AlignMath::AnchorPick GLGizmoAlignment::pick_anchor(const std::vector<AlignItem> &items, bool parts, const AlignOptions &options) const
 {
     const Selection &selection = get_selection();
-    const int        idx       = selection.get_anchor_volume_idx();
-    const GLVolume * volume    = idx >= 0 ? selection.get_volume((unsigned int) idx) : nullptr;
-    const Model *    model     = selection.get_model();
-    if (volume == nullptr || model == nullptr)
-        return {};
+    // Index in `items` of the item that contains volume `volume_idx` (a GLVolume index), or NO_ITEM.
+    const auto item_of_volume = [&](int volume_idx) -> size_t {
+        const GLVolume *v = volume_idx >= 0 ? selection.get_volume((unsigned int) volume_idx) : nullptr;
+        if (v == nullptr)
+            return AlignMath::NO_ITEM;
+        for (size_t i = 0; i < items.size(); ++i)
+            if (items[i].object_idx == v->object_idx() && items[i].instance_idx == v->instance_idx() && (!parts || items[i].volume_idx == v->volume_idx()))
+                return i;
+        return AlignMath::NO_ITEM;
+    };
 
-    const int obj_idx = volume->object_idx();
-    if (obj_idx < 0 || obj_idx >= (int) model->objects.size())
-        return {};
-    const ModelObject *object = model->objects[(size_t) obj_idx];
-
-    std::string name = object->name;
-    if (items_are_parts(false)) {
-        const int vol_idx = volume->volume_idx();
-        if (vol_idx >= 0 && vol_idx < (int) object->volumes.size() && !object->volumes[(size_t) vol_idx]->name.empty())
-            name += " / " + object->volumes[(size_t) vol_idx]->name;
-    } else if (object->instances.size() > 1) {
-        name += " #" + std::to_string(volume->instance_idx() + 1);
+    size_t explicit_index = AlignMath::NO_ITEM;
+    if (options.anchor_item_set) {
+        for (size_t i = 0; i < items.size(); ++i)
+            if (items[i].object_idx == options.anchor_object_idx && items[i].instance_idx == options.anchor_instance_idx &&
+                (!parts || items[i].volume_idx == options.anchor_volume_idx))
+                explicit_index = i;
     }
-    return name;
+    return AlignMath::resolve_anchor(options.anchor_mode, options.anchor_item_set, explicit_index, item_of_volume(selection.get_anchor_volume_idx()),
+                                     item_of_volume(selection.get_first_selected_volume_idx()));
+}
+
+std::vector<GLGizmoAlignment::AnchorCandidate> GLGizmoAlignment::anchor_candidates() const
+{
+    const bool                     parts = items_are_parts(false);
+    const std::vector<AlignItem>   items = collect_items(parts);
+    const Model *                  model = get_selection().get_model();
+    std::vector<std::string>       names;
+    std::vector<int>               numbers;
+    for (const AlignItem &item : items) {
+        std::string name = _u8L("Object");
+        int         number = item.instance_idx + 1;
+        if (model != nullptr && item.object_idx >= 0 && item.object_idx < (int) model->objects.size()) {
+            const ModelObject *object = model->objects[(size_t) item.object_idx];
+            name = object->name;
+            if (parts && item.volume_idx >= 0 && item.volume_idx < (int) object->volumes.size()) {
+                const std::string &part_name = object->volumes[(size_t) item.volume_idx]->name;
+                if (!part_name.empty())
+                    name += " / " + part_name;
+                number = item.volume_idx + 1;
+            }
+        }
+        names.push_back(name);
+        numbers.push_back(number);
+    }
+    const std::vector<std::string> labels = AlignMath::disambiguate_names(names, numbers);
+    std::vector<AnchorCandidate>   out;
+    for (size_t i = 0; i < items.size(); ++i)
+        out.push_back({items[i].object_idx, items[i].instance_idx, items[i].volume_idx, labels[i]});
+    return out;
+}
+
+int GLGizmoAlignment::resolve_anchor_candidate(const AlignOptions &options, bool *explicit_missing) const
+{
+    const bool                   parts = items_are_parts(false);
+    const std::vector<AlignItem> items = collect_items(parts);
+    if (items.empty())
+        return -1;
+    const AlignMath::AnchorPick pick = pick_anchor(items, parts, options);
+    if (explicit_missing != nullptr)
+        *explicit_missing = pick.explicit_missing;
+    return pick.use_union ? -1 : (int) pick.index;
 }
 
 Selection& GLGizmoAlignment::get_selection() const

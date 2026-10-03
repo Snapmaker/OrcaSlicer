@@ -462,6 +462,9 @@ void AppConfig::set_defaults()
 
     // Move gizmo, Align row: which point of the moved item goes to the target, per axis
     // (auto | center | min | max). Auto = the same side as the button, as it always was.
+    // Align selected anchor: last | first | none (a specific item is never stored).
+    if (get("align_anchor_mode").empty())
+        set("align_anchor_mode", "last");
     for (const char* key : {"align_origin_x", "align_origin_y", "align_origin_z"}) {
         if (get(key).empty())
             set(key, "auto");

@@ -50,6 +50,21 @@ public:
         // true: align the selection (as one rigid group) to the plate / parent object box set with
         // set_parent_box(). false: align the selected items to each other.
         bool to_parent = false;
+        // Align selected only: which item stays put when an origin is not Auto. An explicit item
+        // (anchor_item_set) wins while it is still selected; otherwise the mode decides.
+        AlignMath::AnchorMode anchor_mode = AlignMath::AnchorMode::Last;
+        bool                  anchor_item_set = false;
+        int                   anchor_object_idx = -1;
+        int                   anchor_instance_idx = -1;
+        int                   anchor_volume_idx = -1; // -1 for a whole instance
+    };
+
+    // One selectable anchor: an object instance, or a part when parts are being aligned.
+    struct AnchorCandidate {
+        int         object_idx;
+        int         instance_idx;
+        int         volume_idx; // -1 for a whole instance
+        std::string label;      // UTF-8; repeated names carry the instance / part number
     };
 
     explicit GLGizmoAlignment(GLCanvas3D& canvas);
@@ -74,13 +89,25 @@ public:
     // 0.1 mm plate shrink); see AlignMath::AxisRequest::edge_inset.
     void                    set_parent_box(const BoundingBoxf3 &bb, const Vec3d &edge_inset = Vec3d::Zero());
 
-    // The item that stays put in inter-item mode when an origin is not Auto: the last-selected
-    // object (or part). Empty when it cannot be determined (the lowest index is then used).
-    // The text is UTF-8 and ready to show.
-    std::string             anchor_description() const;
+    // The selected items an anchor can be chosen from, in the order align_objects() sees them.
+    std::vector<AnchorCandidate> anchor_candidates() const;
+    // Index into anchor_candidates() of the item that stays put for these options, or -1 when
+    // nothing is fixed (anchor mode None). `explicit_missing` is set when an explicitly chosen item
+    // has left the selection (the result is then the Last-selected item).
+    int                          resolve_anchor_candidate(const AlignOptions &options, bool *explicit_missing = nullptr) const;
 
 private:
     GLCanvas3D& m_canvas;
+
+    // One thing that gets moved: a whole instance (volume_idx < 0) or one part of an instance.
+    struct AlignItem {
+        int           object_idx;
+        int           instance_idx;
+        int           volume_idx;
+        BoundingBoxf3 box; // world space axis-aligned box (rotation is already baked in)
+    };
+    std::vector<AlignItem> collect_items(bool parts) const;
+    AlignMath::AnchorPick  pick_anchor(const std::vector<AlignItem> &items, bool parts, const AlignOptions &options) const;
 
     template<typename GetCoordFunc>
     bool distribute_objects_generic(GetCoordFunc get_coord, int axis,

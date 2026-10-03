@@ -2592,16 +2592,37 @@ void Selection::set_caches()
 
 int Selection::get_anchor_volume_idx() const
 {
+    return find_ordered_volume_idx(false);
+}
+
+int Selection::get_first_selected_volume_idx() const
+{
+    return find_ordered_volume_idx(true);
+}
+
+// The oldest (oldest_first) or newest still-selected volume in the selection order, or -1.
+int Selection::find_ordered_volume_idx(bool oldest_first) const
+{
     if (!m_valid)
         return -1;
-    for (auto it = m_selection_order.rbegin(); it != m_selection_order.rend(); ++it) {
+    auto find_selected = [this](const SelectionOrderKey& key) -> int {
         for (unsigned int i : m_list) {
             if (i >= (unsigned int) m_volumes->size())
                 continue;
             const GLVolume& v = *(*m_volumes)[i];
-            if (v.object_idx() == it->object_idx && v.instance_idx() == it->instance_idx && v.volume_idx() == it->volume_idx)
+            if (v.object_idx() == key.object_idx && v.instance_idx() == key.instance_idx && v.volume_idx() == key.volume_idx)
                 return (int) i;
         }
+        return -1;
+    };
+    if (oldest_first) {
+        for (auto it = m_selection_order.begin(); it != m_selection_order.end(); ++it)
+            if (int i = find_selected(*it); i >= 0)
+                return i;
+    } else {
+        for (auto it = m_selection_order.rbegin(); it != m_selection_order.rend(); ++it)
+            if (int i = find_selected(*it); i >= 0)
+                return i;
     }
     return -1;
 }

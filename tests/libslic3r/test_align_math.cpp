@@ -465,3 +465,101 @@ TEST_CASE("AlignMath ellipsize", "[AlignMath]")
     REQUIRE(c == "\xC3\xA9...");
     REQUIRE(mono(c) <= 45.);
 }
+
+TEST_CASE("AlignMath anchor resolution", "[AlignMath]")
+{
+    SECTION("Last and First use the click order")
+    {
+        AnchorPick p = resolve_anchor(AnchorMode::Last, false, NO_ITEM, 2, 0);
+        REQUIRE(p.index == 2);
+        REQUIRE_FALSE(p.use_union);
+        REQUIRE_FALSE(p.explicit_missing);
+        p = resolve_anchor(AnchorMode::First, false, NO_ITEM, 2, 1);
+        REQUIRE(p.index == 1);
+    }
+    SECTION("unknown click order falls back to the first item")
+    {
+        REQUIRE(resolve_anchor(AnchorMode::Last, false, NO_ITEM, NO_ITEM, NO_ITEM).index == 0);
+        REQUIRE(resolve_anchor(AnchorMode::First, false, NO_ITEM, NO_ITEM, NO_ITEM).index == 0);
+    }
+    SECTION("None means the selection extremes, nothing fixed")
+    {
+        const AnchorPick p = resolve_anchor(AnchorMode::None, false, NO_ITEM, 2, 0);
+        REQUIRE(p.use_union);
+        REQUIRE_FALSE(p.explicit_missing);
+    }
+    SECTION("an explicit item wins over the mode while it is selected")
+    {
+        for (AnchorMode m : {AnchorMode::Last, AnchorMode::First, AnchorMode::None}) {
+            const AnchorPick p = resolve_anchor(m, true, 1, 2, 0);
+            REQUIRE(p.index == 1);
+            REQUIRE_FALSE(p.use_union);
+            REQUIRE_FALSE(p.explicit_missing);
+        }
+    }
+    SECTION("an explicit item that left the selection falls back to Last, whatever the mode")
+    {
+        for (AnchorMode m : {AnchorMode::Last, AnchorMode::First, AnchorMode::None}) {
+            const AnchorPick p = resolve_anchor(m, true, NO_ITEM, 2, 0);
+            REQUIRE(p.explicit_missing);
+            REQUIRE(p.index == 2);
+            REQUIRE_FALSE(p.use_union);
+        }
+        // ... and with no known last item, to the first item
+        REQUIRE(resolve_anchor(AnchorMode::First, true, NO_ITEM, NO_ITEM, NO_ITEM).index == 0);
+    }
+    SECTION("mode keys round-trip, unknown text means Last")
+    {
+        for (AnchorMode m : {AnchorMode::Last, AnchorMode::First, AnchorMode::None})
+            REQUIRE(anchor_mode_from_key(anchor_mode_key(m)) == m);
+        REQUIRE(anchor_mode_from_key("") == AnchorMode::Last);
+        REQUIRE(anchor_mode_from_key("zzz") == AnchorMode::Last);
+    }
+    SECTION("the resolved anchor drives the maths: None aligns to the extremes, an item stays put")
+    {
+        const std::vector<Span> items = {{0., 10.}, {40., 50.}, {90., 95.}};
+        AxisRequest             req;
+        req.button = Side::Min;
+        req.origin = Origin::Max;
+
+        const AnchorPick none = resolve_anchor(AnchorMode::None, false, NO_ITEM, 2, 0);
+        req.reference         = none.use_union ? Reference::Union : Reference::Anchor;
+        // Every item's right face to the selection's left extreme (0).
+        const std::vector<Span> after_none = moved(items, axis_offsets(items, req));
+        for (const Span &s : after_none)
+            REQUIRE_THAT(s.hi, WithinAbs(0., TOL));
+
+        const AnchorPick first = resolve_anchor(AnchorMode::First, false, NO_ITEM, 2, 1);
+        req.reference          = Reference::Anchor;
+        req.anchor             = first.index;
+        const std::vector<double> d = axis_offsets(items, req);
+        REQUIRE(d[1] == 0.); // item 1 (the "first selected") stays
+        REQUIRE_THAT(moved(items, d)[0].hi, WithinAbs(40., TOL));
+        REQUIRE_THAT(moved(items, d)[2].hi, WithinAbs(40., TOL));
+    }
+}
+
+TEST_CASE("AlignMath anchor names with repeats", "[AlignMath]")
+{
+    SECTION("unique names are untouched")
+    {
+        const auto out = disambiguate_names({"Cube", "Sphere"}, {1, 1});
+        REQUIRE(out[0] == "Cube");
+        REQUIRE(out[1] == "Sphere");
+    }
+    SECTION("repeated names get the instance or part number")
+    {
+        const auto out = disambiguate_names({"Cube", "Cube", "Sphere", "Cube"}, {1, 2, 1, 4});
+        REQUIRE(out[0] == "Cube #1");
+        REQUIRE(out[1] == "Cube #2");
+        REQUIRE(out[2] == "Sphere");
+        REQUIRE(out[3] == "Cube #4");
+    }
+    SECTION("empty list and missing numbers do not crash")
+    {
+        REQUIRE(disambiguate_names({}, {}).empty());
+        const auto out = disambiguate_names({"A", "A"}, {});
+        REQUIRE(out[0] == "A");
+        REQUIRE(out[1] == "A");
+    }
+}

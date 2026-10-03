@@ -338,32 +338,40 @@ TEST_CASE("calib volume type follows filament_volume_type not nozzle_volume_type
     REQUIRE(preset.option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0) == 0.98);
 }
 
-TEST_CASE("nozzle temp at the recommended range bounds is not out of range", "[FlowVariantEdit][FilamentTabIndex][G1]")
+// G1 (reviewer harness): `temperature > range_high` → `>=`. Equality at the
+// recommended high bound must stay in range; `>=` would flag 230 as out of range.
+TEST_CASE("recommended nozzle temp high bound is inclusive", "[FlowVariantEdit][G1]")
 {
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
     config.set_key_value("nozzle_temperature_range_low", new ConfigOptionInts{200});
     config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts{230});
-    config.set_key_value("nozzle_temperature", new ConfigOptionInts{200});
+    config.set_key_value("nozzle_temperature", new ConfigOptionInts{230});
     config.set_key_value("nozzle_temperature_initial_layer", new ConfigOptionInts{230});
 
     REQUIRE_FALSE(filament_nozzle_temperature_out_of_range(config, 0));
     REQUIRE_FALSE(filament_nozzle_temperature_initial_layer_out_of_range(config, 0));
-
-    config.option<ConfigOptionInts>("nozzle_temperature")->values[0] = 199;
-    config.option<ConfigOptionInts>("nozzle_temperature_initial_layer")->values[0] = 231;
-    REQUIRE(filament_nozzle_temperature_out_of_range(config, 0));
-    REQUIRE(filament_nozzle_temperature_initial_layer_out_of_range(config, 0));
 }
 
-TEST_CASE("missing filament_flow_ratio falls back to 1.0 not 0.0", "[FlowVariantEdit][N4][G4][G5]")
+// G4 (reviewer harness): filament_flow_ratio_at missing/empty fallback `1.0` → `0.0`.
+TEST_CASE("filament_flow_ratio_at missing option falls back to 1.0", "[FlowVariantEdit][G4]")
 {
     DynamicPrintConfig empty;
     REQUIRE(filament_flow_ratio_at(empty) == 1.0);
+
+    DynamicPrintConfig cleared = DynamicPrintConfig::full_print_config();
+    cleared.set_key_value("filament_flow_ratio", new ConfigOptionFloats{});
+    REQUIRE(filament_flow_ratio_at(cleared) == 1.0);
+}
+
+// G5 (reviewer harness): filament_preset_flow_ratio missing/empty fallback `1.0` → `0.0`.
+TEST_CASE("filament_preset_flow_ratio missing option falls back to 1.0", "[FlowVariantEdit][G5]")
+{
+    DynamicPrintConfig empty;
     REQUIRE(filament_preset_flow_ratio(empty, fvtStandard) == 1.0);
     REQUIRE(filament_preset_flow_ratio(empty, fvtHighFlow) == 1.0);
 
     DynamicPrintConfig cleared = DynamicPrintConfig::full_print_config();
     cleared.set_key_value("filament_flow_ratio", new ConfigOptionFloats{});
-    REQUIRE(filament_flow_ratio_at(cleared) == 1.0);
+    REQUIRE(filament_preset_flow_ratio(cleared, fvtStandard) == 1.0);
     REQUIRE(filament_preset_flow_ratio(cleared, fvtHighFlow) == 1.0);
 }

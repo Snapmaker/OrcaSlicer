@@ -196,6 +196,17 @@ TEST_CASE("project-page images may only load from https", "[Untrusted][ProjectPa
     CHECK_FALSE(is_safe_project_image_url("//cdn.example.com/preview.png"));
 }
 
+TEST_CASE("archive relative paths may not break out of HTML attributes", "[Untrusted][ProjectPage]")
+{
+    CHECK_FALSE(is_safe_archive_relative_path("foo\".png"));
+    CHECK_FALSE(is_safe_archive_relative_path("foo'.png"));
+    CHECK_FALSE(is_safe_archive_relative_path("foo<.png"));
+    CHECK_FALSE(is_safe_archive_relative_path("foo>.png"));
+    CHECK_FALSE(is_safe_archive_relative_path("x.png\"><img"));
+    CHECK_FALSE(is_safe_archive_relative_path("Auxiliaries/Model Pictures/x.\"onclick=1.png"));
+    CHECK(is_safe_archive_relative_path("Auxiliaries/Model Pictures/cover.png"));
+}
+
 TEST_CASE("attachment paths stay inside the project auxiliary directory", "[Untrusted][Attachment]")
 {
     const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_attach_%%%%%%%%");
@@ -714,7 +725,7 @@ TEST_CASE("archive entry names may not leave the extraction folder", "[Untrusted
     for (const char *p : {"readme.txt", "Other Files/readme.txt", "Metadata/plate_1.gcode", "a/b/c.png", "..a/b", "a..b"})
         CHECK(is_safe_archive_relative_path(p));
     for (const char *p : {"", "../x", "a/../../x", "..", ".", "./x", "a/./b", "/etc/passwd", "a//b", "a/", "..\\x",
-                          "a\\b", "C:/x", "C:x", "a/.../b", "a/.. /b", "x\x01y"})
+                          "a\\b", "C:/x", "C:x", "a/.../b", "a/.. /b", "x\x01y", "foo\".png", "foo'.png", "a<b", "a>b"})
         CHECK_FALSE(is_safe_archive_relative_path(p));
 }
 

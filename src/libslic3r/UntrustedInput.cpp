@@ -872,7 +872,7 @@ bool is_safe_archive_relative_path(const std::string &path)
     if (path.empty() || path.size() > 1024 || path.front() == '/')
         return false;
     for (unsigned char c : path)
-        if (c < 0x20 || c == 0x7f || c == '\\' || c == ':')
+        if (c < 0x20 || c == 0x7f || c == '\\' || c == ':' || c == '"' || c == '\'' || c == '<' || c == '>')
             return false;
     if (has_separator_lookalike(path))
         return false;

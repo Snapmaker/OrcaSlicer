@@ -210,8 +210,9 @@ bool content_matches_extension(const std::string &file_name, const std::string &
 // ---- archive entries ---------------------------------------------------------------------------
 
 // True for a relative path made of plain segments separated by '/': no '\\', no drive or ':' ,
-// no leading '/', no "." or ".." segment, no empty segment, no control characters. Used before
-// an archive entry name becomes part of a path on disk (zip-slip).
+// no '"', '\'', '<' or '>' (those break out of a project-page <img src> if a name ever reached
+// JS unescaped), no leading '/', no "." or ".." segment, no empty segment, no control characters.
+// Used before an archive entry name becomes part of a path on disk (zip-slip).
 bool is_safe_archive_relative_path(const std::string &path);
 
 enum class ArchiveEntryName {
@@ -226,8 +227,8 @@ enum class ArchiveEntryName {
 // separators ("a//b") and a trailing separator. The result is then held to is_safe_archive_relative_path
 // as strictly as ever. Rejected: ".." segments anywhere, an absolute path ("/x", "\x", UNC
 // "\\server\share", "\\?\C:\x"), a drive letter or any ':' (C:x, alternate data streams),
-// control characters / NUL, look-alikes of '.' '/' '\' ':', segments made only of dots and
-// spaces, and names over 1024 bytes. `out` is only written for Ok.
+// control characters / NUL, '"', '\'', '<' or '>', look-alikes of '.' '/' '\' ':', segments
+// made only of dots and spaces, and names over 1024 bytes. `out` is only written for Ok.
 ArchiveEntryName normalize_archive_entry_path(const std::string &raw, std::string &out);
 
 // The last segment of a name returned by normalize_archive_entry_path (the whole name when it

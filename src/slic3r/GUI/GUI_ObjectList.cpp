@@ -6856,7 +6856,9 @@ static bool stabilizers_baking_allowed(const PrintObject* po, const ModelObject*
     if (mode == nullptr || mode->getInt() == int(smOff))
         return false;
     for (const char* key : { "stabilizer_supports", "stabilizer_ring_spacing", "stabilizer_points_per_ring", "stabilizer_tip_diameter",
-                             "stabilizer_tip_gap", "stabilizer_pillar_diameter", "stabilizer_max_island_width" }) {
+                             "stabilizer_tip_gap", "stabilizer_pillar_diameter", "stabilizer_max_island_width",
+                             "stabilizer_pillar_base_diameter", "stabilizer_bracing", "stabilizer_brace_max_unbraced", "stabilizer_brace_max_span", "stabilizer_column_shape", "stabilizer_column_width",
+                             "stabilizer_column_length", "stabilizer_column_min_height", "stabilizer_wall_loops", "stabilizer_infill_density", "stabilizer_infill_pattern" }) {
         const ConfigOption* now    = stabilizer_model_option(mo, key);
         const ConfigOption* sliced = po->config().option(key);
         if (now != nullptr && sliced != nullptr && !(*now == *sliced)) {

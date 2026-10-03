@@ -48,8 +48,14 @@ StabilizerBakeResult bake_stabilizers(const PrintObject &object, const Stabilize
     res.tip_gap          = mesh_st.tip_gap;
     res.layer_height     = cfg.layer_height.value;
     res.support_filament = cfg.support_filament.value;
+    // Walls and infill are slicing settings: the baked body gets them as its own.
+    res.wall_loops       = st.wall_loops;
+    res.infill_density   = st.infill_density;
+    res.infill_pattern   = st.infill_pattern;
 
-    res.struts = stabilizers::plan_struts(stabilizers::outlines_of(object), st, stabilizers::painted_spots(object), &res.plan_report);
+    // The whole plan - pillars (tapered, columns) and braces too - exactly as the live generator prints it.
+    res.plan   = stabilizers::plan_stabilizers(stabilizers::outlines_of(object), st, stabilizers::painted_spots(object), &res.plan_report);
+    res.struts = res.plan.struts;
     if (res.struts.empty()) {
         res.error = "no stabilizer fits this object with its settings";
         return res;
@@ -57,7 +63,7 @@ StabilizerBakeResult bake_stabilizers(const PrintObject &object, const Stabilize
 
     stabilizers::MeshOptions mopts;
     mopts.segments = options.segments;
-    res.mesh = stabilizers::stabilizer_mesh(res.struts, mesh_st, mopts, &res.mesh_report);
+    res.mesh = stabilizers::stabilizer_mesh(res.plan, mesh_st, mopts, &res.mesh_report);
     if (res.mesh.indices.empty()) {
         res.error = "the stabilizer mesh came out empty";
         return res;
@@ -83,11 +89,23 @@ StabilizerBakeResult bake_stabilizers(const PrintObject &object, const Stabilize
         its_transform(res.mesh, object.trafo_centered().inverse(), true);
     }
 
-    BOOST_LOG_TRIVIAL(info) << "Stabilizer bake: " << res.struts.size() << " struts, " << res.mesh_report.pillars << " pillars, "
+    BOOST_LOG_TRIVIAL(info) << "Stabilizer bake: " << res.struts.size() << " struts, " << res.mesh_report.pillars << " pillars ("
+                            << res.mesh_report.columns << " columns), " << res.mesh_report.braces << " braces, "
                             << res.mesh_report.triangles << " triangles, " << (res.mesh_report.unioned ? "unioned" : "overlapping shells")
                             << ", " << (res.mesh_report.closed ? "closed" : "NOT closed") << ", " << res.plan_report.unreachable.size()
                             << " painted point(s) unreachable";
     return res;
+}
+
+// Walls and infill of a baked body: the stabilizer walls with their sparse infill when set, else solid
+// (three walls around 100% infill), as v1 baked.
+static void set_body_infill(ModelConfigObject &config, const StabilizerBakeResult &result)
+{
+    const bool sparse = result.wall_loops > 0 && result.infill_density < 0.999;
+    config.set_key_value("wall_loops", new ConfigOptionInt(sparse ? result.wall_loops : 3));
+    config.set_key_value("sparse_infill_density", new ConfigOptionPercent(sparse ? 100. * result.infill_density : 100.));
+    if (sparse)
+        config.set_key_value("sparse_infill_pattern", new ConfigOptionEnum<InfillPattern>(result.infill_pattern));
 }
 
 std::string stabilizer_bake_object_name(const ModelObject &source)
@@ -117,8 +135,7 @@ ModelObject *apply_stabilizer_bake(Model &model, ModelObject &source, const Stab
         obj->config.set_key_value("extruder", new ConfigOptionInt(extruder));
         obj->config.set_key_value("enable_support", new ConfigOptionBool(false));
         obj->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btNoBrim));
-        obj->config.set_key_value("wall_loops", new ConfigOptionInt(3));
-        obj->config.set_key_value("sparse_infill_density", new ConfigOptionPercent(100.));
+        set_body_infill(obj->config, result);
         obj->config.set_key_value("stabilizer_supports", new ConfigOptionEnum<StabilizerMode>(smOff));
         // The tips sit on the source's layers, so slice the stabilizers at the same height.
         if (result.layer_height > 0.)
@@ -140,8 +157,7 @@ ModelObject *apply_stabilizer_bake(Model &model, ModelObject &source, const Stab
         vol->name        = "Stabilizers";
         // Region settings are all a part can have of its own (supports and brim are object-wide).
         vol->config.set_key_value("extruder", new ConfigOptionInt(result.support_filament > 0 ? result.support_filament : 0));
-        vol->config.set_key_value("wall_loops", new ConfigOptionInt(3));
-        vol->config.set_key_value("sparse_infill_density", new ConfigOptionPercent(100.));
+        set_body_infill(vol->config, result);
         source.invalidate_bounding_box();
         target = &source;
     }

@@ -159,7 +159,9 @@ std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::OBJECT_C
                     {"support_object_xy_distance", "",20}, {"bridge_no_support", "",21},{"max_bridge_length", "",22},{"support_critical_regions_only", "",23},{"support_remove_small_overhang","",27},
                     {"support_object_first_layer_gap","",28},
                     {"stabilizer_supports","",29},{"stabilizer_ring_spacing","",30},{"stabilizer_points_per_ring","",31},
-                    {"stabilizer_tip_diameter","",32},{"stabilizer_tip_gap","",32},{"stabilizer_pillar_diameter","",33},{"stabilizer_max_island_width","",34}
+                    {"stabilizer_tip_diameter","",32},{"stabilizer_tip_gap","",32},{"stabilizer_pillar_diameter","",33},{"stabilizer_max_island_width","",34},
+                    {"stabilizer_pillar_base_diameter","",35},{"stabilizer_bracing","",36},{"stabilizer_brace_max_unbraced","",37},{"stabilizer_brace_max_span","",38},{"stabilizer_column_shape","",39},{"stabilizer_column_width","",40},
+                    {"stabilizer_column_length","",41},{"stabilizer_column_min_height","",42},{"stabilizer_wall_loops","",43},{"stabilizer_infill_density","",44},{"stabilizer_infill_pattern","",45}
                             }},
     { L("Speed"), {{"support_speed", "",12}, {"support_interface_speed", "",13}
                     }}

@@ -306,6 +306,12 @@ enum StabilizerMode {
     smOff, smAuto, smManual
 };
 
+// Cross-section of the side stabilizer pillars: round, a filleted rectangle like a prime tower (stiffer),
+// or round with rounded-rectangle columns where a pillar is tall and left unbraced.
+enum StabilizerColumnShape {
+    scsRound, scsRoundedRect, scsAuto
+};
+
 enum class PerimeterGeneratorType
 {
     // Classic perimeter generator using Clipper offsets with constant extrusion width.
@@ -687,6 +693,7 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(BedType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SkirtType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(DraftShield)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(StabilizerMode)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(StabilizerColumnShape)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ForwardCompatibilitySubstitutionRule)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(GCodeThumbnailsFormat)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(CounterboreHoleBridgingOption)
@@ -1253,6 +1260,17 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,              stabilizer_tip_gap))
     ((ConfigOptionFloat,              stabilizer_pillar_diameter))
     ((ConfigOptionFloat,              stabilizer_max_island_width))
+    ((ConfigOptionFloat,              stabilizer_pillar_base_diameter))
+    ((ConfigOptionBool,               stabilizer_bracing))
+    ((ConfigOptionFloat,              stabilizer_brace_max_unbraced))
+    ((ConfigOptionFloat,              stabilizer_brace_max_span))
+    ((ConfigOptionEnum<StabilizerColumnShape>, stabilizer_column_shape))
+    ((ConfigOptionFloat,              stabilizer_column_width))
+    ((ConfigOptionFloat,              stabilizer_column_length))
+    ((ConfigOptionFloat,              stabilizer_column_min_height))
+    ((ConfigOptionInt,                stabilizer_wall_loops))
+    ((ConfigOptionPercent,            stabilizer_infill_density))
+    ((ConfigOptionEnum<InfillPattern>, stabilizer_infill_pattern))
     ((ConfigOptionBool,               detect_narrow_internal_solid_infill))
     // ((ConfigOptionBool,               adaptive_layer_height))
     ((ConfigOptionFloat,              support_bottom_interface_spacing))

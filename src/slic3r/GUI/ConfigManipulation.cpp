@@ -787,6 +787,23 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
         // Manual places struts at the painted points only: the ring settings have nothing to say there.
         for (auto el : {"stabilizer_ring_spacing", "stabilizer_points_per_ring", "stabilizer_max_island_width"})
             toggle_field(el, stab_on && stab_mode == smAuto);
+
+        // v2: tapered pillars, bracing, columns, walls and infill.
+        const bool                  bracing = stab_on && config->opt_bool("stabilizer_bracing");
+        const StabilizerColumnShape shape   = config->opt_enum<StabilizerColumnShape>("stabilizer_column_shape");
+        const bool                  columns = stab_on && shape != scsRound;
+        const bool                  walls   = stab_on && config->opt_int("stabilizer_wall_loops") > 0;
+        for (auto el : {"stabilizer_pillar_base_diameter", "stabilizer_bracing", "stabilizer_column_shape", "stabilizer_wall_loops"})
+            toggle_line(el, stab_on);
+        // The max unbraced height and span are what bracing works to, and what Auto columns call a long
+        // unbraced or a lone pillar.
+        for (auto el : {"stabilizer_brace_max_unbraced", "stabilizer_brace_max_span"})
+            toggle_line(el, bracing || (stab_on && shape == scsAuto));
+        for (auto el : {"stabilizer_column_width", "stabilizer_column_length"})
+            toggle_line(el, columns);
+        toggle_line("stabilizer_column_min_height", stab_on && shape == scsAuto);
+        for (auto el : {"stabilizer_infill_density", "stabilizer_infill_pattern"})
+            toggle_line(el, walls);
     }
     toggle_field("support_threshold_angle", have_support_material && is_auto(support_type));
     toggle_field("support_threshold_overlap", config->opt_int("support_threshold_angle") == 0 && have_support_material && is_auto(support_type));

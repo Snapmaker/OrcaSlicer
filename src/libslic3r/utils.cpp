@@ -663,6 +663,25 @@ namespace WindowsSupport
 } // namespace WindowsSupport
 #endif /* _WIN32 */
 
+#ifndef _WIN32
+bool posix_rename_worth_retrying(int err)
+{
+	// Every first-rename errno is worth remove-then-rename except those no
+	// retry can help: missing source, a different device, or a directory
+	// where a file was expected (and the reverse).
+	return err != ENOENT && err != EXDEV && err != ENOTDIR && err != EISDIR;
+}
+
+std::error_code posix_rename_retry_after_replace_refused(const std::string &from, const std::string &to, int first_errno)
+{
+	if (posix_rename_worth_retrying(first_errno) &&
+	    boost::nowide::remove(to.c_str()) == 0 &&
+	    boost::nowide::rename(from.c_str(), to.c_str()) == 0)
+		return {};
+	return std::error_code(first_errno, std::generic_category());
+}
+#endif
+
 // borrowed from LVVM lib/Support/Windows/Path.inc
 std::error_code rename_file(const std::string &from, const std::string &to)
 {
@@ -670,11 +689,12 @@ std::error_code rename_file(const std::string &from, const std::string &to)
 	return WindowsSupport::rename(from, to);
 #else
 	// rename(2) replaces an existing target atomically. Removing `to` first
-	// opened a window where the file did not exist at all, and wrapping the
-	// -1 return as errc(-1) produced a meaningless error code.
+	// opened a window where the file did not exist at all. Some mounts
+	// (sshfs, gvfs, MTP, a few SMB setups) refuse that replace; only then
+	// fall back to the old remove-then-rename. Return the real errno.
 	if (boost::nowide::rename(from.c_str(), to.c_str()) == 0)
 		return {};
-	return std::error_code(errno, std::generic_category());
+	return posix_rename_retry_after_replace_refused(from, to, errno);
 #endif
 }
 
@@ -688,6 +708,19 @@ std::string atomic_write_temp_path(const std::string &path, bool consume)
 
 bool write_file_atomically(const std::string &path, const std::string &data, std::string *err, bool binary)
 {
+	boost::system::error_code bec;
+	const boost::filesystem::file_status link_st = boost::filesystem::symlink_status(path, bec);
+	if (!bec && boost::filesystem::is_symlink(link_st)) {
+		// A config or preset kept in a dotfiles repo: the link stays, the file
+		// it points to is replaced like any other.
+		const boost::filesystem::path resolved = boost::filesystem::canonical(path, bec);
+		if (!bec && boost::filesystem::is_regular_file(resolved, bec))
+			return write_file_atomically(resolved.string(), data, err, binary);
+	}
+
+	const boost::filesystem::file_status target_st = boost::filesystem::status(path, bec);
+	const bool target_exists = !bec && boost::filesystem::exists(target_st);
+
 	const std::string tmp = atomic_write_temp_path(path, true);
 	errno = 0;
 	FILE *file = boost::nowide::fopen(tmp.c_str(), binary ? "wb" : "w");
@@ -714,6 +747,18 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 			       (flush_err != 0 ? (std::string(": ") + std::strerror(flush_err)) : std::string());
 		return false;
 	}
+
+#ifndef _WIN32
+	// Copy the existing file's mode onto the temporary so replace keeps 0600
+	// (and any other bits) instead of the umask of this process.
+	if (target_exists)
+		boost::filesystem::permissions(tmp, target_st.permissions(), bec);
+#else
+	// On Windows a read-only bit on the temporary would stop the rename itself.
+	// MoveFileEx replace keeps the destination ACL, which is the best-effort
+	// equivalent of copying POSIX mode.
+	(void) target_exists;
+#endif
 
 	if (const std::error_code ec = rename_file(tmp, path)) {
 		boost::nowide::remove(tmp.c_str());

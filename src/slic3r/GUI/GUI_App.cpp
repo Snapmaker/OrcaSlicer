@@ -4108,7 +4108,7 @@ bool GUI_App::on_init_inner()
             update_publish_status();
         }
 
-        if (m_post_initialized && app_config->dirty())
+        if (m_post_initialized && app_config->dirty() && app_config->save_due())
             app_config->save();
 
     });

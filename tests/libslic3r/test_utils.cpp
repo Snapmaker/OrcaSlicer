@@ -1,13 +1,20 @@
 #include <catch2/catch.hpp>
 
+#include "libslic3r/AppConfig.hpp"
+#include "libslic3r/Thread.hpp"
 #include "libslic3r/Utils.hpp"
 #include <test_utils.hpp>
 
 #include <boost/filesystem.hpp>
 
+#include <cerrno>
 #include <fstream>
 #include <string>
 #include <system_error>
+
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 
 using namespace Slic3r;
 
@@ -186,4 +193,134 @@ TEST_CASE("rename_file replaces an existing POSIX file and reports success", "[u
     REQUIRE_FALSE(boost::filesystem::exists(from));
     REQUIRE(slurp(to) == "new-bytes");
 }
+
+TEST_CASE("posix remove-then-rename fallback replaces after a refused first rename", "[utils][atomic]")
+{
+    REQUIRE(posix_rename_worth_retrying(EEXIST));
+    REQUIRE(posix_rename_worth_retrying(EPERM));
+    REQUIRE(posix_rename_worth_retrying(EBUSY));
+    REQUIRE_FALSE(posix_rename_worth_retrying(ENOENT));
+    REQUIRE_FALSE(posix_rename_worth_retrying(EXDEV));
+    REQUIRE_FALSE(posix_rename_worth_retrying(ENOTDIR));
+    REQUIRE_FALSE(posix_rename_worth_retrying(EISDIR));
+
+    ScopedTempDir                 dir;
+    const boost::filesystem::path from = dir.path / "from.json";
+    const boost::filesystem::path to   = dir.path / "to.json";
+    {
+        std::ofstream out_from(from.string());
+        out_from << "new-bytes";
+        std::ofstream out_to(to.string());
+        out_to << "old-bytes";
+    }
+
+    const std::error_code ec = posix_rename_retry_after_replace_refused(from.string(), to.string(), EEXIST);
+    REQUIRE_FALSE(ec);
+    REQUIRE_FALSE(boost::filesystem::exists(from));
+    REQUIRE(slurp(to) == "new-bytes");
+
+    const boost::filesystem::path keep_from = dir.path / "keep_from.json";
+    const boost::filesystem::path keep_to   = dir.path / "keep_to.json";
+    {
+        std::ofstream out_from(keep_from.string());
+        out_from << "left";
+        std::ofstream out_to(keep_to.string());
+        out_to << "right";
+    }
+    const std::error_code skip = posix_rename_retry_after_replace_refused(keep_from.string(), keep_to.string(), ENOENT);
+    REQUIRE(skip);
+    REQUIRE(skip.value() == ENOENT);
+    REQUIRE(slurp(keep_from) == "left");
+    REQUIRE(slurp(keep_to) == "right");
+}
+
+TEST_CASE("write_file_atomically through a symlink keeps the link and updates the target", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path real = dir.path / "real.json";
+    const boost::filesystem::path link = dir.path / "link.json";
+    REQUIRE(write_file_atomically(real.string(), "old"));
+    boost::filesystem::create_symlink(real, link);
+
+    REQUIRE(write_file_atomically(link.string(), "new-through-link"));
+    REQUIRE(boost::filesystem::is_symlink(link));
+    REQUIRE(slurp(real) == "new-through-link");
+    REQUIRE(slurp(link) == "new-through-link");
+}
+
+TEST_CASE("write_file_atomically preserves a 0600 mode", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path target = dir.path / "secret.json";
+    REQUIRE(write_file_atomically(target.string(), "first"));
+    REQUIRE(::chmod(target.string().c_str(), S_IRUSR | S_IWUSR) == 0);
+
+    REQUIRE(write_file_atomically(target.string(), "second"));
+    struct stat st;
+    REQUIRE(::stat(target.string().c_str(), &st) == 0);
+    REQUIRE((st.st_mode & 0777) == 0600);
+    REQUIRE(slurp(target) == "second");
+}
 #endif
+
+TEST_CASE("write_file_atomically removes the temporary when rename fails", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path target = dir.path / "preset.json";
+    boost::filesystem::create_directory(target);
+
+    std::string err;
+    REQUIRE_FALSE(write_file_atomically(target.string(), "replacement", &err));
+    REQUIRE_FALSE(err.empty());
+    REQUIRE(boost::filesystem::is_directory(target));
+
+    size_t tmp_count = 0;
+    for (auto &entry : boost::filesystem::directory_iterator(dir.path)) {
+        if (entry.path().extension() == ".tmp")
+            ++tmp_count;
+    }
+    REQUIRE(tmp_count == 0);
+}
+
+TEST_CASE("a failed binary atomic write keeps the previous cache", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path target   = dir.path / "vendor.cbor";
+    const std::string             original = std::string("\x00\x01\x02""keep-cbor", 12);
+    REQUIRE(write_file_atomically(target.string(), original, nullptr, true));
+
+    const boost::filesystem::path blocker = atomic_write_temp_path(target.string(), /*consume=*/false);
+    boost::filesystem::create_directory(blocker);
+
+    std::string err;
+    REQUIRE_FALSE(write_file_atomically(target.string(), "replacement-cbor", &err, true));
+    REQUIRE_FALSE(err.empty());
+    REQUIRE(slurp(target) == original);
+    REQUIRE(boost::filesystem::is_directory(blocker));
+}
+
+TEST_CASE("AppConfig save round-trips through the atomic helper", "[utils][atomic][AppConfig]")
+{
+    ScopedTempDir dir;
+    struct ScopedDataDir
+    {
+        std::string prev;
+        explicit ScopedDataDir(const std::string &next) : prev(data_dir()) { set_data_dir(next); }
+        ~ScopedDataDir() { set_data_dir(prev); }
+    } data{dir.path.string()};
+    save_main_thread_id();
+
+    AppConfig writer;
+    writer.set("atomic_roundtrip_key", "atomic-value");
+    writer.save();
+    REQUIRE_FALSE(writer.dirty());
+    REQUIRE(boost::filesystem::exists(writer.config_path()));
+#ifdef WIN32
+    REQUIRE(boost::filesystem::exists(writer.config_path() + ".bak"));
+#endif
+
+    AppConfig reader;
+    const std::string load_err = reader.load();
+    REQUIRE(load_err.empty());
+    REQUIRE(reader.get("atomic_roundtrip_key") == "atomic-value");
+}

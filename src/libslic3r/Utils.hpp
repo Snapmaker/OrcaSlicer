@@ -203,6 +203,14 @@ extern std::string normalize_utf8_nfc(const char *src);
 // On Windows, the file explorer (or anti-virus or whatever else) often locks the file
 // for a short while, so the file may not be movable. Retry while we see recoverable errors.
 extern std::error_code rename_file(const std::string &from, const std::string &to);
+#ifndef _WIN32
+// True for a first-rename errno that is worth remove-then-rename (sshfs / gvfs / MTP / SMB).
+// ENOENT / EXDEV / ENOTDIR / EISDIR cannot be helped by removing the target.
+extern bool posix_rename_worth_retrying(int err);
+// After a replace-refused first rename, remove `to` and retry. Used by rename_file
+// and by tests that inject a first-rename errno.
+extern std::error_code posix_rename_retry_after_replace_refused(const std::string &from, const std::string &to, int first_errno);
+#endif
 // Unique sibling used by write_file_atomically: <path>.<pid>.<counter>.tmp.
 // consume=true advances the process-wide counter (same generator the helper uses);
 // consume=false peeks so a test can plant a blocker on the next temporary.

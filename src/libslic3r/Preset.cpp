@@ -676,13 +676,22 @@ void Preset::save(DynamicPrintConfig* parent_config)
             ConfigOption *opt_dst = temp_config.option(option, true);
             opt_dst->set(opt_src);
         }
-        temp_config.save_to_json(this->file, this->name, from_str, this->version.to_string(), this->custom_defined);
+        if (!temp_config.save_to_json(this->file, this->name, from_str, this->version.to_string(), this->custom_defined)) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save config for: " << this->name << " file: " << this->file;
+            return;
+        }
     } else if (!filament_id.empty() && inherits().empty()) {
         DynamicPrintConfig temp_config = config;
         temp_config.set_key_value(BBL_JSON_KEY_FILAMENT_ID, new ConfigOptionString(filament_id));
-        temp_config.save_to_json(this->file, this->name, from_str, this->version.to_string(), this->custom_defined);
+        if (!temp_config.save_to_json(this->file, this->name, from_str, this->version.to_string(), this->custom_defined)) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save config for: " << this->name << " file: " << this->file;
+            return;
+        }
     } else {
-        this->config.save_to_json(this->file, this->name, from_str, this->version.to_string(), this->custom_defined);
+        if (!this->config.save_to_json(this->file, this->name, from_str, this->version.to_string(), this->custom_defined)) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save config for: " << this->name << " file: " << this->file;
+            return;
+        }
     }
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " save config for: " << this->name << " and filament_id: " << filament_id << " and base_id: " << this->base_id;
 

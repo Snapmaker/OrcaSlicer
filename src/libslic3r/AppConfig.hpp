@@ -119,7 +119,7 @@ public:
 
 	static constexpr std::chrono::seconds SAVE_RETRY_BACKOFF{10};
 
-	// Idle path only: a lasting write failure must not retry write+fsync on
+	// Idle path only: a lasting write failure must not retry the write on
 	// every idle event. Explicit save() always attempts.
 	bool				save_due() const
 	{

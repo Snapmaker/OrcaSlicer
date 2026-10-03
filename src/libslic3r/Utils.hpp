@@ -242,27 +242,31 @@ extern void set_atomic_write_temp_inspect_hook(AtomicWriteTempInspectFn hook);
 // the kernel-applied create mode. nullptr disables the hook.
 extern void set_atomic_write_temp_create_hook(AtomicWriteTempInspectFn hook);
 #endif
-// Unique sibling used by write_file_atomically:
-// <path>.<pid>.<launch>.<counter>.tmp. consume=true advances the process-wide
-// counter (same generator the helper uses); consume=false peeks so a test can
-// plant a blocker on the next temporary. `launch` is steady_clock mixed with
-// std::random_device, so two processes that share a pid (Flatpak) and start
-// in the same clock tick still get different temp names.
+// Unique sibling used by write_file_atomically: <path>.<pid>.<counter>.tmp
+// (at most 26 characters longer than <path>, so long data dirs stay under
+// MAX_PATH). consume=true advances the process-wide counter (same generator
+// the helper uses); consume=false peeks so a test can plant a blocker on the
+// next temporary. Two processes that share a pid (Flatpak) cannot collide:
+// the create is exclusive and an existing name moves on to the next counter.
 extern std::string atomic_write_temp_path(const std::string &path, bool consume = true);
 // How many O_EXCL EEXIST retries write_file_atomically will make.
 constexpr int ATOMIC_WRITE_TEMP_ATTEMPTS = 100;
-// Write `data` through that temporary, flush/fsync, then rename over `path`.
+// Write `data` through that temporary, flush (no fsync, as upstream), then rename over `path`.
 // POSIX opens an existing target's temp with mode 0600 (no world-readable
 // window) and a new file with 0666 (kernel applies the umask). fstat captures
 // the create mode (0644 if fstat fails, never 0666). The fd is then fchmod
-// 0600 before the payload. Mode restore is after fsync, so a crash mid-write
+// 0600 before the payload. Mode restore is after the flush, so a crash mid-write
 // leaves the temp at 0600 (the safe direction); a target that vanishes
 // mid-save is also restored as 0600 / the captured default. Before the rename
 // the temp is fchmod'd to the existing target's mode (07777, keeping
 // suid/sgid/sticky), or back to the captured default for a new file.
 // umask() is never called.
-// On a failed replace the temporary is removed only if the target is still
-// there. If the target is already gone the temporary is kept so the new
+// When the replace is refused (Windows: the target held open without
+// FILE_SHARE_DELETE by an indexer or AV; POSIX: a mount that cannot replace a
+// file) the target is written in place instead, as upstream Orca #15861 does,
+// and a warning is logged: losing the save is worse than a reader seeing a
+// partial file. If that fails too, the temporary is removed only if the
+// target is still there. If the target is already gone the temporary is kept so the new
 // contents survive. A dangling or looping symlink is a hard error (the link
 // is not replaced with a regular file).
 // Text mode unless `binary` (Windows CRLF translation matches the ofstreams this replaces).

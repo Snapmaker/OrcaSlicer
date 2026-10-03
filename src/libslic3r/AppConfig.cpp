@@ -962,6 +962,8 @@ void AppConfig::save()
 
     // Serialized first, then written through a unique temp file and renamed
     // so a crash or a concurrent reader never sees a half-written config.
+    // Not flushed to the device (no fsync): the idle handler saves on the GUI
+    // thread after any change, and the rename already gives a complete old or new file.
     const auto path = config_path();
 
     json j;
@@ -1273,6 +1275,8 @@ void AppConfig::save()
 
     // Serialized first, then written through a unique temp file and renamed
     // so a crash or a concurrent reader never sees a half-written config.
+    // Not flushed to the device (no fsync): the idle handler saves on the GUI
+    // thread after any change, and the rename already gives a complete old or new file.
     const auto path = config_path();
 
     std::stringstream config_ss;

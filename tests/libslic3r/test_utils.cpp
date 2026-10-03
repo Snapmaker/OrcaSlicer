@@ -16,7 +16,12 @@
 #include <system_error>
 #include <thread>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -195,6 +200,64 @@ TEST_CASE("atomic write temp names are unique per call and include the process i
     REQUIRE(a.find(".tmp") != std::string::npos);
     REQUIRE(b.find(".tmp") != std::string::npos);
 }
+
+TEST_CASE("atomic write temp names add only a short suffix", "[utils][atomic]")
+{
+    // A preset path that fitted under MAX_PATH must still fit with its
+    // temporary: `.<pid>.<counter>.tmp`, at most 1+10+1+10+4 = 26 characters.
+    const std::string target = "C:/Users/someone/AppData/Roaming/EdgeSlicer/user/default/filament/My filament.json";
+    const std::string tmp    = atomic_write_temp_path(target);
+    REQUIRE(tmp.compare(0, target.size(), target) == 0);
+    const std::string suffix = tmp.substr(target.size());
+    REQUIRE(suffix.size() <= 26);
+    REQUIRE(suffix.rfind("." + std::to_string(get_current_pid()) + ".", 0) == 0);
+    REQUIRE(suffix.size() > 4);
+    REQUIRE(suffix.compare(suffix.size() - 4, 4, ".tmp") == 0);
+    // Only digits and dots between the target and ".tmp".
+    for (size_t i = 0; i + 4 < suffix.size(); ++i)
+        REQUIRE((suffix[i] == '.' || (suffix[i] >= '0' && suffix[i] <= '9')));
+}
+
+#ifdef _WIN32
+TEST_CASE("a replace refused by a reader without FILE_SHARE_DELETE falls back to an in-place write", "[utils][atomic]")
+{
+    ScopedTempDir                 dir;
+    const boost::filesystem::path target = dir.path / "preset.json";
+    REQUIRE(write_file_atomically(target.string(), "old-bytes"));
+
+    // An indexer / AV style reader: shares read and write but not delete, so
+    // ReplaceFileW, SetFileInformationByHandle and MoveFileEx are all refused.
+    HANDLE reader = ::CreateFileW(target.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE(reader != INVALID_HANDLE_VALUE);
+    BY_HANDLE_FILE_INFORMATION before{};
+    REQUIRE(::GetFileInformationByHandle(reader, &before));
+    std::string err;
+    const bool  ok = write_file_atomically(target.string(), "new-bytes", &err);
+    ::CloseHandle(reader);
+
+    REQUIRE(ok);
+    // Same file (index) as the one the reader held: written in place, not replaced.
+    HANDLE after_handle = ::CreateFileW(target.wstring().c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE(after_handle != INVALID_HANDLE_VALUE);
+    BY_HANDLE_FILE_INFORMATION after{};
+    const bool got_after = ::GetFileInformationByHandle(after_handle, &after) != 0;
+    ::CloseHandle(after_handle);
+    REQUIRE(got_after);
+    REQUIRE(after.nFileIndexHigh == before.nFileIndexHigh);
+    REQUIRE(after.nFileIndexLow == before.nFileIndexLow);
+    REQUIRE(err.empty());
+    REQUIRE(slurp(target) == "new-bytes");
+    size_t entries = 0;
+    for (auto &entry : boost::filesystem::directory_iterator(dir.path)) {
+        (void) entry;
+        ++entries;
+    }
+    // No temporary and no moved-aside copy left behind.
+    REQUIRE(entries == 1);
+}
+#endif
 
 #ifndef _WIN32
 TEST_CASE("rename_file replaces an existing POSIX file and reports success", "[utils][atomic]")
@@ -382,20 +445,26 @@ TEST_CASE("posix fallback keeps the target when the source is missing", "[utils]
     REQUIRE(slurp(to) == "old-bytes");
 }
 
-TEST_CASE("posix fallback keeps old or new contents when the second rename fails", "[utils][atomic]")
+TEST_CASE("a refused POSIX replace falls back to an in-place write", "[utils][atomic]")
 {
     ScopedTempDir                 dir;
     const boost::filesystem::path target = dir.path / "preset.json";
     REQUIRE(write_file_atomically(target.string(), "old-bytes"));
 
+    // Both the direct rename and the bak-then-rename retry refuse the temp:
+    // the target is restored from the bak, then written in place (upstream).
     ScopedRenameHook hook(fail_tmp_renames);
     std::string      err;
-    REQUIRE_FALSE(write_file_atomically(target.string(), "new-bytes", &err));
-    REQUIRE_FALSE(err.empty());
-    REQUIRE(err.find("target intact") != std::string::npos);
-    REQUIRE((dir_holds_payload(dir.path, "old-bytes") || dir_holds_payload(dir.path, "new-bytes")));
-    REQUIRE(boost::filesystem::exists(target));
-    REQUIRE(slurp(target) == "old-bytes");
+    REQUIRE(write_file_atomically(target.string(), "new-bytes", &err));
+    REQUIRE(err.empty());
+    REQUIRE(slurp(target) == "new-bytes");
+    REQUIRE_FALSE(dir_holds_payload(dir.path, "old-bytes"));
+    size_t entries = 0;
+    for (auto &entry : boost::filesystem::directory_iterator(dir.path)) {
+        (void) entry;
+        ++entries;
+    }
+    REQUIRE(entries == 1);
 }
 
 TEST_CASE("rename_file and write_file_atomically succeed when replace is refused", "[utils][atomic]")
@@ -464,7 +533,7 @@ TEST_CASE("write_file_atomically preserves a 0600 mode", "[utils][atomic]")
     REQUIRE(slurp(target) == "second");
 }
 
-TEST_CASE("posix fallback keeps temp and bak when both renames fail", "[utils][atomic]")
+TEST_CASE("posix fallback that loses the target writes it in place and keeps the old bytes in the bak", "[utils][atomic]")
 {
     ScopedTempDir                 dir;
     const boost::filesystem::path target = dir.path / "preset.json";
@@ -472,8 +541,9 @@ TEST_CASE("posix fallback keeps temp and bak when both renames fail", "[utils][a
 
     ScopedRenameHook hook(fail_tmp_and_restore);
     std::string      err;
-    REQUIRE_FALSE(write_file_atomically(target.string(), "new-bytes", &err));
-    REQUIRE(err.find("target removed") != std::string::npos);
+    REQUIRE(write_file_atomically(target.string(), "new-bytes", &err));
+    REQUIRE(err.empty());
+    REQUIRE(slurp(target) == "new-bytes");
 
     bool saw_tmp = false;
     bool saw_unique_bak = false;
@@ -494,12 +564,11 @@ TEST_CASE("posix fallback keeps temp and bak when both renames fail", "[utils][a
             saw_unique_bak = true;
         }
     }
-    REQUIRE(saw_tmp);
+    REQUIRE_FALSE(saw_tmp);
     REQUIRE(saw_unique_bak);
-    REQUIRE_FALSE(boost::filesystem::exists(target));
 }
 
-TEST_CASE("posix fallback reports when the target cannot be moved aside", "[utils][atomic]")
+TEST_CASE("posix fallback writes in place when the target cannot be moved aside", "[utils][atomic]")
 {
     ScopedTempDir                 dir;
     const boost::filesystem::path target = dir.path / "preset.json";
@@ -507,11 +576,10 @@ TEST_CASE("posix fallback reports when the target cannot be moved aside", "[util
 
     ScopedRenameHook hook(fail_target_to_bak);
     std::string      err;
-    REQUIRE_FALSE(write_file_atomically(target.string(), "new-bytes", &err));
-    REQUIRE(err.find("cannot move target aside") != std::string::npos);
-    REQUIRE(err.find("target intact") != std::string::npos);
-    REQUIRE(boost::filesystem::exists(target));
-    REQUIRE(slurp(target) == "old-bytes");
+    REQUIRE(write_file_atomically(target.string(), "new-bytes", &err));
+    REQUIRE(err.empty());
+    REQUIRE(slurp(target) == "new-bytes");
+    REQUIRE(count_atomic_baks(dir.path) == 0);
 }
 
 TEST_CASE("atomic write temp is 0600 while writing and a new file gets the umask mode", "[utils][atomic]")

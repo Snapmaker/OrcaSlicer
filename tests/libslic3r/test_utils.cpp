@@ -8,12 +8,15 @@
 #include <boost/filesystem.hpp>
 #include <boost/nowide/cstdio.hpp>
 
+#include <atomic>
 #include <cerrno>
 #include <fstream>
 #include <string>
 #include <system_error>
+#include <thread>
 
 #ifndef _WIN32
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -526,6 +529,49 @@ TEST_CASE("a successful fallback save leaves no atomic.bak", "[utils][atomic]")
     REQUIRE(write_file_atomically(target.string(), "new-bytes"));
     REQUIRE(slurp(target) == "new-bytes");
     REQUIRE(count_atomic_baks(dir.path) == 0);
+}
+
+TEST_CASE("write_file_atomically does not make concurrent creates world-writable", "[utils][atomic]")
+{
+    ScopedTempDir dir;
+    struct ScopedUmask
+    {
+        const mode_t prev;
+        explicit ScopedUmask(mode_t mask) : prev(::umask(mask)) {}
+        ~ScopedUmask() { ::umask(prev); }
+    } umask_022{0022};
+
+    constexpr int kWrites     = 48;
+    constexpr int kCreateCap  = 8000;
+    std::atomic<bool> writing{true};
+    std::atomic<int>  created{0};
+    std::atomic<int>  world_writable{0};
+
+    std::thread creator([&] {
+        int i = 0;
+        while (writing.load(std::memory_order_relaxed) && i < kCreateCap) {
+            const boost::filesystem::path p = dir.path / ("race-c-" + std::to_string(i) + ".dat");
+            const int fd = ::open(p.string().c_str(), O_CREAT | O_EXCL | O_WRONLY, 0666);
+            if (fd >= 0) {
+                struct stat st;
+                if (::fstat(fd, &st) == 0 && (st.st_mode & 0002) != 0)
+                    world_writable.fetch_add(1, std::memory_order_relaxed);
+                ::close(fd);
+                created.fetch_add(1, std::memory_order_relaxed);
+            }
+            ++i;
+        }
+    });
+
+    for (int i = 0; i < kWrites; ++i) {
+        const boost::filesystem::path target = dir.path / ("race-w-" + std::to_string(i) + ".json");
+        REQUIRE(write_file_atomically(target.string(), "x"));
+    }
+    writing.store(false, std::memory_order_relaxed);
+    creator.join();
+
+    REQUIRE(created.load() > 0);
+    REQUIRE(world_writable.load() == 0);
 }
 #endif
 

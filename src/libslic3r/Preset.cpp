@@ -3757,10 +3757,14 @@ void PhysicalPrinter::save(DynamicPrintConfig* /*parent_config*/)
 
 void PhysicalPrinter::save(const std::string& file_name_from, const std::string& file_name_to)
 {
-    // rename the file
-    if (boost::nowide::rename(file_name_from.data(), file_name_to.data()) != 0)
+    if (boost::nowide::rename(file_name_from.data(), file_name_to.data()) != 0) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to rename " << file_name_from
                                  << " to " << file_name_to << ": " << std::strerror(errno);
+        // Stay on the old path so a failed rename cannot leave two printer files.
+        if (!this->config.save_to_json(file_name_from, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION)))
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save physical printer to " << file_name_from;
+        return;
+    }
     this->file = file_name_to;
     if (!this->config.save_to_json(this->file, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION)))
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to save physical printer to " << this->file;

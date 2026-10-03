@@ -244,8 +244,10 @@ extern void set_atomic_write_temp_inspect_hook(AtomicWriteTempInspectFn hook);
 // consume=false peeks so a test can plant a blocker on the next temporary.
 extern std::string atomic_write_temp_path(const std::string &path, bool consume = true);
 // Write `data` through that temporary, flush/fsync, then rename over `path`.
-// The temp is 0600 while writing. An existing target's mode is copied on;
-// a new file is restored to 0666 & ~umask before the rename.
+// POSIX creates the temp with open(0666) so the kernel applies the umask,
+// fstat-captures that default, then fchmod 0600 before the payload. Before
+// the rename the temp is fchmod'd to the existing target's mode, or back to
+// the captured default for a new file. umask() is never called.
 // On a failed replace the temporary is removed only if the target is still
 // there. If the target is already gone the temporary is kept so the new
 // contents survive. A dangling or looping symlink is a hard error (the link

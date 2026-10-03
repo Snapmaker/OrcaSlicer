@@ -29,6 +29,7 @@
 	#include <io.h>  // for _access
 #else
 	#include <unistd.h>
+	#include <fcntl.h>
 	#include <sys/types.h>
 	#include <sys/stat.h>
 	#include <sys/param.h>
@@ -818,21 +819,52 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 
 	const std::string tmp = atomic_write_temp_path(path, true);
 	errno = 0;
+#ifdef _WIN32
+	// rename_file tries ReplaceFileW first so the destination DACL, attributes
+	// and ADS are kept; MoveFileEx is only the missing-target / unsupported-fs
+	// fallback and does not preserve the DACL.
 	FILE *file = boost::nowide::fopen(tmp.c_str(), binary ? "wb" : "w");
 	if (file == nullptr) {
 		if (err)
 			*err = std::string("cannot create temporary file ") + tmp + ": " + std::strerror(errno);
 		return false;
 	}
+	(void) target_exists;
+#else
+	int flags = O_CREAT | O_EXCL | O_WRONLY;
+#ifdef O_CLOEXEC
+	flags |= O_CLOEXEC;
+#endif
+	// Kernel applies the process umask; we never call umask() ourselves.
+	const int fd = ::open(tmp.c_str(), flags, 0666);
+	if (fd < 0) {
+		if (err)
+			*err = std::string("cannot create temporary file ") + tmp + ": " + std::strerror(errno);
+		return false;
+	}
+	struct stat created_st;
+	mode_t      default_mode = 0666;
+	if (::fstat(fd, &created_st) == 0)
+		default_mode = created_st.st_mode & 0777;
+	else
+		BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: fstat failed for " << tmp;
 
-#ifndef _WIN32
 	// Restrict the temp before any payload is written so a crash cannot leave
-	// a world-readable sibling. The existing target's mode is copied later;
-	// a new file is restored to 0666 & ~umask after the write.
-	if (::fchmod(::fileno(file), S_IRUSR | S_IWUSR) != 0)
+	// a world-readable sibling. Restore default_mode or the target's mode later.
+	if (::fchmod(fd, S_IRUSR | S_IWUSR) != 0)
 		BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: fchmod 0600 failed for " << tmp;
 	if (AtomicWriteTempInspectFn inspect = s_temp_inspect_hook.load())
-		inspect(tmp.c_str(), ::fileno(file));
+		inspect(tmp.c_str(), fd);
+
+	FILE *file = ::fdopen(fd, binary ? "wb" : "w");
+	if (file == nullptr) {
+		const int open_err = errno;
+		::close(fd);
+		boost::nowide::remove(tmp.c_str());
+		if (err)
+			*err = std::string("cannot create temporary file ") + tmp + ": " + std::strerror(open_err);
+		return false;
+	}
 #endif
 
 	const size_t wrote    = data.empty() ? 0 : std::fwrite(data.data(), 1, data.size(), file);
@@ -842,6 +874,16 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 	const bool ok_sync = _commit(_fileno(file)) == 0;
 #else
 	const bool ok_sync = ::fsync(::fileno(file)) == 0;
+	if (ok_write && ok_flush && ok_sync) {
+		mode_t restore_mode = default_mode;
+		if (target_exists) {
+			struct stat ts;
+			if (::stat(path.c_str(), &ts) == 0)
+				restore_mode = ts.st_mode & 0777;
+		}
+		if (::fchmod(::fileno(file), restore_mode) != 0)
+			BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: fchmod restore failed for " << tmp;
+	}
 #endif
 	const int  flush_err = ok_write && ok_flush && ok_sync ? 0 : errno;
 	const bool ok_close  = std::fclose(file) == 0;
@@ -852,26 +894,6 @@ bool write_file_atomically(const std::string &path, const std::string &data, std
 			       (flush_err != 0 ? (std::string(": ") + std::strerror(flush_err)) : std::string());
 		return false;
 	}
-
-#ifndef _WIN32
-	// Copy the existing file's mode onto the temporary so replace keeps 0600
-	// (and any other bits) instead of the umask of this process. A new file
-	// gets the normal create mode (0666 & ~umask), not the 0600 write mask.
-	if (target_exists) {
-		boost::filesystem::permissions(tmp, target_st.permissions(), bec);
-	} else {
-		const mode_t mask = ::umask(0);
-		::umask(mask);
-		if (::chmod(tmp.c_str(), 0666 & ~mask) != 0)
-			BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: chmod default mode failed for " << tmp;
-	}
-#else
-	// On Windows a read-only bit on the temporary would stop the rename itself.
-	// rename_file tries ReplaceFileW first so the destination DACL, attributes
-	// and ADS are kept; MoveFileEx is only the missing-target / unsupported-fs
-	// fallback and does not preserve the DACL.
-	(void) target_exists;
-#endif
 
 #ifndef _WIN32
 	PosixRenameFallbackFate fate = PosixRenameFallbackFate::NotAttempted;

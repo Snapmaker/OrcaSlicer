@@ -56,9 +56,9 @@ TEST_CASE("A single-object selection gives the gizmo that object", "[GizmoSelect
     REQUIRE(gizmo_selection_object(model.objects, 1) == second);
 }
 
-// Orca #16029 / Edge w1-06: SequentialPrintClearance.hpp is header-only and does not need a new
-// slic3rutils source file (Edge #117 / #113 already edit that CMakeLists). Catch2 v2 port of
-// upstream tests/slic3rutils/test_sequential_clearance.cpp.
+// Orca #16029 / Edge w1-06: SequentialPrintClearance.hpp is header-only. src/slic3r/CMakeLists.txt
+// lists it (+1). tests/slic3rutils/CMakeLists.txt is untouched (Edge #117 / #113 / #245 own it).
+// Catch2 v2 port of upstream tests/slic3rutils/test_sequential_clearance.cpp.
 
 namespace {
 
@@ -128,11 +128,8 @@ TEST_CASE("Sequential clearance print-order comparator is a strict weak ordering
         instances[i].instance_id = ObjectID(i + 1);
     // Equal print orders (1 and 4 share order 2) plus the chain-overlap layout.
     const std::map<ObjectID, int> print_order{{ObjectID(1), 1}, {ObjectID(2), 2}, {ObjectID(3), 3}, {ObjectID(4), 2}};
-    const auto less = [&print_order](const SequentialClearanceInstance& lhs, const SequentialClearanceInstance& rhs) {
-        return print_order.at(lhs.instance_id) < print_order.at(rhs.instance_id);
-    };
 
-    REQUIRE(is_strict_weak_ordering(instances.begin(), instances.end(), less));
+    REQUIRE(is_strict_weak_ordering(instances.begin(), instances.end(), SequentialClearancePrintOrderLess{print_order}));
     CHECK_FALSE(is_strict_weak_ordering(instances.begin(), instances.end(), old_spatial_less));
 }
 
@@ -144,10 +141,19 @@ TEST_CASE("Sequential clearance handles equal and overlapping items", "[Sequenti
 
     SECTION("Equal print order is stable")
     {
-        const std::map<ObjectID, int> print_order{{ObjectID(1), 2}, {ObjectID(2), 2}};
+        // 17+ equal arrange_order values: two items would also pass std::sort.
+        constexpr int n = 17;
+        instances.clear();
+        instances.reserve(n);
+        std::map<ObjectID, int> print_order;
+        for (int i = 0; i < n; ++i) {
+            instances.push_back(sequential_instance(coord_t(i * 10), 0, 50.));
+            instances.back().instance_id = ObjectID(i + 1);
+            print_order.emplace(ObjectID(i + 1), 2);
+        }
         sort_sequential_clearance_instances(instances.begin(), instances.end(), print_order);
-        CHECK(instances[0].instance_id == ObjectID(1));
-        CHECK(instances[1].instance_id == ObjectID(2));
+        for (int i = 0; i < n; ++i)
+            REQUIRE(instances[i].instance_id == ObjectID(i + 1));
     }
 
     SECTION("Identical overlapping hulls warn the earlier copy at rod height")

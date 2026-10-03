@@ -19,6 +19,17 @@ struct SequentialClearanceInstance
     ObjectID    instance_id;
 };
 
+// arrange_order only: no index tie-break. Equal orders keep input order via stable_sort.
+struct SequentialClearancePrintOrderLess
+{
+    const std::map<ObjectID, int>& print_order;
+
+    bool operator()(const SequentialClearanceInstance& lhs, const SequentialClearanceInstance& rhs) const
+    {
+        return print_order.at(lhs.instance_id) < print_order.at(rhs.instance_id);
+    }
+};
+
 // PrintApply may group rotated copies in a different order from ModelObject::instances.
 // Reorder one object's instances only when validation has assigned all of them an order.
 inline void sort_sequential_clearance_instances(
@@ -31,9 +42,7 @@ inline void sort_sequential_clearance_instances(
         }))
         return;
 
-    std::stable_sort(first, last, [&print_order](const SequentialClearanceInstance& lhs, const SequentialClearanceInstance& rhs) {
-        return print_order.at(lhs.instance_id) < print_order.at(rhs.instance_id);
-    });
+    std::stable_sort(first, last, SequentialClearancePrintOrderLess{print_order});
 }
 
 // Input follows object-list order with validated print order within each object.

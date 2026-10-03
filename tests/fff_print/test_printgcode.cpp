@@ -907,8 +907,9 @@ TEST_CASE("non-SEMM U1 2-tool High-Flow uses per-filament temps retract and plac
     REQUIRE(gcode.find("M104 S" + std::to_string(ooze_t0) + " T0") != std::string::npos);
     REQUIRE(gcode.find(";cooldown") != std::string::npos);
 
-    REQUIRE(gcode.find("M104 T1 S" + std::to_string(kTempF1)) != std::string::npos ||
-            gcode.find("M104 T1 S" + std::to_string(kInitF1)) != std::string::npos);
+    const bool preheat_t1 = gcode.find("M104 T1 S" + std::to_string(kTempF1)) != std::string::npos
+                         || gcode.find("M104 T1 S" + std::to_string(kInitF1)) != std::string::npos;
+    REQUIRE(preheat_t1);
     REQUIRE(gcode.find("M104 T1 S" + std::to_string(kTempHfF0)) == std::string::npos);
     REQUIRE(gcode.find("M104 T1 S" + std::to_string(kInitHfF0)) == std::string::npos);
 }

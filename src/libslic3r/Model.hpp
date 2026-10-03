@@ -488,7 +488,9 @@ public:
     // Mesh Boolean gizmo: replaces volumes[src_idx] by a new volume holding `mesh_in_object_coords`,
     // a mesh in this object's coordinate system (the boolean of volume meshes each transformed by
     // its own ModelVolume::get_matrix()). The new volume takes the source's name (+ " - suffix"),
-    // config, type and material, and sits at index src_idx. Returns the new volume.
+    // config, type and material, and sits at index src_idx. Its mesh is stored centred with a
+    // pure-translation volume transformation, so the result stays exactly where the mesh is.
+    // Returns the new volume.
     ModelVolume*            replace_volume_with_object_mesh(size_t src_idx, TriangleMesh &&mesh_in_object_coords, const std::string &name_suffix);
     void                    delete_volume(size_t idx);
     void                    clear_volumes();

@@ -1482,13 +1482,17 @@ ModelVolume* ModelObject::replace_volume_with_object_mesh(size_t src_idx, Triang
 {
     assert(src_idx < this->volumes.size());
     const ModelVolume *old_volume = this->volumes[src_idx];
-    ModelVolume       *new_volume = this->add_volume(std::move(mesh_in_object_coords));
+    // add_volume() centres the mesh and sets the volume offset to the centre it removed, with
+    // an identity rotation / scale: the source's rotation, scale and mirror are already baked
+    // into the object-space mesh. That transformation is exactly right and must be kept.
+    // (It used to be overwritten with the SOURCE volume's offset, which moved the result by
+    // source offset - result centre: a different direction for every part pair.)
+    ModelVolume       *new_volume = this->add_volume(std::move(mesh_in_object_coords), old_volume->type());
     new_volume->name = old_volume->name + " - " + name_suffix;
     new_volume->set_new_unique_id();
     new_volume->config.apply(old_volume->config);
     new_volume->set_type(old_volume->type());
     new_volume->set_material_id(old_volume->material_id());
-    new_volume->set_offset(old_volume->get_transformation().get_offset());
 
     // The new volume takes the source's slot; the source is deleted.
     std::swap(this->volumes[src_idx], this->volumes.back());

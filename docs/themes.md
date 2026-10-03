@@ -149,8 +149,14 @@ Snapmaker's bundle always starts in light mode, so it is patched by
 `scripts/patch_flutter_web_dark.py`: one statement in `main.<hash>.js` (theme follows
 "prefers-color-scheme"), a small script in `index.html` that answers that query from the page's
 `dark_mode=` parameter and adds `window.edgeSetDarkMode()` (called by
-`WebView::ApplyFlutterTheme`), and new content-hash names for the patched files.
+`WebView::ApplyFlutterTheme`), a set of widget colour patches for the places Snapmaker's dark
+theme leaves bright (the Device tab's title bars and empty panels, the pre-print page's printer
+dropdown, image boxes, check circles and progress bar; light mode is untouched), dark copies of
+the two empty-panel pictures (`*_dark.png`, made with Pillow), and new content-hash names for the
+patched files.
 
 **Re-run `python scripts/patch_flutter_web_dark.py` after every update of the Snapmaker web
 bundle** and commit its output. It does nothing on a patched bundle and stops with an error when
-the bundle no longer has the statement it patches. Without it the pages stay light.
+the bundle no longer has a place it patches. Without it the pages stay light.
+`python scripts/patch_flutter_web_dark.py --check <main.js>` tries the patches on a new bundle's
+compiled file without writing anything.

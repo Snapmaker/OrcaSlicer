@@ -199,11 +199,11 @@ function ShowProjectInfo( p3MF )
 
 // Ultra: everything below comes out of the 3MF, i.e. from whoever made the file. Plain fields are
 // shown as text; the descriptions keep their formatting, but nothing in them may run or load from
-// this machine: scripts, frames, forms and event handlers are dropped. Links may keep http(s) or
-// in-page '#'; images keep https only (plain http would let a crafted project ping LAN hosts).
-// srcset and <source> are dropped entirely: a later http candidate would load on HiDPI, and this
-// page is file:// so mixed content is not blocked. style (url()) and svg (<image href>) are
-// dropped; poster, background and <track> are treated as images. ping and longdesc are dropped.
+// this machine. Tags not on the allowlist keep their text but lose every attribute. Listed tags
+// keep only the named attributes: img src (https only), alt, width, height, title; a href
+// (http(s) or '#') and title. Formatting tags keep no attributes. srcset, <source>, on*, dynsrc,
+// lowsrc, imagesrcset, style, svg, ping and longdesc are therefore dropped. The page is file://
+// so mixed content is not blocked — that is why srcset/<source> are removed, not prefix-checked.
 // Parsing in a DOMParser document is inert (no script runs, nothing loads).
 function EscapeHtml( s )
 {
@@ -220,28 +220,44 @@ function SafeUrlValue( raw )
 function SafeHtml( html )
 {
 	let doc=new DOMParser().parseFromString('<!DOCTYPE html><html><body>'+String(html)+'</body></html>','text/html');
-	let bad=doc.body.querySelectorAll('script,style,iframe,frame,frameset,object,embed,applet,link,meta,base,form,input,button,textarea,select,option,svg,math,template,noscript,portal,source,track');
+	let bad=doc.body.querySelectorAll('script,style,iframe,frame,frameset,object,embed,applet,link,meta,base,form,input,button,textarea,select,option,svg,math,template,noscript,portal,source,track,video,audio');
 	for( let i=0;i<bad.length;i++ )
 		bad[i].remove();
+	let allow={
+		a:{href:1,title:1},
+		img:{src:1,alt:1,width:1,height:1,title:1},
+		p:{title:1},div:{title:1},span:{title:1},
+		br:{},hr:{},
+		b:{},i:{},em:{},strong:{},u:{},s:{},strike:{},small:{},mark:{},
+		sub:{},sup:{},del:{},ins:{},
+		ul:{},ol:{},li:{},dl:{},dt:{},dd:{},
+		h1:{},h2:{},h3:{},h4:{},h5:{},h6:{},
+		blockquote:{title:1},pre:{},code:{},
+		table:{},thead:{},tbody:{},tfoot:{},tr:{},
+		th:{colspan:1,rowspan:1},td:{colspan:1,rowspan:1},
+		figure:{},figcaption:{},picture:{},
+		abbr:{title:1},cite:{},q:{}
+	};
 	let all=doc.body.querySelectorAll('*');
 	for( let i=0;i<all.length;i++ )
 	{
 		let el=all[i];
 		let tag=el.tagName.toLowerCase();
+		let ok=allow[tag]||{};
 		for( let j=el.attributes.length-1;j>=0;j-- )
 		{
 			let name=el.attributes[j].name.toLowerCase();
-			let value=SafeUrlValue(el.attributes[j].value);
-			let isUrl=(name=='href' || name=='src' || name=='xlink:href' || name=='action' || name=='formaction' || name=='background' || name=='poster' || name=='data');
-			// <image> is parsed as <img>; treat href on a load tag as a fetch, not a link.
-			let isSrc=(name=='src' || name=='poster' || name=='background' || name=='data' ||
-				((name=='href' || name=='xlink:href') && (tag=='img' || tag=='image' || tag=='video' || tag=='audio')));
-			// Images load as soon as the page opens: https only. Links may stay http(s) or '#'.
-			let keepUrl=isSrc ? /^https:/.test(value) : /^(https?:|#)/.test(value);
-			if( name.indexOf('on')==0 || name=='style' || name=='srcset' || name=='ping' || name=='longdesc' || (isUrl && !keepUrl) )
+			if( !ok[name] )
+			{
+				el.removeAttribute(el.attributes[j].name);
+				continue;
+			}
+			if( name=='src' && !/^https:/.test(SafeUrlValue(el.attributes[j].value)) )
+				el.removeAttribute(el.attributes[j].name);
+			else if( name=='href' && !/^(https?:|#)/.test(SafeUrlValue(el.attributes[j].value)) )
 				el.removeAttribute(el.attributes[j].name);
 		}
-		if( el.tagName=='A' )
+		if( tag=='a' )
 		{
 			el.setAttribute('target','_blank');
 			el.setAttribute('rel','noopener noreferrer');

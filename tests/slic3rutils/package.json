@@ -1,0 +1,8 @@
+{
+  "name": "edgeslicer-safehtml-model-test",
+  "private": true,
+  "description": "Pinned jsdom for safehtml_model_test.js. Not wired into CMake or CI.",
+  "dependencies": {
+    "jsdom": "24.1.3"
+  }
+}

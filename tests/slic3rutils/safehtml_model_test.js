@@ -1,17 +1,35 @@
 // Headless check of the project page's SafeHtml (resources/web/model/model.js).
 // Loads the real EscapeHtml / SafeUrlValue / SafeHtml from that file into jsdom
-// (no reimplementation). Covers the gate cases: mixed srcset, picture/source,
-// whitespace-scheme ('ht tps://'), and an https happy path.
+// (no reimplementation).
 //
-// Run: node tests/slic3rutils/safehtml_model_test.js
+// Not wired into CMake/CI (Edge rule: no test CMake edits). Owed follow-up: hook this
+// into CI. Pin: tests/slic3rutils/package.json + package-lock.json.
+//
+// Run: npm install --prefix tests/slic3rutils && node tests/slic3rutils/safehtml_model_test.js
+// Missing node or jsdom: exit 0 with SKIP (so an unwired CI job does not go red).
 'use strict';
 
+function skip(why) {
+    console.log('SKIP: ' + why);
+    process.exit(0);
+}
+
+if (typeof process === 'undefined' || !process.versions || !process.versions.node)
+    skip('node is not available');
+
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const { execSync } = require('child_process');
 
 const MODEL_JS = path.join(__dirname, '..', '..', 'resources', 'web', 'model', 'model.js');
+const JSDOM_PATH = path.join(__dirname, 'node_modules', 'jsdom');
+
+let JSDOM;
+try {
+    JSDOM = require(JSDOM_PATH).JSDOM;
+} catch (e) {
+    skip("jsdom is not installed; run: npm install --prefix tests/slic3rutils");
+}
+
 const source = fs.readFileSync(MODEL_JS, 'utf8');
 
 function extractSafeHtmlBlock(src) {
@@ -36,21 +54,10 @@ function extractSafeHtmlBlock(src) {
     return src.slice(start, end);
 }
 
-function loadJsdom() {
-    try {
-        return require('jsdom');
-    } catch (e) {
-        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'safehtml-jsdom-'));
-        execSync('npm install --no-save --prefix ' + tmp + ' jsdom@24', { stdio: 'inherit' });
-        return require(path.join(tmp, 'node_modules', 'jsdom'));
-    }
-}
-
 const extracted = extractSafeHtmlBlock(source);
 if (extracted.indexOf('function SafeUrlValue') < 0)
     throw new Error('SafeUrlValue must sit between EscapeHtml and SafeHtml so this test loads the real helper');
 
-const { JSDOM } = loadJsdom();
 const dom = new JSDOM(
     '<!DOCTYPE html><html><head></head><body></body></html><script>' + extracted + '</script>',
     { runScripts: 'dangerously', url: 'file:///resources/web/model/index.html' }
@@ -90,8 +97,9 @@ function check(label, cond) {
 }
 
 {
-    const out = SafeHtml('<img src="https://cdn.example.com/a.png">');
+    const out = SafeHtml('<img src="https://cdn.example.com/a.png" alt="ok" width="10" height="10" title="t">');
     check('https img src is kept', /src\s*=\s*["']https:\/\/cdn\.example\.com\/a\.png["']/i.test(out));
+    check('img alt/width/height/title are kept', /alt/i.test(out) && /width/i.test(out) && /height/i.test(out) && /title/i.test(out));
 }
 
 {
@@ -105,22 +113,13 @@ function check(label, cond) {
 }
 
 {
-    const http = SafeHtml('<video poster="http://10.0.0.1/p.jpg"></video>');
-    const https = SafeHtml('<video poster="https://cdn/p.jpg"></video>');
-    check('http poster is dropped', !/10\.0\.0\.1/.test(http) && !/poster/i.test(http));
-    check('https poster is kept', /poster\s*=\s*["']https:\/\/cdn\/p\.jpg["']/i.test(https));
+    const out = SafeHtml('<video poster="https://cdn/p.jpg"></video><track src="http://10.0.0.1/t.vtt">');
+    check('video and track are removed', !/<video/i.test(out) && !/<track/i.test(out) && !/10\.0\.0\.1/.test(out));
 }
 
 {
-    const http = SafeHtml('<table background="http://10.0.0.1/b.jpg"></table>');
-    const https = SafeHtml('<table background="https://cdn/b.jpg"></table>');
-    check('http background is dropped', !/10\.0\.0\.1/.test(http) && !/background/i.test(http));
-    check('https background is kept', /background\s*=\s*["']https:\/\/cdn\/b\.jpg["']/i.test(https));
-}
-
-{
-    const out = SafeHtml('<track src="http://10.0.0.1/t.vtt">');
-    check('track is removed', !/<track/i.test(out) && !/10\.0\.0\.1/.test(out));
+    const out = SafeHtml('<table background="http://10.0.0.1/b.jpg"></table>');
+    check('table background is dropped', !/background/i.test(out) && !/10\.0\.0\.1/.test(out));
 }
 
 {
@@ -128,6 +127,22 @@ function check(label, cond) {
     check('ping is dropped', !/ping/i.test(out));
     check('longdesc is dropped', !/longdesc/i.test(out));
     check('https href is kept', /href\s*=\s*["']https:\/\/example\.com["']/i.test(out));
+}
+
+{
+    const img = SafeHtml('<img src="https://cdn/a.png" onerror="alert(1)">');
+    const a = SafeHtml('<a href="https://example.com" onclick="alert(1)">x</a>');
+    const div = SafeHtml('<div onclick="alert(1)">x</div>');
+    check('img onerror is dropped', !/onerror/i.test(img) && !/alert/i.test(img));
+    check('a onclick is dropped', !/onclick/i.test(a) && !/alert/i.test(a));
+    check('div onclick is dropped', !/onclick/i.test(div) && !/alert/i.test(div));
+}
+
+{
+    const out = SafeHtml('<img src="https://cdn/a.png" dynsrc="http://10.0.0.1/x" lowsrc="http://10.0.0.1/y" imagesrcset="http://10.0.0.1/z 2x">');
+    check('dynsrc is dropped', !/dynsrc/i.test(out) && !/10\.0\.0\.1/.test(out));
+    check('lowsrc is dropped', !/lowsrc/i.test(out));
+    check('imagesrcset is dropped', !/imagesrcset/i.test(out));
 }
 
 console.log(passed + ' passed, ' + failures + ' failed');

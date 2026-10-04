@@ -1916,17 +1916,18 @@ ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, Fo
 }
 
 //BBS: add json support
-void ConfigBase::save_to_json(const std::string &file, const std::string &name, const std::string &from, const std::string &version, const std::string is_custom) const
+bool ConfigBase::save_to_json(const std::string &file, const std::string &name, const std::string &from, const std::string &version, const std::string is_custom) const
 {
     // Serialize first: if that throws (invalid UTF-8), the existing file stays untouched.
     std::ostringstream ss;
     this->save_to_json(ss, name, from, version, false, is_custom);
-    boost::nowide::ofstream c;
-    c.open(file, std::ios::out | std::ios::trunc);
-    c << ss.str();
-    c.close();
-
+    std::string err;
+    if (!write_file_atomically(file, ss.str(), &err)) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": failed to save config to %1%: %2%") % file % err;
+        return false;
+    }
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" <<__LINE__ << boost::format(", saved config to %1%\n")%file;
+    return true;
 }
 
 void ConfigBase::save_to_json(std::ostream &os, const std::string &name, const std::string &from, const std::string &version, bool replace_invalid_utf8, const std::string is_custom) const

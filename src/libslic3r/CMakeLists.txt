@@ -123,6 +123,8 @@ set(lisbslic3r_sources
     Config.hpp
     CustomGCode.cpp
     CustomGCode.hpp
+    CustomModels.cpp
+    CustomModels.hpp
     DataDirMigration.cpp
     DataDirMigration.hpp
     CutUtils.cpp

@@ -178,6 +178,11 @@ enum class LoadStrategy
     LoadAuxiliary = 16,
     Silence = 32,
     ImperialUnits = 64,
+    // With LoadModel and without LoadConfig: keep the per-object / per-part settings the file
+    // carries (the plain "geometry only" import drops them) while still never touching the
+    // presets or the plates of the current project. Read by Plater::load_files; "Add Custom
+    // Models" uses it for the 3MFs of the library.
+    KeepObjectSettings = 128,
 
     Restore = 0x10000 | LoadModel | LoadConfig | LoadAuxiliary | Silence,
 };

@@ -2161,7 +2161,7 @@ wxBoxSizer* MainFrame::create_side_tools()
     m_slice_mode_popup = new SliceModePopup(this);
     auto try_show_slice_mode_popup = [this](wxMouseEvent &e) {
         e.Skip();
-        if (m_slice_enable && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2)
+        if (m_slice_enable && GUI::FlowType::slice_mode_popup_enabled()) // D8: never on dual-nozzle Bambu
             m_slice_mode_popup->ShowFor({m_slice_btn, m_slice_option_btn}, m_slice_btn);
     };
     m_slice_btn->Bind(wxEVT_ENTER_WINDOW, try_show_slice_mode_popup);

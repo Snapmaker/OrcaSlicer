@@ -111,13 +111,16 @@ TEST_CASE("Model browser: Printables \"Open in\" links go to the app's downloade
         INFO(link);
         const NavDecision d = decide_navigation(link, PRINTABLES_PAGE);
         REQUIRE(d.action == NavAction::OpenLink);
-        // The link is re-wrapped as our own scheme with the same file, so the downloader's own
-        // checks (and no widening for bambustudio://) apply.
+        // Printables' own schemes are re-wrapped as our scheme with the same file (no widening);
+        // Printables' "Open in Bambu Studio" link goes as it is, the path the system browser gives it.
         const untrusted::OpenLink parsed = untrusted::parse_open_link(d.open_link);
         REQUIRE(parsed.ok);
-        CHECK(parsed.scheme == "edgeslicer");
+        if (scheme == "bambustudio")
+            CHECK(d.open_link == link);
+        else
+            CHECK(parsed.scheme == "edgeslicer");
         CHECK(parsed.file_url == file);
-        CHECK(untrusted::check_model_download(parsed.file_url).verdict == untrusted::DownloadVerdict::Allow);
+        CHECK(untrusted::check_model_download(parsed.file_url, parsed.scheme).verdict == untrusted::DownloadVerdict::Allow);
     }
     // "open/?file=" and a display name.
     {

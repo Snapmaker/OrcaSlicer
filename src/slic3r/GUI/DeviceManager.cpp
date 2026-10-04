@@ -10,6 +10,7 @@
 #include "BambuSendDiagnosis.hpp"
 #include "libslic3r/Time.hpp"
 #include "libslic3r/Thread.hpp"
+#include "libslic3r/BambuFlowSupport.hpp"
 #include "slic3r/Utils/ColorSpaceConvert.hpp"
 
 #include "GUI_App.hpp"
@@ -4132,13 +4133,12 @@ int MachineObject::parse_json(std::string payload, bool key_field_only)
                                                 else if (hw == "01") nt = NozzleType::ntHardenedSteel;
                                             }
                                             m_extder_data.extders[MAIN_NOZZLE_ID].current_nozzle_type = nt;
-                                            // Ultra: derive flow variant from the 2nd char of the code
-                                            // ('H'/'E' = High Flow, else Standard) to auto-match nozzle_volume_type.
+                                            // Ultra: derive flow variant from the 2nd char of the code to
+                                            // auto-match nozzle_volume_type (owner decision D6: 'H'/'E' High Flow,
+                                            // 'U' TPU High Flow and the rest Standard).
                                             NozzleVolumeType nflow = NozzleVolumeType::nvtStandard;
-                                            if (nozzle_type.length() >= 2) {
-                                                char fc = (char) std::toupper((unsigned char) nozzle_type[1]);
-                                                if (fc == 'H' || fc == 'E') nflow = NozzleVolumeType::nvtHighFlow;
-                                            }
+                                            if (nozzle_type.length() >= 2)
+                                                nflow = BambuFlowSupport::nozzle_flow_from_device_code(nozzle_type[1]);
                                             m_extder_data.extders[MAIN_NOZZLE_ID].current_nozzle_flow = nflow;
                                         }
                                     }
@@ -6065,12 +6065,9 @@ void MachineObject::parse_new_info(json print)
                 } else {
                     nozzle_obj.nozzle_type = NozzleType::ntUndefine;
                 }
-                // Ultra: flow variant from the 2nd char ('H'/'E' = High Flow, else Standard).
-                if (type.length() >= 2) {
-                    char fc = (char) std::toupper((unsigned char) type[1]);
-                    nozzle_obj.nozzle_flow = (fc == 'H' || fc == 'E') ? NozzleVolumeType::nvtHighFlow
-                                                                      : NozzleVolumeType::nvtStandard;
-                }
+                // Ultra: flow variant from the 2nd char (owner decision D6: 'H'/'E' High Flow, else Standard).
+                if (type.length() >= 2)
+                    nozzle_obj.nozzle_flow = BambuFlowSupport::nozzle_flow_from_device_code(type[1]);
 
                 if (type.length() >= 2) {
                     switch ((char) std::toupper((unsigned char) type[1])) {

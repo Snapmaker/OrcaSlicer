@@ -178,6 +178,63 @@ TEST_CASE("only document, picture and model attachments are launched", "[Untrust
         CHECK_FALSE(is_safe_attachment_to_launch(n));
 }
 
+TEST_CASE("archive relative paths allow apostrophes in ordinary names", "[Untrusted][ProjectPage]")
+{
+    CHECK(is_safe_archive_relative_path("Bob's notes.pdf"));
+    CHECK(is_safe_archive_relative_path("Other Files/Bob's notes.pdf"));
+    CHECK(is_safe_archive_relative_path("Auxiliaries/Model Pictures/cover.png"));
+    std::string normalized;
+    CHECK(normalize_archive_entry_path("Other Files/Bob's notes.pdf", normalized) == ArchiveEntryName::Ok);
+    CHECK(normalized == "Other Files/Bob's notes.pdf");
+}
+
+TEST_CASE("attachment paths stay inside the project auxiliary directory", "[Untrusted][Attachment]")
+{
+    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_attach_%%%%%%%%");
+    fs::create_directories(dir);
+    const fs::path root    = dir / "Auxiliaries";
+    const fs::path others  = root / "Others";
+    fs::create_directories(others);
+    const fs::path inside  = others / "note.txt";
+    const fs::path missing = others / "missing.txt";
+    const fs::path outside = dir / "secret.txt";
+    {
+        boost::nowide::ofstream out(inside.string());
+        out << "inside";
+    }
+    {
+        boost::nowide::ofstream out(outside.string());
+        out << "outside";
+    }
+
+    CHECK(is_safe_attachment_path(root, inside));
+    CHECK(is_safe_attachment_path(root, missing));
+    CHECK(is_safe_attachment_to_launch(inside.filename().string()));
+
+    CHECK_FALSE(is_safe_attachment_path(root, root));
+    CHECK_FALSE(is_safe_attachment_path(root, others / ".." / ".." / "secret.txt"));
+    CHECK_FALSE(is_safe_attachment_path(root, outside));
+    CHECK_FALSE(is_safe_attachment_path(root, dir / "Auxiliaries2" / "note.txt"));
+    CHECK_FALSE(is_safe_attachment_path(root, fs::path("Others") / "note.txt"));
+    CHECK_FALSE(is_safe_attachment_path(root, fs::path()));
+    CHECK_FALSE(is_safe_attachment_path(fs::path(), inside));
+
+#ifndef _WIN32
+    {
+        const fs::path link = others / "link.txt";
+        try {
+            fs::create_symlink(outside, link);
+            // Extraction would replace a dest-file symlink; opening must follow it.
+            CHECK(is_path_within_root(root, link));
+            CHECK_FALSE(is_safe_attachment_path(root, link));
+        } catch (const std::exception &) {}
+    }
+#endif
+
+    boost::system::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
 // ---- "Open in" links -------------------------------------------------------------------------------
 
 TEST_CASE("parse_open_link understands every scheme we accept", "[Untrusted][Link]")
@@ -646,7 +703,8 @@ TEST_CASE("downloaded bytes must match the file type", "[Untrusted][Download]")
 
 TEST_CASE("archive entry names may not leave the extraction folder", "[Untrusted][ZipSlip]")
 {
-    for (const char *p : {"readme.txt", "Other Files/readme.txt", "Metadata/plate_1.gcode", "a/b/c.png", "..a/b", "a..b"})
+    for (const char *p : {"readme.txt", "Other Files/readme.txt", "Metadata/plate_1.gcode", "a/b/c.png", "..a/b", "a..b",
+                          "Bob's notes.pdf", "Other Files/Bob's notes.pdf"})
         CHECK(is_safe_archive_relative_path(p));
     for (const char *p : {"", "../x", "a/../../x", "..", ".", "./x", "a/./b", "/etc/passwd", "a//b", "a/", "..\\x",
                           "a\\b", "C:/x", "C:x", "a/.../b", "a/.. /b", "x\x01y"})
@@ -2165,6 +2223,28 @@ TEST_CASE("extract_archive_confined writes non-ASCII entry names and binary cont
     boost::filesystem::ifstream in(expected, std::ios::binary);
     const std::string           got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     CHECK(got == content);
+
+    boost::system::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+// Same confined extractor the 3MF attachment path and PresetBundle import use. An apostrophe in
+// the name ("Bob's notes.pdf") must be extracted, not refuse the archive.
+TEST_CASE("extract_archive_confined keeps apostrophes in attachment names", "[Untrusted][ProjectPage][ZipSlip]")
+{
+    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_confined_apos_%%%%%%%%");
+    fs::create_directories(dir);
+    const fs::path zip_file = dir / "bundle.zip";
+    const fs::path target   = dir / "cache";
+    fs::create_directories(target);
+
+    const std::string content = "bill of materials\n";
+    write_zip_entries(zip_file, {{"Other Files/Bob's notes.pdf", content}});
+
+    std::string err;
+    REQUIRE(extract_archive_confined(zip_file, target, err));
+    CHECK(err.empty());
+    CHECK(read_text_file(target / "Other Files" / "Bob's notes.pdf") == content);
 
     boost::system::error_code ec;
     fs::remove_all(dir, ec);

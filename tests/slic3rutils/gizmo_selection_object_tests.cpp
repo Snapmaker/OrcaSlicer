@@ -17,6 +17,9 @@
 #include <map>
 #include <vector>
 
+#define SLIC3R_FRAME_PROFILER_NO_GL
+#include "slic3r/GUI/FrameProfiler.hpp"
+
 using namespace Slic3r;
 using namespace Slic3r::GUI;
 
@@ -342,4 +345,39 @@ TEST_CASE("Opaque volumes draw selected first, then nearest first", "[OpaqueVolu
     REQUIRE(items[2].second == 2);
     REQUIRE(items[3].second == 4);
     REQUIRE(items[4].second == 0);
+}
+
+// Orca #15884 Stage B: the display smoother is pure (no GL). New pass names
+// appear as the raw sample; names that did not run this frame are dropped.
+TEST_CASE("Frame timing smoother blends matching passes and drops stale ones", "[FrameProfiler]")
+{
+    REQUIRE(smooth_frame_timing_ms(10.0, 20.0, 0.1) == 11.0);
+    REQUIRE(smooth_frame_timing_ms(0.0, 5.0, 0.2) == 1.0);
+    REQUIRE(smooth_frame_timing_ms(4.0, 4.0, 0.1) == 4.0);
+
+    const std::vector<FrameTimingSection> previous = {
+        {"objects", 10.0, 8.0},
+        {"bed", 4.0, 3.0},
+        {"gizmos", 1.0, 0.5},
+    };
+    const std::vector<FrameTimingSection> sample = {
+        {"objects", 20.0, 18.0},
+        {"bed", 4.0, 3.0},
+        {"imgui", 2.0, 1.0},
+    };
+
+    const std::vector<FrameTimingSection> out = smooth_frame_timings(previous, sample, 0.1);
+    REQUIRE(out.size() == 3);
+
+    REQUIRE(std::strcmp(out[0].name, "objects") == 0);
+    REQUIRE(out[0].cpu_ms == 11.0);
+    REQUIRE(out[0].gpu_ms == 9.0);
+
+    REQUIRE(std::strcmp(out[1].name, "bed") == 0);
+    REQUIRE(out[1].cpu_ms == 4.0);
+    REQUIRE(out[1].gpu_ms == 3.0);
+
+    REQUIRE(std::strcmp(out[2].name, "imgui") == 0);
+    REQUIRE(out[2].cpu_ms == 2.0);
+    REQUIRE(out[2].gpu_ms == 1.0);
 }

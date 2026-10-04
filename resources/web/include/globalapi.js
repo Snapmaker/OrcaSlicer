@@ -401,7 +401,7 @@ function CheckCssLinkExist( LinkPath )
 function SwitchDarkMode( DarkCssPath )
 {		
 	ExecuteDarkMode( DarkCssPath );
-    setInterval("ExecuteDarkMode('"+DarkCssPath+"')",1000);	
+    setInterval(function(){ExecuteDarkMode(DarkCssPath)},1000);	
 }
 
 function ExecuteDarkMode( DarkCssPath )

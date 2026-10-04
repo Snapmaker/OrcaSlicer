@@ -87,6 +87,10 @@ enum ConfigFileType
 extern Semver get_version_from_json(std::string file_path);
 
 extern Semver get_min_version_from_json(std::string file_path);
+// <data_dir>/user.lock: the InstanceLock file that orders writes to the user
+// preset tree (presets, .info files, physical printers) between instances on
+// one data dir. Empty without a data dir, or when read_only.
+extern std::string user_presets_lock_path(bool read_only = false);
 
 //BBS: add a function to load the key-values from xxx.json
 extern int get_values_from_json(std::string file_path, std::vector<std::string>& keys, std::map<std::string, std::string>& key_values);
@@ -270,7 +274,8 @@ public:
 
     //BBS: add logic for only difference save
     //if parent_config is null, save all keys, otherwise, only save difference
-    void                save(DynamicPrintConfig* parent_config);
+    // Returns false when the preset file could not be written (logged).
+    bool                save(DynamicPrintConfig* parent_config);
     void                reload(Preset const & parent);
 
     // Return a label of this preset, consisting of a name and a "(modified)" suffix, if this preset is dirty.
@@ -926,7 +931,7 @@ public:
 
     //BBS: change to json format
     //void                save() { this->config.save(this->file); }
-    void                save(DynamicPrintConfig* parent_config) { this->config.save_to_json(this->file, std::string("Physical_Printer"), std::string("User"), std::string(SLIC3R_VERSION)); }
+    void                save(DynamicPrintConfig* parent_config);
     void                save(const std::string& file_name_from, const std::string& file_name_to);
 
     void                update_from_preset(const Preset& preset);

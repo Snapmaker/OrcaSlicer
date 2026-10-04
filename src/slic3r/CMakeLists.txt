@@ -301,6 +301,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/PageServerSecurity.hpp
     GUI/UntrustedSettingsGuard.cpp
     GUI/UntrustedSettingsGuard.hpp
+    GUI/CustomModelsMenu.cpp
+    GUI/CustomModelsMenu.hpp
     GUI/I18N.cpp
     GUI/I18N.hpp
     GUI/IconManager.cpp
@@ -909,6 +911,7 @@ set(SLIC3R_GUI_SOURCES
     Utils/LoginUserAgent.hpp
     Utils/HubHomeLogic.cpp
     Utils/HubHomeLogic.hpp
+    Utils/HubHandover.hpp
     Utils/HomeTabLogic.cpp
     Utils/HomeTabLogic.hpp
     Utils/ThemePack.cpp
@@ -1097,6 +1100,7 @@ slic3r_unity_build(libslic3r_gui SKIP
     GUI/Gizmos/GLGizmoCut.cpp                     # namespace-scope using namespace Geometry
     GUI/Gizmos/GLGizmosCommon.cpp                 # namespace-scope using-directives for the gizmo data objects
     GUI/UntrustedSettingsGuard.cpp                # namespace-scope using namespace Slic3r::untrusted
+    GUI/CustomModelsMenu.cpp                      # file-local helpers with generic names (menu_label, add_item, ...)
     GUI/ModelBrowserPanel.cpp                     # WRL/WebView2 COM headers; namespace-scope using-directive
     GUI/Jobs/CreateFontStyleImagesJob.cpp         # namespace-scope using namespace Emboss
     GUI/Jobs/EmbossJob.cpp                        # namespace-scope using namespace Emboss

@@ -123,6 +123,8 @@ set(lisbslic3r_sources
     Config.hpp
     CustomGCode.cpp
     CustomGCode.hpp
+    CustomModels.cpp
+    CustomModels.hpp
     DataDirMigration.cpp
     DataDirMigration.hpp
     CutUtils.cpp
@@ -357,6 +359,8 @@ set(lisbslic3r_sources
     Geometry/VoronoiUtils.hpp
     Geometry/VoronoiVisualUtils.hpp
     Int128.hpp
+    InstanceLock.cpp
+    InstanceLock.hpp
     KDTreeIndirect.hpp
     Layer.cpp
     Layer.hpp
@@ -394,6 +398,8 @@ set(lisbslic3r_sources
     MixedFilamentCliGates.hpp
     BambuExtruderMap.cpp
     BambuExtruderMap.hpp
+    BambuFlowSupport.cpp
+    BambuFlowSupport.hpp
     BambuDualNozzleSync.cpp
     BambuDualNozzleSync.hpp
     BambuNozzleMappingRequest.cpp
@@ -471,6 +477,7 @@ set(lisbslic3r_sources
     PrincipalComponents2D.hpp
     PrintApply.cpp
     PrintBase.cpp
+    MemoryGuardPolicy.hpp
     PrintBase.hpp
     PrintConfig.cpp
     PrintConfig.hpp
@@ -630,6 +637,7 @@ slic3r_unity_build(libslic3r SKIP
     SLA/SupportTreeMesher.cpp       # sphere()/Portion clash with a neighbour
     Support/SupportMaterial.cpp     # support_types_interface also defined in SupportCommon.cpp
     utils.cpp                       # needs <windows.h> without a neighbour's lean/extra macros
+    InstanceLock.cpp                # boost::interprocess file_lock pulls in <windows.h>; keep out of unity batches
     Format/bbs_3mf.cpp              # file-local tag/version constants also defined in Format/3mf.cpp
     Emboss.cpp                      # defines STB_TRUETYPE_IMPLEMENTATION before its include
     CodeEmboss.cpp                  # file-local rectangle()/circle()/to_svg() helpers with common names

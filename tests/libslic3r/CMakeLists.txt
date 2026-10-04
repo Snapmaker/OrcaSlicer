@@ -4,12 +4,15 @@ add_executable(${_TEST_NAME}_tests
 	${_TEST_NAME}_tests.cpp
 	test_3mf.cpp
 	test_bambu_3mf_export.cpp
+	test_bambu_flow_support.cpp
 	test_bambu_import_renames.cpp
 	test_bambu_nil_override.cpp
 	test_untrusted_input.cpp
+	test_custom_models.cpp
 	test_model_browser_rules.cpp
 	test_arrange_support_clearance.cpp
 	test_appconfig_trailing_newline.cpp
+	test_memory_guard_policy.cpp
 	test_aabbindirect.cpp
 	test_ams_lookup.cpp
 	test_assembly_face_pick.cpp
@@ -101,6 +104,7 @@ add_executable(${_TEST_NAME}_tests
 	# test_marchingsquares.cpp
 	test_timeutils.cpp
 	test_utils.cpp
+	test_instance_lock.cpp
 	TestMD5.cpp
 	test_voronoi.cpp
     test_optimizers.cpp

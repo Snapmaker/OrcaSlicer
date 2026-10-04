@@ -9,6 +9,7 @@ add_executable(${_TEST_NAME}_tests
     device_model_code_tests.cpp
     login_useragent_tests.cpp
     hub_home_tests.cpp
+    hub_handover_tests.cpp
     home_tab_tests.cpp
     theme_pack_tests.cpp
     account_providers_tests.cpp
@@ -34,6 +35,7 @@ add_executable(${_TEST_NAME}_tests
     dock_width_settle_tests.cpp
     http_empty_post_tests.cpp
     http_tls_policy_tests.cpp
+    hub_addresses_tests.cpp
     update_feed_tests.cpp
     paint_cli_tests.cpp
     hms_lookup_tests.cpp

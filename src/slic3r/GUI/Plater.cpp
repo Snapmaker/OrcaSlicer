@@ -10,6 +10,7 @@
 #include "libslic3r/FilamentColorLibrary.hpp" // kFullSpectrumSlotCount (recommended slot write-back)
 #include "libslic3r/Config.hpp"
 #include "libslic3r/BambuExtruderMap.hpp"
+#include "libslic3r/BambuFlowSupport.hpp"
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/MixedFilamentConfigRemap.hpp"
 #include "libslic3r/filament_mixer.h"
@@ -89,6 +90,7 @@
 #include "libslic3r/Format/AMF.hpp"
 //#include "libslic3r/Format/3mf.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
+#include "libslic3r/CustomModels.hpp"
 #include "libslic3r/Format/BambuExport.hpp"
 #include "../Utils/BambuStudioLauncher.hpp"
 #include "BlenderBridge.hpp"
@@ -111,6 +113,7 @@
 #include "libslic3r/SliceCompare/Snapshot.hpp"
 #include "slic3r/GUI/SliceCompare/SliceCompareFrame.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/MemoryGuardPolicy.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/FilamentHotBedNozzleRules.hpp"
@@ -200,6 +203,8 @@
 #ifdef __APPLE__
 #include "Gizmos/GLGizmosManager.hpp"
 #endif // __APPLE__
+
+#include "Gizmos/GLGizmoMmuSegmentation.hpp"
 
 #include <libslic3r/CutUtils.hpp>
 #include <wx/glcanvas.h>    // Needs to be last because reasons :-/
@@ -3100,6 +3105,29 @@ Sidebar::Sidebar(Plater *parent)
                 const int span = (total > 0) ? (90 * current / total) : 0;
                 set_progress(5 + span);
             });
+
+        // The painting gizmo keeps an in-memory editing copy of the painting
+        // (m_triangle_selectors) and data_changed() only reloads it when the
+        // extruder count changes; a same-count palette rewrite leaves it stale.
+        // The match just rewrote mmu_segmentation_facets in the model, so force a
+        // re-deserialize on every canvas where the gizmo is active (each canvas
+        // owns its own gizmo manager). A stale copy would keep rendering the old
+        // mapping and its next update_model_object() would write that stale copy
+        // back over the applied match.
+        {
+            Plater* batch_plater = wxGetApp().plater();
+            if (batch_plater != nullptr) {
+                for (GLCanvas3D* cnv : { batch_plater->get_view3D_canvas3D(), batch_plater->get_assmeble_canvas3D() }) {
+                    if (cnv == nullptr) continue;
+                    GLGizmosManager& gizmos_mgr = cnv->get_gizmos_manager();
+                    if (gizmos_mgr.get_current_type() != GLGizmosManager::EType::MmSegmentation) continue;
+                    if (auto* mmu_gizmo = dynamic_cast<GLGizmoMmuSegmentation*>(gizmos_mgr.get_gizmo(GLGizmosManager::EType::MmSegmentation))) {
+                        mmu_gizmo->refresh_from_model();
+                        cnv->set_as_dirty();
+                    }
+                }
+            }
+        }
 
         // cleanup already serializes; only panel refresh needed.
         set_progress(95);
@@ -9775,6 +9803,16 @@ void Sidebar::update_dynamic_filament_list()
     dynamic_filament_list_1_based.update();
 }
 
+void Sidebar::sync_nozzle_flow_combos()
+{
+    const std::vector<std::string> flows = GUI::FlowType::nozzle_volume_types();
+    for (size_t i = 0; i < p->m_nozzle_flow_lists.size(); ++i) {
+        ComboBox *combo = p->m_nozzle_flow_lists[i];
+        if (combo != nullptr && combo->GetCount() >= 2)
+            combo->SetSelection(i < flows.size() && flows[i] == FLOW_MODE_HIGH_FLOW ? 1 : 0);
+    }
+}
+
 void Sidebar::update_nozzle_settings(bool switch_machine)
 {
     if (!p->m_nozzle_notebook)
@@ -11925,6 +11963,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
     bool load_config = strategy & LoadStrategy::LoadConfig;
     bool imperial_units = strategy & LoadStrategy::ImperialUnits;
     bool silence = strategy & LoadStrategy::Silence;
+    // "Add Custom Models": add a 3MF's objects with their object / part settings, modifiers and
+    // paint to the current project, leaving its presets, filaments and plates alone.
+    const bool keep_object_settings = load_model && !load_config && (strategy & LoadStrategy::KeepObjectSettings);
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": load_model %1%, load_config %2%, input_files size %3%")%load_model %load_config %input_files.size();
 
@@ -12080,7 +12121,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 
                     // 1. add extruder for prusa model if the number of existing extruders is not enough
                     // 2. add extruder for BBS or Other model if only import geometry
-                    if (en_3mf_file_type == En3mfType::From_Prusa || (load_model && !load_config)) {
+                    if (en_3mf_file_type == En3mfType::From_Prusa || (load_model && !load_config && !keep_object_settings)) {
                         std::set<int> extruderIds;
                         for (ModelObject *o : model.objects) {
                             if (o->config.option("extruder")) extruderIds.insert(o->config.extruder());
@@ -12256,6 +12297,24 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                 text += "\n";
                                 show_info(q, text, _L("Newer 3mf version"));
                             }
+                        }
+                    } else if (keep_object_settings) {
+                        // Custom model: keep the object / part settings, modifiers and paint. The file's
+                        // project settings and embedded presets are never applied on this path, so what
+                        // is left to check is the settings of the objects themselves, and the filament
+                        // numbers: a project with fewer filaments than the file asks for is not extended,
+                        // the numbers above its count become filament 1.
+                        PresetBundle *pb = wxGetApp().preset_bundle;
+                        const size_t filament_total = pb != nullptr ? pb->mixed_filaments.total_filaments(pb->filament_presets.size()) : size_t(1);
+                        const custom_models::ImportReport report = custom_models::prepare_imported_objects(model.objects, filament_total);
+                        if (q->get_notification_manager() != nullptr) {
+                            if (report.untrusted_settings_removed > 0)
+                                q->get_notification_manager()->push_plater_warning_notification(
+                                    into_u8(format_wxstr(_L("Post-processing scripts and similar settings from \"%1%\" were removed."), from_path(real_filename))));
+                            if (report.filaments_clamped())
+                                q->get_notification_manager()->push_plater_warning_notification(
+                                    into_u8(format_wxstr(_L("\"%1%\" uses filament %2%, but this project has %3% filament(s). Everything assigned to a missing filament now uses filament 1."),
+                                                         from_path(real_filename), report.highest_filament_requested, filament_total)));
                         }
                     } else if (!load_config) {
                         // reset config except color
@@ -12785,7 +12844,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 // convert_model_if(model, answer_convert_from_imperial_units == wxID_YES);
             }
 
-             if (!is_project_file && model.looks_like_multipart_object()) {
+             // A custom model with several objects at different heights stays several objects: turning
+             // them into one multi-part object would throw their settings away.
+             if (!is_project_file && !keep_object_settings && model.looks_like_multipart_object()) {
                MessageDialog msg_dlg(q, _L(
                     "This file contains several objects positioned at multiple heights.\n"
                     "Instead of considering them as multiple objects, should \n"
@@ -12844,9 +12905,27 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 
         if (one_by_one) {
             // BBS: add load_old_project logic
-            if (type_3mf && !is_project_file && !load_old_project)
+            if (type_3mf && !is_project_file && !load_old_project) {
                 // if (type_3mf && !is_project_file)
-                model.center_instances_around_point(this->bed.build_volume().bed_center());
+                if (keep_object_settings) {
+                    // A custom model lands on a free spot of the current plate, like a handy model or a
+                    // pasted copy (get_nearest_empty_cell), instead of on top of what is already there.
+                    PartPlate*       current_plate = partplate_list.get_curr_plate();
+                    const Vec3d      plate_center  = current_plate->get_build_volume().center();
+                    Vec2d            target(plate_center.x(), plate_center.y());
+                    model.center_instances_around_point(target);
+                    if (!current_plate->empty()) {
+                        BoundingBoxf3 group;
+                        for (ModelObject *model_object : model.objects)
+                            for (size_t inst = 0; inst < model_object->instances.size(); ++inst)
+                                group.merge(model_object->instance_bounding_box(inst, false));
+                        const Vec2f cell = wxGetApp().plater()->canvas3D()->get_nearest_empty_cell(
+                            Vec2f(float(target.x()), float(target.y())), Vec2f(float(group.size().x()) + 1.f, float(group.size().y()) + 1.f));
+                        model.center_instances_around_point(Vec2d(cell.x(), cell.y()));
+                    }
+                } else
+                    model.center_instances_around_point(this->bed.build_volume().bed_center());
+            }
             // BBS: add auxiliary files logic
             // BBS: backup & restore
             if (load_aux) {
@@ -16246,6 +16325,35 @@ bool Plater::priv::warnings_dialog()
 }
 
 //BBS: add project slice logic
+// Owner decision D4: a filament the slice maps to High Flow but whose preset has no High Flow values
+// slices its Standard values. Say so once per filament per session (Bambu printers, where the High
+// Flow column comes from Bambu's own data).
+static void notify_high_flow_standard_fallback(const Print *print, NotificationManager *notifications)
+{
+    if (print == nullptr || notifications == nullptr || wxGetApp().preset_bundle == nullptr ||
+        !wxGetApp().preset_bundle->is_bbl_vendor())
+        return;
+    static std::set<std::string> s_notified;
+    const std::vector<unsigned int> fallback =
+        BambuFlowSupport::filaments_without_high_flow_column(print->config(), print->extruders());
+    if (fallback.empty())
+        return;
+    const auto *ids = print->full_print_config().option<ConfigOptionStrings>("filament_settings_id");
+    std::vector<std::string> names;
+    for (unsigned int id : fallback) {
+        const std::string name = ids != nullptr && id < ids->values.size() && !ids->values[id].empty() ?
+                                     ids->values[id] : (boost::format("Filament %1%") % (id + 1)).str();
+        if (s_notified.insert(name).second)
+            names.push_back(name);
+    }
+    if (names.empty())
+        return;
+    const std::string list = boost::algorithm::join(names, ", ");
+    notifications->push_notification(NotificationType::CustomNotification,
+                                     NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                     format(_L("No High Flow values for %s: printed on a High Flow nozzle with its Standard values."), list));
+}
+
 void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": enter, m_ignore_event %1%, status %2%")%m_ignore_event %evt.status();
@@ -16390,6 +16498,7 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     if (evt.success()) {
         wxGetApp().app_config->set("preferred_printer", wxGetApp().preset_bundle->printers.get_selected_preset_name());
         q->record_preferred_print_profile();
+        notify_high_flow_standard_fallback(this->background_process.fff_print(), notification_manager.get());
     }
 
     //BBS: update the action button according to the current plate's status
@@ -22789,24 +22898,22 @@ bool Plater::reslice()
                             if (e.id == physical && e.nozzle_id != 0xff)
                                 want[size_t(logical)] = int(e.current_nozzle_flow);
                     }
-                    if (!cur || cur->values != want) {
-                        if (cur)
-                            cur->values = want; // in place: keeps the option's enum key map
-                        else
-                            pb->project_config.set_key_value("nozzle_volume_type", new ConfigOptionEnumsGeneric(want));
+                    // Through FlowType so the sidebar's Flow combos, the per-printer memory and the
+                    // per-filament flow types (owner decision D2) follow the printer instead of
+                    // putting the old choice back.
+                    if (GUI::FlowType::adopt_device_nozzle_volume_types(want)) {
                         BOOST_LOG_TRIVIAL(info) << "[DualNozzle] auto-matched nozzle_volume_type per extruder to the printer: "
                                                 << want[0] << "," << want[1];
+                        CallAfter([this]() { sidebar().sync_nozzle_flow_combos(); });
                     }
                 } else if (obj->is_connected() && !obj->m_extder_data.extders.empty()) {
                     NozzleVolumeType flow = obj->m_extder_data.extders[0].current_nozzle_flow;
                     // Ultra: nozzle_volume_type is now per-extruder (coEnums). This single-nozzle
                     // auto-match sets the first extruder's value; dual-nozzle per-extruder matching
                     // is handled by the grouping orchestration.
-                    auto* cur = pb->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
-                    int cur0 = (cur && !cur->values.empty()) ? cur->values.front() : -1;
-                    if (cur0 != int(flow)) {
-                        pb->project_config.set_key_value("nozzle_volume_type", new ConfigOptionEnumsGeneric{ flow });
+                    if (GUI::FlowType::adopt_device_nozzle_volume_types({ int(flow) })) {
                         BOOST_LOG_TRIVIAL(info) << "[UltraNet] auto-matched nozzle_volume_type to printer flow=" << int(flow);
+                        CallAfter([this]() { sidebar().sync_nozzle_flow_combos(); });
                     }
                 }
             }
@@ -22874,19 +22981,47 @@ bool Plater::reslice()
                         + _L("Select \"Yes\" to attempt slicing, but the software may lag or freeze.")
                         + "\n- "
                         + _L("Select \"No\" to terminate the slicing task immediately.");
-                    if (RemoteAccess::dialog_mode() != RemoteAccess::Mode::Interactive) {
+                    // Preferences > General "Warn when memory is low during slicing" (also switched off by the
+                    // dialog's "Don't ask again" box). Absent = on.
+                    AppConfig* cfg = wxGetApp().app_config;
+                    const bool warn_enabled = cfg == nullptr || cfg->get(MEMORY_GUARD_WARN_CONFIG_KEY).empty() || cfg->get_bool(MEMORY_GUARD_WARN_CONFIG_KEY);
+                    const MemoryGuardAction action = memory_guard_action(
+                        warn_enabled, RemoteAccess::dialog_mode() == RemoteAccess::Mode::Interactive);
+                    BOOST_LOG_TRIVIAL(warning) << "Memory guard: memory is low during slicing, " << get_available_memory_description()
+                                               << ", warning " << (warn_enabled ? "on" : "off")
+                                               << ", action " << (action == MemoryGuardAction::Stop ? "stop" : action == MemoryGuardAction::ContinueSilently ? "continue (warning switched off)" : "ask");
+                    if (action == MemoryGuardAction::Stop) {
                         // Ultra: nobody can answer; stop the slice rather than risk taking the process down.
+                        // The "warn" setting never applies here: a silent "continue" could take the hub down.
                         RemoteAccess::get().note_attention("Memory Usage Warning", "no");
                         RemoteAccess::get().raise_attention("slicing stopped: the PC ran out of memory", "manual");
                         this->p->preview->set_skip_toolpath_preview(true);
                         promise->set_value(false);
                         return;
                     }
+                    if (action == MemoryGuardAction::ContinueSilently) {
+                        // Warning switched off: keep slicing as if "Yes, Continue" had been chosen (the guard asks
+                        // at most once per slice) and leave a non-modal notice instead of the dialog.
+                        this->p->preview->set_skip_toolpath_preview(true);
+                        this->p->notification_manager->push_notification(NotificationType::CustomNotification,
+                            NotificationManager::NotificationLevel::WarningNotificationLevel,
+                            into_u8(_L("Memory is low during slicing. Slicing continues, but the slicer may freeze or crash. "
+                                       "You can turn the warning back on in Preferences > General.")));
+                        promise->set_value(true);
+                        return;
+                    }
                     RichMessageDialog dlg(this, msg,
                         _L("Memory Usage Warning"), wxYES_NO | wxNO_DEFAULT | wxICON_WARNING);
                     dlg.SetYesNoLabels(_L("Yes, Continue"), _L("No, Stop"));
+                    // Only "Yes, Continue" with this ticked switches the warning off; "No, Stop" never does.
+                    dlg.ShowCheckBox(_L("Don't ask again (only if you choose \"Yes, Continue\")"));
 
                     bool result = (dlg.ShowModal() == wxID_YES);
+                    if (memory_guard_should_disable_warning(result, dlg.IsCheckBoxChecked()) && cfg != nullptr) {
+                        cfg->set_bool(MEMORY_GUARD_WARN_CONFIG_KEY, false);
+                        cfg->save();
+                        BOOST_LOG_TRIVIAL(info) << "Memory guard: warning switched off from the dialog (Preferences > General turns it back on)";
+                    }
                     if (result) {
                         // Skip toolpath preview to reduce memory usage on
                         // the subsequent load_toolpaths / load_shells phase.

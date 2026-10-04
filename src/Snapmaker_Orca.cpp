@@ -964,9 +964,21 @@ static int load_assemble_plate_list(std::string config_file, std::vector<assembl
                 }
 
                 assemble_object.filaments = object_json.at(JSON_ASSEMPLE_OBJECT_FILAMENTS).get<std::vector<int>>();
-                if ((assemble_object.filaments.size() > 0) && (assemble_object.filaments.size() != assemble_object.count) && (assemble_object.filaments.size() != 1))
+                if (assemble_object.filaments.empty())
+                {
+                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": object %1%'s filaments list is empty in plate %2% object %3%") % assemble_object.path % (plate_index + 1) % (object_index + 1);
+                    return CLI_CONFIG_FILE_ERROR;
+                }
+                if ((assemble_object.filaments.size() != assemble_object.count) && (assemble_object.filaments.size() != 1))
                 {
                     BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": object %1%'s filaments count %2% not equal to clone count %3%, also not equal to 1") % assemble_object.path % assemble_object.filaments.size() % assemble_object.count;
+                    return CLI_CONFIG_FILE_ERROR;
+                }
+                // 0 keeps the default filament, as it does for --load-filament-ids.
+                // No upper bound: MixedFilamentManager virtual ids can exceed the physical count.
+                if (std::any_of(assemble_object.filaments.begin(), assemble_object.filaments.end(), [](int id) { return id < 0; }))
+                {
+                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": object %1% has a negative filament id in plate %2% object %3%") % assemble_object.path % (plate_index + 1) % (object_index + 1);
                     return CLI_CONFIG_FILE_ERROR;
                 }
 
@@ -2191,6 +2203,11 @@ int CLI::run(int argc, char **argv)
                     }
                     else {
                         current_filaments_system_name = current_filaments_name;
+                        if (option_strings) {
+                            boost::nowide::cerr << "Warning: project inherits_group has " << option_strings->values.size()
+                                                << " entries, expected " << (filament_name_count + 2)
+                                                << " (filaments+2); using current preset names." << std::endl;
+                        }
                         BOOST_LOG_TRIVIAL(info) << boost::format("no inherits_group: use system name the same as current name");
                     }
                     filament_count = current_filaments_name.size();
@@ -4300,6 +4317,12 @@ int CLI::run(int argc, char **argv)
                 record_exit_reson(outfile_dir, CLI_INVALID_PARAMS, 0, cli_errors[CLI_INVALID_PARAMS], sliced_info);
                 flush_and_exit(CLI_INVALID_PARAMS);
             }
+            if (m_models.empty()) {
+                boost::nowide::cerr << "Invalid params: --assemble needs at least one input model." << std::endl;
+                BOOST_LOG_TRIVIAL(error) << "Invalid params: --assemble needs at least one input model.";
+                record_exit_reson(outfile_dir, CLI_INVALID_PARAMS, 0, cli_errors[CLI_INVALID_PARAMS], sliced_info);
+                flush_and_exit(CLI_INVALID_PARAMS);
+            }
             Model m;
             ModelObject* new_object = m.add_object();
             new_object->name = _u8L("Assembly");
@@ -4313,6 +4336,12 @@ int CLI::run(int argc, char **argv)
                         new_volume->config.set_key_value("extruder", new ConfigOptionInt(o->config.extruder()));
                     }
                 }
+            if (new_object->volumes.empty()) {
+                boost::nowide::cerr << "Invalid params: --assemble needs at least one input model." << std::endl;
+                BOOST_LOG_TRIVIAL(error) << "Invalid params: --assemble needs at least one input model.";
+                record_exit_reson(outfile_dir, CLI_INVALID_PARAMS, 0, cli_errors[CLI_INVALID_PARAMS], sliced_info);
+                flush_and_exit(CLI_INVALID_PARAMS);
+            }
             m_models.clear();
             m_models.emplace_back(std::move(m));
         }
@@ -5186,14 +5215,17 @@ int CLI::run(int argc, char **argv)
                             }
                         }
                         else {
-                            //keep the original
+                            // keep the original. ConfigOptionVector::get_at clamps a past-the-end
+                            // index to values.front() when the vector is non-empty (wipe_tower_x/y
+                            // are per-plate floats; a short vector is not a crash).
                             x = dynamic_cast<const ConfigOptionFloats *>(m_print_config.option("wipe_tower_x"))->get_at(plate_to_slice-1);
                             y = dynamic_cast<const ConfigOptionFloats *>(m_print_config.option("wipe_tower_y"))->get_at(plate_to_slice-1);
                         }
                         float w = dynamic_cast<const ConfigOptionFloat *>(m_print_config.option("prime_tower_width"))->value;
                         float a = dynamic_cast<const ConfigOptionFloat *>(m_print_config.option("wipe_tower_rotation_angle"))->value;
                         float v = dynamic_cast<const ConfigOptionFloat *>(m_print_config.option("prime_volume"))->value;
-                        unsigned int filaments_cnt = plate_data_src[plate_to_slice-1]->slice_filaments_info.size();
+                        unsigned int filaments_cnt = (plate_to_slice > 0 && plate_data_src.size() >= size_t(plate_to_slice))
+                            ? plate_data_src[plate_to_slice - 1]->slice_filaments_info.size() : 0;
                         if ((filaments_cnt == 0) || need_skip)
                         {
                             // slice filaments info invalid

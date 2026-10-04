@@ -50,7 +50,12 @@ struct SupportParameters {
             bool different_support_interface_filament = object_config.support_interface_filament != 0 &&
                                                        object_config.support_interface_filament != object_config.support_filament;
  
-            if (non_soluble_base_top) { // ORCA: Try to support soluble dense interfaces with non-soluble dense interfaces.
+            if (!is_tree(object_config.support_type)) {
+                // Normal support prints transition layers with the support body filament below the configured top
+                // interface layers: two below a soluble or different interface filament, one otherwise.
+                this->num_top_base_interface_layers = num_top_interface_layers == 0 ? 0 :
+                    (non_soluble_base_top || different_support_interface_filament) ? 2 : 1;
+            } else if (non_soluble_base_top) { // ORCA: Try to support soluble dense interfaces with non-soluble dense interfaces.
                 this->num_top_base_interface_layers = size_t(std::min(int(num_top_interface_layers) / 2, 2));
             } else {
                 // Keep at least one configured layer on the interface filament.
@@ -142,20 +147,22 @@ struct SupportParameters {
         this->raft_interface_fill_pattern = this->raft_interface_density > 0.95 ? ipRectilinear : ipSupportBase;
         const coordf_t contact_interface_density = this->num_top_interface_layers > 0 ?
             this->top_interface_density : this->bottom_interface_density;
-        const bool zero_gap_contact_interface = this->num_top_interface_layers > 0 ?
-            this->zero_gap_interface_top : this->zero_gap_interface_bottom;
         if (object_config.support_interface_pattern == smipGrid)
             this->contact_fill_pattern = ipGrid;
         else if (object_config.support_interface_pattern == smipRectilinearInterlaced)
             this->contact_fill_pattern = ipRectilinear;
         else if (object_config.support_interface_pattern == smipSpiralInset)
             this->contact_fill_pattern = ipSpiralInset;
-        else
+        else {
+            // The automatic pattern is concentric for a soluble interface filament.
+            const bool interface_filament_soluble = object_config.support_interface_filament.value > 0 &&
+                print_config.filament_soluble.get_at(object_config.support_interface_filament.value - 1);
             this->contact_fill_pattern =
-            (object_config.support_interface_pattern == smipAuto && zero_gap_contact_interface) ||
+            (object_config.support_interface_pattern == smipAuto && interface_filament_soluble) ||
             object_config.support_interface_pattern == smipConcentric ?
             ipConcentric :
             (contact_interface_density > 0.95 ? ipRectilinear : ipSupportBase);
+        }
 
         this->raft_angle_1st_layer  = 0.f;
         this->raft_angle_base       = 0.f;
@@ -245,8 +252,13 @@ struct SupportParameters {
         }
         if (support_style == smsDefault) {
             if (is_tree(object_config.support_type)) {
-                // Orca: use organic as default
-                support_style = smsTreeOrganic;
+                // Organic supports handle neither variable layer height nor a zero top Z distance.
+                if (tree_default_style_is_hybrid(object_config.support_top_z_distance.value, object_config.support_interface_top_layers.value,
+                                                 object.model_object()->has_custom_layering())) {
+                    support_style = smsTreeHybrid;
+                } else {
+                    support_style = smsTreeOrganic;
+                }
             } else {
                 support_style = smsGrid;
             }
@@ -272,8 +284,8 @@ struct SupportParameters {
     bool                    has_contacts() const { return this->has_top_contacts || this->has_bottom_contacts; }
     bool                    has_interfaces() const { return this->num_top_interface_layers + this->num_bottom_interface_layers > 0; }
     bool                    has_base_interfaces() const { return this->num_top_base_interface_layers + this->num_bottom_base_interface_layers > 0; }
-    size_t                  num_top_interface_layers_only() const { return this->num_top_interface_layers - this->num_top_base_interface_layers; }
-    size_t                  num_bottom_interface_layers_only() const { return this->num_bottom_interface_layers - this->num_bottom_base_interface_layers; }
+    size_t                  num_top_interface_layers_only() const { return std::max(0, int(this->num_top_interface_layers) - int(this->num_top_base_interface_layers)); }
+    size_t                  num_bottom_interface_layers_only() const { return std::max(0, int(this->num_bottom_interface_layers) - int(this->num_bottom_base_interface_layers)); }
 
 	// Flow at the 1st print layer.
 	Flow 					first_layer_flow;
@@ -364,7 +376,8 @@ struct SupportParameters {
     int  grid_height_step = 1;
     // ORCA: support pieces run through overhang contact layers; the gap rounds to support layers.
     bool grid_max_height_priority = false;
-    const double thresh_big_overhang = Slic3r::sqr(scale_(10));
+    // Length of a big overhang (10 mm); area comparisons use its square.
+    const double thresh_big_overhang = scale_(10);
 
 	bool          ironing;
     Flow          ironing_flow; // Flow at the interface ironing.

@@ -4793,6 +4793,9 @@ msgstr "筏层与支撑底部"
 msgid "Support interface"
 msgstr "支撑面"
 
+msgid "Support transition speed"
+msgstr "支撑过渡层速度"
+
 msgid "Spiral mode only works when wall loops is 1, support is disabled, clumping detection by probing is disabled, top shell layers is 0, sparse infill density is 0 and timelapse type is traditional."
 msgstr "螺旋模式仅在壁环为 1、支撑被禁用、探测结块检测被禁用、顶部壳层为 0、稀疏填充密度为 0 且延时类型为传统时才起作用。"
 
@@ -9529,13 +9532,6 @@ msgstr "上传并打印"
 
 msgid "Abnormal print file data. Please slice again"
 msgstr "打印文件数据异常，请重新切片"
-
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"逐件打印：\n"
-"建议使用自动摆盘避免打印时发生碰撞。"
 
 msgid "Slicing was not started because you aborted the very long slice. Use Slice to slice anyway."
 msgstr ""
@@ -15122,6 +15118,12 @@ msgstr "空驶加速度"
 msgid "First layer travel"
 msgstr "首层空驶"
 
+msgid "Acceleration of travel moves on the first layer. If expressed as a percentage it will be calculated based on the travel acceleration. A value of 0 means the printer will use its firmware default."
+msgstr "首层空驶移动的加速度。如果以百分比（如 50%）表示，将基于空驶加速度计算。设为 0 表示使用打印机固件默认值。"
+
+msgid "Jerk of travel moves on the first layer. If expressed as a percentage it will be calculated based on the travel jerk. A value of 0 means the printer will use its firmware default."
+msgstr "首层空驶移动的抖动。如果以百分比（如 50%）表示，将基于空驶抖动计算。设为 0 表示使用打印机固件默认值。"
+
 msgid ""
 "Travel acceleration of first layer.\n"
 "The percentage value is relative to Travel Acceleration."
@@ -15939,6 +15941,9 @@ msgstr ""
 msgid "Adhesiveness Category"
 msgstr "粘性分类"
 
+msgid "Filament category"
+msgstr "材料类别"
+
 msgid "Filament category."
 msgstr "耗材分类"
 
@@ -16040,6 +16045,12 @@ msgstr "接触层打印温度"
 
 msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
 msgstr "擦拭塔接触层（不同耗材丝相遇处）的打印温度。如果设置为 -1，则使用最大推荐喷嘴温度。"
+
+msgid "Max speed"
+msgstr "最大速度"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "擦料塔上除了预冲刷外的最大打印速度。"
 
 msgid "Speed of the last cooling move"
 msgstr "最后一次冷却移动的速度"
@@ -18077,6 +18088,9 @@ msgstr "筏层与模型之间的Z间隙。如果支撑顶部Z距离为0，则忽
 msgid "Raft expansion"
 msgstr "筏层扩展"
 
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
+msgstr "扩展筏层和支撑的首层可以改善和热床的粘接，-1 表示自动"
+
 msgid "This expands all raft layers in XY plane."
 msgstr "在XY平面扩展所有筏层"
 
@@ -18977,6 +18991,12 @@ msgstr ""
 msgid "Bottom interface spacing"
 msgstr "底部接触面线距"
 
+msgid "Minimum Support Contact Area"
+msgstr "最小支撑接触面面积"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "阈值越小，生成的支撑接触面越多。"
+
 msgid "This is the spacing of bottom interface lines. 0 means solid interface."
 msgstr "底部接触面走线的线距。0 表示实心接触面。"
 
@@ -19262,6 +19282,42 @@ msgstr "顶面实心填充的速度"
 msgid "Top shell layers"
 msgstr "顶部壳体层数"
 
+msgid "Top paint penetration layers"
+msgstr "顶部涂色渗透层数"
+
+msgid "This is  the number of layers of top paint penetration."
+msgstr "顶部涂色渗透的层数"
+
+msgid "Bottom paint penetration layers"
+msgstr "底部涂色渗透层数"
+
+msgid "This is the number of layers of bottom paint penetration."
+msgstr "底部涂色渗透的层数。"
+
+#, c-format, boost-format
+msgid "The paint penetration layers (current: %d) exceed the shell layers (current: %d). The top paint penetration layers will be reset automatically."
+msgstr "涂色渗透层数（当前：%d 层）已超过壳体层数（当前：%d 层），顶部涂色渗透层数将自动重置。"
+
+#, c-format, boost-format
+msgid "The paint penetration layers (current: %d) exceed the shell layers (current: %d). The bottom paint penetration layers will be reset automatically."
+msgstr "涂色渗透层数（当前：%d 层）已超过壳体层数（当前：%d 层），底部涂色渗透层数将自动重置。"
+
+#, boost-format
+msgid "The paint penetration layers (current: %1%) exceed the model layers (total: %2%). Please reduce the top paint penetration layers."
+msgstr "涂色渗透层数（当前：%1% 层）超过模型总层数（共计：%2% 层）。请减少顶部涂色渗透层数。"
+
+#, boost-format
+msgid "The paint penetration layers (current: %1%) exceed the model layers (total: %2%). Please reduce the bottom paint penetration layers."
+msgstr "涂色渗透层数（当前：%1% 层）超过模型总层数（共计：%2% 层）。请减少底部涂色渗透层数。"
+
+#, boost-format
+msgid "The shell layers (current: %1%) exceed the model layers (total: %2%). Please reduce the top shell layers."
+msgstr "壳体层数（当前：%1% 层）超过模型总层数（共计：%2% 层）。请减少顶部壳体层数。"
+
+#, boost-format
+msgid "The shell layers (current: %1%) exceed the model layers (total: %2%). Please reduce the bottom shell layers."
+msgstr "壳体层数（当前：%1% 层）超过模型总层数（共计：%2% 层）。请减少底部壳体层数。"
+
 msgid "This is the number of solid layers of top shell, including the top surface layer. When the thickness calculated by this value is thinner than the top shell thickness, the top shell layers will be increased"
 msgstr "顶部壳体实心层层数，包括顶面。当由该层数计算的厚度小于顶部壳体厚度，切片时会增加顶部壳体的层数"
 
@@ -19496,6 +19552,51 @@ msgstr "启用擦拭塔接触层功能"
 
 msgid "Enable optimized prime tower interface behavior when different materials meet."
 msgstr "启用优化后的擦拭塔接触层行为，用于不同耗材丝相遇时。"
+
+msgid ""
+"Switch to rectilinear pattern?\n"
+"Yes - switch to rectilinear pattern automatically\n"
+"No  - reset density to default non 100% value automatically"
+msgstr ""
+"切换到直线图案？\n"
+"是 - 自动切换到直线图案\n"
+"否 - 自动将密度重置为默认的非100%值"
+
+#, boost-format
+msgid "%1% infill pattern doesn't support 100%% density."
+msgstr "%1% 填充图案不支持 100%% 密度。"
+
+msgid "PLA and PETG filaments detected on the same plate. When used as mutual support materials, parameter adjustment is recommended."
+msgstr "检测到同一底板上同时存在PLA和PETG耗材，互为支撑时需调整参数。"
+
+#, c-format, boost-format
+msgid "Detected %s as support interface material for %s models. PLA and PETG do not bond together — we recommend adjusting the following parameters:"
+msgstr "检测到%s作为%s模型的支撑界面材料。PLA与PETG无法粘合——建议调整以下参数："
+
+msgid ""
+"Non-soluble support materials are not recommended for support base.\n"
+"Are you sure to use them for support base?"
+msgstr ""
+"不建议使用非可溶性支撑材料作为支撑基底。\n"
+"确定要将其用作支撑基底吗？"
+
+#, c-format, boost-format
+msgid "  • Top Z distance: %.2f → 0 mm\n"
+msgstr "  • 顶部Z距离：%.2f → 0 mm\n"
+
+msgid "  • Base pattern → Default\n"
+msgstr "  • 支撑主体图案 → 缺省\n"
+
+#, c-format, boost-format
+msgid "  • Top interface layers: %d → 3\n"
+msgstr "  • 顶部接触面层数：%d → 3\n"
+
+msgid "  • Interface pattern → Rectilinear Interlaced\n"
+msgstr "  • 接触面图案 → 交叠直线\n"
+
+#, c-format, boost-format
+msgid "  • Interface spacing: %.2f → 0 mm\n"
+msgstr "  • 接触面间距：%.2f → 0 mm\n"
 
 msgid "Cool down from interface boost during prime tower"
 msgstr "擦拭塔期间从接触层加速状态冷却"

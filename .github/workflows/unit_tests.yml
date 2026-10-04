@@ -45,6 +45,15 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact }}
+      # run_unit_tests.sh installs the plugin tests' numpy with the uv the build stages
+      # beside them; the Windows arm64 build bundles none and a failed download leaves
+      # x64 without one, so Windows gets one on PATH as the fallback.
+      - name: Install uv
+        if: runner.os == 'Windows'
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.11.21"  # ORCA_UV_VERSION in CMakeLists.txt
+          enable-cache: false
       - uses: lukka/get-cmake@latest
         with:
           cmakeVersion: "~4.3.0"  # use most recent 4.3.x version

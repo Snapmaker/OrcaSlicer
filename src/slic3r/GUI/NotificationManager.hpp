@@ -174,7 +174,6 @@ enum class NotificationType
     BBLSliceLimitError,
     BBLSliceMultiExtruderHeightOutside,
 	BBLBedFilamentIncompatible,
-    BBLMixUsePLAAndPETG,
 	BBLNozzleFilamentIncompatible,
     // A mixed-color filament is printed on a single-nozzle printer (frequent changes and purging).
     BBLSingleExtruderMixedFilamentRisk,
@@ -293,7 +292,11 @@ public:
 	// GCode exceeds the printing range of the extruder
     void push_slicing_customize_error_notification(NotificationType type, NotificationLevel level, const std::string &text, const std::string &hypertext = "", std::function<bool(wxEvtHandler*)> callback = std::function<bool(wxEvtHandler*)>());
     void close_slicing_customize_error_notification(NotificationType type, NotificationLevel level);
-
+	// PLA/PETG mix warning: uses SlicingWarning type to stay visible
+	// in Preview mode without blocking slicing.
+	void push_pla_petg_mix_warning(const std::string& text);
+	void close_pla_petg_mix_warning(const std::string& text);
+	void reset_pla_petg_mix_warning();
 	// Object warning with ObjectID, closes when object is deleted. ID used is of object not print like in slicing warning.
 	void push_simplify_suggestion_notification(const std::string& text, ObjectID object_id, const std::string& hypertext = "",
 		std::function<bool(wxEvtHandler*)> callback = std::function<bool(wxEvtHandler*)>());
@@ -409,7 +412,8 @@ public:
 	void bbl_show_objectsinfo_notification(const std::string &text, bool is_warning, bool is_hidden);
     void bbl_close_objectsinfo_notification();
 
-    void bbl_show_seqprintinfo_notification(const std::string &text);
+	//BBS--Seq Print Info
+	void bbl_show_seqprintinfo_notification(const std::string &text);
     void bbl_close_seqprintinfo_notification();
 
 	//BBS--EmptyLayer
@@ -457,6 +461,9 @@ private:
 		int                      sub_msg_id {-1};
 		std::string        ori_text;
         bool                use_warn_color { false };
+        // Identifies the origin of a ValidateError (option key, or exception type);
+        // notifications of the same source reuse and update each other instead of stacking.
+        std::string        source_key;
 	};
 
 	// Cache of IDs to identify and reuse ImGUI windows.
@@ -694,6 +701,17 @@ private:
         void close() override;
 		void		 real_close()      { m_state = EState::ClosePending; wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0); }
 		void         show()            { m_state = EState::Unknown; }
+	};
+
+	// PLA/PETG mutual-support mix warning. Closing it with X only hides it, so the per-frame check
+	// does not recreate it; real_close() removes it once the combination is gone or the config
+	// changes. A SlicingWarning, it stays visible in Preview.
+	class PlaPetgMixNotification : public PopNotification
+	{
+	public:
+		PlaPetgMixNotification(const NotificationData& n, NotificationIDProvider& id_provider, wxEvtHandler* evt_handler) : PopNotification(n, id_provider, evt_handler) {}
+		void	     close()  override { if(is_finished()) return; m_state = EState::Hidden; wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0); }
+		void		 real_close()      { m_state = EState::ClosePending; wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0); }
 	};
 
 

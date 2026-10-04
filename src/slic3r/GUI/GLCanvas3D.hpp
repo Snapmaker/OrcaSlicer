@@ -187,8 +187,6 @@ wxDECLARE_EVENT(EVT_GLCANVAS_MOUSE_DRAGGING_FINISHED, SimpleEvent);
 wxDECLARE_EVENT(EVT_GLCANVAS_UPDATE_BED_SHAPE, SimpleEvent);
 wxDECLARE_EVENT(EVT_GLCANVAS_TAB, SimpleEvent);
 wxDECLARE_EVENT(EVT_GLCANVAS_RESETGIZMOS, SimpleEvent);
-wxDECLARE_EVENT(EVT_GLCANVAS_MOVE_SLIDERS, wxKeyEvent);
-wxDECLARE_EVENT(EVT_GLCANVAS_JUMP_TO, wxKeyEvent);
 wxDECLARE_EVENT(EVT_GLCANVAS_UNDO, SimpleEvent);
 wxDECLARE_EVENT(EVT_GLCANVAS_REDO, SimpleEvent);
 wxDECLARE_EVENT(EVT_GLCANVAS_SWITCH_TO_OBJECT, SimpleEvent);
@@ -393,7 +391,7 @@ class GLCanvas3D
         ObjectLimited,
         GCodeConflict,
         ToolHeightOutside,
-        SpiralLiftNearBoundary,  // Snapmaker: 螺旋抬升靠近边界警告
+        SpiralLiftNearBoundary,  // model too close to the bed boundary for spiral lift
         TPUPrintableError,
         FilamentPrintableError,
         LeftExtruderPrintableError, // before slice
@@ -1345,6 +1343,8 @@ public:
     Vec3d _mouse_to_3d(const Point& mouse_pos, float* z = nullptr);
 
     bool make_current_for_postinit();
+    // Sizes ImGui's fonts and style for this canvas; the fonts are rebuilt when the size changes.
+    void set_imgui_scaling();
 
 private:
     bool _is_shown_on_screen() const;
@@ -1364,6 +1364,7 @@ private:
     bool _init_collapse_toolbar();
 
     bool _set_current();
+    bool _set_shown_canvas_current();
     void _resize(unsigned int w, unsigned int h);
 
     //BBS: add part plate related logic
@@ -1503,8 +1504,11 @@ private:
     void _set_warning_notification(EWarning warning, bool state);
 
     bool is_flushing_matrix_error();
+    // Per-frame PLA/PETG mix check from _render_frame(), without the full_config() merge.
+    void _update_pla_petg_mix_warning();
+
     bool _is_any_volume_outside() const;
-    // Snapmaker: 检查是否有任何 volume 靠近边界（螺旋抬升风险）
+    // Whether any volume is close enough to the bed boundary to risk a spiral-lift collision.
     bool _is_any_volume_near_boundary_for_spiral_lift() const;
 
     // updates the selection from the content of m_hover_volume_idxs

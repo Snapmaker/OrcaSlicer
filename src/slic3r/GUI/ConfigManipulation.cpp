@@ -193,14 +193,16 @@ void ConfigManipulation::check_adaptive_pressure_advance_model(DynamicPrintConfi
         return;
 
     const auto* model = config->option<ConfigOptionStrings>("adaptive_pressure_advance_model");
-    if (model == nullptr || model->values.empty())
+    if (model == nullptr)
         return;
 
-    std::string raw_model;
-    for (const std::string& chunk : model->values)
-        raw_model += chunk;
-
-    std::string error = AdaptivePAProcessor::validate_adaptive_pa_model(raw_model);
+    // Each extruder variant holds its own model.
+    std::string error;
+    for (const std::string& variant_model : model->values) {
+        error = AdaptivePAProcessor::validate_adaptive_pa_model(variant_model);
+        if (!error.empty())
+            break;
+    }
     if (!error.empty()) {
         wxString msg_text = _L("Adaptive Pressure Advance model validation failed:\n");
         msg_text += from_u8(error);
@@ -341,6 +343,47 @@ bool ConfigManipulation::layer_height_out_of_range_dialog(DynamicPrintConfig* co
     return adjust;
 }
 
+void ConfigManipulation::validate_paint_penetration_layers(DynamicPrintConfig* config, const bool is_top)
+{
+    const char* pen_key   = is_top ? "top_color_penetration_layers" : "bottom_color_penetration_layers";
+    const char* shell_key = is_top ? "top_shell_layers" : "bottom_shell_layers";
+    if (!config->has(pen_key) || !config->has(shell_key))
+        return;
+    const int   cur_shell = config->opt_int(shell_key);
+    const int   cur_pen   = config->opt_int(pen_key);
+
+    // Both fields of the pair highlight together, whichever value was edited.
+    const bool is_invalid = cur_pen > cur_shell;
+    if (cb_highlight_field) {
+        cb_highlight_field(pen_key, is_invalid);
+        cb_highlight_field(shell_key, is_invalid);
+    }
+    if (!is_invalid)
+        return;
+
+    const wxString msg_text = is_top ?
+        wxString::Format(_L("The paint penetration layers (current: %d) exceed the shell layers (current: %d). "
+                           "The top paint penetration layers will be reset automatically."), cur_pen, cur_shell) :
+        wxString::Format(_L("The paint penetration layers (current: %d) exceed the shell layers (current: %d). "
+                           "The bottom paint penetration layers will be reset automatically."), cur_pen, cur_shell);
+    // No wxICON_* flag, so the dialog shows the brand logo like the filament-sync confirm dialogs.
+    MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxOK);
+    // Centered on the screen rather than on the left-anchored parent panel, so it never covers the edited fields.
+    dialog.CentreOnScreen();
+    DynamicPrintConfig new_conf = *config;
+    is_msg_dlg_already_exist = true;
+    dialog.ShowModal();
+    new_conf.set_key_value(pen_key, new ConfigOptionInt(cur_shell));
+    apply(config, &new_conf);
+    is_msg_dlg_already_exist = false;
+    // apply() re-ran the update, so the highlights are re-synced with the post-reset state.
+    if (cb_highlight_field) {
+        const bool still_invalid = config->opt_int(pen_key) > config->opt_int(shell_key);
+        cb_highlight_field(pen_key, still_invalid);
+        cb_highlight_field(shell_key, still_invalid);
+    }
+}
+
 void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, const bool is_global_config, const bool is_plate_config)
 {
     // #ys_FIXME_to_delete
@@ -447,6 +490,10 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
             apply(config, &new_conf);
         }
     }
+
+    // Paint penetration must not exceed the shell layers: both fields turn red, a warning shows, the value resets.
+    validate_paint_penetration_layers(config, true);
+    validate_paint_penetration_layers(config, false);
 
     double sparse_infill_density = config->option<ConfigOptionPercent>("sparse_infill_density")->value;
     int    fill_multiline        = config->option<ConfigOptionInt>("fill_multiline")->value;
@@ -978,14 +1025,18 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
         "support_interface_pattern", "support_interface_top_layers", "support_interface_bottom_layers",
         "bridge_no_support", "max_bridge_length", "support_top_z_distance", "support_bottom_z_distance",
         "support_type", "support_on_build_plate_only", "support_critical_regions_only", "support_interface_not_for_body",
-        "support_object_xy_distance", "support_object_first_layer_gap", "independent_support_layer_height"})
+        "support_object_xy_distance", "support_object_first_layer_gap", "independent_support_layer_height",
+        "support_interface_min_area"})
         toggle_field(el, have_support_material);
     toggle_field("support_threshold_angle", have_support_material && is_auto(support_type));
     toggle_field("support_threshold_overlap", config->opt_int("support_threshold_angle") == 0 && have_support_material && is_auto(support_type));
     //toggle_field("support_closing_radius", have_support_material && support_style == smsSnug);
 
     bool support_is_tree = config->opt_bool("enable_support") && is_tree(support_type);
-    bool support_is_organic = support_is_tree && (support_style == smsTreeOrganic || support_style == smsDefault);
+    // The object's layer profile is unknown here, so custom layering counts as off.
+    bool support_is_organic = support_is_tree && (support_style == smsTreeOrganic ||
+        (support_style == smsDefault && !tree_default_style_is_hybrid(config->opt_float("support_top_z_distance"),
+                                                                      config->opt_int("support_interface_top_layers"), false)));
     bool support_is_normal_tree = support_is_tree && !support_is_organic;
 
     // hide settings that are not used by tree supports
@@ -1057,10 +1108,9 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
 
     // Orca: First-layer density is available for supports broadly.
     toggle_field("raft_first_layer_density", have_support_material);
-    // Orca: For regular tree (Slim/Strong) without raft, hide first-layer expansion.
-    // Keep it enabled for non-tree supports, organic tree, hybrid tree, and any raft case.
-    toggle_field("raft_first_layer_expansion",
-                 have_support_material && ((!support_is_normal_tree || support_style == smsTreeHybrid) || have_raft));
+    // raft_first_layer_expansion also drives the no-raft tree first-layer expansion,
+    // so it stays editable whenever support is enabled, raft or not.
+    toggle_field("raft_first_layer_expansion", have_support_material);
 
     bool has_ironing = (config->opt_enum<IroningType>("ironing_type") != IroningType::NoIroning);
     for (auto el : { "ironing_pattern", "ironing_flow", "ironing_spacing", "ironing_angle", "ironing_inset", "ironing_angle_fixed" })
@@ -1108,6 +1158,8 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
 
     // Orca: both tower generators skip sparse layers, so this is not a wipe tower 2 exclusive.
     toggle_line("wipe_tower_no_sparse_layers", have_prime_tower);
+    // Dropping the sparse layers outright leaves nothing to combine, so the two are exclusive.
+    toggle_line("wipe_tower_sparse_layers_combination", have_prime_tower && !config->opt_bool("wipe_tower_no_sparse_layers"));
 
     const bool local_z_dithering_enabled =
         config->has("dithering_local_z_mode") && config->option("dithering_local_z_mode") != nullptr &&
@@ -1123,6 +1175,10 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     toggle_line("wipe_tower_rib_width", have_rib_wall);
     toggle_line("wipe_tower_fillet_wall", have_rib_wall);
     toggle_field("prime_tower_width", have_prime_tower && !have_rib_wall);
+
+    toggle_line("wipe_tower_wall_gap", have_prime_tower);
+    toggle_line("prime_tower_brim_chamfer_max_width", have_prime_tower);
+    toggle_line("prime_tower_brim_chamfer", have_prime_tower);
 
     toggle_line("single_extruder_multi_material_priming", !bSEMM && have_prime_tower && supports_wipe_tower_2);
 

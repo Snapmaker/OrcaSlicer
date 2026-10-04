@@ -59,17 +59,16 @@ TEST_CASE("Per filament pressure advance of an older project is rebuilt per fila
     config.set_key_value("additional_cooling_fan_speed", new ConfigOptionInts({70, 10}));
     // Already one value per column: left alone.
     config.set_key_value("fan_max_speed", new ConfigOptionFloats({40., 60., 30., 25.}));
-    // Neither layout: left to the loader's padding.
+    // A single value: spread to every column.
     config.set_key_value("fan_min_speed", new ConfigOptionFloats({35.}));
 
-    const size_t rebuilt = normalize_promoted_filament_keys(config, 2, {1, 1, 2, 2});
+    normalize_filament_values_to_variants(config);
 
-    CHECK(rebuilt == 3);
     CHECK_THAT(config.option<ConfigOptionFloats>("pressure_advance")->values, Catch::Matchers::Approx(std::vector<double>{0.03, 0.03, 0.05, 0.05}));
     CHECK(config.option<ConfigOptionBools>("enable_pressure_advance")->values == std::vector<unsigned char>{1, 1, 0, 0});
     CHECK(config.option<ConfigOptionInts>("additional_cooling_fan_speed")->values == std::vector<int>{70, 70, 10, 10});
     CHECK_THAT(config.option<ConfigOptionFloats>("fan_max_speed")->values, Catch::Matchers::Approx(std::vector<double>{40., 60., 30., 25.}));
-    CHECK_THAT(config.option<ConfigOptionFloats>("fan_min_speed")->values, Catch::Matchers::Approx(std::vector<double>{35.}));
+    CHECK_THAT(config.option<ConfigOptionFloats>("fan_min_speed")->values, Catch::Matchers::Approx(std::vector<double>{35., 35., 35., 35.}));
 }
 
 TEST_CASE("A project with one column per filament is the same in both layouts and stays untouched", "[HighFlow][FlowCompat][hf_promoted_shim]")
@@ -77,12 +76,14 @@ TEST_CASE("A project with one column per filament is the same in both layouts an
     DynamicPrintConfig config = two_filaments_with_flow_columns();
     config.set_key_value("pressure_advance", new ConfigOptionFloats({0.03, 0.05}));
 
-    CHECK(normalize_promoted_filament_keys(config, 2, {1, 2}) == 0);
-    CHECK_THAT(config.option<ConfigOptionFloats>("pressure_advance")->values, Catch::Matchers::Approx(std::vector<double>{0.03, 0.05}));
-
-    SECTION("a column index that names no filament of the project rebuilds nothing") {
-        CHECK(normalize_promoted_filament_keys(config, 2, {1, 1, 3, 3}) == 0);
-        CHECK(normalize_promoted_filament_keys(config, 2, {0, 1, 2, 2}) == 0);
+    SECTION("one column per filament") {
+        config.set_key_value("filament_self_index", new ConfigOptionInts({1, 2}));
+        normalize_filament_values_to_variants(config);
+        CHECK_THAT(config.option<ConfigOptionFloats>("pressure_advance")->values, Catch::Matchers::Approx(std::vector<double>{0.03, 0.05}));
+    }
+    SECTION("columns of a third filament the values do not cover") {
+        config.set_key_value("filament_self_index", new ConfigOptionInts({1, 1, 3, 3}));
+        normalize_filament_values_to_variants(config);
         CHECK_THAT(config.option<ConfigOptionFloats>("pressure_advance")->values, Catch::Matchers::Approx(std::vector<double>{0.03, 0.05}));
     }
 }
@@ -126,7 +127,7 @@ TEST_CASE("Per filament bed and chamber temperatures of an older project are reb
     config.set_key_value("chamber_temperature", new ConfigOptionInts({0, 40}));
 
     SECTION("the values are spread over the columns of each filament") {
-        CHECK(normalize_promoted_filament_keys(config, 2, {1, 1, 2, 2}) == 4);
+        normalize_filament_values_to_variants(config);
         CHECK(config.option<ConfigOptionInts>("textured_plate_temp")->values == std::vector<int>{60, 60, 80, 80});
         CHECK(config.option<ConfigOptionInts>("textured_plate_temp_initial_layer")->values == std::vector<int>{65, 65, 85, 85});
         CHECK(config.option<ConfigOptionBools>("activate_chamber_temp_control")->values == std::vector<unsigned char>{0, 0, 1, 1});

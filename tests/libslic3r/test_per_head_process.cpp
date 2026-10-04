@@ -196,14 +196,14 @@ TEST_CASE("The composed key set is the 32 speed, acceleration and jerk keys of t
     const std::set<std::string> &composed = PerHeadProcess::composed_keys();
     // 32 speeds, accelerations and jerk keys plus the nine line widths.
     CHECK(composed.size() == 41);
-    // 51 value keys (42 speeds, accelerations, jerk and switches plus the nine line widths of the
-    // Quality page), the ids, the variants and the marker of the values set per tool head.
-    CHECK(print_options_with_variant.size() == 54);
+    // 52 value keys (42 speeds, accelerations, jerk and switches, the nine line widths of the Quality
+    // page and the top surface flow ratio), the ids, the variants and the marker of the values set per tool head.
+    CHECK(print_options_with_variant.size() == 55);
     CHECK(print_options_with_variant.count(PerHeadProcess::override_key) == 1);
     CHECK(composed.count(PerHeadProcess::override_key) == 0);
-    // 48 keys can be set per tool head: the value keys without the three uniform switches.
+    // 49 keys can be set per tool head: the value keys without the three uniform switches.
     const std::set<std::string> &editable = PerHeadProcess::head_editable_keys();
-    CHECK(editable.size() == 48);
+    CHECK(editable.size() == 49);
     // The nine line widths: flow-independent, editable per tool head and composed from the width
     // source; the Locked Zag widths stay scalar and outside every set.
     const std::set<std::string> &widths = PerHeadProcess::flow_independent_keys();

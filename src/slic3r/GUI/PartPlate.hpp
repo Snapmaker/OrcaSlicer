@@ -52,10 +52,8 @@ inline int compute_colum_count(int count)
 
 
 extern const float WIPE_TOWER_DEFAULT_X_POS;
-extern const float WIPE_TOWER_DEFAULT_Y_POS;  // Max y
 
 extern const float I3_WIPE_TOWER_DEFAULT_X_POS;
-extern const float I3_WIPE_TOWER_DEFAULT_Y_POS; // Max y
 
 
 
@@ -360,7 +358,6 @@ public:
     int  get_logical_extruder_by_filament_id(const DynamicConfig& g_config, int idx) const;
     bool check_filament_printable(const DynamicPrintConfig & config, wxString& error_message);
     bool check_tpu_printable_status(const DynamicPrintConfig & config, const std::vector<int> &tpu_filaments);
-    bool check_mixture_of_pla_and_petg(const DynamicPrintConfig & config);
     // Warns when a mixed-color filament is used on a single-nozzle printer, where every
     // component switch costs a full filament change and purge.
     bool check_single_extruder_mixed_filament_risk(const DynamicPrintConfig &config, std::string &warning_text) const;
@@ -644,6 +641,7 @@ class PartPlateList : public ObjectBase
     std::string m_hover_tooltip;
 
     bool m_is_dark = false;
+    bool m_icon_textures_dark = false;
 
     int m_filament_count = 1;
 
@@ -944,12 +942,25 @@ public:
     bool calc_extruder_only_area(Rect &left_only_rect, Rect &right_only_rect);
     void init_bed_type_info();
     bool init_extruder_only_area_info();
+    // Each load_*_textures() loads whatever of its set is not loaded yet; each load_next_*()
+    // loads one texture and returns false once none remain.
     void load_bedtype_textures();
+    bool load_next_bedtype_texture();
     void load_extruder_only_area_textures();
+    bool load_next_extruder_only_area_texture();
+    // Starts loading the printer's logo texture, or sends the levels compressed since; false when
+    // there is no logo to draw.
+    bool load_logo_texture();
 
     void show_cali_texture(bool show = true);
     void init_cali_texture_info();
     void load_cali_textures();
+    bool load_next_cali_texture();
+    bool icon_textures_loaded() const { return m_del_texture.get_id() != 0 && m_icon_textures_dark == m_is_dark; }
+    void load_icon_textures();
+    // Loads the next bed-type, calibration or extruder-area texture, or the logo, which rendering
+    // otherwise loads on first use; false once none remain.
+    bool load_next_plate_texture();
 
     void on_extruder_count_changed(int extruder_count);
 
@@ -961,6 +972,13 @@ public:
     BedTextureInfo bed_texture_info[btCount];
     BedTextureInfo cali_texture_info;
     BedTextureInfo extruder_only_area_info[(unsigned char) Slic3r::ExtruderOnlyAreaType::btAreaCount];
+
+private:
+    // The next part to load in each texture set, counted across the set's parts in order; reset
+    // with the set's is_load_* flag.
+    size_t m_next_bedtype_texture{ 0 };
+    size_t m_next_cali_texture{ 0 };
+    size_t m_next_extruder_only_area_texture{ 0 };
 };
 
 } // namespace GUI

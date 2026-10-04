@@ -275,10 +275,11 @@ TEST_CASE("A rib wall squares the tower and caps the rib width", "[WipeTowerEsti
     // The extra rib length runs along the diagonal and grows the footprint by its projection.
     config.set_key_value("wipe_tower_extra_rib_length", new ConfigOptionFloat(4.));
     CHECK_THAT(estimate(config, 3, 0.2, 5.).depth, WithinAbs((8. + 4.) / std::sqrt(2.) + body, 1e-4));
-    // A tiny tower caps the rib width at half its depth: 5 mm3 on two filaments plans 1.5 mm, squared
-    // to 9 mm, replanned 9 rows of 0.5 mm plus the wall = 5 mm deep, 2.5 mm rib.
+    // A tiny tower caps the rib width at half its depth: 5 mm3 on two filaments (no minimal purge) plans
+    // 1.5 mm, squared to 9 mm, replanned 9 rows of 0.5 mm plus the wall = 5 mm deep, 2.5 mm rib.
     config.set_key_value("wipe_tower_extra_rib_length", new ConfigOptionFloat(0.));
     config.set_key_value("prime_volume", new ConfigOptionFloat(5.));
+    config.set_key_value("filament_minimal_purge_on_wipe_tower", new ConfigOptionFloats({0.}));
     CHECK_THAT(estimate(config, 2, 0.2, 5.).depth, WithinAbs(2.5 / std::sqrt(2.) + 9., 1e-4));
 }
 

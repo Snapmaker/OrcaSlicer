@@ -218,10 +218,11 @@ TEST_CASE("A painted colour whose region cannot follow its filament's pitch gets
 {
     // Top face painted with filament 3 (0.6 mm pitch), top surfaces fixed to filament 1 (0.4 mm
     // nozzle): the region prints every layer, so its shell is the configured two rows, not the
-    // 2N-1 = 5 rows of a run colour.
+    // 2N-1 = 5 rows of a run colour. The paint penetration sets the painted depth.
     DynamicPrintConfig config = three_filament_config();
-    config.set_key_value("top_surface_filament_id", new ConfigOptionInt(1));
-    config.set_key_value("top_shell_layers",        new ConfigOptionInt(2));
+    config.set_key_value("top_surface_filament_id",      new ConfigOptionInt(1));
+    config.set_key_value("top_shell_layers",             new ConfigOptionInt(2));
+    config.set_key_value("top_color_penetration_layers", new ConfigOptionInt(2));
     Model model;
     Print print;
     ModelObject *object = model.add_object();

@@ -3,6 +3,8 @@
 
 #include <forward_list>
 #include <unordered_set>
+#include <vector>
+#include "ClipperUtils.hpp"
 #include "ExPolygon.hpp"
 #include "Point.hpp"
 #include "Slicing.hpp"
@@ -124,7 +126,9 @@ struct SupportNode
     bool           need_extra_wall = false;
     bool           is_sharp_tail   = false;
     bool           valid = true;
+    bool           fading = false;   // a circle node at the edge of a polygon node, shrinking until it vanishes
     ExPolygon      overhang; // when type==ePolygon, set this value to get original overhang area
+    coordf_t       target_radius = -1.;
 
     /*!
      * \brief The direction of the skin lines above the tip of the branch.
@@ -350,6 +354,65 @@ struct LineHash {
 };
 
 /*!
+ * \brief Number of perimeter walls drawn around tree support areas. Hybrid trees print their trunk like
+ * normal support, so for them "auto" (0) means one wall; the other styles keep 0.
+ */
+inline size_t tree_support_effective_wall_count(SupportMaterialStyle style, int wall_count)
+{
+    return (style == smsTreeHybrid && wall_count == 0) ? size_t(1) : size_t(wall_count);
+}
+
+/*!
+ * \brief Erases the holes of expoly smaller than 2 mm in both directions, except holes that overlap another of
+ * all_group_areas (non-null, expoly itself skipped by identity), so two support roles never print on each other.
+ */
+inline void erase_small_area_group_holes(ExPolygon &expoly, const std::vector<const ExPolygon*> &all_group_areas)
+{
+    // A hole is small when its bounding box is below 2 mm in both directions.
+    const double small_hole_edge = scale_(2.);
+    // Overlaps below this area are boundary-touching degeneracies: a carved hole overlaps another group with
+    // (almost) its full area.
+    const double degenerate_overlap_area = Slic3r::sqr(scale_(0.02));
+
+    bool has_small_hole = false;
+    for (const Polygon &hole : expoly.holes) {
+        const auto bbox_size = get_extents(hole).size();
+        if (bbox_size[0] < small_hole_edge && bbox_size[1] < small_hole_edge) {
+            has_small_hole = true;
+            break;
+        }
+    }
+    if (!has_small_hole)
+        return;
+
+    ExPolygons other_solids;
+    other_solids.reserve(all_group_areas.size());
+    for (const ExPolygon *group_area : all_group_areas)
+        if (group_area != &expoly)
+            other_solids.emplace_back(*group_area);
+
+    for (auto hole_it = expoly.holes.begin(); hole_it != expoly.holes.end();) {
+        const auto bbox_size = get_extents(*hole_it).size();
+        if (bbox_size[0] < small_hole_edge && bbox_size[1] < small_hole_edge) {
+            Polygon hole_outer = *hole_it;
+            // Holes are stored clockwise; clipper subjects must be counter-clockwise.
+            hole_outer.make_counter_clockwise();
+            const ExPolygons overlap    = intersection_ex({ExPolygon(std::move(hole_outer))}, other_solids);
+            double         overlap_area = 0.;
+            for (const ExPolygon &island : overlap)
+                overlap_area += island.area();
+            if (overlap_area > degenerate_overlap_area) {
+                // The hole is carved out by another area group; it stays.
+                ++hole_it;
+                continue;
+            }
+            hole_it = expoly.holes.erase(hole_it);
+        } else
+            ++hole_it;
+    }
+}
+
+/*!
  * \brief Generates a tree structure to support your models.
  */
 class TreeSupport
@@ -409,8 +472,13 @@ public:
      */
     ExPolygon m_machine_border;
 
-    enum OverhangType { Detected = 0, Enforced, SharpTail };
-    std::map<const ExPolygon*, OverhangType> overhang_types;
+    // Bit flags: a region can have several types at once (e.g. BigFlat | SharpTail); test membership with &.
+    enum OverhangType : uint8_t {
+        Normal = 0, SharpTail = 1,
+        Cantilever = 1 << 1, Small = 1 << 2,
+        BigFlat = 1 << 3, ThinPlate = 1 << 4,
+        SharpTailLowesst = 1 << 5
+    };
     std::vector<std::pair<Vec3f, Vec3f>>      m_vertical_enforcer_points;
 
 private:
@@ -432,14 +500,15 @@ private:
     size_t          m_highest_overhang_layer = 0;
     std::vector<std::vector<MinimumSpanningTree>> m_spanning_trees;
     std::vector< std::unordered_map<Line, bool, LineHash>> m_mst_line_x_layer_contour_caches;
+    // Contact points closer than this to the bed are not moved sideways; the first 2 mm above the
+    // bed are also where the bottom branch expansion of drop_nodes applies.
+    float    DO_NOT_MOVER_UNDER_MM = 2.0;
     coordf_t base_radius                        = 0.0;
     const coordf_t MAX_BRANCH_RADIUS = 10.0;
     const coordf_t MIN_BRANCH_RADIUS = 0.4;
-    const coordf_t MAX_BRANCH_RADIUS_FIRST_LAYER = 12.0;
-    const coordf_t MIN_BRANCH_RADIUS_FIRST_LAYER = 2.0;
     double diameter_angle_scale_factor = tan(5.0*M_PI/180.0);
-    // minimum roof area (1 mm^2), area smaller than this value will not have interface
-    const double minimum_roof_area{SQ(scaled<double>(1.))};
+    // minimum roof area (default 0.25 mm^2), area smaller than this value will not have interface.
+    double minimum_roof_area = scaled<double>(scaled<double>(0.25));
     float        top_z_distance = 0.0;
 
     bool  is_strong = false;
@@ -511,6 +580,9 @@ private:
     coordf_t calc_branch_radius(coordf_t base_radius, coordf_t mm_to_top, double diameter_angle_scale_factor, bool use_min_distance=true);
     coordf_t   calc_radius(coordf_t mm_to_top);
     coordf_t get_radius(const SupportNode* node);
+    // Transition layers printed with the support body filament between the top interface layers and the
+    // support body; none without top interface layers.
+    int      num_transition_layers() const;
     ExPolygons get_avoidance(coordf_t radius, size_t obj_layer_nr);
     // layer's expolygon expanded by radius+m_xy_distance
     ExPolygons get_collision(coordf_t radius, size_t layer_nr);

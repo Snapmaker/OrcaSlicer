@@ -9717,13 +9717,6 @@ msgstr "Carica e Stampa"
 msgid "Abnormal print file data. Please slice again"
 msgstr "Dati file di stampa anormali. Eseguire nuovamente l'elaborazione"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Stampa per oggetto: \n"
-"Ti consigliamo di utilizzare la disposizione automatica per evitare collisioni durante la stampa."
-
 msgid "Slicing was not started because you aborted the very long slice. Use Slice to slice anyway."
 msgstr ""
 

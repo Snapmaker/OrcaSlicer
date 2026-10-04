@@ -176,6 +176,9 @@ public:
     // Zero based extruder IDs, ordered to minimize tool switches.
     std::vector<unsigned int> 	extruders;
     bool                        preserve_extruder_order = false;
+    // An object splits this layer into Local-Z sublayers; purge overrides stay off here because
+    // they would disable Local-Z emission for the entire shared print layer.
+    bool                        has_local_z_subdivision = false;
     // If per layer extruder switches are inserted by the G-code preview slider, this value contains the new (1 based) extruder, with which the whole object layer is being printed with.
     // If not overriden, it is set to 0.
     unsigned int 				extruder_override = 0;
@@ -419,6 +422,8 @@ private:
                                float        layer_print_z = 0.f,
                                float        layer_height  = 0.f,
                                const PrintObject* current_object = nullptr) const;
+
+    void collect_local_z_layers(const PrintObject &object);
 
     std::vector<LayerTools>    m_layer_tools;
     // First printing extruder, including the multi-material priming sequence.

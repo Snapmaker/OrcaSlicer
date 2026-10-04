@@ -223,6 +223,7 @@ public:
     void msw_rescale() override;
     void OnSelect(wxCommandEvent& evt) override;
     void update_badge_according_flag();
+    void set_sync_badge(bool show);
 
     EncodedFilamentColor get_cur_color_info();
     void show_default_color_picker();
@@ -259,6 +260,7 @@ protected:
 private:
     // BBS
     wxColor m_color;
+    bool    m_sync_badge{false};
     
     // 按钮显示标志（仅用于打印机类型）
     bool m_show_connection_button { false };

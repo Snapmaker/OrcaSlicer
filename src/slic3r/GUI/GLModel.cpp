@@ -451,8 +451,9 @@ void GLModel::init_from(const indexed_triangle_set& its)
         return;
     }
 
-    // Read user preference: smooth normals enabled
-    const bool smooth_normals_enabled = wxGetApp().app_config != nullptr && wxGetApp().app_config->get_bool(SETTING_OPENGL_PHONG_SMOOTH_NORMALS);
+    // CLI thumbnail generation can initialize models without a wx application.
+    const bool smooth_normals_enabled = wxApp::GetInstance() != nullptr && wxGetApp().app_config != nullptr &&
+                                        wxGetApp().app_config->get_bool(SETTING_OPENGL_PHONG_SMOOTH_NORMALS);
 
     // The conversion lives in make_geometry(); a colour set before init_from() is kept.
     Geometry data = make_geometry(its, smooth_normals_enabled);

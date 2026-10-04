@@ -9780,13 +9780,6 @@ msgstr "Nahrát a Tisknout"
 msgid "Abnormal print file data. Please slice again"
 msgstr "Abnormální data tiskového souboru. Prosím znovu slicovat"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Tisk podle objektu: \n"
-"Doporučujeme použít automatické uspořádání, aby se předešlo kolizím při tisku."
-
 msgid "Slicing was not started because you aborted the very long slice. Use Slice to slice anyway."
 msgstr ""
 

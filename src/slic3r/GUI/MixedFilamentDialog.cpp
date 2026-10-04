@@ -362,7 +362,7 @@ void MixedFilamentDialog::build_ui()
                                                wxSize(FromDIP(380), FromDIP(400)),
                                                wxVSCROLL | wxBORDER_NONE);
     m_scrolled_content->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F8F7F7")));
-    m_scrolled_content->SetScrollRate(0, FromDIP(8));
+    m_scrolled_content->SetScrollRate(0, FromDIP(20));
     // Prevent wxScrolledWindow from auto-scrolling to focused children.
     // Without this, clicking a partially-visible widget first scrolls it
     // into view instead of handling the click, requiring a second click.

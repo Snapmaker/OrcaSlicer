@@ -3457,11 +3457,12 @@ static void generate_support_areas(Print &print, TreeSupport* tree_support, cons
         const int       num_raft_layers = int(config.raft_layers.size());
         const int       num_layers = int(print_object.layer_count()) + num_raft_layers;
         overhangs.resize(num_layers);
+        // Pure sharp tail overhangs are expanded by 0.2 mm.
         for (size_t i = 0; i < print_object.layer_count(); i++) {
-            for (ExPolygon& expoly : print_object.get_layer(i)->loverhangs) {
-                Polygons polys = to_polygons(expoly);
-                if (tree_support->overhang_types[&expoly] == TreeSupport::SharpTail) { polys = offset(polys, scale_(0.2));
-                }
+            for (const std::pair<ExPolygon, int>& overhang_with_type : print_object.get_layer(i)->loverhangs_with_type) {
+                Polygons polys = to_polygons(overhang_with_type.first);
+                if (overhang_with_type.second == TreeSupport::SharpTail)
+                    polys = offset(polys, scale_(0.2));
                 append(overhangs[i + num_raft_layers], polys);
             }
         }

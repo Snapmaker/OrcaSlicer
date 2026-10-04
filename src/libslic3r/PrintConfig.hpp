@@ -30,6 +30,8 @@
 
 namespace Slic3r {
 
+class DynamicPrintConfig;
+
 enum GCodeFlavor : unsigned char {
     gcfMarlinLegacy, 
     gcfKlipper, 
@@ -166,6 +168,7 @@ inline bool is_smoothable_infill_pattern(InfillPattern pattern, int multiline = 
     case ipGrid:
     case ipTriangles:
     case ipStars:
+    case ipCubic:
         return multiline > 1;
     default:
         return false;
@@ -293,6 +296,12 @@ inline bool is_auto(SupportType stype)
 {
     return std::set<SupportType>{stNormalAuto, stTreeAuto}.count(stype) != 0;
 };
+// Tree supports with the default style are Hybrid with custom layering or a zero top gap under top
+// interface layers, Organic otherwise.
+inline bool tree_default_style_is_hybrid(double support_top_z_distance, int support_interface_top_layers, bool custom_layering)
+{
+    return custom_layering || (support_top_z_distance == 0. && support_interface_top_layers > 0);
+}
 
 enum SeamPosition {
     spNearest, spAligned, spAlignedBack, spRear, spRandom
@@ -544,8 +553,11 @@ enum NozzleVolumeType {
                      // with more than one sub-nozzle (extruder_max_nozzle_count > 1); matched as Standard for
                      // preset lookup and never emitted in profile variant strings
     nvtTPUHighFlow,  // physical variant, used on H2D/H2DP 0.4 nozzles only
+    // 4 is reserved: E3D High Flow is 5 in BambuStudio's slice_info and device numbering.
+    nvtE3DHighFlow = 5, // physical variant, E3D high-flow hotend on 0.4/0.6 nozzles
+    nvtExtraHighFlow = 6, // Orca: physical variant with no BambuStudio or device counterpart; only profiles name it
     // Integer values are serialized as raw ints in 3mf plate metadata and device MQTT, so they MUST stay stable.
-    nvtMaxNozzleVolumeType = nvtTPUHighFlow
+    nvtMaxNozzleVolumeType = nvtExtraHighFlow
 };
 
 enum FilamentMapMode {
@@ -583,10 +595,18 @@ static std::set<NozzleVolumeType> get_valid_nozzle_volume_type() {
         // Hybrid is not a physical nozzle variant: presets never define it, so it must not
         // produce a variant string.
         if (t == nvtHybrid) continue;
+        // Skip the reserved gap between nvtTPUHighFlow (3) and nvtE3DHighFlow (5).
+        if (i > nvtTPUHighFlow && i < nvtE3DHighFlow) continue;
         type.insert(t);
     }
     return type;
 }
+
+// The nozzle volume types the given extruder physically provides, as declared by the printer
+// profile's extruder_variant_list. An empty set means the profile could not be read and must be
+// treated as "unknown", not as "none". nvtHybrid is never reported: it describes an extruder
+// holding a mix of nozzles, not a nozzle the profile can offer.
+extern std::set<NozzleVolumeType> get_extruder_supported_nozzle_volume_types(const DynamicPrintConfig &printer_config, int extruder_id);
 
 std::string get_nozzle_volume_type_string(NozzleVolumeType nozzle_volume_type);
 
@@ -733,8 +753,6 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SurfaceFillOrder)
 
 #undef CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS
 
-class DynamicPrintConfig;
-
 // Defines each and every configuration option of Slic3r, including the properties of the GUI dialogs.
 // Does not store the actual values, but defines default values.
 class PrintConfigDef : public ConfigDef
@@ -855,6 +873,10 @@ public:
     //BBS
     bool is_using_different_extruders();
     bool support_different_extruders(int& extruder_count) const;
+    // Whether any filament defines more than one variant (filament_extruder_variant longer than
+    // filament_diameter). Its variants then have to be resolved even on a printer with a single
+    // extruder variant, which picks the filament's variant of the same variant string.
+    bool has_multi_variant_filament() const;
     // Counts the config slots of a printer: one per (extruder x nozzle volume type) as described by
     // extruder_nozzle_stats, or simply one per extruder when the stats are absent/mismatched.
     // Fills nozzle_volume_types with each extruder's volume types in ascending enum order.
@@ -896,7 +918,8 @@ public:
 extern std::set<std::string> printer_extruder_options;
 extern std::set<std::string> print_options_with_variant;
 extern std::set<std::string> filament_options_with_variant;
-// Snapmaker: the keys of filament_options_with_variant that mainline keeps per filament.
+// Snapmaker: the keys of filament_options_with_variant that High Flow presets tune per flow type and
+// that projects of earlier versions store once per filament.
 const std::vector<std::string>& promoted_filament_variant_keys();
 // First column of a filament in the per-variant filament arrays: with one column per filament,
 // the filament id itself (filament_self_index is 1 based). Reads only its arguments, so the G-code
@@ -931,6 +954,11 @@ struct VariantOverrideRule
 };
 void set_variant_override(ConfigOptionVectorBase &target, const ConfigOptionVectorBase &source,
                           const std::vector<int> &variant_index, int stride = 1, const VariantOverrideRule &rule = VariantOverrideRule());
+
+// Orca: lays every filament_options_with_variant option out one value per filament variant, as
+// filament_self_index maps the variants to filaments. An option holding one value per filament, or a
+// single value, gives every variant of a filament that filament's value; other lengths are left alone.
+void normalize_filament_values_to_variants(DynamicPrintConfig &config);
 
 extern std::set<std::string> filament_dev_options;
 
@@ -1226,6 +1254,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt,                 support_interface_bottom_layers))
     // Spacing between interface lines (the hatching distance). Set zero to get a solid interface.
     ((ConfigOptionFloat,               support_interface_spacing))
+    // Tree support overhangs smaller than this area (mm^2) get no support interface (roof).
+    ((ConfigOptionFloat,               support_interface_min_area))
     ((ConfigOptionFloatsNullable,      support_interface_speed))
     ((ConfigOptionEnum<SupportMaterialPattern>, support_base_pattern))
     ((ConfigOptionEnum<SupportMaterialInterfacePattern>, support_interface_pattern))
@@ -1298,6 +1328,11 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionPercent,            tree_support_top_rate))
     ((ConfigOptionFloat,              tree_support_branch_diameter_organic))
     ((ConfigOptionFloat,              tree_support_branch_angle_organic))
+    // Transition layers between the support interface and the support body.
+    ((ConfigOptionInt,                tree_support_transition_layers))
+    ((ConfigOptionBool,               support_transition_perimeter))
+    ((ConfigOptionFloats,             support_transition_speed))
+    ((ConfigOptionFloatOrPercent,     support_transition_flow_ratio))
     ((ConfigOptionEnum<GapFillTarget>,gap_fill_target))
     ((ConfigOptionFloat,              min_length_factor))
 
@@ -1344,6 +1379,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionStrings,  print_extruder_override))
     ((ConfigOptionInt,                  bottom_shell_layers))
     ((ConfigOptionFloat,                bottom_shell_thickness))
+    ((ConfigOptionInt,                  bottom_color_penetration_layers))
     ((ConfigOptionFloat,                bridge_angle))
     ((ConfigOptionFloat,                internal_bridge_angle)) // ORCA: Internal bridge angle override
     ((ConfigOptionBool,                 relative_bridge_angle)) // ORCA: Relative bridge angle flag
@@ -1452,6 +1488,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat, top_surface_expansion_margin))
     ((ConfigOptionEnum<TopSurfaceExpansionDirection>, top_surface_expansion_direction))
     ((ConfigOptionFloatsNullable, top_surface_speed))
+    ((ConfigOptionInt, top_color_penetration_layers))
     //BBS
     ((ConfigOptionBoolsNullable,            enable_overhang_speed))
     ((ConfigOptionFloatsOrPercentsNullable, overhang_1_4_speed))
@@ -1479,7 +1516,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloatsNullable,           small_perimeter_threshold))
     ((ConfigOptionFloatsOrPercentsNullable, small_support_perimeter_speed))
     ((ConfigOptionFloatsNullable,           small_support_perimeter_threshold))
-    ((ConfigOptionFloat,                top_solid_infill_flow_ratio))
+    ((ConfigOptionFloatsNullable,       top_solid_infill_flow_ratio))
     ((ConfigOptionFloat,                bottom_solid_infill_flow_ratio))
     ((ConfigOptionFloatOrPercent,       infill_anchor))
     ((ConfigOptionFloatOrPercent,       infill_anchor_max))
@@ -1719,6 +1756,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionString,              toolchange_cyclic_order))
     ((ConfigOptionBool,                toolchange_cyclic_first_layer))
     ((ConfigOptionBool,                wipe_tower_no_sparse_layers))
+    ((ConfigOptionBool,                wipe_tower_sparse_layers_combination))
     ((ConfigOptionString,              change_filament_gcode))
     ((ConfigOptionString,              change_extrusion_role_gcode))
     ((ConfigOptionString,              process_change_extrusion_role_gcode))

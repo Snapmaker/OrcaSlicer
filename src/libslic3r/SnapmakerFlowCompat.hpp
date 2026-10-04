@@ -11,11 +11,6 @@ class DynamicPrintConfig;
 // Reading of configuration layouts that predate the Standard / High Flow columns of the Snapmaker
 // filament presets.
 
-// Expands promoted_filament_variant_keys() stored per filament to one value per column, using
-// filament_self_index (1 based). Must run before the config is split into filament presets, which
-// resizes the vectors in place. Returns the number of rebuilt keys.
-size_t normalize_promoted_filament_keys(DynamicPrintConfig& config, size_t num_filaments, const std::vector<int>& filament_self_index);
-
 // Snapmaker Orca 2.4 configs: the *_flow_support / filament_flow_step_size keys become variant
 // columns, and filament_volume_type is folded into nozzle_volume_type (a tool head takes the type its
 // filaments agree on, else differing filaments are dropped into the report). True if any 2.4 key was found.

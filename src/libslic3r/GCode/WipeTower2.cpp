@@ -1094,6 +1094,7 @@ WipeTower2::WipeTower2(const PrintConfig& config, const PrintRegionConfig& defau
     m_z_pos(0.f),
     m_bridging(float(config.wipe_tower_bridging)),
     m_sparse_layers_skipped(wipe_tower_sparse_layers_skipped(config)),
+    m_sparse_layers_combined(wipe_tower_sparse_layers_combined(config)),
     m_gcode_flavor(config.gcode_flavor),
     m_head_infill_speed(default_region_config.sparse_infill_speed.values),
     m_head_perimeter_speed(default_region_config.inner_wall_speed.values),
@@ -1226,6 +1227,16 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
         pow(config.filament_diameter.get_at(idx), 2)); // all extruders are assumed to have the same filament diameter at this point
     float nozzle_diameter         = float(config.nozzle_diameter.get_at(idx));
     m_filpar[idx].nozzle_diameter = nozzle_diameter; // to be used in future with (non-single) multiextruder MM
+
+    // Orca: max_layer_height is per nozzle, so read it through the filament->nozzle map rather than
+    // by filament id. Zero means three quarters of the nozzle diameter, as in Slicing.cpp.
+    {
+        const std::vector<int> &filament_map = config.filament_map.values; // 1 based nozzle indices
+        const size_t nozzle_idx = idx < filament_map.size() && filament_map[idx] > 0 ? size_t(filament_map[idx] - 1) : 0;
+        const float  max_layer_height = float(config.max_layer_height.get_at(nozzle_idx));
+        m_filpar[idx].max_layer_height = max_layer_height > 0.f ? max_layer_height
+                                                                : 0.75f * float(config.nozzle_diameter.get_at(nozzle_idx));
+    }
 
     float max_vol_speed = float(config.filament_max_volumetric_speed.get_at(idx));
     if (max_vol_speed != 0.f)
@@ -2362,7 +2373,9 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
 
     // Ask our writer about how much material was consumed.
     // Skip this in case the layer is sparse and config option to not print sparse layers is enabled.
-    if (!m_sparse_layers_skipped || toolchanges_on_layer || first_layer) {
+    // A folded layer prints nothing, so it consumes nothing and adds no height of its own.
+    const bool combined_away = m_layer_info != m_plan.end() && m_layer_info->combined_away;
+    if ((! m_sparse_layers_skipped || toolchanges_on_layer || first_layer) && ! combined_away) {
         if (m_current_tool < m_used_filament_length.size())
             m_used_filament_length[m_current_tool] += writer.get_and_reset_used_filament_length();
         m_current_height += m_layer_info->height;
@@ -2810,7 +2823,7 @@ static WipeTower::ToolChangeResult merge_tcr(WipeTower::ToolChangeResult& first,
     assert(first.new_tool == second.initial_tool);
     WipeTower::ToolChangeResult out = first;
     out.is_contact = first.is_contact || second.is_contact;
-    if (first.end_pos != second.start_pos)
+    if ((first.end_pos - second.start_pos).norm() > float(EPSILON))
         out.gcode += "G1 X" + Slic3r::float_to_string_decimal_point(second.start_pos.x(), 3) + " Y" +
                      Slic3r::float_to_string_decimal_point(second.start_pos.y(), 3) + " F7200\n";
     out.gcode += second.gcode;
@@ -2819,6 +2832,11 @@ static WipeTower::ToolChangeResult merge_tcr(WipeTower::ToolChangeResult& first,
     out.wipe_path    = second.wipe_path;
     out.initial_tool = first.initial_tool;
     out.new_tool     = second.new_tool;
+    // The merged result keeps the toolchange's own entry position (the second part when the
+    // finish layer is printed first) and the purge volume of both parts.
+    if (first.is_finish_first && !second.is_finish_first)
+        out.tool_change_start_pos = second.tool_change_start_pos;
+    out.purge_volume += second.purge_volume;
     return out;
 }
 
@@ -2855,6 +2873,14 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
 {
     if (m_plan.empty())
         return;
+
+    // Before planning: the layer heights this rewrites feed the extrusion flow of every later pass.
+    // Local-Z toolchanges and reserve slots purge at their own z, so a plan holding any stays uncombined.
+    const bool plan_has_local_z = std::any_of(m_plan.begin(), m_plan.end(), [](const WipeTowerInfo &layer) {
+        return !layer.local_z_tool_changes.empty() || layer.local_z_reserve_slot_count > 0;
+    });
+    if (m_sparse_layers_combined && !plan_has_local_z)
+        combine_sparse_wipe_tower_plan(m_plan, m_filpar, m_first_layer_idx, m_current_tool);
 
     plan_tower();
 
@@ -2979,6 +3005,10 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
             } else
                 layer_result[idx] = merge_tcr(layer_result[idx], finish_layer_tcr);
         }
+
+        if (layer.combined_away)
+            for (WipeTower::ToolChangeResult &tcr : layer_result)
+                tcr.combined_away = true;
 
         result.emplace_back(std::move(layer_result));
         local_z_result.emplace_back(std::move(local_z_layer_result));

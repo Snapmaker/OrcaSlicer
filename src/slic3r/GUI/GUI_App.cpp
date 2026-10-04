@@ -6,6 +6,7 @@
 #include "libslic3r/Platform.hpp"
 #include "GUI_App.hpp"
 #include "Shortcuts.hpp"
+#include "DeviceCore/DevConfigUtil.h"
 #include "BindDialog.hpp"
 #include "DeviceManager.hpp"
 #include "HMS.hpp"
@@ -28,7 +29,6 @@
 #include <boost/locale/encoding_utf.hpp>
 #include <boost/log/detail/native_typeof.hpp>
 #include <libslic3r/Config.hpp>
-#include <mutex>
 #include <slic3r/plugin/PythonPluginInterface.hpp>
 #include <wx/event.h>
 
@@ -57,9 +57,11 @@
 #include <exception>
 #include <cstdlib>
 #include <clocale>
+#include <mutex>
 #include <regex>
 #include <thread>
 #include <string_view>
+
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
@@ -105,7 +107,6 @@
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/miniz_extension.hpp"
 #include "libslic3r/Utils.hpp"
-#include "libslic3r/Color.hpp"
 #include "slic3r/plugin/PluginManager.hpp"
 #include "slic3r/plugin/host/PluginHostUi.hpp"
 #include "slic3r/plugin/PythonInterpreter.hpp"
@@ -127,19 +128,18 @@
 #include "../Utils/PrintHost.hpp"
 #include "../Utils/Process.hpp"
 #include "../Utils/wxInspectorPlugins/Registration.hpp"
-#include "../Utils/MacDarkMode.hpp"
 #include "../Utils/Http.hpp"
 #include "../Utils/InstanceID.hpp"
 #include "../Utils/UndoRedo.hpp"
 #include "slic3r/Config/Snapshot.hpp"
 #include "Preferences.hpp"
 #include "Tab.hpp"
-#include "SysInfoDialog.hpp"
 #include "UpdateDialogs.hpp"
 #include "Mouse3DController.hpp"
 #include "RemovableDriveManager.hpp"
 #include "InstanceCheck.hpp"
 #ifdef __APPLE__
+#include "../Utils/MacDarkMode.hpp"
 #include "DeepLinkHandlerMac.h"
 #endif
 #include "NotificationManager.hpp"
@@ -148,8 +148,6 @@
 #include "PrintHostDialogs.hpp"
 #include "NetworkPluginDialog.hpp"
 #include "DesktopIntegrationDialog.hpp"
-#include "SendSystemInfoDialog.hpp"
-#include "ParamsDialog.hpp"
 #include "KBShortcutsDialog.hpp"
 #include "DownloadProgressDialog.hpp"
 #include "TroubleshootDialog.hpp"
@@ -161,7 +159,6 @@
 #include "Widgets/SideButton.hpp"
 
 //BBS: DailyTip and UserGuide Dialog
-#include "WebDownPluginDlg.hpp"
 #include "WebGuideDialog.hpp"
 #include "ReleaseNote.hpp"
 #include "PrivacyUpdateDialog.hpp"
@@ -1137,7 +1134,28 @@ void GUI_App::post_init()
         slow_bootup = true;
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", slow bootup, won't render gl here.";
     }
-    if (!switch_to_3d) {
+    // Starting on Home, the GL resources load at idle so Home paints first and Prepare is never
+    // shown.
+    const bool gl_at_idle = !starts_on_prepare() && is_editor();
+    if (!switch_to_3d && gl_at_idle) {
+#ifndef __linux__
+        mainframe->Freeze();
+#endif
+        // Snapmaker Orca: select_view_3D() also selects the Prepare tab. Prepare is made current without
+        // the page-changed event first, so that selection builds nothing, and Home is selected again.
+        // Rendering stays off meanwhile: a render of Prepare would load the GL resources right here.
+        plater_->canvas3D()->enable_render(false);
+        mainframe->select_prepare_for_gl_init();
+        plater_->select_view_3D("3D");
+        plater_->canvas3D()->enable_render(true);
+        if (m_url_open_pending)
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", url open pending, staying on the 3D view";
+        else
+            mainframe->select_tab(TAB_ID_HOME);
+#ifndef __linux__
+        mainframe->Thaw();
+#endif
+    } else if (!switch_to_3d) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", begin load_gl_resources";
 #ifndef __linux__
         mainframe->Freeze();
@@ -1145,9 +1163,6 @@ void GUI_App::post_init()
         plater_->canvas3D()->enable_render(false);
         mainframe->select_prepare_for_gl_init();
         plater_->select_view_3D("3D");
-        // The first render happens before the queued new_project() sets the same view.
-        plater_->get_camera().select_view("topfront");
-        plater_->get_camera().requires_zoom_to_bed = true;
         //BBS init the opengl resource here
         if (!plater_->canvas3D()->get_wxglcanvas()->IsShownOnScreen() ||
             !plater_->canvas3D()->make_current_for_postinit()) {
@@ -1183,19 +1198,12 @@ void GUI_App::post_init()
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", finished rendering a first frame for test";
             }
         }
-        // A pending URL open has already selected the 3D view; switching to the home page would undo it.
+        // A pending URL open has already selected the 3D view; a tab switch here would undo it.
         // On macOS the URL arrives later through MacOpenURL, so switch_to_3d above cannot see it.
-        if (m_url_open_pending) {
+        if (m_url_open_pending)
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", url open pending, staying on the 3D view";
-        } else {
-            // Selected synchronously: the GL init pass above went through
-            // select_prepare_for_gl_init(), which raises no page-changed event, so no
-            // EVT_GLVIEWTOOLBAR_3D is pending that could undo this selection.
-            if (starts_on_prepare())
-                mainframe->select_tab(TAB_ID_PREPARE);
-            else if (is_editor())
-                mainframe->select_tab(TAB_ID_HOME);
-        }
+        else if (starts_on_prepare())
+            mainframe->select_tab(TAB_ID_PREPARE);
 #ifndef __linux__
         mainframe->Thaw();
 #endif
@@ -1266,7 +1274,9 @@ void GUI_App::post_init()
             }
             this->preset_updater->sync_web_async(true);
 
-            this->check_new_version_sf();
+            // App update check: the snapmaker-config gray release endpoint first, the static
+            // version.json as its fallback.
+            this->request_version_from_config(false, 0);
             const auto cloud_provider = get_printer_cloud_provider();
             if (is_user_login(cloud_provider) && !app_config->get_stealth_mode()) {
               // this->check_privacy_version(0);
@@ -1803,11 +1813,33 @@ int GUI_App::install_plugin(std::string name, std::string package_name, InstallP
                     size_t n = mz_zip_reader_get_extra(&archive, stat.m_file_index, extra.data(), extra.size());
                     dest_file = decode(extra.substr(0, n), stat.m_filename);
                 }
+                if (!is_path_within_root(dest_file, plugin_folder)) {
+                    BOOST_LOG_TRIVIAL(error) << "[install_plugin] entry " << dest_file << " resolves outside " << plugin_folder.string();
+                    close_zip_reader(&archive);
+                    if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
+                    return InstallStatusUnzipFailed;
+                }
                 auto dest_path = plugin_folder / dest_file;
-                boost::filesystem::create_directories(dest_path.parent_path());
                 std::string dest_zip_file = encode_path(dest_path.string().c_str());
+#ifndef WIN32
+                // Validate a symlink's target before anything at the destination is replaced.
+                const bool is_link = S_ISLNK(stat.m_external_attr >> 16);
+                std::string link;
+                if (is_link) {
+                    link.assign(stat.m_uncomp_size, 0);
+                    if (!mz_zip_reader_extract_to_mem(&archive, stat.m_file_index, link.data(), stat.m_uncomp_size, 0) ||
+                        !is_symlink_target_within_root(dest_file, link, plugin_folder)) {
+                        BOOST_LOG_TRIVIAL(error) << "[install_plugin] link " << dest_file << " -> " << link << " is unreadable or resolves outside " << plugin_folder.string();
+                        close_zip_reader(&archive);
+                        if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
+                        return InstallStatusUnzipFailed;
+                    }
+                }
+#endif
                 try {
-                    if (fs::exists(dest_path)) {
+                    boost::filesystem::create_directories(dest_path.parent_path());
+                    // symlink_status so that an existing symlink, dangling or not, is replaced rather than written through.
+                    if (fs::exists(fs::symlink_status(dest_path))) {
                         boost::system::error_code ec;
                         fs::remove(dest_path, ec);
                         if (ec) {
@@ -1835,9 +1867,8 @@ int GUI_App::install_plugin(std::string name, std::string package_name, InstallP
                     }
                     mz_bool res = 0;
 #ifndef WIN32
-                    if (S_ISLNK(stat.m_external_attr >> 16)) {
-                        std::string link(stat.m_uncomp_size + 1, 0);
-                        res = mz_zip_reader_extract_to_mem(&archive, stat.m_file_index, link.data(), stat.m_uncomp_size, 0);
+                    if (is_link) {
+                        res = 1;
                         try {
                             boost::filesystem::create_symlink(link, dest_path);
                         } catch (const std::exception &e) {
@@ -2711,34 +2742,23 @@ GUI_App::~GUI_App()
 
 bool GUI_App::is_blocking_printing(MachineObject *obj_)
 {
-    DeviceManager *dev = Slic3r::GUI::wxGetApp().getDeviceManager();
-    if (!dev) return true;
-    std::string target_model;
-    if (obj_ == nullptr) {
-        obj_ = dev->get_selected_machine();
-        if (obj_) {
-            target_model = obj_->printer_type;
-        }
-    } else {
-        target_model = obj_->printer_type;
-    }
-
-    if (!obj_)
-    {
-        return false;
-    }
-
     PresetBundle *preset_bundle = wxGetApp().preset_bundle;
-    std::string    source_model  = preset_bundle->printers.get_edited_preset().get_printer_type(preset_bundle);
+    const std::string source_model = preset_bundle
+        ? preset_bundle->printers.get_edited_preset().get_printer_type(preset_bundle)
+        : std::string();
+    return is_blocking_printing(obj_, source_model);
+}
 
-    if (source_model != target_model) {
-        std::vector<std::string>      compatible_machine = obj_->get_compatible_machine();
-        vector<std::string>::iterator it                 = find(compatible_machine.begin(), compatible_machine.end(), source_model);
-        if (it == compatible_machine.end()) {
-            return true;
-        }
-    }
-    return false;
+bool GUI_App::is_blocking_printing(MachineObject *obj_, const std::string& source_model)
+{
+    DeviceManager *dev = getDeviceManager();
+    if (!dev) return true;
+    if (obj_ == nullptr)
+        obj_ = dev->get_selected_machine();
+    if (!obj_)
+        return false;
+
+    return !DevPrinterConfigUtil::is_printer_model_compatible(source_model, *obj_);
 }
 
 // If formatted for github, plaintext with OpenGL extensions enclosed into <details>.
@@ -3893,6 +3913,10 @@ bool GUI_App::on_init_inner()
 
     BOOST_LOG_TRIVIAL(info) << "create the main window";
     mainframe = new MainFrame();
+    // The first render can happen as soon as the frame is shown, before the queued
+    // new_project() sets the same view.
+    plater_->get_camera().select_view("topfront");
+    plater_->get_camera().requires_zoom_to_bed = true;
     if (!m_updateDialog)
     {
         m_updateDialog = new UpdateVersionDialog(mainframe);
@@ -4528,20 +4552,16 @@ void GUI_App::set_live_printer_agent(std::shared_ptr<IPrinterAgent> agent)
         m_agent->set_user_selected_machine("");
         // note: belt-and-suspenders (precedent: DeviceManagerRefresher::on_timer)
         dev->OnSelectedMachineLost(); // why: clear stale sidebar sync-status / AMS
-        // why: drop stale LAN discoveries; keep My Devices, but only those belonging to the
-        // agent we're about to swap to, so a device stamped by the outgoing agent doesn't
-        // linger hidden - the new agent's start_discovery re-inserts and re-stamps it fresh.
-        // agent is null when clearing the live agent entirely (e.g. plugin unload); there's no
-        // target to filter against then, so fall back to the original "keep all My Devices"
-        // behavior rather than guessing.
-        dev->clear_other_devices(agent ? agent->get_agent_info().id : std::string());
+        // why: retain agent-owned LAN discoveries so agents without automatic discovery (for
+        // example the Moonraker-based Qidi/Snapmaker agents) can reuse them after a switch.
+        dev->clear_other_devices();
     }
 
     m_agent->set_printer_agent(agent);
     sidebar().update_all_preset_comboboxes();
 }
 
-std::string GUI_App::resolve_printer_agent_id(const std::string& stored_id)
+std::string GUI_App::resolve_printer_agent_id(const std::string& stored_id) const
 {
     if (!stored_id.empty())
         return stored_id;
@@ -4577,6 +4597,7 @@ void GUI_App::switch_printer_agent()
 
     std::string log_dir        = data_dir();
     std::string cloud_agent_id = agent_info.id == BBL_PRINTER_AGENT_ID ? BBL_CLOUD_PROVIDER : ORCA_CLOUD_PROVIDER;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " " << agent_info.id;
     std::shared_ptr<ICloudServiceAgent> cloud_agent = m_agent->get_cloud_agent(cloud_agent_id);
 
     // Create new printer agent via registry
@@ -4590,8 +4611,10 @@ void GUI_App::switch_printer_agent()
         return;
     }
 
-    // The factory caches agents per ID, so an identical pointer means the agent type is unchanged.
-    if (m_agent->get_printer_agent() == new_printer_agent) {
+    // Compare the registered IDs, not only the implementation pointer. Different registry IDs
+    // may intentionally be backed by the same implementation object (especially for plugins).
+    const auto current_printer_agent = m_agent->get_printer_agent();
+    if (current_printer_agent && current_printer_agent->get_agent_info().id == effective_agent_id) {
         // Orca: the agent type is unchanged (e.g. switching between two Moonraker/Klipper
         // printer presets), so the selected machine and the agent's cached device_info still
         // point at the previously active printer preset. Re-select the machine when the new
@@ -5920,12 +5943,14 @@ bool GUI_App::is_user_login(const std::string& provider/* = ORCA_CLOUD_PROVIDER*
     return false;
 }
 
-const std::string& GUI_App::get_printer_cloud_provider() const
+std::string GUI_App::get_printer_cloud_provider() const
 {
-    // Orca todo: this need to be revisted. currently it is mainly used for device manager and related clausses and only bambu machines use them.
-    // 
-    return BBL_CLOUD_PROVIDER;
+    const std::string agent_id = resolve_printer_agent_id(
+        preset_bundle ? preset_bundle->printers.get_edited_preset().config.opt_string("printer_agent")
+                      : std::string());
+    return agent_id == BBL_PRINTER_AGENT_ID ? BBL_CLOUD_PROVIDER : ORCA_CLOUD_PROVIDER;
 }
+
 
 
 bool GUI_App::check_login(const std::string& provider/* = ORCA_CLOUD_PROVIDER*/)
@@ -7027,6 +7052,223 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
             std::string errorMsg = ex.what();
             BOOST_LOG_TRIVIAL(fatal) << "request server soft update data error:" << errorMsg;
           }
+        })
+        .perform();
+}
+
+void GUI_App::request_version_from_config(bool show_tips, int by_user)
+{
+    std::string url = app_config->get_config_api_url();
+
+    json req;
+    // appName encodes the platform (server contract): the config backend hosts two apps,
+    // snapmaker-orca-win / snapmaker-orca-mac, each with its own default + gray configs.
+#if defined(_WIN32)
+    req["appName"] = "snapmaker-orca-win";
+    const std::string client_platform_type = "win";
+#elif defined(__APPLE__)
+    req["appName"] = "snapmaker-orca-mac";
+    const std::string client_platform_type = "mac";
+#else
+    req["appName"] = "snapmaker-orca";
+    const std::string client_platform_type = "";
+#endif
+    // Three numeric segments (e.g. "2.4.0"): the server compares version levels numerically
+    // (versionInRange), so the zero-padded four-segment form must not be sent here.
+    req["version"] = std::string(Snapmaker_VERSION);
+    // Same source as the global X-BBL-Device-ID header (slicer_uuid), the gray bucketing key.
+    // The body carries no userId by contract: the gateway derives it from the Authorization
+    // token below and injects it into rule evaluation server-side.
+    req["deviceId"]   = app_config->get("slicer_uuid");
+    std::string req_body = req.dump();
+
+    // Type-guarded readers: unlike value(), a wrong-typed field is treated as missing
+    // instead of raising type_error.302 (e.g. a string "200" where a number is expected).
+    auto str_field  = [](const json& j, const char* key) -> std::string {
+        auto it = j.find(key);
+        return it != j.end() && it->is_string() ? it->get<std::string>() : std::string();
+    };
+    auto flag_field = [](const json& j, const char* key) -> bool {
+        auto it = j.find(key);
+        return it != j.end() && it->is_boolean() ? it->get<bool>() : false;
+    };
+    auto obj_field  = [](const json& j, const char* key) -> json {
+        auto it = j.find(key);
+        return it != j.end() && it->is_object() ? *it : json::object();
+    };
+
+    auto http = Http::post(url);
+    http.header("Content-Type", "application/json");
+    // Gateway auth (snapmaker-config): the SM account JWT goes in Authorization as a raw
+    // token, no "Bearer " prefix — same convention as the SM login requests. The gateway
+    // resolves the gray-rule variable userId from it; anonymous requests stay valid
+    // (update check must work without login) and rules evaluate with userId = nil.
+    // The account token must never travel over plaintext http — the orca_config_api_url
+    // override can point at any URL. Internal testing builds are the only exception,
+    // because the dev gateway has no TLS.
+    bool allow_http_auth = false;
+#if BBL_INTERNAL_TESTING
+    allow_http_auth = true;
+#endif
+    bool with_auth = false;
+    if (sm_get_userinfo()->is_user_login()) {
+        std::string auth_token = sm_get_userinfo()->get_user_token();
+        if (!auth_token.empty()) {
+            if (url.rfind("https://", 0) == 0 || allow_http_auth) {
+                http.header("Authorization", auth_token);
+                with_auth = true;
+            } else {
+                BOOST_LOG_TRIVIAL(warning) << "config/get: refusing to send Authorization over non-https URL";
+            }
+        }
+    }
+    // Normal-path diagnostics stay at info so the release warning stream is reserved
+    // for anomalies; failure paths log at warning.
+    BOOST_LOG_TRIVIAL(info) << format("config/get: posting to `%1%` %2%, deviceId `%3%`", url, with_auth ? "with Authorization" : "anonymously", req["deviceId"].get<std::string>());
+    http.set_post_body(req_body)
+        .timeout_connect(TIMEOUT_CONNECT)
+        // Total timeout: a stalled transfer after a successful connect must still
+        // trigger the static fallback (CURLOPT_TIMEOUT defaults to unlimited).
+        .timeout_max(30)
+        .on_error([this, show_tips, by_user](std::string body, std::string error, unsigned http_status) {
+            (void)body;
+            BOOST_LOG_TRIVIAL(warning) << format("Error posting: `%1%`: HTTP %2%, %3%, fallback to static version.json", "config/get", http_status, error);
+            check_new_version_sf(show_tips, by_user);
+        })
+        .on_complete([this, show_tips, by_user, str_field, flag_field, obj_field, client_platform_type](std::string body, unsigned http_status) {
+            if (http_status != 200) {
+                BOOST_LOG_TRIVIAL(warning) << format("status not 200 with: `%1%`: HTTP %2%, fallback to static version.json", "config/get", http_status);
+                check_new_version_sf(show_tips, by_user);
+                return;
+            }
+            // allow_exceptions = false: a malformed or non-UTF-8 body yields a discarded value
+            // (never an exception) and degrades to the static check. A document that parses
+            // successfully is valid UTF-8 by construction, so every string below is FromUTF8-safe.
+            json jsonObj = json::parse(body, nullptr, false);
+            if (jsonObj.is_discarded() || !jsonObj.is_object()) {
+                BOOST_LOG_TRIVIAL(warning) << "config/get body is not valid JSON/UTF-8, fallback to static version.json";
+                check_new_version_sf(show_tips, by_user);
+                return;
+            }
+
+            // Server contract: 40001 = no default config, 604001 = bad params, 50001 = internal error
+            int  errCode = 0;
+            auto code_it = jsonObj.find("code");
+            if (code_it != jsonObj.end() && code_it->is_number_integer())
+                errCode = code_it->get<int>();
+            if (errCode != 200 || !jsonObj.contains("data") || !jsonObj["data"].is_object()) {
+                BOOST_LOG_TRIVIAL(warning) << format("config/get rejected: code %1%, msg %2%, fallback to static version.json", errCode, str_field(jsonObj, "msg"));
+                check_new_version_sf(show_tips, by_user);
+                return;
+            }
+
+            // The payload mirrors the data object of the static version.json.
+            // A malformed payload (missing/invalid required fields) must degrade to the
+            // static channel instead of silently suppressing the update check: a
+            // misconfigured gray release may never be worse than static-only behavior.
+            auto reject_payload = [this, show_tips, by_user](const char* reason) {
+                BOOST_LOG_TRIVIAL(warning) << format("config/get payload rejected: %1%, fallback to static version.json", reason);
+                check_new_version_sf(show_tips, by_user);
+            };
+
+            const json dataObj = jsonObj["data"];
+
+            std::string releaseType = str_field(dataObj, "release_type");
+            if (releaseType.empty())
+                return reject_payload("release_type missing");
+
+            bool isForceUpgrade         = flag_field(dataObj, "is_force_upgrade");
+            version_info.force_upgrade  = isForceUpgrade;
+            version_info.version_str    = str_field(dataObj, "version");
+
+            // An explicitly non-stable release is a server-side decision, not a malformed
+            // payload: ignore it exactly like the static check ignores non-stable channels.
+            if (releaseType != RELEASE_TYPE_STABLE)
+            {
+                if (by_user)
+                    this->no_new_version();
+                return;
+            }
+
+            std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
+            Semver     current_version = get_version(Snapmaker_VERSION, matcher);
+            Semver     server_version  = get_version(version_info.version_str, matcher);
+            if (!server_version.valid())
+                return reject_payload("version missing or unparsable");
+
+            std::string platformType = str_field(dataObj, "platform_type");
+            // The payload must target the platform this build was compiled for (same
+            // mapping as appName): the server routes by appName, so a mismatched
+            // platform_type would offer the user another platform's installer.
+            if (platformType != client_platform_type)
+                return reject_payload("platform_type mismatch for this build");
+
+            // win x86_x64,  mac arm/x86_64  universal
+            json fullObj      = obj_field(dataObj, "full");
+            json defaultObj   = obj_field(fullObj, "default");
+            json armObj       = obj_field(fullObj, "arm");
+            json intelObj     = obj_field(fullObj, "intel");
+            version_info.description = str_field(fullObj, "file_describe");
+
+            if (platformType == "win") {
+                version_info.url         = str_field(defaultObj, "file_url");
+            }
+            else if (platformType == "mac")
+            {
+                bool isArm64 = false;
+#if defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
+                isArm64 = true;
+#else
+                isArm64 = false;
+#endif
+                json platformObj = defaultObj;
+                if (isArm64) {
+                    if (!armObj.empty()) {
+                        platformObj = armObj;
+                    }
+                }
+                else
+                {
+                    if (!intelObj.empty()) {
+                        platformObj = intelObj;
+                    }
+                }
+
+                version_info.url = str_field(platformObj, "file_url");
+            }
+            else
+            {
+                return reject_payload("unsupported platform_type");
+            }
+
+            // A payload without file_url must not open the update dialog:
+            // clicking download would launch the browser with an empty address.
+            if (version_info.url.empty()) {
+                return reject_payload("file_url missing");
+            }
+
+            if (current_version >= server_version) {
+                if(by_user)
+                    this->no_new_version();
+                return;
+            }
+
+            if (isForceUpgrade)
+            {
+                wxGetApp().app_config->set_bool("force_upgrade", version_info.force_upgrade);
+                wxGetApp().app_config->set("upgrade", "force_upgrade", true);
+                wxGetApp().app_config->set("upgrade", "description", version_info.description);
+                wxGetApp().app_config->set("upgrade", "version", version_info.version_str);
+                wxGetApp().app_config->set("upgrade", "url", version_info.url);
+                GUI::wxGetApp().enter_force_upgrade();
+                return;
+            }
+
+            wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
+            evt->SetString(version_info.url);
+            if (by_user)
+                evt->SetInt(UPDATE_BY_USER);
+            GUI::wxGetApp().QueueEvent(evt);
         })
         .perform();
 }
@@ -9003,10 +9245,12 @@ int GUI_App::input_idle_ms() const
     return int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_last_input).count());
 }
 
-// Every wxCommandEvent claims the user-input category, so only real mouse and key events count.
+// Every wxCommandEvent claims the user-input category, so only real mouse and key events count,
+// plus main window resizes, since a border drag produces no mouse events.
 int GUI_App::FilterEvent(wxEvent& event)
 {
-    if (!event.IsCommandEvent() && (event.GetEventCategory() & wxEVT_CATEGORY_USER_INPUT))
+    if ((!event.IsCommandEvent() && (event.GetEventCategory() & wxEVT_CATEGORY_USER_INPUT)) ||
+        (event.GetEventType() == wxEVT_SIZE && event.GetEventObject() == mainframe))
         m_last_input = std::chrono::steady_clock::now();
     return Event_Skip;
 }
@@ -11025,25 +11269,120 @@ bool is_soluble_filament(int extruder_id)
     if (support_option == nullptr) return false;
 
     return support_option->get_at(0);
+}
+
+
+namespace {
+// Interface / model material pairs that do not bond, so using one as support for the other
+// calls for adjusted support parameters. New pairs only need an entry here.
+struct IncompatibleSupportPair {
+    const char *interface_type;
+    const char *model_type;
 };
 
-bool has_filaments(const std::vector<string>& model_filaments) {
-    auto &filament_presets = Slic3r::GUI::wxGetApp().preset_bundle->filament_presets;
-    if (!Slic3r::GUI::wxGetApp().plater()) return false;
-    auto model_objects = Slic3r::GUI::wxGetApp().plater()->model().objects;
-    const Slic3r::DynamicPrintConfig &config = wxGetApp().preset_bundle->full_config();
-    Model::setExtruderParams(config, filament_presets.size());
+const IncompatibleSupportPair INCOMPATIBLE_SUPPORT_PAIRS[] = {
+    {"PETG", "PLA"},
+    {"PLA",  "PETG"},
+};
+} // anonymous namespace
 
-    auto get_filament_name = [](int id) { return Model::extruderParamsMap.find(id) != Model::extruderParamsMap.end() ? Model::extruderParamsMap.at(id).materialName : "PLA"; };
-    for (const ModelObject *mo : model_objects) {
-        for (auto vol : mo->volumes) {
-            auto ve = vol->get_extruders();
-            for (auto id : ve) {
-                auto name = get_filament_name(id);
-                if (find(model_filaments.begin(), model_filaments.end(), name) != model_filaments.end()) return true;
-            }
+// Whether any model volume on any plate prints with one of the given filament types.
+// Mixed-filament virtual slots are expanded to their physical components first.
+bool has_filaments(const std::vector<std::string> &filament_types)
+{
+    if (filament_types.empty())
+        return false;
+
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr)
+        return false;
+
+    PresetBundle *preset_bundle = wxGetApp().preset_bundle;
+    if (preset_bundle == nullptr)
+        return false;
+
+    const std::vector<std::string> &filament_presets = preset_bundle->filament_presets;
+    const PresetCollection         &filaments        = preset_bundle->filaments;
+    const size_t num_physical    = filament_presets.size();
+
+    // Resolve filament_type string for a 1-based extruder index.
+    auto resolve_filament_type = [&](int extruder_id_1based) -> std::string {
+        if (extruder_id_1based <= 0)
+            return std::string();
+        unsigned int idx = static_cast<unsigned int>(extruder_id_1based - 1);
+        if (idx >= filament_presets.size())
+            return std::string();
+        const Preset *preset = filaments.find_preset(filament_presets[idx]);
+        if (preset == nullptr)
+            return std::string();
+        const ConfigOptionStrings *opt = preset->config.option<ConfigOptionStrings>(
+            "filament_type");
+        if (opt == nullptr || opt->values.empty())
+            return std::string();
+        return opt->values[0];
+    };
+
+    // Collect 1-based extruder IDs from all model volumes on all plates.
+    std::vector<int> raw_extruder_ids;
+    const ModelObjectPtrs &model_objects = plater->model().objects;
+    for (const ModelObject *obj : model_objects) {
+        if (obj == nullptr) continue;
+        for (const ModelVolume *vol : obj->volumes) {
+            if (vol == nullptr) continue;
+            std::vector<int> extruders = vol->get_extruders();
+            raw_extruder_ids.insert(raw_extruder_ids.end(),
+                                    extruders.begin(), extruders.end());
         }
     }
+
+    // Expand mixed-filament virtual IDs to physical components. Only model materials need
+    // this: a mixed slot cannot be selected as a support filament.
+    if (num_physical > 0)
+        preset_bundle->mixed_filaments.expand_virtual_extruder_ids(raw_extruder_ids, num_physical);
+
+    // Match each expanded physical extruder against the target list.
+    for (int extruder_id : raw_extruder_ids) {
+        std::string filament_type = resolve_filament_type(extruder_id);
+        if (filament_type.empty()) continue;
+        for (const std::string &target : filament_types) {
+            if (filament_type == target)
+                return true;
+        }
+    }
+
+    return false;
+}
+
+// Whether the filament at 0-based extruder_id, used as support interface, forms an
+// incompatible PLA/PETG pair with a model material in the project.
+bool check_pla_petg_support_pair(int extruder_id)
+{
+    PresetBundle *preset_bundle = Slic3r::GUI::wxGetApp().preset_bundle;
+    if (preset_bundle == nullptr)
+        return false;
+
+    const std::vector<std::string> &filament_presets = preset_bundle->filament_presets;
+
+    if (extruder_id < 0 || extruder_id >= static_cast<int>(filament_presets.size()))
+        return false;
+
+    const Preset *filament = preset_bundle->filaments.find_preset(
+        filament_presets[extruder_id]);
+    if (filament == nullptr)
+        return false;
+
+    const ConfigOptionStrings *ft_opt =
+        filament->config.option<ConfigOptionStrings>("filament_type");
+    if (ft_opt == nullptr || ft_opt->values.empty())
+        return false;
+
+    const std::string &interface_type = ft_opt->values[0];
+
+    for (const IncompatibleSupportPair &pair : INCOMPATIBLE_SUPPORT_PAIRS) {
+        if (interface_type == pair.interface_type && has_filaments({pair.model_type}))
+            return true;
+    }
+
     return false;
 }
 
@@ -11072,7 +11411,7 @@ bool is_support_filament(int extruder_id, bool strict_check)
     }
     if (support_option == nullptr) return false;
     return support_option->get_at(0);
-};
+}
 
 } // GUI
 } //Slic3r

@@ -212,8 +212,10 @@ WipeTowerFootprint estimate_wipe_tower_footprint(const ConfigBase &config, WipeT
             }
             g.boundary_wipe_start              = g.ramming && gap_wall && !semm;
             g.new_line_width                   = line_width_of(new_id);
-            g.wipe_volume = old_id < flush_volumes.size() && new_id < flush_volumes[old_id].size() ? flush_volumes[old_id][new_id]
-                                                                                                    : float(prime_volume);
+            // Without a flush matrix the tower purges at least the new filament's minimal purge, as Print does.
+            const size_t new_column = self_index != nullptr ? first_filament_variant_column(self_index->values, new_id) : new_id;
+            const float  min_purge  = float(std::max(prime_volume, float_at("filament_minimal_purge_on_wipe_tower", unsigned(new_column), 0.)));
+            g.wipe_volume = old_id < flush_volumes.size() && new_id < flush_volumes[old_id].size() ? flush_volumes[old_id][new_id] : min_purge;
             g.extra_flow                       = float(extra_flow);
             g.extra_spacing_wipe               = float(extra_spacing * extra_flow);
             g.extra_spacing_ramming            = float(extra_spacing);

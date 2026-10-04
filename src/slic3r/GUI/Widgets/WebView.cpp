@@ -11,6 +11,7 @@
 
 #include <wx/webviewarchivehandler.h>
 #include <wx/webviewfshandler.h>
+#include <wx/weakref.h>
 #if wxUSE_WEBVIEW_EDGE
 #include <wx/msw/webview_edge.h>
 #elif defined(__WXMAC__)
@@ -396,7 +397,9 @@ class FakeWebView : public wxWebView
 wxDEFINE_EVENT(EVT_WEBVIEW_RECREATED, wxCommandEvent);
 
 static std::vector<wxWebView*> g_webviews;
-static std::vector<wxWebView*> g_delay_webviews;
+// Webviews waiting for their script handler while another one is added; adding it yields, so a
+// view can be destroyed while it waits.
+static std::vector<wxWeakRef<wxWebView>> g_delay_webviews;
 
 class WebViewRef : public wxObjectRefData
 {
@@ -407,12 +410,6 @@ public:
         assert(iter != g_webviews.end());
         if (iter != g_webviews.end())
             g_webviews.erase(iter);
-        // Drop pending handler installs so a later g_delay_webviews flush never
-        // calls AddScriptMessageHandler() on a destroyed view.
-        // See bambulab/BambuStudio #11004 and #10968.
-        auto diter = std::find(g_delay_webviews.begin(), g_delay_webviews.end(), m_webView);
-        if (diter != g_delay_webviews.end())
-            g_delay_webviews.erase(diter);
     }
     wxWebView *m_webView;
     // Guards against registering the "wx" handler twice (a duplicate throws on WKWebView).
@@ -548,11 +545,9 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
                 addScriptMessageHandler(webView);
                 while (!g_delay_webviews.empty()) {
                     auto views = std::move(g_delay_webviews);
-                    for (auto wv : views) {
-                        if (std::find(g_webviews.begin(), g_webviews.end(), wv) == g_webviews.end())
-                            continue;
-                        addScriptMessageHandler(wv);
-                    }
+                    for (const wxWeakRef<wxWebView>& wv : views)
+                        if (wv)
+                            addScriptMessageHandler(wv.get());
                 }
             }
 #ifndef __WIN32__

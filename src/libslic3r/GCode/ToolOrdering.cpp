@@ -760,6 +760,9 @@ ToolOrdering::ToolOrdering(const PrintObject &object, unsigned int first_extrude
             this->tools_for_layer(layer->print_z).on_object_grid = true;
     }
 
+    // Mark this object's Local-Z layers before considering any purge overrides.
+    this->collect_local_z_layers(object);
+
     // Collect extruders reuqired to print the layers. Add dontcare extruders
     this->collect_extruders(object, std::vector<std::pair<double, unsigned int>>());
 
@@ -828,6 +831,10 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
         const size_t num_filaments = (m_mixed_mgr == nullptr) ? num_physical : m_mixed_mgr->total_filaments(num_physical);
         per_layer_extruder_switches = custom_tool_changes(print.model().get_curr_plate_custom_gcodes(), num_filaments);
 	}
+
+    // Mark every object's Local-Z layers before considering any purge overrides.
+    for (auto object : print.objects())
+        this->collect_local_z_layers(*object);
 
     // Collect extruders reuqired to print the layers.
     for (auto object : print.objects())
@@ -1041,6 +1048,27 @@ void ToolOrdering::initialize_layers(std::vector<coordf_t> &zs)
         // Assign an average print_z to the set of layers with nearly equal print_z.
         m_layer_tools.emplace_back(LayerTools(0.5 * (zs[i] + zs[j-1])));
         i = j;
+    }
+}
+
+void ToolOrdering::collect_local_z_layers(const PrintObject& object)
+{
+    const auto& intervals = object.local_z_intervals();
+    const auto& plans     = object.local_z_sublayer_plan();
+    if (intervals.empty() || plans.empty())
+        return;
+
+    for (const Layer* layer : object.layers()) {
+        const auto interval = std::find_if(intervals.begin(), intervals.end(),
+                                           [layer](const LocalZInterval& candidate) { return candidate.layer_id == size_t(layer->id()); });
+        if (interval == intervals.end() || !interval->has_mixed_paint || interval->sublayer_count <= 1 ||
+            interval->first_sublayer_idx >= plans.size())
+            continue;
+
+        const size_t first = interval->first_sublayer_idx;
+        const size_t count = std::min(interval->sublayer_count, plans.size() - first);
+        if (std::any_of(plans.begin() + first, plans.begin() + first + count, [](const SubLayerPlan& plan) { return plan.split_interval; }))
+            this->tools_for_layer(layer->print_z).has_local_z_subdivision = true;
     }
 }
 
@@ -1345,8 +1373,29 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
             extruder_support   = restrict_default_filament(extruder_support, false);
             extruder_interface = restrict_default_filament(extruder_interface, true);
         }
+        const bool interface_not_for_body = object.config().support_interface_not_for_body;
+        // A layer extruder the "don't care" support base can take over: printing, non-soluble and,
+        // with support_interface_not_for_body, other than the interface filament.
+        auto has_reusable_layer_extruder = [&]() -> bool {
+            const ConfigOptionBools &soluble = object.print()->config().filament_soluble;
+            for (unsigned int extruder_id : layer_tools.extruders) { // 1 based at this point
+                if (extruder_id == 0)
+                    continue;
+                if (interface_not_for_body && extruder_id == extruder_interface)
+                    continue;
+                if (extruder_id - 1 < soluble.values.size() && soluble.get_at(extruder_id - 1))
+                    continue;
+                return true;
+            }
+            return false;
+        };
+        // Pick a concrete base filament when "don't care" could only resolve to the interface or a
+        // soluble filament: on interface layers, and on base-only layers when the interface must not
+        // print the base.
+        const bool pick_base_filament = has_support && extruder_support == 0 && extruder_interface != 0 &&
+                                        (has_interface || interface_not_for_body) && !has_reusable_layer_extruder();
         if (has_support) {
-            if (extruder_support > 0 || !has_interface || extruder_interface == 0 || layer_tools.has_object)
+            if (!pick_base_filament)
                 layer_tools.extruders.push_back(extruder_support);
             else {
                 auto all_extruders     = object.print()->extruders();
@@ -1383,7 +1432,6 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                     }
                     return next_extruder;
                 };
-                bool interface_not_for_body = object.config().support_interface_not_for_body;
                 layer_tools.extruders.push_back(get_next_extruder(interface_not_for_body ? extruder_interface - 1 : -1, all_extruders) + 1);
             }
         }
@@ -3907,6 +3955,10 @@ static bool same_width_columns(const Print &print, const PrintObject &object, co
 // Decides whether this entity could be overridden
 bool WipingExtrusions::is_overriddable(const ExtrusionEntityCollection& eec, const PrintConfig& print_config, const PrintObject& object, const PrintRegion& region) const
 {
+    // Purge overrides would disable Local-Z emission for the entire shared print layer.
+    if (m_layer_tools->has_local_z_subdivision)
+        return false;
+
     const unsigned int intended_filament = m_layer_tools->extruder(eec, region);
     if (print_config.filament_soluble.get_at(intended_filament))
         return false;
@@ -3941,6 +3993,9 @@ bool WipingExtrusions::is_overriddable(const ExtrusionEntityCollection& eec, con
 // BBS
 bool WipingExtrusions::is_support_overriddable(const ExtrusionRole role, const PrintObject& object) const
 {
+    if (m_layer_tools->has_local_z_subdivision)
+        return false;
+
     if (!object.config().flush_into_support)
         return false;
 

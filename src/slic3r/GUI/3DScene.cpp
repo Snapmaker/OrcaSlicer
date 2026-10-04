@@ -163,6 +163,14 @@ ColorRGBA GLVolume::SUPPORT_BLOCKER_COL  = {1.0f, 0.3f, 0.3f, 0.4f};
 
 ColorRGBA GLVolume::MODEL_HIDDEN_COL = {0.f, 0.f, 0.f, 0.3f};
 
+// Precise Seam modifier colors
+ColorRGBA GLVolume::PRECISE_SEAM_CENTER_COL   = {1.0f,   0.627f, 0.082f, 0.6f};  // FFA015 - orange
+ColorRGBA GLVolume::PRECISE_SEAM_LEFT_COL     = {1.0f,   0.753f, 0.0f,   0.6f};  // FFC000 - golden
+ColorRGBA GLVolume::PRECISE_SEAM_RIGHT_COL    = {1.0f,   0.514f, 0.0f,   0.6f};  // FF8300 - dark orange
+ColorRGBA GLVolume::PRECISE_SEAM_ENFORCED_COL = {0.412f, 0.820f, 0.412f, 0.6f};  // 69D169 - green
+ColorRGBA GLVolume::PRECISE_SEAM_NEUTRAL_COL  = {0.655f, 0.655f, 0.655f, 0.6f};  // A7A7A7 - gray
+ColorRGBA GLVolume::PRECISE_SEAM_BLOCKED_COL  = {0.820f, 0.412f, 0.412f, 0.6f};  // D16969 - red
+
 std::array<ColorRGBA, 5> GLVolume::MODEL_COLOR = {
     {{1.0f, 1.0f, 0.0f, 1.f}, {1.0f, 0.5f, 0.5f, 1.f}, {0.5f, 1.0f, 0.5f, 1.f}, {0.5f, 0.5f, 1.0f, 1.f}, {1.0f, 1.0f, 0.0f, 1.f}}};
 
@@ -356,6 +364,28 @@ ColorRGBA color_from_model_volume(const ModelVolume& model_volume)
     ColorRGBA color;
     if (model_volume.is_negative_volume())
         return GLVolume::MODEL_NEGTIVE_COL;
+    else if (model_volume.is_precise_seam()) {
+        // Return color based on Precise Seam subtype.
+        // Exhaustive switch (no default) so -Wswitch flags any future PRECISE_SEAM_* additions.
+        switch (model_volume.type()) {
+            case ModelVolumeType::PRECISE_SEAM_CENTER:   return GLVolume::PRECISE_SEAM_CENTER_COL;
+            case ModelVolumeType::PRECISE_SEAM_LEFT:     return GLVolume::PRECISE_SEAM_LEFT_COL;
+            case ModelVolumeType::PRECISE_SEAM_RIGHT:    return GLVolume::PRECISE_SEAM_RIGHT_COL;
+            case ModelVolumeType::PRECISE_SEAM_ENFORCED: return GLVolume::PRECISE_SEAM_ENFORCED_COL;
+            case ModelVolumeType::PRECISE_SEAM_NEUTRAL:  return GLVolume::PRECISE_SEAM_NEUTRAL_COL;
+            case ModelVolumeType::PRECISE_SEAM_BLOCKED:  return GLVolume::PRECISE_SEAM_BLOCKED_COL;
+            // Non-seam types are unreachable due to the outer is_precise_seam() guard;
+            // listed explicitly so this switch stays exhaustive over ModelVolumeType.
+            case ModelVolumeType::INVALID:
+            case ModelVolumeType::MODEL_PART:
+            case ModelVolumeType::NEGATIVE_VOLUME:
+            case ModelVolumeType::PARAMETER_MODIFIER:
+            case ModelVolumeType::SUPPORT_BLOCKER:
+            case ModelVolumeType::SUPPORT_ENFORCER:
+                break;
+        }
+        return GLVolume::MODEL_MIDIFIER_COL; // unreachable fallback
+    }
     else if (model_volume.is_modifier())
 #if ENABLE_MODIFIERS_ALWAYS_TRANSPARENT
         return GLVolume::MODEL_MIDIFIER_COL;
@@ -1174,12 +1204,10 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType       type,
     if (shader == nullptr)
         return;
 
-    GLShaderProgram* sink_shader = GUI::wxGetApp().get_shader("flat");
-#if SLIC3R_OPENGL_ES
-    GLShaderProgram* edges_shader = GUI::wxGetApp().get_shader("dashed_lines");
-#else
-    GLShaderProgram* edges_shader = GUI::OpenGLManager::get_gl_info().is_core_profile() ? GUI::wxGetApp().get_shader("dashed_thick_lines") : GUI::wxGetApp().get_shader("flat");
-#endif // SLIC3R_OPENGL_ES
+    // The flat shader is bound only around the sinking contours that are drawn, so volumes without
+    // one do not switch programs.
+    GLShaderProgram* sink_shader  = GUI::wxGetApp().get_shader("flat");
+    const bool canRenderSinkingContours = m_show_sinking_contours && sink_shader != nullptr;
 
     if (type == ERenderType::Transparent) {
         glsafe(::glEnable(GL_BLEND));
@@ -1236,19 +1264,17 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType       type,
             volume.first->force_transparent = false;
 #endif // ENABLE_MODIFIERS_ALWAYS_TRANSPARENT
 
-        // render sinking contours of non-hovered volumes
-        shader->stop_using();
-        if (sink_shader != nullptr) {
-            sink_shader->start_using();
-            if (m_show_sinking_contours) {
-                if (volume.first->is_sinking() && !volume.first->is_below_printbed() && volume.first->hover == GLVolume::HS_None &&
-                    !volume.first->force_sinking_contours) {
-                    volume.first->render_sinking_contours();
-                }
+        if (canRenderSinkingContours)
+        {
+            const bool needSinkingContour = volume.first->is_sinking() && !volume.first->is_below_printbed() &&
+                                            volume.first->hover == GLVolume::HS_None && !volume.first->force_sinking_contours;
+            if (needSinkingContour)
+            {
+                sink_shader->start_using();
+                volume.first->render_sinking_contours();
+                shader->start_using();
             }
-            sink_shader->stop_using();
         }
-        shader->start_using();
 
         if (!volume.first->model.is_initialized())
             shader->set_uniform("uniform_color", volume.first->render_color);
@@ -1334,22 +1360,29 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType       type,
         glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
     }
 
-    if (m_show_sinking_contours) {
-        shader->stop_using();
-        if (sink_shader != nullptr) {
-            sink_shader->start_using();
-            for (GLVolumeWithIdAndZ& volume : to_render) {
-                // render sinking contours of hovered/displaced volumes
-                if (volume.first->is_sinking() && !volume.first->is_below_printbed() &&
-                    (volume.first->hover != GLVolume::HS_None || volume.first->force_sinking_contours)) {
-                    glsafe(::glDepthFunc(GL_ALWAYS));
-                    volume.first->render_sinking_contours();
-                    glsafe(::glDepthFunc(GL_LESS));
-                }
+    if (canRenderSinkingContours)
+    {
+        bool sinkShaderUsing = false;
+        for (GLVolumeWithIdAndZ& volume : to_render)
+        {
+            const bool needHoveredSinkingContour = volume.first->is_sinking() && !volume.first->is_below_printbed() &&
+                                                   (volume.first->hover != GLVolume::HS_None || volume.first->force_sinking_contours);
+            if (!needHoveredSinkingContour)
+                continue;
+
+            if (!sinkShaderUsing)
+            {
+                sink_shader->start_using();
+                sinkShaderUsing = true;
             }
-            sink_shader->start_using();
+
+            glsafe(::glDepthFunc(GL_ALWAYS));
+            volume.first->render_sinking_contours();
+            glsafe(::glDepthFunc(GL_LESS));
         }
-        shader->start_using();
+
+        if (sinkShaderUsing)
+            shader->start_using();
     }
 
     if (disable_cullface)

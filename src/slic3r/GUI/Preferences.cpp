@@ -1537,7 +1537,7 @@ void PreferencesDialog::create()
     SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
 
     m_parent = new MyscrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
-    m_parent->SetScrollRate(5, 5);
+    m_parent->SetScrollRate(0, FromDIP(20));
     m_parent->SetBackgroundColour(*wxWHITE);
 
     m_sizer_body = new wxBoxSizer(wxVERTICAL);
@@ -1933,6 +1933,9 @@ void PreferencesDialog::create_items()
             return dlg.ShowModal() == wxID_OK;
         });
     g_sizer->Add(allow_filament_temp_mixing);
+
+    auto item_remember_print_action = create_item_checkbox(_L("Remember last print action"), _L("If enabled, Snapmaker Orca will remember the last selected option in the print button's dropdown (e.g. Print, Export plate sliced file, Export G-code file) and use it as the default on next startup."), "remember_print_action");
+    g_sizer->Add(item_remember_print_action);
 
     //// CONTROL > Camera
     g_sizer->Add(create_item_title(_L("Camera")), 1, wxEXPAND);

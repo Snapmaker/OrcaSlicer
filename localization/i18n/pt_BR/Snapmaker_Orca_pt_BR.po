@@ -9521,13 +9521,6 @@ msgstr "Enviar e Imprimir"
 msgid "Abnormal print file data. Please slice again"
 msgstr "Dados de arquivo de impressão anormais. Por favor, fatie novamente"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Imprimir por objeto: \n"
-"Sugere-se usar o auto-arranjo para evitar colisões ao imprimir."
-
 msgid "Slicing was not started because you aborted the very long slice. Use Slice to slice anyway."
 msgstr ""
 

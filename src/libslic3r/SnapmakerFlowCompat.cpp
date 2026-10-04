@@ -13,33 +13,6 @@
 
 namespace Slic3r {
 
-size_t normalize_promoted_filament_keys(DynamicPrintConfig& config, size_t num_filaments, const std::vector<int>& filament_self_index)
-{
-    const size_t num_columns = filament_self_index.size();
-    // With one column per filament both layouts are the same vector.
-    if (num_filaments == 0 || num_columns <= num_filaments)
-        return 0;
-    for (int owner : filament_self_index)
-        if (owner < 1 || size_t(owner) > num_filaments)
-            return 0;
-
-    size_t rebuilt = 0;
-    for (const std::string& key : promoted_filament_variant_keys()) {
-        auto* values = dynamic_cast<ConfigOptionVectorBase*>(config.option(key));
-        if (values == nullptr || values->size() != num_filaments)
-            continue;
-        std::unique_ptr<ConfigOption> per_filament(values->clone());
-        values->resize(num_columns);
-        for (size_t column = 0; column < num_columns; ++column)
-            values->set_at(per_filament.get(), column, size_t(filament_self_index[column] - 1));
-        ++rebuilt;
-    }
-    if (rebuilt > 0)
-        BOOST_LOG_TRIVIAL(info) << "normalize_promoted_filament_keys: rebuilt " << rebuilt << " per filament keys over "
-                                << num_columns << " filament variant columns";
-    return rebuilt;
-}
-
 namespace {
 
 const char* const FLOW_STANDARD  = "standard";

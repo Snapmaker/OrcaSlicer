@@ -19637,6 +19637,12 @@ void adjust_settings_for_flowrate_calib(ModelObjectPtrs& objects, bool linear, i
     print_config->set_key_value("alternate_extra_wall", new ConfigOptionBool(false));
     print_config->set_key_value("initial_layer_print_height", new ConfigOptionFloat(first_layer_height));
     print_config->set_key_value("reduce_crossing_wall", new ConfigOptionBool(true));
+    // The tiles are read by their top surfaces, which spiral vase does not print. The
+    // spiral calibrations (max flowrate, VFA, input shaping, junction deviation) switch
+    // spiral_mode on in the edited process preset and nothing switches it back, so a
+    // flow-rate test run after one of them came up in spiral mode, which with several
+    // objects demands "By object" and its extruder clearance.
+    print_config->set_key_value("spiral_mode", new ConfigOptionBool(false));
 
 
     wxGetApp().get_tab(Preset::TYPE_PRINT)->update_dirty();
@@ -19687,6 +19693,19 @@ void Plater::calib_flowrate(bool is_linear, int pass) {
     // Refresh object after scaling
     const std::vector<size_t> object_idx(boost::counting_iterator<size_t>(0), boost::counting_iterator<size_t>(model().objects.size()));
     changed_objects(object_idx);
+
+    // The test files place the tiles a few mm apart, which suits "By layer" only. Printed
+    // "By object", each tile needs the extruder clearance (radius, rod and lid heights)
+    // around it, so let arrange space them by those rules and the bed size, as it does
+    // for any by-object plate. The print sequence comes from the process preset.
+    const auto *print_sequence = wxGetApp().preset_bundle->prints.get_edited_preset().config.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
+    if (model().objects.size() > 1 && print_sequence != nullptr && print_sequence->value == PrintSequence::ByObject) {
+        // After this event's updates have applied the process preset to the plate's print.
+        wxGetApp().CallAfter([this]() {
+            set_prepare_state(Job::PREPARE_STATE_DEFAULT);
+            arrange();
+        });
+    }
 }
 
 

@@ -994,6 +994,25 @@ bool is_path_within_root(const boost::filesystem::path &root, const boost::files
     }
 }
 
+bool is_safe_attachment_path(const boost::filesystem::path &root, const boost::filesystem::path &candidate)
+{
+    try {
+        if (root.empty() || candidate.empty() || candidate.is_relative())
+            return false;
+        if (!is_path_within_root(root, candidate))
+            return false;
+        // Follow every symlink, including the last component. Opening a dest-file
+        // symlink must not launch the file outside the project's Auxiliaries.
+        const boost::filesystem::path root_c = boost::filesystem::weakly_canonical(root);
+        const boost::filesystem::path cand_c = boost::filesystem::weakly_canonical(candidate);
+        if (cand_c.empty() || cand_c == root_c)
+            return false;
+        return is_path_within_root(root_c, cand_c);
+    } catch (...) {
+        return false;
+    }
+}
+
 // ---- settings --------------------------------------------------------------------------------
 
 std::string joined_post_process(const DynamicPrintConfig &cfg)

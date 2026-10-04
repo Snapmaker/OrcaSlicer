@@ -80,6 +80,12 @@ std::string local_path_from_file_url(const std::string &url);
 // documents, unknown types) is shown in its folder instead.
 bool is_safe_attachment_to_launch(const std::string &file_name);
 
+// True if candidate is an absolute path strictly inside root (not root itself) that still
+// resolves inside root after following every symlink, including the last component.
+// is_path_within_root does not follow a dest-file symlink (extraction replaces it); opening
+// must follow it or a project attachment that is a symlink out of Auxiliaries would be launched.
+bool is_safe_attachment_path(const boost::filesystem::path &root, const boost::filesystem::path &candidate);
+
 // ---- "Open in" links -----------------------------------------------------------------------
 
 struct OpenLink
@@ -200,7 +206,8 @@ bool content_matches_extension(const std::string &file_name, const std::string &
 
 // True for a relative path made of plain segments separated by '/': no '\\', no drive or ':' ,
 // no leading '/', no "." or ".." segment, no empty segment, no control characters. Used before
-// an archive entry name becomes part of a path on disk (zip-slip).
+// an archive entry name becomes part of a path on disk (zip-slip). Apostrophes and similar
+// ordinary filename characters are allowed ("Bob's notes.pdf").
 bool is_safe_archive_relative_path(const std::string &path);
 
 enum class ArchiveEntryName {

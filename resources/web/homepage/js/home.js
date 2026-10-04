@@ -455,7 +455,7 @@ function SendMsg_GetStaffPick()
 	
 	SendWXMessage( JSON.stringify(tSend) );
 	
-	setTimeout("SendMsg_GetStaffPick()",3600*1000*1);
+	setTimeout(function(){SendMsg_GetStaffPick();},3600*1000*1);
 }
 
 function ShowStaffPick( ModelList )

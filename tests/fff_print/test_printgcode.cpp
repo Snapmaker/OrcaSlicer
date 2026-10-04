@@ -5,6 +5,7 @@
 #include "libslic3r/GCode/WipeTower2.hpp"
 #include "libslic3r/GCodeReader.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/PresetFlowVariant.hpp"
 
 #include "test_data.hpp"
 
@@ -1258,4 +1259,59 @@ TEST_CASE("resolved per-filament flow values match the per-path lookups",
         config.set_num_filaments(3);
         check(config);
     }
+}
+
+// A High-Flow slot of a filament retract override with no value of its own (nil, or a
+// preset that never stored one) falls back to the Standard override when composing the
+// packed config, and to the printer value only when Standard is nil too. Never NaN.
+TEST_CASE("a nil High-Flow retract override slices with the Standard override, then the printer value",
+          "[PrintGCode][GCode][FilamentVariants]")
+{
+    auto applied_tool_retraction = [](const ConfigOptionFloatsNullable &f0_preset) {
+        DynamicPrintConfig config = step_size_2_f0_config();   // F0 [std, hf] set to High-Flow, F1 std
+        config.option<ConfigOptionFloats>("retraction_length")->values = {0.4, 0.4};
+        ConfigOptionFloatsNullable       packed;
+        packed.values = {ConfigOptionFloatsNullable::nil_value()};
+        const ConfigOptionFloatsNullable f1_preset{1.5};
+        compose_filament_flow_variant_segment(packed, f0_preset, 0, 2);
+        compose_filament_flow_variant_segment(packed, f1_preset, 2, 1);
+        REQUIRE(packed.values.size() == 3);
+        config.set_key_value("filament_retraction_length", packed.clone());
+
+        Print print;
+        Model model;
+        add_two_tool_cubes(model);
+        print.apply(model, config);
+        REQUIRE(print.config().retraction_length.size() == 2);
+        return std::make_pair(print.config().retraction_length.get_at(0), print.config().retraction_length.get_at(1));
+    };
+    const double nil = ConfigOptionFloatsNullable::nil_value();
+
+    // Standard 0.7, High-Flow nil: T0 (High-Flow) retracts 0.7.
+    ConfigOptionFloatsNullable std_only;
+    std_only.values = {0.7, nil};
+    auto r = applied_tool_retraction(std_only);
+    CHECK_FALSE(std::isnan(r.first));
+    CHECK(r.first == Approx(0.7));
+    CHECK(r.second == Approx(1.5));
+
+    // A preset that stored only one (Standard) value: same.
+    ConfigOptionFloatsNullable one_value;
+    one_value.values = {0.7};
+    r = applied_tool_retraction(one_value);
+    CHECK(r.first == Approx(0.7));
+
+    // Both nil: the printer value.
+    ConfigOptionFloatsNullable both_nil;
+    both_nil.values = {nil, nil};
+    r = applied_tool_retraction(both_nil);
+    CHECK_FALSE(std::isnan(r.first));
+    CHECK(r.first == Approx(0.4));
+    CHECK(r.second == Approx(1.5));
+
+    // Its own High-Flow value still wins.
+    ConfigOptionFloatsNullable own_hf;
+    own_hf.values = {0.7, 0.3};
+    r = applied_tool_retraction(own_hf);
+    CHECK(r.first == Approx(0.3));
 }

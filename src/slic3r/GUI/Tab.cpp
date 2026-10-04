@@ -67,6 +67,7 @@
 #include "Widgets/Button.hpp"
 #include "Widgets/SegmentedToggle.hpp"
 #include "FlowVariantEdit.hpp"
+#include "libslic3r/PresetFlowVariant.hpp"
 #include "FlowTypeHelper.hpp"
 #include <wx/textdlg.h>
 #ifdef WIN32
@@ -4513,6 +4514,19 @@ PageShp TabFilament::add_filament_overrides_page()
                         field->toggle(is_checked);
 
                         if (is_checked) {
+                            // A High-Flow (or other non-first) slot with no value of its own starts
+                            // from the Standard override, or the printer value when that is unset
+                            // too - never from whatever the field held (nan for a nil default).
+                            const ConfigOption *opt = m_config->option(opt_key);
+                            const auto *vec = dynamic_cast<const ConfigOptionVectorBase *>(opt);
+                            if (option_index > 0 && vec != nullptr && vec->is_nil(size_t(option_index))) {
+                                const int slot = filament_override_effective_slot(opt, size_t(option_index));
+                                const boost::any seed = slot == 0 ?
+                                    optgroup_sh->get_config_value(*m_config, opt_key, 0) :
+                                    optgroup_sh->get_config_value(m_preset_bundle->printers.get_edited_preset().config,
+                                                                  opt_key.substr(strlen("filament_")), 0);
+                                field->set_value(seed, false);
+                            }
                             field->update_na_value(_(L("N/A")));
                             field->set_last_meaningful_value();
                         }
@@ -4647,10 +4661,17 @@ void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* print
             field->toggle(is_checked && filament_enabled && machine_enabled);
         } else {
             if (!is_checked) {
+                // What applies when this slot has no override: in a High-Flow (non-first)
+                // view the Standard override if it is set, else the printer value. This is
+                // also what slicing uses (compose_filament_flow_variant_segment).
+                const bool from_standard = option_index > 0 &&
+                    filament_override_effective_slot(m_config->option(opt_key), size_t(option_index)) == 0;
                 const std::string printer_opt_key = opt_key.substr(strlen("filament_"));
-                boost::any printer_config_value = optgroup->get_config_value(*printers_config, printer_opt_key, extruder_idx);
-                field->update_na_value(printer_config_value);
-                field->set_value(printer_config_value, false);
+                boost::any fallback_value = from_standard ?
+                    optgroup->get_config_value(*m_config, opt_key, 0) :
+                    optgroup->get_config_value(*printers_config, printer_opt_key, extruder_idx);
+                field->update_na_value(fallback_value);
+                field->set_value(fallback_value, false);
             }
 
             field->toggle(is_checked);

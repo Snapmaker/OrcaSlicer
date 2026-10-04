@@ -1,5 +1,7 @@
 #include <catch2/catch.hpp>
 
+#include <algorithm>
+
 #include "slic3r/GUI/FlowVariantEdit.hpp"
 
 #include "libslic3r/PresetFlowVariant.hpp"
@@ -429,4 +431,85 @@ TEST_CASE("filament_preset_flow_ratio missing option falls back to 1.0", "[FlowV
     cleared.set_key_value("filament_flow_ratio", new ConfigOptionFloats{});
     REQUIRE(filament_preset_flow_ratio(cleared, fvtStandard) == 1.0);
     REQUIRE(filament_preset_flow_ratio(cleared, fvtHighFlow) == 1.0);
+}
+
+// The filament tab's Setting Overrides page showed "nan" with a ticked box in the
+// High-Flow view: a preset that stores one value (["nil"]) was read at index 1, past
+// the end. is_nil(idx) read out of bounds (garbage, so "set") while get_at fell back
+// to the nil slot 0. is_nil now reads the slot get_at would.
+TEST_CASE("is_nil past the end reads the slot get_at reads", "[FlowVariantEdit][Overrides]")
+{
+    const double nil = ConfigOptionFloatsNullable::nil_value();
+    ConfigOptionFloatsNullable one_nil;
+    one_nil.values = {nil};
+    CHECK(one_nil.is_nil(0));
+    CHECK(one_nil.is_nil(1));
+    ConfigOptionFloatsNullable one_value;
+    one_value.values = {0.8};
+    CHECK_FALSE(one_value.is_nil(1));
+    CHECK(one_value.get_at(1) == Approx(0.8));
+    ConfigOptionIntsNullable ints;
+    ints.values = {ConfigOptionIntsNullable::nil_value()};
+    CHECK(ints.is_nil(3));
+    ConfigOptionBoolsNullable bools;
+    bools.values = {ConfigOptionBoolsNullable::nil_value()};
+    CHECK(bools.is_nil(1));
+}
+
+TEST_CASE("a nil High-Flow override uses the Standard slot, then the printer", "[FlowVariantEdit][Overrides]")
+{
+    const double nil = ConfigOptionFloatsNullable::nil_value();
+    ConfigOptionFloatsNullable std_only;
+    std_only.values = {0.7, nil};
+    CHECK(filament_override_effective_slot(&std_only, 1) == 0);
+    CHECK(filament_override_effective_slot(&std_only, 0) == 0);
+    ConfigOptionFloatsNullable own_hf;
+    own_hf.values = {nil, 0.6};
+    CHECK(filament_override_effective_slot(&own_hf, 1) == 1);
+    CHECK(filament_override_effective_slot(&own_hf, 0) == -1);
+    ConfigOptionFloatsNullable one_nil;
+    one_nil.values = {nil};
+    CHECK(filament_override_effective_slot(&one_nil, 1) == -1);
+    ConfigOptionFloatsNullable one_value;
+    one_value.values = {0.7};
+    CHECK(filament_override_effective_slot(&one_value, 1) == 1);   // past the end reads slot 0, which is set
+    CHECK(filament_override_effective_slot(nullptr, 1) == -1);
+
+    // Composition into the packed config: the same rule, so the G-code matches the tab.
+    ConfigOptionFloatsNullable packed;
+    packed.values = {nil};
+    compose_filament_flow_variant_segment(packed, std_only, 0, 2);
+    compose_filament_flow_variant_segment(packed, one_nil, 2, 2);
+    compose_filament_flow_variant_segment(packed, own_hf, 4, 2);
+    REQUIRE(packed.values.size() == 6);
+    CHECK(packed.values[0] == Approx(0.7));
+    CHECK(packed.values[1] == Approx(0.7));   // nil High-Flow -> Standard
+    CHECK(packed.is_nil(2));
+    CHECK(packed.is_nil(3));                  // both nil -> printer value at apply time
+    CHECK(packed.is_nil(4));
+    CHECK(packed.values[5] == Approx(0.6));   // own value kept
+
+    // Non-nullable variant keys: a short preset vector repeats its Standard value.
+    ConfigOptionFloats flow_dst{1.0};
+    compose_filament_flow_variant_segment(flow_dst, ConfigOptionFloats{0.95}, 0, 2);
+    REQUIRE(flow_dst.values.size() == 2);
+    CHECK(flow_dst.values[1] == Approx(0.95));
+}
+
+// Audit of the 19 filament flow-variant keys: only the six retract overrides are
+// nullable, so only they can hold a nil High-Flow slot. The other 13 are plain
+// vectors whose short presets read the Standard value through get_at.
+TEST_CASE("only the retract overrides among the filament flow-variant keys are nullable", "[FlowVariantEdit][Overrides]")
+{
+    std::vector<std::string> nullable;
+    for (const std::string &key : filament_flow_variant_options()) {
+        const ConfigOptionDef *def = print_config_def.get(key);
+        REQUIRE(def != nullptr);
+        if (def->nullable)
+            nullable.push_back(key);
+    }
+    std::sort(nullable.begin(), nullable.end());
+    CHECK(nullable == std::vector<std::string>{"filament_deretraction_speed", "filament_retract_length_toolchange",
+                                               "filament_retraction_length", "filament_retraction_speed",
+                                               "filament_wipe_distance", "filament_z_hop_types"});
 }

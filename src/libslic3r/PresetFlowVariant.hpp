@@ -43,6 +43,23 @@ inline auto get_preset_value_at(const ConfigBase &preset_config, const VectorOpt
     return opt.get_at(get_preset_flow_variant_idx(preset_config, domain, type));
 }
 
+// Copy one filament preset's flow-variant values into its segment of a composed
+// (packed) vector: slot k of the segment takes source slot k, or slot 0 when the
+// source is shorter (a preset that never stored a High-Flow value uses its
+// Standard one). For a nullable option (the filament_* retract overrides) a nil
+// slot k > 0 also falls back to a set slot 0: "no High-Flow override of its own"
+// means the Standard override applies, and only when that is nil too does the
+// printer value (via apply_override) apply. Never yields NaN for a set Standard.
+void compose_filament_flow_variant_segment(ConfigOptionVectorBase       &dst,
+                                           const ConfigOptionVectorBase &src,
+                                           size_t                        segment_start,
+                                           size_t                        step_size);
+
+// Which slot of a filament override a flow-variant view `index` effectively uses:
+// `index` when it holds a value, else slot 0 when that does (index > 0), else -1
+// (nothing set: the printer value applies). Bounds-safe like get_at.
+int filament_override_effective_slot(const ConfigOption *opt, size_t index);
+
 inline double filament_preset_flow_ratio(const ConfigBase &preset_config, FilamentVolumeType type)
 {
     const auto *opt = preset_config.option<ConfigOptionFloats>("filament_flow_ratio");

@@ -15,6 +15,9 @@
 #include "SelectMachine.hpp"
 
 namespace Slic3r {
+
+struct PrintParams;
+
 namespace GUI {
 #define SEND_LEFT_PADDING_LEFT 15
 #define SEND_LEFT_PRINTABLE    40
@@ -22,19 +25,18 @@ namespace GUI {
 #define SEND_LEFT_DEV_STATUS 250
 #define SEND_LEFT_TAKS_STATUS 180
 
-#define  DESIGN_SELECTOR_NOMORE_COLOR wxColour(248, 248, 248)
-#define  DESIGN_GRAY900_COLOR wxColour(38, 46, 48)
-#define  DESIGN_GRAY800_COLOR wxColour(50, 58, 61)
-#define  DESIGN_GRAY600_COLOR wxColour(144, 144, 144)
-#define  DESIGN_GRAY400_COLOR wxColour(166, 169, 170)
-#define  DESIGN_RESOUTION_PREFERENCES wxSize(FromDIP(540), -1)
-#define  DESIGN_COMBOBOX_SIZE wxSize(FromDIP(140), -1)
-#define  DESIGN_LARGE_COMBOBOX_SIZE wxSize(FromDIP(160), -1)
-#define  DESIGN_INPUT_SIZE wxSize(FromDIP(50), -1)
+#define  SEND_DESIGN_SELECTOR_NOMORE_COLOR wxColour(248, 248, 248)
+#define  SEND_DESIGN_GRAY900_COLOR wxColour(38, 46, 48)
+#define  SEND_DESIGN_GRAY800_COLOR wxColour(50, 58, 61)
+#define  SEND_DESIGN_GRAY600_COLOR wxColour(144, 144, 144)
+#define  SEND_DESIGN_GRAY400_COLOR wxColour(166, 169, 170)
+#define  SEND_DESIGN_RESOUTION_PREFERENCES wxSize(FromDIP(540), -1)
+#define  SEND_DESIGN_COMBOBOX_SIZE wxSize(FromDIP(140), -1)
+#define  SEND_DESIGN_LARGE_COMBOBOX_SIZE wxSize(FromDIP(160), -1)
+#define  SEND_DESIGN_INPUT_SIZE wxSize(FromDIP(50), -1)
 
-#define MATERIAL_ITEM_SIZE wxSize(FromDIP(64), FromDIP(34))
-#define MATERIAL_ITEM_REAL_SIZE wxSize(FromDIP(62), FromDIP(32))
-#define MAPPING_ITEM_REAL_SIZE wxSize(FromDIP(48), FromDIP(45))
+
+
 
 #define THUMBNAIL_SIZE FromDIP(128)
 
@@ -107,7 +109,7 @@ private:
     wxBoxSizer*                         m_sizer_body{ nullptr };
     wxGridSizer*                        m_ams_list_sizer{ nullptr };
     AmsMapingPopup*                     m_mapping_popup{ nullptr };
-    
+
     AmsRadioSelectorList                m_radio_group;
     MaterialHash                        m_material_list;
     std::map<std::string, CheckBox*>    m_checkbox_map;
@@ -150,7 +152,6 @@ private:
     ScalableBitmap*                     print_time{ nullptr };
     wxStaticBitmap*                     weightimg{ nullptr };
     ScalableBitmap*                     print_weight{ nullptr };
-    wxBoxSizer*                         m_thumbnail_sizer{ nullptr };
     ThumbnailPanel*                     m_thumbnail_panel{nullptr};
     wxPanel*                            m_panel_image{ nullptr };
     wxBoxSizer*                         m_image_sizer{ nullptr };
@@ -171,9 +172,9 @@ public:
     void on_send(wxCommandEvent& event);
     bool Show(bool show);
 
-    BBL::PrintParams request_params(MachineObject* obj);
+    PrintParams request_params(MachineObject* obj);
 
-    bool get_ams_mapping_result(std::string& mapping_array_str, std::string& ams_mapping_info);
+    bool get_ams_mapping_result(std::string &mapping_array_str, std::string &mapping_array_str2, std::string &ams_mapping_info);
     wxBoxSizer* create_item_title(wxString title, wxWindow* parent, wxString tooltip);
     wxBoxSizer* create_item_checkbox(wxString title, wxWindow* parent, wxString tooltip, int padding_left, std::string param);
     wxBoxSizer* create_item_input(wxString str_before, wxString str_after, wxWindow* parent, wxString tooltip, std::string param);

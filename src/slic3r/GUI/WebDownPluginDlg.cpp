@@ -38,9 +38,7 @@ DownPluginFrame::DownPluginFrame(GUI_App *pGUI) : wxDialog((wxWindow *) (pGUI->m
 
     // set the frame icon
     wxBoxSizer *topsizer = new wxBoxSizer(wxVERTICAL);
-    wxString TargetUrl    = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/6/index.html").make_preferred().string());
-
-    TargetUrl = "file://" + TargetUrl;
+    wxString TargetUrl    = file_url_from_path(boost::filesystem::path(resources_dir()) / "web/guide/6/index.html");
 
     // Create the webview
     m_browser = WebView::CreateWebView(this, TargetUrl);
@@ -218,11 +216,11 @@ void DownPluginFrame::OnScriptMessage(wxWebViewEvent &evt)
             wxGetApp().restart_networking();
             this->EndModal(wxID_OK);
             this->Close();
-        } 
+        }
         else if (strCmd == "close_download_dialog") {
             this->EndModal(wxID_OK);
             this->Close();
-        } 
+        }
         else if (strCmd == "open_plugin_folder") {
             auto plugin_folder = (boost::filesystem::path(wxStandardPaths::Get().GetUserDataDir().ToUTF8().data()) / "plugins").make_preferred().string();
             desktop_open_any_folder(plugin_folder);
@@ -322,7 +320,7 @@ int DownPluginFrame::InstallPlugin()
 int DownPluginFrame::ShowPluginStatus(int status, int percent, bool &cancel)
 {
     static int nPercent = 0;
-    if (nPercent == percent) 
+    if (nPercent == percent)
         return 0;
 
     nPercent = percent;

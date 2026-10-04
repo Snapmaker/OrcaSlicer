@@ -31,9 +31,9 @@ class PhysicalPrinterDialog : public DPIDialog
 
     Button*     m_printhost_browse_btn              {nullptr};
     Button*     m_printhost_test_btn                {nullptr};
+    Button*     m_printhost_generate_creds_btn      {nullptr};
     Button*     m_printhost_logout_btn              {nullptr};
     Button*     m_printhost_cafile_browse_btn       {nullptr};
-    Button*     m_printhost_client_cert_browse_btn  {nullptr};
     Button*     m_printhost_port_browse_btn         {nullptr};
 
     RoundedRectangle*   m_input_area                        {nullptr};
@@ -69,6 +69,7 @@ public:
 protected:
     void on_dpi_changed(const wxRect& suggested_rect) override;
     void on_sys_color_changed() override {};
+    void check_host_key_valid();
 };
 
 

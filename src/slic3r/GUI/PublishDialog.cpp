@@ -18,9 +18,9 @@ namespace Slic3r {
 namespace GUI {
 
 static wxString PUBLISH_STEP_STRING[STEP_COUNT] = {
-    _L("Slice all plate to obtain time and filament estimation"),
-    _L("Packing project data into 3mf file"),
-    _L("Uploading 3mf"),
+    _L("Slice all plates to obtain time and filament estimation"),
+    _L("Packing project data into 3MF file"),
+    _L("Uploading 3MF"),
     _L("Jump to model publish web page")
 };
 
@@ -123,7 +123,7 @@ PublishDialog::PublishDialog(Plater *plater)
     top_sizer->Add(m_main_sizer, 1, wxALL | wxEXPAND, 0);
     top_sizer->Add(FromDIP(30), 0, 0, wxEXPAND, 0);
 
-    this->SetSizer(top_sizer);
+    this->SetSizerAndFit(top_sizer);
     this->Layout();
 
     this->Centre(wxBOTH);
@@ -140,7 +140,7 @@ void PublishDialog::cancel()
 {
     m_was_cancelled = true;
     m_btn_cancel->Enable(false);
-    m_text_progress->SetLabelText(_L("Publish was cancelled"));
+    m_text_progress->SetLabelText(_L("Publish was canceled"));
     wxCloseEvent evt;
     this->on_close(evt);
 }
@@ -185,13 +185,13 @@ void PublishDialog::SetPublishStep(PublishStep step, bool yield, int percent)
         else
             m_progress->SetValue(0);
     } else if (step == PublishStep::STEP_PACKING) {
-        m_text_progress->SetLabelText(_L("Packing data to 3mf"));
+        m_text_progress->SetLabelText(_L("Packing data to 3MF"));
         if (percent > 0)
             m_progress->SetValue(percent);
         else
             m_progress->SetValue(70);
     } else if (step == PublishStep::STEP_UPLOADING) {
-        m_text_progress->SetLabelText(_L("Packing data to 3mf"));
+        m_text_progress->SetLabelText(_L("Uploading data"));
         if (percent > 0)
             m_progress->SetValue(percent);
         else

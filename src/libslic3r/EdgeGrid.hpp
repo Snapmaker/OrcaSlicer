@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <math.h>
+#include <algorithm>
 
 #include "Point.hpp"
 #include "BoundingBox.hpp"
@@ -171,15 +172,24 @@ public:
 
 	template<typename VISITOR> void visit_cells_intersecting_line(Slic3r::Point p1, Slic3r::Point p2, VISITOR &visitor) const
 	{
+		if (m_cols == 0 || m_rows == 0)
+			// Empty grid (not created yet): nothing to visit. Also guards the clamp below
+			// against a degenerate empty domain and the never-initialized m_resolution.
+			return;
 		// End points of the line segment.
-		assert(m_bbox.contains(p1));
-		assert(m_bbox.contains(p2));
+		// Callers may pass points slightly outside m_bbox (e.g. MMU segmentation clips
+		// painted lines against a padded bbox). Truncating division then maps a small
+		// negative coordinate to cell 0, while the Bresenham walk below still crosses the
+		// grid boundary and reads m_cells out of bounds. Clamp the end points so that
+		// truncation equals floor and every visited cell index stays valid.
 		p1 -= m_bbox.min;
 		p2 -= m_bbox.min;
-        assert(p1.x() >= 0 && size_t(p1.x()) < m_cols * m_resolution);
-        assert(p1.y() >= 0 && size_t(p1.y()) < m_rows * m_resolution);
-        assert(p2.x() >= 0 && size_t(p2.x()) < m_cols * m_resolution);
-        assert(p2.y() >= 0 && size_t(p2.y()) < m_rows * m_resolution);
+		const coord_t grid_extent_x = static_cast<coord_t>(m_cols * m_resolution) - 1;
+		const coord_t grid_extent_y = static_cast<coord_t>(m_rows * m_resolution) - 1;
+		p1.x()       = std::clamp<coord_t>(p1.x(), 0, grid_extent_x);
+		p1.y()       = std::clamp<coord_t>(p1.y(), 0, grid_extent_y);
+		p2.x()       = std::clamp<coord_t>(p2.x(), 0, grid_extent_x);
+		p2.y()       = std::clamp<coord_t>(p2.y(), 0, grid_extent_y);
 		// Get the cells of the end points.
 		coord_t ix = p1(0) / m_resolution;
 		coord_t iy = p1(1) / m_resolution;
@@ -224,6 +234,8 @@ public:
 						iy += 1;
 						assert(iy <= iyb);
 					}
+					if (ix < 0 || iy < 0 || ix >= (int64_t)m_cols || iy >= (int64_t)m_rows)
+						return; 
 					if (! visitor(iy, ix))
 						return;
 				} while (ix != ixb || iy != iyb);
@@ -245,6 +257,8 @@ public:
 						iy -= 1;
 						assert(iy >= iyb);
 					}
+					if (ix < 0 || iy < 0 || ix >= (int64_t)m_cols || iy >= (int64_t)m_rows)
+						return; 
 					if (! visitor(iy, ix))
 						return;
 				} while (ix != ixb || iy != iyb);
@@ -270,6 +284,8 @@ public:
 						iy += 1;
 						assert(iy <= iyb);
 					}
+					if (ix < 0 || iy < 0 || ix >= (int64_t)m_cols || iy >= (int64_t)m_rows)
+						return; 
 					if (! visitor(iy, ix))
 						return;
 				} while (ix != ixb || iy != iyb);
@@ -307,6 +323,8 @@ public:
 						iy -= 1;
 						assert(iy >= iyb);
 					}
+					if (ix < 0 || iy < 0 || ix >= (int64_t)m_cols || iy >= (int64_t)m_rows)
+						return; 
 					if (! visitor(iy, ix))
 						return;
 				} while (ix != ixb || iy != iyb);

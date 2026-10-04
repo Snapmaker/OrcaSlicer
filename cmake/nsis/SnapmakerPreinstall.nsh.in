@@ -1,0 +1,171 @@
+; Pre-install guard, run inside Section "-Core installation". CMakeLists.txt sets
+; CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS to "  !include .../SnapmakerPreinstall.nsh"
+; so this whole block lands in the install section at the template's
+; @CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS@ placeholder.
+; 1) Block while the app is running.
+; 2) If an old version exists, prompt to uninstall it first, with a clear failure
+;    reason when the uninstall cannot run or fails.
+; Kept out of the inline CPack template because the CPack-generated .nsi must
+; stay ASCII; the Chinese/English prompt texts below live in this UTF-8 BOM .nsh
+; (included after "Unicode true") and switch on $LANGUAGE, matching
+; SnapmakerUninstallConfirm.nsh / SnapmakerUpgradeCleanup.nsh.
+; $SnapmakerIsUpgrade and Function SnapmakerCleanupUpgradeData are declared in
+; SnapmakerUpgradeCleanup.nsh (included at the top level of the patched template).
+
+!ifndef LANG_SIMPCHINESE
+!define LANG_SIMPCHINESE 2052
+!endif
+
+SnapmakerOrcaPre_check_loop:
+  nsExec::Exec 'cmd.exe /c tasklist /FI "IMAGENAME eq snapmaker-orca.exe" 2>nul | find /i "snapmaker-orca.exe" >nul'
+  Pop $0
+  IntCmp $0 0 SnapmakerOrcaPre_in_use SnapmakerOrcaPre_try_legacy SnapmakerOrcaPre_try_legacy
+SnapmakerOrcaPre_try_legacy:
+  nsExec::Exec 'cmd.exe /c tasklist /FI "IMAGENAME eq Snapmaker_Orca.exe" 2>nul | find /i "Snapmaker_Orca.exe" >nul'
+  Pop $0
+  IntCmp $0 0 SnapmakerOrcaPre_in_use SnapmakerOrcaPre_idle SnapmakerOrcaPre_idle
+SnapmakerOrcaPre_idle:
+  Goto SnapmakerOrcaPre_done
+SnapmakerOrcaPre_in_use:
+  IfSilent SnapmakerOrcaPre_silent SnapmakerOrcaPre_prompt
+SnapmakerOrcaPre_silent:
+  SetErrorLevel 7
+  Quit
+SnapmakerOrcaPre_prompt:
+  StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 SnapmakerOrcaPre_prompt_en
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca 仍在运行。$\n请关闭程序后点击重试继续，或点击取消退出安装程序。" IDRETRY SnapmakerOrcaPre_check_loop
+  Abort
+SnapmakerOrcaPre_prompt_en:
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca is still running.$\nClose the program, then click Retry to continue, or Cancel to exit the installer." IDRETRY SnapmakerOrcaPre_check_loop
+  Abort
+SnapmakerOrcaPre_done:
+  ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "UninstallString"
+  StrCmp $0 "" SnapmakerOrcaPre_read_hkcu_uninst SnapmakerOrcaPre_have_uninst_str
+SnapmakerOrcaPre_read_hkcu_uninst:
+  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "UninstallString"
+  StrCmp $0 "" SnapmakerOrcaPre_read_hkml_space SnapmakerOrcaPre_have_uninst_str
+SnapmakerOrcaPre_read_hkml_space:
+  ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker Orca" "UninstallString"
+  StrCmp $0 "" SnapmakerOrcaPre_read_hkcu_space SnapmakerOrcaPre_have_uninst_str
+SnapmakerOrcaPre_read_hkcu_space:
+  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker Orca" "UninstallString"
+  StrCmp $0 "" SnapmakerOrcaPre_try_instdir SnapmakerOrcaPre_have_uninst_str
+SnapmakerOrcaPre_try_instdir:
+  IfFileExists "$INSTDIR\Uninstall.exe" 0 SnapmakerOrcaPre_check_app
+  StrCpy $0 "$INSTDIR\Uninstall.exe"
+  Goto SnapmakerOrcaPre_have_uninst_str
+SnapmakerOrcaPre_check_app:
+  IfFileExists "$INSTDIR\snapmaker-orca.exe" SnapmakerOrcaPre_have_existing_install SnapmakerOrcaPre_check_legacy_app
+SnapmakerOrcaPre_check_legacy_app:
+  IfFileExists "$INSTDIR\Snapmaker_Orca.exe" SnapmakerOrcaPre_have_existing_install SnapmakerOrcaPre_finish
+
+SnapmakerOrcaPre_have_existing_install:
+  ; App exe found but no uninstaller path in registry ($0 stays empty). Fall through
+  ; to the common prompt; the quote-strip below is a no-op on an empty string, and
+  ; the uninstall step will skip removal because $0 is empty.
+SnapmakerOrcaPre_have_uninst_str:
+  StrCpy $2 $0 1 0
+  StrCmp $2 "$\"" SnapmakerOrcaPre_trim_first_quote SnapmakerOrcaPre_check_last_quote
+SnapmakerOrcaPre_trim_first_quote:
+  StrCpy $0 $0 "" 1
+SnapmakerOrcaPre_check_last_quote:
+  StrCpy $2 $0 1 -1
+  StrCmp $2 "$\"" SnapmakerOrcaPre_trim_last_quote SnapmakerOrcaPre_path_ready
+SnapmakerOrcaPre_trim_last_quote:
+  StrCpy $0 $0 -1
+SnapmakerOrcaPre_path_ready:
+  ; Existing install confirmed -> this is an upgrade (overwrite or uninstall-first).
+  StrCpy $SnapmakerIsUpgrade "1"
+
+  StrCpy $4 ""
+  ; Uninstall key is written by CPack in the default (32-bit) registry view; read it
+  ; in the same view. Do NOT SetRegView 64 here -- the 32-bit installer writes to
+  ; the WOW6432Node, so a 64-bit read would always come back empty.
+  ReadRegStr $4 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "DisplayVersion"
+  StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
+  ReadRegStr $4 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "DisplayVersion"
+  StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
+  ReadRegStr $4 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker Orca" "DisplayVersion"
+  StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
+  ReadRegStr $4 HKLM "Software\Snapmaker\Snapmaker_Orca" "Version"
+  StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
+  ReadRegStr $4 HKLM "Software\Snapmaker\Snapmaker Orca" "Version"
+SnapmakerOrcaPre_have_ver:
+  StrCpy $5 $4 1
+  StrCmp $5 "V" 0 SnapmakerOrcaPre_ver_ready
+  StrCpy $4 $4 "" 1
+SnapmakerOrcaPre_ver_ready:
+  StrCmp $4 "" SnapmakerOrcaPre_already_no_ver SnapmakerOrcaPre_already_ver
+SnapmakerOrcaPre_already_ver:
+  StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 SnapmakerOrcaPre_already_ver_en
+  MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "已安装 Snapmaker Orca V$4。$\n$\n是否先卸载旧版本，再安装新版本？" /SD IDYES IDYES SnapmakerOrcaPre_uninst IDNO SnapmakerOrcaPre_finish
+  Abort
+SnapmakerOrcaPre_already_ver_en:
+  MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca V$4 is already installed.$\n$\nDo you want to uninstall the old version before installing the new one?" /SD IDYES IDYES SnapmakerOrcaPre_uninst IDNO SnapmakerOrcaPre_finish
+  Abort
+SnapmakerOrcaPre_already_no_ver:
+  StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 SnapmakerOrcaPre_already_no_ver_en
+  MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "已安装 Snapmaker Orca。$\n$\n是否先卸载旧版本，再安装新版本？" /SD IDYES IDYES SnapmakerOrcaPre_uninst IDNO SnapmakerOrcaPre_finish
+  Abort
+SnapmakerOrcaPre_already_no_ver_en:
+  MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca is already installed.$\n$\nDo you want to uninstall the old version before installing the new one?" /SD IDYES IDYES SnapmakerOrcaPre_uninst IDNO SnapmakerOrcaPre_finish
+  Abort
+
+SnapmakerOrcaPre_skip_uninst:
+  ; User chose to uninstall but the uninstaller is missing: skip removal and
+  ; proceed with the overwrite install (no blocking dialog).
+  StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 SnapmakerOrcaPre_skip_uninst_en
+  DetailPrint "未找到卸载程序，跳过旧版本移除并直接覆盖安装。"
+  Goto SnapmakerOrcaPre_finish
+SnapmakerOrcaPre_skip_uninst_en:
+  DetailPrint "Uninstaller not found, skipping old-version removal and overwriting."
+  Goto SnapmakerOrcaPre_finish
+
+SnapmakerOrcaPre_uninst:
+  IfFileExists "$0" 0 SnapmakerOrcaPre_skip_uninst
+  ClearErrors
+  StrLen $2 "Uninstall.exe"
+  StrCpy $3 $0 -$2
+  ; $3 ends with "\" (e.g. ...\Snapmaker_Orca\). _?="...\" breaks Windows cmdline parsing
+  ; (\" escapes the closing quote), truncating _?= at the first space -- strip trailing backslashes.
+SnapmakerOrcaPre_trim_inst_slash:
+  StrCpy $2 $3 1 -1
+  StrCmp $2 "\" SnapmakerOrcaPre_do_trim_slash SnapmakerOrcaPre_trim_slash_done
+SnapmakerOrcaPre_do_trim_slash:
+  StrCpy $3 $3 -1
+  Goto SnapmakerOrcaPre_trim_inst_slash
+SnapmakerOrcaPre_trim_slash_done:
+  IfFileExists "$0" 0 SnapmakerOrcaPre_uninst_launch_failed
+  ; Same as CMake CPack NSIS.template.in and NSIS maintainer guidance: use _?=$DIR with NO
+  ; extra quotes around the directory. _?="C:\Program Files\..." breaks parsing (log shows
+  ; _?="C:\Program Fil...) and causes uninstall failure. See NSIS forums t-212468.
+  ExecWait '"$0" /S _?=$3' $1
+  IfErrors SnapmakerOrcaPre_uninst_launch_failed 0
+  IntCmp $1 0 SnapmakerOrcaPre_uninst_ok SnapmakerOrcaPre_uninst_failed SnapmakerOrcaPre_uninst_failed
+SnapmakerOrcaPre_uninst_ok:
+  ; The old uninstaller's self-delete may be deferred or fail; remove it again so
+  ; Uninstall.exe never survives an upgrade into the new install.
+  Delete "$0"
+  ClearErrors
+  Goto SnapmakerOrcaPre_finish
+
+SnapmakerOrcaPre_uninst_failed:
+  StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 SnapmakerOrcaPre_uninst_failed_en
+  MessageBox MB_OK|MB_ICONSTOP "卸载失败。$\n卸载程序路径：$0$\n工作目录：$3$\n退出码：$1"
+  Abort
+SnapmakerOrcaPre_uninst_failed_en:
+  MessageBox MB_OK|MB_ICONSTOP "Uninstall failed.$\nUninstaller path: $0$\nWorking dir: $3$\nExit code: $1"
+  Abort
+
+SnapmakerOrcaPre_uninst_launch_failed:
+  StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 SnapmakerOrcaPre_uninst_launch_failed_en
+  MessageBox MB_OK|MB_ICONSTOP "无法启动卸载程序。$\n卸载程序路径：$0$\n工作目录：$3$\n$\n系统错误：Windows 无法执行卸载命令（已设置 IfErrors）。$\n可能原因：卸载程序缺失或损坏、访问被拒绝，或安装目录无效。"
+  Abort
+SnapmakerOrcaPre_uninst_launch_failed_en:
+  MessageBox MB_OK|MB_ICONSTOP "Failed to start uninstaller process.$\nUninstaller path: $0$\nWorking dir: $3$\n$\nSystem error: the uninstall command could not be executed by Windows (IfErrors set).$\nPossible causes: missing/corrupted uninstaller, access denied, or invalid install directory."
+  Abort
+
+SnapmakerOrcaPre_finish:
+  StrCmp $SnapmakerIsUpgrade "1" 0 SnapmakerOrcaPre_cleanup_done
+  Call SnapmakerCleanupUpgradeData
+SnapmakerOrcaPre_cleanup_done:

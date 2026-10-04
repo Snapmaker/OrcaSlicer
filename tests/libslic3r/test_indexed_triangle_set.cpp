@@ -1,8 +1,11 @@
 #include <iostream>
 #include <fstream>
-#include <catch2/catch.hpp>
+#include <random>
+#include <catch2/catch_all.hpp>
 
 #include "libslic3r/TriangleMesh.hpp"
+
+#include "test_utils.hpp"
 
 using namespace Slic3r;
 
@@ -28,13 +31,15 @@ TEST_CASE("Split simple mesh consisting of one part", "[its_split][its]") {
     REQUIRE(res.front().vertices.size() == cube.vertices.size());
 }
 
+// Dump each split part as its own OBJ for eyeballing; no-op in release.
 void debug_write_obj(const std::vector<indexed_triangle_set> &res, const std::string &name)
 {
 #ifndef NDEBUG
     size_t part_idx = 0;
-    for (auto &part_its : res) {
-        its_write_obj(part_its, (name + std::to_string(part_idx++) + ".obj").c_str());
-    }
+    for (const auto &part_its : res)
+        write_debug_obj("indexed_triangle_set/" + name + std::to_string(part_idx++) + ".obj", part_its);
+#else
+    (void) res; (void) name;
 #endif
 }
 
@@ -224,7 +229,7 @@ TEST_CASE("Reduce one edge by Quadric Edge Collapse", "[its]")
                     Vec3f(0.9f, .1f, -.1f)};
     its.indices  = {Vec3i32(1, 0, 3), Vec3i32(2, 1, 3), Vec3i32(0, 2, 3),
                    Vec3i32(0, 1, 4), Vec3i32(1, 2, 4), Vec3i32(2, 0, 4)};
-    // edge to remove is between vertices 2 and 4 on trinagles 4 and 5
+    // edge to remove is between vertices 2 and 4 on triangles 4 and 5
 
     indexed_triangle_set its_ = its; // copy
     // its_write_obj(its, "tetrhedron_in.obj");
@@ -259,7 +264,6 @@ TEST_CASE("Reduce one edge by Quadric Edge Collapse", "[its]")
     CHECK(is_similar(its_, its, cfg));
 }
 
-#include "test_utils.hpp"
 TEST_CASE("Simplify mesh by Quadric edge collapse to 5%", "[its]")
 {
     TriangleMesh mesh = load_model("frog_legs.obj");

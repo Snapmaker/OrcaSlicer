@@ -20,29 +20,36 @@
 #include <wx/listbook.h>
 #include <wx/scrolwin.h>
 #include <wx/sizer.h>
+#include <wx/stattext.h>
 #include <wx/bmpcbox.h>
 #include <wx/bmpbuttn.h>
 #include <wx/treectrl.h>
 #include <wx/imaglist.h>
 
 #include <map>
+#include <set>
 #include <vector>
 #include <memory>
 
 //#include "BedShapeDialog.hpp"
-#include "Event.hpp"
 #include "wxExtensions.hpp"
 #include "ConfigManipulation.hpp"
 #include "OptionsGroup.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/PerHeadProcess.hpp"
 //BBS: GUI refactor
 #include "Notebook.hpp"
 #include "ParamsPanel.hpp"
-#include "Widgets/RoundedRectangle.hpp"
 #include "Widgets/TextInput.hpp"
 #include "Widgets/CheckBox.hpp" // ORCA
 
 class TabCtrl;
+class ModeSwitchButton;
+class SwitchButton;
+class MultiSwitchButton;
+
+class ComboBox;
+class Button;
 
 namespace Slic3r {
 
@@ -53,6 +60,9 @@ namespace GUI {
 
 class TabPresetComboBox;
 class OG_CustomCtrl;
+class HyperLink;
+
+std::vector<InputShaperType> input_shaper_types_for_flavor(GCodeFlavor flavor);
 
 // Single Tab page containing a{ vsizer } of{ optgroups }
 // package Slic3r::GUI::Tab::Page;
@@ -68,6 +78,7 @@ class Page: public std::enable_shared_from_this<Page>// : public wxScrolledWindo
 	// BBS: new layout
 	wxStaticText*	m_page_title;
     bool            m_show = true;
+    bool            m_visibility_applied = false;
 public:
 	//BBS: GUI refactor
     Page(wxWindow* parent, const wxString& title, int iconID, wxPanel* tab_owner);
@@ -91,12 +102,18 @@ public:
 	void		reload_config();
     void        update_visibility(ConfigOptionMode mode, bool update_contolls_visibility);
     void        activate(ConfigOptionMode mode, std::function<void()> throw_if_canceled);
+    // Whether an option group has no controls yet.
+    bool        build_pending() const;
+    // Builds the next option group that has no controls yet; true while some remain.
+    bool        build_step(ConfigOptionMode mode);
+    // Whether the controls have not been shown or hidden for a mode since they were built.
+    bool        visibility_pending() const { return !m_visibility_applied; }
     void        clear();
     void        msw_rescale();
     void        sys_color_changed();
     void        refresh();
 	Field*		get_field(const t_config_option_key& opt_key, int opt_index = -1) const;
-    Line *      get_line(const t_config_option_key &opt_key);
+    Line *      get_line(const t_config_option_key &opt_key, int opt_index = -1);
 	bool		set_value(const t_config_option_key& opt_key, const boost::any& value);
 	// BBS. Add is_extruder_og parameter.
 	ConfigOptionsGroupShp	new_optgroup(const wxString& title, const wxString& icon = wxEmptyString, int noncommon_label_width = -1, bool is_extruder_og = false);
@@ -115,7 +132,11 @@ public:
 	}
     bool get_show() const { return m_show; }
 
+    std::map<std::string, std::string> m_opt_id_map;
+
 protected:
+    size_t      next_group_to_build() const;
+    bool        activate_group(size_t i, ConfigOptionMode mode, std::function<void()> throw_if_canceled);
 	// Color of TreeCtrlItem. The wxColour will be updated only if the new wxColour pointer differs from the currently rendered one.
 	const wxColour*		m_item_color;
 };
@@ -139,7 +160,6 @@ protected:
 
 	//BBS: GUI refactor
 	wxPanel*			m_top_panel;
-	wxStaticText* m_static_title;
 	wxBoxSizer* m_main_sizer;
 	wxBoxSizer* m_top_sizer;
 	wxBoxSizer* m_top_left_sizer;
@@ -159,8 +179,6 @@ protected:
 
 	wxScrolledWindow*	m_page_view {nullptr};
 	//wxBoxSizer*			m_page_sizer {nullptr};
-
-    //ModeSizer*			m_mode_sizer {nullptr};
 
    	struct PresetDependencies {
 		Preset::Type type	  = Preset::TYPE_INVALID;
@@ -246,6 +264,7 @@ protected:
     std::vector<Preset::Type>	m_dependent_tabs;
 	enum OptStatus { osSystemValue = 1, osInitValue = 2 };
 	std::map<std::string, int>	m_options_list;
+    std::map<std::string, int> m_all_extruder_options_status;
 	int							m_opt_status_value = 0;
 
 	bool				m_is_modified_values{ false };
@@ -275,6 +294,14 @@ protected:
     m_highlighter;
 
 	DynamicPrintConfig 	m_cache_config;
+    std::vector<std::string> m_cache_options;
+    // Snapmaker Orca: the process layout the cached rows were taken from (its ids, variants,
+    // marker and variant keys), so that rows of a preset with values per tool head are transferred
+    // by (id, variant) and not by index (PerHeadProcess::transfer_columns).
+    DynamicPrintConfig  m_cache_process_source;
+    // Snapmaker Orca: the variant list and variant keys of a filament source, so that its columns
+    // are transferred by variant name (filament_transfer_columns).
+    DynamicPrintConfig  m_cache_filament_source;
 
 
 	bool				m_page_switch_running = false;
@@ -300,7 +327,55 @@ public:
     // 3. propagate changed configuration to the Plater when (m_update_cnt == 0) only
     int                 m_update_cnt = 0;
 
-	SwitchButton *		m_mode_view = nullptr;
+	ModeSwitchButton *m_mode_view = nullptr;
+	ScalableButton* m_mode_icon = nullptr; // ORCA m_static_title replacement
+    wxSizer *       m_variant_sizer   = nullptr;
+    MultiSwitchButton *  m_extruder_switch = nullptr;
+    MultiSwitchButton *  m_variant_combo   = nullptr;
+    // Snapmaker Orca, Filament tab: m_variant_combo may end with a High Flow entry that has no column yet;
+    // the first write under it adds the column (TabFilament::before_flow_change).
+    // m_flow_entries_updating mutes the selection handler while the entries are rebuilt.
+    bool                 m_virtual_flow_entry { false };
+    bool                 m_flow_entries_updating { false };
+    // The line under the Filament tab's selector (TabFilament::update_flow_hint).
+    wxBoxSizer *         m_flow_hint_sizer   = nullptr;
+    ogStaticText *       m_flow_hint_text    = nullptr;
+    ::Button *           m_flow_hint_button  = nullptr;
+    ScalableButton *m_extruder_sync   = nullptr;
+	wxPanel *       m_extruder_sync_box  = nullptr;
+    std::vector<NozzleVolumeType> m_actual_nozzle_volumes;
+    // Snapmaker Orca: flow selector mode of m_extruder_switch. The process preset holds one column
+    // per flow type (HighFlowNotices::flow_selector_types) and the switch offers these types
+    // instead of extruders; empty in every other case.
+    std::vector<NozzleVolumeType> m_flow_selector_types;
+    // Snapmaker Orca: Process-tab speed selector (PerHeadProcess.hpp), "All extruders" plus one entry per tool head
+    // (not on Bambu two-head printers). All edits the shared columns of m_all_flow (set by m_flow_toggle);
+    // a head edits its own columns, created on first edit.
+    bool                          m_head_selector { false };
+    std::vector<NozzleVolumeType> m_head_flow_types;
+    NozzleVolumeType              m_all_flow { NozzleVolumeType::nvtStandard };
+    MultiSwitchButton            *m_flow_toggle { nullptr };
+    // -1: the toggle picks the shared column under All (m_all_flow); else the High Flow head whose printed column
+    // it picks (PerHeadProcess::flow_key). m_flow_toggle_updating mutes the handler during show_flow_toggle.
+    int                           m_flow_toggle_head { -1 };
+    bool                          m_flow_toggle_updating { false };
+    // Set while the code selects an entry of m_extruder_switch (a rebuild of the row, the
+    // sidebar's page change through select_tool_head): the selection handler then shows no nozzle
+    // tab in the sidebar; a click on a tool head does (Sidebar::show_nozzle_tab).
+    bool                          m_head_selection_by_program { false };
+    // Long ("Extruder 2 · 0.6") and short ("E2 · 0.6") selector labels from generate_extruder_options;
+    // fit_head_selector picks the set that fits (HighFlowNotices::head_selector_fit) on resize and rebuild.
+    std::vector<wxString>         m_head_labels_long;
+    std::vector<wxString>         m_head_labels_short;
+    bool                          m_head_labels_short_shown { false };
+    bool                          m_head_fit_pending { false };
+    void                          fit_head_selector();
+    // Applies the rule of the flow toggle's visibility (see the definition); called after every
+    // show of the row, which wxSizer::ShowItems shows the toggle with.
+    void                          show_flow_toggle();
+    // The active page has an indexed key whose columns differ by flow (a speed); the Quality page
+    // (line widths alone, flow-independent) has none and shows no toggle.
+    bool                          page_has_flow_dependent_key() const;
 
 public:
 	// BBS
@@ -329,8 +404,8 @@ public:
     void		update_btns_enabling();
     void		update_preset_choice();
     // Select a new preset, possibly delete the current one.
-	bool		select_preset(std::string preset_name = "", bool delete_current = false, const std::string& last_selected_ph_printer_name = "", bool force_select = false);
-	bool		may_discard_current_dirty_preset(PresetCollection* presets = nullptr, const std::string& new_printer_name = "", bool no_transfer = false);
+    bool select_preset(std::string preset_name = "", bool delete_current = false, const std::string &last_selected_ph_printer_name = "", bool force_select = false, bool force_no_transfer = false);
+	bool		may_discard_current_dirty_preset(PresetCollection* presets = nullptr, const std::string& new_printer_name = "", bool no_transfer = false, bool no_transfer_variant = false);
 
     virtual void    clear_pages();
     virtual void    update_description_lines();
@@ -353,8 +428,11 @@ public:
 	void		decorate();
 	void		update_changed_ui();
 	void		get_sys_and_mod_flags(const std::string& opt_key, bool& sys_page, bool& modified_page);
-	void		update_changed_tree_ui();
+    void        update_changed_tree_ui();
 	void		update_undo_buttons();
+    void        update_extruder_switch_colors();
+    void        update_all_extruder_options_status();
+    void        check_extruder_options_status(int index, bool &sys_extruder, bool &modified_extruder, const std::vector<PageShp>& pages_to_check);
 
 	void		on_roll_back_value(const bool to_sys = false);
 
@@ -367,7 +445,8 @@ public:
 	virtual void	update() = 0;
 	virtual void	toggle_options() = 0;
 	virtual void	init_options_list();
-    virtual void    update_custom_dirty() {}
+	std::string	options_list_storage_key(const std::string& opt_key) const;
+    virtual void    update_custom_dirty(std::vector<std::string> &dirty_options, std::vector<std::string> &nonsys_options) {}
 	void			load_initial_data();
 	void			update_dirty();
 	//BBS update plater presets if update_plater_presets = true
@@ -384,11 +463,23 @@ public:
 
     Field*          get_field(const t_config_option_key &opt_key, Page** selected_page, int opt_index = -1);
     void            toggle_option(const std::string &opt_key, bool toggle, int opt_index = -1);
-    void            toggle_line(const std::string &opt_key, bool toggle); // BBS: hide some line
+    void            toggle_line(const std::string &opt_key, bool toggle, int opt_index = -1); // BBS: hide some line
+    void            set_option_label(const std::string &opt_key, const wxString &label, int opt_index = -1);
+
+    // Live state of the settings row that owns an option, read from the built pages.
+    struct SettingRowState
+    {
+        bool     visible{true}; // false when ConfigManipulation hides the row
+        wxString label;         // Line::label the row draws (may change at runtime)
+        bool     multi{false};  // row packs several options, so label is precomposed
+    };
+    SettingRowState setting_row_state(const std::string &opt_id) const;
+
 	wxSizer*		description_line_widget(wxWindow* parent, ogStaticText** StaticText, wxString text = wxEmptyString);
 	bool			current_preset_is_dirty() const;
 	bool			saved_preset_is_dirty() const;
 	void            update_saved_preset_from_current_preset();
+    void            update_pages_with_multi_variant();
 
 	DynamicPrintConfig*	get_config() { return m_config; }
     PresetCollection *  get_presets() { return m_presets; }
@@ -410,15 +501,65 @@ public:
 	// BBS: new layout
 	void set_expanded(bool value);
 	void restore_last_select_item();
+	// page_build_pending() says whether the selected page has groups without controls or controls
+	// not yet shown for the mode, and page_build_step() does the next of those.
+	bool page_build_pending() const;
+	bool page_build_step();
 
 	static bool validate_custom_gcode(const wxString& title, const std::string& gcode);
 	bool        validate_custom_gcodes();
+	bool        validate_filament_temperature_pairs();
     bool        validate_custom_gcodes_was_shown{ false };
     void        set_just_edit(bool just_edit);
 
     void						edit_custom_gcode(const t_config_option_key& opt_key);
     virtual const std::string&	get_custom_gcode(const t_config_option_key& opt_key);
     virtual void				set_custom_gcode(const t_config_option_key& opt_key, const std::string& value);
+
+    void        update_extruder_variants(int extruder_id = -1, bool reload = true);
+    void        switch_excluder(int extruder_id = -1, bool reload = true);
+    void        sync_excluder();
+	void        parse_extruder_selection(int selection, int &extruder_id, NozzleVolumeType &nozzle_type);
+    int         calculate_selection_index_for_extruder(int extruder_id, NozzleVolumeType nozzle_type);
+	bool        get_extruder_sync_enable_state(int extruder_id);
+	int         get_current_active_extruder();
+
+	std::vector<wxString>  generate_extruder_options();
+    // Snapmaker Orca: shows the sync button next to a shown extruder switch, never in flow selector mode.
+    void                   show_extruder_sync();
+    // Snapmaker Orca: shows the Standard / High Flow column of a flow type in the filament tab's
+    // variant list (HighFlowNotices::variant_column_for_type) or the process tab's flow selector.
+    // No-op when the preset has no such column or the tab has no such control.
+    void                   select_flow_column(NozzleVolumeType type);
+    // Snapmaker Orca, Filament tab: the column of the filament preset the fields show and edit,
+    // 0 without a variant selector (and under the High Flow entry without a column).
+    int                    filament_column() const;
+    // Filament tab: the selected entry is the High Flow entry without a column.
+    bool                   filament_virtual_high_flow() const;
+    // Filament tab: the edited preset may get High Flow values here: an extruder of the project is
+    // set to High Flow, the material may be printed with it, column 0 is Standard and there is no
+    // High Flow column yet.
+    bool                   flow_entry_offered() const;
+    // Snapmaker Orca: the sidebar's nozzle tab of `head` was clicked: the speed selector selects
+    // that head, the flow selector the column of `type`.
+    void                   select_tool_head(size_t head, NozzleVolumeType type);
+    // Activates the page of category `category` ("Speed") without focusing or highlighting a field.
+    void                   select_page_by_category(const wxString &category);
+    // Snapmaker Orca, speed selector: selected entry (0 = All, k = tool head k-1) and its head (-1 for All),
+    // a head's flow (project_config), the preset column a selection edits, and the entries' labels and tooltips.
+    int                    head_selection() const;
+    int                    selected_head() const { return head_selection() - 1; }
+    NozzleVolumeType       head_flow(size_t head) const;
+    // The flow whose speeds column the tool head prints (PerHeadProcess::effective_flow): the
+    // nozzle's, or the Standard column chosen for a High Flow nozzle with the flow toggle. Every
+    // reader of a head's speeds on this tab asks this one; head_flow names the nozzle.
+    NozzleVolumeType       head_speed_flow(size_t head) const;
+    // The flow toggle under a selected High Flow tool head: writes the head's entry (the nozzle's
+    // own flow clears it) and refreshes the page, the entries, the sidebar hint and the plate.
+    void                   choose_head_flow(size_t head, NozzleVolumeType flow);
+    int                    head_selection_column(int selection) const;
+    void                   update_head_entries();
+    NozzleVolumeType       get_actual_nozzle_volume_type(int extruder_id);
 
 protected:
 	void			create_line_with_widget(ConfigOptionsGroup* optgroup, const std::string& opt_key, const std::string& path, widget_t widget);
@@ -430,14 +571,18 @@ protected:
 	// return true if cancelled
 	bool			tree_sel_change_delayed(wxCommandEvent& event);
 	void			on_presets_changed();
+	void			update_printer_agent_if_needed();
 	void			build_preset_description_line(ConfigOptionsGroup* optgroup);
 	void			update_preset_description_line();
 	void			update_frequently_changed_parameters();
 	void			set_tooltips_text();
+    void			filter_diff_option(std::vector<std::string> &options);
 
     ConfigManipulation m_config_manipulation;
+    std::string m_last_sparse_infill_rotate_template_value;
     ConfigManipulation get_config_manipulation();
     friend class EditGCodeDialog;
+    friend class PublishSettingsDialog;
 };
 
 class TabPrint : public Tab
@@ -454,11 +599,67 @@ public:
 	void		toggle_options() override;
 	void		update() override;
 	void		clear_pages() override;
+	void		msw_rescale() override;
+	void		sys_color_changed() override;
 	bool 		supports_printer_technology(const PrinterTechnology tech) const override { return tech == ptFFF; }
+	// Snapmaker Orca, the speed picker: shows the Speed page with tool head `head` selected and the
+	// focus on the picker (the nozzle tab hint and the notices lead here).
+	void		focus_speed_source_picker(size_t head);
+	// Snapmaker Orca: clears the line widths set for tool head `head` (the "Clear" of the notice
+	// raised when the head's nozzle size changes with an absolute width set for it).
+	void		clear_head_widths(size_t head);
+
+protected:
+	// Snapmaker Orca, the speed selector (libslic3r/PerHeadProcess.hpp): the hooks of the option
+	// groups of the Speed page, installed by build() for the process tab alone.
+	void		install_head_hooks();
+	bool		before_head_change(const std::string &opt_key, int &opt_index);
+	void		after_head_change(const std::string &opt_key, int opt_index);
+	bool		before_head_revert(const std::string &opt_key, bool to_sys);
+	bool		head_display_source(const std::string &opt_key, int opt_index, const DynamicPrintConfig *&config, int &index);
+	wxString	head_values_tooltip(const std::string &opt_key) const;
+	// The line and the link under the selector: what the selection means, and the clear of the
+	// values set for the selected tool head (no confirmation) or for every head (confirmed).
+	wxSizer*	per_head_line_widget(wxWindow *parent, int label_em, bool stacked = false);
+	wxString	head_selection_description() const;
+	void		clear_head_values();
+	// The Quality page carries the same selector, line, picker and link for the nine line widths:
+	// which page is active, the width keys among a head's values, and the head-editable keys of
+	// the active page (its clear link clears those alone).
+	bool		quality_page_active() const;
+	static std::vector<std::string> head_width_keys(const std::vector<std::string> &keys);
+	std::set<std::string> page_head_keys() const;
+	void		refresh_after_head_change(bool relayout_columns);
+	// The "Speeds from" picker of the Speed page for the selected tool head. A pick calls PerHeadProcess::set_chosen
+	// ("" = automatic) and refreshes page, entries, sidebar hint and plate. Keys: arrows move the highlight only,
+	// Enter commits, Escape cancels.
+	void		update_speed_source_picker();
+	// The page is laid out again for the lines its wrapped description lines take, scroll range included.
+	void		fit_page_to_lines();
+	void		choose_speed_source(const std::string &name);
+	void		on_speed_source_key(wxKeyEvent &event);
 
 private:
+	wxString	per_head_process_description() const;
 	ogStaticText*	m_recommended_thin_wall_thickness_description_line = nullptr;
 	ogStaticText*	m_top_bottom_shell_thickness_explanation = nullptr;
+	// Snapmaker Orca: the line on the Speed page that names the process presets the tool heads of
+	// another nozzle size print with (libslic3r/PerHeadProcess.hpp).
+	ogStaticText*	m_per_head_process_line = nullptr;
+	HyperLink*		m_per_head_clear_link = nullptr;
+	// The speed picker row: label, combo and the reset to the automatic preset; the preset name
+	// behind every item ("" for the automatic item and the headers). Cleared with the page.
+	wxStaticText*	m_speed_source_label = nullptr;
+	::ComboBox*		m_speed_source_combo = nullptr;
+	ScalableButton*	m_speed_source_reset = nullptr;
+	ogStaticText*	m_speed_source_note = nullptr;   // the line under the picker: what the preset supplies on this page
+	int				m_speed_source_label_em = 15;    // the label column of the page the picker is on (15 Speed, 20 Quality)
+	bool			m_speed_source_stacked = false;  // Quality page: the label on its own line above a full-width combo
+	std::vector<std::string> m_speed_source_items;
+	// The sources of the tool heads (PerHeadProcess::head_sources) and the composed keys edited under
+	// All, refreshed with the entries; read by the display of a tool head's fields.
+	std::vector<PerHeadProcess::Source> m_head_sources;
+	std::set<std::string>               m_all_edited_keys;
 	::CheckBox*		m_legacy_support_check = nullptr;
 };
 
@@ -482,15 +683,15 @@ public:
 	bool has_key(std::string const &key);
 
 protected:
-	virtual void    activate_selected_page(std::function<void()> throw_if_canceled);
+	virtual void    activate_selected_page(std::function<void()> throw_if_canceled) override;
 
 	virtual void    on_value_change(const std::string& opt_key, const boost::any& value) override;
 
 	virtual void    notify_changed(ObjectBase * object) = 0;
 
-	virtual void	reload_config();
+	virtual void	reload_config() override;
 
-	virtual void	update_custom_dirty() override;
+	virtual void	update_custom_dirty(std::vector<std::string> &dirty_options, std::vector<std::string> &nonsys_options) override;
 
 protected:
 	std::vector<std::string> m_keys;
@@ -512,11 +713,13 @@ public:
 	void build() override;
 	void reset_model_config() override;
 	int show_spiral_mode_settings_dialog(bool is_object_config) { return m_config_manipulation.show_spiral_mode_settings_dialog(is_object_config); }
+	// Disables the user-defined filament print order while a mixed-color filament exists.
+	void update_mixed_filament_seq_state();
 
 protected:
 	virtual void    on_value_change(const std::string& opt_key, const boost::any& value) override;
 	virtual void    notify_changed(ObjectBase* object) override;
-	virtual void	update_custom_dirty() override;
+	virtual void	update_custom_dirty(std::vector<std::string> &dirty_options, std::vector<std::string> &nonsys_options) override;
 };
 
 class TabPrintObject : public TabPrintModel
@@ -547,7 +750,7 @@ public:
 	~TabPrintLayer() {}
 protected:
 	virtual void    notify_changed(ObjectBase* object) override;
-	virtual void    update_custom_dirty() override;
+	virtual void    update_custom_dirty(std::vector<std::string> &dirty_options, std::vector<std::string> &nonsys_options) override;
 };
 
 class TabFilament : public Tab
@@ -573,27 +776,61 @@ public:
 	void		update_description_lines() override;
 	void		toggle_options() override;
 	void		update() override;
-	void		clear_pages() override;
+    void        init_options_list() override;
+    void        clear_pages() override;
 	bool 		supports_printer_technology(const PrinterTechnology tech) const override { return tech == ptFFF; }
+
+	void		on_value_change(const std::string& opt_key, const boost::any& value) override;
 
     const std::string&	get_custom_gcode(const t_config_option_key& opt_key) override;
     void				set_custom_gcode(const t_config_option_key& opt_key, const std::string& value) override;
+
+    // Snapmaker Orca: High Flow values for any filament (FilamentFlowColumns.hpp).
+    // The selector shows a High Flow entry, with or without its column.
+    bool        high_flow_selected() const;
+    // Adds the High Flow column as a copy of Standard and selects it; false when there is none to add.
+    bool        create_high_flow_column();
+    // The hint line under the selector and its button.
+    void        update_flow_hint();
+    void        on_flow_hint_button();
+    // The Save dialog's lines about the High Flow values; empty when the edit touches none.
+    wxString    high_flow_save_info() const;
+
+private:
+    // m_before_change of every option group but those of the Dependencies and Notes pages.
+    bool        before_flow_change(const std::string &key, int &index);
+    // The filament slot the tab was opened from sits on a High Flow extruder.
+    bool        slot_on_high_flow() const;
+    // Under a High Flow entry the lines shared by both columns are read-only (last pass of
+    // toggle_options); unlock_shared_lines() undoes it before the enable rules run again.
+    void        lock_shared_lines();
+    void        unlock_shared_lines();
+    // The name of a per-column setting in the hint: its line and, on a line of several fields, the
+    // field ("Textured PEI Plate (First layer)").
+    wxString    flow_hint_label(const std::string &key) const;
+
+    enum class FlowHintAction { None, Create, ApplyToHighFlow };
+    FlowHintAction                   m_flow_hint_action { FlowHintAction::None };
+    std::vector<std::string>         m_flow_hint_keys;
+    std::vector<std::pair<std::weak_ptr<ConfigOptionsGroup>, std::string>> m_locked_fields;
 };
 
 class TabPrinter : public Tab
 {
 private:
 	bool		m_use_silent_mode = false;
-	void		append_option_line(ConfigOptionsGroupShp optgroup, const std::string opt_key);
+	void		append_option_line(ConfigOptionsGroupShp optgroup, const std::string opt_key, const std::string& label_path = "");
 	bool		m_rebuild_kinematics_page = false;
+	void        update_input_shaper_menu(GCodeFlavor flavor);
 
-	ogStaticText*	m_fff_print_host_upload_description_line {nullptr};
-	ogStaticText*	m_sla_print_host_upload_description_line {nullptr};
 
     std::vector<PageShp>			m_pages_fff;
     std::vector<PageShp>			m_pages_sla;
 
-    wxBoxSizer*         m_presets_sizer                 {nullptr};
+	// Snapmaker Orca: the flow combos of the extruder pages that are built at the moment, by
+	// extruder index (page controls come and go with the active page).
+	std::map<int, ::ComboBox*>		m_nozzle_flow_combos;
+
 public:
 	ScalableButton*	m_reset_to_filament_color = nullptr;
 
@@ -602,6 +839,8 @@ public:
 	size_t		m_initial_extruders_count;
 	size_t		m_sys_extruders_count;
 	size_t		m_cache_extruder_count = 0;
+	std::vector<std::string> m_extruder_variant_list;
+	std::string m_base_preset_name;
 
     PrinterTechnology               m_printer_technology = ptFFF;
 
@@ -621,6 +860,7 @@ public:
     void		update_fff();
     void		update_sla();
     void        update_pages(); // update m_pages according to printer technology
+	void        on_gcode_flavor_changed();
 	void		extruders_count_changed(size_t extruders_count);
 	PageShp		build_kinematics_page();
 	void		build_unregular_pages(bool from_initial_build = false);
@@ -629,10 +869,18 @@ public:
 	void		msw_rescale() override;
 	bool 		supports_printer_technology(const PrinterTechnology /* tech */) const override { return true; }
 
+	void		set_extruder_volume_type(int extruder_id, NozzleVolumeType type);
+	// Snapmaker Orca: the "Nozzle flow" line of the extruder pages. It edits the project's
+	// "nozzle_volume_type" (no key of the printer preset), so it is a widget, kept in step with
+	// the Flow row of the sidebar by update_nozzle_flow_lines().
+	wxSizer*	create_nozzle_flow_widget(wxWindow* parent, int extruder_idx);
+	void		update_nozzle_flow_lines(bool refresh_page = true);
+	void		on_value_change(const std::string& opt_key, const boost::any& value) override;
+
 	wxSizer*	create_bed_shape_widget(wxWindow* parent);
 	void		cache_extruder_cnt(const DynamicPrintConfig* config = nullptr);
 	bool		apply_extruder_cnt_from_cache();
-
+	void		refresh_printer_agent_dropdown() const;
 };
 
 class TabSLAMaterial : public Tab
@@ -647,7 +895,6 @@ public:
 	void		reload_config() override;
 	void		toggle_options() override;
 	void		update() override;
-    void		init_options_list() override;
 	bool 		supports_printer_technology(const PrinterTechnology tech) const override { return tech == ptSLA; }
 };
 

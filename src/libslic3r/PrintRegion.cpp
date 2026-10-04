@@ -30,32 +30,39 @@ unsigned int PrintRegion::extruder(FlowRole role) const
 Flow PrintRegion::flow(const PrintObject &object, FlowRole role, double layer_height, bool first_layer, unsigned int filament_id) const
 {
     const PrintConfig          &print_config = object.print()->config();
+    // The filament that prints the flow: the explicitly given one when it differs from the role's
+    // default mapping (top / bottom surface fills), else the role's.
+    // Here this->extruder(role) - 1 may underflow to MAX_INT, but then the get_at() will follback to zero'th element, so everything is all right.
+    const unsigned int filament = filament_id > 0 ? filament_id : this->extruder(role);
+    // Snapmaker Orca: the line widths are columns per tool head, read at the column of the head
+    // whose nozzle resolves the width (Print::width_slot; column and nozzle name one head).
+    const size_t column = object.print()->width_slot(filament);
     ConfigOptionFloatOrPercent config_width;
     // Get extrusion width from configuration.
     // (might be an absolute value, or a percent value, or zero for auto)
-    if (first_layer && print_config.initial_layer_line_width.value > 0) {
-        config_width = print_config.initial_layer_line_width;
+    const ConfigOptionFloatOrPercent initial_layer_width = Flow::width_at(print_config.initial_layer_line_width, column);
+    if (first_layer && initial_layer_width.value > 0) {
+        config_width = initial_layer_width;
     } else if (role == frExternalPerimeter) {
-        config_width = m_config.outer_wall_line_width;
+        config_width = Flow::width_at(m_config.outer_wall_line_width, column);
     } else if (role == frPerimeter) {
-        config_width = m_config.inner_wall_line_width;
+        config_width = Flow::width_at(m_config.inner_wall_line_width, column);
     } else if (role == frInfill) {
-        config_width = m_config.sparse_infill_line_width;
+        config_width = Flow::width_at(m_config.sparse_infill_line_width, column);
     } else if (role == frSolidInfill) {
-        config_width = m_config.internal_solid_infill_line_width;
+        config_width = Flow::width_at(m_config.internal_solid_infill_line_width, column);
     } else if (role == frTopSolidInfill) {
-        config_width = m_config.top_surface_line_width;
+        config_width = Flow::width_at(m_config.top_surface_line_width, column);
     } else {
         throw Slic3r::InvalidArgument("Unknown role");
     }
 
     if (config_width.value == 0)
-        config_width = object.config().line_width;
+        config_width = Flow::width_at(object.config().line_width, column);
     
     // Get the configured nozzle_diameter for the extruder associated to the flow role requested,
     // or for the explicitly given filament when it differs from the role's default mapping (top / bottom surface fills).
-    // Here this->extruder(role) - 1 may underflow to MAX_INT, but then the get_at() will follback to zero'th element, so everything is all right.
-    auto nozzle_diameter = float(print_config.nozzle_diameter.get_at((filament_id > 0 ? filament_id : this->extruder(role)) - 1));
+    auto nozzle_diameter = float(print_config.nozzle_diameter.get_at(filament - 1));
     return Flow::new_from_config_width(role, config_width, nozzle_diameter, float(layer_height));
 }
 
@@ -104,7 +111,11 @@ void PrintRegion::collect_object_printing_extruders(const Print &print, std::vec
     // If not, then there must be something wrong with the Print::apply() function.
 #ifndef NDEBUG
     // BBS
-    auto num_extruders = int(print.config().filament_diameter.size());
+    // Snapmaker mixed filament: painted regions may carry virtual mixed-filament ids above
+    // the physical filament count (admitted by Print::apply via MixedFilamentManager and
+    // resolved to physical extruders per layer), so bound the sanity check by
+    // physical + enabled virtual mixed filaments.
+    auto num_extruders = int(print.mixed_filament_manager().total_filaments(print.config().filament_diameter.size()));
     assert(this->config().outer_wall_filament_id    <= num_extruders);
     assert(this->config().inner_wall_filament_id    <= num_extruders);
     assert(this->config().sparse_infill_filament_id       <= num_extruders);

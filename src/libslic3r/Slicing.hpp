@@ -71,6 +71,8 @@ struct SlicingParameters
     coordf_t    min_layer_height { 0 };
     coordf_t    max_layer_height { 0 };
     coordf_t    max_suport_layer_height { 0 };
+    // The support extruders' own minimum, not clamped to the object layer height.
+    coordf_t    min_suport_layer_height { 0 };
 
     // First layer height of the print, this may be used for the first layer of the raft
     // or for the first layer of the print.
@@ -84,9 +86,10 @@ struct SlicingParameters
     // If the object is printed over a non-soluble raft, the first layer may be printed with a briding flow.
     bool 		first_object_layer_bridging { false };
 
-    // Soluble interface? (PLA soluble in water, HIPS soluble in lemonen)
-    // otherwise the interface must be broken off.
-    bool        soluble_interface { false };
+    // Zero-gap interface flags for top / bottom / raft contact.
+    bool        zero_gap_interface_top { false };
+    bool        zero_gap_interface_bottom { false };
+    bool        zero_gap_interface_raft { false };
     // Gap when placing object over raft.
     coordf_t    gap_raft_object { 0 };
     // Gap when placing support over object.
@@ -100,7 +103,7 @@ struct SlicingParameters
     coordf_t    raft_base_top_z { 0 };
     coordf_t    raft_interface_top_z { 0 };
     coordf_t    raft_contact_top_z { 0 };
-    // In case of a soluble interface, object_print_z_min == raft_contact_top_z, otherwise there is a gap between the raft and the 1st object layer.
+    // In case of a zero-gap raft interface, object_print_z_min == raft_contact_top_z, otherwise there is a gap between the raft and the 1st object layer.
     coordf_t 	object_print_z_min { 0 };
     // This value of maximum print Z is scaled by shrinkage compensation in the Z-axis.
     coordf_t 	object_print_z_max { 0 };
@@ -133,7 +136,9 @@ inline bool equal_layering(const SlicingParameters &sp1, const SlicingParameters
             // BBS: following  are not required for equal layer height.
             // Since the z-gap diff may be multiple of layer height.
 #if 0
-            sp1.soluble_interface                   == sp2.soluble_interface                    &&
+            sp1.zero_gap_interface_top              == sp2.zero_gap_interface_top               &&
+            sp1.zero_gap_interface_bottom           == sp2.zero_gap_interface_bottom            &&
+            sp1.zero_gap_interface_raft             == sp2.zero_gap_interface_raft              &&
             sp1.gap_raft_object                     == sp2.gap_raft_object                      &&
             sp1.gap_object_support                  == sp2.gap_object_support                   &&
             sp1.gap_support_object                  == sp2.gap_support_object                   &&
@@ -203,6 +208,85 @@ int generate_layer_height_texture(
     const SlicingParameters     &slicing_params,
     const std::vector<coordf_t> &layers,
     void *data, int rows, int cols, bool level_of_detail_2nd_level);
+
+// ORCA multi-nozzle-size: per-extruder preferred layer heights ("extruder_layer_height") and the
+// object layer height they print on. The engine prints an extruder in runs of whole object
+// layers, so every explicit preferred height must be a whole multiple of the object layer height
+// (the grid). Heights are taken in 5 um quanta.
+struct ExtruderLayerHeightPlan
+{
+    double              grid = 0.;             // object layer height (0 = nothing to derive)
+    std::vector<double> heights;               // adjusted preferred heights (0 = Default)
+    std::vector<size_t> rounded;               // extruders whose preferred height was rounded
+    std::vector<size_t> pinned;                // Default extruders pinned to the previous height
+};
+
+// The coarsest object layer height every explicit height is a whole multiple of; with
+// `include_base` the given base joins in, so the result can only be finer than it. Capped to
+// `max_height` (largest divisor that fits) when that is > 0. 0 when nothing constrains it.
+double conforming_object_layer_height(const std::vector<double> &heights, double base, bool include_base, double max_height);
+
+// The object layer height for a set of preferred heights and the heights made whole multiples of
+// it. `exact` (experimental): the grid is the coarsest height every preferred height is a whole
+// multiple of, so every entered value prints exactly - possibly a very fine grid, which the
+// Default extruders, supports and the prime tower's fallback slabs print at. Otherwise the grid
+// is the coarsest height, down to the floor `min_grid` (clamped to 0.02 mm..finest preferred
+// height), on which every preferred height lands within `tolerance` of a whole multiple; the
+// tolerance grows in steps of itself until one does. With a Default (0) extruder, grids `base`
+// lands on within max(base/10, tolerance) are preferred, so one entered value does not move
+// the others. In both modes the grid must fit through the smallest
+// nozzle (`min_nozzle`, 0 = unconstrained), preferred heights are snapped to whole multiples
+// within their nozzle bore, and Default extruders are pinned to their current height (`base`,
+// rounded to the grid) when the grid gets finer than it.
+ExtruderLayerHeightPlan plan_extruder_layer_heights(std::vector<double> heights, double base, const std::vector<double> &nozzles,
+                                                    double min_nozzle, bool exact, double min_grid = 0., double tolerance = 0.01);
+
+// Snapmaker Orca: presets and projects keep the entered preferred layer heights; the grid and the printed
+// heights are planned only in the config for slicing (inputs: layer_height, extruder_layer_height,
+// extruder_layer_height_exact, nozzle_diameter, min_layer_height; the list also max_layer_height).
+
+// Transient marker set by apply_extruder_layer_height_plan(): Print::apply then fits an object's own
+// layer height to the planned extruder heights. Never stored in a preset, project or G-code header.
+extern const char *const extruder_layer_height_planned_key;
+
+// A config holding the keys above, from the edited printer and print presets.
+DynamicPrintConfig extruder_layer_height_inputs(const DynamicPrintConfig &printer, const DynamicPrintConfig &print);
+
+// Whether the heights print as entered on `base`: base on the 5 um grid, every explicit height a whole
+// multiple of it within its nozzle, and no Default (0) extruder with a nozzle below `base`.
+bool extruder_layer_heights_conform(const std::vector<double> &heights, double base, const std::vector<double> &nozzles);
+
+// The object layer height (grid) and the per-extruder heights a config prints with (0 = Default, prints
+// the grid); `heights` has one entry per nozzle. Planned when the config does not conform, with
+// `rounded` / `pinned` as plan_extruder_layer_heights() reports them; else grid = layer_height.
+ExtruderLayerHeightPlan effective_extruder_layer_heights(const DynamicPrintConfig &config);
+
+// Writes the effective grid and heights into `config` and sets the marker when an explicit preferred
+// height is present. Idempotent. Returns true when layer_height or extruder_layer_height changed.
+bool apply_extruder_layer_height_plan(DynamicPrintConfig &config);
+
+// An object's own layer height fitted to the effective extruder heights: unchanged when every explicit
+// height is a whole multiple of it, else the coarsest height they all are (capped to the smallest nozzle).
+double effective_object_layer_height(const std::vector<double> &heights, const std::vector<double> &nozzles, double object_height);
+
+// The preferred layer heights offered for extruder `extruder`: from the grid of the plate with this extruder
+// at Default, its half, quarter and whole multiples within its limits, those that print as listed without
+// moving another entered height. Ascending, no duplicates.
+std::vector<double> available_extruder_layer_heights(const DynamicPrintConfig &config, size_t extruder);
+
+// Whether an extruder other than `extruder` has a preferred layer height entered. Without one nothing
+// constrains the grid, so the sidebar offers no list of heights for `extruder`.
+bool other_extruder_has_layer_height(const DynamicPrintConfig &config, size_t extruder);
+
+// What the sidebar tells about one extruder's layer height.
+struct ExtruderLayerHeightNote
+{
+    double preferred = 0.; // as entered (0 = Default)
+    double printed   = 0.; // the height the extruder prints (the grid for a Default extruder)
+    double grid      = 0.; // the object layer height the plate prints on
+    bool   off_grid  = false; // an entered height that prints at another height
+};
+std::vector<ExtruderLayerHeightNote> extruder_layer_height_notes(const DynamicPrintConfig &config);
 
 namespace Slicing {
 	// Minimum layer height for the variable layer height algorithm. Nozzle index is 1 based.

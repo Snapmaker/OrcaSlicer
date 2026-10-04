@@ -1,9 +1,9 @@
-//**********************************************************/
-/* File: uiDeviceUpdateVersion.h
+/**********************************************************
+* File: uiDeviceUpdateVersion.h
 *  Description: The panel with firmware info
 * 
 *  \n class uiDeviceUpdateVersion
-//**********************************************************/
+**********************************************************/
 
 #pragma once
 #include <wx/panel.h>
@@ -29,7 +29,7 @@ public:
     ~uiDeviceUpdateVersion() = default;
 
 public:
-    void  UpdateInfo(const MachineObject::ModuleVersionInfo& info);
+    void  UpdateInfo(const DevFirmwareVersionInfo& info);
 
 private:
     void  CreateWidgets();

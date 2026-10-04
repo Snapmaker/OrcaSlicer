@@ -3,7 +3,7 @@
     "name": "Generic PETG HF @base",
     "inherits": "fdm_filament_pet",
     "from": "system",
-    "filament_id": "GFG96",
+    "filament_id": "OF7lOgYF",
     "instantiation": "false",
     "cool_plate_temp": [
         "0"
@@ -41,14 +41,14 @@
     "hot_plate_temp_initial_layer": [
         "70"
     ],
+    "nozzle_temperature_range_high": [
+        "270"
+    ],
     "nozzle_temperature": [
         "220"
     ],
     "nozzle_temperature_initial_layer": [
         "220"
-    ],
-    "nozzle_temperature_range_high": [
-        "270"
     ],
     "overhang_fan_speed": [
         "90"

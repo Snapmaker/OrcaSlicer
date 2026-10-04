@@ -1,10 +1,15 @@
 #include "PresetComboBoxes.hpp"
+#include "libslic3r/FilamentFlowColumns.hpp"
 
 #include <cstddef>
+#include <cctype>
 #include <algorithm>
 #include <unordered_map>
 #include <vector>
 #include <string>
+#include <set>
+#include <utility>
+#include <algorithm>
 #include <boost/algorithm/string.hpp>
 
 #include <wx/sizer.h>
@@ -40,13 +45,16 @@
 #include "Tab.hpp"
 #include "ConfigWizard.hpp"
 #include "../Utils/ASCIIFolding.hpp"
-#include "../Utils/FixModelByWin10.hpp"
 #include "../Utils/UndoRedo.hpp"
 #include "../Utils/ColorSpaceConvert.hpp"
 #include "BitmapCache.hpp"
 #include "SavePresetDialog.hpp"
 #include "MsgDialog.hpp"
 #include "ParamsDialog.hpp"
+#include "FilamentPickerDialog.hpp"
+#include "wxExtensions.hpp"
+
+#include "DeviceCore/DevManager.h"
 
 // A workaround for a set of issues related to text fitting into gtk widgets:
 #if defined(__WXGTK20__) || defined(__WXGTK3__)
@@ -216,6 +224,7 @@ PresetComboBox::PresetComboBox(wxWindow* parent, Preset::Type preset_type, const
     // parameters for an icon's drawing
     fill_width_height();
 
+    // Snapmaker: the mouse wheel must not change the selection while the drop-down is closed.
     Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent& e) {
         if (m_suppress_change)
             e.StopPropagation();
@@ -277,7 +286,7 @@ void PresetComboBox::invalidate_selection()
 
 void PresetComboBox::validate_selection(bool predicate/*=false*/)
 {
-    if (predicate ||
+    if (predicate &&
         // just in case: mark m_last_selected as a first added element
         m_last_selected == INT_MAX)
         m_last_selected = GetCount() - 1;
@@ -289,7 +298,9 @@ void PresetComboBox::update_selection()
      * there is no presets added to the list.
      * So, select last combobox item ("Add/Remove preset")
      */
-    validate_selection();
+    //validate_selection();
+    if (m_last_selected == INT_MAX)
+        m_last_selected = 1;
 
     SetSelection(m_last_selected);
 #ifdef __WXMSW__
@@ -302,23 +313,31 @@ void PresetComboBox::update_selection()
 
 // A workaround for a set of issues related to text fitting into gtk widgets:
 #if defined(__WXGTK20__) || defined(__WXGTK3__)
-    // Guard: m_widget may not be a GtkCellLayout (e.g. not yet realized, or GtkComboBoxText in Flatpak/GTK3)
-    if (!m_widget || !GTK_IS_CELL_LAYOUT(m_widget))
+    // ORCA: m_widget may not be realized yet; the Flatpak/GTK3 build hit a null here.
+    if (!m_widget)
         return;
-    GList* cells = gtk_cell_layout_get_cells(GTK_CELL_LAYOUT(m_widget));
-
-    // 'cells' contains the GtkCellRendererPixBuf for the icon,
-    // 'cells->next' contains GtkCellRendererText for the text we need to ellipsize
-    if (!cells || !cells->next) return;
-
-    auto cell = static_cast<GtkCellRendererText *>(cells->next->data);
-
-    if (!cell) return;
-
-    g_object_set(G_OBJECT(cell), "ellipsize", PANGO_ELLIPSIZE_END, (char*)NULL);
-
-    // Only the list of cells must be freed, the renderer isn't ours to free
-    g_list_free(cells);
+    GtkWidget* widget = m_widget;
+    if (GTK_IS_CONTAINER(widget)) {
+        GList* children = gtk_container_get_children(GTK_CONTAINER(widget));
+        if (children) {
+            widget = GTK_WIDGET(children->data);
+            g_list_free(children);
+        }
+    }
+    if (GTK_IS_ENTRY(widget)) {
+        // Set ellipsization for the entry
+        gtk_entry_set_width_chars(GTK_ENTRY(widget), 20);  // Adjust this value as needed
+        gtk_entry_set_max_width_chars(GTK_ENTRY(widget), 20);  // Adjust this value as needed
+        // Create a PangoLayout for the entry and set ellipsization
+        PangoLayout* layout = gtk_entry_get_layout(GTK_ENTRY(widget));
+        if (layout) {
+            pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
+        } else {
+            g_warning("Unable to get PangoLayout from GtkEntry");
+        }
+    } else {
+        g_warning("Expected GtkEntry, but got %s", G_OBJECT_TYPE_NAME(widget));
+    }
 #endif
 }
 
@@ -366,12 +385,28 @@ int PresetComboBox::update_ams_color()
     }
 
     std::string color;
-    std::vector<std::string> multiColors;
+    std::string ctype;                    // ORCA: filament colour type reported by the AMS
+    std::vector<std::string> colors;      // ORCA: filament_multi_colour values reported by the AMS
+    std::vector<std::string> multiColors; // Snapmaker: FilamentColorUtils multi colours
     FilamentColorMode colorMode = FilamentColorMode::Segment;
     if (idx < 0)
     {
-        auto *preset = m_collection->find_preset(Preset::remove_suffix_modified(GetLabel().ToUTF8().data()));
-        if (preset) color = preset->config.opt_string("default_filament_colour", 0u);
+        // ORCA: The combo displays the preset alias while
+        // the stored preset name usually carries a printer suffix. Resolving with the raw display
+        // value via find_preset() fails for such presets, so this returned early and the
+        // filament color swatch (clr_picker) kept showing the previous color. Prefer the
+        // internal preset name stored per item, then fall back to alias resolution.
+        std::string name;
+        if (m_last_selected >= 0) {
+            wxString stored = GetItemAlias(m_last_selected);
+            if (!stored.empty())
+                name = Preset::remove_suffix_modified(stored.ToUTF8().data());
+        }
+        if (name.empty())
+            name = m_collection->get_preset_name_by_alias(Preset::remove_suffix_modified(GetValue().ToUTF8().data()));
+        auto *preset = m_collection->find_preset(name);
+        if (preset)
+            color = preset->config.opt_string("default_filament_colour", 0u);
         if (color.empty()) return -1;
     }
     else if (machineInfo != nullptr)
@@ -406,6 +441,10 @@ int PresetComboBox::update_ams_color()
                 return -1;
             }
             color = iter->second.opt_string("filament_colour", 0u);
+            // ORCA: the AMS also reports a colour type and a multi-colour pack.
+            ctype = iter->second.opt_string("filament_colour_type", 0u);
+            if (const auto *multi = iter->second.opt<ConfigOptionStrings>("filament_multi_colour"); multi != nullptr)
+                colors = multi->values;
         }
     }
     const std::string normalizedColor = FilamentColorUtils::NormalizeHexColor(color, "#26A69A");
@@ -429,6 +468,25 @@ int PresetComboBox::update_ams_color()
     filamentColors->values[index] = normalizedColor.empty() ? color : normalizedColor;
     DynamicPrintConfig new_cfg;
     new_cfg.set_key_value("filament_colour", filamentColors);
+
+    // ORCA: colour type + multi-colour pack. "filament_multi_colour" (Orca, space separated
+    // string) is a different key from Snapmaker's "filament_multi_colors" written below.
+    ConfigOptionStrings* colorTypes = CloneStringOption(*cfg, "filament_colour_type");
+    ConfigOptionStrings* colorPack  = CloneStringOption(*cfg, "filament_multi_colour");
+    ResizeStrings(colorTypes, targetSize);
+    ResizeStrings(colorPack, targetSize);
+    colorTypes->values[index] = ctype;
+    std::string color_str = ""; // Translate multi color info to config storage format
+    for (auto &c : colors) {
+        if (c.empty()) continue;
+        color_str += c + " ";
+    }
+    if (color_str.empty()) color_str = filamentColors->values[index];
+    else color_str.erase(color_str.size() - 1);
+    colorPack->values[index] = color_str;
+    new_cfg.set_key_value("filament_colour_type", colorTypes);
+    new_cfg.set_key_value("filament_multi_colour", colorPack);
+
     if (machineInfo != nullptr)
     {
         ConfigOptionStrings* filamentMultiColors = CloneStringOption(*cfg, "filament_multi_colors");
@@ -459,7 +517,25 @@ wxColor PresetComboBox::different_color(wxColor const &clr)
 wxString PresetComboBox::get_tooltip(const Preset &preset)
 {
     wxString tooltip = from_u8(preset.name);
-    
+
+    // Snapmaker Orca: the plate's quality choice: which tool heads print with presets of that
+    // quality for their nozzle size, and which with a preset chosen in the project (libslic3r/PerHeadProcess.hpp).
+    if (m_type == Preset::TYPE_PRINT) {
+        const PresetBundle *bundle = wxGetApp().preset_bundle;
+        if (bundle != nullptr && bundle->prints.get_selected_idx() != size_t(-1) && preset.name == bundle->prints.get_selected_preset().name) {
+            std::string heads;
+            for (const PerHeadProcess::Source &source : PerHeadProcess::head_sources(*bundle))
+                if (source.derived && source.preset != nullptr)
+                    // TRN One tool head in the tooltip of the process combo. %1% the tool head, %2% the process preset it prints with
+                    heads += (heads.empty() ? "" : ", ") + into_u8(format_wxstr(_L("extruder %1% %2%"), source.head + 1,
+                                                                              from_u8(source.preset->alias.empty() ? source.preset->name : source.preset->alias))) +
+                             (source.step == PerHeadProcess::Step::Chosen ? " " + into_u8(_L("(chosen)")) : std::string());
+            if (!heads.empty())
+                // TRN Tooltip of the process combo of the sidebar. %1% lists tool heads with the process preset each prints with
+                tooltip += "\n" + format_wxstr(_L("Extruders of other nozzle sizes print with presets of this quality for their size: %1%."), from_u8(heads));
+        }
+    }
+
     // Add filament notes if available for filament presets
     if (m_type == Preset::TYPE_FILAMENT) {
         const DynamicConfig* config = &preset.config;
@@ -501,6 +577,100 @@ wxString PresetComboBox::get_tooltip(const Preset &preset)
     return tooltip;
 }
 
+// Snapmaker Orca: filament presets follow the nozzle size of their tool head.
+bool PresetComboBox::filament_slot_state(NozzleFilament::State &state) const
+{
+    if (m_type != Preset::TYPE_FILAMENT || m_filament_idx < 0 || m_preset_bundle == nullptr ||
+        size_t(m_filament_idx) >= m_preset_bundle->filament_presets.size())
+        return false;
+    state = NozzleFilament::state(*m_preset_bundle);
+    return state.rule_on && state.head_of(size_t(m_filament_idx)) != NozzleFilament::no_head;
+}
+
+const Preset* PresetComboBox::machine_filament_for_slot(const NozzleFilament::State &state, const std::string &filament_name, const Preset *mainline_match) const
+{
+    const Preset *machine = state.mixed ? state.machine_of(size_t(m_filament_idx)) : nullptr;
+    if (machine == nullptr || machine == &m_preset_bundle->printers.get_edited_preset())
+        return mainline_match;
+    // The tool head carries another size than the printer preset. The name probe of the caller
+    // rates against the printer preset, so it finds the version of that size or nothing at all;
+    // the version for the tool head is the member of the same family that serves its machine preset.
+    const PresetCollection &filaments = m_preset_bundle->filaments;
+    if (mainline_match != nullptr)
+        if (const Preset *system = NozzleFilament::system_ancestor(filaments, *mainline_match); system != nullptr)
+            if (const Preset *version = NozzleFilament::version_for(filaments, *system, *machine); version != nullptr)
+                return version;
+    for (const Preset &candidate : filaments)
+        if (candidate.is_system && candidate.alias == filament_name)
+            if (const Preset *version = NozzleFilament::version_for(filaments, candidate, *machine); version != nullptr)
+                return version;
+    return mainline_match;
+}
+
+wxString PresetComboBox::nozzle_size_marker(const NozzleFilament::State &state, const Preset &preset) const
+{
+    if (m_preset_bundle == nullptr || m_filament_idx < 0 || preset.is_default)
+        return {};
+    const double size = NozzleFilament::preset_nozzle_size(*m_preset_bundle, preset);
+    if (size <= 0.)
+        return {};
+    const size_t head      = state.head_of(size_t(m_filament_idx));
+    const double head_size = head < state.head_size.size() ? state.head_size[head] : 0.;
+    const double home      = NozzleFilament::home_nozzle_size(m_preset_bundle->printers.get_edited_preset().config);
+    if ((head_size <= 0. || std::abs(size - head_size) < EPSILON) && (home <= 0. || std::abs(size - home) < EPSILON))
+        return {};
+    // TRN: the nozzle size a filament preset is made for, in front of its name in the filament list. %1% is a number like 0.2.
+    return format_wxstr(_L("%1% mm"), nozzle_size_text(size));
+}
+
+std::string PresetComboBox::nozzle_size_text(double size)
+{
+    std::string number = float_to_string_decimal_point(size, 2);
+    while (number.find('.') != std::string::npos && (number.back() == '0' || number.back() == '.'))
+        number.pop_back();
+    return number;
+}
+
+wxString PresetComboBox::get_preset_item_name(unsigned int index)
+{
+    if (m_type == Preset::TYPE_PRINTER) {
+        int idx = selected_connected_printer();
+        if (idx < 0) {
+            m_selected_dev_id.clear();
+            return GetString(index);
+        }
+        else {
+            DeviceManager *dev = Slic3r::GUI::wxGetApp().getDeviceManager();
+            if (!dev) {
+                assert(false);
+                m_selected_dev_id.clear();
+                return GetString(index);
+            }
+
+            std::map<std::string, MachineObject *> machine_list =
+                dev->get_my_machine_list(dev->get_current_printer_agent_id());
+            if (machine_list.empty()) {
+                assert(false);
+                m_selected_dev_id.clear();
+                return GetString(index);
+            }
+
+            auto iter = machine_list.begin();
+            std::advance(iter, idx);
+            if (iter != machine_list.end()) {
+                m_selected_dev_id = iter->first;
+                Preset* machine_preset = get_printer_preset(iter->second);
+                if (machine_preset) {
+                    return from_u8(machine_preset->name);
+                }
+            }
+        }
+    }
+
+    m_selected_dev_id.clear();
+    return GetString(index);
+}
+
 wxString PresetComboBox::get_preset_name(const Preset & preset)
 {
     return from_u8(preset.name/* + suffix(preset)*/);
@@ -519,7 +689,7 @@ void PresetComboBox::update(std::string select_preset_name)
 
     wxString selected = "";
     if (!presets.front().is_visible)
-        set_label_marker(Append(separator(L("System presets")), wxNullBitmap));
+        set_label_marker(Append(_L("System presets"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
 
     for (size_t i = presets.front().is_visible ? 0 : m_collection->num_default_presets(); i < presets.size(); ++i)
     {
@@ -549,11 +719,11 @@ void PresetComboBox::update(std::string select_preset_name)
                 selected = get_preset_name(preset);
         }
         if (i + 1 == m_collection->num_default_presets())
-            set_label_marker(Append(separator(L("System presets")), wxNullBitmap));
+            set_label_marker(Append(_L("System presets"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
     }
     if (!nonsys_presets.empty())
     {
-        set_label_marker(Append(separator(L("User presets")), wxNullBitmap));
+        set_label_marker(Append(_L("User presets"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
         for (std::map<wxString, std::pair<wxBitmap*, bool>>::iterator it = nonsys_presets.begin(); it != nonsys_presets.end(); ++it) {
             int item_id = Append(it->first, *it->second.first);
             bool is_enabled = it->second.second;
@@ -564,7 +734,7 @@ void PresetComboBox::update(std::string select_preset_name)
     }
     if (!incomp_presets.empty())
     {
-        set_label_marker(Append(separator(L("Incompatible presets")), wxNullBitmap));
+        set_label_marker(Append(_L("Incompatible presets"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
         for (std::map<wxString, wxBitmap*>::iterator it = incomp_presets.begin(); it != incomp_presets.end(); ++it) {
             set_label_marker(Append(it->first, *it->second), LABEL_ITEM_DISABLED);
         }
@@ -597,17 +767,88 @@ void PresetComboBox::update_from_bundle()
     this->update(m_collection->get_selected_preset().name);
 }
 
-void PresetComboBox::add_ams_filaments(std::string selected, bool alias_name)
+void PresetComboBox::add_connected_printers(std::string selected, bool alias_name)
 {
+    DeviceManager *dev = Slic3r::GUI::wxGetApp().getDeviceManager();
+    if (!dev)
+        return;
+
+    std::map<std::string, MachineObject *> machine_list =
+        dev->get_my_machine_list(dev->get_current_printer_agent_id());
+    if (machine_list.empty())
+        return;
+
+    set_label_marker(Append(_L("My Printer"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
+    m_first_printer_idx = GetCount();
+    for (auto iter = machine_list.begin(); iter != machine_list.end(); ++iter) {
+        Preset* printer_preset = get_printer_preset(iter->second);
+        if (!printer_preset)
+            continue;
+        printer_preset->is_visible = true;
+        auto printer_model = printer_preset->config.opt_string("printer_model");
+        boost::replace_all(printer_model, "Bambu Lab ", "");
+        auto text = iter->second->get_dev_name() + " (" + printer_model + ")";
+        int  item_id = Append(from_u8(text), wxNullBitmap, &m_first_printer_idx + std::distance(machine_list.begin(), iter));
+        validate_selection(m_selected_dev_id == iter->first);
+    }
+    m_last_printer_idx = GetCount();
+}
+
+int PresetComboBox::selected_connected_printer() const
+{
+    if (m_first_printer_idx && m_last_selected >= m_first_printer_idx && m_last_selected < m_last_printer_idx) {
+        return reinterpret_cast<int *>(GetClientData(m_last_selected)) - &m_first_printer_idx;
+    }
+    return -1;
+}
+
+bool PresetComboBox::add_ams_filaments(std::string selected, bool alias_name)
+{
+    bool selected_in_ams      = false;
     bool is_bbl_vendor_preset = m_preset_bundle->is_bbl_vendor();
     if (is_bbl_vendor_preset && !m_preset_bundle->filament_ams_list.empty()) {
-        set_label_marker(Append(separator(L("AMS filaments")), wxNullBitmap));
+        // When a filament track switch is installed and calibrated, every AMS filament is reachable
+        // from both extruders, so present one deduplicated group instead of the Left/Right split.
+        bool fila_switch_ready = wxGetApp().sidebar().is_fila_switch_ready();
+        bool dual_extruder   = (m_preset_bundle->filament_ams_list.begin()->first & 0x10000) == 0;
+        if (fila_switch_ready)
+            set_label_marker(Append(_L("AMS filaments"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
+        else
+            set_label_marker(Append(dual_extruder ? _L("Left filaments") : _L("AMS filament"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
         m_first_ams_filament = GetCount();
         auto &filaments      = m_collection->get_presets();
+
+        int icon_width = 24;
         for (auto &entry : m_preset_bundle->filament_ams_list) {
             auto &      tray        = entry.second;
+            auto  name = tray.opt_string("tray_name", 0u);
+            if (name.size() > 3)
+                icon_width = 32;
+        }
+
+        // Deduplicate by (tray_name, filament_id) so a filament shared by both extruders is
+        // listed once when the switch is ready. Uses Orca's tray naming/lookup, not BBS's.
+        std::set<std::pair<std::string, std::string>> added_filaments;
+
+        for (auto &entry : m_preset_bundle->filament_ams_list) {
+            if (!fila_switch_ready && dual_extruder && (entry.first & 0x10000)) {
+                dual_extruder = false;
+                set_label_marker(Append(_L("Right filaments"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
+            }
+            auto &      tray        = entry.second;
             std::string filament_id = tray.opt_string("filament_id", 0u);
-            if (filament_id.empty()) continue;
+            auto        name        = tray.opt_string("tray_name", 0u);
+            if (filament_id.empty()) {
+                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":  %1% 's filament_id is empty.") % name;
+                continue;
+            }
+            if (fila_switch_ready) {
+                // skip the external spool and collapse duplicates shared across both extruders
+                if (name == "Ext")
+                    continue;
+                if (!added_filaments.insert(std::make_pair(name, filament_id)).second)
+                    continue;
+            }
             auto iter = std::find_if(filaments.begin(), filaments.end(),
                 [&filament_id, this](auto &f) { return f.is_compatible && m_collection->get_preset_base(f) == &f && f.filament_id == filament_id; });
             if (iter == filaments.end()) {
@@ -624,13 +865,28 @@ void PresetComboBox::add_ams_filaments(std::string selected, bool alias_name)
             }
             const_cast<Preset&>(*iter).is_visible = true;
             auto color = tray.opt_string("filament_colour", 0u);
-            auto name = tray.opt_string("tray_name", 0u);
-            wxBitmap bmp(*get_extruder_color_icon(color, name, 24, 16));
-            int item_id = Append(get_preset_name(*iter), bmp.ConvertToImage(), &m_first_ams_filament + entry.first);
+            auto multi_color = tray.opt<ConfigOptionStrings>("filament_multi_colour")->values;
+            wxBitmap bmp(*get_extruder_color_icon(color, name, icon_width, 16));
+            auto text = get_preset_name(*iter);
+            int      item_id = Append(text, bmp.ConvertToImage(), &m_first_ams_filament + entry.first);
+            SetFlag(GetCount() - 1, (int) FilamentAMSType::FROM_AMS);
+            if (text == selected) {
+                DynamicPrintConfig *cfg    = &wxGetApp().preset_bundle->project_config;
+                if (cfg) {
+                    auto colors = static_cast<ConfigOptionStrings *>(cfg->option("filament_colour")->clone());
+                    if (m_filament_idx < colors->values.size()) {
+                        auto cur_color = colors->values[m_filament_idx];
+                        if (color == cur_color) {
+                            selected_in_ams = true;
+                        }
+                    }
+                }
+            }
             //validate_selection(id->value == selected); // can not select
         }
         m_last_ams_filament = GetCount();
     }
+    return selected_in_ams;
 }
 
 int PresetComboBox::selected_ams_filament() const
@@ -811,6 +1067,7 @@ bool PresetComboBox::is_selected_physical_printer()
     return marker == LABEL_ITEM_PHYSICAL_PRINTER;
 }
 
+
 bool PresetComboBox::selection_is_changed_according_to_physical_printers()
 {
     if (m_type != Preset::TYPE_PRINTER || !is_selected_physical_printer())
@@ -908,9 +1165,64 @@ PlaterPresetComboBox::PlaterPresetComboBox(wxWindow *parent, Preset::Type preset
     if (m_type == Preset::TYPE_FILAMENT) {
         clr_picker = new wxBitmapButton(parent, wxID_ANY, {}, wxDefaultPosition, wxSize(FromDIP(20), FromDIP(20)), wxBU_EXACTFIT | wxBU_AUTODRAW | wxBORDER_NONE);
         clr_picker->SetBitmapMargins(0, 0);
+        clr_picker->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
         clr_picker->SetToolTip(_L("Click to select filament color"));
-        clr_picker->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-            ChangeExtruderColor();
+#ifdef __WXGTK__
+        RemoveButtonBorder(clr_picker);
+#endif
+        clr_picker->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {
+            // ORCA: Bambu official filaments keep Orca's filament picker; every other filament
+            // goes through the Snapmaker filament colour library dialog, which itself falls back
+            // to the plain colour picker when the filament is not in the library.
+            auto fila_type = Preset::remove_suffix_modified(GetValue().ToUTF8().data());
+            if (!boost::algorithm::starts_with(fila_type, "Bambu")) {
+                ChangeExtruderColor();
+                return;
+            }
+
+            // Get filament_id from filament_presets. FilamentPickerDialog looks up
+            // filaments_color_codes.json, which is downloaded from Bambu and keyed by the
+            // printer's own ids, so translate our OF id (the "GFA00" fallback is already one).
+            const std::string& preset_name = m_preset_bundle->filament_presets[m_filament_idx];
+            const Preset* selected_preset = m_collection->find_preset(preset_name);
+            auto* agent = wxGetApp().getAgent();
+            wxString fila_id = "GFA00";
+            if (selected_preset)
+                fila_id = wxString::FromUTF8(agent ? agent->from_orca_filament_id(selected_preset->filament_id) : selected_preset->filament_id);
+            EncodedFilamentColor fila_color = get_cur_color_info();
+
+            // Show filament picker dialog
+            FilamentPickerDialog dialog(this, fila_id, fila_color, fila_type);
+
+            if (!dialog.IsDataLoaded()) {
+                // If FilamentPicker fails, fallback to default color picker
+                show_default_color_picker();
+            } else if (dialog.ShowModal() == wxID_OK) {
+                // Get selected filament color data
+                EncodedFilamentColor fila_color = dialog.GetSelectedFilamentColor();
+
+                // Check if we have valid color data
+                if (!fila_color.m_colors.empty()) {
+                    // Convert to storage format
+                    std::vector<std::string> colors;
+                    for (const wxColour& color : fila_color.m_colors) {
+                        colors.push_back(color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString());
+                    }
+
+                    bool is_gradient = (fila_color.m_color_type == EncodedFilamentColor::ColorType::GRADIENT_CLR);
+                    this->sync_colour_config(colors, is_gradient);
+                } else {
+                    // Fallback to basic color if no FilamentColor data
+                    wxColour selected_color = dialog.GetSelectedColour();
+                    if (selected_color.IsOk()) {
+                        std::vector<std::string> color = {selected_color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString()};
+                        this->sync_colour_config(color, false);
+                    }
+                }
+            }
+            wxCommandEvent *evt = new wxCommandEvent(EVT_FILAMENT_COLOR_CHANGED);
+            evt->SetInt(m_filament_idx);
+            wxQueueEvent(wxGetApp().plater(), evt);
         });
     }
     else {
@@ -956,14 +1268,14 @@ void PlaterPresetComboBox::OnSelect(wxCommandEvent &evt)
     auto selected_item = evt.GetSelection();
 
     auto marker = reinterpret_cast<Marker>(this->GetClientData(selected_item));
-    if (marker >= LABEL_ITEM_MARKER && marker < LABEL_ITEM_MAX) {
+    if (marker >= LABEL_ITEM_DISABLED && marker < LABEL_ITEM_MAX) {
         this->SetSelection(m_last_selected);
         if (LABEL_ITEM_WIZARD_ADD_PRINTERS == marker) {
             evt.Skip();
             return;
         }
         evt.StopPropagation();
-        if (marker == LABEL_ITEM_MARKER)
+        if (marker == LABEL_ITEM_MARKER || marker == LABEL_ITEM_DISABLED)
             return;
         //if (marker == LABEL_ITEM_WIZARD_PRINTERS)
         //    show_add_menu();
@@ -978,13 +1290,26 @@ void PlaterPresetComboBox::OnSelect(wxCommandEvent &evt)
             wxTheApp->CallAfter([sp]() { run_wizard(sp); });
         //}
         return;
-    } else if (marker == LABEL_ITEM_PHYSICAL_PRINTER || m_last_selected != selected_item || m_collection->current_is_dirty()) {
+    } else if (marker == LABEL_ITEM_PHYSICAL_PRINTER ||  selected_item >= 0 || m_collection->current_is_dirty()) {
         m_last_selected = selected_item;
         if (m_type == Preset::TYPE_FILAMENT)
             update_ams_color();
     }
 
     evt.Skip();
+}
+
+void PlaterPresetComboBox::update_badge_according_flag() {
+    auto selection   = GetSelection();
+    auto select_flag = GetFlag(selection);
+    auto ok          = select_flag == (int) PresetComboBox::FilamentAMSType::FROM_AMS;
+    ShowBadge(m_sync_badge || ok);
+}
+
+void PlaterPresetComboBox::set_sync_badge(bool show)
+{
+    m_sync_badge = show;
+    ShowBadge(show);
 }
 
 bool PlaterPresetComboBox::switch_to_tab()
@@ -999,11 +1324,26 @@ bool PlaterPresetComboBox::switch_to_tab()
         const std::string& selected_preset = GetString(GetSelection()).ToUTF8().data();
         if (!boost::algorithm::starts_with(selected_preset, Preset::suffix_modified()))
         {
-            const std::string& preset_name = wxGetApp().preset_bundle->filaments.get_preset_name_by_alias(selected_preset);
+            std::string preset_name = wxGetApp().preset_bundle->filaments.get_preset_name_by_alias(selected_preset);
+            // Snapmaker Orca: the displayed alias is shared by the versions of a material for the
+            // nozzle sizes, and the lookup above returns the one of the printer preset. The editor
+            // opens the preset the slot holds.
+            if (NozzleFilament::State slot_state; this->filament_slot_state(slot_state))
+                preset_name = m_preset_bundle->filament_presets[m_filament_idx];
             if (wxGetApp().get_tab(m_type)->select_preset(preset_name))
                 wxGetApp().get_tab(m_type)->get_combo_box()->set_filament_idx(m_filament_idx);
             else {
                 return false;
+            }
+            // Snapmaker Orca: the Standard / High Flow column of the tool head that prints the
+            // slot, so that a High Flow tool head opens its material on its High Flow values.
+            if (m_filament_idx >= 0) {
+                const auto *volume_types = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+                size_t      head         = NozzleFilament::head_state(*m_preset_bundle).head_of(size_t(m_filament_idx));
+                if (head == NozzleFilament::no_head)
+                    head = size_t(m_filament_idx);
+                if (volume_types != nullptr && head < volume_types->values.size())
+                    tab->select_flow_column(NozzleVolumeType(volume_types->values[head]));
             }
         }
     }
@@ -1032,7 +1372,7 @@ bool PlaterPresetComboBox::switch_to_tab()
 
     //BBS  Select NoteBook Tab params
     if (tab->GetParent() == wxGetApp().params_panel())
-        wxGetApp().mainframe->select_tab(MainFrame::tp3DEditor);
+        wxGetApp().mainframe->select_tab(TAB_ID_PREPARE);
     else {
         wxGetApp().params_dialog()->Popup();
         tab->OnActivate();
@@ -1048,6 +1388,13 @@ void PlaterPresetComboBox::ChangeExtruderColor()
         return;
 
     const std::string filamentPresetName = CurrentFilamentPresetName();
+    const Preset* currentPreset = m_collection != nullptr ? m_collection->find_preset(filamentPresetName, false, true) : nullptr;
+    if (currentPreset == nullptr || !currentPreset->is_compatible)
+    {
+        SelectLegacyFilamentColor();
+        return;
+    }
+
     const std::string filamentBaseName = FilamentBaseName(filamentPresetName);
     if (!IsSnapmakerFilamentName(filamentBaseName))
     {
@@ -1231,7 +1578,7 @@ void PlaterPresetComboBox::show_edit_menu()
 #ifdef __linux__
     // To edit extruder color from the sidebar
     if (m_type == Preset::TYPE_FILAMENT) {
-        append_menu_item(menu, wxID_ANY, _devL("Change extruder color"), "",
+        append_menu_item(menu, wxID_ANY, _L("Change extruder color"), "",
             [this](wxCommandEvent&) { this->ChangeExtruderColor(); }, "blank_14", menu, []() { return true; }, wxGetApp().plater());
         wxGetApp().plater()->PopupMenu(menu);
         return;
@@ -1251,6 +1598,27 @@ wxString PlaterPresetComboBox::get_preset_name(const Preset& preset)
     return from_u8(preset.label(false));
 }
 
+// Snapmaker Orca: one spelling per filament vendor, compared without case: the one that starts with
+// a capital letter, else the first met, so "snapmaker" and "Snapmaker" share one sub menu.
+static void unify_vendor_spelling(std::map<wxString, std::string> &preset_vendors)
+{
+    std::map<std::string, std::string> spelling; // lower case -> the spelling shown
+    for (const auto &entry : preset_vendors) {
+        const std::string &vendor = entry.second;
+        if (vendor.empty())
+            continue;
+        std::string key = boost::algorithm::to_lower_copy(vendor);
+        auto        it  = spelling.find(key);
+        if (it == spelling.end())
+            spelling.emplace(std::move(key), vendor);
+        else if (std::isupper(static_cast<unsigned char>(vendor.front())) && !std::isupper(static_cast<unsigned char>(it->second.front())))
+            it->second = vendor;
+    }
+    for (auto &entry : preset_vendors)
+        if (!entry.second.empty())
+            entry.second = spelling.at(boost::algorithm::to_lower_copy(entry.second));
+}
+
 // Only the compatible presets are shown.
 // If an incompatible preset is selected, it is shown as well.
 void PlaterPresetComboBox::update()
@@ -1266,11 +1634,11 @@ void PlaterPresetComboBox::update()
     invalidate_selection();
 
     const Preset* selected_filament_preset = nullptr;
-    std::string filament_color;
     if (m_type == Preset::TYPE_FILAMENT)
     {
+        // Snapmaker: multi-colour aware swatch (filament_multi_colors / filament_colour_mode).
         //unsigned char rgb[3];
-        filament_color = m_preset_bundle->project_config.opt_string("filament_colour", (unsigned int) m_filament_idx);
+        std::string filament_color = m_preset_bundle->project_config.opt_string("filament_colour", (unsigned int) m_filament_idx);
         wxColor clr(filament_color);
         const int picker_size = std::max(1, 20 * m_em_unit / 10);
         clr_picker->SetMinSize(wxSize(picker_size, picker_size));
@@ -1299,17 +1667,53 @@ void PlaterPresetComboBox::update()
     // and draw a red flag in front of the selected preset.
     bool wide_icons = selected_preset && !selected_preset->is_compatible;
 
+    // Snapmaker Orca: filament presets follow the nozzle size of their tool head. The combo of a
+    // slot with a tool head rates the presets against that tool head, and always lists the preset
+    // the slot holds. Every other combo keeps reading Preset::is_compatible.
+    NozzleFilament::State slot_state;
+    const bool            slot_rule = this->filament_slot_state(slot_state);
+    if (slot_rule)
+        wide_icons = selected_preset && !m_preset_bundle->filament_slot_fits(slot_state, *selected_preset, size_t(m_filament_idx));
+    // Snapmaker Orca: the extruder of this slot is set to High Flow (item tooltips below).
+    bool slot_high_flow = false;
+    if (m_type == Preset::TYPE_FILAMENT && m_filament_idx >= 0) {
+        size_t head = NozzleFilament::head_state(*m_preset_bundle).head_of(size_t(m_filament_idx));
+        if (head == NozzleFilament::no_head)
+            head = size_t(m_filament_idx);
+        const auto *volume_types = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+        slot_high_flow = volume_types != nullptr && head < volume_types->values.size() && volume_types->values[head] == int(nvtHighFlow);
+    }
+
     std::map<wxString, wxBitmap*> nonsys_presets;
     //BBS: add project embedded presets logic
     std::map<wxString, wxBitmap*>  project_embedded_presets;
+    // ORCA: add bundle presets
+    std::map<wxString, wxBitmap*> bundle_presets;
     std::map<wxString, wxBitmap *> system_presets;
     std::map<wxString, wxBitmap*>   machine_filament_presets;
+    std::map<wxString, wxBitmap *>  uncompatible_presets;
     std::unordered_set<std::string> system_printer_models;
     std::map<wxString, wxString>   preset_descriptions;
-
+    std::map<wxString, std::string> preset_filament_vendors;
+    std::map<wxString, std::string> preset_filament_types;
+    std::map<wxString, std::string> preset_aliases; // ORCA
+    std::map<wxString, std::string> preset_bundle_ids;
+    std::map<wxString, std::string> preset_bundle_names;
+    // Snapmaker Orca: listed presets with no version for the nozzle size of the slot's tool head.
+    // They go after the matching presets, behind a separator that names the missing size.
+    std::set<wxString> off_size_presets;
+    wxString           off_size_label;
+    if (slot_rule) {
+        const size_t head      = slot_state.head_of(size_t(m_filament_idx));
+        const double head_size = head < slot_state.head_size.size() ? slot_state.head_size[head] : 0.;
+        if (head_size > 0.)
+            // TRN: separator in the filament list of a tool head, above the materials that have no preset for its nozzle size. %1% is a number like 0.6.
+            off_size_label = format_wxstr(_L("No %1% mm version:"), nozzle_size_text(head_size));
+    }
     //BBS:  move system to the end
     wxString selected_system_preset;
     wxString selected_user_preset;
+    wxString selected_bundle_preset;
     wxString tooltip;
     const std::deque<Preset>& presets = m_collection->get_presets();
 
@@ -1326,10 +1730,41 @@ void PlaterPresetComboBox::update()
                             m_type == Preset::TYPE_PRINTER && m_preset_bundle->physical_printers.has_selection() ? false :
                             i == m_collection->get_selected_idx();
 
-        if (!preset.is_visible || (!preset.is_compatible && !is_selected))
+        if (!is_selected && !preset.is_visible)
+        {
             continue;
+        }
+        else if (is_selected && !preset.is_visible)
+        {
+            Preset& selected_preset = const_cast<Preset&>(preset);
+            selected_preset.is_visible = true;
+        }
 
         bool single_bar = false;
+        wxString name = from_u8(preset.name);
+        preset_aliases[name] = get_preset_name(preset).utf8_string(); // ORCA
+        // Snapmaker Orca: the versions of a material share the alias; one that is made for another
+        // size than the tool head of the slot, or than the printer preset, tells its size, in
+        // front of the alias so that a narrow combo keeps it.
+        // In a slot on a High Flow extruder a preset with High Flow values is marked "HF" after its size.
+        if (slot_rule || slot_high_flow) {
+            const std::string size_text = slot_rule ? this->nozzle_size_marker(slot_state, preset).utf8_string() : std::string();
+            preset_aliases[name] = NozzleFilament::size_marked_label(
+                preset_aliases[name], NozzleFilament::high_flow_marker(size_text, slot_high_flow && filament_flow_column(preset.config, nvtHighFlow) >= 0));
+        }
+
+        // Track bundle names for bundled presets
+        if (preset.is_from_bundle()) {
+             m_preset_bundle->bundles.ReadLock();
+            auto bundle_it = m_preset_bundle->bundles.m_bundles.find(preset.bundle_id);
+            if (bundle_it != m_preset_bundle->bundles.m_bundles.end()) {
+                preset_bundle_ids[name] = bundle_it->second.id;
+                preset_bundle_names[name] = bundle_it->second.name;
+            }
+             m_preset_bundle->bundles.ReadUnlock();
+
+        }
+
         if (m_type == Preset::TYPE_FILAMENT)
         {
 #if 0
@@ -1341,26 +1776,68 @@ void PlaterPresetComboBox::update()
 
             bitmap_key += single_bar ? filament_rgb : filament_rgb + extruder_rgb;
 #endif
+            // ORCA allow caching vendor and type values for all presets instead just system ones
+            // if (preset.is_system) { 
+                if (!preset.is_compatible && preset_filament_vendors.count(name) > 0)
+                    continue;
+                else if (preset.is_compatible && preset_filament_vendors.count(name) > 0)
+                    uncompatible_presets.erase(name);
+                preset_filament_vendors[name] = preset.config.option<ConfigOptionStrings>("filament_vendor")->values.at(0);
+                if (preset_filament_vendors[name] == "Bambu Lab")
+                    preset_filament_vendors[name] = "Bambu";
+                preset_filament_types[name] = preset.config.option<ConfigOptionStrings>("filament_type")->values.at(0);
+            //}
         }
-
         wxBitmap* bmp = get_bmp(preset);
         assert(bmp);
 
-        wxString name = get_preset_name(preset);
-        preset_descriptions.emplace(name, from_u8(preset.description));
+        {
+            // Snapmaker Orca: in the list of a slot on a High Flow extruder each preset says whether it
+            // has High Flow values or prints the Standard ones there.
+            wxString description = from_u8(preset.description);
+            if (slot_high_flow) {
+                if (!description.empty())
+                    description += "\n";
+                description += filament_flow_column(preset.config, nvtHighFlow) >= 0 ? _L("High Flow values") : _L("Standard values only");
+            }
+            preset_descriptions.emplace(name, description);
+        }
 
-        if (preset.is_default || preset.is_system) {
+        const bool listed = slot_rule ? is_selected || m_preset_bundle->filament_slot_selectable(slot_state, preset, size_t(m_filament_idx)) :
+                                        preset.is_compatible;
+        if (slot_rule && listed && !off_size_label.IsEmpty() && !m_preset_bundle->filament_slot_fits(slot_state, preset, size_t(m_filament_idx)))
+            off_size_presets.insert(name);
+        if (!listed) {
+            if (boost::ends_with(name, " template"))
+                continue;
+            uncompatible_presets.emplace(name, bmp);
+        }
+        else if (preset.is_default || preset.is_system) {
             //BBS: move system to the end
             if (m_type == Preset::TYPE_PRINTER) {
                 auto printer_model = preset.config.opt_string("printer_model");
-                name = from_u8(printer_model);
+
+                // ORCA: Make system printer presets display the dirty "*" prefix when edited.
+                name = from_u8(is_selected && preset.is_dirty ? Preset::suffix_modified() + printer_model : printer_model);
+
                 if (system_printer_models.count(printer_model) == 0) {
+                    preset_aliases[name] = name.utf8_string(); // ORCA
                     system_presets.emplace(name, bmp);
                     system_printer_models.insert(printer_model);
+                }
+                else if (is_selected) {
+                    const wxString alternate_name = from_u8(preset.is_dirty ? printer_model : Preset::suffix_modified() + printer_model);
+                    // Remove the old preset name if exists, and add the new one with the same name but with modified suffix if needed.
+                    if (system_presets.erase(alternate_name))
+                        system_presets.emplace(name, bmp);
+
+                    preset_aliases.erase(alternate_name);  // ORCA: do this to aliases too
+                    preset_aliases[name] = name.utf8_string();
                 }
             } else {
                 system_presets.emplace(name, bmp);
             }
+
             if (is_selected) {
                 tooltip = get_tooltip(preset);
                 selected_system_preset = name;
@@ -1380,6 +1857,15 @@ void PlaterPresetComboBox::update()
                 tooltip = wxString::FromUTF8(preset.name.c_str());
             }
         }
+        // ORCA: add bundle presets
+        else if (preset.is_from_bundle())
+        {
+            bundle_presets.emplace(name, bmp);
+            if (is_selected) {
+                selected_bundle_preset = name;
+                tooltip = get_tooltip(preset);
+            }
+        }
         else
         {
             nonsys_presets.emplace(name, bmp);
@@ -1390,9 +1876,24 @@ void PlaterPresetComboBox::update()
             }
         }
     }
-    if (m_type == Preset::TYPE_FILAMENT && m_preset_bundle->is_bbl_vendor())
-        add_ams_filaments(into_u8(selected_user_preset), true);
+    //if (m_type == Preset::TYPE_PRINTER)
+    //    add_connected_printers("", true);
+    bool selected_in_ams = false;
+    if (m_type == Preset::TYPE_FILAMENT) {
+        set_replace_text("Bambu", "BambuStudioBlack");
+        // Orca: selected_system/user_preset hold the FULL preset name because Orca keys the maps above by
+        // full name to avoid alias collisions (BBS keys by alias). add_ams_filaments() compares against
+        // get_preset_name() which returns the alias, so resolve the selection back to its alias here.
+        // Without this, e.g. "Bambu PLA Basic @BBL H2C" never equals the AMS tray alias "Bambu PLA Basic",
+        // so the FROM_AMS flag is never set and update_sync_status() wipes the AMS sync check mark on the
+        // filament cards for connected Bambu printers.
+        wxString selected_full = selected_user_preset.empty() ? selected_system_preset : selected_user_preset;
+        auto     alias_it      = preset_aliases.find(selected_full);
+        wxString selected_alias = alias_it != preset_aliases.end() ? from_u8(alias_it->second) : selected_full;
+        selected_in_ams = add_ams_filaments(into_u8(selected_alias), true);
+    }
 
+    // Snapmaker: filaments reported by the connected machine (SSWCP sync), filtered by nozzle.
     if (m_type == Preset::TYPE_FILAMENT && wxGetApp().preset_bundle->machine_filaments.size() > 0) {
         set_label_marker(Append(separator(L("Machine Filament")), wxNullBitmap));
         auto& filaments         = m_collection->get_presets();
@@ -1402,13 +1903,15 @@ void PlaterPresetComboBox::update()
         std::string currentNozzleInfo;
         if (const auto* nd_opt = m_preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
             nd_opt && !nd_opt->values.empty()) {
-            currentNozzleInfo = float_to_string_decimal_point(nd_opt->values.front(), 2);
+            // Snapmaker Orca: the size of the tool head that prints the slot, not of the first one.
+            const size_t slot_head = slot_rule ? slot_state.head_of(size_t(m_filament_idx)) : 0;
+            currentNozzleInfo = float_to_string_decimal_point(slot_head < nd_opt->values.size() ? nd_opt->values[slot_head] : nd_opt->values.front(), 2);
             while (!currentNozzleInfo.empty() && currentNozzleInfo.back() == '0')
                 currentNozzleInfo.pop_back();
             if (!currentNozzleInfo.empty() && currentNozzleInfo.back() == '.')
                 currentNozzleInfo.pop_back();
         }
-        
+
         for (int i = 0; i < machine_nozzles_list.size(); i++) {
             std::string filament_name   = machine_nozzles_list[i].filament_info;
             std::string machine_nozzles = machine_nozzles_list[i].nozzle_info;
@@ -1422,7 +1925,7 @@ void PlaterPresetComboBox::update()
                 if (f.name == filament_name + " @U1 " + machine_nozzles + " nozzle")
                     if (f.is_compatible)
                         return true;
-                
+
                 if (f.name == filament_name + " @U1 " + machine_nozzles)
                     if (f.is_compatible)
                         return true;
@@ -1438,8 +1941,13 @@ void PlaterPresetComboBox::update()
                 return false;
             });
 
-            if (item_iter != filaments.end()) {
-                const_cast<Preset&>(*item_iter).is_visible = true;
+            // Snapmaker Orca: on a tool head of another size than the printer preset the entry
+            // stands for the version of the material for that size; the item stores its name,
+            // because the displayed alias resolves to the version of the printer preset.
+            const Preset *mainline_match = item_iter != filaments.end() ? &*item_iter : nullptr;
+            const Preset *machine_preset = slot_rule ? this->machine_filament_for_slot(slot_state, filament_name, mainline_match) : mainline_match;
+            if (machine_preset != nullptr) {
+                const_cast<Preset&>(*machine_preset).is_visible = true;
                 const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
                 std::vector<std::string> colors = machineInfo.multiColors;
                 if (colors.empty() && !machineInfo.color_info.empty())
@@ -1449,48 +1957,155 @@ void PlaterPresetComboBox::update()
                 if (icon == nullptr)
                     icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
                 wxBitmap bmp(*icon);
-                Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
+                const int item = Append(get_preset_name(*machine_preset), bmp.ConvertToImage(), &m_first_ams_filament + i);
+                if (machine_preset != mainline_match)
+                    SetItemAlias(item, from_u8(machine_preset->name));
             }
         }
         m_last_ams_filament = GetCount();
     }
 
-    //BBS: add project embedded preset logic
-    if (!project_embedded_presets.empty())
-    {
-        set_label_marker(Append(separator(L("Project-inside presets")), wxNullBitmap));
-        for (std::map<wxString, wxBitmap*>::iterator it = project_embedded_presets.begin(); it != project_embedded_presets.end(); ++it) {
-            SetItemTooltip(Append(it->first, *it->second), preset_descriptions[it->first]);
-            validate_selection(it->first == selected_user_preset);
-        }
-    }
-    if (!nonsys_presets.empty())
-    {
-        set_label_marker(Append(separator(L("User presets")), wxNullBitmap));
-        for (std::map<wxString, wxBitmap*>::iterator it = nonsys_presets.begin(); it != nonsys_presets.end(); ++it) {
-            SetItemTooltip(Append(it->first, *it->second), preset_descriptions[it->first]);
-            validate_selection(it->first == selected_user_preset);
-        }
-    }
-    //BBS: move system to the end
-    if (!system_presets.empty())
-    {
-        set_label_marker(Append(separator(L("System presets")), wxNullBitmap));
-        for (std::map<wxString, wxBitmap*>::iterator it = system_presets.begin(); it != system_presets.end(); ++it) {
-            SetItemTooltip(Append(it->first, *it->second), preset_descriptions[it->first]);
-            if (m_type != Preset::TYPE_FILAMENT) {
-                set_label_marker(GetCount() - 1, LABEL_ITEM_PRINTER_MODELS);
+
+    // Snapmaker Orca: the vendor keys the sub menus below; one spelling per vendor gives one menu.
+    unify_vendor_spelling(preset_filament_vendors);
+
+    std::vector<wxString> filament_orders = {"Bambu PLA Basic", "Bambu PLA Matte", "Bambu PETG HF",    "Bambu ABS",      "Bambu PLA Silk", "Bambu PLA-CF",
+                                                "Bambu PLA Galaxy", "Bambu PLA Metal", "Bambu PLA Marble", "Bambu PETG-CF", "Bambu PETG Translucent", "Bambu ABS-GF"};
+    std::vector<std::string> first_vendors     = {"", "Bambu", "Generic"}; // Empty vendor for non-system presets
+    std::vector<std::string> first_types     = {"PLA", "PETG", "ABS", "TPU"};
+    auto  add_presets       = [this, &preset_descriptions, &filament_orders, &preset_filament_vendors, &first_vendors, &preset_filament_types, &preset_aliases, &preset_bundle_ids, &preset_bundle_names, &first_types, &selected_in_ams,
+                               &off_size_presets, &off_size_label]
+            (std::map<wxString, wxBitmap *> const &presets, wxString const &selected, std::string const &group, wxString const &groupName) {
+        if (!presets.empty()) {
+            set_label_marker(Append(_L(group), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
+            if (m_type == Preset::TYPE_FILAMENT || m_type == Preset::TYPE_PRINTER) {
+                std::vector<std::map<wxString, wxBitmap *>::value_type const*> list(presets.size(), nullptr);
+                std::transform(presets.begin(), presets.end(), list.begin(), [](auto & pair) { return &pair; });
+                bool groupByGroup = group != "System presets";
+                //if (groupByGroup) {
+                //    if (GetCount() == 1) Clear();
+                //    else SetString(GetCount() - 1, "");
+                //}
+                if (m_type == Preset::TYPE_FILAMENT && (group == "System presets" || group == "Unsupported presets"))
+                    std::sort(list.begin(), list.end(), [&filament_orders, &preset_filament_vendors, &first_vendors, &preset_filament_types, &first_types](auto *l, auto *r) {
+                        { // Compare order
+                            auto iter1 = std::find(filament_orders.begin(), filament_orders.end(), l->first);
+                            auto iter2 = std::find(filament_orders.begin(), filament_orders.end(), r->first);
+                            if (iter1 != iter2)
+                                return iter1 < iter2;
+                        }
+                        { // Compare vendor
+                            auto iter1 = std::find(first_vendors.begin(), first_vendors.end(), preset_filament_vendors[l->first]);
+                            auto iter2 = std::find(first_vendors.begin(), first_vendors.end(), preset_filament_vendors[r->first]);
+                            if (iter1 != iter2)
+                                return iter1 < iter2;
+                        }
+                        { // Compare type
+                            auto iter1 = std::find(first_types.begin(), first_types.end(), preset_filament_types[l->first]);
+                            auto iter2 = std::find(first_types.begin(), first_types.end(), preset_filament_types[r->first]);
+                            if (iter1 != iter2)
+                                return iter1 < iter2;
+                        }
+                        return l->first < r->first;
+                    });
+                // ORCA add sorting support for vendor / type for user presets. also non grouped items
+                if (groupName == "by_bundle" || groupName == "by_vendor" || groupName == "by_type" || groupName == ""){
+                    auto by = groupName == "by_bundle" ? preset_bundle_names
+                            : groupName == "by_vendor" ? preset_filament_vendors
+                            : groupName == "by_type"   ? preset_filament_types
+                            : preset_aliases;
+                    std::sort(list.begin(), list.end(), [&by](auto *l, auto *r) {
+                        auto get_key = [&](auto* item) -> std::pair<bool, std::string> {
+                            std::string str = by.count(item->first) ? by.at(item->first) : "";
+                            std::transform(str.begin(), str.end(), str.begin(), [](unsigned char c) { return std::tolower(c);});
+                            return {!str.empty(), str}; // is_valid, lower_case
+                        };
+                        auto [l_valid, l_lower] = get_key(l);
+                        auto [r_valid, r_lower] = get_key(r);
+                        return (l_valid != r_valid) ? l_valid > r_valid
+                             : (l_lower != r_lower) ? l_lower < r_lower
+                             : l->first < r->first;
+                    });
+                }
+                // Snapmaker Orca: presets of the slot's nozzle size first, then those of another size;
+                // each sub menu gets a separator naming the missing size before the first of them.
+                if (m_type == Preset::TYPE_FILAMENT && !off_size_presets.empty())
+                    std::stable_partition(list.begin(), list.end(), [&off_size_presets](auto *item) { return off_size_presets.count(item->first) == 0; });
+                std::set<wxString> separated_groups;
+                bool unsupported = group == "Unsupported presets";
+                for (auto it : list) {
+                    // ORCA add sorting support for vendor / type for user presets
+                    auto groupName2 = groupName == "by_bundle"   ? (preset_bundle_names[it->first].empty()     ? _L("Unspecified") : from_u8(preset_bundle_names[it->first]))
+                                    : groupName == "by_type"     ? (preset_filament_types[it->first].empty()   ? _L("Unspecified") : from_u8(preset_filament_types[it->first]))
+                                    : groupName == "by_vendor"   ? (preset_filament_vendors[it->first].empty() ? _L("Unspecified") : from_u8(preset_filament_vendors[it->first]))
+                                    : groupByGroup               ? groupName
+                                    : from_u8(preset_filament_vendors[it->first]);
+                    if (off_size_presets.count(it->first) != 0 && separated_groups.insert(groupName2).second) {
+                        const int separator = groupName == "by_bundle"
+                            ? Append(off_size_label, wxNullBitmap, from_u8(preset_bundle_ids[it->first]), groupName2, nullptr, DD_ITEM_STYLE_SPLIT_ITEM | DD_ITEM_STYLE_DISABLED)
+                            : Append(off_size_label, wxNullBitmap, groupName2, nullptr, DD_ITEM_STYLE_SPLIT_ITEM | DD_ITEM_STYLE_DISABLED);
+                        set_label_marker(separator, LABEL_ITEM_DISABLED);
+                    }
+                    int  index = groupName == "by_bundle"
+                        ? Append(from_u8(preset_aliases[it->first]), *it->second,
+                                 from_u8(preset_bundle_ids[it->first]), groupName2, nullptr,
+                                 unsupported ? DD_ITEM_STYLE_DISABLED : 0)
+                        : Append(from_u8(preset_aliases[it->first]), *it->second, groupName2, nullptr,
+                                 unsupported ? DD_ITEM_STYLE_DISABLED : 0);
+                    SetItemAlias(index, it->first);
+                    if (unsupported)
+                        set_label_marker(index, LABEL_ITEM_DISABLED);
+                    else if (m_type == Preset::TYPE_PRINTER && group == "System presets" )
+                        set_label_marker(index, LABEL_ITEM_PRINTER_MODELS);
+                    SetItemTooltip(index, preset_descriptions[it->first]);
+                    bool is_selected = it->first == selected;
+                    validate_selection(is_selected);
+                    if (is_selected  && selected_in_ams) {
+                        SetFlag(GetCount() - 1, (int) FilamentAMSType::FROM_AMS);
+                    }
+                }
+            } else {
+                for (std::map<wxString, wxBitmap *>::const_iterator it = presets.begin(); it != presets.end(); ++it) {
+                    int index = Append(from_u8(preset_aliases[it->first]), *it->second);
+                    SetItemAlias(index, it->first);
+                    SetItemTooltip(index, preset_descriptions[it->first]);
+                    if (group == "System presets")
+                        set_label_marker(GetCount() - 1, LABEL_ITEM_PRINTER_MODELS);
+                    validate_selection(it->first == selected);
+                }
             }
-            validate_selection(it->first == selected_system_preset);
         }
-    }
+    };
+
+    //BBS: add project embedded preset logic
+    add_presets(project_embedded_presets, selected_user_preset, L("Project-inside presets"), _L("Project") + " ");
+    // ORCA add sorting support for vendor / type for user presets
+    auto group_filament_presets    = wxGetApp().app_config->get("group_filament_presets");
+    auto group_filament_presets_by = group_filament_presets  == "0" ? (_L("Custom") + " ") // Append all to "Custom" sub menu
+                                   : group_filament_presets  == "2" ? "by_type"            // Create sub menus with filament type
+                                   : group_filament_presets  == "3" ? "by_vendor"          // Create sub menus with filament vendor
+                                   : "";                                                   // Use without sub menu
+    // ORCA: the by_type/by_vendor grouping is derived from filament-only attributes
+    // (filament_type/filament_vendor), which are empty for printer and material presets.
+    // Applying it to non-filament combos buckets every user preset under "Unspecified",
+    // so only group user presets by those attributes for the filament combobox.
+    add_presets(nonsys_presets, selected_user_preset, L("User presets"),
+                m_type == Preset::TYPE_FILAMENT ? group_filament_presets_by : wxString(""));
+    // ORCA: add bundle presets with sub-dropdown grouping for filament and printer
+    auto bundle_group_name = (m_type == Preset::TYPE_FILAMENT || m_type == Preset::TYPE_PRINTER) ? "by_bundle" : "";
+    add_presets(bundle_presets, selected_bundle_preset, L("Bundle presets"), bundle_group_name);
+    // BBS: move system to the end
+    add_presets(system_presets, selected_system_preset, L("System presets"), _L("System"));
+    // Orca: optionally show unsupported presets (controlled by developer preference, default off)
+    if (wxGetApp().app_config->get_bool("show_unsupported_presets"))
+        add_presets(uncompatible_presets, {}, L("Unsupported presets"), _L("Unsupported") + " ");
 
     if (m_type == Preset::TYPE_PRINTER || m_type == Preset::TYPE_FILAMENT || m_type == Preset::TYPE_SLA_MATERIAL) {
         wxBitmap* bmp = get_bmp("edit_preset_list", wide_icons, "edit_uni");
         assert(bmp);
 
         if (m_type == Preset::TYPE_FILAMENT)
-            set_label_marker(Append(separator(L("Add/Remove filaments")), *bmp), LABEL_ITEM_WIZARD_FILAMENTS);
+            set_label_marker(Append(separator(L("Add/Remove filament")), *bmp), LABEL_ITEM_WIZARD_FILAMENTS);
         else if (m_type == Preset::TYPE_SLA_MATERIAL)
             set_label_marker(Append(separator(L("Add/Remove materials")), *bmp), LABEL_ITEM_WIZARD_MATERIALS);
         else {
@@ -1500,6 +2115,15 @@ void PlaterPresetComboBox::update()
     }
 
     update_selection();
+    // Snapmaker Orca: the closed combo of a slot on a High Flow extruder tells it as the list does.
+    if (slot_high_flow && !tooltip.IsEmpty())
+        if (const Preset *held = m_collection->find_preset(m_preset_bundle->filament_presets[m_filament_idx], false); held != nullptr)
+            tooltip += "\n" + (filament_flow_column(held->config, nvtHighFlow) >= 0 ? _L("High Flow values") : _L("Standard values only"));
+    if (m_type == Preset::TYPE_FILAMENT) {
+        if (wxGetApp().plater()->is_same_printer_for_connected_and_selected(false)) {
+            update_badge_according_flag();
+        }
+    }
     Thaw();
 
     if (!tooltip.IsEmpty()) {
@@ -1833,6 +2457,91 @@ void PlaterPresetComboBox::onMouseMove(wxMouseEvent& evt)
 }
 
 
+EncodedFilamentColor PlaterPresetComboBox::get_cur_color_info()
+{
+    std::vector<std::string> filaments_multi_color = Slic3r::GUI::wxGetApp().plater()->get_filament_colors_render_info();
+    std::vector<std::string> filament_color_type = Slic3r::GUI::wxGetApp().plater()->get_filament_color_render_type();
+
+    if (m_filament_idx < 0 || m_filament_idx >= static_cast<int>(filaments_multi_color.size())) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": m_filament_idx %1% out of range %2%") % m_filament_idx % filaments_multi_color.size();
+        return EncodedFilamentColor();
+    }
+
+    if (m_filament_idx >= static_cast<int>(filament_color_type.size())) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": m_filament_idx %1% out of range for color_type %2%") % m_filament_idx % filament_color_type.size();
+        return EncodedFilamentColor();
+    }
+    std::string filament_color_info = filaments_multi_color[m_filament_idx];
+    std::vector<std::string> colors;
+    colors = Slic3r::split_string(filament_color_info, ' ');
+    EncodedFilamentColor fila_color;
+    for (const std::string& color_str : colors) {
+        if (!color_str.empty()) {
+            wxColour color(color_str);
+            if (color.IsOk()) {
+                fila_color.m_colors.insert(color);
+            }
+        }
+    }
+
+    fila_color.EndSet(filament_color_type[m_filament_idx] == "0" ? 0 : 1);
+    return fila_color;
+}
+
+void PlaterPresetComboBox::show_default_color_picker()
+{
+    DynamicPrintConfig* cfg = &wxGetApp().preset_bundle->project_config;
+    auto colors = static_cast<ConfigOptionStrings*>(cfg->option("filament_colour")->clone());
+    wxColour current_clr(colors->values[m_filament_idx]);
+    if (!current_clr.IsOk())
+        current_clr = wxColour(0, 0, 0); // Don't set alfa to transparence
+
+    m_clrData.SetColour(current_clr);
+
+    wxColourData data = show_sys_picker_dialog(this, m_clrData);
+    if (m_clrData.GetColour() != data.GetColour()) {
+        std::vector<std::string> color = {data.GetColour().GetAsString(wxC2S_HTML_SYNTAX).ToStdString()};
+        m_clrData.SetColour(data.GetColour());
+        sync_colour_config(color, false);
+    }
+}
+
+void PlaterPresetComboBox::sync_colour_config(const std::vector<std::string> &clrs, bool is_gradient)
+{
+    DynamicPrintConfig *cfg = &wxGetApp().preset_bundle->project_config;
+
+    // Clone the string vector and patch the value at current extruder index.
+    auto multi_colour_opt = static_cast<ConfigOptionStrings *>(cfg->option("filament_multi_colour")->clone());
+    auto colour_type_opt = static_cast<ConfigOptionStrings *>(cfg->option("filament_colour_type")->clone());
+    auto colour_opt = static_cast<ConfigOptionStrings *>(cfg->option("filament_colour")->clone());
+
+    if (m_filament_idx >= multi_colour_opt->values.size()) multi_colour_opt->values.resize(m_filament_idx + 1);
+    if (m_filament_idx >= colour_type_opt->values.size()) colour_type_opt->values.resize(m_filament_idx + 1);
+    if (m_filament_idx >= colour_opt->values.size()) colour_opt->values.resize(m_filament_idx + 1);
+
+    std::string clr_str = "";
+    for(auto &clr : clrs) {
+        clr_str += clr + " ";
+    }
+    clr_str.pop_back();
+
+    multi_colour_opt->values[m_filament_idx] = clr_str;
+    colour_opt->values[m_filament_idx] = clrs[0];
+    colour_type_opt->values[m_filament_idx] = is_gradient ? "0" : "1";
+    DynamicPrintConfig cfg_new = *cfg;
+    cfg_new.set_key_value("filament_multi_colour", multi_colour_opt);
+    cfg_new.set_key_value("filament_colour", colour_opt);
+    cfg_new.set_key_value("filament_colour_type", colour_type_opt);
+    cfg->apply(cfg_new);
+
+    wxGetApp().plater()->update_project_dirty_from_presets();
+
+    wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
+    update();  // refresh the preset combobox with new config
+
+    wxGetApp().plater()->on_config_change(cfg_new);
+}
+
 // ---------------------------------
 // ***  TabPresetComboBox  ***
 // ---------------------------------
@@ -1841,6 +2550,7 @@ TabPresetComboBox::TabPresetComboBox(wxWindow* parent, Preset::Type preset_type)
     // BBS: new layout
     PresetComboBox(parent, preset_type, wxSize(20 * wxGetApp().em_unit(), 30 * wxGetApp().em_unit() / 10))
 {
+    GetDropDown().SetUseContentWidth(true,true);
 }
 
 void TabPresetComboBox::OnSelect(wxCommandEvent &evt)
@@ -1862,7 +2572,7 @@ void TabPresetComboBox::OnSelect(wxCommandEvent &evt)
         default: break;
         }
         if (sp != ConfigWizard::SP_WELCOME) {
-            wxTheApp->CallAfter([this, sp]() {
+            wxTheApp->CallAfter([sp]() {
                 run_wizard(sp);
             });
         }
@@ -1885,7 +2595,10 @@ void TabPresetComboBox::OnSelect(wxCommandEvent &evt)
 
 wxString TabPresetComboBox::get_preset_name(const Preset& preset)
 {
-    return from_u8(preset.label(true));
+    if (preset.is_from_bundle())
+        return from_u8(preset.label(false));
+    else
+        return from_u8(preset.label(true));
 }
 
 // Update the choice UI from the list of presets.
@@ -1905,7 +2618,12 @@ void TabPresetComboBox::update()
     //BBS:  move system to the end
     std::map<wxString, std::pair<wxBitmap*, bool>>  system_presets;
     std::map<wxString, std::pair<wxBitmap*, bool>> machine_filament_presets;
+    // ORCA: add bundle presets
+    std::map<wxString, std::pair<wxBitmap*, bool>>  bundle_presets;
     std::map<wxString, wxString>                    preset_descriptions;
+    std::map<wxString, std::string>                 preset_aliases; // ORCA
+    std::map<wxString, std::string>                 preset_bundle_ids;
+    std::map<wxString, std::string>                 preset_bundle_names;
 
     wxString selected = "";
     //BBS:  move system to the end
@@ -1920,10 +2638,29 @@ void TabPresetComboBox::update()
             m_preset_bundle->physical_printers.unselect_printer();
     }
 
+    // Snapmaker Orca: filament presets follow the nozzle size of their tool head. While the tab
+    // edits the filament of a slot with a tool head, the list is rated against that tool head, as
+    // the combo of the slot in the sidebar is.
+    NozzleFilament::State slot_state;
+    const bool            slot_rule = this->filament_slot_state(slot_state);
+    auto listed = [this, &slot_state, slot_rule](const Preset &preset) {
+        return slot_rule ? m_preset_bundle->filament_slot_selectable(slot_state, preset, size_t(m_filament_idx)) : preset.is_compatible;
+    };
+    // Size markers of the user presets, by preset name (nozzle_size_marker()), and the label of
+    // an item: the marker in front of the name, the name alone without one.
+    std::map<wxString, wxString> size_markers;
+    auto marker_of = [&size_markers](const wxString &name) {
+        const auto it = size_markers.find(name);
+        return it == size_markers.end() ? wxString() : it->second;
+    };
+    auto marked_label = [&marker_of](const wxString &name) {
+        return from_u8(NozzleFilament::size_marked_label(into_u8(name), into_u8(marker_of(name))));
+    };
+
     for (size_t i = presets.front().is_visible ? 0 : m_collection->num_default_presets(); i < presets.size(); ++i)
     {
         const Preset& preset = presets[i];
-        if (!preset.is_visible || (!show_incompatible && !preset.is_compatible && i != idx_selected))
+        if (!preset.is_visible || (!show_incompatible && i != idx_selected && !listed(preset)))
             continue;
 
         // marker used for disable incompatible printer models for the selected physical printer
@@ -1932,8 +2669,28 @@ void TabPresetComboBox::update()
         wxBitmap* bmp = get_bmp(preset);
         assert(bmp);
 
-        const wxString name = get_preset_name(preset);
-        preset_descriptions.emplace(name, from_u8(preset.description));
+        const wxString name = from_u8(preset.name);
+        preset_aliases[name] = get_preset_name(preset).utf8_string();
+        // Snapmaker Orca: a user preset made for another nozzle size than the tool head of the
+        // slot, or than the printer preset, tells its size. The system presets are listed by
+        // their full names here, which name the size already.
+        if (slot_rule && !preset.is_system && !preset.is_from_bundle())
+            if (const wxString marker = this->nozzle_size_marker(slot_state, preset); !marker.empty())
+                size_markers[name] = marker;
+        if (preset.is_system)
+            preset_descriptions.emplace(name, from_u8(preset.description));
+
+        // ORCA: Track bundle names for bundled presets
+        if (preset.is_from_bundle()) {
+             m_preset_bundle->bundles.ReadLock();
+            auto bundle_it = m_preset_bundle->bundles.m_bundles.find(preset.bundle_id);
+            if (bundle_it != m_preset_bundle->bundles.m_bundles.end()) {
+                preset_bundle_ids[name] = bundle_it->second.id;
+                preset_bundle_names[name] = bundle_it->second.name;
+            }
+             m_preset_bundle->bundles.ReadUnlock();
+
+        }
 
         if (preset.is_default || preset.is_system) {
             //BBS: move system to the end
@@ -1950,6 +2707,13 @@ void TabPresetComboBox::update()
         {
             //std::pair<wxBitmap*, bool> pair(bmp, is_enabled);
             project_embedded_presets.emplace(name, std::pair<wxBitmap *, bool>(bmp, is_enabled));
+            if (i == idx_selected)
+                selected = name;
+        }
+        // ORCA: add bundle presets
+        else if (preset.is_from_bundle())
+        {
+            bundle_presets.emplace(name, std::pair<wxBitmap*, bool>(bmp, is_enabled));
             if (i == idx_selected)
                 selected = name;
         }
@@ -1974,7 +2738,9 @@ void TabPresetComboBox::update()
         std::string currentNozzleInfo;
         if (const auto* nd_opt = m_preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
             nd_opt && !nd_opt->values.empty()) {
-            currentNozzleInfo = float_to_string_decimal_point(nd_opt->values.front(), 2);
+            // Snapmaker Orca: the size of the tool head that prints the slot, not of the first one.
+            const size_t slot_head = slot_rule ? slot_state.head_of(size_t(m_filament_idx)) : 0;
+            currentNozzleInfo = float_to_string_decimal_point(slot_head < nd_opt->values.size() ? nd_opt->values[slot_head] : nd_opt->values.front(), 2);
             while (!currentNozzleInfo.empty() && currentNozzleInfo.back() == '0')
                 currentNozzleInfo.pop_back();
             if (!currentNozzleInfo.empty() && currentNozzleInfo.back() == '.')
@@ -2009,8 +2775,13 @@ void TabPresetComboBox::update()
                 return false;                
                 });
 
-            if (item_iter != filaments.end()) {
-                const_cast<Preset&>(*item_iter).is_visible = true;
+            // Snapmaker Orca: on a tool head of another size than the printer preset the entry
+            // stands for the version of the material for that size; the item stores its name,
+            // because the displayed alias resolves to the version of the printer preset.
+            const Preset *mainline_match = item_iter != filaments.end() ? &*item_iter : nullptr;
+            const Preset *machine_preset = slot_rule ? this->machine_filament_for_slot(slot_state, filament_name, mainline_match) : mainline_match;
+            if (machine_preset != nullptr) {
+                const_cast<Preset&>(*machine_preset).is_visible = true;
                 const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
                 std::vector<std::string> colors = machineInfo.multiColors;
                 if (colors.empty() && !machineInfo.color_info.empty())
@@ -2020,7 +2791,9 @@ void TabPresetComboBox::update()
                 if (icon == nullptr)
                     icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
                 wxBitmap bmp(*icon);
-                Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
+                const int item = Append(get_preset_name(*machine_preset), bmp.ConvertToImage(), &m_first_ams_filament + i);
+                if (machine_preset != mainline_match)
+                    SetItemAlias(item, from_u8(machine_preset->name));
             }
         }
 
@@ -2030,9 +2803,12 @@ void TabPresetComboBox::update()
     //BBS: add project embedded preset logic
     if (!project_embedded_presets.empty())
     {
-        set_label_marker(Append(separator(L("Project-inside presets")), wxNullBitmap));
+        set_label_marker(Append(_L("Project-inside presets"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
         for (std::map<wxString, std::pair<wxBitmap*, bool>>::iterator it = project_embedded_presets.begin(); it != project_embedded_presets.end(); ++it) {
-            int item_id = Append(it->first, *it->second.first);
+            int item_id = Append(marked_label(it->first), *it->second.first);
+            // A marked item is resolved by the name it carries, not by its label.
+            if (!marker_of(it->first).empty())
+                SetItemAlias(item_id, it->first);
             SetItemTooltip(item_id, preset_descriptions[it->first]);
             bool is_enabled = it->second.second;
             if (!is_enabled)
@@ -2042,9 +2818,30 @@ void TabPresetComboBox::update()
     }
     if (!nonsys_presets.empty())
     {
-        set_label_marker(Append(separator(L("User presets")), wxNullBitmap));
+        set_label_marker(Append(_L("User presets"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
         for (std::map<wxString, std::pair<wxBitmap*, bool>>::iterator it = nonsys_presets.begin(); it != nonsys_presets.end(); ++it) {
-            int item_id = Append(it->first, *it->second.first);
+            int item_id = Append(marked_label(it->first), *it->second.first);
+            SetItemAlias(item_id, it->first);
+            SetItemTooltip(item_id, preset_descriptions[it->first]);
+            bool is_enabled = it->second.second;
+            if (!is_enabled)
+                set_label_marker(item_id, LABEL_ITEM_DISABLED);
+            validate_selection(it->first == selected);
+        }
+    }
+    // ORCA: add bundle presets with sub-dropdown grouping
+    if (!bundle_presets.empty())
+    {
+        set_label_marker(Append(_L("Bundle presets"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
+        for (std::map<wxString, std::pair<wxBitmap*, bool>>::iterator it = bundle_presets.begin(); it != bundle_presets.end(); ++it) {
+            // Get bundle name for grouping
+            wxString bundle_name = _L("Unspecified");
+            if (preset_bundle_names.count(it->first) > 0 && !preset_bundle_names[it->first].empty()) {
+                bundle_name = from_u8(preset_bundle_names[it->first]);
+            }
+            // Use Append with group parameter for sub-dropdown grouping
+            int item_id = Append(from_u8(preset_aliases[it->first]), *it->second.first, from_u8(preset_bundle_ids[it->first]), bundle_name);
+            SetItemAlias(item_id, it->first);
             SetItemTooltip(item_id, preset_descriptions[it->first]);
             bool is_enabled = it->second.second;
             if (!is_enabled)
@@ -2055,9 +2852,10 @@ void TabPresetComboBox::update()
     //BBS: move system to the end
     if (!system_presets.empty())
     {
-        set_label_marker(Append(separator(L("System presets")), wxNullBitmap));
+        set_label_marker(Append(_L("System presets"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
         for (std::map<wxString, std::pair<wxBitmap*, bool>>::iterator it = system_presets.begin(); it != system_presets.end(); ++it) {
             int item_id = Append(it->first, *it->second.first);
+            SetItemAlias(item_id, it->first);
             SetItemTooltip(item_id, preset_descriptions[it->first]);
             bool is_enabled = it->second.second;
             if (!is_enabled)
@@ -2086,6 +2884,8 @@ void TabPresetComboBox::update_dirty()
 
     // 2) Update the labels.
     wxWindowUpdateLocker noUpdates(this);
+    NozzleFilament::State slot_state;
+    const bool            slot_rule = this->filament_slot_state(slot_state);
     for (unsigned int ui_id = 0; ui_id < GetCount(); ++ui_id) {
         auto marker = reinterpret_cast<Marker>(this->GetClientData(ui_id));
         if (marker >= LABEL_ITEM_MARKER)
@@ -2094,6 +2894,17 @@ void TabPresetComboBox::update_dirty()
         std::string   old_label = GetString(ui_id).utf8_str().data();
         std::string   preset_name = Preset::remove_suffix_modified(old_label);
         std::string   ph_printer_name;
+        // Snapmaker Orca: a filament item with a size marker is resolved by the name it carries.
+        // Only the presets update() marks get the marker back: the system and bundle items carry
+        // a stored name too, and their full names tell the size already.
+        std::string   size_marker;
+        if (slot_rule && marker != LABEL_ITEM_PHYSICAL_PRINTER)
+            if (const wxString stored = GetItemAlias(ui_id); !stored.empty())
+                if (const Preset *marked = m_collection->find_preset(into_u8(stored), false); marked != nullptr) {
+                    preset_name = marked->name;
+                    if (!marked->is_system && !marked->is_from_bundle())
+                        size_marker = into_u8(this->nozzle_size_marker(slot_state, *marked));
+                }
 
         if (marker == LABEL_ITEM_PHYSICAL_PRINTER) {
             ph_printer_name = PhysicalPrinter::get_short_name(preset_name);
@@ -2102,7 +2913,7 @@ void TabPresetComboBox::update_dirty()
 
         Preset* preset = m_collection->find_preset(preset_name, false);
         if (preset) {
-            std::string new_label = preset->label(true);
+            std::string new_label = NozzleFilament::size_marked_label(preset->label(true), size_marker);
 
             if (marker == LABEL_ITEM_PHYSICAL_PRINTER)
                 new_label = ph_printer_name + PhysicalPrinter::separator() + new_label;
@@ -2125,10 +2936,9 @@ void TabPresetComboBox::update_dirty()
 GUI::CalibrateFilamentComboBox::CalibrateFilamentComboBox(wxWindow *parent)
 : PlaterPresetComboBox(parent, Preset::TYPE_FILAMENT)
 {
-    clr_picker->SetBackgroundColour(*wxWHITE);
-    clr_picker->SetBitmap(*get_extruder_color_icon("#FFFFFFFF", "", FromDIP(20), FromDIP(20)));
+    clr_picker->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
     clr_picker->SetToolTip("");
-    clr_picker->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {});
+    clr_picker->Bind(wxEVT_BUTTON, [](wxCommandEvent& e) {});
 }
 
 GUI::CalibrateFilamentComboBox::~CalibrateFilamentComboBox()
@@ -2138,6 +2948,10 @@ GUI::CalibrateFilamentComboBox::~CalibrateFilamentComboBox()
 void GUI::CalibrateFilamentComboBox::load_tray(DynamicPrintConfig &config)
 {
     m_tray_name = config.opt_string("tray_name", 0u);
+    size_t pos = m_tray_name.find("HT-");
+    if (pos != std::string::npos) {
+        m_tray_name = m_tray_name.substr(pos + 3);
+    }
     m_filament_id = config.opt_string("filament_id", 0u);
     m_tag_uid = config.opt_string("tag_uid", 0u);
     m_filament_type  = config.opt_string("filament_type", 0u);
@@ -2157,9 +2971,21 @@ void GUI::CalibrateFilamentComboBox::load_tray(DynamicPrintConfig &config)
     } else {
         auto &filaments = m_collection->get_presets();
         auto  iter      = std::find_if(filaments.begin(), filaments.end(), [this](auto &f) {
+            if (!f.is_system) // Only match system preset
+                return false;
             bool is_compatible = m_preset_bundle->calibrate_filaments.find(&f) != m_preset_bundle->calibrate_filaments.end();
             return is_compatible && f.filament_id == m_filament_id;
             });
+
+        // Prioritize matching system presets. If there are no system presets, match all presets.
+        if (iter == filaments.end()) {
+            iter = std::find_if(filaments.begin(), filaments.end(), [this](auto &f) {
+                if (f.is_system) // Only match system preset
+                    return false;
+                bool is_compatible = m_preset_bundle->calibrate_filaments.find(&f) != m_preset_bundle->calibrate_filaments.end();
+                return is_compatible && f.filament_id == m_filament_id;
+            });
+        }
         //if (iter == filaments.end() && !m_filament_type.empty()) {
         //    auto filament_type = "Generic " + m_filament_type;
         //    iter               = std::find_if(filaments.begin(), filaments.end(),
@@ -2233,7 +3059,7 @@ void GUI::CalibrateFilamentComboBox::update()
 
     if (!m_nonsys_presets.empty())
     {
-        set_label_marker(Append(separator(L("User presets")), wxNullBitmap));
+        set_label_marker(Append(_L("User presets"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
         for (auto it = m_nonsys_presets.begin(); it != m_nonsys_presets.end(); ++it) {
             Append(it->first, *(it->second.second));
             validate_selection(it->first == selected_preset);
@@ -2241,7 +3067,7 @@ void GUI::CalibrateFilamentComboBox::update()
     }
     if (!m_system_presets.empty())
     {
-        set_label_marker(Append(separator(L("System presets")), wxNullBitmap));
+        set_label_marker(Append(_L("System presets"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
         for (auto it = m_system_presets.begin(); it != m_system_presets.end(); ++it) {
             Append(it->first, *(it->second.second));
             validate_selection(it->first == selected_preset);
@@ -2301,4 +3127,11 @@ void GUI::CalibrateFilamentComboBox::OnSelect(wxCommandEvent &evt)
     wxPostEvent(m_parent, e);
 }
 
+void PlaterPresetComboBox::sys_color_changed()
+{
+    PresetComboBox::sys_color_changed();
+    if (clr_picker) {
+        clr_picker->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
+    }
+}
 } // namespace Slic3r

@@ -53,7 +53,7 @@ OG_CustomCtrl::OG_CustomCtrl(   wxWindow*            parent,
     // BBS: new font
     m_font = Label::Body_14;
     SetFont(m_font);
-    m_em_unit   = em_unit(m_parent);
+    m_em_unit = em_unit(m_parent);
     m_v_gap   = lround(1.2 * m_em_unit);
     m_v_gap2  = lround(0.8 * m_em_unit);
     m_h_gap   = lround(0.2 * m_em_unit);
@@ -121,7 +121,7 @@ int OG_CustomCtrl::get_height(const Line& line)
     for (auto ctrl_line : ctrl_lines)
         if (&ctrl_line.og_line == &line)
             return ctrl_line.height;
-        
+
     return 0;
 }
 
@@ -158,7 +158,7 @@ wxPoint OG_CustomCtrl::get_pos(const Line& line, Field* field_in/* = nullptr*/)
             ctrl_line.height = size.y;
     };
 
-    auto add_buttons_width = [&h_pos, this] (int blinking_button_width) {
+    auto add_buttons_width = [&h_pos] (int blinking_button_width) {
 #ifndef DISABLE_BLINKING
 #  ifndef DISABLE_UNDO_SYS
         h_pos += 3 * blinking_button_width;
@@ -230,7 +230,7 @@ wxPoint OG_CustomCtrl::get_pos(const Line& line, Field* field_in/* = nullptr*/)
                     // add label if any
                     if (is_multioption_line && !option.label.empty()) {
                         //!            To correct translation by context have to use wxGETTEXT_IN_CONTEXT macro from wxWidget 3.1.1
-                        auto label = (option.label == L_CONTEXT("Top", "Layers") || option.label == L_CONTEXT("Bottom", "Layers")) ? _CTX(option.label, "Layers") :
+                        auto label = (option.label == L_CONTEXT("Top", "Layers") || option.label == L_CONTEXT("Bottom", "Layers")) ? _L_CONTEXT(option.label, "Layers") :
                                                                                                                                      _(option.label);
                         // BBS
                         // label += ":";
@@ -364,9 +364,18 @@ void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
             if (!suppress_hyperlinks && !line.og_line.label_path.empty())
                 tooltip = OptionsGroup::get_url(line.og_line.label_path) + "\n\n";
             tooltip += line.og_line.label_tooltip;
+            // Snapmaker Orca: the values set for tool heads on this line (the speed selector).
+            if (opt_group->head_values_tooltip)
+                for (const Option& opt : line.og_line.get_options()) {
+                    const wxString heads = opt_group->head_values_tooltip(opt.opt_id.substr(0, opt.opt_id.find('#')));
+                    if (!heads.IsEmpty()) {
+                        tooltip += (tooltip.IsEmpty() ? "" : "\n\n") + heads;
+                        break;
+                    }
+                }
             // BBS: markdown tip
             focusedLine = &line;
-            markdowntip = line.og_line.label.empty() 
+            markdowntip = line.og_line.label.empty()
                 ? line.og_line.get_options().front().opt_id : into_u8(line.og_line.label);
             markdowntip.erase(0, markdowntip.find_last_of('#') + 1);
             // BBS
@@ -597,7 +606,7 @@ void OG_CustomCtrl::msw_rescale()
     SetFont(m_font);
     m_em_unit   = em_unit(m_parent);
     m_v_gap     = lround(1.2 * m_em_unit);
-    m_v_gap2     = lround(0.8 * m_em_unit);
+    m_v_gap2    = lround(0.8 * m_em_unit);
     m_h_gap     = lround(0.2 * m_em_unit);
 
     //m_bmp_mode_sz = create_scaled_bitmap("mode_simple", this, wxOSX ? 10 : 12).GetSize();
@@ -791,6 +800,8 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
 
     wxString label = og_line.label;
     wxColour blink_color = StateColor::darkModeColorFor("#009688");
+    // Red pair registered in StateColor's dark-mode map ("#D01B1B" / "#BB2A3A")
+    wxColour invalid_color = StateColor::darkModeColorFor("#D01B1B");
     bool is_url_string = false;
     if (ctrl->opt_group->label_width != 0 && !label.IsEmpty()) {
         const wxColour* text_clr = field ? field->label_color() : og_line.label_color();
@@ -801,9 +812,37 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
                 break;
             }
         }
+        // The validation highlight wins over the modified/blink colors.
+        for (const Option& opt : option_set) {
+            Field* field = ctrl->opt_group->get_field(opt.opt_id);
+            if (field && field->has_invalid_highlight()) {
+                text_clr = &invalid_color;
+                break;
+            }
+        }
+        bool is_multi_extruder = false;
+        if (ctrl->opt_group->draw_multi_extruder)
+            for (const Option& opt : option_set)
+                is_multi_extruder |= opt.opt_id.find_last_of('#') != std::string::npos;
+        wxCoord icon_pos = h_pos;
+        if (is_multi_extruder) {
+            static ScalableBitmap multi_extruder(ctrl, "multi_extruder");
+            // Snapmaker Orca: a line whose key has a value set for some tool head (the speed
+            // selector of the Process tab) draws the head icon with a dot in the same slot.
+            static ScalableBitmap head_override(ctrl, "head_override");
+            bool set_per_head = false;
+            if (ctrl->opt_group->head_values_tooltip)
+                for (const Option& opt : option_set)
+                    if (!ctrl->opt_group->head_values_tooltip(opt.opt_id.substr(0, opt.opt_id.find('#'))).IsEmpty()) {
+                        set_per_head = true;
+                        break;
+                    }
+            const ScalableBitmap &icon = set_per_head ? head_override : multi_extruder;
+            h_pos = draw_act_bmps(dc, wxPoint(h_pos, v_pos), icon.bmp(), icon.bmp(), false, 0, true).x;
+        }
         is_url_string = !suppress_hyperlinks && !og_line.label_path.empty();
         // BBS
-        h_pos = draw_text(dc, wxPoint(h_pos, v_pos), label /* + ":" */, text_clr, ctrl->opt_group->label_width * ctrl->m_em_unit, is_url_string, true);
+        h_pos = draw_text(dc, wxPoint(h_pos, v_pos), label /* + ":" */, text_clr, icon_pos + ctrl->opt_group->label_width * ctrl->m_em_unit - h_pos, is_url_string, true);
     }
 
     // If there's a widget, build it and set result to the correct position.
@@ -837,7 +876,7 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
             h_pos = draw_act_bmps(dc, wxPoint(h_pos, v_pos), field->undo_to_sys_bitmap()->bmp(), field->undo_bitmap()->bmp(), field->blink(), bmp_rect_id).x;
         }
 #ifndef DISABLE_BLINKING
-        else if (field && !field->undo_to_sys_bitmap() && field->blink()) 
+        else if (field && !field->undo_to_sys_bitmap() && field->blink())
             draw_blinking_bmp(dc, wxPoint(h_pos, v_pos), field->blink());
 #endif
     };
@@ -856,7 +895,9 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
             draw_buttons(field);
         // update width for full_width fields
         if (option_set.front().opt.full_width && field && field->getWindow())
-            field->getWindow()->SetSize(ctrl->GetSize().x - h_pos2 + h_pos3 - h_pos - ctrl->m_em_unit * 3, -1);
+            // Clamp to 0: before the page is allocated a real width the subtraction
+            // underflows and GTK rejects the size request (assertion).
+            field->getWindow()->SetSize(wxMax(ctrl->GetSize().x - h_pos2 + h_pos3 - h_pos - ctrl->m_em_unit * 3, 0), -1);
         return;
     }
 
@@ -873,7 +914,7 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
         if (is_multioption_line && !option.label.empty()) {
             //!            To correct translation by context have to use wxGETTEXT_IN_CONTEXT macro from wxWidget 3.1.1
             label = (option.label == L_CONTEXT("Top", "Layers") || option.label == L_CONTEXT("Bottom", "Layers")) ?
-                    _CTX(option.label, "Layers") : _(option.label);
+                    _L_CONTEXT(option.label, "Layers") : _(option.label);
             //if (!ctrl->opt_group->option_label_at_right) // BBS
                 //label += ":";
 
@@ -931,7 +972,7 @@ wxCoord OG_CustomCtrl::CtrlLine::draw_text(wxDC &dc, wxPoint pos, const wxString
         } else {
             pos.y = pos.y + lround((height - size.y) / 2);
         }
-        if (width > 0)
+        if (width > 0 && is_main)
             rect_label = wxRect(pos, wxSize(size.x, size.y));
 
         wxColour old_clr = dc.GetTextForeground();
@@ -943,7 +984,7 @@ wxCoord OG_CustomCtrl::CtrlLine::draw_text(wxDC &dc, wxPoint pos, const wxString
             dc.SetFont(old_font.Underlined());
 #else
             dc.SetFont(old_font.Bold().Underlined());
-#endif            
+#endif
             color = &clr_url;
         }
         dc.SetTextForeground(color ? *color :
@@ -977,12 +1018,12 @@ wxPoint OG_CustomCtrl::CtrlLine::draw_blinking_bmp(wxDC& dc, wxPoint pos, bool i
     return wxPoint(h_pos, v_pos);
 }
 
-wxPoint OG_CustomCtrl::CtrlLine::draw_act_bmps(wxDC& dc, wxPoint pos, const wxBitmap& bmp_undo_to_sys, const wxBitmap& bmp_undo, bool is_blinking, size_t rect_id)
+wxPoint OG_CustomCtrl::CtrlLine::draw_act_bmps(wxDC& dc, wxPoint pos, const wxBitmap& bmp_undo_to_sys, const wxBitmap& bmp_undo, bool is_blinking, size_t rect_id, bool is_main)
 {
 #ifndef DISABLE_BLINKING
     pos = draw_blinking_bmp(dc, pos, is_blinking);
 #else
-    if (ctrl->opt_group->split_multi_line) { // BBS
+    if (ctrl->opt_group->split_multi_line && !is_main) { // BBS
         const std::vector<Option> &option_set = og_line.get_options();
         if (option_set.size() > 1)
             pos.y += lround(((height - ctrl->m_v_gap + ctrl->m_v_gap2) / option_set.size() - get_bitmap_size(bmp_undo).GetHeight()) / 2);
@@ -992,7 +1033,7 @@ wxPoint OG_CustomCtrl::CtrlLine::draw_act_bmps(wxDC& dc, wxPoint pos, const wxBi
         pos.y += lround((height - get_bitmap_size(bmp_undo).GetHeight()) / 2);
     }
 #endif
-    wxCoord h_pos = pos.x;
+    wxCoord h_pos = pos.x - ctrl->m_h_gap;  // Orca: adjust position to the left
     wxCoord v_pos = pos.y;
 
 #ifndef DISABLE_UNDO_SYS

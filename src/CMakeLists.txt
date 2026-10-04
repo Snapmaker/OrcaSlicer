@@ -9,8 +9,18 @@ add_subdirectory(dev-utils)
 # add_subdirectory(avrdude)
 # Note: semver and hints are now included from deps_src/CMakeLists.txt
 
+find_package(libnoise REQUIRED)
+
 # Add MQTT library
 add_subdirectory(mqtt)
+
+# --- Snapmaker Orca: vendored Paho MQTT -------------------------------------------------
+# src/mqtt (Paho MQTT C++ and C, unedited) is built with warnings off like deps_src, so
+# -Werror never stops inside third-party code.
+if (NOT SLIC3R_BUNDLED_WARNINGS)
+    orcaslicer_silence_third_party_warnings("${CMAKE_CURRENT_SOURCE_DIR}/mqtt")
+endif ()
+# --- end of vendored Paho MQTT ----------------------------------------------------------
 
 # Set MQTT paths for use in slic3r GUI
 set(PAHO_MQTT_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/mqtt" CACHE PATH "Paho MQTT C++ path")
@@ -19,7 +29,9 @@ set(PAHO_MQTT_C_PATH "${CMAKE_CURRENT_SOURCE_DIR}/mqtt/externals/paho-mqtt-c" CA
 add_subdirectory(libslic3r)
 
 if (SLIC3R_GUI)
+    add_subdirectory(glad)
     # imgui, imguizmo, and hidapi are now included from deps_src
+    add_subdirectory(libvgcode)
 
     if(WIN32)
         message(STATUS "WXWIN environment set to: $ENV{WXWIN}")
@@ -34,20 +46,31 @@ if (SLIC3R_GUI)
 
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         set (wxWidgets_CONFIG_OPTIONS "--toolkit=gtk${SLIC3R_GTK}")
-        if (SLIC3R_WX_STABLE)
-            find_package(wxWidgets 3.0 REQUIRED COMPONENTS base core adv html gl aui net media webview)
-        else ()
-            find_package(wxWidgets 3.1 REQUIRED COMPONENTS base core adv html gl aui net media webview)
-        endif ()
+        find_package(wxWidgets 3.3 REQUIRED COMPONENTS base core adv html gl aui net media webview)
     else ()
-        find_package(wxWidgets 3.1 REQUIRED COMPONENTS html adv gl core base webview aui net media)
+        # propgrid is required by wxInspector.
+        find_package(wxWidgets 3.3 CONFIG REQUIRED COMPONENTS html adv gl core base webview aui net media propgrid)
     endif ()
 
     if(UNIX)
         message(STATUS "wx-config path: ${wxWidgets_CONFIG_EXECUTABLE}")
     endif()
 
-    include(${wxWidgets_USE_FILE})
+    if(wxWidgets_USE_FILE)
+        include(${wxWidgets_USE_FILE})
+    endif()
+
+    if(APPLE AND TARGET wx::wxgl)
+        # Newer wxWidgets CMake exports may inject the macOS OpenGL framework
+        # as a quoted file path inside wx::wxgl, which Ninja then treats as a
+        # missing input file. Orca links OpenGL explicitly elsewhere, so strip
+        # these broken pseudo-paths from the imported target.
+        get_target_property(_wx_gl_libs wx::wxgl INTERFACE_LINK_LIBRARIES)
+        if(_wx_gl_libs)
+            list(FILTER _wx_gl_libs EXCLUDE REGEX "framework OpenGL")
+            set_target_properties(wx::wxgl PROPERTIES INTERFACE_LINK_LIBRARIES "${_wx_gl_libs}")
+        endif()
+    endif()
 
     find_package(JPEG QUIET)
 
@@ -68,7 +91,7 @@ if (SLIC3R_GUI)
         list(FILTER wxWidgets_LIBRARIES EXCLUDE REGEX expat)
         list(APPEND wxWidgets_LIBRARIES ${EXPAT_LIBRARIES})
     endif ()
-    
+
     # This is an issue in the new wxWidgets cmake build, doesn't deal with librt
     find_library(LIBRT rt)
     if(LIBRT)
@@ -81,6 +104,20 @@ if (SLIC3R_GUI)
     list(FILTER wxWidgets_LIBRARIES EXCLUDE REGEX OpenGL)
 
 #    list(REMOVE_ITEM wxWidgets_LIBRARIES oleacc)
+
+    find_package(wxInspector REQUIRED)
+
+    # wxInspector's exported interface names the release wxWidgets import
+    # libraries, which a Debug build cannot link. wx is linked above instead.
+    get_target_property(_wxinspector_interface wxInspector::wxInspector INTERFACE_LINK_LIBRARIES)
+    if (_wxinspector_interface)
+        list(FILTER _wxinspector_interface EXCLUDE REGEX "wx(base|msw)3[0-9]u[_.]")
+        set_target_properties(wxInspector::wxInspector PROPERTIES
+            INTERFACE_LINK_LIBRARIES "${_wxinspector_interface}")
+    endif ()
+
+    list(APPEND wxWidgets_LIBRARIES "wxInspector::wxInspector")
+
     message(STATUS "wx libs: ${wxWidgets_LIBRARIES}")
 
     add_subdirectory(slic3r)
@@ -110,13 +147,20 @@ if(ORCA_TOOLS)
 endif()
 
 # Create a slic3r executable
-# Process mainfests for various platforms.
+# Process manifests for various platforms.
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/Snapmaker_Orca.rc.in ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/Snapmaker_Orca.manifest.in ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.manifest @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/osx/Info.plist.in ${CMAKE_CURRENT_BINARY_DIR}/Info.plist @ONLY)
 if (WIN32)
     add_library(Snapmaker_Orca SHARED Snapmaker_Orca.cpp Snapmaker_Orca.hpp dev-utils/BaseException.cpp dev-utils/BaseException.h dev-utils/StackWalker.cpp dev-utils/StackWalker.h sentry_wrapper/SentryWrapper.hpp sentry_wrapper/SentryWrapper.cpp bury_cfg/bury_point.hpp bury_cfg/bury_point.cpp common_func/common_func.hpp common_func/common_func.cpp)
     target_compile_definitions(Snapmaker_Orca PRIVATE BURY_EXPORTS)
+    # dev-utils/BaseException.cpp is compiled into this target too and includes the generated
+    # git_commit_hash.h, which lives in the binary dir of src/slic3r (a PRIVATE include of
+    # libslic3r_gui). The header is produced by git_commit_hash_header.
+    target_include_directories(Snapmaker_Orca PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/slic3r)
+    if (TARGET git_commit_hash_header)
+        add_dependencies(Snapmaker_Orca git_commit_hash_header)
+    endif ()
 else ()
     add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp sentry_wrapper/SentryWrapper.hpp sentry_wrapper/SentryWrapper.cpp bury_cfg/bury_point.hpp bury_cfg/bury_point.cpp common_func/common_func.hpp common_func/common_func.cpp)
 endif ()
@@ -125,6 +169,23 @@ if (MINGW)
     target_link_options(Snapmaker_Orca PUBLIC "-Wl,-allow-multiple-definition")
     set_target_properties(Snapmaker_Orca PROPERTIES PREFIX "")
 endif (MINGW)
+
+# The GUI embeds the bundled shared libpython (libslic3r_gui -> pybind11::embed);
+# the dep recipe stamps it with an @rpath id / plain SONAME, so the executable
+# needs an rpath entry for each layout in the "Bundled Python/uv layout" map
+# further down. Dead entries are skipped by the loader.
+# Snapmaker_Orca_profile_validator links libslic3r only (no Python).
+if (APPLE)
+    # A linker flag rather than the BUILD_RPATH property because the release
+    # flow uses the Xcode generator, which does not honor BUILD_RPATH.
+    target_link_options(Snapmaker_Orca PRIVATE "LINKER:-rpath,@executable_path/python/lib")
+elseif (UNIX AND NOT WIN32)
+    set_target_properties(Snapmaker_Orca PROPERTIES
+        # Build tree + AppImage, which packages the build-tree binary.
+        BUILD_RPATH "$ORIGIN/python/lib;$ORIGIN/../lib/python/lib"
+        # Flatpak (cmake --install).
+        INSTALL_RPATH "$ORIGIN/../libpython/lib")
+endif ()
 
 if (NOT WIN32 AND NOT APPLE)
     # Binary name on unix like systems (Linux, Unix)
@@ -145,7 +206,7 @@ elseif (MSVC)
     # Manifest is provided through Snapmaker_Orca.rc, don't generate your own.
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /MANIFEST:NO")
 else ()
-    # Boost on Raspberry-Pi does not link to pthreads explicitely.
+    # Boost on Raspberry-Pi does not link to pthreads explicitly.
     target_link_libraries(Snapmaker_Orca ${CMAKE_DL_LIBS} -lstdc++ Threads::Threads pangoft2-1.0)
 endif ()
 
@@ -156,7 +217,7 @@ target_link_libraries(Snapmaker_Orca libslic3r_gui)
     if (MSVC)
         # Generate debug symbols even in release mode.
         target_link_options(Snapmaker_Orca PUBLIC "$<$<CONFIG:RELEASE>:/DEBUG>")
-        target_link_libraries(Snapmaker_Orca user32.lib Setupapi.lib)
+        target_link_libraries(Snapmaker_Orca ws2_32.lib user32.lib Setupapi.lib)
     elseif (MINGW)
         target_link_libraries(Snapmaker_Orca ws2_32 uxtheme setupapi)
     elseif (APPLE)
@@ -184,19 +245,29 @@ if (WIN32)
     endif()
 
     
-    add_executable(Snapmaker_Orca_app_gui WIN32 Snapmaker_Orca_app_msvc.cpp sentry_wrapper/SentryWrapper.cpp common_func/common_func.cpp ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc)
+    # bury_cfg/bury_point.cpp is compiled in (with BURY_EXPORTS, mirroring the
+    # Snapmaker_Orca DLL target) so the shim resolves its bury-point helpers
+    # locally instead of importing them from Snapmaker_Orca.dll. The shim must
+    # NOT statically depend on Snapmaker_Orca.dll: that DLL statically imports
+    # opengl32.dll, which the loader maps BEFORE wmain runs - the system
+    # opengl32.dll could then never be released and would forever shadow the
+    # MESA opengl32.dll the shim loads for the software-OpenGL fallback
+    # (see Snapmaker_Orca_app_msvc.cpp).
+    add_executable(Snapmaker_Orca_app_gui WIN32 Snapmaker_Orca_app_msvc.cpp sentry_wrapper/SentryWrapper.cpp common_func/common_func.cpp bury_cfg/bury_point.cpp ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc)
     # Generate debug symbols even in release mode.
     if(MSVC)
         target_link_options(Snapmaker_Orca_app_gui PUBLIC "$<$<CONFIG:RELEASE>:/DEBUG>")
     endif()
-    target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE -DSLIC3R_WRAPPER_NOCONSOLE)
+    target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE -DSLIC3R_WRAPPER_NOCONSOLE BURY_EXPORTS)
+    # common_func.hpp includes the libslic3r_version.h generated by libslic3r.
+    target_include_directories(Snapmaker_Orca_app_gui PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/libslic3r)
     add_dependencies(Snapmaker_Orca_app_gui Snapmaker_Orca)
     set_target_properties(Snapmaker_Orca_app_gui PROPERTIES OUTPUT_NAME "snapmaker-orca")
-    
+
     if (SLIC3R_SENTRY)
-        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly sentry::sentry nlohmann_json Snapmaker_Orca)
+        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly sentry::sentry nlohmann_json)
     else()
-        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly nlohmann_json Snapmaker_Orca)
+        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly nlohmann_json)
     endif()
     if (SLIC3R_SENTRY)
         target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE SLIC3R_SENTRY)
@@ -207,8 +278,28 @@ endif ()
 set(output_dlls_Release "")
 set(output_dlls_Debug "")
 set(output_dlls_RelWithDebInfo "")
+# ---- Bundled Python/uv layout (canonical map) ---------------------------
+# The runtime and uv are staged three ways because packaging differs:
+#   install() rules          - Windows installer; on FHS/Flatpak they stage
+#                              only uv (Flatpak's runtime comes from the deps
+#                              build installing to /app/libpython; plain FHS
+#                              installs bundle no python runtime)
+#   POST_BUILD copies (here) - build-tree runs, and the macOS .app/AppImage
+#                              flows, which package the build tree and
+#                              never run install()
+#   packaging scripts        - build_release_macos.sh (copies the .app),
+#                              build_linux_image.sh.in (assembles $APPDIR)
+# Final locations relative to the executable:
+#   Windows:  <exe dir>/python            <resources>/tools/uv
+#   macOS:    Contents/MacOS/python       Contents/MacOS/tools/uv
+#   AppImage: $APPDIR/lib/python          $APPDIR/resources/tools/uv
+#   Flatpak:  /app/libpython (dep prefix) /app/share/Snapmaker_Orca/tools/uv
+# Runtime lookup: PythonInterpreter::initialize() / bundled_uv_path().
+# libpython resolution: rpath on the Snapmaker_Orca target (above); the dep
+# recipe gives the bundled interpreter a self-relative rpath.
+# --------------------------------------------------------------------------
 if (WIN32)
-    # This has to be a separate target due to the windows command line lenght limits
+    # This has to be a separate target due to the windows command line length limits
     add_custom_target(COPY_DLLS ALL DEPENDS Snapmaker_Orca)
 
     if (CMAKE_CONFIGURATION_TYPES)
@@ -225,20 +316,6 @@ if (WIN32)
                 VERBATIM
             )
         endforeach ()
-
-        # For multi-config generators (Visual Studio), copy DLLs for all configurations
-        foreach (CONF ${CMAKE_CONFIGURATION_TYPES})
-            if ("${CONF}" STREQUAL "Debug")
-                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "d" output_dlls_Debug)
-            elseif ("${CONF}" STREQUAL "Release")
-                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "" output_dlls_Release)
-            elseif ("${CONF}" STREQUAL "RelWithDebInfo")
-                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "" output_dlls_RelWithDebInfo)
-            else()
-                # MinSizeRel or other configs
-                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "" _unused_dlls)
-            endif()
-        endforeach ()
     else ()
         # Single-config generators (Ninja, Makefiles)
         file(TO_NATIVE_PATH "${CMAKE_CURRENT_BINARY_DIR}/resources" WIN_RESOURCES_SYMLINK)
@@ -247,16 +324,51 @@ if (WIN32)
             COMMENT "Symlinking the resources directory into the build tree"
             VERBATIM
         )
-        # Copy DLLs for single-config generators
+    endif ()
+    # copy libpython to the bin folder for Windows
+    add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:Snapmaker_Orca>/python"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_PREFIX_PATH}/libpython" "$<TARGET_FILE_DIR:Snapmaker_Orca>/python"
+        COMMENT "Copying Python runtime into the build tree"
+        VERBATIM)
+
+    if (CMAKE_CONFIGURATION_TYPES)
+        # Multi-config generators (Visual Studio, Ninja Multi-Config): copy per config.
+        foreach (cfg ${CMAKE_CONFIGURATION_TYPES})
+            if ("${cfg}" STREQUAL "Debug")
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
+            elseif("${cfg}" STREQUAL "RelWithDebInfo")
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "RelWithDebInfo" "" output_dlls_RelWithDebInfo)
+            else()
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "${cfg}" "" output_dlls_${cfg})
+            endif()
+        endforeach()
+    else()
+        # Single-config generators (Ninja): use CMAKE_BUILD_TYPE.
         if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
             Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
+        elseif("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
+            Snapmaker_Orca_copy_dlls(COPY_DLLS "RelWithDebInfo" "" output_dlls_RelWithDebInfo)
         else()
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "${CMAKE_BUILD_TYPE}" "" output_dlls_Release)
+            Snapmaker_Orca_copy_dlls(COPY_DLLS "Release" "" output_dlls_Release)
         endif()
-    endif ()
-
+    endif()
 
 else ()
+    if (NOT APPLE)
+        # FFmpeg shared libs used by the media player, staged next to the binary.
+        set(output_sos_Release "")
+        set(output_sos_Debug "")
+        set(output_sos_RelWithDebInfo "")
+        add_custom_target(Snapmaker_OrcaSosCopy ALL DEPENDS Snapmaker_Orca)
+        if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+            orcaslicer_copy_sos(Snapmaker_OrcaSosCopy "Debug" "d" output_sos_Debug)
+        elseif ("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
+            orcaslicer_copy_sos(Snapmaker_OrcaSosCopy "RelWithDebInfo" "" output_sos_RelWithDebInfo)
+        else()
+            orcaslicer_copy_sos(Snapmaker_OrcaSosCopy "Release" "" output_sos_Release)
+        endif()
+    endif()
     if (APPLE AND NOT CMAKE_MACOSX_BUNDLE)
         # On OSX, the name of the binary matches the name of the Application.
         add_custom_command(TARGET Snapmaker_Orca POST_BUILD
@@ -285,9 +397,11 @@ else ()
     if (XCODE)
         # Because of Debug/Release/etc. configurations (similar to MSVC) the slic3r binary is located in an extra level
         set(BIN_RESOURCES_DIR "${CMAKE_CURRENT_BINARY_DIR}/resources")
+        set(BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
         set(BIN_CONF_DIR "Debug")
     else ()
         set(BIN_RESOURCES_DIR "${CMAKE_CURRENT_BINARY_DIR}/../resources")
+        set(BIN_DIR "$<TARGET_FILE_DIR:Snapmaker_Orca>")
     endif ()
     if (CMAKE_MACOSX_BUNDLE)
         set(MACOSX_BUNDLE_ICON_FILE Icon.icns)
@@ -295,12 +409,20 @@ else ()
             MACOSX_BUNDLE TRUE
             MACOSX_BUNDLE_BUNDLE_NAME "Snapmaker Orca"
             MACOSX_BUNDLE_SHORT_VERSION_STRING ${Snapmaker_VERSION}
-            MACOSX_BUNDLE_COPYRIGHT "Copyright © 2024-2026 Snapmaker. All rights reserved.")
-        # Get the bundle directory by going up from the executable to the .app bundle
-        if (CMAKE_CONFIGURATION_TYPES)
-            set(BIN_RESOURCES_DIR "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources")
-        else()
-            set(BIN_RESOURCES_DIR "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources")
+            MACOSX_BUNDLE_COPYRIGHT "Copyright © 2024-2026 Snapmaker. All rights reserved."
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/cmake/modules/MacOSXBundleInfo.plist.in")
+        # Get the bundle directory by going up from the executable to the .app bundle.
+        # Derived from the target file dir rather than a hardcoded "<name>.app" path:
+        # the bundle is "Snapmaker Orca.app" (with a space) while the executable is
+        # Snapmaker_Orca, and this form works for both single- and multi-config generators.
+        set(BIN_RESOURCES_DIR "$<TARGET_FILE_DIR:Snapmaker_Orca>/../Resources")
+        set(BIN_DIR "$<TARGET_FILE_DIR:Snapmaker_Orca>")
+        if (XCODE)
+            # Xcode's CodeSign phase fails on the bundled Python runtime's dotted
+            # dirs (python3.12) under Contents/MacOS. Skip it for local dev builds
+            # and let the linker ad-hoc sign; the shipped bundle is signed by the
+            # Ninja/CI packaging path (build_release_macos.sh, build_orca.yml).
+            set_target_properties(Snapmaker_Orca PROPERTIES XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO)
         endif()
         # Create symlink for macOS bundle Resources directory
         # Remove existing Resources if it exists (could be from previous build), then create symlink
@@ -329,6 +451,28 @@ else ()
                 COMMENT "Updating rpath for libsentry.dylib"
                 VERBATIM)
         endif()
+    else ()
+        # Non-bundle builds (Linux, and macOS without CMAKE_MACOSX_BUNDLE): link the
+        # resources dir next to the build tree the way upstream Orca does.
+        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+            COMMAND ln -sfn "${SLIC3R_RESOURCES_DIR}" "${BIN_RESOURCES_DIR}"
+            COMMENT "Symlinking the resources directory into the build tree"
+            VERBATIM)
+    endif()
+    add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${BIN_DIR}/python"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_PREFIX_PATH}/libpython" "${BIN_DIR}/python"
+        COMMENT "Copying Python runtime into the build tree"
+        VERBATIM)
+    # Stage uv next to the binary for the build-tree/.app flows, which never
+    # run install() -- see the layout map above; lookup is bundled_uv_path().
+    if(ORCA_BUNDLED_UV_EXECUTABLE AND EXISTS "${ORCA_BUNDLED_UV_EXECUTABLE}")
+        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${BIN_DIR}/tools/uv"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ORCA_BUNDLED_UV_EXECUTABLE}" "${BIN_DIR}/tools/uv/${ORCA_BUNDLED_UV_FILENAME}"
+            COMMAND chmod +x "${BIN_DIR}/tools/uv/${ORCA_BUNDLED_UV_FILENAME}"
+            COMMENT "Copying bundled uv into the build tree"
+            VERBATIM)
     endif()
 endif ()
 
@@ -351,6 +495,21 @@ if (WIN32)
         install(TARGETS Snapmaker_Orca_app_gui RUNTIME DESTINATION ".")
     endif ()
     install(FILES ${output_dlls_${build_type}} DESTINATION ".")
+    install(DIRECTORY "${CMAKE_PREFIX_PATH}/libpython/" DESTINATION "python")
+    # MESA llvmpipe software-OpenGL fallback: the snapmaker-orca.exe shim loads
+    # <install>/mesa/opengl32.dll before Snapmaker_Orca.dll whenever the system
+    # OpenGL driver is unusable (< 2.0, e.g. disabled GPU -> GDI generic 1.1),
+    # see src/Snapmaker_Orca_app_msvc.cpp and deps/mesa/README.md.
+    if (CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64")
+        # The bundled MESA opengl32.dll is x64 only.
+    elseif (EXISTS "${CMAKE_SOURCE_DIR}/deps/mesa/x64/opengl32.dll")
+        install(FILES "${CMAKE_SOURCE_DIR}/deps/mesa/x64/opengl32.dll" DESTINATION "mesa")
+    else ()
+        message(WARNING "deps/mesa/x64/opengl32.dll not found: the MESA software OpenGL fallback will NOT be packaged (see deps/mesa/README.md).")
+    endif ()
 else ()
+    if (NOT APPLE AND output_sos_${build_type})
+        install(FILES ${output_sos_${build_type}} DESTINATION "${CMAKE_INSTALL_PREFIX}")
+    endif()
     install(TARGETS Snapmaker_Orca RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif ()

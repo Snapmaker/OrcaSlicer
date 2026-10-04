@@ -14,22 +14,29 @@ public:
     StaticBox(wxWindow* parent,
              wxWindowID      id        = wxID_ANY,
              const wxPoint & pos       = wxDefaultPosition,
-             const wxSize &  size      = wxDefaultSize, 
+             const wxSize &  size      = wxDefaultSize,
              long style = 0);
 
     bool Create(wxWindow* parent,
         wxWindowID      id        = wxID_ANY,
         const wxPoint & pos       = wxDefaultPosition,
-        const wxSize &  size      = wxDefaultSize, 
+        const wxSize &  size      = wxDefaultSize,
         long style = 0);
 
     void SetCornerRadius(double radius);
 
     void SetBorderWidth(int width);
 
+    void SetTopMargin(int margin); // ORCA
+
     void SetBorderColor(StateColor const & color);
 
     void SetBorderColorNormal(wxColor const &color);
+
+    void SetBorderStyle(wxPenStyle style);
+
+    /// Read back the current border colors so callers can cache and restore them after an override.
+    StateColor const & borderColor() const { return border_color; }
 
     void SetBackgroundColor(StateColor const &color);
 
@@ -39,8 +46,12 @@ public:
 
     static wxColor GetParentBackgroundColor(wxWindow * parent);
 
+    void ShowBadge(bool show);
+
 protected:
     void eraseEvent(wxEraseEvent& evt);
+
+    void sizeEvent(wxSizeEvent& evt);
 
     void paintEvent(wxPaintEvent& evt);
 
@@ -51,10 +62,13 @@ protected:
 protected:
     double radius;
     int border_width = 1;
+    int top_margin = 0;
+    wxPenStyle border_style = wxPENSTYLE_SOLID;
     StateHandler state_handler;
     StateColor   border_color;
     StateColor   background_color;
     StateColor   background_color2;
+    ScalableBitmap badge;
 
     DECLARE_EVENT_TABLE()
 };

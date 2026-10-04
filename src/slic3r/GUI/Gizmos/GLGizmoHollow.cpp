@@ -3,7 +3,7 @@
 #include "slic3r/GUI/Camera.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmosCommon.hpp"
 
-#include <GL/glew.h>
+#include <glad/gl.h>
 
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/GUI_ObjectSettings.hpp"
@@ -25,7 +25,6 @@ GLGizmoHollow::GLGizmoHollow(GLCanvas3D& parent, const std::string& icon_filenam
 
 bool GLGizmoHollow::on_init()
 {
-    m_shortcut_key = WXK_CONTROL_H;
     m_desc["enable"]           = _(L("Hollow this object"));
     m_desc["preview"]          = _(L("Preview hollowed and drilled model"));
     m_desc["offset"]           = _(L("Offset")) + ": ";

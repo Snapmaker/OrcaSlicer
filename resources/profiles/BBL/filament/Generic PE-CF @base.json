@@ -3,7 +3,7 @@
     "name": "Generic PE-CF @base",
     "inherits": "fdm_filament_pe",
     "from": "system",
-    "filament_id": "GFP98",
+    "filament_id": "OFd0Fv0k",
     "instantiation": "false",
     "filament_cost": [
         "65.99"
@@ -16,6 +16,9 @@
     ],
     "filament_type": [
         "PE-CF"
+    ],
+    "filament_adhesiveness_category": [
+        "901"
     ],
     "nozzle_temperature": [
         "210"

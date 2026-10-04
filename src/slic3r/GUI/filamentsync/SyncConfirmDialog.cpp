@@ -18,10 +18,10 @@ SyncRichConfirmDialog::SyncRichConfirmDialog(wxWindow* parent, const wxString& m
 {
 }
 
-void SyncRichConfirmDialog::navigateToTab(MainFrame::TabPosition pos)
+void SyncRichConfirmDialog::navigateToTab(const wxString& tab_id)
 {
     if (wxGetApp().mainframe)
-        wxGetApp().mainframe->select_tab(pos);
+        wxGetApp().mainframe->select_tab(tab_id);
 }
 
 } // namespace GUI

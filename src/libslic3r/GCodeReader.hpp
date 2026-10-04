@@ -26,23 +26,27 @@ public:
         const std::string_view  comment() const
             { size_t pos = m_raw.find(';'); return (pos == std::string::npos) ? std::string_view() : std::string_view(m_raw).substr(pos + 1); }
 
+        // Return position in this->raw() string starting with the "axis" character.
+        std::string_view axis_pos(char axis) const;
         void  clear() { m_raw.clear(); }
         bool  has(Axis axis) const { return (m_mask & (1 << int(axis))) != 0; }
         float value(Axis axis) const { return m_axis[axis]; }
         bool  has(char axis) const;
         bool  has_value(char axis, float &value) const;
+        // Parse value of an axis from raw string starting at axis_pos.
+        static bool has_value(std::string_view axis_pos, float &value);
         float new_X(const GCodeReader &reader) const { return this->has(X) ? this->x() : reader.x(); }
         float new_Y(const GCodeReader &reader) const { return this->has(Y) ? this->y() : reader.y(); }
         float new_Z(const GCodeReader &reader) const { return this->has(Z) ? this->z() : reader.z(); }
         float new_E(const GCodeReader &reader) const { return this->has(E) ? this->e() : reader.e(); }
         float new_F(const GCodeReader &reader) const { return this->has(F) ? this->f() : reader.f(); }
-        float dist_X(const GCodeReader &reader) const { return this->has(X) ? (this->x() - reader.x()) : 0; }
-        float dist_Y(const GCodeReader &reader) const { return this->has(Y) ? (this->y() - reader.y()) : 0; }
-        float dist_Z(const GCodeReader &reader) const { return this->has(Z) ? (this->z() - reader.z()) : 0; }
+        float dist_X(const GCodeReader &reader) const { return this->has(X) ? (reader.relative_xyz() ? this->x() : this->x() - reader.x()) : 0; }
+        float dist_Y(const GCodeReader &reader) const { return this->has(Y) ? (reader.relative_xyz() ? this->y() : this->y() - reader.y()) : 0; }
+        float dist_Z(const GCodeReader &reader) const { return this->has(Z) ? (reader.relative_xyz() ? this->z() : this->z() - reader.z()) : 0; }
         float dist_E(const GCodeReader &reader) const { return this->has(E) ? (this->e() - reader.e()) : 0; }
         float dist_XY(const GCodeReader &reader) const {
-            float x = this->has(X) ? (this->x() - reader.x()) : 0;
-            float y = this->has(Y) ? (this->y() - reader.y()) : 0;
+            float x = this->has(X) ? (reader.relative_xyz() ? this->x() : this->x() - reader.x()) : 0;
+            float y = this->has(Y) ? (reader.relative_xyz() ? this->y() : this->y() - reader.y()) : 0;
             return sqrt(x*x + y*y);
         }
         bool cmd_is(const char *cmd_test)          const { return cmd_is(m_raw, cmd_test); }
@@ -100,7 +104,9 @@ public:
     typedef std::function<void(GCodeReader&, const char*, const char*)> raw_line_callback_t;
     
     GCodeReader() : m_verbose(false) { this->reset(); }
-    void reset() { memset(m_position, 0, sizeof(m_position)); }
+    void reset() { memset(m_position, 0, sizeof(m_position)); m_relative_xyz = false; }
+    // True while G91 (relative XYZ mode) is in effect; G90 restores absolute mode.
+    bool relative_xyz() const { return m_relative_xyz; }
     void apply_config(const GCodeConfig &config);
     void apply_config(const DynamicPrintConfig &config);
     const GCodeConfig& config() { return m_config; };
@@ -162,6 +168,11 @@ public:
     float& j()       { return m_position[J]; }
     float  j() const { return m_position[J]; }
 
+    GCodeConfig get_config() const
+    { 
+        return m_config;
+    }
+
 private:
     template<typename ParseLineCallback, typename LineEndCallback>
     bool        parse_file_raw_internal(const std::string &filename, ParseLineCallback parse_line_callback, LineEndCallback line_end_callback);
@@ -185,9 +196,11 @@ private:
             ; // silence -Wempty-body
         return c;
     }
+    static const char*  axis_pos(const char *raw_str, char axis);
 
     GCodeConfig m_config;
     float       m_position[NUM_AXES];
+    bool        m_relative_xyz{ false };
     bool        m_verbose;
     // To be set by the callback to stop parsing.
     bool        m_parsing{ false };

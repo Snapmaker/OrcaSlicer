@@ -30,8 +30,8 @@ bool Line::intersection_infinite(const Line &other, Point* point) const
         return false;
     double t1 = cross2(v12, v2) / denom;
     Vec2d result = (a1 + t1 * v1);
-    if (result.x() > std::numeric_limits<coord_t>::max() || result.x() < std::numeric_limits<coord_t>::lowest() ||
-        result.y() > std::numeric_limits<coord_t>::max() || result.y() < std::numeric_limits<coord_t>::lowest()) {
+    if (result.x() > double(std::numeric_limits<coord_t>::max()) || result.x() < double(std::numeric_limits<coord_t>::lowest()) ||
+        result.y() > double(std::numeric_limits<coord_t>::max()) || result.y() < double(std::numeric_limits<coord_t>::lowest())) {
         // Intersection has at least one of the coordinates much bigger (or smaller) than coord_t maximum value (or minimum).
         // So it can not be stored into the Point without integer overflows. That could mean that input lines are parallel or near parallel.
         return false;
@@ -76,7 +76,20 @@ bool Line::parallel_to(const Line& line) const
     const Vec2d v2 = (line.b - line.a).cast<double>();
     return sqr(cross2(v1, v2)) < sqr(EPSILON) * v1.squaredNorm() * v2.squaredNorm();
 }
-
+bool Line::overlap(const Line &line, double &overlap_length) const
+{
+    if (!this->parallel_to(line)) return false;
+    Line line_(this->a, line.a);
+    if (line_.length() > scaled(EPSILON) && !this->parallel_to(line_)) return false;
+    coord_t a_min  = std::min(this->a.x(), this->b.x());
+    coord_t a_max  = std::max(this->a.x(), this->b.x());
+    coord_t b_min  = std::min(line.a.x(), line.b.x());
+    coord_t b_max  = std::max(line.a.x(), line.b.x());
+    if (a_min>b_max||a_max<b_min) return false;
+    overlap_length = std::max((coord_t)0, std::min(a_max, b_max) - std::max(a_min, b_min));
+    overlap_length /= ((double) a_max - a_min) / this->length();
+    return true;
+}
 bool Line::perpendicular_to(double angle) const
 {
     return Slic3r::Geometry::directions_perpendicular(this->direction(), angle);

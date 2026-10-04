@@ -18,7 +18,7 @@ class PlaterWorker: public Worker {
     wxWindow *m_plater;
 
     class PlaterJob : public Job {
-        std::unique_ptr<Job> m_job;
+        std::shared_ptr<Job> m_job;
         wxWindow *m_plater;
         long long m_process_duration; // [ms]
 
@@ -79,9 +79,12 @@ class PlaterWorker: public Worker {
             steady_clock::time_point finalize_end = steady_clock::now();
             long long finalize_duration = duration_cast<milliseconds>(finalize_end - finalize_start).count();
 
+            // Bound first so typeid's operand is not a call. typeid evaluates it for a
+            // polymorphic type, which clang reports as -Wpotentially-evaluated-expression.
+            const Job &job = *m_job;
             BOOST_LOG_TRIVIAL(info)
                 << std::fixed // do not use scientific notations
-                << "Job '" << typeid(*m_job).name() << "' "
+                << "Job '" << typeid(job).name() << "' "
                 << "spend " << m_process_duration + finalize_duration << "ms "
                 << "(process " << m_process_duration << "ms + finalize " << finalize_duration << "ms)";
 
@@ -93,7 +96,7 @@ class PlaterWorker: public Worker {
             }
         }
 
-        PlaterJob(wxWindow *p, std::unique_ptr<Job> j)
+        PlaterJob(wxWindow *p, std::shared_ptr<Job> j)
             : m_job{std::move(j)}, m_plater{p}
         {
             // TODO: decide if disabling slice button during UI job is what we
@@ -131,9 +134,9 @@ public:
     }
 
     // Always package the job argument into a PlaterJob
-    bool push(std::unique_ptr<Job> job) override
+    bool push(std::shared_ptr<Job> job) override
     {
-        return m_w.push(std::make_unique<PlaterJob>(m_plater, std::move(job)));
+        return m_w.push(std::make_shared<PlaterJob>(m_plater, std::move(job)));
     }
 
     bool is_idle() const override { return m_w.is_idle(); }

@@ -8,7 +8,10 @@
 #ifndef MediaPlayCtrl_h
 #define MediaPlayCtrl_h
 
-#include "wxMediaCtrl2.h"
+#include "wxMediaCtrl3.h"
+#include "IMediaController.hpp"
+#include "WebRtcMediaController.hpp"
+#include "slic3r/Utils/IPrinterAgent.hpp"
 
 #include <wx/panel.h>
 
@@ -30,11 +33,15 @@ namespace GUI {
 class MediaPlayCtrl : public wxPanel
 {
 public:
-    MediaPlayCtrl(wxWindow *parent, wxMediaCtrl2 *media_ctrl, const wxPoint &pos = wxDefaultPosition, const wxSize &size = wxDefaultSize);
+    MediaPlayCtrl(wxWindow *parent, wxMediaCtrl3 *media_ctrl, const wxPoint &pos = wxDefaultPosition, const wxSize &size = wxDefaultSize);
 
     ~MediaPlayCtrl();
 
     void SetMachineObject(MachineObject * obj);
+
+    void SetWebMediaController(IMediaController *ctrl);
+
+    void StopWebStream();
 
     bool IsStreaming() const;
 
@@ -54,6 +61,7 @@ protected:
     void TogglePlay();
 
     void SetStatus(wxString const &msg, bool hyperlink = true);
+    void on_webrtc_status(WebRtcMediaController::Status status);
 
 private:
     void load();
@@ -66,13 +74,26 @@ private:
 
     static bool get_stream_url(std::string *url = nullptr);
 
-private:
-    static const wxMediaState MEDIASTATE_IDLE = (wxMediaState) 3;
-    static const wxMediaState MEDIASTATE_INITIALIZING = (wxMediaState) 4;
-    static const wxMediaState MEDIASTATE_LOADING = (wxMediaState) 5;
-    static const wxMediaState MEDIASTATE_BUFFERING = (wxMediaState) 6;
+    CameraStreamMode current_mode() const;
+    void set_active_media_controller(CameraStreamMode mode);
 
-    wxMediaCtrl2 * m_media_ctrl;
+private:
+    static inline const wxMediaState MEDIASTATE_IDLE = static_cast<wxMediaState>(3);
+    static inline const wxMediaState MEDIASTATE_INITIALIZING = static_cast<wxMediaState>(4);
+    static inline const wxMediaState MEDIASTATE_LOADING = static_cast<wxMediaState>(5);
+    static inline const wxMediaState MEDIASTATE_BUFFERING = static_cast<wxMediaState>(6);
+
+    // token
+    std::shared_ptr<int> m_token = std::make_shared<int>(0);
+
+    wxMediaCtrl3 * m_media_ctrl;
+    IMediaController * m_active_media_controller = nullptr;
+    IMediaController * m_web_ctrl = nullptr;
+    std::unique_ptr<WebRtcMediaController> m_webrtc_ctrl;
+    CameraStreamMode m_last_mode = CameraStreamMode::none;
+    std::uint64_t m_webrtc_epoch = 0;
+    std::string m_agent_camera_url;
+    bool m_web_user_stopped = false;
     wxMediaState m_last_state = MEDIASTATE_IDLE;
     std::string m_machine;
     int m_lan_proto = 0;
@@ -87,8 +108,12 @@ private:
     bool m_device_busy = false;
     bool m_disable_lan = false;
     wxString m_url;
-    
-    std::deque<wxString> m_tasks;
+
+    struct MediaTask {
+        wxString command;
+        IMediaController *controller = nullptr;
+    };
+    std::deque<MediaTask> m_tasks;
     boost::mutex m_mutex;
     boost::condition_variable m_cond;
     boost::thread m_thread;

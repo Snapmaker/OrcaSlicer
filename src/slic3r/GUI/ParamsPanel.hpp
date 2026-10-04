@@ -30,11 +30,11 @@
 #include "wxExtensions.hpp"
 #include "GUI_Utils.hpp"
 #include "Widgets/Button.hpp"
+#include "Lazy.hpp"
 
+class ModeSwitchButton;
 class SwitchButton;
 class StaticBox;
-
-#define TIPS_DIALOG_BUTTON_SIZE wxSize(FromDIP(60), FromDIP(24))
 
 namespace Slic3r {
 namespace GUI {
@@ -48,7 +48,7 @@ private:
     std::string m_app_key;
 
 public:
-    TipsDialog(wxWindow *parent, const wxString &title, const wxString &description, std::string app_key = "");
+    TipsDialog(wxWindow *parent, const wxString &title, const wxString &description, std::string app_key = "", long style = wxOK, std::map<wxStandardID,wxString> option_map={});
     Button *m_confirm{nullptr};
     Button *m_cancel{nullptr};
     wxPanel *m_top_line{nullptr};
@@ -56,8 +56,8 @@ public:
 
 protected:
     void on_dpi_changed(const wxRect &suggested_rect) override;
-    void on_ok(wxMouseEvent &event);
     wxBoxSizer *create_item_checkbox(wxString title, wxWindow *parent, wxString tooltip, std::string param);
+    Button* add_button(wxWindowID btn_id, const wxString &label, bool set_focus = false);
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -67,7 +67,6 @@ class ParamsPanel : public wxPanel
 {
 #if __WXOSX__
     wxWindow*            m_tmp_panel;
-    int                 m_size_move = -1;
 #endif // __WXOSX__
 
 	private:
@@ -86,8 +85,8 @@ class ParamsPanel : public wxPanel
         SwitchButton* m_mode_region { nullptr };
         ScalableButton *m_tips_arrow{nullptr};
         bool m_tips_arror_blink{false};
-        wxStaticText* m_title_view { nullptr };
-        SwitchButton* m_mode_view { nullptr };
+        ScalableButton* m_mode_icon { nullptr }; // ORCA
+        ModeSwitchButton* m_mode_view { nullptr };
         //wxBitmapButton* m_search_button { nullptr };
         wxStaticLine* m_staticline_print { nullptr };
         //wxBoxSizer* m_print_sizer { nullptr };
@@ -123,6 +122,22 @@ class ParamsPanel : public wxPanel
 
         wxPanel* m_current_tab { nullptr };
 
+        // Builds the selected page's option groups at idle and then shows them for the mode;
+        // while no tab is selected yet, its first unit selects the default one.
+        class SettingsPagePrebuild : public LazyBase
+        {
+        public:
+            explicit SettingsPagePrebuild(ParamsPanel& panel) : m_panel(panel) {}
+            const std::string& name() const override { return m_name; }
+            bool               built() const override;
+            bool               build_step() override;
+            int                prebuild_order() const override { return 0; }
+
+        private:
+            ParamsPanel& m_panel;
+            std::string  m_name{ "settings_page" };
+        } m_settings_page_prebuild{ *this };
+
         bool m_has_object_config { false };
 
         struct Highlighter
@@ -151,6 +166,10 @@ class ParamsPanel : public wxPanel
         //clear the right page
         void clear_page();
         void OnActivate();
+        // The print tab, or the filament tab without one.
+        void select_default_tab();
+        // The settings page's prebuild task.
+        LazyBase& settings_page_prebuild() { return m_settings_page_prebuild; }
         void set_active_tab(wxPanel*tab);
         bool is_active_and_shown_tab(wxPanel*tab);
         void update_mode();

@@ -2,6 +2,7 @@
 #include "../ShortestPath.hpp"
 #include "../Surface.hpp"
 
+#include "FillCornerSmoothing.hpp"
 #include "FillHoneycomb.hpp"
 
 namespace Slic3r {
@@ -70,11 +71,14 @@ void FillHoneycomb::_fill_surface_single(
             }
             p.rotate(-direction.first, m.hex_center);
             p.simplify(5 * spacing); // simplify to 5x line width
+            // Orca: round the corners of the honeycomb cells. Done before the clipping, so that the
+            // curves are cut by the region boundary just like the sharp path would be.
+            smooth_polyline_corners(p, params.smooth_factor, scaled<double>(params.resolution));
             all_polylines.push_back(p);
         }
     }
     // Apply multiline offset if needed
-    multiline_fill(all_polylines, params, 1.1 * spacing);
+    multiline_fill(all_polylines, params, spacing);
 
     all_polylines = intersection_pl(std::move(all_polylines), expolygon);
     chain_or_connect_infill(std::move(all_polylines), expolygon, polylines_out, this->spacing, params);

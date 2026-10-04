@@ -3,7 +3,7 @@
     "name": "Fiberon PET-CF @base",
     "inherits": "fdm_filament_pet",
     "from": "system",
-    "filament_id": "GFL54",
+    "filament_id": "OFHWSM21",
     "instantiation": "false",
     "cool_plate_temp": [
         "0"
@@ -41,23 +41,47 @@
     "filament_vendor": [
         "Polymaker"
     ],
+    "filament_adhesiveness_category": [
+        "800"
+    ],
+    "filament_dev_chamber_drying_bed_temperature": [
+        "90"
+    ],
+    "filament_dev_ams_drying_ams_limitations": [
+        "1"
+    ],
+    "filament_dev_ams_drying_heat_distortion_temperature": [
+        "165"
+    ],
+    "filament_dev_drying_cooling_temperature": [
+        "150"
+    ],
+    "filament_dev_ams_drying_temperature": [
+        "65",
+        "80",
+        "65",
+        "80"
+    ],
+    "filament_dev_drying_softening_temperature": [
+        "150"
+    ],
     "hot_plate_temp": [
         "70"
     ],
     "hot_plate_temp_initial_layer": [
         "70"
     ],
+    "nozzle_temperature_range_low": [
+        "270"
+    ],
+    "nozzle_temperature_range_high": [
+        "300"
+    ],
     "nozzle_temperature": [
         "300"
     ],
     "nozzle_temperature_initial_layer": [
         "300"
-    ],
-    "nozzle_temperature_range_high": [
-        "300"
-    ],
-    "nozzle_temperature_range_low": [
-        "270"
     ],
     "required_nozzle_HRC": [
         "40"

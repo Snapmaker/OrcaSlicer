@@ -5,6 +5,7 @@
 #include <boost/filesystem/operations.hpp>
 #include "libslic3r/PrintConfig.hpp"
 #include "Job.hpp"
+#include "slic3r/GUI/DeviceCore/DevStorage.h" 
 
 namespace fs = boost::filesystem;
 
@@ -42,6 +43,9 @@ class PrintJob : public Job
     std::function<void()> m_success_fun{nullptr};
     std::string         m_dev_id;
     bool                m_job_finished{ false };
+    bool                m_lifecycle_started{ false };
+    bool                m_lifecycle_finished{ false };
+    bool                m_lifecycle_success{ false };
     int                 m_print_job_completed_id = 0;
     wxString            m_completed_evt_data;
     std::function<void()> m_enter_ip_address_fun_fail{ nullptr };
@@ -60,6 +64,7 @@ public:
     std::string m_ftp_folder;
     std::string m_access_code;
     std::string task_bed_type;
+    std::string task_nozzle_mapping;
     std::string task_ams_mapping;
     std::string task_ams_mapping2;
     std::string task_ams_mapping_info;
@@ -72,25 +77,32 @@ public:
 
     int         m_print_from_sdc_plate_idx = 0;
 
-    bool        m_local_use_ssl_for_mqtt { true };
+    bool        m_local_use_ssl { true };
     bool        m_local_use_ssl_for_ftp { true };
     bool        task_bed_leveling;
     bool        task_flow_cali;
     bool        task_vibration_cali;
     bool        task_record_timelapse;
+    bool        task_timelapse_use_internal { false };
     bool        task_layer_inspect;
     bool        cloud_print_only { false };
     bool        has_sdcard { false };
+    bool        could_emmc_print { false };
     bool        task_use_ams { true };
+
+    DevStorage::SdcardState sdcard_state = DevStorage::SdcardState::NO_SDCARD;        
+    bool        task_ext_change_assist { false };
 
     int         auto_bed_leveling{0};
     int         auto_flow_cali{0};
     int         auto_offset_cali{0};
+    int         extruder_cali_manual_mode{-1};
 
-    void set_print_config(std::string bed_type, bool bed_leveling, bool flow_cali, bool vabration_cali, bool record_timelapse, bool layer_inspect,
+    void set_print_config(std::string bed_type, bool bed_leveling, bool flow_cali, bool vabration_cali, bool record_timelapse, bool layer_inspect, bool ext_change_assist,
         int auto_bed_levelingt,
         int auto_flow_calit,
-        int auto_offset_calit)
+        int auto_offset_calit,
+        int extruder_cali_manual_modet = -1)
     {
         task_bed_type       = bed_type;
         task_bed_leveling   = bed_leveling;
@@ -98,10 +110,13 @@ public:
         task_vibration_cali = vabration_cali;
         task_record_timelapse = record_timelapse;
         task_layer_inspect    = layer_inspect;
+        task_ext_change_assist = ext_change_assist;
 
         auto_bed_leveling = auto_bed_levelingt;
         auto_flow_cali = auto_flow_calit;
         auto_offset_cali = auto_offset_calit;
+        extruder_cali_manual_mode = extruder_cali_manual_modet;
+
     }
 
     int  status_range() const

@@ -1,6 +1,14 @@
-#include <catch2/catch.hpp>
+#include <catch2/catch_all.hpp>
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
+#include <map>
+#include <set>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Print.hpp"
@@ -10,12 +18,31 @@
 #include "libslic3r/Flow.hpp"
 #include "libslic3r/Slicing.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/TriangleSelector.hpp"
+#include "libslic3r/ClipperUtils.hpp"
 #include <libslic3r/ModelArrange.hpp>
 
-#include "test_data.hpp"
+#include "test_helpers.hpp"
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
+
+// Print::validate() now reports warnings through a vector out-param (upstream Orca API).
+static std::string concat_warning_strings(const std::vector<StringObjectException>& warnings)
+{
+    std::string all;
+    for (const StringObjectException& w : warnings)
+        all += w.string + "\n";
+    return all;
+}
+static bool warnings_have_opt_key(const std::vector<StringObjectException>& warnings, const std::string& key)
+{
+    for (const StringObjectException& w : warnings)
+        if (w.opt_key == key)
+            return true;
+    return false;
+}
 
 // ORCA: tests for the per-extruder layer height feature ("extruder_layer_height").
 
@@ -82,9 +109,9 @@ static DynamicPrintConfig two_extruder_config(double second_extruder_layer_heigh
     config.set_key_value("nozzle_temperature",       new ConfigOptionInts({210, 210}));
     config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts({190, 190}));
     config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts({240, 240}));
-    // flush_volumes_matrix must be filament_count^2 entries.
-    config.set_key_value("flush_multiplier",     new ConfigOptionFloat(1.));
-    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats({0, 0, 0, 0}));
+    // Per nozzle: a flush multiplier and a filaments x filaments block.
+    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1., 1.}));
+    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(8, 0.)));
     // Print::validate() reports motion-ability diagnostics by overwriting the single warning
     // out-param; raise the machine limit so the default print accelerations do not clobber the
     // layer height warnings under test.
@@ -92,17 +119,14 @@ static DynamicPrintConfig two_extruder_config(double second_extruder_layer_heigh
     // The default G-code flavor rejects relative extruder addressing without a G92 E0 layer-change
     // reset; this suite does not exercise the G-code writer, keep validation quiet.
     config.set_key_value("use_relative_e_distances", new ConfigOptionBool(false));
-    // The scenarios build on consistent-mode expectations with a tight drift tolerance; the
-    // shipping defaults are fixed mode with a generous tolerance.
-    config.option<ConfigOptionEnum<ExtruderLayerHeightMode>>("extruder_layer_height_mode", true)->value = elhmConsistent;
-    config.set_key_value("extruder_layer_height_tolerance", new ConfigOptionPercent(10));
     return config;
 }
 
-// One object made of two 20x20 mm parts side by side; the second part prints with filament 2.
+// One object made of two 20x20 mm parts side by side; the second part prints with filament
+// `coarse_filament` (1-based, 2 by default), the first with `fine_filament` (0 = the object's).
 // The parts are z-scaled by z_scale (cubes are 10 mm tall by default).
 static void init_two_part_print(Print &print, Model &model, const DynamicPrintConfig &config, float z_scale = 0.5f,
-                                TestMesh coarse_shape = TestMesh::cube_20x20x20)
+                                TestMesh coarse_shape = TestMesh::cube_20x20x20, int fine_filament = 0, int coarse_filament = 2)
 {
     TriangleMesh fine_mesh = mesh(TestMesh::cube_20x20x20);
     fine_mesh.scale(Vec3f(1.f, 1.f, z_scale));
@@ -112,9 +136,11 @@ static void init_two_part_print(Print &print, Model &model, const DynamicPrintCo
 
     ModelObject *object = model.add_object();
     object->name = "two_part_cube";
-    object->add_volume(std::move(fine_mesh));
+    ModelVolume *fine_volume = object->add_volume(std::move(fine_mesh));
+    if (fine_filament > 0)
+        fine_volume->config.set("extruder", fine_filament);
     ModelVolume *coarse_volume = object->add_volume(std::move(coarse_mesh));
-    coarse_volume->config.set("extruder", 2);
+    coarse_volume->config.set("extruder", coarse_filament);
     object->add_instance();
 
     // This fork's arrangement engine rejects positions outside the (unset) plate even for an
@@ -227,20 +253,24 @@ SCENARIO("Per-extruder layer height combines region layers", "[MultiNozzleLayerH
     }
 }
 
-SCENARIO("Fixed mode always prints the extruder layer height", "[MultiNozzleLayerHeight]") {
+SCENARIO("A drifting outline still prints the extruder layer height", "[MultiNozzleLayerHeight]") {
     // A 10 mm tall pyramid on the coarse extruder: its outline drifts by 0.2 mm per edge on every
-    // 0.2 mm layer, far past the suite's 10 % thick layer tolerance (of the 0.6 mm nozzle), so
-    // consistent mode falls back to the object layer height everywhere.
-    GIVEN("A pyramid part whose outline drifts past the thick layer tolerance on every layer") {
+    // 0.2 mm layer. Runs print the shape common to their layers (the boundary turns into steps),
+    // so the part keeps the extruder layer height instead of falling back to the object layer height.
+    GIVEN("A pyramid part whose outline drifts on every layer") {
         DynamicPrintConfig config = two_extruder_config(0.4);
-        // Count coarse extrusion heights well below the apex, where slices stay large enough to print.
-        auto coarse_height_counts = [](Print &print, size_t &at_pitch, size_t &at_base, size_t &odd_layers) {
+        Print print;
+        Model model;
+        init_two_part_print(print, model, config, 0.25f, TestMesh::pyramid);
+        THEN("every coarse extrusion above the first layer keeps the extruder layer height") {
+            REQUIRE(print.validate().string.empty());
             print.process();
             const PrintObject &object = *print.objects().front();
             int fine_region, coarse_region;
             find_regions(object, fine_region, coarse_region);
             REQUIRE(coarse_region >= 0);
-            at_pitch = at_base = odd_layers = 0;
+            // Count coarse extrusion heights well below the apex, where slices stay large enough to print.
+            size_t at_pitch = 0, at_base = 0, odd_layers = 0;
             for (size_t idx = 1; idx <= 40; ++ idx) {
                 const std::vector<float> heights = region_path_heights(object.get_layer(int(idx))->get_region(coarse_region));
                 if (idx % 2 == 1 && ! heights.empty())
@@ -252,45 +282,20 @@ SCENARIO("Fixed mode always prints the extruder layer height", "[MultiNozzleLaye
                         ++ at_base;
                 }
             }
-        };
-        WHEN("thick layer regions are Consistent") {
-            Print print;
-            Model model;
-            init_two_part_print(print, model, config, 0.25f, TestMesh::pyramid);
-            THEN("the drift keeps the coarse part at the object layer height") {
-                REQUIRE(print.validate().string.empty());
-                size_t at_pitch, at_base, odd_layers;
-                coarse_height_counts(print, at_pitch, at_base, odd_layers);
-                CHECK(at_pitch == 0);
-                CHECK(at_base > 0);
-                CHECK(odd_layers == 20);
-            }
-        }
-        WHEN("thick layer regions are Fixed") {
-            config.option<ConfigOptionEnum<ExtruderLayerHeightMode>>("extruder_layer_height_mode", true)->value = elhmFixed;
-            Print print;
-            Model model;
-            init_two_part_print(print, model, config, 0.25f, TestMesh::pyramid);
-            THEN("every coarse extrusion above the first layer keeps the extruder layer height") {
-                REQUIRE(print.validate().string.empty());
-                size_t at_pitch, at_base, odd_layers;
-                coarse_height_counts(print, at_pitch, at_base, odd_layers);
-                CHECK(at_pitch > 0);
-                CHECK(at_base == 0);
-                CHECK(odd_layers == 0);
-            }
+            CHECK(at_pitch > 0);
+            CHECK(at_base == 0);
+            CHECK(odd_layers == 0);
         }
     }
 }
 
-SCENARIO("Fixed mode keeps top surfaces on combined steps", "[MultiNozzleLayerHeight]") {
+SCENARIO("Combining keeps top surfaces on combined steps", "[MultiNozzleLayerHeight]") {
     // A shoulder that ends mid-run: the wide cube's exposed ring is combined away with its layer
     // (the run prints only the common shape), so it must reappear as a top surface on the printed
     // layer below it - otherwise the step carries bare sparse infill.
     GIVEN("A wide cube ending mid-run with a narrower cube on top") {
-        auto top_area = [](ExtruderLayerHeightMode mode) {
-            DynamicPrintConfig config = two_extruder_config(0.4);
-            config.option<ConfigOptionEnum<ExtruderLayerHeightMode>>("extruder_layer_height_mode", true)->value = mode;
+        auto top_area = [](double coarse_layer_height) {
+            DynamicPrintConfig config = two_extruder_config(coarse_layer_height);
             Print print;
             Model model;
             TriangleMesh base = mesh(TestMesh::cube_20x20x20);
@@ -325,8 +330,8 @@ SCENARIO("Fixed mode keeps top surfaces on combined steps", "[MultiNozzleLayerHe
             return area;
         };
         THEN("the combined print keeps most of the per-layer top surface area") {
-            const double per_layer = top_area(elhmConsistent);
-            const double combined  = top_area(elhmFixed);
+            const double per_layer = top_area(0.2);  // the object layer height: no combining
+            const double combined  = top_area(0.4);
             CAPTURE(per_layer, combined);
             REQUIRE(per_layer > 100.);
             REQUIRE(combined > 0.7 * per_layer);
@@ -334,11 +339,10 @@ SCENARIO("Fixed mode keeps top surfaces on combined steps", "[MultiNozzleLayerHe
     }
 }
 
-SCENARIO("Fixed mode bridges lids that start inside a run", "[MultiNozzleLayerHeight]") {
+SCENARIO("Lids that start inside a run bridge", "[MultiNozzleLayerHeight]") {
     // The runs spanning the lid's first layers print nothing there; it must still bridge.
     GIVEN("A hollow tube capped by a lid whose bottom starts in the middle of a run") {
         DynamicPrintConfig config = two_extruder_config(0.4);
-        config.option<ConfigOptionEnum<ExtruderLayerHeightMode>>("extruder_layer_height_mode", true)->value = elhmFixed;
         Print print;
         Model model;
         TriangleMesh tube = mesh(TestMesh::cube_with_hole);   // 20 x 20 x 10 mm, 10 mm hole through z
@@ -377,56 +381,104 @@ SCENARIO("Fixed mode bridges lids that start inside a run", "[MultiNozzleLayerHe
     }
 }
 
-SCENARIO("A bottom over another region's combined-away geometry bridges", "[MultiNozzleLayerHeight]") {
-    // At a filament boundary the support below a region's bottom can belong to a neighboring
-    // region whose run commits only its common shape: that support never prints even though the
-    // object's slices still cover the area, so the bottom must classify as an unsupported bridge.
-    GIVEN("A coarse slab whose top layer is a pocket rim holding a fine-filament insert") {
-        DynamicPrintConfig config = two_extruder_config(0.4);
-        config.option<ConfigOptionEnum<ExtruderLayerHeightMode>>("extruder_layer_height_mode", true)->value = elhmFixed;
-        Print print;
-        Model model;
-        // One coarse volume: a full slab plus a one-layer pocket rim on top. The run pairing the
-        // slab's top layer with the rim commits only the rim and drops the pocket footprint.
-        TriangleMesh slab = mesh(TestMesh::cube_20x20x20);
-        slab.scale(Vec3f(1.f, 1.f, 0.07f));                  // 20 x 20 x 1.4 mm
-        TriangleMesh rim = mesh(TestMesh::cube_with_hole);   // 20 x 20, 10 mm hole
-        rim.scale(Vec3f(1.f, 1.f, 0.02f));                   // one 0.2 mm layer
-        rim.translate(0.f, 0.f, 1.4f);
+// Area of a region's slices on the layer at print_z, optionally of one surface type only. The
+// types come from detect_surfaces_type() and stay on the slices, so parts too narrow for any fill
+// count as well.
+static double region_slices_area(const PrintObject &po, int region, double print_z, int surface_type = -1)
+{
+    double area = 0.;
+    for (size_t idx = 0; idx < po.layer_count(); ++ idx) {
+        const Layer *layer = po.get_layer(int(idx));
+        if (std::abs(layer->print_z - print_z) > EPSILON || region >= layer->region_count())
+            continue;
+        for (const Surface &surface : layer->get_region(region)->slices.surfaces)
+            if (surface_type < 0 || surface.surface_type == SurfaceType(surface_type))
+                area += unscale<double>(unscale<double>(surface.expolygon.area()));
+    }
+    return area;
+}
+
+static void place_and_apply(Print &print, Model &model, const DynamicPrintConfig &config)
+{
+    // This fork's arrangement engine rejects positions outside the (unset) plate even for
+    // an InfiniteBed; place the object at a fixed bed spot like init_two_part_print().
+    for (ModelObject *mo : model.objects) {
+        mo->center_around_origin();
+        mo->translate(120., 120., 0.);
+        mo->ensure_on_bed();
+    }
+    print.apply(model, config);
+    print.set_status_silent();
+}
+
+// A coarse volume: a full 20 x 20 slab of slab_height starting at base_z, plus a rim of
+// rim_layers 0.2 mm layers on top of it leaving a pocket_width x 8 mm pocket, which holds a
+// fine-filament insert of the pocket's footprint, 0.8 mm tall, starting at the rim's bottom.
+// extra_coarse (e.g. a tube below the slab) is merged into the coarse volume.
+static void add_pocketed_slab(Model &model, float base_z, float slab_height, float pocket_width, float rim_layers = 1.f,
+                              TriangleMesh extra_coarse = TriangleMesh())
+{
+    TriangleMesh slab = mesh(TestMesh::cube_20x20x20);
+    slab.scale(Vec3f(1.f, 1.f, slab_height / 20.f));
+    slab.translate(0.f, 0.f, base_z);
+    const float rim_dims[4][4] = {{6.f, 20.f, 0.f, 0.f}, {14.f - pocket_width, 20.f, 6.f + pocket_width, 0.f},
+                                  {pocket_width, 6.f, 6.f, 0.f}, {pocket_width, 6.f, 6.f, 14.f}};
+    for (const auto &d : rim_dims) {
+        TriangleMesh rim = mesh(TestMesh::cube_20x20x20);
+        rim.scale(Vec3f(d[0] / 20.f, d[1] / 20.f, 0.01f * rim_layers));
+        rim.translate(d[2], d[3], base_z + slab_height);
         slab.merge(rim);
-        TriangleMesh insert = mesh(TestMesh::cube_20x20x20);
-        insert.scale(Vec3f(0.4f, 0.4f, 0.04f));              // 8 x 8 x 0.8 mm in the pocket
-        insert.translate(6.f, 6.f, 1.4f);
-        ModelObject *object = model.add_object();
-        object->name = "pocketed_slab";
-        ModelVolume *coarse_volume = object->add_volume(std::move(slab));
-        coarse_volume->config.set("extruder", 2);
-        object->add_volume(std::move(insert));
-        object->add_instance();
-        // This fork's arrangement engine rejects positions outside the (unset) plate even for
-        // an InfiniteBed; place the object at a fixed bed spot like init_two_part_print().
-        for (ModelObject *mo : model.objects) {
-            mo->center_around_origin();
-            mo->translate(120., 120., 0.);
-            mo->ensure_on_bed();
-        }
-        print.apply(model, config);
-        print.set_status_silent();
-        THEN("the insert's first layer is classified as an unsupported bottom") {
-            REQUIRE(print.validate().string.empty());
-            print.process();
-            const PrintObject &po = *print.objects().front();
-            int fine_region = -1, coarse_region = -1;
-            find_regions(po, fine_region, coarse_region);
-            REQUIRE(fine_region >= 0);
-            double bridge_area = 0.;
-            for (size_t idx = 0; idx < po.layer_count(); ++ idx)
-                if (const Layer *layer = po.get_layer(int(idx)); fine_region < layer->region_count())
-                    for (const Surface &surface : layer->get_region(fine_region)->fill_surfaces.surfaces)
-                        if (surface.surface_type == stBottomBridge)
-                            bridge_area += unscale<double>(unscale<double>(surface.expolygon.area()));
-            CAPTURE(bridge_area);
-            REQUIRE(bridge_area > 30.);
+    }
+    if (! extra_coarse.empty())
+        slab.merge(extra_coarse);
+    TriangleMesh insert = mesh(TestMesh::cube_20x20x20);
+    insert.scale(Vec3f(pocket_width / 20.f, 0.4f, 0.04f));
+    insert.translate(6.f, 6.f, base_z + slab_height);
+    ModelObject *object = model.add_object();
+    object->name = "pocketed_slab";
+    ModelVolume *coarse_volume = object->add_volume(std::move(slab));
+    coarse_volume->config.set("extruder", 2);
+    object->add_volume(std::move(insert));
+    object->add_instance();
+}
+
+SCENARIO("A pocket floor a run drops under another region's insert is taken over by the run", "[MultiNozzleLayerHeight]") {
+    // At a filament boundary the support below a region's bottom can belong to a neighboring
+    // region whose run commits only its common shape: the pocket floor (the slab's top layer)
+    // falls out of the run spanning it and the rim above, even though the object's slices still
+    // cover the area. The run keeps its pitch and takes the floor over together with the insert's
+    // first layer above it (which would otherwise bridge the dropped row), so the insert resumes
+    // fully supported on top of the pass.
+    GIVEN("A 1.4 mm coarse slab whose top layer is a pocket rim holding a fine-filament insert") {
+        DynamicPrintConfig config = two_extruder_config(0.4);
+        for (float pocket_width : { 8.f, 1.f }) {
+            WHEN("the pocket is " + std::to_string(int(pocket_width)) + " mm wide") {
+                Print print;
+                Model model;
+                add_pocketed_slab(model, 0.f, 1.4f, pocket_width);
+                place_and_apply(print, model, config);
+                THEN("the run prints the pocket floor with the rim and the insert resumes on top of it") {
+                    REQUIRE(print.validate().string.empty());
+                    print.process();
+                    const PrintObject &po = *print.objects().front();
+                    int fine_region = -1, coarse_region = -1;
+                    find_regions(po, fine_region, coarse_region);
+                    REQUIRE(fine_region >= 0);
+                    REQUIRE(coarse_region >= 0);
+                    const double pocket_area   = 8. * double(pocket_width);
+                    const double pass_area     = region_slices_area(po, coarse_region, 1.6);
+                    const double insert_1_6    = region_slices_area(po, fine_region, 1.6);
+                    const double resumed_area  = region_slices_area(po, fine_region, 1.8);
+                    const double resumed_bottom = region_slices_area(po, fine_region, 1.8, stBottom) + region_slices_area(po, fine_region, 1.8, stBottomBridge);
+                    CAPTURE(pocket_width, pass_area, insert_1_6, resumed_area, resumed_bottom);
+                    CHECK(pass_area > 398.);                    // rim and pocket floor in one pass
+                    CHECK(insert_1_6 < 0.1);                    // the insert gives its first layer up
+                    CHECK(resumed_area > 0.7 * pocket_area);    // and continues on top of the pass
+                    CHECK(resumed_bottom < 0.1);                // supported, no bridge
+                    CHECK(region_slices_area(po, coarse_region, 1.4) < 0.1);   // combined away into the rim layer
+                    CHECK(po.get_layer(6)->get_region(coarse_region)->combined_layer_count() == 2);   // z 1.6: the rim run
+                }
+            }
         }
     }
 }
@@ -434,48 +486,82 @@ SCENARIO("A bottom over another region's combined-away geometry bridges", "[Mult
 SCENARIO("A floating insert below its covering run is filled by the run and resumes on top", "[MultiNozzleLayerHeight]") {
     // Geometry whose covering run commits above it would print into thin air before any support
     // exists: its floating layers are dropped, the covering run's pass fills the object volume
-    // they occupied, and the region resumes fully supported on top of the pass.
+    // they occupied, and the region resumes fully supported on top of the pass. The pocket floor
+    // the run drops lies over the tube's cavity, not on another region, so the run keeps its pitch.
+    auto pocketed_roof = [](Model &model, float pocket_width) {
+        // Coarse volume: tube walls, a full roof slab over the cavity, and a two-layer pocket rim
+        // above it holding the fine insert.
+        TriangleMesh tube = mesh(TestMesh::cube_with_hole);   // 20 x 20, 10 mm hole
+        tube.scale(Vec3f(1.f, 1.f, 0.1f));                    // 1 mm tall
+        add_pocketed_slab(model, 1.f, 0.2f, pocket_width, 2.f, std::move(tube));
+        model.objects.front()->name = "pocketed_roof";
+    };
     GIVEN("A hollow tube capped by a pocketed coarse roof with a fine insert starting mid-run") {
         DynamicPrintConfig config = two_extruder_config(0.6);
         config.set_key_value("max_layer_height", new ConfigOptionFloats({0.3, 0.6}));
-        config.option<ConfigOptionEnum<ExtruderLayerHeightMode>>("extruder_layer_height_mode", true)->value = elhmFixed;
+        for (float pocket_width : { 8.f, 1.f }) {
+            WHEN("the pocket is " + std::to_string(int(pocket_width)) + " mm wide") {
+                Print print;
+                Model model;
+                pocketed_roof(model, pocket_width);
+                place_and_apply(print, model, config);
+                THEN("the covering run fills the floating layers and the insert resumes on top") {
+                    REQUIRE(print.validate().string.empty());
+                    print.process();
+                    const PrintObject &po = *print.objects().front();
+                    int fine_region = -1, coarse_region = -1;
+                    find_regions(po, fine_region, coarse_region);
+                    REQUIRE(fine_region >= 0);
+                    REQUIRE(coarse_region >= 0);
+                    const double pocket_area        = 8. * double(pocket_width);
+                    const double floating_area      = region_slices_area(po, fine_region, 1.4) + region_slices_area(po, fine_region, 1.6);
+                    const double pass_area          = region_slices_area(po, coarse_region, 1.6);
+                    const double filled_bridge_area = region_slices_area(po, coarse_region, 1.6, stBottomBridge);
+                    const double resumed_area       = region_slices_area(po, fine_region, 1.8);
+                    CAPTURE(pocket_width, floating_area, pass_area, filled_bridge_area, resumed_area);
+                    CHECK(floating_area < 0.1);                 // nothing of the insert prints in the air
+                    CHECK(pass_area > 398.);                    // the pass fills the pocket footprint too
+                    CHECK(filled_bridge_area > 60.);            // and bridges the cavity, pocket included
+                    CHECK(resumed_area > 0.7 * pocket_area);    // the insert continues on top of the pass
+                    CHECK(po.get_layer(6)->get_region(coarse_region)->combined_layer_count() == 3);
+                }
+            }
+        }
+    }
+}
+
+SCENARIO("A run never drops a band lying on another region", "[MultiNozzleLayerHeight]") {
+    // The solid layers under a painted top face over another filament's core: the coarse frame
+    // continues past the band, so a run spanning the band would commit the frame alone, drop the
+    // band and let the core print the visible top in its own colour. The run has to end below
+    // the band (the frame prints one layer thinner there) and the band's own run ends at its top.
+    GIVEN("A coarse frame around a fine core, capped by a two-layer coarse band over the core") {
+        DynamicPrintConfig config = two_extruder_config(0.4);
         Print print;
         Model model;
-        // Coarse volume: tube walls, a full roof slab over the cavity, and a one-run pocket rim
-        // above it. The run pairs the slab with the rim and drops the slab's pocket footprint.
-        TriangleMesh roof = mesh(TestMesh::cube_with_hole);   // 20 x 20, 10 mm hole
-        roof.scale(Vec3f(1.f, 1.f, 0.1f));                    // 1 mm tall tube
-        TriangleMesh slab = mesh(TestMesh::cube_20x20x20);
-        slab.scale(Vec3f(1.f, 1.f, 0.01f));                   // 20 x 20 x 0.2 mm
-        slab.translate(0.f, 0.f, 1.f);
-        roof.merge(slab);
-        const float rim_dims[4][4] = {{0.3f, 1.f, 0.f, 0.f}, {0.3f, 1.f, 14.f, 0.f},
-                                      {0.4f, 0.3f, 6.f, 0.f}, {0.4f, 0.3f, 6.f, 14.f}};
-        for (const auto &d : rim_dims) {
-            TriangleMesh rim = mesh(TestMesh::cube_20x20x20);
-            rim.scale(Vec3f(d[0], d[1], 0.02f));              // rim pieces around an 8 x 8 pocket
-            rim.translate(d[2], d[3], 1.2f);
-            roof.merge(rim);
+        TriangleMesh frame;
+        const float frame_dims[4][4] = {{3.f, 20.f, 0.f, 0.f}, {3.f, 20.f, 17.f, 0.f}, {14.f, 3.f, 3.f, 0.f}, {14.f, 3.f, 3.f, 17.f}};
+        for (const auto &d : frame_dims) {
+            TriangleMesh piece = mesh(TestMesh::cube_20x20x20);
+            piece.scale(Vec3f(d[0] / 20.f, d[1] / 20.f, 0.15f));   // 3 mm tall frame pieces around a 14 x 14 core
+            piece.translate(d[2], d[3], 0.f);
+            frame.merge(piece);
         }
-        TriangleMesh insert = mesh(TestMesh::cube_20x20x20);
-        insert.scale(Vec3f(0.4f, 0.4f, 0.04f));               // 8 x 8 x 0.8 mm in the pocket
-        insert.translate(6.f, 6.f, 1.2f);
+        TriangleMesh band = mesh(TestMesh::cube_20x20x20);
+        band.scale(Vec3f(0.7f, 0.7f, 0.02f));                     // 14 x 14 x 0.4 mm: layers 1.2 and 1.4
+        band.translate(3.f, 3.f, 1.f);
+        frame.merge(band);
+        TriangleMesh core = mesh(TestMesh::cube_20x20x20);
+        core.scale(Vec3f(0.7f, 0.7f, 0.05f));                     // 14 x 14 x 1 mm fine core under the band
+        core.translate(3.f, 3.f, 0.f);
         ModelObject *object = model.add_object();
-        object->name = "pocketed_roof";
-        ModelVolume *coarse_volume = object->add_volume(std::move(roof));
+        object->name = "banded_frame";
+        ModelVolume *coarse_volume = object->add_volume(std::move(frame));
         coarse_volume->config.set("extruder", 2);
-        object->add_volume(std::move(insert));
+        object->add_volume(std::move(core));
         object->add_instance();
-        // This fork's arrangement engine rejects positions outside the (unset) plate even for
-        // an InfiniteBed; place the object at a fixed bed spot like init_two_part_print().
-        for (ModelObject *mo : model.objects) {
-            mo->center_around_origin();
-            mo->translate(120., 120., 0.);
-            mo->ensure_on_bed();
-        }
-        print.apply(model, config);
-        print.set_status_silent();
-        THEN("the covering run fills the floating layers and the insert resumes on top") {
+        place_and_apply(print, model, config);
+        THEN("the band prints in full over the core, which gets no top surface") {
             REQUIRE(print.validate().string.empty());
             print.process();
             const PrintObject &po = *print.objects().front();
@@ -483,24 +569,76 @@ SCENARIO("A floating insert below its covering run is filled by the run and resu
             find_regions(po, fine_region, coarse_region);
             REQUIRE(fine_region >= 0);
             REQUIRE(coarse_region >= 0);
-            double floating_area = 0., filled_bridge_area = 0., resumed_area = 0.;
-            for (size_t idx = 0; idx < po.layer_count(); ++ idx) {
-                const Layer *layer = po.get_layer(int(idx));
-                for (int r = 0; r < layer->region_count(); ++ r)
-                    for (const Surface &surface : layer->get_region(r)->fill_surfaces.surfaces) {
-                        const double area = unscale<double>(unscale<double>(surface.expolygon.area()));
-                        if (r == fine_region && layer->print_z < 1.7)
-                            floating_area += area;
-                        else if (r == coarse_region && std::abs(layer->print_z - 1.6) < EPSILON && surface.surface_type == stBottomBridge)
-                            filled_bridge_area += area;
-                        else if (r == fine_region && std::abs(layer->print_z - 1.8) < EPSILON)
-                            resumed_area += area;
-                    }
-            }
-            CAPTURE(floating_area, filled_bridge_area, resumed_area);
-            REQUIRE(floating_area < 0.1);       // nothing of the insert prints in the air
-            REQUIRE(filled_bridge_area > 60.);  // the coarse pass bridges rim and pocket alike
-            REQUIRE(resumed_area > 25.);        // the insert continues on top of the pass
+            double fine_top = 0.;
+            for (size_t idx = 0; idx < po.layer_count(); ++ idx)
+                fine_top += region_slices_area(po, fine_region, po.get_layer(int(idx))->print_z, stTop);
+            const double band_layer = region_slices_area(po, coarse_region, 1.4);
+            const double band_top   = region_slices_area(po, coarse_region, 1.4, stTop);
+            const double frame_top  = region_slices_area(po, coarse_region, 1.0);
+            CAPTURE(fine_top, band_layer, band_top, frame_top);
+            CHECK(fine_top < 0.1);                     // the core is covered by the band
+            CHECK(band_layer > 380.);                  // frame and band together at the band's top
+            CHECK(band_top > 150.);                    // the band is the top surface there
+            CHECK(po.get_layer(5)->get_region(coarse_region)->combined_layer_count() == 2);   // z 1.4: the band's run
+            CHECK(frame_top > 190.);                   // z 1.0 prints the frame on its own below the band
+            CHECK(po.get_layer(3)->get_region(coarse_region)->combined_layer_count() == 1);
+        }
+    }
+}
+
+SCENARIO("A colour hand-off inside a run leaves no void", "[MultiNozzleLayerHeight]") {
+    // A fine part standing on a coarse base whose top lies inside one of the coarse runs (the
+    // coarse region continues beside it, so the run keeps going): the run's intersection drops
+    // the base's last rows under the fine part, and the part would bridge a void of those rows
+    // over the run below. The run takes the rows over instead, together with the part's first
+    // layer above them (a fine region's rows, which it gives up), and the part resumes fully
+    // supported on top of the pass - the colour boundary moves by less than a pitch, no row is
+    // left unprinted and no extra toolchange is needed.
+    GIVEN("A coarse base capped mid-run by a fine block, beside a coarse pillar") {
+        DynamicPrintConfig config = two_extruder_config(0.6);   // runs of three 0.2 mm layers
+        config.set_key_value("max_layer_height", new ConfigOptionFloats({0.3, 0.6}));
+        Print print;
+        Model model;
+        TriangleMesh base = mesh(TestMesh::cube_20x20x20);
+        base.scale(Vec3f(1.f, 1.f, 0.07f));                     // 20 x 20 x 1.4 mm: layers 0.4 .. 1.4 (rows 0-5)
+        TriangleMesh pillar = mesh(TestMesh::cube_20x20x20);
+        pillar.scale(Vec3f(1.f, 1.f, 0.2f));                    // 4 mm tall, keeps the coarse runs going
+        pillar.translate(30.f, 0.f, 0.f);
+        base.merge(pillar);
+        TriangleMesh block = mesh(TestMesh::cube_20x20x20);
+        block.scale(Vec3f(1.f, 1.f, 0.08f));                    // 1.6 mm fine block on the base: rows 6-13
+        block.translate(0.f, 0.f, 1.4f);
+        ModelObject *object = model.add_object();
+        object->name = "hand_off";
+        ModelVolume *coarse_volume = object->add_volume(std::move(base));
+        coarse_volume->config.set("extruder", 2);
+        object->add_volume(std::move(block));
+        object->add_instance();
+        place_and_apply(print, model, config);
+        THEN("the coarse run takes the dropped rows and the block's first layer over, the block resumes on it") {
+            REQUIRE(print.validate().string.empty());
+            print.process();
+            const PrintObject &po = *print.objects().front();
+            int fine_region = -1, coarse_region = -1;
+            find_regions(po, fine_region, coarse_region);
+            REQUIRE(fine_region >= 0);
+            REQUIRE(coarse_region >= 0);
+            // Coarse runs: rows 1-3 (top z 1.0) and 4-6 (top z 1.6). The base's rows 4 and 5
+            // (z 1.2, 1.4) fall out of the second run; the run prints them with the block's row 6.
+            const double run_top      = region_slices_area(po, coarse_region, 1.6);
+            const double block_1_6    = region_slices_area(po, fine_region, 1.6);
+            const double block_1_8    = region_slices_area(po, fine_region, 1.8);
+            const double block_bottom = region_slices_area(po, fine_region, 1.8, stBottom) + region_slices_area(po, fine_region, 1.8, stBottomBridge);
+            const double buried_top   = region_slices_area(po, coarse_region, 1.0, stTop);
+            const double filled_1_2   = region_slices_area(po, fine_region, 1.2) + region_slices_area(po, fine_region, 1.4);
+            CAPTURE(run_top, block_1_6, block_1_8, block_bottom, buried_top, filled_1_2);
+            CHECK(po.get_layer(6)->get_region(coarse_region)->combined_layer_count() == 3);
+            CHECK(run_top > 780.);                     // base footprint and pillar in one pass
+            CHECK(block_1_6 < 0.1);                    // the block gives its first layer up
+            CHECK(filled_1_2 < 0.1);                   // and prints nothing below it either
+            CHECK(block_1_8 > 380.);                   // it continues on top of the pass
+            CHECK(block_bottom < 1.);                  // supported: no bridge
+            CHECK(buried_top < 1.);                    // and the run below is not a top surface
         }
     }
 }
@@ -548,10 +686,10 @@ SCENARIO("Per-extruder layer height respects the extruder's minimum layer height
         Model model;
         init_two_part_print(print, model, config);
         THEN("validation warns instead of rejecting: the minimum is a soft profile limit") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
-            REQUIRE(warning.string.find("minimum layer") != std::string::npos);
-            REQUIRE(warning.opt_key == "extruder_layer_height");
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
+            REQUIRE(concat_warning_strings(warnings).find("minimum layer") != std::string::npos);
+            REQUIRE(warnings_have_opt_key(warnings, "extruder_layer_height"));
         }
     }
 }
@@ -629,17 +767,17 @@ SCENARIO("Per-extruder layer height honors feature filaments", "[MultiNozzleLaye
         // pitch and the no-preference filaments follow it instead of vetoing it.
         config.set_key_value("outer_wall_filament_id", new ConfigOptionInt(2));
         // Keep the combined-region line width checks out of the way, this test targets heights.
-        config.set_key_value("line_width",             new ConfigOptionFloatOrPercent(0.5, false));
+        config.set_key_value("line_width",             new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.5, false)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
         THEN("the part combines to the outer wall filament's height, warning about limits") {
             // Filament 1 prints the pitch above its max_layer_height (0.3 < 0.4): warned, not vetoed.
-            // This fork's validate() appends warnings to a single StringObjectException out-param.
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
-            REQUIRE(warning.string.find("maximum layer") != std::string::npos);
-            REQUIRE(warning.opt_key == "extruder_layer_height");
+            // validate() appends warnings to the vector out-param (upstream Orca API).
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
+            REQUIRE(concat_warning_strings(warnings).find("maximum layer") != std::string::npos);
+            REQUIRE(warnings_have_opt_key(warnings, "extruder_layer_height"));
 
             print.process();
             // Both parts combine now; the first part's region is identified by its top surface
@@ -685,19 +823,20 @@ SCENARIO("Per-extruder layer height honors feature filaments", "[MultiNozzleLaye
         config.set_key_value("nozzle_temperature",    new ConfigOptionInts({210, 210, 210}));
         config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts({190, 190, 190}));
         config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts({240, 240, 240}));
-        config.set_key_value("flush_volumes_matrix",  new ConfigOptionFloats(std::vector<double>(9, 0.)));
+        config.set_key_value("flush_multiplier",      new ConfigOptionFloats({1., 1., 1.}));
+        config.set_key_value("flush_volumes_matrix",  new ConfigOptionFloats(std::vector<double>(27, 0.)));
         config.set_key_value("machine_max_acceleration_extruding", new ConfigOptionFloats({100000., 100000., 100000.}));
         config.set_key_value("top_surface_filament_id",    new ConfigOptionInt(2));
         config.set_key_value("bottom_surface_filament_id", new ConfigOptionInt(3));
         // Keep the combined-region line width checks out of the way, this test targets heights.
-        config.set_key_value("line_width",            new ConfigOptionFloatOrPercent(0.5, false));
+        config.set_key_value("line_width",            new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.5, false)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
         THEN("the part keeps the object layer height and validation warns") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
-            REQUIRE(warning.string.find("cannot all be honored") != std::string::npos);
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
+            REQUIRE(concat_warning_strings(warnings).find("cannot all be honored") != std::string::npos);
 
             print.process();
             const PrintObject &object = *print.objects().front();
@@ -725,8 +864,8 @@ SCENARIO("Fill line width follows the filament that prints the surface", "[Multi
     GIVEN("Internal solid infill mapped to the 0.6 mm filament, bottom surfaces staying on the 0.4 mm filament") {
         DynamicPrintConfig config = two_extruder_config(0.);
         config.set_key_value("internal_solid_filament_id",       new ConfigOptionInt(2));
-        config.set_key_value("initial_layer_line_width",         new ConfigOptionFloatOrPercent(125., true));
-        config.set_key_value("internal_solid_infill_line_width", new ConfigOptionFloatOrPercent(105., true));
+        config.set_key_value("initial_layer_line_width",         new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(125., true)});
+        config.set_key_value("internal_solid_infill_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(105., true)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
@@ -804,9 +943,9 @@ SCENARIO("Combined infill is limited by the printing nozzle only", "[MultiNozzle
         print.apply(model, config);
         print.set_status_silent();
         THEN("infill combines to the full preferred height and validation warns about the maximum") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
-            REQUIRE(warning.string.find("maximum layer") != std::string::npos);
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
+            REQUIRE(concat_warning_strings(warnings).find("maximum layer") != std::string::npos);
             print.process();
 
             const PrintObject &object = *print.objects().front();
@@ -837,14 +976,14 @@ SCENARIO("Combined infill is limited by the printing nozzle only", "[MultiNozzle
         config.set_key_value("inner_wall_filament_id", new ConfigOptionInt(2));
         config.set_key_value("max_layer_height",       new ConfigOptionFloats({0.3, 0.45}));
         // Keep the combined-region line width checks out of the way, this test targets heights.
-        config.set_key_value("line_width",             new ConfigOptionFloatOrPercent(0.5, false));
+        config.set_key_value("line_width",             new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.5, false)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
         THEN("validation warns about the maximum and the part prints the walls' pitch") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
-            REQUIRE(warning.string.find("maximum layer") != std::string::npos);
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
+            REQUIRE(concat_warning_strings(warnings).find("maximum layer") != std::string::npos);
 
             print.process();
             // Both parts' walls print with filament 2, so the parts are told apart by their
@@ -883,14 +1022,14 @@ SCENARIO("Combined infill is limited by the printing nozzle only", "[MultiNozzle
         config.set_key_value("internal_solid_filament_id", new ConfigOptionInt(2));
         config.set_key_value("min_layer_height",           new ConfigOptionFloats({0.07, 0.3}));
         // Keep the combined-region line width checks out of the way, this test targets heights.
-        config.set_key_value("line_width",                 new ConfigOptionFloatOrPercent(0.5, false));
+        config.set_key_value("line_width",                 new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.5, false)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
         THEN("the feature filament's preference drives the part's pitch, warning about the minimum") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
-            REQUIRE(warning.string.find("minimum layer") != std::string::npos);
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
+            REQUIRE(concat_warning_strings(warnings).find("minimum layer") != std::string::npos);
 
             print.process();
             // The first part's walls have no preference of their own, yet the part prints 0.4 mm
@@ -967,7 +1106,7 @@ SCENARIO("Support nozzle diameter restricts support printing", "[MultiNozzleLaye
         config.set_key_value("raft_layers",             new ConfigOptionInt(2));
         config.option<ConfigOptionEnum<SupportType>>("support_type", true)->value = stNormalAuto;
         config.set_key_value("support_nozzle_diameter", new ConfigOptionFloat(support_nozzle_diameter));
-        config.set_key_value("support_line_width",      new ConfigOptionFloatOrPercent(105., true));
+        config.set_key_value("support_line_width",      new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(105., true)});
         return config;
     };
 
@@ -982,8 +1121,8 @@ SCENARIO("Support nozzle diameter restricts support printing", "[MultiNozzleLaye
             const PrintObject &object = *print.objects().front();
             // Support / raft flows must resolve width against the restricted nozzle, not against
             // extruder 1 that the "default" support filament falls back to.
-            REQUIRE(double(support_material_flow(&object).width()) == Approx(1.05 * 0.6).margin(1e-4));
-            REQUIRE(double(support_material_interface_flow(&object).width()) == Approx(1.05 * 0.6).margin(1e-4));
+            REQUIRE(double(support_material_flow(&object).width()) == Catch::Approx(1.05 * 0.6).margin(1e-4));
+            REQUIRE(double(support_material_interface_flow(&object).width()) == Catch::Approx(1.05 * 0.6).margin(1e-4));
 
             // Support layer height limits follow the restricted nozzle (filament 2: max 0.45).
             PrintConfig print_config;
@@ -992,7 +1131,7 @@ SCENARIO("Support nozzle diameter restricts support printing", "[MultiNozzleLaye
             object_config.apply(config, true);
             const SlicingParameters params = SlicingParameters::create_from_config(
                 print_config, object_config, 10., std::vector<unsigned int>{0, 1}, Vec3d(1., 1., 1.));
-            REQUIRE(params.max_suport_layer_height == Approx(0.45).margin(1e-6));
+            REQUIRE(params.max_suport_layer_height == Catch::Approx(0.45).margin(1e-6));
 
             // The raft layers below the object print with filament 2 only.
             print.process();
@@ -1063,7 +1202,7 @@ SCENARIO("A raft keeps the bottom surfaces of combined regions", "[MultiNozzleLa
                 const std::vector<float> heights = region_path_heights(layerm);
                 CHECK(! heights.empty());
                 for (float height : heights)
-                    CHECK(double(height) == Approx(0.2).margin(1e-3));
+                    CHECK(double(height) == Catch::Approx(0.2).margin(1e-3));
                 for (const Surface &surface : layerm->fill_surfaces.surfaces)
                     if (surface.is_bottom()) {
                         ++ bottom_regions;
@@ -1085,6 +1224,8 @@ SCENARIO("A raft keeps the bottom surfaces of combined regions", "[MultiNozzleLa
     }
 }
 
+static DynamicPrintConfig four_nozzle_config();   // defined below, with the four-head scenarios
+
 SCENARIO("Per-extruder layer height validation rejects invalid configurations", "[MultiNozzleLayerHeight]") {
     auto expect_error = [](double second_extruder_layer_height) {
         DynamicPrintConfig config = two_extruder_config(second_extruder_layer_height);
@@ -1095,11 +1236,39 @@ SCENARIO("Per-extruder layer height validation rejects invalid configurations", 
         REQUIRE(! err.string.empty());
         REQUIRE(err.opt_key == "extruder_layer_height");
     };
+    // The rejection names the object layer height the planner derives for the heads in use, as
+    // the sidebar derives it (plan_extruder_layer_heights); that value must validate cleanly.
+    auto expect_error_with_remedy = [](double second_extruder_layer_height, const char *remedy, double remedy_value) {
+        DynamicPrintConfig config = two_extruder_config(second_extruder_layer_height);
+        {
+            Print print;
+            Model model;
+            init_two_part_print(print, model, config);
+            const StringObjectException err = print.validate();
+            REQUIRE(! err.string.empty());
+            REQUIRE(err.opt_key == "extruder_layer_height");
+            INFO(err.string);
+            REQUIRE(err.string.find(remedy) != std::string::npos);
+        }
+        config.set_key_value("layer_height", new ConfigOptionFloat(remedy_value));
+        Print print;
+        Model model;
+        init_two_part_print(print, model, config);
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    };
     GIVEN("An extruder layer height that is no integer multiple of the object layer height") {
-        THEN("validation fails") { expect_error(0.5); }
+        // 0.5 exceeds the 0.4 mm nozzle and the Default head's 0.2 mm does not land on 0.25 (its
+        // tenth-of-base slack is 0.02): the scan reaches 0.1, on which both land exactly; the
+        // pre-planner recommendation was the divisor 0.25.
+        THEN("validation fails and its recommended object layer height validates") { expect_error_with_remedy(0.5, "to 0.1 mm", 0.1); }
     }
     GIVEN("An extruder layer height smaller than the object layer height") {
-        THEN("validation fails") { expect_error(0.1); }
+        THEN("validation fails and its recommended object layer height validates") { expect_error_with_remedy(0.1, "0.1 mm", 0.1); }
+    }
+    GIVEN("An extruder layer height off the 5 um grid") {
+        THEN("the recommendation is the height itself") { expect_error_with_remedy(0.123, "0.123 mm", 0.123); }
     }
     GIVEN("An extruder layer height exceeding the nozzle diameter") {
         THEN("validation fails") { expect_error(0.8); }
@@ -1113,10 +1282,38 @@ SCENARIO("Per-extruder layer height validation rejects invalid configurations", 
         Model model;
         init_two_part_print(print, model, config);
         THEN("validation warns instead of failing") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
-            REQUIRE(warning.string.find("maximum layer") != std::string::npos);
-            REQUIRE(warning.opt_key == "extruder_layer_height");
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
+            REQUIRE(concat_warning_strings(warnings).find("maximum layer") != std::string::npos);
+            REQUIRE(warnings_have_opt_key(warnings, "extruder_layer_height"));
+        }
+    }
+    GIVEN("Four heads of which two print, both preferring heights off the 0.2 mm object layer height") {
+        // Heads 0.2 / 0.4 / 0.6 / 0.8 mm; filaments 2 (0.3 mm) and 3 (0.45 mm) print, heads 1 and 4
+        // idle at Default. The remedy is planned over the used heads only (0.15 fits both); counting
+        // the idle heads would pull 0.2 mm into the scan and land on 0.05.
+        DynamicPrintConfig config = four_nozzle_config();
+        config.set_key_value("layer_height",               new ConfigOptionFloat(0.2));
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.2));
+        config.set_key_value("extruder_layer_height",      new ConfigOptionFloats({0., 0.3, 0.45, 0.}));
+        auto validate_two_of_four = [&config]() {
+            Print print;
+            Model model;
+            init_two_part_print(print, model, config, 0.5f, TestMesh::cube_20x20x20, 2, 3);
+            return print.validate();
+        };
+        THEN("the recommended object layer height is the used heads' 0.15 mm and validates") {
+            {
+                const StringObjectException err = validate_two_of_four();
+                REQUIRE(! err.string.empty());
+                REQUIRE(err.opt_key == "extruder_layer_height");
+                INFO(err.string);
+                REQUIRE(err.string.find("to 0.15 mm") != std::string::npos);
+            }
+            config.set_key_value("layer_height", new ConfigOptionFloat(0.15));
+            const StringObjectException err = validate_two_of_four();
+            INFO(err.string);
+            REQUIRE(err.string.empty());
         }
     }
 }
@@ -1144,8 +1341,8 @@ static DynamicPrintConfig four_nozzle_config()
     config.set_key_value("nozzle_temperature",       new ConfigOptionInts({240, 240, 240, 240}));
     config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts({220, 220, 220, 220}));
     config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts({270, 270, 270, 270}));
-    config.set_key_value("flush_multiplier",     new ConfigOptionFloat(1.));
-    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(16, 0.)));
+    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1., 1., 1., 1.}));
+    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(64, 0.)));
     config.set_key_value("machine_max_acceleration_extruding", new ConfigOptionFloats({100000., 100000.}));
     config.set_key_value("use_relative_e_distances", new ConfigOptionBool(false));
     return config;
@@ -1178,11 +1375,11 @@ SCENARIO("Walls combine to their filament's pitch when the part cannot follow", 
         Model model;
         init_cube_print(print, model, config);
         THEN("walls print once per 4 layers at 0.48 mm while the fills keep 0.12 mm") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
             // The whole-part pitch is impossible (0.2 mm nozzle prints the fills), but the walls
             // combine on their own - no "parts print with the object layer height" fallback.
-            CHECK(warning.string.find("too small to extrude") == std::string::npos);
+            CHECK(concat_warning_strings(warnings).find("too small to extrude") == std::string::npos);
             print.process();
 
             const PrintObject &object = *print.objects().front();
@@ -1228,8 +1425,8 @@ SCENARIO("Top surfaces combine to their filament's pitch by absorbing the shells
         Model model;
         init_cube_print(print, model, config);
         THEN("the topmost surface prints once at 0.48 mm while everything else keeps 0.12 mm") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
             print.process();
 
             const PrintObject &object = *print.objects().front();
@@ -1276,10 +1473,10 @@ SCENARIO("Internal solid infill combines to its filament's pitch", "[MultiNozzle
         Model model;
         init_cube_print(print, model, config);
         THEN("the solid interior prints 0.48 mm groups and never below the extruder's minimum") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
             // The bottom surfaces (also filament 4) keep printing the object layer height: warned.
-            REQUIRE(warning.string.find("minimum layer") != std::string::npos);
+            REQUIRE(concat_warning_strings(warnings).find("minimum layer") != std::string::npos);
             print.process();
 
             const PrintObject &object = *print.objects().front();
@@ -1417,8 +1614,8 @@ SCENARIO("A preference-less fine-nozzle wall filament vetoes the walls-only pitc
         Model model;
         init_cube_print(print, model, config);
         THEN("no wall combines: the 0.2 mm inner-wall nozzle cannot extrude 0.48 mm layers") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
             print.process();
 
             const PrintObject &object = *print.objects().front();
@@ -1444,8 +1641,8 @@ SCENARIO("Disagreeing wall preferences meet at the lower height", "[MultiNozzleL
         Model model;
         init_cube_print(print, model, config);
         THEN("the walls combine to 0.36 mm - the lower preference both nozzles can print") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
             print.process();
 
             const PrintObject &object = *print.objects().front();
@@ -1536,10 +1733,10 @@ SCENARIO("Split wall layer heights print each wall class at its own pitch", "[Mu
         Model model;
         init_cube_print(print, model, config);
         THEN("outer walls print once per 4 layers at 0.48 mm, inner walls once per 2 at 0.24 mm") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
             // The disagreement is intentional here; no conflict warning.
-            CHECK(warning.string.find("prefer different layer heights") == std::string::npos);
+            CHECK(concat_warning_strings(warnings).find("prefer different layer heights") == std::string::npos);
             print.process();
 
             // Outside committed coarse runs the outer walls follow the fine cadence; the first
@@ -1585,9 +1782,9 @@ SCENARIO("Split wall layer heights print each wall class at its own pitch", "[Mu
         Model model;
         init_cube_print(print, model, config);
         THEN("the walls fall back to printing together at the lower height, with the conflict warning") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
-            CHECK(warning.string.find("prefer different layer heights") != std::string::npos);
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
+            CHECK(concat_warning_strings(warnings).find("prefer different layer heights") != std::string::npos);
             print.process();
 
             const WallHeightCounts counts = count_wall_heights(*print.objects().front(),
@@ -1620,10 +1817,10 @@ SCENARIO("Adjusting a wall layer height reconciles non-divisible wall preference
         Model model;
         init_cube_print(print, model, config);
         THEN("inner walls print 0.24 mm - the largest divisor of 0.48 mm below 0.36 mm - and the walls split") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
-            CHECK(warning.string.find("was adjusted") != std::string::npos);
-            CHECK(warning.string.find("prefer different layer heights") == std::string::npos);
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
+            CHECK(concat_warning_strings(warnings).find("was adjusted") != std::string::npos);
+            CHECK(concat_warning_strings(warnings).find("prefer different layer heights") == std::string::npos);
             print.process();
 
             // In particular no 0.36 mm: the raw inner preference is off for walls.
@@ -1640,10 +1837,10 @@ SCENARIO("Adjusting a wall layer height reconciles non-divisible wall preference
         Model model;
         init_cube_print(print, model, config);
         THEN("the inner walls land on the outer walls' 0.48 mm and the walls merge there") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
-            CHECK(warning.string.find("was adjusted") != std::string::npos);
-            CHECK(warning.string.find("prefer different layer heights") == std::string::npos);
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
+            CHECK(concat_warning_strings(warnings).find("was adjusted") != std::string::npos);
+            CHECK(concat_warning_strings(warnings).find("prefer different layer heights") == std::string::npos);
             print.process();
 
             // Merged walls never print the raw 0.36 mm inner preference (bad == 0 covers it).
@@ -1661,16 +1858,1022 @@ SCENARIO("Adjusting a wall layer height reconciles non-divisible wall preference
         Model model;
         init_cube_print(print, model, config);
         THEN("no adjustment happens: the walls merge at the lower height with the conflict warning") {
-            StringObjectException warning;
-            REQUIRE(print.validate(&warning).string.empty());
-            CHECK(warning.string.find("was adjusted") == std::string::npos);
-            CHECK(warning.string.find("prefer different layer heights") != std::string::npos);
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
+            CHECK(concat_warning_strings(warnings).find("was adjusted") == std::string::npos);
+            CHECK(concat_warning_strings(warnings).find("prefer different layer heights") != std::string::npos);
             print.process();
 
             const WallHeightCounts counts = count_wall_heights(*print.objects().front(),
                                                                {0.36f, 0.24f, 0.12f}, {0.36f, 0.24f, 0.12f});
             CHECK(counts.outer_tall >= 15);
             CHECK(counts.bad == 0);
+        }
+    }
+}
+
+
+// Two extruders, tree supports on the second one, prime tower on: the support planner may close
+// support pieces on half / quarter sub-positions of the object layers (support_layer_height_step)
+// while every prime tower slab stays a whole object layer.
+static DynamicPrintConfig fractional_support_config(SupportLayerHeightStep step)
+{
+    DynamicPrintConfig config = two_extruder_config(0.);
+    config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.2));
+    config.set_key_value("enable_prime_tower",         new ConfigOptionBool(true));
+    // The stock default is single-extruder multi-material, which keeps whole steps.
+    config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(false));
+    config.set_key_value("enable_support",             new ConfigOptionBool(true));
+    config.option<ConfigOptionEnum<SupportType>>("support_type", true)->value            = stTreeAuto;
+    config.option<ConfigOptionEnum<SupportMaterialStyle>>("support_style", true)->value  = smsTreeStrong;
+    config.set_key_value("support_filament",           new ConfigOptionInt(2));
+    config.set_key_value("support_interface_filament", new ConfigOptionInt(2));
+    config.set_key_value("independent_support_layer_height", new ConfigOptionBool(true));
+    config.option<ConfigOptionEnum<SupportLayerHeightStep>>("support_layer_height_step", true)->value = step;
+    // The support extruder's maximum sits just above a fractional multiple of the 0.2 mm object
+    // grid (2.5 layers for the half step, 2.25 for the quarter step), so the planner closes
+    // pieces on sub-positions instead of rounding down to whole layers.
+    config.set_key_value("max_layer_height", new ConfigOptionFloats({0.3, step == slhsQuarterLayer ? 0.46 : 0.56}));
+    config.set_key_value("support_top_z_distance", new ConfigOptionFloat(0.2));
+    // The tower needs relative extruder addressing, which in turn needs the per-layer reset.
+    config.set_key_value("use_relative_e_distances", new ConfigOptionBool(true));
+    config.set_key_value("layer_change_gcode",       new ConfigOptionString("G92 E0"));
+    // Inside the default 200 x 200 test bed, clear of the centered object.
+    config.set_key_value("prime_tower_width", new ConfigOptionFloat(35));
+    config.set_key_value("wipe_tower_x",      new ConfigOptionFloats({50.}));
+    config.set_key_value("wipe_tower_y",      new ConfigOptionFloats({50.}));
+    return config;
+}
+
+SCENARIO("Fractional support layers keep the prime tower on whole object layers", "[MultiNozzleLayerHeight][Support][WipeTower]") {
+    for (const SupportLayerHeightStep step : { slhsHalfLayer, slhsQuarterLayer }) {
+        const int    divisions = step == slhsQuarterLayer ? 4 : 2;
+        const double quantum   = 0.2 / divisions;
+        GIVEN(std::string("An overhang on tree supports with the prime tower and a ") + (divisions == 4 ? "quarter" : "half") + " step") {
+            Print print;
+            Model model;
+            Slic3r::Test::init_print({ TestMesh::overhang }, print, model, fractional_support_config(step));
+            {
+                const StringObjectException err = print.validate();
+                INFO(err.string);
+                REQUIRE(err.string.empty());
+            }
+            print.process();
+            THEN("every support layer lies on the sub-step ladder of the object layers") {
+                size_t support_layers = 0, fractional_layers = 0;
+                for (const PrintObject *object : print.objects())
+                    for (const SupportLayer *layer : object->support_layers()) {
+                        const double z = layer->print_z;
+                        INFO("support layer at z=" << z);
+                        REQUIRE(std::abs(z / quantum - std::round(z / quantum)) < 1e-3);
+                        ++ support_layers;
+                        if (std::abs(z / 0.2 - std::round(z / 0.2)) > 1e-3)
+                            ++ fractional_layers;
+                    }
+                REQUIRE(support_layers > 0);
+                // Pieces of 2.5 / 2.25 object layers end off the object grid.
+                REQUIRE(fractional_layers > 0);
+            }
+            THEN("every prime tower slab is a whole object layer on the object grid") {
+                REQUIRE(print.has_wipe_tower());
+                size_t slabs = 0;
+                for (const LayerTools &lt : print.get_tool_ordering().layer_tools())
+                    if (lt.has_wipe_tower) {
+                        INFO("tower slab at z=" << lt.print_z << " height=" << lt.wipe_tower_layer_height);
+                        REQUIRE(lt.wipe_tower_layer_height > 0.2 - 1e-3);
+                        REQUIRE(std::abs(lt.print_z / 0.2 - std::round(lt.print_z / 0.2)) < 1e-3);
+                        ++ slabs;
+                    }
+                REQUIRE(slabs > 0);
+            }
+            THEN("the G-code exports") {
+                const std::string gcode = Slic3r::Test::gcode(print);
+                REQUIRE(! gcode.empty());
+            }
+        }
+    }
+}
+
+// 0.6 / 0.4 / 0.4 / 0.2 mm nozzles preferring 0.32 / 0.16 / - / 0.08 mm on a 0.08 mm grid. The
+// object prints with filament 1 and its sparse infill with filament 2; its support takes the PETG
+// on the 0.2 mm nozzle (filament 4), selected only by the support nozzle and material restrictions.
+static DynamicPrintConfig restricted_support_tower_config()
+{
+    DynamicPrintConfig config = four_nozzle_config();
+    config.set_key_value("layer_height",               new ConfigOptionFloat(0.08));
+    config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.14));
+    config.set_key_value("nozzle_diameter",            new ConfigOptionFloats({0.6, 0.4, 0.4, 0.2}));
+    config.set_key_value("extruder_layer_height",      new ConfigOptionFloats({0.32, 0.16, 0., 0.08}));
+    config.set_key_value("min_layer_height",           new ConfigOptionFloats({0.12, 0.08, 0.08, 0.04}));
+    config.set_key_value("max_layer_height",           new ConfigOptionFloats({0.42, 0.32, 0.32, 0.14}));
+    config.set_key_value("filament_type",              new ConfigOptionStrings({"PLA", "PLA", "PLA", "PETG"}));
+    config.set_key_value("sparse_infill_filament_id",  new ConfigOptionInt(2));
+    config.set_key_value("sparse_infill_density",      new ConfigOptionPercent(30.));
+    config.set_key_value("enable_support",             new ConfigOptionBool(true));
+    config.set_key_value("support_filament",           new ConfigOptionInt(0));
+    config.set_key_value("support_interface_filament", new ConfigOptionInt(0));
+    config.set_key_value("support_nozzle_diameter",    new ConfigOptionFloat(0.2));
+    config.set_key_value("support_base_material",      new ConfigOptionString("PETG"));
+    config.set_key_value("support_interface_material", new ConfigOptionString("PETG"));
+    // Tree (auto) support in the hybrid style at a 40 degree threshold under the arm.
+    config.option<ConfigOptionEnum<SupportType>>("support_type", true)->value           = stTreeAuto;
+    config.option<ConfigOptionEnum<SupportMaterialStyle>>("support_style", true)->value = smsTreeHybrid;
+    config.set_key_value("support_threshold_angle",    new ConfigOptionInt(40));
+    // A rib-walled Type2 tower, 30 mm wide with a 5 mm brim, in the bed corner.
+    config.set_key_value("enable_prime_tower",             new ConfigOptionBool(true));
+    config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(false));
+    config.set_key_value("use_relative_e_distances",       new ConfigOptionBool(true));
+    config.set_key_value("layer_change_gcode",             new ConfigOptionString("G92 E0"));
+    config.set_deserialize_strict({ { "wipe_tower_type", "type2" }, { "wipe_tower_wall_type", "rib" },
+                                    { "printable_area", "0x0,270x0,270x270,0x270" } });
+    config.set_key_value("prime_tower_width",           new ConfigOptionFloat(30.));
+    config.set_key_value("prime_tower_brim_width",      new ConfigOptionFloat(5.));
+    config.set_key_value("prime_volume",                new ConfigOptionFloat(90.));
+    config.set_key_value("wipe_tower_extra_spacing",    new ConfigOptionPercent(120.));
+    config.set_key_value("wipe_tower_rib_width",        new ConfigOptionFloat(8.));
+    config.set_key_value("wipe_tower_extra_rib_length", new ConfigOptionFloat(8.));
+    config.set_key_value("wipe_tower_x",                new ConfigOptionFloats({10.}));
+    config.set_key_value("wipe_tower_y",                new ConfigOptionFloats({10.}));
+    return config;
+}
+
+// A 10 x 10 x 20 mm pillar carrying a 30 x 10 x 4 mm arm at its top: the arm overhangs 20 mm to
+// one side and needs support down to the bed.
+static void init_overhanging_arm_print(Print &print, Model &model, const DynamicPrintConfig &config)
+{
+    TriangleMesh pillar = make_cube(10., 10., 20.);
+    TriangleMesh arm    = make_cube(30., 10., 4.);
+    arm.translate(0.f, 0.f, 16.f);
+    ModelObject *object = model.add_object();
+    object->name = "overhanging_arm";
+    object->add_volume(std::move(pillar), ModelVolumeType::MODEL_PART, false);
+    object->add_volume(std::move(arm), ModelVolumeType::MODEL_PART, false);
+    object->add_instance();
+    object->center_around_origin();
+    object->translate(150., 150., 0.);
+    object->ensure_on_bed();
+    print.apply(model, config);
+    print.set_status_silent();
+}
+
+TEST_CASE("The prime tower reserved before slicing holds the tower of a restricted support filament", "[MultiNozzleLayerHeight][WipeTower][Support]")
+{
+    Print print;
+    Model model;
+    init_overhanging_arm_print(print, model, restricted_support_tower_config());
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+
+    // Before slicing: the plate counts the support filament, so the tower is sized for three.
+    const std::vector<unsigned int> used = print.extruders(true);
+    CHECK(used == std::vector<unsigned int>{0, 1, 3});
+    const WipeTowerData &estimate      = print.wipe_tower_data(used.size());
+    const double         reserved_side = std::max(estimate.width, estimate.depth) + 2. * estimate.brim_width;
+    REQUIRE(reserved_side > 0.);
+
+    print.process();
+    REQUIRE(print.has_wipe_tower());
+    REQUIRE(print.wipe_tower_data().wipe_tower_mesh_data.has_value());
+    // The support exists and prints with filament 4; without it the tower is sized for two filaments.
+    size_t support_layers = 0;
+    for (const SupportLayer *layer : print.objects().front()->support_layers())
+        if (! layer->support_fills.entities.empty())
+            ++ support_layers;
+    size_t layers_with_support = 0, support_layers_on_filament_4 = 0;
+    for (const LayerTools &lt : print.get_tool_ordering().layer_tools())
+        if (lt.has_support) {
+            ++ layers_with_support;
+            if (std::find(lt.extruders.begin(), lt.extruders.end(), 3u) != lt.extruders.end())
+                ++ support_layers_on_filament_4;
+        }
+    INFO("support layers with fills " << support_layers << ", tool layers with support " << layers_with_support
+         << ", of them on filament 4 " << support_layers_on_filament_4);
+    REQUIRE(support_layers > 0);
+    CHECK(support_layers_on_filament_4 > 0);
+
+    // The generated first layer, brim and ribs included, fits the reserved square and does not
+    // leave most of it unused.
+    const BoundingBox built  = get_extents(print.wipe_tower_data().wipe_tower_mesh_data->bottom);
+    const double      built_x = unscaled(built.size().x());
+    const double      built_y = unscaled(built.size().y());
+    INFO("reserved " << reserved_side << " mm, built " << built_x << " x " << built_y << " mm");
+    CHECK(built_x <= reserved_side + 0.5);
+    CHECK(built_y <= reserved_side + 0.5);
+    CHECK(std::max(built_x, built_y) >= 0.7 * reserved_side);
+}
+
+SCENARIO("A painted slope cut to a ribbon prints its colour in full runs", "[MultiNozzleLayerHeight][Segmentation]") {
+    // A wedge whose +x face rises at 45 degrees (1 mm sideways per mm of height), that face
+    // painted with the coarse extruder (here a 0.8 mm nozzle, 0.6 mm layer height = runs of
+    // three 0.2 mm layers), and the painted side regions cut to a 1 mm ribbon along the outline
+    // (mmu_segmented_region_max_width). A run commits the shape common to its three layers; the
+    // ribbon of the top layer only shares 1 - 2 * 0.2 = 0.6 mm with the ribbon two layers down,
+    // less than the 0.84 mm outer wall of the 0.8 mm nozzle (and the face's own strips add up to
+    // 3 * 0.2 = 0.6 mm as well), so without the projected ribbons under a painted face
+    // (MultiMaterialSegmentation.cpp) the runs break into single layers or drop the face.
+    GIVEN("A wedge with its sloped face painted for the coarse extruder and a 1 mm region width") {
+        DynamicPrintConfig config = two_extruder_config(0.6);
+        config.set_key_value("nozzle_diameter",                new ConfigOptionFloats({0.4, 0.8}));
+        config.set_key_value("max_layer_height",               new ConfigOptionFloats({0.3, 0.6}));
+        config.set_key_value("mmu_segmented_region_max_width", new ConfigOptionFloat(1.0));
+        Print print;
+        Model model;
+        {
+            indexed_triangle_set its;
+            its.vertices = { {0.f, 0.f, 0.f}, {20.f, 0.f, 0.f}, {20.f, 20.f, 0.f}, {0.f, 20.f, 0.f},
+                             {0.f, 0.f, 10.f}, {10.f, 0.f, 10.f}, {10.f, 20.f, 10.f}, {0.f, 20.f, 10.f} };
+            its.indices  = { {0, 2, 1}, {0, 3, 2},   // bottom
+                             {4, 5, 6}, {4, 6, 7},   // top
+                             {0, 1, 5}, {0, 5, 4},   // y = 0
+                             {3, 7, 6}, {3, 6, 2},   // y = 20
+                             {0, 4, 7}, {0, 7, 3},   // x = 0
+                             {1, 2, 6}, {1, 6, 5} }; // the slope
+            ModelObject *object = model.add_object();
+            object->name = "painted_wedge";
+            ModelVolume *volume = object->add_volume(TriangleMesh(std::move(its)));
+            TriangleSelector selector(volume->mesh());
+            const indexed_triangle_set &mesh_its = volume->mesh().its;
+            for (size_t f = 0; f < mesh_its.indices.size(); ++ f) {
+                const Vec3f &a = mesh_its.vertices[mesh_its.indices[f](0)], &b = mesh_its.vertices[mesh_its.indices[f](1)], &c = mesh_its.vertices[mesh_its.indices[f](2)];
+                const Vec3f n = (b - a).cross(c - a).normalized();
+                if (n.x() > 0.5f && n.z() > 0.5f)
+                    selector.set_facet(int(f), EnforcerBlockerType(2));
+            }
+            REQUIRE(volume->mmu_segmentation_facets.set(selector));
+            object->add_instance();
+            for (ModelObject *mo : model.objects) {
+                mo->center_around_origin();
+                mo->translate(120., 120., 0.);
+                mo->ensure_on_bed();
+            }
+            print.apply(model, config);
+            print.set_status_silent();
+        }
+        THEN("the painted face prints with the coarse extruder in whole runs, never in single layers") {
+            REQUIRE(print.validate().string.empty());
+            print.process();
+            const PrintObject &object = *print.objects().front();
+            int fine_region, coarse_region;
+            find_regions(object, fine_region, coarse_region);
+            REQUIRE(coarse_region >= 0);
+            // Well inside the slope (z 2..8): every coarse extrusion is a 0.6 mm run, and the
+            // runs are there (the face is not left to the fine extruder).
+            size_t at_pitch = 0, off_pitch = 0, single_rows = 0;
+            for (size_t idx = 8; idx <= 38; ++ idx) {
+                const LayerRegion *layerm = object.get_layer(int(idx))->get_region(coarse_region);
+                if (layerm->combined_layer_count() == 1 && ! layerm->slices.empty())
+                    ++ single_rows;
+                for (float height : region_path_heights(layerm)) {
+                    if (std::abs(height - 0.6) < 1e-3)
+                        ++ at_pitch;
+                    else
+                        ++ off_pitch;
+                }
+            }
+            CHECK(at_pitch > 0);
+            CHECK(off_pitch == 0);
+            CHECK(single_rows == 0);
+        }
+    }
+}
+
+SCENARIO("Preferred layer heights are planned onto a shared object layer grid", "[MultiNozzleLayerHeight][Plan]") {
+    using Catch::Approx;
+    const std::vector<double> nozzles { 0.2, 0.4, 0.6, 0.8 };
+    GIVEN("free values 0.08 / 0.13 / 0.37 / 0.59 on a 0.2 mm object layer height") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.08, 0.13, 0.37, 0.59 }, 0.2, nozzles, 0.2, false);
+        THEN("the coarsest grid every value lands on within 0.01 mm is chosen and the values are rounded to it") {
+            CHECK(plan.grid == Approx(0.045));
+            REQUIRE(plan.heights.size() == 4);
+            CHECK(plan.heights[0] == Approx(0.09));
+            CHECK(plan.heights[1] == Approx(0.135));
+            CHECK(plan.heights[2] == Approx(0.36));
+            CHECK(plan.heights[3] == Approx(0.585));
+            CHECK(plan.rounded.size() == 4);
+            CHECK(plan.pinned.empty());
+        }
+    }
+    GIVEN("values sharing a grid, 0.12 / 0.18 / 0.30, with the first extruder at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0.12, 0.18, 0.30 }, 0.2, nozzles, 0.2, false);
+        THEN("they print exactly on the 0.06 mm grid and the Default extruder keeps its height") {
+            CHECK(plan.grid == Approx(0.06));
+            CHECK(plan.rounded.empty());
+            CHECK(plan.heights[1] == Approx(0.12));
+            CHECK(plan.heights[2] == Approx(0.18));
+            CHECK(plan.heights[3] == Approx(0.30));
+            REQUIRE(plan.pinned == std::vector<size_t> { 0 });
+            CHECK(plan.heights[0] == Approx(0.18));   // 0.2 rounded to the grid within the 0.2 mm bore
+        }
+    }
+    GIVEN("values that already are multiples of the finest one, 0.1 / 0.2 / 0.3") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.1, 0.2, 0.3, 0. }, 0.2, nozzles, 0.2, false);
+        THEN("the finest value is the grid and nothing is rounded") {
+            CHECK(plan.grid == Approx(0.1));
+            CHECK(plan.rounded.empty());
+        }
+    }
+    GIVEN("a finest value above the smallest nozzle") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0., 0., 0.6 }, 0.2, nozzles, 0.2, false);
+        THEN("the grid fits through the smallest nozzle") {
+            CHECK(plan.grid == Approx(0.2));
+            CHECK(plan.heights[3] == Approx(0.6));
+        }
+    }
+    // While an extruder is at Default, its object layer height joins the scan (within a tenth of
+    // it), so one entered value does not move the others. Rows: find-layer-heights.md 3.1.
+    GIVEN("one extruder at 0.30 on a 0.2 mm object layer height, the others at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0.30, 0., 0. }, 0.2, nozzles, 0.2, false);
+        THEN("the grid is 0.1 mm and the Default extruders keep 0.2 mm exactly") {
+            CHECK(plan.grid == Approx(0.1));
+            CHECK(plan.rounded.empty());
+            REQUIRE(plan.heights.size() == 4);
+            CHECK(plan.heights[0] == Approx(0.2));
+            CHECK(plan.heights[1] == Approx(0.3));
+            CHECK(plan.heights[2] == Approx(0.2));
+            CHECK(plan.heights[3] == Approx(0.2));
+            CHECK(plan.pinned == std::vector<size_t> { 0, 2, 3 });
+        }
+    }
+    GIVEN("one extruder at 0.25 on a 0.2 mm object layer height, the others at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0.25, 0., 0. }, 0.2, nozzles, 0.2, false);
+        THEN("the grid lands the Default extruders within a tenth of 0.2 mm (0.065: 0.195), not at 0.26 mm") {
+            CHECK(plan.grid == Approx(0.065));
+            CHECK(plan.heights[0] == Approx(0.195));
+            CHECK(plan.heights[1] == Approx(0.26));
+            CHECK(plan.heights[2] == Approx(0.195));
+            CHECK(plan.heights[3] == Approx(0.195));
+            CHECK(plan.rounded == std::vector<size_t> { 1 });
+            CHECK(plan.pinned == std::vector<size_t> { 0, 2, 3 });
+        }
+    }
+    GIVEN("one extruder at 0.30 on a 0.16 mm object layer height, the others at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0.30, 0., 0. }, 0.16, nozzles, 0.2, false);
+        THEN("0.155 mm serves both within the tolerance") {
+            CHECK(plan.grid == Approx(0.155));
+            CHECK(plan.heights[0] == Approx(0.155));
+            CHECK(plan.heights[1] == Approx(0.31));
+            CHECK(plan.rounded == std::vector<size_t> { 1 });
+            CHECK(plan.pinned == std::vector<size_t> { 0, 2, 3 });
+        }
+    }
+    GIVEN("0.09 and 0.18 on a 0.2 mm object layer height, two extruders at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.09, 0.18, 0., 0. }, 0.2, nozzles, 0.2, false);
+        THEN("the base is soft: 0.18 mm is within a tenth of 0.2 mm, so the grid stays 0.09 mm") {
+            CHECK(plan.grid == Approx(0.09));
+            CHECK(plan.rounded.empty());
+            CHECK(plan.heights[2] == Approx(0.18));
+            CHECK(plan.heights[3] == Approx(0.18));
+            CHECK(plan.pinned == std::vector<size_t> { 2, 3 });
+        }
+    }
+    GIVEN("one extruder at 0.50 on a 0.2 mm object layer height, the others at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0., 0., 0.50 }, 0.2, nozzles, 0.2, false);
+        THEN("the grid is 0.1 mm and the Default extruders keep 0.2 mm exactly") {
+            CHECK(plan.grid == Approx(0.1));
+            CHECK(plan.rounded.empty());
+            CHECK(plan.heights[0] == Approx(0.2));
+            CHECK(plan.heights[2] == Approx(0.2));
+            CHECK(plan.heights[3] == Approx(0.5));
+            CHECK(plan.pinned == std::vector<size_t> { 0, 1, 2 });
+        }
+    }
+    // The fallback (no candidate within the tolerance) has a floor, half the smallest minimum layer
+    // height (0.02 mm for the 0.2 mm head), and a bounded rounding. Rows: find-layer-heights.md 3.2.
+    GIVEN("0.36 and 0.50 on a 0.12 mm object layer height, two extruders at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0., 0.36, 0.50 }, 0.12, nozzles, 0.2, false, 0.02);
+        THEN("the grid is 0.03 mm (0.5 -> 0.51), no longer the 0.02 mm gcd") {
+            CHECK(plan.grid == Approx(0.03));
+            CHECK(plan.heights[0] == Approx(0.12));
+            CHECK(plan.heights[1] == Approx(0.12));
+            CHECK(plan.heights[2] == Approx(0.36));
+            CHECK(plan.heights[3] == Approx(0.51));
+            CHECK(plan.rounded == std::vector<size_t> { 3 });
+            CHECK(plan.pinned == std::vector<size_t> { 0, 1 });
+        }
+    }
+    GIVEN("0.13 / 0.20 / 0.30 / 0.40, every extruder explicit") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.13, 0.20, 0.30, 0.40 }, 0.12, nozzles, 0.2, false, 0.02);
+        THEN("every value stays within 0.01 mm on the 0.03 mm grid, instead of 0.26 / 0.26 on the finest value") {
+            CHECK(plan.grid == Approx(0.03));
+            CHECK(plan.heights[0] == Approx(0.12));
+            CHECK(plan.heights[1] == Approx(0.21));
+            CHECK(plan.heights[2] == Approx(0.30));
+            CHECK(plan.heights[3] == Approx(0.39));
+            CHECK(plan.rounded == std::vector<size_t> { 0, 1, 3 });
+        }
+    }
+    GIVEN("0.16 / 0.20 / 0.25 / 0.22, every extruder explicit") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.16, 0.20, 0.25, 0.22 }, 0.12, nozzles, 0.2, false, 0.02);
+        THEN("every value stays within 0.01 mm on the 0.03 mm grid, instead of 0.16 / 0.16 / 0.32 / 0.16") {
+            CHECK(plan.grid == Approx(0.03));
+            CHECK(plan.heights[0] == Approx(0.15));
+            CHECK(plan.heights[1] == Approx(0.21));
+            CHECK(plan.heights[2] == Approx(0.24));
+            CHECK(plan.heights[3] == Approx(0.21));
+            CHECK(plan.rounded.size() == 4);
+        }
+    }
+    GIVEN("0.13 / 0.20 / 0.30 / 0.40 with a floor of 0.06 mm (heads whose minimum layer height is 0.12 mm)") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.13, 0.20, 0.30, 0.40 }, 0.12, nozzles, 0.2, false, 0.06);
+        THEN("nothing above the floor fits within 0.01 mm; the tolerance grows once and 0.07 mm rounds no value by more than 0.02 mm") {
+            CHECK(plan.grid == Approx(0.07));
+            CHECK(plan.heights[0] == Approx(0.14));
+            CHECK(plan.heights[1] == Approx(0.21));
+            CHECK(plan.heights[2] == Approx(0.28));
+            CHECK(plan.heights[3] == Approx(0.42));
+            CHECK(plan.rounded.size() == 4);
+        }
+    }
+    GIVEN("0.36 and 0.50 on a 0.12 mm object layer height with a floor of 0.06 mm") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0., 0.36, 0.50 }, 0.12, nozzles, 0.2, false, 0.06);
+        THEN("0.125 mm at the second tolerance step: the Default extruders follow it, 0.36 becomes 0.375") {
+            CHECK(plan.grid == Approx(0.125));
+            CHECK(plan.heights[2] == Approx(0.375));
+            CHECK(plan.heights[3] == Approx(0.5));
+            CHECK(plan.rounded == std::vector<size_t> { 2 });
+            CHECK(plan.pinned.empty());
+        }
+    }
+    GIVEN("a finest value below the floor") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.01, 0., 0., 0. }, 0.2, nozzles, 0.2, false, 0.02);
+        THEN("the floor never rises above the finest value: that value is the grid") {
+            CHECK(plan.grid == Approx(0.01));
+            CHECK(plan.rounded.empty());
+        }
+    }
+    GIVEN("the reference heads 0.09 / 0.18 / 0.36 / 0.54, every extruder explicit") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.09, 0.18, 0.36, 0.54 }, 0.2, nozzles, 0.2, false);
+        THEN("the plan is the 0.09 mm grid with nothing rounded or pinned, whatever the object layer height was") {
+            CHECK(plan.grid == Approx(0.09));
+            CHECK(plan.rounded.empty());
+            CHECK(plan.pinned.empty());
+            REQUIRE(plan.heights.size() == 4);
+            CHECK(plan.heights[0] == Approx(0.09));
+            CHECK(plan.heights[1] == Approx(0.18));
+            CHECK(plan.heights[2] == Approx(0.36));
+            CHECK(plan.heights[3] == Approx(0.54));
+        }
+    }
+    GIVEN("the experimental exact mode with 0.13 and 0.37") {
+        // The floor does not apply in exact mode: the grid stays the gcd.
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0.13, 0., 0.37 }, 0.2, nozzles, 0.2, true, 0.06);
+        THEN("every value is kept and the grid is what both are whole multiples of, below the floor") {
+            CHECK(plan.grid == Approx(0.01));
+            CHECK(plan.rounded.empty());
+            CHECK(plan.heights[1] == Approx(0.13));
+            CHECK(plan.heights[3] == Approx(0.37));
+        }
+    }
+}
+
+// Row pitches of each purge block ("; CP TOOLCHANGE WIPE" to "; CP TOOLCHANGE END") per purging
+// tool (last T<n>): the sorted Y steps between its extruding G1 moves; rows run along X.
+static std::map<int, std::vector<double>> purge_row_pitches(const std::string &gcode)
+{
+    std::map<int, std::vector<double>> pitches;
+    std::istringstream                 in(gcode);
+    std::string                        line;
+    int                                tool    = -1;
+    bool                               in_wipe = false;
+    std::set<long>                     rows;   // Y in micrometres
+    auto flush = [&]() {
+        std::vector<long> ys(rows.begin(), rows.end());
+        for (size_t i = 1; i < ys.size(); ++ i)
+            pitches[tool].push_back(double(ys[i] - ys[i - 1]) / 1000.);
+        rows.clear();
+    };
+    while (std::getline(in, line)) {
+        if (line.size() > 1 && line[0] == 'T' && std::isdigit(static_cast<unsigned char>(line[1]))) {
+            tool = std::atoi(line.c_str() + 1);
+        } else if (line.rfind("; CP TOOLCHANGE WIPE", 0) == 0) {
+            in_wipe = true;
+        } else if (in_wipe && line.rfind("; CP TOOLCHANGE END", 0) == 0) {
+            in_wipe = false;
+            flush();
+        } else if (in_wipe && line.rfind("G1 ", 0) == 0) {
+            const size_t y = line.find(" Y"), e = line.find(" E");
+            if (y != std::string::npos && e != std::string::npos && std::atof(line.c_str() + e + 2) > 0.)
+                rows.insert(std::lround(std::atof(line.c_str() + y + 2) * 1000.));
+        }
+    }
+    return pitches;
+}
+
+static double median(std::vector<double> values)
+{
+    REQUIRE(! values.empty());
+    std::sort(values.begin(), values.end());
+    return values[values.size() / 2];
+}
+
+SCENARIO("The prime tower prints one slab per tool change with per-extruder layer heights", "[MultiNozzleLayerHeight][WipeTower]") {
+    // Object layers of 0.1 mm, the second part on a 0.6 mm nozzle printing 0.4 mm runs: three of
+    // every four layers print the first extruder only, and the second and third of them change no
+    // tool. Those get no tower slab; the next slab bridges them (within the 0.3 mm maximum).
+    auto tower_config = [](double second_extruder_layer_height) {
+        DynamicPrintConfig config = two_extruder_config(second_extruder_layer_height);
+        config.set_key_value("layer_height",               new ConfigOptionFloat(0.1));
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.2));
+        config.set_key_value("enable_prime_tower",         new ConfigOptionBool(true));
+        config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(false));
+        config.set_key_value("use_relative_e_distances", new ConfigOptionBool(true));
+        config.set_key_value("layer_change_gcode",       new ConfigOptionString("G92 E0"));
+        config.set_key_value("prime_tower_width", new ConfigOptionFloat(35));
+        config.set_key_value("wipe_tower_x",      new ConfigOptionFloats({50.}));
+        config.set_key_value("wipe_tower_y",      new ConfigOptionFloats({50.}));
+        return config;
+    };
+    GIVEN("the two-part object with the second part at 0.4 mm") {
+        Print print;
+        Model model;
+        init_two_part_print(print, model, tower_config(0.4));
+        {
+            const StringObjectException err = print.validate();
+            INFO(err.string);
+            REQUIRE(err.string.empty());
+        }
+        print.process();
+        THEN("object layers without a tool change carry no slab and every slab stays within the maximum layer height") {
+            REQUIRE(print.has_wipe_tower());
+            size_t slabs = 0, skipped = 0, optional = 0;
+            for (const LayerTools &lt : print.get_tool_ordering().layer_tools()) {
+                if (lt.tower_optional)
+                    ++ optional;
+                if (lt.has_wipe_tower) {
+                    INFO("tower slab at z=" << lt.print_z << " height=" << lt.wipe_tower_layer_height);
+                    CHECK(lt.wipe_tower_layer_height <= 0.3 + 1e-3);
+                    ++ slabs;
+                } else if (lt.tower_optional)
+                    ++ skipped;
+            }
+            CHECK(optional > 0);
+            CHECK(skipped > 0);
+            CHECK(slabs > 0);
+        }
+        THEN("the G-code exports and every tool purges on rows one of its own line widths apart") {
+            const std::string gcode = Slic3r::Test::gcode(print);
+            REQUIRE(! gcode.empty());
+            // 0.4 and 0.6 mm nozzles extrude 0.5 and 0.75 mm lines (1.25 x the nozzle); with extra
+            // spacing and flow at 100 % each tool's purge rows advance by its own width.
+            const std::map<int, std::vector<double>> pitches = purge_row_pitches(gcode);
+            REQUIRE(pitches.count(0) == 1);
+            REQUIRE(pitches.count(1) == 1);
+            CHECK(median(pitches.at(0)) == Catch::Approx(0.5).margin(0.02));
+            CHECK(median(pitches.at(1)) == Catch::Approx(0.75).margin(0.02));
+        }
+    }
+    GIVEN("the two-part object with a third, unused 0.2 mm head on the printer") {
+        // The 0.2 mm head's maximum layer height (0.14) is below two grid steps (0.2), yet no layer
+        // prints with it: the slabs are capped by the heads in use (0.3), not by every installed
+        // head, so the layers without a tool change still lose their slab.
+        DynamicPrintConfig config = tower_config(0.4);
+        config.set_key_value("nozzle_diameter",          new ConfigOptionFloats({0.4, 0.6, 0.2}));
+        config.set_key_value("extruder_layer_height",    new ConfigOptionFloats({0., 0.4, 0.}));
+        config.set_key_value("min_layer_height",         new ConfigOptionFloats({0.07, 0.07, 0.04}));
+        config.set_key_value("max_layer_height",         new ConfigOptionFloats({0.3, 0.45, 0.14}));
+        config.set_key_value("filament_diameter",        new ConfigOptionFloats({1.75, 1.75, 1.75}));
+        config.set_key_value("filament_colour",          new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF"}));
+        config.set_key_value("filament_type",            new ConfigOptionStrings({"PLA", "PLA", "PLA"}));
+        config.set_key_value("default_filament_colour",  new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF"}));
+        config.set_key_value("nozzle_temperature",       new ConfigOptionInts({210, 210, 210}));
+        config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts({190, 190, 190}));
+        config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts({240, 240, 240}));
+        config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1., 1., 1.}));
+        config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(27, 0.)));
+        config.set_key_value("machine_max_acceleration_extruding", new ConfigOptionFloats({100000., 100000., 100000.}));
+        Print print;
+        Model model;
+        init_two_part_print(print, model, config);
+        {
+            const StringObjectException err = print.validate();
+            INFO(err.string);
+            REQUIRE(err.string.empty());
+        }
+        print.process();
+        THEN("the slabs are thinned as without the unused head") {
+            REQUIRE(print.has_wipe_tower());
+            size_t skipped = 0;
+            for (const LayerTools &lt : print.get_tool_ordering().layer_tools()) {
+                if (lt.has_wipe_tower) {
+                    INFO("tower slab at z=" << lt.print_z << " height=" << lt.wipe_tower_layer_height);
+                    CHECK(lt.wipe_tower_layer_height <= 0.3 + 1e-3);
+                } else if (lt.tower_optional)
+                    ++ skipped;
+            }
+            CHECK(skipped > 0);
+        }
+    }
+    GIVEN("the 0.4 mm head's minimum layer height above the thin slabs") {
+        // Slabs follow the object layer grid: 0.1 mm where the first extruder prints alone, 0.3 mm at
+        // run tops. The first head (minimum 0.15 mm) purges on the thin slabs, the 0.6 mm head only on
+        // 0.3 mm ones; slicing warns per head about thin slabs, validate() only about object layers.
+        DynamicPrintConfig config = tower_config(0.4);
+        config.set_key_value("min_layer_height", new ConfigOptionFloats({0.15, 0.07}));
+        Print print;
+        Model model;
+        init_two_part_print(print, model, config);
+        {
+            const StringObjectException err = print.validate();
+            INFO(err.string);
+            REQUIRE(err.string.empty());
+        }
+        print.process();
+        THEN("the tower step warns with the slab count of the plan and the thin slabs of that head only") {
+            size_t slabs = 0, thin_head_1 = 0;
+            for (const LayerTools &lt : print.get_tool_ordering().layer_tools()) {
+                if (! lt.has_wipe_tower)
+                    continue;
+                ++ slabs;
+                if (lt.wipe_tower_layer_height < 0.15 - EPSILON &&
+                    std::find(lt.extruders.begin(), lt.extruders.end(), 0u) != lt.extruders.end())
+                    ++ thin_head_1;
+            }
+            REQUIRE(thin_head_1 > 0);
+            std::string message;
+            for (const PrintStateBase::Warning &warning : print.step_state_with_warnings(psWipeTower).warnings)
+                if (warning.message.find("The prime tower prints ") != std::string::npos)
+                    message = warning.message;
+            INFO(message);
+            REQUIRE(! message.empty());
+            auto number_after = [&message](const std::string &prefix) {
+                const size_t pos = message.find(prefix);
+                REQUIRE(pos != std::string::npos);
+                return std::stoul(message.substr(pos + prefix.size()));
+            };
+            CHECK(number_after("The prime tower prints ") == slabs);
+            CHECK(number_after("extruder 1: ") == thin_head_1);
+            CHECK(message.find("minimum layer height 0.15 mm") != std::string::npos);
+            CHECK(message.find("extruder 2: ") == std::string::npos);
+        }
+    }
+    GIVEN("the same object without per-extruder layer heights") {
+        Print print;
+        Model model;
+        init_two_part_print(print, model, tower_config(0.));
+        REQUIRE(print.validate().string.empty());
+        print.process();
+        THEN("every printing layer keeps its tower slab, as before") {
+            size_t without = 0;
+            for (const LayerTools &lt : print.get_tool_ordering().layer_tools())
+                if (! lt.extruders.empty() && ! lt.has_wipe_tower)
+                    ++ without;
+            CHECK(without == 0);
+        }
+    }
+}
+
+// A stored layer height profile stays fixed for the extruder_layer_height guard after the initial
+// layer height changes, as long as generate_object_layers() never samples its stale first segment;
+// a stale segment reaching above the new first layer changes the second layer and stays rejected.
+SCENARIO("A fixed layer height profile stored under another first layer height stays fixed", "[MultiNozzleLayerHeight]") {
+    auto slicing_params = [](const DynamicPrintConfig &config) {
+        PrintConfig print_config;
+        print_config.apply(config, true);
+        PrintObjectConfig object_config;
+        object_config.apply(config, true);
+        return SlicingParameters::create_from_config(print_config, object_config, 10., std::vector<unsigned int>{0, 1}, Vec3d(1., 1., 1.));
+    };
+    auto fixed_profile = [&slicing_params](DynamicPrintConfig config, double initial_layer_height) {
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(initial_layer_height));
+        const SlicingParameters params = slicing_params(config);
+        REQUIRE(params.first_object_layer_height_fixed());
+        const std::vector<coordf_t> profile = layer_height_profile_from_ranges(params, t_layer_config_ranges{});
+        REQUIRE(check_object_layers_fixed(params, profile));
+        return profile;
+    };
+    auto layer_heights = [](const std::vector<coordf_t> &layers) {
+        std::vector<double> heights;
+        for (size_t i = 0; i + 1 < layers.size(); i += 2)
+            heights.emplace_back(layers[i + 1] - layers[i]);
+        return heights;
+    };
+
+    GIVEN("Fixed profiles with 0.2 mm layers stored under a 0.2 mm and a 0.25 mm first layer") {
+        DynamicPrintConfig config = two_extruder_config(0.4);
+        const std::vector<coordf_t> profile_020 = fixed_profile(config, 0.2);
+        const std::vector<coordf_t> profile_025 = fixed_profile(config, 0.25);
+        REQUIRE(profile_020.size() == 4);
+        REQUIRE(profile_025.size() == 8);
+
+        WHEN("the initial layer height is now 0.4 mm") {
+            config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.4));
+            const SlicingParameters params_now = slicing_params(config);
+            THEN("both profiles count as fixed and slice to a 0.4 mm first layer over 0.2 mm layers") {
+                for (const std::vector<coordf_t> *profile : { &profile_020, &profile_025 }) {
+                    CHECK(check_object_layers_fixed(params_now, *profile));
+                    const std::vector<double> heights = layer_heights(generate_object_layers(params_now, *profile, false));
+                    REQUIRE(heights.size() >= 3);
+                    CHECK(heights.front() == Catch::Approx(0.4).margin(1e-6));
+                    for (size_t i = 1; i < heights.size(); ++ i)
+                        CHECK(heights[i] == Catch::Approx(0.2).margin(1e-6));
+                }
+            }
+            THEN("genuinely variable profiles are still rejected") {
+                CHECK(! check_object_layers_fixed(params_now, std::vector<coordf_t>{0., 0.3, 5., 0.3, 5., 0.2, 10., 0.2}));
+                CHECK(! check_object_layers_fixed(params_now, std::vector<coordf_t>{0., 0.2, 5., 0.2, 5., 0.3, 10., 0.3}));
+                CHECK(! check_object_layers_fixed(params_now, std::vector<coordf_t>{0., 0.2, 2., 0.2, 4., 0.3, 6., 0.2, 8., 0.3, 10., 0.2}));
+            }
+        }
+
+        WHEN("a profile stored under a 0.4 mm first layer meets a 0.25 mm first layer") {
+            const std::vector<coordf_t> profile_040 = fixed_profile(config, 0.4);
+            config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.25));
+            const SlicingParameters params_now = slicing_params(config);
+            THEN("the stale first segment is sampled into the second layer, so the profile is not fixed") {
+                const std::vector<double> heights = layer_heights(generate_object_layers(params_now, profile_040, false));
+                REQUIRE(heights.size() >= 3);
+                CHECK(heights[0] == Catch::Approx(0.25).margin(1e-6));
+                CHECK(heights[1] == Catch::Approx(0.4).margin(1e-6));
+                CHECK(! check_object_layers_fixed(params_now, profile_040));
+            }
+        }
+    }
+
+    GIVEN("A two-part print with per-extruder layer heights and a stored fixed profile") {
+        DynamicPrintConfig config = two_extruder_config(0.4);
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.25));
+        Print print;
+        Model model;
+        init_two_part_print(print, model, config);
+        REQUIRE(print.validate().string.empty());
+        ModelObject &object = *model.objects.front();
+        object.layer_height_profile.set(fixed_profile(config, 0.25));
+        print.apply(model, config);
+        REQUIRE(print.validate().string.empty());
+
+        WHEN("the initial layer height grows to 0.4 mm afterwards") {
+            config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.4));
+            print.apply(model, config);
+            THEN("validation still accepts the per-extruder layer heights") {
+                const StringObjectException err = print.validate();
+                CHECK(err.string.empty());
+            }
+        }
+
+        WHEN("the stored profile is variable") {
+            object.layer_height_profile.set(std::vector<coordf_t>{0., 0.3, 5., 0.3, 5., 0.2, 10., 0.2});
+            print.apply(model, config);
+            THEN("validation rejects the per-extruder layer heights") {
+                const StringObjectException err = print.validate();
+                REQUIRE(! err.string.empty());
+                CHECK(err.opt_key == "extruder_layer_height");
+            }
+        }
+    }
+}
+
+// An object barely taller than its first layer: generate_object_layers() still samples the stored
+// profile for the second layer, so a profile whose top segment is not the regular layer height is
+// not fixed, even though the second layer's centre lies above the object top.
+SCENARIO("A stale layer height profile on a very short object is not taken for fixed", "[MultiNozzleLayerHeight]") {
+    auto slicing_params = [](double first_layer_height, double object_height) {
+        DynamicPrintConfig config = two_extruder_config(0.4);
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(first_layer_height));
+        PrintConfig print_config;
+        print_config.apply(config, true);
+        PrintObjectConfig object_config;
+        object_config.apply(config, true);
+        return SlicingParameters::create_from_config(print_config, object_config, object_height, std::vector<unsigned int>{0, 1}, Vec3d(1., 1., 1.));
+    };
+    GIVEN("a 0.28 mm tall object with 0.2 mm first and regular layers") {
+        const SlicingParameters params = slicing_params(0.2, 0.28);
+        REQUIRE(params.first_object_layer_height_fixed());
+        THEN("a profile holding 0.08 mm all the way is rejected, in its 4 and 8 value forms") {
+            CHECK(! check_object_layers_fixed(params, std::vector<coordf_t>{0., 0.08, 0.28, 0.08}));
+            CHECK(! check_object_layers_fixed(params, std::vector<coordf_t>{0., 0.15, 0.15, 0.15, 0.15, 0.08, 0.28, 0.08}));
+        }
+        THEN("the profile generated for the object itself stays fixed") {
+            CHECK(check_object_layers_fixed(params, layer_height_profile_from_ranges(params, t_layer_config_ranges{})));
+        }
+    }
+    GIVEN("an object no taller than its first layer") {
+        const SlicingParameters params = slicing_params(0.2, 0.2);
+        THEN("its generated profile is fixed: only the hard-coded first layer prints") {
+            CHECK(check_object_layers_fixed(params, layer_height_profile_from_ranges(params, t_layer_config_ranges{})));
+        }
+    }
+}
+
+// Extruders of 0.6 / 0.8 / 0.4 / 0.2 mm on a 0.40 mm object layer height with the given entered
+// preferred layer heights: the plate of the sidebar's entry cases.
+static DynamicPrintConfig entered_heights_config(const std::vector<double> &heights)
+{
+    DynamicPrintConfig config = four_nozzle_config();
+    config.set_key_value("layer_height",          new ConfigOptionFloat(0.4));
+    config.set_key_value("nozzle_diameter",       new ConfigOptionFloats({0.6, 0.8, 0.4, 0.2}));
+    config.set_key_value("extruder_layer_height", new ConfigOptionFloats(heights));
+    config.set_key_value("min_layer_height",      new ConfigOptionFloats({0.08, 0.08, 0.08, 0.08}));
+    config.set_key_value("max_layer_height",      new ConfigOptionFloats({0.42, 0.56, 0.28, 0.14}));
+    return config;
+}
+
+static std::vector<double> object_print_z(const Print &print)
+{
+    std::vector<double> print_z;
+    for (const Layer *layer : print.objects().front()->layers())
+        print_z.push_back(layer->print_z);
+    return print_z;
+}
+
+SCENARIO("Preferred layer heights are kept as entered and planned for slicing only", "[MultiNozzleLayerHeight][Plan][EnteredHeights]") {
+    using Catch::Approx;
+    GIVEN("0.32 mm entered for the 0.6 mm extruder, the others at Default") {
+        const DynamicPrintConfig entered = entered_heights_config({0.32, 0., 0., 0.});
+        THEN("slicing plans the grid 0.11 mm, 0.33 / 0.44 / 0.33 / 0.11 mm") {
+            const ExtruderLayerHeightPlan effective = effective_extruder_layer_heights(entered);
+            CHECK(effective.grid == Approx(0.11));
+            REQUIRE(effective.heights.size() == 4);
+            CHECK(effective.heights[0] == Approx(0.33));
+            CHECK(effective.heights[1] == Approx(0.44));
+            CHECK(effective.heights[2] == Approx(0.33));
+            CHECK(effective.heights[3] == Approx(0.11));
+        }
+        THEN("the entered value stays, the sidebar warns that it prints at 0.33 mm and the Default extruders stay Default") {
+            const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(entered);
+            REQUIRE(notes.size() == 4);
+            CHECK(notes[0].preferred == Approx(0.32));
+            CHECK(notes[0].printed == Approx(0.33));
+            CHECK(notes[0].grid == Approx(0.11));
+            CHECK(notes[0].off_grid);
+            CHECK(notes[3].preferred == 0.);
+            CHECK(notes[3].printed == Approx(0.11));
+            CHECK_FALSE(notes[3].off_grid);
+        }
+        THEN("the plan is written into a copy only, marks it, and a second application changes nothing") {
+            DynamicPrintConfig planned = entered;
+            CHECK(apply_extruder_layer_height_plan(planned));
+            CHECK(planned.opt_float("layer_height") == Approx(0.11));
+            CHECK(planned.option<ConfigOptionFloats>("extruder_layer_height")->values.size() == 4);
+            CHECK(planned.option<ConfigOptionFloats>("extruder_layer_height")->values[1] == Approx(0.44));
+            CHECK(planned.has(extruder_layer_height_planned_key));
+            CHECK(entered.opt_float("layer_height") == Approx(0.4));
+            CHECK(entered.option<ConfigOptionFloats>("extruder_layer_height")->values == std::vector<double>{0.32, 0., 0., 0.});
+            CHECK_FALSE(entered.has(extruder_layer_height_planned_key));
+            const DynamicPrintConfig once = planned;
+            CHECK_FALSE(apply_extruder_layer_height_plan(planned));
+            CHECK(planned.equals(once));
+        }
+        THEN("the planned config validates and slices the layers of the grid 0.11 mm, 0.33 / 0.44 / 0.33 / 0.11 mm") {
+            DynamicPrintConfig planned = entered;
+            apply_extruder_layer_height_plan(planned);
+            DynamicPrintConfig written = entered;
+            written.set_key_value("layer_height",          new ConfigOptionFloat(0.11));
+            written.set_key_value("extruder_layer_height", new ConfigOptionFloats({0.33, 0.44, 0.33, 0.11}));
+
+            Print print_planned, print_written;
+            Model model_planned, model_written;
+            init_cube_print(print_planned, model_planned, planned);
+            init_cube_print(print_written, model_written, written);
+            const StringObjectException error = print_planned.validate();
+            INFO(error.string);
+            REQUIRE(error.string.empty());
+            print_planned.process();
+            print_written.process();
+            const std::vector<double> z_planned = object_print_z(print_planned), z_written = object_print_z(print_written);
+            REQUIRE(! z_planned.empty());
+            REQUIRE(z_planned.size() == z_written.size());
+            for (size_t i = 0; i < z_planned.size(); ++ i)
+                CHECK(z_planned[i] == Approx(z_written[i]));
+        }
+    }
+    GIVEN("the same entry with exact preferred layer heights") {
+        DynamicPrintConfig entered = entered_heights_config({0.32, 0., 0., 0.});
+        entered.set_key_value("extruder_layer_height_exact", new ConfigOptionBool(true));
+        THEN("0.32 mm prints as entered on a 0.16 mm grid and no warning is due") {
+            const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(entered);
+            REQUIRE(notes.size() == 4);
+            CHECK(notes[0].grid == Approx(0.16));
+            CHECK(notes[0].printed == Approx(0.32));
+            CHECK_FALSE(notes[0].off_grid);
+        }
+    }
+    GIVEN("a plate on which no other extruder has a preferred layer height") {
+        THEN("the sidebar offers no list: nothing constrains the grid") {
+            CHECK_FALSE(other_extruder_has_layer_height(entered_heights_config({0., 0., 0., 0.}), 0));
+            CHECK_FALSE(other_extruder_has_layer_height(entered_heights_config({0.32, 0., 0., 0.}), 0));
+            CHECK(other_extruder_has_layer_height(entered_heights_config({0.32, 0., 0., 0.}), 3));
+        }
+    }
+    GIVEN("the list of heights offered for an extruder") {
+        const DynamicPrintConfig entered = entered_heights_config({0.32, 0., 0., 0.});
+        THEN("with the others at Default the 0.6 mm extruder is offered the quarter, half and whole object layer height up to its maximum") {
+            const std::vector<double> offered = available_extruder_layer_heights(entered, 0);
+            REQUIRE(offered.size() == 3);
+            CHECK(offered[0] == Approx(0.1));
+            CHECK(offered[1] == Approx(0.2));
+            CHECK(offered[2] == Approx(0.4));
+            for (double height : offered) {
+                const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(entered_heights_config({height, 0., 0., 0.}));
+                INFO("offered " << height);
+                CHECK(notes[0].printed == Approx(height));
+                CHECK_FALSE(notes[0].off_grid);
+            }
+        }
+        THEN("the 0.2 mm extruder is offered the grid of the 0.32 mm entry, which prints as listed") {
+            const std::vector<double> offered = available_extruder_layer_heights(entered, 3);
+            REQUIRE(offered.size() == 1);
+            CHECK(offered[0] == Approx(0.11));
+            const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(entered_heights_config({0.32, 0., 0., 0.11}));
+            CHECK(notes[3].printed == Approx(0.11));
+            CHECK_FALSE(notes[3].off_grid);
+        }
+    }
+    GIVEN("0.12 mm entered for extruders 2 to 4 at a 0.08 mm object layer height, extruder 1 at Default") {
+        DynamicPrintConfig entered = entered_heights_config({0., 0.12, 0.12, 0.12});
+        entered.set_key_value("layer_height", new ConfigOptionFloat(0.08));
+        const std::vector<double> offered = available_extruder_layer_heights(entered, 0);
+        THEN("extruder 1 is offered 0.08 / 0.12 / 0.24 / 0.36 mm, not 0.16 mm, which moves the grid to 0.055 mm") {
+            REQUIRE(offered.size() == 4);
+            CHECK(offered[0] == Approx(0.08));
+            CHECK(offered[1] == Approx(0.12));
+            CHECK(offered[2] == Approx(0.24));
+            CHECK(offered[3] == Approx(0.36));
+            DynamicPrintConfig picked = entered;
+            picked.set_key_value("extruder_layer_height", new ConfigOptionFloats({0.16, 0.12, 0.12, 0.12}));
+            const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(picked);
+            REQUIRE(notes.size() == 4);
+            CHECK(notes[0].grid == Approx(0.055));
+            CHECK(notes[0].off_grid);
+            CHECK(notes[1].printed == Approx(0.11));
+        }
+        THEN("every offered height prints as listed and extruders 2 to 4 keep printing 0.12 mm") {
+            REQUIRE(! offered.empty());
+            for (double height : offered) {
+                DynamicPrintConfig picked = entered;
+                picked.set_key_value("extruder_layer_height", new ConfigOptionFloats({height, 0.12, 0.12, 0.12}));
+                const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(picked);
+                INFO("offered " << height);
+                REQUIRE(notes.size() == 4);
+                CHECK(notes[0].printed == Approx(height));
+                CHECK_FALSE(notes[0].off_grid);
+                for (size_t j = 1; j < 4; ++ j) {
+                    CHECK(notes[j].printed == Approx(0.12));
+                    CHECK_FALSE(notes[j].off_grid);
+                }
+            }
+        }
+    }
+    GIVEN("0.16 mm entered for extruders 2 to 4 at a 0.4 mm object layer height, extruder 1 at Default") {
+        const DynamicPrintConfig entered = entered_heights_config({0., 0.16, 0.16, 0.16});
+        const std::vector<double> reference = [&entered] {
+            std::vector<double> printed;
+            for (const ExtruderLayerHeightNote &note : extruder_layer_height_notes(entered))
+                printed.push_back(note.printed);
+            return printed;
+        }();
+        const std::vector<double> offered = available_extruder_layer_heights(entered, 0);
+        THEN("0.17 mm, which prints at 0.16 mm, is not offered; every offered height prints as listed without moving the others") {
+            REQUIRE(! offered.empty());
+            CHECK(std::none_of(offered.begin(), offered.end(), [](double height) { return std::abs(height - 0.17) < 1e-6; }));
+            REQUIRE(reference.size() == 4);
+            for (double height : offered) {
+                const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(entered_heights_config({height, 0.16, 0.16, 0.16}));
+                INFO("offered " << height);
+                REQUIRE(notes.size() == 4);
+                CHECK(notes[0].printed == Approx(height));
+                CHECK_FALSE(notes[0].off_grid);
+                for (size_t j = 1; j < 4; ++ j)
+                    CHECK(notes[j].printed == Approx(reference[j]));
+            }
+        }
+    }
+    GIVEN("heights that already are whole multiples of the object layer height") {
+        DynamicPrintConfig config = entered_heights_config({0.4, 0., 0., 0.2});
+        config.set_key_value("layer_height", new ConfigOptionFloat(0.2));
+        THEN("the plan leaves the config as it is") {
+            CHECK_FALSE(apply_extruder_layer_height_plan(config));
+            CHECK(config.opt_float("layer_height") == Approx(0.2));
+            CHECK(config.option<ConfigOptionFloats>("extruder_layer_height")->values == std::vector<double>{0.4, 0., 0., 0.2});
+            CHECK(config.has(extruder_layer_height_planned_key));
+        }
+    }
+    GIVEN("an object with its own 0.2 mm layer height") {
+        DynamicPrintConfig planned = entered_heights_config({0.32, 0., 0., 0.});
+        apply_extruder_layer_height_plan(planned);
+        Print print;
+        Model model;
+        TriangleMesh cube = mesh(TestMesh::cube_20x20x20);
+        cube.scale(Vec3f(1.f, 1.f, 0.5f));
+        ModelObject *object = model.add_object();
+        object->name = "cube";
+        object->add_volume(std::move(cube));
+        object->add_instance();
+        object->config.set("layer_height", 0.2);
+        THEN("a planned config fits it to the planned heights and follows a new entry") {
+            place_and_apply(print, model, planned);
+            CHECK(print.objects().front()->config().layer_height.value == Approx(0.11));
+            DynamicPrintConfig replanned = entered_heights_config({0.3, 0., 0., 0.});
+            apply_extruder_layer_height_plan(replanned);
+            print.apply(model, replanned);
+            CHECK(print.objects().front()->config().layer_height.value == Approx(0.145));
+        }
+        THEN("a config without the marker keeps it") {
+            planned.erase(extruder_layer_height_planned_key);
+            place_and_apply(print, model, planned);
+            CHECK(print.objects().front()->config().layer_height.value == Approx(0.2));
         }
     }
 }

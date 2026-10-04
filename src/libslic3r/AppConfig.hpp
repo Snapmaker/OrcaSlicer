@@ -24,6 +24,46 @@ using namespace nlohmann;
 #define OPTION_PROJECT_LOAD_BEHAVIOUR_ALWAYS_ASK "always_ask"
 #define OPTION_PROJECT_LOAD_BEHAVIOUR_LOAD_GEOMETRY "load_geometry_only"
 
+#define SETTING_NETWORK_PLUGIN_VERSION "network_plugin_version"
+#define SETTING_NETWORK_PLUGIN_SKIPPED_VERSIONS "network_plugin_skipped_versions"
+#define SETTING_NETWORK_PLUGIN_UPDATE_DISABLED "network_plugin_update_prompts_disabled"
+#define SETTING_NETWORK_PLUGIN_REMIND_LATER "network_plugin_remind_later"
+#define SETTING_USE_ENCRYPTED_TOKEN_FILE "use_encrypted_token_file"
+#define SETTING_CLOUD_PROVIDERS "cloud_providers"
+#define SETTING_OPENGL_AA_SAMPLES "opengl_antialiasing_samples"
+#define SETTING_OPENGL_FXAA_ENABLED "opengl_fxaa_enabled"
+#define SETTING_OPENGL_FPS_CAP "opengl_fps_cap"
+#define SETTING_OPENGL_SCENE_CACHE "opengl_scene_cache"
+#define SETTING_OPENGL_SKIP_IDENTICAL_FRAMES "opengl_skip_identical_frames"
+#define SETTING_OPENGL_SHOW_FPS_OVERLAY "opengl_show_fps_overlay"
+#define SETTING_OPENGL_REALISTIC_MODE "opengl_realistic_mode"
+#define SETTING_OPENGL_REALISTIC_PHONG "opengl_realistic_phong"
+#define SETTING_OPENGL_SHADING_MODEL "opengl_shading_model"
+#define SETTING_OPENGL_PHONG_BASIC_PLATE_SHADOWS "opengl_phong_basic_plate_shadows"
+#define SETTING_OPENGL_PHONG_SSAO "opengl_phong_ssao"
+#define SETTING_OPENGL_PHONG_SMOOTH_NORMALS "opengl_phong_smooth_normals"
+// Snapmaker Orca: render LOD, small on-screen objects are drawn from a reduced mesh. Empty reads as
+// false; set_defaults() may only write "true" into an empty value, never "false", so a later
+// default change reaches every config without an explicit choice.
+#define SETTING_OPENGL_MESH_LOD "opengl_mesh_lod"
+#define SETTING_OPENGL_REALISTIC_PREVIEW "opengl_realistic_preview"
+
+#define SETTING_PLUGIN_PAGES_VISIBLE_COUNT "plugin_pages_visible_count"
+#define PLUGIN_PAGES_VISIBLE_COUNT_MIN 1
+#define PLUGIN_PAGES_VISIBLE_COUNT_DEFAULT 5
+#define PLUGIN_PAGES_VISIBLE_COUNT_MAX 10
+
+#define SETTING_SPEED_DIAL_RECENT_COUNT "speed_dial_recent_count"
+#define SPEED_DIAL_RECENT_COUNT_MIN 0
+#define SPEED_DIAL_RECENT_COUNT_DEFAULT 5
+#define SPEED_DIAL_RECENT_COUNT_MAX 10
+
+#if defined(_WIN32) || defined(_WIN64)
+#define BAMBU_NETWORK_AGENT_VERSION_LEGACY "01.10.01.09"
+#else
+#define BAMBU_NETWORK_AGENT_VERSION_LEGACY "01.10.01.01"
+#endif
+
 #define SUPPORT_DARK_MODE
 //#define _MSW_DARK_MODE
 
@@ -39,6 +79,7 @@ struct DeviceInfo {
     bool        connected;
 	std::string img;
 	std::vector<std::string> nozzle_sizes;
+	std::vector<std::string> nozzle_volume_type;
     std::string              sn;
     int              protocol;
     std::string              api_key;
@@ -55,9 +96,58 @@ struct DeviceInfo {
 
 
     
-    // 用于JSON序列化
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DeviceInfo, ip, dev_id, dev_name, model_name, preset_name, connected, img, nozzle_sizes, sn, protocol,api_key,
-		user, password, ca, cert, key, clientId, port, link_mode, userid, id)
+    // For JSON serialization, nozzle_volume_type needs to be compatible with scenarios where this field is missing in old configurations
+    friend void to_json(json& j, const DeviceInfo& device)
+    {
+        j = json{{"ip", device.ip},
+                 {"dev_id", device.dev_id},
+                 {"dev_name", device.dev_name},
+                 {"model_name", device.model_name},
+                 {"preset_name", device.preset_name},
+                 {"connected", device.connected},
+                 {"img", device.img},
+                 {"nozzle_sizes", device.nozzle_sizes},
+                 {"nozzle_volume_type", device.nozzle_volume_type},
+                 {"sn", device.sn},
+                 {"protocol", device.protocol},
+                 {"api_key", device.api_key},
+                 {"user", device.user},
+                 {"password", device.password},
+                 {"ca", device.ca},
+                 {"cert", device.cert},
+                 {"key", device.key},
+                 {"clientId", device.clientId},
+                 {"port", device.port},
+                 {"link_mode", device.link_mode},
+                 {"userid", device.userid},
+                 {"id", device.id}};
+    }
+
+    friend void from_json(const json& j, DeviceInfo& device)
+    {
+        j.at("ip").get_to(device.ip);
+        j.at("dev_id").get_to(device.dev_id);
+        j.at("dev_name").get_to(device.dev_name);
+        j.at("model_name").get_to(device.model_name);
+        j.at("preset_name").get_to(device.preset_name);
+        j.at("connected").get_to(device.connected);
+        j.at("img").get_to(device.img);
+        j.at("nozzle_sizes").get_to(device.nozzle_sizes);
+        device.nozzle_volume_type = j.value("nozzle_volume_type", std::vector<std::string>{});
+        j.at("sn").get_to(device.sn);
+        j.at("protocol").get_to(device.protocol);
+        j.at("api_key").get_to(device.api_key);
+        j.at("user").get_to(device.user);
+        j.at("password").get_to(device.password);
+        j.at("ca").get_to(device.ca);
+        j.at("cert").get_to(device.cert);
+        j.at("key").get_to(device.key);
+        j.at("clientId").get_to(device.clientId);
+        j.at("port").get_to(device.port);
+        j.at("link_mode").get_to(device.link_mode);
+        j.at("userid").get_to(device.userid);
+        j.at("id").get_to(device.id);
+    }
 };
 
 // Connected LAN mode BambuLab printer
@@ -67,10 +157,19 @@ struct BBLocalMachine
     std::string dev_ip;
     std::string dev_id; /* serial number */
     std::string printer_type; /* model_id */
+    std::string printer_agent_id; /* id of the IPrinterAgent that discovered/bound this device, e.g. "bbl"; empty for entries persisted before this field existed */
+    // Access code, scoped to printer_agent_id above - so a code saved while bound under one
+    // printer agent isn't treated as valid for a different, independent agent talking to the
+    // same physical dev_id. Empty for entries persisted before this field existed; those fall
+    // back to the legacy flat "access_code"/"user_access_code" AppConfig sections (BBL-only,
+    // since BBL was the only agent when they were saved) - see
+    // get_access_code_with_legacy_fallback() in DevManager.cpp.
+    std::string access_code;
 
     bool operator==(const BBLocalMachine& other) const
     {
-        return dev_name == other.dev_name && dev_ip == other.dev_ip && dev_id == other.dev_id && printer_type == other.printer_type;
+        return dev_name == other.dev_name && dev_ip == other.dev_ip && dev_id == other.dev_id && printer_type == other.printer_type &&
+               printer_agent_id == other.printer_agent_id && access_code == other.access_code;
     }
     bool operator!=(const BBLocalMachine& other) const { return !operator==(other); }
 };
@@ -97,6 +196,7 @@ public:
 	std::string get_language_code();
 	std::string get_hms_host();
 	bool get_stealth_mode();
+	bool get_hide_login_side_panel();
 
 	// Clear and reset to defaults.
 	void 			   	reset();
@@ -104,8 +204,10 @@ public:
 	void 			   	set_defaults();
 
 	// Load the slic3r.ini from a user profile directory (or a datadir, if configured).
-	// return error string or empty strinf
+	// Return an error string, or an empty string on success.
 	std::string         load();
+	// Treat a missing config as default state; otherwise load it normally.
+	std::string         load_if_exists();
 	// Store the slic3r.ini into a user profile directory (or a datadir, if configured).
 	void 			   	save();
 
@@ -123,7 +225,7 @@ public:
 		if (it == m_storage.end())
 			return false;
 		auto it2 = it->second.find(key);
-		if (it2 == it->second.end()) 
+		if (it2 == it->second.end())
 			return false;
 		value = it2->second;
 		return true;
@@ -314,6 +416,10 @@ public:
 
     void                save_custom_color_to_config(const std::vector<std::string> &colors);
     std::vector<std::string> get_custom_color_from_config();
+
+    void save_nozzle_volume_types_to_config(const std::string& printer_name, const std::string& nozzle_volume_types);
+    std::string get_nozzle_volume_types_from_config(const std::string& printer_name);
+
 	// reset the current print / filament / printer selections, so that
 	// the  PresetBundle::load_selections(const AppConfig &config) call will select
 	// the first non-default preset when called.
@@ -328,10 +434,13 @@ public:
 
 	// Get the Slic3r version check url.
 	// This returns a hardcoded string unless it is overriden by "version_check_url" in the ini file.
+	std::string 		orca_profile_update_url() const;
 	std::string 		version_check_url(bool stable_only = false) const;
 	std::string 		get_version_upgrade_url(bool stable_only = false);
 	std::string 		get_preset_upgrade_url();
 	std::string 		get_web_resource_upgrade_url();
+	// snapmaker-config gray release API endpoint; can be overridden by "orca_config_api_url" (debug/testing)
+	std::string 		get_config_api_url();
 
 	// Returns the original Slic3r version found in the ini file before it was overwritten
 	// by the current version
@@ -389,9 +498,38 @@ public:
 	void clear_filament_extruder_map();
     std::unordered_map<int, int>& get_filament_extruder_map_ref();
 
+    std::string get_network_plugin_version() const;
+    void set_network_plugin_version(const std::string& version);
+
+    // Number of plugin pages shown as fixed tabs before the rest are collapsed into a
+    // dropdown on the last tab.
+    int get_plugin_pages_visible_count() const;
+
+    // Number of recently launched actions shown at the top of the Speed Dial; 0 hides them.
+    int get_speed_dial_recent_count() const;
+
+    std::vector<std::string> get_skipped_network_versions() const;
+    void add_skipped_network_version(const std::string& version);
+    bool is_network_version_skipped(const std::string& version) const;
+    void clear_skipped_network_versions();
+
+    bool is_network_update_prompt_disabled() const;
+    void set_network_update_prompt_disabled(bool disabled);
+
+    bool should_remind_network_update_later() const;
+    void set_remind_network_update_later(bool remind);
+    void clear_remind_network_update_later();
+
+    // Cloud providers (semicolon-delimited, e.g. "orca;bambu")
+    std::vector<std::string> get_cloud_providers() const;
+    void set_cloud_providers(const std::vector<std::string>& providers);
+    bool has_cloud_provider(const std::string& provider) const;
+    void add_cloud_provider(const std::string& provider);
+    void remove_cloud_provider(const std::string& provider);
+
 private:
 	template<typename T>
-	bool get_3dmouse_device_numeric_value(const std::string &device_name, const char *parameter_name, T &out) const 
+	bool get_3dmouse_device_numeric_value(const std::string &device_name, const char *parameter_name, T &out) const
 	{
 	    std::string key = std::string("mouse_device:") + device_name;
 	    auto it = m_storage.find(key);
@@ -425,6 +563,8 @@ private:
 
 	std::vector<std::string>									m_filament_presets;
     std::vector<std::string>									m_filament_colors;
+	std::vector<std::string>									m_filament_multi_colors;
+	std::vector<std::string>									m_filament_color_types;
 
 	std::vector<PrinterCaliInfo>								m_printer_cali_infos;
 

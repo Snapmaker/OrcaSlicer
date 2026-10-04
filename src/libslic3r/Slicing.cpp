@@ -1,4 +1,5 @@
 #include <limits>
+#include <numeric>
 
 #include "libslic3r.h"
 #include "Slicing.hpp"
@@ -60,14 +61,15 @@ coordf_t Slicing::max_layer_height_from_nozzle(const DynamicPrintConfig &print_c
 }
 
 SlicingParameters SlicingParameters::create_from_config(
-     const PrintConfig                 &print_config,
-     const PrintObjectConfig         &object_config,
-     coordf_t                         object_height,
-     const std::vector<unsigned int> &object_extruders,
-     const Vec3d                     &object_shrinkage_compensation)
+    const PrintConfig               &print_config,
+    const PrintObjectConfig         &object_config,
+    coordf_t                         object_height,
+    const std::vector<unsigned int> &object_extruders,
+    const Vec3d                     &object_shrinkage_compensation)
 {
     coordf_t initial_layer_print_height                      = (print_config.initial_layer_print_height.value <= 0) ? 
         object_config.layer_height.value : print_config.initial_layer_print_height.value;
+
     // If object_config.support_filament == 0 resp. object_config.support_interface_filament == 0,
     // print_config.nozzle_diameter.get_at(size_t(-1)) returns the 0th nozzle diameter,
     // which is consistent with the requirement that if support_filament == 0 resp. support_interface_filament == 0,
@@ -83,26 +85,54 @@ SlicingParameters SlicingParameters::create_from_config(
     coordf_t support_material_interface_extruder_dmr = restricted_default(object_config.support_interface_filament.value) ?
         object_config.support_nozzle_diameter.value :
         print_config.nozzle_diameter.get_at(object_config.support_interface_filament.value - 1);
-    bool     soluble_interface                       = object_config.support_top_z_distance.value == 0.;
+
+    // ORCA: store Z distance
+    const coordf_t support_top_z_gap    = object_config.support_top_z_distance.value;
+    const coordf_t support_bottom_z_gap = object_config.support_bottom_z_distance.value;
+    const coordf_t raft_z_gap           = object_config.raft_contact_distance.value;
+    
+
+    /* -------------------------------------------------- */
+    /*  ORCA: Zero-gap interface detection (asymmetric)   */
+    /* -------------------------------------------------- */
+
+    const bool zero_topZ_contact =
+        support_top_z_gap == 0.0;
+
+    const bool zero_gap_interface_top =
+        object_config.support_interface_top_layers.value > 0 &&  // Has some top interface layers
+        zero_topZ_contact;
+
+    const bool zero_gap_interface_bottom =
+        (object_config.support_interface_bottom_layers.value < 0  // Negative value means "use same as top"
+            ? object_config.support_interface_top_layers.value
+            : object_config.support_interface_bottom_layers.value) > 0 &&  // Has some bottom interface layers
+        (support_bottom_z_gap == 0.0 || zero_topZ_contact);
+
+    const bool zero_gap_interface_raft =
+        raft_z_gap == 0.0 || zero_topZ_contact;
 
     SlicingParameters params;
-    params.layer_height = object_config.layer_height.value;
-    params.first_print_layer_height = initial_layer_print_height;
-    params.first_object_layer_height = initial_layer_print_height;
-    params.object_print_z_min = 0.;
+
+    params.layer_height               = object_config.layer_height.value;
+    params.first_print_layer_height   = initial_layer_print_height;
+    params.first_object_layer_height  = initial_layer_print_height;
+    params.object_print_z_min         = 0.0;
     // Orca: XYZ filament compensation
-    params.object_print_z_max = object_height * object_shrinkage_compensation.z();
+    params.object_print_z_max               = object_height * object_shrinkage_compensation.z();
     params.object_print_z_uncompensated_max = object_height;
-    params.object_shrinkage_compensation_z = object_shrinkage_compensation.z();
-    params.base_raft_layers = object_config.raft_layers.value;
-    params.soluble_interface = soluble_interface;
+    params.object_shrinkage_compensation_z  = object_shrinkage_compensation.z();
+    params.base_raft_layers                 = object_config.raft_layers.value;
+    params.zero_gap_interface_top           = zero_gap_interface_top;
+    params.zero_gap_interface_bottom        = zero_gap_interface_bottom;
+    params.zero_gap_interface_raft          = zero_gap_interface_raft;
 
     // Miniumum/maximum of the minimum layer height over all extruders.
     params.min_layer_height = MIN_LAYER_HEIGHT;
     params.max_layer_height = std::numeric_limits<double>::max();
     if (object_config.enable_support.value || params.base_raft_layers > 0 || object_config.enforce_support_layers > 0) {
         // Has some form of support. Add the support layers to the minimum / maximum layer height limits.
-        auto support_layer_height_limit = [&print_config, &object_config, &restricted_default](int configured, bool min_limit) -> coordf_t {
+        auto support_layer_height_limit = [&print_config, &object_config, &object_extruders, &restricted_default](int configured, bool min_limit) -> coordf_t {
             auto from_nozzle = [&print_config, min_limit](int filament) {
                 return min_limit ? min_layer_height_from_nozzle(print_config, filament) : max_layer_height_from_nozzle(print_config, filament);
             };
@@ -119,6 +149,18 @@ SlicingParameters SlicingParameters::create_from_config(
                 if (found)
                     return limit;
             }
+            if (configured == 0 && !object_extruders.empty()) {
+                // Unrestricted "default" support filament: supports print with the object's own
+                // extruder(s), so combine those limits. from_nozzle(0) would read the FIRST
+                // extruder's limits instead, capping support heights by an unrelated fine nozzle
+                // on mixed-diameter machines.
+                coordf_t limit = min_limit ? 0. : std::numeric_limits<coordf_t>::max();
+                for (unsigned int extruder_id : object_extruders) {
+                    coordf_t l = from_nozzle(int(extruder_id + 1));
+                    limit = min_limit ? std::max(limit, l) : std::min(limit, l);
+                }
+                return limit;
+            }
             return from_nozzle(configured);
         };
         params.min_layer_height = std::max(
@@ -128,34 +170,75 @@ SlicingParameters SlicingParameters::create_from_config(
             support_layer_height_limit(object_config.support_filament.value, false),
             support_layer_height_limit(object_config.support_interface_filament.value, false));
         params.max_suport_layer_height = params.max_layer_height;
+        // The support extruders' own (unclamped) minimum matters only when supports are pinned
+        // to their own filaments or nozzle; with the object's filaments the object's clamped
+        // minimum applies as before.
+        if (object_config.support_filament.value != 0 || object_config.support_interface_filament.value != 0 || restricted_default(0))
+            params.min_suport_layer_height = params.min_layer_height;
     }
+
     if (object_extruders.empty()) {
         params.min_layer_height = std::max(params.min_layer_height, min_layer_height_from_nozzle(print_config, 0));
         params.max_layer_height = std::min(params.max_layer_height, max_layer_height_from_nozzle(print_config, 0));
     } else {
         for (unsigned int extruder_id : object_extruders) {
-            params.min_layer_height = std::max(params.min_layer_height, min_layer_height_from_nozzle(print_config, extruder_id));
-            params.max_layer_height = std::min(params.max_layer_height, max_layer_height_from_nozzle(print_config, extruder_id));
+            // object_extruders holds zero based extruder indices, from_nozzle indices are one based.
+            params.min_layer_height = std::max(params.min_layer_height, min_layer_height_from_nozzle(print_config, int(extruder_id + 1)));
+            params.max_layer_height = std::min(params.max_layer_height, max_layer_height_from_nozzle(print_config, int(extruder_id + 1)));
         }
     }
+
     params.min_layer_height = std::min(params.min_layer_height, params.layer_height);
     params.max_layer_height = std::max(params.max_layer_height, params.layer_height);
 
-    if (! soluble_interface) {
-        params.gap_raft_object    = object_config.raft_contact_distance.value;
-        //BBS
-        params.gap_object_support = object_config.support_bottom_z_distance.value; 
-        params.gap_support_object = object_config.support_top_z_distance.value;
+    /* -------------------------------------------------- */
+    /*                ORCA: Gap assignment                */
+    /* -------------------------------------------------- */
 
-        if (!print_config.independent_support_layer_height) {
-            params.gap_raft_object = std::round(params.gap_raft_object / object_config.layer_height + EPSILON) * object_config.layer_height;
-            params.gap_object_support = std::round(params.gap_object_support / object_config.layer_height + EPSILON) * object_config.layer_height;
-            params.gap_support_object = std::round(params.gap_support_object / object_config.layer_height + EPSILON) * object_config.layer_height;
+    // ORCA: Raft contact (raft -> object)
+    if (zero_gap_interface_raft) {
+        params.gap_raft_object = 0.0;
+    } else {
+        params.gap_raft_object = raft_z_gap;
+        if (!print_config.independent_support_layer_height || print_config.enable_prime_tower) {
+            params.gap_raft_object =
+                std::round(params.gap_raft_object / object_config.layer_height + EPSILON)
+                * object_config.layer_height;
         }
     }
 
+    // ORCA: BOTTOM contact (object -> support)
+    if (zero_gap_interface_bottom) {
+        params.gap_object_support = 0.0;
+    } else {
+        params.gap_object_support = support_bottom_z_gap;
+
+        if (!print_config.independent_support_layer_height || print_config.enable_prime_tower) {
+            params.gap_object_support =
+                std::round(params.gap_object_support / object_config.layer_height + EPSILON)
+                * object_config.layer_height;
+        }
+    }
+
+    // ORCA: TOP contact (support -> object)
+    if (zero_gap_interface_top) {
+        params.gap_support_object = 0.0;
+    } else {
+        params.gap_support_object = support_top_z_gap;
+
+        if (!print_config.independent_support_layer_height || print_config.enable_prime_tower) {
+            params.gap_support_object =
+                std::round(params.gap_support_object / object_config.layer_height + EPSILON)
+                * object_config.layer_height;
+        }
+    }
+
+    /* -------------------------------------------------- */
+    /*                     Raft logic                     */
+    /* -------------------------------------------------- */
+
     if (params.base_raft_layers > 0) {
-		params.interface_raft_layers = (params.base_raft_layers + 1) / 2;
+        params.interface_raft_layers = (params.base_raft_layers + 1) / 2;
         params.base_raft_layers -= params.interface_raft_layers;
         // Use as large as possible layer height for the intermediate raft layers.
         params.base_raft_layer_height       = std::max(params.layer_height, 0.75 * support_material_extruder_dmr);
@@ -168,11 +251,11 @@ SlicingParameters SlicingParameters::create_from_config(
     if (params.has_raft()) {
         // Raise first object layer Z by the thickness of the raft itself plus the extra distance required by the support material logic.
         //FIXME The last raft layer is the contact layer, which shall be printed with a bridging flow for ease of separation. Currently it is not the case.
-		if (params.raft_layers() == 1) {
+        if (params.raft_layers() == 1) {
             // There is only the contact layer.
             params.contact_raft_layer_height = initial_layer_print_height;
             params.raft_contact_top_z        = initial_layer_print_height;
-		} else {
+        } else {
             assert(params.base_raft_layers > 0);
             assert(params.interface_raft_layers > 0);
             // Number of the base raft layers is decreased by the first layer.
@@ -180,7 +263,8 @@ SlicingParameters SlicingParameters::create_from_config(
             // Number of the interface raft layers is decreased by the contact layer.
             params.raft_interface_top_z  = params.raft_base_top_z + coordf_t(params.interface_raft_layers - 1) * params.interface_raft_layer_height;
 			params.raft_contact_top_z    = params.raft_interface_top_z + params.contact_raft_layer_height;
-		}
+        }
+
         coordf_t print_z = params.raft_contact_top_z + params.gap_raft_object;
         params.object_print_z_min  = print_z;
         params.object_print_z_max += print_z;
@@ -287,7 +371,7 @@ std::vector<double> layer_height_profile_adaptive(const SlicingParameters& slici
     // last facet visited by the as.next_layer_height() function, where the facets are sorted by their increasing Z span.
     size_t current_facet = 0;
     // loop until we have at least one layer and the max slice_z reaches the object height
-    while (print_z + EPSILON < slicing_params.object_print_z_height()) {
+    while (print_z + EPSILON < slicing_params.object_print_z_uncompensated_height()) {
         float height = slicing_params.max_layer_height;
         // Slic3r::debugf "\n Slice layer: %d\n", $id;
         // determine next layer height
@@ -358,10 +442,10 @@ std::vector<double> layer_height_profile_adaptive(const SlicingParameters& slici
         print_z += height;
     }
 
-    double z_gap = slicing_params.object_print_z_height() - *(layer_height_profile.end() - 2);
+    double z_gap = slicing_params.object_print_z_uncompensated_height() - *(layer_height_profile.end() - 2);
     if (z_gap > 0.0)
     {
-        layer_height_profile.push_back(slicing_params.object_print_z_height());
+        layer_height_profile.push_back(slicing_params.object_print_z_uncompensated_height());
         layer_height_profile.push_back(std::clamp(z_gap, slicing_params.min_layer_height, slicing_params.max_layer_height));
     }
 
@@ -847,7 +931,21 @@ bool check_object_layers_fixed(
     if (! fixed_step1 || ! fixed_step2)
         return false;
 
-    if (layer_height_profile[2] < 0.5 * slicing_params.first_object_layer_height + EPSILON ||
+    if (slicing_params.first_object_layer_height_fixed()) {
+        // generate_object_layers() fixes the first layer at first_object_layer_height and samples the
+        // profile above it: a profile saved under another first layer height still gives fixed layers
+        // if its first segment ends below that layer or already has the regular layer height.
+        if (layer_height_profile.size() == 8 &&
+            layer_height_profile[4] > slicing_params.first_object_layer_height + EPSILON &&
+            ! is_approx(layer_height_profile[3], slicing_params.layer_height))
+            return false;
+        // The z_2nd > z_max early return below skips short objects, yet a second layer that fits above
+        // the first is still sampled from the profile: the top segment must hold the regular height too.
+        if (slicing_params.first_object_layer_height + 0.5 * slicing_params.min_layer_height <
+                slicing_params.object_print_z_height() &&
+            ! is_approx(layer_height_profile.back(), slicing_params.layer_height))
+            return false;
+    } else if (layer_height_profile[2] < 0.5 * slicing_params.first_object_layer_height + EPSILON ||
         ! is_approx(layer_height_profile[3], slicing_params.first_object_layer_height))
         return false;
 
@@ -972,6 +1070,311 @@ int generate_layer_height_texture(
 
     // Returns number of cells of the 0th LOD level.
     return ncells;
+}
+
+// ORCA multi-nozzle-size: see Slicing.hpp.
+double conforming_object_layer_height(const std::vector<double> &heights, double base, bool include_base, double max_height)
+{
+    auto quanta = [](double height) { return std::lround(height / 0.005); };
+    long common = 0;
+    for (double height : heights)
+        if (height > EPSILON)
+            common = std::gcd(common, quanta(height));
+    if ((include_base || common == 0) && base > EPSILON)
+        common = std::gcd(common, quanta(base));
+    for (long k = 1; common > 0 && k <= common; ++ k)
+        if (common % k == 0 && (max_height <= EPSILON || (common / k) * 0.005 <= max_height + EPSILON))
+            return std::round((common / k) * 0.005 * 1e6) / 1e6;
+    return 0.;
+}
+
+ExtruderLayerHeightPlan plan_extruder_layer_heights(std::vector<double> heights, double base, const std::vector<double> &nozzles,
+                                                    double min_nozzle, bool exact, double min_grid, double tolerance)
+{
+    ExtruderLayerHeightPlan plan;
+    auto snap = [](double v) { return std::round(v * 1e6) / 1e6; };
+    double finest      = 0.;
+    bool   has_default = false;
+    for (double h : heights) {
+        if (h > EPSILON) {
+            if (finest <= 0. || h < finest)
+                finest = h;
+        } else
+            has_default = true;
+    }
+    if (finest <= 0.) {
+        plan.heights = std::move(heights);
+        return plan;
+    }
+    // Whether `h` lands within `tol` of a whole multiple of the grid `g` that fits the bore.
+    auto lands = [&snap](double h, double g, double bore, double tol) {
+        const long   n       = std::max(1L, std::lround(h / g));
+        const double snapped = snap(n * g);
+        return std::abs(snapped - h) <= tol + EPSILON && snapped <= bore + EPSILON;
+    };
+    double grid = 0.;
+    if (exact) {
+        // Every entered value prints exactly: the grid is what they all are whole multiples of.
+        grid = conforming_object_layer_height(heights, base, false, min_nozzle);
+    } else {
+        // The coarsest grid on which every entered value lands within the tolerance of a whole
+        // multiple; candidates run from the finest value (or the smallest nozzle, if that is
+        // finer) down to the floor in 5 um steps. With Default extruders, `base` must land too,
+        // within max(tol, 0.1 * base). If nothing fits, the tolerance grows step by step until a
+        // candidate does; the grid never drops below the floor.
+        const double top       = min_nozzle > EPSILON ? std::min(finest, min_nozzle) : finest;
+        const double floor     = std::min(top, std::max(0.02, min_grid));
+        const bool   with_base = has_default && base > EPSILON;
+        const double step      = std::max(tolerance, 0.005);
+        const long   q_top     = std::lround(top / 0.005), q_floor = std::max(1L, std::lround(floor / 0.005));
+        for (double tol = step; grid <= 0. && tol <= top + EPSILON; tol += step) {
+            const double base_tol = std::max(tol, 0.1 * base);
+            for (long q = q_top; q >= q_floor && grid <= 0.; -- q) {
+                const double g  = snap(q * 0.005);
+                bool         ok = ! with_base || lands(base, g, std::numeric_limits<double>::max(), base_tol);
+                for (size_t j = 0; j < heights.size() && ok; ++ j)
+                    if (heights[j] > EPSILON)
+                        ok = lands(heights[j], g, j < nozzles.size() ? nozzles[j] : std::numeric_limits<double>::max(), tol);
+                if (ok)
+                    grid = g;
+            }
+        }
+        if (grid <= EPSILON)
+            // Only a value above its own nozzle never lands (Print::validate refuses it); the
+            // coarsest candidate, the snapping below caps every value to its bore.
+            grid = top;
+    }
+    if (grid <= EPSILON) {
+        plan.heights = std::move(heights);
+        return plan;
+    }
+    auto multiple_of_grid = [&](double h, double bore) {
+        long n = std::max(1L, std::lround(h / grid));
+        while (n > 1 && n * grid > bore + EPSILON)
+            -- n;
+        return snap(n * grid);
+    };
+    for (size_t j = 0; j < heights.size(); ++ j) {
+        const double bore = j < nozzles.size() ? nozzles[j] : std::numeric_limits<double>::max();
+        if (heights[j] > EPSILON) {
+            const double snapped = multiple_of_grid(heights[j], bore);
+            if (std::abs(snapped - heights[j]) > 1e-6)
+                plan.rounded.push_back(j);
+            heights[j] = snapped;
+        } else if (base > EPSILON && grid < base - EPSILON && bore >= grid - EPSILON) {
+            heights[j] = multiple_of_grid(base, bore);
+            plan.pinned.push_back(j);
+        }
+    }
+    plan.grid    = grid;
+    plan.heights = std::move(heights);
+    return plan;
+}
+
+const char *const extruder_layer_height_planned_key = "extruder_layer_height_planned";
+
+namespace {
+
+std::vector<double> floats_of(const DynamicPrintConfig &config, const char *key)
+{
+    const auto *option = config.option<ConfigOptionFloats>(key);
+    return option == nullptr ? std::vector<double>() : option->values;
+}
+
+// Value of a per-extruder option for `idx`, the last one for a shorter list, 0 for an empty one.
+double value_at(const std::vector<double> &values, size_t idx)
+{
+    return values.empty() ? 0. : values[std::min(idx, values.size() - 1)];
+}
+
+double smallest_positive(const std::vector<double> &values)
+{
+    double smallest = 0.;
+    for (double value : values)
+        if (value > EPSILON && (smallest <= 0. || value < smallest))
+            smallest = value;
+    return smallest;
+}
+
+bool has_explicit_height(const std::vector<double> &heights)
+{
+    return std::any_of(heights.begin(), heights.end(), [](double h) { return h > EPSILON; });
+}
+
+// A whole multiple (at least once) of `base`, as Print::validate checks it.
+bool whole_multiple_of(double height, double base)
+{
+    const double n = std::round(height / base);
+    return n >= 1. && std::abs(height - n * base) <= EPSILON;
+}
+
+bool on_quantum_grid(double height)
+{
+    return std::abs(height / 0.005 - std::round(height / 0.005)) <= 1e-6;
+}
+
+} // namespace
+
+DynamicPrintConfig extruder_layer_height_inputs(const DynamicPrintConfig &printer, const DynamicPrintConfig &print)
+{
+    DynamicPrintConfig inputs;
+    for (const char *key : { "extruder_layer_height", "extruder_layer_height_exact", "nozzle_diameter", "min_layer_height", "max_layer_height" })
+        if (const ConfigOption *option = printer.option(key); option != nullptr)
+            inputs.set_key_value(key, option->clone());
+    if (const ConfigOption *option = print.option("layer_height"); option != nullptr)
+        inputs.set_key_value("layer_height", option->clone());
+    return inputs;
+}
+
+bool extruder_layer_heights_conform(const std::vector<double> &heights, double base, const std::vector<double> &nozzles)
+{
+    if (base <= EPSILON || ! on_quantum_grid(base))
+        return false;
+    for (size_t j = 0; j < heights.size(); ++ j) {
+        const double bore = j < nozzles.size() && nozzles[j] > EPSILON ? nozzles[j] : std::numeric_limits<double>::max();
+        if (heights[j] > EPSILON) {
+            if (! whole_multiple_of(heights[j], base) || heights[j] > bore + EPSILON)
+                return false;
+        } else if (bore < base - EPSILON)
+            // A Default extruder would print the object layer height through a smaller nozzle.
+            return false;
+    }
+    return true;
+}
+
+ExtruderLayerHeightPlan effective_extruder_layer_heights(const DynamicPrintConfig &config)
+{
+    ExtruderLayerHeightPlan   effective;
+    const std::vector<double> nozzles = floats_of(config, "nozzle_diameter");
+    effective.heights                 = floats_of(config, "extruder_layer_height");
+    if (! nozzles.empty())
+        effective.heights.resize(nozzles.size(), 0.);
+    // A height above its nozzle cannot print: planned as the nozzle diameter (on the 5 um grid).
+    for (size_t j = 0; j < effective.heights.size(); ++ j) {
+        double &height = effective.heights[j];
+        if (height <= EPSILON)
+            height = 0.;
+        else if (j < nozzles.size() && nozzles[j] > EPSILON && height > nozzles[j] + EPSILON)
+            height = std::round(std::floor(nozzles[j] / 0.005 + EPSILON) * 0.005 * 1e6) / 1e6;
+    }
+    const auto  *base_option = config.option<ConfigOptionFloat>("layer_height");
+    const double base        = base_option != nullptr ? base_option->value : 0.;
+    effective.grid           = base;
+    if (base <= EPSILON || ! has_explicit_height(effective.heights) || extruder_layer_heights_conform(effective.heights, base, nozzles))
+        return effective;
+    const auto *exact = config.option<ConfigOptionBool>("extruder_layer_height_exact");
+    ExtruderLayerHeightPlan plan = plan_extruder_layer_heights(effective.heights, base, nozzles, smallest_positive(nozzles),
+                                                               exact != nullptr && exact->value,
+                                                               smallest_positive(floats_of(config, "min_layer_height")) / 2.);
+    return plan.grid > EPSILON ? plan : effective;
+}
+
+bool apply_extruder_layer_height_plan(DynamicPrintConfig &config)
+{
+    const std::vector<double> stored = floats_of(config, "extruder_layer_height");
+    if (! has_explicit_height(stored))
+        return false;
+    config.set_key_value(extruder_layer_height_planned_key, new ConfigOptionBool(true));
+    const ExtruderLayerHeightPlan effective = effective_extruder_layer_heights(config);
+    bool                          changed   = false;
+    if (auto *base = config.option<ConfigOptionFloat>("layer_height"); base != nullptr && effective.grid > EPSILON &&
+                                                                       std::abs(base->value - effective.grid) > 1e-9) {
+        base->value = effective.grid;
+        changed     = true;
+    }
+    if (effective.heights != stored) {
+        config.set_key_value("extruder_layer_height", new ConfigOptionFloats(effective.heights));
+        changed = true;
+    }
+    return changed;
+}
+
+double effective_object_layer_height(const std::vector<double> &heights, const std::vector<double> &nozzles, double object_height)
+{
+    if (object_height <= EPSILON)
+        return object_height;
+    bool conforms = true;
+    for (double height : heights)
+        conforms = conforms && (height <= EPSILON || whole_multiple_of(height, object_height));
+    if (conforms)
+        return object_height;
+    const double grid = conforming_object_layer_height(heights, object_height, false, smallest_positive(nozzles));
+    return grid > EPSILON ? grid : object_height;
+}
+
+std::vector<double> available_extruder_layer_heights(const DynamicPrintConfig &config, size_t extruder)
+{
+    std::vector<double> available;
+    // Candidates: the grid of the other extruders' heights, its half and quarter, and its whole multiples.
+    std::vector<double> heights = floats_of(config, "extruder_layer_height");
+    if (heights.size() <= extruder)
+        heights.resize(extruder + 1, 0.);
+    heights[extruder] = 0.;
+    DynamicPrintConfig others = config;
+    others.set_key_value("extruder_layer_height", new ConfigOptionFloats(heights));
+    const double grid = effective_extruder_layer_heights(others).grid;
+    if (grid <= EPSILON)
+        return available;
+
+    double       cap        = value_at(floats_of(config, "nozzle_diameter"), extruder);
+    const double max_height = value_at(floats_of(config, "max_layer_height"), extruder);
+    if (max_height > EPSILON)
+        cap = cap > EPSILON ? std::min(cap, max_height) : max_height;
+    const double min_height = value_at(floats_of(config, "min_layer_height"), extruder);
+    auto offer = [&](double height) {
+        height = std::round(height * 1e6) / 1e6;
+        if (height + EPSILON >= min_height && (cap <= EPSILON || height <= cap + EPSILON) && on_quantum_grid(height) &&
+            std::none_of(available.begin(), available.end(), [height](double h) { return std::abs(h - height) < 1e-6; }))
+            available.push_back(height);
+    };
+    offer(grid / 4.);
+    offer(grid / 2.);
+    for (int n = 1; n <= 100 && (n == 1 || (cap > EPSILON && n * grid <= cap + EPSILON)); ++ n)
+        offer(n * grid);
+    std::sort(available.begin(), available.end());
+
+    // A candidate may move the plan to another grid: kept only when it prints as listed and every other
+    // entered height prints as before (or as entered).
+    const std::vector<ExtruderLayerHeightNote> reference = extruder_layer_height_notes(others);
+    auto prints_as_listed = [&](double height) {
+        heights[extruder] = height;
+        others.set_key_value("extruder_layer_height", new ConfigOptionFloats(heights));
+        const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(others);
+        if (extruder < notes.size() && notes[extruder].off_grid)
+            return false;
+        for (size_t j = 0; j < std::min(notes.size(), reference.size()); ++ j)
+            if (j != extruder && heights[j] > EPSILON && notes[j].off_grid && std::abs(notes[j].printed - reference[j].printed) > 1e-6)
+                return false;
+        return true;
+    };
+    available.erase(std::remove_if(available.begin(), available.end(), [&](double height) { return ! prints_as_listed(height); }),
+                    available.end());
+    return available;
+}
+
+bool other_extruder_has_layer_height(const DynamicPrintConfig &config, size_t extruder)
+{
+    const std::vector<double> heights = floats_of(config, "extruder_layer_height");
+    for (size_t j = 0; j < heights.size(); ++ j)
+        if (j != extruder && heights[j] > EPSILON)
+            return true;
+    return false;
+}
+
+std::vector<ExtruderLayerHeightNote> extruder_layer_height_notes(const DynamicPrintConfig &config)
+{
+    const ExtruderLayerHeightPlan effective = effective_extruder_layer_heights(config);
+    std::vector<double>           stored    = floats_of(config, "extruder_layer_height");
+    stored.resize(effective.heights.size(), 0.);
+    std::vector<ExtruderLayerHeightNote> notes(effective.heights.size());
+    for (size_t j = 0; j < notes.size(); ++ j) {
+        ExtruderLayerHeightNote &note = notes[j];
+        note.preferred = std::max(0., stored[j]);
+        note.grid      = effective.grid;
+        note.printed   = effective.heights[j] > EPSILON ? effective.heights[j] : effective.grid;
+        note.off_grid  = note.preferred > EPSILON && std::abs(note.printed - note.preferred) > 1e-6;
+    }
+    return notes;
 }
 
 }; // namespace Slic3r

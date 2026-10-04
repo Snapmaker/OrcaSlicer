@@ -7,7 +7,9 @@
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Geometry.hpp"
+#include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Color.hpp"
+#include "libslic3r/MeshLod.hpp"
 // BBS
 #include "libslic3r/ObjectID.hpp"
 
@@ -15,7 +17,10 @@
 #include "GLShader.hpp"
 #include "MeshUtils.hpp"
 
+#include <array>
+#include <cfloat>
 #include <functional>
+#include <memory>
 #include <optional>
 
 #ifndef NDEBUG
@@ -32,7 +37,6 @@
     #define glsafe(cmd) cmd
     #define glcheck()
 #endif // HAS_GLSAFE
-extern std::vector<Slic3r::ColorRGBA> get_extruders_colors();
 extern float                          FullyTransparentMaterialThreshold;
 extern float                          FullTransparentModdifiedToFixAlpha;
 extern Slic3r::ColorRGBA              adjust_color_for_rendering(const Slic3r::ColorRGBA &colors);
@@ -41,7 +45,8 @@ extern Slic3r::ColorRGBA              adjust_color_for_rendering(const Slic3r::C
 namespace Slic3r {
 namespace GUI {
     class Size;
-    class Camera;
+    struct Camera;
+    class MeshLod;
 }
 
 class SLAPrintObject;
@@ -59,6 +64,22 @@ class GLShaderProgram;
 enum ModelInstanceEPrintVolumeState : unsigned char;
 
 using ModelObjectPtrs = std::vector<ModelObject*>;
+
+struct ObjectFilamentInfo {
+    ModelObject* object;
+    std::map<int, int> manual_filaments; //manual mode: filament id -> extruder id can not be printed
+
+    std::vector<int> auto_filaments; //auto mode: filaments in all extruder's outside area
+};
+
+struct ObjectFilamentResults {
+    FilamentMapMode         mode;
+    std::vector<int>        filaments; //filaments has conflicts
+    std::map<int, int>      filament_maps; //filament maps
+    std::vector<ModelObject*> partly_outside_objects; //partly outside objects
+
+    std::vector<ObjectFilamentInfo> object_filaments;
+};
 
 // Return appropriate color based on the ModelVolume.
 extern ColorRGBA color_from_model_volume(const ModelVolume& model_volume);
@@ -78,9 +99,17 @@ public:
     static ColorRGBA SUPPORT_ENFORCER_COL;
     static ColorRGBA SUPPORT_BLOCKER_COL;
     static ColorRGBA MODEL_HIDDEN_COL;
+    // Precise Seam modifier colors
+    static ColorRGBA PRECISE_SEAM_CENTER_COL;
+    static ColorRGBA PRECISE_SEAM_LEFT_COL;
+    static ColorRGBA PRECISE_SEAM_RIGHT_COL;
+    static ColorRGBA PRECISE_SEAM_ENFORCED_COL;
+    static ColorRGBA PRECISE_SEAM_NEUTRAL_COL;
+    static ColorRGBA PRECISE_SEAM_BLOCKED_COL;
 
     static void update_render_colors();
     static void load_render_colors();
+    static ColorRGBA brighten_color(const ColorRGBA& color, float multiplier = 1.25f);
 
     static float explosion_ratio;
     static float last_explosion_ratio;
@@ -204,12 +233,33 @@ public:
         bool                force_sinking_contours : 1;
         // Is render for picking
         bool                picking : 1;
+        // slice error
+        bool                slice_error : 1;
     };
 
     // Is mouse or rectangle selection over this object to select/deselect it ?
     EHoverState         	hover;
 
     GUI::GLModel            model;
+
+    // Snapmaker Orca: render LOD, the reduced models of this mesh, shared by its instances; null if
+    // none. MeshLodCache / MeshLodPool supersede upstream #737 / #844 (g_meshVolumesMap,
+    // SimplifyMesh() ...). Never set for GLWipeTowerVolume, whose render_with_outline() is render().
+    std::shared_ptr<GUI::MeshLod> m_lod;
+    // Written by GLVolumeCollection::update_lod() only, once per scene pass, and read by the
+    // colour pass (draw_model()) and the shadow pass (shadow_model()) of that scene pass, so the
+    // two always draw the same model.
+    LodLevel                m_lod_level{ LodLevel::High };
+    // The grant of one draw: true only inside GLVolumeCollection::render() of an opted-in
+    // collection, so every other caller (thumbnails, picking, ...) draws the full model.
+    bool                    m_lod_draw{ false };
+    // The model the current draw uses: a reduced one under the grant, never while picking, never
+    // for a ranged volume, and only once it is promoted; the full model otherwise.
+    GUI::GLModel&           draw_model();
+    // The same choice without the grant, for the shadow depth pass of GLCanvas3D, which follows
+    // update_lod() within the same scene pass.
+    GUI::GLModel&           shadow_model();
+
     // raycaster used for picking
     std::unique_ptr<GUI::MeshRaycaster> mesh_raycaster;
     // BBS
@@ -333,6 +383,10 @@ public:
 
     //BBS: add simple render function for thumbnail
     void simple_render(GLShaderProgram* shader, ModelObjectPtrs& model_objects, std::vector<ColorRGBA>& extruder_colors, bool ban_light =false);
+    // Snapmaker Orca: whether simple_render() draws this volume from its painted (multi material
+    // segmentation) models. The one rule of simple_render() and of the render LOD, which keeps a
+    // painted volume at full detail. painted_volume receives the ModelVolume when true.
+    bool is_mmu_painted_for_render(const ModelObjectPtrs& model_objects, ModelVolume** painted_volume = nullptr) const;
 
     void                set_bounding_boxes_as_dirty() {
         m_transformed_bounding_box.reset();
@@ -425,9 +479,27 @@ private:
 
     Slope m_slope;
     bool m_show_sinking_contours = false;
+    // Snapmaker Orca: render LOD is opt-in per collection. The collections of the command line
+    // slicer, of the calibration helpers and of the thumbnails never opt in.
+    bool m_lod_enabled{ false };
+    // Volumes per LodLevel as decided by the last update_lod().
+    std::array<unsigned, 3> m_lod_stats{};
+    // When update_lod() submits the jobs of its volumes again that ended worth a retry.
+    LodRetryTimer m_lod_retry;
 
 public:
     GLVolumePtrs volumes;
+
+    void set_lod_enabled(bool enabled) { m_lod_enabled = enabled; }
+    bool lod_enabled() const { return m_lod_enabled; }
+    // Snapmaker Orca: sets every volume's level, once per scene pass before drawing; takes over
+    // finished models (<= 500k faces, at least one mesh per call) and resubmits failed jobs. Full
+    // detail if !allowed or a volume reaches above pin_above_z; pixel_scale is the HiDPI factor.
+    void update_lod(const GUI::Camera& camera, bool allowed, float pixel_scale, double pin_above_z = DBL_MAX);
+    const std::array<unsigned, 3>& lod_stats() const { return m_lod_stats; }
+    // Snapmaker Orca: drops all reduced models (jobs cancelled, unshared buffers freed); needs a
+    // current OpenGL context. For collections not rebuilt when LOD is turned off (preview shells).
+    void release_lod();
 
     GLVolumeCollection() {
         set_default_slope_normal_z();
@@ -467,22 +539,43 @@ public:
 
     int load_wipe_tower_preview(
         int obj_idx, float pos_x, float pos_y, float width, float depth, float height, float rotation_angle, bool size_unknown, float brim_width);
-
+    int load_real_wipe_tower_preview(
+    int obj_idx, float pos_x, float pos_y,const TriangleMesh& wt_mesh,const TriangleMesh &brim_mesh,bool render_brim, float rotation_angle, bool size_unknown,  bool opengl_initialized);
     GLVolume* new_toolpath_volume(const ColorRGBA& rgba);
     GLVolume* new_nontoolpath_volume(const ColorRGBA& rgba);
 
-    int get_selection_support_threshold_angle(bool&) const;
+    float get_selection_support_normal_z() const;
     // Render the volumes by OpenGL.
     //BBS: add outline drawing logic
+    // Snapmaker: the camera is optional; when supplied the renderer additionally performs CPU
+    // frustum culling. Pass nullptr (or use the matrix-only overload below) when the caller
+    // renders through a matrix pair that does not belong to the plater camera (thumbnails, ...).
+    void render(ERenderType                           type,
+                bool                                  disable_cullface,
+                const Transform3d &                   view_matrix,
+                const Transform3d&                    projection_matrix,
+                const GUI::Size&                      cnv_size,
+                std::function<bool(const GLVolume &)> filter_func   = std::function<bool(const GLVolume &)>(),
+                bool                                  partly_inside_enable =true,
+                // Per-extruder printable heights (extruder_printable_height); null / size<=1
+                // leaves the shader's extruder_printable_heights flag at 0.0 (single-extruder = inert).
+                std::vector<double> *                 printable_heights = nullptr,
+                // Snapmaker: when non-null, volumes outside the camera frustum are skipped.
+                const GUI::Camera *                   camera = nullptr
+           ) const;
+
+    // Snapmaker: convenience overload - takes the camera and enables CPU frustum culling.
     void render(ERenderType                           type,
                 bool                                  disable_cullface,
                 const GUI::Camera&                    camera,
                 const GUI::Size&                      cnv_size,
                 std::function<bool(const GLVolume &)> filter_func   = std::function<bool(const GLVolume &)>(),
-                bool                                  partly_inside_enable =true
+                bool                                  partly_inside_enable =true,
+                std::vector<double> *                 printable_heights = nullptr
            ) const;
 
     // Clear the geometry
+    // LOD: GLVolume::m_lod is a shared_ptr; upstream's release_volume() (#737/#844) is deliberately not ported.
     void clear() { for (auto *v : volumes) delete v; volumes.clear(); }
 
     bool empty() const { return volumes.empty(); }
@@ -516,8 +609,9 @@ public:
 
     // returns true if all the volumes are completely contained in the print volume
     // returns the containment state in the given out_state, if non-null
-    bool check_outside_state(const Slic3r::BuildVolume& build_volume, ModelInstanceEPrintVolumeState* out_state) const;
+    bool check_outside_state(const Slic3r::BuildVolume& build_volume, ModelInstanceEPrintVolumeState* out_state, ObjectFilamentResults* object_results) const;
     void reset_outside_state();
+    bool check_wipe_tower_outside_state(const Slic3r::BuildVolume &build_volume, int plate_id) const;
     // Snapmaker: 检查是否有任何 volume 靠近边界（螺旋抬升风险）
     bool is_any_volume_near_boundary_for_spiral_lift() const;
 

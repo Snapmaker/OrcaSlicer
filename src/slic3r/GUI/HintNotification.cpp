@@ -5,6 +5,7 @@
 #include "GUI_ObjectList.hpp"
 #include "GLCanvas3D.hpp"
 #include "MainFrame.hpp"
+#include "Preferences.hpp"
 #include "Tab.hpp"
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/Utils.hpp"
@@ -115,7 +116,8 @@ namespace {
 			ConfigOptionMode config_mode = wxGetApp().get_mode();
 			if (config_mode == ConfigOptionMode::comSimple)        return (tag == "simple" ? TagCheckAffirmative : TagCheckNegative);
 			else if (config_mode == ConfigOptionMode::comAdvanced) return (tag == "advanced" ? TagCheckAffirmative : TagCheckNegative);
-			//else if (config_mode == ConfigOptionMode::comDevelop)   return (tag == "develop" ? TagCheckAffirmative : TagCheckNegative);
+			else if (config_mode == ConfigOptionMode::comExpert || config_mode == ConfigOptionMode::comDevelop)
+				return (tag == "expert" ? TagCheckAffirmative : TagCheckNegative);
 		}
 		return TagCheckNotCompatible;
 	}
@@ -317,8 +319,12 @@ void HintDatabase::init()
 }
 void HintDatabase::init_random_hint_id()
 {
-	srand(time(NULL));
-	m_hint_id = rand() % m_loaded_hints.size();
+    if (m_loaded_hints.empty()) {
+        m_hint_id = 0;
+        return;
+    }
+    srand(time(NULL));
+    m_hint_id = rand() % m_loaded_hints.size();
 }
 void HintDatabase::load_hints_from_file(const boost::filesystem::path& path)
 {
@@ -443,9 +449,8 @@ void HintDatabase::load_hints_from_file(const boost::filesystem::path& path)
 					// open preferences
 				}
 				else if (dict["hypertext_type"] == "preferences") {
-					std::string	page = dict["hypertext_preferences_page"];
 					std::string	item = dict["hypertext_preferences_item"];
-					HintData	hint_data{ id_string, text1, weight, was_displayed, hypertext_text, follow_text, disabled_tags, enabled_tags, false, documentation_link, img_url, [page, item]() { wxGetApp().open_preferences(1, page); } };// 1 is to modify
+					HintData	hint_data{ id_string, text1, weight, was_displayed, hypertext_text, follow_text, disabled_tags, enabled_tags, false, documentation_link, img_url, [item]() { wxGetApp().open_preferences(PreferencesTab::Control, item); } };
 					m_loaded_hints.emplace_back(hint_data);
 				}
 				else if (dict["hypertext_type"] == "plater") {
@@ -1013,7 +1018,7 @@ void NotificationManager::HintNotification::render_preferences_button(ImGuiWrapp
 		ImGui::PushStyleColor(ImGuiCol_Border, { 0,0,0,0 });
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 8 * scale, 1 * scale });
 		ImGui::BeginTooltip();
-		imgui.text(_u8L("Open Preferences."));
+		imgui.text(_u8L("Open Preferences"));
 		ImGui::EndTooltip();
 		ImGui::PopStyleColor(2);
 		ImGui::PopStyleVar();
@@ -1059,7 +1064,7 @@ void NotificationManager::HintNotification::render_right_arrow_button(ImGuiWrapp
 		ImGui::PushStyleColor(ImGuiCol_Border, { 0,0,0,0 });
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 8 * scale, 1 * scale });
 		ImGui::BeginTooltip();
-		imgui.text(_u8L("Open next tip."));
+		imgui.text(_u8L("Open next tip"));
 		ImGui::EndTooltip();
 		ImGui::PopStyleColor(2);
 		ImGui::PopStyleVar();
@@ -1112,7 +1117,7 @@ void NotificationManager::HintNotification::render_documentation_button(ImGuiWra
 		ImGui::PushStyleColor(ImGuiCol_Border, { 0,0,0,0 });
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 8 * scale, 1 * scale });
 		ImGui::BeginTooltip();
-		imgui.text(_u8L("Open Documentation in web browser."));
+		imgui.text(_u8L("Open documentation in web browser"));
 		ImGui::EndTooltip();
 		ImGui::PopStyleColor(2);
 		ImGui::PopStyleVar();

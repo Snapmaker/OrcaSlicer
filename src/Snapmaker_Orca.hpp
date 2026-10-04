@@ -1,6 +1,8 @@
 #ifndef SLIC3R_HPP
 #define SLIC3R_HPP
 
+#include <set>
+
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Model.hpp"
 
@@ -85,6 +87,11 @@ typedef struct _printer_plate_info {
     int                 exclude_depth{0};
     int                 exclude_x{0};
     int                 exclude_y{0};
+
+    int                 wrapping_width{0};
+    int                 wrapping_depth{0};
+    int                 wrapping_x{0};
+    int                 wrapping_y{0};
 }printer_plate_info_t;
 
 typedef struct _plate_obj_size_info {
@@ -108,6 +115,8 @@ private:
     std::vector<std::string>    m_input_files;
     std::vector<std::string>    m_actions;
     std::vector<std::string>    m_transforms;
+    // Options the user typed; setup() fills the CLI's own options with defaults afterwards.
+    std::set<std::string>       m_given_option_keys;
     std::vector<Model>          m_models;
 
     bool setup(int argc, char **argv);

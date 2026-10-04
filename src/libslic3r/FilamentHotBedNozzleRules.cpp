@@ -526,12 +526,15 @@ bool FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch_detail(const P
         }
 
         const std::string preset_name = resolve_filament_preset_full_name(normalized, filament_collection);
-        if (!is_nozzle_filament_warning(nozzle_key_fid, preset_name, cfg.nozzle_type.value))
+        NozzleType nozzle_type_fid = cfg.nozzle_type.values.empty() ?
+                                         NozzleType::ntUndefine :
+                                         NozzleType(cfg.nozzle_type.get_at(std::min(size_t(nd_idx), cfg.nozzle_type.values.size() - 1)));
+        if (!is_nozzle_filament_warning(nozzle_key_fid, preset_name, nozzle_type_fid))
             continue;
 
         out.has_mismatch           = true;
         out.nozzle_diameter_mm     = nozzle_diameter_mm_display(cur_mm);
-        auto nit                   = NozzleTypeEumnToStr.find(cfg.nozzle_type.value);
+        auto nit                   = NozzleTypeEumnToStr.find(nozzle_type_fid);
         out.nozzle_type_key        = (nit != NozzleTypeEumnToStr.end()) ? nit->second : std::string("undefine");
         out.filament_preset_name   = preset_name;
         return true;

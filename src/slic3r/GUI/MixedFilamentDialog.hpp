@@ -2,6 +2,7 @@
 
 #include "GUI_Utils.hpp"
 #include "libslic3r/MixedFilament.hpp"
+#include "libslic3r/FilamentMixer.hpp"
 
 #include <wx/wx.h>
 #include <wx/statline.h>
@@ -27,6 +28,21 @@ namespace Slic3r { namespace GUI {
 class MixedGradientSelector;
 class MixedColorMatchPanel;
 class MatchRangeSlider;
+
+// Plain result record shared with the color-decompose and texture-import flows
+// (create_mixed_filament_from_result() and friends). Kept identical to the
+// mainline definition; this dialog itself reports Slic3r::MixedFilament.
+struct MixedFilamentResult {
+    std::vector<unsigned int> components;   // 1-based physical filament indices
+    std::vector<int>          ratios;       // percentages, sum = 100
+    bool gradient_enabled   = false;
+    int  gradient_direction = 0;            // 0 = A→B, 1 = B→A  (only for 2-color)
+    bool per_part_gradient  = false;        // valid only when gradient_enabled == true
+    // Optional Photoshop-style custom curve overriding the linear A→B gradient.
+    // Empty -> use linear (gradient_direction). Non-empty -> cubic Hermite over [0,1]^2
+    // with optional per-anchor tangent overrides (see GradientAnchor).
+    std::vector<GradientAnchor> gradient_curve;
+};
 
 class MixedFilamentDialog : public DPIDialog
 {

@@ -1,4 +1,4 @@
-#include <catch2/catch.hpp>
+#include <catch2/catch_all.hpp>
 
 #include "libslic3r/CustomGCode.hpp"
 
@@ -12,7 +12,7 @@ TEST_CASE("Custom layer tool changes keep mixed virtual filament ids", "[CustomG
     const auto tool_changes = CustomGCode::custom_tool_changes(info, 6);
 
     REQUIRE(tool_changes.size() == 1);
-    CHECK(tool_changes.front().first == Approx(1.25));
+    CHECK(tool_changes.front().first == Catch::Approx(1.25));
     CHECK(tool_changes.front().second == 5u);
 }
 

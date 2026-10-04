@@ -18,6 +18,7 @@ using LayerRegionPtrs = std::vector<LayerRegion*>;
 class PrintRegion;
 class PrintRegionConfig;
 class PrintObject;
+class Print;
 
 // Snapmaker mixed filament: resolve a configured 1-based filament id to the physical filament
 // actually printing on this layer (0 "Default" passes through unchanged). The infill variant
@@ -31,6 +32,10 @@ namespace FillAdaptive {
 
 namespace FillLightning {
     class Generator;
+};
+
+namespace sla {
+    class IndexedMesh;
 };
 
 class LayerRegion
@@ -123,6 +128,7 @@ public:
     const Layer* combined_lower_layer() const;
     // Shape of this layer that its combined group does not print; classifies exposed step faces.
     const ExPolygons& combined_away_exposed() const { return m_combined_away_exposed; }
+    const ExPolygons& void_fill() const { return m_void_fill; }
 
     // ORCA: walls-only pitch (PrintObject::wall_layer_height_multiplier()). Number of object
     // layers whose walls this region's perimeters cover here: > 1 on the top layer of a wall run
@@ -167,6 +173,9 @@ private:
     unsigned short     m_combined_layer_count { 1 };
     double             m_combined_height { 0. };
     ExPolygons         m_combined_away_exposed;
+    // ORCA: set by PrintObject::apply_extruder_layer_heights(): area of this layer given to this
+    // region to fill the void under a neighbor's run (see void_fill()); prints as solid infill.
+    ExPolygons         m_void_fill;
     // ORCA: set by PrintObject::apply_extruder_layer_heights(), see wall_combined_count() / wall_combined_height().
     unsigned short     m_wall_combined_count { 1 };
     double             m_wall_combined_height { 0. };
@@ -211,9 +220,14 @@ public:
     ExPolygons 				 lslices;
     ExPolygons 				 lslices_extrudable;  // BBS: the extrudable part of lslices used for tree support
     std::vector<BoundingBox> lslices_bboxes;
+    // Orca: for separated infills / per-model centering. Aligned with lslices: for each island, the
+    // full bounding box of the 3D connected body (across all layers) it belongs to. Populated by
+    // PrintObject::infill() only when the feature is used; empty otherwise.
+    std::vector<BoundingBox> lslices_separated_component_bboxes;
 
     // BBS
     ExPolygons              loverhangs;
+    std::vector<std::pair<ExPolygon, int>> loverhangs_with_type;
     BoundingBox             loverhangs_bbox;
     size_t                  region_count() const { return m_regions.size(); }
     const LayerRegion*      get_region(int idx) const { return m_regions[idx]; }
@@ -241,7 +255,7 @@ public:
     }
 
     // Whether two regions can be printed in a continues perimeter
-    static bool             is_perimeter_compatible(const PrintRegion& a, const PrintRegion& b);
+    static bool             is_perimeter_compatible(const Print& print, const PrintRegion& a, const PrintRegion& b);
     void                    make_perimeters();
     // Phony version of make_fills() without parameters for Perl integration only.
     void                    make_fills() { this->make_fills(nullptr, nullptr); }
@@ -250,6 +264,12 @@ public:
                                                                            FillAdaptive::Octree *support_fill_octree,
                                                                            FillLightning::Generator* lightning_generator) const;
     void 					make_ironing();
+    // Returns the filament id (1-based) the region is ironed with, or -1 when the
+    // region is not ironed.
+    static int              choose_ironing_extruder(const PrintRegionConfig &cfg,
+                                                    bool spiral_mode,
+                                                    bool is_topmost_layer);
+    void                    make_contour_z(const sla::IndexedMesh &mesh);
 
     void                    export_region_slices_to_svg(const char *path) const;
     void                    export_region_fill_surfaces_to_svg(const char *path) const;
@@ -299,6 +319,8 @@ public:
             }
         return idx;
     }
+
+    size_t get_extruder_id(unsigned int filament_id) const;
 
 protected:
     friend class PrintObject;
@@ -374,6 +396,7 @@ protected:
         ExPolygon *area;
         int        type;
         int interface_id = 0;
+        bool interface_as_base = false;
         coordf_t   dist_to_top; // mm dist to top
         bool need_infill = false;
         bool need_extra_wall = false;

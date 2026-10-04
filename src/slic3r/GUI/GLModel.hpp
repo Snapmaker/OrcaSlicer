@@ -13,6 +13,7 @@ namespace Slic3r {
 
 class TriangleMesh;
 class Polygon;
+class GLShaderProgram;
 using Polygons = std::vector<Polygon, PointsAllocator<Polygon>>;
 class BuildVolume;
 
@@ -131,6 +132,7 @@ namespace GUI {
         struct RenderData
         {
             Geometry geometry;
+            unsigned int vao_id{ 0 };
             unsigned int vbo_id{ 0 };
             unsigned int ibo_id{ 0 };
             size_t vertices_count{ 0 };
@@ -169,6 +171,10 @@ namespace GUI {
         void init_from(Geometry&& data);
         void init_from(const TriangleMesh& mesh);
         void init_from(const indexed_triangle_set& its);
+        // Snapmaker Orca: the render geometry of a mesh as plain CPU data (flat normals, or per-corner
+        // smooth normals), empty for an empty mesh. Reads no preference and makes no OpenGL call, so
+        // it may run on any thread; init_from(const indexed_triangle_set&) is built on it.
+        static Geometry make_geometry(const indexed_triangle_set& its, bool smooth_normals_enabled);
         void init_from(const Polygons& polygons, float z);
         bool init_from_file(const std::string& filename);
 
@@ -176,8 +182,8 @@ namespace GUI {
         const ColorRGBA& get_color() const { return m_render_data.geometry.color; }
 
         void reset();
-        void render();
-        void render(const std::pair<size_t, size_t>& range);
+        void render(GLShaderProgram* shader = nullptr);
+        void render(const std::pair<size_t, size_t>& range, GLShaderProgram* shader = nullptr);
         void render_instanced(unsigned int instances_vbo, unsigned int instances_count);
 
         bool is_initialized() const { return vertices_count() > 0 && indices_count() > 0; }
@@ -259,4 +265,3 @@ namespace GUI {
 } // namespace Slic3r
 
 #endif // slic3r_GLModel_hpp_
-

@@ -219,7 +219,7 @@ void create_volume(TriangleMesh &&mesh, const ObjectID& object_id, const ModelVo
 /// Create projection for cut surface from mesh
 /// </summary>
 /// <param name="tr">Volume transformation in object</param>
-/// <param name="shape_scale">Convert shape to milimeters</param>
+/// <param name="shape_scale">Convert shape to millimeters</param>
 /// <param name="z_range">Bounding box 3d of model volume for projection ranges</param> 
 /// <returns>Orthogonal cut_projection</returns>
 OrthoProject create_projection_for_cut(Transform3d tr, double shape_scale, const std::pair<float, float> &z_range);
@@ -299,7 +299,7 @@ CreateObjectJob::CreateObjectJob(DataCreateObject &&input): m_input(std::move(in
 void CreateObjectJob::process(Ctl &ctl) 
 {
     if (!check(m_input))
-        throw JobException("Bad input data for EmbossCreateObjectJob.");
+        throw JobException(_u8L("Bad input data for EmbossCreateObjectJob."));
 
     // can't create new object with using surface
     if (m_input.base->shape.projection.use_surface)
@@ -360,10 +360,10 @@ void CreateObjectJob::finalize(bool canceled, std::exception_ptr &eptr)
         ModelObject *new_object = model.add_object();
         new_object->name = m_input.base->volume_name;
         new_object->add_instance(); // each object should have at list one instance
-
+        new_object->config.set_key_value("extruder", new ConfigOptionInt(1));
         ModelVolume *new_volume = new_object->add_volume(std::move(m_result));
         // set a default extruder value, since user can't add it manually
-        new_volume->config.set_key_value("extruder", new ConfigOptionInt(0));
+        new_volume->config.set_key_value("extruder", new ConfigOptionInt(1));
         // write emboss data into volume
         m_input.base->write(*new_volume);
 
@@ -399,13 +399,13 @@ UpdateJob::UpdateJob(DataUpdate&& input): m_input(std::move(input)){ assert(chec
 void UpdateJob::process(Ctl &ctl)
 {
     if (!check(m_input))
-        throw JobException("Bad input data for EmbossUpdateJob.");
+        throw JobException(_u8L("Bad input data for EmbossUpdateJob."));
 
     auto was_canceled = ::was_canceled(ctl, *m_input.base);
     m_result = ::try_create_mesh(*m_input.base, was_canceled);
     if (was_canceled()) return;
     if (m_result.its.empty())
-        throw JobException("Created text volume is empty. Change text or font.");
+        throw JobException(_u8L("Created text volume is empty. Change text or font."));
 }
 
 void UpdateJob::finalize(bool canceled, std::exception_ptr &eptr)
@@ -428,16 +428,18 @@ void UpdateJob::update_volume(ModelVolume *volume, TriangleMesh &&mesh, const Da
     volume->set_new_unique_id();
     volume->calculate_convex_hull();
 
-    // write data from base into volume
-    base.write(*volume);
-
     GUI_App &app = wxGetApp(); // may be move to input
+
     if (volume->name != base.volume_name) {
-        volume->name = base.volume_name;
+        // write data from base into volume
+        base.write(*volume);
 
         const ObjectList *obj_list = app.obj_list();
         if (obj_list != nullptr)
             update_name_in_list(*obj_list, *volume);
+    } else {
+        // write data from base into volume
+        base.write(*volume);
     }
 
     ModelObject *object = volume->get_object();
@@ -461,7 +463,7 @@ CreateSurfaceVolumeJob::CreateSurfaceVolumeJob(CreateSurfaceVolumeData &&input)
 
 void CreateSurfaceVolumeJob::process(Ctl &ctl) {
     if (!check(m_input)) 
-        throw JobException("Bad input data for CreateSurfaceVolumeJob.");
+        throw JobException(_u8L("Bad input data for CreateSurfaceVolumeJob."));
     m_result = cut_surface(*m_input.base, m_input, was_canceled(ctl, *m_input.base));
 }
 
@@ -483,7 +485,7 @@ UpdateSurfaceVolumeJob::UpdateSurfaceVolumeJob(UpdateSurfaceVolumeData &&input)
 void UpdateSurfaceVolumeJob::process(Ctl &ctl)
 {
     if (!check(m_input)) 
-        throw JobException("Bad input data for UseSurfaceJob.");
+        throw JobException(_u8L("Bad input data for UseSurfaceJob."));
     m_result = cut_surface(*m_input.base, m_input, was_canceled(ctl, *m_input.base));
 }
 

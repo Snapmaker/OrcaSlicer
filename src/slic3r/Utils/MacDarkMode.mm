@@ -1,7 +1,9 @@
 #import "MacDarkMode.hpp"
 #include "../GUI/Widgets/Label.hpp"
 
+#include "wx/graphics.h"
 #include "wx/osx/core/cfstring.h"
+#include "wx/osx/private.h"
 
 #import <algorithm>
 
@@ -11,6 +13,7 @@
 #import <WebKit/WebKit.h>
 
 #include <objc/runtime.h>
+#include <objc/message.h>
 
 @interface MacDarkMode : NSObject {}
 @end
@@ -57,7 +60,7 @@ void set_miniaturizable(void * window)
     while(viewObject = (NSView *)[viewEnum nextObject]) {
         if([viewObject class] == [NSTextField self]) {
             //[(NSTextField*)viewObject setTextColor :  NSColor.whiteColor];
-            mainframe_text_field = viewObject;
+            mainframe_text_field = (NSTextField*)viewObject;
         }
     }
 }
@@ -74,7 +77,7 @@ void set_title_colour_after_set_title(void * window)
   while(viewObject = (NSView *)[viewEnum nextObject]) {
     if([viewObject class] == [NSTextField self]) {
       [(NSTextField*)viewObject setTextColor : NSColor.whiteColor];
-      mainframe_text_field = viewObject;
+      mainframe_text_field = (NSTextField*)viewObject;
     }
   }
 
@@ -98,6 +101,64 @@ void WKWebView_setTransparentBackground(void * web)
     WKWebView * webView = (WKWebView*)web;
     [webView layer].backgroundColor = [NSColor clearColor].CGColor;
     [webView registerForDraggedTypes: @[NSFilenamesPboardType]];
+}
+
+void WKWebViewConfiguration_keepActiveWhenHidden(void * configuration)
+{
+    // The embedded Flutter web views are created hidden (and some at zero size)
+    // while their page loads. Modern WebKit suspends scheduling for inactive
+    // pages, which under the wxWidgets 3.3 WKWebView hosting leaves the async
+    // flutter_bootstrap.js load undispatched and the engine never boots - the
+    // page stays blank. Opt these views out of inactive throttling so they
+    // keep loading and rendering like they did under wxWidgets 3.1.
+    //
+    // This MUST be applied to the WKWebViewConfiguration BEFORE the WKWebView
+    // is created: -[WKWebView configuration] returns a copy, so setting the
+    // policy through an existing web view has no effect.
+    WKWebViewConfiguration * config = (WKWebViewConfiguration*)configuration;
+    if (@available(macOS 14.0, *)) {
+        config.preferences.inactiveSchedulingPolicy = WKInactiveSchedulingPolicyNone;
+    }
+    // WebKit SPI used by apps that run web content in offscreen/hidden views:
+    // keeps the page's activity state at foreground priority regardless of the
+    // hosting view's visibility. Guarded so it degrades gracefully if the SPI
+    // disappears from a future WebKit.
+    // WebKit SPI used by apps that run web content in offscreen/hidden views:
+    // keeps the page's activity state at foreground priority regardless of the
+    // hosting view's visibility. Not present on macOS 26/27 WebKit (verified),
+    // but harmless and potentially useful on older systems; guarded so it
+    // degrades gracefully.
+    SEL fgSel = NSSelectorFromString(@"_setAlwaysRunsAtForegroundPriority:");
+    if ([config respondsToSelector:fgSel]) {
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(config, fgSel, YES);
+    }
+}
+
+void WKWebView_keepActiveWhenHidden(void * web)
+{
+    // Post-creation companion to WKWebViewConfiguration_keepActiveWhenHidden:
+    // disable occlusion-driven visibility demotion on the created web view.
+    // Verified present on macOS 27 WebKit; with it, an occluded-but-shown
+    // page reports document.visibilityState == "visible".
+    WKWebView * webView = (WKWebView*)web;
+    SEL occlSel = NSSelectorFromString(@"_setWindowOcclusionDetectionEnabled:");
+    if ([webView respondsToSelector:occlSel]) {
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(webView, occlSel, NO);
+    }
+}
+
+// Force a WKWebView to re-lay-out and repaint. Needed for chrome-less popups: the window is
+// transparent, so a WKWebView whose layer has no pending frame leaves the whole window invisible
+// until the user generates input (scroll/arrow). setNeedsDisplay alone does not always reach the
+// web-content layer, so flag layout and both the view and its layer.
+void WKWebView_force_display(void * web)
+{
+    WKWebView * webView = (WKWebView*)web;
+    if (!webView)
+        return;
+    [webView setNeedsLayout:YES];
+    [webView setNeedsDisplay:YES];
+    [[webView layer] setNeedsDisplay];
 }
 
 void openFolderForFile(wxString const & file)
@@ -334,10 +395,27 @@ bool addObserver = false;
 }
 @end
 
+// Orca: A Shift-trackpad pan belongs to one GL view; sharing its lifecycle across views
+// could make a gesture reuse another canvas's world-space anchor.
+static char scroll_pan_active_key;
+static char gesture_handler_key;
+
+static wxEvtHandler* get_gesture_handler(NSView* view)
+{
+    return static_cast<wxEvtHandler*>([objc_getAssociatedObject(view, &gesture_handler_key) pointerValue]);
+}
+
+static bool is_scroll_pan_active(NSView* view)
+{
+    return [objc_getAssociatedObject(view, &scroll_pan_active_key) boolValue];
+}
+
+static void set_scroll_pan_active(NSView* view, bool active)
+{
+    objc_setAssociatedObject(view, &scroll_pan_active_key, active ? @YES : nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
 
 @implementation wxNSCustomOpenGLView (Gesture)
-
-wxEvtHandler * _gestureHandler = nullptr;
 
 - (void) onGestureMove: (NSPanGestureRecognizer*) gesture
 {
@@ -364,22 +442,43 @@ wxEvtHandler * _gestureHandler = nullptr;
 - (void) postEvent: (wxGestureEvent &) evt withGesture: (NSGestureRecognizer* ) gesture
 {
     NSPoint pos = [gesture locationInView: self];
-    evt.SetPosition({(int) pos.x, (int) pos.y});
+    evt.SetPosition(wxFromNSPoint(self, pos));
     if (gesture.state == NSGestureRecognizerStateBegan)
         evt.SetGestureStart();
     else if (gesture.state == NSGestureRecognizerStateEnded)
         evt.SetGestureEnd();
-    _gestureHandler->ProcessEvent(evt);
+    if (wxEvtHandler* handler = get_gesture_handler(self))
+        handler->ProcessEvent(evt);
 }
 
 - (void) scrollWheel2:(NSEvent *)event
 {
     bool shiftDown = [event modifierFlags] & NSShiftKeyMask;
-    if (_gestureHandler && shiftDown && event.hasPreciseScrollingDeltas) {
+    wxEvtHandler* handler = get_gesture_handler(self);
+    if (handler && shiftDown && event.hasPreciseScrollingDeltas) {
         wxPanGestureEvent evt;
-        evt.SetDelta({-(int)[event scrollingDeltaX], -	(int)[event scrollingDeltaY]});
-        _gestureHandler->ProcessEvent(evt);
+        // NSOpenGLView uses bottom-left coordinates; wx gestures use top-left coordinates.
+        const wxPoint pos = wxFromNSPoint(self, [self convertPoint:[event locationInWindow] fromView:nil]);
+        const wxPoint delta(-(int)[event scrollingDeltaX], -(int)[event scrollingDeltaY]);
+        // Orca: GLCanvas3D derives the anchor position as position - delta, so synthesize
+        // the post-delta position from the native cursor coordinate.
+        evt.SetPosition(pos + delta);
+        evt.SetDelta(delta);
+        // Orca: Preserve the anchor throughout a trackpad scroll, including its momentum events.
+        // Keep it after phase Ended: momentum may follow. The next Began replaces it.
+        const NSEventPhase phase = event.phase;
+        const NSEventPhase momentum_phase = event.momentumPhase;
+        const bool unphased = phase == NSEventPhaseNone && momentum_phase == NSEventPhaseNone;
+        if (!is_scroll_pan_active(self) || unphased || (phase & (NSEventPhaseMayBegin | NSEventPhaseBegan)))
+            evt.SetGestureStart();
+        if (unphased || (phase & NSEventPhaseCancelled) ||
+            (momentum_phase & (NSEventPhaseEnded | NSEventPhaseCancelled)))
+            evt.SetGestureEnd();
+        set_scroll_pan_active(self, !evt.IsGestureEnd());
+        handler->ProcessEvent(evt);
     } else {
+        // Orca: Switching away from Shift-pan must not reuse its depth when Shift is pressed again.
+        set_scroll_pan_active(self, false);
         [self scrollWheel2: event];
     }
 }
@@ -401,7 +500,9 @@ wxEvtHandler * _gestureHandler = nullptr;
 //    [self addGestureRecognizer:pan];
 //    [self addGestureRecognizer:magnification];
 //    [self addGestureRecognizer:rotation];
-    _gestureHandler = handler;
+    objc_setAssociatedObject(self, &gesture_handler_key, handler ? [NSValue valueWithPointer:handler] : nil,
+        OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    set_scroll_pan_active(self, false);
 }
 
 @end
@@ -416,4 +517,13 @@ void initGestures(void * view,  wxEvtHandler * handler)
 }
 
 }
+}
+
+void StaticGroup_layoutBadge(void * group, void * badge)
+{
+    NSView * vg = (NSView *)group;
+    NSView * vb = (NSView *)badge;
+    vb.translatesAutoresizingMaskIntoConstraints = NO;
+    [vg addConstraint: [NSLayoutConstraint constraintWithItem:vb attribute:NSLayoutAttributeTop relatedBy:NSLayoutRelationEqual toItem:vg attribute:NSLayoutAttributeTop multiplier:1.0 constant:15]];
+    [vg addConstraint: [NSLayoutConstraint constraintWithItem:vb attribute:NSLayoutAttributeRight relatedBy:NSLayoutRelationEqual toItem:vg attribute:NSLayoutAttributeRight multiplier:1.0 constant:-1]];
 }

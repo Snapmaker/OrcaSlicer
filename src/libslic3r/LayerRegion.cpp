@@ -4,6 +4,7 @@
 #include "Exception.hpp"
 #include "Geometry.hpp"
 #include "PerimeterGenerator.hpp"
+#include "Point.hpp"
 #include "Print.hpp"
 #include "GCode/ToolOrdering.hpp"
 #include "Surface.hpp"
@@ -115,19 +116,26 @@ Flow LayerRegion::flow(FlowRole role, double layer_height, unsigned int filament
 Flow LayerRegion::flow(FlowRole role, double layer_height, bool use_initial_layer_width, unsigned int filament_id) const
 {
     const PrintConfig          &print_config = m_layer->object()->print()->config();
+    // The filament that actually prints (filament_id, when given), which may differ from the role's
+    // default filament mapping.
+    const unsigned int filament = filament_id > 0 ? filament_id : this->extruder(role);
+    // Snapmaker Orca: the line widths are columns per tool head, read at the column of the head
+    // whose nozzle resolves the width (Print::width_slot; column and nozzle name one head).
+    const size_t column = m_layer->object()->print()->width_slot(filament);
     ConfigOptionFloatOrPercent config_width;
-    if (use_initial_layer_width && print_config.initial_layer_line_width.value > 0) {
-        config_width = print_config.initial_layer_line_width;
+    const ConfigOptionFloatOrPercent initial_layer_width = Flow::width_at(print_config.initial_layer_line_width, column);
+    if (use_initial_layer_width && initial_layer_width.value > 0) {
+        config_width = initial_layer_width;
     } else if (role == frExternalPerimeter) {
-        config_width = m_region->config().outer_wall_line_width;
+        config_width = Flow::width_at(m_region->config().outer_wall_line_width, column);
     } else if (role == frPerimeter) {
-        config_width = m_region->config().inner_wall_line_width;
+        config_width = Flow::width_at(m_region->config().inner_wall_line_width, column);
     } else if (role == frInfill) {
-        config_width = m_region->config().sparse_infill_line_width;
+        config_width = Flow::width_at(m_region->config().sparse_infill_line_width, column);
     } else if (role == frSolidInfill) {
-        config_width = m_region->config().internal_solid_infill_line_width;
+        config_width = Flow::width_at(m_region->config().internal_solid_infill_line_width, column);
     } else if (role == frTopSolidInfill) {
-        config_width = m_region->config().top_surface_line_width;
+        config_width = Flow::width_at(m_region->config().top_surface_line_width, column);
     } else {
         BOOST_LOG_TRIVIAL(error) << "Unknown role in LayerRegion::flow: " << int(role);
         assert(false);
@@ -135,11 +143,11 @@ Flow LayerRegion::flow(FlowRole role, double layer_height, bool use_initial_laye
     }
 
     if (config_width.value == 0)
-        config_width = m_layer->object()->config().line_width;
+        config_width = Flow::width_at(m_layer->object()->config().line_width, column);
 
     // Width resolves against the nozzle of the filament that actually prints (filament_id, when given),
     // which may differ from the role's default filament mapping.
-    const auto nozzle_diameter = float(print_config.nozzle_diameter.get_at((filament_id > 0 ? filament_id : this->extruder(role)) - 1));
+    const auto nozzle_diameter = float(print_config.nozzle_diameter.get_at(filament - 1));
     return Flow::new_from_config_width(role, config_width, nozzle_diameter, float(layer_height));
 }
 
@@ -149,17 +157,33 @@ Flow LayerRegion::bridging_flow(FlowRole role, bool thick_bridge, unsigned int f
     const PrintRegionConfig &region_config  = region.config();
     const PrintObject       &print_object   = *this->layer()->object();
     Flow bridge_flow;
-    auto nozzle_diameter = float(print_object.print()->config().nozzle_diameter.get_at((filament_id > 0 ? filament_id : this->extruder(role)) - 1));
+    // The nozzle resolves against the filament that actually prints (filament_id, when given), which may
+    // differ from the role's default filament mapping.
+    // Here this->extruder(role) - 1 may underflow to MAX_INT, but then the get_at() will fall back to zero'th element, so everything is all right.
+    const unsigned int filament = filament_id > 0 ? filament_id : this->extruder(role);
+    auto nozzle_diameter = float(print_object.print()->config().nozzle_diameter.get_at(filament - 1));
+    // Snapmaker Orca: the bridge line width is a column per tool head (Print::width_slot).
+    const size_t column = print_object.print()->width_slot(filament);
+    const ConfigOptionFloatOrPercent  bridge_width_opt  = Flow::width_at(region_config.bridge_line_width, column);
+    const double                      bridge_width      = bridge_width_opt.get_abs_value(nozzle_diameter);
+    const bool                        has_bridge_width  = bridge_width > 0.;
+    const double                      bridge_flow_ratio = region_config.bridge_flow;
+
+
     if (thick_bridge) {
         // The old Slic3r way (different from all other slicers): Use rounded extrusions.
         // Get the configured nozzle_diameter for the extruder associated to the flow role requested.
-        // Here this->extruder(role) - 1 may underflow to MAX_INT, but then the get_at() will follback to zero'th element, so everything is all right.
-        // Applies default bridge spacing.
-        bridge_flow = Flow::bridging_flow(float(sqrt(region_config.bridge_flow)) * nozzle_diameter, nozzle_diameter);
+        float thread_diameter = has_bridge_width ? float(bridge_width) : nozzle_diameter;
+        if (bridge_flow_ratio > 0.)
+            thread_diameter *= float(sqrt(bridge_flow_ratio));
+        bridge_flow = Flow::bridging_flow(thread_diameter, nozzle_diameter);
     } else {
         // The same way as other slicers: Use normal extrusions. Apply bridge_flow while maintaining the original spacing.
         // Combined layer groups stamp their full thickness on the surface; the base flow must be resolved at that height.
-        bridge_flow = this->flow(role, layer_height > 0. ? layer_height : m_layer->height, filament_id).with_flow_ratio(region_config.bridge_flow);
+        Flow base_flow = this->flow(role, layer_height > 0. ? layer_height : m_layer->height, filament_id);
+        if (has_bridge_width)
+            base_flow = Flow(float(bridge_width), base_flow.height(), nozzle_diameter);
+        bridge_flow = base_flow.with_flow_ratio(bridge_flow_ratio);
     }
     return bridge_flow;
 
@@ -228,6 +252,13 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
         (this->layer()->id() >= size_t(region_config.bottom_shell_layers.value) &&
          this->layer()->print_z >= region_config.bottom_shell_thickness - EPSILON);
 
+    // ORCA: infill direction alignment to the model transform (Orca 2.5).
+    double model_rotation_rad = 0.0;
+    if (region_config.align_infill_direction_to_model) {
+        auto m = this->layer()->object()->trafo().matrix();
+        model_rotation_rad = std::atan2((double)m(1, 0), (double)m(0, 0));
+    }
+
     // ORCA: on the top layer of a combined group all perimeters extrude with the whole group's
     // height. On layers of a walls-only run (wall_combined_count()) the walls are generated with
     // the run height on every run layer - so the fill boundaries line up with the walls printed
@@ -247,6 +278,7 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
             &this->layer()->object()->config(),
             &print_config,
             spiral_mode,
+            model_rotation_rad,
 
             // output:
             perimeters,
@@ -256,11 +288,6 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
             no_overlap
         );
 
-        // Detect overhangs / bridges against the layer below the whole combined group or wall run
-        // (wall_combined_lower_layer() == lower_layer for regular regions).
-        if (lower_layer != nullptr)
-            // Cummulative sum of polygons over all the regions.
-            g.lower_slices = &lower_layer->lslices;
         if (this->layer()->upper_layer != NULL) {
             g.upper_slices             = &this->layer()->upper_layer->lslices;
             g.upper_slices_same_region = &this->layer()->upper_layer->get_region(region_id)->slices;
@@ -274,8 +301,19 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
         g.ext_overhang_flow     = this->bridging_flow(frPerimeter, object_config.thick_bridges,
                                                       (unsigned int)std::max(0, perimeter_config.outer_wall_filament_id.value), height);
         g.solid_infill_flow     = this->flow(frSolidInfill, height);
+        g.sparse_infill_flow    = this->flow(frInfill, height);
         // Gap fill dispatches to the outer wall filament (LayerTools::extruder()); resolve its width against its nozzle.
         g.gap_fill_flow         = this->flow(frSolidInfill, height, (unsigned int)std::max(0, perimeter_config.outer_wall_filament_id.value));
+
+        // Cumulative sum of polygons over all the regions, less what the lower layer could not print.
+        // ORCA: the overhang reference is the layer below the whole combined group or wall run
+        // (wall_combined_lower_layer() == lower_layer for regular regions). Declared after g so it
+        // outlives the process_*() calls below.
+        ExPolygons lower_slices;
+        if (lower_layer != nullptr) {
+            lower_slices   = g.printable_slices(lower_layer->lslices);
+            g.lower_slices = &lower_slices;
+        }
 
         if (this->layer()->object()->config().wall_generator.value == PerimeterGeneratorType::Arachne && !spiral_mode)
             g.process_arachne();
@@ -711,10 +749,27 @@ void LayerRegion::process_external_surfaces(const Layer *lower_layer, const Poly
     SurfaceCollection bridges;
     {
         BOOST_LOG_TRIVIAL(trace) << "Processing external surface, detecting bridges. layer" << this->layer()->print_z;
-        const double custom_angle = this->region().config().bridge_angle.value;
-        bridges.surfaces = custom_angle > 0 ?
-            expand_merge_surfaces(this->fill_surfaces.surfaces, stBottomBridge, expansion_zones, closing_radius, Geometry::deg2rad(custom_angle)) :
+        // ORCA: Relative/Align Bridge Angle
+        const auto  &region_config    = this->region().config();
+        const double custom_angle_deg = region_config.bridge_angle.value;
+        const bool   relative_angle   = region_config.relative_bridge_angle.value;
+        const double custom_angle_rad = Geometry::deg2rad(custom_angle_deg);
+
+        double align_offset_rad = 0.0;
+        if (region_config.align_infill_direction_to_model) {
+            auto m = this->layer()->object()->trafo().matrix();
+            align_offset_rad = std::atan2((double)m(1, 0), (double)m(0, 0));
+        }
+
+        bridges.surfaces = (custom_angle_deg > 0.0 && !relative_angle) ?
+            expand_merge_surfaces(this->fill_surfaces.surfaces, stBottomBridge, expansion_zones, closing_radius, custom_angle_rad + align_offset_rad) :
             expand_bridges_detect_orientations(this->fill_surfaces.surfaces, expansion_zones, closing_radius);
+        if (custom_angle_deg > 0.0 && relative_angle) {
+            for (Surface &bridge_surface : bridges.surfaces) {
+                if (bridge_surface.bridge_angle >= 0)
+                    bridge_surface.bridge_angle += custom_angle_rad;
+            }
+        }
         BOOST_LOG_TRIVIAL(trace) << "Processing external surface, detecting bridges - done";
 #ifdef SLIC3R_DEBUG_SLICE_PROCESSING
         {
@@ -976,12 +1031,25 @@ void LayerRegion::process_external_surfaces(const Layer *lower_layer, const Poly
                 // would get merged into a single one while they need different directions
                 // also, supply the original expolygon instead of the grown one, because in case
                 // of very thin (but still working) anchors, the grown expolygon would go beyond them
-                double custom_angle = Geometry::deg2rad(this->region().config().bridge_angle.value);
-                if (custom_angle > 0.0) {
-                    bridges[idx_last].bridge_angle = custom_angle;
+                // ORCA: Relative/Align Bridge Angle
+                const auto &region_config   = this->region().config();
+                const double custom_angle_deg = region_config.bridge_angle.value;
+                const bool   relative_angle   = region_config.relative_bridge_angle.value;
+                const double custom_angle_rad = Geometry::deg2rad(custom_angle_deg);
+
+                double align_offset_rad = 0.0;
+                if (region_config.align_infill_direction_to_model) {
+                    auto m = this->layer()->object()->trafo().matrix();
+                    align_offset_rad = std::atan2((double)m(1, 0), (double)m(0, 0));
+                }
+
+                if (custom_angle_deg > 0.0 && !relative_angle) {
+                    bridges[idx_last].bridge_angle = custom_angle_rad + align_offset_rad;
                 } else {
                     auto [bridging_dir, unsupported_dist] = detect_bridging_direction(to_polygons(initial), to_polygons(lower_layer->lslices));
                     bridges[idx_last].bridge_angle = PI + std::atan2(bridging_dir.y(), bridging_dir.x());
+                    if (custom_angle_deg > 0.0 && relative_angle)
+                        bridges[idx_last].bridge_angle += custom_angle_rad;
                 }
 
                 /*

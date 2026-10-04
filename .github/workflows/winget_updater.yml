@@ -1,0 +1,19 @@
+name: Publish to WinGet
+on:
+  release:
+    types: [ released ]
+jobs:
+  publish:
+    # Disabled for the Snapmaker Orca fork: this workflow inherited mainline's
+    # WinGet package identifier (SoftFever.OrcaSlicer) and would publish fork
+    # installers to a third party's package. Set a Snapmaker-owned identifier
+    # below and remove this gate to enable.
+    if: false
+    runs-on: windows-latest
+    steps:
+      - uses: vedantmgoyal9/winget-releaser@main
+        with:
+          identifier: SoftFever.OrcaSlicer
+          version: ${{ github.event.release.tag_name }}
+          token: ${{ secrets.WINGET_TOKEN }}
+          installers-regex: '\.exe$'

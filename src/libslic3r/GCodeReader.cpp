@@ -112,12 +112,29 @@ void GCodeReader::update_coordinates(GCodeLine &gline, std::pair<const char*, co
     PROFILE_FUNC();
     if (*command.first == 'G') {
         int cmd_len = int(command.second - command.first);
+        if (cmd_len == 3 && command.first[1] == '9') {
+            if (command.first[2] == '0') {
+                // G90: absolute XYZ mode
+                m_relative_xyz = false;
+                return;
+            } else if (command.first[2] == '1') {
+                // G91: relative XYZ mode
+                m_relative_xyz = true;
+                return;
+            }
+        }
         //BBS: add support of G2 and G3
         if ((cmd_len == 2 && (command.first[1] == '0' || command.first[1] == '1' || command.first[1] == '2' || command.first[1] == '3')) ||
             (cmd_len == 3 &&  command.first[1] == '9' && command.first[2] == '2')) {
+            const bool is_g92 = (cmd_len == 3 && command.first[1] == '9' && command.first[2] == '2');
             for (size_t i = 0; i < NUM_AXES; ++ i)
-                if (gline.has(Axis(i)))
-                    m_position[i] = gline.value(Axis(i));
+                if (gline.has(Axis(i))) {
+                    // In G91 mode G0/G1/G2/G3 X/Y/Z values are increments; G92 always sets the position.
+                    if (m_relative_xyz && !is_g92 && i <= Z)
+                        m_position[i] += gline.value(Axis(i));
+                    else
+                        m_position[i] = gline.value(Axis(i));
+                }
         }
     }
 }
@@ -231,6 +248,28 @@ bool GCodeReader::parse_file_raw(const std::string &filename, raw_line_callback_
         [](size_t){});
 }
 
+const char* GCodeReader::axis_pos(const char *raw_str, char axis)
+{
+    const char *c = raw_str;
+    // Skip the whitespaces.
+    c = skip_whitespaces(c);
+    // Skip the command.
+    c = skip_word(c);
+    // Up to the end of line or comment.
+    while (! is_end_of_gcode_line(*c)) {
+        // Skip whitespaces.
+        c = skip_whitespaces(c);
+        if (is_end_of_gcode_line(*c))
+            break;
+        // Check the name of the axis.
+        if (*c == axis)
+            return c;
+        // Skip the rest of the word.
+        c = skip_word(c);
+    }
+    return nullptr;
+}
+
 bool GCodeReader::GCodeLine::has(char axis) const
 {
     const char *c = m_raw.c_str();
@@ -249,6 +288,29 @@ bool GCodeReader::GCodeLine::has(char axis) const
             return true;
         // Skip the rest of the word.
         c = skip_word(c);
+    }
+    return false;
+}
+
+std::string_view GCodeReader::GCodeLine::axis_pos(char axis) const
+{
+    const std::string &s = this->raw();
+    const char *c = GCodeReader::axis_pos(this->raw().c_str(), axis);
+    return c ? std::string_view{ c, s.size() - (c - s.data()) } : std::string_view();
+}
+
+bool GCodeReader::GCodeLine::has_value(std::string_view axis_pos, float &value)
+{
+    if (const char *c = axis_pos.data(); c) {
+        // Try to parse the numeric value.
+        double v = 0.;
+        const char *end = axis_pos.data() + axis_pos.size();
+        auto [pend, ec] = fast_float::from_chars(++ c, end, v);
+        if (pend != c && is_end_of_word(*pend)) {
+            // The axis value has been parsed correctly.
+            value = float(v);
+            return true;
+        }
     }
     return false;
 }

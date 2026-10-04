@@ -3,8 +3,8 @@
 
 namespace Slic3r {
 
-double Extruder::m_share_E = 0.;
-double Extruder::m_share_retracted = 0.;
+std::vector<double> Extruder::m_share_E = std::vector<double>(MAXIMUM_EXTRUDER_NUMBER, 0);
+std::vector<double> Extruder::m_share_retracted = std::vector<double>(MAXIMUM_EXTRUDER_NUMBER, 0);
 
 Extruder::Extruder(unsigned int id, GCodeConfig *config, bool share_extruder) :
     m_id(id),
@@ -12,10 +12,28 @@ Extruder::Extruder(unsigned int id, GCodeConfig *config, bool share_extruder) :
     m_share_extruder(share_extruder)
 {
     reset();
-    
+
+    m_config_index = int(m_id);
     // cache values that are going to be called often
     m_e_per_mm3 = this->filament_flow_ratio();
     m_e_per_mm3 /= this->filament_crossection();
+}
+
+void Extruder::set_config_index(int idx)
+{
+    m_config_index = idx < 0 ? int(m_id) : idx;
+    // keep the cached flow term reading the same column as the getters
+    m_e_per_mm3 = this->filament_flow_ratio();
+    m_e_per_mm3 /= this->filament_crossection();
+}
+
+unsigned int Extruder::extruder_id() const
+{
+    assert(m_config);
+    if (m_id < m_config->filament_map.size()) {
+        return m_config->filament_map.get_at(m_id) - 1;
+    }
+    return 0;
 }
 
 double Extruder::extrude(double dE)
@@ -23,11 +41,11 @@ double Extruder::extrude(double dE)
     // BBS
     if (m_share_extruder) {
         if (m_config->use_relative_e_distances)
-            m_share_E = 0.;
-        m_share_E += dE;
+            m_share_E[extruder_id()] = 0.;
+        m_share_E[extruder_id()] += dE;
         m_absolute_E += dE;
         if (dE < 0.)
-            m_share_retracted -= dE;
+            m_share_retracted[extruder_id()] -= dE;
     } else {
         // in case of relative E distances we always reset to 0 before any output
         if (m_config->use_relative_e_distances)
@@ -42,7 +60,7 @@ double Extruder::extrude(double dE)
 
 /* This method makes sure the extruder is retracted by the specified amount
    of filament and returns the amount of filament retracted.
-   If the extruder is already retracted by the same or a greater amount, 
+   If the extruder is already retracted by the same or a greater amount,
    this method is a no-op.
    The restart_extra argument sets the extra length to be used for
    unretraction. If we're actually performing a retraction, any restart_extra
@@ -52,13 +70,13 @@ double Extruder::retract(double length, double restart_extra)
     // BBS
     if (m_share_extruder) {
         if (m_config->use_relative_e_distances)
-            m_share_E = 0.;
-        double to_retract = std::max(0., length - m_share_retracted);
+            m_share_E[extruder_id()] = 0.;
+        double to_retract = std::max(0., length - m_share_retracted[extruder_id()]);
         m_restart_extra = restart_extra;
         if (to_retract > 0.) {
-            m_share_E             -= to_retract;
+            m_share_E[extruder_id()]             -= to_retract;
             m_absolute_E          -= to_retract;
-            m_share_retracted     += to_retract;
+            m_share_retracted[extruder_id()]     += to_retract;
         }
         return to_retract;
     } else {
@@ -80,9 +98,9 @@ double Extruder::unretract()
 {
     // BBS
     if (m_share_extruder) {
-        double dE = m_share_retracted + m_restart_extra;
+        double dE = m_share_retracted[extruder_id()] + m_restart_extra;
         this->extrude(dE);
-        m_share_retracted     = 0.;
+        m_share_retracted[extruder_id()]     = 0.;
         m_restart_extra = 0.;
         return dE;
     } else {
@@ -153,28 +171,35 @@ double Extruder::filament_cost() const
 
 double Extruder::filament_flow_ratio() const
 {
-    return m_config->filament_flow_ratio.get_at(m_id);
+    return m_config->filament_flow_ratio.get_at(m_config_index);
 }
 
 // Return a "retract_before_wipe" percentage as a factor clamped to <0, 1>
 double Extruder::retract_before_wipe() const
 {
-    return std::min(1., std::max(0., m_config->retract_before_wipe.get_at(m_id) * 0.01));
+    return std::clamp(m_config->retract_before_wipe.get_at(m_config_index) * 0.01, 0., 1.);
+}
+
+// Orca:
+// Return a "retract_after_wipe" percentage as a factor clamped to <0, 1>
+double Extruder::retract_after_wipe() const
+{
+    return std::min(std::clamp(m_config->retract_after_wipe.get_at(m_config_index) * 0.01, 0., 1.), 1. - retract_before_wipe());
 }
 
 double Extruder::retraction_length() const
 {
-    return m_config->retraction_length.get_at(m_id);
+    return m_config->retraction_length.get_at(m_config_index);
 }
 
 double Extruder::retract_lift() const
 {
-    return m_config->z_hop.get_at(m_id);
+    return m_config->z_hop.get_at(m_config_index);
 }
 
 int Extruder::retract_speed() const
 {
-    return int(floor(m_config->retraction_speed.get_at(m_id)+0.5));
+    return int(floor(m_config->retraction_speed.get_at(m_config_index)+0.5));
 }
 
 bool Extruder::use_firmware_retraction() const
@@ -184,28 +209,30 @@ bool Extruder::use_firmware_retraction() const
 
 int Extruder::deretract_speed() const
 {
-    int speed = int(floor(m_config->deretraction_speed.get_at(m_id)+0.5));
+    int speed = int(floor(m_config->deretraction_speed.get_at(m_config_index)+0.5));
     return (speed > 0) ? speed : this->retract_speed();
 }
 
 double Extruder::retract_restart_extra() const
 {
-    return m_config->retract_restart_extra.get_at(m_id);
+    return m_config->retract_restart_extra.get_at(m_config_index);
 }
 
 double Extruder::retract_length_toolchange() const
 {
-    return m_config->retract_length_toolchange.get_at(m_id);
+    return m_config->retract_length_toolchange.get_at(m_config_index);
 }
 
 double Extruder::retract_restart_extra_toolchange() const
 {
-    return m_config->retract_restart_extra_toolchange.get_at(m_id);
+    return m_config->retract_restart_extra_toolchange.get_at(m_config_index);
 }
 
 double Extruder::travel_slope() const
 {
-    return m_config->travel_slope.get_at(m_id) * PI / 180;
+    // Orca: deliberately keyed by the physical extruder, not the filament column — this read
+    // predates the per-variant merge and switching it would change existing multi-extruder output.
+    return m_config->travel_slope.get_at(extruder_id()) * PI / 180;
 }
 
 }

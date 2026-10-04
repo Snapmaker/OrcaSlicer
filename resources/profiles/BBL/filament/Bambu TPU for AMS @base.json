@@ -3,7 +3,7 @@
     "name": "Bambu TPU for AMS @base",
     "inherits": "fdm_filament_tpu",
     "from": "system",
-    "filament_id": "GFU02",
+    "filament_id": "OFIBbYO5",
     "instantiation": "false",
     "description": "If you are to print a kind of soft TPU, please don't slice with this profile, and it is only for TPU that has high enough hardness (not less than 55D) and is compatible with the AMS. To get better printing quality, please refer to this wiki: TPU printing guide.",
     "fan_cooling_layer_time": [
@@ -16,10 +16,13 @@
         "20"
     ],
     "filament_cost": [
-        "38.99"
+        "34.99"
     ],
     "filament_density": [
         "1.26"
+    ],
+    "filament_deretraction_speed": [
+        "10"
     ],
     "filament_flow_ratio": [
         "0.97"
@@ -27,11 +30,20 @@
     "filament_max_volumetric_speed": [
         "18"
     ],
+    "filament_retraction_length": [
+        "2"
+    ],
+    "filament_retraction_speed": [
+        "10"
+    ],
     "filament_type": [
         "TPU-AMS"
     ],
     "filament_vendor": [
         "Bambu Lab"
+    ],
+    "impact_strength_z": [
+        "9.6"
     ],
     "nozzle_temperature": [
         "230"

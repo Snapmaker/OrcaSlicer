@@ -25,13 +25,17 @@
 #include <wx/tbarbase.h>
 #include "wx/textctrl.h"
 #include <wx/timer.h>
+#include <memory>
+#include "Lazy.hpp"
 
 
 namespace Slic3r {
 namespace GUI {
 
+class PrinterWebViewHandler;
 
-class PrinterWebView : public wxPanel{
+
+class PrinterWebView : public wxPanel, public LazyInstance<PrinterWebView> {
 public:
     PrinterWebView(wxWindow *parent);
     virtual ~PrinterWebView();
@@ -41,19 +45,26 @@ public:
     void OnClose(wxCloseEvent& evt);
     void OnError(wxWebViewEvent& evt);
     void OnLoaded(wxWebViewEvent& evt);
+    void OnNewWindow(wxWebViewEvent& evt);
     void OnScriptMessage(wxWebViewEvent& evt);
     void reload();
     void update_mode();
     bool isSnapmakerPage();
+    bool is_u1_device_page();
     void sendMessage(const std::string& msg);
     wxWebView* get_browser() const { return m_browser; }
 
 private:
+    friend class PrinterWebViewHandler;
+
     void SendAPIKey();
 
     wxWebView* m_browser;
     long m_zoomFactor;
     wxString m_apikey;
+    // ORCA: host specific webview handler (Elegoo, ...). Null when the view shows the
+    // Snapmaker flutter device page, which is driven through SSWCP instead.
+    std::unique_ptr<PrinterWebViewHandler> m_handler;
 
     // DECLARE_EVENT_TABLE()
 };

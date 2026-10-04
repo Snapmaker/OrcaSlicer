@@ -69,28 +69,33 @@ Generator::Generator(const PrintObject &print_object, const std::function<void()
     const PrintObjectConfig   &object_config        = print_object.config();
     const PrintRegionConfig   &region_config        = print_object.shared_regions()->all_regions.front()->config();
     const std::vector<double> &nozzle_diameters     = print_config.nozzle_diameter.values;
-    double                     max_nozzle_diameter  = *std::max_element(nozzle_diameters.begin(), nozzle_diameters.end());
+    const auto                 max_nozzle           = std::max_element(nozzle_diameters.begin(), nozzle_diameters.end());
+    double                     max_nozzle_diameter  = *max_nozzle;
+    const int                  n_multiline          = region_config.fill_multiline.value;
 //    const int                  infill_extruder      = region_config.infill_extruder.value;
     const double               default_infill_extrusion_width = Flow::auto_extrusion_width(FlowRole::frInfill, float(max_nozzle_diameter));
     // Note: There's not going to be a layer below the first one, so the 'initial layer height' doesn't have to be taken into account.
     const double               layer_thickness      = scaled<double>(object_config.layer_height.value);
 
-    m_infill_extrusion_width = scaled<float>(region_config.sparse_infill_line_width.get_abs_value(max_nozzle_diameter));
+    // Snapmaker Orca: the widths are columns per tool head; the tree is sized for the head of the
+    // largest nozzle, whose column is read with it.
+    const size_t width_column = size_t(max_nozzle - nozzle_diameters.begin());
+    m_infill_extrusion_width = scaled<float>(Flow::width_at(region_config.sparse_infill_line_width, width_column).get_abs_value(max_nozzle_diameter));
     // Orca: fix lightning infill divide by zero when infill line width is set to 0.
     // firstly attempt to set it to the default line width. If that is not provided either, set it to a sane default
     // based on the nozzle diameter.
     if (m_infill_extrusion_width < EPSILON)
         m_infill_extrusion_width = scaled<float>(
-            object_config.line_width.get_abs_value(max_nozzle_diameter) < EPSILON ?
+            Flow::width_at(object_config.line_width, width_column).get_abs_value(max_nozzle_diameter) < EPSILON ?
             default_infill_extrusion_width :
-            object_config.line_width.get_abs_value(max_nozzle_diameter)
+            Flow::width_at(object_config.line_width, width_column).get_abs_value(max_nozzle_diameter)
         );
     
-    m_supporting_radius = coord_t(m_infill_extrusion_width) * 100 / region_config.sparse_infill_density;
+    m_supporting_radius = coord_t(m_infill_extrusion_width) * 100 * n_multiline / region_config.sparse_infill_density;
 
-    const double lightning_infill_overhang_angle      = M_PI / 4; // 45 degrees
-    const double lightning_infill_prune_angle         = M_PI / 4; // 45 degrees
-    const double lightning_infill_straightening_angle = M_PI / 4; // 45 degrees
+    const double lightning_infill_overhang_angle      = region_config.lightning_overhang_angle.value * M_PI / 180.0;
+    const double lightning_infill_prune_angle         = region_config.lightning_prune_angle.value * M_PI / 180.0;
+    const double lightning_infill_straightening_angle = region_config.lightning_straightening_angle.value * M_PI / 180.0;
     m_wall_supporting_radius                          = coord_t(layer_thickness * std::tan(lightning_infill_overhang_angle));
     m_prune_length                                    = coord_t(layer_thickness * std::tan(lightning_infill_prune_angle));
     m_straightening_max_distance                      = coord_t(layer_thickness * std::tan(lightning_infill_straightening_angle));
@@ -105,21 +110,25 @@ Generator::Generator(PrintObject* m_object, std::vector<Polygons>& contours, std
     const PrintObjectConfig   &object_config        = m_object->config();
     const PrintRegionConfig   &region_config        = m_object->shared_regions()->all_regions.front()->config();
     const std::vector<double> &nozzle_diameters     = print_config.nozzle_diameter.values;
-    double                     max_nozzle_diameter  = *std::max_element(nozzle_diameters.begin(), nozzle_diameters.end());
+    const auto                 max_nozzle           = std::max_element(nozzle_diameters.begin(), nozzle_diameters.end());
+    double                     max_nozzle_diameter  = *max_nozzle;
 //    const int                  infill_extruder      = region_config.infill_extruder.value;
     const double               default_infill_extrusion_width = Flow::auto_extrusion_width(FlowRole::frInfill, float(max_nozzle_diameter));
     // Note: There's not going to be a layer below the first one, so the 'initial layer height' doesn't have to be taken into account.
     const double               layer_thickness      = scaled<double>(object_config.layer_height.value);
 
-    m_infill_extrusion_width = scaled<float>(region_config.sparse_infill_line_width.get_abs_value(max_nozzle_diameter));
+    // Snapmaker Orca: the widths are columns per tool head; the tree is sized for the head of the
+    // largest nozzle, whose column is read with it.
+    const size_t width_column = size_t(max_nozzle - nozzle_diameters.begin());
+    m_infill_extrusion_width = scaled<float>(Flow::width_at(region_config.sparse_infill_line_width, width_column).get_abs_value(max_nozzle_diameter));
     // Orca: fix lightning infill divide by zero when infill line width is set to 0.
     // firstly attempt to set it to the default line width. If that is not provided either, set it to a sane default
     // based on the nozzle diameter.
     if (m_infill_extrusion_width < EPSILON)
         m_infill_extrusion_width = scaled<float>(
-            object_config.line_width.get_abs_value(max_nozzle_diameter) < EPSILON ?
+            Flow::width_at(object_config.line_width, width_column).get_abs_value(max_nozzle_diameter) < EPSILON ?
             default_infill_extrusion_width :
-            object_config.line_width.get_abs_value(max_nozzle_diameter)
+            Flow::width_at(object_config.line_width, width_column).get_abs_value(max_nozzle_diameter)
         );
     //m_supporting_radius: against to the density of lightning, failures may happen if set to high density
     //higher density lightning makes support harder, more time-consuming on computing and printing, but more reliable on supporting overhangs
@@ -127,7 +136,7 @@ Generator::Generator(PrintObject* m_object, std::vector<Polygons>& contours, std
     //TODO: decide whether enable density controller in advanced options or not
     density = std::max(0.15f, density);
     m_supporting_radius = coord_t(m_infill_extrusion_width) / density;
-
+    // Keep support-lightning behavior fixed and independent of user print-region angles.
     const double lightning_infill_overhang_angle = M_PI / 4; // 45 degrees
     const double lightning_infill_prune_angle = M_PI / 4; // 45 degrees
     const double lightning_infill_straightening_angle = M_PI / 4; // 45 degrees

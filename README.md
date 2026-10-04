@@ -51,10 +51,10 @@ Visit our GitHub Releases page for the latest stable version of Snapmaker Slicer
     
 # How to compile
 - Windows 64-bit  
-  - Tools needed: Visual Studio 2019, Cmake, git, git-lfs, Strawberry Perl.
+  - Tools needed: Visual Studio 2019 or newer, Cmake, git, git-lfs, Strawberry Perl.
       - You will require cmake version 3.14 or later, which is available [on their website](https://cmake.org/download/).
       - Strawberry Perl is [available on their GitHub repository](https://github.com/StrawberryPerl/Perl-Dist-Strawberry/releases/).
-  - Run `build_release.bat` in `x64 Native Tools Command Prompt for VS 2019`
+  - Run `build_win.bat -ds` in a Command Prompt; the script finds Visual Studio itself (`-d` builds the dependencies, `-s` the slicer, `-u` installs CMake, Strawberry Perl and Git with WinGet, and `build_win.bat -h` lists the rest)
   - Note: Don't forget to run `git lfs pull` after cloning the repository to download tools on Windows
 
 - Mac 64-bit  
@@ -98,7 +98,7 @@ Orca Slicer's logo is designed by community member Justin Levine(@freejstnalxndr
 
 
 # License
-Snapmaker Orca is licensed under the GNU Affero General Public License, version 3. Orca Slicer is based on Snapmaker_Orca by SoftFever
+Snapmaker Orca is licensed under the GNU Affero General Public License, version 3. Snapmaker_Orca is based on Orca Slicer by SoftFever
 
 Orca Slicer is licensed under the GNU Affero General Public License, version 3. Orca Slicer is based on Bambu Studio by BambuLab.
 

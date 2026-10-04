@@ -32,7 +32,7 @@ void DeviceItem::sync_state()
 {
     if (obj_) {
         state_online = obj_->is_online();
-        state_dev_name = obj_->dev_name;
+        state_dev_name = obj_->get_dev_name();
 
         //printable
         if (obj_->print_status == "IDLE") {
@@ -51,7 +51,7 @@ void DeviceItem::sync_state()
             state_printable = 6;
         }
 
-        if (is_blocking_printing(obj_)) {
+        if (wxGetApp().is_blocking_printing(obj_)) {
             state_printable = 5;
         }
 
@@ -104,27 +104,6 @@ void DeviceItem::unselected()
     }
 }
 
-bool DeviceItem::is_blocking_printing(MachineObject* obj_)
-{
-    DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
-    if (!dev) return true;
-    auto target_model = obj_->printer_type;
-    std::string source_model = "";
-
-    PresetBundle* preset_bundle = wxGetApp().preset_bundle;
-    source_model = preset_bundle->printers.get_edited_preset().get_printer_type(preset_bundle);
-
-    if (source_model != target_model) {
-        std::vector<std::string> compatible_machine = dev->get_compatible_machine(target_model);
-        vector<std::string>::iterator it = find(compatible_machine.begin(), compatible_machine.end(), source_model);
-        if (it == compatible_machine.end()) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 void DeviceItem::update_item(const DeviceItem* item)
 {
     // Except for the selected status, everything else is updated
@@ -147,7 +126,7 @@ wxString DeviceItem::get_state_printable()
     str_state_printable.push_back(_L("Printing"));
     str_state_printable.push_back(_L("Upgrading"));
     str_state_printable.push_back(_L("Incompatible"));
-    str_state_printable.push_back(_L("syncing"));
+    str_state_printable.push_back(_L("Syncing"));
 
     return str_state_printable[state_printable];
 }
@@ -163,7 +142,7 @@ wxString DeviceItem::get_state_device()
     str_state_device.push_back(_L("Printing Pause"));
     str_state_device.push_back(_L("Prepare"));
     str_state_device.push_back(_L("Slicing"));
-    str_state_device.push_back(_L("syncing"));
+    str_state_device.push_back(_L("Syncing"));
 
     return str_state_device[state_device];
 }
@@ -202,8 +181,8 @@ std::vector<DeviceItem*> selected_machines(const std::vector<DeviceItem*>& dev_i
     std::vector<DeviceItem*> res;
     for (const auto& item : dev_item_list) {
         const MachineObject* dev = item->get_obj();
-        const std::string& dev_name = dev->dev_name;
-        const std::string& dev_ip = dev->dev_ip;
+        const std::string& dev_name = dev->get_dev_name();
+        const std::string& dev_ip = dev->get_dev_ip();
 
         auto name_it = dev_name.find(search_text);
         auto ip_it = dev_ip.find(search_text);
@@ -217,7 +196,7 @@ std::vector<DeviceItem*> selected_machines(const std::vector<DeviceItem*>& dev_i
 
 SortItem::SortItem()
 {
-    sort_map.emplace(std::make_pair(SortRule::SR_None, [this](const DeviceItem* d1, const DeviceItem* d2) {
+    sort_map.emplace(std::make_pair(SortRule::SR_None, [](const DeviceItem* d1, const DeviceItem* d2) {
         return d1->state_dev_name > d2->state_dev_name;
     }));
     sort_map.emplace(std::make_pair(SortRule::SR_DEV_NAME, [this](const DeviceItem* d1, const DeviceItem* d2) {

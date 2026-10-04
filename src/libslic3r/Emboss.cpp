@@ -1308,10 +1308,17 @@ namespace {
 /// <param name="text">To detect end of lines - to be able horizontal center the line</param>
 /// <param name="prop">Containe Horizontal and vertical alignment</param>
 /// <param name="font">Needed for scale and font size</param>
-void align_shape(ExPolygonsWithIds &shapes, const std::wstring &text, const FontProp &prop, const FontFile &font);
+/// <param name="advances">Optional advance boxes, moved together with the shapes</param>
+void align_shape(ExPolygonsWithIds &shapes, const std::wstring &text, const FontProp &prop, const FontFile &font, Emboss::GlyphAdvances *advances = nullptr);
 }
 
 ExPolygonsWithIds Emboss::text2vshapes(FontFileWithCache &font_with_cache, const std::wstring& text, const FontProp &font_prop, const std::function<bool()>& was_canceled){
+    GlyphAdvances advances;
+    return text2vshapes(font_with_cache, text, font_prop, was_canceled, advances);
+}
+
+ExPolygonsWithIds Emboss::text2vshapes(FontFileWithCache &font_with_cache, const std::wstring& text, const FontProp &font_prop, const std::function<bool()>& was_canceled, GlyphAdvances &advances){
+    advances.clear();
     assert(font_with_cache.has_value());
     const FontFile &font = *font_with_cache.font_file;
     unsigned int font_index = font_prop.collection_number.value_or(0);
@@ -1324,17 +1331,28 @@ ExPolygonsWithIds Emboss::text2vshapes(FontFileWithCache &font_with_cache, const
     fontinfo_opt font_info_cache;  
     ExPolygonsWithIds result;
     result.reserve(text.size());
+    advances.reserve(text.size());
     for (wchar_t letter : text) {
         if (++counter == CANCEL_CHECK) {
             counter = 0;
-            if (was_canceled())
+            if (was_canceled()) {
+                advances.clear();
                 return {};
+            }
         }
         unsigned id = static_cast<unsigned>(letter);
+        const coord_t x_before = cursor.x();
         result.push_back({id, letter2shapes(letter, cursor, font_with_cache, font_prop, font_info_cache)});
+        GlyphAdvance advance;
+        if (letter != L'\n' && letter != L'\r' && cursor.x() > x_before) {
+            advance.x_min = static_cast<double>(x_before);
+            advance.x_max = static_cast<double>(cursor.x());
+            advance.valid = true;
+        }
+        advances.push_back(advance);
     }
 
-    align_shape(result, text, font_prop, font);
+    align_shape(result, text, font_prop, font, &advances);
     return result;
 }
 
@@ -1972,10 +1990,11 @@ int32_t get_align_x_offset(FontProp::HorizontalAlign align, const BoundingBox &s
     return 0;
 }
 
-void align_shape(ExPolygonsWithIds &shapes, const std::wstring &text, const FontProp &prop, const FontFile &font)
+void align_shape(ExPolygonsWithIds &shapes, const std::wstring &text, const FontProp &prop, const FontFile &font, Emboss::GlyphAdvances *advances)
 {
     // Shapes have to match letters in text
     assert(shapes.size() == text.length());
+    assert(advances == nullptr || advances->size() == shapes.size());
 
     unsigned count_lines = get_count_lines(text);
     int y_offset = get_align_y_offset(prop.align.second, count_lines, font, prop);
@@ -2013,6 +2032,10 @@ void align_shape(ExPolygonsWithIds &shapes, const std::wstring &text, const Font
         ExPolygons &shape = shapes[i].expoly;
         for (ExPolygon &s : shape)
             s.translate(offset);
+        if (advances != nullptr && i < advances->size()) {
+            (*advances)[i].x_min += offset.x();
+            (*advances)[i].x_max += offset.x();
+        }
     }
 }
 } // namespace

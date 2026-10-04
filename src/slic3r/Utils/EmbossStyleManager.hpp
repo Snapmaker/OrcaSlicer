@@ -207,9 +207,12 @@ public:
 
         bool operator==(const Style &other) const
         {
-            return EmbossStyle::operator==(other) && 
-                projection == other.projection &&
-                distance == other.distance && 
+            // NOTE: projection.bend (curved text) is a per-volume property, not part of a style,
+            // so it does not mark the style as modified
+            return EmbossStyle::operator==(other) &&
+                projection.depth == other.projection.depth &&
+                projection.use_surface == other.projection.use_surface &&
+                distance == other.distance &&
                 angle == other.angle;
         }
 

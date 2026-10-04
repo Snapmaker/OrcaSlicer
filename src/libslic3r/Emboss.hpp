@@ -155,6 +155,19 @@ namespace Emboss
     HealedExPolygons  text2shapes (FontFileWithCache &font, const char *text,         const FontProp &font_prop, const std::function<bool()> &was_canceled = []() {return false;});
     ExPolygonsWithIds text2vshapes(FontFileWithCache &font, const std::wstring& text, const FontProp &font_prop, const std::function<bool()>& was_canceled = []() {return false;});
 
+    // Horizontal advance box of one entry of text2vshapes, after alignment [in shape units].
+    // Not valid for line breaks and for characters without a glyph in the font.
+    struct GlyphAdvance
+    {
+        double x_min = 0.;
+        double x_max = 0.;
+        bool   valid = false;
+        double center() const { return (x_min + x_max) / 2.; }
+    };
+    using GlyphAdvances = std::vector<GlyphAdvance>;
+    // Same as above, plus the advance box of every entry (same size and order as the result)
+    ExPolygonsWithIds text2vshapes(FontFileWithCache &font, const std::wstring& text, const FontProp &font_prop, const std::function<bool()>& was_canceled, GlyphAdvances &advances);
+
     const unsigned ENTER_UNICODE = static_cast<unsigned>('\n');
     /// Sum of character '\n'
     unsigned get_count_lines(const std::wstring &ws);

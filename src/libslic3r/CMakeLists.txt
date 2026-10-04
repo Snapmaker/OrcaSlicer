@@ -142,6 +142,8 @@ set(lisbslic3r_sources
     Emboss.cpp
     Emboss.hpp
     EmbossShape.hpp
+    EmbossBend.cpp
+    EmbossBend.hpp
     Barcode.cpp
     Barcode.hpp
     CodeEmboss.cpp

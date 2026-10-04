@@ -431,6 +431,11 @@ static constexpr const char *SVG_FILE_PATH_IN_3MF_ATTR = "filepath3mf";
 // EmbossProjection
 static constexpr const char *DEPTH_ATTR       = "depth";
 static constexpr const char *USE_SURFACE_ATTR = "use_surface";
+// EmbossBend (curved text), written only when the bend is active; absent = straight text
+static constexpr const char *BEND_ANGLE_ATTR  = "bend_angle";  // [deg], angle mode
+static constexpr const char *BEND_RADIUS_ATTR = "bend_radius"; // [mm], radius mode
+static constexpr const char *BEND_INSIDE_ATTR = "bend_inside"; // 1 = smile
+static constexpr const char *BEND_RIGID_ATTR  = "bend_rigid";  // 1 = keep letter shape
 // static constexpr const char *FIX_TRANSFORMATION_ATTR = "transform";
 
 
@@ -10676,7 +10681,19 @@ void to_xml(std::stringstream &stream, const EmbossShape &es, const ModelVolume 
     stream << DEPTH_ATTR << "=\"" << p.depth << "\" ";
     if (p.use_surface)
         stream << USE_SURFACE_ATTR << "=\"" << 1 << "\" ";
-    
+
+    // curved text: only when active, so straight text files stay byte-identical
+    if (const EmbossBend &bend = p.bend; bend.is_active()) {
+        if (bend.mode == EmbossBend::Mode::radius)
+            stream << BEND_RADIUS_ATTR << "=\"" << bend.radius << "\" ";
+        else
+            stream << BEND_ANGLE_ATTR << "=\"" << bend.angle << "\" ";
+        if (bend.inside)
+            stream << BEND_INSIDE_ATTR << "=\"" << 1 << "\" ";
+        if (bend.rigid)
+            stream << BEND_RIGID_ATTR << "=\"" << 1 << "\" ";
+    }
+
     // FIX of baked transformation
     Transform3d fix = create_fix(es.fix_3mf_tr, volume);
     stream << TRANSFORM_ATTR << "=\"";
@@ -10698,7 +10715,25 @@ std::optional<EmbossShape> read_emboss_shape(const char **attributes, unsigned i
 
     int use_surface  = bbs_get_attribute_value_int(attributes, num_attributes, USE_SURFACE_ATTR);
     if (use_surface == 1)
-        projection.use_surface = true;     
+        projection.use_surface = true;
+
+    // curved text, absent attributes = straight text (files from older builds)
+    {
+        EmbossBend &bend   = projection.bend;
+        float       radius = bbs_get_attribute_value_float(attributes, num_attributes, BEND_RADIUS_ATTR);
+        float       angle  = bbs_get_attribute_value_float(attributes, num_attributes, BEND_ANGLE_ATTR);
+        if (std::isfinite(radius) && radius > 0.f) {
+            bend.mode   = EmbossBend::Mode::radius;
+            bend.radius = radius;
+        } else if (std::isfinite(angle) && angle > 0.f) {
+            bend.mode  = EmbossBend::Mode::angle;
+            bend.angle = std::min(angle, 359.f);
+        }
+        if (bend.mode != EmbossBend::Mode::off) {
+            bend.inside = bbs_get_attribute_value_int(attributes, num_attributes, BEND_INSIDE_ATTR) == 1;
+            bend.rigid  = bbs_get_attribute_value_int(attributes, num_attributes, BEND_RIGID_ATTR) == 1;
+        }
+    }
 
     std::optional<Transform3d> fix_tr_mat;
     std::string fix_tr_mat_str = bbs_get_attribute_value_string(attributes, num_attributes, TRANSFORM_ATTR);

@@ -16,20 +16,72 @@
 
 namespace Slic3r {
 
+// Curved (arc) text: an in-plane bend of the 2D shape around the emboss direction.
+// Applied to the 2D outlines before extrusion, so every volume type and the
+// surface-less flat emboss stay unchanged. Kept per volume (3MF + undo), never in style presets.
+struct EmbossBend
+{
+    enum class Mode : unsigned char {
+        off    = 0, // straight text (identical to text without bend)
+        angle  = 1, // span of the longest line is given by `angle`
+        radius = 2  // radius of the reference circle is given by `radius`
+    };
+    Mode mode = Mode::off;
+
+    // [deg] span of the longest text line, used by Mode::angle; 0 = straight, max 359
+    float angle = 0.f;
+
+    // [mm] radius of the circle through the text reference line, used by Mode::radius
+    float radius = 0.f;
+
+    // false = arch (text outside the circle, reading clockwise over the top)
+    // true  = smile (text inside the circle, reading along the bottom)
+    bool inside = false;
+
+    // false = bent: every outline point follows the arc (letters become slight wedges)
+    // true  = rigid: each glyph keeps its shape, it is only moved and rotated onto the arc
+    bool rigid = false;
+
+    bool is_active() const {
+        return (mode == Mode::angle && angle > 0.f) ||
+               (mode == Mode::radius && radius > 0.f);
+    }
+
+    bool operator==(const EmbossBend &other) const {
+        return mode == other.mode && angle == other.angle && radius == other.radius &&
+               inside == other.inside && rigid == other.rigid;
+    }
+    bool operator!=(const EmbossBend &other) const { return !(*this == other); }
+
+    // undo / redo stack recovery
+    template<class Archive> void save(Archive &ar) const {
+        unsigned char m = static_cast<unsigned char>(mode);
+        ar(m, angle, radius, inside, rigid);
+    }
+    template<class Archive> void load(Archive &ar) {
+        unsigned char m = 0;
+        ar(m, angle, radius, inside, rigid);
+        mode = (m <= static_cast<unsigned char>(Mode::radius)) ? static_cast<Mode>(m) : Mode::off;
+    }
+};
+
 struct EmbossProjection{
     // Emboss depth, Size in local Z direction
-    double depth = 1.; // [in loacal mm] 
+    double depth = 1.; // [in loacal mm]
     // NOTE: User should see and modify mainly world size not local
 
     // Flag that result volume use surface cutted from source objects
     bool use_surface = false;
 
+    // Curved text (in-plane arc). Default = off = straight text.
+    EmbossBend bend;
+
     bool operator==(const EmbossProjection &other) const {
-        return depth == other.depth && use_surface == other.use_surface;
+        return depth == other.depth && use_surface == other.use_surface && bend == other.bend;
     }
 
     // undo / redo stack recovery
-    template<class Archive> void serialize(Archive &ar) { ar(depth, use_surface); }
+    template<class Archive> void serialize(Archive &ar) { ar(depth, use_surface, bend); }
 };
 
 // Extend expolygons with information whether it was successfull healed

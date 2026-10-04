@@ -95,6 +95,8 @@ bool StyleManager::store_styles_to_app_config(bool use_modification, bool store_
         if (exist_stored_style()) {
             // update stored item
             m_styles[m_style_cache.style_index] = m_style_cache.style;
+            // curved text belongs to the text volume, never to a style preset
+            m_styles[m_style_cache.style_index].projection.bend = {};
         } else {
             // add new into stored list
             EmbossStyle &style = m_style_cache.style;

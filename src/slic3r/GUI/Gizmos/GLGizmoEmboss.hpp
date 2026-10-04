@@ -15,6 +15,7 @@
 #include <atomic>
 
 #include "libslic3r/Emboss.hpp"
+#include "libslic3r/EmbossBend.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/TextConfiguration.hpp"
 
@@ -135,6 +136,23 @@ private:
     bool draw_bold_button();
     void draw_advanced();
 
+    // Curved text (in-plane arc of the whole text block)
+    void draw_curve();
+    // True when the bend can be used with the current settings (not with per glyph / use surface)
+    bool can_use_bend() const;
+    // Measure the current text (GUI thread, private glyph cache) to show the resolved bend
+    std::optional<Slic3r::Emboss::BendInput> measure_text_for_bend();
+    std::optional<Slic3r::Emboss::BendResult> calc_bend_result();
+    // Circle of a round flat face under the text, in text plane coordinates [mm]
+    struct FaceCircle { Vec2d center; double radius; };
+    // face_center: centre of the face under the text (or of the object) when found
+    std::optional<FaceCircle> detect_face_circle(std::optional<Vec2d> *face_center = nullptr) const;
+    // Move the text so the arc centre lies on the centre of the face / object
+    bool center_arc_on_object();
+    // Matrix of the text plane (volume world matrix without 3mf fix)
+    Transform3d get_text_world_matrix() const;
+    void render_bend_overlay();
+
     bool select_facename(const wxString& facename);
 
     template<typename T> bool rev_input_mm(const std::string &name, T &value, const T *default_value,
@@ -221,6 +239,20 @@ private:
     std::optional<float> m_scale_height;
     std::optional<float> m_scale_depth;
     void calculate_scale();
+
+    // Curved text: measured layout of m_text for the readout and the arc overlay (GUI thread only)
+    std::shared_ptr<Slic3r::Emboss::Glyphs>         m_bend_glyphs;
+    std::shared_ptr<const Slic3r::Emboss::FontFile> m_bend_font;
+    FontProp                                m_bend_prop;
+    std::string                             m_bend_text;
+    std::optional<Slic3r::Emboss::BendInput>        m_bend_input;
+    // last resolved bend, used by the overlay
+    std::optional<Slic3r::Emboss::BendResult>       m_bend_result;
+    // Undo snapshot is already taken for the running drag of a curve slider
+    bool                                    m_bend_drag_snapshot = false;
+    // Overlay of the reference circle (unit circle in the text plane)
+    GLModel                                 m_bend_circle;
+    GLModel                                 m_bend_cross;
 
     // drawing icons
     IconManager m_icon_manager;

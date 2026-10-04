@@ -1379,6 +1379,10 @@ private:
     // dual-nozzle Bambu printer overwrites m_config.filament_map with the map it computed (ToolOrdering),
     // so apply() compares an incoming map with this, not with that output (see keep_sliced_filament_map).
     std::vector<int>                                      m_filament_map_input;
+    // filament_volume_type as the config last handed it to apply(). On a dual-nozzle printer with High Flow
+    // support the slice rewrites m_config.filament_volume_type from the final filament_map (ToolOrdering,
+    // BambuFlowSupport::apply_filament_volume_types_from_map); same keep rule as m_filament_map_input.
+    std::vector<int>                                      m_filament_volume_type_input;
     // Print config keys that differed in the last apply() (diagnostics for the GUI).
     std::vector<std::string>                              m_last_apply_changed_keys;
 

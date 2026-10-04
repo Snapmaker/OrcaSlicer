@@ -3,6 +3,7 @@
 #include "Config.hpp"
 #include "Exception.hpp"
 #include "Preset.hpp"
+#include "BambuFlowSupport.hpp"
 #include "PresetQuarantine.hpp"
 #include "PresetBundle.hpp"
 #include "AppConfig.hpp"
@@ -393,6 +394,10 @@ std::string Preset::remove_suffix_modified(const std::string &name)
 // Update new extruder fields at the printer profile.
 void Preset::normalize(DynamicPrintConfig &config)
 {
+    // Owner decision D1: a Bambu preset whose variant names lay out Standard / High Flow slots gets
+    // the matching *_flow_support switched on here, before the flow-variant vectors are sized below.
+    BambuFlowSupport::derive(config);
+
     size_t n = 1;
     if (config.option("single_extruder_multi_material") == nullptr || config.opt_bool("single_extruder_multi_material")) {
         // BBS

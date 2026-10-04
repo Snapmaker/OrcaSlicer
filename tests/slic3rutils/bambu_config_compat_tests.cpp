@@ -369,9 +369,10 @@ TEST_CASE("a zero Bambu really wrote is preserved, not scrubbed", "[BambuCompat]
 //
 // Bambu's arrays are indexed by extruder variant (print_extruder_variant, 5 entries for this
 // H2D preset); this fork's are indexed by flow variant (process_flow_support). A Bambu preset
-// carries no process_flow_support, so the default ["standard"] applies and get_config_idx()
-// resolves to slot 0 whatever the filament's flow type is. Slot 0 is Bambu's
-// "Direct Drive Standard" on extruder 1, i.e. what Bambu Studio itself prints with there.
+// carries no process_flow_support; Preset::normalize derives ["standard", "high_flow"] from its
+// print_extruder_variant (BambuFlowSupport::derive, owner decision D1), so get_config_idx()
+// resolves a Standard filament to slot 0 ("Direct Drive Standard" on extruder 1) and a High Flow
+// filament to slot 1 ("Direct Drive High Flow"), what Bambu Studio itself prints with there.
 // The extra slots are kept (Preset::normalize only ever grows a flow-variant vector), exactly as
 // for the fork's own shipped BBL H2D profiles, which carry the same 5-7 slot layout.
 // ---------------------------------------------------------------------------------------------
@@ -410,10 +411,13 @@ TEST_CASE("a backfilled Bambu vector is read at the slot the slicer uses", "[Bam
         INFO("filament flow type " << to_string(flow));
         if (auto *types = full.option<ConfigOptionEnumsGeneric>("filament_volume_type", true))
             types->values.assign(1, int(flow));
-        const size_t idx = get_config_idx(full, ConfigFlowDomain::Process, 0);
-        CHECK(idx == 0);
-        CHECK(get_value_at(full, *full.option<ConfigOptionFloats>("outer_wall_acceleration"), ConfigFlowDomain::Process, 0) == Approx(3000.));
-        CHECK(get_value_at(full, *full.option<ConfigOptionFloats>("support_interface_speed"), ConfigFlowDomain::Process, 0) == Approx(30.));
+        const bool   high_flow = flow == fvtHighFlow;
+        const size_t idx       = get_config_idx(full, ConfigFlowDomain::Process, 0);
+        CHECK(idx == (high_flow ? 1 : 0));
+        CHECK(get_value_at(full, *full.option<ConfigOptionFloats>("outer_wall_acceleration"), ConfigFlowDomain::Process, 0) ==
+              Approx(high_flow ? 2000. : 3000.));
+        CHECK(get_value_at(full, *full.option<ConfigOptionFloats>("support_interface_speed"), ConfigFlowDomain::Process, 0) ==
+              Approx(high_flow ? 50. : 30.));
         // Every flow-variant speed / acceleration the slicer can read is a real, non-zero value.
         for (const char *key : { "outer_wall_speed", "inner_wall_speed", "sparse_infill_speed", "top_surface_acceleration" }) {
             const auto *opt = full.option<ConfigOptionFloats>(key);

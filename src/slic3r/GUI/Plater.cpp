@@ -10,6 +10,7 @@
 #include "libslic3r/FilamentColorLibrary.hpp" // kFullSpectrumSlotCount (recommended slot write-back)
 #include "libslic3r/Config.hpp"
 #include "libslic3r/BambuExtruderMap.hpp"
+#include "libslic3r/BambuFlowSupport.hpp"
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/MixedFilamentConfigRemap.hpp"
 #include "libslic3r/filament_mixer.h"
@@ -9776,6 +9777,16 @@ void Sidebar::update_dynamic_filament_list()
     dynamic_filament_list_1_based.update();
 }
 
+void Sidebar::sync_nozzle_flow_combos()
+{
+    const std::vector<std::string> flows = GUI::FlowType::nozzle_volume_types();
+    for (size_t i = 0; i < p->m_nozzle_flow_lists.size(); ++i) {
+        ComboBox *combo = p->m_nozzle_flow_lists[i];
+        if (combo != nullptr && combo->GetCount() >= 2)
+            combo->SetSelection(i < flows.size() && flows[i] == FLOW_MODE_HIGH_FLOW ? 1 : 0);
+    }
+}
+
 void Sidebar::update_nozzle_settings(bool switch_machine)
 {
     if (!p->m_nozzle_notebook)
@@ -16287,6 +16298,35 @@ bool Plater::priv::warnings_dialog()
 }
 
 //BBS: add project slice logic
+// Owner decision D4: a filament the slice maps to High Flow but whose preset has no High Flow values
+// slices its Standard values. Say so once per filament per session (Bambu printers, where the High
+// Flow column comes from Bambu's own data).
+static void notify_high_flow_standard_fallback(const Print *print, NotificationManager *notifications)
+{
+    if (print == nullptr || notifications == nullptr || wxGetApp().preset_bundle == nullptr ||
+        !wxGetApp().preset_bundle->is_bbl_vendor())
+        return;
+    static std::set<std::string> s_notified;
+    const std::vector<unsigned int> fallback =
+        BambuFlowSupport::filaments_without_high_flow_column(print->config(), print->extruders());
+    if (fallback.empty())
+        return;
+    const auto *ids = print->full_print_config().option<ConfigOptionStrings>("filament_settings_id");
+    std::vector<std::string> names;
+    for (unsigned int id : fallback) {
+        const std::string name = ids != nullptr && id < ids->values.size() && !ids->values[id].empty() ?
+                                     ids->values[id] : (boost::format("Filament %1%") % (id + 1)).str();
+        if (s_notified.insert(name).second)
+            names.push_back(name);
+    }
+    if (names.empty())
+        return;
+    const std::string list = boost::algorithm::join(names, ", ");
+    notifications->push_notification(NotificationType::CustomNotification,
+                                     NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                     format(_L("No High Flow values for %s: printed on a High Flow nozzle with its Standard values."), list));
+}
+
 void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": enter, m_ignore_event %1%, status %2%")%m_ignore_event %evt.status();
@@ -16431,6 +16471,7 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     if (evt.success()) {
         wxGetApp().app_config->set("preferred_printer", wxGetApp().preset_bundle->printers.get_selected_preset_name());
         q->record_preferred_print_profile();
+        notify_high_flow_standard_fallback(this->background_process.fff_print(), notification_manager.get());
     }
 
     //BBS: update the action button according to the current plate's status
@@ -22829,24 +22870,22 @@ bool Plater::reslice()
                             if (e.id == physical && e.nozzle_id != 0xff)
                                 want[size_t(logical)] = int(e.current_nozzle_flow);
                     }
-                    if (!cur || cur->values != want) {
-                        if (cur)
-                            cur->values = want; // in place: keeps the option's enum key map
-                        else
-                            pb->project_config.set_key_value("nozzle_volume_type", new ConfigOptionEnumsGeneric(want));
+                    // Through FlowType so the sidebar's Flow combos, the per-printer memory and the
+                    // per-filament flow types (owner decision D2) follow the printer instead of
+                    // putting the old choice back.
+                    if (GUI::FlowType::adopt_device_nozzle_volume_types(want)) {
                         BOOST_LOG_TRIVIAL(info) << "[DualNozzle] auto-matched nozzle_volume_type per extruder to the printer: "
                                                 << want[0] << "," << want[1];
+                        CallAfter([this]() { sidebar().sync_nozzle_flow_combos(); });
                     }
                 } else if (obj->is_connected() && !obj->m_extder_data.extders.empty()) {
                     NozzleVolumeType flow = obj->m_extder_data.extders[0].current_nozzle_flow;
                     // Ultra: nozzle_volume_type is now per-extruder (coEnums). This single-nozzle
                     // auto-match sets the first extruder's value; dual-nozzle per-extruder matching
                     // is handled by the grouping orchestration.
-                    auto* cur = pb->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
-                    int cur0 = (cur && !cur->values.empty()) ? cur->values.front() : -1;
-                    if (cur0 != int(flow)) {
-                        pb->project_config.set_key_value("nozzle_volume_type", new ConfigOptionEnumsGeneric{ flow });
+                    if (GUI::FlowType::adopt_device_nozzle_volume_types({ int(flow) })) {
                         BOOST_LOG_TRIVIAL(info) << "[UltraNet] auto-matched nozzle_volume_type to printer flow=" << int(flow);
+                        CallAfter([this]() { sidebar().sync_nozzle_flow_combos(); });
                     }
                 }
             }

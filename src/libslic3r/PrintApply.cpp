@@ -1516,6 +1516,15 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         else
             m_filament_map_input = incoming_map->values;
     }
+    // The same for filament_volume_type, which the slice derives from that computed map on a dual-nozzle
+    // printer with High Flow support (owner decision D2). An unchanged input keeps the derived types, so
+    // re-applying the same settings does not invalidate every step (filament_volume_type invalidates all).
+    if (auto *incoming_types = new_full_config.option<ConfigOptionEnumsGeneric>("filament_volume_type")) {
+        if (keep_sliced_filament_map(incoming_types->values, m_filament_volume_type_input, m_config.filament_volume_type.values))
+            incoming_types->values = m_config.filament_volume_type.values;
+        else
+            m_filament_volume_type_input = incoming_types->values;
+    }
 
     // Find modified keys of the various configs. Resolve overrides extruder retract values by filament profiles.
     DynamicPrintConfig   filament_overrides;

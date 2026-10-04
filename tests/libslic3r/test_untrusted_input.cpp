@@ -2,6 +2,7 @@
 
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Format/3mf.hpp"
+#include "libslic3r/Format/AssembleList.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Format/OBJ.hpp"
 #include "libslic3r/Model.hpp"
@@ -19,6 +20,7 @@
 #include <boost/nowide/convert.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <boost/system/error_code.hpp>
+#include <nlohmann/json.hpp>
 
 #include <array>
 #include <cstdio>
@@ -1156,29 +1158,59 @@ struct LoadedObj
     std::string  message;
 };
 
+// Loads an OBJ made of the given lines. When with_mtl is true, writes material "a"
+// and prefixes the body with mtllib / usemtl so load_obj fills obj_info.uvs.
+LoadedObj load_obj_body(const std::string &body, bool with_mtl = true)
+{
+    ObjScratch scratch;
+    std::string text;
+    if (with_mtl) {
+        scratch.write("a.mtl", "newmtl a\nKd 1 0 0\n");
+        text = "mtllib a.mtl\n";
+        if (body.find("usemtl") == std::string::npos)
+            text += "usemtl a\n";
+        text += body;
+    } else {
+        text = body;
+    }
+    const fs::path obj = scratch.write("mesh.obj", text);
+    LoadedObj      loaded;
+    loaded.ok = load_obj(obj.string().c_str(), &loaded.mesh, loaded.info, loaded.message);
+    return loaded;
+}
+
+LoadedObj load_textured_obj(const std::string &body)
+{
+    return load_obj_body(body, true);
+}
+
 // A tetrahedron with a material and two texture coordinates, (0.25, 0.5) and (0.75, 1).
 // Only the first face and the vt lines are varied; the other three faces reference vt 1.
 LoadedObj load_textured_tetrahedron(const std::string &first_face, const std::string &vts = "vt 0.25 0.5\nvt 0.75 1\n")
 {
-    ObjScratch     scratch;
-    scratch.write("a.mtl", "newmtl a\nKd 1 0 0\n");
-    std::string body = "mtllib a.mtl\n"
-                       "v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\n";
-    body += vts;
-    body += "usemtl a\n";
-    body += first_face;
-    body += "\n";
-    body += "f 1/1 2/1 4/1\nf 1/1 4/1 3/1\nf 2/1 3/1 4/1\n";
-    const fs::path obj = scratch.write("mesh.obj", body);
-    LoadedObj      loaded;
-    loaded.ok = load_obj(obj.string().c_str(), &loaded.mesh, loaded.info, loaded.message);
-    return loaded;
+    return load_textured_obj("v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\n" + vts + "usemtl a\n" + first_face + "\n" +
+                             "f 1/1 2/1 4/1\nf 1/1 4/1 3/1\nf 2/1 3/1 4/1\n");
 }
 
 void check_uv(const Vec2f &uv, float x, float y)
 {
     CHECK(uv.x() == Approx(x).margin(1e-6f));
     CHECK(uv.y() == Approx(y).margin(1e-6f));
+}
+
+// Texture coordinate n is (n / 10, n / 20), so a UV identifies the vt it came from.
+void check_uv_is_vt(const Vec2f &uv, int vt)
+{
+    check_uv(uv, static_cast<float>(vt) / 10.f, static_cast<float>(vt) / 20.f);
+}
+
+void check_uvs_follow_vertices(const LoadedObj &loaded)
+{
+    const indexed_triangle_set &its = loaded.mesh.its;
+    REQUIRE(loaded.info.uvs.size() == its.indices.size());
+    for (size_t face = 0; face < its.indices.size(); ++face)
+        for (int corner = 0; corner < 3; ++corner)
+            check_uv_is_vt(loaded.info.uvs[face][corner], its.indices[face][corner] + 1);
 }
 
 } // namespace
@@ -1245,6 +1277,396 @@ TEST_CASE("Mixed vt u v and vt u v w lines keep the indices stable", "[obj][untr
     check_uv(uv[0], 0.25f, 0.5f);
     check_uv(uv[1], 0.75f, 1.f);
     check_uv(uv[2], 0.75f, 1.f);
+}
+
+// ---- OBJ quad UVs + UV order after flip (Orca #15977, follow-up to #15948 / Edge #197) ---------
+//
+// A quad is split into triangles {0,1,2} and {0,2,3}. The second triangle used to reuse
+// uvs[0..2]. After flip_triangles() (swap vertex 1 and 2) the per-face UVs were left as-is.
+
+TEST_CASE("Both triangles of a quad take the texture coordinates of their own corners", "[obj][uv]")
+{
+    const LoadedObj loaded = load_textured_obj("v 0 0 0\nv 10 0 0\nv 10 10 0\nv 0 10 0\n"
+                                               "vt 0.1 0.05\nvt 0.2 0.1\nvt 0.3 0.15\nvt 0.4 0.2\n"
+                                               "usemtl a\n"
+                                               "f 1/1 2/2 3/3 4/4\n");
+
+    REQUIRE(loaded.ok);
+    REQUIRE(loaded.mesh.facets_count() == 2);
+    REQUIRE(loaded.info.uvs.size() == 2);
+    check_uv_is_vt(loaded.info.uvs[0][0], 1);
+    check_uv_is_vt(loaded.info.uvs[0][1], 2);
+    check_uv_is_vt(loaded.info.uvs[0][2], 3);
+    check_uv_is_vt(loaded.info.uvs[1][0], 1);
+    check_uv_is_vt(loaded.info.uvs[1][1], 3);
+    check_uv_is_vt(loaded.info.uvs[1][2], 4);
+}
+
+TEST_CASE("Texture coordinates follow the corners of an inward-wound cube that is flipped on load", "[obj][uv]")
+{
+    // 10 mm cube, faces wound inward (signed volume -1000). Vertex n uses vt n.
+    LoadedObj loaded = load_textured_obj(
+        "v 0 0 0\nv 10 0 0\nv 10 10 0\nv 0 10 0\n"
+        "v 0 0 10\nv 10 0 10\nv 10 10 10\nv 0 10 10\n"
+        "vt 0.1 0.05\nvt 0.2 0.1\nvt 0.3 0.15\nvt 0.4 0.2\n"
+        "vt 0.5 0.25\nvt 0.6 0.3\nvt 0.7 0.35\nvt 0.8 0.4\n"
+        "usemtl a\n"
+        "f 1/1 3/3 4/4\nf 1/1 2/2 3/3\n"
+        "f 5/5 7/7 6/6\nf 5/5 8/8 7/7\n"
+        "f 1/1 6/6 2/2\nf 1/1 5/5 6/6\n"
+        "f 4/4 7/7 8/8\nf 4/4 3/3 7/7\n"
+        "f 1/1 8/8 5/5\nf 1/1 4/4 8/8\n"
+        "f 2/2 7/7 3/3\nf 2/2 6/6 7/7\n");
+
+    REQUIRE(loaded.ok);
+    CHECK(loaded.mesh.volume() > 0.f);
+    REQUIRE(loaded.mesh.facets_count() == 12);
+    check_uvs_follow_vertices(loaded);
+}
+
+TEST_CASE("Texture coordinates follow the corners of an inward-wound quad cube that is flipped on load", "[obj][uv]")
+{
+    // Same 10 mm cube, but each face is a quad (split into {0,1,2} and {0,2,3}).
+    // Faces wound inward so load_obj flips them. Vertex n uses vt n.
+    LoadedObj loaded = load_textured_obj(
+        "v 0 0 0\nv 10 0 0\nv 10 10 0\nv 0 10 0\n"
+        "v 0 0 10\nv 10 0 10\nv 10 10 10\nv 0 10 10\n"
+        "vt 0.1 0.05\nvt 0.2 0.1\nvt 0.3 0.15\nvt 0.4 0.2\n"
+        "vt 0.5 0.25\nvt 0.6 0.3\nvt 0.7 0.35\nvt 0.8 0.4\n"
+        "usemtl a\n"
+        "f 1/1 2/2 3/3 4/4\n"
+        "f 5/5 8/8 7/7 6/6\n"
+        "f 1/1 5/5 6/6 2/2\n"
+        "f 4/4 3/3 7/7 8/8\n"
+        "f 1/1 4/4 8/8 5/5\n"
+        "f 2/2 6/6 7/7 3/3\n");
+
+    REQUIRE(loaded.ok);
+    CHECK(loaded.mesh.volume() > 0.f);
+    REQUIRE(loaded.mesh.facets_count() == 12);
+    check_uvs_follow_vertices(loaded);
+}
+
+TEST_CASE("A plain outward textured tetrahedron keeps file-order UVs", "[obj][uv]")
+{
+    // Outward-wound; vertex n uses vt n. A swap that always runs would break the pairing.
+    LoadedObj loaded = load_textured_obj("v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\n"
+                                         "vt 0.1 0.05\nvt 0.2 0.1\nvt 0.3 0.15\nvt 0.4 0.2\n"
+                                         "usemtl a\n"
+                                         "f 1/1 3/3 2/2\nf 1/1 2/2 4/4\nf 1/1 4/4 3/3\nf 2/2 3/3 4/4\n");
+
+    REQUIRE(loaded.ok);
+    CHECK(loaded.mesh.volume() > 0.f);
+    REQUIRE(loaded.mesh.facets_count() == 4);
+    check_uvs_follow_vertices(loaded);
+}
+
+TEST_CASE("An untextured OBJ still loads with no UVs", "[obj][uv]")
+{
+    LoadedObj loaded = load_obj_body("v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\n"
+                                     "f 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n",
+                                     false);
+
+    REQUIRE(loaded.ok);
+    CHECK(loaded.mesh.volume() > 0.f);
+    CHECK(loaded.mesh.facets_count() == 4);
+    CHECK(loaded.info.uvs.empty());
+    CHECK(loaded.info.face_colors.empty());
+}
+
+// ---- CLI assemble list ------------------------------------------------------------------------
+//
+// Port of Orca #15978's tests/libslic3r/test_assemble_list.cpp to Catch2 v2, kept in this existing
+// file (no test CMake edits). Inserted before the 3MF section so in-flight PRs that edit the tail
+// do not collide.
+
+namespace {
+
+using nlohmann::json;
+
+static constexpr int assemble_list_max_plates = 36;
+
+struct AssembleListTempFile
+{
+    fs::path path;
+    explicit AssembleListTempFile()
+        : path(fs::temp_directory_path() / fs::unique_path("edgeslicer_assemble_%%%%%%%%"))
+    {}
+    ~AssembleListTempFile()
+    {
+        boost::system::error_code ec;
+        fs::remove(path, ec);
+    }
+    std::string str() const { return path.string(); }
+};
+
+static AssembleListResult load_assemble_text(const std::string &text, std::vector<assemble_plate_info_t> &plates)
+{
+    AssembleListTempFile file;
+    {
+        boost::nowide::ofstream out(file.str());
+        out << text;
+    }
+    return load_assemble_plate_list(file.str(), plates, assemble_list_max_plates);
+}
+
+static AssembleListResult load_assemble_json(const json &root)
+{
+    std::vector<assemble_plate_info_t> plates;
+    return load_assemble_text(root.dump(), plates);
+}
+
+// One plate with one object of three clones, which every optional field accepts.
+static json valid_assemble_list()
+{
+    return json::parse(R"({
+        "plates": [{
+            "plate_name": "plate",
+            "need_arrange": false,
+            "objects": [{
+                "path": "cube.stl",
+                "count": 3,
+                "filaments": [1],
+                "height_ranges": [{ "min_z": 0, "max_z": 5, "range_params": { "layer_height": "0.1" } }]
+            }],
+            "assembled_params": [{
+                "assemble_index": 1,
+                "height_ranges": [{ "min_z": 0, "max_z": 5, "range_params": { "layer_height": "0.1" } }]
+            }]
+        }]
+    })");
+}
+
+} // namespace
+
+TEST_CASE("A valid assemble list parses into its plates and objects", "[AssembleList][CLI]")
+{
+    const std::string text = R"({
+        "plates": [
+            {
+                "plate_name": "first",
+                "need_arrange": true,
+                "plate_params": { "curr_bed_type": "Textured PEI Plate" },
+                "objects": [
+                    {
+                        "path": "a.stl",
+                        "count": 2,
+                        "filaments": [1, 3],
+                        "assemble_index": [1],
+                        "pos_x": [10.5, 20.5],
+                        "pos_y": [30],
+                        "pos_z": [0, 1],
+                        "print_params": { "sparse_infill_density": "30%" },
+                        "height_ranges": [{ "min_z": 1.5, "max_z": 4, "range_params": { "layer_height": "0.12" } }]
+                    },
+                    { "path": "b.stl", "count": 1, "filaments": [0] }
+                ],
+                "assembled_params": [{ "assemble_index": 1, "print_params": { "wall_loops": "4" } }]
+            },
+            {
+                "plate_name": "second",
+                "need_arrange": false,
+                "objects": [{ "path": "c.stl", "count": 1, "filaments": [2] }]
+            }
+        ]
+    })";
+    std::vector<assemble_plate_info_t> plates;
+    REQUIRE(load_assemble_text(text, plates) == AssembleListResult::Success);
+    REQUIRE(plates.size() == 2);
+
+    const assemble_plate_info_t &first = plates[0];
+    CHECK(first.plate_name == "first");
+    CHECK(first.need_arrange);
+    CHECK(first.plate_params.at("curr_bed_type") == "Textured PEI Plate");
+    REQUIRE(first.assemble_obj_list.size() == 2);
+
+    const assemble_object_info_t &a = first.assemble_obj_list[0];
+    CHECK(a.path == "a.stl");
+    CHECK(a.count == 2);
+    CHECK(a.filaments == std::vector<int>{1, 3});
+    CHECK(a.assemble_index == std::vector<int>{1});
+    REQUIRE(a.pos_x.size() == 2);
+    CHECK(a.pos_x[0] == Approx(10.5).margin(1e-6));
+    CHECK(a.pos_x[1] == Approx(20.5).margin(1e-6));
+    REQUIRE(a.pos_y.size() == 1);
+    CHECK(a.pos_y[0] == Approx(30.).margin(1e-6));
+    REQUIRE(a.pos_z.size() == 2);
+    CHECK(a.pos_z[1] == Approx(1.).margin(1e-6));
+    CHECK(a.print_params.at("sparse_infill_density") == "30%");
+    REQUIRE(a.height_ranges.size() == 1);
+    CHECK(a.height_ranges[0].min_z == Approx(1.5).margin(1e-6));
+    CHECK(a.height_ranges[0].max_z == Approx(4.).margin(1e-6));
+    CHECK(a.height_ranges[0].range_params.at("layer_height") == "0.12");
+
+    const assemble_object_info_t &b = first.assemble_obj_list[1];
+    CHECK(b.path == "b.stl");
+    CHECK(b.count == 1);
+    CHECK(b.filaments == std::vector<int>{0});
+    CHECK(b.pos_x.empty());
+    CHECK(b.assemble_index.empty());
+
+    REQUIRE(first.assembled_param_list.count(1) == 1);
+    CHECK(first.assembled_param_list.at(1).print_params.at("wall_loops") == "4");
+
+    const assemble_plate_info_t &second = plates[1];
+    CHECK(second.plate_name == "second");
+    CHECK_FALSE(second.need_arrange);
+    REQUIRE(second.assemble_obj_list.size() == 1);
+    CHECK(second.assemble_obj_list[0].path == "c.stl");
+    CHECK(second.assemble_obj_list[0].filaments == std::vector<int>{2});
+}
+
+TEST_CASE("The unmodified fixture used by the rule tests is accepted", "[AssembleList][CLI]")
+{
+    CHECK(load_assemble_json(valid_assemble_list()) == AssembleListResult::Success);
+}
+
+TEST_CASE("An object with an empty filament list is rejected", "[AssembleList][CLI]")
+{
+    json root = valid_assemble_list();
+    root["plates"][0]["objects"][0]["filaments"] = json::array();
+    CHECK(load_assemble_json(root) == AssembleListResult::ConfigError);
+}
+
+TEST_CASE("An object with a negative filament id is rejected", "[AssembleList][CLI]")
+{
+    json root = valid_assemble_list();
+    root["plates"][0]["objects"][0]["filaments"] = GENERATE(json::array({-1}), json::array({1, -2, 1}));
+    CAPTURE(root["plates"][0]["objects"][0]["filaments"].dump());
+    CHECK(load_assemble_json(root) == AssembleListResult::ConfigError);
+}
+
+TEST_CASE("Filament id 0 is accepted", "[AssembleList][CLI]")
+{
+    json root = valid_assemble_list();
+    root["plates"][0]["objects"][0]["filaments"] = GENERATE(json::array({0}), json::array({0, 1, 0}));
+    CAPTURE(root["plates"][0]["objects"][0]["filaments"].dump());
+    CHECK(load_assemble_json(root) == AssembleListResult::Success);
+}
+
+TEST_CASE("Per-clone lists need one entry or one per clone", "[AssembleList][CLI]")
+{
+    // The fixture object has 3 clones.
+    const std::string key  = GENERATE("filaments", "assemble_index", "pos_x", "pos_y", "pos_z");
+    const size_t      size = GENERATE(1, 2, 3, 4);
+    CAPTURE(key, size);
+
+    json root = valid_assemble_list();
+    root["plates"][0]["objects"][0][key] = json(std::vector<int>(size, 1));
+    const AssembleListResult expected = (size == 1 || size == 3) ? AssembleListResult::Success : AssembleListResult::ConfigError;
+    CHECK(load_assemble_json(root) == expected);
+}
+
+TEST_CASE("An empty optional per-clone list is accepted", "[AssembleList][CLI]")
+{
+    const std::string key = GENERATE("assemble_index", "pos_x", "pos_y", "pos_z");
+    CAPTURE(key);
+
+    json root = valid_assemble_list();
+    root["plates"][0]["objects"][0][key] = json::array();
+    CHECK(load_assemble_json(root) == AssembleListResult::Success);
+}
+
+// Fields read through a const reference (plate_name, need_arrange, objects, path, count) are
+// looked up without a presence check, so only their wrong-type case is covered here.
+// nlohmann 3.10 has no json_pointer::parent_pointer(); pop_back() is the 3.10 equivalent.
+TEST_CASE("A missing required field is rejected", "[AssembleList][CLI]")
+{
+    const std::string pointer = GENERATE("/plates",
+                                         "/plates/0/objects/0/filaments",
+                                         "/plates/0/objects/0/height_ranges/0/min_z",
+                                         "/plates/0/objects/0/height_ranges/0/max_z",
+                                         "/plates/0/objects/0/height_ranges/0/range_params",
+                                         "/plates/0/assembled_params/0/assemble_index",
+                                         "/plates/0/assembled_params/0/height_ranges/0/min_z",
+                                         "/plates/0/assembled_params/0/height_ranges/0/max_z",
+                                         "/plates/0/assembled_params/0/height_ranges/0/range_params");
+    CAPTURE(pointer);
+
+    json root = valid_assemble_list();
+    json::json_pointer ptr(pointer);
+    const std::string last = ptr.back();
+    ptr.pop_back();
+    root[ptr].erase(last);
+    CHECK(load_assemble_json(root) == AssembleListResult::ConfigError);
+}
+
+TEST_CASE("A field of the wrong type is rejected", "[AssembleList][CLI]")
+{
+    const std::string pointer = GENERATE("/plates/0/plate_name",
+                                         "/plates/0/need_arrange",
+                                         "/plates/0/objects/0/path",
+                                         "/plates/0/objects/0/count",
+                                         "/plates/0/objects/0/filaments",
+                                         "/plates/0/objects/0/pos_x");
+    CAPTURE(pointer);
+
+    json root = valid_assemble_list();
+    root[json::json_pointer(pointer)] = json::object();
+    CHECK(load_assemble_json(root) == AssembleListResult::ConfigError);
+}
+
+TEST_CASE("A plate or clone count out of range is rejected", "[AssembleList][CLI]")
+{
+    SECTION("no plates")
+    {
+        json root = valid_assemble_list();
+        root["plates"] = json::array();
+        CHECK(load_assemble_json(root) == AssembleListResult::ConfigError);
+    }
+    SECTION("more plates than the limit")
+    {
+        json root = valid_assemble_list();
+        const json plate = root["plates"][0];
+        for (int i = 1; i < assemble_list_max_plates; ++i)
+            root["plates"].push_back(plate);
+        CHECK(load_assemble_json(root) == AssembleListResult::Success);
+        root["plates"].push_back(plate);
+        CHECK(load_assemble_json(root) == AssembleListResult::ConfigError);
+    }
+    SECTION("a plate with no objects")
+    {
+        json root = valid_assemble_list();
+        root["plates"][0]["objects"] = json::array();
+        CHECK(load_assemble_json(root) == AssembleListResult::ConfigError);
+    }
+    SECTION("a clone count below 1")
+    {
+        json root = valid_assemble_list();
+        root["plates"][0]["objects"][0]["count"] = GENERATE(0, -1);
+        CAPTURE(root["plates"][0]["objects"][0]["count"].dump());
+        CHECK(load_assemble_json(root) == AssembleListResult::ConfigError);
+    }
+}
+
+TEST_CASE("Malformed JSON is rejected", "[AssembleList][CLI]")
+{
+    const std::string text = GENERATE(std::string(), std::string("{\"plates\": ["), std::string("not json"));
+    CAPTURE(text);
+    std::vector<assemble_plate_info_t> plates;
+    CHECK(load_assemble_text(text, plates) == AssembleListResult::ConfigError);
+}
+
+TEST_CASE("A missing file is reported as not found", "[AssembleList][CLI]")
+{
+    const fs::path missing = fs::temp_directory_path() / fs::unique_path("edgeslicer_assemble_missing_%%%%%%%%");
+    std::vector<assemble_plate_info_t> plates;
+    CHECK(load_assemble_plate_list(missing.string(), plates, assemble_list_max_plates) == AssembleListResult::FileNotFound);
+}
+
+// Edge follow-up (upstream deferred): each of pos_x/y/z is independently 1 or count.
+// construct_assemble_list now indexes each axis by its own length, so a 1-vs-count mix
+// is accepted here and must not over-read at construct time.
+TEST_CASE("Per-axis pos lists may be length 1 or count independently", "[AssembleList][CLI]")
+{
+    json root = valid_assemble_list();
+    root["plates"][0]["objects"][0]["pos_x"] = json::array({10.f});
+    root["plates"][0]["objects"][0]["pos_y"] = json::array({1.f, 2.f, 3.f});
+    root["plates"][0]["objects"][0]["pos_z"] = json::array({0.f});
+    CHECK(load_assemble_json(root) == AssembleListResult::Success);
+
+    root["plates"][0]["objects"][0]["pos_x"] = json::array({1.f, 2.f});
+    CHECK(load_assemble_json(root) == AssembleListResult::ConfigError);
 }
 
 // ---- 3MF XML entries larger than expat's int (Orca #15958) ------------------------------------

@@ -175,6 +175,7 @@ set(lisbslic3r_sources
     Feature/Interlocking/VoxelUtils.hpp
     FileParserError.hpp
     AllowlistManager.cpp
+    AlignMath.hpp
     AllowlistManager.hpp
     FilamentColorLibrary.cpp
     FilamentColorLibrary.hpp
@@ -230,6 +231,8 @@ set(lisbslic3r_sources
     Format/3mf.hpp
     Format/AMF.cpp
     Format/AMF.hpp
+    Format/AssembleList.cpp
+    Format/AssembleList.hpp
     Format/bbs_3mf.cpp
     Format/bbs_3mf.hpp
     Format/BambuExport.cpp
@@ -300,6 +303,8 @@ set(lisbslic3r_sources
     GCodeReader.hpp
     GCode/RetractWhenCrossingPerimeters.cpp
     GCode/RetractWhenCrossingPerimeters.hpp
+    GCode/TimelapsePosPicker.cpp
+    GCode/TimelapsePosPicker.hpp
     GCode/PreciseSeam.cpp
     GCode/PreciseSeam.hpp
     GCode/SeamPlacer.cpp
@@ -545,6 +550,10 @@ set(lisbslic3r_sources
     Support/SupportParameters.hpp
     Support/Stabilizers.cpp
     Support/Stabilizers.hpp
+    Support/StabilizerMesh.cpp
+    Support/StabilizerMesh.hpp
+    Support/StabilizerBake.cpp
+    Support/StabilizerBake.hpp
     Support/SupportSpotsGenerator.cpp
     Support/SupportSpotsGenerator.hpp
     Support/TreeModelVolumes.cpp

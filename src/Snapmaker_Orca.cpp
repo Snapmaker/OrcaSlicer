@@ -907,162 +907,6 @@ static void load_default_gcodes_to_config(DynamicPrintConfig& config, Preset::Ty
     }
 }
 
-static int load_assemble_plate_list(std::string config_file, std::vector<assemble_plate_info_t> &assemble_plate_info_list)
-{
-    int ret = 0;
-    boost::filesystem::path directory_path(config_file);
-
-    BOOST_LOG_TRIVIAL(info) << boost::format("%1% enter, file %2%")%__FUNCTION__ % config_file;
-    if (!fs::exists(directory_path)) {
-        BOOST_LOG_TRIVIAL(error) << boost::format("directory %1% not exist.")%config_file;
-        return CLI_FILE_NOTFOUND;
-    }
-
-    try {
-        json root_json;
-        boost::nowide::ifstream ifs(config_file);
-        ifs >> root_json;
-        ifs.close();
-
-        int plate_count = root_json[JSON_ASSEMPLE_PLATES].size();
-        if ((plate_count <= 0) || (plate_count > MAX_PLATE_COUNT)) {
-            BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< boost::format(": invalid plate count %1%")%plate_count;
-            return CLI_CONFIG_FILE_ERROR;
-        }
-        assemble_plate_info_list.resize(plate_count);
-
-        for (int plate_index = 0; plate_index < plate_count; plate_index++)
-        {
-            assemble_plate_info_t &assemble_plate = assemble_plate_info_list[plate_index];
-            const json& plate_json = root_json[JSON_ASSEMPLE_PLATES][plate_index];
-            assemble_plate.plate_name = plate_json[JSON_ASSEMPLE_PLATE_NAME];
-            assemble_plate.need_arrange = plate_json[JSON_ASSEMPLE_PLATE_NEED_ARRANGE];
-
-            if (plate_json.contains(JSON_ASSEMPLE_PLATE_PARAMS)) {
-                assemble_plate.plate_params = plate_json[JSON_ASSEMPLE_PLATE_PARAMS].get<std::map<std::string, std::string>>();
-                BOOST_LOG_TRIVIAL(debug) << boost::format("Plate %1%, has %2% plate params") % (plate_index + 1)  % assemble_plate.plate_params.size();
-            }
-
-            int object_count = plate_json[JSON_ASSEMPLE_OBJECTS].size();
-            if (object_count <= 0) {
-                BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< boost::format(": invalid object count %1% in plate %2%")%object_count %(plate_index+1);
-                return CLI_CONFIG_FILE_ERROR;
-            }
-
-            assemble_plate.assemble_obj_list.resize(object_count);
-            for (int object_index = 0; object_index < object_count; object_index++)
-            {
-                assemble_object_info_t& assemble_object = assemble_plate.assemble_obj_list[object_index];
-                const json& object_json = plate_json[JSON_ASSEMPLE_OBJECTS][object_index];
-
-                assemble_object.path = object_json[JSON_ASSEMPLE_OBJECT_PATH];
-                assemble_object.count = object_json[JSON_ASSEMPLE_OBJECT_COUNT];
-
-                if (assemble_object.count <= 0) {
-                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": invalid object clone count %1% in plate %2% Object %3%") % assemble_object.count % (plate_index + 1) % assemble_object.path;
-                    return CLI_CONFIG_FILE_ERROR;
-                }
-
-                assemble_object.filaments = object_json.at(JSON_ASSEMPLE_OBJECT_FILAMENTS).get<std::vector<int>>();
-                if ((assemble_object.filaments.size() > 0) && (assemble_object.filaments.size() != assemble_object.count) && (assemble_object.filaments.size() != 1))
-                {
-                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": object %1%'s filaments count %2% not equal to clone count %3%, also not equal to 1") % assemble_object.path % assemble_object.filaments.size() % assemble_object.count;
-                    return CLI_CONFIG_FILE_ERROR;
-                }
-
-                if (object_json.contains(JSON_ASSEMPLE_OBJECT_ASSEMBLE_INDEX)) {
-                    assemble_object.assemble_index = object_json[JSON_ASSEMPLE_OBJECT_ASSEMBLE_INDEX].get<std::vector<int>>();
-                    if ((assemble_object.assemble_index.size() > 0) && (assemble_object.assemble_index.size() != assemble_object.count) && (assemble_object.assemble_index.size() != 1))
-                    {
-                        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": object %1%'s assemble_index count %2% not equal to clone count %3%, also not equal to 1") % assemble_object.path % assemble_object.assemble_index.size() % assemble_object.count;
-                        return CLI_CONFIG_FILE_ERROR;
-                    }
-                }
-
-                if (object_json.contains(JSON_ASSEMPLE_OBJECT_POS_X)) {
-                    assemble_object.pos_x = object_json[JSON_ASSEMPLE_OBJECT_POS_X].get<std::vector<float>>();
-                    if ((assemble_object.pos_x.size() > 0) && (assemble_object.pos_x.size() != assemble_object.count) && (assemble_object.pos_x.size() != 1))
-                    {
-                        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": object %1%'s pos_x count %2% not equal to clone count %3%, also not equal to 1") % assemble_object.path % assemble_object.pos_x.size() % assemble_object.count;
-                        return CLI_CONFIG_FILE_ERROR;
-                    }
-                }
-                if (object_json.contains(JSON_ASSEMPLE_OBJECT_POS_Y)) {
-                    assemble_object.pos_y = object_json[JSON_ASSEMPLE_OBJECT_POS_Y].get<std::vector<float>>();
-                    if ((assemble_object.pos_y.size() > 0) && (assemble_object.pos_y.size() != assemble_object.count) && (assemble_object.pos_y.size() != 1))
-                    {
-                        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": object %1%'s pos_y count %2% not equal to clone count %3%, also not equal to 1") % assemble_object.path % assemble_object.pos_y.size() % assemble_object.count;
-                        return CLI_CONFIG_FILE_ERROR;
-                    }
-                }
-                if (object_json.contains(JSON_ASSEMPLE_OBJECT_POS_Z)) {
-                    assemble_object.pos_z = object_json[JSON_ASSEMPLE_OBJECT_POS_Z].get<std::vector<float>>();
-                    if ((assemble_object.pos_z.size() > 0) && (assemble_object.pos_z.size() != assemble_object.count) && (assemble_object.pos_z.size() != 1))
-                    {
-                        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": object %1%'s pos_z count %2% not equal to clone count %3%, also not equal to 1") % assemble_object.path % assemble_object.pos_z.size() % assemble_object.count;
-                        return CLI_CONFIG_FILE_ERROR;
-                    }
-                }
-                if (object_json.contains(JSON_ASSEMPLE_OBJECT_PRINT_PARAMS)) {
-                    assemble_object.print_params = object_json[JSON_ASSEMPLE_OBJECT_PRINT_PARAMS].get<std::map<std::string, std::string>>();
-                    BOOST_LOG_TRIVIAL(debug) << boost::format("Plate %1%, object %2% has %3% print params") % (plate_index + 1) %assemble_object.path % assemble_object.print_params.size();
-                }
-                if (object_json.contains(JSON_ASSEMPLE_OBJECT_HEIGHT_RANGES)) {
-                    json height_range_json = object_json[JSON_ASSEMPLE_OBJECT_HEIGHT_RANGES];
-                    int range_count = height_range_json.size();
-
-                    BOOST_LOG_TRIVIAL(debug) << boost::format("Plate %1%, object %2% has %3% height ranges") % (plate_index + 1) %assemble_object.path % range_count;
-
-                    assemble_object.height_ranges.resize(range_count);
-                    for (int range_index = 0; range_index < range_count; range_index++)
-                    {
-                        height_range_info_t& height_range = assemble_object.height_ranges[range_index];
-                        height_range.min_z = height_range_json[range_index][JSON_ASSEMPLE_OBJECT_MIN_Z];
-                        height_range.max_z = height_range_json[range_index][JSON_ASSEMPLE_OBJECT_MAX_Z];
-                        height_range.range_params = height_range_json[range_index][JSON_ASSEMPLE_OBJECT_RANGE_PARAMS].get<std::map<std::string, std::string>>();
-                    }
-                }
-            }
-            if (plate_json.contains(JSON_ASSEMPLE_ASSEMBLE_PARAMS)) {
-                json assemble_params_json = plate_json[JSON_ASSEMPLE_ASSEMBLE_PARAMS];
-                int assemble_count = assemble_params_json.size();
-                for (int i = 0; i < assemble_count; i++)
-                {
-                    assembled_param_info_t assembled_param;
-                    int assemble_index = assemble_params_json[i][JSON_ASSEMPLE_OBJECT_ASSEMBLE_INDEX];
-                    if (assemble_params_json[i].contains(JSON_ASSEMPLE_OBJECT_PRINT_PARAMS)) {
-                        assembled_param.print_params = assemble_params_json[i][JSON_ASSEMPLE_OBJECT_PRINT_PARAMS].get<std::map<std::string, std::string>>();
-                        BOOST_LOG_TRIVIAL(debug) << boost::format("Plate %1%, assemble object %2% has %3% print params") % (plate_index + 1) %i % assembled_param.print_params.size();
-                    }
-                    if (assemble_params_json[i].contains(JSON_ASSEMPLE_OBJECT_HEIGHT_RANGES)) {
-                        json height_range_json = assemble_params_json[i][JSON_ASSEMPLE_OBJECT_HEIGHT_RANGES];
-                        int range_count = height_range_json.size();
-
-                        BOOST_LOG_TRIVIAL(debug) << boost::format("Plate %1%, assemble object %2% has %3% height ranges") % (plate_index + 1) %i % range_count;
-
-                        assembled_param.height_ranges.resize(range_count);
-                        for (int range_index = 0; range_index < range_count; range_index++)
-                        {
-                            height_range_info_t& height_range = assembled_param.height_ranges[range_index];
-                            height_range.min_z = height_range_json[range_index][JSON_ASSEMPLE_OBJECT_MIN_Z];
-                            height_range.max_z = height_range_json[range_index][JSON_ASSEMPLE_OBJECT_MAX_Z];
-                            height_range.range_params = height_range_json[range_index][JSON_ASSEMPLE_OBJECT_RANGE_PARAMS].get<std::map<std::string, std::string>>();
-                        }
-                    }
-                    assemble_plate.assembled_param_list.emplace(assemble_index, std::move(assembled_param));
-                }
-                BOOST_LOG_TRIVIAL(debug) << boost::format("Plate %1%, has %2% plate params") % (plate_index + 1)  % assemble_plate.plate_params.size();
-            }
-        }
-    }
-    catch(std::exception &err) {
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": parse file "<<config_file<<" got a generic exception, reason = " << err.what();
-        ret = CLI_CONFIG_FILE_ERROR;
-    }
-
-    return ret;
-}
-
 void merge_or_add_object(assemble_plate_info_t& assemble_plate_info, Model &model, int assemble_index, std::map<int, ModelObject*> &merged_objects, ModelObject *ori_object)
 {
     if (assemble_index > 0) {
@@ -1230,9 +1074,10 @@ static int construct_assemble_list(std::vector<assemble_plate_info_t> &assemble_
                 ModelObject* copy_obj = temp_model.add_object(*object);
                 copy_obj->name = object_name + "_" + std::to_string(copy_index + 1);
 
-                if (copy_index >= assemble_object.pos_x.size())
-                    array_index = 0;
-                copy_obj->translate(assemble_object.pos_x[array_index], assemble_object.pos_y[array_index], assemble_object.pos_z[array_index]);
+                const size_t pos_x_index = (copy_index < assemble_object.pos_x.size()) ? copy_index : 0;
+                const size_t pos_y_index = (copy_index < assemble_object.pos_y.size()) ? copy_index : 0;
+                const size_t pos_z_index = (copy_index < assemble_object.pos_z.size()) ? copy_index : 0;
+                copy_obj->translate(assemble_object.pos_x[pos_x_index], assemble_object.pos_y[pos_y_index], assemble_object.pos_z[pos_z_index]);
 
                 if (copy_index < assemble_object.filaments.size())
                     array_index = copy_index;
@@ -1248,7 +1093,7 @@ static int construct_assemble_list(std::vector<assemble_plate_info_t> &assemble_
                 merge_or_add_object(assemble_plate_info, model, assemble_object.assemble_index[array_index], merged_objects, copy_obj);
 
                 BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": cloned object %1%, name %2%, pos_x %3% pos_y %4%, pos_z %5%")
-                    %copy_index %object->name %assemble_object.pos_x[array_index] %assemble_object.pos_y[array_index] %assemble_object.pos_z[array_index];
+                    %copy_index %object->name %assemble_object.pos_x[pos_x_index] %assemble_object.pos_y[pos_y_index] %assemble_object.pos_z[pos_z_index];
             }
         }
 
@@ -2191,6 +2036,11 @@ int CLI::run(int argc, char **argv)
                     }
                     else {
                         current_filaments_system_name = current_filaments_name;
+                        if (option_strings) {
+                            boost::nowide::cerr << "Warning: project inherits_group has " << option_strings->values.size()
+                                                << " entries, expected " << (filament_name_count + 2)
+                                                << " (filaments+2); using current preset names." << std::endl;
+                        }
                         BOOST_LOG_TRIVIAL(info) << boost::format("no inherits_group: use system name the same as current name");
                     }
                     filament_count = current_filaments_name.size();
@@ -2212,7 +2062,7 @@ int CLI::run(int argc, char **argv)
                     if (config.option<ConfigOptionFloat>("extruder_clearance_height_to_lid"))
                         old_height_to_lid = config.opt_float("extruder_clearance_height_to_lid");
                     if (config.option<ConfigOptionFloat>("extruder_clearance_radius"))
-                        old_max_radius = config.opt_float("extruder_clearance_radius");
+                        old_max_radius = float(sequential_clearance_radius(config));
                     if (config.option<ConfigOptionFloats>("max_layer_height"))
                         old_max_layer_height = config.option<ConfigOptionFloats>("max_layer_height")->values;
                     if (config.option<ConfigOptionFloats>("min_layer_height"))
@@ -2315,7 +2165,12 @@ int CLI::run(int argc, char **argv)
         //parse the json and assemble object here
         Model model;
 
-        int ret = load_assemble_plate_list(load_assemble_list, assemble_plate_info_list);
+        AssembleListResult list_result = load_assemble_plate_list(load_assemble_list, assemble_plate_info_list, MAX_PLATE_COUNT);
+        int ret = CLI_SUCCESS;
+        if (list_result == AssembleListResult::FileNotFound)
+            ret = CLI_FILE_NOTFOUND;
+        else if (list_result == AssembleListResult::ConfigError)
+            ret = CLI_CONFIG_FILE_ERROR;
         if (ret) {
             record_exit_reson(outfile_dir, ret, 0, cli_errors[ret], sliced_info);
             flush_and_exit(ret);
@@ -3841,7 +3696,8 @@ int CLI::run(int argc, char **argv)
     double print_height = m_print_config.opt_float("printable_height");
     double height_to_lid = m_print_config.opt_float("extruder_clearance_height_to_lid");
     double height_to_rod = m_print_config.opt_float("extruder_clearance_height_to_rod");
-    double clearance_radius = m_print_config.opt_float("extruder_clearance_radius");
+    // Bambu Studio arranges with extruder_clearance_max_radius (sequential_clearance_radius on Bambu Lab printers).
+    double clearance_radius = sequential_clearance_radius(m_print_config);
     //double plate_stride;
     std::string bed_texture;
 
@@ -4299,6 +4155,12 @@ int CLI::run(int argc, char **argv)
                 record_exit_reson(outfile_dir, CLI_INVALID_PARAMS, 0, cli_errors[CLI_INVALID_PARAMS], sliced_info);
                 flush_and_exit(CLI_INVALID_PARAMS);
             }
+            if (m_models.empty()) {
+                boost::nowide::cerr << "Invalid params: --assemble needs at least one input model." << std::endl;
+                BOOST_LOG_TRIVIAL(error) << "Invalid params: --assemble needs at least one input model.";
+                record_exit_reson(outfile_dir, CLI_INVALID_PARAMS, 0, cli_errors[CLI_INVALID_PARAMS], sliced_info);
+                flush_and_exit(CLI_INVALID_PARAMS);
+            }
             Model m;
             ModelObject* new_object = m.add_object();
             new_object->name = _u8L("Assembly");
@@ -4312,6 +4174,12 @@ int CLI::run(int argc, char **argv)
                         new_volume->config.set_key_value("extruder", new ConfigOptionInt(o->config.extruder()));
                     }
                 }
+            if (new_object->volumes.empty()) {
+                boost::nowide::cerr << "Invalid params: --assemble needs at least one input model." << std::endl;
+                BOOST_LOG_TRIVIAL(error) << "Invalid params: --assemble needs at least one input model.";
+                record_exit_reson(outfile_dir, CLI_INVALID_PARAMS, 0, cli_errors[CLI_INVALID_PARAMS], sliced_info);
+                flush_and_exit(CLI_INVALID_PARAMS);
+            }
             m_models.clear();
             m_models.emplace_back(std::move(m));
         }
@@ -5185,14 +5053,17 @@ int CLI::run(int argc, char **argv)
                             }
                         }
                         else {
-                            //keep the original
+                            // keep the original. ConfigOptionVector::get_at clamps a past-the-end
+                            // index to values.front() when the vector is non-empty (wipe_tower_x/y
+                            // are per-plate floats; a short vector is not a crash).
                             x = dynamic_cast<const ConfigOptionFloats *>(m_print_config.option("wipe_tower_x"))->get_at(plate_to_slice-1);
                             y = dynamic_cast<const ConfigOptionFloats *>(m_print_config.option("wipe_tower_y"))->get_at(plate_to_slice-1);
                         }
                         float w = dynamic_cast<const ConfigOptionFloat *>(m_print_config.option("prime_tower_width"))->value;
                         float a = dynamic_cast<const ConfigOptionFloat *>(m_print_config.option("wipe_tower_rotation_angle"))->value;
                         float v = dynamic_cast<const ConfigOptionFloat *>(m_print_config.option("prime_volume"))->value;
-                        unsigned int filaments_cnt = plate_data_src[plate_to_slice-1]->slice_filaments_info.size();
+                        unsigned int filaments_cnt = (plate_to_slice > 0 && plate_data_src.size() >= size_t(plate_to_slice))
+                            ? plate_data_src[plate_to_slice - 1]->slice_filaments_info.size() : 0;
                         if ((filaments_cnt == 0) || need_skip)
                         {
                             // slice filaments info invalid

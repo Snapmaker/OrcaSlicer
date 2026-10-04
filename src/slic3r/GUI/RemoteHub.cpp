@@ -3146,7 +3146,8 @@ json HubServer::pair_json()
         std::lock_guard<std::mutex> lock(m_mutex);
         j["token_version"] = m_token_version;
     }
-    j["features"] = json::array({ "events", "control", "send", "summary", "thumbnail", "webrtc", "quality", "apppush", "hubid" });
+    // "push_levels": /push/device takes priority_kinds / all_events / level_hint, and /push/test exists.
+    j["features"] = json::array({ "events", "control", "send", "summary", "thumbnail", "webrtc", "quality", "apppush", "hubid", "push_levels" });
     j["capabilities"] = j["features"];
     return j;
 }
@@ -4381,12 +4382,19 @@ static bool instance_api_allowed(const std::string& method, const std::string& s
     // segment is a name, not an index; keep it to what a printer id can hold and nothing else. The
     // page sends it through encodeURIComponent, so a percent escape is part of that (the instance
     // decodes it); a slash is not, encoded or otherwise, so this stays one segment.
+    // The same id also names whose timelapses: GET /api/printers/<id>/timelapses (the list),
+    // .../timelapses/thumbnail?name= and .../timelapses/video?name= (the file name is a query value,
+    // checked by the instance, so the path stays this closed set).
     if (sub.compare(0, 14, "/api/printers/") == 0) {
         const std::string rest  = sub.substr(14);
         const size_t      slash = rest.find('/');
-        if (slash == std::string::npos || rest.substr(slash) != "/control") return false;
+        if (slash == std::string::npos) return false;
+        const std::string what = rest.substr(slash);
+        const bool        ok   = (what == "/control" && post) ||
+                                 ((what == "/timelapses" || what == "/timelapses/thumbnail" || what == "/timelapses/video") && get);
+        if (!ok) return false;
         const std::string id = rest.substr(0, slash);
-        if (!post || id.empty() || id.size() > 64) return false;
+        if (id.empty() || id.size() > 64) return false;
         if (id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:%") != std::string::npos) return false;
         return id.find("%2f") == std::string::npos && id.find("%2F") == std::string::npos;
     }
@@ -4600,6 +4608,17 @@ void HubServer::handle_phone(tcp::socket& client, Request& r, const std::string&
         respond_json(client, res.first, res.second);
         return;
     }
+    if (rest == "/push/test" && r.method == "POST") {
+        // The app's notification test lab: one test of a chosen kind to this device only, built
+        // as a real event of that kind would be for it (AppPush::test_device). May wait up to
+        // 30 s first so the phone can be locked; each connection has its own thread.
+        if (r.content_type.compare(0, 16, "application/json") != 0) { respond_json(client, 415, json_error("Content-Type must be application/json")); return; }
+        std::string body;
+        if (!read_small_body(client, r, body, 16 * 1024)) { respond_json(client, 413, json_error("that is too large")); return; }
+        const auto res = AppPush::test_device(body);
+        respond_json(client, res.first, res.second);
+        return;
+    }
     // ---- hub-level API (instances, uploads) ----
     if (rest == "/api" || rest == "/api/") {
         json j;
@@ -4621,8 +4640,9 @@ void HubServer::handle_phone(tcp::socket& client, Request& r, const std::string&
             { {"method", "GET"},  {"path", "/push/key"},            {"description", "the hub's VAPID public key, for PushManager.subscribe()"} },
             { {"method", "POST"}, {"path", "/push/subscription"},   {"description", "this browser's PushSubscription JSON; re-post it on every launch"} },
             { {"method", "DELETE"}, {"path", "/push/subscription"}, {"description", "body {endpoint} - this browser unsubscribed"} },
-            { {"method", "POST"}, {"path", "/push/device"},        {"description", "the native app's APNs/FCM device token plus its own p256dh/auth; re-post it on every cold launch"} },
-            { {"method", "DELETE"}, {"path", "/push/device"},      {"description", "body {platform, token} - this device unpaired"} }
+            { {"method", "POST"}, {"path", "/push/device"},        {"description", "the native app's APNs/FCM device token plus its own p256dh/auth; re-post it on every cold launch. Optional: priority_kinds [kind...] (sent at high priority), all_events (past the hub's filter; the phone decides), level_hint (APNs interruption-level on the priority kinds)"} },
+            { {"method", "DELETE"}, {"path", "/push/device"},      {"description", "body {platform, token} - this device unpaired"} },
+            { {"method", "POST"}, {"path", "/push/test"},          {"description", "body {platform, token, kind, delay_s 0-30} - one test notification of that kind to this device only, sent as a real one would be; answers {ok, status, priority, ttl, interruption_level}"} }
         });
         respond_json(client, 200, j.dump());
         return;

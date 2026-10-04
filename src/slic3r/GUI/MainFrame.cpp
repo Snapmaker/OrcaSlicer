@@ -79,6 +79,7 @@
 #include "MarkdownTip.hpp"
 #include "NetworkTestDialog.hpp"
 #include "FirewallCheckDialog.hpp"
+#include "BambuSetupNoticeDialog.hpp"
 #include "ConfigWizard.hpp"
 #include "Widgets/WebView.hpp"
 #include "DailyTips.hpp"
@@ -2755,6 +2756,11 @@ static wxMenu* generate_help_menu()
                          _L("Check whether Windows Firewall blocks printer discovery, and fix its rules"),
                          [](wxCommandEvent&) { FirewallCheckDialog::show_modal(wxGetApp().mainframe); });
 
+    // The checklist the first-time notice shows (account, firewall, LAN mode, access code, SD card, network).
+    append_menu_item(helpMenu, wxID_ANY, _L("Bambu Lab Printer Help..."),
+                     _L("What a Bambu Lab printer needs to show up and connect"),
+                     [](wxCommandEvent&) { BambuSetupNoticeDialog::show_modal(wxGetApp().mainframe); });
+
     // About
 #ifndef __APPLE__
     wxString about_title = wxString::Format(_L("&About %s"), SLIC3R_APP_FULL_NAME);
@@ -2861,6 +2867,8 @@ void MainFrame::refresh_account_menu(wxMenu* menu)
             append_menu_item(m_account_menu, wxID_ANY, _L("Log out of Bambu Account"), _L("Sign out of your Bambu Lab account"),
                 [](wxCommandEvent&) { wxGetApp().request_user_logout(); });
         } else {
+            wxMenuItem* who = m_account_menu->Append(wxID_ANY, _L("Bambu Lab") + ": " + _L("signed out"));
+            who->Enable(false);
             append_menu_item(m_account_menu, wxID_ANY, _L("Log in to Bambu Account..."), _L("Sign in to your Bambu Lab account to see your cloud printers"),
                 [](wxCommandEvent&) { wxGetApp().request_login(true); });
         }
@@ -2876,6 +2884,8 @@ void MainFrame::refresh_account_menu(wxMenu* menu)
             append_menu_item(m_account_menu, wxID_ANY, _L("Log out of Snapmaker Account"), _L("Sign out of your Snapmaker account"),
                 [](wxCommandEvent&) { wxGetApp().sm_request_user_logout(); });
         } else {
+            wxMenuItem* who = m_account_menu->Append(wxID_ANY, _L("Snapmaker") + ": " + _L("signed out"));
+            who->Enable(false);
             append_menu_item(m_account_menu, wxID_ANY, _L("Log in to Snapmaker Account..."), _L("Sign in to your Snapmaker account"),
                 [](wxCommandEvent&) { wxGetApp().sm_request_login(true); });
         }

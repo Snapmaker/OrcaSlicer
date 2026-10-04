@@ -1478,6 +1478,28 @@ ModelVolume* ModelObject::add_volume_with_shared_mesh(const ModelVolume &other, 
     return v;
 }
 
+ModelVolume* ModelObject::replace_volume_with_object_mesh(size_t src_idx, TriangleMesh &&mesh_in_object_coords, const std::string &name_suffix)
+{
+    assert(src_idx < this->volumes.size());
+    const ModelVolume *old_volume = this->volumes[src_idx];
+    // add_volume() centres the mesh and sets the volume offset to the centre it removed, with
+    // an identity rotation / scale: the source's rotation, scale and mirror are already baked
+    // into the object-space mesh. That transformation is exactly right and must be kept.
+    // (It used to be overwritten with the SOURCE volume's offset, which moved the result by
+    // source offset - result centre: a different direction for every part pair.)
+    ModelVolume       *new_volume = this->add_volume(std::move(mesh_in_object_coords), old_volume->type());
+    new_volume->name = old_volume->name + " - " + name_suffix;
+    new_volume->set_new_unique_id();
+    new_volume->config.apply(old_volume->config);
+    new_volume->set_type(old_volume->type());
+    new_volume->set_material_id(old_volume->material_id());
+
+    // The new volume takes the source's slot; the source is deleted.
+    std::swap(this->volumes[src_idx], this->volumes.back());
+    this->delete_volume(this->volumes.size() - 1);
+    return new_volume;
+}
+
 void ModelObject::delete_volume(size_t idx)
 {
     ModelVolumePtrs::iterator i = this->volumes.begin() + idx;
@@ -3260,8 +3282,8 @@ void Model::setExtruderParams(const DynamicPrintConfig& config, int extruders_co
         if (config.has("filament_type")) {
             matName = config.opt_string("filament_type", i);
         }
-        if (config.has("nozzle_temperature")) {
-            endTemp = config.opt_int("nozzle_temperature", i);
+        if (const auto *nozzle_temp = config.option<ConfigOptionInts>("nozzle_temperature")) {
+            endTemp = get_value_at(config, *nozzle_temp, ConfigFlowDomain::Filament, i);
         }
 
         // FIXME: curr_bed_type is now a plate config rather than a global config.

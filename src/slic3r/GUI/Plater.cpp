@@ -1,4 +1,5 @@
 #include "Plater.hpp"
+#include "AccountStatus.hpp"
 #include "MixedFilamentDialog.hpp"
 #include "MixedFilamentBatchDialog.hpp"
 #include "MixedGradientSelector.hpp"
@@ -208,6 +209,7 @@
 
 #include "libslic3r/CustomGCode.hpp"
 #include "libslic3r/Platform.hpp"
+#include "libslic3r/Support/StabilizerBake.hpp"
 #include "nlohmann/json.hpp"
 
 #include "PhysicalPrinterDialog.hpp"
@@ -4175,6 +4177,9 @@ void Sidebar::update_presets(Preset::Type preset_type)
 
         update_all_preset_comboboxes();
         p->show_preset_comboboxes();
+
+        // A printer of another vendor may use another account (title bar Account button).
+        AccountStatus::refresh();
 
         /* update bed shape */
         Tab* printer_tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
@@ -10997,7 +11002,7 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
     //BBS: add bed_exclude_area
     , config(Slic3r::DynamicPrintConfig::new_from_defaults_keys({
         "printable_area", "bed_exclude_area", "bed_custom_texture", "bed_custom_model", "print_sequence",
-        "extruder_clearance_radius", "extruder_clearance_height_to_lid", "extruder_clearance_height_to_rod",
+        "extruder_clearance_radius", "extruder_clearance_max_radius", "extruder_clearance_height_to_lid", "extruder_clearance_height_to_rod",
 		"nozzle_height", "skirt_type", "skirt_loops", "skirt_speed","min_skirt_length", "skirt_distance", "skirt_start_angle",
         "brim_width", "brim_object_gap", "brim_type", "nozzle_diameter", "single_extruder_multi_material", "preferred_orientation",
         "enable_prime_tower", "wipe_tower_x", "wipe_tower_y", "prime_tower_width", "prime_tower_brim_width", "prime_volume",
@@ -15477,13 +15482,21 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                     // Page-switch auto-slice must run the same pre-slice guard as
                     // the slice button, or the by-object red error never shows.
                     // Snap #930 / S4: tab-in prompts only when dirty (valid-to-invalid).
-                    // A never-sliced plate skips the dialog.
-                    if (this->partplate_list.is_filament_group_dirty() && !this->q->confirm_filament_grouping_before_slice())
+                    // A never-sliced plate skips the dialog, but still needs the
+                    // same clean-plate volume-type sync as select_sliced_plate.
+                    const bool dirty = this->partplate_list.is_filament_group_dirty();
+                    const bool dialog_required = filament_group_dialog_required(
+                        GUI::FlowType::grouping_mode(), GUI::FlowType::distinct_nozzle_flow_type_count());
+                    if (dirty && !this->q->confirm_filament_grouping_before_slice())
                         slice_cancelled = true;
-                    else if (this->q->guard_before_slice_plate())
-                        slice_cancelled = !(this->q->reslice());
-                    else
-                        slice_cancelled = true;
+                    else {
+                        if (filament_group_sync_on_clean_plate_pick(dirty, dialog_required))
+                            GUI::FlowType::sync_filament_volume_types_for_slice();
+                        if (this->q->guard_before_slice_plate())
+                            slice_cancelled = !(this->q->reslice());
+                        else
+                            slice_cancelled = true;
+                    }
                }
                 else {
                     //reset current plate to the slicing plate
@@ -19531,6 +19544,18 @@ void Plater::_calib_pa_select_added_objects() {
     }
 }
 
+// The flow type the calibration plate will slice with. Its objects print with filament 1,
+// and slicing gives filament 1 the slice-sync target: the nozzles' type when they all have
+// one type (all High Flow -> High Flow), Standard when they mix in standard grouping, and
+// filament 1's own mapping in custom grouping. On a U1 the slicer cannot know which toolhead
+// a filament lands on (the printer assigns them), so the nozzle combos alone cannot say
+// more; this is the same type the plate's G-code will use. Read before the first slice,
+// when project filament_volume_type may still be stale.
+static FilamentVolumeType plater_calib_filament_volume_type()
+{
+    return FlowType::synced_filament_volume_type(0);
+}
+
 // Adjust settings for flowrate calibration
 // For linear mode, pass 1 means normal version while pass 2 mean "for perfectionists" version
 void adjust_settings_for_flowrate_calib(ModelObjectPtrs& objects, bool linear, int pass)
@@ -19565,9 +19590,10 @@ void adjust_settings_for_flowrate_calib(ModelObjectPtrs& objects, bool linear, i
     }
     canvas->do_scale("");
 
-    auto cur_flowrate = filament_config->option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0);
+    const CalibFlowValues flow_values = calib_filament_flow_values(*filament_config, plater_calib_filament_volume_type());
+    const double cur_flowrate = flow_values.flow_ratio;
     Flow infill_flow = Flow(nozzle_diameter * 1.2f, layer_height, nozzle_diameter);
-    double filament_max_volumetric_speed = filament_config->option<ConfigOptionFloats>("filament_max_volumetric_speed")->get_at(0);
+    double filament_max_volumetric_speed = flow_values.max_volumetric_speed;
     double max_infill_speed;
     if (linear)
         max_infill_speed = filament_max_volumetric_speed /
@@ -19638,6 +19664,12 @@ void adjust_settings_for_flowrate_calib(ModelObjectPtrs& objects, bool linear, i
     print_config->set_key_value("alternate_extra_wall", new ConfigOptionBool(false));
     print_config->set_key_value("initial_layer_print_height", new ConfigOptionFloat(first_layer_height));
     print_config->set_key_value("reduce_crossing_wall", new ConfigOptionBool(true));
+    // The tiles are read by their top surfaces, which spiral vase does not print. The
+    // spiral calibrations (max flowrate, VFA, input shaping, junction deviation) switch
+    // spiral_mode on in the edited process preset and nothing switches it back, so a
+    // flow-rate test run after one of them came up in spiral mode, which with several
+    // objects demands "By object" and its extruder clearance.
+    print_config->set_key_value("spiral_mode", new ConfigOptionBool(false));
 
 
     wxGetApp().get_tab(Preset::TYPE_PRINT)->update_dirty();
@@ -19688,6 +19720,19 @@ void Plater::calib_flowrate(bool is_linear, int pass) {
     // Refresh object after scaling
     const std::vector<size_t> object_idx(boost::counting_iterator<size_t>(0), boost::counting_iterator<size_t>(model().objects.size()));
     changed_objects(object_idx);
+
+    // The test files place the tiles a few mm apart, which suits "By layer" only. Printed
+    // "By object", each tile needs the extruder clearance (radius, rod and lid heights)
+    // around it, so let arrange space them by those rules and the bed size, as it does
+    // for any by-object plate. The print sequence comes from the process preset.
+    const auto *print_sequence = wxGetApp().preset_bundle->prints.get_edited_preset().config.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
+    if (model().objects.size() > 1 && print_sequence != nullptr && print_sequence->value == PrintSequence::ByObject) {
+        // After this event's updates have applied the process preset to the plate's print.
+        wxGetApp().CallAfter([this]() {
+            set_prepare_state(Job::PREPARE_STATE_DEFAULT);
+            arrange();
+        });
+    }
 }
 
 
@@ -19809,7 +19854,7 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
 
     auto new_params = params;
     auto mm3_per_mm = Flow(line_width, layer_height, nozzle_diameter).mm3_per_mm() *
-                      filament_config->option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0);
+                      calib_filament_flow_values(*filament_config, plater_calib_filament_volume_type()).flow_ratio;
     new_params.end = params.end / mm3_per_mm;
     new_params.start = params.start / mm3_per_mm;
     new_params.step = params.step / mm3_per_mm;
@@ -21725,6 +21770,25 @@ void Plater::export_core_3mf()
     export_3mf(path_u8, SaveStrategy::Silence);
 }
 
+// Side stabilizers are EdgeSlicer-only settings: an export for Bambu Studio leaves them out, so the
+// objects would print there without them. Say which, and point at the bake.
+static void warn_live_stabilizers_dropped(NotificationManager *notifications, const Model &model)
+{
+    const std::vector<std::string> names =
+        objects_with_live_stabilizers(model, wxGetApp().preset_bundle->prints.get_edited_preset().config);
+    if (names.empty() || notifications == nullptr)
+        return;
+    std::string list;
+    for (size_t i = 0; i < names.size() && i < 3; ++i)
+        list += (i == 0 ? "\"" : ", \"") + names[i] + "\"";
+    if (names.size() > 3)
+        list += " " + format(_u8L("and %1% more"), names.size() - 3);
+    notifications->push_plater_warning_notification(
+        format(_u8L("The side stabilizers of %1% are EdgeSlicer settings and were left out, so Bambu Studio will not print them. "
+                    "Right-click the object and choose \"Bake stabilizers...\" to keep them as geometry, then export again."),
+               list));
+}
+
 void Plater::export_bambu_3mf()
 {
     wxString path = p->get_export_file(FT_3MF);
@@ -21741,6 +21805,7 @@ void Plater::export_bambu_3mf()
         wxString::Format(_L("Exported for Bambu Studio: %d settings not supported by Bambu Studio were left out."), int(report.dropped.size()));
     p->notification_manager->push_notification(NotificationType::CustomNotification,
                                                NotificationManager::NotificationLevel::RegularNotificationLevel, into_u8(msg));
+    warn_live_stabilizers_dropped(p->notification_manager.get(), p->model);
 }
 
 void Plater::export_and_open_in_bambu_studio()
@@ -21759,6 +21824,7 @@ void Plater::export_and_open_in_bambu_studio()
         wxString::Format(_L("Exported for Bambu Studio: %d settings not supported by Bambu Studio were left out."), int(report.dropped.size()));
     p->notification_manager->push_notification(NotificationType::CustomNotification,
                                                NotificationManager::NotificationLevel::RegularNotificationLevel, into_u8(msg));
+    warn_live_stabilizers_dropped(p->notification_manager.get(), p->model);
 
     // The export succeeded regardless of what happens below - never turn a launch problem into
     // an export failure.

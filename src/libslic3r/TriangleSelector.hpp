@@ -17,6 +17,9 @@ enum class EnforcerBlockerType : int16_t {
     BLOCKER   = 2,
     // For the fuzzy skin, we use just two values (NONE and FUZZY_SKIN).
     FUZZY_SKIN = ENFORCER,
+    // Paint-on supports carry a third state: the side stabilizer points (Support/Stabilizers.hpp),
+    // spots where a stabilizer strut must touch the part. Serialized like any state above BLOCKER.
+    STABILIZER = 3,
     // Extruder states are serialized using a 2-bit prefix plus one or more 4-bit nibbles.
     // This allows more than 16 painted states while keeping backward compatibility.
     Extruder1 = ENFORCER,

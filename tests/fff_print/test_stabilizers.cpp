@@ -31,6 +31,7 @@
 
 using namespace Slic3r;
 using Catch::Matchers::WithinAbs;
+using Catch::Matchers::WithinRel;
 
 namespace {
 
@@ -119,6 +120,22 @@ LayerCheck check_layer(const PrintObject &po, double print_z)
         out.paths += sl->support_fills.entities.size();
         out.overlap += total_area(intersection_ex(sl->support_islands, layer->lslices));
     }
+    return out;
+}
+
+// The same over the layers just under a ring: with a tip gap the strut is set back along its axis
+// (stabilizers::gapped), so its tip ends the gap below the ring height as well as the gap off the wall.
+LayerCheck near_ring(const PrintObject &po, double ring_z)
+{
+    LayerCheck out;
+    for (const Layer *l : po.layers())
+        if (l->print_z > ring_z - 3. && l->print_z < ring_z + 0.2) {
+            const LayerCheck at = check_layer(po, l->print_z);
+            out.area += at.area;
+            out.overlap += at.overlap;
+            out.paths += at.paths;
+            out.min_gap = std::min(out.min_gap, at.min_gap);
+        }
     return out;
 }
 
@@ -317,7 +334,7 @@ TEST_CASE("Stabilizers touch a thin pin at the ring heights and stand on the bed
         slice_pin(p, true, "0.3");
         const PrintObject &po = *p.print.objects().front();
         for (double ring_z : { 15., 30., 45. }) {
-            const LayerCheck at = check_layer(po, ring_z);
+            const LayerCheck at = near_ring(po, ring_z);
             INFO("ring at " << ring_z << " mm: area " << at.area << ", gap " << at.min_gap);
             CHECK(at.area > 0.1);
             CHECK(at.min_gap > 0.25);
@@ -424,13 +441,13 @@ TEST_CASE("Stabilizers on the owner's project reach every ring", "[Stabilizers]"
     ProjectPrint p;
     REQUIRE(slice_project(p));
     const PrintObject &po = *p.print.objects().front();
-    REQUIRE(po.config().stabilizer_supports.value);
+    REQUIRE(po.config().stabilizer_supports.value == smAuto);
     CHECK_THAT(stabilizers::pillar_radius(po), WithinAbs(1.5, 1e-6));
     CHECK(stabilizers::plan_struts(po).size() == 9);
 
     const std::vector<ExPolygons> stab = printed_stabilizers(po);
     for (double ring_z : { 15., 30., 45. }) {
-        const LayerCheck at = check_layer(po, ring_z);
+        const LayerCheck at = near_ring(po, ring_z);
         INFO("ring at " << ring_z << " mm: area " << at.area << ", gap " << at.min_gap << ", overlap " << at.overlap);
         CHECK(at.area > 0.1);
         CHECK(at.paths > 0);
@@ -561,5 +578,106 @@ TEST_CASE("Stabilizer report: pin and the owner's project", "[.stabilizers_repor
         ProjectPrint p;
         REQUIRE(slice_project(p));
         report("PROJECT", p.print, "project");
+    }
+}
+
+// The tip gap is the struts' business: the tips stop that far from the wall, while the pillars and
+// their feet keep their own clearance and size. (It used to clip everything near the part, so a gap
+// above the 1 mm clearance ate the feet and the pillars.)
+TEST_CASE("The tip gap moves the tips, not the pillars", "[Stabilizers]")
+{
+    PinPrint touch, apart;
+    slice_pin(touch, true, "0");
+    slice_pin(apart, true, "2");
+    const PrintObject &pt = *touch.print.objects().front();
+    const PrintObject &pa = *apart.print.objects().front();
+    REQUIRE(stabilizers::plan_struts(pa).size() == stabilizers::plan_struts(pt).size());
+
+    // Between the rings: the same pillars, whole, clear of the part.
+    const LayerCheck lt = check_layer(pt, 5.), la = check_layer(pa, 5.);
+    const double     r  = stabilizers::pillar_radius(pa);
+    INFO("pillar layer area: gap 0 " << lt.area << " mm2, gap 2 " << la.area << " mm2");
+    CHECK_THAT(la.area, WithinRel(lt.area, 0.01));
+    CHECK(la.area > 0.95 * 3. * M_PI * r * r);
+    CHECK(la.overlap < 0.01);
+    // The feet on the bed: the same size, never in the part.
+    const LayerCheck ft = check_layer(pt, 0.2), fa = check_layer(pa, 0.2);
+    INFO("first layer area: gap 0 " << ft.area << " mm2, gap 2 " << fa.area << " mm2");
+    CHECK_THAT(fa.area, WithinRel(ft.area, 0.02));
+    CHECK(fa.overlap < 0.01);
+
+    // At each ring the struts come closest to the wall just under the ring height - the tip is cut by a
+    // vertical plane the gap out from the wall, and a 45 degree strut reaches that plane a little
+    // lower - and stop exactly the gap short of it.
+    for (double ring_z : { 15., 30., 45. }) {
+        double closest = std::numeric_limits<double>::max(), area = 0.;
+        size_t paths   = 0;
+        for (const Layer *l : pa.layers())
+            if (l->print_z > ring_z - 3. && l->print_z < ring_z + 0.2) {
+                const LayerCheck at = check_layer(pa, l->print_z);
+                closest = std::min(closest, at.min_gap);
+                area += at.area;
+                paths += at.paths;
+                CHECK(at.overlap < 0.01);
+            }
+        INFO("ring at " << ring_z << " mm: closest " << closest << " mm, area " << area);
+        CHECK(area > 0.1);
+        CHECK(paths > 0);
+        CHECK(closest > 1.9);
+        CHECK(closest < 2.1);
+    }
+}
+
+// With a tip gap the strut is set back along its axis and tapers to its tip at the trimmed end - the
+// same cone to a point as at gap 0, not a wide strut cut off with a knob of material on its end. Seen
+// one strut at a time: over its last layers its cross-section only shrinks towards the tip, and its
+// end is no bigger than a touching tip's.
+TEST_CASE("A gapped strut tapers to its tip", "[Stabilizers]")
+{
+    // The strut area per layer from its top down, `count` layers, for the first top-ring strut.
+    auto tip_profile = [](const PrintObject &po, size_t count) {
+        const std::vector<stabilizers::Strut> struts = stabilizers::plan_struts(po);
+        REQUIRE_FALSE(struts.empty());
+        const stabilizers::Strut *top = &struts.front();
+        for (const stabilizers::Strut &s : struts)
+            if (s.tip_z > top->tip_z + EPSILON)
+                top = &s;
+        const std::vector<ExPolygons> slices =
+            stabilizers::slice_struts(stabilizers::outlines_of(po), stabilizers::settings_of(po), { *top }, {});
+        size_t last = 0;
+        for (size_t i = 0; i < slices.size(); ++i)
+            if (total_area(slices[i]) > 0.)
+                last = i;
+        std::vector<double> out;
+        for (size_t k = 0; k < count && k <= last; ++k)
+            out.push_back(total_area(slices[last - k]));
+        return out;
+    };
+
+    PinPrint touch;
+    slice_pin(touch, true, "0");
+    const std::vector<double> at0 = tip_profile(*touch.print.objects().front(), 8);
+    REQUIRE(at0.size() == 8);
+
+    for (const char *gap : { "0.5", "1", "2" }) {
+        DYNAMIC_SECTION("tip gap " << gap << " mm")
+        {
+            PinPrint p;
+            slice_pin(p, true, gap);
+            // 8 layers of 0.2 mm: well below the junction of a top-ring strut, so the strut alone.
+            const std::vector<double> prof = tip_profile(*p.print.objects().front(), 8);
+            REQUIRE(prof.size() == 8);
+            std::string s;
+            for (double a : prof)
+                s += std::to_string(a) + " ";
+            INFO("strut area from its end down (mm2): " << s << "; at gap 0: " << at0.front() << " " << at0[1] << " ...");
+            // Non-increasing towards the tip: each layer at most as big as the one under it.
+            for (size_t k = 0; k + 1 < prof.size(); ++k)
+                CHECK(prof[k] <= prof[k + 1] + 1e-3);
+            // The end is a tip, not a cut-off strut: no bigger than a touching tip's, layer for layer. (The
+            // set-back tip need not sit on a slicing plane, so allow it up to one layer of its taper.)
+            for (size_t k = 0; k + 1 < 4; ++k)
+                CHECK(prof[k] <= 1.1 * at0[k + 1] + 0.02);
+        }
     }
 }

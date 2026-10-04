@@ -1112,7 +1112,9 @@ public:
 
     // the following methods add a snapshot to the undo/redo stack, unless the given string is empty
     // BBS: force_volume_move applies volume-level transforms even in Instance selection mode (used by part alignment)
-    void do_move(const std::string& snapshot_type, bool force_volume_move = false);
+    // fix_flying_instances = false skips the pass that drops an instance floating above the bed
+    // back onto it (the alignment tools use that to let one object rest on top of another).
+    void do_move(const std::string& snapshot_type, bool force_volume_move = false, bool fix_flying_instances = true);
     void do_rotate(const std::string& snapshot_type);
     void do_scale(const std::string& snapshot_type);
     void do_center();

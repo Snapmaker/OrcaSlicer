@@ -1,5 +1,6 @@
 #include "libslic3r/libslic3r.h"
 #include "DeviceManager.hpp"
+#include "AccountStatus.hpp"
 #include "FilamentCommands.hpp"
 #include "PrintErrorCommands.hpp"
 #include "AmsDrying.hpp"
@@ -7147,6 +7148,8 @@ void DeviceManager::clean_user_info()
 bool DeviceManager::set_selected_machine(std::string dev_id, bool need_disconnect)
 {
     BOOST_LOG_TRIVIAL(info) << "set_selected_machine=" << dev_id;
+    // Whether the selected printer needs the cloud account shows on the title bar's Account button.
+    Slic3r::GUI::AccountStatus::refresh_async();
     auto my_machine_list = get_my_machine_list();
     auto it = my_machine_list.find(dev_id);
 

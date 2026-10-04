@@ -27,6 +27,7 @@
 #include <wx/stdpaths.h>
 #include <wx/timer.h>
 #include <wx/utils.h>
+#include <wx/weakref.h>
 
 #include <algorithm>
 #include <cassert>
@@ -219,7 +220,7 @@ struct ModelBrowserPanel::Impl
     void carry_out(const NavDecision& d, const std::string& url, bool user_visible);
     void handle_new_window(ICoreWebView2* sender, ICoreWebView2NewWindowRequestedEventArgs* args);
     void open_popup(ComPtr<ICoreWebView2NewWindowRequestedEventArgs> args, ComPtr<ICoreWebView2Deferral> deferral, const wxSize& size);
-    void close_popup(wxFrame* frame);
+    bool close_popup(wxFrame* frame); // false when the frame is not (or no longer) a popup of ours
 
     void handle_download(ICoreWebView2* sender, ICoreWebView2DownloadStartingEventArgs* args);
     bool begin_download(ICoreWebView2DownloadStartingEventArgs* args, ICoreWebView2DownloadOperation* op, const std::string& name,
@@ -447,7 +448,7 @@ void ModelBrowserPanel::Impl::show_placeholder(const wxString& text, bool retry)
 void ModelBrowserPanel::Impl::show_notice(const wxString& text, const wxString& action_label, std::function<void()> action)
 {
     notice_text->SetLabel(text);
-    notice_text->Wrap(std::max(owner->GetClientSize().x - owner->FromDIP(260), owner->FromDIP(300)));
+    notice_text->Wrap((std::max)(owner->GetClientSize().x - owner->FromDIP(260), owner->FromDIP(300)));
     notice_callback = std::move(action);
     notice_action->SetLabel(action_label);
     notice_action->Show(!action_label.empty() && notice_callback != nullptr);
@@ -948,9 +949,8 @@ void ModelBrowserPanel::Impl::open_popup(ComPtr<ICoreWebView2NewWindowRequestedE
 
     auto alive_ = alive;
     frame->Bind(wxEVT_CLOSE_WINDOW, [this, alive_, frame](wxCloseEvent&) {
-        if (*alive_)
-            close_popup(frame);
-        else
+        // A popup still being created is not in the list yet: just close its window.
+        if (!*alive_ || !close_popup(frame))
             frame->Destroy();
     });
     frame->Bind(wxEVT_SIZE, [this, frame](wxSizeEvent& evt) {
@@ -963,11 +963,13 @@ void ModelBrowserPanel::Impl::open_popup(ComPtr<ICoreWebView2NewWindowRequestedE
             }
     });
 
-    const HRESULT hr = env->CreateCoreWebView2Controller(
+    wxWeakRef<wxFrame> weak(frame);
+    const HRESULT      hr = env->CreateCoreWebView2Controller(
         (HWND) frame->GetHWND(),
         Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-            [this, alive_, frame, args, deferral](HRESULT result, ICoreWebView2Controller* created) -> HRESULT {
-                if (!*alive_) {
+            [this, alive_, weak, args, deferral](HRESULT result, ICoreWebView2Controller* created) -> HRESULT {
+                wxFrame* frame = weak.get();
+                if (!*alive_ || frame == nullptr) { // closed while it was being made
                     if (created)
                         created->Close();
                     args->put_Handled(TRUE);
@@ -1008,16 +1010,17 @@ void ModelBrowserPanel::Impl::open_popup(ComPtr<ICoreWebView2NewWindowRequestedE
     }
 }
 
-void ModelBrowserPanel::Impl::close_popup(wxFrame* frame)
+bool ModelBrowserPanel::Impl::close_popup(wxFrame* frame)
 {
     for (auto it = popups.begin(); it != popups.end(); ++it)
         if (it->frame == frame) {
             if (it->controller)
                 it->controller->Close();
             popups.erase(it);
-            break;
+            frame->Destroy();
+            return true;
         }
-    frame->Destroy();
+    return false;
 }
 
 // -------------------------------------------------------------------------------- downloads ----
@@ -1326,6 +1329,15 @@ ModelBrowserPanel::ModelBrowserPanel(wxWindow* parent, std::function<void()> on_
     if (site_by_id(saved) != nullptr)
         p->site_id = saved;
     p->build_ui();
+    // Moved to a monitor with another scale: the toolbar re-measures; the browser follows the
+    // monitor's scale itself (its bounds are in the host window's physical pixels).
+    Bind(wxEVT_DPI_CHANGED, [this](wxDPIChangedEvent& evt) {
+        evt.Skip();
+        CallAfter([this]() {
+            p->apply_colours();
+            p->resize();
+        });
+    });
 #endif
 }
 

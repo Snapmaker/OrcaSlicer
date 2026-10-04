@@ -909,6 +909,7 @@ set(SLIC3R_GUI_SOURCES
     Utils/LoginUserAgent.hpp
     Utils/HubHomeLogic.cpp
     Utils/HubHomeLogic.hpp
+    Utils/HubHandover.hpp
     Utils/HomeTabLogic.cpp
     Utils/HomeTabLogic.hpp
     Utils/ThemePack.cpp

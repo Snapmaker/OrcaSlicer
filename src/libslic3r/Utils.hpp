@@ -98,6 +98,10 @@ extern size_t total_physical_memory();
 // crash (malloc returns null).  Taking the min catches both failure modes.
 // Used by the runtime memory guard in PrintBase.hpp.
 extern size_t get_available_physical_memory();
+// Human-readable breakdown of what get_available_physical_memory() saw, for log lines, e.g.
+// "available 412 MB (physical 8123 MB, commit 412 MB)". On Windows it names which of the two
+// limits is the binding one; elsewhere it is just the available figure.
+extern std::string get_available_memory_description();
 
 // Set a path with GUI resource files.
 void set_var_dir(const std::string &path);

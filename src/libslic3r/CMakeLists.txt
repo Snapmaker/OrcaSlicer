@@ -477,6 +477,7 @@ set(lisbslic3r_sources
     PrincipalComponents2D.hpp
     PrintApply.cpp
     PrintBase.cpp
+    MemoryGuardPolicy.hpp
     PrintBase.hpp
     PrintConfig.cpp
     PrintConfig.hpp

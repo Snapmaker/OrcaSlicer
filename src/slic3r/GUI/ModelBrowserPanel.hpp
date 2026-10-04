@@ -23,9 +23,10 @@ bool model_browser_enabled();
 //    host objects are off, and the panel refuses to show a view in which they are not (asserted
 //    after the settings are applied).
 //  - Nothing on this computer or the LAN is loaded, top-level, in frames or as a sub-resource
-//    (our page server and the phone hub live there). No file:, no other programs' URL schemes:
-//    Printables' "Open in" buttons are read and handed to the app's downloader (its domain checks
-//    apply), MakerWorld's are not followed (a notice points to the download button).
+//    (our page server and the phone hub live there). No file:, and no other program is ever
+//    started: the sites' "Open in" buttons (Printables' prusaslicer:// / orcaslicer://, MakerWorld's
+//    bambustudioopen:// / bambustudio://) are read and handed to the app's downloader, the same path
+//    those links take from the system browser, with its domain checks.
 //  - Downloads: model files go through the safe download path (sanitized name, exclusive marker,
 //    no-replace placement, size and magic-byte checks) and then the import queue; programs and
 //    scripts are refused; anything else may be saved to Downloads after asking.

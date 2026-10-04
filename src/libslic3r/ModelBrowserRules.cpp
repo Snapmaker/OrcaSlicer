@@ -87,9 +87,9 @@ NavDecision decide_web_url(const std::string &url)
 const std::vector<Site> &sites()
 {
     static const std::vector<Site> list = {
-        {"printables", "Printables", "https://www.printables.com/", {"printables.com"}, false},
-        {"makerworld", "MakerWorld", "https://makerworld.com/", {"makerworld.com", "makerworld.com.cn"}, true},
-        {"snapmaker", "Snapmaker Space", "https://space.snapmaker.com/", {"space.snapmaker.com"}, false},
+        {"printables", "Printables", "https://www.printables.com/", {"printables.com"}},
+        {"makerworld", "MakerWorld", "https://makerworld.com/", {"makerworld.com", "makerworld.com.cn"}},
+        {"snapmaker", "Snapmaker Space", "https://space.snapmaker.com/", {"space.snapmaker.com"}},
     };
     return list;
 }
@@ -180,20 +180,25 @@ NavDecision decide_navigation(const std::string &url, const std::string &page_ur
 NavDecision decide_app_link(const std::string &url, const std::string &page_url)
 {
     const std::string scheme = scheme_of(url);
-    if (scheme == "bambustudioopen")
-        return NavDecision{NavAction::MakerWorldNotice, "MakerWorld's \"Open in\" button is for its own app; use the download button", std::string()};
-
     const untrusted::OpenLink link = untrusted::parse_open_link(url);
     if (!link.ok) {
         if (link.error == "unsupported link scheme")
             return block("links to other programs (\"" + scheme + ":\") are not opened from the model browser");
         return block("the \"Open in\" link was not understood: " + link.error);
     }
-    const Site *site = site_for_url(page_url);
-    if (site != nullptr && site->download_only)
-        return NavDecision{NavAction::MakerWorldNotice, site->name + " is download-only in EdgeSlicer; use the download button", std::string()};
+    (void) page_url;
 
-    // No scheme widening here: bambustudio:// may otherwise also reach generic cloud storage.
+    // MakerWorld's "Open in" button: the link goes to the downloader as it is, the same as when
+    // the system browser hands it over (the downloader widens the host list for this scheme to
+    // MakerWorld's signed storage and opens MakerWorld files through its import path).
+    if (link.scheme == "bambustudio" || link.scheme == "bambustudioopen") {
+        const untrusted::DownloadCheck check = untrusted::check_model_download(link.file_url, link.scheme);
+        if (check.verdict == untrusted::DownloadVerdict::Refuse)
+            return block(check.reason);
+        return NavDecision{NavAction::OpenLink, check.reason, url};
+    }
+
+    // Other schemes: re-wrapped as our own link, without any scheme-specific widening.
     const untrusted::DownloadCheck check = untrusted::check_model_download(link.file_url);
     if (check.verdict == untrusted::DownloadVerdict::Refuse)
         return block(check.reason);
@@ -257,7 +262,7 @@ WindowDecision decide_new_window(const std::string &target, const std::string &o
     }
 
     r.nav = decide_navigation(target, opener_url, true);
-    if (r.nav.action == NavAction::OpenLink || r.nav.action == NavAction::MakerWorldNotice) {
+    if (r.nav.action == NavAction::OpenLink) {
         r.action = WindowAction::AppLink;
         r.reason = r.nav.reason;
         return r;

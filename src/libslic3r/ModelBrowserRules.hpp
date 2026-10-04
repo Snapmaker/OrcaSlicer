@@ -25,7 +25,6 @@ struct Site
     std::string              name;          // shown as text only: no logos, no endorsement wording
     std::string              start_url;     // https
     std::vector<std::string> domains;       // each matches itself and its subdomains
-    bool                     download_only; // its "Open in <other app>" button is not followed
 };
 
 // The sites offered as shortcuts, in toolbar order.
@@ -49,15 +48,14 @@ bool is_blocked_host(const std::string &host);
 enum class NavAction {
     Allow,            // let the browser load it
     Block,            // cancel (reason says why)
-    OpenLink,         // cancel and hand `open_link` (an edgeslicer://open?file= link) to the app's downloader
-    MakerWorldNotice, // cancel and tell the user to use the site's download button instead
+    OpenLink,         // cancel and hand `open_link` to the app's downloader (GUI_App::start_download)
 };
 
 struct NavDecision
 {
     NavAction   action = NavAction::Block;
     std::string reason;    // for the log and the user
-    std::string open_link; // OpenLink only
+    std::string open_link; // OpenLink only: the link the downloader gets
 };
 
 // A navigation of the main document (main_frame) or of a frame inside it, to `url`, while the
@@ -71,13 +69,16 @@ struct NavDecision
 NavDecision decide_navigation(const std::string &url, const std::string &page_url, bool main_frame = true);
 
 // A link to another program ("<scheme>:..." that is not a web scheme), from page_url.
-//   bambustudioopen:            MakerWorldNotice (the owner's decision: MakerWorld is download-only).
-//   any "Open in" link while the page is on a download_only site: MakerWorldNotice.
-//   prusaslicer:// orcaslicer:// bambustudio:// edgeslicer:// cura:// ... "open?file=<url>" (the
-//   schemes untrusted::parse_open_link() accepts): OpenLink with the file URL re-wrapped as an
-//   edgeslicer://open?file= link, unless untrusted::check_model_download() refuses the file URL
-//   (not https, LAN, credentials, not a model type) - then Block. The app's downloader checks the
-//   link again and asks before fetching from a host that is not a known model site.
+//   bambustudioopen://<url> and bambustudio://open?file=<url> (MakerWorld's "Open in" button):
+//   OpenLink with the link unchanged, so it takes exactly the path the same link takes when the
+//   system browser hands it to EdgeSlicer: Downloader::start_download, which checks it with
+//   untrusted::check_model_download(url, scheme) (MakerWorld's CDN / signed storage allowlist) and
+//   opens MakerWorld files through Plater::import_model_id. Block when that check refuses.
+//   prusaslicer:// orcaslicer:// edgeslicer:// cura:// ... "open?file=<url>" (Printables and the
+//   other schemes untrusted::parse_open_link() accepts): OpenLink with the file URL re-wrapped as
+//   an edgeslicer://open?file= link (no scheme-specific widening), unless check_model_download()
+//   refuses it (not https, LAN, credentials, not a model type) - then Block. The downloader checks
+//   the link again and asks before fetching from a host that is not a known model site.
 //   anything else (mailto:, ms-*, steam:, ...): Block - a site never starts an OS handler from here.
 NavDecision decide_app_link(const std::string &url, const std::string &page_url);
 
@@ -93,7 +94,7 @@ enum class WindowAction {
     Popup,           // a popup window in the same isolated browser (keeps window.opener: OAuth sign-in)
     NavigateInPlace, // load the target in the main view
     SystemBrowser,   // open the target in the user's own browser
-    AppLink,         // the target is a link to another program: carry out `nav` (OpenLink / notice / block)
+    AppLink,         // the target is a link to another program: carry out `nav` (OpenLink / Block)
     Block,
 };
 

@@ -204,8 +204,8 @@ struct ModelBrowserPanel::Impl
     void update_nav_buttons();
     void update_address(const std::string& url);
     void show_placeholder(const wxString& text, bool retry);
-    // Info: a result (saved to Downloads). Warning: something was not followed (MakerWorld's
-    // button, a local address, a link to another program). Error: a download was refused or failed.
+    // Info: a result (saved to Downloads). Warning: something was not followed (a local address,
+    // an "Open in" link whose file host was refused, a link to another program). Error: a download was refused or failed.
     enum class NoticeKind { Info, Warning, Error };
     NoticeKind notice_kind { NoticeKind::Warning };
     void show_notice(const wxString& text, NoticeKind kind, const wxString& action_label = wxString(), std::function<void()> action = nullptr);
@@ -656,8 +656,11 @@ void ModelBrowserPanel::Impl::attach_handlers(ICoreWebView2* wv, wxFrame* popup)
                                             const NavDecision d   = decide_navigation(url, source_of(sender), false);
                                             if (d.action != NavAction::Allow) {
                                                 args->put_Cancel(TRUE);
-                                                // An "Open in" button may navigate a hidden frame; that is the user's click.
-                                                carry_out(d, url, d.action != NavAction::Block);
+                                                // An "Open in" button may navigate a hidden frame; that is the user's click,
+                                                // so a refused app link is reported. Blocked web frames (ads, probes) are not.
+                                                const bool app_link = url.rfind("http", 0) != 0 && url.rfind("about:", 0) != 0 &&
+                                                                      url.rfind("blob:", 0) != 0 && url.rfind("data:", 0) != 0;
+                                                carry_out(d, url, d.action != NavAction::Block || app_link);
                                             }
                                             return S_OK;
                                         })
@@ -874,14 +877,6 @@ void ModelBrowserPanel::Impl::carry_out(const NavDecision& d, const std::string&
         owner->CallAfter([link]() { wxGetApp().start_download(link); });
         return;
     }
-    case NavAction::MakerWorldNotice:
-        BOOST_LOG_TRIVIAL(info) << "ModelBrowser: MakerWorld \"Open in\" button not followed";
-        owner->CallAfter([this]() {
-            show_notice(_L("EdgeSlicer does not use MakerWorld's \"Open in\" button. Use the Download button on the model page "
-                           "instead (choose the 3MF or STL file); the downloaded file opens here."),
-                        NoticeKind::Warning);
-        });
-        return;
     case NavAction::Block: {
         untrusted::Url u;
         const bool     web = untrusted::parse_url(url, u);

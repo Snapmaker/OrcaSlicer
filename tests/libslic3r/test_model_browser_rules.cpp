@@ -23,9 +23,6 @@ TEST_CASE("Model browser: sites are text-only shortcuts on https", "[ModelBrowse
         CHECK(site_by_id(s.id) == &s);
         CHECK_FALSE(s.name.empty());
     }
-    CHECK(site_by_id("makerworld")->download_only);
-    CHECK_FALSE(site_by_id("printables")->download_only);
-    CHECK_FALSE(site_by_id("snapmaker")->download_only);
 
     CHECK(site_for_url(PRINTABLES_PAGE) == site_by_id("printables"));
     CHECK(site_for_url("https://makerworld.com.cn/zh/models/1") == site_by_id("makerworld"));
@@ -145,24 +142,58 @@ TEST_CASE("Model browser: Printables \"Open in\" links go to the app's downloade
     CHECK(decide_app_link("prusaslicer://open", PRINTABLES_PAGE).action == NavAction::Block);
     CHECK(decide_app_link("prusaslicer://delete?file=x", PRINTABLES_PAGE).action == NavAction::Block);
     CHECK(decide_app_link("orcaslicer://open?file=", PRINTABLES_PAGE).action == NavAction::Block);
-    // bambustudio:// may not reach generic cloud storage from the browser (no scheme widening).
-    CHECK(decide_app_link("bambustudio://open?file=" + percent_encode("https://bucket.s3.amazonaws.com/a.3mf"), PRINTABLES_PAGE).action ==
-          NavAction::OpenLink); // Ask in the downloader, not Allow
-    CHECK(untrusted::check_model_download("https://bucket.s3.amazonaws.com/a.3mf").verdict == untrusted::DownloadVerdict::Ask);
+    // Generic cloud storage is only MakerWorld's (bambustudio schemes); re-wrapped links get no
+    // widening, so the downloader asks.
+    {
+        const NavDecision d = decide_app_link("orcaslicer://open?file=" + percent_encode("https://bucket.s3.amazonaws.com/a.3mf"), PRINTABLES_PAGE);
+        REQUIRE(d.action == NavAction::OpenLink);
+        const untrusted::OpenLink parsed = untrusted::parse_open_link(d.open_link);
+        REQUIRE(parsed.ok);
+        CHECK(untrusted::check_model_download(parsed.file_url, parsed.scheme).verdict == untrusted::DownloadVerdict::Ask);
+    }
 }
 
-TEST_CASE("Model browser: MakerWorld is download-only", "[ModelBrowser]")
+TEST_CASE("Model browser: MakerWorld's \"Open in\" button takes the system-browser path", "[ModelBrowser]")
 {
     const std::string signed_url = "https://public-cdn.bblmw.com/makerworld/model/x.3mf?Signature=abc";
-    // Its own "Open in Bambu Studio" button: never followed, wherever it comes from.
-    CHECK(decide_navigation("bambustudioopen://" + percent_encode(signed_url), MAKERWORLD_PAGE).action == NavAction::MakerWorldNotice);
-    CHECK(decide_navigation("bambustudioopen://" + percent_encode(signed_url), PRINTABLES_PAGE).action == NavAction::MakerWorldNotice);
-    CHECK(decide_navigation("BambuStudioOpen://x", "").action == NavAction::MakerWorldNotice);
-    // Any other "Open in" link while on MakerWorld: the same notice.
-    CHECK(decide_navigation("bambustudio://open?file=" + percent_encode(signed_url), MAKERWORLD_PAGE).action == NavAction::MakerWorldNotice);
-    CHECK(decide_navigation("orcaslicer://open?file=" + percent_encode(signed_url), "https://makerworld.com.cn/zh/models/1").action ==
-          NavAction::MakerWorldNotice);
-    // Plain downloads from MakerWorld are imported.
+    const std::string s3_url     = "https://makerworld-bucket.s3.us-west-2.amazonaws.com/x.3mf?X-Amz-Signature=abc";
+    // bambustudioopen://<url> and bambustudio://open?file=<url>: handed to the downloader unchanged,
+    // exactly as the system browser hands them over, wherever the page is.
+    for (const std::string &file : {signed_url, s3_url}) {
+        for (const std::string &link : {"bambustudioopen://" + percent_encode(file), "bambustudio://open?file=" + percent_encode(file),
+                                         "BambuStudioOpen://" + percent_encode(file)}) {
+            for (const std::string &page : {MAKERWORLD_PAGE, std::string("https://makerworld.com.cn/zh/models/1"), PRINTABLES_PAGE}) {
+                INFO(link << " from " << page);
+                const NavDecision d = decide_navigation(link, page);
+                REQUIRE(d.action == NavAction::OpenLink);
+                CHECK(d.open_link == link);
+                // The downloader's own check of that link (with the scheme's MakerWorld storage
+                // allowlist) is what allows it; nothing is trusted here that it would not trust.
+                const untrusted::OpenLink parsed = untrusted::parse_open_link(d.open_link);
+                REQUIRE(parsed.ok);
+                CHECK(parsed.file_url == file);
+                CHECK(untrusted::check_model_download(parsed.file_url, parsed.scheme).verdict == untrusted::DownloadVerdict::Allow);
+                CHECK(untrusted::is_makerworld_file_url(parsed.file_url) == (file == signed_url));
+            }
+        }
+    }
+    // Hosts the downloader would ask about are passed on (it asks); refused ones are blocked here,
+    // and the panel shows why.
+    CHECK(decide_navigation("bambustudioopen://" + percent_encode("https://cdn.example.org/a.3mf"), MAKERWORLD_PAGE).action == NavAction::OpenLink);
+    for (const std::string &f : {"http://public-cdn.bblmw.com/x.3mf", "https://127.0.0.1:13619/x.3mf", "https://192.168.1.9/x.3mf",
+                                 "https://public-cdn.bblmw.com/x.exe", "file:///C:/x.3mf", "https://user@public-cdn.bblmw.com/x.3mf"}) {
+        INFO(f);
+        const NavDecision d = decide_navigation("bambustudioopen://" + percent_encode(f), MAKERWORLD_PAGE);
+        CHECK(d.action == NavAction::Block);
+        CHECK_FALSE(d.reason.empty());
+    }
+    CHECK(decide_navigation("bambustudioopen://x", MAKERWORLD_PAGE).action == NavAction::Block);
+    CHECK(decide_navigation("bambustudioopen://", MAKERWORLD_PAGE).action == NavAction::Block);
+    // A new window to the button's link is carried out like the link itself.
+    const WindowDecision w = decide_new_window("bambustudioopen://" + percent_encode(signed_url), MAKERWORLD_PAGE, true, false);
+    CHECK(w.action == WindowAction::AppLink);
+    CHECK(w.nav.action == NavAction::OpenLink);
+    // Plain downloads from MakerWorld are imported too.
     const DownloadDecision d = decide_download(signed_url, "Benchy.3mf", MAKERWORLD_PAGE, 1024);
     CHECK(d.action == DownloadAction::Import);
     CHECK(d.file_name == "Benchy.3mf");
@@ -199,7 +230,7 @@ TEST_CASE("Model browser: new windows", "[ModelBrowser]")
                                                true, false);
     CHECK(w.action == WindowAction::AppLink);
     CHECK(w.nav.action == NavAction::OpenLink);
-    CHECK(decide_new_window("bambustudioopen://x", MAKERWORLD_PAGE, true, false).nav.action == NavAction::MakerWorldNotice);
+    CHECK(decide_new_window("bambustudioopen://x", MAKERWORLD_PAGE, true, false).action == WindowAction::Block);
 }
 
 TEST_CASE("Model browser: download routing", "[ModelBrowser]")

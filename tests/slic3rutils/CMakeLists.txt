@@ -34,6 +34,7 @@ add_executable(${_TEST_NAME}_tests
     dock_width_settle_tests.cpp
     http_empty_post_tests.cpp
     http_tls_policy_tests.cpp
+    hub_addresses_tests.cpp
     update_feed_tests.cpp
     paint_cli_tests.cpp
     hms_lookup_tests.cpp

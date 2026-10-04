@@ -1337,6 +1337,21 @@ TEST_CASE("A missing file is reported as not found", "[AssembleList][CLI]")
     CHECK(load_assemble_plate_list(missing.string(), plates, assemble_list_max_plates) == AssembleListResult::FileNotFound);
 }
 
+// Edge follow-up (upstream deferred): each of pos_x/y/z is independently 1 or count.
+// construct_assemble_list now indexes each axis by its own length, so a 1-vs-count mix
+// is accepted here and must not over-read at construct time.
+TEST_CASE("Per-axis pos lists may be length 1 or count independently", "[AssembleList][CLI]")
+{
+    json root = valid_assemble_list();
+    root["plates"][0]["objects"][0]["pos_x"] = json::array({10.f});
+    root["plates"][0]["objects"][0]["pos_y"] = json::array({1.f, 2.f, 3.f});
+    root["plates"][0]["objects"][0]["pos_z"] = json::array({0.f});
+    CHECK(load_assemble_json(root) == AssembleListResult::Success);
+
+    root["plates"][0]["objects"][0]["pos_x"] = json::array({1.f, 2.f});
+    CHECK(load_assemble_json(root) == AssembleListResult::ConfigError);
+}
+
 // ---- 3MF XML entries larger than expat's int (Orca #15958) ------------------------------------
 //
 // The three XML_GetBuffer / XML_ParseBuffer sites (Prusa fingerprint probe, Prusa model-config

@@ -1074,9 +1074,10 @@ static int construct_assemble_list(std::vector<assemble_plate_info_t> &assemble_
                 ModelObject* copy_obj = temp_model.add_object(*object);
                 copy_obj->name = object_name + "_" + std::to_string(copy_index + 1);
 
-                if (copy_index >= assemble_object.pos_x.size())
-                    array_index = 0;
-                copy_obj->translate(assemble_object.pos_x[array_index], assemble_object.pos_y[array_index], assemble_object.pos_z[array_index]);
+                const size_t pos_x_index = (copy_index < assemble_object.pos_x.size()) ? copy_index : 0;
+                const size_t pos_y_index = (copy_index < assemble_object.pos_y.size()) ? copy_index : 0;
+                const size_t pos_z_index = (copy_index < assemble_object.pos_z.size()) ? copy_index : 0;
+                copy_obj->translate(assemble_object.pos_x[pos_x_index], assemble_object.pos_y[pos_y_index], assemble_object.pos_z[pos_z_index]);
 
                 if (copy_index < assemble_object.filaments.size())
                     array_index = copy_index;
@@ -1092,7 +1093,7 @@ static int construct_assemble_list(std::vector<assemble_plate_info_t> &assemble_
                 merge_or_add_object(assemble_plate_info, model, assemble_object.assemble_index[array_index], merged_objects, copy_obj);
 
                 BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": cloned object %1%, name %2%, pos_x %3% pos_y %4%, pos_z %5%")
-                    %copy_index %object->name %assemble_object.pos_x[array_index] %assemble_object.pos_y[array_index] %assemble_object.pos_z[array_index];
+                    %copy_index %object->name %assemble_object.pos_x[pos_x_index] %assemble_object.pos_y[pos_y_index] %assemble_object.pos_z[pos_z_index];
             }
         }
 

@@ -703,6 +703,41 @@ static void respond(tcp::socket& s, int status, const std::string& type, const s
 
 static void respond_json(tcp::socket& s, int status, const std::string& body) { respond(s, status, "application/json", body); }
 
+// A page or script the hub serves from <resources>/web/orca. read_file() answers "" for a file it
+// cannot open, and the callers used to send that as a 200 with an empty body: a hub whose install
+// folder had been deleted under it (a leftover process from a removed test copy) served blank
+// camera pages and said nothing. This reads the file and, when it is missing or empty, logs the
+// full path once per asset and answers 503 with a page that says what is wrong, instead.
+// `rel` is relative to web/orca, no leading slash. Returns false when it has already answered.
+static bool serve_web_asset(tcp::socket& s, const std::string& rel, std::string& out,
+                            const std::string& extra_headers = "")
+{
+    const std::string path = resources_dir() + "/web/orca/" + rel;
+    out = read_file(path);
+    if (!out.empty()) return true;
+    static std::mutex            m;
+    static std::set<std::string> logged;
+    bool                         first;
+    {
+        std::lock_guard<std::mutex> lock(m);
+        first = logged.insert(rel).second;
+    }
+    if (first)
+        BOOST_LOG_TRIVIAL(error) << "RemoteHub: the web asset " << path << " is missing or empty, so the hub cannot serve it. "
+                                 << "This hub is probably running from an install folder that was moved or deleted - "
+                                 << "restart it from a current install.";
+    respond(s, 503, "text/html; charset=utf-8",
+            "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            "<title>Hub pages missing</title></head><body style=\"font:16px sans-serif;margin:2em;background:#222;color:#eee\">"
+            "<h2>This hub cannot find its web pages</h2>"
+            "<p>The file <code>" + rel + "</code> is missing from the install folder this hub is running from, "
+            "so this page and the cameras on it cannot load.</p>"
+            "<p>On the PC, close this hub and start it again from the current EdgeSlicer install (the hub log has the full path).</p>"
+            "</body></html>",
+            extra_headers);
+    return false;
+}
+
 // A 200 the phone may keep: an archive record's preview, which never changes under its URL. The
 // same headers as respond() except the cache line (private: the URL carries the phone's token).
 static void respond_cacheable(tcp::socket& s, const std::string& type, const std::string& body)
@@ -4116,7 +4151,8 @@ void HubServer::handle_hub(tcp::socket& client, Request& r)
         respond_json(client, error.empty() ? 200 : 409, j.dump());
     } else if ((r.path == "/hub/" || r.path == "/hub/index.html") && r.method == "GET") {
         // The page gets the per-run secret and sends it back as X-Hub-Secret on every call.
-        std::string page = read_file(resources_dir() + "/web/orca/hub.html"), secret;
+        std::string page, secret;
+        if (!serve_web_asset(client, "hub.html", page, "X-Frame-Options: DENY\r\n")) return;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             secret = m_secret;
@@ -4128,7 +4164,8 @@ void HubServer::handle_hub(tcp::socket& client, Request& r)
         const auto res = onvif_discover();
         respond(client, res.first, res.first == 200 ? "application/json" : "text/plain; charset=utf-8", res.second);
     } else if (r.path == "/hub/qrcode.js" && r.method == "GET") {
-        respond(client, 200, "application/javascript", read_file(resources_dir() + "/web/orca/qrcode.js"));
+        std::string js;
+        if (serve_web_asset(client, "qrcode.js", js)) respond(client, 200, "application/javascript", js);
     } else if (r.path == "/hub/instances" && r.method == "GET") {
         respond_json(client, 200, instances_json().dump());
     } else if (r.path == "/hub/new" && r.method == "POST") {
@@ -4834,11 +4871,16 @@ void HubServer::serve(std::unique_ptr<tcp::socket> owner, bool admin)
                                (peer.is_loopback() && ct_equal(query_param(r.query, "lt"), secret));
         if (r.path == PLAYER_PAGE) {
             if (!player_ok) { respond(client, 404, "text/plain", "not found"); return; }
-            respond(client, 200, "text/html; charset=utf-8", read_file(resources_dir() + "/web/orca/player.html"));
+            std::string page;
+            if (serve_web_asset(client, "player.html", page)) respond(client, 200, "text/html; charset=utf-8", page);
             return;
         }
         for (const char* p : PLAYER_JS) {
-            if (r.path == p) { respond(client, 200, "application/javascript", read_file(resources_dir() + "/web/orca" + std::string(p))); return; }
+            if (r.path == p) {
+                std::string js;
+                if (serve_web_asset(client, std::string(p).substr(1), js)) respond(client, 200, "application/javascript", js);
+                return;
+            }
         }
         if (r.path == GO2RTC_WS) {
             if (!player_ok) { respond(client, 404, "text/plain", "not found"); return; }
@@ -4896,7 +4938,9 @@ void HubServer::serve(std::unique_ptr<tcp::socket> owner, bool admin)
             // A top-level page: never in anybody's frame. (The player at /stream.html deliberately
             // carries no X-Frame-Options - this page frames it, and so does the PC's Stream tab
             // from a different origin, which even SAMEORIGIN would block.)
-            respond(client, 200, "text/html; charset=utf-8", read_file(resources_dir() + "/web/orca/stream_center.html"),
+            std::string page;
+            if (!serve_web_asset(client, "stream_center.html", page, "X-Frame-Options: DENY\r\n")) return;
+            respond(client, 200, "text/html; charset=utf-8", page,
                     "X-Frame-Options: DENY\r\nSet-Cookie: rt=" + token + "; Path=/; SameSite=Lax" + cookie_flags + "\r\n");
         } else if (rest == "/state") {
             // Through Tailscale Serve the phone learns who it is signed in as (shown in its top bar).
@@ -4956,6 +5000,14 @@ void HubServer::serve(std::unique_ptr<tcp::socket> owner, bool admin)
 bool HubServer::start()
 {
     ensure_dirs();
+    {
+        // Say it at start-up, not only when a phone first asks: the usual cause is a hub launched
+        // from an install folder that no longer has its resources.
+        boost::system::error_code ig;
+        if (!fs::exists(fs::path(resources_dir()) / "web" / "orca" / "stream_center.html", ig))
+            BOOST_LOG_TRIVIAL(error) << "RemoteHub: " << resources_dir() << "/web/orca/stream_center.html does not exist; the hub's pages and "
+                                     << "cameras will not load (503) until it is started from a complete install";
+    }
     {
         boost::system::error_code ig;
         fs::remove(last_exit_json_path(), ig); // describes a hub that is no longer the latest

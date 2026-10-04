@@ -1876,11 +1876,12 @@ size_t total_physical_memory()
 // Physical RAM exhaustion  -> page-fault thrashing (unresponsive hang).
 // Commit exhaustion        -> malloc failure (OOM crash).
 // Taking the min catches both failure modes with a single threshold.
-size_t get_available_physical_memory()
-{
 #ifdef _WIN32
+// Both Windows figures behind get_available_physical_memory(); 0 means "could not be read".
+static void get_windows_available_memory(size_t &phys_avail, size_t &commit_avail)
+{
     // Physical RAM available (predicts page-fault thrashing).
-    size_t phys_avail = 0;
+    phys_avail = 0;
     {
         MEMORYSTATUSEX memInfo;
         memInfo.dwLength = sizeof(memInfo);
@@ -1888,7 +1889,7 @@ size_t get_available_physical_memory()
             phys_avail = static_cast<size_t>(memInfo.ullAvailPhys);
     }
     // System commit available (predicts OOM crash).
-    size_t commit_avail = 0;
+    commit_avail = 0;
     {
         PERFORMANCE_INFORMATION perfInfo;
         perfInfo.cb = sizeof(perfInfo);
@@ -1898,6 +1899,14 @@ size_t get_available_physical_memory()
                              * static_cast<size_t>(perfInfo.PageSize);
         }
     }
+}
+#endif
+
+size_t get_available_physical_memory()
+{
+#ifdef _WIN32
+    size_t phys_avail = 0, commit_avail = 0;
+    get_windows_available_memory(phys_avail, commit_avail);
     // Return whichever is more constraining.
     if (phys_avail == 0) return commit_avail;
     if (commit_avail == 0) return phys_avail;
@@ -1932,6 +1941,18 @@ size_t get_available_physical_memory()
 #else
 	return 0;
 #endif
+}
+
+std::string get_available_memory_description()
+{
+    const size_t avail = get_available_physical_memory();
+    std::string  out   = "available " + std::to_string(avail / (1024 * 1024)) + " MB";
+#ifdef _WIN32
+    size_t phys_avail = 0, commit_avail = 0;
+    get_windows_available_memory(phys_avail, commit_avail);
+    out += " (physical " + std::to_string(phys_avail / (1024 * 1024)) + " MB, commit " + std::to_string(commit_avail / (1024 * 1024)) + " MB)";
+#endif
+    return out;
 }
 
 bool makedir(const std::string path) {

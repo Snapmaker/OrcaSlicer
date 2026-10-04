@@ -479,6 +479,12 @@ void AppConfig::set_defaults()
         set_bool("show_print_by_object_caution", true);
     }
 
+    // Slicing "Memory Usage Warning" dialog (PrintBase memory guard). On by default; the dialog's
+    // "Don't ask again" box and Preferences > General switch it off.
+    if (get("warn_low_memory_slicing").empty()) {
+        set_bool("warn_low_memory_slicing", true);
+    }
+
     if (get("auto_shadow_system_presets").empty()) {
         set_bool("auto_shadow_system_presets", true);
     }

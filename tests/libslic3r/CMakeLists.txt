@@ -10,6 +10,7 @@ add_executable(${_TEST_NAME}_tests
 	test_custom_models.cpp
 	test_arrange_support_clearance.cpp
 	test_appconfig_trailing_newline.cpp
+	test_memory_guard_policy.cpp
 	test_aabbindirect.cpp
 	test_ams_lookup.cpp
 	test_assembly_face_pick.cpp

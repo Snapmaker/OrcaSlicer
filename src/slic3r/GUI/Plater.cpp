@@ -112,6 +112,7 @@
 #include "libslic3r/SliceCompare/Snapshot.hpp"
 #include "slic3r/GUI/SliceCompare/SliceCompareFrame.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/MemoryGuardPolicy.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/FilamentHotBedNozzleRules.hpp"
@@ -22914,19 +22915,47 @@ bool Plater::reslice()
                         + _L("Select \"Yes\" to attempt slicing, but the software may lag or freeze.")
                         + "\n- "
                         + _L("Select \"No\" to terminate the slicing task immediately.");
-                    if (RemoteAccess::dialog_mode() != RemoteAccess::Mode::Interactive) {
+                    // Preferences > General "Warn when memory is low during slicing" (also switched off by the
+                    // dialog's "Don't ask again" box). Absent = on.
+                    AppConfig* cfg = wxGetApp().app_config;
+                    const bool warn_enabled = cfg == nullptr || cfg->get(MEMORY_GUARD_WARN_CONFIG_KEY).empty() || cfg->get_bool(MEMORY_GUARD_WARN_CONFIG_KEY);
+                    const MemoryGuardAction action = memory_guard_action(
+                        warn_enabled, RemoteAccess::dialog_mode() == RemoteAccess::Mode::Interactive);
+                    BOOST_LOG_TRIVIAL(warning) << "Memory guard: memory is low during slicing, " << get_available_memory_description()
+                                               << ", warning " << (warn_enabled ? "on" : "off")
+                                               << ", action " << (action == MemoryGuardAction::Stop ? "stop" : action == MemoryGuardAction::ContinueSilently ? "continue (warning switched off)" : "ask");
+                    if (action == MemoryGuardAction::Stop) {
                         // Ultra: nobody can answer; stop the slice rather than risk taking the process down.
+                        // The "warn" setting never applies here: a silent "continue" could take the hub down.
                         RemoteAccess::get().note_attention("Memory Usage Warning", "no");
                         RemoteAccess::get().raise_attention("slicing stopped: the PC ran out of memory", "manual");
                         this->p->preview->set_skip_toolpath_preview(true);
                         promise->set_value(false);
                         return;
                     }
+                    if (action == MemoryGuardAction::ContinueSilently) {
+                        // Warning switched off: keep slicing as if "Yes, Continue" had been chosen (the guard asks
+                        // at most once per slice) and leave a non-modal notice instead of the dialog.
+                        this->p->preview->set_skip_toolpath_preview(true);
+                        this->p->notification_manager->push_notification(NotificationType::CustomNotification,
+                            NotificationManager::NotificationLevel::WarningNotificationLevel,
+                            into_u8(_L("Memory is low during slicing. Slicing continues, but the slicer may freeze or crash. "
+                                       "You can turn the warning back on in Preferences > General.")));
+                        promise->set_value(true);
+                        return;
+                    }
                     RichMessageDialog dlg(this, msg,
                         _L("Memory Usage Warning"), wxYES_NO | wxNO_DEFAULT | wxICON_WARNING);
                     dlg.SetYesNoLabels(_L("Yes, Continue"), _L("No, Stop"));
+                    // Only "Yes, Continue" with this ticked switches the warning off; "No, Stop" never does.
+                    dlg.ShowCheckBox(_L("Don't ask again (only if you choose \"Yes, Continue\")"));
 
                     bool result = (dlg.ShowModal() == wxID_YES);
+                    if (memory_guard_should_disable_warning(result, dlg.IsCheckBoxChecked()) && cfg != nullptr) {
+                        cfg->set_bool(MEMORY_GUARD_WARN_CONFIG_KEY, false);
+                        cfg->save();
+                        BOOST_LOG_TRIVIAL(info) << "Memory guard: warning switched off from the dialog (Preferences > General turns it back on)";
+                    }
                     if (result) {
                         // Skip toolpath preview to reduce memory usage on
                         // the subsequent load_toolpaths / load_shells phase.

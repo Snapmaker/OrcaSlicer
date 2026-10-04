@@ -492,7 +492,13 @@ static std::string real_path_w(const std::wstring& w)
         wchar_t buf[2048];
         const DWORD n = ::GetFinalPathNameByHandleW(h, buf, (DWORD) (sizeof(buf) / sizeof(buf[0])), VOLUME_NAME_DOS);
         ::CloseHandle(h);
-        if (n > 0 && n < sizeof(buf) / sizeof(buf[0])) return boost::nowide::narrow(std::wstring(buf, n));
+        if (n > 0 && n < sizeof(buf) / sizeof(buf[0])) {
+            // GetFinalPathNameByHandle answers with an extended-length prefix: \\?\C:\dir or \\?\UNC\server\share.
+            std::wstring out(buf, n);
+            if (out.rfind(L"\\\\?\\UNC\\", 0) == 0) out = L"\\" + out.substr(7);
+            else if (out.rfind(L"\\\\?\\", 0) == 0) out = out.substr(4);
+            return boost::nowide::narrow(out);
+        }
     }
     return boost::nowide::narrow(w);
 }

@@ -1,9 +1,11 @@
 #ifndef slic3r_GUI_PresetMirrorCore_hpp_
 #define slic3r_GUI_PresetMirrorCore_hpp_
 
+#include <functional>
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 
 // GUI-free core of the Bambu Studio user-preset mirror. Everything here is pure logic over plain
 // values (no wxWidgets, no AppConfig, no PresetBundle), so tests/slic3rutils can exercise it.
@@ -47,6 +49,8 @@ struct SourceFile {
     std::string rel;        // manifest key, always '/'-separated, e.g. "filament/Foo.json"
     long long   t = 0;      // updated_time from the .info, else mtime
     bool        parseable = true;  // the fork's config loader can read it (see preset_is_parseable)
+    std::string body;       // raw source JSON; needed to adopt an untracked dest by content
+    std::string info;       // raw source .info (empty when the source has none, e.g. base/)
 };
 
 // Outcome of listing the source tree. `ok` is the safety gate: false means we could not read the
@@ -90,6 +94,7 @@ bool sanitize_nil_arrays(const std::string&              json_text,
 enum class Action {
     Copy,          // new, or the source is newer than what we copied
     UpToDate,      // our copy matches the source
+    Adopt,         // untracked dest whose bytes already equal what we would write -> record, don't overwrite
     ProtectNative, // a fork-native file sits at this path and we don't own it -> never touch
     RespectDelete, // the user deleted our copy and the source has not changed -> record, don't re-pull
     SkipUnparseable, // the fork's loader would reject (and then delete) it -> never copy
@@ -106,7 +111,49 @@ struct PlanItem {
 struct DestState {
     // rel -> exists on disk in the fork's user\default
     std::map<std::string, bool> present;
+    // dest JSON bytes, keyed by rel. Only untracked dests with a populated
+    // entry can be adopted; missing/empty bytes stay ProtectNative.
+    std::map<std::string, std::string> bytes;
+    // dest .info bytes, keyed by the preset rel (not the .info path).
+    std::map<std::string, std::string> info_bytes;
+    // fork-nullable option keys, used when matching a sanitized dest.
+    std::vector<std::string>           nullable_keys;
 };
+
+// Blank sync_info the way the mirror writes a copied .info. Used both to write
+// the sidecar and to decide whether an untracked dest already matches it.
+std::string info_inert(const std::string& src_info);
+
+// True when every non-empty line is `key = value` and at least one known
+// sidecar key is present. Empty, truncated, or garbage text is not.
+bool info_is_parseable(const std::string& text);
+
+// True when dest JSON equals exactly what this run would write (raw if
+// preset_is_parseable, else the sanitized rewrite) and the source is usable
+// (`f.parseable`). A missing, empty, or unparseable dest .info still matches
+// (S4: kill between JSON and sidecar, or a torn sidecar); a parseable .info
+// that is not inert does not. `!f.parseable` never matches (S5).
+bool dest_matches_mirror(const SourceFile& f, const DestState& dst);
+
+// Dest JSON matches, but the sidecar is missing/torn and the mirror would
+// write one. Callers rewrite it atomically after Adopt.
+bool dest_info_needs_rewrite(const SourceFile& f, const DestState& dst);
+
+// Replace `path` with `bytes` (binary) through a sibling temporary that is then
+// renamed over it, so a crash or a full disk leaves the previous complete file
+// rather than a torn one. The temporary is removed on failure. Used for every
+// file the mirror writes: preset JSON, .info sidecar and the manifest.
+bool replace_file_bytes(const std::string& path, const std::string& bytes, std::string* err = nullptr);
+
+// Replace-write of info_inert(src_info).
+bool write_info_inert(const std::string& path, const std::string& src_info, std::string* err = nullptr);
+
+// A copy is recorded only when the JSON landed and, if a sidecar is required,
+// that write succeeded too.
+inline bool copy_ready_to_record(bool json_ok, bool info_required, bool info_ok)
+{
+    return json_ok && (!info_required || info_ok);
+}
 
 // Build the full plan. This is the whole decision procedure, and it is total: every rel in the
 // listing and every rel in the manifest gets exactly one PlanItem.
@@ -118,10 +165,35 @@ std::vector<PlanItem> build_plan(const SourceListing&               src,
                                  const std::map<std::string, Entry>& manifest,
                                  const DestState&                   dst);
 
-// Convenience: apply a plan to a manifest, returning the new manifest. Copy/RespectDelete update
-// entries, Retire drops them, everything else leaves the manifest alone.
+// Apply a plan to a manifest, returning the new manifest. RespectDelete updates
+// entries, Retire drops them, Adopt is always recorded (the dest already
+// matches; no file write). Copy is recorded only for rels in `copied` — a
+// failed copy (or a copy whose manifest write failed) stays pending so the
+// next run retries it instead of treating it as done or, once the dest is
+// found missing, as a user deletion. There is no two-argument overload:
+// omitting `copied` used to record every planned Copy.
 std::map<std::string, Entry> apply_plan(const std::map<std::string, Entry>& manifest,
-                                        const std::vector<PlanItem>&        plan);
+                                        const std::vector<PlanItem>&        plan,
+                                        const std::set<std::string>&        copied);
+
+// Replace-write of the manifest file (replace_file_bytes). A crash or full
+// disk leaves the previous complete file, which parse_manifest can read. The
+// old truncate-write could leave a torn file that parses as empty, and every
+// mirrored preset then looked fork-native (ProtectNative) for good.
+bool write_manifest_bytes(const std::string& path, const std::string& dump, std::string* err = nullptr);
+
+// Persist apply_plan(manifest, plan, copied ∪ pending). On success, pending
+// rels are moved into `copied` and cleared. On failure `copied` and `pending`
+// are unchanged — those copies are not recorded. `write` defaults to
+// write_manifest_bytes; tests inject a failing or inspecting writer.
+using ManifestWriteFn = std::function<bool(const std::string& path, const std::string& dump, std::string* err)>;
+bool commit_pending_copies(std::set<std::string>&              copied,
+                           std::vector<std::string>&           pending,
+                           const std::map<std::string, Entry>& manifest,
+                           const std::vector<PlanItem>&        plan,
+                           const std::string&                  path,
+                           std::string*                        err   = nullptr,
+                           ManifestWriteFn                     write = {});
 
 // ---- source directory resolution ---------------------------------------------------------------
 

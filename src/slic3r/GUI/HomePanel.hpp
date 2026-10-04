@@ -25,6 +25,7 @@ namespace GUI {
 
 class WebViewPanel;
 class HomeVendors;
+class ModelBrowserPanel;
 
 // The Home tab: a local page (resources/web/home) with a side menu of sections - Recent (the
 // recent projects), Library (the model files in folders the user picked, Utils/LibraryIndex.hpp),
@@ -34,6 +35,10 @@ class HomeVendors;
 // The old flutter start page (WebViewPanel: Snapmaker's model library) is kept behind it for the
 // code that still talks to it: it is built only on demand - File > Start page, EVT_LOAD_URL - and
 // then shown in place of Home with a strip to go back.
+//
+// Models (Windows, Preferences > "Model browser (beta)") is the in-app model browser
+// (ModelBrowserPanel): a native panel shown in place of the page, with its own "Home" button back.
+// It is a separate, isolated browser; nothing of it runs in this page's web view.
 class HomePanel : public wxPanel
 {
 public:
@@ -46,6 +51,13 @@ public:
     void show_home();
     void show_start_page();
     bool start_page_shown() const { return m_start != nullptr && m_start_shown; }
+
+    // Home > Models.
+    void show_models();
+    void leave_models();
+    bool models_shown() const { return m_models != nullptr && m_models_shown; }
+    // Preferences > "Model browser (beta)" changed: the page shows or hides the Models entry.
+    void refresh_models_entry();
 
     // The Home tab was selected (true) or left (false).
     void on_tab_changed(bool selected);
@@ -99,6 +111,8 @@ private:
     wxWebView*    m_browser { nullptr };
     WebViewPanel* m_start { nullptr };
     bool          m_start_shown { false };
+    ModelBrowserPanel* m_models { nullptr };   // built the first time Models is opened
+    bool               m_models_shown { false };
     bool          m_selected { false };
     bool          m_page_ready { false };
 

@@ -42,6 +42,7 @@ add_executable(${_TEST_NAME}_tests
     hms_actions_tests.cpp
     remote_error_actions_tests.cpp
     plate_focus_hide_tests.cpp
+    plate_print_slots_tests.cpp
     preset_mirror_tests.cpp
     bambu_config_compat_tests.cpp
     preset_quarantine_tests.cpp

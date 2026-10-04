@@ -58,6 +58,7 @@ button, input, select { font: inherit; color: inherit; }
   border: 0; border-radius: 8px; background: transparent; cursor: pointer; text-align: left; font-size: 14px; }
 .rail-item svg { width: 20px; height: 20px; fill: var(--mute); flex: none; }
 .rail-item:hover { background: var(--hover); }
+.rail-item[hidden] { display: none; }
 .rail-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .rail-item.active svg { fill: var(--accent); }
 .rail-item:focus-visible, .btn:focus-visible, .icon-btn:focus-visible, .card:focus-visible, .chip:focus-visible {

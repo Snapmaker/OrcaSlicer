@@ -483,6 +483,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/StreamPanel.cpp
     GUI/StreamPanel.hpp
     GUI/HomePanel.cpp
+    GUI/ModelBrowserPanel.cpp
     GUI/Theme.cpp
     GUI/Theme.hpp
     GUI/WindowColourStash.cpp
@@ -490,6 +491,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/ThemesPage.cpp
     GUI/ThemesPage.hpp
     GUI/HomePanel.hpp
+    GUI/ModelBrowserPanel.hpp
     GUI/HomeVendors.cpp
     GUI/HomeVendors.hpp
     GUI/BambuCamRelay.cpp
@@ -1099,6 +1101,7 @@ slic3r_unity_build(libslic3r_gui SKIP
     GUI/Gizmos/GLGizmosCommon.cpp                 # namespace-scope using-directives for the gizmo data objects
     GUI/UntrustedSettingsGuard.cpp                # namespace-scope using namespace Slic3r::untrusted
     GUI/CustomModelsMenu.cpp                      # file-local helpers with generic names (menu_label, add_item, ...)
+    GUI/ModelBrowserPanel.cpp                     # WRL/WebView2 COM headers; namespace-scope using-directive
     GUI/Jobs/CreateFontStyleImagesJob.cpp         # namespace-scope using namespace Emboss
     GUI/Jobs/EmbossJob.cpp                        # namespace-scope using namespace Emboss
     GUI/TextLines.cpp                             # namespace-scope using namespace Emboss

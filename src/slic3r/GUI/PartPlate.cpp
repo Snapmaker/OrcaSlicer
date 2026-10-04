@@ -40,6 +40,7 @@
 #include "2DBed.hpp"
 #include "3DBed.hpp"
 #include "PartPlate.hpp"
+#include "PlatePrintSlots.hpp"
 #include "Camera.hpp"
 #include "GUI_Colors.hpp"
 #include "GUI_ObjectList.hpp"
@@ -3270,12 +3271,15 @@ void PartPlateList::init()
 	m_print_index = 0;
 	if (printer_technology == ptFFF)
 	{
+		// The print list may still hold Prints here (reset(true) keeps them), so take an index
+		// nobody uses. A failed emplace would leave this plate on an orphan Print that shares
+		// its index with a live one (see PlatePrintSlots.hpp).
+		const int print_index = claim_free_print_index(m_print_list, m_gcode_result_list, m_print_index);
 		Print* print = new Print();
 		GCodeResult* gcode = new GCodeResult();
-		m_print_list.emplace(m_print_index, print);
-		m_gcode_result_list.emplace(m_print_index, gcode);
-		first_plate->set_print(print, gcode, m_print_index);
-		m_print_index++;
+		m_print_list.emplace(print_index, print);
+		m_gcode_result_list.emplace(print_index, gcode);
+		first_plate->set_print(print, gcode, print_index);
 	}
 	first_plate->set_index(0);
 
@@ -3725,11 +3729,13 @@ void PartPlateList::reset(bool do_init)
 
 	//m_plate_list.clear();
 
+	// Undo/redo calls reset(false) and then deserializes the plates, so it must not create a plate
+	// here. init() would also rewind m_print_index to 0 while the print list still holds every
+	// plate's Print, and the next new plate would then share an index with a live one.
 	if (do_init) {
         init();
         m_plate_list[0]->set_filament_count(m_filament_count);
 	}
-		init();
 
 	m_filament_group_dirty = false;
 	return;
@@ -3784,12 +3790,15 @@ int PartPlateList::create_plate(bool adjust_position)
 
 	if (printer_technology == ptFFF)
 	{
+		// Never reuse an index the print list holds: a failed emplace would bind this plate to an
+		// orphan Print under another plate's index, and the next undo/redo would hand it that
+		// plate's Print (see PlatePrintSlots.hpp).
+		const int print_index = claim_free_print_index(m_print_list, m_gcode_result_list, m_print_index);
 		Print* print = new Print();
 		GCodeResult* gcode = new GCodeResult();
-		m_print_list.emplace(m_print_index, print);
-		m_gcode_result_list.emplace(m_print_index, gcode);
-		plate->set_print(print, gcode, m_print_index);
-		m_print_index++;
+		m_print_list.emplace(print_index, print);
+		m_gcode_result_list.emplace(print_index, gcode);
+		plate->set_print(print, gcode, print_index);
 	}
 
 	plate->set_filament_count(m_filament_count);
@@ -5332,6 +5341,15 @@ int PartPlateList::rebuild_plates_after_deserialize(std::vector<bool>& previous_
 	update_plate_cols();
 	update_all_plates_pos_and_size(false, false, false, false);
 	set_shapes(m_shape, m_exclude_areas, m_logo_texture_filename, m_height_to_lid, m_height_to_rod);
+
+	// A plate keeps the Print filed under its saved index only if no earlier plate took it already.
+	// Two plates on one Print slice with whichever plate origin was set last (see PlatePrintSlots.hpp).
+	std::vector<int> saved_print_indices;
+	for (const PartPlate* plate : m_plate_list)
+		saved_print_indices.push_back(plate->m_print_index);
+	const std::vector<bool> keep_print = restored_plates_keep_print(saved_print_indices,
+		[this](int idx) { return m_print_list.count(idx) > 0; });
+
 	for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
 	{
 		bool need_reset_print = false;
@@ -5351,7 +5369,15 @@ int PartPlateList::rebuild_plates_after_deserialize(std::vector<bool>& previous_
 
 		std::map<int, PrintBase*>::iterator it = m_print_list.find(m_plate_list[i]->m_print_index);
 		std::map<int, GCodeResult*>::iterator it2 = m_gcode_result_list.find(m_plate_list[i]->m_print_index);
-		if (it != m_print_list.end())
+		if (it != m_print_list.end() && !keep_print[i])
+		{
+			// An earlier plate owns this Print: give this plate one of its own below.
+			BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": plate %1% shares print index %2% with an earlier plate, giving it a new Print")
+				% i % m_plate_list[i]->m_print_index;
+			// Its saved slice result lives in the other plate's Print.
+			m_plate_list[i]->update_slice_result_valid_state(false);
+		}
+		else if (it != m_print_list.end())
 		{
 			//find it
 			if (it2 == m_gcode_result_list.end())
@@ -5438,7 +5464,8 @@ int PartPlateList::rebuild_plates_after_deserialize(std::vector<bool>& previous_
 
 	//update the bed's position
 	Vec2d pos = compute_shape_position(m_current_plate, m_plate_cols);
-	m_plater->set_bed_position(pos);
+	if (m_plater)
+		m_plater->set_bed_position(pos);
 
 	//not used
 	/*if (m_plate_width == 0)

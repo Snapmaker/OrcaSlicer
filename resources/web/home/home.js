@@ -2,7 +2,8 @@
 //
 // The page only draws. It asks the slicer for everything with window.wx.postMessage(JSON) and the
 // slicer answers through window.HomeApp.receive({type, ...}):
-//   init    {strings, section}             translated strings, the section to open
+//   init    {strings, section, models}     translated strings, the section to open, whether Models is offered
+//   models  {enabled}                      Preferences > "Model browser (beta)" changed
 //   recent  {items: [{path, name, folder, exists, time, image}]}
 //   history {enabled, items: [card]}       cards as HomeTabLogic.cpp history_card() builds them
 //   thumbs  {images: {id: dataUri}}        Print History thumbnails, asked for as cards scroll in
@@ -425,7 +426,7 @@
       const s = state.strings[e.dataset.i18n];
       if (s) e.textContent = s;
     }
-    for (const b of document.querySelectorAll('.rail-item')) b.title = t(b.dataset.section);
+    for (const b of document.querySelectorAll('.rail-item')) b.title = t(b.dataset.section || b.dataset.action);
     $('search').placeholder = t('search', 'Search');
     $('refresh').title = t('refresh', 'Refresh');
     $('refresh').setAttribute('aria-label', t('refresh', 'Refresh'));
@@ -1380,7 +1381,11 @@
           state.strings = msg.strings || {};
           applyTheme(msg.theme);
           applyStrings();
+          $('rail-models').hidden = msg.models !== true;
           showSection(msg.section || state.section, false);
+          break;
+        case 'models':
+          $('rail-models').hidden = msg.enabled !== true;
           break;
         case 'recent':
           state.recent = Array.isArray(msg.items) ? msg.items : [];
@@ -1437,8 +1442,10 @@
 
   // ---- wiring ----
   if (/dark/i.test(navigator.userAgent)) document.documentElement.classList.add('dark');
-  for (const b of document.querySelectorAll('.rail-item'))
+  for (const b of document.querySelectorAll('.rail-item[data-section]'))
     b.addEventListener('click', () => showSection(b.dataset.section, true));
+  // Models is not a section of this page: the slicer swaps in its own browser panel.
+  $('rail-models').addEventListener('click', () => post('models_open'));
   let searchTimer = 0;
   $('search').addEventListener('input', () => {
     clearTimeout(searchTimer);

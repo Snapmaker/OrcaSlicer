@@ -120,6 +120,7 @@
 #include "ThemesPage.hpp"
 #include "WindowColourStash.hpp"
 #include <set>
+#include <cwctype>
 #include "PluginGuard.hpp"
 #include "PresetMirror.hpp"
 #include "Tab.hpp"
@@ -9449,6 +9450,24 @@ bool GUI_App::sm_disconnect_current_machine(bool need_reload_printerview)
     }
 
     return true;
+}
+
+static std::wstring web_download_key(const boost::filesystem::path& path)
+{
+    std::wstring key = path.lexically_normal().wstring();
+    std::transform(key.begin(), key.end(), key.begin(), [](wchar_t c) { return c == L'\\' ? L'/' : wchar_t(std::towlower(c)); });
+    return key;
+}
+
+void GUI_App::mark_web_download(const boost::filesystem::path& path)
+{
+    if (!path.empty())
+        m_web_downloads.insert(web_download_key(path));
+}
+
+bool GUI_App::is_web_download(const boost::filesystem::path& path) const
+{
+    return !path.empty() && m_web_downloads.count(web_download_key(path)) > 0;
 }
 
 void GUI_App::start_download(std::string url)

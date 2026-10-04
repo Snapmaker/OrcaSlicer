@@ -32,6 +32,8 @@
 #include <wx/msgdlg.h>
 
 #include <atomic>
+#include <set>
+#include <boost/filesystem/path.hpp>
 #include <mutex>
 #include <stack>
 #include <unordered_map>
@@ -312,6 +314,7 @@ private:
 
     std::unique_ptr<Downloader> m_downloader;
     DownloadManager* m_download_manager;
+    std::set<std::wstring> m_web_downloads; // mark_web_download()
 
     //BBS
     bool m_is_closing {false};
@@ -932,6 +935,11 @@ private:
 
     // URL download - PrusaSlicer gets system call to open prusaslicer:// URL which should contain address of download
     void            start_download(std::string url);
+    // Files this session downloaded from the web (an "Open in" link, a MakerWorld import, the model
+    // browser). Opening one of them always shows the modified-G-code warning, whatever "Don't show
+    // again" said for local files.
+    void            mark_web_download(const boost::filesystem::path& path);
+    bool            is_web_download(const boost::filesystem::path& path) const;
 
     std::string     get_plugin_url(std::string name, std::string country_code);
     int             download_plugin(std::string name, std::string package_name, InstallProgressFn pro_fn = nullptr, WasCancelledFn cancel_fn = nullptr);

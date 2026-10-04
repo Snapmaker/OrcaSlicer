@@ -12456,7 +12456,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         PresetBundle *preset_bundle = wxGetApp().preset_bundle;
 
                         auto choise = wxGetApp().app_config->get("no_warn_when_modified_gcodes");
-                        if (choise.empty() || choise != "true") {
+                        // A file from the web always gets the warning (GUI_App::mark_web_download).
+                        if (choise.empty() || choise != "true" || wxGetApp().is_web_download(filename)) {
                             // BBS: first validate the printer
                             // validate the system profiles
                             std::set<std::string> modified_gcodes;
@@ -19186,6 +19187,7 @@ void Plater::import_model_id(wxString download_info)
     if (download_ok) {
         BOOST_LOG_TRIVIAL(trace) << "import_model_id: target_path = " << target_path.string();
         /* load project */
+        wxGetApp().mark_web_download(target_path);
         // Orca: If download is a zip file, treat it as if file has been drag and dropped on the plater
         if (target_path.extension() == ".zip")
             this->load_files(wxArrayString(1, target_path.string()));

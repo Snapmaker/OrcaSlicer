@@ -297,6 +297,106 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "mklink /J failed ($LASTEXITCODE)" }
           Write-Host "junction resolves to a usable tree: $(Test-Path -LiteralPath (Join-Path $link 'OrcaSlicer_dep\usr\local'))"
 
+      - name: Sync this commit's deps/ sources into the shared tree's source directory
+        id: depsrc
+        if: steps.deps.outputs.refresh == 'true'
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The shared build tree is a CMake build directory, and CMake builds from the source
+          # directory recorded in its cache (CMAKE_HOME_DIRECTORY), not from whatever directory
+          # the configure was started in. On the VM that is C:/Dev/EdgeSlicer/deps - the VM's own
+          # clone - so until this step existed every "rebuild" compiled that clone's deps/ and
+          # never this checkout's. The 2.4.2.0 cut hit it: PR #163 turned on OCCT's
+          # ModelingAlgorithms module, refresh_deps=true "rebuilt" in a minute (Sentry and
+          # wxWidgets only), and the slicer configure then failed on a missing occt\TKFeat.dll.
+          # (The workspace configure in build_release_vs2022.bat errored on the source mismatch,
+          # unchecked, and MSBuild's ZERO_CHECK regenerated from the cached clone instead.)
+          #
+          # So: mirror this commit's deps/ into the cache's source directory, and run the deps
+          # build from there, where the configure agrees with the cache. ExternalProject is
+          # incremental, so only the deps whose recipes changed are rebuilt - a fresh build
+          # directory per stamp would cost the full hour every time deps/ moves.
+          #
+          # Side effect worth knowing: the VM clone's deps/ (and cmake/modules, deps_src/eigen)
+          # then match the last commit CI built rather than that clone's own HEAD, so `git status`
+          # there shows them modified. That is the same thing the manual fix
+          # (`git checkout FETCH_HEAD -- deps`) did.
+          function Norm([string]$p) { [System.IO.Path]::GetFullPath($p).TrimEnd('\') }
+
+          $buildDir = Norm $env:SHARED_DEPS_ROOT
+          $cache    = Join-Path $buildDir 'CMakeCache.txt'
+          $home_    = $null
+          if (Test-Path -LiteralPath $cache) {
+            $line = Select-String -LiteralPath $cache -Pattern '^CMAKE_HOME_DIRECTORY:INTERNAL=(.*)$' | Select-Object -First 1
+            if ($line) { $home_ = Norm ($line.Matches[0].Groups[1].Value -replace '/', '\') }
+          }
+          if (-not $home_) {
+            # No cache yet: the bat will create one with deps\build's parent as its source.
+            $home_ = Norm (Split-Path -Parent $buildDir)
+            Write-Host "no CMakeCache in $buildDir - a fresh configure will use $home_"
+          } else {
+            Write-Host "shared tree's CMAKE_HOME_DIRECTORY: $home_"
+          }
+
+          # build_release_vs2022.bat does `cd deps\build` and `cmake ../`, so it can only drive a
+          # build directory that sits at <source>\build. Anything else was configured by hand.
+          if ((Norm (Join-Path $home_ 'build')) -ne $buildDir) {
+            throw ("$buildDir was configured from $home_, which is not its parent directory, so " +
+                   "build_release_vs2022.bat cannot rebuild it. Reconfigure it by hand with " +
+                   "-S <clone>\deps -B $buildDir, or delete its CMakeCache.txt to let this workflow start over.")
+          }
+          $srcRoot = Split-Path -Parent $home_
+          $wsDeps  = Norm (Join-Path $env:GITHUB_WORKSPACE 'deps')
+
+          function Mirror([string]$from, [string]$to) {
+            # /MIR purges what is not in $from, so it is only ever pointed at directories that
+            # git tracks wholesale - never at deps\ itself, whose build\ and DL_CACHE\ live there.
+            & robocopy $from $to /MIR /XJ /R:2 /W:2 /NP /NFL /NDL /NJH /NJS | Out-Null
+            if ($LASTEXITCODE -ge 8) { throw "robocopy $from -> $to failed ($LASTEXITCODE)" }
+          }
+
+          if ($home_ -eq $wsDeps) {
+            Write-Host "the cache already points at this workspace's deps/ - nothing to sync"
+          } else {
+            # deps/ one tracked entry at a time: each subdirectory mirrored, each top-level file
+            # copied. Untracked top-level directories in the destination (build\, build-dbg\,
+            # DL_CACHE\) are never named, so never touched. A dep directory deleted upstream
+            # stays behind in the destination; harmless, since deps/CMakeLists.txt includes its
+            # recipes by name.
+            $entries = git ls-tree HEAD deps/
+            if ($LASTEXITCODE -ne 0 -or -not $entries) { throw "git ls-tree HEAD deps/ returned nothing" }
+            New-Item -ItemType Directory -Path $home_ -Force | Out-Null
+            $nDirs = 0; $nFiles = 0
+            foreach ($e in $entries) {
+              $meta, $path = $e -split "`t", 2
+              $type = ($meta -split ' ')[1]
+              $name = Split-Path -Leaf $path
+              $from = Join-Path $wsDeps $name
+              $to   = Join-Path $home_ $name
+              switch ($type) {
+                'tree'  { Mirror $from $to; $nDirs++ }
+                'blob'  { Copy-Item -LiteralPath $from -Destination $to -Force; $nFiles++ }
+                default { Write-Host "::warning::skipping deps/$name ($type)" }
+              }
+            }
+            Write-Host "synced deps/ into ${home_}: $nDirs directories, $nFiles files"
+
+            # The two inputs the deps build reads from outside deps/: find modules handed to every
+            # ExternalProject (${PROJECT_SOURCE_DIR}/../cmake/modules) and QuadriFlow's Eigen
+            # (../deps_src/eigen). They are not part of the stamp, but when a rebuild does run it
+            # should not mix this commit's recipes with the clone's copies of these.
+            foreach ($rel in 'cmake\modules', 'deps_src\eigen') {
+              $from = Join-Path $env:GITHUB_WORKSPACE $rel
+              if (Test-Path -LiteralPath $from) {
+                Mirror $from (Join-Path $srcRoot $rel)
+                Write-Host "synced $rel into $srcRoot"
+              }
+            }
+          }
+          "src_root=$srcRoot" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding ascii
+          exit 0
+
       - name: Build dependencies (only when stale)
         if: steps.deps.outputs.refresh == 'true'
         shell: cmd
@@ -308,17 +408,59 @@ jobs:
           GIT_CONFIG_COUNT: '1'
           GIT_CONFIG_KEY_0: safe.directory
           GIT_CONFIG_VALUE_0: '*'
+          DEPS_SRC_ROOT: ${{ steps.depsrc.outputs.src_root }}
         run: |
           call "%VCVARS%" || exit /b 1
           set "PATH=%CMAKE_DIR%;%PERL_DIR%;%PATH%"
-          echo Rebuilding the dependency tree - this takes about an hour.
-          call build_release_vs2022.bat deps || exit /b 1
+          echo Rebuilding the dependency tree from %DEPS_SRC_ROOT%\deps - up to an hour if many deps changed.
+          @rem This checkout's script, run from the synced source root: its `cd deps\build` then
+          @rem lands in the shared tree itself and its `cmake ../` names the source directory the
+          @rem cache was made from, so the configure succeeds instead of erroring on a mismatch.
+          cd /d "%DEPS_SRC_ROOT%" || exit /b 1
+          call "%GITHUB_WORKSPACE%\build_release_vs2022.bat" deps || exit /b 1
+
+      - name: Verify the dependency tree has what the slicer copies
+        shell: powershell -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The slicer's configure copies a fixed list of DLLs out of the dep tree
+          # (Snapmaker_Orca_copy_dlls in CMakeLists.txt) and stops on the first one missing -
+          # after a 25-minute wait in the worst case, and with a file(COPY) message that says
+          # nothing about why. Check the same list here, read from this commit's CMakeLists.txt so
+          # it cannot drift, and say what to do about it.
+          $usr = Join-Path $env:GITHUB_WORKSPACE 'deps\build\OrcaSlicer_dep\usr\local'
+          $cml = Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'CMakeLists.txt') -Raw
+          if ($cml -notmatch '(?s)set\(OCCT_RUNTIME_TOOLKITS\s+([^)]*)\)') {
+            throw "could not find set(OCCT_RUNTIME_TOOLKITS ...) in CMakeLists.txt - update this check to match"
+          }
+          $toolkits = $matches[1] -split '\s+' | Where-Object { $_ }
+          $expected = @($toolkits | ForEach-Object { "bin\occt\$_.dll" }) + 'bin\freetype.dll'
+
+          $missing = @($expected | Where-Object { -not (Test-Path -LiteralPath (Join-Path $usr $_)) })
+          Write-Host "checked $($expected.Count) files under $usr ($($toolkits.Count) OCCT toolkits + freetype)"
+          if ($missing.Count -eq 0) { Write-Host "all present"; exit 0 }
+
+          $missing | ForEach-Object { Write-Host "MISSING $(Join-Path $usr $_)" }
+          if ('${{ steps.deps.outputs.refresh }}' -eq 'true') {
+            Write-Host ("::error::The dependency rebuild in this run finished, but the tree still lacks " +
+                        "$($missing.Count) file(s) the slicer copies (first: $($missing[0])). The deps build did not " +
+                        "produce them - check the 'Build dependencies' log for which source directory it configured " +
+                        "and whether the recipe (e.g. deps/OCCT/OCCT.cmake) enables that component.")
+          } else {
+            Write-Host ("::error::The shared dependency tree at $env:SHARED_DEPS_ROOT lacks $($missing.Count) " +
+                        "file(s) the slicer copies (first: $($missing[0])), although its stamp matches this " +
+                        "commit's deps/. It was built from other deps/ sources. Rerun this workflow with " +
+                        "refresh_deps=true to rebuild it from this commit.")
+          }
+          exit 1
 
       - name: Stamp the rebuilt deps
         if: steps.deps.outputs.refresh == 'true'
         shell: powershell -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           $ErrorActionPreference = 'Stop'
+          # Only after the check above: a rebuild that left the tree incomplete must not be
+          # stamped as current, or the next run would skip the rebuild and fail the same way.
           $stampFile = Join-Path $env:SHARED_DEPS_ROOT '.edgeslicer_deps_stamp'
           Set-Content -LiteralPath $stampFile -Value '${{ steps.deps.outputs.want_stamp }}' -NoNewline -Encoding ascii
           Write-Host "stamped $stampFile"

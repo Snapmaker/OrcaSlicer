@@ -135,7 +135,7 @@ GuideFrame::GuideFrame(GUI_App *pGUI, long style)
     // INI
     m_SectionName = "firstguide";
     PrivacyUse    = false;
-    StealthMode   = false;
+    StealthMode   = true;
     InstallNetplugin = false;
 
     m_MainPtr = pGUI;

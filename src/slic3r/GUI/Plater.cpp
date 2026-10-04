@@ -14459,7 +14459,7 @@ struct Plater::priv
     void update(unsigned int flags = 0);
     void select_view(const std::string& direction);
     //BBS: add no_slice option
-    void select_view_3D(const std::string& name, bool no_slice = true);
+    void select_view_3D(const std::string& name, bool no_slice = true, bool sync_tab = true);
     void select_next_view_3D();
 
     bool is_preview_shown() const { return current_panel == preview; }
@@ -15468,7 +15468,7 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
             if (this->q->get_project_filename().IsEmpty() && this->q->is_empty_project()) {
                 int skip_confirm = e.GetInt();
                 // Skips the preset reload; trigger_restore_project()'s callers load the presets first.
-                this->q->new_project(skip_confirm, true, wxString(), false);
+                this->q->new_project(skip_confirm, true, wxString(), false, this->main_frame->m_tabpanel->GetCurrentPage() != this->q);
             }
             });
         //wxPostEvent(this->q, wxCommandEvent{EVT_RESTORE_PROJECT});
@@ -15626,7 +15626,7 @@ void Plater::priv::apply_free_camera_correction(bool apply/* = true*/)
 }
 
 //BBS: add no slice option
-void Plater::priv::select_view_3D(const std::string& name, bool no_slice)
+void Plater::priv::select_view_3D(const std::string& name, bool no_slice, bool sync_tab)
 {
     if (name == "3D") {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << __LINE__ << "select view3D";
@@ -15634,7 +15634,8 @@ void Plater::priv::select_view_3D(const std::string& name, bool no_slice)
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format("goto preview page when loading gcode/exported_3mf");
         }
         set_current_panel(view3D, no_slice);
-        wxGetApp().mainframe->select_tab(TAB_ID_PREPARE);
+        if (sync_tab)
+            wxGetApp().mainframe->select_tab(TAB_ID_PREPARE);
     }
     else if (name == "Preview") {
         BOOST_LOG_TRIVIAL(info) << "select preview";
@@ -15647,12 +15648,14 @@ void Plater::priv::select_view_3D(const std::string& name, bool no_slice)
         Model::setExtruderParams(config, numExtruders);
         Model::setPrintSpeedTable(config, print_config);
         set_current_panel(preview, no_slice);
-        wxGetApp().mainframe->select_tab(TAB_ID_PREVIEW);
+        if (sync_tab)
+            wxGetApp().mainframe->select_tab(TAB_ID_PREVIEW);
     }
     else if (name == "Assemble") {
         BOOST_LOG_TRIVIAL(info) << "select assemble view";
         set_current_panel(assemble_view, no_slice);
-        wxGetApp().mainframe->select_tab(TAB_ID_PREPARE);
+        if (sync_tab)
+            wxGetApp().mainframe->select_tab(TAB_ID_PREPARE);
     }
 
     //BBS update selection
@@ -23786,7 +23789,7 @@ Print&          Plater::fff_print()         { return p->fff_print; }
 const SLAPrint& Plater::sla_print() const   { return p->sla_print; }
 SLAPrint&       Plater::sla_print()         { return p->sla_print; }
 
-int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_name, bool reload_presets)
+int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_name, bool reload_presets, bool keep_tab)
 {
     model().calib_pa_pattern.reset(nullptr);
     model().plates_custom_gcodes.clear();
@@ -23892,7 +23895,7 @@ int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_
     wxGetApp().app_config->update_last_backup_dir(model().get_backup_path());
 
     // BBS set default view and zoom
-    p->select_view_3D("3D");
+    p->select_view_3D("3D", true, !keep_tab);
     p->select_view("topfront");
     p->camera.requires_zoom_to_bed = true;
     enable_sidebar(!m_only_gcode);

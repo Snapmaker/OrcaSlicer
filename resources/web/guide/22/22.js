@@ -14,16 +14,6 @@ function HandleStudio(pVal)
 	{
 		m_ProfileItem=pVal['response'];
 		SortUI();
-		InstallNetworkPlugin();
-	}
-}
-
-function InstallNetworkPlugin()
-{
-	if(m_ProfileItem["network_plugin_install"]!='1' || (m_ProfileItem["network_plugin_install"]=='1' && m_ProfileItem["network_plugin_compability"]=='0') )
-	{
-		$("#AcceptBtn").hide();
-		$("#GotoNetPluginBtn").show();
 	}
 }
 
@@ -35,14 +25,6 @@ function ReturnPreviewPage()
 		document.location.href="../1/index.html";
 	else
 		document.location.href="../21/index.html";	
-}
-
-function GotoNetPluginPage()
-{
-	let bRet=ResponseFilamentResult();
-	
-	if(bRet)
-		window.location.href="../4orca/index.html";
 }
 
 function FinishGuide()

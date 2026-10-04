@@ -138,10 +138,18 @@ std::string path_utf8(const boost::filesystem::path &p)
 
 boost::filesystem::path normalize_dir_path(boost::filesystem::path p)
 {
-    std::string s = p.generic_string();
-    while (s.size() > 1 && (s.back() == '/' || s.back() == '\\'))
-        s.pop_back();
-    return boost::filesystem::path(s).lexically_normal();
+    // Native path only: a generic_string() round-trip is a narrow conversion on Windows.
+    // lexically_normal first so "cache/./" becomes a trailing-separator form, then strip
+    // that empty (or ".") filename. Do not strip the root ("/", "C:\\"): "C:\\" -> "C:"
+    // is a different path (the current directory on that drive).
+    p = p.lexically_normal();
+    while (!p.empty() && p != p.root_path() && (p.filename().empty() || p.filename() == ".")) {
+        const boost::filesystem::path parent = p.parent_path();
+        if (parent.empty() || parent == p)
+            break;
+        p = parent;
+    }
+    return p;
 }
 
 bool leaf_exists(const boost::filesystem::path &p)
@@ -279,21 +287,27 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
 {
     namespace fs = boost::filesystem;
     err.clear();
-    const fs::path dest_root = normalize_dir_path(dest);
-
+    fs::path              dest_root;
     std::vector<fs::path> created_dirs;
-    if (!is_dir_or_dir_symlink(dest_root)) {
-        if (leaf_exists(dest_root)) {
-            err = path_utf8(dest_root) + " is not a directory";
-            return false;
+    try {
+        dest_root = normalize_dir_path(dest);
+        if (!is_dir_or_dir_symlink(dest_root)) {
+            if (leaf_exists(dest_root)) {
+                err = path_utf8(dest_root) + " is not a directory";
+                return false;
+            }
+            boost::system::error_code ec;
+            fs::create_directories(dest_root, ec);
+            if (ec) {
+                err = "create directory failed: " + path_utf8(dest_root) + " (" + ec.message() + ")";
+                return false;
+            }
+            created_dirs.push_back(dest_root);
         }
-        boost::system::error_code ec;
-        fs::create_directories(dest_root, ec);
-        if (ec) {
-            err = "create directory failed: " + path_utf8(dest_root) + " (" + ec.message() + ")";
-            return false;
-        }
-        created_dirs.push_back(dest_root);
+    } catch (const std::exception &e) {
+        err = e.what();
+        BOOST_LOG_TRIVIAL(error) << "Unzip: dest path: " << err;
+        return false;
     }
 
     const mz_uint            num_entries = mz_zip_reader_get_num_files(&archive);

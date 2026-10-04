@@ -999,12 +999,12 @@ PresetsConfigSubstitutions PresetBundle::import_presets(std::vector<std::string>
             fs::path default_folder(user_folder / DEFAULT_USER_FOLDER_NAME);
             if (!fs::exists(default_folder)) fs::create_directory(default_folder, ec);
             if (ec) BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " create directory failed: " << ec.message();
-            //create temp folder
-            //std::string user_default_temp_dir = data_dir() + "/" + PRESET_USER_DIR + "/" + DEFAULT_USER_FOLDER_NAME + "/" + "temp";
-            fs::path temp_folder(default_folder / "temp");
-            std::string user_default_temp_dir = temp_folder.make_preferred().string();
-            if (fs::exists(temp_folder)) fs::remove_all(temp_folder);
-            fs::create_directory(temp_folder, ec);
+            // Under cache/, per process and per import, so two instances importing
+            // at once do not clear each other's extraction and no preset scan reads it.
+            static std::atomic<unsigned> import_counter{0};
+            fs::path temp_folder(fs::path(data_dir()) / "cache" /
+                                 ("import." + std::to_string(get_current_pid()) + "." + std::to_string(import_counter++)));
+            fs::create_directories(temp_folder, ec);
             if (ec) BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " create directory failed: " << ec.message();
 
             file = boost::filesystem::path(file).make_preferred().string();
@@ -1023,6 +1023,9 @@ PresetsConfigSubstitutions PresetBundle::import_presets(std::vector<std::string>
             status        = mz_zip_reader_init_cfile(&zip_archive, zipFile, 0, MZ_ZIP_FLAG_CASE_SENSITIVE | MZ_ZIP_FLAG_IGNORE_PATH);
             if (MZ_FALSE == status) {
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Failed to initialize reader ZIP archive";
+                if (zipFile != nullptr)
+                    std::fclose(zipFile);
+                fs::remove_all(temp_folder, ec);
                 return substitutions;
             } else {
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Success to initialize reader ZIP archive";
@@ -4419,29 +4422,17 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
                     root[it.key()] = std::move(it.value());
 
                 const std::vector<std::uint8_t> bytes = json::to_cbor(root);
-                const bfs::path tmp = cache_file.string() + ".tmp";
-                {
-                    boost::nowide::ofstream ofs(tmp.string(), std::ios::binary | std::ios::trunc);
-                    ofs.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-                    ofs.flush();
-                    if (!ofs.good())
-                        throw std::runtime_error("write failed");
-                }
-                boost::system::error_code ec;
-                bfs::remove(cache_file, ec);
-                bfs::rename(tmp, cache_file, ec);
-                if (ec) {
-                    bfs::remove(tmp, ec);
-                    throw std::runtime_error("rename failed: " + ec.message());
-                }
+                const std::string payload(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+                std::string err;
+                if (!write_file_atomically(cache_file.string(), payload, &err, true))
+                    throw std::runtime_error(err.empty() ? "write failed" : err);
                 if (startup_profile)
                     startup_profile_log("PresetBundle::load_vendor_configs_from_json vendor=" + vendor_name +
                                         " cache=written bytes=" + std::to_string(bytes.size()));
             } catch (const std::exception &err) {
                 BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": could not write the preset cache for "
                                            << vendor_name << ": " << err.what();
-                boost::system::error_code ec;
-                boost::filesystem::remove(cache_file, ec);
+                // Atomic write leaves a previous cache in place; do not delete it on failure.
             }
         }
     }
@@ -5488,8 +5479,8 @@ std::vector<std::string> PresetBundle::export_current_configs(const std::string 
             if (overwrite == 0 || overwrite == 2)
                 continue;
         }
-        preset->config.save_to_json(file, preset->name, "", preset->version.to_string());
-        result.push_back(file);
+        if (preset->config.save_to_json(file, preset->name, "", preset->version.to_string()))
+            result.push_back(file);
     }
     return result;
 }

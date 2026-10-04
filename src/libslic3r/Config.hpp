@@ -2396,7 +2396,9 @@ public:
     void save(const std::string &file) const;
 
     //BBS: add json support
-    void save_to_json(const std::string &file, const std::string &name, const std::string &from, const std::string &version, const std::string is_custom = "") const;
+    // False if the atomic write failed (logged). Callers that collect written
+    // paths (export_current_configs) must not list a file that was not written.
+    bool save_to_json(const std::string &file, const std::string &name, const std::string &from, const std::string &version, const std::string is_custom = "") const;
     // Same document, written to a stream. Invalid UTF-8 in a string value throws nlohmann's type_error unless
     // replace_invalid_utf8 is set, which writes U+FFFD instead (for callers such as stdout with no handler).
     // is_custom is the Ultra is_custom_defined header; the file overload passes it through so preset files stay unchanged.

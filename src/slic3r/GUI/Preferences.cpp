@@ -28,6 +28,7 @@
 
 #include "sentry_wrapper/SentryWrapper.hpp"
 #include "SSWCP.hpp"
+#include "HomePanel.hpp"
 
 #ifdef __WINDOWS__
 #ifdef _MSW_DARK_MODE
@@ -1281,6 +1282,12 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " sync_user_preset: " << (sync ? "true" : "false");
         }
 
+        // Home > Models appears or goes at once.
+        if (param == "model_browser_beta") {
+            if (MainFrame* mf = wxGetApp().mainframe; mf != nullptr && mf->m_home != nullptr)
+                mf->m_home->refresh_models_entry();
+        }
+
         #ifdef __WXMSW__
         if (param == "associate_3mf") {
              bool pbool = app_config->get("associate_3mf") == "true" ? true : false;
@@ -1843,6 +1850,13 @@ wxWindow* PreferencesDialog::create_general_page()
     auto associate_url_prusaslicer = create_item_link_association(page, L"prusaslicer", "Printables.com");
     auto associate_url_bambustudio = create_item_link_association(page, L"bambustudio", "Makerworld.com");
     auto associate_url_cura        = create_item_link_association(page, L"cura", "Thingiverse.com");
+
+    auto title_model_browser = create_item_title(_L("Model browser"), page, _L("Model browser"));
+    auto item_model_browser  = create_item_checkbox(_L("Model browser (beta)"), page,
+                                                    _L("Adds Models to the Home tab: browse Printables, MakerWorld and Snapmaker Space inside "
+                                                       "EdgeSlicer. It is a separate browser with its own logins and no access to EdgeSlicer; "
+                                                       "model files you download there open here."),
+                                                    50, "model_browser_beta");
 #endif // _WIN32
 
     // auto title_modelmall = create_item_title(_L("Online Models"), page, _L("Online Models"));
@@ -2001,6 +2015,8 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(associate_url_prusaslicer, 0, wxTOP, FromDIP(3));
     sizer_page->Add(associate_url_bambustudio, 0, wxTOP, FromDIP(3));
     sizer_page->Add(associate_url_cura, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(title_model_browser, 0, wxTOP | wxEXPAND, FromDIP(20));
+    sizer_page->Add(item_model_browser, 0, wxTOP, FromDIP(3));
 #endif // _WIN32
     // auto item_title_modelmall = sizer_page->Add(title_modelmall, 0, wxTOP | wxEXPAND, FromDIP(20));
     // auto item_item_modelmall = sizer_page->Add(item_modelmall, 0, wxTOP, FromDIP(3));

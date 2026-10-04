@@ -603,6 +603,8 @@ set(lisbslic3r_sources
     Utils.hpp
     UntrustedInput.cpp
     UntrustedInput.hpp
+    ModelBrowserRules.cpp
+    ModelBrowserRules.hpp
     VariableWidth.cpp
     VariableWidth.hpp
     Zipper.cpp

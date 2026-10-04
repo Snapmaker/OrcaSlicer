@@ -6,6 +6,7 @@
 #include "HomeVendors.hpp"
 #include "I18N.hpp"
 #include "MainFrame.hpp"
+#include "ModelBrowserPanel.hpp"
 #include "MsgDialog.hpp"
 #include "Plater.hpp"
 #include "Theme.hpp"
@@ -93,7 +94,7 @@ HomePanel::HomePanel(wxWindow* parent)
     // (on_tab_changed); a Home tab that is the first page shown hears it from its first real size.
     Bind(wxEVT_SIZE, [this](wxSizeEvent& evt) {
         evt.Skip();
-        if (m_browser == nullptr && !m_start_shown && evt.GetSize().x > 0 && IsShownOnScreen())
+        if (m_browser == nullptr && !m_start_shown && !m_models_shown && evt.GetSize().x > 0 && IsShownOnScreen())
             CallAfter([this]() { ensure_browser(); });
     });
 }
@@ -120,7 +121,7 @@ void HomePanel::ensure_browser()
     m_browser->Bind(wxEVT_WEBVIEW_NAVIGATING, &HomePanel::on_navigating, this);
     m_browser->Bind(wxEVT_WEBVIEW_NEWWINDOW, &HomePanel::on_new_window, this);
     m_sizer->Add(m_browser, 1, wxEXPAND);
-    if (m_start_shown)
+    if (m_start_shown || m_models_shown)
         m_browser->Hide();
     Layout();
 }
@@ -142,6 +143,7 @@ WebViewPanel* HomePanel::start_page()
 
 void HomePanel::show_start_page()
 {
+    leave_models();
     start_page();
     if (m_start_shown)
         return;
@@ -179,6 +181,10 @@ void HomePanel::show_home()
 void HomePanel::on_tab_changed(bool selected)
 {
     m_selected = selected;
+    if (models_shown()) {
+        m_models->set_active(selected);
+        return;
+    }
     if (start_page_shown()) {
         notify_start_page(selected);
         return;
@@ -196,6 +202,56 @@ void HomePanel::on_tab_changed(bool selected)
         send_history();
         library_refresh(false);
     }
+}
+
+void HomePanel::show_models()
+{
+    if (!model_browser_enabled())
+        return;
+    if (m_start_shown)
+        show_home();
+    if (m_models == nullptr) {
+        BOOST_LOG_TRIVIAL(info) << "HomePanel: building the model browser";
+        m_models = new ModelBrowserPanel(this, [this]() { leave_models(); });
+        m_models->Hide();
+        m_sizer->Add(m_models, 1, wxEXPAND);
+    }
+    if (m_models_shown)
+        return;
+    m_models_shown = true;
+    if (m_browser)
+        m_browser->Hide();
+    m_models->Show();
+    Layout();
+    m_models->set_active(m_selected);
+}
+
+void HomePanel::leave_models()
+{
+    if (!m_models_shown)
+        return;
+    m_models_shown = false;
+    if (m_models) {
+        m_models->set_active(false);
+        m_models->Hide();
+    }
+    ensure_browser();
+    if (m_browser && !m_start_shown)
+        m_browser->Show();
+    Layout();
+    if (m_selected && m_page_ready) {
+        send_recent();
+        send_history();
+        library_refresh(false);
+    }
+}
+
+void HomePanel::refresh_models_entry()
+{
+    const bool enabled = model_browser_enabled();
+    if (!enabled)
+        leave_models();
+    send({{"type", "models"}, {"enabled", enabled}});
 }
 
 void HomePanel::notify_start_page(bool active)
@@ -220,6 +276,8 @@ void HomePanel::sys_color_changed()
 {
     apply_colours();
     m_btn_back->Rescale();
+    if (m_models)
+        m_models->sys_color_changed();
     // The page follows the theme itself: WebView::RecreateAll() reloads it with the new
     // User-Agent, and it asks for everything again when it is up.
 }
@@ -293,6 +351,8 @@ void HomePanel::handle(const json& msg)
         const std::string section = msg.value("section", std::string());
         if (HomeTab::valid_section(section))
             wxGetApp().app_config->set(SECTION_KEY, section);
+    } else if (command == "models_open") {
+        show_models();
     } else if (command == "home_refresh") {
         send_recent();
         send_history();
@@ -501,11 +561,13 @@ void HomePanel::send_init()
     s["edit_form"]         = _u8L("Edit as form");
     s["delete_connector"]  = _u8L("Remove connector");
     s["limited_downloads"] = _u8L("Downloads count against a limit");
+    s["models"]            = _u8L("Models");
 
     json init;
     init["type"]    = "init";
     init["strings"] = s;
     init["section"] = HomeTab::section_or_default(wxGetApp().app_config->get(SECTION_KEY));
+    init["models"]  = model_browser_enabled();
     if (Theme::active())
         init["theme"] = ThemePack::home_css(Theme::spec()); // CSS variable -> #RRGGBB
     send(init);

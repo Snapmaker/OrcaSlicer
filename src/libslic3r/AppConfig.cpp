@@ -131,6 +131,9 @@ void AppConfig::set_defaults()
             set_bool("associate_stl", false);
         if (get("associate_step").empty())
             set_bool("associate_step", false);
+        // Home > Models (the in-app model browser), beta: on by default while the owner tests it.
+        if (get("model_browser_beta").empty())
+            set_bool("model_browser_beta", true);
 
 #endif // _WIN32
 

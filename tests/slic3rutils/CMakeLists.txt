@@ -11,6 +11,7 @@ add_executable(${_TEST_NAME}_tests
     hub_home_tests.cpp
     home_tab_tests.cpp
     theme_pack_tests.cpp
+    account_providers_tests.cpp
     library_index_tests.cpp
     vendor_connector_tests.cpp
     step_mesh_tests.cpp
@@ -27,6 +28,7 @@ add_executable(${_TEST_NAME}_tests
     bambu_reprint_tests.cpp
     shutdown_gate_tests.cpp
     hosted_push_tests.cpp
+    app_push_levels_tests.cpp
     flashforge_tests.cpp
     mqtt_reconnect_tests.cpp
     dock_width_settle_tests.cpp
@@ -52,6 +54,8 @@ add_executable(${_TEST_NAME}_tests
     dual_nozzle_layout_tests.cpp
     nozzle_temp_rows_tests.cpp
     device_controls_tests.cpp
+    printer_timelapse_tests.cpp
+    chamber_lights_tests.cpp
     filament_commands_tests.cpp
     ams_dual_layout_tests.cpp
     gizmo_selection_object_tests.cpp
@@ -61,6 +65,7 @@ add_executable(${_TEST_NAME}_tests
     theme_live_tests.cpp
     bambu_send_diagnosis_tests.cpp
     win_firewall_tests.cpp
+    bambu_setup_notice_tests.cpp
     # The crash-report scrubber is plain C++ with no library of its own; the test compiles
     # the very file the app does.
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/sentry_wrapper/SentryScrub.cpp
@@ -101,6 +106,8 @@ if (wxWidgets_FOUND)
     target_include_directories(${_TEST_NAME}_tests PRIVATE ${wxWidgets_INCLUDE_DIRS})
     target_compile_definitions(${_TEST_NAME}_tests PRIVATE ${wxWidgets_DEFINITIONS})
 endif ()
+# chamber_lights_tests.cpp reads the shipped resources/printers/*.json for each model's printer_series.
+target_compile_definitions(${_TEST_NAME}_tests PRIVATE SLIC3R_TEST_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources")
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")
 
 if (WIN32)

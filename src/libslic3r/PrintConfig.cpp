@@ -404,6 +404,20 @@ static const t_config_enum_values s_keys_map_DraftShield = {
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(DraftShield)
 
+static const t_config_enum_values s_keys_map_StabilizerMode = {
+    { "off",    smOff    },
+    { "auto",   smAuto   },
+    { "manual", smManual }
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(StabilizerMode)
+
+static const t_config_enum_values s_keys_map_StabilizerColumnShape = {
+    { "round",        scsRound       },
+    { "rounded_rect", scsRoundedRect },
+    { "auto",         scsAuto        }
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(StabilizerColumnShape)
+
 static const t_config_enum_values s_keys_map_ForwardCompatibilitySubstitutionRule = {
     { "disable",        ForwardCompatibilitySubstitutionRule::Disable },
     { "enable",         ForwardCompatibilitySubstitutionRule::Enable },
@@ -2203,6 +2217,17 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(120));
+
+    // Bambu Studio's definition (PrintConfig.cpp, v02.08.04.57). Loaded from the BBL profiles as its own
+    // key; a file that sets it without extruder_clearance_radius also feeds that key, as the rename
+    // alias used to (BambuKeyAliases::load_fallbacks), so by-object clearance is unchanged.
+    def           = this->add("extruder_clearance_max_radius", coFloat);
+    def->label    = L("Max Radius");
+    def->tooltip  = L("Max clearance radius around extruder. Used for collision avoidance in by-object printing.");
+    def->sidetext = L("mm");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(68));
 
     def = this->add("extruder_clearance_radius", coFloat);
     def->label = L("Radius");
@@ -6425,6 +6450,15 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloat(0));
     def->mode = comAdvanced;
 
+    // Bambu Studio 2.8 (set by the BBL machine profiles, not shown in the UI).
+    def = this->add("farthest_point_timelapse", coBool);
+    def->label = L("Farthest point timelapse");
+    def->tooltip = L("When enabled, the timelapse snapshot is taken at the farthest point from camera "
+                     "instead of traveling to the wipe tower or excess chute. "
+                     "Only effective in instant timelapse mode on non-I3 printers.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("timelapse_type", coEnum);
     def->label = L("Timelapse");
     def->tooltip = L("If smooth or traditional mode is selected, a timelapse video will be generated for each print. "
@@ -7183,15 +7217,25 @@ void PrintConfigDef::init_fff_params()
 
     // Side stabilizers: pinpoint struts on pillars that touch tall, thin parts on their sides
     // (Support/Stabilizers.hpp).
-    def = this->add("stabilizer_supports", coBool);
+    def = this->add("stabilizer_supports", coEnum);
     def->label = L("Side stabilizers");
     def->category = L("Support");
-    def->tooltip = L("Add thin struts that touch tall, slender parts on their sides with a small pinpoint tip, "
-                     "in rings up the part's height, and stand on the build plate next to it. They keep the part "
-                     "from wobbling while it prints and snap off at the tip afterwards. Printed as support, so "
-                     "supports must be enabled.");
+    def->tooltip = L("Add thin struts that touch tall, slender parts on their sides with a small pinpoint tip "
+                     "and stand on the build plate next to it. They keep the part from wobbling while it prints "
+                     "and snap off at the tip afterwards. Printed as support, so supports must be enabled.\n\n"
+                     "Off: no stabilizers.\n"
+                     "Auto: rings of touch points up the part's height, plus any stabilizer points painted with "
+                     "the support painting tool.\n"
+                     "Manual: only the painted stabilizer points.");
+    def->enum_keys_map = &ConfigOptionEnum<StabilizerMode>::get_enum_values();
+    def->enum_values.push_back("off");
+    def->enum_values.push_back("auto");
+    def->enum_values.push_back("manual");
+    def->enum_labels.push_back(L("Off"));
+    def->enum_labels.push_back(L("Auto"));
+    def->enum_labels.push_back(L("Manual"));
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(false));
+    def->set_default_value(new ConfigOptionEnum<StabilizerMode>(smOff));
 
     def = this->add("stabilizer_ring_spacing", coFloat);
     def->label = L("Stabilizer ring spacing");
@@ -7255,6 +7299,141 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(20.));
+
+    // Side stabilizers v2: tapered pillars, pillar-to-pillar bracing, rounded-rectangle columns and
+    // walls / infill for the stabilizer bodies. Every default leaves the v1 stabilizers unchanged.
+    def = this->add("stabilizer_pillar_base_diameter", coFloat);
+    def->label = L("Stabilizer pillar base diameter");
+    def->category = L("Support");
+    def->tooltip = L("Diameter of the stabilizer pillars at the build plate. Pillars taper from this diameter at the "
+                     "plate to the pillar diameter at their top, like tree supports, which makes tall pillars much "
+                     "stiffer. 0, or anything not larger than the pillar diameter, keeps the pillars straight.");
+    def->sidetext = "mm";
+    def->min = 0;
+    def->max = 20;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.));
+
+    def = this->add("stabilizer_bracing", coBool);
+    def->label = L("Brace stabilizer pillars");
+    def->category = L("Support");
+    def->tooltip = L("Tie neighbouring stabilizer pillars together with 45 degree diagonal braces wherever a pillar "
+                     "would otherwise stand unbraced for longer than the maximum unbraced height. Braces climb at "
+                     "45 degrees from one pillar to the next, so they print without bridges, and never pass closer "
+                     "to the part than the support XY distance.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("stabilizer_brace_max_unbraced", coFloat);
+    def->label = L("Max unbraced pillar height");
+    def->category = L("Support");
+    def->tooltip = L("The longest stretch of a stabilizer pillar between two ties - the plate, a strut or a brace - "
+                     "before a brace is added. Also what the Auto column shape calls a long unbraced pillar.");
+    def->sidetext = "mm";
+    def->min = 3;
+    def->max = 200;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(10.));
+
+    def = this->add("stabilizer_brace_max_span", coFloat);
+    def->label = L("Max bracing span");
+    def->category = L("Support");
+    def->tooltip = L("Pillars farther apart than this (axis to axis) are never braced to each other. A brace "
+                     "rises as much as it spans, so a long span also needs a long stretch of both pillars.");
+    def->sidetext = "mm";
+    def->min = 2;
+    def->max = 100;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(25.));
+
+    def = this->add("stabilizer_column_shape", coEnum);
+    def->label = L("Stabilizer column shape");
+    def->category = L("Support");
+    def->tooltip = L("Cross-section of the stabilizer pillars.\n\n"
+                     "Round: round pillars.\n"
+                     "Rounded rectangle: every pillar is a column with a filleted rectangular cross-section, like a "
+                     "prime tower, which is much stiffer than a thin round pillar.\n"
+                     "Auto: round pillars, and a rounded-rectangle column for a pillar at least the column height "
+                     "tall that stands alone or still has a stretch longer than the max unbraced height.");
+    def->enum_keys_map = &ConfigOptionEnum<StabilizerColumnShape>::get_enum_values();
+    def->enum_values.push_back("round");
+    def->enum_values.push_back("rounded_rect");
+    def->enum_values.push_back("auto");
+    def->enum_labels.push_back(L("Round"));
+    def->enum_labels.push_back(L("Rounded rectangle"));
+    def->enum_labels.push_back(L("Auto"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<StabilizerColumnShape>(scsRound));
+
+    def = this->add("stabilizer_column_width", coFloat);
+    def->label = L("Stabilizer column width");
+    def->category = L("Support");
+    def->tooltip = L("Size of a rounded-rectangle column along its struts, towards the part. The column's side "
+                     "facing the part stays where a round pillar's would, so a wider column grows away from the part. "
+                     "Never less than the pillar diameter.");
+    def->sidetext = "mm";
+    def->min = 1;
+    def->max = 30;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(6.));
+
+    def = this->add("stabilizer_column_length", coFloat);
+    def->label = L("Stabilizer column length");
+    def->category = L("Support");
+    def->tooltip = L("Size of a rounded-rectangle column across its struts, along the part's side. "
+                     "Never less than the pillar diameter.");
+    def->sidetext = "mm";
+    def->min = 1;
+    def->max = 50;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(10.));
+
+    def = this->add("stabilizer_column_min_height", coFloat);
+    def->label = L("Auto column height");
+    def->category = L("Support");
+    def->tooltip = L("With the Auto column shape, only pillars at least this tall can become rounded-rectangle columns.");
+    def->sidetext = "mm";
+    def->min = 0;
+    def->max = 500;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(30.));
+
+    def = this->add("stabilizer_wall_loops", coInt);
+    def->label = L("Stabilizer walls");
+    def->category = L("Support");
+    def->tooltip = L("Number of walls around the stabilizer pillars, columns and braces, with sparse infill inside. "
+                     "0 prints them solid. Parts too narrow for infill (thin pillars and the tips) always print solid.");
+    def->min = 0;
+    def->max = 10;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("stabilizer_infill_density", coPercent);
+    def->label = L("Stabilizer infill density");
+    def->category = L("Support");
+    // xgettext:no-c-format, no-boost-format
+    def->tooltip = L("Density of the sparse infill inside the stabilizer walls. 100% prints them solid.");
+    def->sidetext = "%";
+    def->min = 0;
+    def->max = 100;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionPercent(15));
+
+    def = this->add("stabilizer_infill_pattern", coEnum);
+    def->label = L("Stabilizer infill pattern");
+    def->category = L("Support");
+    def->tooltip = L("Line pattern of the sparse infill inside the stabilizer walls.");
+    def->enum_keys_map = &ConfigOptionEnum<InfillPattern>::get_enum_values();
+    def->enum_values.push_back("rectilinear");
+    def->enum_values.push_back("grid");
+    def->enum_values.push_back("honeycomb");
+    def->enum_values.push_back("gyroid");
+    def->enum_labels.push_back(L("Rectilinear"));
+    def->enum_labels.push_back(L("Grid"));
+    def->enum_labels.push_back(L("Honeycomb"));
+    def->enum_labels.push_back(L("Gyroid"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipRectilinear));
 
     // FDM hollowing: an even-thickness shell around an empty cavity (FDMHollowing.hpp).
     def = this->add("hollow_interior", coBool);
@@ -9333,6 +9512,13 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         opt_key = "thumbnails";
     } else if (opt_key == "counterbole_hole_bridging") {
         opt_key = "counterbore_hole_bridging";
+    } else if (opt_key == "stabilizer_supports") {
+        // Side stabilizers were an on/off checkbox before the Off / Auto / Manual choice (projects
+        // saved with the first version of the feature): on was the automatic rings.
+        if (value == "1" || value == "true")
+            value = "auto";
+        else if (value == "0" || value == "false")
+            value = "off";
     } else if (opt_key == "draft_shield" && value == "limited") {
         value = "disabled";
     } else if (opt_key == "support_interface_filament_source") {
@@ -9565,6 +9751,16 @@ DynamicPrintConfig* DynamicPrintConfig::new_from_defaults_keys(const std::vector
     return out;
 }
 
+double sequential_clearance_radius(const ConfigBase &cfg)
+{
+    const auto *radius     = cfg.option<ConfigOptionFloat>("extruder_clearance_radius");
+    const auto *max_radius = cfg.option<ConfigOptionFloat>("extruder_clearance_max_radius");
+    const auto *model      = cfg.option<ConfigOptionString>("printer_model");
+    if (model != nullptr && model->value.compare(0, 9, "Bambu Lab") == 0 && max_radius != nullptr && max_radius->value > 0.)
+        return max_radius->value;
+    return radius != nullptr ? radius->value : 0.;
+}
+
 double min_object_distance(const ConfigBase &cfg)
 {
     const ConfigOptionEnum<PrinterTechnology> *opt_printer_technology = cfg.option<ConfigOptionEnum<PrinterTechnology>>("printer_technology");
@@ -9584,8 +9780,9 @@ double min_object_distance(const ConfigBase &cfg)
             ret = 0.;
         else {
             // min object distance is max(duplicate_distance, clearance_radius)
-            ret = ((co_opt->value == PrintSequence::ByObject) && ecr_opt->value > duplicate_distance) ?
-                      ecr_opt->value : duplicate_distance;
+            const double clearance = sequential_clearance_radius(cfg);
+            ret = ((co_opt->value == PrintSequence::ByObject) && clearance > duplicate_distance) ?
+                      clearance : duplicate_distance;
         }
     }
 
@@ -10041,6 +10238,10 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
     if (cfg.extruder_clearance_radius <= 0) {
         error_message.emplace("extruder_clearance_radius", L("invalid value ") + std::to_string(cfg.extruder_clearance_radius));
     }
+    // Bambu Studio's check of its (only) clearance radius.
+    if (cfg.extruder_clearance_max_radius <= 0) {
+        error_message.emplace("extruder_clearance_max_radius", L("invalid value ") + std::to_string(cfg.extruder_clearance_max_radius));
+    }
     if (cfg.extruder_clearance_height_to_rod <= 0) {
         error_message.emplace("extruder_clearance_height_to_rod", L("invalid value ") + std::to_string(cfg.extruder_clearance_height_to_rod));
     }
@@ -10177,6 +10378,21 @@ PRINT_CONFIG_CACHE_INITIALIZE((
     PrintObjectConfig, PrintRegionConfig, MachineEnvelopeConfig, GCodeConfig, PrintConfig, FullPrintConfig,
     SLAMaterialConfig, SLAPrintConfig, SLAPrintObjectConfig, SLAPrinterConfig, SLAFullPrintConfig))
 static int print_config_static_initialized = print_config_static_initializer();
+
+// The same set() calls ConfigBase::apply_only() makes, without looking every key up by name. Out of line so the
+// option list is expanded for this once, not in every file that includes PrintConfig.hpp.
+#define PRINT_CONFIG_APPLY_TO_DEFINITION(r, data, CLASS_NAME) \
+    bool CLASS_NAME::apply_to(ConfigBase &target) const \
+    { \
+        auto *dst = dynamic_cast<CLASS_NAME*>(&target); \
+        if (dst == nullptr) \
+            return false; \
+        visit_option_pairs(*dst, *this, [](const char*, ConfigOption &a, const ConfigOption &b) { a.set(&b); return true; }); \
+        return true; \
+    }
+BOOST_PP_SEQ_FOR_EACH(PRINT_CONFIG_APPLY_TO_DEFINITION, _, (PrintObjectConfig)(PrintRegionConfig)(MachineEnvelopeConfig)(GCodeConfig)
+    (SLAMaterialConfig)(SLAPrintConfig)(SLAPrintObjectConfig)(SLAPrinterConfig))
+#undef PRINT_CONFIG_APPLY_TO_DEFINITION
 
 //BBS: remove unused command currently
 CLIActionsConfigDef::CLIActionsConfigDef()

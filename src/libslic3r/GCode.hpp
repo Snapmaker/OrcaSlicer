@@ -17,6 +17,7 @@
 #include "GCode/ToolOrdering.hpp"
 #include "GCode/WipeTower.hpp"
 #include "GCode/SeamPlacer.hpp"
+#include "GCode/TimelapsePosPicker.hpp"
 #include "GCode/GCodeProcessor.hpp"
 #include "EdgeGrid.hpp"
 #include "GCode/ThumbnailData.hpp"
@@ -688,6 +689,46 @@ private:
     int m_timelapse_photo_extruder = 0;
     int timelapse_extruder_of_filament(int filament_id) const;
     int timelapse_physical_extruder(int extruder_id) const;
+
+    // BambuStudio's timelapse position picker (GCode/TimelapsePosPicker): the safe spot the
+    // time_lapse_gcode hands the firmware (M9711 U/V), so both nozzles of a dual-nozzle machine
+    // are photographed the same way. Initialised at the start of every export.
+    TimelapsePosPicker m_timelapse_pos_picker;
+    // Objects printed so far in a print-by-object export, the current one last (BambuStudio's
+    // m_printed_objects); the picker keeps clear of the finished ones.
+    std::vector<const PrintObject*> m_printed_objects;
+
+    // BambuStudio 2.8 farthest-point timelapse (machine option farthest_point_timelapse, traditional
+    // mode, non-i3): take the photo where the layer reaches farthest from the camera.
+    struct FarthestPointTimelapseContext {
+        // Whether farthest-point timelapse is active for this layer
+        bool    enabled{false};
+        // The farthest extrusion point from camera (0,0) in global scaled coordinates (includes inst.shift)
+        Point   farthest_point{0, 0};
+        // farthest_point in mm (the frame of point_to_gcode() without the extruder offset)
+        Vec2d   farthest_gcode_pos{0, 0};
+        // Extruder index (0-based) that prints the farthest point
+        int     farthest_extruder_id{0};
+        // Whether the farthest point is printed by the photo head (the most used extruder)
+        bool    farthest_is_photo_head{false};
+        // Whether the photo has already been inserted on this layer (inline or at a tool change)
+        bool    inserted_this_layer{false};
+        // The photo head: m_timelapse_photo_extruder
+        int     most_used_extruder{0};
+    };
+    FarthestPointTimelapseContext m_farthest_point_timelapse;
+    void compute_farthest_point(const std::vector<LayerToPrint> &layers, const LayerTools &layer_tools,
+                                const std::map<std::pair<const SupportLayer *, ExtrusionRole>, unsigned int> &support_filaments);
+
+    struct TimelapseGCodeResult {
+        std::string gcode;
+        Point       safe_pos{DefaultTimelapsePos};
+    };
+    // BambuStudio's generate_timelapse_gcode: expands time_lapse_gcode for the active filament, with
+    // the picked safe position (none when skip_pos_pick: the inline farthest-point photo).
+    TimelapseGCodeResult generate_timelapse_gcode(const Print &print, coordf_t print_z, int photo_extruder, bool skip_pos_pick = false);
+    // Inline farthest-point photo: called with the end point of every extrusion move.
+    void check_and_insert_inline_timelapse(std::string &gcode, const Point &endpoint_scaled);
 
     bool m_silent_time_estimator_enabled;
 

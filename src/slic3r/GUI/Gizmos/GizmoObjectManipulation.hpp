@@ -122,6 +122,36 @@ public:
     };
     AlignChoiceType   m_align_choice_type{AlignChoiceType::AlignParent};
     bool              m_align_to_parent_node{false};
+    // Per-axis "origin" of the Align row (which point of the moved item goes to the target).
+    // Persisted in AppConfig as align_origin_x/y/z; loaded lazily on the first render.
+    AlignMath::Origin m_align_origin[3]{AlignMath::Origin::Auto, AlignMath::Origin::Auto, AlignMath::Origin::Auto};
+    bool              m_align_origin_loaded{false};
+    static std::vector<std::string> align_origin_labels(int axis);
+    static wxString                 align_face_name(int axis, AlignMath::Side side);
+    // Align selected: which item stays put. The mode is persisted (align_anchor_mode), an explicit
+    // item is not.
+    AlignMath::AnchorMode m_align_anchor_mode{AlignMath::AnchorMode::Last};
+    bool                  m_align_anchor_item_set{false};
+    int                   m_align_anchor_object_idx{-1};
+    int                   m_align_anchor_instance_idx{-1};
+    int                   m_align_anchor_volume_idx{-1};
+    GLGizmoAlignment::AlignOptions make_align_options() const;
+    void save_align_anchor_mode();
+    bool render_align_anchor_combo(ImGuiWrapper *imgui_wrapper, float x, float y, float frame_width);
+    bool render_spanning_combo(ImGuiWrapper *                  imgui_wrapper,
+                               const char *                    id,
+                               const std::vector<std::string> &lines,
+                               size_t &                        selection_idx,
+                               const std::string &             preview,
+                               bool                            tinted,
+                               float                           x,
+                               float                           y,
+                               float                           frame_width,
+                               const wxString &                tooltip);
+    void load_align_origins();
+    void save_align_origin(int axis);
+    // One origin dropdown at window-local (x, y), `frame_width` wide. Returns true when changed.
+    bool render_align_origin_combo(ImGuiWrapper *imgui_wrapper, int axis, float x, float y, float frame_width);
     GLGizmoAlignment* get_alignment_helper() { return m_alignment_helper; }
     void show_align_icon(ImGuiWrapper *imgui_wrapper,
                          float         max_tooltip_width,

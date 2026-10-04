@@ -770,7 +770,8 @@ arrangement::ArrangeParams init_arrange_params(Plater *p)
 
     params.clearance_height_to_rod             = print_config.extruder_clearance_height_to_rod.value;
     params.clearance_height_to_lid             = print_config.extruder_clearance_height_to_lid.value;
-    params.clearance_radius                    = print_config.extruder_clearance_radius.value + object_skirt_offset * 2;
+    // Bambu Studio arranges with extruder_clearance_max_radius (sequential_clearance_radius on Bambu Lab printers).
+    params.clearance_radius                    = sequential_clearance_radius(print_config) + object_skirt_offset * 2;
     params.object_skirt_offset                 = object_skirt_offset;
     params.printable_height                    = print_config.printable_height.value;
     params.allow_rotations                     = settings.enable_rotation;

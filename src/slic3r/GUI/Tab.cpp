@@ -1,6 +1,7 @@
 // #include "libslic3r/GCodeSender.hpp"
 //#include "slic3r/Utils/Serial.hpp"
 #include "Tab.hpp"
+#include "BambuSetupNoticeDialog.hpp"
 #include "PresetHints.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -3096,6 +3097,17 @@ void TabPrint::build()
         optgroup->append_single_option_line("stabilizer_tip_gap");
         optgroup->append_single_option_line("stabilizer_pillar_diameter");
         optgroup->append_single_option_line("stabilizer_max_island_width");
+        optgroup->append_single_option_line("stabilizer_pillar_base_diameter");
+        optgroup->append_single_option_line("stabilizer_bracing");
+        optgroup->append_single_option_line("stabilizer_brace_max_unbraced");
+        optgroup->append_single_option_line("stabilizer_brace_max_span");
+        optgroup->append_single_option_line("stabilizer_column_shape");
+        optgroup->append_single_option_line("stabilizer_column_width");
+        optgroup->append_single_option_line("stabilizer_column_length");
+        optgroup->append_single_option_line("stabilizer_column_min_height");
+        optgroup->append_single_option_line("stabilizer_wall_loops");
+        optgroup->append_single_option_line("stabilizer_infill_density");
+        optgroup->append_single_option_line("stabilizer_infill_pattern");
 
     page = add_options_page(L("Multimaterial"), "custom-gcode_multi_material"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Prime tower"), L"param_tower");
@@ -5347,6 +5359,7 @@ void TabPrinter::build_fff()
 
         optgroup = page->new_optgroup(L("Extruder Clearance"), "param_extruder_clearence");
         optgroup->append_single_option_line("extruder_clearance_radius");
+        optgroup->append_single_option_line("extruder_clearance_max_radius");
         optgroup->append_single_option_line("extruder_clearance_dist_to_rod");
         optgroup->append_single_option_line("extruder_clearance_height_to_rod");
         optgroup->append_single_option_line("extruder_clearance_height_to_lid");
@@ -6928,6 +6941,10 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
     if (!canceled && m_presets->type() == Preset::TYPE_FILAMENT)
         validate_filament_hot_bed_nozzle_relation(parent());
     BOOST_LOG_TRIVIAL(info) << boost::format("select preset, exit");
+
+    // First-time Bambu printer setup notice: a printer picked by hand (not a project load or a remote switch).
+    if (!canceled && !force_select && m_presets->type() == Preset::TYPE_PRINTER)
+        BambuSetupNoticeDialog::on_printer_preset_selected();
 
     return !canceled;
 }

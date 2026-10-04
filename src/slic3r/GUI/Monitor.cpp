@@ -1,4 +1,5 @@
 #include "Tab.hpp"
+#include "BambuSetupNoticeDialog.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Model.hpp"
 
@@ -451,6 +452,9 @@ bool MonitorPanel::Show(bool show)
         m_refresh_timer->SetOwner(this);
         m_refresh_timer->Start(REFRESH_INTERVAL);
         wxPostEvent(this, wxTimerEvent());
+
+        // First-time Bambu printer setup notice: fires a little later if the tab still lists nothing.
+        BambuSetupNoticeDialog::on_device_tab_shown();
 
         if (dev) {
             //set a default machine when obj is null

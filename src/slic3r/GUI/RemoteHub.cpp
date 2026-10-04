@@ -11,6 +11,7 @@
 #include "HubPushOwner.hpp"
 #include "GcodeArchive.hpp" // normalize_printer: the Reprint list's printer names
 #include "SnapmakerLan.hpp" // the LAN cards a "connect" record may belong to
+#include "slic3r/Utils/HubAddresses.hpp" // which of this PC's addresses a phone is told about
 #include "HMS.hpp"
 #include "libslic3r/Utils.hpp"
 #include "slic3r/Utils/Http.hpp"
@@ -77,6 +78,13 @@
 #include <wx/taskbar.h>
 #include <wx/timer.h>
 #include <wx/utils.h>
+
+#ifndef _WIN32
+#  include <arpa/inet.h>
+#  include <ifaddrs.h>
+#  include <net/if.h>
+#  include <netinet/in.h>
+#endif
 
 namespace Slic3r {
 namespace GUI {
@@ -341,6 +349,74 @@ static const char* status_text(int status)
     }
 }
 
+// This PC's network adapters as the hub's address rules (HubAddresses.hpp) see them. Empty when the
+// system would not say; lan_ips() then does what it did before adapters were looked at.
+#ifdef _WIN32
+static std::string narrow_utf8(const wchar_t* w)
+{
+    if (!w || !*w) return std::string();
+    const int n = ::WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+    if (n <= 1) return std::string();
+    std::string s((size_t) n - 1, '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, w, -1, &s[0], n, nullptr, nullptr);
+    return s;
+}
+
+static std::vector<HubAddresses::Adapter> host_adapters()
+{
+    std::vector<HubAddresses::Adapter> out;
+    const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_INCLUDE_GATEWAYS;
+    ULONG size = 16 * 1024, rc = ERROR_BUFFER_OVERFLOW;
+    std::vector<unsigned char> buf;
+    for (int attempt = 0; attempt < 3 && rc == ERROR_BUFFER_OVERFLOW; ++attempt) {
+        buf.assign(size, 0);
+        rc = ::GetAdaptersAddresses(AF_INET, flags, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
+    }
+    if (rc != NO_ERROR) return out;
+    for (const IP_ADAPTER_ADDRESSES* a = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()); a; a = a->Next) {
+        HubAddresses::Adapter ad;
+        ad.name        = narrow_utf8(a->FriendlyName);
+        ad.description = narrow_utf8(a->Description);
+        ad.if_type     = (unsigned) a->IfType;
+        ad.up          = a->OperStatus == IfOperStatusUp;
+        ad.loopback    = a->IfType == IF_TYPE_SOFTWARE_LOOPBACK;
+        ad.has_gateway = a->FirstGatewayAddress != nullptr;
+        for (const IP_ADAPTER_UNICAST_ADDRESS* u = a->FirstUnicastAddress; u; u = u->Next) {
+            if (!u->Address.lpSockaddr || u->Address.lpSockaddr->sa_family != AF_INET) continue;
+            char text[INET_ADDRSTRLEN] = {};
+            if (::inet_ntop(AF_INET, &reinterpret_cast<sockaddr_in*>(u->Address.lpSockaddr)->sin_addr, text, sizeof(text)))
+                ad.ipv4.push_back(text);
+        }
+        out.push_back(std::move(ad));
+    }
+    return out;
+}
+#else
+static std::vector<HubAddresses::Adapter> host_adapters()
+{
+    std::vector<HubAddresses::Adapter> out;
+    struct ifaddrs* list = nullptr;
+    if (::getifaddrs(&list) != 0 || !list) return out;
+    for (const struct ifaddrs* i = list; i; i = i->ifa_next) {
+        if (!i->ifa_name || !i->ifa_addr || i->ifa_addr->sa_family != AF_INET) continue;
+        auto it = std::find_if(out.begin(), out.end(), [&](const HubAddresses::Adapter& a) { return a.name == i->ifa_name; });
+        if (it == out.end()) {
+            HubAddresses::Adapter ad;
+            ad.name     = i->ifa_name;
+            ad.up       = (i->ifa_flags & IFF_UP) != 0 && (i->ifa_flags & IFF_RUNNING) != 0;
+            ad.loopback = (i->ifa_flags & IFF_LOOPBACK) != 0;
+            out.push_back(std::move(ad));
+            it = out.end() - 1;
+        }
+        char text[INET_ADDRSTRLEN] = {};
+        if (::inet_ntop(AF_INET, &reinterpret_cast<const sockaddr_in*>(i->ifa_addr)->sin_addr, text, sizeof(text)))
+            it->ipv4.push_back(text);
+    }
+    ::freeifaddrs(list);
+    return out;
+}
+#endif
+
 #ifdef _WIN32
 // The address of the interface that owns the 0.0.0.0/0 route with the best metric (VPNs
 // usually route through 0.0.0.0/1 + 128.0.0.0/1, so this stays the real LAN adapter).
@@ -378,20 +454,25 @@ static std::string default_route_ipv4_win()
 
 static std::vector<std::string> lan_ips()
 {
-    std::vector<std::string> out;
+    // What a phone can actually be on the same network as: the Wi-Fi / Ethernet adapters (and the
+    // Tailscale one, last), never WSL, Hyper-V, Docker, VM host-only or VPN-client adapters. The
+    // default-route address leads. When the system will not list adapters, `adapters` is empty and
+    // the two older sources below are used as they were, unfiltered.
+    const std::vector<HubAddresses::Adapter> adapters = host_adapters();
+    std::string                              preferred;
 #ifdef _WIN32
-    {
-        const std::string a = default_route_ipv4_win();
-        if (!a.empty()) out.push_back(a);
-    }
+    preferred = default_route_ipv4_win();
 #endif
+    std::vector<std::string> out    = HubAddresses::candidate_ips(adapters, preferred);
+    const auto               usable = [&](const std::string& a) { return adapters.empty() || std::find(out.begin(), out.end(), a) != out.end(); };
+    if (adapters.empty() && !preferred.empty()) out.push_back(preferred);
     try {
         asio::io_context      ioc;
         asio::ip::udp::socket s(ioc);
         s.open(asio::ip::udp::v4());
         s.connect(asio::ip::udp::endpoint(asio::ip::make_address_v4("8.8.8.8"), 53)); // sends nothing
         const std::string a = s.local_endpoint().address().to_string();
-        if (a != "0.0.0.0" && std::find(out.begin(), out.end(), a) == out.end()) out.push_back(a);
+        if (a != "0.0.0.0" && usable(a) && std::find(out.begin(), out.end(), a) == out.end()) out.push_back(a);
     } catch (...) {}
     try {
         asio::io_context ioc;
@@ -400,7 +481,7 @@ static std::vector<std::string> lan_ips()
             const auto a = e.endpoint().address();
             if (a.is_v4() && !a.is_loopback()) {
                 const std::string s = a.to_string();
-                if (std::find(out.begin(), out.end(), s) == out.end()) out.push_back(s);
+                if (usable(s) && std::find(out.begin(), out.end(), s) == out.end()) out.push_back(s);
             }
         }
     } catch (...) {}
@@ -2078,7 +2159,7 @@ public:
     // event high-water mark and this hub's own identity. It never needs an open slicer window -
     // that was the whole complaint: with the slicer closed the app could say nothing at all.
     json summary_json();
-    json pair_json();                       // the pairing document: names, both URLs, capabilities
+    json pair_json(bool via_serve_https = false); // the pairing document: names, both URLs, capabilities
     // The last-known status of every printer any instance has reported, newest value per id, each
     // row carrying `age_s` and `stale`. `instance` is the pid that last reported it, or 0 when no
     // window is open any more.
@@ -2384,6 +2465,13 @@ HubServer::PhoneLinks HubServer::phone_links()
     std::lock_guard<std::mutex> lock(m_mutex);
     if (phone && !l.ips.empty()) l.lan = "http://" + l.ips.front() + ":" + std::to_string(m_port) + "/r/" + m_token + "/";
     if (m_remote_on && m_ts.serving && !m_ts.dns_name.empty()) l.remote = "https://" + m_ts.dns_name + "/r/" + m_token + "/";
+    // With Serve publishing the hub, the phone reaches it by the ts.net name; a raw tailnet address
+    // would only ever be tried over https and fail TLS. (lan_ips() already puts it last, so the
+    // LAN link above is only ever built from it when it is the sole address - and then it goes.)
+    if (!l.remote.empty()) {
+        l.ips = HubAddresses::advertised_ips(std::move(l.ips), true);
+        if (l.ips.empty()) l.lan.clear();
+    }
     // l.relay stays empty in phase 0: there is no relay to name one against yet. Everything
     // downstream already treats an empty link as "this path does not exist", so nothing shows.
     return l;
@@ -3108,7 +3196,7 @@ json HubServer::summary_json()
 }
 
 // The pairing document, in the shape the app already reads (tools/mock_hub.py --with-pair).
-json HubServer::pair_json()
+json HubServer::pair_json(bool via_serve_https)
 {
     const PhoneLinks links = phone_links();
     json j;
@@ -3131,7 +3219,10 @@ json HubServer::pair_json()
         // shape the tests pin can never drift apart.
         j.update(json::parse(Testing::pair_identity_json(links.lan, links.remote, links.relay, hubid, pubkey)));
     }
-    j["ips"]     = links.ips;
+    // `ips` are bare hosts the app joins to the *scanned* URL's scheme and port. A scan of the
+    // Serve origin (https, 443) turns every one of them into https://<ip>:443, which nothing
+    // answers, so a request that came through Serve gets none; urls.lan carries the LAN origin whole.
+    j["ips"]     = HubAddresses::ips_for_pair(links.ips, via_serve_https);
     // What this build and this configuration can actually push with, so the app does not register
     // for a provider that will never deliver (APNs needs the .p8 AND HTTP/2 in our libcurl).
     const json prov = AppPush::providers_json();
@@ -4457,7 +4548,9 @@ void HubServer::handle_phone(tcp::socket& client, Request& r, const std::string&
         return;
     }
     if (r.method == "GET" && (rest == "/pair" || rest == "/pair/")) {
-        respond_json(client, 200, pair_json().dump());
+        // r.ts_login / r.fwd_proto are only ever set here by a loopback peer (Tailscale Serve);
+        // the caller clears them for anybody else.
+        respond_json(client, 200, pair_json(!r.ts_login.empty() && r.fwd_proto == "https").dump());
         return;
     }
     // GET /printers/<id>/thumbnail.png - the running job's picture for one printer, out of the

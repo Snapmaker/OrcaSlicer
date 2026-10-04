@@ -15,6 +15,7 @@
 #include "libslic3r/Utils.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/ServerLifetime.hpp"
+#include "slic3r/Utils/HubHandover.hpp"
 #include "slic3r/Utils/WinFirewall.hpp"
 
 #include <boost/asio.hpp>
@@ -22,6 +23,7 @@
 #include <boost/dll/runtime_symbol_info.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
+#include <boost/nowide/convert.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <nlohmann/json.hpp>
 
@@ -468,6 +470,83 @@ static std::wstring quote_arg(const std::wstring& a)
     return out + L"\"";
 }
 #endif
+
+static const bool k_case_insensitive_paths =
+#ifdef _WIN32
+    true;
+#else
+    false;
+#endif
+
+// The path with junctions and symlinks followed (Windows: the final path of the open file, without
+// the \?\ prefix), or the path itself when it cannot be resolved (the file is gone). The install
+// folders are reached through a junction (C:\Dev\EdgeSlicerBuilds\current), so the launch path of
+// two builds can be the same string while the files differ; the real path tells them apart.
+#ifdef _WIN32
+static std::string real_path_w(const std::wstring& w)
+{
+    if (w.empty()) return std::string();
+    HANDLE h = ::CreateFileW(w.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                             nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        wchar_t buf[2048];
+        const DWORD n = ::GetFinalPathNameByHandleW(h, buf, (DWORD) (sizeof(buf) / sizeof(buf[0])), VOLUME_NAME_DOS);
+        ::CloseHandle(h);
+        if (n > 0 && n < sizeof(buf) / sizeof(buf[0])) return boost::nowide::narrow(std::wstring(buf, n));
+    }
+    return boost::nowide::narrow(w);
+}
+#endif
+
+// The executable this process runs from, as hub.json and /hub/info report it and as another
+// instance compares it. Resolved once. "" when it cannot be read or is not valid UTF-8 (hub.json is
+// JSON): "" never leads to a handover.
+static const std::string& own_exe_identity()
+{
+    static const std::string id = [] {
+        std::string out;
+#ifdef _WIN32
+        wchar_t buf[2048];
+        const DWORD n = ::GetModuleFileNameW(nullptr, buf, (DWORD) (sizeof(buf) / sizeof(buf[0])));
+        if (n > 0 && n < sizeof(buf) / sizeof(buf[0])) out = real_path_w(std::wstring(buf, n));
+#else
+        out = current_exe();
+        boost::system::error_code ec;
+        const fs::path            c = fs::canonical(fs::path(out), ec);
+        if (!ec) out = c.string();
+#endif
+        return HubHandover::is_valid_utf8(out) ? out : std::string();
+    }();
+    return id;
+}
+
+// The image path the OS has for a running pid, "" when it cannot be read or this platform has no
+// cheap way. Only used for a hub too old to report its own exe (Windows: QueryFullProcessImageName).
+static std::string process_image_path(long pid)
+{
+    if (pid <= 0) return std::string();
+#ifdef _WIN32
+    HANDLE h = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD) pid);
+    if (!h) return std::string();
+    wchar_t    buf[2048];
+    DWORD      n  = (DWORD) (sizeof(buf) / sizeof(buf[0]));
+    const BOOL ok = ::QueryFullProcessImageNameW(h, 0, buf, &n);
+    ::CloseHandle(h);
+    if (!ok || n == 0) return std::string();
+    return real_path_w(std::wstring(buf, n));
+#else
+    return std::string(); // an AppImage's image path is its mount, not the file a slicer launches: not comparable
+#endif
+}
+
+// Set by HubServer::spawn_slicer() for the slicer instances the hub starts (hidden ones, and the
+// service-mode supervisor's). They inherit it and must never ask their own hub to step aside.
+static const char* const ENV_HUB_CHILD = "EDGESLICER_HUB_CHILD";
+static bool              started_by_hub()
+{
+    const char* v = std::getenv(ENV_HUB_CHILD);
+    return v != nullptr && *v != '\0';
+}
 
 // Start a process that outlives us. `env` entries are added to the child's environment;
 // `job` (Windows Job Object handle) ties the child to OUR lifetime instead.
@@ -2304,6 +2383,7 @@ json HubServer::info_json()
     j["go2rtc_port"] = m_go2rtc_port;
     j["relay_port"]  = BambuCamRelay::get().port();
     j["version"]     = std::string(SLIC3R_VERSION);
+    j["exe"]         = own_exe_identity();
     j["remote"]      = remote_json_locked();
     j["ips"]         = json::array();
     j["url"]         = "";
@@ -2364,6 +2444,7 @@ void HubServer::write_hub_json()
         j["go2rtc_port"] = m_go2rtc_port;
         j["webrtc_port"] = m_webrtc_port;
         j["version"]     = std::string(SLIC3R_VERSION);
+        j["exe"]         = own_exe_identity(); // which install this hub runs from (slicers compare it; see HubHandover.hpp)
         j["remote_on"]      = m_remote_on;
         j["allowed_logins"] = m_allowed_logins;
     }
@@ -4084,6 +4165,7 @@ long HubServer::spawn_slicer(const std::string& file, bool hidden)
     if (!file.empty()) args.push_back(file);
     std::vector<std::pair<std::string, std::string>> env { { "SNORCA_NEW_INSTANCE", "1" } };
     env.emplace_back("SNORCA_HIDDEN", hidden ? "1" : "0"); // explicit either way
+    env.emplace_back(ENV_HUB_CHILD, "1");                  // this hub is its own: it never asks it to hand over
     const long pid = spawn_process(args, env, false, nullptr);
     if (pid > 0) {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -5121,9 +5203,35 @@ void HubServer::loop(bool idle_exit)
 {
     auto idle_since = std::chrono::steady_clock::now();
     auto printers_at = std::chrono::steady_clock::now() - std::chrono::milliseconds(PRINTERS_POLL_MS);
+    auto install_check_at = std::chrono::steady_clock::now();
+    int  install_misses   = 0;
     while (!m_quit) {
         std::this_thread::sleep_for(std::chrono::seconds(2));
         flush_logs(); // the file sink buffers; keep hub.log readable while we run
+        // A hub whose install folder was deleted under it (a scratch test copy that was removed)
+        // would serve blank pages for days and be reused by the next slicer. Two stats every
+        // SELF_CHECK_INTERVAL_S; when the executable or the web pages are gone on consecutive looks
+        // it quits the same way POST /hub/quit does.
+        if (std::chrono::steady_clock::now() - install_check_at >= std::chrono::seconds(HubHandover::SELF_CHECK_INTERVAL_S)) {
+            install_check_at = std::chrono::steady_clock::now();
+            boost::system::error_code ig;
+            // The resolved path the hub was started from; the launch path only when that could not be read.
+            const std::string& me     = own_exe_identity();
+            const bool         exe_ok = fs::exists(fs::path(me.empty() ? current_exe() : me), ig);
+            const bool web_ok = fs::exists(fs::path(resources_dir()) / "web" / "orca" / "stream_center.html", ig);
+            const HubHandover::SelfCheck sc = HubHandover::self_check(install_misses, exe_ok, web_ok);
+            install_misses = sc.misses;
+            if (sc.misses > 0)
+                BOOST_LOG_TRIVIAL(warning) << "RemoteHub: install check " << sc.misses << "/" << HubHandover::SELF_CHECK_MISSES << ": "
+                                           << (exe_ok ? "" : (me.empty() ? current_exe() : me) + " is gone; ")
+                                           << (web_ok ? "" : resources_dir() + "/web/orca/stream_center.html is gone");
+            if (sc.quit) {
+                BOOST_LOG_TRIVIAL(error) << "RemoteHub: the install folder this hub runs from has been removed or emptied, exiting "
+                                         << "(a slicer will start a hub from its own install)";
+                request_quit("install_missing");
+                break;
+            }
+        }
         // The printers every open window can see, remembered here so /summary and /state can
         // answer once every window is closed. One round costs one loopback GET per instance and
         // runs on this thread, never on a request.
@@ -5462,6 +5570,7 @@ static Info parse_info(const std::string& body)
         i.relay_url   = j.value("relay_url", "");   // "" until a relay exists (phase 1)
         i.hubid       = j.value("hubid", "");       // this data dir's durable relay identity
         i.version     = j.value("version", "");
+        i.exe         = j.value("exe", "");         // "" from a hub older than this field
         for (const auto& ip : j.value("ips", json::array())) i.ips.push_back(ip.get<std::string>());
     } catch (...) {}
     return i;
@@ -5469,7 +5578,7 @@ static Info parse_info(const std::string& body)
 
 // admin_port is where /hub/* answers (the loopback-only control plane); port is the listener the
 // phone and any tunnel use. Everything below talks to the control plane.
-struct HubFile { int port { 0 }; int admin_port { 0 }; std::string secret; bool exists { false }; bool parsed { false }; bool pid_alive { false }; };
+struct HubFile { int port { 0 }; int admin_port { 0 }; long pid { 0 }; std::string secret; std::string exe; bool exists { false }; bool parsed { false }; bool pid_alive { false }; };
 static HubFile hub_file()
 {
     HubFile h;
@@ -5485,6 +5594,8 @@ static HubFile hub_file()
             h.parsed = true;
             if (!pid_alive(j.value("pid", 0L))) return h;
             h.pid_alive  = true;
+            h.pid        = j.value("pid", 0L);
+            h.exe        = j.value("exe", "");
             h.port       = j.value("port", 0);
             h.admin_port = j.value("admin_port", 0);
             h.secret     = j.value("secret", "");
@@ -5608,16 +5719,69 @@ bool post_event(const std::string& event_json)
     return ok;
 }
 
+// Ask the hub to quit and say whether it accepted: hub_call() hides the status (its answer parses
+// to a not-alive Info either way), and the handover has to tell "refused" from "went".
+static bool post_quit(const HubFile& hf)
+{
+    if (hf.admin_port == 0) return false;
+    bool ok = false;
+    Http::post("http://127.0.0.1:" + std::to_string(hf.admin_port) + "/hub/quit")
+        .timeout_connect(1).timeout_max(5)
+        .header("Content-Type", "application/json")
+        .header("X-Hub-Secret", hf.secret) // never logged
+        .set_post_body(std::string("{}"))  // a bodyless POST hangs the fork's Http
+        .on_complete([&ok](std::string, unsigned status) { ok = status == 200; })
+        .perform_sync();
+    return ok;
+}
+
+// Only the first ensure_running() of a process may take the hub from another install. The Stream
+// tab calls it every time it opens, and two installs open at once would otherwise swap the hub
+// back and forth on every tab; after its one reclaim a process just uses whatever hub runs.
+static std::atomic<bool> s_handover_used { false };
+
 Info ensure_running(const std::string& token_hint, bool phone_on)
 {
     std::lock_guard<std::mutex> ensure_lock(s_ensure_mutex);
     Info i = query();
-    if (i.alive && i.version != SLIC3R_VERSION) {
-        BOOST_LOG_TRIVIAL(info) << "RemoteHub: hub version " << i.version << " != " << SLIC3R_VERSION << ", restarting it";
-        const long old_pid = i.pid;
-        quit();
-        for (int n = 0; n < 30 && pid_alive(old_pid); ++n) std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        i = Info();
+    HubHandover::Facts facts;
+    facts.hub_alive       = i.alive;
+    facts.version_differs = i.alive && i.version != SLIC3R_VERSION;
+    facts.handover_allowed = !started_by_hub() && !s_handover_used.load();
+    std::string hub_exe;
+    if (i.alive) {
+        // /hub/info first, hub.json second; a hub too old for either is looked up by its pid.
+        hub_exe = i.exe;
+        long pid = i.pid;
+        if (hub_exe.empty()) {
+            const HubFile hf = hub_file();
+            hub_exe = hf.exe;
+            if (pid <= 0) pid = hf.pid;
+        }
+        const std::string pid_image = hub_exe.empty() ? process_image_path(pid) : std::string();
+        facts.exe = HubHandover::judge_exe(own_exe_identity(), hub_exe, pid_image, k_case_insensitive_paths);
+        if (hub_exe.empty()) hub_exe = pid_image;
+        if (facts.exe == HubHandover::ExeVerdict::Foreign) s_handover_used = true; // one reclaim per process, win or lose
+    }
+    if (HubHandover::plan(facts) == HubHandover::Step::ReplaceRunning) {
+        if (facts.version_differs)
+            BOOST_LOG_TRIVIAL(info) << "RemoteHub: hub version " << i.version << " != " << SLIC3R_VERSION << ", restarting it";
+        else
+            BOOST_LOG_TRIVIAL(info) << "RemoteHub: the running hub (pid " << i.pid << ") belongs to another install (" << hub_exe
+                                    << "), not " << own_exe_identity() << "; asking it to hand over";
+        const long old_pid  = i.pid;
+        const bool accepted = post_quit(hub_file());
+        for (int n = 0; n < 100 && pid_alive(old_pid); ++n) std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 10 s
+        const bool gone = !pid_alive(old_pid);
+        if (HubHandover::after_quit(gone) == HubHandover::Outcome::SpawnOwn) {
+            i = Info();
+        } else {
+            // Graceful only: no kill by pid or by name. A second hub next to it would fight for the
+            // ports and overwrite hub.json, so this slicer uses the one that is there.
+            BOOST_LOG_TRIVIAL(error) << "RemoteHub: the hub (pid " << old_pid << ") "
+                                     << (accepted ? "accepted /hub/quit but is still running after 10 s" : "did not accept /hub/quit")
+                                     << "; leaving it running and using it as it is";
+        }
     }
     if (!i.alive) {
         std::vector<std::string> args = { current_exe(), "--hub", "--datadir", data_dir() };

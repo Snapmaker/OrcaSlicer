@@ -41,6 +41,7 @@ struct Info
     int                      go2rtc_port { 0 };
     int                      relay_port { 0 };
     std::string              version;
+    std::string              exe;             // the executable the hub runs from, resolved; "" from a hub older than the field
     std::vector<std::string> ips; // LAN IPv4 addresses, default-route one first (phone on only)
     std::string              remote_url; // https://<machine>.<tailnet>.ts.net/r/<token>/ while Tailscale remote access is on
     std::string              relay_url;  // the hosted-relay link; always "" in phase 0 (nothing hosts it yet)

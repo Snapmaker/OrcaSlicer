@@ -548,10 +548,7 @@ bool CalibUtils::calib_flowrate(int pass, const CalibInfo &calib_info, wxString 
     //}
 
     Flow   infill_flow                   = Flow(nozzle_diameter * 1.2f, layer_height, nozzle_diameter);
-    const auto *max_volumetric_speed_opt = filament_config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
-    const FilamentVolumeType filament_volume_type = calib_nozzle_volume_type(calib_info);
-    double filament_max_volumetric_speed = get_preset_value_at(filament_config, *max_volumetric_speed_opt,
-                                                                ConfigFlowDomain::Filament, filament_volume_type);
+    double filament_max_volumetric_speed = calib_filament_flow_values(filament_config, calib_nozzle_volume_type(calib_info)).max_volumetric_speed;
     double max_infill_speed              = filament_max_volumetric_speed / (infill_flow.mm3_per_mm() * (pass == 1 ? 1.2 : 1));
 
     double internal_solid_speed          = std::floor(std::min(print_config.opt_float("internal_solid_infill_speed", 0), max_infill_speed));
@@ -849,8 +846,8 @@ void CalibUtils::calib_max_vol_speed(const CalibInfo &calib_info, wxString &erro
     }
 
     auto new_params  = params;
-    const FilamentVolumeType volume_type = calib_nozzle_volume_type(calib_info);
-    auto mm3_per_mm  = Flow(line_width, layer_height, nozzle_diameter).mm3_per_mm() * filament_preset_flow_ratio(filament_config, volume_type);
+    auto mm3_per_mm  = Flow(line_width, layer_height, nozzle_diameter).mm3_per_mm() *
+                       calib_filament_flow_values(filament_config, calib_nozzle_volume_type(calib_info)).flow_ratio;
     new_params.end   = params.end / mm3_per_mm;
     new_params.start = params.start / mm3_per_mm;
     new_params.step  = params.step / mm3_per_mm;

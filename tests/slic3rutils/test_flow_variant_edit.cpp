@@ -513,3 +513,43 @@ TEST_CASE("only the retract overrides among the filament flow-variant keys are n
                                                "filament_retraction_length", "filament_retraction_speed",
                                                "filament_wipe_distance", "filament_z_hop_types"});
 }
+
+// Slicer-side calibrations (Calibration > Flow rate / Max flowrate) size the test from
+// calib_filament_flow_values(filament preset, the flow type filament 1 will slice with).
+// That type is the slice-sync target, so the calibration and its G-code agree.
+TEST_CASE("a U1 calibration with High Flow selected sizes from the High-Flow column", "[FlowVariantEdit][Calib]")
+{
+    DynamicPrintConfig hf_filament = DynamicPrintConfig::full_print_config();
+    hf_filament.set_key_value("filament_flow_support", new ConfigOptionStrings{FLOW_MODE_STANDARD, FLOW_MODE_HIGH_FLOW});
+    hf_filament.set_key_value("filament_flow_ratio", new ConfigOptionFloats{0.98, 0.95});
+    hf_filament.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats{20.0, 30.0});
+
+    // U1, all four nozzles on High Flow (one flow type): filament 1 slices High-Flow.
+    const FilamentVolumeType all_hf = slice_sync_target_filament_volume_type(FILAMENT_GROUPING_STANDARD, 1, fvtHighFlow, fvtStandard);
+    REQUIRE(all_hf == fvtHighFlow);
+    CalibFlowValues v = calib_filament_flow_values(hf_filament, all_hf);
+    CHECK(v.flow_ratio == Approx(0.95));
+    CHECK(v.max_volumetric_speed == Approx(30.0));
+
+    // Custom grouping with filament 1 mapped to High Flow on mixed nozzles: High-Flow.
+    const FilamentVolumeType custom_hf = slice_sync_target_filament_volume_type(FILAMENT_GROUPING_CUSTOM, 2, fvtStandard, fvtHighFlow);
+    REQUIRE(custom_hf == fvtHighFlow);
+    CHECK(calib_filament_flow_values(hf_filament, custom_hf).max_volumetric_speed == Approx(30.0));
+
+    // One nozzle of four on High Flow, standard grouping: every filament slices Standard,
+    // and so does the calibration (it cannot know which toolhead the printer picks).
+    const FilamentVolumeType mixed = slice_sync_target_filament_volume_type(FILAMENT_GROUPING_STANDARD, 2, fvtStandard, fvtHighFlow);
+    REQUIRE(mixed == fvtStandard);
+    v = calib_filament_flow_values(hf_filament, mixed);
+    CHECK(v.flow_ratio == Approx(0.98));
+    CHECK(v.max_volumetric_speed == Approx(20.0));
+
+    // A filament with no High-Flow column (most U1 presets) gives its Standard values.
+    DynamicPrintConfig std_filament = DynamicPrintConfig::full_print_config();
+    std_filament.set_key_value("filament_flow_support", new ConfigOptionStrings{FLOW_MODE_STANDARD});
+    std_filament.set_key_value("filament_flow_ratio", new ConfigOptionFloats{0.97});
+    std_filament.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats{18.0});
+    v = calib_filament_flow_values(std_filament, fvtHighFlow);
+    CHECK(v.flow_ratio == Approx(0.97));
+    CHECK(v.max_volumetric_speed == Approx(18.0));
+}

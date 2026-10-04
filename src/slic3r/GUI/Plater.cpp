@@ -19533,10 +19533,13 @@ void Plater::_calib_pa_select_added_objects() {
     }
 }
 
-// Preset-sized filament configs have no filament_flow_step_size, so
-// filament_flow_ratio_at() would stay on get_at(0). Use the same
-// target the slice sync would write — project filament_volume_type is
-// stale until the first slice.
+// The flow type the calibration plate will slice with. Its objects print with filament 1,
+// and slicing gives filament 1 the slice-sync target: the nozzles' type when they all have
+// one type (all High Flow -> High Flow), Standard when they mix in standard grouping, and
+// filament 1's own mapping in custom grouping. On a U1 the slicer cannot know which toolhead
+// a filament lands on (the printer assigns them), so the nozzle combos alone cannot say
+// more; this is the same type the plate's G-code will use. Read before the first slice,
+// when project filament_volume_type may still be stale.
 static FilamentVolumeType plater_calib_filament_volume_type()
 {
     return FlowType::synced_filament_volume_type(0);
@@ -19576,14 +19579,10 @@ void adjust_settings_for_flowrate_calib(ModelObjectPtrs& objects, bool linear, i
     }
     canvas->do_scale("");
 
-    const FilamentVolumeType volume_type = plater_calib_filament_volume_type();
-    const double cur_flowrate = filament_preset_flow_ratio(*filament_config, volume_type);
+    const CalibFlowValues flow_values = calib_filament_flow_values(*filament_config, plater_calib_filament_volume_type());
+    const double cur_flowrate = flow_values.flow_ratio;
     Flow infill_flow = Flow(nozzle_diameter * 1.2f, layer_height, nozzle_diameter);
-    const auto *max_volumetric_speed_opt = filament_config->option<ConfigOptionFloats>("filament_max_volumetric_speed");
-    double filament_max_volumetric_speed = (max_volumetric_speed_opt == nullptr || max_volumetric_speed_opt->values.empty())
-                                               ? 0.0
-                                               : get_preset_value_at(*filament_config, *max_volumetric_speed_opt,
-                                                                     ConfigFlowDomain::Filament, volume_type);
+    double filament_max_volumetric_speed = flow_values.max_volumetric_speed;
     double max_infill_speed;
     if (linear)
         max_infill_speed = filament_max_volumetric_speed /
@@ -19825,7 +19824,7 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
 
     auto new_params = params;
     auto mm3_per_mm = Flow(line_width, layer_height, nozzle_diameter).mm3_per_mm() *
-                      filament_preset_flow_ratio(*filament_config, plater_calib_filament_volume_type());
+                      calib_filament_flow_values(*filament_config, plater_calib_filament_volume_type()).flow_ratio;
     new_params.end = params.end / mm3_per_mm;
     new_params.start = params.start / mm3_per_mm;
     new_params.step = params.step / mm3_per_mm;

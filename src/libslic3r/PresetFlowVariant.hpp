@@ -68,4 +68,23 @@ inline double filament_preset_flow_ratio(const ConfigBase &preset_config, Filame
     return get_preset_value_at(preset_config, *opt, ConfigFlowDomain::Filament, type);
 }
 
+// The flow ratio and max volumetric speed a flow / max-flowrate calibration sizes its
+// test from, for the flow type the calibration print will slice with. A filament preset
+// that declares no column for `type` (most U1 filaments only have Standard) gives its
+// Standard values, exactly as slicing it would.
+struct CalibFlowValues
+{
+    double flow_ratio           = 1.0;
+    double max_volumetric_speed = 0.0;
+};
+inline CalibFlowValues calib_filament_flow_values(const ConfigBase &filament_preset, FilamentVolumeType type)
+{
+    CalibFlowValues out;
+    out.flow_ratio = filament_preset_flow_ratio(filament_preset, type);
+    const auto *mvs = filament_preset.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    if (mvs != nullptr && !mvs->values.empty())
+        out.max_volumetric_speed = get_preset_value_at(filament_preset, *mvs, ConfigFlowDomain::Filament, type);
+    return out;
+}
+
 } // namespace Slic3r

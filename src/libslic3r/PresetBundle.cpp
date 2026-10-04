@@ -2,6 +2,7 @@
 
 #include "PresetBundle.hpp"
 #include "InstanceLock.hpp"
+#include "PresetFlowVariant.hpp"
 #include "StartupProfile.hpp"
 #include "FilamentColorLibrary.hpp"
 #include "PrintConfig.hpp"
@@ -3027,14 +3028,9 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
                 size_t segment_start = 0;
                 for (size_t i = 0; i < num_filaments; ++i) {
                     const ConfigOption *opt_src = filament_configs[i]->option(key);
-                    if (opt_src != nullptr && !opt_src->is_scalar()) {
-                        const auto *opt_vec_src = static_cast<const ConfigOptionVectorBase *>(opt_src);
-                        const size_t source_size = opt_vec_src->size();
-                        if (source_size > 0) {
-                            for (size_t k = 0; k < size_t(flow_step_sizes[i]); ++k)
-                                opt_vec_dst->set_at(opt_src, segment_start + k, k < source_size ? k : 0);
-                        }
-                    }
+                    if (opt_src != nullptr && !opt_src->is_scalar())
+                        compose_filament_flow_variant_segment(*opt_vec_dst, *static_cast<const ConfigOptionVectorBase *>(opt_src),
+                                                              segment_start, size_t(flow_step_sizes[i]));
                     segment_start += size_t(flow_step_sizes[i]);
                 }
             } else {

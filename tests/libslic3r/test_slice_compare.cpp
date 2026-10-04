@@ -2,6 +2,7 @@
 #include "libslic3r/SliceCompare/Snapshot.hpp"
 #include "libslic3r/SliceCompare/Diff.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "libslic3r/PrintConfig.hpp"
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -382,4 +383,46 @@ TEST_CASE("build_snapshot captures max_speed and layer bbox", "[slice_compare]")
     CHECK(l.bx1 == Approx(10.0));
     CHECK(l.by0 == Approx(0.0));
     CHECK(l.by1 == Approx(10.0));
+}
+
+// Orca #16007 Stage A: Standard-only / step-size-1 configs must keep get_value_at == get_at,
+// which is the byte-identity gate for non-HF output. Packed U1 arrays are a different case
+// (filament >= 1 used to read an earlier filament's High-Flow slot); see the PR body.
+TEST_CASE("Standard-only filament flow columns resolve to the raw filament id", "[slice_compare]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_num_extruders(2);
+    config.set_num_filaments(2);
+    config.option<ConfigOptionInts>("filament_flow_step_size", true)->values = {1, 1};
+    config.option<ConfigOptionStrings>("filament_flow_support", true)->values = {FLOW_MODE_STANDARD,
+                                                                                FLOW_MODE_STANDARD};
+    config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtStandard),
+                                                                                     int(fvtStandard)};
+    config.option<ConfigOptionInts>("nozzle_temperature")->values               = {200, 215};
+    config.option<ConfigOptionInts>("nozzle_temperature_initial_layer")->values = {195, 211};
+    config.option<ConfigOptionFloats>("filament_minimal_purge_on_wipe_tower")->values = {3., 7.};
+    config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values  = {11., 13.};
+    config.option<ConfigOptionBools>("filament_multitool_ramming")->values      = {true, false};
+    config.option<ConfigOptionFloats>("filament_multitool_ramming_volume")->values = {6., 9.};
+    config.option<ConfigOptionFloats>("filament_multitool_ramming_flow")->values   = {3., 4.};
+
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 0) == 0);
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 1) == 1);
+
+    const auto *temps  = config.option<ConfigOptionInts>("nozzle_temperature");
+    const auto *inits  = config.option<ConfigOptionInts>("nozzle_temperature_initial_layer");
+    const auto *purge  = config.option<ConfigOptionFloats>("filament_minimal_purge_on_wipe_tower");
+    const auto *vol    = config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    const auto *ram_on = config.option<ConfigOptionBools>("filament_multitool_ramming");
+    const auto *ram_v  = config.option<ConfigOptionFloats>("filament_multitool_ramming_volume");
+    const auto *ram_f  = config.option<ConfigOptionFloats>("filament_multitool_ramming_flow");
+    for (unsigned int id : {0u, 1u}) {
+        CHECK(get_value_at(config, *temps, ConfigFlowDomain::Filament, id) == temps->get_at(id));
+        CHECK(get_value_at(config, *inits, ConfigFlowDomain::Filament, id) == inits->get_at(id));
+        CHECK(get_value_at(config, *purge, ConfigFlowDomain::Filament, id) == purge->get_at(id));
+        CHECK(get_value_at(config, *vol, ConfigFlowDomain::Filament, id) == vol->get_at(id));
+        CHECK(get_value_at(config, *ram_on, ConfigFlowDomain::Filament, id) == ram_on->get_at(id));
+        CHECK(get_value_at(config, *ram_v, ConfigFlowDomain::Filament, id) == ram_v->get_at(id));
+        CHECK(get_value_at(config, *ram_f, ConfigFlowDomain::Filament, id) == ram_f->get_at(id));
+    }
 }

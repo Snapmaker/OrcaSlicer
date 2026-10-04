@@ -992,9 +992,12 @@ boost::any ConfigOptionsGroup::get_config_value(const DynamicPrintConfig& config
                 ret = double_to_string(val); }
             }
             break;
-        case coBools:
-            ret = config.option<ConfigOptionBoolsNullable>(opt_key)->values[idx];
+        case coBools: {
+            // A flow-variant view index can be past the end of a short vector: read slot 0, like get_at.
+            const auto &values = config.option<ConfigOptionBoolsNullable>(opt_key)->values;
+            ret = values.empty() ? static_cast<unsigned char>(0) : values[idx < values.size() ? idx : 0];
             break;
+        }
         case coInts:
             ret = config.option<ConfigOptionIntsNullable>(opt_key)->get_at(idx);
             break;
@@ -1297,9 +1300,12 @@ boost::any ConfigOptionsGroup::get_config_value2(const DynamicPrintConfig& confi
                 ret = val; }
         }
                      break;
-        case coBools:
-            ret = config.option<ConfigOptionBoolsNullable>(opt_key)->values[idx];
+        case coBools: {
+            // A flow-variant view index can be past the end of a short vector: read slot 0, like get_at.
+            const auto &values = config.option<ConfigOptionBoolsNullable>(opt_key)->values;
+            ret = values.empty() ? static_cast<unsigned char>(0) : values[idx < values.size() ? idx : 0];
             break;
+        }
         case coInts:
             ret = config.option<ConfigOptionIntsNullable>(opt_key)->get_at(idx);
             break;

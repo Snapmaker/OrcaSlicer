@@ -104,10 +104,10 @@ TEST_CASE("Command line split keeps the hand-off switch rules", "[InstanceRoutin
 
 TEST_CASE("Handed-off arguments name files only when they exist", "[InstanceRouting]")
 {
-    const auto exists = [](const std::string &p) { return p == "C:\parts\a b.step"; };
-    CHECK(handed_off_file("C:\parts\a b.step", exists) == "C:\parts\a b.step");
-    CHECK(handed_off_file("\"C:\parts\a b.step\"", exists) == "C:\parts\a b.step");
-    CHECK(handed_off_file("C:\parts\missing.step", exists).empty());
+    const auto exists = [](const std::string &p) { return p == R"(C:\parts\a b.step)"; };
+    CHECK(handed_off_file(R"(C:\parts\a b.step)", exists) == R"(C:\parts\a b.step)");
+    CHECK(handed_off_file(R"("C:\parts\a b.step")", exists) == R"(C:\parts\a b.step)");
+    CHECK(handed_off_file(R"(C:\parts\missing.step)", exists).empty());
     CHECK(handed_off_file("edgeslicer://open?file=x", exists).empty());
     CHECK(handed_off_file("ab", exists).empty());
 }

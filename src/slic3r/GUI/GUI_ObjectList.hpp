@@ -465,6 +465,14 @@ public:
     void bake_slice_to_mesh();
     // Whether the menu item should be enabled for the current selection.
     static bool can_bake_slice_to_mesh();
+    // Side stabilizers baked into real geometry (a separate object or a part), so they print in
+    // other slicers too. Enabled when the object is sliced and its side stabilizers are not Off.
+    // tests/research_stabilizer_bake.md
+    void bake_stabilizers();
+    static bool can_bake_stabilizers();
+    // Re-reads an object's own settings into its list row and the settings panel, after code (not
+    // the user) changed ModelObject::config.
+    void refresh_object_settings(int obj_idx);
     void toggle_visibility_state(const wxDataViewItem& item);
     void update_visibility_icons();
     // Ultra (support groups): resync every part row's group badge with ModelVolume::config.

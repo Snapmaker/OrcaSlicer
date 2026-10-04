@@ -10,6 +10,8 @@
 #include <nlohmann/json.hpp>
 #include <wx/sizer.h>
 #include <wx/webview.h>
+#include <wx/event.h>
+#include <wx/frame.h>
 #include <wx/uri.h>
 #include <wx/weakref.h>
 
@@ -42,8 +44,47 @@ StreamPanel::StreamPanel(wxWindow* parent)
     sizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
     SetSizer(sizer);
 
+    Bind(wxEVT_SHOW, &StreamPanel::OnShow, this);
+    // A page that loads while its tab is hidden would otherwise start its tiles and keep them.
+    m_browser->Bind(wxEVT_WEBVIEW_LOADED, &StreamPanel::OnPageLoaded, this, m_browser->GetId());
+    if (wxWindow* top = wxGetTopLevelParent(this))
+        top->Bind(wxEVT_ICONIZE, &StreamPanel::OnIconize, this);
+
     // The instance API and the hub handshake used to start here; they now start from
     // GUI_App::start_remote_access() so a hidden instance (no Stream tab) registers too.
+}
+
+void StreamPanel::SetPageActive(bool active)
+{
+    if (m_browser == nullptr || active == m_active)
+        return;
+    m_active = active;
+    WebView::RunScript(m_browser, wxString::Format("if (window.__snorcaTilesActive) window.__snorcaTilesActive(%s);",
+                                                   active ? "true" : "false"));
+}
+
+void StreamPanel::OnShow(wxShowEvent& evt)
+{
+    evt.Skip();
+    SetPageActive(evt.IsShown() && !m_iconized);
+}
+
+void StreamPanel::OnIconize(wxIconizeEvent& evt)
+{
+    evt.Skip(); // the frame's own handlers still run
+    m_iconized = evt.IsIconized();
+    SetPageActive(!m_iconized && IsShownOnScreen());
+}
+
+void StreamPanel::OnPageLoaded(wxWebViewEvent& evt)
+{
+    evt.Skip();
+    // The page has just (re)started with every tile running: say so if it is not on screen.
+    const bool on = !m_iconized && IsShownOnScreen();
+    if (!on) {
+        m_active = true; // force the call: the new page has not been told anything
+        SetPageActive(false);
+    }
 }
 
 void StreamPanel::OnScriptMessage(wxWebViewEvent& evt)

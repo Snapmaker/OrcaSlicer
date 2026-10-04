@@ -8,6 +8,7 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "MsgDialog.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "FlowVariantEdit.hpp"
 
 #include <wx/msgdlg.h>
 
@@ -78,7 +79,7 @@ void ConfigManipulation::check_nozzle_recommended_temperature_range(DynamicPrint
     }
 }
 
-void ConfigManipulation::check_nozzle_temperature_range(DynamicPrintConfig *config)
+void ConfigManipulation::check_nozzle_temperature_range(DynamicPrintConfig *config, int variant_index)
 {
     if (is_msg_dlg_already_exist)
         return;
@@ -86,20 +87,18 @@ void ConfigManipulation::check_nozzle_temperature_range(DynamicPrintConfig *conf
     int temperature_range_low, temperature_range_high;
     if (!get_temperature_range(config, temperature_range_low, temperature_range_high)) return;
 
-    if (config->has("nozzle_temperature")) {
-        if (config->opt_int("nozzle_temperature", 0) < temperature_range_low || config->opt_int("nozzle_temperature", 0) > temperature_range_high) {
-            wxString msg_text = _(L("Nozzle may be blocked when the temperature is out of recommended range.\n"
-                "Please make sure whether to use the temperature to print.\n\n"));
-            msg_text += wxString::Format(_L("The recommended nozzle temperature for this filament type is [%d, %d] degrees Celsius."), temperature_range_low, temperature_range_high);
-            MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
-            is_msg_dlg_already_exist = true;
-            dialog.ShowModal();
-            is_msg_dlg_already_exist = false;
-        }
+    if (filament_nozzle_temperature_out_of_range(*config, variant_index)) {
+        wxString msg_text = _(L("Nozzle may be blocked when the temperature is out of recommended range.\n"
+            "Please make sure whether to use the temperature to print.\n\n"));
+        msg_text += wxString::Format(_L("The recommended nozzle temperature for this filament type is [%d, %d] degrees Celsius."), temperature_range_low, temperature_range_high);
+        MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
+        is_msg_dlg_already_exist = true;
+        dialog.ShowModal();
+        is_msg_dlg_already_exist = false;
     }
 }
 
-void ConfigManipulation::check_nozzle_temperature_initial_layer_range(DynamicPrintConfig* config)
+void ConfigManipulation::check_nozzle_temperature_initial_layer_range(DynamicPrintConfig* config, int variant_index)
 {
     if (is_msg_dlg_already_exist)
         return;
@@ -107,18 +106,14 @@ void ConfigManipulation::check_nozzle_temperature_initial_layer_range(DynamicPri
     int temperature_range_low, temperature_range_high;
     if (!get_temperature_range(config, temperature_range_low, temperature_range_high)) return;
 
-    if (config->has("nozzle_temperature_initial_layer")) {
-        if (config->opt_int("nozzle_temperature_initial_layer", 0) < temperature_range_low ||
-            config->opt_int("nozzle_temperature_initial_layer", 0) > temperature_range_high)
-        {
-            wxString msg_text = _(L("Nozzle may be blocked when the temperature is out of recommended range.\n"
-                "Please make sure whether to use the temperature to print.\n\n"));
-            msg_text += wxString::Format(_L("The recommended nozzle temperature for this filament type is [%d, %d] degrees Celsius."), temperature_range_low, temperature_range_high);
-            MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
-            is_msg_dlg_already_exist = true;
-            dialog.ShowModal();
-            is_msg_dlg_already_exist = false;
-        }
+    if (filament_nozzle_temperature_initial_layer_out_of_range(*config, variant_index)) {
+        wxString msg_text = _(L("Nozzle may be blocked when the temperature is out of recommended range.\n"
+            "Please make sure whether to use the temperature to print.\n\n"));
+        msg_text += wxString::Format(_L("The recommended nozzle temperature for this filament type is [%d, %d] degrees Celsius."), temperature_range_low, temperature_range_high);
+        MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
+        is_msg_dlg_already_exist = true;
+        dialog.ShowModal();
+        is_msg_dlg_already_exist = false;
     }
 }
 
@@ -233,7 +228,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
     }
 
     //BBS: ironing_spacing shouldn't be too small or equal to zero
-    if (config->opt_float("ironing_spacing") < 0.05)
+    if (config->opt_float("ironing_spacing") < IRONING_SPACING_MIN)
     {
         const wxString msg_text = _(L("Too small ironing spacing.\nReset to 0.1."));
         MessageDialog dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);
@@ -244,7 +239,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
     }
-    if (config->opt_float("support_ironing_spacing") < 0.05)
+    if (config->opt_float("support_ironing_spacing") < IRONING_SPACING_MIN)
     {
         const wxString msg_text = _(L("Too small ironing spacing.\nReset to 0.1."));
         MessageDialog dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);
@@ -778,9 +773,33 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("hollow_shell_thickness", config->opt_bool("hollow_interior"));
     // Side stabilizers print as support, so they need supports on.
     toggle_field("stabilizer_supports", have_support_material);
-    for (auto el : {"stabilizer_ring_spacing", "stabilizer_points_per_ring", "stabilizer_tip_diameter", "stabilizer_tip_gap",
-                    "stabilizer_pillar_diameter", "stabilizer_max_island_width"})
-        toggle_line(el, have_support_material && config->opt_bool("stabilizer_supports"));
+    {
+        const StabilizerMode stab_mode = config->opt_enum<StabilizerMode>("stabilizer_supports");
+        const bool           stab_on   = have_support_material && stab_mode != smOff;
+        for (auto el : {"stabilizer_ring_spacing", "stabilizer_points_per_ring", "stabilizer_tip_diameter", "stabilizer_tip_gap",
+                        "stabilizer_pillar_diameter", "stabilizer_max_island_width"})
+            toggle_line(el, stab_on);
+        // Manual places struts at the painted points only: the ring settings have nothing to say there.
+        for (auto el : {"stabilizer_ring_spacing", "stabilizer_points_per_ring", "stabilizer_max_island_width"})
+            toggle_field(el, stab_on && stab_mode == smAuto);
+
+        // v2: tapered pillars, bracing, columns, walls and infill.
+        const bool                  bracing = stab_on && config->opt_bool("stabilizer_bracing");
+        const StabilizerColumnShape shape   = config->opt_enum<StabilizerColumnShape>("stabilizer_column_shape");
+        const bool                  columns = stab_on && shape != scsRound;
+        const bool                  walls   = stab_on && config->opt_int("stabilizer_wall_loops") > 0;
+        for (auto el : {"stabilizer_pillar_base_diameter", "stabilizer_bracing", "stabilizer_column_shape", "stabilizer_wall_loops"})
+            toggle_line(el, stab_on);
+        // The max unbraced height and span are what bracing works to, and what Auto columns call a long
+        // unbraced or a lone pillar.
+        for (auto el : {"stabilizer_brace_max_unbraced", "stabilizer_brace_max_span"})
+            toggle_line(el, bracing || (stab_on && shape == scsAuto));
+        for (auto el : {"stabilizer_column_width", "stabilizer_column_length"})
+            toggle_line(el, columns);
+        toggle_line("stabilizer_column_min_height", stab_on && shape == scsAuto);
+        for (auto el : {"stabilizer_infill_density", "stabilizer_infill_pattern"})
+            toggle_line(el, walls);
+    }
     toggle_field("support_threshold_angle", have_support_material && is_auto(support_type));
     toggle_field("support_threshold_overlap", config->opt_int("support_threshold_angle") == 0 && have_support_material && is_auto(support_type));
     //toggle_field("support_closing_radius", have_support_material && support_style == smsSnug);

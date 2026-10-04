@@ -158,5 +158,30 @@ bool replicate_flow_variant_value(DynamicPrintConfig             &config,
     return true;
 }
 
+int filament_tab_option_index(const std::string &key, size_t view_index)
+{
+    return is_filament_flow_variant_option(key) ? int(view_index) : 0;
+}
+
+static bool temperature_out_of_recommended_range(const DynamicPrintConfig &config, const char *temp_key, int variant_index)
+{
+    if (!config.has(temp_key) || !config.has("nozzle_temperature_range_low") || !config.has("nozzle_temperature_range_high"))
+        return false;
+    const int temperature = config.opt_int(temp_key, variant_index);
+    const int range_low   = config.opt_int("nozzle_temperature_range_low", 0);
+    const int range_high  = config.opt_int("nozzle_temperature_range_high", 0);
+    return temperature < range_low || temperature > range_high;
+}
+
+bool filament_nozzle_temperature_out_of_range(const DynamicPrintConfig &config, int variant_index)
+{
+    return temperature_out_of_recommended_range(config, "nozzle_temperature", variant_index);
+}
+
+bool filament_nozzle_temperature_initial_layer_out_of_range(const DynamicPrintConfig &config, int variant_index)
+{
+    return temperature_out_of_recommended_range(config, "nozzle_temperature_initial_layer", variant_index);
+}
+
 } // namespace GUI
 } // namespace Slic3r

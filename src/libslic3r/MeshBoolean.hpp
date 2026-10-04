@@ -106,6 +106,10 @@ namespace mfd {
 // manifold or the operation is unknown; true otherwise (dst may legitimately be
 // empty, e.g. a void intersection).
 bool make_boolean(const TriangleMesh &src_mesh, const TriangleMesh &cut_mesh, std::vector<TriangleMesh> &dst_mesh, const std::string &boolean_opts);
+
+// The union of many closed meshes in one go (Manifold::BatchBoolean), into `out`. False, with `out`
+// untouched, when any input is not a valid manifold or Manifold throws.
+bool union_all(const std::vector<indexed_triangle_set> &meshes, indexed_triangle_set &out);
 } // namespace mfd
 
 } // namespace MeshBoolean

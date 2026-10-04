@@ -142,6 +142,9 @@ std::string body_for_send(const PushRequest& req, long long ts, const std::strin
     j["thread"]   = req.thread_id;
     j["priority"] = req.priority >= 10 ? 10 : 5;
     j["ttl"]      = std::max(0, std::min(86400, req.ttl_seconds));
+    // Additive and only when the device asked for it: the push service ignores fields it does not
+    // know, so this is inert until it builds `aps.interruption-level` from it (research note H8).
+    if (req.platform == "apns" && !req.interruption_level.empty()) j["level"] = req.interruption_level;
     return j.dump();
 }
 

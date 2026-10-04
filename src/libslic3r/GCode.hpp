@@ -17,6 +17,7 @@
 #include "GCode/ToolOrdering.hpp"
 #include "GCode/WipeTower.hpp"
 #include "GCode/SeamPlacer.hpp"
+#include "GCode/TimelapsePosPicker.hpp"
 #include "GCode/GCodeProcessor.hpp"
 #include "EdgeGrid.hpp"
 #include "GCode/ThumbnailData.hpp"
@@ -291,6 +292,9 @@ public:
     std::string     retract(bool toolchange = false, bool is_last_retraction = false, LiftType lift_type = LiftType::NormalLift, ExtrusionRole role = erNone);
     std::string     unretract() { return m_writer.unlift() + m_writer.unretract(); }
     std::string     set_extruder(unsigned int extruder_id, double print_z, bool by_object=false);
+    // Emit PA for this filament's active flow variant (Standard / High-Flow), not raw column = id.
+    // reset_adaptive=false keeps the two set_extruder sites that historically skipped the reset.
+    std::string     set_filament_pressure_advance(unsigned filament_id, bool reset_adaptive = true);
     // Orca: Adaptive PA. Tell the adaptive PA processor a tool change has just set the PA to `pa`.
     // Returns G-code to append right after that PA command (empty outside the layer pipeline).
     std::string     reset_adaptive_pa(double pa);
@@ -546,6 +550,10 @@ private:
        methods. */
     Vec2d                               m_origin;
     FullPrintConfig                     m_config;
+    // Per-filament flow ratio / max volumetric speed / PA enable that _extrude
+    // reads on every path, resolved in apply_print_config (the only place the
+    // filament options of m_config change during an export).
+    ResolvedFilamentFlow                m_filament_flow;
     DynamicConfig                       m_calib_config;
     // scaled G-code resolution
     double                              m_scaled_resolution;
@@ -681,6 +689,46 @@ private:
     int m_timelapse_photo_extruder = 0;
     int timelapse_extruder_of_filament(int filament_id) const;
     int timelapse_physical_extruder(int extruder_id) const;
+
+    // BambuStudio's timelapse position picker (GCode/TimelapsePosPicker): the safe spot the
+    // time_lapse_gcode hands the firmware (M9711 U/V), so both nozzles of a dual-nozzle machine
+    // are photographed the same way. Initialised at the start of every export.
+    TimelapsePosPicker m_timelapse_pos_picker;
+    // Objects printed so far in a print-by-object export, the current one last (BambuStudio's
+    // m_printed_objects); the picker keeps clear of the finished ones.
+    std::vector<const PrintObject*> m_printed_objects;
+
+    // BambuStudio 2.8 farthest-point timelapse (machine option farthest_point_timelapse, traditional
+    // mode, non-i3): take the photo where the layer reaches farthest from the camera.
+    struct FarthestPointTimelapseContext {
+        // Whether farthest-point timelapse is active for this layer
+        bool    enabled{false};
+        // The farthest extrusion point from camera (0,0) in global scaled coordinates (includes inst.shift)
+        Point   farthest_point{0, 0};
+        // farthest_point in mm (the frame of point_to_gcode() without the extruder offset)
+        Vec2d   farthest_gcode_pos{0, 0};
+        // Extruder index (0-based) that prints the farthest point
+        int     farthest_extruder_id{0};
+        // Whether the farthest point is printed by the photo head (the most used extruder)
+        bool    farthest_is_photo_head{false};
+        // Whether the photo has already been inserted on this layer (inline or at a tool change)
+        bool    inserted_this_layer{false};
+        // The photo head: m_timelapse_photo_extruder
+        int     most_used_extruder{0};
+    };
+    FarthestPointTimelapseContext m_farthest_point_timelapse;
+    void compute_farthest_point(const std::vector<LayerToPrint> &layers, const LayerTools &layer_tools,
+                                const std::map<std::pair<const SupportLayer *, ExtrusionRole>, unsigned int> &support_filaments);
+
+    struct TimelapseGCodeResult {
+        std::string gcode;
+        Point       safe_pos{DefaultTimelapsePos};
+    };
+    // BambuStudio's generate_timelapse_gcode: expands time_lapse_gcode for the active filament, with
+    // the picked safe position (none when skip_pos_pick: the inline farthest-point photo).
+    TimelapseGCodeResult generate_timelapse_gcode(const Print &print, coordf_t print_z, int photo_extruder, bool skip_pos_pick = false);
+    // Inline farthest-point photo: called with the end point of every extrusion move.
+    void check_and_insert_inline_timelapse(std::string &gcode, const Point &endpoint_scaled);
 
     bool m_silent_time_estimator_enabled;
 

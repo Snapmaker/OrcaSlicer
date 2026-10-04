@@ -145,6 +145,8 @@ public:
         payload["aps"]["mutable-content"] = 1;
         payload["aps"]["sound"]           = "default";
         if (!req.thread_id.empty()) payload["aps"]["thread-id"] = req.thread_id;
+        // Only when the device asked for the level hint (see PushRequest::interruption_level).
+        if (!req.interruption_level.empty()) payload["aps"]["interruption-level"] = req.interruption_level;
         payload["v"] = 1;
         payload["e"] = req.ciphertext_b64u;
         const std::string body = payload.dump();

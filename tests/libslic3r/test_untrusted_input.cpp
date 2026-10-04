@@ -839,29 +839,59 @@ struct LoadedObj
     std::string  message;
 };
 
+// Loads an OBJ made of the given lines. When with_mtl is true, writes material "a"
+// and prefixes the body with mtllib / usemtl so load_obj fills obj_info.uvs.
+LoadedObj load_obj_body(const std::string &body, bool with_mtl = true)
+{
+    ObjScratch scratch;
+    std::string text;
+    if (with_mtl) {
+        scratch.write("a.mtl", "newmtl a\nKd 1 0 0\n");
+        text = "mtllib a.mtl\n";
+        if (body.find("usemtl") == std::string::npos)
+            text += "usemtl a\n";
+        text += body;
+    } else {
+        text = body;
+    }
+    const fs::path obj = scratch.write("mesh.obj", text);
+    LoadedObj      loaded;
+    loaded.ok = load_obj(obj.string().c_str(), &loaded.mesh, loaded.info, loaded.message);
+    return loaded;
+}
+
+LoadedObj load_textured_obj(const std::string &body)
+{
+    return load_obj_body(body, true);
+}
+
 // A tetrahedron with a material and two texture coordinates, (0.25, 0.5) and (0.75, 1).
 // Only the first face and the vt lines are varied; the other three faces reference vt 1.
 LoadedObj load_textured_tetrahedron(const std::string &first_face, const std::string &vts = "vt 0.25 0.5\nvt 0.75 1\n")
 {
-    ObjScratch     scratch;
-    scratch.write("a.mtl", "newmtl a\nKd 1 0 0\n");
-    std::string body = "mtllib a.mtl\n"
-                       "v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\n";
-    body += vts;
-    body += "usemtl a\n";
-    body += first_face;
-    body += "\n";
-    body += "f 1/1 2/1 4/1\nf 1/1 4/1 3/1\nf 2/1 3/1 4/1\n";
-    const fs::path obj = scratch.write("mesh.obj", body);
-    LoadedObj      loaded;
-    loaded.ok = load_obj(obj.string().c_str(), &loaded.mesh, loaded.info, loaded.message);
-    return loaded;
+    return load_textured_obj("v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\n" + vts + "usemtl a\n" + first_face + "\n" +
+                             "f 1/1 2/1 4/1\nf 1/1 4/1 3/1\nf 2/1 3/1 4/1\n");
 }
 
 void check_uv(const Vec2f &uv, float x, float y)
 {
     CHECK(uv.x() == Approx(x).margin(1e-6f));
     CHECK(uv.y() == Approx(y).margin(1e-6f));
+}
+
+// Texture coordinate n is (n / 10, n / 20), so a UV identifies the vt it came from.
+void check_uv_is_vt(const Vec2f &uv, int vt)
+{
+    check_uv(uv, static_cast<float>(vt) / 10.f, static_cast<float>(vt) / 20.f);
+}
+
+void check_uvs_follow_vertices(const LoadedObj &loaded)
+{
+    const indexed_triangle_set &its = loaded.mesh.its;
+    REQUIRE(loaded.info.uvs.size() == its.indices.size());
+    for (size_t face = 0; face < its.indices.size(); ++face)
+        for (int corner = 0; corner < 3; ++corner)
+            check_uv_is_vt(loaded.info.uvs[face][corner], its.indices[face][corner] + 1);
 }
 
 } // namespace
@@ -928,6 +958,101 @@ TEST_CASE("Mixed vt u v and vt u v w lines keep the indices stable", "[obj][untr
     check_uv(uv[0], 0.25f, 0.5f);
     check_uv(uv[1], 0.75f, 1.f);
     check_uv(uv[2], 0.75f, 1.f);
+}
+
+// ---- OBJ quad UVs + UV order after flip (Orca #15977, follow-up to #15948 / Edge #197) ---------
+//
+// A quad is split into triangles {0,1,2} and {0,2,3}. The second triangle used to reuse
+// uvs[0..2]. After flip_triangles() (swap vertex 1 and 2) the per-face UVs were left as-is.
+
+TEST_CASE("Both triangles of a quad take the texture coordinates of their own corners", "[obj][uv]")
+{
+    const LoadedObj loaded = load_textured_obj("v 0 0 0\nv 10 0 0\nv 10 10 0\nv 0 10 0\n"
+                                               "vt 0.1 0.05\nvt 0.2 0.1\nvt 0.3 0.15\nvt 0.4 0.2\n"
+                                               "usemtl a\n"
+                                               "f 1/1 2/2 3/3 4/4\n");
+
+    REQUIRE(loaded.ok);
+    REQUIRE(loaded.mesh.facets_count() == 2);
+    REQUIRE(loaded.info.uvs.size() == 2);
+    check_uv_is_vt(loaded.info.uvs[0][0], 1);
+    check_uv_is_vt(loaded.info.uvs[0][1], 2);
+    check_uv_is_vt(loaded.info.uvs[0][2], 3);
+    check_uv_is_vt(loaded.info.uvs[1][0], 1);
+    check_uv_is_vt(loaded.info.uvs[1][1], 3);
+    check_uv_is_vt(loaded.info.uvs[1][2], 4);
+}
+
+TEST_CASE("Texture coordinates follow the corners of an inward-wound cube that is flipped on load", "[obj][uv]")
+{
+    // 10 mm cube, faces wound inward (signed volume -1000). Vertex n uses vt n.
+    LoadedObj loaded = load_textured_obj(
+        "v 0 0 0\nv 10 0 0\nv 10 10 0\nv 0 10 0\n"
+        "v 0 0 10\nv 10 0 10\nv 10 10 10\nv 0 10 10\n"
+        "vt 0.1 0.05\nvt 0.2 0.1\nvt 0.3 0.15\nvt 0.4 0.2\n"
+        "vt 0.5 0.25\nvt 0.6 0.3\nvt 0.7 0.35\nvt 0.8 0.4\n"
+        "usemtl a\n"
+        "f 1/1 3/3 4/4\nf 1/1 2/2 3/3\n"
+        "f 5/5 7/7 6/6\nf 5/5 8/8 7/7\n"
+        "f 1/1 6/6 2/2\nf 1/1 5/5 6/6\n"
+        "f 4/4 7/7 8/8\nf 4/4 3/3 7/7\n"
+        "f 1/1 8/8 5/5\nf 1/1 4/4 8/8\n"
+        "f 2/2 7/7 3/3\nf 2/2 6/6 7/7\n");
+
+    REQUIRE(loaded.ok);
+    CHECK(loaded.mesh.volume() > 0.f);
+    REQUIRE(loaded.mesh.facets_count() == 12);
+    check_uvs_follow_vertices(loaded);
+}
+
+TEST_CASE("Texture coordinates follow the corners of an inward-wound quad cube that is flipped on load", "[obj][uv]")
+{
+    // Same 10 mm cube, but each face is a quad (split into {0,1,2} and {0,2,3}).
+    // Faces wound inward so load_obj flips them. Vertex n uses vt n.
+    LoadedObj loaded = load_textured_obj(
+        "v 0 0 0\nv 10 0 0\nv 10 10 0\nv 0 10 0\n"
+        "v 0 0 10\nv 10 0 10\nv 10 10 10\nv 0 10 10\n"
+        "vt 0.1 0.05\nvt 0.2 0.1\nvt 0.3 0.15\nvt 0.4 0.2\n"
+        "vt 0.5 0.25\nvt 0.6 0.3\nvt 0.7 0.35\nvt 0.8 0.4\n"
+        "usemtl a\n"
+        "f 1/1 2/2 3/3 4/4\n"
+        "f 5/5 8/8 7/7 6/6\n"
+        "f 1/1 5/5 6/6 2/2\n"
+        "f 4/4 3/3 7/7 8/8\n"
+        "f 1/1 4/4 8/8 5/5\n"
+        "f 2/2 6/6 7/7 3/3\n");
+
+    REQUIRE(loaded.ok);
+    CHECK(loaded.mesh.volume() > 0.f);
+    REQUIRE(loaded.mesh.facets_count() == 12);
+    check_uvs_follow_vertices(loaded);
+}
+
+TEST_CASE("A plain outward textured tetrahedron keeps file-order UVs", "[obj][uv]")
+{
+    // Outward-wound; vertex n uses vt n. A swap that always runs would break the pairing.
+    LoadedObj loaded = load_textured_obj("v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\n"
+                                         "vt 0.1 0.05\nvt 0.2 0.1\nvt 0.3 0.15\nvt 0.4 0.2\n"
+                                         "usemtl a\n"
+                                         "f 1/1 3/3 2/2\nf 1/1 2/2 4/4\nf 1/1 4/4 3/3\nf 2/2 3/3 4/4\n");
+
+    REQUIRE(loaded.ok);
+    CHECK(loaded.mesh.volume() > 0.f);
+    REQUIRE(loaded.mesh.facets_count() == 4);
+    check_uvs_follow_vertices(loaded);
+}
+
+TEST_CASE("An untextured OBJ still loads with no UVs", "[obj][uv]")
+{
+    LoadedObj loaded = load_obj_body("v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\n"
+                                     "f 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n",
+                                     false);
+
+    REQUIRE(loaded.ok);
+    CHECK(loaded.mesh.volume() > 0.f);
+    CHECK(loaded.mesh.facets_count() == 4);
+    CHECK(loaded.info.uvs.empty());
+    CHECK(loaded.info.face_colors.empty());
 }
 
 // ---- 3MF XML entries larger than expat's int (Orca #15958) ------------------------------------

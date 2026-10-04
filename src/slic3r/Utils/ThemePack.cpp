@@ -40,6 +40,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& roles()
         // Drawn directly, no stock colour to recolour.
         {"titlebar_bg",      {}},
         {"titlebar_text",    {}},
+        {"titlebar_warning", {}},
         {"canvas_bg",        {}},
         {"canvas_bg_top",    {}},
         {"icon",             {}},
@@ -125,7 +126,7 @@ std::string stock_colour(const std::string& role)
 {
     // What BBLTopbar, GLCanvas3D and BitmapCache draw when a theme leaves these alone.
     static const std::map<std::string, std::string> direct = {
-        {"titlebar_bg", "#262E30"}, {"titlebar_text", "#FFFFFF"}, {"canvas_bg", "#E7E7E7"},
+        {"titlebar_bg", "#262E30"}, {"titlebar_text", "#FFFFFF"}, {"titlebar_warning", "#FFC83D"}, {"canvas_bg", "#E7E7E7"},
         {"canvas_bg_top", "#E7E7E7"}, {"icon", "#262E30"},
     };
     if (auto it = direct.find(role); it != direct.end())

@@ -4,6 +4,7 @@
 #include "AmsUiPreview.hpp"
 #include "DarkModeBackground.hpp"
 #include "RemoteAccess.hpp"
+#include "BambuSetupNoticeDialog.hpp"
 #include "RemoteHub.hpp"
 #include "Theme.hpp"
 #include "GUI_Init.hpp"
@@ -102,6 +103,7 @@
 #include "slic3r/GUI/FlashForge/MultiComMgr.hpp"
 #include "slic3r/GUI/FlashForge/FFDiagnostics.hpp"
 #include "Plater.hpp"
+#include "AccountStatus.hpp"
 #include "GLCanvas3D.hpp"
 #include "GeneratedConfig.hpp"
 
@@ -2552,6 +2554,9 @@ void GUI_App::init_networking_callbacks()
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter, m_agent=%1%")%m_agent;
     if (m_agent) {
+
+        // The plug-in's own sign-in / sign-out reports (a session it ended itself) reach the Account button.
+        m_agent->set_on_user_login_fn([](int /*online_login*/, bool /*login*/) { GUI::AccountStatus::refresh_async(); });
 
         m_agent->set_server_callback([](std::string url, int status) {
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": server_callback, url=%1%, status=%2%") % url % status;
@@ -5916,14 +5921,21 @@ wxString GUI_App::get_international_url(const wxString& origin_url) {
         region = "US";
     }
 
-    string dark_mode = wxGetApp().app_config->get("dark_color_mode");
+    // The look the slicer shows (a dark theme pack, or macOS in dark mode, count too): the Snapmaker
+    // pages take their theme from it, and in dark mode the colours of the slicer's Device page
+    // and its accent (dark_bg, dark_card, dark_strip, dark_title, dark_accent, dark_accent_text:
+    // WebView::FlutterDarkColours,
+    // scripts/patch_flutter_web_dark.py).
+    string dark = dark_mode() ? "1" : "0";
+    for (const auto &[role, hex] : WebView::FlutterDarkColours())
+        dark += "&dark_" + role + "=" + hex.substr(1);
 
     if (baseUrl.find("?") != std::string::npos) {
         return baseUrl + wxString::FromUTF8("&locale=") + lang + wxString::FromUTF8("-") + region +
-               wxString::FromUTF8("&dark_mode=" + dark_mode);
+               wxString::FromUTF8("&dark_mode=" + dark);
     } else {
         return baseUrl + wxString::FromUTF8("?locale=") + lang + wxString::FromUTF8("-") + region +
-               wxString::FromUTF8("&dark_mode=" + dark_mode);
+               wxString::FromUTF8("&dark_mode=" + dark);
     }
 
 }
@@ -8820,6 +8832,8 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
         mainframe->refresh_plugin_tips();
         m_fltviews.reload_all();
         // BBS: remove SLA related message
+        // First-time Bambu printer setup notice (waits for the main window; a no-op for other vendors).
+        BambuSetupNoticeDialog::on_wizard_finished();
     }
     auto isAgree = wxGetApp().app_config->get("app", PRIVACY_POLICY_FLAGS);
 
@@ -9471,6 +9485,8 @@ void GUI_App::SMUserInfo::notify() {
 
     wxGetApp().user_login_notify(data);
 
+    // The title bar's Account button follows the Snapmaker sign-in state.
+    GUI::AccountStatus::refresh_async();
 }
 bool is_support_filament(int extruder_id)
 {

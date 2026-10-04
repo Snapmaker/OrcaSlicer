@@ -44,6 +44,7 @@ jobs:
       ORCA_UPDATER_SIG_KEY: ${{ secrets.ORCA_UPDATER_SIG_KEY }}
       # Branches whose builds are published to the nightly release.
       deploy_nightly: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.3.0-final' }}
+      macos_sign: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/release_') || github.ref == 'refs/heads/2.3.0-final') && secrets.BUILD_CERTIFICATE_BASE64 != '' }}
 
     steps:
       - name: Checkout
@@ -322,7 +323,7 @@ jobs:
 
  # Thanks to RaySajuuk, it's working now
       - name: Sign app and notary
-        if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/release_') || github.ref == 'refs/heads/2.3.0-final') && runner.os == 'macOS' && inputs.macos-combine-only
+        if: env.macos_sign == 'true' && runner.os == 'macOS' && inputs.macos-combine-only
         working-directory: ${{ github.workspace }}
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
@@ -409,7 +410,7 @@ jobs:
           fi
 
       - name: Create DMG without notary
-        if: github.ref != 'refs/heads/main' && github.ref != 'refs/heads/2.3.0-final' && !startsWith(github.ref, 'refs/heads/release/') && !startsWith(github.ref, 'refs/heads/release_') && runner.os == 'macOS' && inputs.macos-combine-only
+        if: env.macos_sign != 'true' && runner.os == 'macOS' && inputs.macos-combine-only
         working-directory: ${{ github.workspace }}
         run: |
           # Load the `retry` helper (retries flaky commands such as `hdiutil create`).
@@ -784,7 +785,7 @@ jobs:
           max_releases: 1 # optional, if there are more releases than this matching the asset_name, the oldest ones are going to be deleted
 
       - name: Tag nightly build
-        if: ${{ github.repository == (vars.NIGHTLY_REPO || 'LixNix-Swap-Org/Snapmaker-Orca') && ! env.ACT && env.deploy_nightly == 'true' && runner.os == 'Linux' && !vars.SELF_HOSTED && inputs.arch != 'aarch64' }}
+        if: ${{ github.repository == (vars.NIGHTLY_REPO || 'LixNix-Swap-Org/Snapmaker-Orca') && ! env.ACT && env.deploy_nightly == 'true' && runner.os == 'Linux' && !vars.SELF_HOSTED && inputs.arch != 'aarch64' && steps.nightly.outputs.release_id != '' }}
         uses: rickstaa/action-create-tag@v1
         with:
           tag: "nightly-builds"

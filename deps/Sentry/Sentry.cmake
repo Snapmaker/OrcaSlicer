@@ -1,7 +1,7 @@
 set(_sentry_platform_flags
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON
   -DSENTRY_BUILD_TESTS=OFF
-  -DSENTRY_EXAMPLES=OFF
+  -DSENTRY_BUILD_EXAMPLES=OFF
   -DSENTRY_BACKEND=crashpad
   -DSENTRY_ENABLE_INSTALL=ON
 )
@@ -111,7 +111,7 @@ orcaslicer_add_cmake_project(Sentry
 
 # Sentry depends on CURL which depends on OpenSSL
 # Ensure they are built before Sentry
-if(APPLE)
+if(NOT WIN32)
 	if (TARGET dep_CURL)
 		add_dependencies(dep_Sentry dep_CURL)
 	endif()

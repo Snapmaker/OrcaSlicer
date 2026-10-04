@@ -769,6 +769,22 @@ wxMenu* MenuFactory::append_submenu_add_handy_model(wxMenu* menu, ModelVolumeTyp
 
     return sub_menu;
 }
+wxMenu* MenuFactory::append_submenu_add_custom_model(wxMenu* menu, std::unique_ptr<CustomModelsMenu>& holder)
+{
+    holder = std::make_unique<CustomModelsMenu>();
+    return holder->create(menu, m_parent);
+}
+
+// Right-click on an object: put it (with its parts, settings, paint and filament) into the
+// Custom Models library.
+void MenuFactory::append_menu_item_save_custom_model(wxMenu* menu)
+{
+    append_menu_item(menu, wxID_ANY, _L("Save to Custom Models") + dots,
+        _L("Save the selected object, with its parts, modifiers, settings overrides, painting and filament, to the Custom Models folder"),
+        [](wxCommandEvent&) { wxGetApp().CallAfter([]() { save_selection_as_custom_model(); }); }, "", menu,
+        []() { return can_save_selection_as_custom_model(); }, m_parent);
+}
+
 static void append_menu_itemm_add_(const wxString& name, GLGizmosManager::EType gizmo_type, wxMenu *menu, ModelVolumeType type, bool is_submenu_item) {
     auto add_ = [type, gizmo_type](const wxCommandEvent & /*unnamed*/) {
         const GLCanvas3D *canvas = plater()->canvas3D();
@@ -2085,10 +2101,13 @@ void MenuFactory::create_default_menu()
 {
     wxMenu* sub_menu_primitives = append_submenu_add_generic(&m_default_menu, ModelVolumeType::INVALID);
     wxMenu* sub_menu_handy = append_submenu_add_handy_model(&m_default_menu, ModelVolumeType::INVALID);
+    wxMenu* sub_menu_custom = append_submenu_add_custom_model(&m_default_menu, m_custom_models_default);
 #ifdef __WINDOWS__
     append_submenu(&m_default_menu, sub_menu_primitives, wxID_ANY, _L("Add Primitive"), "", "menu_add_part",
         []() {return true; }, m_parent);
     append_submenu(&m_default_menu, sub_menu_handy, wxID_ANY, _L("Add Handy models"), "", "menu_add_part",
+        []() {return true; }, m_parent);
+    append_submenu(&m_default_menu, sub_menu_custom, wxID_ANY, _L("Add Custom Models"), "", "menu_add_part",
         []() {return true; }, m_parent);
     append_menu_item(&m_default_menu, wxID_ANY, _L("Add Models"), "", // ORCA: Add Models
         [](wxCommandEvent&) { plater()->add_file(); }, "menu_add_part", &m_default_menu,
@@ -2097,6 +2116,8 @@ void MenuFactory::create_default_menu()
     append_submenu(&m_default_menu, sub_menu_primitives, wxID_ANY, _L("Add Primitive"), "", "",
         []() {return true; }, m_parent);
     append_submenu(&m_default_menu, sub_menu_handy, wxID_ANY, _L("Add Handy models"), "", "",
+        []() {return true; }, m_parent);
+    append_submenu(&m_default_menu, sub_menu_custom, wxID_ANY, _L("Add Custom Models"), "", "",
         []() {return true; }, m_parent);
     append_menu_item(&m_default_menu, wxID_ANY, _L("Add Models"), "", // ORCA: Add Models
         [](wxCommandEvent&) { plater()->add_file(); }, "", &m_default_menu,
@@ -2245,6 +2266,7 @@ void MenuFactory::create_extra_object_menu()
     append_menu_item_cad_fillet(&m_object_menu);
     append_menu_item_export_stl(&m_object_menu);
     append_menu_item_export_step(&m_object_menu);
+    append_menu_item_save_custom_model(&m_object_menu);
 }
 
 void MenuFactory::create_bbl_assemble_object_menu()
@@ -2589,11 +2611,14 @@ void MenuFactory::create_plate_menu()
     menu->AppendSeparator();
     wxMenu* sub_menu_primitives = append_submenu_add_generic(menu, ModelVolumeType::INVALID);
     wxMenu* sub_menu_handy = append_submenu_add_handy_model(menu, ModelVolumeType::INVALID);
+    wxMenu* sub_menu_custom = append_submenu_add_custom_model(menu, m_custom_models_plate);
 
 #ifdef __WINDOWS__
     append_submenu(menu, sub_menu_primitives, wxID_ANY, _L("Add Primitive"), "", "menu_add_part",
         []() {return true; }, m_parent);
     append_submenu(menu, sub_menu_handy, wxID_ANY, _L("Add Handy models"), "", "menu_add_part",
+        []() {return true; }, m_parent);
+    append_submenu(menu, sub_menu_custom, wxID_ANY, _L("Add Custom Models"), "", "menu_add_part",
         []() {return true; }, m_parent);
     append_menu_item(menu, wxID_ANY, _L("Add Models"), "", // ORCA: Add Models
         [](wxCommandEvent&) { plater()->add_file(); }, "menu_add_part", menu,
@@ -2602,6 +2627,8 @@ void MenuFactory::create_plate_menu()
     append_submenu(menu, sub_menu_primitives, wxID_ANY, _L("Add Primitive"), "", "",
         []() {return true; }, m_parent);
     append_submenu(menu, sub_menu_handy, wxID_ANY, _L("Add Handy models"), "", "",
+        []() {return true; }, m_parent);
+    append_submenu(menu, sub_menu_custom, wxID_ANY, _L("Add Custom Models"), "", "",
         []() {return true; }, m_parent);
     append_menu_item(menu, wxID_ANY, _L("Add Models"), "", // ORCA: Add Models
         [](wxCommandEvent&) { plater()->add_file(); }, "", menu,
@@ -2645,6 +2672,9 @@ void MenuFactory::update()
 
 wxMenu* MenuFactory::default_menu()
 {
+    // Called right before the menu is shown: pick up files added to the Custom Models folder.
+    if (m_custom_models_default)
+        m_custom_models_default->refresh();
     return &m_default_menu;
 }
 
@@ -2756,6 +2786,7 @@ wxMenu* MenuFactory::multi_selection_menu()
         menu->AppendSeparator();
         append_menu_item_export_stl(menu, true);
         append_menu_item_export_step(menu);
+        append_menu_item_save_custom_model(menu);
     }
     else {
         append_menu_item_center(menu);
@@ -2818,6 +2849,8 @@ wxMenu* MenuFactory::assemble_multi_selection_menu()
 //BBS: add partplate related logic
 wxMenu* MenuFactory::plate_menu()
 {
+    if (m_custom_models_plate)
+        m_custom_models_plate->refresh();
     append_menu_item_locked(&m_plate_menu);
     append_menu_item_plate_name(&m_plate_menu);
     return &m_plate_menu;
@@ -3132,7 +3165,7 @@ void MenuFactory::update_object_menu()
 
 void MenuFactory::update_default_menu()
 {
-    for (auto& name : { _L("Add Primitive") , _L("Add Handy models"), _L("Show Labels") }) {
+    for (auto& name : { _L("Add Primitive") , _L("Add Handy models"), _L("Add Custom Models"), _L("Show Labels") }) {
         const auto menu_item_id = m_default_menu.FindItem(name);
         if (menu_item_id != wxNOT_FOUND)
             m_default_menu.Destroy(menu_item_id);

@@ -4,11 +4,13 @@
 #include <map>
 #include <vector>
 #include <array>
+#include <memory>
 
 #include <wx/bitmap.h>
 
 #include "libslic3r/PrintConfig.hpp"
 #include "wxExtensions.hpp"
+#include "CustomModelsMenu.hpp"
 
 class wxMenu;
 class wxMenuItem;
@@ -131,6 +133,11 @@ private:
     MenuWithSeparators m_assemble_object_menu;
     MenuWithSeparators m_assemble_part_menu;
 
+    // "Add Custom Models": one submenu in the empty-space menu and one in the plate menu; the
+    // list is re-read from the folder every time the menu is about to be shown.
+    std::unique_ptr<CustomModelsMenu> m_custom_models_default;
+    std::unique_ptr<CustomModelsMenu> m_custom_models_plate;
+
     wxMenu m_filament_action_menu;
    
 
@@ -159,6 +166,10 @@ private:
     wxMenu*     append_submenu_add_generic(wxMenu* menu, ModelVolumeType type);
     // Orca: add submenu for adding handy models
     wxMenu*     append_submenu_add_handy_model(wxMenu* menu, ModelVolumeType type);
+    // "Add Custom Models": the user's own library (CustomModelsMenu.hpp). `holder` keeps the
+    // menu's state so it can be refreshed before the menu is shown.
+    wxMenu*     append_submenu_add_custom_model(wxMenu* menu, std::unique_ptr<CustomModelsMenu>& holder);
+    void        append_menu_item_save_custom_model(wxMenu* menu);
     void        append_menu_item_add_text(wxMenu* menu, ModelVolumeType type, bool is_submenu_item = true);
     void        append_menu_item_add_svg(wxMenu *menu, ModelVolumeType type, bool is_submenu_item = true);    
     void        append_menu_item_add_code(wxMenu *menu, ModelVolumeType type);

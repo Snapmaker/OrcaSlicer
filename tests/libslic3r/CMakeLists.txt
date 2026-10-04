@@ -7,6 +7,7 @@ add_executable(${_TEST_NAME}_tests
 	test_bambu_import_renames.cpp
 	test_bambu_nil_override.cpp
 	test_untrusted_input.cpp
+	test_custom_models.cpp
 	test_arrange_support_clearance.cpp
 	test_appconfig_trailing_newline.cpp
 	test_aabbindirect.cpp

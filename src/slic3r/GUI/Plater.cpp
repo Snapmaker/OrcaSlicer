@@ -89,6 +89,7 @@
 #include "libslic3r/Format/AMF.hpp"
 //#include "libslic3r/Format/3mf.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
+#include "libslic3r/CustomModels.hpp"
 #include "libslic3r/Format/BambuExport.hpp"
 #include "../Utils/BambuStudioLauncher.hpp"
 #include "BlenderBridge.hpp"
@@ -11925,6 +11926,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
     bool load_config = strategy & LoadStrategy::LoadConfig;
     bool imperial_units = strategy & LoadStrategy::ImperialUnits;
     bool silence = strategy & LoadStrategy::Silence;
+    // "Add Custom Models": add a 3MF's objects with their object / part settings, modifiers and
+    // paint to the current project, leaving its presets, filaments and plates alone.
+    const bool keep_object_settings = load_model && !load_config && (strategy & LoadStrategy::KeepObjectSettings);
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": load_model %1%, load_config %2%, input_files size %3%")%load_model %load_config %input_files.size();
 
@@ -12080,7 +12084,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 
                     // 1. add extruder for prusa model if the number of existing extruders is not enough
                     // 2. add extruder for BBS or Other model if only import geometry
-                    if (en_3mf_file_type == En3mfType::From_Prusa || (load_model && !load_config)) {
+                    if (en_3mf_file_type == En3mfType::From_Prusa || (load_model && !load_config && !keep_object_settings)) {
                         std::set<int> extruderIds;
                         for (ModelObject *o : model.objects) {
                             if (o->config.option("extruder")) extruderIds.insert(o->config.extruder());
@@ -12256,6 +12260,24 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                 text += "\n";
                                 show_info(q, text, _L("Newer 3mf version"));
                             }
+                        }
+                    } else if (keep_object_settings) {
+                        // Custom model: keep the object / part settings, modifiers and paint. The file's
+                        // project settings and embedded presets are never applied on this path, so what
+                        // is left to check is the settings of the objects themselves, and the filament
+                        // numbers: a project with fewer filaments than the file asks for is not extended,
+                        // the numbers above its count become filament 1.
+                        PresetBundle *pb = wxGetApp().preset_bundle;
+                        const size_t filament_total = pb != nullptr ? pb->mixed_filaments.total_filaments(pb->filament_presets.size()) : size_t(1);
+                        const custom_models::ImportReport report = custom_models::prepare_imported_objects(model.objects, filament_total);
+                        if (q->get_notification_manager() != nullptr) {
+                            if (report.untrusted_settings_removed > 0)
+                                q->get_notification_manager()->push_plater_warning_notification(
+                                    into_u8(format_wxstr(_L("Post-processing scripts and similar settings from \"%1%\" were removed."), from_path(real_filename))));
+                            if (report.filaments_clamped())
+                                q->get_notification_manager()->push_plater_warning_notification(
+                                    into_u8(format_wxstr(_L("\"%1%\" uses filament %2%, but this project has %3% filament(s). Everything assigned to a missing filament now uses filament 1."),
+                                                         from_path(real_filename), report.highest_filament_requested, filament_total)));
                         }
                     } else if (!load_config) {
                         // reset config except color
@@ -12784,7 +12806,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 // convert_model_if(model, answer_convert_from_imperial_units == wxID_YES);
             }
 
-             if (!is_project_file && model.looks_like_multipart_object()) {
+             // A custom model with several objects at different heights stays several objects: turning
+             // them into one multi-part object would throw their settings away.
+             if (!is_project_file && !keep_object_settings && model.looks_like_multipart_object()) {
                MessageDialog msg_dlg(q, _L(
                     "This file contains several objects positioned at multiple heights.\n"
                     "Instead of considering them as multiple objects, should \n"
@@ -12843,9 +12867,27 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 
         if (one_by_one) {
             // BBS: add load_old_project logic
-            if (type_3mf && !is_project_file && !load_old_project)
+            if (type_3mf && !is_project_file && !load_old_project) {
                 // if (type_3mf && !is_project_file)
-                model.center_instances_around_point(this->bed.build_volume().bed_center());
+                if (keep_object_settings) {
+                    // A custom model lands on a free spot of the current plate, like a handy model or a
+                    // pasted copy (get_nearest_empty_cell), instead of on top of what is already there.
+                    PartPlate*       current_plate = partplate_list.get_curr_plate();
+                    const Vec3d      plate_center  = current_plate->get_build_volume().center();
+                    Vec2d            target(plate_center.x(), plate_center.y());
+                    model.center_instances_around_point(target);
+                    if (!current_plate->empty()) {
+                        BoundingBoxf3 group;
+                        for (ModelObject *model_object : model.objects)
+                            for (size_t inst = 0; inst < model_object->instances.size(); ++inst)
+                                group.merge(model_object->instance_bounding_box(inst, false));
+                        const Vec2f cell = wxGetApp().plater()->canvas3D()->get_nearest_empty_cell(
+                            Vec2f(float(target.x()), float(target.y())), Vec2f(float(group.size().x()) + 1.f, float(group.size().y()) + 1.f));
+                        model.center_instances_around_point(Vec2d(cell.x(), cell.y()));
+                    }
+                } else
+                    model.center_instances_around_point(this->bed.build_volume().bed_center());
+            }
             // BBS: add auxiliary files logic
             // BBS: backup & restore
             if (load_aux) {

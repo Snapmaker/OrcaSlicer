@@ -1246,6 +1246,9 @@ void GLGizmoEmboss::set_volume_by_selection()
         m_job_cancel->store(true);
         m_job_cancel = nullptr;
     }
+    // a waiting curve preview belongs to the previous volume
+    m_bend_preview_pending = false;
+    m_bend_surface_key.reset();
 
     m_text   = tc.text;
     m_volume = volume;
@@ -1270,6 +1273,8 @@ void GLGizmoEmboss::reset_volume()
 
     m_volume = nullptr;
     m_volume_id.id = 0;
+    m_bend_preview_pending = false;
+    m_bend_surface_key.reset();
 
     // No more need of current notification
     remove_notification_not_valid_font();
@@ -1359,6 +1364,10 @@ void GLGizmoEmboss::draw_window()
 #ifdef ALLOW_DEBUG_MODE
     if (ImGui::Button("re-process")) process();
 #endif //  ALLOW_DEBUG_MODE
+
+    // Curve slider dragged over a surface: start the waiting preview once the previous cut is done
+    if (m_bend_preview_pending)
+        request_bend_preview();
 
     // Setter of indent must be befor disable !!!
     ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, m_gui_cfg->indent);
@@ -2699,11 +2708,11 @@ void GLGizmoEmboss::draw_advanced()
         stored_style = m_style_manager.get_stored_style();
     
     bool is_the_only_one_part = m_volume->is_the_only_one_part();
-    // Curved text is not combined with surface projection nor per glyph placement (yet)
+    // Curved text works with surface projection, not with per glyph placement
     const bool is_curved = m_style_manager.get_style().projection.bend.mode != EmbossBend::Mode::off;
     const std::string curved_hint = _u8L("Not available for curved text. Turn off \"Curve text\" first.");
     bool can_use_surface = (m_volume->emboss_shape->projection.use_surface)? true : // already used surface must have option to uncheck
-                            (!is_the_only_one_part && !is_curved);
+                            !is_the_only_one_part;
     m_imgui->disabled_begin(!can_use_surface);
     const bool *def_use_surface = stored_style ?
         &stored_style->projection.use_surface : nullptr;
@@ -2715,8 +2724,6 @@ void GLGizmoEmboss::draw_advanced()
             // when using surface distance is not used
             current_style.distance.reset();
         process();
-    } else if (!can_use_surface && is_curved && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        m_imgui->tooltip(curved_hint, m_gui_cfg->max_tooltip_width);
     }
     m_imgui->disabled_end(); // !can_use_surface
 
@@ -3067,8 +3074,24 @@ constexpr float CURVE_SLIDER_MAX_RADIUS = 300.f; // [mm]
 
 bool GLGizmoEmboss::can_use_bend() const
 {
-    const StyleManager::Style &style = m_style_manager.get_style();
-    return !style.prop.per_glyph && !style.projection.use_surface;
+    // Per glyph places every glyph along a section of the object, the bend would fight it
+    return !m_style_manager.get_style().prop.per_glyph;
+}
+
+void GLGizmoEmboss::request_bend_preview()
+{
+    m_bend_preview_pending = false;
+    if (m_volume == nullptr)
+        return;
+    // Flat text is fast enough for every slider tick. The surface cut can take longer than a frame:
+    // start the next preview only when the previous one is done, so the shown text never lags
+    // behind a queue of cancelled cuts.
+    if (m_style_manager.get_style().projection.use_surface && !wxGetApp().plater()->get_ui_job_worker().is_idle()) {
+        m_bend_preview_pending = true;
+        m_imgui->set_requires_extra_frame();
+        return;
+    }
+    process(false);
 }
 
 std::optional<Slic3r::Emboss::BendInput> GLGizmoEmboss::measure_text_for_bend()
@@ -3104,7 +3127,8 @@ std::optional<Slic3r::Emboss::BendInput> GLGizmoEmboss::measure_text_for_bend()
 
 std::optional<Slic3r::Emboss::BendResult> GLGizmoEmboss::calc_bend_result()
 {
-    const EmbossBend &bend = m_style_manager.get_style().projection.bend;
+    const StyleManager::Style &style = m_style_manager.get_style();
+    const EmbossBend &bend = style.projection.bend;
     if (!bend.is_active())
         return {};
     std::optional<Slic3r::Emboss::BendInput> input = measure_text_for_bend();
@@ -3112,7 +3136,8 @@ std::optional<Slic3r::Emboss::BendResult> GLGizmoEmboss::calc_bend_result()
         return {};
     Slic3r::Emboss::FontFileWithCache &ff = m_style_manager.get_font_file_with_cache();
     double scale = get_text_shape_scale(m_style_manager.get_font_prop(), *ff.font_file);
-    Slic3r::Emboss::BendResult result = Slic3r::Emboss::resolve_bend(bend, *input, scale);
+    Slic3r::Emboss::BendResult result = Slic3r::Emboss::resolve_bend(bend, *input, scale,
+                                                                     Slic3r::Emboss::bend_tolerance_mm(style.projection.use_surface));
     if (!result.is_active())
         return {};
     return result;
@@ -3143,13 +3168,17 @@ std::optional<GLGizmoEmboss::FaceCircle> GLGizmoEmboss::detect_face_circle(std::
     if (instance_idx < 0 || instance_idx >= static_cast<int>(object->instances.size()))
         return {};
 
-    // Everything in the text plane: x, y along the text, z = 0 on the surface under the text
+    // Everything in the text plane: x, y along the text, z = 0 on the surface under the text.
+    // With "Use surface" this is also the projection plane: the text is projected along -z.
+    const StyleManager::Style &style = m_style_manager.get_style();
+    const bool        on_surface  = style.projection.use_surface;
     const Transform3d instance_tr = object->instances[instance_idx]->get_matrix();
     const Transform3d to_text     = get_text_world_matrix().inverse();
-    const double      face_z      = -static_cast<double>(m_style_manager.get_style().distance.value_or(0.f));
+    const double      face_z      = -static_cast<double>(style.distance.value_or(0.f));
     const double      band        = 0.05; // [mm] vertices this close to the text plane lie on the face
 
     std::vector<Vec2d> face_points;
+    std::vector<Vec3d> all_points; // only with surface
     BoundingBoxf       face_bb, all_bb;
     for (const ModelVolume *volume : object->volumes) {
         // other texts / svgs are not the face the text sits on
@@ -3160,71 +3189,91 @@ std::optional<GLGizmoEmboss::FaceCircle> GLGizmoEmboss::detect_face_circle(std::
             Vec3d p = tr * vertex.cast<double>();
             Vec2d p2(p.x(), p.y());
             all_bb.merge(p2);
+            if (on_surface)
+                all_points.push_back(p);
             if (std::abs(p.z() - face_z) <= band) {
                 face_points.push_back(p2);
                 face_bb.merge(p2);
             }
         }
     }
+
+    // Curved target (dome, sphere, lid): round outline seen along the projection direction
+    std::optional<Slic3r::Emboss::SurfaceRound> outline;
+    if (on_surface)
+        outline = Slic3r::Emboss::surface_round_area(all_points);
+
     if (face_center != nullptr) {
-        if (face_bb.defined)
+        if (outline.has_value())
+            *face_center = outline->center;
+        else if (face_bb.defined && !on_surface) // on a curved surface the band holds only a few points around the text
             *face_center = face_bb.center();
         else if (all_bb.defined)
             *face_center = all_bb.center();
     }
 
-    // Round face: its outer rim is a circle around the face centre
-    const size_t min_count = 12;
-    if (face_points.size() < min_count || !face_bb.defined)
-        return {};
-    const Vec2d c0    = face_bb.center();
-    double      r_max = 0.;
-    for (const Vec2d &p : face_points)
-        r_max = std::max(r_max, (p - c0).norm());
-    if (r_max <= EPSILON)
-        return {};
-    std::vector<Vec2d> rim;
-    for (const Vec2d &p : face_points)
-        if ((p - c0).norm() >= 0.85 * r_max)
-            rim.push_back(p - c0);
-    if (rim.size() < min_count)
-        return {};
+    // Round flat face: its outer rim is a circle around the face centre
+    auto flat_face = [&]() -> std::optional<FaceCircle> {
+        if (face_points.size() < 12 || !face_bb.defined)
+            return {};
+        const Vec2d c0    = face_bb.center();
+        double      r_max = 0.;
+        for (const Vec2d &p : face_points)
+            r_max = std::max(r_max, (p - c0).norm());
+        if (r_max <= EPSILON)
+            return {};
+        std::vector<Vec2d> rim;
+        for (const Vec2d &p : face_points)
+            if ((p - c0).norm() >= 0.85 * r_max)
+                rim.push_back(p);
+        std::optional<Slic3r::Emboss::RoundOutline> circle = Slic3r::Emboss::fit_round_outline(rim);
+        if (!circle.has_value())
+            return {};
+        if ((circle->center - c0).norm() > 0.05 * circle->radius)
+            return {}; // an arc of some other outline, not a round face
+        return FaceCircle{circle->center, circle->radius};
+    };
+    std::optional<FaceCircle> flat = flat_face();
 
-    // Algebraic (Kasa) circle fit: x^2 + y^2 + D x + E y + F = 0
-    Eigen::Matrix3d a = Eigen::Matrix3d::Zero();
-    Eigen::Vector3d b = Eigen::Vector3d::Zero();
-    for (const Vec2d &p : rim) {
-        Eigen::Vector3d row(p.x(), p.y(), 1.);
-        a += row * row.transpose();
-        b -= row * p.squaredNorm();
+    if (outline.has_value()) {
+        // A flat face spanning most of the outline (a cylinder end cap) wins; a handful of
+        // vertices around the top of a dome does not.
+        if (flat.has_value() && flat->radius >= 0.5 * outline->radius)
+            return flat;
+        // keep the text where the surface is not too steep for a clean projection
+        return FaceCircle{outline->center, outline->usable_radius};
     }
-    Eigen::Vector3d solution = a.colPivHouseholderQr().solve(b);
-    Vec2d  center(-solution(0) / 2., -solution(1) / 2.);
-    double radius_sq = center.squaredNorm() - solution(2);
-    if (!std::isfinite(radius_sq) || radius_sq <= 0.)
+    return flat;
+}
+
+bool GLGizmoEmboss::prepare_surface_raycast(RaycastManager::AllowVolumes &condition)
+{
+    if (m_volume == nullptr)
+        return false;
+    const GLVolume    *gl_volume = m_parent.get_selection().get_first_volume();
+    const ModelObject *object    = m_volume->get_object();
+    if (gl_volume == nullptr || object == nullptr)
+        return false;
+    int instance_idx = gl_volume->instance_idx();
+    if (instance_idx < 0 || instance_idx >= static_cast<int>(object->instances.size()))
+        return false;
+    condition = create_condition(object->volumes, m_volume->id());
+    m_raycast_manager.actualize(*object->instances[instance_idx], &condition);
+    return true;
+}
+
+std::optional<Vec3d> GLGizmoEmboss::project_on_surface(const Vec3d &point, const Vec3d &direction,
+                                                       const RaycastManager::AllowVolumes &condition, Vec3d *normal) const
+{
+    std::optional<RaycastManager::Hit> hit = m_raycast_manager.closest_hit(point, direction, &condition);
+    if (!hit.has_value())
         return {};
-    double radius = std::sqrt(radius_sq);
-    if (center.norm() > 0.05 * radius)
-        return {}; // an arc of some other outline, not a round face
-
-    double sum_sq = 0.;
-    std::vector<double> angles;
-    angles.reserve(rim.size());
-    for (const Vec2d &p : rim) {
-        double d = (p - center).norm() - radius;
-        sum_sq += d * d;
-        angles.push_back(std::atan2(p.y() - center.y(), p.x() - center.x()));
+    const Transform3d tr = m_raycast_manager.get_transformation(hit->tr_key);
+    if (normal != nullptr) {
+        Vec3d n = tr.linear().inverse().transpose() * hit->normal.cast<double>();
+        *normal = (n.squaredNorm() > 0.) ? Vec3d(n.normalized()) : Vec3d(-direction.normalized());
     }
-    if (std::sqrt(sum_sq / rim.size()) > 0.01 * radius)
-        return {}; // not round
-    std::sort(angles.begin(), angles.end());
-    double max_gap = angles.front() + 2. * PI - angles.back();
-    for (size_t i = 1; i < angles.size(); ++i)
-        max_gap = std::max(max_gap, angles[i] - angles[i - 1]);
-    if (max_gap > PI / 4.)
-        return {}; // only a part of a circle
-
-    return FaceCircle{c0 + center, radius};
+    return Vec3d(tr * hit->position.cast<double>());
 }
 
 bool GLGizmoEmboss::center_arc_on_object()
@@ -3245,19 +3294,96 @@ bool GLGizmoEmboss::center_arc_on_object()
     else
         return false;
 
-    // arc centre in the text plane [mm]
+    // arc centre in the text plane [mm], which is also the projection plane with "Use surface"
     const Vec2d arc_center(0., -result->spec.side() * result->radius_mm);
     const Vec2d move = target - arc_center;
-    if (move.squaredNorm() < sqr(1e-6))
+
+    const Transform3d text_tr    = get_text_world_matrix();
+    Vec3d             move_world = text_tr.linear() * Vec3d(move.x(), move.y(), 0.);
+
+    // On a curved surface the moved origin would float above (or sink into) the surface, and the
+    // cut could pick another layer of the object. Keep the projection direction and slide the
+    // origin along it back onto the surface.
+    if (m_style_manager.get_style().projection.use_surface) {
+        RaycastManager::AllowVolumes condition(std::vector<size_t>{});
+        if (prepare_surface_raycast(condition)) {
+            const Vec3d dir    = text_tr.linear().col(2).normalized();
+            const Vec3d origin = text_tr.translation() + move_world;
+            if (std::optional<Vec3d> hit = project_on_surface(origin, -dir, condition); hit.has_value())
+                move_world += dir * dir.dot(*hit - origin);
+        }
+    }
+    if (move_world.squaredNorm() < sqr(1e-6))
         return true;
 
-    const Vec3d move_world = get_text_world_matrix().linear() * Vec3d(move.x(), move.y(), 0.);
     Selection &selection = m_parent.get_selection();
     selection.setup_cache();
     selection.translate(move_world, TransformationType::World);
     m_parent.do_move(_u8L("Centre arc on object"));
     volume_transformation_changed();
     return true;
+}
+
+void GLGizmoEmboss::update_bend_surface_overlay(const Transform3d &text_tr, const Vec2d &center, double radius, double cross)
+{
+    if (m_bend_surface_key.has_value() && m_bend_surface_key->text_tr.isApprox(text_tr, 1e-12) &&
+        m_bend_surface_key->center == center && m_bend_surface_key->radius == radius &&
+        m_bend_surface_key->volume_id == m_volume_id)
+        return;
+    m_bend_surface_key = BendOverlayKey{text_tr, center, radius, m_volume_id};
+    m_bend_surface.reset();
+
+    RaycastManager::AllowVolumes condition(std::vector<size_t>{});
+    if (!prepare_surface_raycast(condition))
+        return;
+
+    // Project the circle the way the text is projected: along the text's -z onto the closest surface
+    const Vec3d  dir  = text_tr.linear().col(2).normalized();
+    const double lift = 0.1; // [mm] along the surface normal, against z-fighting
+    auto project = [&](const Vec2d &p) -> std::optional<Vec3d> {
+        const Vec3d world = text_tr * Vec3d(p.x(), p.y(), 0.);
+        Vec3d       n;
+        std::optional<Vec3d> hit = project_on_surface(world, -dir, condition, &n);
+        if (!hit.has_value())
+            return {};
+        return Vec3d(*hit + lift * n);
+    };
+
+    GLModel::Geometry geometry;
+    geometry.format = {GLModel::Geometry::EPrimitiveType::Lines, GLModel::Geometry::EVertexLayout::P3};
+    const unsigned int count = 360;
+    std::vector<std::optional<Vec3d>> ring(count);
+    for (unsigned int i = 0; i < count; ++i) {
+        const double angle = 2. * PI * i / count;
+        ring[i] = project(center + radius * Vec2d(std::cos(angle), std::sin(angle)));
+    }
+    // Segments only where both ends lie on the surface: beyond the object the circle has gaps,
+    // and no bridge where the closest surface jumps to another layer (a steep wall)
+    const double max_segment = 4. * 2. * PI * radius / count + 1.;
+    for (unsigned int i = 0; i < count; ++i) {
+        const std::optional<Vec3d> &a = ring[i];
+        const std::optional<Vec3d> &b = ring[(i + 1) % count];
+        if (!a.has_value() || !b.has_value() || (*a - *b).norm() > max_segment)
+            continue;
+        const unsigned int v = static_cast<unsigned int>(geometry.vertices_count());
+        geometry.add_vertex(Vec3f(a->cast<float>()));
+        geometry.add_vertex(Vec3f(b->cast<float>()));
+        geometry.add_line(v, v + 1);
+    }
+    // Centre cross along the text axes, sitting on the surface
+    if (std::optional<Vec3d> c = project(center); c.has_value()) {
+        const Vec3d x = text_tr.linear().col(0).normalized() * cross;
+        const Vec3d y = text_tr.linear().col(1).normalized() * cross;
+        const unsigned int v = static_cast<unsigned int>(geometry.vertices_count());
+        geometry.add_vertex(Vec3f((*c - x).cast<float>()));
+        geometry.add_vertex(Vec3f((*c + x).cast<float>()));
+        geometry.add_vertex(Vec3f((*c - y).cast<float>()));
+        geometry.add_vertex(Vec3f((*c + y).cast<float>()));
+        geometry.add_line(v, v + 1);
+        geometry.add_line(v + 2, v + 3);
+    }
+    if (geometry.vertices_count() > 0)
+        m_bend_surface.init_from(std::move(geometry));
 }
 
 void GLGizmoEmboss::render_bend_overlay()
@@ -3272,43 +3398,50 @@ void GLGizmoEmboss::render_bend_overlay()
     if (shader == nullptr)
         return;
 
-    if (!m_bend_circle.is_initialized()) {
-        GLModel::Geometry geometry;
-        geometry.format = {GLModel::Geometry::EPrimitiveType::LineLoop, GLModel::Geometry::EVertexLayout::P3};
-        const unsigned int count = 180;
-        geometry.reserve_vertices(count);
-        geometry.reserve_indices(count);
-        for (unsigned int i = 0; i < count; ++i) {
-            double angle = 2. * PI * i / count;
-            geometry.add_vertex(Vec3f(static_cast<float>(std::cos(angle)), static_cast<float>(std::sin(angle)), 0.f));
-            geometry.add_index(i);
-        }
-        m_bend_circle.init_from(std::move(geometry));
-    }
-    if (!m_bend_cross.is_initialized()) {
-        GLModel::Geometry geometry;
-        geometry.format = {GLModel::Geometry::EPrimitiveType::Lines, GLModel::Geometry::EVertexLayout::P3};
-        geometry.reserve_vertices(4);
-        geometry.reserve_indices(4);
-        geometry.add_vertex(Vec3f(-1.f, 0.f, 0.f));
-        geometry.add_vertex(Vec3f(1.f, 0.f, 0.f));
-        geometry.add_vertex(Vec3f(0.f, -1.f, 0.f));
-        geometry.add_vertex(Vec3f(0.f, 1.f, 0.f));
-        geometry.add_line(0, 1);
-        geometry.add_line(2, 3);
-        m_bend_cross.init_from(std::move(geometry));
-    }
     // Same accent in light and dark theme
-    const ColorRGBA color(0.f, 0.59f, 0.53f, 1.f);
-    m_bend_circle.set_color(color);
-    m_bend_cross.set_color(color);
+    const ColorRGBA   color(0.f, 0.59f, 0.53f, 1.f);
+    const double      radius  = m_bend_result->radius_mm;
+    const Vec2d       center(0., -m_bend_result->spec.side() * radius);
+    const Transform3d text_tr = get_text_world_matrix();
+    const double      cross   = std::clamp(0.08 * radius, 1., 5.);
+    // Projected text: draw the circle where the text lands, on the surface
+    const bool on_surface = m_style_manager.get_style().projection.use_surface && !m_volume->is_the_only_one_part();
 
-    const double radius = m_bend_result->radius_mm;
-    const Vec2d  center(0., -m_bend_result->spec.side() * radius);
-    const double lift   = 0.05; // [mm] above the face, against z-fighting
-    const Transform3d text_tr   = get_text_world_matrix();
-    const Transform3d center_tr = text_tr * Geometry::translation_transform(Vec3d(center.x(), center.y(), lift));
-    const double      cross     = std::clamp(0.08 * radius, 1., 5.);
+    if (on_surface) {
+        update_bend_surface_overlay(text_tr, center, radius, cross);
+        if (!m_bend_surface.is_initialized())
+            return;
+        m_bend_surface.set_color(color);
+    } else {
+        if (!m_bend_circle.is_initialized()) {
+            GLModel::Geometry geometry;
+            geometry.format = {GLModel::Geometry::EPrimitiveType::LineLoop, GLModel::Geometry::EVertexLayout::P3};
+            const unsigned int count = 180;
+            geometry.reserve_vertices(count);
+            geometry.reserve_indices(count);
+            for (unsigned int i = 0; i < count; ++i) {
+                double angle = 2. * PI * i / count;
+                geometry.add_vertex(Vec3f(static_cast<float>(std::cos(angle)), static_cast<float>(std::sin(angle)), 0.f));
+                geometry.add_index(i);
+            }
+            m_bend_circle.init_from(std::move(geometry));
+        }
+        if (!m_bend_cross.is_initialized()) {
+            GLModel::Geometry geometry;
+            geometry.format = {GLModel::Geometry::EPrimitiveType::Lines, GLModel::Geometry::EVertexLayout::P3};
+            geometry.reserve_vertices(4);
+            geometry.reserve_indices(4);
+            geometry.add_vertex(Vec3f(-1.f, 0.f, 0.f));
+            geometry.add_vertex(Vec3f(1.f, 0.f, 0.f));
+            geometry.add_vertex(Vec3f(0.f, -1.f, 0.f));
+            geometry.add_vertex(Vec3f(0.f, 1.f, 0.f));
+            geometry.add_line(0, 1);
+            geometry.add_line(2, 3);
+            m_bend_cross.init_from(std::move(geometry));
+        }
+        m_bend_circle.set_color(color);
+        m_bend_cross.set_color(color);
+    }
 
     const Camera &camera = app.plater()->get_camera();
     shader->start_using();
@@ -3318,10 +3451,18 @@ void GLGizmoEmboss::render_bend_overlay()
     if (!is_depth_test)
         glsafe(::glEnable(GL_DEPTH_TEST));
 
-    shader->set_uniform("view_model_matrix", camera.get_view_matrix() * center_tr * Geometry::scale_transform(Vec3d(radius, radius, 1.)));
-    m_bend_circle.render();
-    shader->set_uniform("view_model_matrix", camera.get_view_matrix() * center_tr * Geometry::scale_transform(Vec3d(cross, cross, 1.)));
-    m_bend_cross.render();
+    if (on_surface) {
+        // geometry in world coordinates
+        shader->set_uniform("view_model_matrix", camera.get_view_matrix());
+        m_bend_surface.render();
+    } else {
+        const double      lift      = 0.05; // [mm] above the face, against z-fighting
+        const Transform3d center_tr = text_tr * Geometry::translation_transform(Vec3d(center.x(), center.y(), lift));
+        shader->set_uniform("view_model_matrix", camera.get_view_matrix() * center_tr * Geometry::scale_transform(Vec3d(radius, radius, 1.)));
+        m_bend_circle.render();
+        shader->set_uniform("view_model_matrix", camera.get_view_matrix() * center_tr * Geometry::scale_transform(Vec3d(cross, cross, 1.)));
+        m_bend_cross.render();
+    }
 
     if (!is_depth_test)
         glsafe(::glDisable(GL_DEPTH_TEST));
@@ -3395,16 +3536,20 @@ void GLGizmoEmboss::draw_curve()
         }
         commit = true;
     } else if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        m_imgui->tooltip(can_bend ? _u8L("Bend the text along a circular arc in the plane of the text.") :
-                                    _u8L("Turn off \"Use surface\" and \"Per glyph\" in Advanced to curve the text."),
+        m_imgui->tooltip(can_bend ? _u8L("Bend the text along a circular arc in the plane of the text. "
+                                         "With \"Use surface\" the curved text is then projected onto the surface.") :
+                                    _u8L("Turn off \"Per glyph\" in Advanced to curve the text."),
                          tooltip_width);
     }
     m_imgui->disabled_end();
 
     const bool is_on = bend.mode != EmbossBend::Mode::off;
     if (!can_bend)
-        draw_note(is_on ? _u8L("The curve is ignored while \"Use surface\" or \"Per glyph\" is on.") :
-                          _u8L("Not available together with \"Use surface\" or \"Per glyph\"."));
+        draw_note(is_on ? _u8L("The curve is ignored while \"Per glyph\" is on.") :
+                          _u8L("Not available together with \"Per glyph\"."));
+    else if (is_on && style.projection.use_surface && !is_text_object)
+        draw_note(_u8L("The arc is laid out in the text plane and projected onto the surface; "
+                       "letters stretch where the surface gets steep."));
     if (!is_on || !can_bend) {
         m_bend_result.reset();
         if (commit)
@@ -3479,7 +3624,7 @@ void GLGizmoEmboss::draw_curve()
             Plater::TakeSnapshot snapshot(wxGetApp().plater(), _u8L("Curve text"), UndoRedo::SnapshotType::GizmoAction);
             m_bend_drag_snapshot = true;
         }
-        process(false);
+        request_bend_preview();
         result = calc_bend_result();
     }
     if (slider_released)
@@ -3558,6 +3703,7 @@ void GLGizmoEmboss::draw_curve()
     m_imgui->disabled_end();
 
     if (commit) {
+        m_bend_preview_pending = false; // the full update below covers it
         process();
         result = calc_bend_result();
     }
@@ -3813,11 +3959,13 @@ EmbossShape &TextDataBase::create_shape()
     Slic3r::Emboss::GlyphAdvances advances;
     shape.shapes_with_ids = text2vshapes(m_font_file, text_w, fp, was_canceled, advances);
 
-    // Curved text: bend the 2D outlines before they are united and extruded.
-    // Not combined with per glyph placement or surface projection (yet).
+    // Curved text: bend the 2D outlines before they are united and extruded. With "Use surface"
+    // the bent outlines are projected onto the object like straight text. Not combined with
+    // per glyph placement, which positions every glyph along a section of the object itself.
     const EmbossBend &bend = shape.projection.bend;
-    if (bend.is_active() && !fp.per_glyph && !shape.projection.use_surface && !was_canceled())
-        Slic3r::Emboss::apply_bend(shape.shapes_with_ids, bend, shape.scale, &advances);
+    if (bend.is_active() && !fp.per_glyph && !was_canceled())
+        Slic3r::Emboss::apply_bend(shape.shapes_with_ids, bend, shape.scale, &advances,
+                                   Slic3r::Emboss::bend_tolerance_mm(shape.projection.use_surface));
     return shape;
 }
 

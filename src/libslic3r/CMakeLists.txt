@@ -231,6 +231,8 @@ set(lisbslic3r_sources
     Format/3mf.hpp
     Format/AMF.cpp
     Format/AMF.hpp
+    Format/AssembleList.cpp
+    Format/AssembleList.hpp
     Format/bbs_3mf.cpp
     Format/bbs_3mf.hpp
     Format/BambuExport.cpp

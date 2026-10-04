@@ -13,6 +13,7 @@
 #include "MsgDialog.hpp"
 #include "RemoteHub.hpp"
 #include "Theme.hpp"
+#include "AccountStatus.hpp"
 
 #include <algorithm>
 #include <thread>
@@ -58,6 +59,15 @@ static wxColour topbar_text_colour()
 #endif
 }
 
+// The Account button's label is drawn in the theme's warning colour while the printer's account is
+// signed out (GUI/AccountStatus.cpp, BBLTopbar::SetAccountWarning).
+static bool g_account_warn = false;
+
+static wxColour topbar_warning_colour()
+{
+    return GUI::Theme::colour("titlebar_warning", wxColour(255, 200, 61));
+}
+
 // The banner scaled for the bar; made again for a new size, and dropped when the theme changes
 // (BBLTopbar::ThemeChanged) because the new theme has another banner, or none.
 static wxBitmap g_banner_scaled;
@@ -97,7 +107,7 @@ static void draw_banner(wxDC& dc, const wxRect& rect)
 void BBLTopbarArt::DrawLabel(wxDC& dc, wxWindow* wnd, const wxAuiToolBarItem& item, const wxRect& rect)
 {
     dc.SetFont(m_font);
-    dc.SetTextForeground(topbar_text_colour());
+    dc.SetTextForeground(item.GetId() == ID_ACCOUNT && g_account_warn ? topbar_warning_colour() : topbar_text_colour());
 
     int textWidth = 0, textHeight = 0;
     dc.GetTextExtent(item.GetLabel(), &textWidth, &textHeight);
@@ -218,7 +228,7 @@ void BBLTopbarArt::DrawButton(wxDC& dc, wxWindow* wnd, const wxAuiToolBarItem& i
         dc.DrawBitmap(bmp, bmpX, bmpY, true);
 
     // set the item's text color based on if it is disabled
-    dc.SetTextForeground(topbar_text_colour());
+    dc.SetTextForeground(item.GetId() == ID_ACCOUNT && g_account_warn ? topbar_warning_colour() : topbar_text_colour());
     if (item.GetState() & wxAUI_BUTTON_STATE_DISABLED)
     {
         dc.SetTextForeground(wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
@@ -391,10 +401,27 @@ void BBLTopbar::Init(wxFrame* parent)
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnUndo, this, wxID_UNDO);
     //this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnModelStoreClicked, this, ID_MODEL_STORE);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnPublishClicked, this, ID_PUBLISH);
+
+    // The Account button shows a warning while the selected printer's account is signed out.
+    g_account_warn = false;
+    GUI::AccountStatus::attach_topbar(this);
+    GUI::AccountStatus::refresh_async();
+}
+
+void BBLTopbar::SetAccountWarning(bool warn, const wxString& tooltip)
+{
+    if (m_account_item == nullptr)
+        return;
+    const bool changed = g_account_warn != warn || m_account_item->GetShortHelp() != tooltip;
+    g_account_warn = warn;
+    m_account_item->SetShortHelp(tooltip);
+    if (changed)
+        Refresh();
 }
 
 BBLTopbar::~BBLTopbar()
 {
+    GUI::AccountStatus::detach_topbar(this);
     m_file_menu_item = nullptr;
     m_dropdown_menu_item = nullptr;
     m_file_menu = nullptr;

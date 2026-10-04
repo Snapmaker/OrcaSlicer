@@ -2,7 +2,9 @@
 #include "I18N.hpp"
 
 #include <atomic>
+#include <cerrno>
 #include <cstdlib>
+#include <cstring>
 #include <locale>
 #include <memory>
 #include <mutex>
@@ -27,7 +29,9 @@
 	#include <io.h>  // for _access
 #else
 	#include <unistd.h>
+	#include <fcntl.h>
 	#include <sys/types.h>
+	#include <sys/stat.h>
 	#include <sys/param.h>
     #include <sys/resource.h>
 	#ifdef BSD
@@ -552,6 +556,29 @@ namespace WindowsSupport
 		std::wstring wide_from = boost::nowide::widen(from);
 		std::wstring wide_to   = boost::nowide::widen(to);
 
+		// ReplaceFileW keeps the destination DACL, attributes and ADS.
+		// MoveFileEx / SetFileInformationByHandle do not: the temp's inherited
+		// descriptor would win. Fall back when the target is missing or the
+		// filesystem does not implement ReplaceFile.
+		const DWORD dest_attr = ::GetFileAttributesW(wide_to.c_str());
+		if (dest_attr != INVALID_FILE_ATTRIBUTES && !(dest_attr & FILE_ATTRIBUTE_DIRECTORY)) {
+			DWORD replace_flags = 0;
+#ifdef REPLACEFILE_IGNORE_MERGE_ERRORS
+			replace_flags |= REPLACEFILE_IGNORE_MERGE_ERRORS;
+#endif
+#ifdef REPLACEFILE_IGNORE_ACL_ERRORS
+			replace_flags |= REPLACEFILE_IGNORE_ACL_ERRORS;
+#endif
+			if (::ReplaceFileW(wide_to.c_str(), wide_from.c_str(), nullptr, replace_flags, nullptr, nullptr))
+				return {};
+			const DWORD err = ::GetLastError();
+			if (err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND &&
+			    err != ERROR_NOT_SUPPORTED && err != ERROR_INVALID_FUNCTION &&
+			    err != ERROR_CALL_NOT_IMPLEMENTED)
+				BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " ReplaceFileW failed (" << err
+				                           << "); falling back to MoveFileEx / SetFileInformationByHandle";
+		}
+
 		ScopedFileHandle from_handle;
 		// Retry this a few times to defeat badly behaved file system scanners.
 		for (unsigned retry = 0; retry != 200; ++ retry) {
@@ -661,15 +688,326 @@ namespace WindowsSupport
 } // namespace WindowsSupport
 #endif /* _WIN32 */
 
+static std::atomic<unsigned> s_atomic_write_counter{0};
+
+#ifndef _WIN32
+bool posix_rename_worth_retrying(int err)
+{
+	// Every first-rename errno is worth bak-then-rename except those no
+	// retry can help: missing source, a different device, or a directory
+	// where a file was expected (and the reverse).
+	return err != ENOENT && err != EXDEV && err != ENOTDIR && err != EISDIR;
+}
+
+static std::atomic<AtomicPosixRenameFn> s_posix_rename_hook{nullptr};
+static std::atomic<AtomicWriteTempInspectFn> s_temp_inspect_hook{nullptr};
+static std::atomic<AtomicWriteTempInspectFn> s_temp_create_hook{nullptr};
+
+void set_atomic_posix_rename_hook(AtomicPosixRenameFn hook)
+{
+	s_posix_rename_hook.store(hook);
+}
+
+void set_atomic_write_temp_inspect_hook(AtomicWriteTempInspectFn hook)
+{
+	s_temp_inspect_hook.store(hook);
+}
+
+void set_atomic_write_temp_create_hook(AtomicWriteTempInspectFn hook)
+{
+	s_temp_create_hook.store(hook);
+}
+
+static int atomic_posix_rename(const char *from, const char *to)
+{
+	if (AtomicPosixRenameFn hook = s_posix_rename_hook.load())
+		return hook(from, to);
+	return boost::nowide::rename(from, to);
+}
+
+// `<to>.<pid>.<n>.atomic.bak`. Reuse the temp suffix when `from` is
+// `<to>.<pid>.<n>.tmp`; otherwise mint a fresh pid/counter pair.
+static std::string atomic_write_backup_path(const std::string &to, const std::string &from)
+{
+	static constexpr const char kTmp[] = ".tmp";
+	static constexpr size_t     kTmpLen = 4;
+	if (from.size() > kTmpLen &&
+	    from.compare(from.size() - kTmpLen, kTmpLen, kTmp) == 0 &&
+	    from.size() > to.size() + 1 &&
+	    from.compare(0, to.size(), to) == 0 &&
+	    from[to.size()] == '.')
+		return from.substr(0, from.size() - kTmpLen) + ".atomic.bak";
+	const unsigned n = s_atomic_write_counter.fetch_add(1u);
+	return to + "." + std::to_string(get_current_pid()) + "." + std::to_string(n) + ".atomic.bak";
+}
+
+std::error_code posix_rename_retry_after_replace_refused(const std::string &from,
+                                                         const std::string &to,
+                                                         int                first_errno,
+                                                         PosixRenameFallbackFate *fate)
+{
+	if (fate)
+		*fate = PosixRenameFallbackFate::NotAttempted;
+	if (!posix_rename_worth_retrying(first_errno))
+		return std::error_code(first_errno, std::generic_category());
+
+	// Move the target aside instead of unlinking it. If the retry then fails,
+	// the bak can be put back so the old contents are not lost.
+	const std::string bak = atomic_write_backup_path(to, from);
+	boost::nowide::remove(bak.c_str());
+	errno = 0;
+	if (atomic_posix_rename(to.c_str(), bak.c_str()) != 0) {
+		if (fate)
+			*fate = PosixRenameFallbackFate::BakMoveFailed;
+		return std::error_code(errno, std::generic_category());
+	}
+
+	if (atomic_posix_rename(from.c_str(), to.c_str()) == 0) {
+		if (boost::nowide::remove(bak.c_str()) != 0)
+			BOOST_LOG_TRIVIAL(warning) << "posix_rename_retry_after_replace_refused: leftover backup "
+			                           << bak << ": " << std::strerror(errno);
+		if (fate)
+			*fate = PosixRenameFallbackFate::Replaced;
+		return {};
+	}
+	const int second = errno;
+	if (atomic_posix_rename(bak.c_str(), to.c_str()) == 0) {
+		if (fate)
+			*fate = PosixRenameFallbackFate::TargetRestored;
+	} else if (fate) {
+		*fate = PosixRenameFallbackFate::TargetRemoved;
+	}
+	return std::error_code(second, std::generic_category());
+}
+#endif
+
 // borrowed from LVVM lib/Support/Windows/Path.inc
 std::error_code rename_file(const std::string &from, const std::string &to)
 {
 #ifdef _WIN32
 	return WindowsSupport::rename(from, to);
 #else
-	boost::nowide::remove(to.c_str());
-	return std::make_error_code(static_cast<std::errc>(boost::nowide::rename(from.c_str(), to.c_str())));
+	// rename(2) replaces an existing target atomically. Some mounts
+	// (sshfs, gvfs, MTP, a few SMB setups) refuse that replace; only then
+	// fall back to bak-then-rename. Returns the second errno on a failed retry.
+	if (atomic_posix_rename(from.c_str(), to.c_str()) == 0)
+		return {};
+	return posix_rename_retry_after_replace_refused(from, to, errno);
 #endif
+}
+
+std::string atomic_write_temp_path(const std::string &path, bool consume)
+{
+	// Short on purpose: `.<pid>.<n>.tmp` (upstream Orca #15861's name) adds at
+	// most 26 characters, so a preset path that fitted under MAX_PATH before
+	// still fits. Uniqueness across processes that share a pid (Flatpak) comes
+	// from the exclusive create below, which retries the next counter on EEXIST.
+	const unsigned n = consume ? s_atomic_write_counter.fetch_add(1u) : s_atomic_write_counter.load();
+	return path + "." + std::to_string(get_current_pid()) + "." + std::to_string(n) + ".tmp";
+}
+
+// Whole-file write without the temporary: used only when the temp could not
+// replace an existing target (Windows: a reader holding it open without
+// FILE_SHARE_DELETE, an AV or indexer lock; POSIX: a mount that cannot replace
+// a file). Losing the save is worse than a reader seeing a partial file, so
+// write in place the way this worked before the atomic path existed. The
+// in-place write truncates the target, so two threads of this process must not
+// both be in it: one mutex for all such writes, never freed so a save during
+// static destruction still finds it.
+static bool write_file_in_place(const std::string &path, const std::string &data, bool binary, std::string &why)
+{
+	static auto *mutex = new std::mutex();
+	std::lock_guard<std::mutex> guard(*mutex);
+	errno = 0;
+	FILE *file = boost::nowide::fopen(path.c_str(), binary ? "wb" : "w");
+	if (file == nullptr) {
+		why = errno != 0 ? std::strerror(errno) : std::string("cannot open for writing");
+		return false;
+	}
+	bool ok = data.empty() || std::fwrite(data.data(), 1, data.size(), file) == data.size();
+	ok = ok && std::fflush(file) == 0;
+	const int write_err = ok ? 0 : errno;
+	ok = std::fclose(file) == 0 && ok;
+	if (!ok)
+		why = write_err != 0 ? std::strerror(write_err) : std::string("write failed");
+	return ok;
+}
+
+bool write_file_atomically(const std::string &path, const std::string &data, std::string *err, bool binary)
+{
+	boost::system::error_code bec;
+	const boost::filesystem::file_status link_st = boost::filesystem::symlink_status(path, bec);
+	if (!bec && boost::filesystem::is_symlink(link_st)) {
+		// A config or preset kept in a dotfiles repo: the link stays, the file
+		// it points to is replaced like any other. A dangling or looping link
+		// is a hard error so we do not silently replace the symlink with a file.
+		const boost::filesystem::path resolved = boost::filesystem::canonical(path, bec);
+		if (!bec && boost::filesystem::is_regular_file(resolved, bec))
+			return write_file_atomically(resolved.string(), data, err, binary);
+		const std::string why = bec ? bec.message() : std::string("not a regular file");
+		BOOST_LOG_TRIVIAL(error) << "write_file_atomically: cannot resolve symlink " << path << ": " << why;
+		if (err)
+			*err = std::string("cannot resolve symlink ") + path + ": " + why;
+		return false;
+	}
+
+	const boost::filesystem::file_status target_st = boost::filesystem::status(path, bec);
+	const bool target_exists = !bec && boost::filesystem::exists(target_st);
+
+	std::string tmp;
+	errno = 0;
+#ifdef _WIN32
+	// rename_file tries ReplaceFileW first so the destination DACL, attributes
+	// and ADS are kept; MoveFileEx is only the missing-target / unsupported-fs
+	// fallback and does not preserve the DACL.
+	// "wx" / "wbx" is C11 exclusive create (VS2015+ / UCRT). A same-name leftover
+	// must not be truncated; only EEXIST / ERROR_FILE_EXISTS is retried.
+	FILE *file     = nullptr;
+	int   last_err = 0;
+	for (int attempt = 0; attempt < ATOMIC_WRITE_TEMP_ATTEMPTS; ++attempt) {
+		tmp     = atomic_write_temp_path(path, true);
+		errno   = 0;
+		file    = boost::nowide::fopen(tmp.c_str(), binary ? "wbx" : "wx");
+		last_err = errno;
+		if (file != nullptr)
+			break;
+		const DWORD werr = ::GetLastError();
+		if (last_err != EEXIST && werr != ERROR_FILE_EXISTS && werr != ERROR_ALREADY_EXISTS)
+			break;
+	}
+	if (file == nullptr) {
+		if (err)
+			*err = std::string("cannot create temporary file ") + tmp + ": " +
+			       (last_err != 0 ? std::strerror(last_err) : std::string("exclusive create failed"));
+		return false;
+	}
+	(void) target_exists;
+#else
+	int flags = O_CREAT | O_EXCL | O_WRONLY;
+#ifdef O_CLOEXEC
+	flags |= O_CLOEXEC;
+#endif
+	// Existing targets are created 0600 so a racing open cannot grab a
+	// world-readable fd. New files use 0666 and the kernel applies the umask.
+	const mode_t create_mode = target_exists ? static_cast<mode_t>(0600) : static_cast<mode_t>(0666);
+	int          fd          = -1;
+	int          last_err    = 0;
+	for (int attempt = 0; attempt < ATOMIC_WRITE_TEMP_ATTEMPTS; ++attempt) {
+		tmp       = atomic_write_temp_path(path, true);
+		errno     = 0;
+		fd        = ::open(tmp.c_str(), flags, create_mode);
+		last_err  = errno;
+		if (fd >= 0)
+			break;
+		if (last_err != EEXIST)
+			break;
+	}
+	if (fd < 0) {
+		if (err)
+			*err = std::string("cannot create temporary file ") + tmp + ": " + std::strerror(last_err);
+		return false;
+	}
+	struct stat created_st;
+	// Never fall back to 0666: a failed fstat must not invent a world-writable mode.
+	mode_t default_mode = 0644;
+	if (::fstat(fd, &created_st) == 0)
+		default_mode = created_st.st_mode & 07777;
+	else
+		BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: fstat failed for " << tmp;
+
+	if (AtomicWriteTempInspectFn create = s_temp_create_hook.load())
+		create(tmp.c_str(), fd);
+
+	// Restrict the temp before any payload is written so a crash cannot leave
+	// a world-readable sibling. Restore default_mode or the target's mode later.
+	if (::fchmod(fd, S_IRUSR | S_IWUSR) != 0)
+		BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: fchmod 0600 failed for " << tmp;
+	if (AtomicWriteTempInspectFn inspect = s_temp_inspect_hook.load())
+		inspect(tmp.c_str(), fd);
+
+	FILE *file = ::fdopen(fd, binary ? "wb" : "w");
+	if (file == nullptr) {
+		const int open_err = errno;
+		::close(fd);
+		boost::nowide::remove(tmp.c_str());
+		if (err)
+			*err = std::string("cannot create temporary file ") + tmp + ": " + std::strerror(open_err);
+		return false;
+	}
+#endif
+
+	// Flushed to the OS, not to the device: like upstream Orca #15861, no
+	// fsync / _commit. These saves run on the GUI thread (AppConfig at idle,
+	// presets on Save), and the rename already gives readers a complete old or
+	// new file; a disk flush there is a cost these files do not justify.
+	const size_t wrote    = data.empty() ? 0 : std::fwrite(data.data(), 1, data.size(), file);
+	const bool   ok_write = wrote == data.size();
+	const bool   ok_flush = std::fflush(file) == 0;
+#ifndef _WIN32
+	if (ok_write && ok_flush) {
+		mode_t restore_mode = default_mode;
+		if (target_exists) {
+			struct stat ts;
+			if (::stat(path.c_str(), &ts) == 0)
+				restore_mode = ts.st_mode & 07777;
+		}
+		if (::fchmod(::fileno(file), restore_mode) != 0)
+			BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: fchmod restore failed for " << tmp;
+	}
+#endif
+	const int  flush_err = ok_write && ok_flush ? 0 : errno;
+	const bool ok_close  = std::fclose(file) == 0;
+	if (!ok_write || !ok_flush || !ok_close) {
+		boost::nowide::remove(tmp.c_str());
+		if (err)
+			*err = std::string("failed to write temporary file ") + tmp +
+			       (flush_err != 0 ? (std::string(": ") + std::strerror(flush_err)) : std::string());
+		return false;
+	}
+
+	std::error_code ec;
+#ifndef _WIN32
+	PosixRenameFallbackFate fate = PosixRenameFallbackFate::NotAttempted;
+	if (atomic_posix_rename(tmp.c_str(), path.c_str()) != 0)
+		ec = posix_rename_retry_after_replace_refused(tmp, path, errno, &fate);
+#else
+	ec = rename_file(tmp, path);
+#endif
+	if (!ec)
+		return true;
+
+	boost::system::error_code exists_ec;
+	const boost::filesystem::file_status now_st = boost::filesystem::status(path, exists_ec);
+	bool target_still = !exists_ec && boost::filesystem::exists(now_st);
+	// The replace was refused. A directory or other non-file at the target is
+	// a real error; a regular file (or a target the POSIX fallback lost) gets
+	// the in-place write upstream falls back to.
+	if (!target_still || boost::filesystem::is_regular_file(now_st)) {
+		std::string why;
+		if (write_file_in_place(path, data, binary, why)) {
+			boost::nowide::remove(tmp.c_str());
+			BOOST_LOG_TRIVIAL(warning) << "write_file_atomically: cannot replace " << path << " (" << ec.message()
+			                           << "); wrote it in place instead";
+			return true;
+		}
+		BOOST_LOG_TRIVIAL(error) << "write_file_atomically: cannot replace " << path << " (" << ec.message()
+		                         << ") and the in-place write failed too: " << why;
+		target_still = boost::filesystem::exists(path, exists_ec);
+	}
+	// Never drop the temp once the target is gone: that is the last copy of
+	// the new contents (and on POSIX the bak holds the old ones, if any).
+	if (target_still)
+		boost::nowide::remove(tmp.c_str());
+	if (err) {
+		*err = std::string("failed to replace ") + path + ": ";
+#ifndef _WIN32
+		if (fate == PosixRenameFallbackFate::BakMoveFailed)
+			*err += std::string("cannot move target aside: ");
+#endif
+		*err += ec.message();
+		*err += target_still ? " (target intact)" : " (target removed; temporary kept)";
+	}
+	return false;
 }
 
 #ifdef __linux__

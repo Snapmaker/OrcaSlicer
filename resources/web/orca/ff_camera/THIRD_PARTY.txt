@@ -1,0 +1,21 @@
+FlashForge Device tab camera page - third-party files
+
+index.html and ff_camera.js are EdgeSlicer's own (AGPL-3.0, as the rest of EdgeSlicer).
+
+flv.min.js
+  flv.js 1.6.2, https://github.com/bilibili/flv.js
+  Copyright (C) 2016 Bilibili. Licensed under the Apache License, Version 2.0.
+  Bundles es6-promise (MIT, Copyright (c) 2014 Yehuda Katz, Tom Dale, Stefan Penner and
+  contributors).
+  Taken unmodified from FlashForge's Orca-Flashforge repository
+  (resources/web/orca/js/flv.min.js, branch release_0817), where it plays the same streams.
+  sha256 733b9b325dbc59871a652c0a84f2f285a2cfd06cf2efcedcd87cb1e194cd1e8f
+
+hls.min.js
+  hls.js 1.5.6, https://github.com/video-dev/hls.js
+  Copyright (c) 2017 Dailymotion. Licensed under the Apache License, Version 2.0.
+  Taken unmodified from FlashForge's Orca-Flashforge repository
+  (resources/web/orca/js/hls.js, branch release_0817).
+  sha256 dabbd1c4fdd9b69d5792ead3e96375360bd3226d420ab0e84f14520ba904dca3
+
+The Apache License 2.0 text: https://www.apache.org/licenses/LICENSE-2.0

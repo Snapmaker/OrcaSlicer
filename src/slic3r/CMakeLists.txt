@@ -16,6 +16,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/3DScene.hpp
     GUI/AboutDialog.cpp
     GUI/AboutDialog.hpp
+    GUI/AccountStatus.cpp
+    GUI/AccountStatus.hpp
     GUI/AmsMappingPopup.cpp
     GUI/AmsMappingPopup.hpp
     GUI/AMSMaterialsSetting.cpp
@@ -40,6 +42,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/BBLStatusBarSend.hpp
     GUI/BlenderBridge.cpp
     GUI/BlenderBridge.hpp
+    GUI/ExternalEditorBridge.cpp
+    GUI/ExternalEditorBridge.hpp
+    GUI/FreeCADBridge.cpp
+    GUI/FreeCADBridge.hpp
     GUI/BBLTopbar.cpp
     GUI/BBLTopbar.hpp
     GUI/BedShapeDialog.cpp
@@ -90,6 +96,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/QuadRemeshDialog.hpp
     GUI/SliceBakeDialog.cpp
     GUI/SliceBakeDialog.hpp
+    GUI/StabilizerBakeDialog.cpp
+    GUI/StabilizerBakeDialog.hpp
     GUI/ColorSplitDialog.cpp
     GUI/ColorSplitDialog.hpp
     GUI/ImageFillDialog.cpp
@@ -227,6 +235,7 @@ set(SLIC3R_GUI_SOURCES
     #GUI/Gizmos/GLGizmoText.hpp
     GUI/GLCanvas3D.cpp
     GUI/GLCanvas3D.hpp
+    GUI/SequentialPrintClearance.hpp
     GUI/GLModel.cpp
     GUI/GLModel.hpp
     GUI/GLSelectionRectangle.cpp
@@ -292,6 +301,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/PageServerSecurity.hpp
     GUI/UntrustedSettingsGuard.cpp
     GUI/UntrustedSettingsGuard.hpp
+    GUI/CustomModelsMenu.cpp
+    GUI/CustomModelsMenu.hpp
     GUI/I18N.cpp
     GUI/I18N.hpp
     GUI/IconManager.cpp
@@ -319,6 +330,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Jobs/ColorSplitJob.hpp
     GUI/Jobs/SliceBakeJob.cpp
     GUI/Jobs/SliceBakeJob.hpp
+    GUI/Jobs/StabilizerBakeJob.cpp
+    GUI/Jobs/StabilizerBakeJob.hpp
     GUI/Jobs/SeamAutoPaintJob.cpp
     GUI/Jobs/SeamAutoPaintJob.hpp
     GUI/Jobs/QuadRemeshJob.cpp
@@ -357,6 +370,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/KBShortcutsDialog.hpp
     GUI/MainFrame.cpp
     GUI/MainFrame.hpp
+    GUI/PrintSelectKeys.hpp
     GUI/LazyPanelHolder.hpp
     GUI/MarkdownTip.cpp
     GUI/MarkdownTip.hpp
@@ -402,6 +416,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/MultiTaskModel.hpp
     GUI/NetworkTestDialog.cpp
     GUI/NetworkTestDialog.hpp
+    GUI/FirewallCheckDialog.cpp
+    GUI/FirewallCheckDialog.hpp
+    GUI/BambuSetupNoticeDialog.cpp
+    GUI/BambuSetupNoticeDialog.hpp
     GUI/Notebook.cpp
     GUI/Notebook.hpp
     GUI/NotificationManager.cpp
@@ -491,6 +509,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/BambuReprint.hpp
     GUI/GcodeArchive.cpp
     GUI/GcodeArchive.hpp
+    GUI/PrinterTimelapse.cpp
+    GUI/PrinterTimelapse.hpp
+    GUI/RemoteTimelapse.cpp
+    GUI/RemoteTimelapse.hpp
     GUI/RemoteSnapmaker.cpp
     GUI/RemoteSnapmaker.hpp
     GUI/SnapmakerLan.cpp
@@ -506,6 +528,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/DeviceModelCode.cpp
     GUI/NozzleTempRows.hpp
     GUI/DeviceControls.hpp
+    GUI/ChamberLights.hpp
     GUI/FilamentCommands.hpp
     GUI/SnapmakerLan.hpp
     GUI/RemoteHub.cpp
@@ -831,6 +854,10 @@ set(SLIC3R_GUI_SOURCES
     Utils/BambuStudioLauncher.hpp
     Utils/BlenderLauncher.cpp
     Utils/BlenderLauncher.hpp
+    Utils/ExternalEditor.cpp
+    Utils/ExternalEditor.hpp
+    Utils/FreeCADLauncher.cpp
+    Utils/FreeCADLauncher.hpp
     Utils/InstanceRouting.hpp
     Utils/Bonjour.cpp
     Utils/Bonjour.hpp
@@ -900,6 +927,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/ServerLifetime.hpp
     Utils/SnapmakerSilentLogin.cpp
     Utils/SnapmakerSilentLogin.hpp
+    Utils/AccountProviders.cpp
+    Utils/AccountProviders.hpp
     Utils/json_diff.cpp
     Utils/json_diff.hpp
     Utils/minilzo_extension.cpp
@@ -951,6 +980,10 @@ set(SLIC3R_GUI_SOURCES
     Utils/TimeSyncManager.cpp
     Utils/TimeSyncManager.hpp
     Utils/TimeoutMap.hpp
+    Utils/WinFirewall.cpp
+    Utils/WinFirewall.hpp
+    Utils/BambuSetupNotice.cpp
+    Utils/BambuSetupNotice.hpp
 )
 
 add_subdirectory(GUI/DeviceTab)
@@ -1064,6 +1097,7 @@ slic3r_unity_build(libslic3r_gui SKIP
     GUI/Gizmos/GLGizmoCut.cpp                     # namespace-scope using namespace Geometry
     GUI/Gizmos/GLGizmosCommon.cpp                 # namespace-scope using-directives for the gizmo data objects
     GUI/UntrustedSettingsGuard.cpp                # namespace-scope using namespace Slic3r::untrusted
+    GUI/CustomModelsMenu.cpp                      # file-local helpers with generic names (menu_label, add_item, ...)
     GUI/Jobs/CreateFontStyleImagesJob.cpp         # namespace-scope using namespace Emboss
     GUI/Jobs/EmbossJob.cpp                        # namespace-scope using namespace Emboss
     GUI/TextLines.cpp                             # namespace-scope using namespace Emboss
@@ -1097,6 +1131,9 @@ slic3r_unity_build(libslic3r_gui SKIP
     GUI/OpenGLManager.cpp                         # includes wx/glcanvas.h (GL/gl.h) before a neighbour's glad
     GUI/Gizmos/GLGizmosManager.cpp                # includes wx/glcanvas.h (GL/gl.h) before a neighbour's glad
     GUI/MediaFilePanel.cpp                        # Windows shell headers declare UserNotification (clashes with UserNotification.hpp)
+    GUI/FirewallCheckDialog.cpp                   # Windows shell headers; ::CheckBox vs GUI::CheckBox (Field.hpp)
+    GUI/BambuSetupNoticeDialog.cpp                # ::CheckBox vs GUI::CheckBox (Field.hpp)
+    Utils/WinFirewall.cpp                         # windows.h + netfw.h (COM) ahead of neighbours' headers
     GUI/wxMediaCtrl2.cpp                          # Windows shell headers declare UserNotification (clashes with UserNotification.hpp)
     GUI/Widgets/WebView.cpp                       # Windows shell headers declare UserNotification (clashes with UserNotification.hpp)
     GUI/AMSSetting.cpp                            # ::CheckBox vs GUI::CheckBox (Field.hpp)

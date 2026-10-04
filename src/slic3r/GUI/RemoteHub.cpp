@@ -11,10 +11,12 @@
 #include "HubPushOwner.hpp"
 #include "GcodeArchive.hpp" // normalize_printer: the Reprint list's printer names
 #include "SnapmakerLan.hpp" // the LAN cards a "connect" record may belong to
+#include "slic3r/Utils/HubAddresses.hpp" // which of this PC's addresses a phone is told about
 #include "HMS.hpp"
 #include "libslic3r/Utils.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/ServerLifetime.hpp"
+#include "slic3r/Utils/WinFirewall.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/beast/core/detail/base64.hpp>
@@ -76,6 +78,13 @@
 #include <wx/taskbar.h>
 #include <wx/timer.h>
 #include <wx/utils.h>
+
+#ifndef _WIN32
+#  include <arpa/inet.h>
+#  include <ifaddrs.h>
+#  include <net/if.h>
+#  include <netinet/in.h>
+#endif
 
 namespace Slic3r {
 namespace GUI {
@@ -340,6 +349,74 @@ static const char* status_text(int status)
     }
 }
 
+// This PC's network adapters as the hub's address rules (HubAddresses.hpp) see them. Empty when the
+// system would not say; lan_ips() then does what it did before adapters were looked at.
+#ifdef _WIN32
+static std::string narrow_utf8(const wchar_t* w)
+{
+    if (!w || !*w) return std::string();
+    const int n = ::WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+    if (n <= 1) return std::string();
+    std::string s((size_t) n - 1, '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, w, -1, &s[0], n, nullptr, nullptr);
+    return s;
+}
+
+static std::vector<HubAddresses::Adapter> host_adapters()
+{
+    std::vector<HubAddresses::Adapter> out;
+    const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_INCLUDE_GATEWAYS;
+    ULONG size = 16 * 1024, rc = ERROR_BUFFER_OVERFLOW;
+    std::vector<unsigned char> buf;
+    for (int attempt = 0; attempt < 3 && rc == ERROR_BUFFER_OVERFLOW; ++attempt) {
+        buf.assign(size, 0);
+        rc = ::GetAdaptersAddresses(AF_INET, flags, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
+    }
+    if (rc != NO_ERROR) return out;
+    for (const IP_ADAPTER_ADDRESSES* a = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()); a; a = a->Next) {
+        HubAddresses::Adapter ad;
+        ad.name        = narrow_utf8(a->FriendlyName);
+        ad.description = narrow_utf8(a->Description);
+        ad.if_type     = (unsigned) a->IfType;
+        ad.up          = a->OperStatus == IfOperStatusUp;
+        ad.loopback    = a->IfType == IF_TYPE_SOFTWARE_LOOPBACK;
+        ad.has_gateway = a->FirstGatewayAddress != nullptr;
+        for (const IP_ADAPTER_UNICAST_ADDRESS* u = a->FirstUnicastAddress; u; u = u->Next) {
+            if (!u->Address.lpSockaddr || u->Address.lpSockaddr->sa_family != AF_INET) continue;
+            char text[INET_ADDRSTRLEN] = {};
+            if (::inet_ntop(AF_INET, &reinterpret_cast<sockaddr_in*>(u->Address.lpSockaddr)->sin_addr, text, sizeof(text)))
+                ad.ipv4.push_back(text);
+        }
+        out.push_back(std::move(ad));
+    }
+    return out;
+}
+#else
+static std::vector<HubAddresses::Adapter> host_adapters()
+{
+    std::vector<HubAddresses::Adapter> out;
+    struct ifaddrs* list = nullptr;
+    if (::getifaddrs(&list) != 0 || !list) return out;
+    for (const struct ifaddrs* i = list; i; i = i->ifa_next) {
+        if (!i->ifa_name || !i->ifa_addr || i->ifa_addr->sa_family != AF_INET) continue;
+        auto it = std::find_if(out.begin(), out.end(), [&](const HubAddresses::Adapter& a) { return a.name == i->ifa_name; });
+        if (it == out.end()) {
+            HubAddresses::Adapter ad;
+            ad.name     = i->ifa_name;
+            ad.up       = (i->ifa_flags & IFF_UP) != 0 && (i->ifa_flags & IFF_RUNNING) != 0;
+            ad.loopback = (i->ifa_flags & IFF_LOOPBACK) != 0;
+            out.push_back(std::move(ad));
+            it = out.end() - 1;
+        }
+        char text[INET_ADDRSTRLEN] = {};
+        if (::inet_ntop(AF_INET, &reinterpret_cast<const sockaddr_in*>(i->ifa_addr)->sin_addr, text, sizeof(text)))
+            it->ipv4.push_back(text);
+    }
+    ::freeifaddrs(list);
+    return out;
+}
+#endif
+
 #ifdef _WIN32
 // The address of the interface that owns the 0.0.0.0/0 route with the best metric (VPNs
 // usually route through 0.0.0.0/1 + 128.0.0.0/1, so this stays the real LAN adapter).
@@ -377,20 +454,25 @@ static std::string default_route_ipv4_win()
 
 static std::vector<std::string> lan_ips()
 {
-    std::vector<std::string> out;
+    // What a phone can actually be on the same network as: the Wi-Fi / Ethernet adapters (and the
+    // Tailscale one, last), never WSL, Hyper-V, Docker, VM host-only or VPN-client adapters. The
+    // default-route address leads. When the system will not list adapters, `adapters` is empty and
+    // the two older sources below are used as they were, unfiltered.
+    const std::vector<HubAddresses::Adapter> adapters = host_adapters();
+    std::string                              preferred;
 #ifdef _WIN32
-    {
-        const std::string a = default_route_ipv4_win();
-        if (!a.empty()) out.push_back(a);
-    }
+    preferred = default_route_ipv4_win();
 #endif
+    std::vector<std::string> out    = HubAddresses::candidate_ips(adapters, preferred);
+    const auto               usable = [&](const std::string& a) { return adapters.empty() || std::find(out.begin(), out.end(), a) != out.end(); };
+    if (adapters.empty() && !preferred.empty()) out.push_back(preferred);
     try {
         asio::io_context      ioc;
         asio::ip::udp::socket s(ioc);
         s.open(asio::ip::udp::v4());
         s.connect(asio::ip::udp::endpoint(asio::ip::make_address_v4("8.8.8.8"), 53)); // sends nothing
         const std::string a = s.local_endpoint().address().to_string();
-        if (a != "0.0.0.0" && std::find(out.begin(), out.end(), a) == out.end()) out.push_back(a);
+        if (a != "0.0.0.0" && usable(a) && std::find(out.begin(), out.end(), a) == out.end()) out.push_back(a);
     } catch (...) {}
     try {
         asio::io_context ioc;
@@ -399,7 +481,7 @@ static std::vector<std::string> lan_ips()
             const auto a = e.endpoint().address();
             if (a.is_v4() && !a.is_loopback()) {
                 const std::string s = a.to_string();
-                if (std::find(out.begin(), out.end(), s) == out.end()) out.push_back(s);
+                if (usable(s) && std::find(out.begin(), out.end(), s) == out.end()) out.push_back(s);
             }
         }
     } catch (...) {}
@@ -1568,47 +1650,36 @@ static std::string join_words(const std::vector<std::string>& v, const char* sep
     return out;
 }
 
-// Windows Firewall through PowerShell rather than netsh: Get-NetFirewallRule answers with
-// property values (Allow/Inbound/Private) that are the same in every Windows display language,
-// while netsh's verbose output is localised and would have to be parsed by label.
+// Windows Firewall through its COM API (slic3r/Utils/WinFirewall, shared with Help > Check
+// Windows Firewall) rather than netsh: property values are the same in every Windows display
+// language, while netsh's verbose output is localised and would have to be parsed by label. It
+// used to be a PowerShell Get-NetFirewallRule run; same answers, without a 30 s process launch.
 //
 // `label` is the program name used in the sentences shown to the user ("go2rtc.exe", "EdgeSlicer.exe");
 // `netsh_hint` is the exact command they can paste into an elevated prompt to fix a "missing" or
-// "partial" state themselves - we only ever *look*, never run netsh add ourselves.
+// "partial" state themselves - the hub only ever *looks* (the elevated fix is the dialog's job).
 static FirewallState firewall_query(const std::string& exe, int port, const std::string& label, const std::string& netsh_hint)
 {
     FirewallState fw;
     fw.checked_at = (long long) std::time(nullptr);
 #ifdef _WIN32
-    std::string quoted = exe; // '' escapes a quote inside a PowerShell single-quoted string
-    for (size_t i = 0; i < quoted.size(); ++i)
-        if (quoted[i] == '\'') quoted.insert(i++, 1, '\'');
-    const std::string script =
-        "$p='" + quoted + "';$f=[IO.Path]::GetFullPath($p);"
-        "$r=@(Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue |"
-        " Where-Object { try { [IO.Path]::GetFullPath($_.Program) -ieq $f } catch { $false } } |"
-        " Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq 'True' -and"
-        " $_.Direction -eq 'Inbound' });"
-        "foreach ($x in $r) { $(if ($x.Action -eq 'Block') { 'BLOCK=' } else { 'RULE=' }) + $x.Profile };"
-        "foreach ($n in @(Get-NetConnectionProfile -ErrorAction SilentlyContinue)) { 'NET=' + $n.NetworkCategory };"
-        "'DONE'";
-    std::string out;
-    int         code = 0;
-    if (!run_capture({ "powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script }, out, code, 30000) ||
-        out.find("DONE") == std::string::npos) {
+    (void) port;
+    const WinFirewall::Snapshot snap = WinFirewall::read_system_snapshot();
+    if (!snap.ok) {
+        BOOST_LOG_TRIVIAL(warning) << "RemoteHub: Windows Firewall could not be read: " << snap.error;
         fw.note    = "Windows Firewall could not be checked for " + label + ".";
         fw.command = netsh_hint;
         return fw;
     }
     std::vector<std::string> rules, blocks, nets;
-    std::istringstream       is(out);
-    std::string              line;
-    while (std::getline(is, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
-        if (line.compare(0, 5, "RULE=") == 0) rules.push_back(line.substr(5));
-        else if (line.compare(0, 6, "BLOCK=") == 0) blocks.push_back(line.substr(6));
-        else if (line.compare(0, 4, "NET=") == 0) nets.push_back(line.substr(4) == "DomainAuthenticated" ? "Domain" : line.substr(4));
+    for (const WinFirewall::Rule& r : snap.rules) {
+        if (!r.inbound || !r.enabled || !WinFirewall::same_program(r.program, exe)) continue;
+        const std::string profiles = (r.profiles & WinFirewall::ProfileAll) == WinFirewall::ProfileAll ? std::string("Any") :
+                                                                                                       WinFirewall::profiles_text(r.profiles);
+        (r.allow ? rules : blocks).push_back(profiles);
     }
+    for (int bit : { WinFirewall::ProfileDomain, WinFirewall::ProfilePrivate, WinFirewall::ProfilePublic })
+        if (snap.current_profiles & bit) nets.push_back(WinFirewall::profiles_text(bit));
     // Only the profiles the PC's live networks are in matter: a rule that covers Public does
     // nothing for a phone on a network Windows filed as Private.
     auto covers = [](const std::vector<std::string>& rs, const std::string& n) {
@@ -2088,7 +2159,7 @@ public:
     // event high-water mark and this hub's own identity. It never needs an open slicer window -
     // that was the whole complaint: with the slicer closed the app could say nothing at all.
     json summary_json();
-    json pair_json();                       // the pairing document: names, both URLs, capabilities
+    json pair_json(bool via_serve_https = false); // the pairing document: names, both URLs, capabilities
     // The last-known status of every printer any instance has reported, newest value per id, each
     // row carrying `age_s` and `stale`. `instance` is the pid that last reported it, or 0 when no
     // window is open any more.
@@ -2394,6 +2465,13 @@ HubServer::PhoneLinks HubServer::phone_links()
     std::lock_guard<std::mutex> lock(m_mutex);
     if (phone && !l.ips.empty()) l.lan = "http://" + l.ips.front() + ":" + std::to_string(m_port) + "/r/" + m_token + "/";
     if (m_remote_on && m_ts.serving && !m_ts.dns_name.empty()) l.remote = "https://" + m_ts.dns_name + "/r/" + m_token + "/";
+    // With Serve publishing the hub, the phone reaches it by the ts.net name; a raw tailnet address
+    // would only ever be tried over https and fail TLS. (lan_ips() already puts it last, so the
+    // LAN link above is only ever built from it when it is the sole address - and then it goes.)
+    if (!l.remote.empty()) {
+        l.ips = HubAddresses::advertised_ips(std::move(l.ips), true);
+        if (l.ips.empty()) l.lan.clear();
+    }
     // l.relay stays empty in phase 0: there is no relay to name one against yet. Everything
     // downstream already treats an empty link as "this path does not exist", so nothing shows.
     return l;
@@ -3118,7 +3196,7 @@ json HubServer::summary_json()
 }
 
 // The pairing document, in the shape the app already reads (tools/mock_hub.py --with-pair).
-json HubServer::pair_json()
+json HubServer::pair_json(bool via_serve_https)
 {
     const PhoneLinks links = phone_links();
     json j;
@@ -3141,7 +3219,10 @@ json HubServer::pair_json()
         // shape the tests pin can never drift apart.
         j.update(json::parse(Testing::pair_identity_json(links.lan, links.remote, links.relay, hubid, pubkey)));
     }
-    j["ips"]     = links.ips;
+    // `ips` are bare hosts the app joins to the *scanned* URL's scheme and port. A scan of the
+    // Serve origin (https, 443) turns every one of them into https://<ip>:443, which nothing
+    // answers, so a request that came through Serve gets none; urls.lan carries the LAN origin whole.
+    j["ips"]     = HubAddresses::ips_for_pair(links.ips, via_serve_https);
     // What this build and this configuration can actually push with, so the app does not register
     // for a provider that will never deliver (APNs needs the .p8 AND HTTP/2 in our libcurl).
     const json prov = AppPush::providers_json();
@@ -3156,7 +3237,8 @@ json HubServer::pair_json()
         std::lock_guard<std::mutex> lock(m_mutex);
         j["token_version"] = m_token_version;
     }
-    j["features"] = json::array({ "events", "control", "send", "summary", "thumbnail", "webrtc", "quality", "apppush", "hubid" });
+    // "push_levels": /push/device takes priority_kinds / all_events / level_hint, and /push/test exists.
+    j["features"] = json::array({ "events", "control", "send", "summary", "thumbnail", "webrtc", "quality", "apppush", "hubid", "push_levels" });
     j["capabilities"] = j["features"];
     return j;
 }
@@ -3474,11 +3556,11 @@ void HubServer::start_go2rtc()
                                 << (ff.empty() ? "off (no ffmpeg found; MJPEG fps knob only)"
                                                : "on via " + ff);
     }
-    if (webrtc_port > 0) firewall_state(true); // one PowerShell run on a detached thread; result cached
+    if (webrtc_port > 0) firewall_state(true); // one firewall read on a detached thread; result cached
 #endif
 }
 
-// Cached; a refresh runs the (slow) PowerShell query on a detached thread and never blocks a
+// Cached; a refresh runs the firewall query on a detached thread and never blocks a
 // request, so the hub page's 3 s poll always gets the last answer straight away.
 FirewallState HubServer::firewall_state(bool refresh)
 {
@@ -4391,12 +4473,19 @@ static bool instance_api_allowed(const std::string& method, const std::string& s
     // segment is a name, not an index; keep it to what a printer id can hold and nothing else. The
     // page sends it through encodeURIComponent, so a percent escape is part of that (the instance
     // decodes it); a slash is not, encoded or otherwise, so this stays one segment.
+    // The same id also names whose timelapses: GET /api/printers/<id>/timelapses (the list),
+    // .../timelapses/thumbnail?name= and .../timelapses/video?name= (the file name is a query value,
+    // checked by the instance, so the path stays this closed set).
     if (sub.compare(0, 14, "/api/printers/") == 0) {
         const std::string rest  = sub.substr(14);
         const size_t      slash = rest.find('/');
-        if (slash == std::string::npos || rest.substr(slash) != "/control") return false;
+        if (slash == std::string::npos) return false;
+        const std::string what = rest.substr(slash);
+        const bool        ok   = (what == "/control" && post) ||
+                                 ((what == "/timelapses" || what == "/timelapses/thumbnail" || what == "/timelapses/video") && get);
+        if (!ok) return false;
         const std::string id = rest.substr(0, slash);
-        if (!post || id.empty() || id.size() > 64) return false;
+        if (id.empty() || id.size() > 64) return false;
         if (id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:%") != std::string::npos) return false;
         return id.find("%2f") == std::string::npos && id.find("%2F") == std::string::npos;
     }
@@ -4459,7 +4548,9 @@ void HubServer::handle_phone(tcp::socket& client, Request& r, const std::string&
         return;
     }
     if (r.method == "GET" && (rest == "/pair" || rest == "/pair/")) {
-        respond_json(client, 200, pair_json().dump());
+        // r.ts_login / r.fwd_proto are only ever set here by a loopback peer (Tailscale Serve);
+        // the caller clears them for anybody else.
+        respond_json(client, 200, pair_json(!r.ts_login.empty() && r.fwd_proto == "https").dump());
         return;
     }
     // GET /printers/<id>/thumbnail.png - the running job's picture for one printer, out of the
@@ -4610,6 +4701,17 @@ void HubServer::handle_phone(tcp::socket& client, Request& r, const std::string&
         respond_json(client, res.first, res.second);
         return;
     }
+    if (rest == "/push/test" && r.method == "POST") {
+        // The app's notification test lab: one test of a chosen kind to this device only, built
+        // as a real event of that kind would be for it (AppPush::test_device). May wait up to
+        // 30 s first so the phone can be locked; each connection has its own thread.
+        if (r.content_type.compare(0, 16, "application/json") != 0) { respond_json(client, 415, json_error("Content-Type must be application/json")); return; }
+        std::string body;
+        if (!read_small_body(client, r, body, 16 * 1024)) { respond_json(client, 413, json_error("that is too large")); return; }
+        const auto res = AppPush::test_device(body);
+        respond_json(client, res.first, res.second);
+        return;
+    }
     // ---- hub-level API (instances, uploads) ----
     if (rest == "/api" || rest == "/api/") {
         json j;
@@ -4631,8 +4733,9 @@ void HubServer::handle_phone(tcp::socket& client, Request& r, const std::string&
             { {"method", "GET"},  {"path", "/push/key"},            {"description", "the hub's VAPID public key, for PushManager.subscribe()"} },
             { {"method", "POST"}, {"path", "/push/subscription"},   {"description", "this browser's PushSubscription JSON; re-post it on every launch"} },
             { {"method", "DELETE"}, {"path", "/push/subscription"}, {"description", "body {endpoint} - this browser unsubscribed"} },
-            { {"method", "POST"}, {"path", "/push/device"},        {"description", "the native app's APNs/FCM device token plus its own p256dh/auth; re-post it on every cold launch"} },
-            { {"method", "DELETE"}, {"path", "/push/device"},      {"description", "body {platform, token} - this device unpaired"} }
+            { {"method", "POST"}, {"path", "/push/device"},        {"description", "the native app's APNs/FCM device token plus its own p256dh/auth; re-post it on every cold launch. Optional: priority_kinds [kind...] (sent at high priority), all_events (past the hub's filter; the phone decides), level_hint (APNs interruption-level on the priority kinds)"} },
+            { {"method", "DELETE"}, {"path", "/push/device"},      {"description", "body {platform, token} - this device unpaired"} },
+            { {"method", "POST"}, {"path", "/push/test"},          {"description", "body {platform, token, kind, delay_s 0-30} - one test notification of that kind to this device only, sent as a real one would be; answers {ok, status, priority, ttl, interruption_level}"} }
         });
         respond_json(client, 200, j.dump());
         return;

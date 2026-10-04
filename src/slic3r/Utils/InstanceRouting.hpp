@@ -2,7 +2,7 @@
 #define slic3r_Utils_InstanceRouting_hpp_
 
 // Who receives the files another EdgeSlicer process hands over (`EdgeSlicer.exe --single-instance
-// a.stl`, used by "Send to EdgeSlicer" in Blender, by Explorer and by the phone hub).
+// a.stl`, used by "Send to EdgeSlicer" in Blender and FreeCAD, by Explorer and by the phone hub).
 //
 // GUI/InstanceCheck.cpp does the real work with windows, lock files and D-Bus; the decisions are
 // kept here, free of wxWidgets and the platform headers, so tests/slic3rutils/instance_routing_tests.cpp
@@ -21,8 +21,10 @@
 //  * The headless `--hub` process never reaches the single-instance check at all.
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace Slic3r {
 namespace InstanceRouting {
@@ -79,6 +81,45 @@ inline bool should_hand_off(bool hand_off_requested, bool other_instance_holds_l
 inline bool claims_instance_lock(bool hidden_start)
 {
     return !hidden_start;
+}
+
+// A launch's command line split into the hand-off switch and what is passed on to the instance
+// that receives it: argv[0] (the executable) and every other argument, in order, without
+// --single-instance / --no-single-instance. Must match DynamicConfig::read_cli() for those two.
+struct CommandLine
+{
+    std::optional<bool>      single_instance; // unset: the "single_instance" preference decides
+    std::vector<std::string> forwarded;
+};
+
+inline CommandLine split_command_line(const std::vector<std::string> &argv)
+{
+    CommandLine out;
+    for (size_t i = 0; i < argv.size(); ++i) {
+        if (i > 0 && argv[i] == "--single-instance")
+            out.single_instance = true;
+        else if (i > 0 && argv[i] == "--no-single-instance")
+            out.single_instance = false;
+        else
+            out.forwarded.push_back(argv[i]);
+    }
+    return out;
+}
+
+// The receiving side: an argument of the hand-off message names a file to load when it exists,
+// as written or with surrounding double quotes. Empty when it is not a file (a URL, an option).
+inline std::string handed_off_file(const std::string &argument, const std::function<bool(const std::string &)> &exists)
+{
+    if (argument.size() < 3)
+        return {};
+    if (exists(argument))
+        return argument;
+    if (argument.front() == '"') {
+        std::string unquoted = argument.substr(1, argument.size() - 2);
+        if (exists(unquoted))
+            return unquoted;
+    }
+    return {};
 }
 
 } // namespace InstanceRouting

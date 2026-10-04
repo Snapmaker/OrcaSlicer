@@ -1,0 +1,269 @@
+#pragma once
+
+// Pure one-axis alignment maths for the Move gizmo's "Align" row (no wx, no Selection, no Model).
+//
+// Vocabulary
+//   Button  (Side)    which place the move goes to: the Min / Center / Max of the reference.
+//   Origin            which point of each MOVED item is brought there: Auto, Center, Min or Max.
+//                     Auto means "the same side as the button" (edge to edge for Min/Max, centre
+//                     to centre for Center), i.e. the behaviour the panel always had.
+//   Reference         what the button's side is measured on:
+//                       Union   the extremes of the items themselves (inter-item, Auto behaviour),
+//                       Anchor  one of the items, which stays put (inter-item with an origin),
+//                       Fixed   a fixed span (the plate or the parent object); the items then move
+//                               as one rigid group so their spacing is preserved.
+//
+// Min / Max are the lower / higher world coordinate on the axis: Left / Right on X, Front / Back
+// on Y, Bottom / Top on Z. Every span is the world-space extent of one item's axis-aligned box, so
+// rotated items are handled through their bounding box.
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <string>
+#include <vector>
+
+namespace Slic3r {
+namespace AlignMath {
+
+enum class Side { Min, Center, Max };
+
+// Order matches the dropdown: Auto, Center, then the low edge, then the high edge.
+enum class Origin { Auto = 0, Center = 1, Min = 2, Max = 3 };
+
+enum class Reference { Union, Anchor, Fixed };
+
+// Displacements below this are returned as exactly zero (same guard the panel always used).
+constexpr double ALIGN_EPSILON = 1e-6;
+
+// The side of a moved item that is brought to the target.
+inline Side pick_side(Origin origin, Side button)
+{
+    switch (origin) {
+    case Origin::Center: return Side::Center;
+    case Origin::Min:    return Side::Min;
+    case Origin::Max:    return Side::Max;
+    case Origin::Auto:
+    default:             return button;
+    }
+}
+
+// Stable config strings: "auto", "center", "min", "max".
+inline const char *origin_key(Origin origin)
+{
+    switch (origin) {
+    case Origin::Center: return "center";
+    case Origin::Min:    return "min";
+    case Origin::Max:    return "max";
+    case Origin::Auto:
+    default:             return "auto";
+    }
+}
+
+// Unknown text falls back to Auto, so a stale or hand-edited config can never break the panel.
+inline Origin origin_from_key(const std::string &key)
+{
+    if (key == "center") return Origin::Center;
+    if (key == "min")    return Origin::Min;
+    if (key == "max")    return Origin::Max;
+    return Origin::Auto;
+}
+
+// World extent of one item on one axis.
+struct Span
+{
+    double lo = 0.;
+    double hi = 0.;
+
+    double center() const { return 0.5 * (lo + hi); }
+    double at(Side side) const
+    {
+        switch (side) {
+        case Side::Min: return lo;
+        case Side::Max: return hi;
+        case Side::Center:
+        default:        return center();
+        }
+    }
+};
+
+inline Span union_of(const std::vector<Span> &spans)
+{
+    Span u = spans.empty() ? Span{} : spans.front();
+    for (const Span &s : spans) {
+        u.lo = std::min(u.lo, s.lo);
+        u.hi = std::max(u.hi, s.hi);
+    }
+    return u;
+}
+
+struct AxisRequest
+{
+    Side      button    = Side::Min;
+    Origin    origin    = Origin::Auto;
+    Reference reference = Reference::Union;
+    // Reference::Anchor: index into the span list of the item that stays put. An index out of
+    // range falls back to Reference::Union.
+    std::size_t anchor = 0;
+    // Reference::Fixed: the span the button's side is measured on (the plate, the parent object).
+    Span fixed;
+    // Reference::Fixed only: pulls an EDGE target inward by this much (the 0.1 mm plate shrink).
+    // It is applied only when an edge of the items goes to the same-side edge of `fixed`, i.e.
+    // when the item stays inside the span. A centre target, or an edge that deliberately goes to
+    // the opposite edge (origin Left, button Right), is exact.
+    double edge_inset = 0.;
+};
+
+// One displacement per input span, along this single axis. Items that already sit on the target
+// get exactly 0, and so does the anchor.
+inline std::vector<double> axis_offsets(const std::vector<Span> &spans, const AxisRequest &req)
+{
+    std::vector<double> out(spans.size(), 0.);
+    if (spans.empty())
+        return out;
+
+    const Side pick = pick_side(req.origin, req.button);
+    Reference  ref  = req.reference;
+    if (ref == Reference::Anchor && req.anchor >= spans.size())
+        ref = Reference::Union;
+
+    switch (ref) {
+    case Reference::Anchor: {
+        const double target = spans[req.anchor].at(req.button);
+        for (std::size_t i = 0; i < spans.size(); ++i)
+            if (i != req.anchor)
+                out[i] = target - spans[i].at(pick);
+        break;
+    }
+    case Reference::Fixed: {
+        double target = req.fixed.at(req.button);
+        if (req.edge_inset != 0. && req.button != Side::Center && pick == req.button)
+            target += (req.button == Side::Min) ? req.edge_inset : -req.edge_inset;
+        const double delta = target - union_of(spans).at(pick);
+        std::fill(out.begin(), out.end(), delta);
+        break;
+    }
+    case Reference::Union:
+    default: {
+        const double target = union_of(spans).at(req.button);
+        for (std::size_t i = 0; i < spans.size(); ++i)
+            out[i] = target - spans[i].at(pick);
+        break;
+    }
+    }
+
+    for (double &d : out)
+        if (std::abs(d) < ALIGN_EPSILON)
+            d = 0.;
+    return out;
+}
+
+// ---- Anchor choice (Align selected, origin not Auto) ----
+
+// Which item stays put. None = the selection's own extremes (Reference::Union), nothing fixed.
+enum class AnchorMode { Last = 0, First = 1, None = 2 };
+
+constexpr std::size_t NO_ITEM = static_cast<std::size_t>(-1);
+
+inline const char *anchor_mode_key(AnchorMode mode)
+{
+    switch (mode) {
+    case AnchorMode::First: return "first";
+    case AnchorMode::None:  return "none";
+    case AnchorMode::Last:
+    default:                return "last";
+    }
+}
+
+inline AnchorMode anchor_mode_from_key(const std::string &key)
+{
+    if (key == "first") return AnchorMode::First;
+    if (key == "none")  return AnchorMode::None;
+    return AnchorMode::Last;
+}
+
+struct AnchorPick
+{
+    // Index of the anchor in the item list (meaningless when use_union).
+    std::size_t index = 0;
+    // No anchor: align to the selection's extremes.
+    bool use_union = false;
+    // An explicitly chosen item is no longer in the selection; the pick fell back to Last.
+    bool explicit_missing = false;
+};
+
+// last / first / explicit_index are indices into the current item list, or NO_ITEM when unknown
+// (click order lost, item not selected any more). An unknown last / first uses the first item.
+// An explicit choice wins while its item is present; otherwise it falls back to Last, whatever
+// the mode was.
+inline AnchorPick resolve_anchor(AnchorMode mode, bool explicit_requested, std::size_t explicit_index, std::size_t last_index, std::size_t first_index)
+{
+    const auto known = [](std::size_t i) { return i == NO_ITEM ? std::size_t(0) : i; };
+    AnchorPick pick;
+    if (explicit_requested) {
+        if (explicit_index != NO_ITEM) {
+            pick.index = explicit_index;
+        } else {
+            pick.explicit_missing = true;
+            pick.index            = known(last_index);
+        }
+        return pick;
+    }
+    switch (mode) {
+    case AnchorMode::None:  pick.use_union = true; break;
+    case AnchorMode::First: pick.index = known(first_index); break;
+    case AnchorMode::Last:
+    default:                pick.index = known(last_index); break;
+    }
+    return pick;
+}
+
+// Names for the anchor list: a name that occurs more than once gets " #<number>" (the instance or
+// part number) so the entries can be told apart; unique names stay as they are.
+inline std::vector<std::string> disambiguate_names(const std::vector<std::string> &names, const std::vector<int> &numbers)
+{
+    std::vector<std::string> out = names;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        std::size_t same = 0;
+        for (const std::string &n : names)
+            same += n == names[i] ? 1 : 0;
+        if (same > 1 && i < numbers.size())
+            out[i] += " #" + std::to_string(numbers[i]);
+    }
+    return out;
+}
+
+// ---- Panel layout helpers (pure, so they can be tested without an ImGui context) ----
+
+// An origin dropdown spans exactly its button group: from the first button's left edge to the
+// last button's right edge (both window-local x). The result is the combo's visible frame width.
+inline double combo_frame_width(double group_left, double group_right)
+{
+    return std::max(0., group_right - group_left);
+}
+
+// Shortens `text` with a trailing "..." until measure(text) <= max_width, removing whole UTF-8
+// code points. Text that already fits is returned unchanged; if even "..." does not fit, the
+// result is "...". `measure` returns the rendered width of a string.
+template<class Measure>
+std::string ellipsize(const std::string &text, double max_width, Measure measure)
+{
+    if (measure(text) <= max_width)
+        return text;
+    static const std::string dots = "...";
+    std::string              cut  = text;
+    while (!cut.empty()) {
+        // Drop the last code point: the continuation bytes (10xxxxxx) and then its lead byte.
+        unsigned char removed;
+        do {
+            removed = static_cast<unsigned char>(cut.back());
+            cut.pop_back();
+        } while (!cut.empty() && (removed & 0xC0) == 0x80);
+        if (measure(cut + dots) <= max_width)
+            return cut + dots;
+    }
+    return dots;
+}
+
+} // namespace AlignMath
+} // namespace Slic3r

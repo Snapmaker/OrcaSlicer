@@ -18,7 +18,10 @@ PrinterCameraPanel::PrinterCameraPanel(wxWindow *parent)
     , m_curComId(ComInvalidId)
     , m_popupDlg(nullptr)
 {
-    wxString url = file_url_from_path(boost::filesystem::path(resources_dir()) / "web/orca/missing_connection.html");
+    // EdgeSlicer: FlashForge's own build swaps Orca's missing_connection.html for its camera
+    // player; here that page is still Orca's "set up your connection" help, which ignores the
+    // stream URL, so the camera never played. The player lives in its own page instead.
+    wxString url = file_url_from_path(boost::filesystem::path(resources_dir()) / "web/orca/ff_camera/index.html");
     m_webView = WebView::CreateWebView(this, url);
     std::string homePageEnableDebug = wxGetApp().app_config->get("home_page_enable_debug");
     m_webView->EnableAccessToDevTools(homePageEnableDebug == "true" || homePageEnableDebug == "1");
@@ -28,6 +31,7 @@ PrinterCameraPanel::PrinterCameraPanel(wxWindow *parent)
     }
     Bind(wxEVT_PAINT, &PrinterCameraPanel::onPaint, this);
     Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &PrinterCameraPanel::onScriptMessage, this);
+    Bind(wxEVT_WEBVIEW_LOADED, &PrinterCameraPanel::onPageLoaded, this);
 }
 
 void PrinterCameraPanel::setSize(wxSize size)
@@ -54,10 +58,7 @@ void PrinterCameraPanel::setStreamUrl(const std::string &streamUrl)
     json["address"] = streamUrl;
     json["language"]    = wxGetApp().app_config->get("language");
     json["sequence_id"] = "10001";
-    wxString jsStr = wxString::Format("window.postMessage(%s)", wxString::FromUTF8(json.dump()));
-    if (m_webView != nullptr) {
-        WebView::RunScript(m_webView, jsStr);
-    }
+    runPlayerCommand(wxString::Format("window.postMessage(%s)", wxString::FromUTF8(json.dump())));
 }
 
 void PrinterCameraPanel::setOffline()
@@ -66,10 +67,25 @@ void PrinterCameraPanel::setOffline()
     json["command"] = "close_rtsp";
     json["language"] = wxGetApp().app_config->get("language");
     json["sequence_id"] = "10001";
-    wxString jsStr = wxString::Format("window.postMessage(%s)", wxString::FromUTF8(json.dump()));
+    runPlayerCommand(wxString::Format("window.postMessage(%s)", wxString::FromUTF8(json.dump())));
+}
+
+void PrinterCameraPanel::runPlayerCommand(const wxString &script)
+{
+    m_lastCommand = script;
     if (m_webView != nullptr) {
-        WebView::RunScript(m_webView, jsStr);
+        WebView::RunScript(m_webView, script);
     }
+}
+
+void PrinterCameraPanel::onPageLoaded(wxWebViewEvent &event)
+{
+    // The stream URL is pushed only when it changes, so one that arrived before the page had
+    // loaded would otherwise be lost until the printer reported a different URL.
+    if (m_webView != nullptr && !m_lastCommand.empty()) {
+        WebView::RunScript(m_webView, m_lastCommand);
+    }
+    event.Skip();
 }
 
 void PrinterCameraPanel::onPaint(wxPaintEvent &event)

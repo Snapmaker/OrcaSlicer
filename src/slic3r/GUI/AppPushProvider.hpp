@@ -27,6 +27,11 @@ struct PushRequest
     std::string thread_id;         // the printer id, so iOS groups a printer's alerts together
     int         priority { 10 };   // APNs 10 or 5; FCM maps this to "high" or "normal"
     int         ttl_seconds { 1800 };
+    // APNs only, and empty unless the device asked for it (`level_hint` on /push/device): the
+    // cleartext `aps.interruption-level` ("time-sensitive"). The app's Notification Service
+    // Extension sets the level itself after decrypting; this is the fallback for when that does
+    // not take effect, and it tells Apple no more than apns-priority 10 already does.
+    std::string interruption_level;
 };
 
 struct PushResult

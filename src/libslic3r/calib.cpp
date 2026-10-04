@@ -246,7 +246,7 @@ std::string CalibPressureAdvance::draw_line(
     const double e_per_mm = CalibPressureAdvance::e_per_mm(line_width, layer_height,
                                                            m_config.option<ConfigOptionFloats>("nozzle_diameter")->get_at(0),
                                                            m_config.option<ConfigOptionFloats>("filament_diameter")->get_at(0),
-                                                           m_config.option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0));
+                                                           filament_flow_ratio_at(m_config));
 
     const double length = get_distance(Vec2d(m_last_pos.x(), m_last_pos.y()), to_pt);
     auto         dE     = e_per_mm * length;
@@ -569,7 +569,7 @@ Vec3d CalibPressureAdvancePattern::handle_pos_offset() const
 
 double CalibPressureAdvancePattern::flow_val() const
 {
-    double flow_mult = m_config.option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0);
+    double flow_mult = filament_flow_ratio_at(m_config);
     double nozzle_diameter = m_config.option<ConfigOptionFloats>("nozzle_diameter")->get_at(0);
     double line_width = m_config.get_abs_value("line_width", nozzle_diameter);
     if (line_width <= 0.) line_width = Flow::auto_extrusion_width(frPerimeter, nozzle_diameter);
@@ -643,7 +643,7 @@ CustomGCode::Info CalibPressureAdvancePattern::generate_custom_gcodes(const Dyna
             double number_e_per_mm = e_per_mm(line_width(), height_layer(),
                                               m_config.option<ConfigOptionFloats>("nozzle_diameter")->get_at(0),
                                               m_config.option<ConfigOptionFloats>("filament_diameter")->get_at(0),
-                                              m_config.option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0));
+                                              filament_flow_ratio_at(m_config));
 
             // glyph on every other line
             for (int j = 0; j < num_patterns; j += 2) {

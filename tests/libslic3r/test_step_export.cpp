@@ -1,9 +1,11 @@
 #include <catch2/catch.hpp>
 
+#include "libslic3r/BRep/CadEdit.hpp"
 #include "libslic3r/BRep/MeshToBRep.hpp"
 #include "libslic3r/Format/STEP.hpp"
 #include "libslic3r/Format/STEPExport.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/PartMeshReplace.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 
 #include <BRepAlgoAPI_Cut.hxx>
@@ -595,4 +597,227 @@ TEST_CASE("STEP import still tessellates into one volume per solid", "[StepExpor
     const Vec3d size = cyl_mesh.bounding_box().size();
     CHECK_THAT(size.z(), WithinAbs(30., 1e-4));
     CHECK_THAT(size.x(), WithinAbs(20., 0.01));
+}
+
+// ------------------------------------------------------------------------------------------
+// CAD round trip (the FreeCAD bridge): a part goes out in its own mesh coordinates, comes back
+// as STEP and replaces the mesh while the part and the object keep their placement.
+// ------------------------------------------------------------------------------------------
+
+namespace {
+
+// An asymmetric part (a plate with a peg off one corner, not touching it), so a rotation or a
+// mirror applied in the wrong frame changes the world bounding box.
+TriangleMesh asymmetric_part()
+{
+    indexed_triangle_set its = its_make_cube(30., 12., 5.);
+    TriangleMesh         peg = make_cube(4., 4., 8.);
+    peg.translate(25.f, 7.f, 6.f);
+    its_merge(its, peg.its);
+    return TriangleMesh(its);
+}
+
+// An off-centre, rotated, non-uniformly scaled instance of a part that is itself moved and rotated
+// inside its object, resting on the bed.
+ModelObject *placed_object(Model &model, TriangleMesh &&mesh, const std::string &name)
+{
+    ModelObject *object = model.add_object();
+    object->name        = name;
+    ModelVolume *volume = object->add_volume(std::move(mesh));
+    volume->name        = name;
+    volume->set_offset(volume->get_offset() + Vec3d(5., -3., 2.));
+    volume->set_rotation(Vec3d(0.1, 0., 0.4));
+    ModelInstance *instance = object->add_instance();
+    instance->set_offset(Vec3d(123.4, -56.7, 8.));
+    instance->set_rotation(Vec3d(0.3, -0.2, 1.1));
+    instance->set_scaling_factor(Vec3d(1.5, 0.8, 2.));
+    object->ensure_on_bed();
+    return object;
+}
+
+} // namespace
+
+TEST_CASE("A part sent to a CAD program and back keeps its geometry and placement", "[StepExport][CadBridge]")
+{
+    Model        model;
+    ModelObject *object = placed_object(model, asymmetric_part(), "bracket");
+    ModelVolume *volume = object->volumes.front();
+    volume->config.set_key_value("wall_loops", new ConfigOptionInt(5));
+    const Transform3d  volume_matrix   = volume->get_matrix();
+    const Transform3d  instance_matrix = object->instances.front()->get_matrix();
+    const TriangleMesh world_before    = object->volume_mesh_in_world(0, 0);
+    const ObjectID     id_before       = volume->id();
+
+    // Out: the part on its own, in its mesh coordinates (a mesh part becomes planar faces).
+    TempFile         out(".step");
+    StepExportReport report;
+    REQUIRE(store_step_part(out.str(), *volume, {}, report));
+    CHECK(report.error.empty());
+    CHECK(report.mesh_parts == 1);
+    CHECK(report.exact_parts == 0);
+    const BRep::ShapeInfo sent = info_of_all(reread(out.str()));
+    CHECK(sent.solids == 2);
+    require_bbox(sent.bbox, volume->mesh().bounding_box(), 1e-4);
+
+    SECTION("unchanged, it lands exactly where it was")
+    {
+        TriangleMesh back;
+        std::string  error;
+        REQUIRE(load_step_mesh(out.str().c_str(), back, 0.003, 0.5, &error));
+        INFO(error);
+        require_bbox(back.bounding_box(), volume->mesh().bounding_box(), 1e-4);
+        CHECK_THAT(double(its_volume(back.its)), WithinRel(double(its_volume(volume->mesh().its)), 1e-5));
+
+        CHECK_FALSE(replace_part_mesh(*volume, std::move(back)));
+        CHECK(volume->id() != id_before);
+        CHECK(volume->get_matrix().isApprox(volume_matrix));
+        CHECK(object->instances.front()->get_matrix().isApprox(instance_matrix));
+        CHECK(volume->name == "bracket");
+        CHECK(volume->config.opt_int("wall_loops") == 5);
+        require_bbox(object->volume_mesh_in_world(0, 0).bounding_box(), world_before.bounding_box(), 1e-3);
+    }
+    SECTION("edited in the CAD program (a hole through the plate), it replaces the part in place")
+    {
+        // What FreeCAD does to the shape, in the same frame: drill through the plate's middle.
+        const std::vector<NamedSolid> shapes = reread(out.str());
+        REQUIRE(shapes.size() == 1);
+        const BoundingBoxf3 bb   = volume->mesh().bounding_box();
+        const Vec3d         c    = bb.center();
+        const TopoDS_Shape  hole = BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(c.x() - 8., c.y() - 2., bb.min.z() - 1.), gp_Dir(0., 0., 1.)), 2., 7.).Shape();
+        BRepAlgoAPI_Cut     cut(shapes.front().solid, hole);
+        REQUIRE(cut.IsDone());
+        TempFile edited(".step");
+        write_occt_step(cut.Shape(), edited.str());
+
+        // Read back the way the bridge does: the tessellation plus the exact solid behind it.
+        indexed_triangle_set                 its;
+        std::shared_ptr<const BRep::CadBody> body;
+        std::string                          error;
+        REQUIRE(load_step_part(edited.str(), 0.003, 0.5, its, body, &error));
+        INFO(error);
+        REQUIRE(body);
+        const double volume_before = double(its_volume(volume->mesh().its));
+        const double drilled       = double(its_volume(its));
+        CHECK_THAT(drilled, WithinRel(volume_before - PI * 4. * 5., 2e-3));
+        // The plain STEP import of the same file agrees.
+        TriangleMesh plain;
+        REQUIRE(load_step_mesh(edited.str().c_str(), plain, 0.003, 0.5));
+        CHECK_THAT(double(its_volume(plain.its)), WithinRel(drilled, 1e-4));
+
+        // Painted data is per triangle of the old mesh: dropped, and reported.
+        volume->seam_facets.set_triangle_from_string(0, "4");
+        REQUIRE_FALSE(volume->seam_facets.empty());
+        CHECK(replace_part_mesh(*volume, TriangleMesh(std::move(its)), body));
+        CHECK(volume->seam_facets.empty());
+
+        // The part now carries the exact drilled shape (#218's CAD body): the next STEP export and
+        // the next round trip are exact.
+        const std::shared_ptr<const BRep::CadBody> attached = BRep::attached_cad_body(*volume);
+        REQUIRE(attached);
+        const int drilled_faces = int(info_of_all(reread(edited.str())).faces);
+        TempFile again(".step");
+        REQUIRE(store_step_part(again.str(), *volume, {}, report, true));
+        CHECK(report.exact_parts == 1);
+        CHECK(int(info_of_all(reread(again.str())).faces) == drilled_faces);
+        require_bbox(info_of_all(reread(again.str())).bbox, volume->mesh().bounding_box(), 0.01);
+        TempFile world_step(".step");
+        REQUIRE(store_step(world_step.str(), model, {}, report));
+        CHECK(report.exact_parts == 1);
+
+        CHECK(volume->get_matrix().isApprox(volume_matrix));
+        CHECK(object->instances.front()->get_matrix().isApprox(instance_matrix));
+        CHECK(volume->config.opt_int("wall_loops") == 5);
+        // The hole is inside: the outside, and so the world placement, is unchanged.
+        require_bbox(object->volume_mesh_in_world(0, 0).bounding_box(), world_before.bounding_box(), 1e-3);
+    }
+}
+
+TEST_CASE("A transformed part survives a world STEP export and re-import", "[StepExport][CadBridge]")
+{
+    Model               model;
+    ModelObject        *object = placed_object(model, asymmetric_part(), "bracket");
+    const BoundingBoxf3 world  = object->volume_mesh_in_world(0, 0).bounding_box();
+
+    TempFile         step(".step");
+    StepExportReport report;
+    REQUIRE(store_step(step.str(), model, {}, report));
+    TriangleMesh back;
+    REQUIRE(load_step_mesh(step.str().c_str(), back, 0.003, 0.5));
+    require_bbox(back.bounding_box(), world, 1e-3);
+    // The volume scales with the determinant of the instance's scale (1.5 * 0.8 * 2).
+    CHECK_THAT(double(its_volume(back.its)), WithinRel(2.4 * double(its_volume(object->volumes.front()->mesh().its)), 1e-4));
+}
+
+TEST_CASE("An unedited STEP import goes to the CAD program exactly, in its mesh frame", "[StepExport][CadBridge]")
+{
+    const TopoDS_Shape cylinder = BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(40., 25., 3.), gp_Dir(0., 0., 1.)), 10., 20.).Shape();
+    const TopoDS_Shape notch    = BRepPrimAPI_MakeBox(gp_Pnt(47., 20., 13.), 10., 10., 20.).Shape();
+    BRepAlgoAPI_Cut    cut(cylinder, notch);
+    REQUIRE(cut.IsDone());
+    const BRep::ShapeInfo source_info = BRep::shape_info(cut.Shape(), true);
+    TempFile              source(".step");
+    write_occt_step(cut.Shape(), source.str());
+
+    Model        model;
+    ModelObject *object = import_step(model, source.str());
+    REQUIRE(object->volumes.size() == 1);
+    // As the GUI does after loading, then placed by the user.
+    object->center_around_origin();
+    object->instances.front()->set_offset(Vec3d(-30., 70., 0.));
+    object->instances.front()->set_rotation(Vec3d(0., 0.5, 2.));
+    object->instances.front()->set_scaling_factor(Vec3d(1.2, 1.2, 1.2));
+    object->ensure_on_bed();
+    ModelVolume        *volume = object->volumes.front();
+    const BoundingBoxf3 world  = object->volume_mesh_in_world(0, 0).bounding_box();
+
+    TempFile         out(".step");
+    StepExportReport report;
+    REQUIRE(store_step_part(out.str(), *volume, {}, report, true));
+    CHECK(report.exact_parts == 1);
+    const BRep::ShapeInfo sent = info_of_all(reread(out.str()));
+    CHECK(sent.faces == source_info.faces); // the B-rep, not its triangles
+    CHECK_THAT(sent.volume, WithinRel(source_info.volume, 1e-6));
+    // In the part's mesh frame: around the mesh, not where the source file had it.
+    require_bbox(sent.bbox, volume->mesh().bounding_box(), 0.05);
+
+    // Back as the bridge reads it, with the solid attached as the part's CAD body.
+    indexed_triangle_set                 its;
+    std::shared_ptr<const BRep::CadBody> body;
+    REQUIRE(load_step_part(out.str(), 0.003, 0.5, its, body));
+    REQUIRE(body);
+    CHECK_FALSE(replace_part_mesh(*volume, TriangleMesh(std::move(its)), body));
+    require_bbox(object->volume_mesh_in_world(0, 0).bounding_box(), world, 0.01);
+    const std::shared_ptr<const BRep::CadBody> attached = BRep::attached_cad_body(*volume);
+    REQUIRE(attached);
+    // The CAD tools take it: chamfer one edge of the returned solid.
+    const BRep::CadTopology topo = BRep::cad_topology(*attached, 0.05, 0.3);
+    std::vector<int>        one_edge;
+    for (int e = 0; e < topo.num_edges && one_edge.empty(); ++e)
+        if (topo.edge_selectable[e])
+            one_edge.push_back(e);
+    REQUIRE_FALSE(one_edge.empty());
+    CHECK(BRep::fillet_edges(*attached, BRep::EdgeFeature::Chamfer, 0.5, one_edge).ok());
+
+    SECTION("a mesh part with a CAD body attached goes out exactly")
+    {
+        Model                    other;
+        ModelObject             *plain = placed_object(other, make_cube(20., 10., 5.), "plain");
+        ModelVolume             *part  = plain->volumes.front();
+        BRep::MeshConversionReport conversion;
+        part->cad_body = BRep::cad_body_from_mesh(part->mesh().its, conversion);
+        REQUIRE(part->cad_body);
+        TempFile exact(".step");
+        REQUIRE(store_step_part(exact.str(), *part, {}, report, true));
+        CHECK(report.exact_parts == 1);
+        CHECK(info_of_all(reread(exact.str())).faces == 6); // the body, not the 12 triangles
+    }
+    SECTION("a mesh part has no exact B-rep; exact_only says why and writes nothing")
+    {
+        Model        other;
+        ModelObject *plain = placed_object(other, asymmetric_part(), "plain");
+        TempFile     nothing(".step");
+        REQUIRE_FALSE(store_step_part(nothing.str(), *plain->volumes.front(), {}, report, true));
+        CHECK_FALSE(report.error.empty());
+        CHECK_FALSE(boost::filesystem::exists(nothing.path));
+    }
 }

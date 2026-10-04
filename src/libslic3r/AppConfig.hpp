@@ -1,6 +1,7 @@
 #ifndef slic3r_AppConfig_hpp_
 #define slic3r_AppConfig_hpp_
 
+#include <chrono>
 #include <set>
 #include <map>
 #include <string>
@@ -116,6 +117,15 @@ public:
 	// Does this config need to be saved?
 	bool 				dirty() const { return m_dirty; }
 
+	static constexpr std::chrono::seconds SAVE_RETRY_BACKOFF{10};
+
+	// Idle path only: a lasting write failure must not retry the write on
+	// every idle event. Explicit save() always attempts.
+	bool				save_due() const
+	{
+		return m_retry_save_at == std::chrono::steady_clock::time_point{} ||
+		       std::chrono::steady_clock::now() >= m_retry_save_at;
+	}
 
 	void				set_dirty() { m_dirty = true; }
 
@@ -335,6 +345,9 @@ public:
 
 	// Get the default config path from Slic3r::data_dir().
 	std::string			config_path();
+	// <config_path>.lock: the InstanceLock file that orders saves of the config
+	// between instances on one data dir. Empty without a data dir (tests, CLI).
+	std::string			lock_path();
 
 	// Returns true if the user's data directory comes from before Slic3r 1.40.0 (no updating)
 	bool 				legacy_datadir() const { return m_legacy_datadir; }
@@ -430,6 +443,8 @@ private:
 	MachineSettingMap											m_printer_settings;
 	// Has any value been modified since the config.ini has been last saved or loaded?
 	bool														m_dirty;
+	// After a failed save(), idle retries wait until this instant. Epoch means "no back-off".
+	std::chrono::steady_clock::time_point						m_retry_save_at{};
 	// Original version found in the ini file before it was overwritten
 	Semver                                                      m_orig_version;
 	// Whether the existing version is before system profiles & configuration updating

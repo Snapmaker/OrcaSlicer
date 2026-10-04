@@ -4,6 +4,7 @@
 #include "Layer.hpp"
 #include "ClipperUtils.hpp"
 #include "ParameterUtils.hpp"
+#include "../BambuFlowSupport.hpp"
 #include "../BrimFilament.hpp"
 // Ultra (dual-nozzle): filament->nozzle grouping compute.
 #include "../FilamentGroup.hpp"
@@ -1935,6 +1936,15 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
                     if (m_print_full_config) {
                         auto* opt = const_cast<DynamicPrintConfig*>(m_print_full_config)->option<ConfigOptionInts>("filament_map", true);
                         if (opt) opt->values = em;
+                    }
+                    // Owner decision D2: on a dual-nozzle printer with High Flow support each filament slices
+                    // the column of the nozzle its extruder carries. The grouping above is what decides the
+                    // extruder (an auto-grouped filament may land on the High Flow nozzle), so the per-filament
+                    // flow type follows the final map here, before the wipe tower and G-code read it.
+                    if (BambuFlowSupport::apply_filament_volume_types_from_map(const_cast<PrintConfig&>(m_print->config()))) {
+                        if (m_print_full_config)
+                            const_cast<DynamicPrintConfig*>(m_print_full_config)->option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values =
+                                m_print->config().filament_volume_type.values;
                     }
                 }
             }

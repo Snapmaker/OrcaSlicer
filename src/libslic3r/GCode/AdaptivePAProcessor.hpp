@@ -50,10 +50,25 @@ public:
      * @brief Manually sets adaptive PA internal value.
      *
      * This method manually sets the adaptive PA internally held value.
-     * Call this when changing tools or in any other case where the internally assumed last PA value may be incorrect
+     * Call this when changing tools or in any other case where the internally assumed last PA value may be incorrect.
+     * Only safe while process_layer() is not running on another thread: inside the layer pipeline,
+     * emit reset_marker() into the layer G-code instead.
      */
     void resetPreviousPA(double PA){ m_last_predicted_pa = PA; };
-    
+
+    /**
+     * @brief In-band equivalent of resetPreviousPA() for G-code that goes through process_layer().
+     *
+     * The layer pipeline generates layer N+1 while this processor is still working on layer N, so a
+     * tool change must not touch the processor from the generator thread. It writes this line right
+     * after its own pressure advance command instead; process_layer() applies the reset when it
+     * reaches the line, in G-code order, and drops the line from its output.
+     *
+     * @param PA The pressure advance the tool change has just set.
+     * @return The marker line, newline terminated.
+     */
+    static std::string reset_marker(double PA);
+
 private:
     GCode &m_gcodegen; ///< Reference to the GCode object.
     std::unordered_map<unsigned int, std::unique_ptr<AdaptivePAInterpolator>> m_AdaptivePAInterpolators; ///< Map between Interpolator objects and tool ID's
@@ -78,6 +93,13 @@ private:
      * @return The Adaptive PA Interpolator object corresponding to that tool.
      */
     AdaptivePAInterpolator* getInterpolator(unsigned int tool_id);
+
+    /**
+     * @brief Applies a reset_marker() line.
+     *
+     * @return False when the line is not a reset marker.
+     */
+    bool applyResetMarker(const std::string &line);
 };
 
 } // namespace Slic3r

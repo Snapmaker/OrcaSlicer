@@ -1,11 +1,42 @@
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
 #include "UntrustedInput.hpp"
 
 #include "Config.hpp"
 #include "PrintConfig.hpp"
+#include "Utils.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
+#include <cstdio>
+
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1 << 0)
+#endif
+#endif
+#endif
+
+#include <boost/filesystem.hpp>
+#include <boost/filesystem/operations.hpp>
+#include <boost/system/error_code.hpp>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace Slic3r {
 namespace untrusted {
@@ -499,6 +530,211 @@ std::string sanitize_download_filename(const std::string &name_in)
     return out;
 }
 
+boost::filesystem::path download_marker_path(const boost::filesystem::path &dest_folder, const std::string &filename)
+{
+    return dest_folder / (filename + "." + std::to_string(get_current_pid()) + ".download");
+}
+
+namespace {
+
+// A stat error is treated as free. Exclusive create and no-replace rename still refuse
+// to overwrite if the name is in use, so a missed probe cannot replace an existing file.
+bool path_taken(const boost::filesystem::path &p)
+{
+    boost::system::error_code ec;
+    const auto                st = boost::filesystem::symlink_status(p, ec);
+    return !ec && boost::filesystem::exists(st);
+}
+
+void set_already_exists(boost::system::error_code &ec)
+{
+    ec = boost::system::errc::make_error_code(boost::system::errc::file_exists);
+}
+
+bool exclusive_open_hit_existing() { return errno == EEXIST; }
+
+#ifndef _WIN32
+void set_posix_rename_error(boost::system::error_code &ec)
+{
+    if (errno == EEXIST)
+        set_already_exists(ec);
+    else
+        ec.assign(errno, boost::system::system_category());
+}
+#endif
+
+} // namespace
+
+bool find_unused_filename(const boost::filesystem::path &dest_folder,
+                          const std::string             &filename,
+                          const boost::filesystem::path &ignored_marker,
+                          std::string                   &result,
+                          std::size_t                    max_version)
+{
+    // Probe the name that will be written, so a name the sanitizing maps onto an existing file is versioned too.
+    const std::string sanitized = sanitize_download_filename(filename);
+    if (sanitized.empty()) {
+        result.clear();
+        return false;
+    }
+    const std::string extension = boost::filesystem::path(sanitized).extension().string();
+    const std::string stem      = sanitized.substr(0, sanitized.size() - extension.size());
+    auto              is_used   = [&](const std::string &name) {
+        const boost::filesystem::path marker = download_marker_path(dest_folder, name);
+        return path_taken(dest_folder / name) || (marker != ignored_marker && path_taken(marker));
+    };
+    result = sanitized;
+    for (size_t version = 1; is_used(result); ++version) {
+        if (version > max_version)
+            return false;
+        result = stem + "(" + std::to_string(version) + ")" + extension;
+    }
+    return true;
+}
+
+FILE *open_exclusive_write(const boost::filesystem::path &path)
+{
+#ifdef _WIN32
+    return _wfopen(path.wstring().c_str(), L"wbx");
+#else
+    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+    if (fd < 0)
+        return nullptr;
+    FILE *f = ::fdopen(fd, "wb");
+    if (f == nullptr)
+        ::close(fd);
+    return f;
+#endif
+}
+
+bool rename_no_replace(const boost::filesystem::path &from, const boost::filesystem::path &to, boost::system::error_code &ec)
+{
+    ec.clear();
+#ifdef _WIN32
+    if (MoveFileExW(from.wstring().c_str(), to.wstring().c_str(), 0))
+        return true;
+    const DWORD err = GetLastError();
+    if (err == ERROR_ALREADY_EXISTS || err == ERROR_FILE_EXISTS)
+        set_already_exists(ec);
+    else
+        ec.assign(static_cast<int>(err), boost::system::system_category());
+    return false;
+#else
+#if defined(__linux__) && defined(SYS_renameat2)
+    if (::syscall(SYS_renameat2, AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0)
+        return true;
+    if (errno != ENOSYS && errno != EINVAL) {
+        set_posix_rename_error(ec);
+        return false;
+    }
+#endif
+#if defined(__APPLE__)
+    if (::renameatx_np(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_EXCL) == 0)
+        return true;
+    if (errno != ENOSYS && errno != ENOTSUP) {
+        set_posix_rename_error(ec);
+        return false;
+    }
+#endif
+    if (::link(from.c_str(), to.c_str()) == 0) {
+        if (::unlink(from.c_str()) == 0)
+            return true;
+        // dest is a new name for the same inode. A leftover source name is acceptable
+        // if dest is in place; do not fail the download after a successful link.
+        if (path_taken(to)) {
+            ec.clear();
+            return true;
+        }
+        set_posix_rename_error(ec);
+        return false;
+    }
+    // Hard links are missing on some NFS/CIFS/FUSE volumes. After a last existence
+    // check, a plain rename is the fallback.
+    if (errno == EPERM || errno == ENOTSUP || errno == EXDEV
+#ifdef EOPNOTSUPP
+        || errno == EOPNOTSUPP
+#endif
+    ) {
+        if (path_taken(to)) {
+            set_already_exists(ec);
+            return false;
+        }
+        if (::rename(from.c_str(), to.c_str()) == 0) {
+            ec.clear();
+            return true;
+        }
+        set_posix_rename_error(ec);
+        return false;
+    }
+    set_posix_rename_error(ec);
+    return false;
+#endif
+}
+
+FILE *claim_unused_download_name(const boost::filesystem::path &dest_folder,
+                                 const std::string             &filename,
+                                 const boost::filesystem::path &ignored_marker,
+                                 std::string                   &result)
+{
+    const std::string requested = filename;
+    result.clear();
+    std::string last;
+    for (std::size_t attempt = 0; attempt <= FIND_UNUSED_FILENAME_MAX_VERSION + 1; ++attempt) {
+        if (!find_unused_filename(dest_folder, requested, ignored_marker, result))
+            return nullptr;
+        const boost::filesystem::path marker = download_marker_path(dest_folder, result);
+        FILE *f = open_exclusive_write(marker);
+        if (f != nullptr)
+            return f;
+        // The caller already holds this marker (Content-Disposition adopting the same
+        // name). A removed marker (early pause) is not this case: exclusive create
+        // succeeded above. Only a still-present ignored_marker is reused.
+        if (marker == ignored_marker)
+            return nullptr;
+        if (!exclusive_open_hit_existing() || result == last) {
+            result.clear();
+            return nullptr;
+        }
+        last = result;
+    }
+    result.clear();
+    return nullptr;
+}
+
+bool place_download_file(const boost::filesystem::path &tmp_path,
+                         const boost::filesystem::path &dest_folder,
+                         std::string                   &filename,
+                         boost::filesystem::path       &dest_path,
+                         boost::system::error_code     &ec)
+{
+    dest_path.clear();
+    std::string last;
+    for (std::size_t attempt = 0; attempt <= FIND_UNUSED_FILENAME_MAX_VERSION + 1; ++attempt) {
+        std::string unused;
+        if (!find_unused_filename(dest_folder, filename, tmp_path, unused)) {
+            ec = boost::system::errc::make_error_code(boost::system::errc::io_error);
+            return false;
+        }
+        // Same name after an EEXIST: path_taken treated the dest as free (stat error).
+        // Do not spin; fail so the caller can drop the marker instead of looping forever.
+        if (!last.empty() && unused == last) {
+            set_already_exists(ec);
+            dest_path = dest_folder / unused;
+            filename  = unused;
+            return false;
+        }
+        last      = unused;
+        filename  = unused;
+        dest_path = dest_folder / unused;
+        if (rename_no_replace(tmp_path, dest_path, ec))
+            return true;
+        if (ec != boost::system::errc::file_exists)
+            return false;
+    }
+    set_already_exists(ec);
+    return false;
+}
+
 bool content_matches_extension(const std::string &file_name, const std::string &head, unsigned long long file_size, std::string *why)
 {
     auto fail = [why](const char *msg) {
@@ -543,6 +779,86 @@ bool content_matches_extension(const std::string &file_name, const std::string &
 
 // ---- archive entries ---------------------------------------------------------------------------
 
+namespace {
+
+// Non-ASCII characters that NFKC normalisation or an ANSI code page's best-fit mapping
+// (WideCharToMultiByte without WC_NO_BEST_FIT_CHARS) turns into '.', '/', '\\' or ':'. The
+// archive extractors write through wide APIs, so these never reach a narrow path call any more;
+// refusing them as well keeps a name like "U+FF0E U+FF0E U+FF0F x" (fullwidth "../x") from
+// meaning something different to any other consumer of the validated name.
+bool is_separator_lookalike(std::uint32_t cp)
+{
+    switch (cp) {
+    case 0x2024: // ONE DOT LEADER
+    case 0x2025: // TWO DOT LEADER
+    case 0x2044: // FRACTION SLASH
+    case 0x2215: // DIVISION SLASH
+    case 0x2216: // SET MINUS
+    case 0x2236: // RATIO
+    case 0x2571: // BOX DRAWINGS LIGHT DIAGONAL UPPER RIGHT TO LOWER LEFT
+    case 0x2572: // BOX DRAWINGS LIGHT DIAGONAL UPPER LEFT TO LOWER RIGHT
+    case 0x29F5: // REVERSE SOLIDUS OPERATOR
+    case 0x29F8: // BIG SOLIDUS
+    case 0x29F9: // BIG REVERSE SOLIDUS
+    case 0xA789: // MODIFIER LETTER COLON
+    case 0xFE30: // PRESENTATION FORM FOR VERTICAL TWO DOT LEADER
+    case 0xFE52: // SMALL FULL STOP
+    case 0xFE55: // SMALL COLON
+    case 0xFE68: // SMALL REVERSE SOLIDUS
+    case 0xFF0E: // FULLWIDTH FULL STOP
+    case 0xFF0F: // FULLWIDTH SOLIDUS
+    case 0xFF1A: // FULLWIDTH COLON
+    case 0xFF3C: // FULLWIDTH REVERSE SOLIDUS
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Scans the UTF-8 text for such a character. A byte that is not part of a well-formed
+// sequence is skipped: legacy-encoded names keep working, and no conforming decoder reads a
+// malformed (e.g. overlong) sequence as an ASCII character.
+bool has_separator_lookalike(const std::string &s)
+{
+    for (size_t i = 0; i < s.size();) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        size_t              len = 0;
+        std::uint32_t       cp  = 0;
+        if (c < 0x80) {
+            ++i;
+            continue;
+        } else if ((c & 0xE0) == 0xC0) {
+            len = 2;
+            cp  = c & 0x1F;
+        } else if ((c & 0xF0) == 0xE0) {
+            len = 3;
+            cp  = c & 0x0F;
+        } else if ((c & 0xF8) == 0xF0) {
+            len = 4;
+            cp  = c & 0x07;
+        } else {
+            ++i;
+            continue;
+        }
+        bool ok = i + len <= s.size();
+        for (size_t k = 1; ok && k < len; ++k) {
+            const unsigned char cc = static_cast<unsigned char>(s[i + k]);
+            ok                     = (cc & 0xC0) == 0x80;
+            cp                     = (cp << 6) | (cc & 0x3F);
+        }
+        if (!ok) {
+            ++i;
+            continue;
+        }
+        if (is_separator_lookalike(cp))
+            return true;
+        i += len;
+    }
+    return false;
+}
+
+} // namespace
+
 bool is_safe_archive_relative_path(const std::string &path)
 {
     if (path.empty() || path.size() > 1024 || path.front() == '/')
@@ -550,6 +866,8 @@ bool is_safe_archive_relative_path(const std::string &path)
     for (unsigned char c : path)
         if (c < 0x20 || c == 0x7f || c == '\\' || c == ':')
             return false;
+    if (has_separator_lookalike(path))
+        return false;
     size_t start = 0;
     while (true) {
         const size_t slash = path.find('/', start);
@@ -564,6 +882,116 @@ bool is_safe_archive_relative_path(const std::string &path)
         start = slash + 1;
     }
     return true;
+}
+
+ArchiveEntryName normalize_archive_entry_path(const std::string &raw, std::string &out)
+{
+    // Far longer than any real name; also bounds the work below.
+    if (raw.empty() || raw.size() > 4096)
+        return ArchiveEntryName::Reject;
+    std::string s = raw;
+    for (char &c : s)
+        if (c == '\\')
+            c = '/';
+    // After the conversion an absolute path, a UNC share and "\\?\" all start with '/'.
+    if (s.front() == '/')
+        return ArchiveEntryName::Reject;
+    std::string result;
+    size_t      start = 0;
+    while (start <= s.size()) {
+        const size_t      slash = s.find('/', start);
+        const std::string seg   = s.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
+        if (seg == "..")
+            return ArchiveEntryName::Reject;
+        if (!seg.empty() && seg != ".") {
+            if (!result.empty())
+                result += '/';
+            result += seg;
+        }
+        if (slash == std::string::npos)
+            break;
+        start = slash + 1;
+    }
+    if (result.empty())
+        return ArchiveEntryName::Skip; // only "." segments and separators
+    if (!is_safe_archive_relative_path(result))
+        return ArchiveEntryName::Reject;
+    out = std::move(result);
+    return ArchiveEntryName::Ok;
+}
+
+std::string archive_entry_leaf(const std::string &normalized)
+{
+    const size_t slash = normalized.rfind('/');
+    return slash == std::string::npos ? normalized : normalized.substr(slash + 1);
+}
+
+namespace {
+
+bool has_embedded_nul(const std::string &s) { return s.find('\0') != std::string::npos; }
+
+bool has_embedded_nul(const boost::filesystem::path &p)
+{
+    return has_embedded_nul(p.string()) || has_embedded_nul(p.generic_string());
+}
+
+boost::filesystem::path strip_trailing_separators_path(boost::filesystem::path p)
+{
+    std::string s = p.generic_string();
+    while (s.size() > 1 && (s.back() == '/' || s.back() == '\\'))
+        s.pop_back();
+    return boost::filesystem::path(s);
+}
+
+// weakly_canonical follows a symlink at the last component. Extraction *replaces*
+// a destination file symlink, so that last hop of a *candidate* must stay the spelled
+// path. Intermediate symlinks are still followed, so root/out/lib.so (out -> outside)
+// is rejected. Do not use this on the extraction root: a symlink-to-dir root is a
+// valid dest and must be followed (plain weakly_canonical).
+boost::filesystem::path weakly_canonical_for_confine(const boost::filesystem::path &p)
+{
+    const boost::filesystem::path stripped = strip_trailing_separators_path(p);
+    boost::system::error_code     ec;
+    if (boost::filesystem::is_symlink(boost::filesystem::symlink_status(stripped, ec))) {
+        const boost::filesystem::path parent = stripped.parent_path();
+        if (parent.empty())
+            return stripped;
+        return boost::filesystem::weakly_canonical(parent) / stripped.filename();
+    }
+    return boost::filesystem::weakly_canonical(stripped);
+}
+
+bool skip_dot_or_empty(const boost::filesystem::path &comp) { return comp.empty() || comp == "."; }
+
+} // namespace
+
+bool is_path_within_root(const boost::filesystem::path &root, const boost::filesystem::path &candidate)
+{
+    try {
+        if (has_embedded_nul(root) || has_embedded_nul(candidate))
+            return false;
+        const boost::filesystem::path root_c = boost::filesystem::weakly_canonical(strip_trailing_separators_path(root));
+        const boost::filesystem::path cand_c = weakly_canonical_for_confine(candidate);
+        if (has_embedded_nul(root_c) || has_embedded_nul(cand_c))
+            return false;
+        auto r = root_c.begin();
+        auto c = cand_c.begin();
+        while (r != root_c.end()) {
+            if (skip_dot_or_empty(*r)) {
+                ++r;
+                continue;
+            }
+            while (c != cand_c.end() && skip_dot_or_empty(*c))
+                ++c;
+            if (c == cand_c.end() || *r != *c)
+                return false;
+            ++r;
+            ++c;
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 // ---- settings --------------------------------------------------------------------------------

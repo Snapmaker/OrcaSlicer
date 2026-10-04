@@ -1,12 +1,20 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/libslic3r.h"
+#include "libslic3r/Extruder.hpp"
+#include "libslic3r/GCode/WipeTower2.hpp"
 #include "libslic3r/GCodeReader.hpp"
+#include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/PresetFlowVariant.hpp"
 
 #include "test_data.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <map>
 #include <regex>
+#include <sstream>
+#include <vector>
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
@@ -346,4 +354,964 @@ TEST_CASE("BBL time_lapse_gcode is emitted once per layer", "[PrintGCode][Timela
         std::string gcode = slice_bbl("i3", marker);
         REQUIRE(count(gcode, "\n;TEST_TIMELAPSE ") == count(gcode, "\n;TEST_LAYER_CHANGE "));
     }
+}
+
+// Orca #15986 / Edge flow variants: pressure_advance is stored per Standard/High-Flow column,
+// so filament id is not the array index once a filament declares both variants. Filament 2 is
+// High-Flow with Standard=0.02 and High-Flow=0.05; raw get_at(1) reads the Standard slot.
+namespace {
+
+constexpr double kPaStdF0 = 0.01;
+constexpr double kPaStdF1 = 0.02;
+constexpr double kPaHfF1  = 0.05;
+
+DynamicPrintConfig high_flow_pa_config(bool enable_std_f1, bool enable_hf_f1, bool adaptive)
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_num_extruders(2);
+    config.set_num_filaments(2);
+    config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75};
+    config.option<ConfigOptionFloats>("nozzle_diameter")->values   = {0.4, 0.4};
+    config.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#0000FF"};
+    config.option<ConfigOptionBool>("enable_prime_tower")->value   = true;
+    config.option<ConfigOptionBool>("enable_support")->value       = false;
+    config.option<ConfigOptionBool>("spiral_mode")->value          = false;
+    config.option<ConfigOptionFloats>("wipe_tower_x")->values      = {15.};
+    config.option<ConfigOptionFloats>("wipe_tower_y")->values      = {15.};
+    config.option<ConfigOptionFloat>("prime_tower_width")->value   = 35.;
+    config.option<ConfigOptionBool>("gcode_comments")->value       = true;
+    config.set_deserialize_strict({{"brim_type", "no_brim"},
+                                   {"skirt_loops", "0"},
+                                   {"wipe_tower_wall_type", "rectangle"},
+                                   {"gcode_flavor", "marlin"},
+                                   {"layer_height", "0.2"},
+                                   {"initial_layer_print_height", "0.2"}});
+
+    // F0 Standard-only (1 column) + F1 Standard/High-Flow (2 columns). Filament 2 is High-Flow,
+    // so get_config_idx(..., 1) == 2 while get_at(1) still reads the Standard 0.02 slot.
+    config.option<ConfigOptionInts>("filament_flow_step_size", true)->values = {1, 2};
+    config.option<ConfigOptionStrings>("filament_flow_support", true)->values =
+        {FLOW_MODE_STANDARD, FLOW_MODE_STANDARD, FLOW_MODE_HIGH_FLOW};
+    config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtStandard),
+                                                                                     int(fvtHighFlow)};
+    config.option<ConfigOptionFloats>("pressure_advance")->values                = {kPaStdF0, kPaStdF1, kPaHfF1};
+    config.option<ConfigOptionBools>("enable_pressure_advance")->values          = {true, enable_std_f1, enable_hf_f1};
+    config.option<ConfigOptionBools>("adaptive_pressure_advance")->values        = {adaptive, adaptive};
+    config.option<ConfigOptionBools>("adaptive_pressure_advance_overhangs")->values = {adaptive, adaptive};
+    if (adaptive)
+        config.option<ConfigOptionStrings>("adaptive_pressure_advance_model")->values = {"", ""};
+    return config;
+}
+
+void require_high_flow_columns(const ConfigBase &config)
+{
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 0) == 0);
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 1) == 2);
+    const auto *pa = config.option<ConfigOptionFloats>("pressure_advance");
+    REQUIRE(pa != nullptr);
+    REQUIRE(pa->values.size() >= 3);
+    REQUIRE_THAT(pa->get_at(1), Catch::Matchers::WithinAbs(kPaStdF1, 1e-9));
+    REQUIRE_THAT(get_value_at(config, *pa, ConfigFlowDomain::Filament, 1), Catch::Matchers::WithinAbs(kPaHfF1, 1e-9));
+}
+
+std::string slice_high_flow_pa(DynamicPrintConfig config, bool bbl, bool check_pa_columns = true)
+{
+    Print print;
+    Model model;
+    ModelObject *first = model.add_object();
+    first->name        = "cube-a.stl";
+    first->add_volume(mesh(TestMesh::cube_20x20x20));
+    first->add_instance()->set_offset(Vec3d(80., 40., 0.));
+    first->ensure_on_bed();
+    ModelObject *second = model.add_object();
+    second->name        = "cube-b.stl";
+    second->add_volume(mesh(TestMesh::cube_20x20x20));
+    second->add_instance()->set_offset(Vec3d(120., 40., 0.));
+    second->ensure_on_bed();
+    second->volumes.front()->config.set("extruder", 2);
+
+    print.apply(model, config);
+    print.is_BBL_printer() = bbl;
+    REQUIRE(print.has_wipe_tower());
+    if (check_pa_columns)
+        require_high_flow_columns(print.config());
+    return Test::gcode(print);
+}
+
+struct PaAfterT1 {
+    size_t              toolchanges_to_f2 = 0;
+    size_t              pa_commands       = 0;
+    size_t              pa_high_flow      = 0;
+    size_t              pa_standard_slot  = 0;
+    size_t              pa_ramming_zero   = 0;
+    size_t              pa_unexpected     = 0;
+    std::vector<double> values;
+};
+
+PaAfterT1 collect_pa_after_filament2(const std::string &gcode)
+{
+    static const std::regex pa_cmd(R"(^(?:M900 K|SET_PRESSURE_ADVANCE ADVANCE=)([0-9.eE+-]+))");
+    static const std::regex tool_cmd(R"(^T(\d+)\s*(;.*)?$)");
+    const double            tol = 1e-4;
+
+    PaAfterT1          result;
+    std::smatch        m;
+    int                current = -1;
+    std::istringstream in(gcode);
+    std::string        line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (std::regex_match(line, m, tool_cmd)) {
+            current = std::stoi(m[1].str());
+            if (current == 1)
+                ++result.toolchanges_to_f2;
+            continue;
+        }
+        if (current != 1)
+            continue;
+        if (!std::regex_search(line, m, pa_cmd))
+            continue;
+        const double pa = std::stod(m[1].str());
+        result.values.push_back(pa);
+        ++result.pa_commands;
+        const bool is_hf      = std::fabs(pa - kPaHfF1) <= tol;
+        const bool is_std     = std::fabs(pa - kPaStdF1) <= tol;
+        // WipeTower2 ramming writes M900 K0 / SET_PRESSURE_ADVANCE ADVANCE=0 because
+        // ramming_pressure_advance_value defaults to 0 (WipeTower2.cpp disable_linear_advance_value).
+        const bool is_ramming = std::fabs(pa) <= tol;
+        if (is_hf)
+            ++result.pa_high_flow;
+        if (is_std)
+            ++result.pa_standard_slot;
+        if (is_ramming)
+            ++result.pa_ramming_zero;
+        if (!is_hf && !is_ramming)
+            ++result.pa_unexpected;
+    }
+    return result;
+}
+
+void require_filament2_uses_high_flow_pa(const std::string &gcode, size_t min_pa_commands)
+{
+    const PaAfterT1 pa = collect_pa_after_filament2(gcode);
+    INFO("T1 toolchanges " << pa.toolchanges_to_f2 << ", PA commands " << pa.pa_commands << ", HF " << pa.pa_high_flow
+                           << ", std-slot " << pa.pa_standard_slot << ", ramming-0 " << pa.pa_ramming_zero
+                           << ", unexpected " << pa.pa_unexpected);
+    REQUIRE(pa.toolchanges_to_f2 >= 2);
+    REQUIRE(pa.pa_commands >= min_pa_commands);
+    REQUIRE(pa.pa_standard_slot == 0);
+    // Every PA inside a T1 block is High-Flow 0.05, except WipeTower2 ramming M900 K0.
+    // A wrong-column read of filament 2's Standard slot is 0.02; a silent fallback to
+    // filament 0 (or get_at(0)) is 0.01. On the multi-extruder path T (~GCode.cpp:10882)
+    // is emitted before PA (~:10921), so a later filament's 0.01 cannot appear here.
+    REQUIRE(pa.pa_unexpected == 0);
+    REQUIRE(pa.pa_high_flow + pa.pa_ramming_zero == pa.pa_commands);
+    REQUIRE(pa.pa_high_flow >= min_pa_commands);
+}
+
+// Orca #16007: F0 packed Standard+High-Flow, F1 single. get_at(1) is F0's High-Flow slot.
+constexpr int    kTempStdF0    = 190;
+constexpr int    kTempHfF0     = 230;
+constexpr int    kTempF1       = 210;
+constexpr int    kInitStdF0    = 185;
+constexpr int    kInitHfF0     = 225;
+constexpr int    kInitF1       = 205;
+constexpr double kPurgeStdF0   = 1.;
+constexpr double kPurgeHfF0    = 15.;
+constexpr double kPurgeF1      = 5.;
+constexpr double kVolStdF0     = 8.;
+constexpr double kVolHfF0      = 30.;
+constexpr double kVolF1        = 12.;
+constexpr double kRamVolStdF0  = 1.;
+constexpr double kRamVolHfF0   = 20.;
+constexpr double kRamVolF1     = 8.;
+constexpr double kRamFlowStdF0 = 1.;
+constexpr double kRamFlowHfF0  = 10.;
+constexpr double kRamFlowF1    = 4.;
+constexpr double kFlowStdF0    = 0.98;
+constexpr double kFlowHfF0     = 0.95;
+constexpr double kFlowF1       = 1.01;
+constexpr double kRetractStdF0 = 0.8;
+constexpr double kRetractHfF0  = 3.0;
+constexpr double kRetractF1    = 1.5;
+constexpr double kRetractSpeedStdF0 = 30.;
+constexpr double kRetractSpeedHfF0  = 40.;
+constexpr double kRetractSpeedF1    = 25.;
+constexpr int    kStandbyDelta      = -15;
+constexpr double kFlowT1StdPacked   = 1.40;
+DynamicPrintConfig step_size_2_f0_config()
+{
+    DynamicPrintConfig config = high_flow_pa_config(true, true, false);
+    // F0 Standard+High-Flow (2 columns) + F1 Standard-only (1 column). F0 is High-Flow, so
+    // get_config_idx(..., 0) == 1 and get_config_idx(..., 1) == 2. get_at(1) is F0's HF slot.
+    config.option<ConfigOptionInts>("filament_flow_step_size", true)->values = {2, 1};
+    config.option<ConfigOptionStrings>("filament_flow_support", true)->values =
+        {FLOW_MODE_STANDARD, FLOW_MODE_HIGH_FLOW, FLOW_MODE_STANDARD};
+    config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtHighFlow),
+                                                                                     int(fvtStandard)};
+    config.option<ConfigOptionInts>("nozzle_temperature")->values               = {kTempStdF0, kTempHfF0, kTempF1};
+    config.option<ConfigOptionInts>("nozzle_temperature_initial_layer")->values = {kInitStdF0, kInitHfF0, kInitF1};
+    config.option<ConfigOptionFloats>("filament_minimal_purge_on_wipe_tower")->values = {kPurgeStdF0, kPurgeHfF0,
+                                                                                         kPurgeF1};
+    config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values        = {kVolStdF0, kVolHfF0, kVolF1};
+    config.option<ConfigOptionBools>("filament_multitool_ramming")->values            = {false, true, true};
+    config.option<ConfigOptionFloats>("filament_multitool_ramming_volume")->values    = {kRamVolStdF0, kRamVolHfF0,
+                                                                                        kRamVolF1};
+    config.option<ConfigOptionFloats>("filament_multitool_ramming_flow")->values      = {kRamFlowStdF0, kRamFlowHfF0,
+                                                                                        kRamFlowF1};
+    // 2x2 flush matrix so extract_wipe_volumes walks two filament ids, not the 4x4 default.
+    config.option<ConfigOptionFloats>("flush_volumes_matrix")->values = {0.f, 0.f, 0.f, 0.f};
+    config.option<ConfigOptionFloats>("filament_flow_ratio")->values = {kFlowStdF0, kFlowHfF0, kFlowF1};
+    config.option<ConfigOptionFloats>("retraction_length")->values   = {0.4, 0.4};
+    config.option<ConfigOptionFloats>("retraction_speed")->values    = {10., 10.};
+    config.option<ConfigOptionFloatsNullable>("filament_retraction_length", true)->values = {kRetractStdF0, kRetractHfF0,
+                                                                                             kRetractF1};
+    config.option<ConfigOptionFloatsNullable>("filament_retraction_speed", true)->values = {kRetractSpeedStdF0,
+                                                                                            kRetractSpeedHfF0,
+                                                                                            kRetractSpeedF1};
+    return config;
+}
+
+void require_applied_tool_retract_and_flow(Print &print)
+{
+    REQUIRE(print.config().retraction_length.size() == 2);
+    REQUIRE_THAT(print.config().retraction_length.get_at(0), Catch::Matchers::WithinAbs(kRetractHfF0, 1e-9));
+    REQUIRE_THAT(print.config().retraction_length.get_at(1), Catch::Matchers::WithinAbs(kRetractF1, 1e-9));
+    REQUIRE_THAT(print.config().retraction_speed.get_at(0), Catch::Matchers::WithinAbs(kRetractSpeedHfF0, 1e-9));
+    REQUIRE_THAT(print.config().retraction_speed.get_at(1), Catch::Matchers::WithinAbs(kRetractSpeedF1, 1e-9));
+
+    GCodeConfig gc;
+    gc.apply(print.config(), true);
+    Extruder e0(0, &gc, false);
+    Extruder e1(1, &gc, false);
+    REQUIRE_THAT(e0.filament_flow_ratio(), Catch::Matchers::WithinAbs(kFlowHfF0, 1e-9));
+    REQUIRE_THAT(e1.filament_flow_ratio(), Catch::Matchers::WithinAbs(kFlowF1, 1e-9));
+    REQUIRE_THAT(e0.retraction_length(), Catch::Matchers::WithinAbs(kRetractHfF0, 1e-9));
+    REQUIRE_THAT(e1.retraction_length(), Catch::Matchers::WithinAbs(kRetractF1, 1e-9));
+    REQUIRE(e0.retract_speed() == int(kRetractSpeedHfF0));
+    REQUIRE(e1.retract_speed() == int(kRetractSpeedF1));
+}
+
+int e_feedrate_from_vol(double vol)
+{
+    const double area = (M_PI / 4.) * 1.75 * 1.75;
+    const int    feed = int(60.0 * vol / area);
+    return feed == 0 ? 100 : feed;
+}
+
+void require_step_size_2_f0_columns(const ConfigBase &config)
+{
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 0) == 1);
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 1) == 2);
+
+    const auto *temps  = config.option<ConfigOptionInts>("nozzle_temperature");
+    const auto *inits  = config.option<ConfigOptionInts>("nozzle_temperature_initial_layer");
+    const auto *purge  = config.option<ConfigOptionFloats>("filament_minimal_purge_on_wipe_tower");
+    const auto *vol    = config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    const auto *ram_on = config.option<ConfigOptionBools>("filament_multitool_ramming");
+    const auto *ram_v  = config.option<ConfigOptionFloats>("filament_multitool_ramming_volume");
+    const auto *ram_f  = config.option<ConfigOptionFloats>("filament_multitool_ramming_flow");
+    REQUIRE(temps != nullptr);
+    REQUIRE(inits != nullptr);
+    REQUIRE(purge != nullptr);
+    REQUIRE(vol != nullptr);
+    REQUIRE(ram_on != nullptr);
+    REQUIRE(ram_v != nullptr);
+    REQUIRE(ram_f != nullptr);
+
+    // Raw filament-id reads land in F0's High-Flow column.
+    REQUIRE(temps->get_at(1) == kTempHfF0);
+    REQUIRE(inits->get_at(1) == kInitHfF0);
+    REQUIRE_THAT(purge->get_at(1), Catch::Matchers::WithinAbs(kPurgeHfF0, 1e-9));
+    REQUIRE_THAT(vol->get_at(1), Catch::Matchers::WithinAbs(kVolHfF0, 1e-9));
+    REQUIRE(ram_on->get_at(1));
+    REQUIRE_THAT(ram_v->get_at(1), Catch::Matchers::WithinAbs(kRamVolHfF0, 1e-9));
+    REQUIRE_THAT(ram_f->get_at(1), Catch::Matchers::WithinAbs(kRamFlowHfF0, 1e-9));
+
+    REQUIRE(get_value_at(config, *temps, ConfigFlowDomain::Filament, 1) == kTempF1);
+    REQUIRE(get_value_at(config, *inits, ConfigFlowDomain::Filament, 1) == kInitF1);
+    REQUIRE_THAT(get_value_at(config, *purge, ConfigFlowDomain::Filament, 1),
+                 Catch::Matchers::WithinAbs(kPurgeF1, 1e-9));
+    REQUIRE_THAT(get_value_at(config, *vol, ConfigFlowDomain::Filament, 1), Catch::Matchers::WithinAbs(kVolF1, 1e-9));
+    REQUIRE(get_value_at(config, *ram_on, ConfigFlowDomain::Filament, 1));
+    REQUIRE_THAT(get_value_at(config, *ram_v, ConfigFlowDomain::Filament, 1),
+                 Catch::Matchers::WithinAbs(kRamVolF1, 1e-9));
+    REQUIRE_THAT(get_value_at(config, *ram_f, ConfigFlowDomain::Filament, 1),
+                 Catch::Matchers::WithinAbs(kRamFlowF1, 1e-9));
+
+    REQUIRE(get_value_at(config, *temps, ConfigFlowDomain::Filament, 0) == kTempHfF0);
+    REQUIRE(temps->get_at(0) == kTempStdF0);
+}
+
+PrintConfig as_print_config(const DynamicPrintConfig &dyn)
+{
+    PrintConfig print_cfg;
+    print_cfg.apply(dyn, true);
+    return print_cfg;
+}
+
+void add_two_tool_cubes(Model &model)
+{
+    ModelObject *first = model.add_object();
+    first->name        = "cube-a.stl";
+    first->add_volume(mesh(TestMesh::cube_20x20x20));
+    first->add_instance()->set_offset(Vec3d(80., 40., 0.));
+    first->ensure_on_bed();
+    ModelObject *second = model.add_object();
+    second->name        = "cube-b.stl";
+    second->add_volume(mesh(TestMesh::cube_20x20x20));
+    second->add_instance()->set_offset(Vec3d(120., 40., 0.));
+    second->ensure_on_bed();
+    second->volumes.front()->config.set("extruder", 2);
+}
+
+std::string g1_feed_fingerprint(const std::string &gcode)
+{
+    std::ostringstream os;
+    std::istringstream in(gcode);
+    std::string        line;
+    static const std::regex f_re(R"(\bF([0-9]+))");
+    while (std::getline(in, line)) {
+        if (line.compare(0, 2, "G1") != 0)
+            continue;
+        std::smatch m;
+        if (std::regex_search(line, m, f_re))
+            os << 'F' << m[1].str() << '\n';
+    }
+    return os.str();
+}
+
+size_t count_g1_feed(const std::string &gcode, int feed)
+{
+    size_t             n = 0;
+    std::istringstream in(gcode);
+    std::string        line;
+    static const std::regex f_re(R"(\bF([0-9]+))");
+    const std::string       want = std::to_string(feed);
+    while (std::getline(in, line)) {
+        if (line.compare(0, 2, "G1") != 0)
+            continue;
+        std::smatch m;
+        if (std::regex_search(line, m, f_re) && m[1].str() == want)
+            ++n;
+    }
+    return n;
+}
+
+std::map<int, size_t> g1_feed_histogram(const std::string &gcode)
+{
+    std::map<int, size_t>    counts;
+    std::istringstream       in(gcode);
+    std::string              line;
+    static const std::regex  f_re(R"(\bF([0-9]+))");
+    while (std::getline(in, line)) {
+        if (line.compare(0, 2, "G1") != 0)
+            continue;
+        std::smatch m;
+        if (std::regex_search(line, m, f_re))
+            ++counts[std::stoi(m[1].str())];
+    }
+    return counts;
+}
+
+void raise_role_speeds_for_mvs_cap(DynamicPrintConfig &config)
+{
+    // Push role speeds above the HF volumetric cap so _extrude F and wipe-tower F
+    // bind on filament_max_volumetric_speed / flow_ratio.
+    const char *keys[] = {"outer_wall_speed", "inner_wall_speed", "sparse_infill_speed",
+                          "internal_solid_infill_speed", "top_surface_speed", "gap_infill_speed",
+                          "support_speed", "travel_speed", "initial_layer_speed",
+                          "initial_layer_infill_speed"};
+    for (const char *key : keys)
+        if (auto *opt = config.option<ConfigOptionFloats>(key))
+            opt->values.assign(std::max<size_t>(1, opt->values.size()), 200.);
+}
+
+void disable_layer_cooling(DynamicPrintConfig &config)
+{
+    if (auto *opt = config.option<ConfigOptionBools>("slow_down_for_layer_cooling"))
+        opt->values.assign(std::max<size_t>(1, opt->values.size()), false);
+    if (auto *opt = config.option<ConfigOptionFloats>("fan_cooling_layer_time"))
+        opt->values.assign(std::max<size_t>(1, opt->values.size()), 0.);
+    if (auto *opt = config.option<ConfigOptionInts>("slow_down_layers"))
+        opt->values.assign(std::max<size_t>(1, opt->values.size()), 0);
+}
+
+size_t count_substr(const std::string &hay, const std::string &needle)
+{
+    size_t n = 0;
+    for (size_t pos = 0; (pos = hay.find(needle, pos)) != std::string::npos; pos += needle.size())
+        ++n;
+    return n;
+}
+
+// Count "Travel to a Wipe Tower" whose next U1_TC is next=<id>. append_tcr2 ~1097
+// travels before set_extruder only when the departing tool rams.
+size_t count_travel_then_tc_next(const std::string &gcode, int next)
+{
+    const std::string travel = "Travel to a Wipe Tower";
+    const std::string marker = "; U1_TC next=" + std::to_string(next);
+    size_t            n      = 0;
+    for (size_t pos = 0; (pos = gcode.find(travel, pos)) != std::string::npos; pos += travel.size()) {
+        const size_t tc = gcode.find("; U1_TC next=", pos);
+        if (tc != std::string::npos && tc < pos + 2500 && gcode.compare(tc, marker.size(), marker) == 0)
+            ++n;
+    }
+    return n;
+}
+
+void apply_u1_toolchange_markers(DynamicPrintConfig &config)
+{
+    config.option<ConfigOptionBool>("single_extruder_multi_material")->value = false;
+    config.option<ConfigOptionFloat>("preheat_time")->value                 = 30.;
+    config.option<ConfigOptionString>("machine_start_gcode")->value =
+        "; U1_START init={nozzle_temperature_initial_layer[initial_extruder]} "
+        "fl0={first_layer_temperature[0]} fl1={first_layer_temperature[1]} "
+        "nt0={nozzle_temperature[0]} nt1={nozzle_temperature[1]} "
+        "rl0={retract_length[0]} rl1={retract_length[1]} "
+        "ram0={filament_multitool_ramming[0]} ram1={filament_multitool_ramming[1]} "
+        "flush0={flush_volumetric_speeds[0]} flush1={flush_volumetric_speeds[1]}\n";
+    config.option<ConfigOptionString>("change_filament_gcode")->value =
+        "; U1_TC next={next_extruder} layer={layer_num}\n"
+        "{if layer_num < 1}\n"
+        "M109 S{first_layer_temperature[next_extruder]} T{next_extruder} ; U1_WAIT_L0\n"
+        "{else}\n"
+        "M109 S{temperature[next_extruder]} T{next_extruder} ; U1_WAIT_LX\n"
+        "{endif}\n"
+        "; U1_FULL NT={nozzle_temperature[next_extruder]} "
+        "NTI={nozzle_temperature_initial_layer[next_extruder]} "
+        "RL={retract_length[next_extruder]} RAM={filament_multitool_ramming[next_extruder]} "
+        "FLUSH={flush_volumetric_speeds[next_extruder]} FEED={new_filament_e_feedrate}\n";
+}
+
+std::string slice_u1_two_tool(DynamicPrintConfig config)
+{
+    Print print;
+    Model model;
+    add_two_tool_cubes(model);
+    print.apply(model, config);
+    print.is_BBL_printer() = false;
+    REQUIRE(print.has_wipe_tower());
+    return Test::gcode(print);
+}
+
+} // namespace
+
+TEST_CASE("wipe-tower and set_extruder PA follow the High-Flow column", "[PrintGCode][GCode][PAVariant]")
+{
+    const DynamicPrintConfig config = high_flow_pa_config(true, true, false);
+    require_high_flow_columns(config);
+
+    SECTION("non-BBL wipe tower hits set_extruder and append_tcr2") {
+        const std::string gcode = slice_high_flow_pa(config, false);
+        REQUIRE(gcode.find("Travel to a Wipe Tower") != std::string::npos);
+        require_filament2_uses_high_flow_pa(gcode, 4);
+    }
+    SECTION("BBL wipe tower hits append_tcr") {
+        const std::string gcode = slice_high_flow_pa(config, true);
+        REQUIRE(gcode.find("CP TOOLCHANGE") != std::string::npos);
+        require_filament2_uses_high_flow_pa(gcode, 2);
+    }
+}
+
+TEST_CASE("enable_pressure_advance follows the High-Flow column", "[PrintGCode][GCode][PAVariant]")
+{
+    // Filament 2 Standard=false, High-Flow=true. get_at(1) is false, so the unfixed readers
+    // skip PA entirely on every toolchange to filament 2.
+    const DynamicPrintConfig config = high_flow_pa_config(false, true, false);
+    require_high_flow_columns(config);
+
+    SECTION("non-BBL wipe tower") {
+        const std::string gcode = slice_high_flow_pa(config, false);
+        require_filament2_uses_high_flow_pa(gcode, 4);
+    }
+    SECTION("BBL wipe tower") {
+        const std::string gcode = slice_high_flow_pa(config, true);
+        require_filament2_uses_high_flow_pa(gcode, 2);
+    }
+}
+
+TEST_CASE("AdaptivePAProcessor base PA follows the High-Flow column", "[PrintGCode][GCode][PAVariant]")
+{
+    const DynamicPrintConfig config = high_flow_pa_config(true, true, true);
+    require_high_flow_columns(config);
+    const std::string gcode = slice_high_flow_pa(config, false);
+    REQUIRE(gcode.find("PA_CHANGE") != std::string::npos);
+    require_filament2_uses_high_flow_pa(gcode, 2);
+}
+
+TEST_CASE("AdaptivePA enable follows the High-Flow column", "[PrintGCode][GCode][PAVariant]")
+{
+    // Standard=false, High-Flow=true. get_at(1) is false, so this fails if:
+    //   * _extrude (~GCode.cpp:9548) reads enable_pressure_advance by raw filament id
+    //     (no PA_CHANGE tags for filament 2), or
+    //   * AdaptivePAProcessor ctor (~:78) does the same (interpolator never installed;
+    //     "; APA: Tool doesnt have APA enabled" instead of the empty-model fallback).
+    // set_extruder ~:10606 is the single-extruder path (PA then T) and ~:10642 is the
+    // BBL start-gcode first-filament path; this 2-extruder wipe-tower fixture hits
+    // the multi-extruder set_extruder site (~:10921) instead.
+    const DynamicPrintConfig config = high_flow_pa_config(false, true, true);
+    require_high_flow_columns(config);
+    const std::string gcode = slice_high_flow_pa(config, false);
+    // PA_CHANGE:T1 is emitted only when _extrude's enable check uses the High-Flow
+    // column. A bare "PA_CHANGE" match is not enough: filament 0 still tags T0
+    // after a get_at(1) revert at ~:9548.
+    REQUIRE(gcode.find("PA_CHANGE:T1") != std::string::npos);
+    // Empty model still marks the interpolator initialised, so interpolation
+    // returns -1 and process_layer falls back. That path only runs if the ctor
+    // installed a per-tool interpolator via get_value_at (High-Flow true).
+    REQUIRE(gcode.find("; APA: Interpolation failed") != std::string::npos);
+    REQUIRE(gcode.find("; APA: Tool doesnt have APA enabled") == std::string::npos);
+    require_filament2_uses_high_flow_pa(gcode, 2);
+}
+
+// Orca #16007 Stage A / Edge flow variants: when F0 declares both Standard and High-Flow, the
+// packed filament arrays are [F0-std, F0-hf, F1, ...]. A raw get_at(1) for filament 1 reads
+// F0's High-Flow slot (wrong filament), not F1's own column.
+TEST_CASE("step-size-2 F0 variants misindex F1 on raw get_at", "[PrintGCode][GCode][PAVariant][FilamentVariants]")
+{
+    const DynamicPrintConfig config = step_size_2_f0_config();
+    require_step_size_2_f0_columns(config);
+
+    const PrintConfig print_cfg = as_print_config(config);
+    const auto        vols      = WipeTower2::extract_wipe_volumes(print_cfg);
+    REQUIRE(vols.size() == 2);
+    REQUIRE(vols[0].size() == 2);
+    // F1 is column j=1. get_at(1) is F0's High-Flow 15 mm3; the variant reader is F1's 5 mm3.
+    REQUIRE_THAT(vols[0][1], Catch::Matchers::WithinAbs(float(kPurgeF1), 1e-4f));
+    REQUIRE_THAT(vols[1][1], Catch::Matchers::WithinAbs(float(kPurgeF1), 1e-4f));
+    REQUIRE_THAT(vols[0][0], Catch::Matchers::WithinAbs(float(kPurgeHfF0), 1e-4f));
+
+    const std::string gcode = slice_high_flow_pa(config, false, false);
+    REQUIRE(gcode.find("Travel to a Wipe Tower") != std::string::npos);
+    // Header comment is filament 0. get_at(0) is Standard 185; F0 is High-Flow so 225.
+    REQUIRE(gcode.find("; first_layer_temperature = " + std::to_string(kInitHfF0)) != std::string::npos);
+    REQUIRE(gcode.find("; first_layer_temperature = " + std::to_string(kInitStdF0)) == std::string::npos);
+    // F1's own first-layer / other-layer temps must appear. F0's High-Flow pair (225/230) is
+    // what a raw get_at(1) would write for filament 1.
+    REQUIRE(count_substr(gcode, "S" + std::to_string(kInitF1)) >= 1);
+    REQUIRE(count_substr(gcode, "S" + std::to_string(kTempF1)) >= 1);
+}
+
+TEST_CASE("Standard-only flow columns stay get_at-identical after variant readers",
+          "[PrintGCode][GCode][slice_compare]")
+{
+    DynamicPrintConfig config = high_flow_pa_config(true, true, false);
+    config.option<ConfigOptionInts>("filament_flow_step_size", true)->values = {1, 1};
+    config.option<ConfigOptionStrings>("filament_flow_support", true)->values = {FLOW_MODE_STANDARD,
+                                                                                FLOW_MODE_STANDARD};
+    config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtStandard),
+                                                                                     int(fvtStandard)};
+    config.option<ConfigOptionInts>("nozzle_temperature")->values               = {200, 215};
+    config.option<ConfigOptionInts>("nozzle_temperature_initial_layer")->values = {195, 211};
+    config.option<ConfigOptionFloats>("filament_minimal_purge_on_wipe_tower")->values = {3., 7.};
+    config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values  = {11., 13.};
+    config.option<ConfigOptionBools>("filament_multitool_ramming")->values      = {true, true};
+    config.option<ConfigOptionFloats>("filament_multitool_ramming_volume")->values = {6., 9.};
+    config.option<ConfigOptionFloats>("filament_multitool_ramming_flow")->values   = {3., 4.};
+    config.option<ConfigOptionFloats>("flush_volumes_matrix")->values              = {0.f, 0.f, 0.f, 0.f};
+    config.option<ConfigOptionFloats>("pressure_advance")->values                 = {kPaStdF0, kPaStdF1};
+    config.option<ConfigOptionBools>("enable_pressure_advance")->values           = {true, true};
+
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 0) == 0);
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 1) == 1);
+    const auto *temps = config.option<ConfigOptionInts>("nozzle_temperature");
+    const auto *inits = config.option<ConfigOptionInts>("nozzle_temperature_initial_layer");
+    const auto *purge = config.option<ConfigOptionFloats>("filament_minimal_purge_on_wipe_tower");
+    const auto *vol   = config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    REQUIRE(get_value_at(config, *temps, ConfigFlowDomain::Filament, 0) == temps->get_at(0));
+    REQUIRE(get_value_at(config, *temps, ConfigFlowDomain::Filament, 1) == temps->get_at(1));
+    REQUIRE(get_value_at(config, *inits, ConfigFlowDomain::Filament, 0) == inits->get_at(0));
+    REQUIRE(get_value_at(config, *inits, ConfigFlowDomain::Filament, 1) == inits->get_at(1));
+    REQUIRE_THAT(get_value_at(config, *purge, ConfigFlowDomain::Filament, 1),
+                 Catch::Matchers::WithinAbs(purge->get_at(1), 1e-9));
+    REQUIRE_THAT(get_value_at(config, *vol, ConfigFlowDomain::Filament, 1),
+                 Catch::Matchers::WithinAbs(vol->get_at(1), 1e-9));
+
+    const auto vols = WipeTower2::extract_wipe_volumes(as_print_config(config));
+    REQUIRE_THAT(vols[0][1], Catch::Matchers::WithinAbs(7.f, 1e-4f));
+    REQUIRE_THAT(vols[1][0], Catch::Matchers::WithinAbs(3.f, 1e-4f));
+
+    const std::string gcode = slice_high_flow_pa(config, false, false);
+    REQUIRE(gcode.find("; first_layer_temperature = 195") != std::string::npos);
+    REQUIRE(count_substr(gcode, "S211") >= 1);
+    REQUIRE(count_substr(gcode, "S215") >= 1);
+}
+
+TEST_CASE("apply_override unpacks flow-variant retract keys by filament id",
+          "[PrintGCode][GCode][PAVariant][FilamentVariants]")
+{
+    DynamicPrintConfig config = step_size_2_f0_config();
+    Print              print;
+    Model              model;
+    add_two_tool_cubes(model);
+
+    print.apply(model, config);
+    require_applied_tool_retract_and_flow(print);
+    REQUIRE(get_config_idx(print.config(), ConfigFlowDomain::Filament, (unsigned int) -1) == 0);
+}
+
+TEST_CASE("unpack_filament_flow_override falls back on an empty filament override",
+          "[PrintGCode][GCode][FilamentVariants]")
+{
+    DynamicPrintConfig config = step_size_2_f0_config();
+    config.option<ConfigOptionFloatsNullable>("filament_retraction_length", true)->values.clear();
+    Print print;
+    Model model;
+    add_two_tool_cubes(model);
+    REQUIRE_NOTHROW(print.apply(model, config));
+    REQUIRE(print.config().retraction_length.size() == 2);
+}
+
+TEST_CASE("non-SEMM U1 2-tool High-Flow uses per-filament temps retract and placeholders",
+          "[PrintGCode][GCode][PAVariant][FilamentVariants]")
+{
+    DynamicPrintConfig config = step_size_2_f0_config();
+    config.option<ConfigOptionBool>("single_extruder_multi_material")->value = false;
+    // Ooze standbys T1 to 205-15=190, which hides the first-layer writer's M104 S205 T1
+    // and skips idle tools in the layer-2 writer. Keep it off so those two sites emit
+    // the per-filament temps the mutation table checks.
+    config.option<ConfigOptionBool>("ooze_prevention")->value               = false;
+    config.option<ConfigOptionFloat>("preheat_time")->value                 = 30.;
+    raise_role_speeds_for_mvs_cap(config);
+    disable_layer_cooling(config);
+    // No M104/M109 in start G-code so _print_first_layer_extruder_temperatures emits
+    // M104 S205 T1 (F1 init), not packed F0 HF S225.
+    config.option<ConfigOptionString>("machine_start_gcode")->value =
+        "; U1_START init={nozzle_temperature_initial_layer[initial_extruder]} "
+        "fl0={first_layer_temperature[0]} fl1={first_layer_temperature[1]} "
+        "nt0={nozzle_temperature[0]} nt1={nozzle_temperature[1]} "
+        "rl0={retract_length[0]} rl1={retract_length[1]} "
+        "ram0={filament_multitool_ramming[0]} ram1={filament_multitool_ramming[1]} "
+        "flush0={flush_volumetric_speeds[0]} flush1={flush_volumetric_speeds[1]}\n";
+    config.option<ConfigOptionString>("change_filament_gcode")->value =
+        "; U1_TC next={next_extruder} layer={layer_num}\n"
+        "{if layer_num < 1}\n"
+        "M109 S{first_layer_temperature[next_extruder]} T{next_extruder} ; U1_WAIT_L0\n"
+        "{else}\n"
+        "M109 S{temperature[next_extruder]} T{next_extruder} ; U1_WAIT_LX\n"
+        "{endif}\n"
+        "; U1_FULL NT={nozzle_temperature[next_extruder]} "
+        "NTI={nozzle_temperature_initial_layer[next_extruder]} "
+        "RL={retract_length[next_extruder]} RAM={filament_multitool_ramming[next_extruder]} "
+        "FLUSH={flush_volumetric_speeds[next_extruder]} FEED={new_filament_e_feedrate}\n";
+
+    Print print;
+    Model model;
+    add_two_tool_cubes(model);
+
+    print.apply(model, config);
+    print.is_BBL_printer() = false;
+    REQUIRE(print.has_wipe_tower());
+    require_applied_tool_retract_and_flow(print);
+
+    const std::string gcode = Test::gcode(print);
+    {
+        const auto         hist = g1_feed_histogram(gcode);
+        std::ostringstream hs;
+        for (const auto &kv : hist)
+            hs << " F" << kv.first << "x" << kv.second;
+        INFO("G1 F histogram:" << hs.str());
+    }
+    REQUIRE(gcode.find("Travel to a Wipe Tower") != std::string::npos);
+
+    const size_t start_pos = gcode.find("; U1_START ");
+    REQUIRE(start_pos != std::string::npos);
+    const size_t start_eol = gcode.find('\n', start_pos);
+    const std::string start_line = gcode.substr(start_pos, start_eol - start_pos);
+    REQUIRE(start_line.find("init=" + std::to_string(kInitHfF0)) != std::string::npos);
+    REQUIRE(start_line.find("fl0=" + std::to_string(kInitHfF0)) != std::string::npos);
+    REQUIRE(start_line.find("fl1=" + std::to_string(kInitF1)) != std::string::npos);
+    REQUIRE(start_line.find("nt0=" + std::to_string(kTempHfF0)) != std::string::npos);
+    REQUIRE(start_line.find("nt1=" + std::to_string(kTempF1)) != std::string::npos);
+    INFO(start_line);
+    REQUIRE(start_line.find("rl0=") != std::string::npos);
+    REQUIRE(start_line.find("rl1=") != std::string::npos);
+    REQUIRE(start_line.find("rl0=0.4") == std::string::npos);
+    const bool ram0_on = start_line.find("ram0=1") != std::string::npos || start_line.find("ram0=true") != std::string::npos;
+    const bool ram1_on = start_line.find("ram1=1") != std::string::npos || start_line.find("ram1=true") != std::string::npos;
+    REQUIRE(ram0_on);
+    REQUIRE(ram1_on);
+    REQUIRE(start_line.find("flush0=" + std::to_string(int(kVolHfF0))) != std::string::npos);
+    REQUIRE(start_line.find("flush1=" + std::to_string(int(kVolF1))) != std::string::npos);
+
+    REQUIRE(gcode.find("M109 S" + std::to_string(kInitF1) + " T1") != std::string::npos);
+    REQUIRE(gcode.find("M109 S" + std::to_string(kTempF1) + " T1") != std::string::npos);
+    REQUIRE(gcode.find("M109 S" + std::to_string(kTempHfF0) + " T0") != std::string::npos);
+    REQUIRE(gcode.find("M109 S" + std::to_string(kTempHfF0) + " T1") == std::string::npos);
+    REQUIRE(gcode.find("M109 S" + std::to_string(kInitHfF0) + " T1") == std::string::npos);
+    REQUIRE(gcode.find("M109 S" + std::to_string(kTempStdF0) + " T0") == std::string::npos);
+
+    REQUIRE(gcode.find("FEED=" + std::to_string(e_feedrate_from_vol(kVolF1))) != std::string::npos);
+    REQUIRE(gcode.find("FEED=" + std::to_string(e_feedrate_from_vol(kVolHfF0))) != std::string::npos);
+    REQUIRE(gcode.find("FLUSH=" + std::to_string(int(kVolF1))) != std::string::npos);
+    REQUIRE(gcode.find("FLUSH=" + std::to_string(int(kVolHfF0))) != std::string::npos);
+
+    // GCodeWriter emits "M104 S<temp> T<tool> ; preheat T<tool> ...". Packed get_at(1) would
+    // preheat T1 at F0's High-Flow 230/225.
+    REQUIRE(gcode.find("preheat T1") != std::string::npos);
+    const bool preheat_t1_ok = gcode.find("M104 S" + std::to_string(kTempF1) + " T1 ; preheat") != std::string::npos
+                            || gcode.find("M104 S" + std::to_string(kInitF1) + " T1 ; preheat") != std::string::npos;
+    REQUIRE(preheat_t1_ok);
+    REQUIRE(gcode.find("M104 S" + std::to_string(kTempHfF0) + " T1 ; preheat") == std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(kInitHfF0) + " T1 ; preheat") == std::string::npos);
+
+    // First-layer writer (~4629-4663), wait=false: "M104 S<temp> T<tool> ; set nozzle temperature".
+    // Packed get_at(1) writes S225 T1. U1_WAIT M109 S205 T1 is a different comment.
+    REQUIRE(gcode.find("M104 S" + std::to_string(kInitF1) + " T1 ; set nozzle temperature") != std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(kInitHfF0) + " T1") == std::string::npos);
+
+    // Layer-2 writer (~6067-6092): other-layer temps, not the U1_WAIT M109 placeholders.
+    REQUIRE(gcode.find("M104 S" + std::to_string(kTempHfF0) + " T0 ; set nozzle temperature") != std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(kTempF1) + " T1 ; set nozzle temperature") != std::string::npos);
+
+    // append_tcr2 ramming (~1097): T0 High-Flow ramming forces travel to the tower.
+    REQUIRE(count_substr(gcode, "Travel to a Wipe Tower") >= 2);
+
+    // _extrude MVS (~9358) and N2/S5 flow-ratio cap (~9234). F0 HF MVS 30 is above the
+    // 200 mm/s role speed, so the cap binds on F1 (MVS 12 / flow 1.01 → G1 F8755.932).
+    // get_at(0) flow 0.98 → F9024; packed HF flow 0.95 → F9309; get_at(0) MVS 8 → F5837.
+    REQUIRE(count_g1_feed(gcode, 8755) >= 1);
+    REQUIRE(count_g1_feed(gcode, 9024) == 0);
+    REQUIRE(count_g1_feed(gcode, 9309) == 0);
+    REQUIRE(count_g1_feed(gcode, 5837) == 0);
+
+    // WipeTower2 MVS (~1568): F1 wipe at width 0.5 is F7876 (12 mm³/s). get_at(0) MVS 8 → F5251.
+    REQUIRE(count_g1_feed(gcode, 7876) >= 1);
+    REQUIRE(count_g1_feed(gcode, 5251) == 0);
+
+    // WipeTower2 ramming (~1587-1590): F0 HF flow 10 → G1 F3135; F1 flow 4 → G1 F1254.
+    // Packed get_at(0) flow 1 → F313. Turnaround travel is hardcoded F7200 while ramming.
+    REQUIRE(count_g1_feed(gcode, 3135) >= 1);
+    REQUIRE(count_g1_feed(gcode, 1254) >= 1);
+    REQUIRE(count_g1_feed(gcode, 313) == 0);
+    REQUIRE(count_g1_feed(gcode, 7200) >= 10);
+}
+
+TEST_CASE("non-variant 2-filament flow_ratio keeps get_at(0) _extrude cap",
+          "[PrintGCode][GCode][FilamentVariants][slice_compare]")
+{
+    auto make = [](double ratio_f1) {
+        DynamicPrintConfig config = high_flow_pa_config(true, true, false);
+        config.option<ConfigOptionInts>("filament_flow_step_size", true)->values = {1, 1};
+        config.option<ConfigOptionStrings>("filament_flow_support", true)->values =
+            {FLOW_MODE_STANDARD, FLOW_MODE_STANDARD};
+        config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtStandard),
+                                                                                         int(fvtStandard)};
+        config.option<ConfigOptionFloats>("filament_flow_ratio")->values = {kFlowStdF0, ratio_f1};
+        config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values = {kVolStdF0, kVolStdF0};
+        config.option<ConfigOptionFloats>("pressure_advance")->values              = {kPaStdF0, kPaStdF1};
+        config.option<ConfigOptionBools>("enable_pressure_advance")->values        = {true, true};
+        disable_layer_cooling(config);
+        raise_role_speeds_for_mvs_cap(config);
+        REQUIRE_FALSE(filament_flow_variants_active(config));
+        return slice_high_flow_pa(config, false, false);
+    };
+
+    const std::string g_same = make(kFlowStdF0);
+    const std::string g_diff = make(1.40);
+    const std::string fp_same = g1_feed_fingerprint(g_same);
+    const std::string fp_diff = g1_feed_fingerprint(g_diff);
+    INFO(fp_same.size() << " vs " << fp_diff.size());
+    REQUIRE_FALSE(fp_same.empty());
+    REQUIRE(fp_same == fp_diff);
+}
+
+// S7: T0 Standard-only (TPU/PC) + T1 [std,hf] set to Standard. Nothing remaps
+// (get_config_idx is 0/1), but T1's ratio is packed slot 1. The old remap-only
+// gate used T0's get_at(0) for T1's MVS / M73 cap.
+TEST_CASE("T0 Standard-only plus T1 packed-std uses T1 flow_ratio cap",
+          "[PrintGCode][GCode][FilamentVariants][slice_compare]")
+{
+    DynamicPrintConfig config = high_flow_pa_config(true, true, false);
+    config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtStandard),
+                                                                                     int(fvtStandard)};
+    config.option<ConfigOptionFloats>("filament_flow_ratio")->values = {kFlowStdF0, kFlowT1StdPacked, kFlowHfF0};
+    config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values = {kVolHfF0, kVolF1, kVolF1};
+    config.option<ConfigOptionFloats>("pressure_advance")->values              = {kPaStdF0, kPaStdF1, kPaHfF1};
+    config.option<ConfigOptionBools>("enable_pressure_advance")->values        = {true, true, true};
+    disable_layer_cooling(config);
+    raise_role_speeds_for_mvs_cap(config);
+
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 0) == 0);
+    REQUIRE(get_config_idx(config, ConfigFlowDomain::Filament, 1) == 1);
+    REQUIRE(filament_flow_variants_active(config));
+
+    apply_u1_toolchange_markers(config);
+    const std::string gcode = slice_u1_two_tool(config);
+    // T1 MVS 12 / flow 1.40 on a 0.45×0.2 perimeter → G1 F6316. Old remap-only
+    // gate uses T0's 0.98 → F9024; packed HF 0.95 → F9309.
+    REQUIRE(count_g1_feed(gcode, 6316) >= 1);
+    REQUIRE(count_g1_feed(gcode, 9024) == 0);
+    REQUIRE(count_g1_feed(gcode, 9309) == 0);
+}
+
+TEST_CASE("ooze-on U1 2-tool High-Flow standbys use the active variant",
+          "[PrintGCode][GCode][PAVariant][FilamentVariants]")
+{
+    DynamicPrintConfig config = step_size_2_f0_config();
+    apply_u1_toolchange_markers(config);
+    config.option<ConfigOptionBool>("ooze_prevention")->value          = true;
+    config.option<ConfigOptionInt>("standby_temperature_delta")->value = kStandbyDelta;
+    raise_role_speeds_for_mvs_cap(config);
+    disable_layer_cooling(config);
+
+    const std::string gcode = slice_u1_two_tool(config);
+    REQUIRE(gcode.find(";cooldown") != std::string::npos);
+    // pre_toolchange: _get_temp + standby. T0 HF other-layer 230-15=215; T1 210-15=195.
+    // Raw get_at uses T0 Standard 190-15=175 and T1 packed HF 230-15=215.
+    const int t0_hf_standby  = kTempHfF0 + kStandbyDelta;
+    const int t0_std_standby = kTempStdF0 + kStandbyDelta;
+    const int t1_standby     = kTempF1 + kStandbyDelta;
+    const int t1_hf_standby  = kTempHfF0 + kStandbyDelta;
+    REQUIRE(gcode.find("M104 S" + std::to_string(t0_hf_standby) + " T0") != std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(t1_standby) + " T1") != std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(t0_std_standby) + " T0") == std::string::npos);
+    REQUIRE(gcode.find("M104 S" + std::to_string(t1_hf_standby) + " T1") == std::string::npos);
+}
+
+// F0 [std,hf] HF rams, F1 does not. get_at(0) is F0 Standard (off); get_at(1) is
+// F0 HF (on). ~1097 must use get_value_at so only leaving T0 travels to the tower.
+TEST_CASE("append_tcr2 ramming flag follows the departing tool variant",
+          "[PrintGCode][GCode][PAVariant][FilamentVariants]")
+{
+    DynamicPrintConfig config = step_size_2_f0_config();
+    config.option<ConfigOptionBools>("filament_multitool_ramming")->values = {false, true, false};
+    apply_u1_toolchange_markers(config);
+    raise_role_speeds_for_mvs_cap(config);
+    disable_layer_cooling(config);
+
+    const std::string gcode = slice_u1_two_tool(config);
+    const size_t      leave_t0 = count_travel_then_tc_next(gcode, 1);
+    const size_t      leave_t1 = count_travel_then_tc_next(gcode, 0);
+    INFO("travel-then-T1 " << leave_t0 << " travel-then-T0 " << leave_t1);
+    REQUIRE(leave_t0 >= 10);
+    REQUIRE(leave_t0 > leave_t1);
+}
+
+// _extrude reads flow ratio, max volumetric speed and the PA enable flag from
+// m_filament_flow, resolved once per export. Every id must give what the old
+// per-path expressions gave, including an id past the resolved range.
+TEST_CASE("resolved per-filament flow values match the per-path lookups",
+          "[PrintGCode][GCode][FilamentVariants]")
+{
+    auto check = [](const DynamicPrintConfig &config) {
+        const ResolvedFilamentFlow cache = ResolvedFilamentFlow::resolve(config);
+        const auto &ratio = *config.option<ConfigOptionFloats>("filament_flow_ratio");
+        const auto &mvs   = *config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+        const auto &pa    = *config.option<ConfigOptionBools>("enable_pressure_advance");
+        const size_t n    = flow_variant_filament_count(config);
+        REQUIRE(cache.flow_ratio.size() == n);
+        REQUIRE(cache.variants_active == filament_flow_variants_active(config));
+        for (unsigned int id = 0; id <= n; ++id) {
+            INFO("filament id " << id);
+            // The expressions _extrude used before the cache.
+            const double old_ratio = filament_flow_variants_active(config) ?
+                                         get_value_at(config, ratio, ConfigFlowDomain::Filament, id) :
+                                         ratio.get_at(0);
+            const double old_mvs = get_value_at(config, mvs, ConfigFlowDomain::Filament, id);
+            const bool   old_pa  = get_value_at(config, pa, ConfigFlowDomain::Filament, id);
+            CHECK(cache.flow_ratio_for(config, id) == old_ratio);
+            CHECK(cache.max_volumetric_speed_for(config, id) == old_mvs);
+            CHECK(cache.enable_pressure_advance_for(config, id) == old_pa);
+            CHECK(ResolvedFilamentFlow::uncached_flow_ratio(config, id) == old_ratio);
+        }
+        // Default-constructed (before apply_print_config): every id falls back.
+        const ResolvedFilamentFlow empty;
+        for (unsigned int id = 0; id <= n; ++id) {
+            CHECK(empty.flow_ratio_for(config, id) == cache.flow_ratio_for(config, id));
+            CHECK(empty.max_volumetric_speed_for(config, id) == cache.max_volumetric_speed_for(config, id));
+            CHECK(empty.enable_pressure_advance_for(config, id) == cache.enable_pressure_advance_for(config, id));
+        }
+    };
+
+    SECTION("F0 Standard-only, F1 Standard/High-Flow set to High-Flow")
+    {
+        DynamicPrintConfig config = high_flow_pa_config(true, false, false);
+        config.option<ConfigOptionFloats>("filament_flow_ratio")->values           = {kFlowStdF0, kFlowT1StdPacked, kFlowHfF0};
+        config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values = {kVolStdF0, kVolF1, kVolHfF0};
+        REQUIRE(filament_flow_variants_active(config));
+        check(config);
+    }
+    SECTION("F0 Standard/High-Flow set to High-Flow, F1 Standard-only")
+    {
+        const DynamicPrintConfig config = step_size_2_f0_config();
+        REQUIRE(filament_flow_variants_active(config));
+        check(config);
+    }
+    SECTION("no packed variants keeps get_at(0) for the flow ratio")
+    {
+        DynamicPrintConfig config = high_flow_pa_config(true, true, false);
+        config.option<ConfigOptionInts>("filament_flow_step_size", true)->values = {1, 1};
+        config.option<ConfigOptionStrings>("filament_flow_support", true)->values = {FLOW_MODE_STANDARD, FLOW_MODE_STANDARD};
+        config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtStandard), int(fvtStandard)};
+        config.option<ConfigOptionFloats>("filament_flow_ratio")->values           = {kFlowStdF0, 1.40};
+        config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values = {kVolStdF0, kVolF1};
+        config.option<ConfigOptionBools>("enable_pressure_advance")->values        = {true, false};
+        REQUIRE_FALSE(filament_flow_variants_active(config));
+        check(config);
+        REQUIRE(ResolvedFilamentFlow::resolve(config).flow_ratio_for(config, 1) == kFlowStdF0);
+    }
+    SECTION("a plain full print config")
+    {
+        DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+        config.set_num_filaments(3);
+        check(config);
+    }
+}
+
+// A High-Flow slot of a filament retract override with no value of its own (nil, or a
+// preset that never stored one) falls back to the Standard override when composing the
+// packed config, and to the printer value only when Standard is nil too. Never NaN.
+TEST_CASE("a nil High-Flow retract override slices with the Standard override, then the printer value",
+          "[PrintGCode][GCode][FilamentVariants]")
+{
+    auto applied_tool_retraction = [](const ConfigOptionFloatsNullable &f0_preset) {
+        DynamicPrintConfig config = step_size_2_f0_config();   // F0 [std, hf] set to High-Flow, F1 std
+        config.option<ConfigOptionFloats>("retraction_length")->values = {0.4, 0.4};
+        ConfigOptionFloatsNullable       packed;
+        packed.values = {ConfigOptionFloatsNullable::nil_value()};
+        const ConfigOptionFloatsNullable f1_preset{1.5};
+        compose_filament_flow_variant_segment(packed, f0_preset, 0, 2);
+        compose_filament_flow_variant_segment(packed, f1_preset, 2, 1);
+        REQUIRE(packed.values.size() == 3);
+        config.set_key_value("filament_retraction_length", packed.clone());
+
+        Print print;
+        Model model;
+        add_two_tool_cubes(model);
+        print.apply(model, config);
+        REQUIRE(print.config().retraction_length.size() == 2);
+        return std::make_pair(print.config().retraction_length.get_at(0), print.config().retraction_length.get_at(1));
+    };
+    const double nil = ConfigOptionFloatsNullable::nil_value();
+
+    // Standard 0.7, High-Flow nil: T0 (High-Flow) retracts 0.7.
+    ConfigOptionFloatsNullable std_only;
+    std_only.values = {0.7, nil};
+    auto r = applied_tool_retraction(std_only);
+    CHECK_FALSE(std::isnan(r.first));
+    CHECK(r.first == Approx(0.7));
+    CHECK(r.second == Approx(1.5));
+
+    // A preset that stored only one (Standard) value: same.
+    ConfigOptionFloatsNullable one_value;
+    one_value.values = {0.7};
+    r = applied_tool_retraction(one_value);
+    CHECK(r.first == Approx(0.7));
+
+    // Both nil: the printer value.
+    ConfigOptionFloatsNullable both_nil;
+    both_nil.values = {nil, nil};
+    r = applied_tool_retraction(both_nil);
+    CHECK_FALSE(std::isnan(r.first));
+    CHECK(r.first == Approx(0.4));
+    CHECK(r.second == Approx(1.5));
+
+    // Its own High-Flow value still wins.
+    ConfigOptionFloatsNullable own_hf;
+    own_hf.values = {0.7, 0.3};
+    r = applied_tool_retraction(own_hf);
+    CHECK(r.first == Approx(0.3));
 }

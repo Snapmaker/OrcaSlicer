@@ -181,6 +181,8 @@ private:
     PinCodePanel*                     m_panel_direct_connection{nullptr};
     wxWindow*                         m_placeholder_panel{nullptr};
     wxHyperlinkCtrl*                  m_hyperlink{nullptr};
+    wxStaticText*                     m_firewall_link{nullptr}; // Windows: opens Help > Check Windows Firewall
+    wxStaticText*                     m_setup_link{nullptr};    // opens Help > Bambu printer setup
     Label*                            m_ping_code_text{nullptr};
     wxStaticBitmap*                   m_img_ping_code{nullptr};
     wxBoxSizer *                      m_sizer_body{nullptr};

@@ -1,11 +1,14 @@
 #include <cassert>
 
 #include "PresetBundle.hpp"
+#include "InstanceLock.hpp"
+#include "PresetFlowVariant.hpp"
 #include "StartupProfile.hpp"
 #include "FilamentColorLibrary.hpp"
 #include "PrintConfig.hpp"
 #include "libslic3r.h"
 #include "Utils.hpp"
+#include "LocalesUtils.hpp"
 #include "Model.hpp"
 #include "format.hpp"
 #include "common_func/common_func.hpp"
@@ -38,6 +41,7 @@
 #include <boost/locale.hpp>
 #include <boost/log/trivial.hpp>
 #include <miniz/miniz.h>
+#include "miniz_extension.hpp"
 
 
 // Store the print/filament/printer presets into a "presets" subdirectory of the Slic3rPE config dir.
@@ -996,12 +1000,12 @@ PresetsConfigSubstitutions PresetBundle::import_presets(std::vector<std::string>
             fs::path default_folder(user_folder / DEFAULT_USER_FOLDER_NAME);
             if (!fs::exists(default_folder)) fs::create_directory(default_folder, ec);
             if (ec) BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " create directory failed: " << ec.message();
-            //create temp folder
-            //std::string user_default_temp_dir = data_dir() + "/" + PRESET_USER_DIR + "/" + DEFAULT_USER_FOLDER_NAME + "/" + "temp";
-            fs::path temp_folder(default_folder / "temp");
-            std::string user_default_temp_dir = temp_folder.make_preferred().string();
-            if (fs::exists(temp_folder)) fs::remove_all(temp_folder);
-            fs::create_directory(temp_folder, ec);
+            // Under cache/, per process and per import, so two instances importing
+            // at once do not clear each other's extraction and no preset scan reads it.
+            static std::atomic<unsigned> import_counter{0};
+            fs::path temp_folder(fs::path(data_dir()) / "cache" /
+                                 ("import." + std::to_string(get_current_pid()) + "." + std::to_string(import_counter++)));
+            fs::create_directories(temp_folder, ec);
             if (ec) BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " create directory failed: " << ec.message();
 
             file = boost::filesystem::path(file).make_preferred().string();
@@ -1020,6 +1024,9 @@ PresetsConfigSubstitutions PresetBundle::import_presets(std::vector<std::string>
             status        = mz_zip_reader_init_cfile(&zip_archive, zipFile, 0, MZ_ZIP_FLAG_CASE_SENSITIVE | MZ_ZIP_FLAG_IGNORE_PATH);
             if (MZ_FALSE == status) {
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Failed to initialize reader ZIP archive";
+                if (zipFile != nullptr)
+                    std::fclose(zipFile);
+                fs::remove_all(temp_folder, ec);
                 return substitutions;
             } else {
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Success to initialize reader ZIP archive";
@@ -1031,23 +1038,25 @@ PresetsConfigSubstitutions PresetBundle::import_presets(std::vector<std::string>
                 mz_zip_archive_file_stat file_stat;
                 status = mz_zip_reader_file_stat(&zip_archive, i, &file_stat);
                 if (status) {
-                    std::string file_name = file_stat.m_filename;
                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Form zip file: " << file << ". Read file name: " << file_stat.m_filename;
-                    // Only the entry's own name is used, never its folders: "..\..\x" (a
-                    // Windows separator) used to climb out of the temp folder (zip-slip).
-                    size_t index = file_name.find_last_of("/\\");
-                    if (std::string::npos != index) {
-                        file_name = file_name.substr(index + 1);
-                    }
-                    if (!untrusted::is_safe_archive_relative_path(file_name)) {
+                    // Only the entry's own name is used, never its folders. The name is normalised
+                    // like every other extractor's (backslashes, "./", "a//b") and then judged:
+                    // "..\..\x" used to climb out of the temp folder (zip-slip) and is still refused.
+                    std::string normalized_name;
+                    const untrusted::ArchiveEntryName verdict = untrusted::normalize_archive_entry_path(file_stat.m_filename, normalized_name);
+                    if (verdict == untrusted::ArchiveEntryName::Skip)
+                        continue;
+                    if (verdict == untrusted::ArchiveEntryName::Reject) {
                         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " skipping bundle entry with an unsafe name: " << file_stat.m_filename;
                         continue;
                     }
+                    std::string file_name = untrusted::archive_entry_leaf(normalized_name);
                     if (BUNDLE_STRUCTURE_JSON_NAME == file_name) continue;
                     // create target file path
                     std::string target_file_path = boost::filesystem::path(temp_folder / file_name).make_preferred().string();
 
-                    status = mz_zip_reader_extract_to_file(&zip_archive, i, encode_path(target_file_path.c_str()).c_str(), MZ_ZIP_FLAG_CASE_SENSITIVE);
+                    // Wide API on Windows: the name is never narrowed through the ANSI code page.
+                    status = extract_entry_to_file(zip_archive, i, target_file_path) ? MZ_TRUE : MZ_FALSE;
                     // target file is opened
                     if (MZ_FALSE == status) {
                         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Failed to open target file: " << target_file_path;
@@ -1225,6 +1234,7 @@ void PresetBundle::remove_user_presets_directory(const std::string preset_folder
     }
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" enter, delete directory : %1%") % dir_user_presets;
     fs::path folder(dir_user_presets);
+    InstanceLock instance_lock(user_presets_lock_path());
     if (fs::exists(folder)) {
         fs::remove_all(folder);
     }
@@ -3018,14 +3028,9 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
                 size_t segment_start = 0;
                 for (size_t i = 0; i < num_filaments; ++i) {
                     const ConfigOption *opt_src = filament_configs[i]->option(key);
-                    if (opt_src != nullptr && !opt_src->is_scalar()) {
-                        const auto *opt_vec_src = static_cast<const ConfigOptionVectorBase *>(opt_src);
-                        const size_t source_size = opt_vec_src->size();
-                        if (source_size > 0) {
-                            for (size_t k = 0; k < size_t(flow_step_sizes[i]); ++k)
-                                opt_vec_dst->set_at(opt_src, segment_start + k, k < source_size ? k : 0);
-                        }
-                    }
+                    if (opt_src != nullptr && !opt_src->is_scalar())
+                        compose_filament_flow_variant_segment(*opt_vec_dst, *static_cast<const ConfigOptionVectorBase *>(opt_src),
+                                                              segment_start, size_t(flow_step_sizes[i]));
                     segment_start += size_t(flow_step_sizes[i]);
                 }
             } else {
@@ -4255,6 +4260,9 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
         section_parse_errors.resize(subfiles.size());
         tbb::parallel_for(tbb::blocked_range<size_t>(0, subfiles.size()),
                           [&](const tbb::blocked_range<size_t> &range) {
+                              // One C locale per worker chunk so parse_json_document's
+                              // inner setter skips setlocale (MSVC _Lockit(_LOCK_LOCALE)).
+                              CNumericLocalesSetter locales_setter;
                               for (size_t i = range.begin(); i != range.end(); ++i) {
                                   const std::string file = vendor_dir_path + "/" + subfiles[i].second;
                                   std::string       err;
@@ -4294,6 +4302,10 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
         if (i < section_docs.size())
             section_docs[i] = json();
     };
+
+    // One C locale on this thread for sequential deserialize (and any sequential
+    // fallback parse). Inner per-file setters in load_from_json_document skip.
+    CNumericLocalesSetter vendor_locales_setter;
 
     //3.1) paste the process
     presets = &this->prints;
@@ -4412,29 +4424,17 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
                     root[it.key()] = std::move(it.value());
 
                 const std::vector<std::uint8_t> bytes = json::to_cbor(root);
-                const bfs::path tmp = cache_file.string() + ".tmp";
-                {
-                    boost::nowide::ofstream ofs(tmp.string(), std::ios::binary | std::ios::trunc);
-                    ofs.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-                    ofs.flush();
-                    if (!ofs.good())
-                        throw std::runtime_error("write failed");
-                }
-                boost::system::error_code ec;
-                bfs::remove(cache_file, ec);
-                bfs::rename(tmp, cache_file, ec);
-                if (ec) {
-                    bfs::remove(tmp, ec);
-                    throw std::runtime_error("rename failed: " + ec.message());
-                }
+                const std::string payload(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+                std::string err;
+                if (!write_file_atomically(cache_file.string(), payload, &err, true))
+                    throw std::runtime_error(err.empty() ? "write failed" : err);
                 if (startup_profile)
                     startup_profile_log("PresetBundle::load_vendor_configs_from_json vendor=" + vendor_name +
                                         " cache=written bytes=" + std::to_string(bytes.size()));
             } catch (const std::exception &err) {
                 BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": could not write the preset cache for "
                                            << vendor_name << ": " << err.what();
-                boost::system::error_code ec;
-                boost::filesystem::remove(cache_file, ec);
+                // Atomic write leaves a previous cache in place; do not delete it on failure.
             }
         }
     }
@@ -5481,8 +5481,8 @@ std::vector<std::string> PresetBundle::export_current_configs(const std::string 
             if (overwrite == 0 || overwrite == 2)
                 continue;
         }
-        preset->config.save_to_json(file, preset->name, "", preset->version.to_string());
-        result.push_back(file);
+        if (preset->config.save_to_json(file, preset->name, "", preset->version.to_string()))
+            result.push_back(file);
     }
     return result;
 }

@@ -1,6 +1,7 @@
 #include "CalibUtils.hpp"
 #include "../GUI/I18N.hpp"
 #include "../GUI/GUI_App.hpp"
+#include "../GUI/FlowTypeHelper.hpp"
 #include "../GUI/DeviceManager.hpp"
 #include "../GUI/Jobs/ProgressIndicator.hpp"
 #include "../GUI/PartPlate.hpp"
@@ -36,6 +37,27 @@ static std::string MachineBedTypeString[7] = {
     "pct",
 };
 
+
+// Flow type of the nozzle on the extruder being calibrated (calib_info.extruder_id).
+// The live per-extruder selection is project nozzle_volume_type, one entry per
+// logical extruder: the sidebar nozzle combo (U1) or the type auto-matched from a
+// connected Bambu printer (H2D/H2C, per logical extruder). No printer profile sets
+// nozzle_volume_type, so get_nozzle_volume_type(printer preset) read the Standard
+// default even with a High-Flow nozzle fitted; it stays only as the fallback for an extruder
+// beyond the selected printer's nozzle count. On a single-nozzle printer, or two
+// nozzles of one type, this is the type the slice sync gives every filament; on
+// a mixed Standard/High-Flow H2D/H2C it is the chosen extruder's own nozzle, where
+// the slice-sync target (filament 0's mapping, or Standard) can be the other one.
+static FilamentVolumeType calib_nozzle_volume_type(const CalibInfo &calib_info)
+{
+    const unsigned int extruder = static_cast<unsigned int>(std::max(0, calib_info.extruder_id));
+    const FilamentVolumeType preset_type = calib_info.printer_prest == nullptr ?
+                                               fvtStandard :
+                                               get_nozzle_volume_type(calib_info.printer_prest->config, extruder);
+    if (wxGetApp().preset_bundle == nullptr)
+        return preset_type;
+    return nozzle_flow_type_at(FlowType::nozzle_volume_types(), extruder, preset_type);
+}
 
 wxString get_nozzle_volume_type_name(NozzleVolumeType type)
 {
@@ -526,13 +548,7 @@ bool CalibUtils::calib_flowrate(int pass, const CalibInfo &calib_info, wxString 
     //}
 
     Flow   infill_flow                   = Flow(nozzle_diameter * 1.2f, layer_height, nozzle_diameter);
-    const auto *max_volumetric_speed_opt = filament_config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
-    const FilamentVolumeType filament_volume_type = calib_info.printer_prest == nullptr
-                                                        ? fvtStandard
-                                                        : get_nozzle_volume_type(calib_info.printer_prest->config,
-                                                                                 std::max(0, calib_info.extruder_id));
-    double filament_max_volumetric_speed = get_preset_value_at(filament_config, *max_volumetric_speed_opt,
-                                                                ConfigFlowDomain::Filament, filament_volume_type);
+    double filament_max_volumetric_speed = calib_filament_flow_values(filament_config, calib_nozzle_volume_type(calib_info)).max_volumetric_speed;
     double max_infill_speed              = filament_max_volumetric_speed / (infill_flow.mm3_per_mm() * (pass == 1 ? 1.2 : 1));
 
     double internal_solid_speed          = std::floor(std::min(print_config.opt_float("internal_solid_infill_speed", 0), max_infill_speed));
@@ -830,7 +846,8 @@ void CalibUtils::calib_max_vol_speed(const CalibInfo &calib_info, wxString &erro
     }
 
     auto new_params  = params;
-    auto mm3_per_mm  = Flow(line_width, layer_height, nozzle_diameter).mm3_per_mm() * filament_config.option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0);
+    auto mm3_per_mm  = Flow(line_width, layer_height, nozzle_diameter).mm3_per_mm() *
+                       calib_filament_flow_values(filament_config, calib_nozzle_volume_type(calib_info)).flow_ratio;
     new_params.end   = params.end / mm3_per_mm;
     new_params.start = params.start / mm3_per_mm;
     new_params.step  = params.step / mm3_per_mm;

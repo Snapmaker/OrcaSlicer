@@ -10,9 +10,15 @@
 // The GUI decides what to do with a verdict (ask, refuse, strip); this file only decides.
 
 #include <cstddef>
+#include <cstdio>
+#include <cstdint>
+#include <limits>
 #include <set>
 #include <string>
 #include <vector>
+
+#include <boost/filesystem/path.hpp>
+#include <boost/system/error_code.hpp>
 
 namespace Slic3r {
 
@@ -127,6 +133,61 @@ bool has_model_extension(const std::string &file_name);
 // Returns "" when nothing usable is left. Never returns a name with a path separator.
 std::string sanitize_download_filename(const std::string &name);
 
+// Marker this process writes before it is renamed to filename
+// (filename + "." + pid + ".download"). Concurrent downloads of this process treat this as
+// the name in use. Another instance uses a different pid, so its marker is a different path.
+boost::filesystem::path download_marker_path(const boost::filesystem::path &dest_folder, const std::string &filename);
+
+// Highest N tried for "name(N).ext" (the unsuffixed name is try 0).
+constexpr std::size_t FIND_UNUSED_FILENAME_MAX_VERSION = 999;
+
+// Sanitize filename first (via sanitize_download_filename), then pick a name that neither an
+// entry of dest_folder nor this process's download marker uses: "name.ext", then "name(1).ext", …
+// up to max_version. The marker at ignored_marker does not count (the caller's own in-flight
+// file). Dest and marker probes use symlink_status, so a dangling symlink counts as taken.
+// A stat error is treated as free: exclusive create and no-replace rename still refuse to
+// overwrite if the name is in use. Returns true and the name in result, or false and the last
+// name tried (empty when nothing usable remains after sanitizing). Never returns a name with
+// a path separator.
+bool find_unused_filename(const boost::filesystem::path &dest_folder,
+                          const std::string             &filename,
+                          const boost::filesystem::path &ignored_marker,
+                          std::string                   &result,
+                          std::size_t                    max_version = FIND_UNUSED_FILENAME_MAX_VERSION);
+
+// Opens `path` for writing only if it does not already exist (Windows: _wfopen L"wbx";
+// POSIX: O_CREAT|O_EXCL). Returns the FILE* (caller fclose) or nullptr.
+FILE *open_exclusive_write(const boost::filesystem::path &path);
+
+// Rename `from` to `to` without replacing an existing `to`. Linux: renameat2 RENAME_NOREPLACE,
+// then link+unlink. macOS: renameatx_np RENAME_EXCL, then link+unlink. Other POSIX: link+unlink;
+// if hard links are unsupported (EPERM / ENOTSUP / EXDEV) a plain rename is used after a final
+// existence check. Windows: MoveFileExW without MOVEFILE_REPLACE_EXISTING. When `to` already
+// exists, returns false and sets ec to errc::file_exists.
+bool rename_no_replace(const boost::filesystem::path &from,
+                       const boost::filesystem::path &to,
+                       boost::system::error_code     &ec);
+
+// Sanitize, then exclusively create this process's download marker for the first unused name.
+// On EEXIST the name is treated as taken and the next is tried. Returns the open marker FILE*
+// (caller fclose) and the claimed name in `result`. Returns nullptr if nothing usable remains.
+// When the first unused name's marker is `ignored_marker` and that file already exists (the
+// caller already holds it), `result` is that name and the FILE* is nullptr. If that marker
+// path was removed (early pause), exclusive create is retried and a new FILE* is returned.
+FILE *claim_unused_download_name(const boost::filesystem::path &dest_folder,
+                                 const std::string             &filename,
+                                 const boost::filesystem::path &ignored_marker,
+                                 std::string                   &result);
+
+// Rename tmp_path to dest_folder/<chosen name> without replacing. On EEXIST, pick the next
+// unused name. Stops after FIND_UNUSED_FILENAME_MAX_VERSION attempts, or if the same name is
+// offered twice after an EEXIST (a stat miss: path_taken treated the dest as free).
+bool place_download_file(const boost::filesystem::path &tmp_path,
+                         const boost::filesystem::path &dest_folder,
+                         std::string                   &filename,
+                         boost::filesystem::path       &dest_path,
+                         boost::system::error_code     &ec);
+
 // Upper bound for a model download (same cap as the MakerWorld import path).
 constexpr std::size_t MODEL_DOWNLOAD_SIZE_LIMIT = std::size_t(500) * 1024 * 1024;
 
@@ -141,6 +202,40 @@ bool content_matches_extension(const std::string &file_name, const std::string &
 // no leading '/', no "." or ".." segment, no empty segment, no control characters. Used before
 // an archive entry name becomes part of a path on disk (zip-slip).
 bool is_safe_archive_relative_path(const std::string &path);
+
+enum class ArchiveEntryName {
+    Reject, // unsafe: refuse the entry (the confined extractor refuses the whole archive)
+    Skip,   // nothing to extract: a bare "./" or "." directory entry
+    Ok      // `out` holds the normalised name
+};
+
+// The one place an archive entry name is cleaned up and then judged. Harmless spellings that
+// common zip tools produce are normalised first: backslash separators (PowerShell 5.1
+// Compress-Archive, some .NET zippers), a leading "./" or "./" segments (bsdtar), repeated
+// separators ("a//b") and a trailing separator. The result is then held to is_safe_archive_relative_path
+// as strictly as ever. Rejected: ".." segments anywhere, an absolute path ("/x", "\x", UNC
+// "\\server\share", "\\?\C:\x"), a drive letter or any ':' (C:x, alternate data streams),
+// control characters / NUL, look-alikes of '.' '/' '\' ':', segments made only of dots and
+// spaces, and names over 1024 bytes. `out` is only written for Ok.
+ArchiveEntryName normalize_archive_entry_path(const std::string &raw, std::string &out);
+
+// The last segment of a name returned by normalize_archive_entry_path (the whole name when it
+// has no '/'). For extractors that flatten entries to their file name.
+std::string archive_entry_leaf(const std::string &normalized);
+
+// True if candidate stays under root after weakly_canonical. Rejects an embedded NUL in either
+// path. A trailing separator on root is ignored. Compared component-wise so a sibling that
+// shares a prefix (/tmp/root2 vs /tmp/root) is not accepted. A symlink-to-dir root is followed
+// (extraction into that directory is allowed). A symlink at the candidate's last component is
+// not followed, so a dest-file symlink can be replaced rather than written through.
+bool is_path_within_root(const boost::filesystem::path &root, const boost::filesystem::path &candidate);
+
+// expat's XML_GetBuffer / XML_ParseBuffer take an int length. An archive entry larger than
+// INT_MAX cannot be handed to those APIs without truncating the size (Orca #15958).
+inline bool xml_entry_size_ok(std::uint64_t uncomp_size)
+{
+    return uncomp_size <= static_cast<std::uint64_t>(std::numeric_limits<int>::max());
+}
 
 // ---- settings in project / preset files ----------------------------------------------------------
 

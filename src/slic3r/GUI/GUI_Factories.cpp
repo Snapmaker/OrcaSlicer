@@ -157,7 +157,11 @@ std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::OBJECT_C
                     {"support_top_z_distance", "",13},{"support_bottom_z_distance", "",12},{"support_base_pattern", "",14},{"support_base_pattern_spacing", "",15},
                     {"support_interface_top_layers", "",16},{"support_interface_bottom_layers", "",17},{"support_interface_spacing", "",18},{"support_bottom_interface_spacing", "",19},
                     {"support_object_xy_distance", "",20}, {"bridge_no_support", "",21},{"max_bridge_length", "",22},{"support_critical_regions_only", "",23},{"support_remove_small_overhang","",27},
-                    {"support_object_first_layer_gap","",28}
+                    {"support_object_first_layer_gap","",28},
+                    {"stabilizer_supports","",29},{"stabilizer_ring_spacing","",30},{"stabilizer_points_per_ring","",31},
+                    {"stabilizer_tip_diameter","",32},{"stabilizer_tip_gap","",32},{"stabilizer_pillar_diameter","",33},{"stabilizer_max_island_width","",34},
+                    {"stabilizer_pillar_base_diameter","",35},{"stabilizer_bracing","",36},{"stabilizer_brace_max_unbraced","",37},{"stabilizer_brace_max_span","",38},{"stabilizer_column_shape","",39},{"stabilizer_column_width","",40},
+                    {"stabilizer_column_length","",41},{"stabilizer_column_min_height","",42},{"stabilizer_wall_loops","",43},{"stabilizer_infill_density","",44},{"stabilizer_infill_pattern","",45}
                             }},
     { L("Speed"), {{"support_speed", "",12}, {"support_interface_speed", "",13}
                     }}
@@ -174,6 +178,7 @@ std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::PART_CAT
                     {"bottom_shell_layers", L("Bottom Solid Layers"),1}, {"bottom_shell_thickness", L("Bottom Minimum Shell Thickness"),1},{"bottom_color_penetration_layers", "",1},{"bottom_surface_density", L("Bottom Surface Density"),1},
                     {"sparse_infill_density", "",1},{"sparse_infill_pattern", "",1},{"sparse_infill_filament", "",1},{"lateral_lattice_angle_1", "",1},{"lateral_lattice_angle_2", "",1},{"infill_overhang_angle", "",1},{"infill_anchor", "",1},{"infill_anchor_max", "",1},{"top_surface_pattern", "",1},{"undertop_surface_pattern", "",1},{"bottom_surface_pattern", "",1}, {"internal_solid_infill_pattern", "",1},
                     {"align_infill_direction_to_model", "", 1},
+                    {"hollow_interior", "", 1}, {"hollow_shell_thickness", "", 1},
                     {"extra_solid_infills", "", 1},
         {"infill_combination", "",1}, {"infill_combination_max_layer_height", "",1}, {"infill_wall_overlap", "",1},{"top_bottom_infill_wall_overlap", "",1}, {"solid_infill_direction", "",1}, {"infill_direction", "",1}, {"bridge_angle", "",1}, {"internal_bridge_angle", "",1}, {"minimum_sparse_infill_area", "",1}
                     }},
@@ -764,6 +769,22 @@ wxMenu* MenuFactory::append_submenu_add_handy_model(wxMenu* menu, ModelVolumeTyp
 
     return sub_menu;
 }
+wxMenu* MenuFactory::append_submenu_add_custom_model(wxMenu* menu, std::unique_ptr<CustomModelsMenu>& holder)
+{
+    holder = std::make_unique<CustomModelsMenu>();
+    return holder->create(menu, m_parent);
+}
+
+// Right-click on an object: put it (with its parts, settings, paint and filament) into the
+// Custom Models library.
+void MenuFactory::append_menu_item_save_custom_model(wxMenu* menu)
+{
+    append_menu_item(menu, wxID_ANY, _L("Save to Custom Models") + dots,
+        _L("Save the selected object, with its parts, modifiers, settings overrides, painting and filament, to the Custom Models folder"),
+        [](wxCommandEvent&) { wxGetApp().CallAfter([]() { save_selection_as_custom_model(); }); }, "", menu,
+        []() { return can_save_selection_as_custom_model(); }, m_parent);
+}
+
 static void append_menu_itemm_add_(const wxString& name, GLGizmosManager::EType gizmo_type, wxMenu *menu, ModelVolumeType type, bool is_submenu_item) {
     auto add_ = [type, gizmo_type](const wxCommandEvent & /*unnamed*/) {
         const GLCanvas3D *canvas = plater()->canvas3D();
@@ -1238,6 +1259,13 @@ void MenuFactory::append_menu_item_edit_in_blender(wxMenu *menu)
     append_menu_item(menu, wxID_ANY, _L("Edit in Blender"), _L("Open the selected part in Blender. Saving in Blender updates the part here"),
         [](wxCommandEvent &) { plater()->edit_in_blender(); }, "", menu,
         []() { return plater()->can_edit_in_blender(); }, m_parent);
+}
+
+void MenuFactory::append_menu_item_edit_in_freecad(wxMenu *menu)
+{
+    append_menu_item(menu, wxID_ANY, _L("Edit in FreeCAD"), _L("Open the selected part in FreeCAD. Saving in FreeCAD updates the part here"),
+        [](wxCommandEvent &) { plater()->edit_in_freecad(); }, "", menu,
+        []() { return plater()->can_edit_in_freecad(); }, m_parent);
 }
 
 void MenuFactory::append_menu_item_change_extruder(wxMenu* menu)
@@ -2073,10 +2101,13 @@ void MenuFactory::create_default_menu()
 {
     wxMenu* sub_menu_primitives = append_submenu_add_generic(&m_default_menu, ModelVolumeType::INVALID);
     wxMenu* sub_menu_handy = append_submenu_add_handy_model(&m_default_menu, ModelVolumeType::INVALID);
+    wxMenu* sub_menu_custom = append_submenu_add_custom_model(&m_default_menu, m_custom_models_default);
 #ifdef __WINDOWS__
     append_submenu(&m_default_menu, sub_menu_primitives, wxID_ANY, _L("Add Primitive"), "", "menu_add_part",
         []() {return true; }, m_parent);
     append_submenu(&m_default_menu, sub_menu_handy, wxID_ANY, _L("Add Handy models"), "", "menu_add_part",
+        []() {return true; }, m_parent);
+    append_submenu(&m_default_menu, sub_menu_custom, wxID_ANY, _L("Add Custom Models"), "", "menu_add_part",
         []() {return true; }, m_parent);
     append_menu_item(&m_default_menu, wxID_ANY, _L("Add Models"), "", // ORCA: Add Models
         [](wxCommandEvent&) { plater()->add_file(); }, "menu_add_part", &m_default_menu,
@@ -2085,6 +2116,8 @@ void MenuFactory::create_default_menu()
     append_submenu(&m_default_menu, sub_menu_primitives, wxID_ANY, _L("Add Primitive"), "", "",
         []() {return true; }, m_parent);
     append_submenu(&m_default_menu, sub_menu_handy, wxID_ANY, _L("Add Handy models"), "", "",
+        []() {return true; }, m_parent);
+    append_submenu(&m_default_menu, sub_menu_custom, wxID_ANY, _L("Add Custom Models"), "", "",
         []() {return true; }, m_parent);
     append_menu_item(&m_default_menu, wxID_ANY, _L("Add Models"), "", // ORCA: Add Models
         [](wxCommandEvent&) { plater()->add_file(); }, "", &m_default_menu,
@@ -2176,6 +2209,12 @@ void MenuFactory::create_extra_object_menu()
         _L("Rebuild this object as the outer wall the slicer will actually print, so it can be re-sliced at another layer height"),
         [](wxCommandEvent&) { obj_list()->bake_slice_to_mesh(); }, "", &m_object_menu,
         []() { return ObjectList::can_bake_slice_to_mesh(); }, m_parent);
+    // Side stabilizers as real geometry, so they print in other slicers too. Enabled once the object is
+    // sliced with its side stabilizers on. tests/research_stabilizer_bake.md
+    append_menu_item(&m_object_menu, wxID_ANY, _L("Bake stabilizers..."),
+        _L("Turn this object's side stabilizers into real geometry, as a separate object or a part, so they print in any slicer"),
+        [](wxCommandEvent&) { obj_list()->bake_stabilizers(); }, "", &m_object_menu,
+        []() { return ObjectList::can_bake_stabilizers(); }, m_parent);
     // Image Fill (Phase 2): on the object menu too - a single-part object never opens the part menu.
     append_menu_item_image_fill(&m_object_menu);
     // merge to single part
@@ -2223,9 +2262,11 @@ void MenuFactory::create_extra_object_menu()
     append_menu_item_reload_from_disk(&m_object_menu);
     append_menu_item_replace_with_stl(&m_object_menu);
     append_menu_item_edit_in_blender(&m_object_menu);
+    append_menu_item_edit_in_freecad(&m_object_menu);
     append_menu_item_cad_fillet(&m_object_menu);
     append_menu_item_export_stl(&m_object_menu);
     append_menu_item_export_step(&m_object_menu);
+    append_menu_item_save_custom_model(&m_object_menu);
 }
 
 void MenuFactory::create_bbl_assemble_object_menu()
@@ -2362,6 +2403,7 @@ void MenuFactory::create_bbl_part_menu()
     append_menu_item_reload_from_disk(menu);
     append_menu_item_replace_with_stl(menu);
     append_menu_item_edit_in_blender(menu);
+    append_menu_item_edit_in_freecad(menu);
     append_menu_item_cad_fillet(menu);
     append_menu_item_export_stl_part(menu);
 }
@@ -2569,11 +2611,14 @@ void MenuFactory::create_plate_menu()
     menu->AppendSeparator();
     wxMenu* sub_menu_primitives = append_submenu_add_generic(menu, ModelVolumeType::INVALID);
     wxMenu* sub_menu_handy = append_submenu_add_handy_model(menu, ModelVolumeType::INVALID);
+    wxMenu* sub_menu_custom = append_submenu_add_custom_model(menu, m_custom_models_plate);
 
 #ifdef __WINDOWS__
     append_submenu(menu, sub_menu_primitives, wxID_ANY, _L("Add Primitive"), "", "menu_add_part",
         []() {return true; }, m_parent);
     append_submenu(menu, sub_menu_handy, wxID_ANY, _L("Add Handy models"), "", "menu_add_part",
+        []() {return true; }, m_parent);
+    append_submenu(menu, sub_menu_custom, wxID_ANY, _L("Add Custom Models"), "", "menu_add_part",
         []() {return true; }, m_parent);
     append_menu_item(menu, wxID_ANY, _L("Add Models"), "", // ORCA: Add Models
         [](wxCommandEvent&) { plater()->add_file(); }, "menu_add_part", menu,
@@ -2582,6 +2627,8 @@ void MenuFactory::create_plate_menu()
     append_submenu(menu, sub_menu_primitives, wxID_ANY, _L("Add Primitive"), "", "",
         []() {return true; }, m_parent);
     append_submenu(menu, sub_menu_handy, wxID_ANY, _L("Add Handy models"), "", "",
+        []() {return true; }, m_parent);
+    append_submenu(menu, sub_menu_custom, wxID_ANY, _L("Add Custom Models"), "", "",
         []() {return true; }, m_parent);
     append_menu_item(menu, wxID_ANY, _L("Add Models"), "", // ORCA: Add Models
         [](wxCommandEvent&) { plater()->add_file(); }, "", menu,
@@ -2625,6 +2672,9 @@ void MenuFactory::update()
 
 wxMenu* MenuFactory::default_menu()
 {
+    // Called right before the menu is shown: pick up files added to the Custom Models folder.
+    if (m_custom_models_default)
+        m_custom_models_default->refresh();
     return &m_default_menu;
 }
 
@@ -2736,6 +2786,7 @@ wxMenu* MenuFactory::multi_selection_menu()
         menu->AppendSeparator();
         append_menu_item_export_stl(menu, true);
         append_menu_item_export_step(menu);
+        append_menu_item_save_custom_model(menu);
     }
     else {
         append_menu_item_center(menu);
@@ -2798,6 +2849,8 @@ wxMenu* MenuFactory::assemble_multi_selection_menu()
 //BBS: add partplate related logic
 wxMenu* MenuFactory::plate_menu()
 {
+    if (m_custom_models_plate)
+        m_custom_models_plate->refresh();
     append_menu_item_locked(&m_plate_menu);
     append_menu_item_plate_name(&m_plate_menu);
     return &m_plate_menu;
@@ -3112,7 +3165,7 @@ void MenuFactory::update_object_menu()
 
 void MenuFactory::update_default_menu()
 {
-    for (auto& name : { _L("Add Primitive") , _L("Add Handy models"), _L("Show Labels") }) {
+    for (auto& name : { _L("Add Primitive") , _L("Add Handy models"), _L("Add Custom Models"), _L("Show Labels") }) {
         const auto menu_item_id = m_default_menu.FindItem(name);
         if (menu_item_id != wxNOT_FOUND)
             m_default_menu.Destroy(menu_item_id);

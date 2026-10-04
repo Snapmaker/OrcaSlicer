@@ -19,7 +19,7 @@
 bl_info = {
     "name": "EdgeSlicer Bridge",
     "author": "EdgeSlicer",
-    "version": (1, 0, 1),
+    "version": (1, 0, 2),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > EdgeSlicer, Object > Send to EdgeSlicer",
     "description": "Send meshes to EdgeSlicer and send parts opened from EdgeSlicer back to it",
@@ -48,6 +48,9 @@ PROP_NAME = "edgeslicer_name"
 PROP_SENT = "edgeslicer_last_sent"
 # Object custom property marking the mesh that came from EdgeSlicer.
 PROP_PART = "edgeslicer_part"
+
+# While above zero, saves do not send the mesh back (see start_edit_session).
+_suppress_send = 0
 
 
 # ------------------------------------------------------------------------------------------------
@@ -296,6 +299,7 @@ def _frame_part():
 
 
 def start_edit_session(opts):
+    global _suppress_send
     scene = bpy.context.scene
     for obj in list(scene.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
@@ -320,11 +324,16 @@ def start_edit_session(opts):
         _remember_session_exe(opts["exe"])
 
     # Save next to the exchange files, so Ctrl+S has somewhere to go without asking.
+    # This save fires save_post too. Sending the untouched part back from it would make EdgeSlicer swap
+    # in an identical mesh and drop the part's painted supports, seams and colours.
     blend = os.path.join(os.path.dirname(opts["out"]), _safe_filename(name) + ".blend")
+    _suppress_send += 1
     try:
         bpy.ops.wm.save_as_mainfile(filepath=blend)
     except Exception as ex:
         print("EdgeSlicer Bridge: could not save %s: %s" % (blend, ex))
+    finally:
+        _suppress_send -= 1
 
     if not bpy.app.background:
         bpy.app.timers.register(_frame_part, first_interval=0.2)
@@ -355,6 +364,8 @@ def send_back(scene):
 
 @persistent
 def _on_save_post(*_args):
+    if _suppress_send:
+        return
     scene = bpy.context.scene
     if scene is None or not scene.get(PROP_OUT):
         return
@@ -557,7 +568,18 @@ def _run_as_script():
                 if prefs is not None and getattr(prefs, "edgeslicer_path", None) is not None:
                     _log("the installed add-on is older (%s); using %s for this session" % (installed_version, opts["exe"]))
                     prefs.edgeslicer_path = opts["exe"]
-            installed.start_edit_session(opts)
+            # Copies older than 1.0.2 send the untouched part back when the session saves its .blend
+            # (see start_edit_session); keep their save handler out of that first save.
+            old_handler = None if hasattr(installed, "_suppress_send") else getattr(installed, "_on_save_post", None)
+            handlers = bpy.app.handlers.save_post
+            muted = old_handler is not None and old_handler in handlers
+            if muted:
+                handlers.remove(old_handler)
+            try:
+                installed.start_edit_session(opts)
+            finally:
+                if muted:
+                    handlers.append(old_handler)
         return
     register()
     if opts:

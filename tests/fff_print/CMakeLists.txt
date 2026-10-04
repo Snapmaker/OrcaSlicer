@@ -28,9 +28,15 @@ add_executable(${_TEST_NAME}_tests
 	test_slice_bake.cpp
 	test_modifier_effect.cpp
 	test_tree_support_determinism.cpp
+	test_stabilizers.cpp
+	test_stabilizer_bake.cpp
+	test_stabilizers_v2.cpp
+	test_fdm_hollowing.cpp
+	test_extra_bridge_layer_determinism.cpp
 	test_bed_temperature.cpp
 	test_trianglemesh.cpp
 	test_wipe.cpp
+	test_adaptive_pa.cpp
 	)
 # libslic3r_cgal links CGAL privately, so the GMP/MPFR libraries are needed at link time.
 # They are not propagated to this test target; find them under the deps prefix or the

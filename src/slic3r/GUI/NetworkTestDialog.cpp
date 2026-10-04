@@ -1,5 +1,6 @@
 #include "NetworkTestDialog.hpp"
 #include "MainFrame.hpp"
+#include "FirewallCheckDialog.hpp"
 #include "I18N.hpp"
 
 #include "libslic3r/Utils.hpp"
@@ -206,6 +207,15 @@ wxBoxSizer* NetworkTestDialog::create_top_sizer(wxWindow* parent)
 	btn_clear_log = new Button(this, _L("Clear Log"));
     btn_clear_log->SetStyle(ButtonStyle::Regular, ButtonType::Window);
 	line_sizer->Add(btn_clear_log, 0, wxALL, 5);
+
+	// Printers missing from the Device list are most often Windows Firewall dropping their
+	// discovery broadcasts, which none of the tests here can see.
+	if (FirewallCheckDialog::supported()) {
+		auto* btn_firewall = new Button(this, _L("Check Windows Firewall..."));
+		btn_firewall->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+		line_sizer->Add(btn_firewall, 0, wxALL, 5);
+		btn_firewall->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { FirewallCheckDialog::show_modal(this); });
+	}
 
 	// Button handlers run on the main thread while the dialog (their parent) is alive.
 	btn_start->Bind(wxEVT_BUTTON, [this](wxCommandEvent &evt) { start_all_job(); });

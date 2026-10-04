@@ -1,0 +1,189 @@
+# Headless check of resources/freecad/EdgeSlicerBridge/edgeslicer_bridge.py in FreeCADCmd (no GUI,
+# no EdgeSlicer): edit sessions from STEP and STL, save -> edited.step / edited.stl in the part's
+# frame, reopen, Mesh to solid, placements (moved objects, App::Part containers, PartDesign bodies),
+# Send to EdgeSlicer (launch stubbed) and a session EdgeSlicer no longer watches.
+#
+# Not part of ctest. Run it from Git Bash, with every FreeCAD config file redirected to a scratch
+# folder so the real %APPDATA%\FreeCAD is not written:
+#
+#   D=$(cygpath -w "$(mktemp -d)")
+#   FC_TEST_DIR="$D" FC_BRIDGE_DIR="$(cygpath -w resources/freecad/EdgeSlicerBridge)" \
+#     "/c/Program Files/FreeCAD 1.0/bin/freecadcmd.exe" -u "$D\\user.cfg" -s "$D\\system.cfg" \
+#     "$(cygpath -w tests/freecad/freecad_bridge_headless.FCMacro)" < /dev/null | grep -E "^(PASS|FAIL)|BRIDGE_TEST"
+#
+# It also writes to %TEMP%\EdgeSlicer-from-FreeCAD (the Send to EdgeSlicer folder).
+#
+# The last line is "BRIDGE_TEST PASSED: <n> checks, 0 failed []".
+import importlib.util, json, math, os, shutil, sys, traceback
+import FreeCAD as App
+import Part, Mesh
+
+HERE = os.environ["FC_TEST_DIR"]
+BRIDGE = os.environ["FC_BRIDGE_DIR"]
+results = []
+
+
+def check(name, cond, extra=""):
+    results.append((name, bool(cond)))
+    print(("PASS " if cond else "FAIL ") + name + (" " + str(extra) if extra != "" else ""))
+
+
+def session(dirname, name, fmt, input_path):
+    d = os.path.join(HERE, dirname)
+    s = {"version": 1, "name": name, "input": input_path, "input_format": fmt,
+         "document": os.path.join(d, name + ".FCStd"), "output_step": os.path.join(d, "edited.step"),
+         "output_stl": os.path.join(d, "edited.stl"), "edgeslicer_exe": os.path.join(d, "EdgeSlicer.exe")}
+    p = os.path.join(d, "session.json")
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(s, f)
+    return s, p
+
+
+def fresh(dirname):
+    d = os.path.join(HERE, dirname)
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(d)
+    return d
+
+
+try:
+    # Load the bundled module exactly the way edgeslicer_edit.FCMacro does.
+    spec = importlib.util.spec_from_file_location("edgeslicer_bridge", os.path.join(BRIDGE, "edgeslicer_bridge.py"))
+    eb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(eb)
+    sys.modules["edgeslicer_bridge"] = eb
+    check("module loads headless", eb.Gui is None and eb.VERSION >= (1, 0, 0))
+
+    # ---- STEP part: an off-centre box in the part's own (mesh) coordinates ----
+    d = fresh("step_session")
+    box = Part.makeBox(20, 10, 5, App.Vector(-10, -5, -2.5))
+    name = "Bracket ä"
+    box.exportStep(os.path.join(d, name + ".step"))
+    s, p = session("step_session", name, "step", os.path.join(d, name + ".step"))
+    doc = eb.start_edit_session(p)
+    check("STEP session: one Part::Feature", len(doc.Objects) == 1 and doc.Objects[0].TypeId == "Part::Feature")
+    check("STEP session: document saved next to the part", os.path.exists(s["document"]))
+    check("STEP session: opening does not send back", not os.path.exists(s["output_step"]) and not os.path.exists(s["output_stl"]))
+    check("STEP session: meta marks the session", doc.Meta.get(eb.META_OUT_STEP) == s["output_step"])
+    bb = doc.Objects[0].Shape.BoundBox
+    check("STEP session: geometry arrives in the part's frame", abs(bb.XMin + 10) < 1e-6 and abs(bb.ZMax - 2.5) < 1e-6, bb)
+
+    # Model on it: cut a hole, save -> edited.step
+    base = doc.Objects[0]
+    cyl = doc.addObject("Part::Cylinder", "Hole")
+    cyl.Radius = 2
+    cyl.Height = 20
+    cyl.Placement.Base = App.Vector(3, 0, -10)
+    cut = doc.addObject("Part::Cut", "Cut")
+    cut.Base = base
+    cut.Tool = cyl
+    doc.recompute()
+    base.Visibility = False
+    cyl.Visibility = False
+    doc.save()
+    check("STEP session: save sends STEP back", os.path.exists(s["output_step"]))
+    back = Part.Shape()
+    back.read(s["output_step"])
+    check("STEP session: result keeps the frame", abs(back.BoundBox.XMin + 10) < 1e-4 and abs(back.BoundBox.XMax - 10) < 1e-4, back.BoundBox)
+    check("STEP session: result is the cut solid", abs(back.Volume - (1000 - math.pi * 4 * 5)) < 0.5, back.Volume)
+    check("STEP session: no temp files left", not [f for f in os.listdir(d) if ".sending." in f])
+
+    # Reopening the same session finds the open document instead of importing again.
+    again = eb.start_edit_session(p)
+    check("STEP session: reopen finds the open document", again is doc)
+    App.closeDocument(doc.Name)
+    reopened = eb.start_edit_session(p)
+    check("STEP session: reopen loads the saved document", reopened.Meta.get(eb.META_OUT_STEP) == s["output_step"] and len(reopened.Objects) == 3)
+    App.closeDocument(reopened.Name)
+
+    # ---- STL part: a mesh, converted to a solid ----
+    d = fresh("stl_session")
+    m = Mesh.createBox(10, 20, 30)
+    m.translate(5, 5, 5)
+    m.write(os.path.join(d, "Peg.stl"))
+    s, p = session("stl_session", "Peg", "stl", os.path.join(d, "Peg.stl"))
+    doc = eb.start_edit_session(p)
+    check("STL session: one Mesh::Feature", len(doc.Objects) == 1 and doc.Objects[0].TypeId == "Mesh::Feature")
+    doc.save()
+    check("STL session: a mesh result goes back as STL", os.path.exists(s["output_stl"]) and not os.path.exists(s["output_step"]))
+    sent = Mesh.Mesh(s["output_stl"])
+    check("STL session: STL keeps the frame", abs(sent.BoundBox.XMin) < 1e-4 and abs(sent.BoundBox.ZMax - 20) < 1e-4, sent.BoundBox)
+    solid = eb.mesh_to_solid(doc.Objects[0])
+    check("Mesh to solid: one refined solid", len(solid.Shape.Solids) == 1 and len(solid.Shape.Faces) == 6, (len(solid.Shape.Solids), len(solid.Shape.Faces)))
+    doc.save()
+    check("STL session: after Mesh to solid, STEP goes back", os.path.exists(s["output_step"]))
+    back = Part.Shape()
+    back.read(s["output_step"])
+    check("STL session: solid keeps the frame", abs(back.BoundBox.XMin) < 1e-4 and abs(back.Volume - 6000) < 1e-3, (back.BoundBox, back.Volume))
+
+    # A moved result object: its placement is part of what goes back.
+    solid.Placement.Base = App.Vector(1, 2, 3)
+    doc.recompute()
+    doc.save()
+    back = Part.Shape()
+    back.read(s["output_step"])
+    check("placement of a moved FreeCAD object is applied", abs(back.BoundBox.XMin - 1) < 1e-4 and abs(back.BoundBox.YMin + 3) < 1e-4 and abs(back.BoundBox.ZMax - 23) < 1e-4, back.BoundBox)
+
+    # A mesh that was itself moved and rotated in FreeCAD: Mesh to solid keeps it where it is shown.
+    m2 = doc.addObject("Mesh::Feature", "Moved")
+    m2.Mesh = Mesh.createBox(2, 2, 2)
+    m2.Placement = App.Placement(App.Vector(50, 0, 0), App.Rotation(App.Vector(0, 0, 1), 45))
+    doc.recompute()
+    s2 = eb.mesh_to_solid(m2)
+    check("Mesh to solid keeps a moved mesh in place", abs(s2.Shape.BoundBox.Center.x - 50) < 1e-4 and abs(s2.Shape.BoundBox.XLength - 2 * math.sqrt(2)) < 1e-3, s2.Shape.BoundBox)
+    doc.removeObject(s2.Name)
+    doc.removeObject(m2.Name)
+    doc.recompute()
+
+    # Body inside an App::Part container: the global placement counts, the features do not double up.
+    container = doc.addObject("App::Part", "Assembly")
+    container.Placement.Base = App.Vector(100, 0, 0)
+    body = doc.addObject("PartDesign::Body", "Body")
+    container.addObject(body)
+    feat = body.newObject("PartDesign::AdditiveBox", "Block")
+    feat.Length = 4
+    feat.Width = 4
+    feat.Height = 4
+    doc.recompute()
+    res = eb.result_objects(doc)
+    check("results: body counted once, features skipped", sum(1 for o in res if o.TypeId == "PartDesign::Body") == 1 and feat not in res, [o.Name for o in res])
+    shp = eb.placed_shape(body)
+    check("results: container placement applied", abs(shp.BoundBox.XMin - 100) < 1e-6, shp.BoundBox)
+
+    # ---- Send to EdgeSlicer: one STEP per object, handed to --single-instance ----
+    launched = []
+    eb.launch_edgeslicer = lambda exe, files: launched.append((exe, files))
+    fake_exe = os.path.join(HERE, "EdgeSlicer.exe")
+    open(fake_exe, "w").close()
+    eb._params().SetString("EdgeSlicerPath", fake_exe)
+    count, error = eb.send_to_edgeslicer(doc)
+    check("send: no error", error is None, error)
+    files = launched[-1][1] if launched else []
+    check("send: one file per visible result", count == len(files) == 2, files)
+    check("send: solids as STEP", files and all(f.endswith(".step") for f in files), files)
+    check("send: uses the chosen EdgeSlicer", launched and launched[-1][0] == fake_exe)
+    sent_body = [f for f in files if os.path.basename(f).startswith("Body")]
+    if sent_body:
+        b = Part.Shape()
+        b.read(sent_body[0])
+        check("send: the body arrives where FreeCAD shows it", abs(b.BoundBox.XMin - 100) < 1e-4, b.BoundBox)
+    eb._params().SetString("EdgeSlicerPath", "")
+    App.closeDocument(doc.Name)
+
+    # ---- EdgeSlicer gone: the session folder was removed ----
+    d = fresh("gone_session")
+    doc = App.newDocument("Gone")
+    doc.Meta = {eb.META_OUT_STEP: os.path.join(d, "edited.step"), eb.META_OUT_STL: os.path.join(d, "edited.stl")}
+    Part.show(Part.makeBox(1, 1, 1))
+    fmt, error = eb.send_back(doc)
+    check("send back works while EdgeSlicer waits", fmt == "STEP" and error is None, error)
+    shutil.rmtree(d)
+    fmt, error = eb.send_back(doc)
+    check("send back reports a session EdgeSlicer no longer watches", fmt is None and "no longer waiting" in (error or ""), error)
+    App.closeDocument(doc.Name)
+except Exception:
+    traceback.print_exc()
+    results.append(("exception", False))
+
+failed = [n for n, ok in results if not ok]
+print("BRIDGE_TEST %s: %d checks, %d failed %s" % ("PASSED" if not failed else "FAILED", len(results), len(failed), failed))

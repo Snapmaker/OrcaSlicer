@@ -489,6 +489,14 @@ jobs:
               Write-Host "::notice::no $($p.f) under $dir - the package will omit that component"
             }
           }
+          # FlashNetwork.dll refuses to initialise without FlashForge's server-settings file beside
+          # it in the ship folder (2.4.2.0 shipped the DLL alone and the FlashForge tab never
+          # started). Say so here; the verify step below fails the run if it is missing.
+          $fnDir = Join-Path $env:SHIP_ROOT 'flashnetwork'
+          if ((Test-Path -LiteralPath (Join-Path $fnDir 'FlashNetwork.dll')) -and
+              -not (Test-Path -LiteralPath (Join-Path $fnDir 'FLASHNETWORK9.DAT'))) {
+            Write-Host "::warning::$fnDir has FlashNetwork.dll but no FLASHNETWORK9.DAT - FlashNetwork cannot initialise without it"
+          }
           "flags=$($flags -join ' ')" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding ascii
 
       - name: Configure and build the slicer
@@ -596,6 +604,9 @@ jobs:
           $expect = @(
             @{ var = 'ULTRANET_BIN_DIR';     path = 'ultranet\bambu_networking.dll' },
             @{ var = 'FLASHNETWORK_BIN_DIR'; path = 'FlashNetwork.dll' },
+            # The DLL's server-settings file: without it fnet_initlize fails and the FlashForge
+            # tab is dead even though the DLL landed (2.4.2.0).
+            @{ var = 'FLASHNETWORK_BIN_DIR'; path = 'resources\data\FLASHNETWORK9.DAT' },
             @{ var = 'FFMPEG_BIN_DIR';       path = 'resources\tools\go2rtc\ffmpeg.exe' }
           )
           $missing = @()

@@ -671,7 +671,14 @@ if(SLIC3R_STATIC)
     set(TBB_STATIC 1)
 endif()
 set(TBB_DEBUG 1)
-set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO RelWithDebInfo Release "")
+# Adapted from Orca #14593 (case-insensitive): only map RelWithDebInfo imported configs to Release when
+# that config is in use, or on MSVC. Non-MSVC multi-config generators with
+# CMAKE_BUILD_TYPE unset now fall back to the deps' first available config,
+# which is harmless with Edge's single-config deps.
+string(TOUPPER "${CMAKE_BUILD_TYPE}" _bt)
+if (_bt STREQUAL "RELWITHDEBINFO" OR MSVC)
+    set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO RelWithDebInfo Release "")
+endif()
 find_package(TBB REQUIRED)
 # include_directories(SYSTEM ${TBB_INCLUDE_DIRS})
 # add_definitions(${TBB_DEFINITIONS})
@@ -1067,11 +1074,27 @@ if (WIN32)
     # The library is redistributed unmodified; see docs/superpowers/specs/2026-09-11-flashforge-lan-ship.md
     # for its provenance (Flash Studio Desktop 1.7.13) and the sha256 it is pinned to. It is x64 and
     # needs only the MSVC runtime we already ship, so no companion DLLs travel with it.
+    #
+    # It does need one data file: FLASHNETWORK9.DAT, FlashForge's server-settings file, which
+    # fnet_initlize() reads and without which it returns FNET_ERROR - so a package with the DLL and
+    # no DAT has a FlashForge tab that never starts (2.4.2.0). The file is published by FlashForge
+    # in its AGPL-3.0 Orca-Flashforge repository (resources/data/FLASHNETWORK9.DAT); it is
+    # generation-matched to the library (the older FLASHNETWORK7.DAT is rejected by the 3.4.2 DLL),
+    # so it travels in the same ship folder as the DLL rather than in this tree, and installs where
+    # FlashForge's own client reads it: resources/data.
     if (FLASHNETWORK_BIN_DIR AND EXISTS "${FLASHNETWORK_BIN_DIR}/FlashNetwork.dll")
         install(FILES "${FLASHNETWORK_BIN_DIR}/FlashNetwork.dll" DESTINATION ".")
         # Any companion DLLs a future build of the library may need.
         install(DIRECTORY "${FLASHNETWORK_BIN_DIR}/" DESTINATION "." FILES_MATCHING PATTERN "*.dll")
         message(STATUS "EdgeSlicer: shipping FlashForge's FlashNetwork library from ${FLASHNETWORK_BIN_DIR}")
+        file(GLOB _flashnetwork_dats "${FLASHNETWORK_BIN_DIR}/FLASHNETWORK*.DAT")
+        if (_flashnetwork_dats)
+            install(FILES ${_flashnetwork_dats} DESTINATION "./resources/data")
+            message(STATUS "EdgeSlicer: shipping FlashNetwork server settings ${_flashnetwork_dats}")
+        else()
+            message(WARNING "EdgeSlicer: ${FLASHNETWORK_BIN_DIR} has FlashNetwork.dll but no FLASHNETWORK9.DAT - "
+                            "the library will refuse to initialise and the FlashForge tab will not work")
+        endif()
     else()
         message(STATUS "EdgeSlicer: no FLASHNETWORK_BIN_DIR - FlashForge LAN printing will be unavailable in this package")
     endif()

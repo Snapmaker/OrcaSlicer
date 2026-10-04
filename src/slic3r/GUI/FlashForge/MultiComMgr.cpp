@@ -17,6 +17,8 @@
 #include <wx/stdpaths.h>
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
+#include "libslic3r/Utils.hpp"
+#include "FFDiagnostics.hpp"
 #include "FreeInDestructor.h"
 #include "MultiComHelper.hpp"
 #include "WanDevTokenMgr.hpp"
@@ -120,15 +122,40 @@ bool MultiComMgr::initalize(const std::string &dllPath, const std::string &dataD
     logSettings.expireHours = 72;
     logSettings.level = debug ? FNET_LOG_LEVEL_DEBUG : FNET_LOG_LEVEL_INFO;
 
-#ifdef __APPLE__
-    std::string serverSettingsPath = (appPathWithSep + "../Resources/data/" + DAT_FILE_NAME).ToUTF8().data();
-#else
-    std::string serverSettingsPath = (appPathWithSep + "resources/data/" + DAT_FILE_NAME).ToUTF8().data();
-#endif
+    // fnet_initlize refuses to start without FlashForge's server-settings file (a missing, empty
+    // or wrong-generation file all return FNET_ERROR), so find it before calling in. The first
+    // candidate is <resources>/data - where the installer puts it and where FlashForge's own
+    // client looks - so an install that has it behaves exactly as upstream does.
+    const std::vector<std::string> datCandidates = Slic3r::GUI::ff_flashnetwork_dat_search_paths(
+        Slic3r::resources_dir(), dllPath, dataDir, DAT_FILE_NAME);
+    std::string serverSettingsPath;
+    for (const std::string &candidate : datCandidates) {
+        if (wxFileName::FileExists(wxString::FromUTF8(candidate.c_str()))) {
+            serverSettingsPath = candidate;
+            break;
+        }
+    }
+    const bool datFound = !serverSettingsPath.empty();
+    if (datFound) {
+        BOOST_LOG_TRIVIAL(info) << "FlashNetwork: server settings " << serverSettingsPath;
+    } else {
+        std::string searched;
+        for (const std::string &candidate : datCandidates)
+            searched += (searched.empty() ? "" : ", ") + candidate;
+        BOOST_LOG_TRIVIAL(error) << "FlashNetwork: " << DAT_FILE_NAME
+                                 << " (FlashForge server settings) not found; looked in: " << searched
+                                 << ". FlashNetwork will not initialise without it.";
+        // Still make the call, with the path upstream would use, so the log carries the library's
+        // own verdict and return code rather than our guess. FlashForge's client does not fall
+        // back to running without the file, and neither do we.
+        serverSettingsPath = datCandidates.empty() ? std::string(DAT_FILE_NAME) : datCandidates.front();
+    }
+    m_lastInitError.clear();
     m_networkIntfc.reset(new fnet::FlashNetworkIntfc(
-        dllPath.c_str(), serverSettingsPath.c_str(), logSettings));
+        dllPath.c_str(), serverSettingsPath.c_str(), logSettings, datFound));
     if (!m_networkIntfc->isOk()) {
-        BOOST_LOG_TRIVIAL(error) << "initalize FlashNetwork failed: " << dllPath;
+        m_lastInitError = m_networkIntfc->error();
+        BOOST_LOG_TRIVIAL(error) << "initalize FlashNetwork failed: " << dllPath << ": " << m_lastInitError;
         m_networkIntfc.reset();
         return false;
     }

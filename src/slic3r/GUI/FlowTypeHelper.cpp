@@ -1,11 +1,15 @@
 #include "FlowTypeHelper.hpp"
 
+#include "DualNozzleState.hpp"
 #include "FilamentGroupDialog.hpp"
 #include "GUI_App.hpp"
+#include "PartPlate.hpp"
 #include "Plater.hpp"
 #include "RemoteAccess.hpp"
 
+#include "libslic3r/BambuFlowSupport.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/PresetFlowVariant.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
 #include <boost/algorithm/string.hpp>
@@ -37,6 +41,16 @@ bool printer_supports_high_flow()
            std::find(support->values.begin(), support->values.end(), FLOW_MODE_HIGH_FLOW) != support->values.end();
 }
 
+bool flow_follows_filament_map()
+{
+    return printer_supports_high_flow() && DualNozzle::preset_is_dual_nozzle_bambu();
+}
+
+bool slice_mode_popup_enabled()
+{
+    return !flow_follows_filament_map() && distinct_nozzle_flow_type_count() >= 2;
+}
+
 bool any_filament_supports_high_flow()
 {
     const PresetBundle &bundle = *wxGetApp().preset_bundle;
@@ -57,8 +71,9 @@ std::vector<std::string> nozzle_volume_types()
     std::vector<std::string> types;
     if (const auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type")) {
         types.reserve(opt->values.size());
+        // Owner decision D6: an E3D High Flow nozzle (from a Bambu project or printer) slices High Flow.
         for (int v : opt->values)
-            types.push_back(to_string(FilamentVolumeType(v)));
+            types.push_back(to_string(BambuFlowSupport::slicing_flow_of_nozzle(v)));
     }
     types.resize(nozzle_count(), FLOW_MODE_STANDARD);
     const bool supported = printer_supports_high_flow();
@@ -125,6 +140,55 @@ void set_nozzle_volume_types(const std::vector<std::string> &volume_types)
     notify_plater();
 }
 
+// The filament -> extruder map the next slice starts from: the plate's manual grouping when it has
+// one, else the project's filament_map (1-based logical extruders).
+static std::vector<int> current_filament_map()
+{
+    if (Plater *plater = wxGetApp().plater())
+        if (PartPlate *plate = plater->get_partplate_list().get_curr_plate()) {
+            std::vector<int> manual = plate->get_manual_filament_map();
+            if (!manual.empty())
+                return manual;
+        }
+    if (const auto *map = wxGetApp().preset_bundle->project_config.option<ConfigOptionInts>("filament_map"))
+        return map->values;
+    return {};
+}
+
+static std::vector<int> project_nozzle_volume_type_values()
+{
+    if (const auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type"))
+        return opt->values;
+    return {};
+}
+
+// D2: per-filament flow types on a dual-nozzle Bambu printer, from the filament map and the nozzles.
+static std::vector<FilamentVolumeType> filament_map_volume_types()
+{
+    const size_t n = std::max<size_t>(wxGetApp().preset_bundle->filament_presets.size(), size_t(1));
+    return BambuFlowSupport::filament_volume_types_from_map(current_filament_map(), project_nozzle_volume_type_values(), n);
+}
+
+bool adopt_device_nozzle_volume_types(const std::vector<int> &volume_types)
+{
+    auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true);
+    const bool changed = opt->values != volume_types;
+    if (changed) {
+        opt->values = volume_types; // in place: keeps the option's enum key map
+        // Remember the printer's nozzles like a combo pick, so the per-printer memory does not
+        // hand back the previous choice.
+        save_nozzle_volume_types_to_app_config();
+    }
+    // The flow types the slice will use follow the adopted nozzles right away (no FilamentGroupDialog,
+    // no notification: the caller is about to slice).
+    if (flow_follows_filament_map()) {
+        const std::vector<FilamentVolumeType> types = filament_map_volume_types();
+        if (types != wxGetApp().preset_bundle->get_filament_volume_types())
+            wxGetApp().preset_bundle->set_filament_volume_types(types);
+    }
+    return changed;
+}
+
 void restore_nozzle_volume_types_from_app_config()
 {
     if (wxGetApp().app_config == nullptr)
@@ -162,6 +226,10 @@ void reset_nozzle_volume_types_to_standard()
 
 std::string grouping_mode()
 {
+    // Owner decision D8: on a dual-nozzle Bambu printer the filament map decides which filament
+    // slices High Flow, so the Standard / Custom grouping (and its dialog) never applies there.
+    if (flow_follows_filament_map())
+        return FILAMENT_GROUPING_STANDARD;
     const auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("filament_grouping_mode");
     return opt != nullptr && opt->value == FILAMENT_GROUPING_CUSTOM ? FILAMENT_GROUPING_CUSTOM : FILAMENT_GROUPING_STANDARD;
 }
@@ -179,21 +247,41 @@ void apply_custom_mapping(const std::vector<FilamentVolumeType> &mapping)
     notify_plater();
 }
 
+static FilamentVolumeType uniform_nozzle_volume_type()
+{
+    const std::vector<std::string> nozzles = nozzle_volume_types();
+    return !nozzles.empty() && nozzles.front() == FLOW_MODE_HIGH_FLOW ? fvtHighFlow : fvtStandard;
+}
+
+FilamentVolumeType synced_filament_volume_type(unsigned int filament_id)
+{
+    if (wxGetApp().preset_bundle == nullptr)
+        return fvtStandard;
+    if (flow_follows_filament_map()) {
+        const std::vector<FilamentVolumeType> types = filament_map_volume_types();
+        return filament_id < types.size() ? types[filament_id] : fvtStandard;
+    }
+    return slice_sync_target_filament_volume_type(
+        grouping_mode(),
+        distinct_nozzle_flow_type_count(),
+        uniform_nozzle_volume_type(),
+        filament_volume_type_at(wxGetApp().preset_bundle->project_config, filament_id));
+}
+
 void sync_filament_volume_types_for_slice()
 {
+    // D2: dual-nozzle Bambu, each filament follows the nozzle of the extruder it is mapped to. The slice
+    // itself re-derives the types from the grouping's final map (an auto-grouped plate can move a filament).
+    if (flow_follows_filament_map()) {
+        const std::vector<FilamentVolumeType> types = filament_map_volume_types();
+        if (types != wxGetApp().preset_bundle->get_filament_volume_types())
+            apply_custom_mapping(types);
+        return;
+    }
     // Custom + mixed nozzles: the dialog mapping is the source of truth.
     if (filament_group_dialog_required(grouping_mode(), distinct_nozzle_flow_type_count()))
         return;
-    // Flow type every filament should use when the custom per-filament mapping does
-    // not apply: follow the single nozzle type when the nozzles are not mixing types
-    // (all standard -> standard, all high flow -> high flow); in standard mode with
-    // mixed nozzles, fall back to standard.
-    FilamentVolumeType type = fvtStandard;
-    if (distinct_nozzle_flow_type_count() < 2) {
-        const std::vector<std::string> nozzles = nozzle_volume_types();
-        if (!nozzles.empty() && nozzles.front() == FLOW_MODE_HIGH_FLOW)
-            type = fvtHighFlow;
-    }
+    const FilamentVolumeType type = synced_filament_volume_type(0);
     const std::vector<FilamentVolumeType> current = wxGetApp().preset_bundle->get_filament_volume_types();
     if (std::all_of(current.begin(), current.end(), [type](FilamentVolumeType t) { return t == type; }))
         return; // already uniform at the target type

@@ -559,6 +559,12 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url, wxStr
 #endif
         } // script_bridge
         webView->EnableContextMenu(true);
+        // Snapmaker's Flutter pages follow the slicer's dark mode (ApplyFlutterTheme). Bound on the
+        // view itself, so it runs ahead of the hosts' handlers, which sit on their windows.
+        webView->Bind(wxEVT_WEBVIEW_LOADED, [webView](wxWebViewEvent &evt) {
+            evt.Skip();
+            WebView::ApplyFlutterTheme(webView);
+        });
     } else {
         BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__ << ": failed. Use fake web view.";
         Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL, "bury_point_create webview fail and use fakewebview", BP_WEB_VIEW);
@@ -639,9 +645,69 @@ void WebView::RecreateAll()
             Slic3r::current_login_ua_platform(), dark,
             Slic3r::GUI::wxGetApp().current_language_code().ToStdString(),
             "SM-Slicer", SLIC3R_VERSION)));
-        if (std::find(g_no_theme_reload.begin(), g_no_theme_reload.end(), webView) == g_no_theme_reload.end())
+        // A Flutter page switches its theme live (ApplyFlutterTheme); a reload would lose its
+        // state (a pre-print page's filament mapping, the Device tab's connection).
+        if (IsFlutterPage(webView))
+            WebView::ApplyFlutterTheme(webView);
+        else if (std::find(g_no_theme_reload.begin(), g_no_theme_reload.end(), webView) == g_no_theme_reload.end())
             webView->Reload();
     }
+}
+
+bool WebView::IsFlutterPage(wxWebView *webView)
+{
+    if (webView == nullptr)
+        return false;
+    const wxString url = webView->GetCurrentURL();
+    return url.Contains("/web/flutter_web/") && Slic3r::GUI::wxGetApp().is_own_page_url(url.ToStdString(wxConvUTF8));
+}
+
+void WebView::ApplyFlutterTheme(wxWebView *webView)
+{
+    if (!IsFlutterPage(webView))
+        return;
+    // index.html defines edgeSetDarkMode (scripts/patch_flutter_web_dark.py); the app follows it
+    // with its own dark theme, live. The page also starts from its dark_mode= and dark_<role>= URL
+    // parameters, which can be out of date after a theme change, hence on every load too.
+    std::string colours;
+    for (const auto &[role, hex] : FlutterDarkColours())
+        colours += (colours.empty() ? "" : ",") + role + ":'" + hex + "'";
+    RunScript(webView, wxString::Format("window.edgeSetDarkMode && window.edgeSetDarkMode(%s, {%s});",
+                                        Slic3r::GUI::wxGetApp().dark_mode() ? "true" : "false", wxString::FromUTF8(colours)));
+}
+
+std::vector<std::pair<std::string, std::string>> WebView::FlutterDarkColours()
+{
+    // The pages look like the slicer's own (Bambu) Device page, StatusPanel.cpp, whose light colours
+    // UpdateDarkUI turns dark through StateColor's table (or a theme pack's map):
+    //   bg    - the page behind the panels, STATUS_PANEL_BG #EEEEEE -> #4C4C55 (theme: separator)
+    //   card  - the panels, white #FFFFFF                           -> #2D2D31 (theme: window_bg)
+    //   strip - the panel title bars, STATUS_TITLE_BG #F8F8F8       -> #36363C (theme: panel_bg)
+    //   title - the panel titles, PAGE_TITLE_FONT_COL #6B6B6B        -> #818183 (theme: text_disabled)
+    // and the slicer's accent for the Control panel's buttons:
+    //   accent      - the Orca accent #009688                        -> #00675B (theme: accent)
+    //   accent_text - text and icons on it #FEFEFE                   -> #FEFEFE (theme: accent_text)
+    static const std::pair<const char *, const char *> roles[] = {
+        {"bg", "#EEEEEE"}, {"card", "#FFFFFF"}, {"strip", "#F8F8F8"}, {"title", "#6B6B6B"},
+        {"accent", "#009688"}, {"accent_text", "#FEFEFE"}};
+    const auto &stock = StateColor::GetDarkMap();
+    auto stock_dark = [&stock](const wxColour &light) {
+        auto it = stock.find(light);
+        return it != stock.end() ? it->second : light;
+    };
+    const bool dark = Slic3r::GUI::wxGetApp().dark_mode();
+    std::vector<std::pair<std::string, wxColour>> picked;
+    for (const auto &[role, light] : roles)
+        picked.emplace_back(role, dark ? StateColor::darkModeColorFor(wxColour(light)) : stock_dark(wxColour(light)));
+    // A dark look whose window background is not dark after all: the stock greys.
+    const wxColour &bg = picked.front().second;
+    if (!bg.IsOk() || 0.2126 * bg.Red() + 0.7152 * bg.Green() + 0.0722 * bg.Blue() > 110)
+        for (size_t i = 0; i < picked.size(); ++i)
+            picked[i].second = stock_dark(wxColour(roles[i].second));
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const auto &[role, colour] : picked)
+        out.emplace_back(role, colour.GetAsString(wxC2S_HTML_SYNTAX).ToStdString());
+    return out;
 }
 
 void WebView::SetReloadOnThemeChange(wxWebView *webView, bool reload)

@@ -345,6 +345,9 @@ public:
 
 	// Get the default config path from Slic3r::data_dir().
 	std::string			config_path();
+	// <config_path>.lock: the InstanceLock file that orders saves of the config
+	// between instances on one data dir. Empty without a data dir (tests, CLI).
+	std::string			lock_path();
 
 	// Returns true if the user's data directory comes from before Slic3r 1.40.0 (no updating)
 	bool 				legacy_datadir() const { return m_legacy_datadir; }

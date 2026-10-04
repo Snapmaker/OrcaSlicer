@@ -1,6 +1,7 @@
 #include <cassert>
 
 #include "PresetBundle.hpp"
+#include "InstanceLock.hpp"
 #include "PresetFlowVariant.hpp"
 #include "StartupProfile.hpp"
 #include "FilamentColorLibrary.hpp"
@@ -1233,6 +1234,7 @@ void PresetBundle::remove_user_presets_directory(const std::string preset_folder
     }
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" enter, delete directory : %1%") % dir_user_presets;
     fs::path folder(dir_user_presets);
+    InstanceLock instance_lock(user_presets_lock_path());
     if (fs::exists(folder)) {
         fs::remove_all(folder);
     }

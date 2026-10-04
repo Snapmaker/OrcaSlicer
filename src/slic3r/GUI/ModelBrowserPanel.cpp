@@ -204,7 +204,12 @@ struct ModelBrowserPanel::Impl
     void update_nav_buttons();
     void update_address(const std::string& url);
     void show_placeholder(const wxString& text, bool retry);
-    void show_notice(const wxString& text, const wxString& action_label = wxString(), std::function<void()> action = nullptr);
+    // Info: a result (saved to Downloads). Warning: something was not followed (MakerWorld's
+    // button, a local address, a link to another program). Error: a download was refused or failed.
+    enum class NoticeKind { Info, Warning, Error };
+    NoticeKind notice_kind { NoticeKind::Warning };
+    void show_notice(const wxString& text, NoticeKind kind, const wxString& action_label = wxString(), std::function<void()> action = nullptr);
+    void apply_notice_colours();
     void hide_notice();
 
     void create_browser();
@@ -374,13 +379,11 @@ void ModelBrowserPanel::Impl::apply_colours()
     const wxColour bar    = StateColor::darkModeColorFor(wxColour("#F8F8F8"));
     const wxColour text   = StateColor::darkModeColorFor(wxColour("#262E30"));
     const wxColour muted  = StateColor::darkModeColorFor(wxColour("#6B6B6B"));
-    const wxColour warnbg = StateColor::darkModeColorFor(wxColour("#FFF4E0"));
     owner->SetBackgroundColour(bg);
     toolbar->SetBackgroundColour(bar);
     address->SetForegroundColour(muted);
     status->SetForegroundColour(muted);
-    notice->SetBackgroundColour(warnbg);
-    notice_text->SetForegroundColour(text);
+    apply_notice_colours();
     placeholder->SetBackgroundColour(bg);
     placeholder_text->SetForegroundColour(text);
     host->SetBackgroundColour(bg);
@@ -445,8 +448,24 @@ void ModelBrowserPanel::Impl::show_placeholder(const wxString& text, bool retry)
     owner->Layout();
 }
 
-void ModelBrowserPanel::Impl::show_notice(const wxString& text, const wxString& action_label, std::function<void()> action)
+// The app's banner colours (StateColor's light -> dark table, and the active UI theme): the
+// warning and error banner backgrounds with the normal text colour, readable in both themes.
+// Called again on every theme change (apply_colours), so a notice on screen follows it.
+void ModelBrowserPanel::Impl::apply_notice_colours()
 {
+    const char* bg = notice_kind == NoticeKind::Error ? "#FDE8E8" :   // error banner background
+                     notice_kind == NoticeKind::Warning ? "#FFF3EB" : // warning banner background
+                                                          "#F3F4F6";  // card / divider grey
+    notice->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(bg)));
+    notice_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#262E30")));
+    notice->Refresh();
+    notice_text->Refresh();
+}
+
+void ModelBrowserPanel::Impl::show_notice(const wxString& text, NoticeKind kind, const wxString& action_label, std::function<void()> action)
+{
+    notice_kind = kind;
+    apply_notice_colours();
     notice_text->SetLabel(text);
     notice_text->Wrap((std::max)(owner->GetClientSize().x - owner->FromDIP(260), owner->FromDIP(300)));
     notice_callback = std::move(action);
@@ -859,7 +878,8 @@ void ModelBrowserPanel::Impl::carry_out(const NavDecision& d, const std::string&
         BOOST_LOG_TRIVIAL(info) << "ModelBrowser: MakerWorld \"Open in\" button not followed";
         owner->CallAfter([this]() {
             show_notice(_L("EdgeSlicer does not use MakerWorld's \"Open in\" button. Use the Download button on the model page "
-                           "instead (choose the 3MF or STL file); the downloaded file opens here."));
+                           "instead (choose the 3MF or STL file); the downloaded file opens here."),
+                        NoticeKind::Warning);
         });
         return;
     case NavAction::Block: {
@@ -871,7 +891,7 @@ void ModelBrowserPanel::Impl::carry_out(const NavDecision& d, const std::string&
         const wxString text = (web && is_blocked_host(u.host)) ?
                                   _L("The model browser does not open addresses on this computer or your local network.") :
                                   format_wxstr(_L("The model browser did not open this link: %1%"), from_u8(d.reason));
-        owner->CallAfter([this, text]() { show_notice(text); });
+        owner->CallAfter([this, text]() { show_notice(text, NoticeKind::Warning); });
         return;
     }
     }
@@ -1051,13 +1071,13 @@ void ModelBrowserPanel::Impl::handle_download(ICoreWebView2* sender, ICoreWebVie
         const fs::path folder = model_folder();
         if (folder.empty() || !begin_download(args, op.Get(), d.file_name, folder, true)) {
             args->put_Cancel(TRUE);
-            show_notice(format_wxstr(_L("\"%1%\" could not be saved: no usable download folder."), from_u8(d.file_name)));
+            show_notice(format_wxstr(_L("\"%1%\" could not be saved: no usable download folder."), from_u8(d.file_name)), NoticeKind::Error);
         }
         return;
     }
     case DownloadAction::Refuse:
         args->put_Cancel(TRUE);
-        show_notice(format_wxstr(_L("The download of \"%1%\" was refused: %2%"), from_u8(d.file_name), from_u8(d.reason)));
+        show_notice(format_wxstr(_L("The download of \"%1%\" was refused: %2%"), from_u8(d.file_name), from_u8(d.reason)), NoticeKind::Error);
         return;
     case DownloadAction::ImportAfterConfirm:
     case DownloadAction::OfferSave: {
@@ -1187,7 +1207,7 @@ void ModelBrowserPanel::Impl::on_download_state(int id)
         fs::remove(dl.marker, ec);
         BOOST_LOG_TRIVIAL(warning) << "ModelBrowser: download of \"" << dl.name << "\" interrupted, reason " << int(reason);
         if (reason != COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_CANCELED && reason != COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_SHUTDOWN)
-            show_notice(format_wxstr(_L("The download of \"%1%\" failed."), from_u8(dl.name)));
+            show_notice(format_wxstr(_L("The download of \"%1%\" failed."), from_u8(dl.name)), NoticeKind::Error);
         return;
     }
     LPWSTR result = nullptr;
@@ -1203,7 +1223,7 @@ void ModelBrowserPanel::Impl::finish_download(int /*id*/, Download dl, const std
         fs::remove(file, ec);
         fs::remove(dl.marker, ec);
         BOOST_LOG_TRIVIAL(warning) << "ModelBrowser: dropped \"" << dl.name << "\": " << into_u8(why);
-        show_notice(format_wxstr(_L("\"%1%\" was not opened: %2%"), from_u8(dl.name), why));
+        show_notice(format_wxstr(_L("\"%1%\" was not opened: %2%"), from_u8(dl.name), why), NoticeKind::Error);
     };
     // The browser must have written where we told it to, inside the folder.
     if (!untrusted::is_path_within_root(dl.folder, file)) {
@@ -1243,7 +1263,7 @@ void ModelBrowserPanel::Impl::finish_download(int /*id*/, Download dl, const std
     if (dl.to_import) {
         enqueue_import(dest);
     } else {
-        show_notice(format_wxstr(_L("Saved \"%1%\" to your Downloads folder."), from_u8(name)), _L("Show in folder"),
+        show_notice(format_wxstr(_L("Saved \"%1%\" to your Downloads folder."), from_u8(name)), NoticeKind::Info, _L("Show in folder"),
                     [dest]() { desktop_open_any_folderEx(into_u8(from_path(dest))); });
     }
 }

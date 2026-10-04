@@ -1535,9 +1535,12 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
     m_filpar[idx].material = config.filament_type.get_at(idx);
     m_filpar[idx].is_soluble = config.wipe_tower_filament == 0 ? config.filament_soluble.get_at(idx) :
                                (idx != size_t(config.wipe_tower_filament - 1));
-    m_filpar[idx].temperature = config.nozzle_temperature.get_at(idx);
-    m_filpar[idx].first_layer_temperature              = config.nozzle_temperature_initial_layer.get_at(idx);
-    m_filpar[idx].filament_minimal_purge_on_wipe_tower = config.filament_minimal_purge_on_wipe_tower.get_at(idx);
+    const unsigned int filament_id = (unsigned int) idx;
+    m_filpar[idx].temperature = get_value_at(config, config.nozzle_temperature, ConfigFlowDomain::Filament, filament_id);
+    m_filpar[idx].first_layer_temperature =
+        get_value_at(config, config.nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, filament_id);
+    m_filpar[idx].filament_minimal_purge_on_wipe_tower =
+        get_value_at(config, config.filament_minimal_purge_on_wipe_tower, ConfigFlowDomain::Filament, filament_id);
     m_filpar[idx].flat_iron_area                       = config.filament_tower_ironing_area.get_at(idx);
 
     // If this is a single extruder MM printer, we will use all the SE-specific config values.
@@ -1561,7 +1564,8 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
     float nozzle_diameter         = float(config.nozzle_diameter.get_at(idx));
     m_filpar[idx].nozzle_diameter = nozzle_diameter; // to be used in future with (non-single) multiextruder MM
 
-    float max_vol_speed = float(config.filament_max_volumetric_speed.get_at(idx));
+    float max_vol_speed = float(
+        get_value_at(config, config.filament_max_volumetric_speed, ConfigFlowDomain::Filament, filament_id));
     if (max_vol_speed != 0.f)
         m_filpar[idx].max_e_speed = (max_vol_speed / filament_area());
 
@@ -1580,9 +1584,11 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
         // and the same time step has to be used when the ramming is performed.
     } else {
         // We will use the same variables internally, but the correspondence to the configuration options will be different.
-        float vol                                      = config.filament_multitool_ramming_volume.get_at(idx);
-        float flow                                     = config.filament_multitool_ramming_flow.get_at(idx);
-        m_filpar[idx].multitool_ramming                = config.filament_multitool_ramming.get_at(idx) && vol > 0.f && flow > 0.f;
+        float vol  = float(get_value_at(config, config.filament_multitool_ramming_volume, ConfigFlowDomain::Filament, filament_id));
+        float flow = float(get_value_at(config, config.filament_multitool_ramming_flow, ConfigFlowDomain::Filament, filament_id));
+        m_filpar[idx].multitool_ramming =
+            get_value_at(config, config.filament_multitool_ramming, ConfigFlowDomain::Filament, filament_id) && vol > 0.f &&
+            flow > 0.f;
         m_filpar[idx].ramming_line_width_multiplicator = m_ramming_width_ratio;
         m_filpar[idx].ramming_step_multiplicator       = 1.;
 
@@ -2608,7 +2614,9 @@ std::vector<std::vector<float>> WipeTower2::extract_wipe_volumes(const PrintConf
     // Also include filament_minimal_purge_on_wipe_tower. This is needed for the preview.
     for (unsigned int i = 0; i < number_of_extruders; ++i)
         for (unsigned int j = 0; j < number_of_extruders; ++j)
-            wipe_volumes[i][j] = std::max<float>(wipe_volumes[i][j] * scale, config.filament_minimal_purge_on_wipe_tower.get_at(j));
+            wipe_volumes[i][j] = std::max<float>(
+                wipe_volumes[i][j] * scale,
+                get_value_at(config, config.filament_minimal_purge_on_wipe_tower, ConfigFlowDomain::Filament, j));
 
     // Ultra (Phase 7, tower geometry half): a change between filaments on DIFFERENT physical nozzles is a
     // nozzle switch, not a color purge (the gcode-side gate at GCode.cpp already emits zero flush for it).
@@ -2659,7 +2667,8 @@ float WipeTower2::estimate_semm_flush_volume(const ConfigBase& config, size_t fi
         for (unsigned int j = 0; j < number_of_extruders; ++j) {
             wipe_volumes[i][j] *= scale;
             if (minimal_purge != nullptr)
-                wipe_volumes[i][j] = std::max<float>(wipe_volumes[i][j], float(minimal_purge->get_at(j)));
+                wipe_volumes[i][j] = std::max<float>(
+                    wipe_volumes[i][j], float(get_value_at(config, *minimal_purge, ConfigFlowDomain::Filament, j)));
         }
 
     float maximum = 0.f;

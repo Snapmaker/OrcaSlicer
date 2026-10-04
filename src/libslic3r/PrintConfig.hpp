@@ -526,6 +526,24 @@ inline bool filament_group_plate_pick_continues(bool dirty, bool dialog_required
 // required. CUSTOM + mixed nozzles keep the custom mapping.
 inline bool filament_group_sync_on_clean_plate_pick(bool dirty, bool dialog_required) { return !dirty && !dialog_required; }
 
+// Target filament_volume_type that sync_filament_volume_types_for_slice writes
+// (or keeps, when the grouping dialog owns the mapping). Calib reads this
+// before the first slice so a U1 nozzle switched to High-Flow is not still
+// Standard. CUSTOM + mixed nozzles keep current_filament_type. Uniform nozzles
+// follow that single type. Mixed nozzles in standard grouping fall back to Standard.
+inline FilamentVolumeType slice_sync_target_filament_volume_type(
+    const std::string     &grouping_mode,
+    size_t                 distinct_nozzle_flow_type_count,
+    FilamentVolumeType     uniform_nozzle_type,
+    FilamentVolumeType     current_filament_type)
+{
+    if (filament_group_dialog_required(grouping_mode, distinct_nozzle_flow_type_count))
+        return current_filament_type;
+    if (distinct_nozzle_flow_type_count < 2 && uniform_nozzle_type == fvtHighFlow)
+        return fvtHighFlow;
+    return fvtStandard;
+}
+
 // Bounds-checked: values outside the mapping render as FLOW_MODE_STANDARD.
 const char* to_string(FilamentVolumeType type);
 
@@ -555,6 +573,95 @@ inline auto get_value_at(const ConfigBase &config, const VectorOption &opt, Conf
     -> decltype(opt.get_at(0))
 {
     return opt.get_at(get_config_idx(config, domain, filament_id));
+}
+
+// Packed filament_flow_ratio for calib / G-code-adjacent readers. get_at(filament_id)
+// is the wrong slot when an earlier filament declares Standard+High-Flow.
+inline double filament_flow_ratio_at(const ConfigBase &config, unsigned int filament_id = 0)
+{
+    const auto *opt = config.option<ConfigOptionFloats>("filament_flow_ratio");
+    if (opt == nullptr || opt->values.empty())
+        return 1.0;
+    return get_value_at(config, *opt, ConfigFlowDomain::Filament, filament_id);
+}
+
+// Packed flow-variant vectors are segmented by filament_flow_step_size. Filament / tool id
+// count is filament_diameter, not the packed length.
+inline size_t flow_variant_filament_count(const ConfigBase &config)
+{
+    if (const auto *opt = config.option<ConfigOptionFloats>("filament_diameter")) {
+        if (!opt->values.empty())
+            return opt->values.size();
+    }
+    return 1;
+}
+
+// True when any filament declares packed Standard/High-Flow columns (step_size > 1) or
+// get_config_idx remaps an id. T0 Standard-only + T1 [std,hf] set to Standard remaps
+// nothing (idx 0/1), but T1's ratio still lives at packed slot 1, not get_at(0).
+// Stay false when every filament is a single column so S5 non-variant F / M73 stay
+// byte-identical.
+inline bool filament_flow_variants_active(const ConfigBase &config)
+{
+    if (const auto *steps = config.option<ConfigOptionInts>("filament_flow_step_size")) {
+        for (int step : steps->values)
+            if (step > 1)
+                return true;
+    }
+    const size_t n = flow_variant_filament_count(config);
+    for (size_t i = 0; i < n; ++i)
+        if (get_config_idx(config, ConfigFlowDomain::Filament, static_cast<unsigned int>(i)) != i)
+            return true;
+    return false;
+}
+
+// The per-filament values GCode::_extrude reads on every extrusion path, resolved
+// once per export (GCode::apply_print_config) instead of through string-keyed
+// option lookups and get_config_idx on every path. The *_for accessors return the
+// same value the uncached expression gives, falling back to it for an id outside
+// the resolved range, so the G-code is identical either way.
+struct ResolvedFilamentFlow
+{
+    bool                       variants_active{false};
+    std::vector<double>        flow_ratio;
+    std::vector<double>        max_volumetric_speed;
+    std::vector<unsigned char> enable_pressure_advance;
+
+    static ResolvedFilamentFlow resolve(const ConfigBase &config);
+
+    // The uncached expressions, one lookup each: what _extrude computed per path.
+    // _extrude's flow ratio stays get_at(0) unless flow variants are active (S5).
+    static double uncached_flow_ratio(const ConfigBase &config, unsigned int filament_id);
+    static double uncached_max_volumetric_speed(const ConfigBase &config, unsigned int filament_id);
+    static bool   uncached_enable_pressure_advance(const ConfigBase &config, unsigned int filament_id);
+
+    double flow_ratio_for(const ConfigBase &config, unsigned int filament_id) const
+    {
+        return filament_id < flow_ratio.size() ? flow_ratio[filament_id] : uncached_flow_ratio(config, filament_id);
+    }
+    double max_volumetric_speed_for(const ConfigBase &config, unsigned int filament_id) const
+    {
+        return filament_id < max_volumetric_speed.size() ? max_volumetric_speed[filament_id] :
+                                                           uncached_max_volumetric_speed(config, filament_id);
+    }
+    bool enable_pressure_advance_for(const ConfigBase &config, unsigned int filament_id) const
+    {
+        return filament_id < enable_pressure_advance.size() ? enable_pressure_advance[filament_id] != 0 :
+                                                              uncached_enable_pressure_advance(config, filament_id);
+    }
+};
+
+template<typename VectorOption>
+inline auto unpack_filament_values(const ConfigBase &config, const VectorOption &opt)
+    -> std::vector<typename std::decay<decltype(opt.get_at(0))>::type>
+{
+    using T = typename std::decay<decltype(opt.get_at(0))>::type;
+    const size_t n = flow_variant_filament_count(config);
+    std::vector<T> out;
+    out.reserve(n);
+    for (size_t i = 0; i < n; ++i)
+        out.push_back(get_value_at(config, opt, ConfigFlowDomain::Filament, static_cast<unsigned int>(i)));
+    return out;
 }
 
 // end Snapmaker: flow variant------------------------------------------------------------------------

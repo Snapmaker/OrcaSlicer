@@ -9287,6 +9287,10 @@ bool is_machine_flow_variant_option(const std::string &key)
 
 size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigned int filament_id)
 {
+    // An id of -1 (unsigned wrap) used to run the Filament segment loop ~4e9 times.
+    if (filament_id == (unsigned int) -1)
+        return 0;
+
     const ConfigOptionEnumsGeneric* volume_types = enums_option(config, "filament_volume_type");
     const ConfigOptionStrings*      flow_support = strings_option(config, flow_support_key(domain));
 
@@ -9336,6 +9340,57 @@ size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigne
     }
 
     return 0;
+}
+
+double ResolvedFilamentFlow::uncached_flow_ratio(const ConfigBase &config, unsigned int filament_id)
+{
+    const auto *opt = config.option<ConfigOptionFloats>("filament_flow_ratio");
+    if (opt == nullptr || opt->values.empty())
+        return 1.;
+    return filament_flow_variants_active(config) ? get_value_at(config, *opt, ConfigFlowDomain::Filament, filament_id) :
+                                                   opt->get_at(0);
+}
+
+double ResolvedFilamentFlow::uncached_max_volumetric_speed(const ConfigBase &config, unsigned int filament_id)
+{
+    const auto *opt = config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    if (opt == nullptr || opt->values.empty())
+        return 0.;
+    return get_value_at(config, *opt, ConfigFlowDomain::Filament, filament_id);
+}
+
+bool ResolvedFilamentFlow::uncached_enable_pressure_advance(const ConfigBase &config, unsigned int filament_id)
+{
+    const auto *opt = config.option<ConfigOptionBools>("enable_pressure_advance");
+    if (opt == nullptr || opt->values.empty())
+        return false;
+    return get_value_at(config, *opt, ConfigFlowDomain::Filament, filament_id);
+}
+
+ResolvedFilamentFlow ResolvedFilamentFlow::resolve(const ConfigBase &config)
+{
+    ResolvedFilamentFlow out;
+    out.variants_active = filament_flow_variants_active(config);
+    const auto *ratio   = config.option<ConfigOptionFloats>("filament_flow_ratio");
+    const auto *mvs     = config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    const auto *pa      = config.option<ConfigOptionBools>("enable_pressure_advance");
+    // Left empty when an option is missing: the *_for accessors then fall back to
+    // the uncached expression for every id.
+    if (ratio == nullptr || ratio->values.empty() || mvs == nullptr || mvs->values.empty() || pa == nullptr ||
+        pa->values.empty())
+        return out;
+    const size_t n = flow_variant_filament_count(config);
+    out.flow_ratio.reserve(n);
+    out.max_volumetric_speed.reserve(n);
+    out.enable_pressure_advance.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+        const unsigned int id  = static_cast<unsigned int>(i);
+        const size_t       idx = get_config_idx(config, ConfigFlowDomain::Filament, id);
+        out.flow_ratio.push_back(out.variants_active ? ratio->get_at(idx) : ratio->get_at(0));
+        out.max_volumetric_speed.push_back(mvs->get_at(idx));
+        out.enable_pressure_advance.push_back(pa->get_at(idx) ? 1 : 0);
+    }
+    return out;
 }
 
 // ==== end Snapmaker: flow-variant support ========================================================

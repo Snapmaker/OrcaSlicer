@@ -1283,6 +1283,17 @@ TEST_CASE("filament group plate-pick continues only when grouping is accepted", 
     CHECK(filament_group_plate_pick_continues(false, required, true, false));
 }
 
+TEST_CASE("Preview auto-slice syncs volume types on a clean plate when the dialog is not required", "[Config][FilamentGroup][PreviewSync]")
+{
+    // Plater::priv::set_current_panel (Preview tab-in) and select_sliced_plate
+    // share filament_group_sync_on_clean_plate_pick. A never-sliced U1 HF plate
+    // is not dirty and does not need the grouping dialog, so Preview must sync.
+    CHECK(filament_group_sync_on_clean_plate_pick(false, false));
+    CHECK_FALSE(filament_group_sync_on_clean_plate_pick(false, true));
+    CHECK_FALSE(filament_group_sync_on_clean_plate_pick(true, false));
+    CHECK_FALSE(filament_group_sync_on_clean_plate_pick(true, true));
+}
+
 TEST_CASE("Static print configs compare, order and hash by their option values", "[Config]")
 {
     // PrintObjectConfig comes from PRINT_CONFIG_CLASS_DEFINE; PrintConfig combines MachineEnvelopeConfig

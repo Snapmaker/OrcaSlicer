@@ -17,6 +17,7 @@
 #include <string>
 #include <system_error>
 #include <thread>
+#include <tuple>
 #include <utility>
 
 #ifdef _WIN32
@@ -865,6 +866,46 @@ TEST_CASE("atof_decimal_point parses what atof parses in the C locale", "[Locale
             CHECK(std::abs(atof_decimal_point(text) - value) < 1e-12);
         }
     }
+}
+
+TEST_CASE("Floats print as printf prints them in the C locale", "[LocalesUtils]")
+{
+    const std::tuple<double, int, const char *> cases[] = {
+        {0.5,         -1, "0.5"},
+        {25. / 3.,    -1, "8.33333"},
+        {1500.5,      -1, "1500.5"},
+        {1e6,         -1, "1e+06"},
+        {-0.000123,   -1, "-0.000123"},
+        {25. / 3.,     3, "8.333"},
+        {2.,           0, "2"},
+        {1e21,         2, "1000000000000000000000.00"},
+    };
+    for (const auto &[value, precision, text] : cases) {
+        DYNAMIC_SECTION(text) {
+            CHECK(float_to_string_decimal_point(value, precision) == text);
+        }
+    }
+}
+
+TEST_CASE("Floats print with a decimal point in a locale whose decimal separator is a comma", "[LocalesUtils]")
+{
+    CNumericLocalesSetter outer;
+    const char *candidates[] = {"de_DE.UTF-8", "de_DE", "fr_FR.UTF-8", "fr_FR", "C"};
+    bool applied_comma = false;
+    for (const char *name : candidates) {
+        if (std::strcmp(name, "C") == 0)
+            continue;
+        if (std::setlocale(LC_NUMERIC, name) != nullptr) {
+            applied_comma = true;
+            break;
+        }
+    }
+    if (!applied_comma) {
+        WARN("no locale with a comma decimal separator is installed");
+        return;
+    }
+    CHECK(float_to_string_decimal_point(1500.5) == "1500.5");
+    CHECK(float_to_string_decimal_point(25. / 3., 3) == "8.333");
 }
 
 TEST_CASE("atof_decimal_point and string_to_double_decimal_point return 0 for text with no number", "[LocalesUtils]")

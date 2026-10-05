@@ -866,6 +866,18 @@ TEST_CASE("AdaptivePA enable follows the High-Flow column", "[PrintGCode][GCode]
     require_filament2_uses_high_flow_pa(gcode, 2);
 }
 
+TEST_CASE("Adaptive PA processor skips the line scan when no flow-variant column has adaptive PA", "[PrintGCode][GCode][PAVariant][AdaptivePA]")
+{
+    // High-Flow PA is on, adaptive is off for every column. Tool changes still emit
+    // in-band PA_RESET; the early-out must strip those without emitting PA_CHANGE.
+    const DynamicPrintConfig config = high_flow_pa_config(false, true, false);
+    require_high_flow_columns(config);
+    const std::string gcode = slice_high_flow_pa(config, false);
+    REQUIRE(gcode.find("PA_CHANGE") == std::string::npos);
+    REQUIRE(gcode.find("PA_RESET") == std::string::npos);
+    require_filament2_uses_high_flow_pa(gcode, 2);
+}
+
 // Orca #16007 Stage A / Edge flow variants: when F0 declares both Standard and High-Flow, the
 // packed filament arrays are [F0-std, F0-hf, F1, ...]. A raw get_at(1) for filament 1 reads
 // F0's High-Flow slot (wrong filament), not F1's own column.

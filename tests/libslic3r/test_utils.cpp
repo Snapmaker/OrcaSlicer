@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/Utils.hpp"
 #include <test_utils.hpp>
@@ -10,11 +11,13 @@
 
 #include <atomic>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <string>
 #include <system_error>
 #include <thread>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -824,4 +827,39 @@ TEST_CASE("AppConfig save round-trips through the atomic helper", "[utils][atomi
     const std::string load_err = reader.load();
     REQUIRE(load_err.empty());
     REQUIRE(reader.get("atomic_roundtrip_key") == "atomic-value");
+}
+
+TEST_CASE("ascii_iequals compares ASCII letters regardless of case", "[Utils]")
+{
+    CHECK(ascii_iequals("set_velocity_limit", "SET_VELOCITY_LIMIT"));
+    CHECK(ascii_iequals("G28", "g28"));
+    CHECK(ascii_iequals("", ""));
+    CHECK_FALSE(ascii_iequals("G28", "G29"));
+    CHECK_FALSE(ascii_iequals("G2", "G28"));
+    CHECK_FALSE(ascii_iequals("G28", "G2"));
+    // Non-letters 0x20 apart are not equal.
+    CHECK_FALSE(ascii_iequals("[", "{"));
+    CHECK_FALSE(ascii_iequals("@", "`"));
+}
+
+TEST_CASE("atof_decimal_point parses what atof parses in the C locale", "[LocalesUtils]")
+{
+    const auto cases = {
+        std::pair<const char *, double>{"5", 5.},
+        {"  12.5", 12.5},
+        {"\t+3", 3.},
+        {"\r\n7", 7.},
+        {"-1.25", -1.25},
+        {"1e2", 100.},
+        {".5", 0.5},
+        {"12.5;comment", 12.5},
+        {"+-5", 0.},
+        {"", 0.},
+        {"abc", 0.},
+    };
+    for (const auto &[text, value] : cases) {
+        DYNAMIC_SECTION("parse [" << (text[0] ? text : "<empty>") << "]") {
+            CHECK(std::abs(atof_decimal_point(text) - value) < 1e-12);
+        }
+    }
 }

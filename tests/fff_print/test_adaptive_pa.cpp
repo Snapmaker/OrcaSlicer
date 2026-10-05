@@ -35,7 +35,7 @@ namespace {
 // that lands on the wrong side of a tool change shows up as a PA mismatch.
 const std::vector<double> NOMINAL_PA = {0.1, 0.2};
 
-std::string slice_two_filaments(bool bbl)
+std::string slice_two_filaments(bool bbl, bool adaptive = true)
 {
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
     config.set_num_extruders(2);
@@ -50,7 +50,7 @@ std::string slice_two_filaments(bool bbl)
     config.option<ConfigOptionFloats>("wipe_tower_y")->values      = {15.};
     config.option<ConfigOptionFloat>("prime_tower_width")->value   = 35.;
     config.option<ConfigOptionBools>("enable_pressure_advance")->values   = {true, true};
-    config.option<ConfigOptionBools>("adaptive_pressure_advance")->values = {true, true};
+    config.option<ConfigOptionBools>("adaptive_pressure_advance")->values = {adaptive, adaptive};
     config.option<ConfigOptionFloats>("pressure_advance")->values         = NOMINAL_PA;
     config.option<ConfigOptionStrings>("adaptive_pressure_advance_model")->values = {
         "0.060,2,1000\n0.050,8,1000\n0.040,16,1000\n0.050,2,10000\n0.040,8,10000\n0.030,16,10000",
@@ -222,4 +222,14 @@ TEST_CASE("Adaptive PA around tool changes does not depend on pipeline timing", 
 {
     SECTION("generic printer") { check_plate(false); }
     SECTION("BBL printer") { check_plate(true); }
+}
+
+TEST_CASE("Adaptive PA processor is a no-op when no used tool has adaptive PA", "[GCode][AdaptivePA]")
+{
+    // Tool changes still emit in-band PA_RESET markers during the layer pipeline.
+    // The early-out must strip those without scanning every G1, and must not emit PA_CHANGE.
+    const std::string gcode = slice_two_filaments(false, false);
+    REQUIRE(gcode.find("PA_CHANGE") == std::string::npos);
+    REQUIRE(gcode.find("PA_RESET") == std::string::npos);
+    REQUIRE(gcode.find("SET_PRESSURE_ADVANCE") != std::string::npos);
 }

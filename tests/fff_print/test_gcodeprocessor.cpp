@@ -4,6 +4,7 @@
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace Slic3r;
@@ -80,4 +81,19 @@ TEST_CASE("Reserved keyword detection reports every offending line", "[GCodeProc
         CHECK_FALSE(GCodeProcessor::contains_reserved_tags("G28\n; home all axes\n", 5, tags, false));
         CHECK(tags.empty());
     }
+}
+
+TEST_CASE("GCodeProcessorResult move assignment transfers members the copy assignment used to miss", "[GCodeProcessor]")
+{
+    GCodeProcessorResult src;
+    src.filename = "export.gcode";
+    src.backtrace_enabled = true;
+    src.support_traditional_timelapse = false;
+    src.moves.emplace_back();
+    GCodeProcessorResult dst;
+    dst = std::move(src);
+    REQUIRE(dst.filename == "export.gcode");
+    REQUIRE(dst.backtrace_enabled);
+    REQUIRE_FALSE(dst.support_traditional_timelapse);
+    REQUIRE(dst.moves.size() == 1);
 }

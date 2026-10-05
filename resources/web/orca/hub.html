@@ -156,7 +156,7 @@ select { background: #222; color: #ddd; border: 1px solid #555; border-radius: 6
             var off = el('span', 'btn warn', 'Disable'); off.onclick = function() { post('/hub/phone?on=0').then(refresh); }; body.appendChild(off);
             var relink = el('span', 'btn dim', 'New link');
             relink.onclick = function() {
-                if (!confirm('Make a new link?\n\nThis link stops working. Saved links, QR codes and home-screen icons made from it all have to be made again from the new code.')) return;
+                if (!confirm('Make a new link?\n\nThis link stops working. Saved links, QR codes and home-screen icons made from it all have to be made again from the new code. Phones paired with the old link also stop getting notifications until they are paired again.')) return;
                 post('/hub/newlink').then(refresh);
             };
             body.appendChild(relink);

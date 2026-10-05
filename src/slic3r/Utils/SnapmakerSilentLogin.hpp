@@ -19,6 +19,15 @@ namespace SMSilentLogin {
 // app_config key of Preferences > General "Sign in to my Snapmaker account automatically at startup".
 inline constexpr const char* k_pref_key = "snapmaker_auto_login";
 
+// app_config key that remembers whether this computer has a Snapmaker sign-in to come back to:
+// true after a sign-in completed (by hand or silently), false after signing out, after a silent
+// attempt found no session, and on every install that never signed in. The startup attempt only
+// runs while it is true, so a person who never uses Snapmaker cloud gets no Snapmaker traffic at
+// startup at all (privacy audit 2026-10, EdgeSlicerSite PR 4). An install from before this key
+// existed reads it as false: someone who was signed in signs in once more by hand (with a valid
+// web session the sign-in window closes on its own).
+inline constexpr const char* k_session_key = "snapmaker_signed_in";
+
 // Give up this long after the attempt started, whatever happened.
 inline constexpr int k_overall_timeout_ms = 20000;
 // After an id.snapmaker.com page finished loading, a valid session redirects on its own within a
@@ -30,6 +39,7 @@ inline constexpr int k_tick_ms = 500;
 struct StartupInputs
 {
     bool pref_enabled       = true;  // Preferences toggle (default on)
+    bool signed_in_before   = true;  // k_session_key: a sign-in on this computer to come back to
     bool is_editor          = true;  // false for the G-code viewer
     bool hidden_instance    = false; // hub-managed / --hidden / phone-upload instance: nobody in front of it
     bool main_window_ready  = true;  // mainframe exists and the app is not closing
@@ -69,6 +79,17 @@ enum class Outcome
 };
 
 const char* outcome_name(Outcome o);
+
+// What an attempt's outcome does to k_session_key: a sign-in sets it, "no session" clears it (the
+// saved web session is gone, so the next start must not ask Snapmaker again), and everything else
+// (timed out, failed, cancelled, skipped) leaves it as it was.
+enum class SessionMarker
+{
+    Set,
+    Clear,
+    Keep,
+};
+SessionMarker session_marker_after(Outcome o);
 
 // "Snapmaker silent login: <outcome>" plus " (<detail>)" when detail is not empty. The caller never
 // passes the token or a cookie as the detail.

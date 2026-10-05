@@ -5746,6 +5746,9 @@ void GUI_App::sm_start_silent_login()
 {
     SMSilentLogin::StartupInputs in;
     in.pref_enabled      = app_config->get_bool(SMSilentLogin::k_pref_key);
+    // Only someone who signed in on this computer has a session to come back to; everybody else
+    // gets no Snapmaker traffic at startup (the hidden web view would load id.snapmaker.com).
+    in.signed_in_before  = app_config->get_bool(SMSilentLogin::k_session_key);
     in.is_editor         = is_editor();
     // SNORCA_SM_SILENT_LOGIN=1 runs the attempt in a hidden instance too. Test-only knob: it lets
     // an agent check the never-shown path without a window on anyone's screen. No effect unless set.
@@ -5792,6 +5795,10 @@ void GUI_App::sm_on_silent_login_result(unsigned gen, const SMUserLogin::SilentR
         const SMSilentLogin::Outcome o = r.outcome == "no session" ? SMSilentLogin::Outcome::NoSession :
                                          r.outcome == "timed out"  ? SMSilentLogin::Outcome::TimedOut :
                                                                      SMSilentLogin::Outcome::Failed;
+        // The saved web session is gone: stop asking Snapmaker at every start until the person
+        // signs in again by hand. A time-out or a failure keeps the marker (try again next start).
+        if (SMSilentLogin::session_marker_after(o) == SMSilentLogin::SessionMarker::Clear)
+            app_config->set_bool(SMSilentLogin::k_session_key, false);
         sm_finish_silent_login(SMSilentLogin::log_line(o, r.detail));
         return;
     }
@@ -5858,9 +5865,15 @@ void GUI_App::sm_request_user_logout()
 {
     if (m_sm_silent_active)
         sm_cancel_silent_login("signed out");
+    // Signed out on purpose: no silent sign-in at the next start (SnapmakerSilentLogin.hpp).
+    app_config->set_bool(SMSilentLogin::k_session_key, false);
     if (m_login_userinfo.is_user_login()) {
         m_login_userinfo.set_user_login(false);
     }
+    // Nothing to revoke without a token: a page asking to sign out somebody who never signed in
+    // must not reach Snapmaker either.
+    if (m_login_userinfo.get_user_token().empty())
+        return;
     try {
         wxString region = wxString::FromUTF8(app_config->get_country_code());
         std::string url    = "";

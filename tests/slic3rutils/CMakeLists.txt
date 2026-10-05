@@ -30,6 +30,7 @@ add_executable(${_TEST_NAME}_tests
     shutdown_gate_tests.cpp
     hosted_push_tests.cpp
     app_push_levels_tests.cpp
+    push_privacy_tests.cpp
     flashforge_tests.cpp
     mqtt_reconnect_tests.cpp
     dock_width_settle_tests.cpp

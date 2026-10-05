@@ -2,6 +2,22 @@
 
 EdgeSlicer collects no usage statistics and no analytics. This page covers the two things that
 can leave your computer: crash reports (off unless you turn them on) and phone app notifications.
+The full privacy policy, including the other connections EdgeSlicer makes, is at
+<https://edgeslicer.com/privacy>.
+
+# Snapmaker sign-in at startup
+
+From version 2.4.4.0, EdgeSlicer only contacts Snapmaker's sign-in service (`id.snapmaker.com`,
+`id.snapmaker.cn` in mainland China) at startup if you have signed in to a Snapmaker account on
+this computer. It then reuses the saved session in a hidden window, so you stay signed in. If you
+never signed in, signed out, or the saved session has expired, nothing is sent to Snapmaker when
+EdgeSlicer starts. Preferences > General > "Sign in to my Snapmaker account automatically at
+startup" turns the quiet sign-in off altogether. Snapmaker U1 printers on your network work
+without a Snapmaker account.
+
+Earlier versions loaded the sign-in page in a hidden window at every start, also for people
+without a Snapmaker account. After updating, someone who was signed in signs in once more by hand;
+with a valid saved session the sign-in window closes by itself.
 
 # Crash reports
 
@@ -103,6 +119,16 @@ device.
 Nightly backups of the hub list are kept for 30 days. The service never sees printer names, file
 names, your e-mail or anything else about your prints; those are inside the encrypted part.
 
+Next to the encrypted part, each notification carries two short identifiers that the push
+service, Apple and Google can read: a collapse ID, so that a second "paused" for the same printer
+replaces the first instead of stacking, and on iPhone a thread ID, so that one printer's
+notifications are grouped. From version 2.4.4.0 both are keyed hashes made with a secret that only
+your hub holds: they stay the same for one printer on one hub, but nobody else can tell which
+printer they belong to. In earlier versions the iPhone thread ID was the printer's ID, which for a
+Bambu Lab printer is its serial number, and the collapse ID was an unkeyed hash of it. The real
+printer ID is inside the encrypted part only, and the app uses it to open the right printer when
+you tap a notification.
+
 The service runs on a server rented from Hetzner in Helsinki, Finland. There is a limit of 300
 notifications per hub per day; past it, the hub page shows a notice and the rest of that day's
 notifications are not sent.
@@ -113,6 +139,17 @@ notifications are not sent.
   with its own keys uses them and never contacts the push service.
 - To have no phone notifications at all, don't pair the phone app, or turn notifications off for
   the app in your phone's settings.
+
+## Removing a phone
+
+- **One phone:** the hub page's phone list has a **Remove** button for each registered phone. The
+  phone app's **Unpair** also tells the hub to forget that phone, when the hub can be reached.
+- **Every phone:** **New link** on the hub page or in the tray menu replaces the phone link. From
+  version 2.4.4.0 it also forgets every phone app and phone-page notification subscription that
+  was registered with the old link, including notifications still waiting to be sent, so those
+  phones stop getting notifications until they are paired again.
+- The push service keeps no list of phones, so there is nothing to remove there. To make it forget
+  the hub itself, use **Forget this hub on the service** on the hub page.
 
 ---
 

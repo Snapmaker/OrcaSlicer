@@ -118,6 +118,13 @@ std::pair<int, std::string> forget_device(const std::string& body);
 // DELETE /hub/apppush?id=<id> - the hub page removing a device by its short id.
 std::pair<int, std::string> remove(const std::string& id);
 
+// A new phone link (HubServer::new_link): every registered device was paired under the old token,
+// which no longer lets anybody in, so all of them are forgotten together with anything still queued
+// for the hosted service. A phone that is re-paired with the new link registers again on its next
+// launch. The hosted service keeps no per-device rows, so there is nothing to tell it. Answers how
+// many devices were forgotten.
+int forget_all_devices();
+
 // POST /hub/apppush/options - enabled, min_severity, the per-kind filter (as "kinds":[...] or
 // "events":{kind:bool}; see RemoteEvents.hpp) and the two providers' settings. Credential
 // fields follow take_secret's rule: a value beginning "****" means keep the stored one, so a

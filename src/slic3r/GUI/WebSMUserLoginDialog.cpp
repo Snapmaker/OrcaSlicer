@@ -238,6 +238,10 @@ bool SMUserLogin::apply_account_info(const std::string &body, const std::string 
     sentryReportLog(SENTRY_LOG_TRACE, userInfo, BP_LOGIN);
     wxGetApp().sm_get_userinfo()->set_user_token(token);
     wxGetApp().sm_get_userinfo()->set_user_login(true);
+    // A sign-in completed on this computer: from now on the next start may quietly reuse the saved
+    // session (SnapmakerSilentLogin.hpp, k_session_key). Before this, startup sends nothing.
+    if (wxGetApp().app_config)
+        wxGetApp().app_config->set_bool(SMSilentLogin::k_session_key, true);
     return true;
 }
 

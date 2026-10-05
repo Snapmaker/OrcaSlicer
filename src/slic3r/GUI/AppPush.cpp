@@ -17,6 +17,7 @@
 
 #include "AppPushProvider.hpp"
 #include "HostedPush.hpp"
+#include "PushIds.hpp"
 #include "WebPush.hpp"
 #include "slic3r/Utils/Http.hpp"
 
@@ -99,6 +100,9 @@ static std::atomic<bool>    g_dirty { false };
 static std::unique_ptr<Provider> g_apns, g_fcm;
 static std::unique_ptr<Hosted::HostedProvider> g_hosted;
 static Hosted::Identity     g_identity; // this hub's Ed25519 identity, handed over by RemoteHub
+// The per-hub secret behind every cleartext id next to a push (PushIds.hpp): the thread id and the
+// collapse id. Kept in settings.json with the device rows; minted the first time a hub starts.
+static std::string          g_id_key;
 
 // ------------------------------------------------------------------ small helpers ----
 
@@ -345,14 +349,21 @@ bool debug_routes_on()
 // ------------------------------------------------------------------- the envelope ----
 
 // The collapse id: a second "paused" for the same printer replaces the first on the lock screen
-// instead of stacking. A hash rather than the printer's name, because APNs and FCM both see this
-// one in the clear and the whole point of the design is that they learn nothing.
+// instead of stacking. APNs, FCM and the hosted service all see it in the clear, so it is a keyed
+// HMAC under this hub's own secret (PushIds.hpp) - an unkeyed hash of a Bambu serial number could
+// be confirmed by anyone who knows the serial. 24 characters, far inside APNs' 64-byte cap.
 static std::string collapse_for(const std::string& printer_id, const std::string& kind)
 {
-    const std::string in = printer_id + "|" + kind;
-    unsigned char     digest[SHA256_DIGEST_LENGTH];
-    SHA256((const unsigned char*) in.data(), in.size(), digest);
-    return detail::b64url(digest, 18); // 24 characters, far inside APNs' 64-byte cap
+    return PushIds::collapse_id(PushIds::key(), printer_id, kind);
+}
+
+// The cleartext thread id (APNs aps.thread-id, the hosted service's "thread"): opaque and stable per
+// printer, so iOS still groups one printer's alerts, but never the printer id itself. The app routes
+// a tap with the printer_id inside the encrypted payload, and sets its own thread identifier from it
+// after decrypting; this one only shows if the extension cannot decrypt.
+static std::string thread_for(const std::string& printer_id)
+{
+    return PushIds::thread_id(PushIds::key(), printer_id);
 }
 
 // What the app decrypts and renders. Deliberately the same shape WebPush::payload_for produces,
@@ -560,6 +571,9 @@ json settings_json()
     j["fcm"]          = g_fcm_cfg;
     if (!g_mode.empty()) j["mode"] = g_mode;
     j["hosted"]       = g_hosted_cfg;
+    // The secret behind the opaque thread and collapse ids. Only ever in settings.json: never in
+    // masked_json(), never on the phone plane, never sent anywhere.
+    if (!g_id_key.empty()) j["id_key"] = g_id_key;
     j["devices"]      = json::array();
     for (const Device& d : g_devices) j["devices"].push_back(device_json(d, false));
     return j;
@@ -663,7 +677,7 @@ static PushRequest request_for(const Device& d, const json& event, const std::st
                                 ? ev_str(event["printer"], "id") : std::string();
     const std::string kind = ev_str(event, "kind");
     req.collapse_id = collapse_for(pid, kind);
-    req.thread_id   = pid;
+    req.thread_id   = thread_for(pid);
     req.priority    = policy::priority(d.prefs, ev_str(event, "severity", "info"), kind);
     req.ttl_seconds = policy::ttl(kind);
     if (d.platform == "apns") req.interruption_level = policy::interruption_level(d.prefs, kind);
@@ -934,13 +948,19 @@ std::pair<int, std::string> forget_device(const std::string& body)
         }
     } catch (...) {}
     if (!token.empty()) {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        for (size_t i = 0; i < g_devices.size(); ++i)
-            if (g_devices[i].token == token && (platform.empty() || g_devices[i].platform == platform)) {
-                g_devices.erase(g_devices.begin() + i);
-                g_dirty = true;
-                break;
-            }
+        std::string removed_id;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            for (size_t i = 0; i < g_devices.size(); ++i)
+                if (g_devices[i].token == token && (platform.empty() || g_devices[i].platform == platform)) {
+                    removed_id = g_devices[i].id;
+                    g_devices.erase(g_devices.begin() + i);
+                    g_dirty = true;
+                    break;
+                }
+        }
+        // Nothing more for an unpaired phone, not even what was waiting for the push service.
+        if (!removed_id.empty() && g_hosted) g_hosted->forget(removed_id);
     }
     // Whether it was there is not the caller's business: answering "no such device" to an
     // unauthenticated caller would turn this into an oracle for guessing device tokens.
@@ -956,8 +976,24 @@ std::pair<int, std::string> remove(const std::string& id)
             if (g_devices[i].id == id) { g_devices.erase(g_devices.begin() + i); found = true; g_dirty = true; break; }
     }
     if (!found) return { 404, json({ { "error", "no such device" } }).dump() };
+    if (g_hosted) g_hosted->forget(id);
     BOOST_LOG_TRIVIAL(info) << "AppPush: device removed from the hub page";
     return { 200, masked_json().dump() };
+}
+
+int forget_all_devices()
+{
+    size_t n;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        n = g_devices.size();
+        g_devices.clear();
+        if (n) g_dirty = true;
+    }
+    // Including what is still queued for the hosted service: the old link's phones get nothing more.
+    if (g_hosted) g_hosted->forget(std::string());
+    if (n) BOOST_LOG_TRIVIAL(info) << "AppPush: " << n << " device(s) forgotten with the old phone link";
+    return (int) n;
 }
 
 std::pair<int, std::string> set_options(const std::string& body)
@@ -1254,13 +1290,17 @@ std::pair<int, std::string> debug_op(const std::string& body)
     if (op == "collapse") {
         return { 200, json({ { "collapse_id", collapse_for(in.value("printer", ""), in.value("kind", "")) } }).dump() };
     }
+    if (op == "thread") {
+        // What aps.thread-id / the hosted "thread" carries for this printer on this hub.
+        return { 200, json({ { "thread_id", thread_for(in.value("printer", "")) } }).dump() };
+    }
     if (op == "plaintext") {
         return { 200, json({ { "plaintext", plaintext_for(in.value("event", json::object())) } }).dump() };
     }
     if (op == "providers") {
         return { 200, providers_json().dump() };
     }
-    return { 400, json({ { "error", "op must be collapse, plaintext or providers" } }).dump() };
+    return { 400, json({ { "error", "op must be collapse, thread, plaintext or providers" } }).dump() };
 }
 
 // ------------------------------------------------------------------- lifecycle ----
@@ -1281,8 +1321,10 @@ void start(const json& saved)
     g_fcm_cfg  = json::object();
     g_mode.clear();
     g_hosted_cfg = json::object();
+    g_id_key.clear();
     try {
         if (saved.is_object()) {
+            g_id_key = saved.value("id_key", std::string());
             g_enabled      = saved.value("enabled", true);
             g_min_severity = saved.value("min_severity", std::string("info"));
             // A stale kind in a hand-edited settings.json is dropped, never fatal.
@@ -1329,6 +1371,14 @@ void start(const json& saved)
                 }
         }
     } catch (...) {} // a settings.json somebody hand-edited must not stop the hub starting
+    // The opaque-id secret: minted the first time (or if a hand edit broke it) and written back with
+    // the next settings.json. A new key only regroups notifications already on a phone's lock
+    // screen; it never stops one being delivered.
+    if (!PushIds::valid_key_hex(g_id_key)) {
+        g_id_key = PushIds::new_key_hex();
+        g_dirty  = true;
+    }
+    PushIds::set_key(g_id_key);
     g_hosted->set_identity(g_identity);
     reconfigure_locked();
     BOOST_LOG_TRIVIAL(info) << "AppPush: " << g_devices.size() << " registered device(s), push via "

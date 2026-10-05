@@ -3825,13 +3825,19 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
     void _BBS_3MF_Importer::_extract_embossed_svg_shape_file(const std::string &filename, mz_zip_archive &archive, const mz_zip_archive_file_stat &stat){
         assert(m_path_to_emboss_shape_files.find(filename) == m_path_to_emboss_shape_files.end());
-        auto file = std::make_unique<std::string>(stat.m_uncomp_size, '\0');
-        mz_bool res  = mz_zip_reader_extract_to_mem(&archive, stat.m_file_index, (void *) file->data(), stat.m_uncomp_size, 0);
-        if (res == 0) {
-            add_error("Error while reading svg shape for emboss");
+        // The entry comes from a file we did not write: check its declared size before allocating
+        // and inflate through a capped sink (untrusted::SVG_SIZE_LIMIT), so a zip bomb or an
+        // entry whose header lies cannot exhaust memory. A refused SVG only costs the option to
+        // re-edit the shape as SVG; the baked mesh of the volume and the rest of the project load.
+        auto file = std::make_unique<std::string>();
+        std::string why;
+        if (!read_zip_entry_capped(archive, stat.m_file_index, untrusted::SVG_SIZE_LIMIT, *file, &why)) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": SVG shape \"" << filename << "\" in the project was not loaded ("
+                                       << why << "; declared " << stat.m_uncomp_size << " bytes, limit "
+                                       << untrusted::SVG_SIZE_LIMIT << "). The shape keeps its mesh but cannot be edited as SVG.";
             return;
         }
-        
+
         // store for case svg is loaded before volume
         m_path_to_emboss_shape_files[filename] = std::move(file);
         
@@ -10649,7 +10655,7 @@ bool to_xml(std::stringstream &stream, const EmbossShape::SvgFile &svg, const Mo
     stream << SVG_FILE_PATH_IN_3MF_ATTR << "=\"" << xml_escape_double_quotes_attribute_value(svg.path_in_3mf) << "\" ";
 
     std::shared_ptr<std::string> file_data = svg.file_data;
-    assert(file_data != nullptr); 
+    // file_data is null for an SVG entry the importer refused (too large), see _extract_embossed_svg_shape_file
     if (file_data == nullptr && !svg.path.empty())
         file_data = read_from_disk(svg.path);
     if (file_data == nullptr) {

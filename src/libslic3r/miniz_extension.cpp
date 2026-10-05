@@ -112,6 +112,53 @@ bool extract_entry_to_file(mz_zip_archive &archive, mz_uint file_index, const st
 }
 
 namespace {
+struct CappedSink
+{
+    std::string  *out;
+    std::uint64_t cap;
+    bool          overflow = false;
+};
+
+size_t capped_sink_write(void *opaque, mz_uint64 file_ofs, const void *data, size_t n)
+{
+    CappedSink *sink = static_cast<CappedSink *>(opaque);
+    // Entries are written sequentially; anything else is a corrupt stream.
+    if (file_ofs != sink->out->size() || n > sink->cap - std::min<std::uint64_t>(sink->cap, sink->out->size())) {
+        sink->overflow = true;
+        return 0; // a short write makes miniz abort the extraction
+    }
+    sink->out->append(static_cast<const char *>(data), n);
+    return n;
+}
+} // namespace
+
+bool read_zip_entry_capped(mz_zip_archive &archive, mz_uint file_index, std::uint64_t cap, std::string &out, std::string *why)
+{
+    out.clear();
+    auto fail = [&](const char *reason) {
+        out.clear();
+        out.shrink_to_fit();
+        if (why != nullptr)
+            *why = reason;
+        return false;
+    };
+    mz_zip_archive_file_stat stat;
+    if (!mz_zip_reader_file_stat(&archive, file_index, &stat))
+        return fail("unreadable entry header");
+    if (stat.m_is_directory || stat.m_uncomp_size == 0)
+        return true;
+    if (stat.m_uncomp_size > cap)
+        return fail("entry is larger than the allowed size");
+    CappedSink sink{&out, stat.m_uncomp_size}; // stop at the declared size (already within cap)
+    out.reserve(static_cast<size_t>(stat.m_uncomp_size)); // the header was just checked against cap
+    if (!mz_zip_reader_extract_to_callback(&archive, file_index, capped_sink_write, &sink, 0))
+        return fail(sink.overflow ? "entry inflates beyond its declared size" : "entry cannot be inflated");
+    if (out.size() != stat.m_uncomp_size)
+        return fail("entry size does not match its header");
+    return true;
+}
+
+namespace {
 
 // An archive entry name is UTF-8. On Windows it is widened explicitly, so the path does not
 // depend on whether boost::filesystem has the nowide locale installed (the app installs it,

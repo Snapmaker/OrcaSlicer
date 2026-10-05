@@ -53,6 +53,7 @@ namespace pt = boost::property_tree;
 #include "nlohmann/json.hpp"
 
 #include "TextConfiguration.hpp"
+#include "InlineShapes.hpp"
 #include "EmbossShape.hpp"
 #include "ExPolygonSerialize.hpp" 
 
@@ -400,6 +401,9 @@ static constexpr const char* MESH_STAT_BACKWARDS_EDGES      = "backwards_edges";
 // Store / load of TextConfiguration
 static constexpr const char *TEXT_TAG = "slic3rpe:text";
 static constexpr const char *TEXT_DATA_ATTR = "text";
+// Inline shapes of the text (JSON, InlineShapes.hpp), written only when the text has any.
+// User SVGs of the table travel as the zip entries "3D/inline_<hash8>.svg" named in it.
+static constexpr const char *INLINE_SHAPES_ATTR = "inline_shapes";
 // TextConfiguration::EmbossStyle
 static constexpr const char *STYLE_NAME_ATTR      = "style_name";
 static constexpr const char *FONT_DESCRIPTOR_ATTR = "font_descriptor";
@@ -3824,7 +3828,21 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
     }*/
 
     void _BBS_3MF_Importer::_extract_embossed_svg_shape_file(const std::string &filename, mz_zip_archive &archive, const mz_zip_archive_file_stat &stat){
-        assert(m_path_to_emboss_shape_files.find(filename) == m_path_to_emboss_shape_files.end());
+        // Inline shapes of text ("3D/inline_*.svg"): the name must be a plain, normalised entry name of the
+        // form the writer makes, or the entry is not read at all (it then matches no table entry). The
+        // size cap below (untrusted::SVG_SIZE_LIMIT) applies before anything is allocated.
+        if (boost::istarts_with(filename, "3D/inline_")) {
+            std::string normalized;
+            if (untrusted::normalize_archive_entry_path(filename, normalized) != untrusted::ArchiveEntryName::Ok ||
+                normalized != filename || !is_inline_svg_entry_name(filename)) {
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": inline shape entry with an unexpected name skipped: " << filename;
+                return;
+            }
+        }
+        if (m_path_to_emboss_shape_files.find(filename) != m_path_to_emboss_shape_files.end()) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": duplicate SVG entry skipped: " << filename;
+            return;
+        }
         // The entry comes from a file we did not write: check its declared size before allocating
         // and inflate through a capped sink (untrusted::SVG_SIZE_LIMIT), so a zip bomb or an
         // entry whose header lies cannot exhaust memory. A refused SVG only costs the option to
@@ -4689,7 +4707,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             return type_name->second;
         }
 
-        static void to_xml(std::stringstream &stream, const TextConfiguration &tc);
+        // entry name -> data of the inline SVG entries already in the archive (one entry per content)
+        using InlineSvgEntries = std::map<std::string, std::shared_ptr<const std::string>>;
+        static void to_xml(std::stringstream &stream, const TextConfiguration &tc, mz_zip_archive *archive = nullptr,
+                           InlineSvgEntries *written = nullptr);
         static std::optional<TextConfiguration> read(const char **attributes, unsigned int num_attributes);
         static EmbossShape read_old(const char **attributes, unsigned int num_attributes);
     };
@@ -5745,8 +5766,17 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             
             if (auto &es = volume_data->shape_configuration; es.has_value())
                 volume->emboss_shape = std::move(es);            
-            if (auto &tc = volume_data->text_configuration; tc.has_value())
-                volume->text_configuration = std::move(tc);
+            if (auto &tc = volume_data->text_configuration; tc.has_value()) {
+                // user SVGs of inline shapes: the zip entries were read before the volumes are made
+                TextConfiguration text = *tc;
+                for (InlineShape &shape : text.inline_shapes)
+                    if (shape.source == InlineShapeSource::Svg && !shape.path_in_3mf.empty()) {
+                        auto it = m_path_to_emboss_shape_files.find(shape.path_in_3mf);
+                        if (it != m_path_to_emboss_shape_files.end() && it->second != nullptr)
+                            shape.svg_data = it->second;
+                    }
+                volume->text_configuration = std::move(text);
+            }
 
             // Apply the seam mode after all base-type metadata, regardless of XML key order.
             ModelVolumeType precise_seam_type = ModelVolumeType::INVALID;
@@ -8655,6 +8685,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 return a->second.object_id < b->second.object_id;
             });
 
+        // inline SVG shapes of text volumes already written into the archive
+        TextConfigurationSerialization::InlineSvgEntries inline_svg_entries;
+
         if (!m_skip_model)
         for (const ObjectToObjectDataMap::value_type* obj_metadata_ptr : ordered_objects_data) {
             const ObjectToObjectDataMap::value_type& obj_metadata = *obj_metadata_ptr;
@@ -8788,7 +8821,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     
                             if (const std::optional<TextConfiguration> &tc = volume->text_configuration;
                                 tc.has_value())
-                                TextConfigurationSerialization::to_xml(stream, *tc);
+                                TextConfigurationSerialization::to_xml(stream, *tc, &archive, &inline_svg_entries);
 
                             // stores mesh's statistics
                             const RepairedMeshErrors& stats = volume->mesh().stats().repaired_errors;
@@ -10458,11 +10491,49 @@ const TextConfigurationSerialization::VerticalAlignToName TextConfigurationSeria
     (FontProp::VerticalAlign::bottom, "bottom");
 
 
-void TextConfigurationSerialization::to_xml(std::stringstream &stream, const TextConfiguration &tc)
+void TextConfigurationSerialization::to_xml(std::stringstream &stream, const TextConfiguration &tc, mz_zip_archive *archive,
+                                            InlineSvgEntries *written)
 {
     stream << "   <" << TEXT_TAG << " ";
 
     stream << TEXT_DATA_ATTR << "=\"" << xml_escape_double_quotes_attribute_value(tc.text) << "\" ";
+
+    // Inline shapes: user SVGs are written once per content as "3D/inline_<hash8>.svg" (named from the
+    // data, so equal shapes of several volumes share one entry); an SVG without data (refused when the
+    // project was loaded) is left out of the table. Old builds ignore the attribute and keep the mesh.
+    if (!tc.inline_shapes.empty()) {
+        InlineShapeTable table;
+        table.reserve(tc.inline_shapes.size());
+        for (const InlineShape &shape : tc.inline_shapes) {
+            if (shape.source != InlineShapeSource::Svg) {
+                table.push_back(shape);
+                continue;
+            }
+            if (shape.svg_data == nullptr || shape.svg_data->empty() || archive == nullptr || written == nullptr)
+                continue;
+            InlineShape       entry = shape;
+            const std::string base  = inline_svg_entry_name(*shape.svg_data);
+            std::string       name  = base;
+            // another content with the same short hash: number it
+            for (int n = 2; n < 1000; ++n) {
+                auto it = written->find(name);
+                if (it == written->end() || it->second == shape.svg_data || *it->second == *shape.svg_data)
+                    break;
+                name = base.substr(0, base.size() - 4) + "_" + std::to_string(n) + ".svg";
+            }
+            if (written->find(name) == written->end()) {
+                if (!mz_zip_writer_add_mem(archive, name.c_str(), shape.svg_data->data(), shape.svg_data->size(), MZ_DEFAULT_COMPRESSION)) {
+                    BOOST_LOG_TRIVIAL(warning) << "Can't write inline svg shape " << name << " into 3mf";
+                    continue;
+                }
+                written->emplace(name, shape.svg_data);
+            }
+            entry.path_in_3mf = name;
+            table.push_back(std::move(entry));
+        }
+        if (std::string json = inline_shapes_to_json(table); !json.empty())
+            stream << INLINE_SHAPES_ATTR << "=\"" << xml_escape_double_quotes_attribute_value(json) << "\" ";
+    }
     // font item
     const EmbossStyle &style = tc.style;
     stream << STYLE_NAME_ATTR <<  "=\"" << xml_escape_double_quotes_attribute_value(style.name) << "\" ";
@@ -10585,7 +10656,21 @@ std::optional<TextConfiguration> TextConfigurationSerialization::read(const char
 
     std::string text = bbs_get_attribute_value_string(attributes, num_attributes, TEXT_DATA_ATTR);
     EmbossStyle es{style_name, std::move(font_descriptor), type, std::move(fp)};
-    return TextConfiguration{std::move(es), std::move(text)};
+    TextConfiguration tc{std::move(es), std::move(text)};
+
+    // Inline shapes (untrusted JSON: inline_shapes_from_json skips bad entries and clamps values). The
+    // data of user SVGs is attached when the volume is created (_generate_volumes_new).
+    std::string inline_json = bbs_get_attribute_value_string(attributes, num_attributes, INLINE_SHAPES_ATTR);
+    if (!inline_json.empty()) {
+        size_t skipped = 0;
+        if (std::optional<InlineShapeTable> table = inline_shapes_from_json(inline_json, &skipped); table.has_value())
+            tc.inline_shapes = std::move(*table);
+        else
+            BOOST_LOG_TRIVIAL(warning) << "Text volume: the inline shapes attribute is not valid and is ignored";
+        if (skipped > 0)
+            BOOST_LOG_TRIVIAL(warning) << "Text volume: " << skipped << " inline shape(s) were not valid and are ignored";
+    }
+    return tc;
 }
 
 EmbossShape TextConfigurationSerialization::read_old(const char **attributes, unsigned int num_attributes)

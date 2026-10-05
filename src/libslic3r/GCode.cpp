@@ -4348,6 +4348,72 @@ void GCode::check_and_insert_inline_timelapse(std::string &gcode, const Point &e
     }
 }
 
+namespace {
+struct PrecomputedLayer
+{
+    size_t                                index{size_t(-1)}; // size_t(-1) for the empty layer after the last
+    std::vector<PrecomputedOverhangLayer> overhang_layers;
+};
+
+// Whether process_layer() prepares the overhang estimator for `layer`.
+template<typename OverhangSpeed>
+static bool prepares_overhang_estimator(const Layer &layer, bool overhang_fan, OverhangSpeed overhang_speed)
+{
+    const LayerRegionPtrs &regions = layer.regions();
+    return std::any_of(regions.begin(), regions.end(), [overhang_fan, &overhang_speed](const LayerRegion *region) {
+        return region->has_extrusions() && (overhang_fan || overhang_speed(*region));
+    });
+}
+} // namespace
+
+std::vector<PrecomputedOverhangLayer> precompute_overhang_layers(const std::vector<GCode::LayerToPrint> &layers, bool overhang_fan)
+{
+    // Any filament may print the layer, so a region's overhang speed counts if it is enabled for any.
+    auto overhang_speed = [](const LayerRegion &region) { return any_enabled(region.region().config().enable_overhang_speed); };
+    std::vector<PrecomputedOverhangLayer> out;
+    for (const GCode::LayerToPrint &layer : layers)
+        if (layer.object_layer != nullptr && layer.object_layer->lower_layer != nullptr &&
+            prepares_overhang_estimator(*layer.object_layer, overhang_fan, overhang_speed)) {
+            const LayerRegionPtrs &regions = layer.object_layer->regions();
+            const bool curled_lines = std::any_of(regions.begin(), regions.end(), [](const LayerRegion *region) {
+                return any_enabled(region->region().config().slowdown_for_curled_perimeters);
+            });
+            out.push_back(precompute_overhang_layer(layer.original_object, *layer.object_layer, curled_lines));
+        }
+    return out;
+}
+
+namespace {
+// Hands out the index of each layer to process_layers(), then computes the layers' overhang data in parallel.
+template<typename LayersAt>
+static auto precomputed_layers_source(size_t &next_index, size_t layer_count, bool nop_layer, bool overhang_fan, LayersAt layers_at)
+{
+    return tbb::make_filter<void, PrecomputedLayer>(slic3r_tbb_filtermode::serial_in_order,
+               [&next_index, layer_count, nop_layer](tbb::flow_control &fc) -> PrecomputedLayer {
+                   if (next_index < layer_count)
+                       return {next_index++};
+                   // The pressure equalizer returns one layer back, so it gets an empty layer after the last.
+                   if (next_index == layer_count + (nop_layer ? 1 : 0))
+                       fc.stop();
+                   else
+                       ++next_index;
+                   return {};
+               }) &
+           tbb::make_filter<PrecomputedLayer, PrecomputedLayer>(slic3r_tbb_filtermode::parallel,
+               [layers_at, overhang_fan](PrecomputedLayer layer) -> PrecomputedLayer {
+                   if (layer.index != size_t(-1))
+                       layer.overhang_layers = precompute_overhang_layers(layers_at(layer.index), overhang_fan);
+                   return layer;
+               });
+}
+
+// Whether the overhang fan can switch on for any filament.
+static bool overhang_fan_enabled(const PrintConfig &config, bool cooling_markers)
+{
+    return cooling_markers && any_enabled(config.enable_overhang_bridge_fan);
+}
+} // namespace
+
 // Process all layers of all objects (non-sequential mode) with a parallel pipeline:
 // Generate G-code, run the filters (vase mode, cooling buffer), run the G-code analyser
 // and export G-code into file.
@@ -4360,32 +4426,25 @@ void GCode::process_layers(const Print&                                         
     m_timelapse_photo_extruder = timelapse_most_used_extruder(print, tool_ordering);
     // The pipeline is variable: The vase mode filter is optional.
     size_t     layer_to_print_idx = 0;
-    const auto generator          = tbb::make_filter<void, LayerResult>(
+    const auto source             = precomputed_layers_source(layer_to_print_idx, layers_to_print.size(), m_pressure_equalizer != nullptr,
+        overhang_fan_enabled(print.config(), m_enable_cooling_markers),
+        [&layers_to_print](size_t index) -> const std::vector<LayerToPrint> & { return layers_to_print[index].second; });
+    const auto generator          = tbb::make_filter<PrecomputedLayer, LayerResult>(
         slic3r_tbb_filtermode::serial_in_order,
-        [this, &print, &tool_ordering, &print_object_instances_ordering, &layers_to_print,
-         &layer_to_print_idx](tbb::flow_control& fc) -> LayerResult {
-            if (layer_to_print_idx >= layers_to_print.size()) {
-                if (layer_to_print_idx == layers_to_print.size() + (m_pressure_equalizer ? 1 : 0)) {
-                    fc.stop();
-                    return {};
-                } else {
-                    // Pressure equalizer need insert empty input. Because it returns one layer back.
-                    // Insert NOP (no operation) layer;
-                    ++layer_to_print_idx;
-                    return LayerResult::make_nop_layer_result();
-                }
-            } else {
-                const std::pair<coordf_t, std::vector<LayerToPrint>>& layer       = layers_to_print[layer_to_print_idx++];
-                const LayerTools&                                     layer_tools = tool_ordering.tools_for_layer(layer.first);
-                print.set_status(80, Slic3r::format(_(L("Generating G-code: layer %1%")), std::to_string(layer_to_print_idx)));
-                if (m_wipe_tower && layer_tools.has_wipe_tower)
-                    m_wipe_tower->next_layer();
-                // BBS
-                check_placeholder_parser_failed();
-                print.throw_if_canceled();
-                return this->process_layer(print, layer.second, layer_tools, &layer == &layers_to_print.back(),
-                                                    &print_object_instances_ordering, size_t(-1));
-            }
+        [this, &print, &tool_ordering, &print_object_instances_ordering, &layers_to_print](PrecomputedLayer precomputed) -> LayerResult {
+            if (precomputed.index == size_t(-1))
+                return LayerResult::make_nop_layer_result();
+            const std::pair<coordf_t, std::vector<LayerToPrint>>& layer       = layers_to_print[precomputed.index];
+            const LayerTools&                                     layer_tools = tool_ordering.tools_for_layer(layer.first);
+            print.set_status(80, Slic3r::format(_(L("Generating G-code: layer %1%")), std::to_string(precomputed.index + 1)));
+            if (m_wipe_tower && layer_tools.has_wipe_tower)
+                m_wipe_tower->next_layer();
+            // BBS
+            check_placeholder_parser_failed();
+            print.throw_if_canceled();
+            m_extrusion_quality_estimator.set_precomputed_layers(std::move(precomputed.overhang_layers));
+            return this->process_layer(print, layer.second, layer_tools, &layer == &layers_to_print.back(),
+                                                &print_object_instances_ordering, size_t(-1));
         });
     if (m_spiral_vase) {
         float nozzle_diameter  = EXTRUDER_CONFIG(nozzle_diameter);
@@ -4458,21 +4517,23 @@ void GCode::process_layers(const Print&                                         
     // The pipeline elements are joined using const references, thus no copying is performed.
     // Layer-time speed smoothing sits after CoolingBuffer and before FanMover in every variant.
     if (m_spiral_vase && m_pressure_equalizer)
-        tbb::parallel_pipeline(12, generator & spiral_mode & pressure_equalizer & cooling & layer_time_speed_smoothing & fan_mover &
+        tbb::parallel_pipeline(12, source & generator & spiral_mode & pressure_equalizer & cooling & layer_time_speed_smoothing & fan_mover &
                                        output);
     else if (m_spiral_vase)
-        tbb::parallel_pipeline(12, generator & spiral_mode & cooling & layer_time_speed_smoothing & fan_mover & output);
+        tbb::parallel_pipeline(12, source & generator & spiral_mode & cooling & layer_time_speed_smoothing & fan_mover & output);
     else {
         // Orca: Adaptive PA. pa_processor_filter works on an earlier layer than the generator, so tool
         // changes hand it their PA reset in band (reset_adaptive_pa()).
         m_pa_reset_in_band = true;
         if (m_pressure_equalizer)
-            tbb::parallel_pipeline(12, generator & pressure_equalizer & cooling & layer_time_speed_smoothing & fan_mover &
+            tbb::parallel_pipeline(12, source & generator & pressure_equalizer & cooling & layer_time_speed_smoothing & fan_mover &
                                            pa_processor_filter & output);
         else
-            tbb::parallel_pipeline(12, generator & cooling & layer_time_speed_smoothing & fan_mover & pa_processor_filter & output);
+            tbb::parallel_pipeline(12, source & generator & cooling & layer_time_speed_smoothing & fan_mover & pa_processor_filter & output);
         m_pa_reset_in_band = false;
     }
+    // The estimator's precomputed data points into this print's layers.
+    m_extrusion_quality_estimator.set_precomputed_layers({});
 }
 
 // Process all layers of a single object instance (sequential mode) with a parallel pipeline:
@@ -4489,32 +4550,26 @@ void GCode::process_layers(const Print&              print,
     m_timelapse_photo_extruder = timelapse_most_used_extruder(print, tool_ordering);
     // The pipeline is variable: The vase mode filter is optional.
     size_t     layer_to_print_idx = 0;
+    const auto source             = precomputed_layers_source(layer_to_print_idx, layers_to_print.size(), m_pressure_equalizer != nullptr,
+        overhang_fan_enabled(print.config(), m_enable_cooling_markers),
+        [&layers_to_print](size_t index) { return std::vector<LayerToPrint>{layers_to_print[index]}; });
     const auto generator =
-        tbb::make_filter<void, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
-                                            [this, &print, &tool_ordering, &layers_to_print, &layer_to_print_idx, single_object_idx,
-                                             prime_extruder](tbb::flow_control& fc) -> LayerResult {
-                                                if (layer_to_print_idx >= layers_to_print.size()) {
-                                                    if (layer_to_print_idx == layers_to_print.size() + (m_pressure_equalizer ? 1 : 0)) {
-                                                        fc.stop();
-                                                        return {};
-                                                    } else {
-                                                        // Pressure equalizer need insert empty input. Because it returns one layer back.
-                                                        // Insert NOP (no operation) layer;
-                                                        ++layer_to_print_idx;
-                                                        return LayerResult::make_nop_layer_result();
-                                                    }
-                                                } else {
-                                                    LayerToPrint& layer = layers_to_print[layer_to_print_idx++];
-                                                    print.set_status(80, Slic3r::format(_(L("Generating G-code: layer %1%")),
-                                                                                        std::to_string(layer_to_print_idx)));
-                                                    // BBS
-                                                    check_placeholder_parser_failed();
-                                                    print.throw_if_canceled();
-                                                    return this->process_layer(print, {std::move(layer)},
-                                                                               tool_ordering.tools_for_layer(layer.print_z()),
-                                                                               &layer == &layers_to_print.back(), nullptr,
-                                                                               single_object_idx, prime_extruder);
-                                                }
+        tbb::make_filter<PrecomputedLayer, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
+                                            [this, &print, &tool_ordering, &layers_to_print, single_object_idx,
+                                             prime_extruder](PrecomputedLayer precomputed) -> LayerResult {
+                                                if (precomputed.index == size_t(-1))
+                                                    return LayerResult::make_nop_layer_result();
+                                                LayerToPrint& layer = layers_to_print[precomputed.index];
+                                                print.set_status(80, Slic3r::format(_(L("Generating G-code: layer %1%")),
+                                                                                    std::to_string(precomputed.index + 1)));
+                                                // BBS
+                                                check_placeholder_parser_failed();
+                                                print.throw_if_canceled();
+                                                m_extrusion_quality_estimator.set_precomputed_layers(std::move(precomputed.overhang_layers));
+                                                return this->process_layer(print, {std::move(layer)},
+                                                                           tool_ordering.tools_for_layer(layer.print_z()),
+                                                                           &layer == &layers_to_print.back(), nullptr,
+                                                                           single_object_idx, prime_extruder);
                                             });
     if (m_spiral_vase) {
         float nozzle_diameter  = EXTRUDER_CONFIG(nozzle_diameter);
@@ -4584,21 +4639,23 @@ void GCode::process_layers(const Print&              print,
     // The pipeline elements are joined using const references, thus no copying is performed.
     // Layer-time speed smoothing sits after CoolingBuffer and before FanMover in every variant.
     if (m_spiral_vase && m_pressure_equalizer)
-        tbb::parallel_pipeline(12, generator & spiral_mode & pressure_equalizer & cooling & layer_time_speed_smoothing & fan_mover &
+        tbb::parallel_pipeline(12, source & generator & spiral_mode & pressure_equalizer & cooling & layer_time_speed_smoothing & fan_mover &
                                        output);
     else if (m_spiral_vase)
-        tbb::parallel_pipeline(12, generator & spiral_mode & cooling & layer_time_speed_smoothing & fan_mover & output);
+        tbb::parallel_pipeline(12, source & generator & spiral_mode & cooling & layer_time_speed_smoothing & fan_mover & output);
     else {
         // Orca: Adaptive PA. pa_processor_filter works on an earlier layer than the generator, so tool
         // changes hand it their PA reset in band (reset_adaptive_pa()).
         m_pa_reset_in_band = true;
         if (m_pressure_equalizer)
-            tbb::parallel_pipeline(12, generator & pressure_equalizer & cooling & layer_time_speed_smoothing & fan_mover &
+            tbb::parallel_pipeline(12, source & generator & pressure_equalizer & cooling & layer_time_speed_smoothing & fan_mover &
                                            pa_processor_filter & output);
         else
-            tbb::parallel_pipeline(12, generator & cooling & layer_time_speed_smoothing & fan_mover & pa_processor_filter & output);
+            tbb::parallel_pipeline(12, source & generator & cooling & layer_time_speed_smoothing & fan_mover & pa_processor_filter & output);
         m_pa_reset_in_band = false;
     }
+    // The estimator's precomputed data points into this print's layers.
+    m_extrusion_quality_estimator.set_precomputed_layers({});
 }
 
 
@@ -6445,17 +6502,11 @@ LayerResult GCode::process_layer(const Print& print,
         return next_extruder;
     };
 
-    for (const auto& layer_to_print : layers) {
-        if (layer_to_print.object_layer) {
-            const auto& regions               = layer_to_print.object_layer->regions();
-            const bool  enable_overhang_speed = std::any_of(regions.begin(), regions.end(), [](const LayerRegion* r) {
-                return r->has_extrusions() && r->region().config().enable_overhang_speed.values.front();
-            });
-            if (enable_overhang_speed) {
-                m_extrusion_quality_estimator.prepare_for_new_layer(layer_to_print.original_object, layer_to_print.object_layer);
-            }
-        }
-    }
+    const bool overhang_fan   = overhang_fan_enabled(m_config, m_enable_cooling_markers);
+    auto       overhang_speed = [](const LayerRegion &region) { return any_enabled(region.region().config().enable_overhang_speed); };
+    for (const auto &layer_to_print : layers)
+        if (layer_to_print.object_layer && prepares_overhang_estimator(*layer_to_print.object_layer, overhang_fan, overhang_speed))
+            m_extrusion_quality_estimator.prepare_for_new_layer(layer_to_print.original_object, layer_to_print.object_layer);
 
     // Group extrusions by an extruder, then by an object, an island and a region.
     std::map<unsigned int, std::vector<ObjectByExtruder>> by_extruder;

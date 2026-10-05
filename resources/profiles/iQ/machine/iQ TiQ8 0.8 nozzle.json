@@ -1,14 +1,14 @@
 {
 	"type": "machine",
-	"name": "iQ TiQ8 0.4 Nozzle",
+	"name": "iQ TiQ8 0.8 Nozzle",
 	"inherits": "fdm_tiq_common",
 	"from": "system",
-	"setting_id": "sFyLghE6YxFT4Kbm",
+	"setting_id": "KmISSZMOnHtmrfRD",
 	"instantiation": "true",
-	"printer_settings_id": "iQ TiQ8 0.4 Nozzle",
+	"printer_settings_id": "iQ TiQ8 0.8 Nozzle",
 	"printer_model": "TiQ8",
-	"printer_variant": "0.4",
-	"default_print_profile": "0.20mm Standard @iQ TiQ8 P1 - ABS Natur Material4Print (0.4 Nozzle)",
+	"printer_variant": "0.8",
+	"default_print_profile": "0.40mm Standard @iQ TiQ8 (0.8 Nozzle)",
 	"change_filament_gcode": "G1 Z{layer_z+2} F900 ; safe distance while tool change\n{if next_extruder==0}G1 X30 Y-12 F9000{endif}\nM109 S{nozzle_temperature[next_extruder]} T[next_extruder] ; set new tool temperature so it can start heating while changing",
 	"deretraction_speed": [
 		"30",
@@ -41,16 +41,16 @@
 	"machine_pause_gcode": "M10710 S0",
 	"machine_start_gcode": "T[initial_extruder]\nM109 S{nozzle_temperature_initial_layer[current_extruder]}\n",
 	"max_layer_height": [
-		"0.32",
-		"0.32"
+		"0.8",
+		"0.8"
 	],
 	"min_layer_height": [
 		"0.08",
 		"0.08"
 	],
 	"nozzle_diameter": [
-		"0.4",
-		"0.4"
+		"0.8",
+		"0.8"
 	],
 	"print_host": "https://simplyprint.io/panel",
 	"printable_area": [
@@ -126,8 +126,8 @@
 		"1"
 	],
 	"z_hop": [
-		"0.4",
-		"0.4"
+		"0.8",
+		"0.8"
 	],
 	"z_hop_types": [
 		"Normal Lift",
@@ -145,5 +145,5 @@
 		"1500",
 		"1500"
 	],
-	"printer_notes": "Machine file version 1.1 20250516"
+	"printer_notes": "Machine file version 1.0 20251106"
 }

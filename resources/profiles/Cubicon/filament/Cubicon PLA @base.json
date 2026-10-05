@@ -82,9 +82,9 @@
 		"1"
 	],
 	"during_print_exhaust_fan_speed": [
-		"255"
+		"100"
 	],
 	"complete_print_exhaust_fan_speed": [
-		"255"
+		"100"
 	]
 }

@@ -83,6 +83,7 @@ struct Stored
 {
     bool        ok { false };
     std::string history_json;       // what the loaded PlateData carried
+    std::string dual_nozzle_confirm; // carried by the same plate-data copy (it used to be dropped)
     std::string model_settings;     // Metadata/model_settings.config as written
     std::string fingerprint_before; // plate_input_fingerprint of the source model
     std::string fingerprint_after;  // ... of the loaded model
@@ -106,6 +107,7 @@ Stored store_and_load(const std::string &history_json)
     plate->plate_index = 0;
     plate->objects_and_instances.emplace_back(0, 0);
     plate->print_history = history_json;
+    plate->dual_nozzle_confirm = "{\"v\":1,\"ok\":true}";
 
     const boost::filesystem::path tmp_root = boost::filesystem::temp_directory_path() / "snorca_tests";
     boost::filesystem::create_directories(tmp_root);
@@ -134,6 +136,7 @@ Stored store_and_load(const std::string &history_json)
     out.ok = loaded && plate_data.size() == 1;
     if (out.ok) {
         out.history_json       = plate_data.front()->print_history;
+        out.dual_nozzle_confirm = plate_data.front()->dual_nozzle_confirm;
         out.fingerprint_before = plate_input_fingerprint(src_model, {{0, 0}}, Vec3d::Zero());
         out.fingerprint_after  = plate_input_fingerprint(dst_model, {{0, 0}}, Vec3d::Zero());
     }
@@ -389,6 +392,8 @@ TEST_CASE("A plate's history round trips through a project 3MF", "[PlateHistory]
     REQUIRE(back == h);
     REQUIRE(back.entries().front().printer_name == "Shop \"U1\" & <friends>");
     REQUIRE(back.was_sent());
+    // The plate-data copy used to drop the dual-nozzle confirmation on load.
+    REQUIRE(stored.dual_nozzle_confirm == "{\"v\":1,\"ok\":true}");
 
     // What the plate would slice from is the same after a save and reopen, so "modified since the
     // last send" does not fire just because the project was reopened.

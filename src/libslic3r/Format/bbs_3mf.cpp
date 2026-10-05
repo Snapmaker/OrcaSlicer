@@ -1751,6 +1751,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             plate->pattern_bbox_file = it->second->pattern_bbox_file;
             plate->config = it->second->config;
             plate->print_history = it->second->print_history;
+            plate->dual_nozzle_confirm = it->second->dual_nozzle_confirm;
 
             if (!plate->thumbnail_file.empty())
                 _extract_from_archive(archive, plate->thumbnail_file, [&pixels = plate_data_list[it->first - 1]->plate_thumbnail.pixels](auto &archive, auto const &stat) -> bool {
@@ -2506,6 +2507,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             plate_data_list[it->first-1]->pattern_bbox_file = in_backup(it->second->pattern_bbox_file);
             plate_data_list[it->first-1]->config = it->second->config;
             plate_data_list[it->first-1]->print_history = it->second->print_history;
+            plate_data_list[it->first-1]->dual_nozzle_confirm = it->second->dual_nozzle_confirm;
 
             current_plate_data = plate_data_list[it->first - 1];
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" << __LINE__ << boost::format(", plate %1%, thumbnail_file=%2%, no_light_thumbnail_file=%3%")%it->first %plate_data_list[it->first-1]->thumbnail_file %plate_data_list[it->first-1]->no_light_thumbnail_file;

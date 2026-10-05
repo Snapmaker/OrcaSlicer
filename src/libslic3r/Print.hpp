@@ -1131,11 +1131,14 @@ public:
     // filament that the object body does not use, so the prime tower carries support material?
     // Ported from BambuStudio Print::support_material_on_wipe_tower.
     bool support_material_on_wipe_tower() const;
-    void set_nozzle_group_result(const std::shared_ptr<MultiNozzleUtils::NozzleGroupResultBase> result) { m_nozzle_group_result = result; }
+    void set_nozzle_group_result(std::shared_ptr<MultiNozzleUtils::NozzleGroupResultBase> result);
     const std::shared_ptr<MultiNozzleUtils::NozzleGroupResultBase> get_nozzle_group_result() const { return m_nozzle_group_result; }
     std::shared_ptr<MultiNozzleUtils::LayeredNozzleGroupResult> get_layered_nozzle_group_result() const {
-        return std::dynamic_pointer_cast<MultiNozzleUtils::LayeredNozzleGroupResult>(m_nozzle_group_result);
+        return m_layered_nozzle_group_result;
     }
+    // Bumped when the grouping result is replaced or a flow-variant key invalidates the
+    // cached layered view. Callers that snapshot the layered pointer can reuse it until this changes.
+    size_t config_index_generation() const { return m_config_index_generation; }
 
     // Ultra (dual-nozzle): inputs to the filament->nozzle grouping compute. In BBS these are populated by
     // GUI slice-prep; this fork does not populate them yet (stubbed-input grouping), so the getters return
@@ -1380,6 +1383,10 @@ private:
     // Ultra (dual-nozzle): filament->nozzle grouping result set externally before process(); null on
     // classic machines. Reset in clear().
     std::shared_ptr<MultiNozzleUtils::NozzleGroupResultBase> m_nozzle_group_result;
+    // m_nozzle_group_result narrowed to the layer-aware type; only set_nozzle_group_result() assigns
+    // it, and a flow-variant change clears it so the next slice recasts.
+    std::shared_ptr<MultiNozzleUtils::LayeredNozzleGroupResult> m_layered_nozzle_group_result;
+    size_t m_config_index_generation{0};
     // Ultra (dual-nozzle): grouping inputs (see getters). Empty until an input-population pass fills them.
     std::vector<std::vector<DynamicPrintConfig>>            m_extruder_filament_info;
     std::unordered_map<int, std::unordered_map<int, double>> m_filament_print_time;

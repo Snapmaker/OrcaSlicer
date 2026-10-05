@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -1197,4 +1198,55 @@ TEST_CASE("Exporting a sliced print again gives the same G-code", "[Print][GCode
         });
         check_reexport(TestMesh::overhang);
     }
+}
+
+namespace {
+
+std::shared_ptr<MultiNozzleUtils::LayeredNozzleGroupResult> make_single_nozzle_group()
+{
+    std::vector<MultiNozzleUtils::NozzleInfo> nozzles(1);
+    nozzles[0].diameter    = "0.4";
+    nozzles[0].volume_type = nvtStandard;
+    nozzles[0].extruder_id = 0;
+    nozzles[0].group_id    = 0;
+    auto created = MultiNozzleUtils::LayeredNozzleGroupResult::create({0}, nozzles, {0u});
+    REQUIRE(created);
+    return std::make_shared<MultiNozzleUtils::LayeredNozzleGroupResult>(std::move(*created));
+}
+
+} // namespace
+
+TEST_CASE("Replacing the nozzle grouping result recasts the layered cache and bumps generation", "[Print]")
+{
+    Print print;
+    REQUIRE(print.get_layered_nozzle_group_result() == nullptr);
+    const size_t generation0 = print.config_index_generation();
+
+    print.set_nozzle_group_result(nullptr);
+    REQUIRE(print.config_index_generation() != generation0);
+    REQUIRE(print.get_layered_nozzle_group_result() == nullptr);
+
+    auto grouped = make_single_nozzle_group();
+    const size_t generation1 = print.config_index_generation();
+    print.set_nozzle_group_result(grouped);
+    REQUIRE(print.config_index_generation() != generation1);
+    REQUIRE(print.get_layered_nozzle_group_result() == grouped);
+    REQUIRE(print.get_layered_nozzle_group_result().get() == print.get_nozzle_group_result().get());
+}
+
+TEST_CASE("A flow-variant change clears the layered nozzle-group cache", "[Print]")
+{
+    Print              print;
+    Model              model;
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    init_print({TestMesh::cube_20x20x20}, print, model, config);
+
+    print.set_nozzle_group_result(make_single_nozzle_group());
+    REQUIRE(print.get_layered_nozzle_group_result() != nullptr);
+    const size_t generation = print.config_index_generation();
+
+    config.set_deserialize_strict({{"filament_volume_type", FLOW_MODE_HIGH_FLOW}});
+    print.apply(model, config);
+    REQUIRE(print.config_index_generation() != generation);
+    CHECK(print.get_layered_nozzle_group_result() == nullptr);
 }

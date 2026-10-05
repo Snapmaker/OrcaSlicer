@@ -9523,55 +9523,71 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
     // Orca: optimize for Klipper, set acceleration and jerk in one command
     unsigned int acceleration_i = 0;
     double       jerk           = 0;
-    // adjust acceleration
-    if (this->process_flow_value(m_config.default_acceleration) > 0) {
+    const ExtrusionRole path_role = path.role();
+    // adjust acceleration — hoist process_flow_value once per path; role-gate percent lookups
+    // that only apply to that role (Orca #16028, without FILAMENT/NOZZLE ConfigIndexCache).
+    const double default_acc = this->process_flow_value(m_config.default_acceleration);
+    if (default_acc > 0) {
         double acceleration;
-        const double outer_wall_acc = this->process_flow_value(m_config.outer_wall_acceleration);
-        const double default_acc    = this->process_flow_value(m_config.default_acceleration);
-        const auto   bridge_fop     = this->process_flow_value(m_config.bridge_acceleration);
-        const auto   sparse_fop     = this->process_flow_value(m_config.sparse_infill_acceleration);
-        const auto   solid_fop      = this->process_flow_value(m_config.internal_solid_infill_acceleration);
-        const double bridge_acc     = bridge_fop.percent ? (bridge_fop.value * 0.01 * outer_wall_acc) : bridge_fop.value;
-        const double sparse_acc     = sparse_fop.percent ? (sparse_fop.value * 0.01 * default_acc)    : sparse_fop.value;
-        const double solid_acc      = solid_fop.percent  ? (solid_fop.value  * 0.01 * default_acc)    : solid_fop.value;
-        if (this->on_first_layer() && this->process_flow_value(m_config.initial_layer_acceleration) > 0) {
-            acceleration = this->process_flow_value(m_config.initial_layer_acceleration);
+        const double outer_wall_acc     = this->process_flow_value(m_config.outer_wall_acceleration);
+        const double inner_wall_acc     = this->process_flow_value(m_config.inner_wall_acceleration);
+        const double top_surface_acc    = this->process_flow_value(m_config.top_surface_acceleration);
+        const double initial_layer_acc  = this->process_flow_value(m_config.initial_layer_acceleration);
+        const auto   bridge_fop         = is_bridge(path_role) ? this->process_flow_value(m_config.bridge_acceleration) :
+                                                                 FloatOrPercent{0., false};
+        const auto   sparse_fop         = path_role == erInternalInfill ?
+                                              this->process_flow_value(m_config.sparse_infill_acceleration) :
+                                              FloatOrPercent{0., false};
+        const auto   solid_fop          = path_role == erSolidInfill ?
+                                              this->process_flow_value(m_config.internal_solid_infill_acceleration) :
+                                              FloatOrPercent{0., false};
+        const double bridge_acc         = bridge_fop.percent ? (bridge_fop.value * 0.01 * outer_wall_acc) : bridge_fop.value;
+        const double sparse_acc         = sparse_fop.percent ? (sparse_fop.value * 0.01 * default_acc)    : sparse_fop.value;
+        const double solid_acc          = solid_fop.percent  ? (solid_fop.value  * 0.01 * default_acc)    : solid_fop.value;
+        if (this->on_first_layer() && initial_layer_acc > 0) {
+            acceleration = initial_layer_acc;
 #if 0
         } else if (this->object_layer_over_raft() && m_config.first_layer_acceleration_over_raft.value > 0) {
             acceleration = m_config.first_layer_acceleration_over_raft.value;
 #endif
-        } else if (bridge_acc > 0 && is_bridge(path.role())) {
+        } else if (bridge_acc > 0) {
             acceleration = bridge_acc;
-        } else if (sparse_acc > 0 && (path.role() == erInternalInfill)) {
+        } else if (sparse_acc > 0) {
             acceleration = sparse_acc;
-        } else if (solid_acc > 0 && (path.role() == erSolidInfill)) {
+        } else if (solid_acc > 0) {
             acceleration = solid_acc;
-        } else if (this->process_flow_value(m_config.outer_wall_acceleration) > 0 && is_external_perimeter(path.role())) {
-            acceleration = this->process_flow_value(m_config.outer_wall_acceleration);
-        } else if (this->process_flow_value(m_config.inner_wall_acceleration) > 0 && is_internal_perimeter(path.role())) {
-            acceleration = this->process_flow_value(m_config.inner_wall_acceleration);
-        } else if (this->process_flow_value(m_config.top_surface_acceleration) > 0 && is_top_surface(path.role())) {
-            acceleration = this->process_flow_value(m_config.top_surface_acceleration);
+        } else if (outer_wall_acc > 0 && is_external_perimeter(path_role)) {
+            acceleration = outer_wall_acc;
+        } else if (inner_wall_acc > 0 && is_internal_perimeter(path_role)) {
+            acceleration = inner_wall_acc;
+        } else if (top_surface_acc > 0 && is_top_surface(path_role)) {
+            acceleration = top_surface_acc;
         } else {
-            acceleration = this->process_flow_value(m_config.default_acceleration);
+            acceleration = default_acc;
         }
         acceleration_i = (unsigned int) floor(acceleration + 0.5);
     }
 
-    // adjust X Y jerk
-    if (this->process_flow_value(m_config.default_jerk) > 0) {
-        if (this->on_first_layer() && this->process_flow_value(m_config.initial_layer_jerk) > 0) {
-            jerk = this->process_flow_value(m_config.initial_layer_jerk);
-        } else if (this->process_flow_value(m_config.outer_wall_jerk) > 0 && is_external_perimeter(path.role())) {
-            jerk = this->process_flow_value(m_config.outer_wall_jerk);
-        } else if (this->process_flow_value(m_config.inner_wall_jerk) > 0 && is_internal_perimeter(path.role())) {
-            jerk = this->process_flow_value(m_config.inner_wall_jerk);
-        } else if (this->process_flow_value(m_config.top_surface_jerk) > 0 && is_top_surface(path.role())) {
-            jerk = this->process_flow_value(m_config.top_surface_jerk);
-        } else if (this->process_flow_value(m_config.infill_jerk) > 0 && is_infill(path.role())) {
-            jerk = this->process_flow_value(m_config.infill_jerk);
+    // adjust X Y jerk — hoist once per path; do not cache into ResolvedFilamentFlow
+    const double default_jerk = this->process_flow_value(m_config.default_jerk);
+    if (default_jerk > 0) {
+        const double initial_layer_jerk  = this->process_flow_value(m_config.initial_layer_jerk);
+        const double outer_wall_jerk     = this->process_flow_value(m_config.outer_wall_jerk);
+        const double inner_wall_jerk     = this->process_flow_value(m_config.inner_wall_jerk);
+        const double top_surface_jerk    = this->process_flow_value(m_config.top_surface_jerk);
+        const double infill_jerk         = this->process_flow_value(m_config.infill_jerk);
+        if (this->on_first_layer() && initial_layer_jerk > 0) {
+            jerk = initial_layer_jerk;
+        } else if (outer_wall_jerk > 0 && is_external_perimeter(path_role)) {
+            jerk = outer_wall_jerk;
+        } else if (inner_wall_jerk > 0 && is_internal_perimeter(path_role)) {
+            jerk = inner_wall_jerk;
+        } else if (top_surface_jerk > 0 && is_top_surface(path_role)) {
+            jerk = top_surface_jerk;
+        } else if (infill_jerk > 0 && is_infill(path_role)) {
+            jerk = infill_jerk;
         } else {
-            jerk = this->process_flow_value(m_config.default_jerk);
+            jerk = default_jerk;
         }
     }
 
@@ -9748,7 +9764,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
     }
     // Override skirt speed if set
     if (path.role() == erSkirt) {
-        const double skirt_speed = m_config.get_abs_value("skirt_speed");
+        const double skirt_speed = m_config.skirt_speed.value;
         if (skirt_speed > 0.0) {
             speed_setting = "skirt_speed";
             speed = skirt_speed;

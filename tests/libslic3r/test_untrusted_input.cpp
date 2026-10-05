@@ -1,6 +1,8 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/Config.hpp"
+#include "libslic3r/EmbossShape.hpp"
+#include "libslic3r/NSVGUtils.hpp"
 #include "libslic3r/Format/3mf.hpp"
 #include "libslic3r/Format/AssembleList.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
@@ -2531,3 +2533,476 @@ TEST_CASE("extract_archive_confined replaces a destination symlink instead of wr
 }
 #endif
 
+
+// ---- SVG input limits (UntrustedInput.hpp, NSVGUtils.hpp, bbs_3mf.cpp) ----------------------------
+//
+// An SVG comes from a project file or a file the user picked and is parsed by NanoSVG. The size is
+// capped before anything is allocated, an entry of a 3MF is inflated through a capped sink, and a
+// parsed drawing with too many shapes / paths / points is refused. Fixtures are made here; the
+// biggest is a few tens of MiB in memory and under a MiB on disk.
+
+namespace {
+
+const char *const SVG_HEAD = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20mm\" height=\"20mm\" viewBox=\"0 0 20 20\">";
+const char *const SVG_TAIL = "</svg>";
+
+std::string normal_svg()
+{
+    return std::string(SVG_HEAD) + "<path fill=\"#000\" d=\"M2 2 L18 2 L18 18 L2 18 Z\"/>" + SVG_TAIL;
+}
+
+// Four Bezier arcs: every one flattens to many polygon points at a fine tolerance.
+std::string circle_svg()
+{
+    return std::string(SVG_HEAD) +
+           "<path fill=\"#000\" d=\"M10 2 C14.4 2 18 5.6 18 10 C18 14.4 14.4 18 10 18 C5.6 18 2 14.4 2 10 C2 5.6 5.6 2 10 2 Z\"/>" +
+           SVG_TAIL;
+}
+
+// One path with `segments` line segments: 3 Bezier points each.
+std::string many_points_svg(size_t segments)
+{
+    std::string d = "M0 0";
+    for (size_t i = 1; i <= segments; ++i)
+        d += " L" + std::to_string(i % 19 + 1) + " " + std::to_string((i * 7) % 19 + 1);
+    return std::string(SVG_HEAD) + "<path fill=\"#000\" d=\"" + d + " Z\"/>" + SVG_TAIL;
+}
+
+// One path element holding `count` sub-paths.
+std::string many_paths_svg(size_t count)
+{
+    std::string d;
+    for (size_t i = 0; i < count; ++i)
+        d += "M0 0L1 1"; // 4 Bezier points: 50500 of them stay below SVG_MAX_POINTS
+    return std::string(SVG_HEAD) + "<path fill=\"#000\" d=\"" + d + "\"/>" + SVG_TAIL;
+}
+
+std::string many_shapes_svg(size_t count)
+{
+    std::string s = SVG_HEAD;
+    for (size_t i = 0; i < count; ++i)
+        s += "<path fill=\"#000\" d=\"M0 0L1 1L2 0Z\"/>";
+    return s + SVG_TAIL;
+}
+
+// A real SVG followed by `padding` bytes of an XML comment: compresses to almost nothing.
+std::string padded_svg(size_t padding)
+{
+    return std::string(SVG_HEAD) + "<path fill=\"#000\" d=\"M2 2 L18 2 L18 18 Z\"/><!--" + std::string(padding, 'a') + "-->" + SVG_TAIL;
+}
+
+size_t flat_point_count(const ExPolygonsWithIds &shapes)
+{
+    size_t n = 0;
+    for (const ExPolygonsWithId &s : shapes)
+        for (const ExPolygon &ep : s.expoly) {
+            n += ep.contour.size();
+            for (const Polygon &h : ep.holes)
+                n += h.size();
+        }
+    return n;
+}
+
+void write_binary_file(const fs::path &path, const std::string &bytes)
+{
+    boost::nowide::ofstream f(path.string(), std::ios::binary | std::ios::trunc);
+    REQUIRE(f.good());
+    f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    REQUIRE(f.good());
+}
+
+std::string read_binary_file(const fs::path &path)
+{
+    boost::nowide::ifstream f(path.string(), std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+
+// Copies every entry of `src` into `dst`; the entry called `replace` gets `content` instead.
+void rewrite_zip_replacing(const fs::path &src, const fs::path &dst, const std::string &replace, const std::string &content)
+{
+    mz_zip_archive in;
+    mz_zip_zero_struct(&in);
+    REQUIRE(open_zip_reader(&in, src.string()));
+    mz_zip_archive out;
+    mz_zip_zero_struct(&out);
+    REQUIRE(open_zip_writer(&out, dst.string()));
+    bool replaced = false;
+    for (mz_uint i = 0; i < mz_zip_reader_get_num_files(&in); ++i) {
+        mz_zip_archive_file_stat stat;
+        REQUIRE(mz_zip_reader_file_stat(&in, i, &stat));
+        if (stat.m_is_directory)
+            continue;
+        if (replace == stat.m_filename) {
+            REQUIRE(mz_zip_writer_add_mem(&out, stat.m_filename, content.data(), content.size(), MZ_DEFAULT_COMPRESSION));
+            replaced = true;
+            continue;
+        }
+        size_t size = 0;
+        void  *data = mz_zip_reader_extract_to_heap(&in, i, &size, 0);
+        REQUIRE((data != nullptr || size == 0));
+        REQUIRE(mz_zip_writer_add_mem(&out, stat.m_filename, data, size, MZ_DEFAULT_COMPRESSION));
+        mz_free(data);
+    }
+    REQUIRE(mz_zip_writer_finalize_archive(&out));
+    REQUIRE(close_zip_writer(&out));
+    close_zip_reader(&in);
+    REQUIRE(replaced);
+}
+
+// Changes the uncompressed size the central directory declares for `entry` (offset 24 of the
+// central directory header). The data stays what it was: the header now lies.
+void patch_declared_size(const fs::path &zip_file, const std::string &entry, std::uint32_t declared)
+{
+    std::string bytes = read_binary_file(zip_file);
+    const std::string sig("PK\x01\x02", 4);
+    bool patched = false;
+    for (size_t pos = bytes.find(sig); pos != std::string::npos; pos = bytes.find(sig, pos + 4)) {
+        if (pos + 46 > bytes.size())
+            break;
+        const size_t name_len = static_cast<unsigned char>(bytes[pos + 28]) | (static_cast<unsigned char>(bytes[pos + 29]) << 8);
+        if (name_len != entry.size() || bytes.compare(pos + 46, name_len, entry) != 0)
+            continue;
+        for (int i = 0; i < 4; ++i)
+            bytes[pos + 24 + i] = static_cast<char>((declared >> (8 * i)) & 0xFF);
+        patched = true;
+    }
+    REQUIRE(patched);
+    write_binary_file(zip_file, bytes);
+}
+
+// Reads `entry` of a zip through read_zip_entry_capped.
+bool read_entry_capped(const fs::path &zip_file, const std::string &entry, std::uint64_t cap, std::string &out, std::string *why = nullptr)
+{
+    mz_zip_archive zip;
+    mz_zip_zero_struct(&zip);
+    REQUIRE(open_zip_reader(&zip, zip_file.string()));
+    const int index = mz_zip_reader_locate_file(&zip, entry.c_str(), nullptr, 0);
+    REQUIRE(index >= 0);
+    const bool ok = read_zip_entry_capped(zip, static_cast<mz_uint>(index), cap, out, why);
+    close_zip_reader(&zip);
+    return ok;
+}
+
+struct SvgLog
+{
+    std::vector<std::string> lines;
+    SvgLog() { set_log_observer([this](int, const std::string &msg) { lines.push_back(msg); }, 3); } // warning and up
+    ~SvgLog() { set_log_observer({}, 0); }
+    bool saw(const std::string &needle) const
+    {
+        for (const std::string &line : lines)
+            if (line.find(needle) != std::string::npos)
+                return true;
+        return false;
+    }
+};
+
+const char *const SVG_ENTRY = "3D/shape_test.svg";
+
+// A project with a base cube and a second volume that carries an embedded SVG.
+void store_svg_project(const fs::path &path, const std::string &svg)
+{
+    Model        model;
+    ModelObject *object = model.add_object();
+    object->name        = "plate";
+    object->add_volume(TriangleMesh(its_make_cube(40., 40., 3.)))->name = "base";
+    ModelVolume *relief = object->add_volume(TriangleMesh(its_make_cube(10., 10., 1.)));
+    relief->name        = "relief";
+
+    EmbossShape es;
+    es.scale            = 1.;
+    es.projection.depth = 1.;
+    EmbossShape::SvgFile file;
+    file.path_in_3mf = SVG_ENTRY;
+    file.file_data   = std::make_shared<std::string>(svg);
+    es.svg_file      = std::move(file);
+    relief->emboss_shape = es;
+
+    object->add_instance();
+    object->ensure_on_bed();
+
+    const fs::path tmp = fs::temp_directory_path() / "snorca_tests";
+    fs::create_directories(tmp);
+    Slic3r::set_temporary_dir(tmp.string());
+
+    DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+    PlateData          plate;
+    plate.plate_index = 0;
+    const std::string path_str = path.string();
+    StoreParams sp;
+    sp.path     = path_str.c_str();
+    sp.model    = &model;
+    sp.config   = &cfg;
+    sp.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary;
+    sp.plate_data_list.push_back(&plate);
+    REQUIRE(store_bbs_3mf(sp));
+}
+
+struct LoadedSvgProject
+{
+    bool                         loaded = false;
+    size_t                       volumes = 0;
+    bool                         has_svg_file = false;
+    std::shared_ptr<std::string> file_data;
+};
+
+LoadedSvgProject load_svg_project(const fs::path &path)
+{
+    LoadedSvgProject          result;
+    Model                     model;
+    DynamicPrintConfig        config;
+    ConfigSubstitutionContext ctxt{ForwardCompatibilitySubstitutionRule::Enable};
+    PlateDataPtrs             plates;
+    std::vector<Preset *>     project_presets;
+    bool                      is_bbl_3mf = false;
+    Semver                    file_version;
+    const std::string         path_str = path.string();
+    REQUIRE_NOTHROW(result.loaded = load_bbs_3mf(path_str.c_str(), &config, &ctxt, &model, &plates, &project_presets, &is_bbl_3mf,
+                                                 &file_version, nullptr,
+                                                 LoadStrategy::LoadModel | LoadStrategy::LoadConfig | LoadStrategy::Silence));
+    release_PlateData_list(plates);
+    for (Preset *preset : project_presets)
+        delete preset;
+    for (const ModelObject *o : model.objects)
+        for (const ModelVolume *v : o->volumes) {
+            ++result.volumes;
+            if (v->emboss_shape.has_value() && v->emboss_shape->svg_file.has_value()) {
+                result.has_svg_file = true;
+                result.file_data    = v->emboss_shape->svg_file->file_data;
+            }
+        }
+    return result;
+}
+
+struct SvgTempDir
+{
+    fs::path dir;
+    SvgTempDir()
+    {
+        dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_svgcaps_%%%%%%%%");
+        fs::create_directories(dir);
+    }
+    ~SvgTempDir()
+    {
+        boost::system::error_code ec;
+        fs::remove_all(dir, ec);
+    }
+};
+
+} // namespace
+
+TEST_CASE("SVG limits are sane and a normal SVG is within them", "[Untrusted][Svg]")
+{
+    CHECK(SVG_SIZE_LIMIT == 8u * 1024u * 1024u);
+    CHECK(svg_size_ok(0));
+    CHECK(svg_size_ok(SVG_SIZE_LIMIT));
+    CHECK_FALSE(svg_size_ok(SVG_SIZE_LIMIT + 1));
+
+    SvgRefusal    refusal = SvgRefusal::TooLarge;
+    std::string   why;
+    NSVGimage_ptr image = nsvgParse_checked(normal_svg(), refusal, &why);
+    REQUIRE(image != nullptr);
+    CHECK(refusal == SvgRefusal::None);
+    CHECK(svg_within_limits(*image));
+
+    bool too_complex = true;
+    const ExPolygonsWithIds shapes = create_shape_with_ids(*image, NSVGLineParams{1.}, &too_complex);
+    CHECK_FALSE(too_complex);
+    CHECK_FALSE(shapes.empty());
+}
+
+TEST_CASE("an SVG with more points than the cap is refused", "[Untrusted][Svg]")
+{
+    // 3 Bezier points per line segment: well over SVG_MAX_POINTS
+    const size_t      over = SVG_MAX_POINTS / 3 + 5000;
+    const std::string svg  = many_points_svg(over);
+    REQUIRE(svg.size() < SVG_SIZE_LIMIT); // it is the point count that refuses it, not the size
+
+    SvgRefusal    refusal = SvgRefusal::None;
+    std::string   why;
+    NSVGimage_ptr image = nsvgParse_checked(svg, refusal, &why);
+    CHECK(image == nullptr);
+    CHECK(refusal == SvgRefusal::TooComplex);
+    CHECK(why == "too many points");
+
+    // below the cap the same kind of file loads
+    refusal = SvgRefusal::TooLarge;
+    CHECK(nsvgParse_checked(many_points_svg(1000), refusal) != nullptr);
+    CHECK(refusal == SvgRefusal::None);
+}
+
+TEST_CASE("an SVG with more paths or shapes than the cap is refused", "[Untrusted][Svg]")
+{
+    SvgRefusal  refusal = SvgRefusal::None;
+    std::string why;
+    CHECK(nsvgParse_checked(many_paths_svg(SVG_MAX_PATHS + 500), refusal, &why) == nullptr);
+    CHECK(refusal == SvgRefusal::TooComplex);
+    CHECK(why == "too many paths");
+
+    why.clear();
+    CHECK(nsvgParse_checked(many_shapes_svg(SVG_MAX_SHAPES + 500), refusal, &why) == nullptr);
+    CHECK(refusal == SvgRefusal::TooComplex);
+    CHECK(why == "too many shapes");
+}
+
+TEST_CASE("flattening curves stops at the polygon point budget", "[Untrusted][Svg]")
+{
+    SvgRefusal    refusal = SvgRefusal::None;
+    NSVGimage_ptr image   = nsvgParse_checked(circle_svg(), refusal);
+    REQUIRE(image != nullptr);
+
+    NSVGLineParams params{std::pow(0.01 / SCALING_FACTOR, 2)}; // 0.01 mm, as the emboss code does
+    bool           too_complex = true;
+    const size_t   total       = flat_point_count(create_shape_with_ids(*image, params, &too_complex));
+    REQUIRE_FALSE(too_complex);
+    REQUIRE(total >= 8);
+
+    params.max_flat_points = total / 4;
+    const ExPolygonsWithIds limited = create_shape_with_ids(*image, params, &too_complex);
+    CHECK(too_complex);
+    CHECK(limited.empty());
+
+    params.max_flat_points = SVG_MAX_FLAT_POINTS;
+    CHECK_FALSE(create_shape_with_ids(*image, params, &too_complex).empty());
+    CHECK_FALSE(too_complex);
+}
+
+TEST_CASE("an SVG file larger than the cap is not read from disk", "[Untrusted][Svg]")
+{
+    SvgTempDir     tmp;
+    const fs::path big = tmp.dir / "big.svg";
+    write_binary_file(big, padded_svg(static_cast<size_t>(SVG_SIZE_LIMIT) + 1024));
+    const fs::path small = tmp.dir / "small.svg";
+    write_binary_file(small, normal_svg());
+
+    bool too_large = false;
+    CHECK(read_from_disk(big.string(), SVG_SIZE_LIMIT, &too_large) == nullptr);
+    CHECK(too_large);
+
+    EmbossShape::SvgFile file;
+    file.path          = big.string();
+    SvgRefusal refusal = SvgRefusal::None;
+    CHECK(init_image(file, &refusal) == nullptr);
+    CHECK(refusal == SvgRefusal::TooLarge);
+    CHECK(file.file_data == nullptr); // nothing of it was kept
+
+    EmbossShape::SvgFile ok;
+    ok.path = small.string();
+    CHECK(init_image(ok, &refusal) != nullptr);
+    CHECK(refusal == SvgRefusal::None);
+
+    // too complex: parsed, then refused
+    const fs::path complex_file = tmp.dir / "complex.svg";
+    write_binary_file(complex_file, many_points_svg(SVG_MAX_POINTS));
+    EmbossShape::SvgFile complex;
+    complex.path = complex_file.string();
+    CHECK(init_image(complex, &refusal) == nullptr);
+    CHECK(refusal == SvgRefusal::TooComplex);
+}
+
+TEST_CASE("read_zip_entry_capped refuses a declared size above the cap without allocating it", "[Untrusted][Svg][ZipBomb]")
+{
+    SvgTempDir     tmp;
+    const fs::path zip = tmp.dir / "declared.zip";
+    write_zip_entries(zip, {{"a.svg", normal_svg()}, {"b.svg", std::string(3 * 1024 * 1024, ' ')}});
+
+    std::string out, why;
+    CHECK(read_entry_capped(zip, "a.svg", 1024 * 1024, out, &why));
+    CHECK(out == normal_svg());
+
+    CHECK_FALSE(read_entry_capped(zip, "b.svg", 1024 * 1024, out, &why));
+    CHECK(why == "entry is larger than the allowed size");
+    CHECK(out.empty());
+    CHECK(out.capacity() < 1024 * 1024); // the 3 MiB the header declares were never reserved
+
+    CHECK(read_entry_capped(zip, "b.svg", 4 * 1024 * 1024, out, &why));
+    CHECK(out.size() == 3 * 1024 * 1024);
+}
+
+TEST_CASE("a zip bomb SVG entry is refused", "[Untrusted][Svg][ZipBomb]")
+{
+    SvgTempDir     tmp;
+    const fs::path zip = tmp.dir / "bomb.zip";
+    // 64 MiB of one repeated byte deflates to about 64 KiB
+    write_zip_entries(zip, {{"bomb.svg", padded_svg(64u * 1024u * 1024u)}});
+    REQUIRE(fs::file_size(zip) < 1024 * 1024);
+
+    std::string out, why;
+    CHECK_FALSE(read_entry_capped(zip, "bomb.svg", SVG_SIZE_LIMIT, out, &why));
+    CHECK(out.empty());
+    CHECK(out.capacity() < SVG_SIZE_LIMIT);
+}
+
+TEST_CASE("an SVG entry whose header understates its size cannot grow past the declared size", "[Untrusted][Svg][ZipBomb]")
+{
+    SvgTempDir     tmp;
+    const fs::path zip = tmp.dir / "lying.zip";
+    write_zip_entries(zip, {{"liar.svg", padded_svg(200000)}});
+    patch_declared_size(zip, "liar.svg", 1000);
+
+    std::string out, why;
+    CHECK_FALSE(read_entry_capped(zip, "liar.svg", SVG_SIZE_LIMIT, out, &why));
+    CHECK(out.empty());
+    CHECK(out.capacity() < 100000);
+}
+
+TEST_CASE("a 3MF with a normal SVG entry keeps loading it", "[Untrusted][Svg][3mf]")
+{
+    SvgTempDir     tmp;
+    const fs::path path = tmp.dir / "normal.3mf";
+    store_svg_project(path, normal_svg());
+
+    SvgLog                 log;
+    const LoadedSvgProject loaded = load_svg_project(path);
+    CHECK(loaded.loaded);
+    CHECK(loaded.volumes == 2);
+    REQUIRE(loaded.has_svg_file);
+    REQUIRE(loaded.file_data != nullptr);
+    CHECK(*loaded.file_data == normal_svg());
+    CHECK_FALSE(log.saw("was not loaded"));
+
+    // and the loaded text is a usable drawing
+    EmbossShape::SvgFile file;
+    file.file_data = loaded.file_data;
+    CHECK(init_image(file) != nullptr);
+}
+
+TEST_CASE("a 3MF whose SVG entry is a zip bomb loads without the SVG", "[Untrusted][Svg][3mf][ZipBomb]")
+{
+    SvgTempDir     tmp;
+    const fs::path base = tmp.dir / "base.3mf";
+    store_svg_project(base, normal_svg());
+
+    const fs::path bomb = tmp.dir / "bomb.3mf";
+    rewrite_zip_replacing(base, bomb, SVG_ENTRY, padded_svg(64u * 1024u * 1024u));
+    REQUIRE(fs::file_size(bomb) < 4 * 1024 * 1024);
+
+    SvgLog                 log;
+    const LoadedSvgProject loaded = load_svg_project(bomb);
+    CHECK(loaded.loaded);               // the rest of the project still loads
+    CHECK(loaded.volumes == 2);         // with the baked mesh of the relief
+    REQUIRE(loaded.has_svg_file);       // the shape is still marked as an SVG shape ...
+    CHECK(loaded.file_data == nullptr); // ... but there is no SVG text to re-edit
+    CHECK(log.saw("was not loaded"));
+}
+
+TEST_CASE("a 3MF whose SVG entry declares more than the cap is refused before allocating", "[Untrusted][Svg][3mf][ZipBomb]")
+{
+    SvgTempDir     tmp;
+    const fs::path base = tmp.dir / "base.3mf";
+    store_svg_project(base, normal_svg());
+
+    // same archive, but the central directory now claims 512 MiB for the SVG entry
+    const fs::path lying = tmp.dir / "lying.3mf";
+    rewrite_zip_replacing(base, lying, SVG_ENTRY, normal_svg());
+    patch_declared_size(lying, SVG_ENTRY, 512u * 1024u * 1024u);
+
+    SvgLog                 log;
+    const LoadedSvgProject loaded = load_svg_project(lying);
+    CHECK(loaded.loaded);
+    CHECK(loaded.volumes == 2);
+    REQUIRE(loaded.has_svg_file);
+    CHECK(loaded.file_data == nullptr);
+    CHECK(log.saw("was not loaded"));
+    CHECK(log.saw("larger than the allowed size"));
+}

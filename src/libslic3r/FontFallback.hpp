@@ -3,13 +3,14 @@
 
 // Groundwork for font fallback in Emboss text: when the selected font has no glyph for a character, take
 // it from a bundled symbol font instead of dropping it. This file holds the pure decisions and helpers; it
-// is not wired into text2vshapes yet.
+// is used by text2vshapes (Emboss.cpp) and by the text box of the Emboss tool.
 //
 // The bundled font is a subset of Noto Sans Symbols 2 (SIL OFL 1.1), resources/fonts/NotoSansSymbols2-Subset.ttf,
 // with its licence next to it (OFL-NotoSansSymbols2.txt).
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -54,6 +55,24 @@ FontReferenceHeights font_reference_heights(const Emboss::FontFile &font, unsign
 
 // Location of the bundled symbol font subset: resources_dir() + "/fonts/NotoSansSymbols2-Subset.ttf"
 std::string bundled_symbol_font_path();
+
+// The bundled symbol font, loaded once per process from bundled_symbol_font_path(); nullptr when it
+// cannot be loaded (then nothing falls back). Thread safe.
+std::shared_ptr<const Emboss::FontFile> bundled_symbol_font();
+
+// Characters of a text sorted by the font that draws them, for the text box (each character once,
+// line breaks and tabs left out): `primary` the selected font draws, `fallback` only the fallback font
+// draws, `inline_shapes` are placeholders of the inline-shape table. `exist_unknown` when some other
+// character is drawn by nobody (the warning "unknown glyph").
+struct TextGlyphSplit
+{
+    std::string primary;
+    std::string fallback;
+    std::vector<uint32_t> inline_shapes;
+    bool exist_unknown = false;
+};
+TextGlyphSplit split_text_by_glyph_source(const std::string &utf8, const GlyphCoverage &primary, const GlyphCoverage &fallback,
+                                          const std::function<bool(uint32_t)> &is_inline_shape);
 
 // Curated symbols of the picker, in groups. Every code point is covered by the bundled font.
 struct SymbolGroup

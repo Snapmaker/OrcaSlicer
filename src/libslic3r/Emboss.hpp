@@ -18,6 +18,8 @@ namespace Slic3r {
 /// class with only static function add ability to engraved OR raised
 /// text OR polygons onto model surface
 /// </summary>
+class BuiltinShapeLibrary; // InlineShapes.hpp
+
 namespace Emboss
 {    
     static const float UNION_DELTA = 50.0f; // [approx in nano meters depends on volume scale]
@@ -167,6 +169,29 @@ namespace Emboss
     using GlyphAdvances = std::vector<GlyphAdvance>;
     // Same as above, plus the advance box of every entry (same size and order as the result)
     ExPolygonsWithIds text2vshapes(FontFileWithCache &font, const std::wstring& text, const FontProp &font_prop, const std::function<bool()>& was_canceled, GlyphAdvances &advances);
+
+    /// <summary>
+    /// Where glyphs come from besides the selected font.
+    /// - Inline shapes: a placeholder character (private use) of the table is drawn as its shape, sized and
+    ///   placed like a letter (InlineShapes.hpp). The table wins over the font for its codes. Glyphs of the
+    ///   table are cached per call only: the font cache is shared by volumes that may use one code for
+    ///   different shapes.
+    /// - Font fallback: a character the selected font lacks is taken from the fallback font (by default the
+    ///   bundled symbol font, FontFallback.hpp), scaled to the same em and on the same baseline. A character
+    ///   no font has stays empty with no advance, as before.
+    /// The default (no table, bundled fallback) is what the overloads above use.
+    /// </summary>
+    struct TextGlyphSources
+    {
+        // per-volume table of inline shapes; nullptr = none
+        const InlineShapeTable *inline_shapes = nullptr;
+        // built-in shapes; nullptr = BuiltinShapeLibrary::instance()
+        const BuiltinShapeLibrary *library = nullptr;
+        // font for characters the selected font lacks; nullptr = the bundled symbol font
+        std::shared_ptr<const FontFile> fallback_font;
+        bool use_fallback = true;
+    };
+    ExPolygonsWithIds text2vshapes(FontFileWithCache &font, const std::wstring& text, const FontProp &font_prop, const std::function<bool()>& was_canceled, GlyphAdvances &advances, const TextGlyphSources &sources);
 
     const unsigned ENTER_UNICODE = static_cast<unsigned>('\n');
     /// Sum of character '\n'

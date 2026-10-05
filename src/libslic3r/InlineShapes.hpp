@@ -30,104 +30,15 @@
 
 #include "ExPolygon.hpp"
 #include "Emboss.hpp" // Emboss::Glyph
+#include "InlineShapeTable.hpp"
 
 namespace Slic3r {
-
-// ---- limits -----------------------------------------------------------------------------------
-// Local caps. Another branch (fix/svg-size-caps) adds general SVG caps; reuse its constants once they
-// land and delete the duplicates here.
-struct InlineShapeLimits
-{
-    // SVG data accepted by load_inline_svg() (a 3MF entry, or the data of a user file)
-    static constexpr size_t max_svg_bytes = 2u * 1024u * 1024u;
-    // size of an SVG file a user may pick (checked by the UI before it reads the file)
-    static constexpr size_t max_svg_file_pick_bytes = 512u * 1024u;
-    // distinct shapes in one text volume
-    static constexpr size_t max_shapes_per_text = 32;
-    // placeholders in one text
-    static constexpr size_t max_placeholders_per_text = 200;
-    // nanosvg shapes / control points accepted before any geometry is built
-    static constexpr size_t max_svg_shapes         = 2000;
-    static constexpr size_t max_svg_control_points = 30000;
-    // points of the flattened outline: above simplify_above_points the outline is simplified,
-    // above reject_above_points (before simplification) the SVG is rejected
-    static constexpr size_t simplify_above_points = 5000;
-    static constexpr size_t reject_above_points   = 50000;
-    // widest accepted aspect ratio of a shape (width / height)
-    static constexpr double max_aspect = 64.;
-};
-
-// ---- placeholders -----------------------------------------------------------------------------
-// BMP private-use range reserved for placeholders (ImWchar and Windows wchar_t are 16 bit).
-// U+F8FF (the Apple logo in Apple fonts) is left out.
-constexpr uint32_t INLINE_SHAPE_CODE_FIRST = 0xF700;
-constexpr uint32_t INLINE_SHAPE_CODE_LAST  = 0xF8FE;
-
-inline bool is_inline_shape_code(uint32_t cp) { return cp >= INLINE_SHAPE_CODE_FIRST && cp <= INLINE_SHAPE_CODE_LAST; }
 
 // One coordinate unit of a loaded shape is 1/INLINE_SHAPE_UNIT of the design box height.
 constexpr int INLINE_SHAPE_UNIT = 1000000;
 
-// ---- table model ------------------------------------------------------------------------------
-enum class InlineShapeSource : uint8_t { Builtin = 0, Svg = 1 };
-// Where the shape sits vertically (see place_inline_shape).
-enum class InlineShapeAnchor : uint8_t {
-    Baseline      = 0, // bottom of the shape's box on the baseline
-    XHeightCenter = 1, // centre of the box at half the x-height (bullet-like)
-    CapCenter     = 2, // centre of the box at half the cap height (plus, minus)
-};
-
 const char *to_string(InlineShapeAnchor anchor);
 std::optional<InlineShapeAnchor> inline_shape_anchor_from_string(const std::string &name);
-
-struct InlineShape
-{
-    uint16_t          code   = 0; // placeholder (private-use) code point used in the text
-    InlineShapeSource source = InlineShapeSource::Builtin;
-    // Builtin: id in the built-in library ("star"). Svg: display name only.
-    std::string id;
-    // Svg: the embedded file. The local path is never stored (privacy).
-    std::shared_ptr<const std::string> svg_data;
-    // Svg: entry name in the 3MF ("3D/inline_<hash8>.svg"); empty until assigned.
-    std::string path_in_3mf;
-
-    // Placement, relative to the font so it follows the size slider.
-    float             scale  = 1.f;  // 1 = cap height
-    float             dy     = 0.f;  // baseline offset in em (+ up)
-    float             gap_l  = 0.06f; // em, added before the shape
-    float             gap_r  = 0.06f; // em, added after the shape
-    bool              flip_x = false;
-    InlineShapeAnchor anchor = InlineShapeAnchor::Baseline;
-
-    // equal in everything but the placeholder code (used to share one code between equal entries)
-    bool same_content(const InlineShape &other) const;
-
-    template<class Archive> void save(Archive &ar) const
-    {
-        ar(code, static_cast<uint8_t>(source), id, path_in_3mf, scale, dy, gap_l, gap_r, flip_x, static_cast<uint8_t>(anchor));
-        const bool has_data = svg_data != nullptr;
-        ar(has_data);
-        if (has_data)
-            ar(*svg_data);
-    }
-    template<class Archive> void load(Archive &ar)
-    {
-        uint8_t source_u8 = 0, anchor_u8 = 0;
-        ar(code, source_u8, id, path_in_3mf, scale, dy, gap_l, gap_r, flip_x, anchor_u8);
-        source = source_u8 == static_cast<uint8_t>(InlineShapeSource::Svg) ? InlineShapeSource::Svg : InlineShapeSource::Builtin;
-        anchor = anchor_u8 <= static_cast<uint8_t>(InlineShapeAnchor::CapCenter) ? static_cast<InlineShapeAnchor>(anchor_u8) :
-                                                                                    InlineShapeAnchor::Baseline;
-        bool has_data = false;
-        ar(has_data);
-        svg_data.reset();
-        if (has_data) {
-            std::string data;
-            ar(data);
-            svg_data = std::make_shared<const std::string>(std::move(data));
-        }
-    }
-};
-using InlineShapeTable = std::vector<InlineShape>;
 
 // "is this code a code point the current font draws?" (so allocation can avoid icon-font codes)
 using CodePointPredicate = std::function<bool(uint32_t)>;
@@ -164,6 +75,8 @@ std::string inline_shapes_to_json(const InlineShapeTable &table);
 // Tolerant reader for untrusted input: malformed entries are skipped (counted in *skipped), values are
 // clamped, at most max_shapes_per_text entries are kept. nullopt when the text is not a JSON array.
 std::optional<InlineShapeTable> inline_shapes_from_json(const std::string &json, size_t *skipped = nullptr);
+// True for the entry names the writer makes: "3D/inline_" + letters, digits, '_' or '-' + ".svg"
+bool is_inline_svg_entry_name(const std::string &entry_name);
 // "3D/inline_<hash8>.svg" for the data
 std::string inline_svg_entry_name(const std::string &svg_data);
 // gives Svg entries without an entry name the name derived from their data
@@ -186,7 +99,8 @@ enum class InlineBoxMode { DesignBox, InkBox };
 
 // Loads SVG data into a unit shape. All colours are ignored: every visible filled or stroked shape is
 // unioned into one silhouette (holes and fill rule come from the SVG, strokes become filled outlines,
-// dashes are ignored). Applies the caps in InlineShapeLimits; nullopt (with *error) on a malformed,
+// dashes are ignored). Applies the shared SVG caps of UntrustedInput.hpp and the
+// glyph caps in InlineShapeLimits; nullopt (with *error) on a malformed,
 // empty or over-limit SVG. Never throws.
 std::optional<InlineUnitShape> load_inline_svg(const std::string &svg, InlineBoxMode mode, std::string *error = nullptr);
 
@@ -269,6 +183,10 @@ struct InlineFontMetrics
     int                  char_gap = 0;
 };
 
+// Metrics of the selected font (collection number, boldness, skew and char gap of the style) in shape units
+// (defined in Emboss.cpp, next to the letters it must match)
+InlineFontMetrics inline_font_metrics(const Emboss::FontFile &font, const FontProp &prop);
+
 // Glyph of the shape for the text layout: same struct and conventions as Emboss get_glyph (shape in glyph
 // space with the pen at x = 0, y up, baseline y = 0; advance_width and left_side_bearing in the same units;
 // boldness and skew applied like letters). nullopt for an empty shape or unusable metrics.
@@ -278,6 +196,31 @@ std::optional<Emboss::Glyph> place_inline_shape(const InlineShape &entry, const 
 // nullopt means "unknown shape": the caller treats it like a missing glyph (zero width).
 std::optional<Emboss::Glyph> make_inline_glyph(const InlineShape &entry, const BuiltinShapeLibrary &library, InlineShapeCache &cache,
                                                const InlineFontMetrics &metrics);
+
+// ---- text box (GUI) ---------------------------------------------------------------------------
+// Coverage of one pixel of a shape drawn into a bitmap: 0 = empty, 255 = inside. The shape (any units)
+// is mapped with px = (x - origin.x) * scale, py = (origin.y - y) * scale (y up in the shape, rows go
+// down). 4 x 4 samples per pixel, even-odd over all contours (unioned ExPolygons: holes stay holes).
+std::vector<uint8_t> rasterize_shape(const ExPolygons &shape, int width, int height, const Vec2d &origin, double scale);
+
+// Replaces the bytes [sel_a, sel_b) of the UTF-8 text by `insert` (the positions are clamped to the text
+// and moved back to the start of a character, so a character is never split). Returns the byte position
+// right after the inserted text (the new caret).
+size_t insert_utf8_at(std::string &text, size_t sel_a, size_t sel_b, const std::string &insert);
+
+// A user SVG file as an inline shape: read with the shared size cap (untrusted::SVG_SIZE_LIMIT), checked
+// with the shared complexity caps and turned into a silhouette once (load_inline_svg). The entry holds
+// the data and a display name from the file name, never the path. On refusal nullopt and *error says
+// why in words for the user; *too_large tells the size refusal apart.
+std::optional<InlineShape> load_user_inline_svg(const std::string &path, std::string *error = nullptr, bool *too_large = nullptr);
+
+// Name of a text volume: line breaks become spaces, placeholders of the table become "[star]",
+// placeholders the table does not know are dropped. Never holds private-use placeholder characters.
+std::string text_volume_name(const std::string &utf8, const InlineShapeTable &table);
+
+// Display name of a user SVG from its file name: no folders, no extension, at most 40 characters,
+// nothing that would confuse the "[name]" volume names. "svg" when nothing is left.
+std::string inline_svg_display_name(const std::string &file_name);
 
 } // namespace Slic3r
 

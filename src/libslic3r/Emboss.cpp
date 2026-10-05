@@ -20,6 +20,8 @@
 #include "libslic3r/AABBTreeLines.hpp" // search structure for found close points
 #include "libslic3r/Line.hpp"
 #include "libslic3r/BoundingBox.hpp"
+#include "libslic3r/FontFallback.hpp"
+#include "libslic3r/InlineShapes.hpp"
 
 // Experimentaly suggested ration of font ascent by multiple fonts
 // to get approx center of normal text line
@@ -81,6 +83,7 @@ fontinfo_opt load_font_info(const unsigned char *data, unsigned int index = 0);
 std::optional<Glyph> get_glyph(const stbtt_fontinfo &font_info, int unicode_letter, float flatness);
 
 // take glyph from cache
+void apply_font_prop(Glyph &glyph, const FontProp &font_prop);
 const Glyph* get_glyph(int unicode, const FontFile &font, const FontProp &font_prop, 
         Glyphs &cache, fontinfo_opt &font_info_opt);
 
@@ -785,6 +788,16 @@ const Glyph* get_glyph(
     if (!glyph_opt.has_value()) return nullptr;
 
     Glyph &glyph = *glyph_opt;
+    apply_font_prop(glyph, font_prop);
+    auto [it, success] = cache.try_emplace(unicode, std::move(glyph));
+    assert(success);
+    return &it->second;
+}
+
+// char gap, scale to shape units, boldness and skew: what the style does to every glyph
+// (glyph in font units, shape already in shape units)
+void apply_font_prop(Glyph &glyph, const FontProp &font_prop)
+{
     if (font_prop.char_gap.has_value()) 
         glyph.advance_width += *font_prop.char_gap;
 
@@ -809,6 +822,46 @@ const Glyph* get_glyph(
             }
         }
     }
+}
+
+// Glyph of a character the selected font lacks, from the fallback font: scaled to the em of the
+// selected font, on the same baseline, styled like a letter and cached with the letters (the decision
+// depends only on the two fonts, so the cache of the selected font may hold it).
+const Glyph *get_fallback_glyph(int unicode, const FontFile &font, const FontProp &font_prop, Glyphs &cache,
+                                const FontFile &fallback, fontinfo_opt &fallback_info_opt)
+{
+    const float RESOLUTION = 0.0125f; // [in mm], as get_glyph
+    if (!is_font_fallback_candidate(static_cast<uint32_t>(unicode)))
+        return nullptr;
+    unsigned int font_index = font_prop.collection_number.value_or(0);
+    if (!is_valid(font, font_index) || !is_valid(fallback, 0))
+        return nullptr;
+    if (!fallback_info_opt.has_value()) {
+        fallback_info_opt = load_font_info(fallback.data->data(), 0);
+        if (!fallback_info_opt.has_value())
+            return nullptr;
+    }
+    const double em_scale = fallback_em_scale(font.infos[font_index].unit_per_em, fallback.infos[0].unit_per_em);
+    float flatness = font.infos[font_index].ascent * RESOLUTION / font_prop.size_in_mm;
+    if (flatness < RESOLUTION) flatness = RESOLUTION;
+    flatness = static_cast<float>(flatness / em_scale); // in fallback font units
+
+    std::optional<Glyph> glyph_opt = get_glyph(*fallback_info_opt, unicode, flatness);
+    if (!glyph_opt.has_value())
+        return nullptr;
+    Glyph &glyph = *glyph_opt;
+    if (em_scale != 1.) {
+        for (ExPolygon &expolygon : glyph.shape) {
+            for (Point &p : expolygon.contour.points)
+                p = Point(static_cast<coord_t>(std::llround(p.x() * em_scale)), static_cast<coord_t>(std::llround(p.y() * em_scale)));
+            for (Polygon &hole : expolygon.holes)
+                for (Point &p : hole.points)
+                    p = Point(static_cast<coord_t>(std::llround(p.x() * em_scale)), static_cast<coord_t>(std::llround(p.y() * em_scale)));
+        }
+        glyph.advance_width     = static_cast<int>(std::lround(glyph.advance_width * em_scale));
+        glyph.left_side_bearing = static_cast<int>(std::lround(glyph.left_side_bearing * em_scale));
+    }
+    apply_font_prop(glyph, font_prop);
     auto [it, success] = cache.try_emplace(unicode, std::move(glyph));
     assert(success);
     return &it->second;
@@ -1190,8 +1243,41 @@ int Emboss::get_line_height(const FontFile &font, const FontProp &prop) {
 }
 
 namespace {
+// Per text2vshapes call: inline shapes of the table and the fallback font (see TextGlyphSources)
+struct GlyphSourcesState
+{
+    const InlineShapeTable    *inline_shapes = nullptr;
+    const BuiltinShapeLibrary *library       = nullptr;
+    InlineShapeCache           inline_cache;
+    std::optional<InlineFontMetrics> metrics;
+    std::map<uint32_t, std::optional<Glyph>> inline_glyphs; // per call, never in the font cache
+
+    std::shared_ptr<const FontFile> fallback;
+    fontinfo_opt                    fallback_info;
+
+    // nullptr when the code is not a shape of the table; an empty glyph when the shape is unusable
+    const Glyph *inline_glyph(uint32_t code, const FontFile &font, const FontProp &font_prop)
+    {
+        if (inline_shapes == nullptr || !is_inline_shape_code(code))
+            return nullptr;
+        const InlineShape *entry = find_inline_shape(*inline_shapes, code);
+        if (entry == nullptr)
+            return nullptr;
+        auto it = inline_glyphs.find(code);
+        if (it == inline_glyphs.end()) {
+            if (!metrics.has_value())
+                metrics = inline_font_metrics(font, font_prop);
+            const BuiltinShapeLibrary &lib = library != nullptr ? *library : BuiltinShapeLibrary::instance();
+            it = inline_glyphs.emplace(code, make_inline_glyph(*entry, lib, inline_cache, *metrics)).first;
+        }
+        static const Glyph empty;
+        return it->second.has_value() ? &*it->second : &empty;
+    }
+};
+
 ExPolygons letter2shapes(
-    wchar_t letter, Point &cursor, FontFileWithCache &font_with_cache, const FontProp &font_prop, fontinfo_opt& font_info_cache)
+    wchar_t letter, Point &cursor, FontFileWithCache &font_with_cache, const FontProp &font_prop, fontinfo_opt& font_info_cache,
+    GlyphSourcesState *sources = nullptr)
 {
     assert(font_with_cache.has_value());
     if (!font_with_cache.has_value())
@@ -1219,10 +1305,20 @@ ExPolygons letter2shapes(
         return {};
 
     int unicode = static_cast<int>(letter);
-    auto it = cache.find(unicode);
 
-    // Create glyph from font file and cache it
-    const Glyph *glyph_ptr = (it != cache.end()) ? &it->second : get_glyph(unicode, font, font_prop, cache, font_info_cache);
+    // Inline shape of the table: wins over the font, never cached with the letters
+    const Glyph *glyph_ptr = sources != nullptr ? sources->inline_glyph(static_cast<uint32_t>(unicode), font, font_prop) : nullptr;
+    if (glyph_ptr != nullptr && glyph_ptr->shape.empty() && glyph_ptr->advance_width == 0)
+        return {}; // unusable shape: like a missing glyph
+
+    if (glyph_ptr == nullptr) {
+        auto it = cache.find(unicode);
+        // Create glyph from font file and cache it
+        glyph_ptr = (it != cache.end()) ? &it->second : get_glyph(unicode, font, font_prop, cache, font_info_cache);
+        // Not in the selected font: the fallback font (bundled symbols)
+        if (glyph_ptr == nullptr && sources != nullptr && sources->fallback != nullptr)
+            glyph_ptr = get_fallback_glyph(unicode, font, font_prop, cache, *sources->fallback, sources->fallback_info);
+    }
     if (glyph_ptr == nullptr)
         return {};
 
@@ -1318,6 +1414,10 @@ ExPolygonsWithIds Emboss::text2vshapes(FontFileWithCache &font_with_cache, const
 }
 
 ExPolygonsWithIds Emboss::text2vshapes(FontFileWithCache &font_with_cache, const std::wstring& text, const FontProp &font_prop, const std::function<bool()>& was_canceled, GlyphAdvances &advances){
+    return text2vshapes(font_with_cache, text, font_prop, was_canceled, advances, TextGlyphSources{});
+}
+
+ExPolygonsWithIds Emboss::text2vshapes(FontFileWithCache &font_with_cache, const std::wstring& text, const FontProp &font_prop, const std::function<bool()>& was_canceled, GlyphAdvances &advances, const TextGlyphSources &glyph_sources){
     advances.clear();
     assert(font_with_cache.has_value());
     const FontFile &font = *font_with_cache.font_file;
@@ -1329,6 +1429,11 @@ ExPolygonsWithIds Emboss::text2vshapes(FontFileWithCache &font_with_cache, const
     Point cursor(0, 0);
 
     fontinfo_opt font_info_cache;  
+    GlyphSourcesState sources;
+    sources.inline_shapes = glyph_sources.inline_shapes != nullptr && !glyph_sources.inline_shapes->empty() ? glyph_sources.inline_shapes : nullptr;
+    sources.library       = glyph_sources.library;
+    if (glyph_sources.use_fallback)
+        sources.fallback = glyph_sources.fallback_font != nullptr ? glyph_sources.fallback_font : bundled_symbol_font();
     ExPolygonsWithIds result;
     result.reserve(text.size());
     advances.reserve(text.size());
@@ -1342,7 +1447,7 @@ ExPolygonsWithIds Emboss::text2vshapes(FontFileWithCache &font_with_cache, const
         }
         unsigned id = static_cast<unsigned>(letter);
         const coord_t x_before = cursor.x();
-        result.push_back({id, letter2shapes(letter, cursor, font_with_cache, font_prop, font_info_cache)});
+        result.push_back({id, letter2shapes(letter, cursor, font_with_cache, font_prop, font_info_cache, &sources)});
         GlyphAdvance advance;
         if (letter != L'\n' && letter != L'\r' && cursor.x() > x_before) {
             advance.x_min = static_cast<double>(x_before);
@@ -1488,6 +1593,25 @@ std::string Emboss::create_range_text(const std::string &text,
         }), ws.end());
 
     return boost::nowide::narrow(ws);
+}
+
+InlineFontMetrics Slic3r::inline_font_metrics(const FontFile &font, const FontProp &prop)
+{
+    InlineFontMetrics m;
+    const unsigned int font_index = prop.collection_number.value_or(0);
+    if (!is_valid(font, font_index))
+        return m;
+    const FontReferenceHeights h = font_reference_heights(font, font_index);
+    m.cap_height = h.cap_height / SHAPE_SCALE;
+    m.x_height   = h.x_height / SHAPE_SCALE;
+    m.em         = h.em / SHAPE_SCALE;
+    if (prop.boldness.has_value() && prop.size_in_mm > 0.f)
+        m.boldness_delta = *prop.boldness / SHAPE_SCALE / prop.size_in_mm;
+    if (prop.skew.has_value())
+        m.skew = static_cast<double>(*prop.skew);
+    if (prop.char_gap.has_value())
+        m.char_gap = static_cast<int>(*prop.char_gap / SHAPE_SCALE);
+    return m;
 }
 
 double Emboss::get_text_shape_scale(const FontProp &fp, const FontFile &ff)

@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <memory>
+#include <mutex>
+#include <set>
 
 #include "imgui/imstb_truetype.h" // stbtt_fontinfo (the implementation is compiled in Emboss.cpp)
 #include "Utils.hpp"              // resources_dir()
+#include "InlineShapes.hpp"       // utf8 helpers, placeholder range
 
 namespace Slic3r {
 
@@ -90,6 +93,52 @@ FontReferenceHeights font_reference_heights(const Emboss::FontFile &font, unsign
 }
 
 std::string bundled_symbol_font_path() { return resources_dir() + "/fonts/NotoSansSymbols2-Subset.ttf"; }
+
+std::shared_ptr<const Emboss::FontFile> bundled_symbol_font()
+{
+    static std::shared_ptr<const Emboss::FontFile> font;
+    static std::once_flag                          once;
+    std::call_once(once, [] {
+        if (resources_dir().empty())
+            return;
+        try {
+            std::unique_ptr<Emboss::FontFile> file = Emboss::create_font_file(bundled_symbol_font_path().c_str());
+            if (file != nullptr && !file->infos.empty())
+                font = std::move(file);
+        } catch (...) {
+            font.reset();
+        }
+    });
+    return font;
+}
+
+TextGlyphSplit split_text_by_glyph_source(const std::string &utf8, const GlyphCoverage &primary, const GlyphCoverage &fallback,
+                                          const std::function<bool(uint32_t)> &is_inline_shape)
+{
+    TextGlyphSplit         out;
+    std::set<uint32_t>     seen;
+    std::vector<uint32_t>  prim, fall;
+    for (uint32_t cp : utf8_to_codepoints(utf8)) {
+        if (cp == '\n' || cp == '\r' || cp == '\t' || !seen.insert(cp).second)
+            continue;
+        if (is_inline_shape_code(cp) && is_inline_shape && is_inline_shape(cp)) {
+            out.inline_shapes.push_back(cp);
+            continue;
+        }
+        switch (choose_glyph_source(cp, primary, fallback)) {
+        case GlyphSource::Primary: prim.push_back(cp); break;
+        case GlyphSource::Fallback: fall.push_back(cp); break;
+        case GlyphSource::None:
+        default:
+            if (cp != ' ')
+                out.exist_unknown = true;
+            break;
+        }
+    }
+    out.primary  = codepoints_to_utf8(prim);
+    out.fallback = codepoints_to_utf8(fall);
+    return out;
+}
 
 const std::vector<SymbolGroup> &symbol_picker_groups()
 {

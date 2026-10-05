@@ -15,6 +15,7 @@
 #include <libslic3r/Emboss.hpp>
 #include <libslic3r/FontFallback.hpp>
 #include <libslic3r/InlineShapes.hpp>
+#include <libslic3r/UntrustedInput.hpp>
 
 using namespace Slic3r;
 using Catch::Matchers::WithinAbs;
@@ -696,30 +697,47 @@ TEST_CASE("Inline shapes: SVG limits and hostile input", "[InlineShapes]")
         REQUIRE_NOTHROW(load_inline_svg("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 0 0\"><rect width=\"1\" height=\"1\"/></svg>", InlineBoxMode::InkBox));
         REQUIRE_NOTHROW(load_inline_svg("<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"10\" height=\"10\"/></svg>", InlineBoxMode::DesignBox));
     }
-    SECTION("over the byte cap")
+    SECTION("over the shared byte cap (UntrustedInput SVG_SIZE_LIMIT)")
     {
-        std::string big = svg_wrap(std::string(InlineShapeLimits::max_svg_bytes + 1, ' '));
+        std::string big = svg_wrap(std::string(size_t(untrusted::SVG_SIZE_LIMIT) + 1, ' '));
         CHECK_FALSE(load_inline_svg(big, InlineBoxMode::InkBox, &error).has_value());
         CHECK_FALSE(error.empty());
     }
-    SECTION("too many shapes")
+    SECTION("too many shapes (shared cap)")
     {
         std::string body;
-        for (size_t i = 0; i < InlineShapeLimits::max_svg_shapes + 1; ++i)
+        body.reserve((untrusted::SVG_MAX_SHAPES + 1) * 48);
+        for (size_t i = 0; i < untrusted::SVG_MAX_SHAPES + 1; ++i)
             body += "<rect x=\"" + std::to_string(i % 90) + "\" y=\"0\" width=\"5\" height=\"5\"/>";
         CHECK_FALSE(load_inline_svg(svg_wrap(body), InlineBoxMode::InkBox, &error).has_value());
+        INFO(error);
+        CHECK(error.find("too complex") != std::string::npos);
     }
-    SECTION("too many points")
+    SECTION("too many points (shared cap)")
     {
         std::string d = "M0 0";
-        for (int i = 1; i <= 12000; ++i) // 3 control points per line segment in nanosvg
+        const int   segments = int(untrusted::SVG_MAX_POINTS / 3) + 10; // 3 control points per line segment in nanosvg
+        d.reserve(size_t(segments) * 10);
+        for (int i = 1; i <= segments; ++i)
             d += " L" + std::to_string(i % 97) + " " + std::to_string((i * 7) % 89);
         CHECK_FALSE(load_inline_svg(svg_wrap("<path d=\"" + d + "\"/>"), InlineBoxMode::InkBox, &error).has_value());
+        CHECK(error.find("too many points") != std::string::npos);
+    }
+    SECTION("a zig-zag under the shared caps is still refused or simplified, never slow")
+    {
+        std::string d = "M0 0";
+        for (int i = 1; i <= 12000; ++i)
+            d += " L" + std::to_string(i % 97) + " " + std::to_string((i * 7) % 89);
+        const auto t0 = std::chrono::steady_clock::now();
+        std::optional<InlineUnitShape> u = load_inline_svg(svg_wrap("<path d=\"" + d + "\"/>"), InlineBoxMode::InkBox, &error);
+        CHECK(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < 20.);
+        if (u.has_value())
+            CHECK(point_count(u->shape) <= InlineShapeLimits::simplify_above_points);
     }
     SECTION("a detailed outline is simplified under the cap")
     {
         std::string d;
-        const int n = 8000; // 24k control points: under the control cap, over simplify_above_points
+        const int n = 8000; // 24k control points: under the shared caps, over simplify_above_points
         for (int i = 0; i < n; ++i) {
             const double a = 2. * PI * i / n, r = 40. + 0.004 * ((i * 37) % 11);
             char buf[64];

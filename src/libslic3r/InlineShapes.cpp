@@ -11,6 +11,7 @@
 #include "BoundingBox.hpp"
 #include "ClipperUtils.hpp"
 #include "NSVGUtils.hpp"
+#include "UntrustedInput.hpp"
 #include "Utils.hpp" // resources_dir()
 
 namespace Slic3r {
@@ -205,6 +206,22 @@ size_t purge_unused_inline_shapes(InlineShapeTable &table, const std::string &ut
     return before - table.size();
 }
 
+namespace {
+// a name from the table may come from a file: no controls, no placeholders, no brackets
+std::string clean_shape_name(const std::string &name, size_t max_chars)
+{
+    std::vector<uint32_t> cps;
+    for (uint32_t cp : utf8_to_codepoints(name)) {
+        if (cp < 0x20 || cp == 0x7F || cp == '[' || cp == ']' || cp == 0xFFFD || is_inline_shape_code(cp) || (cp >= 0xD800 && cp <= 0xDFFF))
+            continue;
+        cps.push_back(cp);
+        if (cps.size() >= max_chars)
+            break;
+    }
+    return codepoints_to_utf8(cps);
+}
+} // namespace
+
 std::string inline_text_display_name(const std::string &utf8, const InlineShapeTable &table)
 {
     std::string out;
@@ -217,8 +234,9 @@ std::string inline_text_display_name(const std::string &utf8, const InlineShapeT
         const InlineShape *shape = find_inline_shape(table, cp);
         if (shape == nullptr)
             continue; // unknown placeholder
+        const std::string name = clean_shape_name(shape->id, 40);
         out += '[';
-        out += shape->id.empty() ? std::string("shape") : shape->id;
+        out += name.empty() ? std::string("shape") : name;
         out += ']';
     }
     return out;
@@ -253,8 +271,10 @@ float clamp_param(const nlohmann::json &j, const char *key, float def, float lo,
     return static_cast<float>(std::min<double>(hi, std::max<double>(lo, v)));
 }
 
+} // namespace
+
 // "3D/inline_<letters, digits, _ or ->.svg", nothing that could leave the archive folder
-bool is_valid_inline_svg_entry_name(const std::string &name)
+bool is_inline_svg_entry_name(const std::string &name)
 {
     static const char  prefix[] = "3D/inline_";
     static const char  suffix[] = ".svg";
@@ -271,7 +291,7 @@ bool is_valid_inline_svg_entry_name(const std::string &name)
     }
     return true;
 }
-} // namespace
+
 
 std::string inline_svg_entry_name(const std::string &svg_data)
 {
@@ -389,14 +409,14 @@ std::optional<InlineShapeTable> inline_shapes_from_json(const std::string &json,
         }
         auto id = j.find("id");
         if (id != j.end() && id->is_string())
-            s.id = id->get<std::string>().substr(0, 128);
+            s.id = clean_shape_name(id->get<std::string>().substr(0, 512), 64);
         if (s.source == InlineShapeSource::Builtin && s.id.empty()) {
             skip();
             continue;
         }
         if (s.source == InlineShapeSource::Svg) {
             auto f = j.find("f");
-            if (f == j.end() || !f->is_string() || !is_valid_inline_svg_entry_name(f->get<std::string>())) {
+            if (f == j.end() || !f->is_string() || !is_inline_svg_entry_name(f->get<std::string>())) {
                 skip();
                 continue;
             }
@@ -462,7 +482,9 @@ std::optional<InlineUnitShape> load_inline_svg(const std::string &svg, InlineBox
             fail(error, "empty SVG");
             return std::nullopt;
         }
-        if (svg.size() > InlineShapeLimits::max_svg_bytes) {
+        // shared caps for SVG from outside (UntrustedInput.hpp): size before the parser copies it,
+        // shapes / paths / control points before any geometry is built
+        if (!untrusted::svg_size_ok(svg.size())) {
             fail(error, "SVG is too large");
             return std::nullopt;
         }
@@ -471,20 +493,15 @@ std::optional<InlineUnitShape> load_inline_svg(const std::string &svg, InlineBox
             fail(error, "SVG cannot be parsed");
             return std::nullopt;
         }
+        if (std::string why; !svg_within_limits(*image, &why)) {
+            if (error)
+                *error = "SVG is too complex (" + why + ")";
+            return std::nullopt;
+        }
 
-        // caps before any geometry is built
-        size_t shapes = 0, points = 0;
+        size_t shapes = 0;
         for (NSVGshape *s = image->shapes; s != nullptr; s = s->next) {
-            if (++shapes > InlineShapeLimits::max_svg_shapes) {
-                fail(error, "SVG has too many shapes");
-                return std::nullopt;
-            }
-            for (const NSVGpath *p = s->paths; p != nullptr; p = p->next)
-                points += static_cast<size_t>(std::max(p->npts, 0));
-            if (points > InlineShapeLimits::max_svg_control_points) {
-                fail(error, "SVG has too many points");
-                return std::nullopt;
-            }
+            ++shapes;
             // dashes would only multiply the work (a silhouette is a solid outline anyway)
             s->strokeDashCount = 0;
         }
@@ -524,7 +541,13 @@ std::optional<InlineUnitShape> load_inline_svg(const std::string &svg, InlineBox
         NSVGLineParams params(1e6); // flatten to about 1/1000 of the shape height (squared distance in scaled units)
         params.scale     = static_cast<double>(INLINE_SHAPE_UNIT) / scale_ref;
         params.max_level = 7;
-        ExPolygonsWithIds shapes_with_ids = create_shape_with_ids(*image, params, /*too_complex*/ nullptr, /*center_result*/ false);
+        params.max_flat_points = untrusted::SVG_MAX_FLAT_POINTS;
+        bool              too_complex     = false;
+        ExPolygonsWithIds shapes_with_ids = create_shape_with_ids(*image, params, &too_complex, /*center_result*/ false);
+        if (too_complex) {
+            fail(error, "SVG outline is too detailed");
+            return std::nullopt;
+        }
         ExPolygons        silhouette      = silhouette_of(shapes_with_ids);
         if (silhouette.empty()) {
             fail(error, "SVG has no visible area");
@@ -819,6 +842,138 @@ std::optional<Emboss::Glyph> make_inline_glyph(const InlineShape &entry, const B
     if (unit == nullptr)
         return std::nullopt;
     return place_inline_shape(entry, *unit, metrics);
+}
+
+// ---------------------------------------------------------------------------------------------
+// text box and names
+// ---------------------------------------------------------------------------------------------
+std::vector<uint8_t> rasterize_shape(const ExPolygons &shape, int width, int height, const Vec2d &origin, double scale)
+{
+    std::vector<uint8_t> out;
+    if (width <= 0 || height <= 0 || width > 4096 || height > 4096 || !(scale > 0.) || !std::isfinite(scale))
+        return out;
+    out.assign(size_t(width) * size_t(height), 0);
+
+    // edges in pixel coordinates
+    struct Edge { double x0, y0, x1, y1; };
+    std::vector<Edge> edges;
+    auto add = [&](const Polygon &poly) {
+        const size_t n = poly.points.size();
+        if (n < 3)
+            return;
+        for (size_t i = 0; i < n; ++i) {
+            const Point &a = poly.points[i], &b = poly.points[(i + 1) % n];
+            Edge e{(double(a.x()) - origin.x()) * scale, (origin.y() - double(a.y())) * scale,
+                   (double(b.x()) - origin.x()) * scale, (origin.y() - double(b.y())) * scale};
+            if (e.y0 != e.y1)
+                edges.push_back(e);
+        }
+    };
+    for (const ExPolygon &e : shape) {
+        add(e.contour);
+        for (const Polygon &h : e.holes)
+            add(h);
+    }
+    if (edges.empty())
+        return out;
+
+    constexpr int        SS = 4; // samples per pixel side
+    std::vector<int>     coverage(size_t(width) * SS, 0);
+    std::vector<double>  xs;
+    for (int row = 0; row < height; ++row) {
+        std::fill(coverage.begin(), coverage.end(), 0);
+        for (int sub = 0; sub < SS; ++sub) {
+            const double y = row + (sub + 0.5) / SS;
+            xs.clear();
+            for (const Edge &e : edges) {
+                const bool up = e.y0 <= y && e.y1 > y, down = e.y1 <= y && e.y0 > y;
+                if (up || down)
+                    xs.push_back(e.x0 + (y - e.y0) * (e.x1 - e.x0) / (e.y1 - e.y0));
+            }
+            std::sort(xs.begin(), xs.end());
+            for (size_t i = 0; i + 1 < xs.size(); i += 2) {
+                // sample columns whose centre is inside [xs[i], xs[i+1])
+                const double a = xs[i] * SS - 0.5, b = xs[i + 1] * SS - 0.5;
+                int c0 = std::max(0, int(std::ceil(a)));
+                int c1 = std::min(width * SS - 1, int(std::ceil(b)) - 1);
+                for (int c = c0; c <= c1; ++c)
+                    ++coverage[size_t(c)];
+            }
+        }
+        for (int col = 0; col < width; ++col) {
+            int sum = 0;
+            for (int k = 0; k < SS; ++k)
+                sum += coverage[size_t(col) * SS + k];
+            out[size_t(row) * width + col] = static_cast<uint8_t>(std::min(255, sum * 255 / (SS * SS)));
+        }
+    }
+    return out;
+}
+
+std::string text_volume_name(const std::string &utf8, const InlineShapeTable &table)
+{
+    std::string name = inline_text_display_name(utf8, table);
+    std::replace(name.begin(), name.end(), '\n', ' ');
+    std::replace(name.begin(), name.end(), '\r', ' ');
+    return name;
+}
+
+std::string inline_svg_display_name(const std::string &file_name)
+{
+    std::string name = file_name;
+    const size_t slash = name.find_last_of("/\\");
+    if (slash != std::string::npos)
+        name = name.substr(slash + 1);
+    const size_t dot = name.find_last_of('.');
+    if (dot != std::string::npos)
+        name = name.substr(0, dot);
+    name = clean_shape_name(name, 40);
+    const size_t first = name.find_first_not_of(' ');
+    const size_t last  = name.find_last_not_of(' ');
+    name = first == std::string::npos ? std::string() : name.substr(first, last - first + 1);
+    return name.empty() ? std::string("svg") : name;
+}
+
+size_t insert_utf8_at(std::string &text, size_t sel_a, size_t sel_b, const std::string &insert)
+{
+    auto to_char_start = [&text](size_t pos) {
+        pos = std::min(pos, text.size());
+        while (pos > 0 && pos < text.size() && (static_cast<unsigned char>(text[pos]) & 0xC0) == 0x80)
+            --pos;
+        return pos;
+    };
+    size_t a = to_char_start(sel_a), b = to_char_start(sel_b);
+    if (a > b)
+        std::swap(a, b);
+    text.replace(a, b - a, insert);
+    return a + insert.size();
+}
+
+std::optional<InlineShape> load_user_inline_svg(const std::string &path, std::string *error, bool *too_large)
+{
+    if (too_large)
+        *too_large = false;
+    bool                         big  = false;
+    std::unique_ptr<std::string> data = read_from_disk(path, untrusted::SVG_SIZE_LIMIT, &big);
+    if (data == nullptr) {
+        if (too_large)
+            *too_large = big;
+        if (error)
+            *error = big ? "the file is too large" : "the file cannot be read";
+        return std::nullopt;
+    }
+    std::string why;
+    if (!load_inline_svg(*data, InlineBoxMode::InkBox, &why).has_value()) {
+        if (error)
+            *error = why.empty() ? std::string("the SVG cannot be used") : why;
+        return std::nullopt;
+    }
+    InlineShape shape;
+    shape.source   = InlineShapeSource::Svg;
+    shape.id       = inline_svg_display_name(path);
+    shape.svg_data = std::make_shared<const std::string>(std::move(*data));
+    shape.path_in_3mf = inline_svg_entry_name(*shape.svg_data);
+    return shape;
 }
 
 } // namespace Slic3r

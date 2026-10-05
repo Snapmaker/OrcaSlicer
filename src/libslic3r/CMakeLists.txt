@@ -148,6 +148,7 @@ set(lisbslic3r_sources
     EmbossBendSurface.hpp
     InlineShapes.cpp
     InlineShapes.hpp
+    InlineShapeTable.hpp
     FontFallback.cpp
     FontFallback.hpp
     Barcode.cpp

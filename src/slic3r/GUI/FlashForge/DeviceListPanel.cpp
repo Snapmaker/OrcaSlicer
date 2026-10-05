@@ -16,6 +16,10 @@
 #include "slic3r/GUI/FlashForge/FFDiagnosticsDialog.hpp"
 #include "slic3r/GUI/FlashForge/FFAddPrinterDialog.hpp"
 #include "slic3r/GUI/FlashForge/DeviceData.hpp"
+#include "slic3r/GUI/FlashForge/FFPrinterSources.hpp"
+#include "slic3r/GUI/PrintHostDevicesDialog.hpp"
+#include "slic3r/Utils/PrintHostDevices.hpp"
+#include "libslic3r/PresetBundle.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -372,10 +376,20 @@ DeviceInfoItemPanel::DeviceInfoItemPanel(wxWindow *parent, const DeviceInfo& inf
     status_sizer->Add(m_progress_text, 0, wxEXPAND | wxALIGN_RIGHT | wxALIGN_CENTER_VERTICAL);
     status_sizer->Add(m_warning_icon, 0, wxEXPAND | wxALIGN_RIGHT | wxALIGN_CENTER_VERTICAL);
 
+    // Shown only on a tile whose print-host settings entry is missing something.
+    m_setup_btn = new wxButton(this, wxID_ANY, _L("Set up"));
+    m_setup_btn->SetToolTip(_L("Open the print-host settings to fill in what is missing."));
+    m_setup_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        if (m_on_setup)
+            m_on_setup();
+    });
+    m_setup_btn->Hide();
+
     wxBoxSizer* left_sizer = new wxBoxSizer(wxVERTICAL);
     left_sizer->Add(m_placement_text, 0, wxEXPAND | wxALIGN_LEFT | wxALIGN_CENTER_VERTICAL, FromDIP(10));
     left_sizer->AddSpacer(FromDIP(3));
     left_sizer->Add(status_sizer, 0, wxEXPAND | wxALIGN_LEFT | wxALIGN_CENTER_VERTICAL, FromDIP(10));
+    left_sizer->Add(m_setup_btn, 0, wxALIGN_LEFT | wxTOP, FromDIP(4));
 
     m_main_sizer->AddSpacer(2);
     m_main_sizer->AddStretchSpacer(1);    
@@ -404,6 +418,8 @@ void DeviceInfoItemPanel::updateInfo(const DeviceInfo& info)
     //    m_placement_text->SetLabel(_L("Default"));
     //} else {
     wxString placement = FFUtils::trimString(dc, wxString::FromUTF8(info.placement), width);
+    if (info.needs_setup)
+        placement = FFUtils::trimString(dc, _L("Missing:") + " " + wxString::FromUTF8(info.setup_text.c_str()), width);
     m_placement_text->SetLabel(placement);
     //m_placement_text->SetToolTip(FFUtils::trimString(wxPaintDC(m_placement_text), wxString::FromUTF8(info.placement), m_placement_text->GetSizer()->~wxClientDataContainer));
     //}
@@ -411,6 +427,9 @@ void DeviceInfoItemPanel::updateInfo(const DeviceInfo& info)
         m_icon->SetBitmap(machineBitmap(info.pid));
     }
     m_info = info;
+    // A settings-owned printer is removed or edited in the settings, not unbound here.
+    m_exit_btn->Show(!info.from_settings);
+    m_setup_btn->Show(info.needs_setup);
     updateStatus();
     Layout();
 }
@@ -495,6 +514,11 @@ wxPoint DeviceInfoItemPanel::convertEventPoint(wxMouseEvent& event)
 
 void DeviceInfoItemPanel::sendEvent()
 {
+    if (m_info.needs_setup) {
+        if (m_on_setup)
+            m_on_setup();
+        return;
+    }
     if (m_info.conn_id >= 0 && !m_info.status.empty() && m_info.status != "offline" && m_event_handle) {
         wxGetApp().mainframe->jump_to_monitor(EVT_SWITCH_TO_DEVICE_STATUS, m_info.conn_id);
     }
@@ -509,6 +533,10 @@ void DeviceInfoItemPanel::updateStatus()
     m_warning_icon->Show("error" == m_info.status && ("E0088" == m_info.errorCode || "E0089" == m_info.errorCode));
     wxColour color("#00CD6D");
     wxString status = FFUtils::convertStatus(m_info.status, color);
+    if (m_info.needs_setup) {
+        status = _L("Needs setup");
+        color  = wxColour("#E67E00");
+    }
     m_status_text->SetLabel(status);
     m_status_text->SetForegroundColour(color);
     if ("printing" == m_info.status) {
@@ -1524,7 +1552,9 @@ bool DeviceListPanel::getDeviceInfo(DeviceInfoItemPanel::DeviceInfo& info, int c
                 info.name = data.lanDevInfo.name;
                 info.progress = 0;
             }
-            info.pid = data.lanDevInfo.pid;
+            // A printer typed in or taken from the settings has no product id until it answers.
+            info.pid = data.lanDevInfo.pid != 0 ? data.lanDevInfo.pid
+                       : (data.devDetail ? (unsigned short) data.devDetail->pid : (unsigned short) 0);
         } else if (COM_CONNECT_WAN == data.connectMode && valid && data.devDetail) {
             std::string dev_id = data.wanDevInfo.serialNumber;
             info.lanFlag = false;
@@ -1570,9 +1600,16 @@ void DeviceListPanel::updateDeviceInfo(const std::string& dev_id, const DeviceIn
                 || dev_info.conn_id != info.conn_id || dev_info.lanFlag != info.lanFlag
                 || dev_info.name != info.name || dev_info.progress != info.progress
                 || dev_info.errorCode != info.errorCode) {
-                iter->second->updateInfo(info);
+                // Events know nothing of where the tile came from; keep that.
+                DeviceInfoItemPanel::DeviceInfo merged = info;
+                merged.from_settings = dev_info.from_settings;
+                merged.needs_setup   = dev_info.needs_setup;
+                merged.setup_text    = dev_info.setup_text;
+                iter->second->updateInfo(merged);
             }
-            if (info.lanFlag && (dev_info.name != info.name || dev_info.placement != info.placement)) {
+            DeviceObjectOpr* settings_opr = wxGetApp().getDeviceObjectOpr();
+            if (info.lanFlag && (dev_info.name != info.name || dev_info.placement != info.placement)
+                && !(settings_opr && settings_opr->is_settings_serial(dev_id))) {
                 AppConfig* config = GUI::wxGetApp().app_config;
                 if (config) {
                     config->save_bind_machine_to_config(dev_id, info.name, info.placement, info.pid);
@@ -1688,6 +1725,116 @@ void DeviceListPanel::onTestConnection(wxCommandEvent &event)
     FFDiagnosticsDialog dlg(this, serial, ip);
     dlg.ShowModal();
     event.Skip();
+}
+
+// What the print-host settings hold for FlashForge: every device whose host type is Flashforge, in
+// every model's list. (The old single-address presets are imported into those lists first, once.)
+static std::vector<FFPrinterSource> collect_settings_printers()
+{
+    std::vector<FFPrinterSource> out;
+    try {
+        if (PresetBundle* bundle = wxGetApp().preset_bundle)
+            PrintHostDevices::migrate_from_presets(*bundle);
+        for (const auto& [model, devices] : PrintHostDevices::all_devices()) {
+            for (const PrintHostDevices::Device& d : devices) {
+                if (PrintHostDevices::host_type_enum(d.host_type) != htFlashforge || d.host_type != PrintHostDevices::host_type_key(htFlashforge))
+                    continue;
+                FFPrinterSource s;
+                s.name       = d.display_name();
+                s.address    = d.address;
+                s.serial     = d.serial;
+                s.check_code = d.apikey;
+                s.origin     = model + "/" + d.id;
+                out.push_back(std::move(s));
+            }
+        }
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(warning) << "[FlashForge] could not read the print-host settings: " << e.what();
+    }
+    return out;
+}
+
+void DeviceListPanel::syncSettingsPrinters()
+{
+    DeviceObjectOpr* opr = wxGetApp().getDeviceObjectOpr();
+    if (opr == nullptr)
+        return;
+    const std::vector<FFPrinterEntry> entries = ff_merge_printer_sources(collect_settings_printers());
+    opr->sync_settings_printers(entries);
+
+    std::set<std::string> saved_serials;
+    if (AppConfig* config = wxGetApp().app_config)
+        for (const auto& row : config->get_local_machines())
+            if (row.second.is_flashforge())
+                saved_serials.insert(row.first);
+
+    bool changed = false;
+    // Tiles the settings no longer ask for. (A printer saved by Add printer keeps its tile.)
+    for (const std::string& key : ff_stale_setting_tiles(m_settings_tiles, entries, saved_serials)) {
+        auto it = m_device_map.find(key);
+        if (it != m_device_map.end()) {
+            it->second->blockMouseEvent(true);
+            it->second->Disable();
+            it->second->Destroy();
+            m_device_map.erase(it);
+            changed = true;
+        }
+    }
+    m_settings_tiles.clear();
+
+    for (const FFPrinterEntry& e : entries) {
+        m_settings_tiles.insert(e.key);
+        // A printer the user also saved with Add printer is theirs and works with what it saved:
+        // the settings entry being incomplete does not make it "needs setup", and it keeps Unbind.
+        const bool owned       = saved_serials.count(e.key) == 0;
+        const bool needs_setup = owned && e.state != FFPrinterState::Ready;
+        auto       it          = m_device_map.find(e.key);
+        if (it == m_device_map.end()) {
+            DeviceInfoItemPanel::DeviceInfo info;
+            info.lanFlag       = true;
+            info.status        = "offline";
+            info.name          = e.name;
+            info.from_settings = owned;
+            info.needs_setup   = needs_setup;
+            info.setup_text    = e.missing_text();
+            DeviceInfoItemPanel* item = new DeviceInfoItemPanel(m_device_panel, info, this);
+            item->setDevId(e.key);
+            item->setSetupHandler([this]() { openPrinterSettings(); });
+            item->Show(false);
+            m_device_map.emplace(DeviceKey(generateNewPriorityId(), e.key, e.name), item);
+            changed = true;
+        } else {
+            DeviceInfoItemPanel::DeviceInfo info = it->second->deviceInfo();
+            if (info.from_settings != owned || info.needs_setup != needs_setup || info.setup_text != e.missing_text()) {
+                info.from_settings = owned;
+                info.needs_setup   = needs_setup;
+                info.setup_text    = e.missing_text();
+                if (needs_setup) {
+                    info.conn_id = ComInvalidId;
+                    info.status  = "offline";
+                }
+                it->second->setSetupHandler([this]() { openPrinterSettings(); });
+                it->second->updateInfo(info);
+                changed = true;
+            }
+        }
+    }
+    if (!changed)
+        return;
+    m_simple_book->ChangeSelection(m_device_map.empty() ? 0 : 1);
+    if (!m_device_map.empty()) {
+        updateFilterMap();
+        updateStaticMap();
+        updateDeviceSizer();
+    }
+}
+
+void DeviceListPanel::openPrinterSettings()
+{
+    // The device list of the selected printer's model - where a FlashForge printer's address, serial
+    // number and check code are entered. Closing it re-reads them, so the tile follows the edit.
+    show_print_host_devices_dialog(this);
+    CallAfter([this]() { syncSettingsPrinters(); });
 }
 
 void DeviceListPanel::onAddPrinter(wxCommandEvent &event)

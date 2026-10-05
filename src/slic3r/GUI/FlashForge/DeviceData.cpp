@@ -627,6 +627,100 @@ bool DeviceObjectOpr::add_manual_lan_machine(const fnet_lan_dev_info& info, cons
     return connect_lan(obj);
 }
 
+void DeviceObjectOpr::sync_settings_printers(const std::vector<FFPrinterEntry>& entries)
+{
+    AppConfig* config = GUI::wxGetApp().app_config;
+    auto saved_by_add = [&](const std::string& serial) {
+        if (config == nullptr) return false;
+        const auto& rows = config->get_local_machines();
+        auto        it   = rows.find(serial);
+        return it != rows.end() && it->second.is_flashforge();
+    };
+    auto drop = [&](const std::string& serial) {
+        auto conn = m_lan_dev_connect_map.find(serial);
+        if (conn != m_lan_dev_connect_map.end()) {
+            MultiComMgr::inst()->removeLanDev(conn->second.id);
+            m_lan_dev_connect_map.erase(conn);
+        }
+        auto local = m_local_devices.find(serial);
+        if (local != m_local_devices.end()) {
+            delete local->second;
+            m_local_devices.erase(local);
+        }
+    };
+
+    std::set<std::string> now_keys, ready_serials;
+    int connecting = 0, needs_setup = 0;
+    for (const FFPrinterEntry& e : entries) {
+        now_keys.insert(e.serial);
+        if (e.state != FFPrinterState::Ready) {
+            ++needs_setup;
+            // It was ready before and lost a field (the check code was cleared): it must not stay
+            // connected on the old values. A printer the user saved with Add printer keeps its own.
+            if (!e.serial.empty() && m_settings_serials.count(e.serial) && !saved_by_add(e.serial))
+                drop(e.serial);
+            continue;
+        }
+        ready_serials.insert(e.serial);
+        m_settings_serials.insert(e.serial);
+
+        DeviceObject* obj  = nullptr;
+        auto          it   = m_local_devices.find(e.serial);
+        bool          need_connect = false;
+        if (it == m_local_devices.end() || it->second == nullptr) {
+            obj = new DeviceObject(make_lan_info(e.serial, e.name, e.ip, e.port, 0));
+            obj->set_device_type(DT_LOCAL);
+            m_local_devices[e.serial] = obj;
+            need_connect = true;
+        } else {
+            obj = it->second;
+            fnet_lan_dev_info* cur = obj->get_lan_dev_info();
+            const bool changed = cur == nullptr || e.ip != cur->ip || e.port != cur->port || e.check_code != obj->get_user_access_code(true);
+            if (changed) {
+                // The settings were edited: leave the old connection, whatever it was, and come
+                // back with the new address / code. The product id is the printer's, not the
+                // settings', so it is kept.
+                auto conn = m_lan_dev_connect_map.find(e.serial);
+                if (conn != m_lan_dev_connect_map.end()) {
+                    MultiComMgr::inst()->removeLanDev(conn->second.id);
+                    m_lan_dev_connect_map.erase(conn);
+                }
+                const unsigned short pid = cur != nullptr ? cur->pid : 0;
+                obj->set_lan_dev_info(make_lan_info(e.serial, obj->get_dev_name().empty() ? e.name : obj->get_dev_name(), e.ip, e.port, pid));
+                obj->set_online_state(false);
+                obj->set_connecting(false);
+                need_connect = true;
+            } else if (!obj->is_online() && !obj->is_connecting()) {
+                need_connect = true;
+            }
+        }
+        // In memory only (only_refresh = false): the settings hold the code; this must not copy it
+        // into the config next to the saved printers.
+        obj->set_user_access_code(e.check_code, false);
+        obj->set_connection_type(CONNECTTYPE_LAN);
+        if (need_connect && connect_lan(obj))
+            ++connecting;
+    }
+
+    // Printers the settings asked for last time and no longer do.
+    for (auto it = m_settings_serials.begin(); it != m_settings_serials.end();) {
+        if (!now_keys.count(*it)) {
+            if (!saved_by_add(*it))
+                drop(*it);
+            it = m_settings_serials.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    // A settings printer that lost a field is no longer connected by the settings.
+    for (auto it = m_settings_serials.begin(); it != m_settings_serials.end();) {
+        if (!ready_serials.count(*it)) it = m_settings_serials.erase(it);
+        else ++it;
+    }
+    BOOST_LOG_TRIVIAL(warning) << "[FlashForge] print-host settings: " << ready_serials.size() << " FlashForge printer(s) ready ("
+                               << connecting << " connecting), " << needs_setup << " needing setup";
+}
+
 void DeviceObjectOpr::connect_saved_machines()
 {
     int started = 0, skipped = 0;
@@ -1128,7 +1222,9 @@ void DeviceObjectOpr::onConnectReady(ComConnectionReadyEvent &event)
             // Keep the address, so the next start can reconnect without a scan.
             const unsigned short pid = data.lanDevInfo.pid != 0 ? data.lanDevInfo.pid
                                        : (data.devDetail ? (unsigned short) data.devDetail->pid : (unsigned short) 0);
-            if (AppConfig *config = GUI::wxGetApp().app_config; config && pid != 0 && data.lanDevInfo.ip[0] != '\0')
+            // (Not for a printer the print-host settings own: they hold its address, and a saved
+            // row here would outlive it.)
+            if (AppConfig *config = GUI::wxGetApp().app_config; config && pid != 0 && data.lanDevInfo.ip[0] != '\0' && !is_settings_serial(serialNum))
                 config->save_bind_machine_to_config(serialNum, userObj->get_dev_name(), "", pid, false,
                                                     data.lanDevInfo.ip, data.lanDevInfo.port);
         }

@@ -1,5 +1,6 @@
 #ifndef slic3r_DeviceListPanel_hpp_
 #define slic3r_DeviceListPanel_hpp_
+#include <functional>
 #include <map>
 #include <set>
 #include <wx/simplebook.h>
@@ -94,6 +95,12 @@ public:
         std::string status;
         std::string errorCode;
         int progress {0};
+        // The printer comes from the print-host settings (not Add printer / a scan): the tile has no
+        // Unbind - the settings are where it is removed or edited.
+        bool from_settings {false};
+        // From the settings, but a field is missing: the tile says so and offers the settings.
+        bool needs_setup {false};
+        std::string setup_text;   // "check code", "serial number and check code"
     };
 
     DeviceInfoItemPanel(wxWindow *parent, const DeviceInfo& info, wxWindow* event_handle = nullptr);
@@ -102,6 +109,8 @@ public:
     const DeviceInfo& deviceInfo() const;
     void blockMouseEvent(bool block);
     void setDevId(const std::string& id);
+    // What the tile's "Set up" button does (open the print-host settings).
+    void setSetupHandler(std::function<void()> handler) { m_on_setup = std::move(handler); }
 
 private:
     wxPoint convertEventPoint(wxMouseEvent& event) override;
@@ -121,6 +130,8 @@ private:
     wxStaticText*   m_status_text {nullptr};
     wxStaticText*   m_progress_text {nullptr};
     ScalableButton* m_exit_btn{nullptr};
+    wxButton*       m_setup_btn {nullptr};
+    std::function<void()> m_on_setup;
     wxWindow*       m_event_handle {nullptr};
 };
 //wxDECLARE_EVENT(EVT_DEVICE_ITEM_SELECTED, wxCommandEvent);
@@ -180,6 +191,10 @@ public:
 
     void msw_rescale();
     void OnActivate();
+    // Lists the FlashForge printers from the print-host settings (and connects them): one tile per
+    // serial number, a "needs setup" tile where a field is missing. Safe to call any time; the
+    // Device tab calls it whenever it is shown and after the settings dialog closes.
+    void syncSettingsPrinters();
 
 private:
     void build();
@@ -204,6 +219,7 @@ private:
     void onFilterButtonClicked(wxMouseEvent &event);
     void onTestConnection(wxCommandEvent &event);
     void onAddPrinter(wxCommandEvent &event);
+    void openPrinterSettings();
     void onNetworkTypeToggled(wxCommandEvent& event);
     void onStaticModeToggled(wxCommandEvent &event);
     void onDeviceListUpdated(DeviceListUpdateEvent& event);
@@ -282,6 +298,7 @@ private:
     DeviceCacheDataMap  m_device_data_cached;
     wxTimer             m_refresh_timer;
     DeviceItemMap       m_device_map;
+    std::set<std::string> m_settings_tiles; // tile keys the print-host settings asked for at the last sync
     std::map<std::string, DeviceStaticItemPanel*> m_device_stat_map;
     DeviceFilterItem*   m_default_filter_item {nullptr};
     PlacementItemMap    m_placement_item_map;

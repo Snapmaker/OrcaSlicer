@@ -5,6 +5,8 @@
 #include "nlohmann/json.hpp"
 #include "FlashNetwork.h"
 #include "MultiComEvent.hpp"
+#include "FFPrinterSources.hpp"
+#include <set>
 
 using namespace nlohmann;  // json open source library
 //using namespace std;
@@ -234,6 +236,16 @@ public:
     // sat Offline for ever. Safe to call repeatedly (each tab activation does).
     void          connect_saved_machines();
 
+    // The printers the user's print-host settings ask for (see FFPrinterSources.hpp). Each Ready
+    // entry is made a printer of this list and connected - or reconnected when its address or check
+    // code changed since last time - keyed by serial number, so a printer that "Add printer" also
+    // saved is one printer. A printer the settings stopped asking for is dropped, unless it was
+    // saved by "Add printer". The settings keep the check code; nothing here writes it to the config.
+    void          sync_settings_printers(const std::vector<FFPrinterEntry>& entries);
+    // Whether the settings own this printer (its tile has no Unbind, and nothing is saved for it).
+    bool          is_settings_serial(const std::string& serial) const { return m_settings_serials.count(serial) != 0; }
+    const std::set<std::string>& settings_serials() const { return m_settings_serials; }
+
     // Builds the lan record FlashNetwork wants from the pieces a saved/typed printer has.
     static fnet_lan_dev_info make_lan_info(const std::string& serial, const std::string& name,
                                            const std::string& ip, unsigned short port, unsigned short pid);
@@ -269,6 +281,7 @@ private:
     std::map<std::string, DeviceObject*> m_old_user_devices;
     std::map<std::string, DeviceObject*> m_local_devices; /* dev_id -> DeviceObject*,  in lan connectMode, device has input access code. Read data from appconfig. */
     //map<std::string, com_id_t>             m_dev_connect_map;   /* dev_id -> connectId */
+    std::set<std::string>                  m_settings_serials; /* printers owned by the print-host settings */
     std::map<std::string, id_connect_mode> m_lan_dev_connect_map;
     std::map<std::string, id_connect_mode> m_wan_dev_connect_map;
 };

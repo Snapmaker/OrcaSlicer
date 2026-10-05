@@ -27,6 +27,7 @@ add_executable(${_TEST_NAME}_tests
 	test_code_emboss.cpp
 	test_emboss_bend.cpp
 	test_inline_shapes.cpp
+	test_inline_text.cpp
 	test_simple_shape.cpp
 	test_image_fill.cpp
 	test_image_row_transform.cpp

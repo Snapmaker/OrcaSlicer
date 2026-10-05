@@ -84,11 +84,26 @@ bool is_decimal_separator_point()
 
 double string_to_double_decimal_point(const std::string_view str, size_t* pos /* = nullptr*/)
 {
-    double out;
+    // fast_float leaves `out` untouched when nothing parses (empty or non-numeric input), so it
+    // must start at 0 to match atof: unparsable text reads as 0 with *pos == 0.
+    double out = 0.;
     size_t p = fast_float::from_chars(str.data(), str.data() + str.size(), out).ptr - str.data();
     if (pos)
         *pos = p;
     return out;
+}
+
+double atof_decimal_point(std::string_view str)
+{
+    size_t i = 0;
+    while (i < str.size() && (str[i] == ' ' || (str[i] >= '\t' && str[i] <= '\r')))
+        ++i;
+    if (i < str.size() && str[i] == '+') {
+        ++i;
+        if (i < str.size() && str[i] == '-')
+            return 0.;
+    }
+    return string_to_double_decimal_point(str.substr(i));
 }
 
 std::string float_to_string_decimal_point(double value, int precision/* = -1*/)

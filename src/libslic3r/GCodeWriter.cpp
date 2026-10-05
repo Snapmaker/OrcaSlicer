@@ -316,33 +316,32 @@ std::string GCodeWriter::set_accel_and_jerk(unsigned int acceleration, double je
     // Clamp the acceleration to the allowed maximum.
     if (m_max_acceleration > 0 && acceleration > m_max_acceleration)
         acceleration = m_max_acceleration;
-    
-    bool is_empty = true;
-    std::ostringstream gcode;
-    gcode << "SET_VELOCITY_LIMIT";
-    if (acceleration != 0 && acceleration != m_last_acceleration) {
-        gcode << " ACCEL=" << acceleration;
-        unsigned int filament_id = m_extruder != nullptr ? m_extruder->id() : 0;
-        if (get_value_at(this->config, this->config.accel_to_decel_enable, ConfigFlowDomain::Process, filament_id)) {
-            gcode << " ACCEL_TO_DECEL=" << acceleration * get_value_at(this->config, this->config.accel_to_decel_factor, ConfigFlowDomain::Process, filament_id) / 100;
-        }
-        m_last_acceleration = acceleration;
-        is_empty = false;
-    }
+
     // Clamp the jerk to the allowed maximum.
     if (m_max_jerk_x > 0 && jerk > m_max_jerk_x)
         jerk = m_max_jerk_x;
     if (m_max_jerk_y > 0 && jerk > m_max_jerk_y)
         jerk = m_max_jerk_y;
 
-    if (jerk > 0.01 && !is_approx(jerk, m_last_jerk)) {
+    const bool set_acceleration = acceleration != 0 && acceleration != m_last_acceleration;
+    const bool set_jerk         = jerk > 0.01 && !is_approx(jerk, m_last_jerk);
+    if (!set_acceleration && !set_jerk)
+        return std::string();
+
+    std::ostringstream gcode;
+    gcode << "SET_VELOCITY_LIMIT";
+    if (set_acceleration) {
+        gcode << " ACCEL=" << acceleration;
+        unsigned int filament_id = m_extruder != nullptr ? m_extruder->id() : 0;
+        if (get_value_at(this->config, this->config.accel_to_decel_enable, ConfigFlowDomain::Process, filament_id)) {
+            gcode << " ACCEL_TO_DECEL=" << acceleration * get_value_at(this->config, this->config.accel_to_decel_factor, ConfigFlowDomain::Process, filament_id) / 100;
+        }
+        m_last_acceleration = acceleration;
+    }
+    if (set_jerk) {
         gcode << " SQUARE_CORNER_VELOCITY=" << jerk;
         m_last_jerk = jerk;
-        is_empty = false;
     }
-
-    if(is_empty)
-        return std::string();
 
     if (GCodeWriter::full_gcode_comment)
         gcode << " ; adjust VELOCITY_LIMIT(accel/jerk)";

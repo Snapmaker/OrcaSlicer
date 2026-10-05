@@ -1591,7 +1591,7 @@ void GCodeProcessor::process_gcode_line(const GCodeReader::GCodeLine& line, bool
     const std::string_view cmd = line.cmd();
     if (m_flavor == gcfKlipper)
     {
-        if (boost::iequals(cmd, "SET_VELOCITY_LIMIT"))
+        if (ascii_iequals(cmd, "SET_VELOCITY_LIMIT"))
         {
             process_SET_VELOCITY_LIMIT(line);
             return;
@@ -4292,10 +4292,10 @@ void GCodeProcessor::run_post_process()
             std::function<std::string(const std::string&)> line_replacer) {
             // Orca: find start pos by seaching G28/G29/PRINT_START/START_PRINT commands
             auto is_start_pos = [](const std::string& curr_cmd) {
-                return boost::iequals(curr_cmd, "G28") 
-                || boost::iequals(curr_cmd, "G29") 
-                || boost::iequals(curr_cmd, "PRINT_START") 
-                || boost::iequals(curr_cmd, "START_PRINT");
+                return ascii_iequals(curr_cmd, "G28")
+                || ascii_iequals(curr_cmd, "G29")
+                || ascii_iequals(curr_cmd, "PRINT_START")
+                || ascii_iequals(curr_cmd, "START_PRINT");
             };
             assert(!m_lines.empty());
             const float time_step = backtrace.time_step();

@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/Utils.hpp"
 #include <test_utils.hpp>
@@ -10,11 +11,13 @@
 
 #include <atomic>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <string>
 #include <system_error>
 #include <thread>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -824,4 +827,59 @@ TEST_CASE("AppConfig save round-trips through the atomic helper", "[utils][atomi
     const std::string load_err = reader.load();
     REQUIRE(load_err.empty());
     REQUIRE(reader.get("atomic_roundtrip_key") == "atomic-value");
+}
+
+TEST_CASE("ascii_iequals compares ASCII letters regardless of case", "[Utils]")
+{
+    CHECK(ascii_iequals("set_velocity_limit", "SET_VELOCITY_LIMIT"));
+    CHECK(ascii_iequals("G28", "g28"));
+    CHECK(ascii_iequals("", ""));
+    CHECK_FALSE(ascii_iequals("G28", "G29"));
+    CHECK_FALSE(ascii_iequals("G2", "G28"));
+    CHECK_FALSE(ascii_iequals("G28", "G2"));
+    // Non-letters 0x20 apart are not equal.
+    CHECK_FALSE(ascii_iequals("[", "{"));
+    CHECK_FALSE(ascii_iequals("@", "`"));
+}
+
+TEST_CASE("atof_decimal_point parses what atof parses in the C locale", "[LocalesUtils]")
+{
+    const auto cases = {
+        std::pair<const char *, double>{"5", 5.},
+        {"  12.5", 12.5},
+        {"\t+3", 3.},
+        {"\r\n7", 7.},
+        {"-1.25", -1.25},
+        {"1e2", 100.},
+        {".5", 0.5},
+        {"12.5;comment", 12.5},
+        {"+-5", 0.},
+        {"1.5abc", 1.5},
+        {"-", 0.},
+        {"+", 0.},
+        {"-abc", 0.},
+        {"+ 5", 0.},
+    };
+    for (const auto &[text, value] : cases) {
+        DYNAMIC_SECTION("parse [" << text << "]") {
+            CHECK(std::abs(atof_decimal_point(text) - value) < 1e-12);
+        }
+    }
+}
+
+TEST_CASE("atof_decimal_point and string_to_double_decimal_point return 0 for text with no number", "[LocalesUtils]")
+{
+    // fast_float leaves the output untouched on failure; the result must not be indeterminate.
+    // CoolingBuffer feeds "G4 P1000" (no 'S', so find() == npos and npos + 1 wraps to the line
+    // start) to atof_decimal_point, which must give exactly what atof gives: 0.
+    const char *no_number[] = {"", "abc", "G4 P1000", "-", "+", "-abc", "+-5", ";comment 5", "   "};
+    for (const char *text : no_number) {
+        DYNAMIC_SECTION("no number [" << text << "]") {
+            REQUIRE(atof_decimal_point(text) == 0.);
+            size_t pos = 12345;
+            REQUIRE(string_to_double_decimal_point(text, &pos) == 0.);
+            REQUIRE(pos == 0);
+            REQUIRE(string_to_double_decimal_point(std::string_view(text)) == 0.);
+        }
+    }
 }

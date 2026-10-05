@@ -1,14 +1,15 @@
 {
-    "type": "filament",
-    "name": "OrcaArena Generic PC @0.2 nozzle",
-    "inherits": "OrcaArena Generic PC @base",
-    "from": "system",
-    "setting_id": "GFSC99_00",
-    "instantiation": "true",
-    "filament_max_volumetric_speed": [
-        "1"
-    ],
-    "compatible_printers": [
-        "Orca Arena X1 Carbon 0.2 nozzle"
-    ]
+	"type": "filament",
+	"name": "OrcaArena Generic PC @0.2 nozzle",
+	"renamed_from": "OrcaArena Generic PC 0.2 nozzle",
+	"inherits": "OrcaArena Generic PC @base",
+	"from": "system",
+	"setting_id": "AEKvB4RVBo2zOkdg",
+	"instantiation": "true",
+	"filament_max_volumetric_speed": [
+		"1"
+	],
+	"compatible_printers": [
+		"Orca Arena X1 Carbon 0.2 nozzle"
+	]
 }

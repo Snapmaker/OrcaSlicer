@@ -1,14 +1,15 @@
 {
-    "type": "filament",
-    "name": "OrcaArena Generic ABS @0.2 nozzle",
-    "inherits": "OrcaArena Generic ABS @base",
-    "from": "system",
-    "setting_id": "GFSB99_00",
-    "instantiation": "true",
-    "filament_max_volumetric_speed": [
-        "2"
-    ],
-    "compatible_printers": [
-        "Orca Arena X1 Carbon 0.2 nozzle"
-    ]
+	"type": "filament",
+	"name": "OrcaArena Generic ABS @0.2 nozzle",
+	"renamed_from": "OrcaArena Generic ABS 0.2 nozzle",
+	"inherits": "OrcaArena Generic ABS @base",
+	"from": "system",
+	"setting_id": "mzx0hG9Xe9fIrkrW",
+	"instantiation": "true",
+	"filament_max_volumetric_speed": [
+		"2"
+	],
+	"compatible_printers": [
+		"Orca Arena X1 Carbon 0.2 nozzle"
+	]
 }

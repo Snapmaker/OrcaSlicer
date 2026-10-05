@@ -16,6 +16,7 @@
 
 #include "libslic3r/Emboss.hpp"
 #include "libslic3r/EmbossBend.hpp"
+#include "libslic3r/EmbossBendSurface.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/TextConfiguration.hpp"
 
@@ -138,12 +139,16 @@ private:
 
     // Curved text (in-plane arc of the whole text block)
     void draw_curve();
-    // True when the bend can be used with the current settings (not with per glyph / use surface)
-    bool can_use_bend() const;
+    // Live preview while a curve slider is dragged; with "Use surface" at most one cut at a time
+    void request_bend_preview();
+    // Curve + use surface + per glyph: every letter placed and oriented on the surface along the arc
+    bool is_curve_per_letter() const;
     // Measure the current text (GUI thread, private glyph cache) to show the resolved bend
     std::optional<Slic3r::Emboss::BendInput> measure_text_for_bend();
     std::optional<Slic3r::Emboss::BendResult> calc_bend_result();
-    // Circle of a round flat face under the text, in text plane coordinates [mm]
+    // Circle of a round flat face under the text, in text plane coordinates [mm].
+    // With "Use surface" on a curved target (dome, sphere) the round outline of the target seen along
+    // the projection direction; radius is then the part that is not too steep for the projection.
     struct FaceCircle { Vec2d center; double radius; };
     // face_center: centre of the face under the text (or of the object) when found
     std::optional<FaceCircle> detect_face_circle(std::optional<Vec2d> *face_center = nullptr) const;
@@ -152,6 +157,15 @@ private:
     // Matrix of the text plane (volume world matrix without 3mf fix)
     Transform3d get_text_world_matrix() const;
     void render_bend_overlay();
+    // Raycaster over the other parts of the object (the surface the text is projected on)
+    bool prepare_surface_raycast(RaycastManager::AllowVolumes &condition);
+    // Closest surface point along the line point + t * direction (world), normal in world
+    std::optional<Vec3d> project_on_surface(const Vec3d &point, const Vec3d &direction,
+                                            const RaycastManager::AllowVolumes &condition, Vec3d *normal = nullptr) const;
+    // Reference circle projected onto the surface, cached while nothing changes
+    void update_bend_surface_overlay(const Transform3d &text_tr, const Vec2d &center, double radius, double cross);
+    // Reference curve of the letter by letter placement, from the last job
+    void update_bend_letter_overlay();
 
     bool select_facename(const wxString& facename);
 
@@ -250,9 +264,19 @@ private:
     std::optional<Slic3r::Emboss::BendResult>       m_bend_result;
     // Undo snapshot is already taken for the running drag of a curve slider
     bool                                    m_bend_drag_snapshot = false;
+    // A curve slider changed over a surface while the previous cut was still running
+    bool                                    m_bend_preview_pending = false;
     // Overlay of the reference circle (unit circle in the text plane)
     GLModel                                 m_bend_circle;
     GLModel                                 m_bend_cross;
+    // Same projected onto the surface (world coordinates) with what it was made for
+    struct BendOverlayKey { Transform3d text_tr; Vec2d center; double radius; ObjectID volume_id; };
+    std::optional<BendOverlayKey>           m_bend_surface_key;
+    GLModel                                 m_bend_surface;
+    // Letter by letter: the job publishes its reference curve here (text coordinates)
+    std::shared_ptr<Slic3r::Emboss::SurfaceArcPreview> m_bend_surface_preview;
+    std::optional<Slic3r::Emboss::SurfaceArcPreview>   m_bend_letter_drawn;
+    GLModel                                            m_bend_letter;
 
     // drawing icons
     IconManager m_icon_manager;

@@ -1,6 +1,6 @@
 {
     "name": "Voron",
-    "version": "02.03.01.10",
+    "version": "02.04.00.04",
     "force_update": "0",
     "description": "Voron configurations",
     "machine_model_list": [
@@ -233,6 +233,10 @@
         {
             "name": "0.80mm Extra Draft 1.0 nozzle @Voron",
             "sub_path": "process/0.80mm Extra Draft 1.0 nozzle @Voron.json"
+        },
+        {
+            "name": "0.32mm Optimal 0.8 nozzle @Voron",
+            "sub_path": "process/0.32mm Optimal 0.8 nozzle @Voron.json"
         }
     ],
     "filament_list": [],

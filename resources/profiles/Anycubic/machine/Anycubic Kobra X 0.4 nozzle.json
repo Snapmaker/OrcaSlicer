@@ -12,7 +12,7 @@
 	"nozzle_diameter": [
 		"0.4"
 	],
-	"default_print_profile": "0.20mm Standard @Anycubic Kobra X 0.4 nozzle;0.08mm Standard @Anycubic Kobra X 0.4 nozzle",
+	"default_print_profile": "0.20mm Standard @Anycubic Kobra X",
 	"default_filament_profile": [
 		"Anycubic PLA @Anycubic Kobra X 0.4 nozzle",
 		"Anycubic ABS @Anycubic Kobra X 0.4 nozzle",

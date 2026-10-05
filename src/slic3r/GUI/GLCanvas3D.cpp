@@ -3274,7 +3274,9 @@ bool GLCanvas3D::ensure_gl_ready()
 void GLCanvas3D::reset_gcode_toolpaths()
 {
     // GCodeViewer::reset() -> glDeleteBuffers; deleting against the wrong or no context leaks VRAM.
-    _set_current();
+    // Prefer the shown canvas: it shares this context, and a hidden canvas's SetCurrent fails on GTK
+    // (Preview hidden on Prepare, or both canvases hidden on Stream).
+    _set_shown_canvas_current();
     m_gcode_viewer.reset();
 }
 
@@ -4468,6 +4470,9 @@ void GLCanvas3D::load_shells(const Print& print, bool force_previewing)
 {
     if (m_initialized)
     {
+        // Continue even if make-current fails: skipping would leave stale shell buffers,
+        // matching today's behaviour (D-w1-07a). Do not bail like ensure_gl_ready().
+        _set_shown_canvas_current();
         m_gcode_viewer.load_shells(print, m_initialized, force_previewing);
         m_gcode_viewer.update_shells_color_by_extruder(m_config);
     }
@@ -8646,7 +8651,7 @@ bool GLCanvas3D::_set_current()
 
 bool GLCanvas3D::_set_shown_canvas_current()
 {
-    // Thumbnails also render outside render(), where another library's GL context (e.g. WebKitGTK's)
+    // Called before GL work outside render(), where another library's GL context (e.g. WebKitGTK's)
     // can be current. Prefer the on-screen canvas so GTK hidden/unrealized SetCurrent does not fail,
     // and so a frame already in render() does not switch drawables. Canvases share one wxGLContext.
     // Fall back to this canvas (CLI / unit / shown-canvas SetCurrent failed).

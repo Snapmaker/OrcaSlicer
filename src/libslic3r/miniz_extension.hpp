@@ -1,6 +1,7 @@
 #ifndef MINIZ_EXTENSION_HPP
 #define MINIZ_EXTENSION_HPP
 
+#include <cstdint>
 #include <string>
 #include <miniz.h>
 
@@ -34,6 +35,14 @@ bool extract_archive_confined(const boost::filesystem::path &zip_path, const boo
 // The std::string overload takes a UTF-8 path.
 bool extract_entry_to_file(mz_zip_archive &archive, mz_uint file_index, const boost::filesystem::path &dest_path);
 bool extract_entry_to_file(mz_zip_archive &archive, mz_uint file_index, const std::string &dest_path_utf8);
+
+// Reads one archive entry of a file we did not write into `out`, never trusting its header: the
+// declared uncompressed size is compared with `cap` before anything is allocated, and the data
+// is inflated through a sink that refuses to grow past `cap`, so an entry whose header lies
+// about its size, or a zip bomb, cannot take more than `cap` bytes. Returns false (and `out`
+// empty) when the entry is too large, cannot be inflated, or its size or CRC disagree with its
+// header. `*why` gets a short reason. A zero-length entry yields true and an empty `out`.
+bool read_zip_entry_capped(mz_zip_archive &archive, mz_uint file_index, std::uint64_t cap, std::string &out, std::string *why = nullptr);
 
 class MZ_Archive {
 public:

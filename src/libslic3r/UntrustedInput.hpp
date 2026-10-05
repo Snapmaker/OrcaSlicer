@@ -244,6 +244,27 @@ inline bool xml_entry_size_ok(std::uint64_t uncomp_size)
     return uncomp_size <= static_cast<std::uint64_t>(std::numeric_limits<int>::max());
 }
 
+// ---- SVG input -----------------------------------------------------------------------------------
+
+// An SVG is parsed by NanoSVG (a small hand-written parser) from bytes a project file or a
+// stranger's download hands us, so its size and complexity are bounded before anything big is
+// allocated. 8 MiB: a logo or an icon is a few KiB, a detailed Illustrator / Inkscape drawing a
+// few hundred KiB, a dense cartographic or hatching export a few MiB; nothing that can be
+// embossed into a printable relief needs more, and the parser keeps a second copy of the text
+// plus a float per coordinate, so a larger file would cost hundreds of MB before the first
+// polygon exists. Applied to .svg files picked from disk and to `3D/*.svg` entries of a 3MF.
+constexpr std::uint64_t SVG_SIZE_LIMIT = std::uint64_t(8) * 1024 * 1024;
+
+inline bool svg_size_ok(std::uint64_t size) { return size <= SVG_SIZE_LIMIT; }
+
+// After parsing: how much an SVG may contain before it is refused (see NSVGUtils.hpp,
+// svg_within_limits()). Far above any drawing that is meant to be embossed, far below what
+// would make tessellation and polygon healing run for minutes or exhaust memory.
+constexpr std::size_t SVG_MAX_SHAPES        = 20000;    // <path>/<rect>/... elements
+constexpr std::size_t SVG_MAX_PATHS         = 50000;    // sub-paths over all shapes
+constexpr std::size_t SVG_MAX_POINTS        = 250000;   // Bezier control points over all paths
+constexpr std::size_t SVG_MAX_FLAT_POINTS   = 2000000;  // polygon points after curves are flattened
+
 // ---- settings in project / preset files ----------------------------------------------------------
 
 // Options a file we did not write may not set silently:

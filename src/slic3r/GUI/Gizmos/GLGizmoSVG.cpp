@@ -21,6 +21,7 @@
 #include "libslic3r/Emboss.hpp" // heal_shape
 
 #include "libslic3r/NSVGUtils.hpp"
+#include "libslic3r/UntrustedInput.hpp" // SVG size and complexity limits
 #include "libslic3r/Model.hpp"
 #include "libslic3r/ClipperUtils.hpp" // union_ex
 
@@ -245,8 +246,10 @@ bool ensure_shapes(EmbossShape &shape)
     if (!shape.svg_file.has_value() || init_image(*shape.svg_file) == nullptr)
         return false;
     NSVGLineParams params{get_tesselation_tolerance(1.)};
-    shape.shapes_with_ids = create_shape_with_ids(*shape.svg_file->image, params);
-    return !shape.shapes_with_ids.empty();
+    params.max_flat_points = untrusted::SVG_MAX_FLAT_POINTS; // the SVG may come from a project file
+    bool too_complex = false;
+    shape.shapes_with_ids = create_shape_with_ids(*shape.svg_file->image, params, &too_complex);
+    return !too_complex && !shape.shapes_with_ids.empty();
 }
 
 // Emboss shape of one code part, SVG data are generated
@@ -1381,7 +1384,13 @@ void GLGizmoSVG::set_volume_by_selection()
     ExPolygonsWithIds &shape_ids = es.shapes_with_ids;
     if (shape_ids.empty()) {        
         NSVGLineParams params{get_tesselation_tolerance(get_scale_for_tolerance())};
-        shape_ids = create_shape_with_ids(image, params);                
+        params.max_flat_points = untrusted::SVG_MAX_FLAT_POINTS; // the SVG may come from a project file
+        bool too_complex = false;
+        shape_ids = create_shape_with_ids(image, params, &too_complex);
+        if (too_complex) {
+            BOOST_LOG_TRIVIAL(warning) << "SVG of the volume is too complex to be edited, the baked mesh is kept.";
+            return reset_volume();
+        }
     }
 
     reset_volume(); // clear cached data
@@ -2005,7 +2014,11 @@ void GLGizmoSVG::draw_size()
         assert(img != NULL);
         if (img != NULL){
             NSVGLineParams params{get_tesselation_tolerance(get_scale_for_tolerance())};
-            m_volume_shape.shapes_with_ids = create_shape_with_ids(*img, params);
+            params.max_flat_points = untrusted::SVG_MAX_FLAT_POINTS;
+            bool too_complex = false;
+            ExPolygonsWithIds shapes = create_shape_with_ids(*img, params, &too_complex);
+            if (!too_complex) // otherwise keep the shapes of the previous scale
+                m_volume_shape.shapes_with_ids = std::move(shapes);
             m_volume_shape.final_shape = {}; // reset cache for final shape
             if (!make_snap) // Be carefull: Last change may be without change of scale
                 process(false);
@@ -2693,14 +2706,27 @@ EmbossShape select_shape(std::string_view filepath, double tesselation_tolerance
         return {};
     }
 
-    if(init_image(svg) == nullptr) {
-        show_error(nullptr, GUI::format(_u8L("Nano SVG parser can't load from file (%1%)."), svg.path));
+    SvgRefusal refusal = SvgRefusal::None;
+    if(init_image(svg, &refusal) == nullptr) {
+        const double limit_mb = double(untrusted::SVG_SIZE_LIMIT) / (1024. * 1024.);
+        if (refusal == SvgRefusal::TooLarge)
+            show_error(nullptr, GUI::format(_u8L("SVG file is too large to be loaded (limit %1% MB) (%2%)."), limit_mb, svg.path));
+        else if (refusal == SvgRefusal::TooComplex)
+            show_error(nullptr, GUI::format(_u8L("SVG file is too complex to be loaded, it has too many shapes or points (%1%). Simplify it in a vector editor and try again."), svg.path));
+        else
+            show_error(nullptr, GUI::format(_u8L("Nano SVG parser can't load from file (%1%)."), svg.path));
         return {};
     }
 
     // Set default and unchanging scale
     NSVGLineParams params{tesselation_tolerance};
-    shape.shapes_with_ids = create_shape_with_ids(*svg.image, params);
+    params.max_flat_points = untrusted::SVG_MAX_FLAT_POINTS;
+    bool too_complex = false;
+    shape.shapes_with_ids = create_shape_with_ids(*svg.image, params, &too_complex);
+    if (too_complex) {
+        show_error(nullptr, GUI::format(_u8L("SVG file is too complex to be loaded, it has too many shapes or points (%1%). Simplify it in a vector editor and try again."), svg.path));
+        return {};
+    }
 
     // Must contain some shapes !!!
     if (shape.shapes_with_ids.empty()) {

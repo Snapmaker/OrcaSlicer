@@ -4,6 +4,8 @@
 
 #include "svg.hpp"
 #include "nanosvg/nanosvg.h"
+#include "../NSVGUtils.hpp"       // size and complexity limits for an SVG from outside
+#include "../UntrustedInput.hpp"
 
 #include <string>
 
@@ -124,12 +126,24 @@ double get_profile_area(std::vector<std::pair<gp_Pnt, gp_Pnt>> profile_line_poin
 
 bool get_svg_profile(const char *path, std::vector<Element_Info> &element_infos, std::string& message)
 {
-    NSVGimage *svg_data = nullptr;
-    svg_data            = nsvgParseFromFile(path, "mm", 96.0f);
-    if (svg_data == nullptr) {
-        message = "import svg failed: could not open svg.";
+    // The file is not ours: read it with a size limit and refuse a drawing with an absurd number of
+    // shapes or points before anything is interpolated.
+    bool too_large = false;
+    std::unique_ptr<std::string> text = read_from_disk(path, untrusted::SVG_SIZE_LIMIT, &too_large);
+    if (text == nullptr) {
+        message = too_large ? "import svg failed: svg file is too large." : "import svg failed: could not open svg.";
         return false;
     }
+    SvgRefusal  refusal = SvgRefusal::None;
+    std::string why;
+    NSVGimage_ptr parsed = nsvgParse_checked(*text, refusal, &why);
+    if (parsed == nullptr) {
+        message = (refusal == SvgRefusal::TooComplex) ? "import svg failed: svg is too complex (" + why + ")."
+                                                      : "import svg failed: could not open svg.";
+        return false;
+    }
+    NSVGimage *svg_data = parsed.release(); // deleted below
+
     if (svg_data->shapes == nullptr) {
         message = "import svg failed: could not parse imported svg data.";
         return false;

@@ -336,11 +336,6 @@ std::vector<ExtendedPoint> estimate_points_properties(const POINTS              
     return points;
 }
 
-struct PointHash
-{
-    size_t operator()(const Point &pt) const noexcept { return size_t((89 * 31 + int64_t(pt.x())) * 31 + pt.y()); }
-};
-
 // The trees of the layer below an object layer, and the signed distances from the layer's perimeter and bridge
 // vertices to that layer's outline, computed for ExtrusionQualityEstimator ahead of the G-code generator.
 struct PrecomputedOverhangLayer

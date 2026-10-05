@@ -1096,10 +1096,11 @@ TEST_CASE("Overhang data is precomputed for the layers the serial code prepares,
 
 TEST_CASE("A per-object slowdown override does not skip the curled-wall estimate while another region reads it", "[ExtrusionProcessor]")
 {
-    // GCode::_extrude extrudes each region's walls with that region's config applied, so a region whose
-    // override turns the slowdown off still shares layers' curled lines with regions that have it on.
-    // Skipping the estimate because ONE object's override is off would change the G-code of the others
-    // compared with main, which always estimated here.
+    // GCode::_extrude extrudes each region's walls with that region's config applied, so what matters is
+    // whether ANY region in use has the slowdown on. Skipping the estimate because ONE object's override
+    // is off would change the G-code of another object that still has it on, compared with main (which
+    // always estimated here). The print-level default only matters while some region uses it: an object
+    // that overrides the option has its own region, and the default is then never read.
     struct Case
     {
         bool print_default;
@@ -1108,9 +1109,10 @@ TEST_CASE("A per-object slowdown override does not skip the curled-wall estimate
         bool estimated;
     };
     const Case cases[] = {
-        {true, false, true, true},   // object 0 overrides it off, the print default and object 1 have it on
-        {true, false, false, true},  // both objects override it off, but the print default is on
-        {false, false, true, true},  // only object 1 turns it on
+        {true, false, true, true},    // object 0 overrides it off, object 1 uses the print default (on)
+        {true, true, false, true},    // the other way round
+        {true, false, false, false},  // both objects override it off: no region reads it, the default is unused
+        {false, false, true, true},   // only object 1 turns it on
         {false, false, false, false},
     };
     for (const Case c : cases) {

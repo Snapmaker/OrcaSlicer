@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "rJkvmsmBm7x7CPtt",
 	"instantiation": "true",
+	"default_print_profile": "0.12mm Fine @The Positron",
 	"printer_model": "The Positron",
 	"nozzle_diameter": [
 		"0.2"

@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "ZGnrVaKEE9cv5jxS",
 	"instantiation": "true",
+	"default_print_profile": "0.20mm Standard @Comgrow T500 0.6",
 	"printer_model": "Comgrow T500",
 	"printer_variant": "0.6",
 	"retraction_length": [

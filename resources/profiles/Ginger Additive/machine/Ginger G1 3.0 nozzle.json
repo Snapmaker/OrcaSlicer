@@ -5,6 +5,7 @@
 	"inherits": "Ginger_G1_common",
 	"setting_id": "dhUNr6odQIkoPSr5",
 	"instantiation": "true",
+	"default_print_profile": "1.50mm Standard",
 	"printer_settings_id": "Ginger G1 3.0 nozzle",
 	"max_layer_height": [
 		"2.5"

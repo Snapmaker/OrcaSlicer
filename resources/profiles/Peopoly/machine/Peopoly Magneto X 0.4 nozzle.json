@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "e4tGiU9ZtpU54ZUY",
 	"instantiation": "true",
+	"default_print_profile": "0.20mm Standard @Magneto X",
 	"printer_model": "Peopoly Magneto X",
 	"nozzle_diameter": [
 		"0.4"

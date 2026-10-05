@@ -6,7 +6,7 @@
 	"setting_id": "kYxFDURI6G6xkM0G",
 	"instantiation": "true",
 	"printer_model": "Artillery Sidewinder X3 Plus",
-	"default_print_profile": "0.20mm Standard @Artillery Genius",
+	"default_print_profile": "0.20mm Standard @Artillery X3Plus 0.4 nozzle",
 	"default_filament_profile": [
 		"Artillery PLA Basic"
 	],

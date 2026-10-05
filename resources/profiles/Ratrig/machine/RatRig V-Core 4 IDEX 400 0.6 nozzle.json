@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "HnNyKaPvBwZyhnyd",
 	"instantiation": "true",
+	"default_print_profile": "0.30mm Big @RatRig V-Core 4 IDEX 0.6",
 	"printer_model": "RatRig V-Core 4 IDEX 400",
 	"printer_variant": "0.6",
 	"nozzle_diameter": [

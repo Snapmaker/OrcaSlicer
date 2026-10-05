@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "GBrf7SJAuv8wVd3Q",
 	"instantiation": "true",
+	"default_print_profile": "0.20mm Quality @RatRig V-Core 4 IDEX 0.4",
 	"printer_model": "RatRig V-Core 4 IDEX 500 MIRROR MODE",
 	"printer_variant": "0.4",
 	"nozzle_diameter": [

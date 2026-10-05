@@ -25,7 +25,7 @@
 	"default_filament_profile": [
 		"CoLiDo Generic PLA @CoLiDo X16"
 	],
-	"default_print_profile": "0.20mm Standard @CoLiDo X16",
+	"default_print_profile": "0.20mm Standard @CoLiDo 160 V2",
 	"deretraction_speed": [
 		"30"
 	],

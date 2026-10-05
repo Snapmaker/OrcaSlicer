@@ -6,7 +6,7 @@
 	"setting_id": "DS558fFGRIbNmoxv",
 	"instantiation": "true",
 	"printer_model": "Voron Trident 350",
-	"default_print_profile": "0.30mm Standard 0.5 nozzle @Voron",
+	"default_print_profile": "0.25mm Standard 0.5 nozzle @Voron",
 	"max_layer_height": [
 		"0.4"
 	],

@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "cnn3LX6k2Zwc1BPb",
 	"instantiation": "true",
+	"default_print_profile": "0.20mm Quality @RatRig V-Core 4 IDEX 0.5",
 	"printer_model": "RatRig V-Core 4 IDEX 500",
 	"printer_variant": "0.5",
 	"nozzle_diameter": [

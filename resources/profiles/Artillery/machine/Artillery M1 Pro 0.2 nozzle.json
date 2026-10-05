@@ -24,7 +24,7 @@
 	"default_filament_profile": [
 		"Artillery PLA Basic"
 	],
-	"default_print_profile": "0.20mm Standard @Artillery Genius",
+	"default_print_profile": "0.10mm Standard @Artillery M1 Pro 0.2 nozzle",
 	"deretraction_speed": [
 		"30"
 	],

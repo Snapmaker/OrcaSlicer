@@ -6,7 +6,7 @@
 	"setting_id": "xBbVrJNCzJO4egUE",
 	"instantiation": "true",
 	"printer_model": "SH65 IDRE",
-	"default_print_profile": "Performance 150 - 0.15mm",
+	"default_print_profile": "Normal performance - 0.15mm",
 	"host_type": "octoprint",
 	"print_host": "192.168.0.60",
 	"nozzle_diameter": [

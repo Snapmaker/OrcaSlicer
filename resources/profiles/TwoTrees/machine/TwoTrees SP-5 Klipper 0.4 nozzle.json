@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "mLsl3PZrcD5XnV7j",
 	"instantiation": "true",
+	"default_print_profile": "0.20mm Standard @TwoTrees",
 	"printer_model": "TwoTrees SP-5 Klipper",
 	"nozzle_diameter": [
 		"0.4"

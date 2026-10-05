@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "4xd2mlCoTuJoXmOf",
 	"instantiation": "true",
+	"default_print_profile": "0.30mm Standard @Tiertime UP600 HS 0.6 nozzle",
 	"printer_model": "Tiertime UP600 HS",
 	"nozzle_diameter": [
 		"0.6"

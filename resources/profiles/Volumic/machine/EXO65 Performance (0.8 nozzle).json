@@ -6,7 +6,7 @@
 	"setting_id": "4LGJDuCA7yAKGml3",
 	"instantiation": "true",
 	"printer_model": "EXO65 Performance",
-	"default_print_profile": "Performance 150 - 0.15mm",
+	"default_print_profile": "Normal performance - 0.30mm",
 	"host_type": "octoprint",
 	"print_host": "192.168.0.60",
 	"nozzle_diameter": [

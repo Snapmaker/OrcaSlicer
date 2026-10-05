@@ -304,6 +304,8 @@ TriangleMesh cut_surface(/*const*/ DataBase &input1, const SurfaceVolumeData &in
 SurfaceVolumeData::ModelSources create_sources(const ModelVolumePtrs &volumes, const std::vector<size_t> &skip_volume_ids = {});
 
 void create_message(const std::string &message); // only in finalize
+// non modal, for failures during live preview (only in finalize)
+void create_notification(const std::string &message);
 bool process(std::exception_ptr &eptr);
 bool finalize(bool canceled, std::exception_ptr &eptr, const DataBase &input);
 
@@ -604,7 +606,11 @@ void CreateVolumesJob::process(Ctl &ctl)
 
 void CreateVolumesJob::finalize(bool canceled, std::exception_ptr &eptr)
 {
-    if (m_input.parts.empty() || !::finalize(canceled, eptr, *m_input.parts.front().base))
+    if (m_input.parts.empty()) {
+        ::process(eptr); // report and clear, never rethrow
+        return;
+    }
+    if (!::finalize(canceled, eptr, *m_input.parts.front().base))
         return;
     if (m_results.size() != m_input.parts.size())
         return; // canceled in the middle
@@ -1759,8 +1765,17 @@ bool process(std::exception_ptr &eptr)
         std::rethrow_exception(eptr);
     } catch (JobException &e) {
         create_message(e.what());
-        eptr = nullptr;
+    } catch (const std::exception &e) {
+        // A geometry kernel failure (e.g. CGAL on degenerate outlines) must never take the application
+        // down, least of all during a slider drag: report it, the volume keeps its previous mesh.
+        BOOST_LOG_TRIVIAL(error) << "Emboss job failed: " << e.what();
+        create_notification(GUI::format(_u8L("The text could not be updated (%1%). The previous shape is kept."), e.what()));
+    } catch (...) {
+        BOOST_LOG_TRIVIAL(error) << "Emboss job failed with an unknown exception";
+        create_notification(_u8L("The text could not be updated. The previous shape is kept."));
     }
+    // handled here, nothing is passed on to the worker / main loop
+    eptr = nullptr;
     return true;
 }
 
@@ -1939,6 +1954,15 @@ bool start_create_volume_on_surface_job(CreateVolumeParams &input, DataBasePtr d
 
 void create_message(const std::string &message) {
     show_error(nullptr, message.c_str());
+}
+
+void create_notification(const std::string &message)
+{
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr || plater->get_notification_manager() == nullptr)
+        return;
+    plater->get_notification_manager()->push_notification(NotificationType::CustomNotification,
+                                                          NotificationManager::NotificationLevel::WarningNotificationLevel, message);
 }
 
 } // namespace

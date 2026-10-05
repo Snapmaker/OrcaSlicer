@@ -387,7 +387,9 @@ SurfaceArc place_on_surface_arc(const BendSurface &surface, const std::vector<do
     }
 
     // ---- glyph frames ----
-    const double delta = std::clamp(1. / rho, 1e-4, 0.05); // [rad] for the tangent and curvature
+    // [rad] for the tangent and curvature: about 3 mm of arc, so the facets of the mesh do not
+    // show up as curvature noise
+    const double delta = std::clamp(3. / rho, 1e-3, 0.2);
     for (size_t i = 0; i < pivots_mm.size(); ++i) {
         const double x = pivots_mm[i];
         if (!std::isfinite(x))
@@ -412,13 +414,20 @@ SurfaceArc place_on_surface_arc(const BendSurface &surface, const std::vector<do
         frame.translation()   = p->position;
         result.frames[i]      = frame;
 
-        // curvature of the curve in the tangent plane: circumcircle of the three points
+        // curvature of the curve in the tangent plane: circle through the three points. Only a
+        // curve bending towards the arc centre side (-y arch, +y smile) gets a warp; a (nearly)
+        // straight curve, e.g. the great circle a too wide arc is limited to, stays straight.
         const Vec2d a2((pa->position - p->position).dot(x_dir), (pa->position - p->position).dot(y_dir));
         const Vec2d b2((pb->position - p->position).dot(x_dir), (pb->position - p->position).dot(y_dir));
         const double cross = a2.x() * b2.y() - a2.y() * b2.x();
         if (std::abs(cross) > 1e-12) {
-            const double ab = (a2 - b2).norm();
-            result.curvature_radius[i] = a2.norm() * b2.norm() * ab / (2. * std::abs(cross));
+            // centre c of the circle through 0, a2, b2: c . a2 = |a2|^2 / 2, c . b2 = |b2|^2 / 2
+            const Vec2d c((0.5 * a2.squaredNorm() * b2.y() - 0.5 * b2.squaredNorm() * a2.y()) / cross,
+                          (0.5 * b2.squaredNorm() * a2.x() - 0.5 * a2.squaredNorm() * b2.x()) / cross);
+            const double side   = params.inside ? 1. : -1.;
+            const double radius = c.norm();
+            if (c.y() * side > 0. && radius < BEND_MAX_LOCAL_RADIUS_MM)
+                result.curvature_radius[i] = radius;
         }
     }
 
@@ -498,12 +507,19 @@ ExPolygons surface_glyph_shape(const ExPolygons &glyph, double pivot, double cur
     const Point offset(-static_cast<coord_t>(std::llround(pivot)), 0);
     for (ExPolygon &e : result)
         e.translate(offset);
-    if (!bend.rigid && curvature_radius_mm > 0. && shape_scale > 0.) {
+    if (!bend.rigid && curvature_radius_mm > 0. && shape_scale > 0. && !result.empty()) {
         BendSpec local;
         local.radius    = curvature_radius_mm / shape_scale;
         local.inside    = bend.inside;
         local.tolerance = BEND_SURFACE_TOLERANCE_MM / shape_scale;
-        result          = bend_expolygons(result, local);
+        // The warp folds the glyph over when its part facing the centre reaches the centre: keep the
+        // radius above that extent, as resolve_bend does for flat text
+        const BoundingBox bb     = get_extents(result);
+        const double      extent = bend.inside ? static_cast<double>(bb.max.y()) : -static_cast<double>(bb.min.y());
+        local.radius = std::max(local.radius, BEND_MIN_RADIUS_RATIO * std::max(extent, 0.));
+        // and clean what the warp could still leave (touching or overlapping contours), so no
+        // self-intersecting outline reaches the surface cut
+        result = union_ex(bend_expolygons(result, local));
     }
     return result;
 }

@@ -26,6 +26,7 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -1238,4 +1239,155 @@ TEST_CASE("Timing of letters on a dome", "[EmbossBend][surface][.perf]")
             std::cout << "  " << (rigid ? "rigid " : "bent ") << angle << " deg: placement " << best_place << " ms, total "
                       << best_all << " ms" << std::endl;
         }
+}
+
+// ---- Robustness sweep: no geometry exception for any curve setting ----
+
+namespace {
+
+struct SweepFailure
+{
+    std::string what;
+    std::string config;
+};
+
+// Runs the parallel and the letter by letter surface projection of `text` with `bend`
+// on `mesh`, the way the surface job does, and reports any exception.
+void sweep_one(const ExPolygonsWithIds &text, const GlyphAdvances &advances, double scale, const EmbossBend &bend,
+               const indexed_triangle_set &mesh, const std::string &name, std::vector<SweepFailure> &failures)
+{
+    auto describe = [&](const char *projection) {
+        std::ostringstream os;
+        os << name << ", " << projection << ", " << (bend.inside ? "smile" : "arch") << ", " << (bend.rigid ? "rigid" : "bent")
+           << ", " << (bend.mode == EmbossBend::Mode::angle ? "angle " : "radius ")
+           << (bend.mode == EmbossBend::Mode::angle ? bend.angle : bend.radius);
+        return os.str();
+    };
+    // parallel
+    try {
+        ExPolygonsWithIds shapes = text;
+        apply_bend(shapes, bend, scale, &advances, BEND_SURFACE_TOLERANCE_MM);
+        EmbossShape es;
+        es.shapes_with_ids = std::move(shapes);
+        es.scale           = scale;
+        ExPolygons outlines = union_with_delta(es, UNION_DELTA, UNION_MAX_ITERATIN);
+        if (!outlines.empty())
+            project_onto(outlines, scale, mesh);
+    } catch (const std::exception &e) {
+        failures.push_back({e.what(), describe("parallel")});
+    }
+    // letter by letter
+    try {
+        std::optional<SurfaceGlyphLayout> layout = surface_glyph_layout(text, &advances, bend, scale);
+        if (layout.has_value()) {
+            BendSurface surface(mesh);
+            SurfaceArc  arc = place_on_surface_arc(surface, layout->pivots_mm, layout->x_min, layout->x_max, layout->params);
+            for (size_t i = 0; i < text.size(); ++i) {
+                if (text[i].expoly.empty() || !arc.frames[i].has_value())
+                    continue;
+                ExPolygons glyph = surface_glyph_shape(text[i].expoly, layout->pivots[i], arc.curvature_radius[i], bend, scale);
+                if (glyph.empty())
+                    continue;
+                indexed_triangle_set local = mesh;
+                its_transform(local, arc.frames[i]->inverse());
+                project_onto(glyph, scale, local);
+            }
+        }
+    } catch (const std::exception &e) {
+        failures.push_back({e.what(), describe("per letter")});
+    }
+}
+
+indexed_triangle_set plane_below()
+{
+    indexed_triangle_set plane = its_make_cube(300., 300., 10.);
+    its_translate(plane, Vec3f(-150.f, -150.f, -10.f));
+    return plane;
+}
+
+void sweep(const ExPolygonsWithIds &text, const GlyphAdvances &advances, double scale, const std::string &name,
+           const std::vector<float> &angles, const std::vector<float> &radii, std::vector<SweepFailure> &failures)
+{
+    const indexed_triangle_set sphere = sphere_below(30.);
+    const indexed_triangle_set plane  = plane_below();
+    for (bool inside : {true, false})
+        for (bool rigid : {false, true}) {
+            for (float angle : angles) {
+                sweep_one(text, advances, scale, angle_bend(angle, inside, rigid), sphere, name + " on sphere", failures);
+                sweep_one(text, advances, scale, angle_bend(angle, inside, rigid), plane, name + " on plane", failures);
+            }
+            for (float radius : radii) {
+                sweep_one(text, advances, scale, radius_bend(radius, inside, rigid), sphere, name + " on sphere", failures);
+                sweep_one(text, advances, scale, radius_bend(radius, inside, rigid), plane, name + " on plane", failures);
+            }
+        }
+}
+
+void report(const std::vector<SweepFailure> &failures)
+{
+    for (const SweepFailure &f : failures)
+        UNSCOPED_INFO(f.config << ": " << f.what);
+    CHECK(failures.empty());
+}
+
+} // namespace
+
+// Full sweep, run on demand: libslic3r_tests "[.sweep]"
+TEST_CASE("Curve settings sweep on surfaces never throws", "[EmbossBend][surface][.sweep]")
+{
+    std::vector<float> angles, radii = {1.f, 2.f, 3.f, 5.f, 8.f, 12.f, 20.f, 40.f, 120.f};
+    for (float a = 5.f; a <= 359.f; a += 9.f)
+        angles.push_back(a);
+    angles.push_back(359.f);
+    std::vector<SweepFailure> failures;
+
+    GlyphAdvances           box_advances;
+    const ExPolygonsWithIds boxes = box_text(8, &box_advances);
+    sweep(boxes, box_advances, SCALE, "boxes", angles, radii, failures);
+
+    if (boost::filesystem::exists(font_path())) {
+        std::unique_ptr<FontFile> font = create_font_file(font_path().c_str());
+        REQUIRE(font != nullptr);
+        FontFileWithCache ff(std::move(font));
+        FontProp          fp;
+        fp.size_in_mm = 8.f;
+        const double scale = get_text_shape_scale(fp, *ff.font_file);
+        for (const std::wstring &t : {std::wstring(L"UNIVERSAL STUDIOS"), std::wstring(L"Ag@%&8B")}) {
+            GlyphAdvances     advances;
+            ExPolygonsWithIds shapes = text2vshapes(ff, t, fp, []() { return false; }, advances);
+            sweep(shapes, advances, scale, "font text", angles, radii, failures);
+        }
+    }
+    report(failures);
+}
+
+TEST_CASE("Bent letters at a tiny angle on a sphere stay valid for the surface cut", "[EmbossBend][surface][letters]")
+{
+    // Regression (EDGESLICER-5): a 5 degree arc is far wider than the sphere, the curve is limited to
+    // the widest circle and is locally straight. Facet noise gave a tiny, random local radius, the
+    // warp folded the letters and CGAL threw "Unauthorized intersections of constraints".
+    const indexed_triangle_set sphere = sphere_below(30.);
+    GlyphAdvances           advances;
+    const ExPolygonsWithIds boxes = box_text(8, &advances);
+    for (bool inside : {true, false}) {
+        INFO((inside ? "smile" : "arch"));
+        std::vector<SweepFailure> failures;
+        for (float angle : {2.f, 5.f, 9.f, 14.f})
+            sweep_one(boxes, advances, SCALE, angle_bend(angle, inside, false), sphere, "boxes on sphere", failures);
+        report(failures);
+
+        // and the letters handed to the cut have no self-intersection
+        const EmbossBend                  bend   = angle_bend(5.f, inside, false);
+        std::optional<SurfaceGlyphLayout> layout = surface_glyph_layout(boxes, &advances, bend, SCALE);
+        REQUIRE(layout.has_value());
+        BendSurface surface(sphere);
+        SurfaceArc  arc = place_on_surface_arc(surface, layout->pivots_mm, layout->x_min, layout->x_max, layout->params);
+        for (size_t i = 0; i < boxes.size(); ++i) {
+            REQUIRE(arc.frames[i].has_value());
+            ExPolygons glyph = surface_glyph_shape(boxes[i].expoly, layout->pivots[i], arc.curvature_radius[i], bend, SCALE);
+            REQUIRE(glyph.size() == 1);
+            CHECK(get_intersections(glyph).empty());
+            CHECK(shape_area(glyph) > 0.);
+        }
+    }
 }

@@ -2492,6 +2492,29 @@ static std::string update_print_stats_and_format_filament_stats(const bool      
     }
     return filament_stats_string_out;
 }
+
+// Bambu Studio's GCode::mass_load_limited_machine_acceleration. On a bed slinger the Y motor drives
+// the bed and the printed part with a limited force, so the Y acceleration it can reach falls as the
+// part grows: a = F / (bed mass + printed mass), capped by the configured Y acceleration limit. With
+// machine_max_force_Y or machine_bed_mass_Y unset (0, every printer but the A2L) the result is just
+// the smallest machine_max_acceleration_y. Mass in g, force in N, acceleration in mm/s^2.
+static void mass_load_limited_machine_acceleration(const PrintStatistics &curr_print_statistics,
+                                                   const Print           &print,
+                                                   double                &y_acceleration_limit_res,
+                                                   double                &accumulated_mass_res)
+{
+    double curr_acceleration_y_config = 1e10;
+    for (double limit : print.config().machine_max_acceleration_y.values)
+        curr_acceleration_y_config = std::min(curr_acceleration_y_config, limit);
+    accumulated_mass_res = curr_print_statistics.total_weight;
+    const double machine_max_force_Y = print.config().machine_max_force_Y.value;
+    const double machine_bed_mass_Y  = print.config().machine_bed_mass_Y.value;
+    if (machine_max_force_Y > EPSILON && machine_bed_mass_Y > EPSILON && accumulated_mass_res > EPSILON) {
+        const double virtual_force_g_mms2 = machine_max_force_Y * 1e6; // N = 1e6 g*mm/s^2
+        y_acceleration_limit_res = std::min(virtual_force_g_mms2 / (machine_bed_mass_Y + accumulated_mass_res), curr_acceleration_y_config);
+    } else
+        y_acceleration_limit_res = curr_acceleration_y_config;
+}
 } // namespace DoExport
 
 #if 0
@@ -2653,6 +2676,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     // resets analyzer's tracking data
     m_last_height  = 0.f;
     m_last_layer_z = 0.f;
+    m_last_layer_accumulated_mass = 0.;
     m_max_layer_z  = 0.f;
     m_last_width   = 0.f;
     m_is_role_based_fan_on.fill(false);
@@ -6310,6 +6334,23 @@ LayerResult GCode::process_layer(const Print& print,
         DynamicConfig config;
         config.set_key_value("layer_num", new ConfigOptionInt(m_layer_index));
         config.set_key_value("layer_z", new ConfigOptionFloat(print_z));
+        // Bambu Studio's bed-slinger variables (the A2L's layer change sets "M201 N1 Y[curr_y_acceleration_limit]"):
+        // the mass printed so far (g, filament statistics as at the end of the print, wipe tower included),
+        // the mass the previous layer added, and the Y acceleration limit that mass allows.
+        {
+            PrintStatistics curr_print_statistics;
+            DoExport::update_print_stats_and_format_filament_stats(has_wipe_tower, print.wipe_tower_data(), m_writer.extruders(),
+                                                                   curr_print_statistics);
+            double curr_y_acceleration_limit = -1., curr_accumulated_mass = -1.;
+            DoExport::mass_load_limited_machine_acceleration(curr_print_statistics, print, curr_y_acceleration_limit, curr_accumulated_mass);
+            double curr_layer_mass = curr_print_statistics.total_weight - m_last_layer_accumulated_mass;
+            if (curr_layer_mass <= EPSILON)
+                curr_layer_mass = 0.;
+            m_last_layer_accumulated_mass = curr_print_statistics.total_weight;
+            config.set_key_value("curr_y_acceleration_limit", new ConfigOptionFloat(curr_y_acceleration_limit));
+            config.set_key_value("curr_accumulated_mass", new ConfigOptionFloat(curr_accumulated_mass));
+            config.set_key_value("curr_layer_mass", new ConfigOptionFloat(curr_layer_mass));
+        }
         gcode += this->placeholder_parser_process("layer_change_gcode", print.config().layer_change_gcode.value, m_writer.extruder()->id(),
                                                   &config) +
                  "\n";
@@ -8776,9 +8817,14 @@ void GCode::append_full_config(const Print& print, std::string& str)
     static const std::set<std::string_view> pre_heating_keys({"enable_pre_heating"sv, "filament_pre_cooling_temperature"sv,
                                                               "filament_preheat_temperature_delta"sv});
     const bool dump_pre_heating_keys = print.config().enable_pre_heating.value;
+    // Likewise the bed-slinger mass model keys: only for a printer that models it (the A2L sets both).
+    static const std::set<std::string_view> mass_model_keys({"machine_max_force_Y"sv, "machine_bed_mass_Y"sv});
+    const bool dump_mass_model_keys = print.config().machine_max_force_Y.value > 0. || print.config().machine_bed_mass_Y.value > 0.;
     std::ostringstream                      ss;
     for (const std::string& key : cfg.keys()) {
         if (!dump_pre_heating_keys && pre_heating_keys.find(key) != pre_heating_keys.end())
+            continue;
+        if (!dump_mass_model_keys && mass_model_keys.find(key) != mass_model_keys.end())
             continue;
         if (!is_banned(key) && !cfg.option(key)->is_nil()) {
             if (key == "wipe_tower_x" || key == "wipe_tower_y") {

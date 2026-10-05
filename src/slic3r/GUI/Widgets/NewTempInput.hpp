@@ -16,6 +16,7 @@
 #include "slic3r/GUI/FlashForge/FlashNetwork.h"
 #include "slic3r/GUI/FlashForge/MultiComMgr.hpp"
 #include "slic3r/GUI/FlashForge/ComCommand.hpp"
+#include "slic3r/GUI/FFUtils.hpp"
 
 namespace Slic3r { namespace GUI {
 
@@ -475,6 +476,14 @@ private:
     std::unordered_map<std::string, NewTempInput*> m_tempInputs;
     wxBoxSizer*             m_tempSizer;
     int m_cur_id = -1;
+    // What the rows in m_tempInputs were built for. UpdateTempatrue and lostTempModify follow
+    // this, not a fresh product id lookup, so they only ever touch rows that exist.
+    FFTempLayout   m_layout       = FFTempLayout::Generic;
+    unsigned short m_layout_pid   = 0;
+    bool           m_layout_known = false;
+    void buildTempLayout(int curId, unsigned short pid, int nozzleCnt);
+    NewTempInput* tempInput(const char* key) const;
+    void setTemps(const char* key, double curr, double target);
     void lostTempModify();
 };
    

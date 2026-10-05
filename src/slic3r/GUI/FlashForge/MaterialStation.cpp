@@ -1130,12 +1130,7 @@ void MaterialSlotArea::synchronize_printer_status(const com_dev_data_t& data)
     m_hasMatlStation = data.devDetail->hasMatlStation;
     synchronize_matl_station(data);
     synchronize_indep_matl(data);
-    unsigned short curr_pid = 0;
-    if (data.connectMode == 0) {
-        curr_pid            = data.lanDevInfo.pid;
-    } else if (data.connectMode == 1) {
-        curr_pid            = data.devDetail->pid;
-    }
+    const unsigned short curr_pid = FFUtils::getPid(data);
     if (FFUtils::printer_preset_map.find(curr_pid) != FFUtils::printer_preset_map.end()) {
         MaterialStation::set_printer_type((FFPrinterPid)curr_pid);
         m_printer_type = (FFPrinterPid)curr_pid;
@@ -3012,12 +3007,7 @@ void MaterialSlotAreaU1::synchronize_printer_status(const com_dev_data_t& data)
 {
     m_hasMatlStation = data.devDetail->hasMatlStation;
     synchronize_matl_station(data);
-    unsigned short curr_pid = 0;
-    if (data.connectMode == 0) {
-        curr_pid = data.lanDevInfo.pid;
-    } else if (data.connectMode == 1) {
-        curr_pid = data.devDetail->pid;
-    }
+    const unsigned short curr_pid = FFUtils::getPid(data);
     if (curr_pid == C5 || curr_pid == C5P) {
         MaterialStation::set_printer_type((FFPrinterPid)curr_pid);
     } else {
@@ -3723,6 +3713,9 @@ void FFNozzles::onComDevDetailUpdate(ComDevDetailUpdateEvent& event)
         return;
     }
     const com_dev_data_t& data = MultiComMgr::inst()->devData(m_cur_id);
+    if (data.devDetail == nullptr) {
+        return;
+    }
     int                    slot_cnt  = data.devDetail->matlStationInfo.slotCnt;
     fnet_matl_slot_info_t* slotInfos = data.devDetail->matlStationInfo.slotInfos;
     if (!slotInfos) {

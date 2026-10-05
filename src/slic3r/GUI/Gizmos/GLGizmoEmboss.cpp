@@ -305,6 +305,7 @@ struct GuiCfg
         std::string curve_radius;
         std::string curve_side;
         std::string curve_letters;
+        std::string curve_projection;
     };
     Translations translations;
 };
@@ -463,7 +464,7 @@ bool GLGizmoEmboss::do_mirror(size_t axis)
     // mirror
     tr = tr * Eigen::Scaling(scale);
 
-    if (is_per_glyph) { 
+    if (is_per_glyph && m_style_manager.get_style().projection.bend.mode == EmbossBend::Mode::off) {
         // init textlines before mirroring on mirrored text volume transformation
         ModelVolumePtrs volumes = prepare_volumes_to_slice(*m_volume);
         m_text_lines.init(tr, volumes, m_style_manager, m_text_lines.get_lines().size());
@@ -1106,6 +1107,11 @@ std::optional<wxString> get_installed_face_name(const std::optional<std::string>
 
 void init_text_lines(TextLinesModel &text_lines, const Selection& selection, /* const*/ StyleManager &style_manager, unsigned count_lines)
 {    
+    // Curved text places its letters along the arc, not along a section of the object
+    if (style_manager.get_style().projection.bend.mode != EmbossBend::Mode::off) {
+        text_lines.reset();
+        return;
+    }
     const GLVolume *gl_volume_ptr = selection.get_first_volume();
     if (gl_volume_ptr == nullptr)
         return;
@@ -1249,6 +1255,8 @@ void GLGizmoEmboss::set_volume_by_selection()
     // a waiting curve preview belongs to the previous volume
     m_bend_preview_pending = false;
     m_bend_surface_key.reset();
+    m_bend_surface_preview.reset(); // a running job keeps writing into its own copy
+    m_bend_letter_drawn.reset();
 
     m_text   = tc.text;
     m_volume = volume;
@@ -1275,6 +1283,8 @@ void GLGizmoEmboss::reset_volume()
     m_volume_id.id = 0;
     m_bend_preview_pending = false;
     m_bend_surface_key.reset();
+    m_bend_surface_preview.reset();
+    m_bend_letter_drawn.reset();
 
     // No more need of current notification
     remove_notification_not_valid_font();
@@ -1323,6 +1333,12 @@ bool GLGizmoEmboss::process(bool make_snapshot)
 
     const Selection& selection = m_parent.get_selection();
     DataBasePtr base = create_emboss_data_base(m_text, m_style_manager, m_text_lines, selection, m_volume->type(), m_job_cancel);
+    if (base == nullptr)
+        return false;
+    // curved text letter by letter: the job publishes its reference curve for the overlay
+    if (m_bend_surface_preview == nullptr)
+        m_bend_surface_preview = std::make_shared<Slic3r::Emboss::SurfaceArcPreview>();
+    base->bend_preview_out = m_bend_surface_preview;
     DataUpdate  data{std::move(base), m_volume->id(), make_snapshot};
 
     // check valid count of text lines
@@ -2708,9 +2724,10 @@ void GLGizmoEmboss::draw_advanced()
         stored_style = m_style_manager.get_stored_style();
     
     bool is_the_only_one_part = m_volume->is_the_only_one_part();
-    // Curved text works with surface projection, not with per glyph placement
+    // Curved text works with surface projection. Per glyph then places it letter by letter on the
+    // surface; without the surface per glyph (along a section of the object) is not combined with it.
     const bool is_curved = m_style_manager.get_style().projection.bend.mode != EmbossBend::Mode::off;
-    const std::string curved_hint = _u8L("Not available for curved text. Turn off \"Curve text\" first.");
+    const std::string curved_hint = _u8L("Curved text is placed letter by letter only on the surface. Turn on \"Use surface\" first.");
     bool can_use_surface = (m_volume->emboss_shape->projection.use_surface)? true : // already used surface must have option to uncheck
                             !is_the_only_one_part;
     m_imgui->disabled_begin(!can_use_surface);
@@ -2723,14 +2740,17 @@ void GLGizmoEmboss::draw_advanced()
         if (use_surface)
             // when using surface distance is not used
             current_style.distance.reset();
+        // curved text: letter by letter on the surface by default, never along a section
+        if (is_curved)
+            font_prop.per_glyph = use_surface;
         process();
     }
     m_imgui->disabled_end(); // !can_use_surface
 
     bool &per_glyph = font_prop.per_glyph;
     bool can_use_per_glyph = (per_glyph) ? true : // already used surface must have option to uncheck
-                            (!is_the_only_one_part && !is_curved);
-    if (!can_use_per_glyph && is_curved && m_text_lines.is_init())
+                            (!is_the_only_one_part && (!is_curved || use_surface));
+    if (is_curved && m_text_lines.is_init())
         m_text_lines.reset();
     m_imgui->disabled_begin(!can_use_per_glyph);
     const bool *def_per_glyph = stored_style ? &stored_style->prop.per_glyph : nullptr;
@@ -2739,6 +2759,10 @@ void GLGizmoEmboss::draw_advanced()
         if (per_glyph && !m_text_lines.is_init())
             reinit_text_lines();
         process();
+    } else if (is_curved && can_use_per_glyph && ImGui::IsItemHovered()) {
+        m_imgui->tooltip(_u8L("Curved text: place and orient every letter on the surface along the arc "
+                              "(the same as Projection: Per letter in the Curve section)."),
+                         m_gui_cfg->max_tooltip_width);
     } else if (ImGui::IsItemHovered()) {
         if (per_glyph) {
             m_imgui->tooltip(_u8L("Set global orientation for whole text."), m_gui_cfg->max_tooltip_width);
@@ -3072,10 +3096,11 @@ constexpr float CURVE_MAX_RADIUS = 10000.f; // [mm]
 constexpr float CURVE_SLIDER_MAX_RADIUS = 300.f; // [mm]
 } // namespace
 
-bool GLGizmoEmboss::can_use_bend() const
+bool GLGizmoEmboss::is_curve_per_letter() const
 {
-    // Per glyph places every glyph along a section of the object, the bend would fight it
-    return !m_style_manager.get_style().prop.per_glyph;
+    const StyleManager::Style &style = m_style_manager.get_style();
+    return style.projection.bend.mode != EmbossBend::Mode::off && style.prop.per_glyph && style.projection.use_surface &&
+           m_volume != nullptr && !m_volume->is_the_only_one_part();
 }
 
 void GLGizmoEmboss::request_bend_preview()
@@ -3294,8 +3319,11 @@ bool GLGizmoEmboss::center_arc_on_object()
     else
         return false;
 
-    // arc centre in the text plane [mm], which is also the projection plane with "Use surface"
-    const Vec2d arc_center(0., -result->spec.side() * result->radius_mm);
+    // arc centre in the text plane [mm], which is also the projection plane with "Use surface";
+    // letter by letter the centre the last placement found on the surface
+    Vec2d arc_center(0., -result->spec.side() * result->radius_mm);
+    if (is_curve_per_letter() && m_bend_surface_preview != nullptr && m_bend_surface_preview->valid)
+        arc_center = Vec2d(m_bend_surface_preview->center.x(), m_bend_surface_preview->center.y());
     const Vec2d move = target - arc_center;
 
     const Transform3d text_tr    = get_text_world_matrix();
@@ -3386,9 +3414,52 @@ void GLGizmoEmboss::update_bend_surface_overlay(const Transform3d &text_tr, cons
         m_bend_surface.init_from(std::move(geometry));
 }
 
+void GLGizmoEmboss::update_bend_letter_overlay()
+{
+    if (m_bend_surface_preview == nullptr || !m_bend_surface_preview->valid) {
+        m_bend_letter.reset();
+        m_bend_letter_drawn.reset();
+        return;
+    }
+    const Slic3r::Emboss::SurfaceArcPreview &preview = *m_bend_surface_preview;
+    if (m_bend_letter_drawn.has_value() && m_bend_letter_drawn->center == preview.center &&
+        m_bend_letter_drawn->radius == preview.radius && m_bend_letter_drawn->circle == preview.circle)
+        return;
+    m_bend_letter_drawn = preview; // copy
+    m_bend_letter.reset();
+
+    const double lift = 0.1; // [mm] along the surface normal, against z-fighting
+    GLModel::Geometry geometry;
+    geometry.format = {GLModel::Geometry::EPrimitiveType::Lines, GLModel::Geometry::EVertexLayout::P3};
+    const size_t count = preview.circle.size();
+    for (size_t i = 0; i < count; ++i) {
+        const size_t j = (i + 1) % count;
+        if (!preview.circle_ok[i] || !preview.circle_ok[j])
+            continue;
+        const unsigned int v = static_cast<unsigned int>(geometry.vertices_count());
+        geometry.add_vertex(Vec3f((preview.circle[i] + lift * preview.circle_normal[i]).cast<float>()));
+        geometry.add_vertex(Vec3f((preview.circle[j] + lift * preview.circle_normal[j]).cast<float>()));
+        geometry.add_line(v, v + 1);
+    }
+    // centre cross in the tangent plane of the arc centre
+    const Vec3d  n     = preview.normal;
+    Vec3d        a     = n.cross(std::abs(n.x()) < 0.9 ? Vec3d::UnitX() : Vec3d::UnitY()).normalized();
+    const Vec3d  b     = n.cross(a);
+    const double cross = std::clamp(0.08 * preview.radius, 1., 5.);
+    const Vec3d  c     = preview.center + lift * n;
+    const unsigned int v = static_cast<unsigned int>(geometry.vertices_count());
+    geometry.add_vertex(Vec3f((c - cross * a).cast<float>()));
+    geometry.add_vertex(Vec3f((c + cross * a).cast<float>()));
+    geometry.add_vertex(Vec3f((c - cross * b).cast<float>()));
+    geometry.add_vertex(Vec3f((c + cross * b).cast<float>()));
+    geometry.add_line(v, v + 1);
+    geometry.add_line(v + 2, v + 3);
+    m_bend_letter.init_from(std::move(geometry));
+}
+
 void GLGizmoEmboss::render_bend_overlay()
 {
-    if (!m_bend_result.has_value() || !m_bend_result->is_active() || m_volume == nullptr || !can_use_bend())
+    if (!m_bend_result.has_value() || !m_bend_result->is_active() || m_volume == nullptr)
         return;
     if (m_parent.get_selection().get_first_volume() == nullptr)
         return;
@@ -3406,8 +3477,15 @@ void GLGizmoEmboss::render_bend_overlay()
     const double      cross   = std::clamp(0.08 * radius, 1., 5.);
     // Projected text: draw the circle where the text lands, on the surface
     const bool on_surface = m_style_manager.get_style().projection.use_surface && !m_volume->is_the_only_one_part();
+    // Letter by letter: the reference curve the last placement used (geodesic circle)
+    const bool per_letter = is_curve_per_letter();
 
-    if (on_surface) {
+    if (per_letter) {
+        update_bend_letter_overlay();
+        if (!m_bend_letter.is_initialized())
+            return;
+        m_bend_letter.set_color(color);
+    } else if (on_surface) {
         update_bend_surface_overlay(text_tr, center, radius, cross);
         if (!m_bend_surface.is_initialized())
             return;
@@ -3451,7 +3529,11 @@ void GLGizmoEmboss::render_bend_overlay()
     if (!is_depth_test)
         glsafe(::glEnable(GL_DEPTH_TEST));
 
-    if (on_surface) {
+    if (per_letter) {
+        // geometry in text coordinates
+        shader->set_uniform("view_model_matrix", camera.get_view_matrix() * text_tr);
+        m_bend_letter.render();
+    } else if (on_surface) {
         // geometry in world coordinates
         shader->set_uniform("view_model_matrix", camera.get_view_matrix());
         m_bend_surface.render();
@@ -3478,7 +3560,6 @@ void GLGizmoEmboss::draw_curve()
     StyleManager::Style &style = m_style_manager.get_style();
     EmbossBend &bend = style.projection.bend;
     const bool was_on   = bend.mode != EmbossBend::Mode::off;
-    const bool can_bend = can_use_bend();
     const bool is_text_object = m_volume->is_the_only_one_part();
 
     auto draw_label = [offset](const std::string &text, bool highlight) {
@@ -3507,7 +3588,6 @@ void GLGizmoEmboss::draw_curve()
     bool commit = false;
 
     // Enable
-    m_imgui->disabled_begin(!was_on && !can_bend); // switching off must stay possible
     draw_label(tr.curve, was_on);
     bool enable = was_on;
     if (m_imgui->bbl_checkbox(wxString::FromUTF8("##curve_text"), enable)) {
@@ -3531,26 +3611,26 @@ void GLGizmoEmboss::draw_curve()
                 if (bend.angle <= 0.f)
                     bend.angle = CURVE_DEFAULT_ANGLE;
             }
+            // On a surface letter by letter by default. Per glyph along a section of the object
+            // (without the surface) is not combined with a curve.
+            style.prop.per_glyph = style.projection.use_surface && !is_text_object;
+            if (m_text_lines.is_init())
+                m_text_lines.reset();
         } else {
             bend.mode = EmbossBend::Mode::off;
+            // straight per glyph text follows a section of the object again
+            if (style.prop.per_glyph)
+                reinit_text_lines();
         }
         commit = true;
     } else if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-        m_imgui->tooltip(can_bend ? _u8L("Bend the text along a circular arc in the plane of the text. "
-                                         "With \"Use surface\" the curved text is then projected onto the surface.") :
-                                    _u8L("Turn off \"Per glyph\" in Advanced to curve the text."),
+        m_imgui->tooltip(_u8L("Bend the text along a circular arc. With \"Use surface\" the letters follow the arc on "
+                              "the surface."),
                          tooltip_width);
     }
-    m_imgui->disabled_end();
 
     const bool is_on = bend.mode != EmbossBend::Mode::off;
-    if (!can_bend)
-        draw_note(is_on ? _u8L("The curve is ignored while \"Per glyph\" is on.") :
-                          _u8L("Not available together with \"Per glyph\"."));
-    else if (is_on && style.projection.use_surface && !is_text_object)
-        draw_note(_u8L("The arc is laid out in the text plane and projected onto the surface; "
-                       "letters stretch where the surface gets steep."));
-    if (!is_on || !can_bend) {
+    if (!is_on) {
         m_bend_result.reset();
         if (commit)
             process();
@@ -3688,6 +3768,46 @@ void GLGizmoEmboss::draw_curve()
         m_imgui->tooltip(_u8L("Letters keep their shape; each one is only turned to follow the arc."), tooltip_width);
     }
     ImGuiWrapper::pop_radio_style();
+
+    // Projection onto the surface: per letter (default) | parallel
+    const bool on_surface = style.projection.use_surface && !is_text_object;
+    if (on_surface) {
+        draw_label(tr.curve_projection, false);
+        ImGuiWrapper::push_radio_style();
+        if (ImGui::RadioButton(_u8L("Per letter").c_str(), style.prop.per_glyph)) {
+            if (!style.prop.per_glyph) {
+                style.prop.per_glyph = true;
+                commit               = true;
+            }
+        } else if (ImGui::IsItemHovered()) {
+            m_imgui->tooltip(_u8L("Every letter is placed on the surface along the arc and projected along the local "
+                                  "surface normal. Letters keep their shape all the way round, also past the edge "
+                                  "seen from the text."),
+                             tooltip_width);
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton(_u8L("Parallel").c_str(), !style.prop.per_glyph)) {
+            if (style.prop.per_glyph) {
+                style.prop.per_glyph = false;
+                commit               = true;
+            }
+        } else if (ImGui::IsItemHovered()) {
+            m_imgui->tooltip(_u8L("The arc is laid out in the text plane and the whole text is projected onto the "
+                                  "surface in one direction. Letters stretch where the surface gets steep."),
+                             tooltip_width);
+        }
+        ImGuiWrapper::pop_radio_style();
+        // what the surface made of the arc (last placement)
+        if (style.prop.per_glyph && m_bend_surface_preview != nullptr && m_bend_surface_preview->valid) {
+            const Slic3r::Emboss::SurfaceArcPreview &preview = *m_bend_surface_preview;
+            ImGui::Dummy(ImVec2(0.f, 0.f));
+            ImGui::SameLine(offset);
+            ImGui::TextDisabled("%s", GUI::format(_u8L("On the surface: radius %1% mm, span %2% °"),
+                                                  curve_number(preview.radius, 1), curve_number(preview.span_deg, 0)).c_str());
+            if (preview.limited)
+                draw_warning(_u8L("The surface has no arc of that size; the curve was limited."));
+        }
+    }
 
     // Move the text so the arc centre lies on the centre of the face / object
     m_imgui->disabled_begin(is_text_object || !result.has_value());
@@ -3959,13 +4079,23 @@ EmbossShape &TextDataBase::create_shape()
     Slic3r::Emboss::GlyphAdvances advances;
     shape.shapes_with_ids = text2vshapes(m_font_file, text_w, fp, was_canceled, advances);
 
-    // Curved text: bend the 2D outlines before they are united and extruded. With "Use surface"
-    // the bent outlines are projected onto the object like straight text. Not combined with
-    // per glyph placement, which positions every glyph along a section of the object itself.
+    // Curved text: bend the 2D outlines before they are united and extruded; with "Use surface"
+    // they are then projected onto the object along one direction (parallel).
+    // With "Use surface" and per glyph ("Per letter") the outlines stay straight: the surface job
+    // places and orients every glyph on the surface along the arc (cut_curved_glyph_surface).
     const EmbossBend &bend = shape.projection.bend;
-    if (bend.is_active() && !fp.per_glyph && !was_canceled())
-        Slic3r::Emboss::apply_bend(shape.shapes_with_ids, bend, shape.scale, &advances,
-                                   Slic3r::Emboss::bend_tolerance_mm(shape.projection.use_surface));
+    bend_per_glyph = false;
+    bend_advances.clear();
+    if (bend.is_active() && !was_canceled()) {
+        if (fp.per_glyph && shape.projection.use_surface) {
+            bend_per_glyph = true;
+            bend_advances  = std::move(advances);
+        } else {
+            // per glyph along a section of the object is not used for curved text (no text lines)
+            Slic3r::Emboss::apply_bend(shape.shapes_with_ids, bend, shape.scale, &advances,
+                                       Slic3r::Emboss::bend_tolerance_mm(shape.projection.use_surface));
+        }
+    }
     return shape;
 }
 
@@ -4003,7 +4133,7 @@ std::unique_ptr<DataBase> create_emboss_data_base(const std::string             
     assert(style_manager.get_wx_font().IsOk());
     assert(style.path.compare(WxFontUtils::store_wxFont(style_manager.get_wx_font())) == 0);
 
-    if (style.prop.per_glyph) {
+    if (style.prop.per_glyph && style.projection.bend.mode == EmbossBend::Mode::off) {
         if (!text_lines.is_init())
             init_text_lines(text_lines, selection, style_manager);
     } else
@@ -4395,6 +4525,8 @@ GuiCfg create_gui_configuration()
     tr.curve_side = _u8L("Side");
     // TRN - Input label. Be short as possible. Letters bent with the arc or kept rigid
     tr.curve_letters = _u8L("Letters");
+    // TRN - Input label. Be short as possible. Curved text on a surface: placed per letter or projected in one direction
+    tr.curve_projection = _u8L("Projection");
 
     float max_advanced_text_width = std::max({
         ImGui::CalcTextSize(tr.curve.c_str()).x,
@@ -4403,6 +4535,7 @@ GuiCfg create_gui_configuration()
         ImGui::CalcTextSize(tr.curve_radius.c_str()).x,
         ImGui::CalcTextSize(tr.curve_side.c_str()).x,
         ImGui::CalcTextSize(tr.curve_letters.c_str()).x,
+        ImGui::CalcTextSize(tr.curve_projection.c_str()).x,
         ImGui::CalcTextSize(tr.use_surface.c_str()).x,
         ImGui::CalcTextSize(tr.per_glyph.c_str()).x,
         ImGui::CalcTextSize(tr.alignment.c_str()).x,

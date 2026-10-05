@@ -16,6 +16,7 @@
 
 #include "libslic3r/Emboss.hpp"
 #include "libslic3r/EmbossBend.hpp"
+#include "libslic3r/EmbossBendSurface.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/TextConfiguration.hpp"
 
@@ -138,10 +139,10 @@ private:
 
     // Curved text (in-plane arc of the whole text block)
     void draw_curve();
-    // True when the bend can be used with the current settings (not with per glyph)
-    bool can_use_bend() const;
     // Live preview while a curve slider is dragged; with "Use surface" at most one cut at a time
     void request_bend_preview();
+    // Curve + use surface + per glyph: every letter placed and oriented on the surface along the arc
+    bool is_curve_per_letter() const;
     // Measure the current text (GUI thread, private glyph cache) to show the resolved bend
     std::optional<Slic3r::Emboss::BendInput> measure_text_for_bend();
     std::optional<Slic3r::Emboss::BendResult> calc_bend_result();
@@ -163,6 +164,8 @@ private:
                                             const RaycastManager::AllowVolumes &condition, Vec3d *normal = nullptr) const;
     // Reference circle projected onto the surface, cached while nothing changes
     void update_bend_surface_overlay(const Transform3d &text_tr, const Vec2d &center, double radius, double cross);
+    // Reference curve of the letter by letter placement, from the last job
+    void update_bend_letter_overlay();
 
     bool select_facename(const wxString& facename);
 
@@ -270,6 +273,10 @@ private:
     struct BendOverlayKey { Transform3d text_tr; Vec2d center; double radius; ObjectID volume_id; };
     std::optional<BendOverlayKey>           m_bend_surface_key;
     GLModel                                 m_bend_surface;
+    // Letter by letter: the job publishes its reference curve here (text coordinates)
+    std::shared_ptr<Slic3r::Emboss::SurfaceArcPreview> m_bend_surface_preview;
+    std::optional<Slic3r::Emboss::SurfaceArcPreview>   m_bend_letter_drawn;
+    GLModel                                            m_bend_letter;
 
     // drawing icons
     IconManager m_icon_manager;

@@ -8,6 +8,7 @@
 #include <string>
 #include <libslic3r/Emboss.hpp>
 #include <libslic3r/EmbossShape.hpp> // ExPolygonsWithIds
+#include <libslic3r/EmbossBendSurface.hpp> // SurfaceArcPreview
 #include "libslic3r/Point.hpp" // Transform3d
 #include "libslic3r/ObjectID.hpp"
 
@@ -81,6 +82,16 @@ public:
 
     // shape to emboss
     EmbossShape shape;
+
+    // Curved text placed letter by letter on the surface (curve + per glyph + use surface).
+    // Set by create_shape(), which then leaves the outlines straight: the job places every glyph.
+    bool bend_per_glyph = false;
+    // advance boxes of the glyphs (same order as shape.shapes_with_ids) for the arc layout
+    Slic3r::Emboss::GlyphAdvances bend_advances;
+    // Reference curve of the placement (worker thread), published in finalize (main thread) into
+    // bend_preview_out, which the gizmo shares, for its overlay
+    Slic3r::Emboss::SurfaceArcPreview bend_preview;
+    std::shared_ptr<Slic3r::Emboss::SurfaceArcPreview> bend_preview_out;
 };
 
 /// <summary>

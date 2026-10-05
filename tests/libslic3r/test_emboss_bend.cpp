@@ -4,6 +4,7 @@
 // surfaces ("Use surface") and its 3MF round trip.
 
 #include <libslic3r/EmbossBend.hpp>
+#include <libslic3r/EmbossBendSurface.hpp>
 #include <libslic3r/Emboss.hpp>
 #include <libslic3r/EmbossShape.hpp>
 #include <libslic3r/ClipperUtils.hpp>
@@ -761,8 +762,6 @@ TEST_CASE("Straight text with use surface is unchanged by the bend code", "[Embo
 {
     const indexed_triangle_set sphere = sphere_below(30.);
     GlyphAdvances advances;
-    // Odd count: the pole of the sphere lies inside a glyph. With the pole exactly in the middle of a
-    // gap between two glyphs the CGAL cut crashes for straight text too (pre-existing, CutSurface.cpp).
     const ExPolygonsWithIds straight = box_text(5, &advances);
     const SurfaceProjection reference = project_onto(united(straight, SCALE), SCALE, sphere);
     REQUIRE_FALSE(reference.cut.empty());
@@ -938,4 +937,292 @@ TEST_CASE("Timing of curved text on a dome", "[EmbossBend][surface][.perf]")
         run(("bent " + a + " deg, 0.02 mm").c_str(), angle_bend(angle), BEND_SURFACE_TOLERANCE_MM);
         run(("rigid " + a + " deg").c_str(), angle_bend(angle, false, true), BEND_SURFACE_TOLERANCE_MM);
     }
+}
+
+// ---- Curved text letter by letter on the surface (phase 2b) ----
+
+namespace {
+
+// Same as the surface job (cut_curved_glyph_surface in EmbossJob.cpp): every glyph is projected in
+// its own frame along its own normal. Cuts are returned in text coordinates.
+struct LetterProjection
+{
+    SurfaceArc                          arc;
+    std::vector<SurfaceCut>             cuts;   // per glyph (empty when not placed), text coordinates
+    std::vector<ExPolygons>             local;  // glyph outline in its own frame
+};
+
+LetterProjection project_letters(const ExPolygonsWithIds &shapes, const GlyphAdvances &advances, const EmbossBend &bend,
+                                 const indexed_triangle_set &mesh)
+{
+    LetterProjection result;
+    std::optional<SurfaceGlyphLayout> layout = surface_glyph_layout(shapes, &advances, bend, SCALE);
+    REQUIRE(layout.has_value());
+    BendSurface surface(mesh);
+    result.arc = place_on_surface_arc(surface, layout->pivots_mm, layout->x_min, layout->x_max, layout->params);
+    result.cuts.resize(shapes.size());
+    result.local.resize(shapes.size());
+    for (size_t i = 0; i < shapes.size(); ++i) {
+        if (shapes[i].expoly.empty() || !result.arc.frames[i].has_value())
+            continue;
+        const Transform3d &frame = *result.arc.frames[i];
+        result.local[i] = surface_glyph_shape(shapes[i].expoly, layout->pivots[i], result.arc.curvature_radius[i], bend, SCALE);
+        indexed_triangle_set local_mesh = mesh;
+        its_transform(local_mesh, frame.inverse());
+        SurfaceCut cut = project_onto(result.local[i], SCALE, local_mesh).cut;
+        for (stl_vertex &v : cut.vertices)
+            v = (frame * v.cast<double>()).cast<float>();
+        result.cuts[i] = std::move(cut);
+    }
+    return result;
+}
+
+// area of a mesh patch in 3D [mm^2]
+double surface_area(const indexed_triangle_set &its)
+{
+    double area = 0.;
+    for (const stl_triangle_vertex_indices &t : its.indices) {
+        const Vec3d a = its.vertices[t[0]].cast<double>(), b = its.vertices[t[1]].cast<double>(), c = its.vertices[t[2]].cast<double>();
+        area += 0.5 * (b - a).cross(c - a).norm();
+    }
+    return area;
+}
+
+// Extent of the cut along two directions through the frame origin (as walked on the patch: the
+// 3D bounding box in the frame)
+Vec2d extent_in_frame(const SurfaceCut &cut, const Transform3d &frame)
+{
+    const Transform3d inv = frame.inverse();
+    BoundingBoxf bb;
+    for (const stl_vertex &v : cut.vertices) {
+        const Vec3d p = inv * v.cast<double>();
+        bb.merge(Vec2d(p.x(), p.y()));
+    }
+    return bb.size();
+}
+
+// Each glyph: placed, not clipped, on the mesh, and hardly distorted
+void check_letters(const ExPolygonsWithIds &shapes, const LetterProjection &p, const indexed_triangle_set &mesh,
+                   double max_area_error, double max_aspect_error)
+{
+    for (size_t i = 0; i < shapes.size(); ++i) {
+        if (shapes[i].expoly.empty())
+            continue;
+        INFO("glyph " << i);
+        REQUIRE(p.arc.frames[i].has_value());
+        const SurfaceCut &cut = p.cuts[i];
+        REQUIRE_FALSE(cut.empty());
+        // every vertex on the surface
+        CHECK(max_distance_to(cut, mesh) < 1e-3);
+        const double flat_area = shapes_area_mm2(p.local[i], SCALE);
+        // not clipped: the footprint along its own normal is the whole glyph
+        indexed_triangle_set in_frame = cut;
+        its_transform(in_frame, p.arc.frames[i]->inverse());
+        CHECK_THAT(projected_area(in_frame), WithinRel(flat_area, 2e-3));
+        // hardly distorted: the area on the surface and the proportions stay those of the flat glyph
+        CHECK_THAT(surface_area(cut), WithinRel(flat_area, max_area_error));
+        const BoundingBox bb   = get_extents(p.local[i]);
+        const double      flat_aspect = double(bb.size().x()) / double(bb.size().y());
+        const Vec2d       ext  = extent_in_frame(cut, *p.arc.frames[i]);
+        CHECK_THAT(ext.x() / ext.y(), WithinRel(flat_aspect, max_aspect_error));
+        // one patch per glyph (no hole lost or glyph split)
+        CHECK(its_number_of_patches(cut) == 1);
+    }
+}
+
+// Angle of a point around the axis (sphere centre -> arc centre)
+double angle_around(const Vec3d &p, const Vec3d &axis_point, const Vec3d &axis, const Vec3d &ref)
+{
+    const Vec3d d  = p - axis_point;
+    const Vec3d u  = (ref - ref.dot(axis) * axis).normalized();
+    const Vec3d v  = axis.cross(u);
+    return std::atan2(d.dot(v), d.dot(u));
+}
+
+} // namespace
+
+TEST_CASE("Curved text letter by letter on a sphere", "[EmbossBend][surface][letters]")
+{
+    const double               rs     = 30.;
+    const indexed_triangle_set sphere = sphere_below(rs);
+    const Vec3d                sphere_center(0., 0., -rs);
+    GlyphAdvances              advances;
+    const ExPolygonsWithIds    text = box_text(8, &advances); // 8 glyphs of 6 x 8 mm, advance 7 mm
+    const double               width = 8 * 7.;
+
+    for (bool rigid : {true, false})
+        for (float angle : {120.f, 270.f}) {
+            DYNAMIC_SECTION((rigid ? "rigid " : "bent ") << angle << " degrees") {
+                const EmbossBend bend = angle_bend(angle, false, rigid);
+                LetterProjection p    = project_letters(text, advances, bend, sphere);
+                REQUIRE(p.arc.preview.valid);
+                CHECK_FALSE(p.arc.preview.limited);
+                // letters keep their shape: a 6 x 8 mm letter on a 30 mm sphere, bent ones are wedges
+                check_letters(text, p, sphere, 0.03, rigid ? 0.02 : 0.08);
+
+                // the arc centre lies on the sphere and the pivots on one circle around it
+                const Vec3d axis = (p.arc.preview.center - sphere_center).normalized();
+                std::vector<double> heights, angles;
+                for (size_t i = 0; i < text.size(); ++i) {
+                    const Vec3d o = p.arc.frames[i]->translation();
+                    heights.push_back((o - sphere_center).dot(axis));
+                    angles.push_back(angle_around(o, sphere_center, axis, p.arc.frames[0]->translation() - sphere_center));
+                }
+                for (double h : heights)
+                    CHECK_THAT(h, WithinAbs(heights.front(), 0.05));
+                // spacing by arc length on the surface: equal steps, and the text spans the angle
+                const double r_circle = std::sqrt(rs * rs - heights.front() * heights.front());
+                for (size_t i = 1; i < angles.size(); ++i) {
+                    double step = std::abs(angles[i] - angles[i - 1]);
+                    if (step > PI)
+                        step = 2. * PI - step;
+                    CHECK_THAT(step * r_circle, WithinRel(7., 0.01));
+                }
+                CHECK_THAT(width / r_circle * 180. / PI, WithinAbs(angle, 1.));
+                CHECK_THAT(p.arc.preview.span_deg, WithinAbs(angle, 1.));
+            }
+        }
+}
+
+TEST_CASE("Letters wrap past the edge seen from the text", "[EmbossBend][surface][letters]")
+{
+    // text placed on the side of a sphere, the ring passes the silhouette of the text plane
+    const double rs = 30.;
+    indexed_triangle_set sphere = its_make_sphere(rs, PI / 90.);
+    // text origin at the equator, text z = sphere normal there (+x of the sphere), text y = up
+    Transform3d to_text = Transform3d::Identity();
+    to_text.linear() << 0., 1., 0., //
+                        0., 0., 1., //
+                        1., 0., 0.;
+    to_text.translation() = Vec3d(0., 0., -rs);
+    its_transform(sphere, to_text);
+    GlyphAdvances           advances;
+    const ExPolygonsWithIds text = box_text(18, &advances); // 326 degrees around the centre
+    LetterProjection p = project_letters(text, advances, radius_bend(25.f, false, true), sphere);
+    REQUIRE(p.arc.preview.valid);
+    check_letters(text, p, sphere, 0.03, 0.02);
+    // some letters face away from the text direction: past the silhouette
+    bool past = false;
+    for (const std::optional<Transform3d> &f : p.arc.frames)
+        past |= f.has_value() && f->linear().col(2).z() < 0.;
+    CHECK(past);
+}
+
+TEST_CASE("Letters arc around the side wall of a cup", "[EmbossBend][surface][letters]")
+{
+    // standing cylinder (a cup), the text on its side wall: z of the text = outward normal
+    const double rc = 25.;
+    indexed_triangle_set cup = its_make_cylinder(rc, 80., PI / 180.);
+    Transform3d to_text = Transform3d::Identity();
+    to_text.linear() << 0., 1., 0., //
+                        0., 0., 1., //
+                        1., 0., 0.;
+    to_text.translation() = Vec3d(0., -40., -rc);
+    its_transform(cup, to_text);
+    // in text coordinates the cylinder axis is the y axis through (0, *, -rc)
+    GlyphAdvances           advances;
+    const ExPolygonsWithIds text = box_text(8, &advances);
+    for (bool rigid : {true, false}) {
+        INFO((rigid ? "rigid" : "bent"));
+        LetterProjection p = project_letters(text, advances, radius_bend(30.f, false, rigid), cup);
+        REQUIRE(p.arc.preview.valid);
+        check_letters(text, p, cup, 0.02, rigid ? 0.02 : 0.08);
+        // unrolled, the letters sit on the flat circle: radius 30 around the unrolled centre
+        auto unroll = [rc](const Vec3d &q) { return Vec2d(rc * std::atan2(q.x(), q.z() + rc), q.y()); };
+        const Vec2d c = unroll(p.arc.preview.center);
+        for (const std::optional<Transform3d> &f : p.arc.frames)
+            if (f.has_value())
+                CHECK_THAT((unroll(f->translation()) - c).norm(), WithinAbs(30., 0.1));
+        // the text wraps round the cup: 56 mm of text over 25 mm radius
+        double a_min = 1e9, a_max = -1e9;
+        for (const std::optional<Transform3d> &f : p.arc.frames)
+            if (f.has_value()) {
+                const double a = std::atan2(f->translation().x(), f->translation().z() + rc);
+                a_min = std::min(a_min, a);
+                a_max = std::max(a_max, a);
+            }
+        CHECK((a_max - a_min) * 180. / PI > 90.);
+    }
+}
+
+TEST_CASE("Parallel projection of a wide arc distorts the outer letters", "[EmbossBend][surface][letters]")
+{
+    // the reason for letter by letter placement: the same arc projected in one direction
+    const indexed_triangle_set sphere = sphere_below(30.);
+    GlyphAdvances     advances;
+    ExPolygonsWithIds shapes = box_text(8, &advances);
+    BendResult r = apply_bend(shapes, angle_bend(120.f, false, true), SCALE, &advances, BEND_SURFACE_TOLERANCE_MM);
+    REQUIRE(r.is_active());
+    double worst = 0.;
+    for (const ExPolygonsWithId &g : shapes) {
+        SurfaceProjection p = project_onto(g.expoly, SCALE, sphere);
+        if (p.cut.empty())
+            continue;
+        worst = std::max(worst, surface_area(p.cut) / shapes_area_mm2(g.expoly, SCALE));
+    }
+    CHECK(worst > 1.2); // the outer letters stretch by more than 20 % (letter by letter: under 3 %)
+}
+
+TEST_CASE("Straight text whose glyph side runs exactly through mesh vertices", "[EmbossBend][surface]")
+{
+    // Regression: with 4 or 6 glyphs a glyph side lies on x = 7.5 mm, which passes exactly through
+    // vertices of the 2 degree sphere (30 * sin 30 * cos 60 = 7.5). Corefine records no intersection
+    // for such an original vertex and the cut used to crash (CutSurface.cpp, set_face_type).
+    const indexed_triangle_set sphere = sphere_below(30.);
+    for (int count : {2, 4, 6}) {
+        INFO(count << " glyphs");
+        GlyphAdvances           advances;
+        const ExPolygonsWithIds straight = box_text(count, &advances);
+        check_on_surface(straight, project_onto(united(straight, SCALE), SCALE, sphere), sphere);
+    }
+}
+
+TEST_CASE("Timing of letters on a dome", "[EmbossBend][surface][.perf]")
+{
+    if (!boost::filesystem::exists(font_path())) {
+        WARN("Font not found: " << font_path());
+        return;
+    }
+    std::unique_ptr<FontFile> font = create_font_file(font_path().c_str());
+    REQUIRE(font != nullptr);
+    FontFileWithCache ff(std::move(font));
+    FontProp          fp;
+    fp.size_in_mm = 5.f;
+    const double scale = get_text_shape_scale(fp, *ff.font_file);
+    const std::wstring text = L"Hello, Curved World!";
+    GlyphAdvances      advances;
+    ExPolygonsWithIds  shapes = text2vshapes(ff, text, fp, []() { return false; }, advances);
+
+    indexed_triangle_set dome = its_make_sphere(40., PI / 90.);
+    its_translate(dome, Vec3f(0.f, 0.f, -40.f));
+
+    using clock = std::chrono::steady_clock;
+    std::cout << "Letter by letter, \"Hello, Curved World!\" (5 mm) on a 80 mm sphere, best of 3:" << std::endl;
+    for (float angle : {120.f, 270.f})
+        for (bool rigid : {true, false}) {
+            double best_place = 1e9, best_all = 1e9;
+            for (int run = 0; run < 3; ++run) {
+                auto start = clock::now();
+                std::optional<SurfaceGlyphLayout> layout = surface_glyph_layout(shapes, &advances, angle_bend(angle, false, rigid), scale);
+                REQUIRE(layout.has_value());
+                BendSurface surface(dome);
+                SurfaceArc arc = place_on_surface_arc(surface, layout->pivots_mm, layout->x_min, layout->x_max, layout->params);
+                auto placed = clock::now();
+                size_t done = 0;
+                for (size_t i = 0; i < shapes.size(); ++i) {
+                    if (shapes[i].expoly.empty() || !arc.frames[i].has_value())
+                        continue;
+                    ExPolygons glyph = surface_glyph_shape(shapes[i].expoly, layout->pivots[i], arc.curvature_radius[i],
+                                                           angle_bend(angle, false, rigid), scale);
+                    indexed_triangle_set local = dome;
+                    its_transform(local, arc.frames[i]->inverse());
+                    done += project_onto(glyph, scale, local).cut.empty() ? 0 : 1;
+                }
+                best_place = std::min(best_place, std::chrono::duration<double, std::milli>(placed - start).count());
+                best_all   = std::min(best_all, std::chrono::duration<double, std::milli>(clock::now() - start).count());
+                CHECK(done > 0);
+            }
+            std::cout << "  " << (rigid ? "rigid " : "bent ") << angle << " deg: placement " << best_place << " ms, total "
+                      << best_all << " ms" << std::endl;
+        }
 }

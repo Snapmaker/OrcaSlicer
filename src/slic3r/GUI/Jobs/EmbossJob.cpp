@@ -10,6 +10,9 @@
 #include <libslic3r/BuildVolume.hpp> // create object
 #include <libslic3r/SLA/ReprojectPointsOnMesh.hpp>
 #include <libslic3r/CodeEmboss.hpp> // parts of code are not projected onto each other
+#include <libslic3r/EmbossBend.hpp>
+#include <libslic3r/ClipperUtils.hpp> // union_ex
+#include <libslic3r/EmbossBendSurface.hpp> // curved text letter by letter on the surface
 
 #include "libslic3r/libslic3r.h"
 #include "slic3r/GUI/Plater.hpp"
@@ -539,6 +542,10 @@ void UpdateSurfaceVolumeJob::finalize(bool canceled, std::exception_ptr &eptr)
 {
     if (!::finalize(canceled, eptr, *m_input.base))
         return;
+
+    // curved text letter by letter: the reference curve for the gizmo overlay
+    if (m_input.base->bend_preview_out != nullptr)
+        *m_input.base->bend_preview_out = m_input.base->bend_preview;
 
     // when start using surface it is wanted to move text origin on surface of model
     // also when repeteadly move above surface result position should match
@@ -1643,12 +1650,73 @@ TriangleMesh cut_per_glyph_surface(DataBase &input1, const SurfaceVolumeData &in
     return TriangleMesh(std::move(result));
 }
 
+
+// Curved text letter by letter: every glyph gets its own frame on the surface (EmbossBendSurface.hpp)
+// and is projected along its own normal, like per glyph text along a section.
+TriangleMesh cut_curved_glyph_surface(DataBase &input1, const SurfaceVolumeData &input2, std::function<bool()> was_canceled)
+{
+    using namespace Slic3r::Emboss;
+    const EmbossShape &es = input1.create_shape();
+    if (was_canceled()) return {};
+    if (es.shapes_with_ids.empty())
+        throw JobException(_u8L("Font doesn't have any shape for given text.").c_str());
+
+    const ExPolygonsWithIds &shapes   = es.shapes_with_ids;
+    const GlyphAdvances     *advances = input1.bend_advances.size() == shapes.size() ? &input1.bend_advances : nullptr;
+    const EmbossBend        &bend     = es.projection.bend;
+    const double             scale    = es.scale;
+    std::optional<SurfaceGlyphLayout> layout = surface_glyph_layout(shapes, advances, bend, scale);
+    if (!layout.has_value())
+        throw JobException(_u8L("Font doesn't have any shape for given text.").c_str());
+
+    // the surface in text coordinates
+    const Transform3d text_inv = input2.transform.inverse();
+    indexed_triangle_set surface_its;
+    for (const SurfaceVolumeData::ModelSource &source : input2.sources) {
+        indexed_triangle_set its = source.mesh->its; // copy
+        its_transform(its, text_inv * source.tr, true);
+        its_merge(surface_its, std::move(its));
+    }
+    if (was_canceled()) return {};
+    BendSurface surface(std::move(surface_its));
+    if (surface.empty())
+        throw JobException(_u8L("There is no valid surface for text projection.").c_str());
+    // text on the inside of a shell (cup, bowl) faces against the normals
+    if (std::optional<BendSurface::Point> o = surface.closest(Vec3d::Zero()); o.has_value() && o->normal.z() < 0.)
+        surface.set_flip_normals(true);
+
+    SurfaceArc arc = place_on_surface_arc(surface, layout->pivots_mm, layout->x_min, layout->x_max, layout->params);
+    input1.bend_preview = arc.preview;
+    if (was_canceled()) return {};
+
+    indexed_triangle_set result;
+    for (size_t i = 0; i < shapes.size(); ++i) {
+        if (shapes[i].expoly.empty() || !arc.frames[i].has_value())
+            continue;
+        ExPolygons glyph = surface_glyph_shape(shapes[i].expoly, layout->pivots[i], arc.curvature_radius[i], bend, scale);
+        if (glyph.empty())
+            continue;
+        const Transform3d &frame = *arc.frames[i];
+        indexed_triangle_set glyph_its = cut_surface_to_its(glyph, input2.transform * frame, input2.sources, input1, was_canceled);
+        its_transform(glyph_its, frame);
+        its_merge(result, std::move(glyph_its));
+        if (was_canceled())
+            return {};
+    }
+    if (result.empty())
+        throw JobException(_u8L("There is no valid surface for text projection.").c_str());
+    return TriangleMesh(std::move(result));
+}
+
 // input can't be const - cache of font
 template<typename Fnc>
 TriangleMesh cut_surface(DataBase& input1, const SurfaceVolumeData& input2, const Fnc& was_canceled)
 {
     if (!input1.text_lines.empty())
         return cut_per_glyph_surface(input1, input2, was_canceled);
+    input1.create_shape(); // decides about the curved letter by letter placement
+    if (input1.bend_per_glyph)
+        return cut_curved_glyph_surface(input1, input2, was_canceled);
     
     ExPolygons shapes = create_shape(input1, was_canceled);
     if (was_canceled()) return {};

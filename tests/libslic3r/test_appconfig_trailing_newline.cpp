@@ -200,3 +200,38 @@ TEST_CASE("Print-action preference keys round-trip; unknown keys fall back to th
         CHECK(resolve_or_default("4", third_party, n, ePrintPlate) == ePrintPlate);
     }
 }
+
+TEST_CASE("Remembered checkbox settings retain both selections", "[AppConfig][Regression]")
+{
+    AppConfig config;
+    const bool checked = GENERATE(true, false);
+    config.set("recent", "checkbox", checked ? "1" : "0");
+    CHECK(config.get("recent", "checkbox") == (checked ? "1" : "0"));
+}
+
+TEST_CASE("Boolean setters retain their established encoding", "[AppConfig]")
+{
+    AppConfig config;
+    config.set("recent", "flag", true);
+    CHECK(config.get("recent", "flag") == "true");
+    config.set("recent", "flag", false);
+    CHECK(config.get("recent", "flag") == "false");
+}
+
+TEST_CASE("Boolean reads use only the requested section", "[AppConfig]")
+{
+    AppConfig config;
+    const bool value = GENERATE(true, false);
+    config.set("recent", "flag", value ? "1" : "0");
+    config.set("app", "flag", value ? "0" : "1");
+    CHECK(config.get_bool("recent", "flag") == value);
+    CHECK(config.get_bool("app", "flag") != value);
+}
+
+TEST_CASE("Wizard finish is stored as true", "[AppConfig]")
+{
+    AppConfig config;
+    config.set("firstguide", "finish", true);
+    CHECK(config.get("firstguide", "finish") == "true");
+    CHECK(config.get_bool("firstguide", "finish"));
+}

@@ -46,6 +46,7 @@ enum Protocol : int {
 extern const char* const RULE_HUB;       // "EdgeSlicer"               TCP 13640-13659, the phone hub
 extern const char* const RULE_DISCOVERY; // "EdgeSlicer LAN discovery" UDP 2021,1990, Bambu SSDP
 extern const char* const RULE_WEBRTC;    // "EdgeSlicer WebRTC video"  go2rtc.exe, UDP and TCP 8555-8574
+extern const char* const RULE_FLASHFORGE; // "EdgeSlicer FlashForge discovery" UDP 18007, the reply port of FlashForge's LAN search
 
 // One firewall rule, as much of it as matters here.
 struct Rule
@@ -105,10 +106,10 @@ struct ExpectedRule
     std::string program;  // this copy's exe or go2rtc.exe
     int         protocol;
     std::string ports;
-    std::string purpose;  // "hub" | "discovery" | "webrtc": the dialog words it
+    std::string purpose;  // "hub" | "discovery" | "webrtc" | "flashforge": the dialog words it
 };
 
-// The four rules the installer creates, for these paths. `go2rtc` empty (not shipped with this
+// The five rules the installer creates, for these paths. `go2rtc` empty (not shipped with this
 // copy): no WebRTC rules.
 std::vector<ExpectedRule> expected_rules(const std::string& exe, const std::string& go2rtc);
 
@@ -140,6 +141,13 @@ struct Diagnosis
     int  enabled_blocks() const;
     // Whether Public is live and the firewall is on for it.
     bool on_public_network() const;
+    // Whether pressing "Fix firewall rules" (with or without Public) would change anything that
+    // matters: a Block rule to remove, or an expected allow rule missing on one of the profiles the
+    // fix covers (Private and Domain, plus Public when asked). When the rules are already in place
+    // for Private and Domain and the only thing left is a Public network, a second press adds the
+    // same rules again and the verdict stays the same - the dialog uses this to say "switch the
+    // network to Private" instead of offering the button again.
+    bool fix_would_help(bool allow_public) const;
 };
 
 Diagnosis diagnose(const Snapshot& snapshot, const std::string& exe, const std::string& go2rtc, const EnvLookup& env = {});

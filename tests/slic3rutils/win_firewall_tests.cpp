@@ -55,7 +55,8 @@ Rule prompt_block(const std::string& program, int protocol, int profiles = Profi
 std::vector<Rule> installer_rules(const std::string& exe = EXE, const std::string& go2rtc = GO2RTC)
 {
     return { allow(RULE_HUB, exe, ProtoTCP, "13640-13659"), allow(RULE_DISCOVERY, exe, ProtoUDP, "2021,1990"),
-             allow(RULE_WEBRTC, go2rtc, ProtoUDP, "8555-8574"), allow(RULE_WEBRTC, go2rtc, ProtoTCP, "8555-8574") };
+             allow(RULE_WEBRTC, go2rtc, ProtoUDP, "8555-8574"), allow(RULE_WEBRTC, go2rtc, ProtoTCP, "8555-8574"),
+             allow(RULE_FLASHFORGE, exe, ProtoUDP, "18007") };
 }
 
 Snapshot snapshot(std::vector<Rule> rules, int current = ProfilePrivate)
@@ -168,7 +169,7 @@ TEST_CASE("installer rules for this exe: everything allowed on a Private network
 {
     const Diagnosis d = diagnose(snapshot(installer_rules()), EXE, GO2RTC);
     REQUIRE(d.ok);
-    REQUIRE(d.expected.size() == 4);
+    REQUIRE(d.expected.size() == 5);
     CHECK(status(d, "discovery", ProtoUDP).allowed_profiles == (ProfilePrivate | ProfileDomain));
     CHECK(status(d, "hub", ProtoTCP).allowed_profiles == (ProfilePrivate | ProfileDomain));
     CHECK(status(d, "webrtc", ProtoTCP).allowed_profiles == (ProfilePrivate | ProfileDomain));
@@ -179,7 +180,7 @@ TEST_CASE("installer rules for this exe: everything allowed on a Private network
 TEST_CASE("the installed copy's rules do nothing for a portable copy", "[WinFirewall]")
 {
     const Diagnosis d = diagnose(snapshot(installer_rules()), OTHER, "");
-    CHECK(d.expected.size() == 2); // no go2rtc.exe next to it: no video rules expected
+    CHECK(d.expected.size() == 3); // no go2rtc.exe next to it: no video rules expected
     CHECK(status(d, "discovery", ProtoUDP).allowed_profiles == 0);
     CHECK(d.problem_profiles() == ProfilePrivate);
     CHECK(d.discovery_problem_profiles() == ProfilePrivate);
@@ -312,11 +313,11 @@ TEST_CASE("the fix replaces our own allow rules and leaves other allow rules alo
     rules.push_back(allow("Chrome", "C:\\Program Files\\Google\\Chrome\\chrome.exe", ProtoUDP, "5353"));
 
     const FixPlan plan = plan_fix(snapshot(rules), EXE, GO2RTC, false);
-    REQUIRE(plan.remove.size() == 4); // the installer's four for this copy
+    REQUIRE(plan.remove.size() == 5); // the installer's five for this copy
     for (const Rule& r : plan.remove) {
         CHECK(r.allow);
         CHECK(r.profiles == (ProfilePrivate | ProfileDomain));
-        CHECK((r.name == RULE_HUB || r.name == RULE_DISCOVERY || r.name == RULE_WEBRTC));
+        CHECK((r.name == RULE_HUB || r.name == RULE_DISCOVERY || r.name == RULE_WEBRTC || r.name == RULE_FLASHFORGE));
         CHECK((same_program(r.program, EXE) || same_program(r.program, GO2RTC)));
         CHECK(r.protocol != ProtoAny);
     }
@@ -325,7 +326,7 @@ TEST_CASE("the fix replaces our own allow rules and leaves other allow rules alo
 TEST_CASE("the fix adds the installer's rules for this path, Private and Domain unless asked", "[WinFirewall]")
 {
     const FixPlan plan = plan_fix(snapshot({}), OTHER, "", false);
-    REQUIRE(plan.add.size() == 2);
+    REQUIRE(plan.add.size() == 3);
     for (const Rule& r : plan.add) {
         CHECK(r.program == OTHER);
         CHECK(r.allow);
@@ -340,7 +341,7 @@ TEST_CASE("the fix adds the installer's rules for this path, Private and Domain 
     CHECK(plan.add[1].local_ports == "13640-13659");
 
     const FixPlan pub = plan_fix(snapshot({}), EXE, GO2RTC, true);
-    REQUIRE(pub.add.size() == 4);
+    REQUIRE(pub.add.size() == 5);
     for (const Rule& r : pub.add) CHECK(r.profiles == ProfileAll);
     CHECK(pub.add[2].program == GO2RTC);
     CHECK(pub.add[2].local_ports == "8555-8574");
@@ -364,18 +365,18 @@ TEST_CASE("applying the fix clears a cancelled-prompt block and the check then p
 
     const FixResult res = apply_fix(fw, plan_fix(fw.read(), EXE, GO2RTC, false));
     CHECK(res.failed == 0);
-    CHECK(res.removed == 6);
-    CHECK(res.added == 4);
+    CHECK(res.removed == 7);
+    CHECK(res.added == 5);
     CHECK_FALSE(diagnose(fw.read(), EXE, GO2RTC).has_problems());
     // The other copy's block rule is still there; nothing doubled up.
-    CHECK(fw.state.rules.size() == 5);
+    CHECK(fw.state.rules.size() == 6);
     CHECK(std::count_if(fw.state.rules.begin(), fw.state.rules.end(), [](const Rule& r) { return same_program(r.program, OTHER); }) == 1);
 
     // Running it again is a no-op in effect: same rules, still clean.
     const FixResult again = apply_fix(fw, plan_fix(fw.read(), EXE, GO2RTC, false));
-    CHECK(again.removed == 4);
-    CHECK(again.added == 4);
-    CHECK(fw.state.rules.size() == 5);
+    CHECK(again.removed == 5);
+    CHECK(again.added == 5);
+    CHECK(fw.state.rules.size() == 6);
 }
 
 TEST_CASE("a failed removal is counted and reported, not hidden", "[WinFirewall]")
@@ -384,7 +385,7 @@ TEST_CASE("a failed removal is counted and reported, not hidden", "[WinFirewall]
     fw.fail_removes = true;
     const FixResult res = apply_fix(fw, plan_fix(fw.read(), EXE, "", false));
     CHECK(res.failed == 1);
-    CHECK(res.added == 2);
+    CHECK(res.added == 3);
     CHECK(std::any_of(res.steps.begin(), res.steps.end(), [](const std::string& s) { return s.find("FAILED to remove") != std::string::npos; }));
 }
 
@@ -418,4 +419,46 @@ TEST_CASE("profile words read in Domain, Private, Public order", "[WinFirewall]"
     CHECK(profiles_text(ProfileAll) == "Domain, Private, Public");
     CHECK(profile_index(ProfilePublic) == 2);
     CHECK(profile_index(3) == -1);
+}
+
+// ---- FlashForge discovery and the Public-network case -------------------------------------------
+
+TEST_CASE("FlashForge's search needs UDP 18007 for this exe, and the fix adds it", "[WinFirewall]")
+{
+    // A 2.4.3.0 install: the Bambu, hub and video rules are there, the FlashForge one is not.
+    std::vector<Rule> rules = installer_rules();
+    rules.pop_back();
+    const Diagnosis d = diagnose(snapshot(rules), EXE, GO2RTC);
+    CHECK(status(d, "flashforge", ProtoUDP).allowed_profiles == 0);
+    CHECK(d.problem_profiles() == ProfilePrivate);
+    CHECK(d.discovery_problem_profiles() == 0); // the Bambu discovery rule is fine
+
+    const FixPlan plan = plan_fix(snapshot(rules), EXE, GO2RTC, false);
+    const auto    ff   = std::find_if(plan.add.begin(), plan.add.end(), [](const Rule& r) { return r.name == RULE_FLASHFORGE; });
+    REQUIRE(ff != plan.add.end());
+    CHECK(ff->protocol == ProtoUDP);
+    CHECK(ff->local_ports == "18007");
+    CHECK(ff->profiles == (ProfilePrivate | ProfileDomain));
+}
+
+TEST_CASE("the fix is offered only while it can change something", "[WinFirewall]")
+{
+    // The logged case: rules in place for Private and Domain, the PC on a Public network. The
+    // verdict is "problems" on Public, and pressing the fix again only re-adds the same rules.
+    const Diagnosis public_net = diagnose(snapshot(installer_rules(), ProfilePrivate | ProfilePublic), EXE, GO2RTC);
+    CHECK(public_net.problem_profiles() == ProfilePublic);
+    CHECK_FALSE(public_net.fix_would_help(false));
+    CHECK(public_net.fix_would_help(true)); // ticking "Also allow on Public networks" does change things
+
+    // Missing rules, or a Block rule, are what the fix is for.
+    const Diagnosis missing = diagnose(snapshot({}), EXE, GO2RTC);
+    CHECK(missing.fix_would_help(false));
+    std::vector<Rule> blocked = installer_rules();
+    blocked.push_back(prompt_block(EXE, ProtoUDP));
+    CHECK(diagnose(snapshot(blocked), EXE, GO2RTC).fix_would_help(false));
+
+    // Nothing wrong: nothing to fix. A firewall that could not be read: nothing the fix can know.
+    CHECK_FALSE(diagnose(snapshot(installer_rules()), EXE, GO2RTC).fix_would_help(false));
+    Snapshot unreadable;
+    CHECK_FALSE(diagnose(unreadable, EXE, GO2RTC).fix_would_help(true));
 }

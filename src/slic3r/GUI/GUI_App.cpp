@@ -4502,7 +4502,7 @@ bool GUI_App::init_flashnetwork(const std::string &explicit_path)
 
     if (found.empty()) {
         m_flashnetwork_error = ff_flashnetwork_missing_text(m_flashnetwork_searched);
-        BOOST_LOG_TRIVIAL(info) << "FlashNetwork.dll not present; Flashforge device connectivity disabled";
+        BOOST_LOG_TRIVIAL(warning) << "[FlashForge] FlashNetwork.dll not present; Flashforge device connectivity disabled";
         return false;
     }
 
@@ -4519,7 +4519,9 @@ bool GUI_App::init_flashnetwork(const std::string &explicit_path)
     }
 
     m_flashnetwork_loaded = true;
-    BOOST_LOG_TRIVIAL(info) << "FlashNetwork initialized from " << found;
+    // Warning level on purpose: the default log level drops info, and this is the line that tells a
+    // support log whether the FlashForge Device tab could start at all.
+    BOOST_LOG_TRIVIAL(warning) << "[FlashForge] FlashNetwork " << MultiComMgr::inst()->libraryVersion() << " initialized from " << found;
     return true;
 }
 
@@ -5840,7 +5842,14 @@ void GUI_App::maybe_start_bambu_sync(const char* why)
     in.network_plugin  = m_agent != nullptr && plugin_version != "00.00.00.00";
     in.ultranet_plugin = m_ultranet_plugin_installed;
     // Saved Bambu LAN printers, then the Device tab's lists (bound to the account, or found on the LAN).
-    in.bambu_device = !app_config->get_local_machines().empty();
+    in.bambu_device = false;
+    for (const auto& saved : app_config->get_local_machines()) {
+        // FlashForge printers share this table; they are not Bambu devices.
+        if (!saved.second.is_flashforge()) {
+            in.bambu_device = true;
+            break;
+        }
+    }
     if (!in.bambu_device && m_device_manager)
         in.bambu_device = !m_device_manager->get_my_machine_list().empty() || !m_device_manager->get_local_machine_list().empty();
     // A Bambu Lab printer among the visible printer presets: an installed system preset, a user

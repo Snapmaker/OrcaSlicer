@@ -3,6 +3,7 @@
 #include "slic3r/GUI/Monitor.hpp"
 #include "slic3r/GUI/FlashForge/DeviceListPanel.hpp"
 #include "slic3r/GUI/FlashForge/SingleDeviceState.hpp"
+#include "slic3r/GUI/FlashForge/DeviceData.hpp"
 
 #include <wx/button.h>
 #include <wx/filedlg.h>
@@ -166,6 +167,10 @@ void FFDeviceTab::OnActivate()
     // Re-checked on every activation: the user may have used Locate since the tab was built.
     if (!refresh_availability())
         return;
+    // Saved printers reconnect from their saved address. They used to wait for a LAN scan that
+    // nothing ever ran, so a printer added once sat Offline for good.
+    if (DeviceObjectOpr* opr = wxGetApp().getDeviceObjectOpr())
+        opr->connect_saved_machines();
     if (m_device_list != nullptr)
         m_device_list->OnActivate();
 }

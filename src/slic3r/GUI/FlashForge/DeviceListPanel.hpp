@@ -203,6 +203,7 @@ private:
 
     void onFilterButtonClicked(wxMouseEvent &event);
     void onTestConnection(wxCommandEvent &event);
+    void onAddPrinter(wxCommandEvent &event);
     void onNetworkTypeToggled(wxCommandEvent& event);
     void onStaticModeToggled(wxCommandEvent &event);
     void onDeviceListUpdated(DeviceListUpdateEvent& event);
@@ -262,7 +263,9 @@ private:
     // It is here rather than on a device card because the case that needs it most is the one
     // where no card appeared at all.
     wxButton* m_test_btn {nullptr};
-    
+    // Adds a printer by serial number, IP address and check code (FFAddPrinterDialog).
+    wxButton* m_add_btn {nullptr};
+
     wxWebView*        m_webBanner{nullptr};
     wxSimplebook*   m_simple_book {nullptr};
     wxPanel*        m_no_device_panel {nullptr};

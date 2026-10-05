@@ -14,6 +14,7 @@
 #include "slic3r/GUI/FFUtils.hpp"
 #include <slic3r/GUI/BindDialog.hpp>
 #include "slic3r/GUI/FlashForge/FFDiagnosticsDialog.hpp"
+#include "slic3r/GUI/FlashForge/FFAddPrinterDialog.hpp"
 #include "slic3r/GUI/FlashForge/DeviceData.hpp"
 
 namespace Slic3r {
@@ -696,6 +697,9 @@ void DeviceListPanel::build()
     hTopSizer->AddSpacer(FromDIP(30));
     hTopSizer->Add(m_static_btn, 0, wxALIGN_CENTER_VERTICAL);
     hTopSizer->AddSpacer(FromDIP(20));
+    m_add_btn = new wxButton(this, wxID_ANY, _L("Add printer"));
+    m_add_btn->SetToolTip(_L("Add a FlashForge printer by its serial number, IP address and check code, or search the network for it."));
+    hTopSizer->Add(m_add_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     m_test_btn = new wxButton(this, wxID_ANY, _L("Test connection"));
     m_test_btn->SetToolTip(_L("Check whether a FlashForge printer answers on the network, and "
                               "collect diagnostics if it does not. No print job is started."));
@@ -744,7 +748,8 @@ void DeviceListPanel::build()
     m_no_device_panel = new wxPanel(m_simple_book);
     m_no_device_bitmap = new wxStaticBitmap(m_no_device_panel, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxDefaultSize, 0);
     m_no_device_bitmap->SetBitmap(create_scaled_bitmap("monitor_device_empty", nullptr, 250));
-    m_no_device_staticText = new wxStaticText(m_no_device_panel, wxID_ANY, wxT("No Device"));
+    m_no_device_staticText = new wxStaticText(m_no_device_panel, wxID_ANY,
+        _L("No FlashForge printers yet. Use Add printer (serial number, IP address and check code) to add one.") );
     m_no_device_staticText->Wrap(-1);
     m_no_device_staticText->SetForegroundColour("#909090");
     apply_light_mode_text(m_no_device_staticText, wxColour(FF_DEVICE_LIST_MUTED_TEXT));
@@ -809,6 +814,7 @@ void DeviceListPanel::connectEvent()
     m_lan_btn->Bind(wxEVT_TOGGLEBUTTON, &DeviceListPanel::onNetworkTypeToggled, this);
     m_static_btn->Bind(wxEVT_TOGGLEBUTTON, &DeviceListPanel::onStaticModeToggled, this);
     m_test_btn->Bind(wxEVT_BUTTON, &DeviceListPanel::onTestConnection, this);
+    m_add_btn->Bind(wxEVT_BUTTON, &DeviceListPanel::onAddPrinter, this);
     MultiComMgr::inst()->Bind(COM_DEV_DETAIL_UPDATE_EVENT, &DeviceListPanel::onComDevDetailUpdate, this);
     MultiComMgr::inst()->Bind(COM_WAN_DEV_INFO_UPDATE_EVENT, &DeviceListPanel::onComWanDeviceInfoUpdate, this);
     wxGetApp().getDeviceObjectOpr()->Bind(EVT_DEVICE_LIST_UPDATED, &DeviceListPanel::onDeviceListUpdated, this);
@@ -824,12 +830,15 @@ void DeviceListPanel::initLocalDevice(std::map<std::string, DeviceInfoItemPanel:
     if (config) {
         std::vector<MacInfoMap> macInfo;
         config->get_local_mahcines(macInfo);
-        DeviceInfoItemPanel::DeviceInfo dev_info;
-        dev_info.lanFlag = true;
-        dev_info.status = "offline";
+        // get_local_mahcines() already leaves out the Bambu LAN printers that share the table.
+        // A fresh DeviceInfo per row: the old shared one carried the previous row's name, placement
+        // and product id into any row that lacked its own.
         for (auto& mac : macInfo) {
             auto it = mac.find("dev_id");
             if (it != mac.end()) {
+                DeviceInfoItemPanel::DeviceInfo dev_info;
+                dev_info.lanFlag = true;
+                dev_info.status = "offline";
                 std::string dev_id = it->second;
                 it = mac.find("dev_name");
                 if (it != mac.end()) {
@@ -841,13 +850,20 @@ void DeviceListPanel::initLocalDevice(std::map<std::string, DeviceInfoItemPanel:
                 }
                 it = mac.find("dev_pid");
                 if (it != mac.end()) {
-                    dev_info.pid = (unsigned short)std::stoi(it->second);
+                    try {
+                        dev_info.pid = (unsigned short)std::stoi(it->second);
+                    } catch (const std::exception&) {
+                        dev_info.pid = 0;
+                    }
                 }
                 if (deviceInfoMap.find(dev_id) == deviceInfoMap.end()) {
                     deviceInfoMap.emplace(dev_id, dev_info);
                 }
             }
         }
+        BOOST_LOG_TRIVIAL(warning) << "[FlashForge] Device tab: " << deviceInfoMap.size()
+                                   << " saved FlashForge printer(s) in the list ("
+                                   << config->get_local_machines().size() << " saved LAN printers in all, the rest are Bambu)";
     }
 }
 
@@ -1671,6 +1687,15 @@ void DeviceListPanel::onTestConnection(wxCommandEvent &event)
     }
     FFDiagnosticsDialog dlg(this, serial, ip);
     dlg.ShowModal();
+    event.Skip();
+}
+
+void DeviceListPanel::onAddPrinter(wxCommandEvent &event)
+{
+    FFAddPrinterDialog dlg(this);
+    dlg.ShowModal();
+    // A new printer's tile arrives with the connection (COM_CONNECTION_READY -> device list update),
+    // not from here.
     event.Skip();
 }
 

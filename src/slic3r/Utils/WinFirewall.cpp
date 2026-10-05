@@ -36,6 +36,7 @@ namespace fs = boost::filesystem;
 const char* const RULE_HUB       = "EdgeSlicer";
 const char* const RULE_DISCOVERY = "EdgeSlicer LAN discovery";
 const char* const RULE_WEBRTC    = "EdgeSlicer WebRTC video";
+const char* const RULE_FLASHFORGE = "EdgeSlicer FlashForge discovery";
 
 static const char* const RULE_DESCRIPTION = "Added by EdgeSlicer (Help > Check Windows Firewall).";
 
@@ -238,6 +239,10 @@ std::vector<ExpectedRule> expected_rules(const std::string& exe, const std::stri
         out.push_back({ RULE_WEBRTC, go2rtc, ProtoUDP, "8555-8574", "webrtc" });
         out.push_back({ RULE_WEBRTC, go2rtc, ProtoTCP, "8555-8574", "webrtc" });
     }
+    // FlashForge's LAN search (Flashforge::discover_printers) broadcasts to UDP 48899 from, and
+    // listens on, UDP 18007; the printers answer to 18007, which Windows Firewall drops unless
+    // there is an inbound rule for it. Kept last so the other rules keep their positions.
+    out.push_back({ RULE_FLASHFORGE, exe, ProtoUDP, "18007", "flashforge" });
     return out;
 }
 
@@ -269,6 +274,16 @@ int Diagnosis::enabled_blocks() const
 }
 
 bool Diagnosis::on_public_network() const { return (current_profiles & ProfilePublic) && firewall_on[2]; }
+
+bool Diagnosis::fix_would_help(bool allow_public) const
+{
+    if (!ok) return false;
+    if (!blocks.empty()) return true; // the fix removes every Block rule for our programs
+    const int target = ProfilePrivate | ProfileDomain | (allow_public ? ProfilePublic : 0);
+    for (const ExpectedStatus& e : expected)
+        if ((e.allowed_profiles & target) != target) return true;
+    return false;
+}
 
 Diagnosis diagnose(const Snapshot& s, const std::string& exe, const std::string& go2rtc, const EnvLookup& env)
 {

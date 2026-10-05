@@ -223,6 +223,21 @@ public:
     bool          set_selected_machine(const std::string& dev_id, bool my_machine = false);
     DeviceObject* get_selected_machine();
 
+    // Adds a printer the user typed in (serial number, IP address, check code) instead of one a LAN
+    // scan found. `info` carries the serial, name, ip, port and product id; the printer is
+    // connected at once and, when it answers, saved - so it is in the list at the next start too.
+    // Returns false when the serial number is empty or the connection could not be started.
+    bool          add_manual_lan_machine(const fnet_lan_dev_info& info, const std::string& check_code);
+
+    // Starts a connection to every saved printer that has an address and a check code and is not
+    // connected or connecting. Saved printers used to wait for a LAN scan nothing ever ran, so they
+    // sat Offline for ever. Safe to call repeatedly (each tab activation does).
+    void          connect_saved_machines();
+
+    // Builds the lan record FlashNetwork wants from the pieces a saved/typed printer has.
+    static fnet_lan_dev_info make_lan_info(const std::string& serial, const std::string& name,
+                                           const std::string& ip, unsigned short port, unsigned short pid);
+
     void unbind_lan_machine(DeviceObject *obj);
     ComErrno unbind_wan_machine(const std::string& dev_id, const std::string& bind_id, const std::string& dev_topic);
     std::string find_dev_from_id(id_connect_mode& mode, int connectId);
@@ -230,6 +245,9 @@ public:
 
 private:
     DeviceObject* get_scan_device(const std::string& dev_id);
+    // Opens the FlashNetwork LAN connection for `obj` (needs its lan info and check code) and
+    // records it in m_lan_dev_connect_map.
+    bool connect_lan(DeviceObject* obj);
 
     // before connect, scan machine's access code which hasn't written in config file
     void get_my_machine_list_v2(std::map<std::string, DeviceObject*> & devList, bool my_machine = false);

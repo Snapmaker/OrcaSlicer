@@ -6509,6 +6509,12 @@ DeviceManager::DeviceManager(NetworkAgent* agent)
         const auto local_machines = config->get_local_machines();
         for (auto& it : local_machines) {
             const auto&    m         = it.second;
+            // A FlashForge printer saved by the FlashForge Device tab shares this table. It has a
+            // check code, so it would pass the access-code test below and turn up as a Bambu LAN
+            // printer with no model and no address; and without one it would be erased here. Leave
+            // it to its own tab.
+            if (m.is_flashforge())
+                continue;
             MachineObject* obj       = new MachineObject(m_agent, m.dev_name, m.dev_id, m.dev_ip);
             obj->printer_type        = m.printer_type;
             obj->dev_connection_type = "lan";

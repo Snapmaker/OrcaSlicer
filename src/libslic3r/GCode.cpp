@@ -4355,26 +4355,31 @@ struct PrecomputedLayer
     std::vector<PrecomputedOverhangLayer> overhang_layers;
 };
 
-// Whether process_layer() prepares the overhang estimator for `layer`.
-template<typename OverhangSpeed>
-static bool prepares_overhang_estimator(const Layer &layer, bool overhang_fan, OverhangSpeed overhang_speed)
+// Whether process_layer() prepares the overhang estimator for `layer`. This is the rule the serial
+// code always had and it must stay that way, because the estimator measures each prepared layer against
+// the layer prepared before it: a region's first (Standard) enable_overhang_speed value, not "any
+// flow-variant column". Which layers get prepared decides which layer a later wall is compared with, so
+// a different rule would change the G-code. (The overhang fan needs no clause of its own: _extrude only
+// asks the estimator when overhang speed is on.)
+static bool prepares_overhang_estimator(const Layer &layer)
 {
     const LayerRegionPtrs &regions = layer.regions();
-    return std::any_of(regions.begin(), regions.end(), [overhang_fan, &overhang_speed](const LayerRegion *region) {
-        return region->has_extrusions() && (overhang_fan || overhang_speed(*region));
+    return std::any_of(regions.begin(), regions.end(), [](const LayerRegion *region) {
+        return region->has_extrusions() && region->region().config().enable_overhang_speed.values.front();
     });
 }
 } // namespace
 
-std::vector<PrecomputedOverhangLayer> precompute_overhang_layers(const std::vector<GCode::LayerToPrint> &layers, bool overhang_fan)
+std::vector<PrecomputedOverhangLayer> precompute_overhang_layers(const std::vector<GCode::LayerToPrint> &layers)
 {
-    // Any filament may print the layer, so a region's overhang speed counts if it is enabled for any.
-    auto overhang_speed = [](const LayerRegion &region) { return any_enabled(region.region().config().enable_overhang_speed); };
     std::vector<PrecomputedOverhangLayer> out;
     for (const GCode::LayerToPrint &layer : layers)
         if (layer.object_layer != nullptr && layer.object_layer->lower_layer != nullptr &&
-            prepares_overhang_estimator(*layer.object_layer, overhang_fan, overhang_speed)) {
+            prepares_overhang_estimator(*layer.object_layer)) {
             const LayerRegionPtrs &regions = layer.object_layer->regions();
+            // _extrude extrudes a region's walls with that region's config applied, so it reads that region's
+            // slowdown value (for whichever filament prints): the curled-line tree is only read if some region
+            // of the layer has it on in some column.
             const bool curled_lines = std::any_of(regions.begin(), regions.end(), [](const LayerRegion *region) {
                 return any_enabled(region->region().config().slowdown_for_curled_perimeters);
             });
@@ -4386,7 +4391,7 @@ std::vector<PrecomputedOverhangLayer> precompute_overhang_layers(const std::vect
 namespace {
 // Hands out the index of each layer to process_layers(), then computes the layers' overhang data in parallel.
 template<typename LayersAt>
-static auto precomputed_layers_source(size_t &next_index, size_t layer_count, bool nop_layer, bool overhang_fan, LayersAt layers_at)
+static auto precomputed_layers_source(size_t &next_index, size_t layer_count, bool nop_layer, LayersAt layers_at)
 {
     return tbb::make_filter<void, PrecomputedLayer>(slic3r_tbb_filtermode::serial_in_order,
                [&next_index, layer_count, nop_layer](tbb::flow_control &fc) -> PrecomputedLayer {
@@ -4400,17 +4405,11 @@ static auto precomputed_layers_source(size_t &next_index, size_t layer_count, bo
                    return {};
                }) &
            tbb::make_filter<PrecomputedLayer, PrecomputedLayer>(slic3r_tbb_filtermode::parallel,
-               [layers_at, overhang_fan](PrecomputedLayer layer) -> PrecomputedLayer {
+               [layers_at](PrecomputedLayer layer) -> PrecomputedLayer {
                    if (layer.index != size_t(-1))
-                       layer.overhang_layers = precompute_overhang_layers(layers_at(layer.index), overhang_fan);
+                       layer.overhang_layers = precompute_overhang_layers(layers_at(layer.index));
                    return layer;
                });
-}
-
-// Whether the overhang fan can switch on for any filament.
-static bool overhang_fan_enabled(const PrintConfig &config, bool cooling_markers)
-{
-    return cooling_markers && any_enabled(config.enable_overhang_bridge_fan);
 }
 } // namespace
 
@@ -4427,7 +4426,6 @@ void GCode::process_layers(const Print&                                         
     // The pipeline is variable: The vase mode filter is optional.
     size_t     layer_to_print_idx = 0;
     const auto source             = precomputed_layers_source(layer_to_print_idx, layers_to_print.size(), m_pressure_equalizer != nullptr,
-        overhang_fan_enabled(print.config(), m_enable_cooling_markers),
         [&layers_to_print](size_t index) -> const std::vector<LayerToPrint> & { return layers_to_print[index].second; });
     const auto generator          = tbb::make_filter<PrecomputedLayer, LayerResult>(
         slic3r_tbb_filtermode::serial_in_order,
@@ -4551,7 +4549,6 @@ void GCode::process_layers(const Print&              print,
     // The pipeline is variable: The vase mode filter is optional.
     size_t     layer_to_print_idx = 0;
     const auto source             = precomputed_layers_source(layer_to_print_idx, layers_to_print.size(), m_pressure_equalizer != nullptr,
-        overhang_fan_enabled(print.config(), m_enable_cooling_markers),
         [&layers_to_print](size_t index) { return std::vector<LayerToPrint>{layers_to_print[index]}; });
     const auto generator =
         tbb::make_filter<PrecomputedLayer, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
@@ -6502,10 +6499,8 @@ LayerResult GCode::process_layer(const Print& print,
         return next_extruder;
     };
 
-    const bool overhang_fan   = overhang_fan_enabled(m_config, m_enable_cooling_markers);
-    auto       overhang_speed = [](const LayerRegion &region) { return any_enabled(region.region().config().enable_overhang_speed); };
     for (const auto &layer_to_print : layers)
-        if (layer_to_print.object_layer && prepares_overhang_estimator(*layer_to_print.object_layer, overhang_fan, overhang_speed))
+        if (layer_to_print.object_layer && prepares_overhang_estimator(*layer_to_print.object_layer))
             m_extrusion_quality_estimator.prepare_for_new_layer(layer_to_print.original_object, layer_to_print.object_layer);
 
     // Group extrusions by an extruder, then by an object, an island and a region.

@@ -916,9 +916,60 @@ TEST_CASE("Precomputed overhang data has the curled-line tree exactly when a reg
             GCode::LayerToPrint layer_to_print;
             layer_to_print.object_layer    = layer;
             layer_to_print.original_object = object;
-            const std::vector<PrecomputedOverhangLayer> precomputed = precompute_overhang_layers({layer_to_print}, false);
+            const std::vector<PrecomputedOverhangLayer> precomputed = precompute_overhang_layers({layer_to_print});
             REQUIRE(precomputed.size() == 1);
             CHECK((precomputed.front().lower_curled_lines != nullptr) == slowdown);
+        }
+    }
+}
+
+TEST_CASE("Overhang data is precomputed for the layers the serial code prepares, by the first overhang speed value", "[ExtrusionProcessor]")
+{
+    // process_layer() prepares the estimator for a layer when a region has extrusions and its FIRST
+    // enable_overhang_speed value is on. A second (High Flow) column that is on must not make another
+    // layer qualify, or the estimator would compare walls with a different layer than the serial code does.
+    struct Case
+    {
+        std::vector<unsigned char> overhang_speed;
+        bool                       precomputed;
+    };
+    const Case cases[] = {
+        {{1}, true},
+        {{1, 0}, true},
+        {{0}, false},
+        {{0, 1}, false},
+    };
+    for (const Case &c : cases) {
+        std::string label;
+        for (unsigned char v : c.overhang_speed)
+            label += v ? "1" : "0";
+        DYNAMIC_SECTION("enable_overhang_speed " << label) {
+            DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+            config.set_deserialize_strict({
+                {"layer_height", "0.2"},
+                {"skirt_loops", "0"},
+                {"brim_type", "no_brim"},
+            });
+            config.option<ConfigOptionBools>("enable_overhang_speed")->values = c.overhang_speed;
+            Print print;
+            init_and_process_print({TestMesh::overhang}, print, config);
+            const PrintObject *object = print.objects().front();
+            const Layer       *layer  = first_overhang_layer(*object);
+            REQUIRE(layer != nullptr);
+            REQUIRE(layer->lower_layer != nullptr);
+            // The option reached the region unchanged.
+            bool found_region = false;
+            for (const LayerRegion *region : layer->regions())
+                if (region->has_extrusions()) {
+                    found_region = true;
+                    REQUIRE(region->region().config().enable_overhang_speed.values == c.overhang_speed);
+                }
+            REQUIRE(found_region);
+
+            GCode::LayerToPrint layer_to_print;
+            layer_to_print.object_layer    = layer;
+            layer_to_print.original_object = object;
+            CHECK(precompute_overhang_layers({layer_to_print}).size() == (c.precomputed ? 1u : 0u));
         }
     }
 }

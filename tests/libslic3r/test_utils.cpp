@@ -855,11 +855,14 @@ TEST_CASE("atof_decimal_point parses what atof parses in the C locale", "[Locale
         {".5", 0.5},
         {"12.5;comment", 12.5},
         {"+-5", 0.},
-        {"", 0.},
-        {"abc", 0.},
+        {"1.5abc", 1.5},
+        {"-", 0.},
+        {"+", 0.},
+        {"-abc", 0.},
+        {"+ 5", 0.},
     };
     for (const auto &[text, value] : cases) {
-        DYNAMIC_SECTION("parse [" << (text[0] ? text : "<empty>") << "]") {
+        DYNAMIC_SECTION("parse [" << text << "]") {
             CHECK(std::abs(atof_decimal_point(text) - value) < 1e-12);
         }
     }
@@ -903,4 +906,21 @@ TEST_CASE("Floats print with a decimal point in a locale whose decimal separator
     }
     CHECK(float_to_string_decimal_point(1500.5) == "1500.5");
     CHECK(float_to_string_decimal_point(25. / 3., 3) == "8.333");
+}
+
+TEST_CASE("atof_decimal_point and string_to_double_decimal_point return 0 for text with no number", "[LocalesUtils]")
+{
+    // fast_float leaves the output untouched on failure; the result must not be indeterminate.
+    // CoolingBuffer feeds "G4 P1000" (no 'S', so find() == npos and npos + 1 wraps to the line
+    // start) to atof_decimal_point, which must give exactly what atof gives: 0.
+    const char *no_number[] = {"", "abc", "G4 P1000", "-", "+", "-abc", "+-5", ";comment 5", "   "};
+    for (const char *text : no_number) {
+        DYNAMIC_SECTION("no number [" << text << "]") {
+            REQUIRE(atof_decimal_point(text) == 0.);
+            size_t pos = 12345;
+            REQUIRE(string_to_double_decimal_point(text, &pos) == 0.);
+            REQUIRE(pos == 0);
+            REQUIRE(string_to_double_decimal_point(std::string_view(text)) == 0.);
+        }
+    }
 }

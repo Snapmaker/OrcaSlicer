@@ -29,6 +29,7 @@
 #include "../GUI/PrintHostDialogs.hpp"
 #include "../GUI/MainFrame.hpp"
 #include "../GUI/GcodeArchive.hpp"
+#include "../GUI/PlatePrintHistoryRecorder.hpp"
 #include "../GUI/SnapmakerLan.hpp" // Ultra: END_UNLOAD_FILAMENT, built in one place for every send path
 #include "Obico.hpp"
 #include "Flashforge.hpp"
@@ -451,6 +452,10 @@ void PrintHostJobQueue::priv::perform_job(PrintHostJob the_job)
     const std::string archive_dev_name = the_job.device_name;
     const std::string archive_mapping  = the_job.filament_mapping;
     const bool        archive_unload   = the_job.unload_at_end;
+    // Plate print history: read now, the job's strings are not touched again after upload() starts.
+    const std::vector<int> history_plates = the_job.history_plates;
+    const std::string history_printer = !the_job.history_printer_name.empty() ? the_job.history_printer_name : host_name;
+    const std::string history_model   = the_job.history_printer_model;
 
     // "Unload filaments after print", for a Snapmaker tool changer only. The flag cannot
     // ride inside the G-code: the firmware refuses SET_PRINT_PREFERENCES while print_stats.state is
@@ -537,6 +542,21 @@ void PrintHostJobQueue::priv::perform_job(PrintHostJob the_job)
 
     if (success) {
         emit_progress(100);
+        // The upload went through: this is a send. Reported even when the G-code archive is off.
+        if (!history_plates.empty()) {
+            try {
+                GUI::PlateHistoryRecorder::Send h;
+                h.plates        = history_plates;
+                h.printer_name  = history_printer;
+                h.printer_model = history_model;
+                h.connection    = GUI::PlateHistoryRecorder::connection_key_for_host(host_name);
+                h.file_name     = fs::path(archive_name).filename().string();
+                h.action        = archive_print ? PlateHistory::Action::SentAndStarted : PlateHistory::Action::UploadedOnly;
+                GUI::PlateHistoryRecorder::record(h);
+            } catch (...) {
+                BOOST_LOG_TRIVIAL(warning) << "PrintHostJobQueue: recording the plate history failed";
+            }
+        }
         // Ultra: keep a copy of the file the print host received (Preferences > Ultra > G-Code
         // Archive). Archiving never fails an upload; switching to the device tab must not either.
         // These sit outside the upload try so a throw here cannot flip success into an error.

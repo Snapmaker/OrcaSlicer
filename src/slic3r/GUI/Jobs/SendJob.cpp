@@ -4,6 +4,7 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "slic3r/GUI/BambuSendDiagnosis.hpp"
 #include "slic3r/GUI/GcodeArchive.hpp"
+#include "slic3r/GUI/PlatePrintHistoryRecorder.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -376,6 +377,17 @@ void SendJob::process(Ctl &ctl)
             am.printer_name = GcodeArchive::bambu_printer_name(m_dev_id);
             am.file_name    = params.project_name;
             GcodeArchive::archive(params.filename, am);
+        }
+
+        // Plate print history: the plate's file is on the printer's storage (not started).
+        {
+            PlateHistoryRecorder::Send h;
+            h.plates = { job_data.plate_idx };
+            PlateHistoryRecorder::bambu_identity(m_dev_id, h.printer_name, h.printer_model);
+            h.connection = connection_type == "lan" ? "bambu_lan" : "bambu_cloud";
+            h.file_name  = params.project_name;
+            h.action     = PlateHistory::Action::UploadedOnly;
+            PlateHistoryRecorder::record(h);
         }
 
         BOOST_LOG_TRIVIAL(error) << "send_job: send ok.";

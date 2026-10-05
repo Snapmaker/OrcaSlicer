@@ -103,6 +103,9 @@ struct Prepared
     // desktop's own send path does. Decided on the GUI thread in prepare(), where the preference
     // and the Spoolman URL can be read; run() only fires it.
     bool        spoolman_deduct { false };
+    // Plate print history: the id of the entry archive_sent() recorded, so a print start that
+    // follows an upload (a two-step host send, a Snapmaker LAN start) can upgrade it.
+    std::string history_uid;
 };
 
 struct Sink

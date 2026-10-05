@@ -112,6 +112,8 @@ struct PlateData
     std::vector<int>          limit_filament_maps;
     // EdgeSlicer: DualNozzleSync::Confirmation JSON of the plate (empty = none).
     std::string               dual_nozzle_confirm;
+    // EdgeSlicer: the plate's print history (PlateHistory::History::serialize() JSON; empty = none).
+    std::string               print_history;
     std::vector<unsigned int> filament_change_sequence;
     std::vector<unsigned int> nozzle_change_sequence;
     std::vector<int>          optimal_assignment;

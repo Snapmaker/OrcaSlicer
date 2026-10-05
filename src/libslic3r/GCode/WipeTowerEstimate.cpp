@@ -3,6 +3,8 @@
 #include "WipeTower.hpp"
 #include "WipeTower2.hpp"
 #include "WipeTowerInterface.hpp"
+#include "../BoundingBox.hpp"
+#include "../ClipperUtils.hpp"
 #include "../Config.hpp"
 #include "../PrintConfig.hpp"
 #include "../libslic3r.h"
@@ -203,6 +205,64 @@ WipeTowerFootprint estimate_wipe_tower_footprint(const ConfigBase &config, WipeT
     // generators report its room through the brim width, so the reserved area covers it.
     footprint.brim_width = std::max(footprint.brim_width, TowerInterface::run_in_reserve(config, filament_ids, perimeter_width));
     return footprint;
+}
+
+Polygon placed_wipe_tower_footprint(const ConfigBase &config, const WipeTowerFootprint &footprint, const Vec2d &pos)
+{
+    // Print::validate()'s hull: the outline, grown by the brim, rotated about the tower's corner.
+    Polygon outline = estimate_wipe_tower_first_layer_outline(config, resolve_wipe_tower_type(config), footprint.width, footprint.depth,
+                                                              footprint.height);
+    if (footprint.brim_width > EPSILON) {
+        Polygons brimmed = offset(outline, float(scale_(footprint.brim_width)));
+        if (!brimmed.empty())
+            outline = brimmed.front();
+    }
+    const ConfigOption *angle = option_of(config, "wipe_tower_rotation_angle");
+    if (angle != nullptr && std::abs(angle->getFloat()) > EPSILON)
+        outline.rotate(angle->getFloat() * PI / 180.);
+    outline.translate(Point(scale_(pos.x()), scale_(pos.y())));
+    return outline;
+}
+
+std::optional<Vec2d> wipe_tower_position_clear_of_exclusion(const ConfigBase         &config,
+                                                            const WipeTowerFootprint &footprint,
+                                                            const Polygons           &excluded,
+                                                            const Vec2d              &bed_size,
+                                                            const Vec2d              &preferred,
+                                                            const Vec2d              &current)
+{
+    if (footprint.width < EPSILON || footprint.depth < EPSILON || excluded.empty())
+        return std::nullopt;
+    auto clear_at = [&](const Vec2d &pos) {
+        return intersection(excluded, Polygons{ placed_wipe_tower_footprint(config, footprint, pos) }).empty();
+    };
+    if (clear_at(current))
+        return std::nullopt;
+
+    // The GUI's default clamp keeps the brim WIPE_TOWER_AUTO_MARGIN inside the bed; a Type2 cone
+    // bulges past the body box like a brim does (PartPlate::estimate_wipe_tower_polygon).
+    const BoundingBox body  = get_extents(estimate_wipe_tower_first_layer_outline(config, resolve_wipe_tower_type(config), footprint.width,
+                                                                                   footprint.depth, footprint.height));
+    const double      bulge = std::max({ 0., unscale<double>(body.max.x()) - footprint.width, unscale<double>(body.max.y()) - footprint.depth,
+                                         -unscale<double>(body.min.x()), -unscale<double>(body.min.y()) });
+    auto range = [&](double bed, double size) {
+        double lo = WIPE_TOWER_AUTO_MARGIN + footprint.brim_width + bulge, hi = bed - size - lo;
+        if (lo > hi) { // a cramped bed: the validity margin instead
+            lo = WIPE_TOWER_MARGIN + footprint.brim_width + bulge;
+            hi = std::max(lo, bed - size - lo);
+        }
+        return std::make_pair(lo, hi);
+    };
+    const auto [x_lo, x_hi] = range(bed_size.x(), footprint.width);
+    const auto [y_lo, y_hi] = range(bed_size.y(), footprint.depth);
+    const Vec2d candidates[] = {
+        { std::clamp(preferred.x(), x_lo, x_hi), std::clamp(preferred.y(), y_lo, y_hi) },
+        { x_lo, y_hi }, { x_hi, y_hi }, { x_lo, y_lo }, { x_hi, y_lo },
+    };
+    for (const Vec2d &candidate : candidates)
+        if (clear_at(candidate))
+            return candidate;
+    return std::nullopt;
 }
 
 } // namespace Slic3r

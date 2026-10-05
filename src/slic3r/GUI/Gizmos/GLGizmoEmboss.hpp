@@ -9,6 +9,7 @@
 #include "slic3r/GUI/TextLines.hpp"
 #include "slic3r/Utils/RaycastManager.hpp"
 #include "slic3r/Utils/EmbossStyleManager.hpp"
+#include "EmbossInsert.hpp"
 
 #include <optional>
 #include <memory>
@@ -19,6 +20,8 @@
 #include "libslic3r/EmbossBendSurface.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/TextConfiguration.hpp"
+#include "libslic3r/FontFallback.hpp"
+#include "libslic3r/InlineShapes.hpp"
 
 #include <imgui/imgui.h>
 #include <glad/gl.h>
@@ -216,6 +219,20 @@ private:
     // Text to emboss
     std::string m_text; // Sequence of Unicode UTF8 symbols
 
+    // Inline shapes of m_text (placeholder code -> shape). The whole table of this editing session: the
+    // volume gets only the entries the text uses, so the text box's own undo can bring a shape back.
+    InlineShapeTable m_inline_shapes;
+    // "Insert" popup (shapes, symbols, user SVGs) and the caret it inserts at
+    EmbossInsert m_insert;
+    // Glyphs the text box font was built for (selected font / fallback font / shapes); rebuilt only when
+    // a character of the text is missing from it and the set differs from the last try
+    std::string m_imgui_glyph_key;
+    // text + table the split below was computed from
+    std::string m_glyph_split_key;
+    Slic3r::TextGlyphSplit m_glyph_split;
+    void update_glyph_split();
+    Emboss::StyleManager::ImGuiExtraGlyphs create_text_box_glyphs() const;
+
     // When true keep up vector otherwise relative rotation
     bool m_keep_up = true;
 
@@ -259,6 +276,7 @@ private:
     std::shared_ptr<const Slic3r::Emboss::FontFile> m_bend_font;
     FontProp                                m_bend_prop;
     std::string                             m_bend_text;
+    std::string                             m_bend_inline_key;
     std::optional<Slic3r::Emboss::BendInput>        m_bend_input;
     // last resolved bend, used by the overlay
     std::optional<Slic3r::Emboss::BendResult>       m_bend_result;

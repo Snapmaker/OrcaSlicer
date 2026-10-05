@@ -120,6 +120,7 @@ static const float SELECTABLE_INNER_OFFSET = 8.0f;
 /// <returns>Base data for emboss text</returns>
 std::unique_ptr<DataBase> create_emboss_data_base(
     const std::string& text,
+    const InlineShapeTable& inline_shapes,
     StyleManager& style_manager,
     TextLinesModel& text_lines,
     const Selection& selection,
@@ -339,7 +340,7 @@ bool GLGizmoEmboss::create_volume(ModelVolumeType volume_type, const Vec2d& mous
         return false;
 
     // NOTE: change style manager - be carefull with order changes
-    DataBasePtr base = create_emboss_data_base(m_text, m_style_manager, m_text_lines, m_parent.get_selection(), volume_type, m_job_cancel);
+    DataBasePtr base = create_emboss_data_base(m_text, m_inline_shapes, m_style_manager, m_text_lines, m_parent.get_selection(), volume_type, m_job_cancel);
     CreateVolumeParams input = create_input(m_parent, m_style_manager.get_style(), m_raycast_manager, volume_type);
     return start_create_volume(input, std::move(base), mouse_pos);
 }
@@ -351,7 +352,7 @@ bool GLGizmoEmboss::create_volume(ModelVolumeType volume_type)
         return false;
 
     // NOTE: change style manager - be carefull with order changes
-    DataBasePtr base = create_emboss_data_base(m_text, m_style_manager, m_text_lines, m_parent.get_selection(), volume_type, m_job_cancel);
+    DataBasePtr base = create_emboss_data_base(m_text, m_inline_shapes, m_style_manager, m_text_lines, m_parent.get_selection(), volume_type, m_job_cancel);
     CreateVolumeParams input = create_input(m_parent, m_style_manager.get_style(), m_raycast_manager, volume_type);
     return start_create_volume_without_position(input, std::move(base));
 }
@@ -391,7 +392,7 @@ bool GLGizmoEmboss::re_emboss(const ModelVolume &text_volume, std::shared_ptr<st
 
     TextLinesModel text_lines;
     const Selection &selection = wxGetApp().plater()->canvas3D()->get_selection();
-    DataBasePtr base = create_emboss_data_base(tc.text, style_manager, text_lines, selection, text_volume.type(), job_cancel);
+    DataBasePtr base = create_emboss_data_base(tc.text, tc.inline_shapes, style_manager, text_lines, selection, text_volume.type(), job_cancel);
     DataUpdate  data{std::move(base), text_volume.id(), false};
 
     RaycastManager raycast_manager; // Nothing is cached now, so It need to create raycasters
@@ -509,6 +510,10 @@ bool GLGizmoEmboss::init_create(ModelVolumeType volume_type)
 
     // set default text
     m_text = _u8L("Embossed text");
+    if (!m_inline_shapes.empty())
+        m_style_manager.clear_imgui_font();
+    m_inline_shapes.clear();
+    m_insert.on_text_reset(m_text);
     return true;
 }
 
@@ -957,6 +962,8 @@ void GLGizmoEmboss::on_set_state()
         // TODO: what to do when can't store into file?
         m_style_manager.store_styles_to_app_config(false);
         remove_notification_not_valid_font();
+        // thumbnails of the Insert popup
+        m_insert.release_textures();
     } else if (m_state == GLGizmoBase::On) {
         // to reload fonts from system, when install new one
         wxFontEnumerator::InvalidateCache();
@@ -1259,6 +1266,30 @@ void GLGizmoEmboss::set_volume_by_selection()
     m_bend_letter_drawn.reset();
 
     m_text   = tc.text;
+    // Inline shapes: an update of the same volume (it gets a new id) writes back only the entries the text
+    // uses; keep the whole table of this editing session then, so the text box's undo finds them.
+    {
+        InlineShapeTable table = tc.inline_shapes;
+        if (m_volume == volume)
+            for (const InlineShape &entry : m_inline_shapes)
+                if (find_inline_shape(table, entry.code) == nullptr)
+                    table.push_back(entry);
+        auto same = [](const InlineShapeTable &a, const InlineShapeTable &b) {
+            if (a.size() != b.size())
+                return false;
+            for (const InlineShape &e : a) {
+                const InlineShape *o = find_inline_shape(b, e.code);
+                if (o == nullptr || !o->same_content(e))
+                    return false;
+            }
+            return true;
+        };
+        if (!same(table, m_inline_shapes))
+            m_style_manager.clear_imgui_font(); // the text box draws the shapes of this table
+        m_inline_shapes = std::move(table);
+        if (m_volume != volume)
+            m_insert.on_text_reset(m_text);
+    }
     m_volume = volume;
     m_volume_id = volume->id();
         
@@ -1332,7 +1363,7 @@ bool GLGizmoEmboss::process(bool make_snapshot)
     if (!m_style_manager.is_active_font()) return false;
 
     const Selection& selection = m_parent.get_selection();
-    DataBasePtr base = create_emboss_data_base(m_text, m_style_manager, m_text_lines, selection, m_volume->type(), m_job_cancel);
+    DataBasePtr base = create_emboss_data_base(m_text, m_inline_shapes, m_style_manager, m_text_lines, selection, m_volume->type(), m_job_cancel);
     if (base == nullptr)
         return false;
     // curved text letter by letter: the job publishes its reference curve for the overlay
@@ -1498,24 +1529,87 @@ void GLGizmoEmboss::draw_window()
 
 #include "imgui/imgui_internal.h" // scroll bar existence
 
+void GLGizmoEmboss::update_glyph_split()
+{
+    auto &ff = m_style_manager.get_font_file_with_cache();
+    if (!ff.has_value())
+        return;
+    const unsigned int font_index = m_style_manager.get_font_prop().collection_number.value_or(0);
+    // the font is part of the key: the same text splits differently with another font
+    std::string key = m_text;
+    key += '\x1F';
+    key += inline_shapes_to_json(m_inline_shapes);
+    key += '\x1F';
+    key += std::to_string(reinterpret_cast<uintptr_t>(ff.font_file.get())) + ":" + std::to_string(font_index);
+    if (key == m_glyph_split_key)
+        return;
+    m_glyph_split_key = std::move(key);
+
+    GlyphCoverage primary = make_font_coverage(*ff.font_file, font_index);
+    GlyphCoverage fallback;
+    if (std::shared_ptr<const Slic3r::Emboss::FontFile> symbols = bundled_symbol_font())
+        fallback = [symbols, cover = make_font_coverage(*symbols, 0)](uint32_t cp) { return cover(cp); };
+    const InlineShapeTable &table = m_inline_shapes;
+    m_glyph_split = split_text_by_glyph_source(m_text, primary, fallback,
+                                               [&table](uint32_t cp) { return find_inline_shape(table, cp) != nullptr; });
+    m_text_contain_unknown_glyph = m_glyph_split.exist_unknown;
+}
+
+Slic3r::GUI::Emboss::StyleManager::ImGuiExtraGlyphs GLGizmoEmboss::create_text_box_glyphs() const
+{
+    Emboss::StyleManager::ImGuiExtraGlyphs extra;
+    if (!m_glyph_split.fallback.empty()) {
+        extra.fallback_text = m_glyph_split.fallback;
+        extra.fallback_font = bundled_symbol_font();
+    }
+    if (m_glyph_split.inline_shapes.empty())
+        return extra;
+    const Slic3r::Emboss::FontFileWithCache &ff = const_cast<Emboss::StyleManager &>(m_style_manager).get_font_file_with_cache();
+    if (!ff.has_value())
+        return extra;
+    // the text box shows neither boldness nor skew (see the warnings), so the shapes do not either
+    FontProp prop = m_style_manager.get_font_prop();
+    prop.boldness.reset();
+    prop.skew.reset();
+    const InlineFontMetrics metrics = inline_font_metrics(*ff.font_file, prop);
+    InlineShapeCache        cache;
+    for (uint32_t code : m_glyph_split.inline_shapes) {
+        const InlineShape *entry = find_inline_shape(m_inline_shapes, code);
+        if (entry == nullptr)
+            continue;
+        std::optional<Slic3r::Emboss::Glyph> glyph = make_inline_glyph(*entry, BuiltinShapeLibrary::instance(), cache, metrics);
+        if (!glyph.has_value())
+            continue;
+        Emboss::StyleManager::ImGuiExtraGlyphs::Shape shape;
+        shape.code    = static_cast<ImWchar>(code);
+        shape.shape   = std::move(glyph->shape);
+        shape.advance = glyph->advance_width;
+        extra.shapes.push_back(std::move(shape));
+    }
+    return extra;
+}
+
 void GLGizmoEmboss::draw_text_input()
 {
-    auto create_range_text_prep = [&mng = m_style_manager, &text = m_text, &exist_unknown = m_text_contain_unknown_glyph]() {
-        auto& ff = mng.get_font_file_with_cache();
-        assert(ff.has_value());
-        const auto &cn = mng.get_font_prop().collection_number;
-        unsigned int font_index = (cn.has_value()) ? *cn : 0;
-        return create_range_text(text, *ff.font_file, font_index, &exist_unknown);
+    // which font draws each character: selected font, bundled symbol font, inline shape (or nobody)
+    update_glyph_split();
+    auto glyph_key = [this]() {
+        std::string key = m_glyph_split.primary + '\x1F' + m_glyph_split.fallback + '\x1F';
+        for (uint32_t code : m_glyph_split.inline_shapes)
+            if (const InlineShape *entry = find_inline_shape(m_inline_shapes, code))
+                key += inline_shapes_to_json({*entry});
+        return key;
     };
-    
+
     double scale = m_scale_height.has_value() ? *m_scale_height : 1.;
     ImFont *imgui_font = m_style_manager.get_imgui_font();
     if (imgui_font == nullptr) {
         // try create new imgui font
         double screen_scale = wxDisplay(wxGetApp().plater()).GetScaleFactor();
         double imgui_scale = scale * screen_scale;
-        m_style_manager.create_imgui_font(create_range_text_prep(), imgui_scale);
+        m_style_manager.create_imgui_font(m_glyph_split.primary, imgui_scale, create_text_box_glyphs());
         imgui_font = m_style_manager.get_imgui_font();
+        m_imgui_glyph_key = glyph_key();
     }
     bool exist_font = 
         imgui_font != nullptr &&
@@ -1558,18 +1652,20 @@ void GLGizmoEmboss::draw_text_input()
     
     // flag for extend font ranges if neccessary
     // ranges can't be extend during font is activ(pushed)
-    std::string range_text;
+    bool text_changed = false;
     ImVec2 input_size(m_gui_cfg->text_size.x, m_gui_cfg->text_size.y);
-    const ImGuiInputTextFlags flags = ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll;
-    if (ImGui::InputTextMultiline("##Text", &m_text, input_size, flags)) {
+    // CallbackAlways: the Insert popup inserts at the caret the box reports
+    const ImGuiInputTextFlags flags = ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll |
+                                      ImGuiInputTextFlags_CallbackAlways;
+    if (ImGui::InputTextMultiline("##Text", &m_text, input_size, flags, &EmbossInsert::text_callback, &m_insert)) {
         if (m_style_manager.get_font_prop().per_glyph) {
             unsigned count_lines = get_count_lines(m_text);
-            if (count_lines != m_text_lines.get_lines().size()) 
+            if (count_lines != m_text_lines.get_lines().size())
                 // Necesarry to initialize count by given number (differ from stored in volume at the moment)
-                reinit_text_lines(count_lines);         
+                reinit_text_lines(count_lines);
         }
         process();
-        range_text = create_range_text_prep();
+        text_changed = true;
     }
 
     if (exist_font) ImGui::PopFont();
@@ -1596,13 +1692,36 @@ void GLGizmoEmboss::draw_text_input()
         ImGui::SetCursorPos(cursor);
     }
 
-    // NOTE: must be after ImGui::font_pop() 
+    // Insert a shape, a symbol or a user SVG at the caret
+    {
+        auto &ff = m_style_manager.get_font_file_with_cache();
+        EmbossInsert::Context ctx{m_text, m_inline_shapes};
+        ctx.font       = ff.has_value() ? ff.font_file.get() : nullptr;
+        ctx.font_index = m_style_manager.get_font_prop().collection_number.value_or(0);
+        ctx.model      = &wxGetApp().model();
+        ctx.gui_scale  = m_parent.get_scale();
+        if (m_insert.draw(ctx)) {
+            process();
+            text_changed = true;
+        }
+    }
+
+    // NOTE: must be after ImGui::font_pop()
     //          -> imgui_font has to be unused
     // IMPROVE: only extend not clear
-    // Extend font ranges
-    if (!range_text.empty() &&
-        !ImGuiWrapper::contain_all_glyphs(imgui_font, range_text) )
-        m_style_manager.clear_imgui_font();    
+    // Extend the font when a character of the text is missing from it (once per set of characters, so
+    // a glyph ImGui cannot make does not rebuild the atlas every frame)
+    if (text_changed && imgui_font != nullptr) {
+        update_glyph_split();
+        bool all = true;
+        auto has = [imgui_font](uint32_t cp) { return cp <= 0xFFFF && imgui_font->FindGlyphNoFallback(static_cast<ImWchar>(cp)) != nullptr; };
+        for (uint32_t cp : utf8_to_codepoints(m_glyph_split.primary + m_glyph_split.fallback))
+            all &= has(cp);
+        for (uint32_t cp : m_glyph_split.inline_shapes)
+            all &= has(cp);
+        if (!all && glyph_key() != m_imgui_glyph_key)
+            m_style_manager.clear_imgui_font();
+    }
 }
 
 // create texture for visualization font face
@@ -3135,15 +3254,19 @@ std::optional<Slic3r::Emboss::BendInput> GLGizmoEmboss::measure_text_for_bend()
         m_bend_prop   = fp;
         m_bend_input.reset();
     }
-    if (!m_bend_input.has_value() || m_bend_text != m_text) {
+    const std::string inline_key = inline_shapes_to_json(m_inline_shapes);
+    if (!m_bend_input.has_value() || m_bend_text != m_text || m_bend_inline_key != inline_key) {
         Slic3r::Emboss::FontFileWithCache font;
         font.font_file = ff.font_file;
         font.cache     = m_bend_glyphs;
         Slic3r::Emboss::GlyphAdvances advances;
         std::wstring text_w = boost::nowide::widen(m_text);
-        ExPolygonsWithIds shapes = Slic3r::Emboss::text2vshapes(font, text_w, fp, []() { return false; }, advances);
+        Slic3r::Emboss::TextGlyphSources sources;
+        sources.inline_shapes = &m_inline_shapes;
+        ExPolygonsWithIds shapes = Slic3r::Emboss::text2vshapes(font, text_w, fp, []() { return false; }, advances, sources);
         m_bend_input = Slic3r::Emboss::measure_bend_input(shapes, &advances);
         m_bend_text  = m_text;
+        m_bend_inline_key = inline_key;
     }
     if (!m_bend_input->is_valid())
         return {};
@@ -4077,7 +4200,9 @@ EmbossShape &TextDataBase::create_shape()
     auto was_canceled = [&c = cancel](){ return c->load(); };
 
     Slic3r::Emboss::GlyphAdvances advances;
-    shape.shapes_with_ids = text2vshapes(m_font_file, text_w, fp, was_canceled, advances);
+    Slic3r::Emboss::TextGlyphSources sources;
+    sources.inline_shapes = &m_text_configuration.inline_shapes;
+    shape.shapes_with_ids = text2vshapes(m_font_file, text_w, fp, was_canceled, advances, sources);
 
     // Curved text: bend the 2D outlines before they are united and extruded; with "Use surface"
     // they are then projected onto the object along one direction (parallel).
@@ -4107,18 +4232,20 @@ void TextDataBase::write(ModelVolume &volume) const
 }
 
 std::unique_ptr<DataBase> create_emboss_data_base(const std::string                  &text,
+                                       const InlineShapeTable             &inline_shapes,
                                        StyleManager                       &style_manager,
                                        TextLinesModel                     &text_lines,
                                        const Selection                    &selection,
                                        ModelVolumeType                     type,
                                        std::shared_ptr<std::atomic<bool>> &cancel)
 {
-    // create volume_name
-    std::string volume_name = text; // copy
-    // contain_enter?
-    if (volume_name.find('\n') != std::string::npos)
-        // change enters to space
-        std::replace(volume_name.begin(), volume_name.end(), '\n', ' ');
+    // Inline shapes: only the entries the text uses go into the volume (the gizmo keeps its whole table
+    // so the undo of the text box can bring a deleted shape back)
+    InlineShapeTable used_shapes = inline_shapes; // copy
+    purge_unused_inline_shapes(used_shapes, text);
+
+    // create volume_name: line breaks become spaces, shapes "[star]" (never the placeholder characters)
+    std::string volume_name = text_volume_name(text, used_shapes);
 
     if (!style_manager.is_active_font()) {
         style_manager.load_valid_style();
@@ -4155,7 +4282,7 @@ std::unique_ptr<DataBase> create_emboss_data_base(const std::string             
     base.from_surface = style.distance;
 
     FontFileWithCache &font = style_manager.get_font_file_with_cache();
-    TextConfiguration tc{static_cast<EmbossStyle>(style), text};
+    TextConfiguration tc{static_cast<EmbossStyle>(style), text, std::move(used_shapes)};
     return std::make_unique<TextDataBase>(std::move(base), font, std::move(tc), style.projection);
 }
 

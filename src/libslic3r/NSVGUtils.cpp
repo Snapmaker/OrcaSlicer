@@ -25,7 +25,7 @@ HealedExPolygons stroke_to_expolygons(const LinesPath &lines_path, const NSVGsha
 
 namespace Slic3r {
 
-ExPolygonsWithIds create_shape_with_ids(const NSVGimage &image, const NSVGLineParams &param, bool *too_complex_out)
+ExPolygonsWithIds create_shape_with_ids(const NSVGimage &image, const NSVGLineParams &param, bool *too_complex_out, bool center_result)
 {
     ExPolygonsWithIds result;
     size_t shape_id = 0;
@@ -67,7 +67,8 @@ ExPolygonsWithIds create_shape_with_ids(const NSVGimage &image, const NSVGLinePa
 
     // SVG is used as centered
     // Do not disturb user by settings of pivot position
-    center(result);
+    if (center_result)
+        center(result);
     return result;
 }
 

@@ -37,6 +37,9 @@ class AABBMesh;
 
 namespace Slic3r::Emboss {
 
+// Larger local radii of the curve on the surface count as straight (no warp of bent letters) [mm]
+constexpr double BEND_MAX_LOCAL_RADIUS_MM = 1e4;
+
 // Triangle mesh the text is placed on, in text coordinates [mm]
 class BendSurface
 {

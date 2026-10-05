@@ -671,7 +671,8 @@ std::vector<std::map<NozzleVolumeType, int>> get_extruder_nozzle_stats(const std
 }
 
 // True when the printer's extruders carry more than one distinct extruder variant (dual-nozzle grouping
-// machine: H2D/H2C/X2D). Same-variant toolchangers (U1) and single-nozzle machines return false.
+// machine: H2D/H2C/X2D). Same-variant toolchangers (U1) and machines with more than two extruders return
+// false.
 bool DynamicPrintConfig::support_different_extruders(int& extruder_count)
 {
     extruder_count = 0;
@@ -692,7 +693,12 @@ bool DynamicPrintConfig::support_different_extruders(int& extruder_count)
                 variant_set.insert(variants_list.begin(), variants_list.end());
         }
     }
-    return (variant_set.size() > 1);
+    // Bambu's grouping machines have one or two extruders, and the filament->nozzle grouping engine
+    // (FilamentGroup, collect_unprintable_limits) is built for two. A larger toolchanger whose extruders
+    // merely list several possible variants (upstream Orca's Custom MyToolChanger: five extruders, each
+    // "Direct Drive Standard,Direct Drive High Flow,Direct Drive Extra High Flow") is not one: its
+    // filaments keep their own tools, like the Snapmaker U1's or the Flashforge Creator 5's.
+    return variant_set.size() > 1 && extruder_count <= 2;
 }
 
 static t_config_enum_values s_keys_map_PrinterStructure {
@@ -11563,8 +11569,9 @@ bool is_identical_multi_extruder_printer(const ConfigBase &cfg)
     // ...and all of the same kind. A machine with two different extruder variants is a grouping
     // machine (H2D/H2C/X2D): its filament->nozzle assignment is computed by ToolOrdering, and
     // this identity map must not pre-empt it. Mirrors
-    // DynamicPrintConfig::support_different_extruders(), which is that path's own gate.
-    if (const auto *variants = cfg.option<ConfigOptionStrings>("extruder_variant_list")) {
+    // DynamicPrintConfig::support_different_extruders(), which is that path's own gate - including
+    // its two-extruder limit: a larger toolchanger is never grouped, whatever variants it lists.
+    if (const auto *variants = cfg.option<ConfigOptionStrings>("extruder_variant_list"); variants != nullptr && nozzles->size() <= 2) {
         std::set<std::string> variant_set;
         const int             n = std::min<int>((int) nozzles->size(), (int) variants->values.size());
         for (int i = 0; i < n; ++i) {

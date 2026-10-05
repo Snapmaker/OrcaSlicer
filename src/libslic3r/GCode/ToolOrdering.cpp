@@ -1463,6 +1463,21 @@ static NozzleVolumeType nozzle_volume_type_at(const PrintConfig& print_config, s
     return idx < values.size() ? NozzleVolumeType(values[idx]) : NozzleVolumeType::nvtStandard;
 }
 
+// extruder_max_nozzle_count is one value per extruder, but nothing sizes it to the extruder count:
+// a printer preset that does not set it (every non-Bambu profile) keeps the one-entry default, and a
+// profile can write it shorter than nozzle_diameter. Reading values[idx] past the end returned heap
+// garbage, which build_nozzle_list then expanded into that many nozzles - gigabytes within seconds
+// (upstream's Custom MyToolChanger, five extruders). A missing or nil entry is one nozzle; the upper
+// bound only keeps a corrupt value from doing the same (the H2C rack, the largest real cluster, is 6).
+static int extruder_max_nozzle_count_at(const PrintConfig& print_config, size_t idx)
+{
+    constexpr int max_sane_count = 64;
+    const auto&   values         = print_config.extruder_max_nozzle_count.values;
+    if (idx >= values.size() || values[idx] == ConfigOptionIntsNullable::nil_value())
+        return 1;
+    return std::clamp(values[idx], 1, max_sane_count);
+}
+
 std::vector<MultiNozzleUtils::NozzleGroupInfo> build_nozzle_groups(const PrintConfig& print_config, size_t extruder_nums)
 {
     std::vector<MultiNozzleUtils::NozzleGroupInfo> nozzle_groups;
@@ -1470,7 +1485,7 @@ std::vector<MultiNozzleUtils::NozzleGroupInfo> build_nozzle_groups(const PrintCo
     for (size_t idx = 0; idx < extruder_nums; ++idx) {
         if (idx >= extruder_nozzle_counts.size() || extruder_nozzle_counts[idx].empty()) {
             nozzle_groups.emplace_back(format_diameter_to_str(print_config.nozzle_diameter.values[idx]), nozzle_volume_type_at(print_config, idx), idx,
-                                       print_config.extruder_max_nozzle_count.values[idx]);
+                                       extruder_max_nozzle_count_at(print_config, idx));
         } else {
             NozzleVolumeType type = nozzle_volume_type_at(print_config, idx);
             if (type == nvtHybrid) {
@@ -1505,6 +1520,10 @@ std::vector<FlushMatrix> prepare_flush_matrices(const PrintConfig& print_config)
     std::vector<FlushMatrix> nozzle_flush_mtx;
     for (size_t nozzle_id = 0; nozzle_id < extruder_nums; ++nozzle_id) {
         std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(print_config.flush_volumes_matrix.values, nozzle_id, extruder_nums)));
+        // A flush matrix shorter than filaments x filaments per nozzle (a preset written for another
+        // extruder count) must not be sliced past its end below: missing entries flush nothing.
+        if (flush_matrix.size() < filament_nums * filament_nums)
+            flush_matrix.resize(filament_nums * filament_nums, 0.f);
         std::vector<std::vector<float>> wipe_volumes;
         for (unsigned int i = 0; i < filament_nums; ++i)
             wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * filament_nums, flush_matrix.begin() + (i + 1) * filament_nums));
@@ -1560,8 +1579,11 @@ FilamentGroupContext build_filament_group_context(
             s = std::max(s, total_filaments);
     }
 
-    std::vector<bool> prefer_non_model_filament(extruder_nums);
-    for (size_t idx = 0; idx < extruder_nums; ++idx)
+    // extruder_type is one value per extruder in Bambu's profiles but is dropped on load here (a legacy
+    // key, PrintConfigDef::handle_legacy), so the config holds its one-entry default: a missing entry
+    // is Direct Drive rather than whatever lies past the end of the vector.
+    std::vector<bool> prefer_non_model_filament(extruder_nums, false);
+    for (size_t idx = 0; idx < extruder_nums && idx < print_config.extruder_type.values.size(); ++idx)
         prefer_non_model_filament[idx] = (print_config.extruder_type.values[idx] == ExtruderType::etBowden);
 
     auto machine_filament_info = build_machine_filaments(print->get_extruder_filament_info(), extruder_ams_counts, ignore_ext_filament);
@@ -1652,7 +1674,8 @@ FilamentGroupContext build_filament_group_context(
         for (auto& nozzle : context.nozzle_info.nozzle_list) {
             for (auto fil_id : used_filaments) {
                 auto uv = context.model_info.unprintable_volumes[fil_id];
-                if (uv.count(nozzle.volume_type))
+                // The unprintable limits are the engine's two extruders (collect_unprintable_limits).
+                if (uv.count(nozzle.volume_type) && nozzle.extruder_id >= 0 && nozzle.extruder_id < (int) ext_unprintable_filaments_with_volume.size())
                     ext_unprintable_filaments_with_volume[nozzle.extruder_id].insert(fil_id);
             }
         }
@@ -1716,6 +1739,18 @@ MultiNozzleUtils::LayeredNozzleGroupResult ToolOrdering::get_recommended_filamen
 
     int master_extruder_id = print_config.master_extruder_id.value - 1;
     std::vector<int> ret(filament_nums, master_extruder_id);
+
+    // The grouping engine knows two extruders (collect_unprintable_limits, the match mode's machine
+    // filaments, the add_volume_type_limits pass below). DynamicPrintConfig::support_different_extruders()
+    // keeps larger machines out of this path; should one get here anyway, each filament keeps its own
+    // tool, as on any other toolchanger, instead of running the engine past its two extruders.
+    if (extruder_nums > 2) {
+        BOOST_LOG_TRIVIAL(warning) << "filament map: " << extruder_nums << " extruders, the nozzle grouping supports two; filaments keep their own tools";
+        for (size_t f = 0; f < ret.size(); ++f)
+            ret[f] = int(std::min(f, extruder_nums - 1));
+        auto result_opt = LayeredNozzleGroupResult::create(ret, nozzle_list, used_filaments);
+        return result_opt ? *result_opt : LayeredNozzleGroupResult();
+    }
 
     if (has_multiple_extruder || has_multiple_nozzle) {
         auto context = build_filament_group_context(print, layer_filaments, physical_unprintables, geometric_unprintables, unprintable_volumes, mode, nozzle_status);

@@ -1,5 +1,6 @@
 #include "ExtruderAreas.hpp"
 
+#include "BoundingBox.hpp"
 #include "ClipperUtils.hpp"
 #include "Config.hpp"
 
@@ -161,11 +162,11 @@ ExPolygons hatch_region(const Polygons &region, double period_mm, double stripe_
     const coord_t     stripe = coord_t(scale_(stripe_mm));
     if (period <= 0 || stripe <= 0)
         return {};
-    const coord_t y0 = box.min.y() - 1, y1 = box.max.y() + 1;
+    const coord_t y_lo = box.min.y() - 1, y_hi = box.max.y() + 1;
     // A stripe is the band between the lines x + y = k and x + y = k + stripe.
     Polygons stripes;
-    for (coord_t k = box.min.x() + y0 - period; k <= box.max.x() + y1; k += period)
-        stripes.emplace_back(Polygon{ Point(k - y0, y0), Point(k + stripe - y0, y0), Point(k + stripe - y1, y1), Point(k - y1, y1) });
+    for (coord_t k = box.min.x() + y_lo - period; k <= box.max.x() + y_hi; k += period)
+        stripes.emplace_back(Polygon{ Point(k - y_lo, y_lo), Point(k + stripe - y_lo, y_lo), Point(k + stripe - y_hi, y_hi), Point(k - y_hi, y_hi) });
     return intersection_ex(stripes, region);
 }
 

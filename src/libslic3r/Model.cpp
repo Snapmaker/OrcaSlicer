@@ -3254,18 +3254,10 @@ void Model::setPrintSpeedTable(const DynamicPrintConfig& config, const PrintConf
     //auto print_config = print.config();
     //printSpeedMap.bed_poly.points = get_bed_shape(*(wxGetApp().plater()->config()));
     printSpeedMap.bed_poly.points = get_bed_shape(config);
-    Pointfs excluse_area_points = print_config.bed_exclude_area.values;
-    Polygons exclude_polys;
-    Polygon exclude_poly;
-    for (int i = 0; i < excluse_area_points.size(); i++) {
-        auto pt = excluse_area_points[i];
-        exclude_poly.points.emplace_back(scale_(pt.x()), scale_(pt.y()));
-        if (i % 4 == 3) {  // exclude areas are always rectangle
-            exclude_polys.push_back(exclude_poly);
-            exclude_poly.points.clear();
-        }
-    }
-    printSpeedMap.bed_poly = diff({ printSpeedMap.bed_poly }, exclude_polys)[0];
+    // Same reading of bed_exclude_area as validation and arrange (rectangles or one polygon).
+    const Polygons bed_left = diff({ printSpeedMap.bed_poly }, get_bed_excluded_area(print_config));
+    if (!bed_left.empty())
+        printSpeedMap.bed_poly = bed_left.front();
 }
 
 // find temperature of heatend and bed and matierial of an given extruder

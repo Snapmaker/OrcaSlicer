@@ -57,10 +57,13 @@ struct NSVGLineParams
 /// <param name="max_level">Maximal depth for conversion curve to lines</param>
 /// <param name="scale">Multiplicator of point coors
 /// NOTE: Every point coor from image(float) is multiplied by scale and rounded to integer</param>
+/// <param name="center_result">When true (default) the result is moved so the bounding box of the ink is centred on the origin.
+/// Pass false to keep image coordinates (y negated when param.is_y_negative).</param>
 /// <returns>Shapes from svg image - fill + stroke</returns>
 /// <param name="too_complex">When not null it is set to true if param.max_flat_points was exceeded;
 /// the result is then empty</param>
-ExPolygonsWithIds create_shape_with_ids(const NSVGimage &image, const NSVGLineParams &param, bool *too_complex = nullptr);
+ExPolygonsWithIds create_shape_with_ids(const NSVGimage &image, const NSVGLineParams &param, bool *too_complex = nullptr,
+                                        bool center_result = true);
 
 // help functions - prepare to be tested
 /// <param name="is_y_negative">Flag is y negative, when true than y coor is multiplied by -1</param>

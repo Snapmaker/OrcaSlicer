@@ -1,0 +1,19 @@
+NotoSansSymbols2-Subset.ttf
+===========================
+A subset of "Noto Sans Symbols 2" (version 2.008) from the Noto Project
+(https://github.com/notofonts/symbols), licensed under the SIL Open Font
+License 1.1. The licence text is in OFL-NotoSansSymbols2.txt (next to this
+file). The font declares no Reserved Font Name; the subset is nevertheless
+renamed "Noto Sans Symbols 2 Subset" so it cannot be mistaken for the original.
+
+Purpose: glyph fallback for embossed text and the symbol picker (stb_truetype
+reads glyf outlines, so this is a plain TrueType font).
+
+Contents (388 glyphs): U+2022-2023, U+2043 (bullets), U+25A0-25FF (Geometric
+Shapes), U+2600-26FF (Miscellaneous Symbols), U+2700-27BF (Dingbats),
+U+2B05-2B0D, U+2B1A-2B1F, U+2B50-2B59 (arrows and stars). Only code points that
+the original font actually covers are present.
+
+Regenerate with fontTools (pyftsubset): hinting, layout features (GSUB, GPOS,
+GDEF), vertical metrics and the hinting tables (fpgm, prep, cvt, gasp) are
+dropped; the name table keeps the licence records.

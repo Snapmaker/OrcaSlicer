@@ -1093,3 +1093,76 @@ TEST_CASE("Overhang data is precomputed for the layers the serial code prepares,
         }
     }
 }
+
+TEST_CASE("A per-object slowdown override does not skip the curled-wall estimate while another region reads it", "[ExtrusionProcessor]")
+{
+    // GCode::_extrude extrudes each region's walls with that region's config applied, so a region whose
+    // override turns the slowdown off still shares layers' curled lines with regions that have it on.
+    // Skipping the estimate because ONE object's override is off would change the G-code of the others
+    // compared with main, which always estimated here.
+    struct Case
+    {
+        bool print_default;
+        bool object0;
+        bool object1;
+        bool estimated;
+    };
+    const Case cases[] = {
+        {true, false, true, true},   // object 0 overrides it off, the print default and object 1 have it on
+        {true, false, false, true},  // both objects override it off, but the print default is on
+        {false, false, true, true},  // only object 1 turns it on
+        {false, false, false, false},
+    };
+    for (const Case c : cases) {
+        DYNAMIC_SECTION("default " << c.print_default << " object 0 " << c.object0 << " object 1 " << c.object1) {
+            DynamicPrintConfig config = overhang_curled_config();
+            config.set_deserialize_strict({{"slowdown_for_curled_perimeters", c.print_default ? "1" : "0"}});
+            Print print;
+            Model model;
+            init_print({caged_overhang_mesh(), caged_overhang_mesh()}, print, model, config);
+            REQUIRE(model.objects.size() == 2);
+            model.objects[0]->config.set_key_value("slowdown_for_curled_perimeters", new ConfigOptionBools{c.object0});
+            model.objects[1]->config.set_key_value("slowdown_for_curled_perimeters", new ConfigOptionBools{c.object1});
+            print.apply(model, config);
+            print.process();
+
+            REQUIRE(print.objects().size() == 2);
+            for (const PrintObject *object : print.objects())
+                CHECK(has_curled_lines(*object) == c.estimated);
+        }
+    }
+}
+
+TEST_CASE("Curled walls follow the first overhang speed value and any slowdown column", "[ExtrusionProcessor]")
+{
+    // Overhang speed: main's rule, the first (Standard) value. Slowdown: skipped only when no column reads it.
+    struct Case
+    {
+        std::vector<unsigned char> overhang_speed;
+        std::vector<unsigned char> slowdown;
+        bool                       estimated;
+    };
+    const Case cases[] = {
+        {{1}, {1}, true},
+        {{1, 0}, {0, 1}, true},  // High Flow slowdown on: a High Flow filament could read the lines
+        {{1, 0}, {0, 0}, false},
+        {{0, 1}, {1, 1}, false}, // overhang speed is judged by the first value, as before
+    };
+    for (const Case &c : cases) {
+        std::string label;
+        for (unsigned char v : c.overhang_speed)
+            label += v ? "1" : "0";
+        label += " / ";
+        for (unsigned char v : c.slowdown)
+            label += v ? "1" : "0";
+        DYNAMIC_SECTION("overhang speed / slowdown " << label) {
+            DynamicPrintConfig config = overhang_curled_config();
+            config.option<ConfigOptionBools>("enable_overhang_speed")->values           = c.overhang_speed;
+            config.option<ConfigOptionBools>("slowdown_for_curled_perimeters")->values = c.slowdown;
+            Print print;
+            init_and_process_print({caged_overhang_mesh()}, print, config);
+
+            CHECK(has_curled_lines(*print.objects().front()) == c.estimated);
+        }
+    }
+}

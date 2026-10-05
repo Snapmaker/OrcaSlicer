@@ -873,13 +873,20 @@ void PrintObject::generate_support_material()
 void PrintObject::estimate_curled_extrusions()
 {
     if (this->set_started(posEstimateCurledExtrusions)) {
-        const auto any_region_enables = [this](ConfigOptionBools PrintRegionConfig::*option) {
-            return std::any_of(this->print()->m_print_regions.begin(), this->print()->m_print_regions.end(),
-                               [option](const PrintRegion *region) { return any_enabled(region->config().*option); });
-        };
-        // Only the slowdown for curled perimeters reads the curled lines, and they stay empty unless some region has overhang speed on.
-        if (any_region_enables(&PrintRegionConfig::enable_overhang_speed) &&
-            any_region_enables(&PrintRegionConfig::slowdown_for_curled_perimeters)) {
+        const auto &regions = this->print()->m_print_regions;
+        // The rule this step always had: curled lines exist only when some region has overhang speed on
+        // (its first value). Kept as it was so the G-code does not move.
+        const bool overhang_speed = std::any_of(regions.begin(), regions.end(),
+                                                [](const PrintRegion *region) { return region->config().enable_overhang_speed.values.front(); });
+        // Only the slowdown for curled perimeters reads the curled lines. GCode::_extrude extrudes each region's
+        // walls with that region's config applied, so it reads that region's slowdown value for whichever filament
+        // prints. The estimate may therefore be skipped only when NO region has it on in ANY flow-variant column;
+        // a per-object override that turns it off for one object must not skip it while another region (or
+        // the print default) has it on, or that object's neighbours would lose lines they read on main.
+        const bool slowdown_read = std::any_of(regions.begin(), regions.end(), [](const PrintRegion *region) {
+            return any_enabled(region->config().slowdown_for_curled_perimeters);
+        });
+        if (overhang_speed && slowdown_read) {
 
             // Estimate curling of support material and add it to the malformaition lines of each layer
             float support_flow_width = support_material_flow(this, this->config().layer_height).width();

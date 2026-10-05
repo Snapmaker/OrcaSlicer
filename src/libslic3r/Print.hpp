@@ -20,6 +20,7 @@
 #include "GCode/GCodeProcessor.hpp"
 #include "MultiMaterialSegmentation.hpp"
 #include "MixedFilament.hpp"
+#include "ExtruderAreas.hpp"
 #include "libslic3r.h"
 
 #include <Eigen/Geometry>
@@ -720,6 +721,10 @@ private:
     ExPolygons _shrink_contour_holes(double contour_delta, double hole_delta, const ExPolygons& polys) const;
     // BBS
     void detect_overhangs_for_lift();
+    // Dual-nozzle: per extruder, the 0-based filaments this object prints somewhere that extruder cannot
+    // reach (its unprintable strip of the bed, or above its own height limit). Needs the sliced layers.
+    // Fed to the filament grouping so an automatic grouping never sends such a filament to that nozzle.
+    std::vector<std::set<int>> detect_extruder_geometric_unprintables() const;
     void clear_overhangs_for_lift();
 
    void _transform_hole_to_polyholes();
@@ -1147,6 +1152,13 @@ public:
     std::vector<FilamentUsageType> get_filament_usage_type() const;
     std::vector<std::set<int>> get_physical_unprintable_filaments(const std::vector<unsigned int>& used_filaments) const;
     std::map<int, std::set<NozzleVolumeType>> get_filament_unprintable_flow(const std::vector<unsigned int>& used_filaments) const;
+
+    // Dual-nozzle (H2D / H2C / X2D): what each nozzle reaches, in plate-local coordinates like printable_area.
+    // Empty (single-nozzle result) on single-nozzle machines and on the Snapmaker U1, which declare no
+    // extruder_printable_area. See ExtruderAreas.hpp.
+    ExtruderAreas         get_extruder_areas() const;
+    std::vector<Polygons> get_extruder_printable_polygons() const;
+    std::vector<Polygons> get_extruder_unprintable_polygons() const;
 
     // Ultra (Phase 10): AMS-aware grouping inputs carried OUTSIDE the print config. The per-nozzle AMS slot
     // budget (extruder_ams_count "cap#numBanks" per nozzle) and the "force match mode" flag are set from the

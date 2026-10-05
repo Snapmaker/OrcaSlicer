@@ -108,6 +108,8 @@ set(lisbslic3r_sources
     ColorSplitShell.cpp
     BuildVolume.cpp
     BuildVolume.hpp
+    ExtruderAreas.cpp
+    ExtruderAreas.hpp
     calib.cpp
     calib.hpp
     Circle.cpp

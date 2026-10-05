@@ -20,6 +20,7 @@
 #include "ContourZ.hpp"
 #include "SLA/IndexedMesh.hpp"
 #include "Support/Stabilizers.hpp"
+#include "ExtruderAreas.hpp"
 #include "Fill/FillAdaptive.hpp"
 #include "Fill/Fill.hpp"
 #include "Fill/FillLightning.hpp"
@@ -4245,6 +4246,112 @@ std::vector<unsigned int> PrintObject::object_extruders() const
     sort_remove_duplicates(extruders);
     this->print()->mixed_filament_manager().expand_0based_extruder_ids(extruders, this->print()->config().filament_diameter.size());
     return extruders;
+}
+
+// Dual-nozzle (H2D / H2C / X2D): which filaments does this object print somewhere a nozzle cannot reach?
+// Ported from Bambu Studio's PrintObject::detect_extruder_geometric_unprintables. A layer region counts when
+// its walls or its infill touch the bed strip the extruder cannot reach, or sit above the extruder's own
+// height limit; the filaments of that region are then unprintable on that extruder. Empty sets for single-nozzle
+// machines and for printers that declare no extruder areas (the U1).
+std::vector<std::set<int>> PrintObject::detect_extruder_geometric_unprintables() const
+{
+    const ExtruderAreas areas = m_print->get_extruder_areas();
+    std::vector<std::set<int>> result(std::max<size_t>(1, m_print->config().nozzle_diameter.size()));
+    if (!areas.multi() || (!areas.has_exclusive_regions() && !areas.has_height_limits()) || areas.count() > result.size())
+        return result;
+
+    const int filament_count = int(m_print->config().filament_diameter.size());
+    auto add = [&](std::set<int> &into, int filament_1based) {
+        if (filament_1based > 0 && filament_1based <= filament_count)
+            into.insert(filament_1based - 1);
+    };
+    // The filaments a region prints with, the same ones Bambu inspects (mixed-filament virtual slots above
+    // the real count are dropped by `add`).
+    struct RegionFilaments { int wall; int outer_wall; int solid; int sparse; };
+    auto region_filaments = [](const LayerRegion *layerm) {
+        const PrintRegionConfig &c = layerm->region().config();
+        return RegionFilaments{ c.wall_filament.value, c.outer_wall_filament.value, c.solid_infill_filament.value, c.sparse_infill_filament.value };
+    };
+    auto add_walls = [&](std::set<int> &into, const RegionFilaments &f) {
+        add(into, f.wall);
+        if (f.outer_wall > 0)
+            add(into, f.outer_wall);
+    };
+    auto add_infill = [&](std::set<int> &into, const RegionFilaments &f) {
+        add(into, f.solid);
+        add(into, f.sparse);
+    };
+
+    // Taller than an extruder can print: every filament printing in the layers above its limit.
+    for (size_t e = 0; e < areas.count(); ++e) {
+        const double limit = areas.height_limit(e);
+        if (limit <= 0.)
+            continue;
+        for (const Layer *layer : m_layers) {
+            if (layer->print_z <= limit + 0.01)
+                continue;
+            for (const LayerRegion *layerm : layer->regions()) {
+                const RegionFilaments f = region_filaments(layerm);
+                if (!layerm->fills.entities.empty())
+                    add_infill(result[e], f);
+                if (!layerm->perimeters.entities.empty())
+                    add_walls(result[e], f);
+            }
+        }
+    }
+
+    // Outside the strip an extruder reaches. The strips are plate-local; slices are object-local, so move the
+    // strips once per instance instead of every slice into the plate.
+    for (const PrintInstance &instance : m_instances) {
+        const Point shift = instance.shift_without_plate_offset();
+        std::vector<Polygons>    strips(areas.count());
+        std::vector<BoundingBox> strip_boxes(areas.count());
+        for (size_t e = 0; e < areas.count(); ++e) {
+            strips[e] = areas.unprintable[e];
+            for (Polygon &p : strips[e])
+                p.translate(-shift);
+            // Shrink slightly so a slice that only shares an edge with the strip does not count as inside it.
+            strips[e]      = shrink(strips[e], float(SCALED_EPSILON));
+            strip_boxes[e] = get_extents(strips[e]);
+        }
+
+        tbb::spin_mutex                  mutex;
+        std::vector<std::set<int>> found(areas.count());
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, m_layers.size()), [&](const tbb::blocked_range<size_t> &range) {
+            std::vector<std::set<int>> local(areas.count());
+            for (size_t li = range.begin(); li < range.end(); ++li) {
+                for (const LayerRegion *layerm : m_layers[li]->regions()) {
+                    const RegionFilaments f = region_filaments(layerm);
+                    const BoundingBox     fill_box = get_extents(layerm->fill_expolygons);
+                    for (size_t e = 0; e < areas.count(); ++e) {
+                        if (strips[e].empty())
+                            continue;
+                        bool infill_blocked = false;
+                        if (!layerm->fills.entities.empty() && fill_box.overlap(strip_boxes[e]) && !intersection(layerm->fill_expolygons, strips[e]).empty()) {
+                            add_infill(local[e], f);
+                            infill_blocked = true;
+                        }
+                        if (layerm->perimeters.entities.empty())
+                            continue;
+                        if (infill_blocked) {
+                            // The walls surround the infill, so they are in the strip too.
+                            add_walls(local[e], f);
+                            continue;
+                        }
+                        const ExPolygons walls = diff_ex(layerm->raw_slices, layerm->fill_expolygons);
+                        if (get_extents(walls).overlap(strip_boxes[e]) && !intersection(walls, strips[e]).empty())
+                            add_walls(local[e], f);
+                    }
+                }
+            }
+            tbb::spin_mutex::scoped_lock lock(mutex);
+            for (size_t e = 0; e < local.size(); ++e)
+                found[e].insert(local[e].begin(), local[e].end());
+        });
+        for (size_t e = 0; e < found.size(); ++e)
+            result[e].insert(found[e].begin(), found[e].end());
+    }
+    return result;
 }
 
 namespace {

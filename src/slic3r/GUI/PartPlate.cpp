@@ -844,6 +844,115 @@ void PartPlate::render_logo(bool bottom, bool render_cali)
 	}
 }
 
+// Dual-nozzle nozzle-only strips. The plate under them is light grey or dark grey/blue depending on the theme
+// and the bed model, so the shade is a translucent mid grey and the hatching a darker (light theme) or lighter
+// (dark theme) line, readable on both.
+static const ColorRGBA EXTRUDER_ONLY_FILL_LIGHT   = { 0.40f, 0.44f, 0.50f, 0.22f };
+static const ColorRGBA EXTRUDER_ONLY_HATCH_LIGHT  = { 0.18f, 0.20f, 0.24f, 0.30f };
+static const ColorRGBA EXTRUDER_ONLY_FILL_DARK    = { 0.70f, 0.74f, 0.80f, 0.14f };
+static const ColorRGBA EXTRUDER_ONLY_HATCH_DARK   = { 0.88f, 0.90f, 0.94f, 0.26f };
+
+// Triangles of several polygons into one flat model (the hatching is many stripes). UVs are unused.
+static bool init_model_from_expolygons(GLModel &model, const ExPolygons &polys, float z)
+{
+    if (polys.empty())
+        return false;
+    const std::vector<Vec2f> triangles = triangulate_expolygons_2f(polys, NORMALS_UP);
+    if (triangles.empty() || triangles.size() % 3 != 0)
+        return false;
+
+    GLModel::Geometry init_data;
+    init_data.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3T2 };
+    init_data.reserve_vertices(triangles.size());
+    init_data.reserve_indices(triangles.size() / 3);
+    unsigned int vertices_counter = 0;
+    for (const Vec2f &v : triangles) {
+        init_data.add_vertex(Vec3f(v.x(), v.y(), z), Vec2f(0.f, 0.f));
+        ++vertices_counter;
+        if (vertices_counter % 3 == 0)
+            init_data.add_triangle(vertices_counter - 3, vertices_counter - 2, vertices_counter - 1);
+    }
+    model.init_from(std::move(init_data));
+    return true;
+}
+
+void PartPlate::update_extruder_only_triangles(const Vec2d& position)
+{
+    m_extruder_only_fill.clear();
+    m_extruder_only_hatch.clear();
+    m_extruder_only_label.clear();
+    if (m_partplate_list == nullptr)
+        return;
+    const ExtruderAreas areas = translate_extruder_areas(m_partplate_list->m_extruder_areas, position);
+    if (!areas.multi() || !areas.has_exclusive_regions())
+        return;
+
+    m_extruder_only_fill.resize(areas.count());
+    m_extruder_only_hatch.resize(areas.count());
+    m_extruder_only_label.resize(areas.count());
+    for (size_t e = 0; e < areas.count(); ++e) {
+        if (areas.only[e].empty())
+            continue;
+        const ExPolygons region = union_ex(areas.only[e]);
+        if (!init_model_from_expolygons(m_extruder_only_fill[e], region, GROUND_Z + 0.01f))
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": unable to create nozzle-only fill for extruder " << e;
+        // 1 mm stripes every 4 mm, clipped to the strip.
+        init_model_from_expolygons(m_extruder_only_hatch[e], hatch_region(areas.only[e], 4.0, 1.0), GROUND_Z + 0.015f);
+
+        // The label (an SVG with vertical text, authored for a 25 x 320 mm strip) is 12 x 150 mm there; scale it
+        // uniformly to the strip and centre it. A label that would come out 5 mm wide or less (the H2C's 5 mm
+        // right-hand strip) is unreadable, so those strips are shaded and hatched only (Bambu Studio does the same).
+        const BoundingBox box_scaled = get_extents(areas.only[e]);
+        const Vec2d       size(unscale<double>(box_scaled.size().x()), unscale<double>(box_scaled.size().y()));
+        const Vec2d       c(unscale<double>(box_scaled.center().x()), unscale<double>(box_scaled.center().y()));
+        const double      s = std::min(size.x() / 25., size.y() / 320.);
+        if (s > 0. && 12. * s > 5.) {
+            const double w = 12. * s, h = 150. * s;
+            ExPolygon quad;
+            quad.contour.append({ scale_(c.x() - w / 2.), scale_(c.y() - h / 2.) });
+            quad.contour.append({ scale_(c.x() + w / 2.), scale_(c.y() - h / 2.) });
+            quad.contour.append({ scale_(c.x() + w / 2.), scale_(c.y() + h / 2.) });
+            quad.contour.append({ scale_(c.x() - w / 2.), scale_(c.y() + h / 2.) });
+            if (!init_model_from_poly(m_extruder_only_label[e], quad, GROUND_Z + 0.02f))
+                m_extruder_only_label[e].reset();
+        }
+    }
+}
+
+void PartPlate::render_extruder_only_areas(bool force_default_color)
+{
+    if (force_default_color || m_extruder_only_fill.empty()) // thumbnails get no overlay
+        return;
+    const bool dark = m_partplate_list != nullptr && m_partplate_list->m_is_dark;
+    glsafe(::glDepthMask(GL_FALSE));
+    for (size_t e = 0; e < m_extruder_only_fill.size(); ++e) {
+        if (m_extruder_only_fill[e].is_initialized()) {
+            m_extruder_only_fill[e].set_color(dark ? EXTRUDER_ONLY_FILL_DARK : EXTRUDER_ONLY_FILL_LIGHT);
+            m_extruder_only_fill[e].render();
+        }
+        if (e < m_extruder_only_hatch.size() && m_extruder_only_hatch[e].is_initialized()) {
+            m_extruder_only_hatch[e].set_color(dark ? EXTRUDER_ONLY_HATCH_DARK : EXTRUDER_ONLY_HATCH_LIGHT);
+            m_extruder_only_hatch[e].render();
+        }
+    }
+    glsafe(::glDepthMask(GL_TRUE));
+}
+
+void PartPlate::render_extruder_only_labels(bool bottom)
+{
+    if (m_extruder_only_label.empty() || m_partplate_list == nullptr)
+        return;
+    if (wxGetApp().plater() != nullptr && wxGetApp().plater()->only_gcode_mode())
+        return;
+    m_partplate_list->load_extruder_label_textures();
+    const bool is_zh = wxGetApp().app_config->get("language") == "zh_CN";
+    for (size_t e = 0; e < m_extruder_only_label.size() && e < 2; ++e) {
+        GLTexture &texture = m_partplate_list->m_extruder_label_textures[is_zh ? 1 : 0][e];
+        if (m_extruder_only_label[e].is_initialized() && texture.get_id() != 0)
+            render_logo_texture(texture, m_extruder_only_label[e], bottom);
+    }
+}
+
 void PartPlate::render_exclude_area(bool force_default_color) {
 	if (force_default_color) //for thumbnail case
 		return;
@@ -2681,6 +2790,7 @@ bool PartPlate::set_shape(const Pointfs& shape, const Pointfs& exclude_areas, Ve
 			}*/
 			generate_exclude_polygon(exclude_poly);
 			calc_exclude_triangles(exclude_poly);
+			update_extruder_only_triangles(position);
 
 			const BoundingBox& pp_bbox = poly.contour.bounding_box();
 			calc_gridlines(poly, pp_bbox);
@@ -2766,6 +2876,7 @@ void PartPlate::render(const Transform3d& view_matrix, const Transform3d& projec
             render_background(force_background_color);
 
             render_exclude_area(force_background_color);
+            render_extruder_only_areas(force_background_color);
         }
 
         if (show_grid)
@@ -2787,6 +2898,7 @@ void PartPlate::render(const Transform3d& view_matrix, const Transform3d& projec
             render_logo(bottom, m_partplate_list->render_cali_logo && render_cali);
         else
             render_logo(bottom);
+        render_extruder_only_labels(bottom);
     }
 
     render_icons(bottom, only_body, hover_id);
@@ -3535,6 +3647,10 @@ void PartPlateList::load_icon_textures()
 
 void PartPlateList::release_icon_textures()
 {
+	for (auto &per_language : m_extruder_label_textures)
+		for (GLTexture &texture : per_language)
+			texture.reset();
+	m_extruder_label_textures_loaded = false;
 	m_logo_texture.reset();
 	m_del_texture.reset();
 	m_del_hovered_texture.reset();
@@ -5143,6 +5259,36 @@ void PartPlateList::select_plate_view()
 	m_plater->get_camera().select_view("topfront");
 }
 
+bool PartPlateList::set_extruder_areas(const ExtruderAreas& areas)
+{
+	if (m_extruder_areas == areas)
+		return false;
+	const std::lock_guard<std::mutex> local_lock(m_plates_mutex);
+	m_extruder_areas = areas;
+	is_load_bedtype_textures = false; // the plate-name texture layout differs on dual-nozzle printers
+	for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
+		m_plate_list[i]->update_extruder_only_triangles(compute_shape_position(i, m_plate_cols));
+	return true;
+}
+
+// "Left nozzle only" / "right nozzle only" labels (vertical text SVGs, from Bambu Studio), English and Chinese.
+void PartPlateList::load_extruder_label_textures()
+{
+	if (m_extruder_label_textures_loaded)
+		return;
+	m_extruder_label_textures_loaded = true;
+	static const char *files[2][2] = { { "left_extruder_only_area.svg", "right_extruder_only_area.svg" },
+	                                   { "left_extruder_only_area_ch.svg", "right_extruder_only_area_ch.svg" } };
+	GLint max_tex_size = OpenGLManager::get_gl_info().get_max_tex_size();
+	GLint tex_size = (max_tex_size < 2048) ? max_tex_size : 2048;
+	for (int lang = 0; lang < 2; ++lang)
+		for (int side = 0; side < 2; ++side) {
+			const std::string filename = resources_dir() + "/images/" + files[lang][side];
+			if (!boost::filesystem::exists(filename) || !m_extruder_label_textures[lang][side].load_from_svg_file(filename, true, false, false, tex_size))
+				BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": load nozzle-only label from %1% failed!") % filename;
+		}
+}
+
 bool PartPlateList::set_shapes(const Pointfs& shape, const Pointfs& exclude_areas, const std::string& texture_filename, float height_to_lid, float height_to_rod)
 {
 	const std::lock_guard<std::mutex> local_lock(m_plates_mutex);
@@ -5893,6 +6039,46 @@ void PartPlateList::init_bed_type_info()
 	int   bed_height  = bed_ext.size()(1);
 	float base_width  = 256;
 	float base_height = 256;
+
+	// Dual-nozzle (H2D / H2C / X2D): the single-nozzle layout runs the plate name sideways down the left edge,
+	// straight over the left-nozzle-only strip and its label. Bambu Studio's dual-nozzle layout puts the name
+	// along the back edge (the "middle" texture) and a short one at the front left (the "left_bottom" one), both
+	// in the margin outside the strips, and its coordinates are in mm of the bed (no scaling by bed size).
+	if (m_extruder_areas.multi() && m_extruder_areas.has_exclusive_regions()) {
+		struct DualTextures { BedType type; const char *middle; const char *left_bottom; float left_bottom_w; };
+		const DualTextures dual[] = {
+			{ btSuperTack, "bbl_bed_st_middle.svg",  "bbl_bed_st_left_bottom.svg",  260.f },
+			{ btPC,        "bbl_bed_pc_middle.svg",  "bbl_bed_pc_left_bottom.svg",  70.f },
+			{ btPCT,       "bbl_bed_pc_middle.svg",  "bbl_bed_pc_left_bottom.svg",  70.f },
+			{ btEP,        "bbl_bed_ep_middle.svg",  "bbl_bed_ep_left_bottom.svg",  260.f },
+			{ btPEI,       "bbl_bed_pei_middle.svg", "bbl_bed_pei_left_bottom.svg", 70.f },
+			{ btPTE,       "bbl_bed_pte_middle.svg", "bbl_bed_pte_left_bottom.svg", 70.f },
+		};
+		// 236 x 10 mm name along the back edge, centred (Bambu: x 57, y 300 on the 350 x 320 H2D).
+		// It must stay inside what both nozzles reach (the X2D's shared width is barely wider than the name), so it
+		// shrinks to fit and is centred on that area, not on the bed.
+		float middle_w = 236.12f, middle_h = 10.f;
+		float shared_min_x = 0.f, shared_max_x = float(bed_width);
+		if (!m_extruder_areas.shared.empty()) {
+			const BoundingBox shared_box = get_extents(m_extruder_areas.shared);
+			shared_min_x = float(unscale<double>(shared_box.min.x()) - bed_ext.min.x());
+			shared_max_x = float(unscale<double>(shared_box.max.x()) - bed_ext.min.x());
+		}
+		const float room = shared_max_x - shared_min_x - 4.f;
+		if (room > 0.f && middle_w > room) {
+			middle_h *= room / middle_w;
+			middle_w = room;
+		}
+		const float middle_x = shared_min_x + (shared_max_x - shared_min_x - middle_w) / 2.f, middle_y = float(bed_height) - 20.f;
+		for (const DualTextures &d : dual) {
+			bed_texture_info[d.type].reset();
+			bed_texture_info[d.type].parts.clear();
+			bed_texture_info[d.type].parts.push_back(BedTextureInfo::TexturePart(middle_x, middle_y, middle_w, middle_h, d.middle));
+			bed_texture_info[d.type].parts.push_back(BedTextureInfo::TexturePart(45, -14.5f, d.left_bottom_w, 8, d.left_bottom));
+		}
+		base_width  = float(bed_width);
+		base_height = float(bed_height);
+	}
 	float x_rate      = bed_width / base_width;
 	float y_rate      = bed_height / base_height;
 	for (int i = 0; i < btCount; i++) {

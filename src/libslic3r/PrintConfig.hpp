@@ -20,6 +20,7 @@
 #include "Config.hpp"
 #include "Polygon.hpp"
 #include "PaintDepth.hpp"
+#include <algorithm>
 #include <boost/preprocessor/facilities/empty.hpp>
 #include <boost/preprocessor/punctuation/comma_if.hpp>
 #include <boost/preprocessor/seq/for_each.hpp>
@@ -903,6 +904,13 @@ class StaticPrintConfig;
 
 // Minimum object distance for arrangement, based on printer technology.
 double min_object_distance(const ConfigBase &cfg);
+
+// Whether any value is set, a nil value included.
+template<bool NULLABLE> bool any_enabled(const ConfigOptionBoolsTempl<NULLABLE> &option)
+{
+    return std::any_of(option.values.begin(), option.values.end(), [](unsigned char enabled) { return enabled != 0; });
+}
+
 // The clearance radius of print-by-object collision checks and arrange. Bambu Studio's
 // extruder_clearance_max_radius on a Bambu Lab printer (printer_model "Bambu Lab ..."), as Bambu
 // Studio uses it everywhere; extruder_clearance_radius on every other printer, whose profiles do not

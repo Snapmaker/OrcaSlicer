@@ -832,6 +832,10 @@ private:
 
 std::vector<const PrintInstance*> sort_object_instances_by_model_order(const Print& print, bool init_order = false);
 
+// The overhang data ExtrusionQualityEstimator needs for the object layers in `layers` that process_layer() prepares it
+// for, computed ahead of the generator.
+std::vector<PrecomputedOverhangLayer> precompute_overhang_layers(const std::vector<GCode::LayerToPrint> &layers);
+
 }
 
 #endif

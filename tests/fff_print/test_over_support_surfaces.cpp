@@ -14,6 +14,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <functional>
 #include <iterator>
@@ -25,6 +27,8 @@
 
 #include "libslic3r/AABBTreeLines.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
+#include "libslic3r/ExtrusionEntityCollection.hpp"
+#include "libslic3r/GCode.hpp"
 #include "libslic3r/GCode/ExtrusionProcessor.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/Model.hpp"
@@ -770,4 +774,202 @@ TEST_CASE("A wall is not fan-split when the overhang fan does not depend on over
                                                                       fan_overlap_threshold);
 
     REQUIRE(points.size() == 2);
+}
+
+namespace {
+
+using Walls = std::vector<std::vector<ProcessedPoint>>;
+
+Walls estimate_walls(ExtrusionQualityEstimator &estimator, const PrintObject *object, const Layer &layer)
+{
+    const ConfigOptionPercents         overlaps({90, 75, 50, 25, 13, 0});
+    const ConfigOptionFloatsOrPercents speeds({FloatOrPercent{100, true}, FloatOrPercent{50, true}, FloatOrPercent{30, true},
+                                               FloatOrPercent{20, true}, FloatOrPercent{10, true}, FloatOrPercent{5, true}});
+    Walls walls;
+    estimator.set_current_object(object);
+    for (const LayerRegion *region : layer.regions())
+        for_each_extrusion_path(region->perimeters, [&](const ExtrusionPath &path) {
+            if (is_perimeter(path.role()))
+                walls.push_back(estimator.estimate_extrusion_quality(path, overlaps, speeds, 60.f, 60.f, true, 0.5f));
+        });
+    return walls;
+}
+
+uint32_t float_bits(float value)
+{
+    uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+void check_identical_walls(const Walls &actual, const Walls &expected)
+{
+    REQUIRE(actual.size() == expected.size());
+    for (size_t wall = 0; wall < actual.size(); ++wall) {
+        INFO("wall " << wall);
+        REQUIRE(actual[wall].size() == expected[wall].size());
+        for (size_t i = 0; i < actual[wall].size(); ++i) {
+            const ProcessedPoint &a = actual[wall][i];
+            const ProcessedPoint &e = expected[wall][i];
+            INFO("point " << i << ": speed " << a.speed << " vs " << e.speed << ", overlap " << a.overlap << " vs " << e.overlap);
+            CHECK(a.p == e.p);
+            CHECK(float_bits(a.speed) == float_bits(e.speed));
+            CHECK(float_bits(a.overlap) == float_bits(e.overlap));
+        }
+    }
+}
+
+const Layer *first_overhang_layer(const PrintObject &object)
+{
+    for (const Layer *layer : object.layers()) {
+        if (layer == nullptr || layer->lower_layer == nullptr || !layer->has_extrusions())
+            continue;
+        return layer;
+    }
+    return nullptr;
+}
+
+} // namespace
+
+TEST_CASE("Overhang data computed ahead of the generator gives the same wall speeds", "[ExtrusionProcessor]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({
+        {"enable_overhang_speed", "1"},
+        {"slowdown_for_curled_perimeters", "1"},
+        {"layer_height", "0.2"},
+        {"skirt_loops", "0"},
+        {"brim_type", "no_brim"},
+    });
+    Print print;
+    init_and_process_print({TestMesh::overhang}, print, config);
+    const PrintObject *object = print.objects().front();
+    const Layer       *layer  = first_overhang_layer(*object);
+    REQUIRE(layer != nullptr);
+    REQUIRE(layer->lower_layer != nullptr);
+
+    ExtrusionQualityEstimator queried;
+    queried.prepare_for_new_layer(object, layer->lower_layer);
+    queried.prepare_for_new_layer(object, layer);
+    const Walls expected = estimate_walls(queried, object, *layer);
+    REQUIRE_FALSE(expected.empty());
+
+    ExtrusionQualityEstimator precomputed;
+    precomputed.prepare_for_new_layer(object, layer->lower_layer);
+    precomputed.set_precomputed_layers({precompute_overhang_layer(object, *layer)});
+    precomputed.prepare_for_new_layer(object, layer);
+    check_identical_walls(estimate_walls(precomputed, object, *layer), expected);
+}
+
+TEST_CASE("Overhang distances measured against another layer than the previous one are not used", "[ExtrusionProcessor]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({
+        {"enable_overhang_speed", "1"},
+        {"layer_height", "0.2"},
+        {"skirt_loops", "0"},
+        {"brim_type", "no_brim"},
+    });
+    Print print;
+    init_and_process_print({TestMesh::overhang}, print, config);
+    const PrintObject *object    = print.objects().front();
+    const Layer       *layer     = nullptr;
+    for (const Layer *l : object->layers()) {
+        if (l != nullptr && l->lower_layer != nullptr && l->lower_layer->lower_layer != nullptr && l->has_extrusions()) {
+            layer = l;
+            break;
+        }
+    }
+    REQUIRE(layer != nullptr);
+    const Layer *two_below = layer->lower_layer->lower_layer;
+
+    ExtrusionQualityEstimator queried;
+    queried.prepare_for_new_layer(object, two_below);
+    queried.prepare_for_new_layer(object, layer);
+    const Walls expected = estimate_walls(queried, object, *layer);
+
+    ExtrusionQualityEstimator precomputed;
+    precomputed.prepare_for_new_layer(object, two_below);
+    precomputed.set_precomputed_layers({precompute_overhang_layer(object, *layer)});
+    precomputed.prepare_for_new_layer(object, layer);
+    check_identical_walls(estimate_walls(precomputed, object, *layer), expected);
+}
+
+TEST_CASE("Precomputed overhang data has the curled-line tree exactly when a region slows down for curled perimeters", "[ExtrusionProcessor]")
+{
+    for (const bool slowdown : {false, true}) {
+        DYNAMIC_SECTION((slowdown ? "slowdown on" : "slowdown off")) {
+            DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+            config.set_deserialize_strict({
+                {"enable_overhang_speed", "1"},
+                {"slowdown_for_curled_perimeters", slowdown ? "1" : "0"},
+                {"layer_height", "0.2"},
+                {"skirt_loops", "0"},
+                {"brim_type", "no_brim"},
+            });
+            Print print;
+            init_and_process_print({TestMesh::overhang}, print, config);
+            const PrintObject *object = print.objects().front();
+            const Layer       *layer  = first_overhang_layer(*object);
+            REQUIRE(layer != nullptr);
+
+            GCode::LayerToPrint layer_to_print;
+            layer_to_print.object_layer    = layer;
+            layer_to_print.original_object = object;
+            const std::vector<PrecomputedOverhangLayer> precomputed = precompute_overhang_layers({layer_to_print});
+            REQUIRE(precomputed.size() == 1);
+            CHECK((precomputed.front().lower_curled_lines != nullptr) == slowdown);
+        }
+    }
+}
+
+TEST_CASE("Overhang data is precomputed for the layers the serial code prepares, by the first overhang speed value", "[ExtrusionProcessor]")
+{
+    // process_layer() prepares the estimator for a layer when a region has extrusions and its FIRST
+    // enable_overhang_speed value is on. A second (High Flow) column that is on must not make another
+    // layer qualify, or the estimator would compare walls with a different layer than the serial code does.
+    struct Case
+    {
+        std::vector<unsigned char> overhang_speed;
+        bool                       precomputed;
+    };
+    const Case cases[] = {
+        {{1}, true},
+        {{1, 0}, true},
+        {{0}, false},
+        {{0, 1}, false},
+    };
+    for (const Case &c : cases) {
+        std::string label;
+        for (unsigned char v : c.overhang_speed)
+            label += v ? "1" : "0";
+        DYNAMIC_SECTION("enable_overhang_speed " << label) {
+            DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+            config.set_deserialize_strict({
+                {"layer_height", "0.2"},
+                {"skirt_loops", "0"},
+                {"brim_type", "no_brim"},
+            });
+            config.option<ConfigOptionBools>("enable_overhang_speed")->values = c.overhang_speed;
+            Print print;
+            init_and_process_print({TestMesh::overhang}, print, config);
+            const PrintObject *object = print.objects().front();
+            const Layer       *layer  = first_overhang_layer(*object);
+            REQUIRE(layer != nullptr);
+            REQUIRE(layer->lower_layer != nullptr);
+            // The option reached the region unchanged.
+            bool found_region = false;
+            for (const LayerRegion *region : layer->regions())
+                if (region->has_extrusions()) {
+                    found_region = true;
+                    REQUIRE(region->region().config().enable_overhang_speed.values == c.overhang_speed);
+                }
+            REQUIRE(found_region);
+
+            GCode::LayerToPrint layer_to_print;
+            layer_to_print.object_layer    = layer;
+            layer_to_print.original_object = object;
+            CHECK(precompute_overhang_layers({layer_to_print}).size() == (c.precomputed ? 1u : 0u));
+        }
+    }
 }

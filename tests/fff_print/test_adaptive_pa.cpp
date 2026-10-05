@@ -231,5 +231,6 @@ TEST_CASE("Adaptive PA processor is a no-op when no used tool has adaptive PA", 
     const std::string gcode = slice_two_filaments(false, false);
     REQUIRE(gcode.find("PA_CHANGE") == std::string::npos);
     REQUIRE(gcode.find("PA_RESET") == std::string::npos);
-    REQUIRE(gcode.find("SET_PRESSURE_ADVANCE") != std::string::npos);
+    // These tests slice a Marlin-flavoured plate, so the printer's PA command is M900.
+    REQUIRE(gcode.find("M900 K") != std::string::npos);
 }

@@ -10877,7 +10877,7 @@ struct Plater::priv
     // fills the m_bed.m_grid_lines and sets m_bed.m_origin.
     // Sets m_bed.m_polygon to limit the object placement.
     //BBS: add bed exclude area
-    void set_bed_shape(const Pointfs& shape, const Pointfs& exclude_areas, const double printable_height, const std::string& custom_texture, const std::string& custom_model, bool force_as_custom = false);
+    void set_bed_shape(const Pointfs& shape, const Pointfs& exclude_areas, const double printable_height, const std::string& custom_texture, const std::string& custom_model, bool force_as_custom = false, const ExtruderAreas& extruder_areas = ExtruderAreas());
 
     bool can_delete() const;
     bool can_delete_all() const;
@@ -11039,7 +11039,7 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
     , main_frame(main_frame)
     //BBS: add bed_exclude_area
     , config(Slic3r::DynamicPrintConfig::new_from_defaults_keys({
-        "printable_area", "bed_exclude_area", "bed_custom_texture", "bed_custom_model", "print_sequence",
+        "printable_area", "bed_exclude_area", "extruder_printable_area", "extruder_printable_height", "bed_custom_texture", "bed_custom_model", "print_sequence",
         "extruder_clearance_radius", "extruder_clearance_max_radius", "extruder_clearance_height_to_lid", "extruder_clearance_height_to_rod",
 		"nozzle_height", "skirt_type", "skirt_loops", "skirt_speed","min_skirt_length", "skirt_distance", "skirt_start_angle",
         "brim_width", "brim_object_gap", "brim_type", "nozzle_diameter", "single_extruder_multi_material", "preferred_orientation",
@@ -17937,7 +17937,7 @@ bool Plater::priv::show_publish_dlg(bool show)
 }
 
 //BBS: add bed exclude area
-void Plater::priv::set_bed_shape(const Pointfs& shape, const Pointfs& exclude_areas, const double printable_height, const std::string& custom_texture, const std::string& custom_model, bool force_as_custom)
+void Plater::priv::set_bed_shape(const Pointfs& shape, const Pointfs& exclude_areas, const double printable_height, const std::string& custom_texture, const std::string& custom_model, bool force_as_custom, const ExtruderAreas& extruder_areas)
 {
     //Orca: reduce resolution for large bed printer
     BoundingBoxf bed_size = get_extents(shape);
@@ -17945,6 +17945,15 @@ void Plater::priv::set_bed_shape(const Pointfs& shape, const Pointfs& exclude_ar
         SCALING_FACTOR = SCALING_FACTOR_INTERNAL;
     else
         SCALING_FACTOR = SCALING_FACTOR_INTERNAL_LARGE_PRINTER;
+
+    // Dual-nozzle (H2D / H2C / X2D): the strips of the plate only one nozzle reaches (scaled by the caller; the
+    // factor only differs from the default above beds of 2147 mm). Set them before the plates are reshaped below so a changed plate size rebuilds
+    // the strips together with the plate; when only the areas changed (a nozzle or printer variant with a
+    // different reach on the same bed) the plate list rebuilds them itself.
+    if (partplate_list.set_extruder_areas(extruder_areas)) {
+        if (view3D) view3D->get_canvas3d()->set_as_dirty();
+        if (preview) preview->get_canvas3d()->set_as_dirty();
+    }
 
     //BBS: add shape position
     Vec2d shape_position = partplate_list.get_current_shape_position();
@@ -25111,6 +25120,7 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         }
         //BBS: add bed_exclude_area
         else if (opt_key == "printable_area" || opt_key == "bed_exclude_area"
+            || opt_key == "extruder_printable_area" || opt_key == "extruder_printable_height"
             || opt_key == "bed_custom_texture" || opt_key == "bed_custom_model"
             || opt_key == "extruder_clearance_height_to_lid"
             || opt_key == "extruder_clearance_height_to_rod") {
@@ -25196,13 +25206,16 @@ void Plater::set_bed_shape() const
         p->config->option<ConfigOptionPoints>("bed_exclude_area")->values,
         p->config->option<ConfigOptionFloat>("printable_height")->value,
         p->config->option<ConfigOptionString>("bed_custom_texture")->value.empty() ? texture_filename : p->config->option<ConfigOptionString>("bed_custom_texture")->value,
-        p->config->option<ConfigOptionString>("bed_custom_model")->value);
+        p->config->option<ConfigOptionString>("bed_custom_model")->value,
+        false,
+        // Fewer than two nozzles (or no declared areas, as on the U1) gives an empty result: no overlay.
+        p->config->option<ConfigOptionFloats>("nozzle_diameter")->values.size() >= 2 ? extruder_areas_from_config(*p->config) : ExtruderAreas());
 }
 
 //BBS: add bed exclude area
-void Plater::set_bed_shape(const Pointfs& shape, const Pointfs& exclude_area, const double printable_height, const std::string& custom_texture, const std::string& custom_model, bool force_as_custom) const
+void Plater::set_bed_shape(const Pointfs& shape, const Pointfs& exclude_area, const double printable_height, const std::string& custom_texture, const std::string& custom_model, bool force_as_custom, const ExtruderAreas& extruder_areas) const
 {
-    p->set_bed_shape(make_counter_clockwise(shape), exclude_area, printable_height, custom_texture, custom_model, force_as_custom);
+    p->set_bed_shape(make_counter_clockwise(shape), exclude_area, printable_height, custom_texture, custom_model, force_as_custom, extruder_areas);
 }
 
 void Plater::force_filament_colors_update()

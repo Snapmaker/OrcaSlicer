@@ -24,6 +24,7 @@
 #include "3DBed.hpp"
 #include "MeshUtils.hpp"
 #include "libslic3r/ParameterUtils.hpp"
+#include "libslic3r/ExtruderAreas.hpp"
 
 class GLUquadric;
 typedef class GLUquadric GLUquadricObject;
@@ -133,6 +134,11 @@ private:
     std::vector<Vec3f> positions;
     PickingModel m_triangles;
     GLModel m_exclude_triangles;
+    // Dual-nozzle: the strips of this plate only one nozzle reaches (index = extruder, 0 = left): shaded fill,
+    // diagonal hatching on top, and the "left / right nozzle only" label quad. Empty on every other printer.
+    std::vector<GLModel> m_extruder_only_fill;
+    std::vector<GLModel> m_extruder_only_hatch;
+    std::vector<GLModel> m_extruder_only_label;
     GLModel m_logo_triangles;
     GLModel m_gridlines;
     GLModel m_gridlines_bolder;
@@ -184,6 +190,8 @@ private:
     void render_logo(bool bottom, bool render_cali = true);
     void render_logo_texture(GLTexture &logo_texture, GLModel &logo_buffer, bool bottom);
     void render_exclude_area(bool force_default_color);
+    void render_extruder_only_areas(bool force_default_color);
+    void render_extruder_only_labels(bool bottom);
     //void render_background_for_picking(const ColorRGBA render_color) const;
     void render_grid(bool bottom);
     void render_height_limit(PartPlate::HeightLimitMode mode = HEIGHT_LIMIT_BOTH);
@@ -396,6 +404,9 @@ public:
     /*rendering related functions*/
     const Pointfs& get_shape() const { return m_shape; }
     bool set_shape(const Pointfs& shape, const Pointfs& exclude_areas, Vec2d position, float height_to_lid, float height_to_rod);
+    // Rebuild the nozzle-only strips from the plate list's extruder areas; `position` is this plate's place in
+    // the plate grid (the same offset set_shape gets).
+    void update_extruder_only_triangles(const Vec2d& position);
     bool contains(const Vec3d& point) const;
     bool contains(const GLVolume& v) const;
     bool contains(const BoundingBoxf3& bb) const;
@@ -585,6 +596,12 @@ class PartPlateList : public ObjectBase
     PartPlate unprintable_plate;
     Pointfs m_shape;
     Pointfs m_exclude_areas;
+    // Dual-nozzle reach, plate-local; not serialized (it follows the printer preset, not the project).
+    ExtruderAreas m_extruder_areas;
+    // "Left / right nozzle only" label textures: [0] English, [1] Chinese; each [left, right].
+    GLTexture m_extruder_label_textures[2][2];
+    bool      m_extruder_label_textures_loaded = false;
+    void      load_extruder_label_textures();
     BoundingBoxf3 m_bounding_box;
     bool m_intialized;
     std::string m_logo_texture_filename;
@@ -859,6 +876,9 @@ public:
     void calc_bounding_boxes();
     void select_plate_view();
     bool set_shapes(const Pointfs& shape, const Pointfs& exclude_areas, const std::string& custom_texture, float height_to_lid, float height_to_rod);
+    // Dual-nozzle: what each nozzle reaches (plate-local). Empty clears the overlay. Returns true when it changed.
+    bool set_extruder_areas(const ExtruderAreas& areas);
+    const ExtruderAreas& get_extruder_areas() const { return m_extruder_areas; }
     void set_hover_id(int id);
     void reset_hover_id();
     bool intersects(const BoundingBoxf3 &bb);

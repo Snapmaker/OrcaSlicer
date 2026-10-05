@@ -1223,6 +1223,10 @@ int ConfigBase::load_from_json_document(const std::string &file, json &j, Config
                     if (optdef && optdef->type == coStrings) {
                         use_comma = false;
                     }
+                    // A list of point groups (extruder_printable_area: one polygon per extruder, each a string
+                    // "x1xy1,x2xy2,...") is joined with '#' like Bambu Studio does; a ',' merged every nozzle's
+                    // polygon into one group and the left / right reach of the H2D, H2C and X2D was lost.
+                    const bool use_hash = optdef && optdef->type == coPointsGroups;
                     std::vector<std::string> array_values;
                     array_values.reserve(it.value().size());
                     for (auto iter = it.value().begin(); iter != it.value().end(); iter++) {
@@ -1299,7 +1303,9 @@ int ConfigBase::load_from_json_document(const std::string &file, json &j, Config
                     if (valid && value_str.empty()) {
                         for (const std::string &array_value : array_values) {
                             if (!first) {
-                                if (use_comma)
+                                if (use_hash)
+                                    value_str += "#";
+                                else if (use_comma)
                                     value_str += ",";
                                 else
                                     value_str += ";";

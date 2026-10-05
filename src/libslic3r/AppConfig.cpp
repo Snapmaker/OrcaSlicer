@@ -838,6 +838,8 @@ std::string AppConfig::load()
                         local_machine.dev_placement = p["dev_placement"].get<std::string>();
                     if (p.contains("dev_pid"))
                         local_machine.dev_pid = p["dev_pid"].get<std::string>();
+                    if (p.contains("dev_port"))
+                        local_machine.dev_port = p["dev_port"].get<std::string>();
                     m_local_machines[local_machine.dev_id] = local_machine;
                 }
             } else {
@@ -1133,6 +1135,8 @@ void AppConfig::save()
             m_json["dev_placement"] = local_machine.second.dev_placement;
         if (!local_machine.second.dev_pid.empty())
             m_json["dev_pid"]       = local_machine.second.dev_pid;
+        if (!local_machine.second.dev_port.empty())
+            m_json["dev_port"]      = local_machine.second.dev_port;
 
         j["local_machines"][local_machine.first] = m_json;
     }
@@ -1633,18 +1637,26 @@ void AppConfig::get_local_mahcines(LocalMacInfo& local_machines)
     local_machines.clear();
     local_machines.reserve(m_local_machines.size());
     for (const auto& [dev_id, machine] : m_local_machines) {
+        // A Bambu LAN printer (no product id) is not ours: this table is shared with the Bambu
+        // Device tab, and listing its rows here put them in the FlashForge grid.
+        if (!machine.is_flashforge())
+            continue;
         MacInfoMap info;
         info.emplace("dev_id", dev_id);
         info.emplace("dev_name", machine.dev_name);
         if (!machine.dev_placement.empty())
             info.emplace("dev_placement", machine.dev_placement);
-        if (!machine.dev_pid.empty())
-            info.emplace("dev_pid", machine.dev_pid);
+        info.emplace("dev_pid", machine.dev_pid);
+        if (!machine.dev_ip.empty())
+            info.emplace("dev_ip", machine.dev_ip);
+        if (!machine.dev_port.empty())
+            info.emplace("dev_port", machine.dev_port);
         local_machines.emplace_back(std::move(info));
     }
 }
 
-void AppConfig::save_bind_machine_to_config(const std::string& dev_id, const std::string& dev_name, const std::string& placement, const unsigned short& pid, bool modifyPlacement)
+void AppConfig::save_bind_machine_to_config(const std::string& dev_id, const std::string& dev_name, const std::string& placement, const unsigned short& pid, bool modifyPlacement,
+                                            const std::string& ip, unsigned short port)
 {
     if (dev_id.empty())
         return;
@@ -1659,6 +1671,10 @@ void AppConfig::save_bind_machine_to_config(const std::string& dev_id, const std
     if (modifyPlacement)
         machine.dev_placement = placement;
     machine.dev_pid = std::to_string(pid);
+    if (!ip.empty())
+        machine.dev_ip = ip;
+    if (port != 0)
+        machine.dev_port = std::to_string(port);
     update_local_machine(machine);
 }
 

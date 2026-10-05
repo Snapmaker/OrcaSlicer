@@ -617,6 +617,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/FlashForge/ExportLogs.hpp
     GUI/FlashForge/FFDiagnostics.cpp
     GUI/FlashForge/FFDiagnostics.hpp
+    GUI/FlashForge/FFAddPrinterDialog.cpp
+    GUI/FlashForge/FFAddPrinterDialog.hpp
+    GUI/FlashForge/FFPrinterSources.cpp
+    GUI/FlashForge/FFPrinterSources.hpp
     GUI/FlashForge/FFDiagnosticsDialog.cpp
     GUI/FlashForge/FFDiagnosticsDialog.hpp
     GUI/FlashForge/FFDownloadTool.cpp

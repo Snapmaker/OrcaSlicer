@@ -5,6 +5,8 @@
 #include "nlohmann/json.hpp"
 #include "FlashNetwork.h"
 #include "MultiComEvent.hpp"
+#include "FFPrinterSources.hpp"
+#include <set>
 
 using namespace nlohmann;  // json open source library
 //using namespace std;
@@ -223,6 +225,31 @@ public:
     bool          set_selected_machine(const std::string& dev_id, bool my_machine = false);
     DeviceObject* get_selected_machine();
 
+    // Adds a printer the user typed in (serial number, IP address, check code) instead of one a LAN
+    // scan found. `info` carries the serial, name, ip, port and product id; the printer is
+    // connected at once and, when it answers, saved - so it is in the list at the next start too.
+    // Returns false when the serial number is empty or the connection could not be started.
+    bool          add_manual_lan_machine(const fnet_lan_dev_info& info, const std::string& check_code);
+
+    // Starts a connection to every saved printer that has an address and a check code and is not
+    // connected or connecting. Saved printers used to wait for a LAN scan nothing ever ran, so they
+    // sat Offline for ever. Safe to call repeatedly (each tab activation does).
+    void          connect_saved_machines();
+
+    // The printers the user's print-host settings ask for (see FFPrinterSources.hpp). Each Ready
+    // entry is made a printer of this list and connected - or reconnected when its address or check
+    // code changed since last time - keyed by serial number, so a printer that "Add printer" also
+    // saved is one printer. A printer the settings stopped asking for is dropped, unless it was
+    // saved by "Add printer". The settings keep the check code; nothing here writes it to the config.
+    void          sync_settings_printers(const std::vector<FFPrinterEntry>& entries);
+    // Whether the settings own this printer (its tile has no Unbind, and nothing is saved for it).
+    bool          is_settings_serial(const std::string& serial) const { return m_settings_serials.count(serial) != 0; }
+    const std::set<std::string>& settings_serials() const { return m_settings_serials; }
+
+    // Builds the lan record FlashNetwork wants from the pieces a saved/typed printer has.
+    static fnet_lan_dev_info make_lan_info(const std::string& serial, const std::string& name,
+                                           const std::string& ip, unsigned short port, unsigned short pid);
+
     void unbind_lan_machine(DeviceObject *obj);
     ComErrno unbind_wan_machine(const std::string& dev_id, const std::string& bind_id, const std::string& dev_topic);
     std::string find_dev_from_id(id_connect_mode& mode, int connectId);
@@ -230,6 +257,9 @@ public:
 
 private:
     DeviceObject* get_scan_device(const std::string& dev_id);
+    // Opens the FlashNetwork LAN connection for `obj` (needs its lan info and check code) and
+    // records it in m_lan_dev_connect_map.
+    bool connect_lan(DeviceObject* obj);
 
     // before connect, scan machine's access code which hasn't written in config file
     void get_my_machine_list_v2(std::map<std::string, DeviceObject*> & devList, bool my_machine = false);
@@ -251,6 +281,7 @@ private:
     std::map<std::string, DeviceObject*> m_old_user_devices;
     std::map<std::string, DeviceObject*> m_local_devices; /* dev_id -> DeviceObject*,  in lan connectMode, device has input access code. Read data from appconfig. */
     //map<std::string, com_id_t>             m_dev_connect_map;   /* dev_id -> connectId */
+    std::set<std::string>                  m_settings_serials; /* printers owned by the print-host settings */
     std::map<std::string, id_connect_mode> m_lan_dev_connect_map;
     std::map<std::string, id_connect_mode> m_wan_dev_connect_map;
 };

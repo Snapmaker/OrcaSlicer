@@ -52,6 +52,7 @@ wxString purpose_words(const std::string& purpose)
 {
     if (purpose == "discovery") return _L("Printer discovery (UDP 2021, 1990)");
     if (purpose == "hub") return _L("Phone hub (TCP 13640-13659)");
+    if (purpose == "flashforge") return _L("FlashForge printer search (UDP 18007)");
     return _L("Phone camera video, go2rtc.exe (UDP and TCP 8555-8574)");
 }
 
@@ -79,7 +80,8 @@ void FirewallCheckDialog::show_modal(wxWindow* parent)
 {
     if (!supported()) {
         MessageDialog dlg(parent, _L("The firewall check is for Windows Firewall only. On this system, if printers do not appear, "
-                                     "check that your firewall lets EdgeSlicer receive UDP ports 2021 and 1990 on the local network."),
+                                     "check that your firewall lets EdgeSlicer receive UDP ports 2021 and 1990 (Bambu Lab) and 18007 "
+                                     "(FlashForge) on the local network."),
                           _L("Check firewall"), wxOK | wxICON_INFORMATION);
         dlg.ShowModal();
         return;
@@ -98,9 +100,9 @@ FirewallCheckDialog::FirewallCheckDialog(wxWindow* parent)
     auto* top = new wxBoxSizer(wxVERTICAL);
 
     auto* intro = new wxStaticText(this, wxID_ANY,
-        _L("EdgeSlicer finds Bambu Lab printers on your network by listening for their announcements on UDP ports 2021 and 1990. "
-           "If Windows Firewall drops them, the printers do not appear in the Device list. This check only reads the firewall; "
-           "nothing changes until you press \"Fix firewall rules\"."));
+        _L("EdgeSlicer finds Bambu Lab printers on your network by listening for their announcements on UDP ports 2021 and 1990, "
+           "and FlashForge printers by their answers on UDP port 18007. If Windows Firewall drops them, the printers do not appear "
+           "in the Device list. This check only reads the firewall; nothing changes until you press \"Fix firewall rules\"."));
     intro->SetFont(Label::Body_13);
     intro->Wrap(wrap);
     top->Add(intro, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
@@ -230,8 +232,6 @@ void FirewallCheckDialog::run_check()
     m_diag = WinFirewall::diagnose_this_copy();
     rebuild_lines();
     update_public_hint();
-    m_btn_fix->Enable(m_diag.ok && !m_fixing);
-    m_btn_fix->SetStyle(m_diag.has_problems() ? ButtonStyle::Confirm : ButtonStyle::Regular, ButtonType::Choice);
     relayout();
 }
 
@@ -338,11 +338,34 @@ void FirewallCheckDialog::rebuild_lines()
 
 void FirewallCheckDialog::update_public_hint()
 {
-    const bool show = m_diag.ok && m_diag.on_public_network() && !m_cb_public->GetValue();
+    const bool allow_public = m_cb_public->GetValue();
+    const bool show         = m_diag.ok && m_diag.on_public_network() && !allow_public;
+
+    // The fix only ever adds rules for Private and Domain (and Public when ticked). Once those are
+    // in place, pressing it again changes nothing: the log of a user on a Public Wi-Fi shows the
+    // same rules removed and re-added twice with the verdict unchanged. So the button is only live
+    // when it can do something, and the hint says what will.
+    const bool helps = m_diag.fix_would_help(allow_public);
+    m_btn_fix->Enable(m_diag.ok && !m_fixing && helps);
+    m_btn_fix->SetStyle(m_diag.has_problems() && helps ? ButtonStyle::Confirm : ButtonStyle::Regular, ButtonType::Choice);
+
+    if (show) {
+        m_public_hint_text->SetLabel(
+            m_diag.fix_would_help(false) ?
+                _L("This PC's network is set to Public, and the fix only allows EdgeSlicer on Private and Domain networks. If this is your "
+                   "home or workshop network, set it to Private: Settings > Network & internet > Wi-Fi or Ethernet > your network > "
+                   "Network profile type > Private. EdgeSlicer never changes this setting itself.") :
+                _L("The firewall rules are already in place for Private and Domain networks, so pressing the fix again would change "
+                   "nothing. Windows treats this PC's network as Public, and the rules do not apply there. If this is your home or "
+                   "workshop network, set it to Private: Settings > Network & internet > Wi-Fi or Ethernet > your network > "
+                   "Network profile type > Private, then press Check again. EdgeSlicer never changes this setting itself, and the "
+                   "fix does not open Public networks unless you tick the box above."));
+        m_public_hint_text->Wrap(FromDIP(TEXT_WIDTH) - FromDIP(20));
+    }
     if (m_public_hint->IsShown() != show) {
         m_public_hint->Show(show);
-        relayout();
     }
+    relayout();
 }
 
 void FirewallCheckDialog::open_network_settings()
@@ -412,10 +435,17 @@ void FirewallCheckDialog::on_fix_done(const WinFirewall::ElevatedOutcome& outcom
             msg = wxString::Format(_L("The helper stopped with code %d; nothing may have changed. The check above was run again."), outcome.exit_code);
         break;
     }
+    run_check();
+    // The fix did what it can for Private and Domain. If the PC is on a Public network the verdict
+    // does not change, and a bare "rules were updated" read as a failure the user then repeated.
+    if (outcome.result == WinFirewall::ElevatedResult::Done && outcome.exit_code == WinFirewall::FIX_EXIT_OK && !allow_public &&
+        m_diag.on_public_network() && (m_diag.problem_profiles() & WinFirewall::ProfilePublic))
+        msg += wxString(" ") + _L("Windows still treats this PC's network as Public, where these rules do not apply, so the problem "
+                                  "remains until that network is switched to Private (Open network settings, below).");
     BOOST_LOG_TRIVIAL(warning) << "[Firewall] fix result shown to the user: " << into_u8(msg);
     m_result->SetLabel(msg);
     m_result->Wrap(FromDIP(TEXT_WIDTH));
-    run_check();
+    relayout();
 }
 
 } // namespace GUI

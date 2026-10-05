@@ -71,11 +71,20 @@ struct BBLocalMachine
     // Ultra: Flashforge device stack (Orca-Flashforge port)
     std::string dev_placement;
     std::string dev_pid;
+    // FlashForge LAN port (8898 for the Creator 5 / Adventurer 5 HTTP API). Empty = the default.
+    std::string dev_port;
+
+    // The Bambu LAN list and the FlashForge Device tab share this one table. A FlashForge entry is
+    // the one that carries a product id (dev_pid): FlashForge's save always writes it, Bambu's never
+    // does. Each side must skip the other's rows - the FlashForge grid used to list every saved
+    // Bambu printer as an Offline tile, and Bambu's loader would treat a FlashForge row as a
+    // Bambu LAN printer.
+    bool is_flashforge() const { return !dev_pid.empty(); }
 
     bool operator==(const BBLocalMachine& other) const
     {
         return dev_name == other.dev_name && dev_ip == other.dev_ip && dev_id == other.dev_id && printer_type == other.printer_type &&
-            dev_placement == other.dev_placement && dev_pid == other.dev_pid;
+            dev_placement == other.dev_placement && dev_pid == other.dev_pid && dev_port == other.dev_port;
     }
     bool operator!=(const BBLocalMachine& other) const { return !operator==(other); }
 };
@@ -299,9 +308,15 @@ public:
     // Ultra: Flashforge device stack (Orca-Flashforge port)
     typedef std::map<std::string, std::string> MacInfoMap;
     typedef std::vector<MacInfoMap>            LocalMacInfo;
+    // The saved FlashForge printers only (see BBLocalMachine::is_flashforge); Bambu LAN printers
+    // live in the same table and are not returned. Keys: dev_id, dev_name, dev_placement, dev_pid,
+    // and dev_ip / dev_port when known.
     void get_local_mahcines(LocalMacInfo& local_machines);
+    // `ip` / `port` are kept when given (empty / 0 leaves what is already saved): they are what lets
+    // the Device tab reconnect to the printer at the next start without a LAN scan.
     void save_bind_machine_to_config(const std::string& dev_id, const std::string& dev_name, const std::string& placement,
-                                     const unsigned short& pid, bool modifyPlacement = true);
+                                     const unsigned short& pid, bool modifyPlacement = true,
+                                     const std::string& ip = std::string(), unsigned short port = 0);
     void erase_local_machine(const std::string& dev_id, const std::string& dev_name);
 
     const std::vector<std::string> &get_filament_presets() const { return m_filament_presets; }

@@ -5265,6 +5265,7 @@ bool PartPlateList::set_extruder_areas(const ExtruderAreas& areas)
 		return false;
 	const std::lock_guard<std::mutex> local_lock(m_plates_mutex);
 	m_extruder_areas = areas;
+	is_load_bedtype_textures = false; // the plate-name texture layout differs on dual-nozzle printers
 	for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
 		m_plate_list[i]->update_extruder_only_triangles(compute_shape_position(i, m_plate_cols));
 	return true;
@@ -6038,6 +6039,46 @@ void PartPlateList::init_bed_type_info()
 	int   bed_height  = bed_ext.size()(1);
 	float base_width  = 256;
 	float base_height = 256;
+
+	// Dual-nozzle (H2D / H2C / X2D): the single-nozzle layout runs the plate name sideways down the left edge,
+	// straight over the left-nozzle-only strip and its label. Bambu Studio's dual-nozzle layout puts the name
+	// along the back edge (the "middle" texture) and a short one at the front left (the "left_bottom" one), both
+	// in the margin outside the strips, and its coordinates are in mm of the bed (no scaling by bed size).
+	if (m_extruder_areas.multi() && m_extruder_areas.has_exclusive_regions()) {
+		struct DualTextures { BedType type; const char *middle; const char *left_bottom; float left_bottom_w; };
+		const DualTextures dual[] = {
+			{ btSuperTack, "bbl_bed_st_middle.svg",  "bbl_bed_st_left_bottom.svg",  260.f },
+			{ btPC,        "bbl_bed_pc_middle.svg",  "bbl_bed_pc_left_bottom.svg",  70.f },
+			{ btPCT,       "bbl_bed_pc_middle.svg",  "bbl_bed_pc_left_bottom.svg",  70.f },
+			{ btEP,        "bbl_bed_ep_middle.svg",  "bbl_bed_ep_left_bottom.svg",  260.f },
+			{ btPEI,       "bbl_bed_pei_middle.svg", "bbl_bed_pei_left_bottom.svg", 70.f },
+			{ btPTE,       "bbl_bed_pte_middle.svg", "bbl_bed_pte_left_bottom.svg", 70.f },
+		};
+		// 236 x 10 mm name along the back edge, centred (Bambu: x 57, y 300 on the 350 x 320 H2D).
+		// It must stay inside what both nozzles reach (the X2D's shared width is barely wider than the name), so it
+		// shrinks to fit and is centred on that area, not on the bed.
+		float middle_w = 236.12f, middle_h = 10.f;
+		float shared_min_x = 0.f, shared_max_x = float(bed_width);
+		if (!m_extruder_areas.shared.empty()) {
+			const BoundingBox shared_box = get_extents(m_extruder_areas.shared);
+			shared_min_x = float(unscale<double>(shared_box.min.x()) - bed_ext.min.x());
+			shared_max_x = float(unscale<double>(shared_box.max.x()) - bed_ext.min.x());
+		}
+		const float room = shared_max_x - shared_min_x - 4.f;
+		if (room > 0.f && middle_w > room) {
+			middle_h *= room / middle_w;
+			middle_w = room;
+		}
+		const float middle_x = shared_min_x + (shared_max_x - shared_min_x - middle_w) / 2.f, middle_y = float(bed_height) - 20.f;
+		for (const DualTextures &d : dual) {
+			bed_texture_info[d.type].reset();
+			bed_texture_info[d.type].parts.clear();
+			bed_texture_info[d.type].parts.push_back(BedTextureInfo::TexturePart(middle_x, middle_y, middle_w, middle_h, d.middle));
+			bed_texture_info[d.type].parts.push_back(BedTextureInfo::TexturePart(45, -14.5f, d.left_bottom_w, 8, d.left_bottom));
+		}
+		base_width  = float(bed_width);
+		base_height = float(bed_height);
+	}
 	float x_rate      = bed_width / base_width;
 	float y_rate      = bed_height / base_height;
 	for (int i = 0; i < btCount; i++) {

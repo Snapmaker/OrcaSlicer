@@ -608,6 +608,10 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
             line.type = CoolingLine::TYPE_G4;
             size_t pos_S = sline.find('S', 3);
             size_t pos_P = sline.find('P', 3);
+            // Long-standing quirk, kept so G-code does not change: find() returns npos, which is > 0,
+            // so a line without 'S' (e.g. "G4 P500") parses from npos + 1 == 0, i.e. the whole line,
+            // and reads as 0 - the P dwell never counts toward the layer time. atof_decimal_point
+            // returns 0 for that text exactly as atof did (tested in test_printgcode.cpp).
             line.time = line.time_max = float(
                 (pos_S > 0) ? atof_decimal_point(sline.c_str() + pos_S + 1) :
                 (pos_P > 0) ? atof_decimal_point(sline.c_str() + pos_P + 1) * 0.001 : 0.);

@@ -525,14 +525,6 @@ void Print::clear()
     m_model.clear_objects();
     // Ultra (dual-nozzle): drop any stale grouping result so a re-sliced job recomputes it.
     m_nozzle_group_result.reset();
-    m_layered_nozzle_group_result.reset();
-}
-
-void Print::set_nozzle_group_result(std::shared_ptr<MultiNozzleUtils::NozzleGroupResultBase> result)
-{
-    m_nozzle_group_result         = std::move(result);
-    m_layered_nozzle_group_result = std::dynamic_pointer_cast<MultiNozzleUtils::LayeredNozzleGroupResult>(m_nozzle_group_result);
-    ++m_config_index_generation;
 }
 
 // Ultra (dual-nozzle): classify each filament as model-only / support-only / hybrid from object extruder
@@ -780,10 +772,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "printer_flow_support"
             || opt_key == "filament_flow_step_size") {
             // Snapmaker: switching a filament's flow variant changes the values read out of
-            // flow-variant arrays without the arrays themselves changing. The layered grouping
-            // cache was recast for the previous variant; drop it so the next slice recasts.
-            m_layered_nozzle_group_result.reset();
-            ++m_config_index_generation;
+            // flow-variant arrays without the arrays themselves changing.
             invalidated |= this->invalidate_all_steps();
         } else if (
                opt_key == "skirt_type"

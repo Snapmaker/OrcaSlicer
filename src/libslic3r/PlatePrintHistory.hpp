@@ -55,6 +55,13 @@ struct Entry
     Action      action { Action::Sent };
     // The file name the printer was given, or the path's file name for an export.
     std::string file_name;
+    // The plate it was sent from: 1-based number (0 = unknown) and its name, as they were at the
+    // time. Entries from builds before these fields read back blank.
+    int         plate_number { 0 };
+    std::string plate_name;
+    // The project / job title (the project name), as opposed to file_name, the name the printer
+    // was given.
+    std::string title;
     // Optional: 0 = unknown.
     int         time_estimate_s { 0 };
     double      filament_g { 0.0 };
@@ -67,7 +74,8 @@ inline bool operator==(const Entry &a, const Entry &b)
 {
     return a.uid == b.uid && a.time_utc == b.time_utc && a.utc_offset_min == b.utc_offset_min &&
            a.printer_name == b.printer_name && a.printer_model == b.printer_model && a.connection == b.connection &&
-           a.action == b.action && a.file_name == b.file_name && a.time_estimate_s == b.time_estimate_s &&
+           a.action == b.action && a.file_name == b.file_name && a.plate_number == b.plate_number && a.plate_name == b.plate_name &&
+           a.title == b.title && a.time_estimate_s == b.time_estimate_s &&
            a.filament_g == b.filament_g && a.input_hash == b.input_hash;
 }
 

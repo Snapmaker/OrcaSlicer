@@ -182,12 +182,18 @@ void PlatePrintHistoryDialog::rebuild()
                 t->Wrap(FromDIP(430));
             };
             if (PlateHistory::is_printer_action(e.action)) {
-                wxString printer = wxString::FromUTF8(e.printer_name.c_str());
-                if (!e.printer_model.empty() && e.printer_model != e.printer_name)
-                    printer += wxString::Format(" (%s)", wxString::FromUTF8(e.printer_model.c_str()));
-                detail(_L("Printer"), printer);
+                detail(_L("Printer"), wxString::FromUTF8(e.printer_name.c_str()));
+                detail(_L("Model"), wxString::FromUTF8(e.printer_model.c_str()));
                 detail(_L("Connection"), connection_label(e.connection));
             }
+            // Entries from before these fields were kept show nothing for them.
+            if (e.plate_number > 0) {
+                wxString plate = wxString::Format("%d", e.plate_number);
+                if (!e.plate_name.empty())
+                    plate += wxString::Format(" (%s)", wxString::FromUTF8(e.plate_name.c_str()));
+                detail(_L("Plate"), plate);
+            }
+            detail(_L("Title"), wxString::FromUTF8(e.title.c_str()));
             detail(_L("File"), wxString::FromUTF8(e.file_name.c_str()));
             wxString estimate = duration_text(e.time_estimate_s);
             if (e.filament_g > 0.0) {

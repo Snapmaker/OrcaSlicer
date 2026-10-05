@@ -3309,6 +3309,12 @@ std::string PartPlate::add_print_history_entry(PlateHistory::Entry entry)
         entry.uid = PlateHistory::make_uid();
     if (entry.input_hash.empty())
         entry.input_hash = input_fingerprint();
+    if (entry.plate_number <= 0)
+        entry.plate_number = m_plate_index + 1;
+    if (entry.plate_name.empty())
+        entry.plate_name = m_name;
+    if (entry.title.empty() && m_plater != nullptr)
+        entry.title = m_plater->get_project_name().ToUTF8().data();
     const std::string uid = entry.uid;
     m_partplate_list->m_print_histories[m_history_key].add(std::move(entry));
     // A new entry changes what the project file holds: ask the user to save it, like any other edit.

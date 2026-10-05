@@ -23546,7 +23546,11 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         dialog->set_send_page(dlg.post_action() == PrintHostPostUploadAction::None);
         dialog->set_gcode_file_name(upload_job.upload_data.source_path.string());
         dialog->set_display_file_name(upload_job.upload_data.upload_path.string());
+        SSWCP::plate_history_begin();
         bool res = dialog->run();
+
+        // Plate print history: the page reported success (Upload or Upload + Print).
+        SSWCP::plate_history_finish(dialog->is_send_page(), dialog->is_finish());
 
         if (dialog->is_finish()) {
             wxGetApp().mainframe->select_tab(MainFrame::TabPosition::tpMonitor);

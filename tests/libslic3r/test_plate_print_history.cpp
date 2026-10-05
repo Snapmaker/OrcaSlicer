@@ -175,6 +175,55 @@ TEST_CASE("A history survives serialise and deserialise with every field", "[Pla
     REQUIRE(back.entries().front().action == Action::SentAndStarted);
 }
 
+TEST_CASE("Plate number, plate name and title round trip, and entries without them read blank", "[PlateHistory]")
+{
+    Entry e = entry_at(3, Action::UploadedOnly);
+    e.plate_number = 2;
+    e.plate_name   = "Lid \"A\"";
+    e.title        = "Benchy remix";
+    e.printer_name = "Garage U1";
+    e.printer_model = "Snapmaker U1";
+    History h;
+    h.add(e);
+    const History back = History::deserialize(h.serialize());
+    REQUIRE(back == h);
+    REQUIRE(back.entries().front().plate_number == 2);
+    REQUIRE(back.entries().front().plate_name == "Lid \"A\"");
+    REQUIRE(back.entries().front().title == "Benchy remix");
+    REQUIRE(back.entries().front().printer_model == "Snapmaker U1");
+
+    // Exactly what the first build of this feature wrote: no plate, plate name or title keys.
+    const History old = History::deserialize(
+        "{\"v\":1,\"entries\":[{\"id\":\"abc\",\"t\":\"2020-10-01T08:00:00Z\",\"off\":60,\"action\":\"uploaded\","
+        "\"printer\":\"Garage U1\",\"model\":\"Snapmaker U1\",\"conn\":\"snapmaker_lan\",\"file\":\"p.gcode\"}]}");
+    REQUIRE(old.size() == 1);
+    REQUIRE(old.entries().front().plate_number == 0);
+    REQUIRE(old.entries().front().plate_name.empty());
+    REQUIRE(old.entries().front().title.empty());
+    REQUIRE(old.entries().front().printer_model == "Snapmaker U1");
+    REQUIRE(old.was_sent());
+    // And a blank field is not written back.
+    REQUIRE(old.serialize().find("\"plate\"") == std::string::npos);
+    REQUIRE(old.serialize().find("\"title\"") == std::string::npos);
+}
+
+TEST_CASE("An exported G-code is an entry but never a send", "[PlateHistory]")
+{
+    // What PlateHistoryRecorder::record_export() adds for Export G-code / Export plate sliced file.
+    Entry e;
+    e.time_utc     = "2020-10-02T10:00:00Z";
+    e.action       = Action::Exported;
+    e.connection   = "file";
+    e.file_name    = "plate_1.gcode";
+    e.plate_number = 1;
+    History h;
+    h.add(e);
+    REQUIRE(h.size() == 1);
+    REQUIRE_FALSE(h.was_sent());
+    REQUIRE(History::deserialize(h.serialize()) == h);
+    REQUIRE(h.entries().front().action == Action::Exported);
+}
+
 TEST_CASE("An empty history writes nothing, and unreadable text reads as empty", "[PlateHistory]")
 {
     REQUIRE(History().serialize().empty());

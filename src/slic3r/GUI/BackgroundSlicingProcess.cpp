@@ -845,6 +845,11 @@ void BackgroundSlicingProcess::finalize_gcode()
 		break;
 	}
 
+	// Plate print history: the G-code reached its file (every non-Bambu printer exports through here,
+	// Bambu printers through export_gcode() below). An export, not a send.
+	if (m_current_plate != nullptr)
+		GUI::PlateHistoryRecorder::record_export(m_current_plate->get_index(), export_path);
+
 	m_print->set_status(100, GUI::format(_L("G-code file exported to %1%"), export_path));
 }
 

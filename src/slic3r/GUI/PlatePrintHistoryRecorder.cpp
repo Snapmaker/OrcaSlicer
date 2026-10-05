@@ -100,6 +100,12 @@ std::vector<std::pair<int, std::string>> record_now(const Send &send)
             PlateHistory::Entry e;
             e.printer_name  = send.printer_name;
             e.printer_model = send.printer_model;
+            // A path that could not name the target's model falls back to the model the project is
+            // sliced for (the printer preset's), which is the printer the plate was made for.
+            if (e.printer_model.empty())
+                if (PresetBundle *bundle = wxGetApp().preset_bundle)
+                    if (auto *model = bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_model"))
+                        e.printer_model = model->value;
             e.connection    = send.connection;
             e.file_name     = send.file_name;
             e.action        = send.action;

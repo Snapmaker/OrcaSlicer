@@ -216,6 +216,9 @@ std::string History::serialize() const
         if (!e.printer_model.empty()) j["model"]   = e.printer_model;
         if (!e.connection.empty())    j["conn"]    = e.connection;
         if (!e.file_name.empty())     j["file"]    = e.file_name;
+        if (e.plate_number > 0)       j["plate"]   = e.plate_number;
+        if (!e.plate_name.empty())    j["pname"]   = e.plate_name;
+        if (!e.title.empty())         j["title"]   = e.title;
         if (e.time_estimate_s > 0)    j["est_s"]   = e.time_estimate_s;
         if (e.filament_g > 0.0)       j["fil_g"]   = e.filament_g;
         if (!e.input_hash.empty())    j["hash"]    = e.input_hash;
@@ -260,6 +263,10 @@ History History::deserialize(const std::string &text)
         e.printer_model = str_of(j, "model");
         e.connection    = str_of(j, "conn");
         e.file_name     = str_of(j, "file");
+        e.plate_name    = str_of(j, "pname");
+        e.title         = str_of(j, "title");
+        if (auto it = j.find("plate"); it != j.end() && it->is_number_integer())
+            e.plate_number = std::max(0, it->get<int>());
         e.input_hash    = str_of(j, "hash");
         if (auto it = j.find("est_s"); it != j.end() && it->is_number_integer())
             e.time_estimate_s = std::max(0, it->get<int>());

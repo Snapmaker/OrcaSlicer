@@ -7748,6 +7748,25 @@ static void record_plate_history_once(const std::string& mode)
     }
 }
 
+// The pre-print dialog is opening: nothing of an earlier send may suppress this one's entry. The
+// state is keyed on the G-code path, which is the same temporary file for every send of a plate,
+// and the page never calls sw_FinishPreprint to clear it.
+void SSWCP::plate_history_begin()
+{
+    g_plate_history = PlateHistoryState();
+}
+
+// The pre-print dialog is closing. `finished` is the dialog's own success flag (the page's
+// sw_SetFilamentMappingComplete "success"), the one signal both Upload and Upload + Print give:
+// an upload-only send on the current page reaches no other hook. Records the send if no earlier
+// hook did (an Upload + Print was recorded when the print started), then closes the state.
+void SSWCP::plate_history_finish(bool send_page, bool finished)
+{
+    if (finished)
+        record_plate_history_once(send_page ? "upload" : "print");
+    g_plate_history = PlateHistoryState();
+}
+
 void SSWCP::archive_print_once(const std::string& mode, const std::string& remote_path)
 {
     record_plate_history_once(mode);

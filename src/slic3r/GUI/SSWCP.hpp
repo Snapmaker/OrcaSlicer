@@ -695,6 +695,9 @@ public:
     // send so the next one can store the same path again.
     static void archive_print_once(const std::string& mode, const std::string& remote_path = "");
     static void clear_archived_print();
+    // Plate print history of the pre-print dialog: reset when it opens, completed when it closes.
+    static void plate_history_begin();
+    static void plate_history_finish(bool send_page, bool finished);
 
     // get the active file name
     static std::string get_active_filename();

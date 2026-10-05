@@ -1,9 +1,9 @@
 {
 	"type": "machine",
-	"name": "Cubicon xCeler-I 0.4 nozzle",
+	"name": "Cubicon xCeler-Mini 0.4 nozzle",
 	"inherits": "fdm_machine_common",
 	"from": "system",
-	"setting_id": "Num5CMrrTDvWXQVQ",
+	"setting_id": "rr7eQd0tw3utAK9f",
 	"instantiation": "true",
 	"adaptive_bed_mesh_margin": "0",
 	"auxiliary_fan": "1",
@@ -23,7 +23,7 @@
 	"cooling_tube_length": "0",
 	"cooling_tube_retraction": "0",
 	"default_filament_profile": [
-		"Cubicon PLA @Cubicon xCeler-I 0.4 nozzle"
+		"Cubicon PLA @Cubicon xCeler-Mini 0.4 nozzle"
 	],
 	"default_print_profile": "cubicon default @base",
 	"deretraction_speed": [
@@ -153,14 +153,14 @@
 	"print_host_webui": "",
 	"printable_area": [
 		"0x0",
-		"250x0",
-		"250x250",
-		"0x250"
+		"150x0",
+		"150x150",
+		"0x150"
 	],
-	"printable_height": "290",
-	"printer_model": "Cubicon xCeler-I",
+	"printable_height": "150",
+	"printer_model": "Cubicon xCeler-Mini",
 	"printer_notes": "",
-	"printer_settings_id": "Cubicon xCeler-I 0.4 nozzle",
+	"printer_settings_id": "Cubicon xCeler-Mini 0.4 nozzle",
 	"printer_structure": "undefine",
 	"printer_technology": "FFF",
 	"printer_variant": "0.4",

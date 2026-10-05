@@ -144,6 +144,10 @@ set(lisbslic3r_sources
     EmbossShape.hpp
     EmbossBend.cpp
     EmbossBend.hpp
+    InlineShapes.cpp
+    InlineShapes.hpp
+    FontFallback.cpp
+    FontFallback.hpp
     Barcode.cpp
     Barcode.hpp
     CodeEmboss.cpp
@@ -642,6 +646,8 @@ slic3r_unity_build(libslic3r SKIP
     InstanceLock.cpp                # boost::interprocess file_lock pulls in <windows.h>; keep out of unity batches
     Format/bbs_3mf.cpp              # file-local tag/version constants also defined in Format/3mf.cpp
     Emboss.cpp                      # defines STB_TRUETYPE_IMPLEMENTATION before its include
+    FontFallback.cpp                # includes imstb_truetype.h without the implementation, keep away from Emboss.cpp
+    InlineShapes.cpp                # file-local helpers (fnv1a64, append_utf8, fail) with common names
     CodeEmboss.cpp                  # file-local rectangle()/circle()/to_svg() helpers with common names
     Format/GLTF.cpp                 # defines CGLTF_IMPLEMENTATION before its include
     FilamentGroup.cpp               # namespace-scope using namespace FilamentGroupUtils - FilamentInfo ambiguity

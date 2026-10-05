@@ -1,0 +1,460 @@
+{
+  "format": 1,
+  "comment": "Built-in inline shapes. Each SVG is drawn on a 100x100 em box: the bottom edge is the text baseline and the box height is the cap height at scale 1. anchor: baseline | x_height_center | cap_center. baseline: where the baseline sits as a fraction of the box height above its bottom edge. advance: advance width as a fraction of the box width. gap_l/gap_r: extra side spacing in em.",
+  "shapes": [
+    {
+      "id": "dot",
+      "name": "Dot (bullet)",
+      "category": "geometric",
+      "keywords": [
+        "bullet",
+        "point",
+        "period"
+      ],
+      "anchor": "x_height_center",
+      "scale": 0.36,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "dot.svg"
+    },
+    {
+      "id": "circle",
+      "name": "Circle",
+      "category": "geometric",
+      "keywords": [
+        "round",
+        "disc",
+        "filled"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "circle.svg"
+    },
+    {
+      "id": "ring",
+      "name": "Ring",
+      "category": "geometric",
+      "keywords": [
+        "donut",
+        "hollow",
+        "circle outline"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "ring.svg"
+    },
+    {
+      "id": "square",
+      "name": "Square",
+      "category": "geometric",
+      "keywords": [
+        "box",
+        "block"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "square.svg"
+    },
+    {
+      "id": "triangle",
+      "name": "Triangle",
+      "category": "geometric",
+      "keywords": [
+        "delta",
+        "warning",
+        "play"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "triangle.svg"
+    },
+    {
+      "id": "diamond",
+      "name": "Diamond",
+      "category": "geometric",
+      "keywords": [
+        "rhombus",
+        "lozenge"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "diamond.svg"
+    },
+    {
+      "id": "hexagon",
+      "name": "Hexagon",
+      "category": "geometric",
+      "keywords": [
+        "hex",
+        "nut"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "hexagon.svg"
+    },
+    {
+      "id": "plus",
+      "name": "Plus",
+      "category": "geometric",
+      "keywords": [
+        "add",
+        "cross",
+        "positive"
+      ],
+      "anchor": "cap_center",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "plus.svg"
+    },
+    {
+      "id": "minus",
+      "name": "Minus",
+      "category": "geometric",
+      "keywords": [
+        "dash",
+        "subtract",
+        "negative"
+      ],
+      "anchor": "cap_center",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "minus.svg"
+    },
+    {
+      "id": "star",
+      "name": "Star",
+      "category": "marks",
+      "keywords": [
+        "favorite",
+        "rating",
+        "five point"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "star.svg"
+    },
+    {
+      "id": "heart",
+      "name": "Heart",
+      "category": "marks",
+      "keywords": [
+        "love",
+        "like",
+        "valentine"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "heart.svg"
+    },
+    {
+      "id": "check",
+      "name": "Check mark",
+      "category": "marks",
+      "keywords": [
+        "tick",
+        "ok",
+        "done",
+        "yes"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "check.svg"
+    },
+    {
+      "id": "cross",
+      "name": "Cross mark",
+      "category": "marks",
+      "keywords": [
+        "x",
+        "close",
+        "cancel",
+        "no",
+        "multiply"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "cross.svg"
+    },
+    {
+      "id": "arrow_right",
+      "name": "Arrow right",
+      "category": "arrows",
+      "keywords": [
+        "next",
+        "forward",
+        "direction"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "arrow_right.svg"
+    },
+    {
+      "id": "arrow_left",
+      "name": "Arrow left",
+      "category": "arrows",
+      "keywords": [
+        "back",
+        "previous",
+        "direction"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "arrow_left.svg"
+    },
+    {
+      "id": "arrow_up",
+      "name": "Arrow up",
+      "category": "arrows",
+      "keywords": [
+        "raise",
+        "direction"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "arrow_up.svg"
+    },
+    {
+      "id": "arrow_down",
+      "name": "Arrow down",
+      "category": "arrows",
+      "keywords": [
+        "lower",
+        "direction"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "arrow_down.svg"
+    },
+    {
+      "id": "flower",
+      "name": "Flower",
+      "category": "symbols",
+      "keywords": [
+        "bloom",
+        "blossom",
+        "petals",
+        "plant"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "flower.svg"
+    },
+    {
+      "id": "gear",
+      "name": "Gear",
+      "category": "symbols",
+      "keywords": [
+        "cog",
+        "settings",
+        "mechanical"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "gear.svg"
+    },
+    {
+      "id": "sun",
+      "name": "Sun",
+      "category": "symbols",
+      "keywords": [
+        "day",
+        "weather",
+        "sunny",
+        "bright"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "sun.svg"
+    },
+    {
+      "id": "moon",
+      "name": "Moon",
+      "category": "symbols",
+      "keywords": [
+        "crescent",
+        "night",
+        "sleep"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "moon.svg"
+    },
+    {
+      "id": "smile",
+      "name": "Smiley",
+      "category": "symbols",
+      "keywords": [
+        "smile",
+        "happy",
+        "face",
+        "emoji"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "smile.svg"
+    },
+    {
+      "id": "paw",
+      "name": "Paw print",
+      "category": "symbols",
+      "keywords": [
+        "animal",
+        "pet",
+        "dog",
+        "cat"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 1.0,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "paw.svg"
+    },
+    {
+      "id": "lightning",
+      "name": "Lightning bolt",
+      "category": "symbols",
+      "keywords": [
+        "bolt",
+        "energy",
+        "power",
+        "flash"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 0.7,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "lightning.svg"
+    },
+    {
+      "id": "music_note",
+      "name": "Music note",
+      "category": "symbols",
+      "keywords": [
+        "note",
+        "quaver",
+        "song",
+        "sound"
+      ],
+      "anchor": "baseline",
+      "scale": 1.0,
+      "advance": 0.75,
+      "gap_l": 0.06,
+      "gap_r": 0.06,
+      "baseline": 0.0,
+      "flip_x": false,
+      "file": "music_note.svg"
+    }
+  ]
+}

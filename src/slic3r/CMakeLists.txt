@@ -185,6 +185,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Gizmos/GLGizmoCut.hpp
     GUI/Gizmos/GLGizmoEmboss.cpp
     GUI/Gizmos/GLGizmoEmboss.hpp
+    GUI/Gizmos/EmbossInsert.cpp
+    GUI/Gizmos/EmbossInsert.hpp
     #GUI/Gizmos/GLGizmoFaceDetector.cpp
     #GUI/Gizmos/GLGizmoFaceDetector.hpp
     GUI/Gizmos/GLGizmoFdmSupports.cpp

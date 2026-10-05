@@ -1,9 +1,9 @@
 {
 	"type": "process",
-	"name": "0.25mm Standard @Lulzbot Taz 6",
+	"name": "0.25mm Standard @Lulzbot Mini 1",
 	"inherits": "fdm_process_common",
 	"from": "system",
-	"setting_id": "K4uIiLjmRJfy0GZv",
+	"setting_id": "bqY8CEHwvUYnLRPe",
 	"instantiation": "true",
 	"reduce_crossing_wall": "0",
 	"layer_height": "0.25",
@@ -91,18 +91,18 @@
 	"initial_layer_speed": "35%",
 	"initial_layer_infill_speed": "35%",
 	"outer_wall_speed": "40",
-	"inner_wall_speed": "40",
+	"inner_wall_speed": "45",
 	"internal_solid_infill_speed": "40",
 	"top_surface_speed": "30",
 	"gap_infill_speed": "30",
 	"sparse_infill_speed": "60",
-	"travel_speed": "150",
+	"travel_speed": "175",
 	"enable_prime_tower": "1",
 	"wipe_tower_no_sparse_layers": "0",
-	"prime_tower_width": "60",
+	"prime_tower_width": "30",
 	"xy_hole_compensation": "0",
 	"xy_contour_compensation": "0",
 	"compatible_printers": [
-		"Lulzbot Taz 6 0.5 nozzle"
+		"Lulzbot Mini 1 0.5 nozzle"
 	]
 }

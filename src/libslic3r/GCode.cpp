@@ -4355,26 +4355,31 @@ struct PrecomputedLayer
     std::vector<PrecomputedOverhangLayer> overhang_layers;
 };
 
-// Whether process_layer() prepares the overhang estimator for `layer`.
-template<typename OverhangSpeed>
-static bool prepares_overhang_estimator(const Layer &layer, bool overhang_fan, OverhangSpeed overhang_speed)
+// Whether process_layer() prepares the overhang estimator for `layer`. This is the rule the serial
+// code always had and it must stay that way, because the estimator measures each prepared layer against
+// the layer prepared before it: a region's first (Standard) enable_overhang_speed value, not "any
+// flow-variant column". Which layers get prepared decides which layer a later wall is compared with, so
+// a different rule would change the G-code. (The overhang fan needs no clause of its own: _extrude only
+// asks the estimator when overhang speed is on.)
+static bool prepares_overhang_estimator(const Layer &layer)
 {
     const LayerRegionPtrs &regions = layer.regions();
-    return std::any_of(regions.begin(), regions.end(), [overhang_fan, &overhang_speed](const LayerRegion *region) {
-        return region->has_extrusions() && (overhang_fan || overhang_speed(*region));
+    return std::any_of(regions.begin(), regions.end(), [](const LayerRegion *region) {
+        return region->has_extrusions() && region->region().config().enable_overhang_speed.values.front();
     });
 }
 } // namespace
 
-std::vector<PrecomputedOverhangLayer> precompute_overhang_layers(const std::vector<GCode::LayerToPrint> &layers, bool overhang_fan)
+std::vector<PrecomputedOverhangLayer> precompute_overhang_layers(const std::vector<GCode::LayerToPrint> &layers)
 {
-    // Any filament may print the layer, so a region's overhang speed counts if it is enabled for any.
-    auto overhang_speed = [](const LayerRegion &region) { return any_enabled(region.region().config().enable_overhang_speed); };
     std::vector<PrecomputedOverhangLayer> out;
     for (const GCode::LayerToPrint &layer : layers)
         if (layer.object_layer != nullptr && layer.object_layer->lower_layer != nullptr &&
-            prepares_overhang_estimator(*layer.object_layer, overhang_fan, overhang_speed)) {
+            prepares_overhang_estimator(*layer.object_layer)) {
             const LayerRegionPtrs &regions = layer.object_layer->regions();
+            // _extrude extrudes a region's walls with that region's config applied, so it reads that region's
+            // slowdown value (for whichever filament prints): the curled-line tree is only read if some region
+            // of the layer has it on in some column.
             const bool curled_lines = std::any_of(regions.begin(), regions.end(), [](const LayerRegion *region) {
                 return any_enabled(region->region().config().slowdown_for_curled_perimeters);
             });
@@ -4386,7 +4391,7 @@ std::vector<PrecomputedOverhangLayer> precompute_overhang_layers(const std::vect
 namespace {
 // Hands out the index of each layer to process_layers(), then computes the layers' overhang data in parallel.
 template<typename LayersAt>
-static auto precomputed_layers_source(size_t &next_index, size_t layer_count, bool nop_layer, bool overhang_fan, LayersAt layers_at)
+static auto precomputed_layers_source(size_t &next_index, size_t layer_count, bool nop_layer, LayersAt layers_at)
 {
     return tbb::make_filter<void, PrecomputedLayer>(slic3r_tbb_filtermode::serial_in_order,
                [&next_index, layer_count, nop_layer](tbb::flow_control &fc) -> PrecomputedLayer {
@@ -4400,17 +4405,11 @@ static auto precomputed_layers_source(size_t &next_index, size_t layer_count, bo
                    return {};
                }) &
            tbb::make_filter<PrecomputedLayer, PrecomputedLayer>(slic3r_tbb_filtermode::parallel,
-               [layers_at, overhang_fan](PrecomputedLayer layer) -> PrecomputedLayer {
+               [layers_at](PrecomputedLayer layer) -> PrecomputedLayer {
                    if (layer.index != size_t(-1))
-                       layer.overhang_layers = precompute_overhang_layers(layers_at(layer.index), overhang_fan);
+                       layer.overhang_layers = precompute_overhang_layers(layers_at(layer.index));
                    return layer;
                });
-}
-
-// Whether the overhang fan can switch on for any filament.
-static bool overhang_fan_enabled(const PrintConfig &config, bool cooling_markers)
-{
-    return cooling_markers && any_enabled(config.enable_overhang_bridge_fan);
 }
 } // namespace
 
@@ -4427,7 +4426,6 @@ void GCode::process_layers(const Print&                                         
     // The pipeline is variable: The vase mode filter is optional.
     size_t     layer_to_print_idx = 0;
     const auto source             = precomputed_layers_source(layer_to_print_idx, layers_to_print.size(), m_pressure_equalizer != nullptr,
-        overhang_fan_enabled(print.config(), m_enable_cooling_markers),
         [&layers_to_print](size_t index) -> const std::vector<LayerToPrint> & { return layers_to_print[index].second; });
     const auto generator          = tbb::make_filter<PrecomputedLayer, LayerResult>(
         slic3r_tbb_filtermode::serial_in_order,
@@ -4551,7 +4549,6 @@ void GCode::process_layers(const Print&              print,
     // The pipeline is variable: The vase mode filter is optional.
     size_t     layer_to_print_idx = 0;
     const auto source             = precomputed_layers_source(layer_to_print_idx, layers_to_print.size(), m_pressure_equalizer != nullptr,
-        overhang_fan_enabled(print.config(), m_enable_cooling_markers),
         [&layers_to_print](size_t index) { return std::vector<LayerToPrint>{layers_to_print[index]}; });
     const auto generator =
         tbb::make_filter<PrecomputedLayer, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
@@ -6502,10 +6499,8 @@ LayerResult GCode::process_layer(const Print& print,
         return next_extruder;
     };
 
-    const bool overhang_fan   = overhang_fan_enabled(m_config, m_enable_cooling_markers);
-    auto       overhang_speed = [](const LayerRegion &region) { return any_enabled(region.region().config().enable_overhang_speed); };
     for (const auto &layer_to_print : layers)
-        if (layer_to_print.object_layer && prepares_overhang_estimator(*layer_to_print.object_layer, overhang_fan, overhang_speed))
+        if (layer_to_print.object_layer && prepares_overhang_estimator(*layer_to_print.object_layer))
             m_extrusion_quality_estimator.prepare_for_new_layer(layer_to_print.original_object, layer_to_print.object_layer);
 
     // Group extrusions by an extruder, then by an object, an island and a region.
@@ -9583,71 +9578,55 @@ std::string GCode::_extrude(const ExtrusionPath& path, const std::string& path_d
     // Orca: optimize for Klipper, set acceleration and jerk in one command
     unsigned int acceleration_i = 0;
     double       jerk           = 0;
-    const ExtrusionRole path_role = path.role();
-    // adjust acceleration — hoist process_flow_value once per path; role-gate percent lookups
-    // that only apply to that role (Orca #16028, without FILAMENT/NOZZLE ConfigIndexCache).
-    const double default_acc = this->process_flow_value(m_config.default_acceleration);
-    if (default_acc > 0) {
+    // adjust acceleration
+    if (this->process_flow_value(m_config.default_acceleration) > 0) {
         double acceleration;
-        const double outer_wall_acc     = this->process_flow_value(m_config.outer_wall_acceleration);
-        const double inner_wall_acc     = this->process_flow_value(m_config.inner_wall_acceleration);
-        const double top_surface_acc    = this->process_flow_value(m_config.top_surface_acceleration);
-        const double initial_layer_acc  = this->process_flow_value(m_config.initial_layer_acceleration);
-        const auto   bridge_fop         = is_bridge(path_role) ? this->process_flow_value(m_config.bridge_acceleration) :
-                                                                 FloatOrPercent{0., false};
-        const auto   sparse_fop         = path_role == erInternalInfill ?
-                                              this->process_flow_value(m_config.sparse_infill_acceleration) :
-                                              FloatOrPercent{0., false};
-        const auto   solid_fop          = path_role == erSolidInfill ?
-                                              this->process_flow_value(m_config.internal_solid_infill_acceleration) :
-                                              FloatOrPercent{0., false};
-        const double bridge_acc         = bridge_fop.percent ? (bridge_fop.value * 0.01 * outer_wall_acc) : bridge_fop.value;
-        const double sparse_acc         = sparse_fop.percent ? (sparse_fop.value * 0.01 * default_acc)    : sparse_fop.value;
-        const double solid_acc          = solid_fop.percent  ? (solid_fop.value  * 0.01 * default_acc)    : solid_fop.value;
-        if (this->on_first_layer() && initial_layer_acc > 0) {
-            acceleration = initial_layer_acc;
+        const double outer_wall_acc = this->process_flow_value(m_config.outer_wall_acceleration);
+        const double default_acc    = this->process_flow_value(m_config.default_acceleration);
+        const auto   bridge_fop     = this->process_flow_value(m_config.bridge_acceleration);
+        const auto   sparse_fop     = this->process_flow_value(m_config.sparse_infill_acceleration);
+        const auto   solid_fop      = this->process_flow_value(m_config.internal_solid_infill_acceleration);
+        const double bridge_acc     = bridge_fop.percent ? (bridge_fop.value * 0.01 * outer_wall_acc) : bridge_fop.value;
+        const double sparse_acc     = sparse_fop.percent ? (sparse_fop.value * 0.01 * default_acc)    : sparse_fop.value;
+        const double solid_acc      = solid_fop.percent  ? (solid_fop.value  * 0.01 * default_acc)    : solid_fop.value;
+        if (this->on_first_layer() && this->process_flow_value(m_config.initial_layer_acceleration) > 0) {
+            acceleration = this->process_flow_value(m_config.initial_layer_acceleration);
 #if 0
         } else if (this->object_layer_over_raft() && m_config.first_layer_acceleration_over_raft.value > 0) {
             acceleration = m_config.first_layer_acceleration_over_raft.value;
 #endif
-        } else if (bridge_acc > 0) {
+        } else if (bridge_acc > 0 && is_bridge(path.role())) {
             acceleration = bridge_acc;
-        } else if (sparse_acc > 0) {
+        } else if (sparse_acc > 0 && (path.role() == erInternalInfill)) {
             acceleration = sparse_acc;
-        } else if (solid_acc > 0) {
+        } else if (solid_acc > 0 && (path.role() == erSolidInfill)) {
             acceleration = solid_acc;
-        } else if (outer_wall_acc > 0 && is_external_perimeter(path_role)) {
-            acceleration = outer_wall_acc;
-        } else if (inner_wall_acc > 0 && is_internal_perimeter(path_role)) {
-            acceleration = inner_wall_acc;
-        } else if (top_surface_acc > 0 && is_top_surface(path_role)) {
-            acceleration = top_surface_acc;
+        } else if (this->process_flow_value(m_config.outer_wall_acceleration) > 0 && is_external_perimeter(path.role())) {
+            acceleration = this->process_flow_value(m_config.outer_wall_acceleration);
+        } else if (this->process_flow_value(m_config.inner_wall_acceleration) > 0 && is_internal_perimeter(path.role())) {
+            acceleration = this->process_flow_value(m_config.inner_wall_acceleration);
+        } else if (this->process_flow_value(m_config.top_surface_acceleration) > 0 && is_top_surface(path.role())) {
+            acceleration = this->process_flow_value(m_config.top_surface_acceleration);
         } else {
-            acceleration = default_acc;
+            acceleration = this->process_flow_value(m_config.default_acceleration);
         }
         acceleration_i = (unsigned int) floor(acceleration + 0.5);
     }
 
-    // adjust X Y jerk — hoist once per path; do not cache into ResolvedFilamentFlow
-    const double default_jerk = this->process_flow_value(m_config.default_jerk);
-    if (default_jerk > 0) {
-        const double initial_layer_jerk  = this->process_flow_value(m_config.initial_layer_jerk);
-        const double outer_wall_jerk     = this->process_flow_value(m_config.outer_wall_jerk);
-        const double inner_wall_jerk     = this->process_flow_value(m_config.inner_wall_jerk);
-        const double top_surface_jerk    = this->process_flow_value(m_config.top_surface_jerk);
-        const double infill_jerk         = this->process_flow_value(m_config.infill_jerk);
-        if (this->on_first_layer() && initial_layer_jerk > 0) {
-            jerk = initial_layer_jerk;
-        } else if (outer_wall_jerk > 0 && is_external_perimeter(path_role)) {
-            jerk = outer_wall_jerk;
-        } else if (inner_wall_jerk > 0 && is_internal_perimeter(path_role)) {
-            jerk = inner_wall_jerk;
-        } else if (top_surface_jerk > 0 && is_top_surface(path_role)) {
-            jerk = top_surface_jerk;
-        } else if (infill_jerk > 0 && is_infill(path_role)) {
-            jerk = infill_jerk;
+    // adjust X Y jerk
+    if (this->process_flow_value(m_config.default_jerk) > 0) {
+        if (this->on_first_layer() && this->process_flow_value(m_config.initial_layer_jerk) > 0) {
+            jerk = this->process_flow_value(m_config.initial_layer_jerk);
+        } else if (this->process_flow_value(m_config.outer_wall_jerk) > 0 && is_external_perimeter(path.role())) {
+            jerk = this->process_flow_value(m_config.outer_wall_jerk);
+        } else if (this->process_flow_value(m_config.inner_wall_jerk) > 0 && is_internal_perimeter(path.role())) {
+            jerk = this->process_flow_value(m_config.inner_wall_jerk);
+        } else if (this->process_flow_value(m_config.top_surface_jerk) > 0 && is_top_surface(path.role())) {
+            jerk = this->process_flow_value(m_config.top_surface_jerk);
+        } else if (this->process_flow_value(m_config.infill_jerk) > 0 && is_infill(path.role())) {
+            jerk = this->process_flow_value(m_config.infill_jerk);
         } else {
-            jerk = default_jerk;
+            jerk = this->process_flow_value(m_config.default_jerk);
         }
     }
 
@@ -9824,7 +9803,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, const std::string& path_d
     }
     // Override skirt speed if set
     if (path.role() == erSkirt) {
-        const double skirt_speed = m_config.skirt_speed.value;
+        const double skirt_speed = m_config.get_abs_value("skirt_speed");
         if (skirt_speed > 0.0) {
             speed_setting = "skirt_speed";
             speed = skirt_speed;

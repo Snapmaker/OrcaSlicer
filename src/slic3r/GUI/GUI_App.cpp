@@ -4231,7 +4231,32 @@ void GUI_App::machine_find()
 
 void GUI_App::copy_network_if_available()
 {
-    if (app_config->get("update_network_plugin") != "true")
+    // Never over UltraNet (privacy audit follow-up, 2026-10): the staged package is Bambu's and its
+    // library has our plug-in's file name. refresh_ultranet_plugin_state() has run just before this.
+    const OtaPluginInstall ota = ota_plugin_install_decision(app_config->get("update_network_plugin") == "true",
+                                                             m_ultranet_plugin_installed,
+                                                             app_config->get_bool("ultranet_keep_foreign_plugin"));
+    if (ota == OtaPluginInstall::Refuse) {
+        app_config->set("update_network_plugin", "false");
+        namespace fs = boost::filesystem;
+        const fs::path ota_dir = fs::path(data_dir()) / "ota";
+        size_t n = 0;
+        const char *const *names = ota_plugin_staged_names(n);
+        int removed = 0;
+        for (size_t i = 0; i < n; ++i) {
+            boost::system::error_code ec;
+            const fs::path f = ota_dir / names[i]; // exact names, directly inside ota/ only
+            if (fs::is_regular_file(f, ec) && fs::remove(f, ec))
+                ++removed;
+            else if (ec)
+                BOOST_LOG_TRIVIAL(warning) << "[UltraNet] could not remove the staged " << names[i] << ": " << ec.message();
+        }
+        BOOST_LOG_TRIVIAL(warning) << "[UltraNet] refused to install a staged Bambu network plug-in over UltraNet; "
+                                   << "cleared update_network_plugin and removed " << removed << " staged file(s) from "
+                                   << ota_dir.string();
+        return;
+    }
+    if (ota == OtaPluginInstall::NothingStaged)
         return;
     std::string network_library, player_library, live555_library, network_library_dst, player_library_dst, live555_library_dst;
     std::string data_dir_str = data_dir();

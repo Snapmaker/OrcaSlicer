@@ -873,8 +873,13 @@ void PrintObject::generate_support_material()
 void PrintObject::estimate_curled_extrusions()
 {
     if (this->set_started(posEstimateCurledExtrusions)) {
-        if ( std::any_of(this->print()->m_print_regions.begin(), this->print()->m_print_regions.end(),
-                        [](const PrintRegion *region) { return region->config().enable_overhang_speed.values.front(); })) {
+        const auto any_region_enables = [this](ConfigOptionBools PrintRegionConfig::*option) {
+            return std::any_of(this->print()->m_print_regions.begin(), this->print()->m_print_regions.end(),
+                               [option](const PrintRegion *region) { return any_enabled(region->config().*option); });
+        };
+        // Only the slowdown for curled perimeters reads the curled lines, and they stay empty unless some region has overhang speed on.
+        if (any_region_enables(&PrintRegionConfig::enable_overhang_speed) &&
+            any_region_enables(&PrintRegionConfig::slowdown_for_curled_perimeters)) {
 
             // Estimate curling of support material and add it to the malformaition lines of each layer
             float support_flow_width = support_material_flow(this, this->config().layer_height).width();
@@ -884,6 +889,9 @@ void PrintObject::estimate_curled_extrusions()
                                                  float(this->config().brim_width.getFloat())};
             SupportSpotsGenerator::estimate_malformations(this->layers(), params);
             m_print->throw_if_canceled();
+        } else {
+            for (Layer *layer : m_layers)
+                layer->curled_lines.clear();
         }
         //this->set_done(posEstimateCurledExtrusions);
     }

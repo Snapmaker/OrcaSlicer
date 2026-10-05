@@ -31,6 +31,7 @@
 #include "libslic3r/GCode.hpp"
 #include "libslic3r/GCode/ExtrusionProcessor.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "libslic3r/Layer.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -829,6 +830,57 @@ const Layer *first_overhang_layer(const PrintObject &object)
     return nullptr;
 }
 
+bool has_curled_lines(const PrintObject &object)
+{
+    const auto layers = object.layers();
+    return std::any_of(layers.begin(), layers.end(), [](const Layer *layer) { return !layer->curled_lines.empty(); });
+}
+
+// A 40 x 20 x 20 mm box with a 45 degree overhang cut into the y = 0 side. The sloped face is caged
+// by full-height walls so the estimator sees unsupported span between supported ends.
+TriangleMesh caged_overhang_mesh()
+{
+    return TriangleMesh(
+        {
+            {5.0859987f, 10.167065f, 5.711731f},
+            {34.914257f, 10.167065f, 5.711731f},
+            {34.914257f, 0.f, 15.878796f},
+            {5.0859995f, 0.f, 15.878796f},
+            {0.f, 0.f, 0.f},
+            {0.f, 0.f, 20.f},
+            {0.f, 20.f, 20.f},
+            {0.f, 20.f, 0.f},
+            {40.f, 20.f, 20.f},
+            {40.f, 20.f, 0.f},
+            {40.f, 0.f, 20.f},
+            {40.f, 0.f, 0.f},
+            {34.914257f, 0.f, 0.f},
+            {5.0859995f, 0.f, 0.f},
+            {34.914257f, 10.167065f, 0.f},
+            {5.0859995f, 10.167065f, 0.f},
+        },
+        {
+            {0, 1, 2},   {0, 2, 3},    {4, 5, 6},   {4, 6, 7},     {7, 6, 8},    {7, 8, 9},    {9, 8, 10},  {9, 10, 11},
+            {12, 11, 10}, {5, 4, 13},  {5, 13, 3},  {2, 12, 10},   {5, 3, 2},    {10, 5, 2},   {9, 11, 12}, {9, 12, 14},
+            {13, 4, 7},   {9, 14, 15}, {15, 13, 7}, {7, 9, 15},    {8, 6, 5},    {8, 5, 10},   {14, 1, 0},  {14, 0, 15},
+            {2, 1, 14},   {2, 14, 12}, {15, 0, 3},  {15, 3, 13},
+        });
+}
+
+DynamicPrintConfig overhang_curled_config()
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({
+        {"enable_overhang_speed", "1"},
+        {"slowdown_for_curled_perimeters", "1"},
+        {"layer_height", "0.2"},
+        {"skirt_loops", "0"},
+        {"brim_type", "no_brim"},
+        {"printable_area", "0x0,400x0,400x400,0x400"},
+    });
+    return config;
+}
+
 } // namespace
 
 TEST_CASE("Overhang data computed ahead of the generator gives the same wall speeds", "[ExtrusionProcessor]")
@@ -921,4 +973,72 @@ TEST_CASE("Precomputed overhang data has the curled-line tree exactly when a reg
             CHECK((precomputed.front().lower_curled_lines != nullptr) == slowdown);
         }
     }
+}
+
+TEST_CASE("Curled walls are estimated only when overhang speed and the slowdown for curled perimeters are both on", "[ExtrusionProcessor]")
+{
+    struct Case
+    {
+        bool overhang_speed;
+        bool slowdown;
+        bool estimated;
+    };
+    const Case cases[] = {
+        {true, true, true},
+        {true, false, false},
+        {false, true, false},
+    };
+    for (const Case c : cases) {
+        DYNAMIC_SECTION("overhang speed " << c.overhang_speed << " slowdown " << c.slowdown) {
+            DynamicPrintConfig config = overhang_curled_config();
+            config.set_deserialize_strict({{"enable_overhang_speed", c.overhang_speed ? "1" : "0"},
+                                           {"slowdown_for_curled_perimeters", c.slowdown ? "1" : "0"}});
+            Print print;
+            init_and_process_print({caged_overhang_mesh()}, print, config);
+
+            CHECK(has_curled_lines(*print.objects().front()) == c.estimated);
+        }
+    }
+}
+
+TEST_CASE("Curled walls are estimated when overhang speed and the slowdown for curled perimeters are on in different objects",
+          "[ExtrusionProcessor]")
+{
+    DynamicPrintConfig config = overhang_curled_config();
+    config.set_deserialize_strict({
+        {"enable_overhang_speed", "0"},
+        {"slowdown_for_curled_perimeters", "0"},
+    });
+    Print print;
+    Model model;
+    init_print({caged_overhang_mesh(), caged_overhang_mesh()}, print, model, config);
+    REQUIRE(model.objects.size() == 2);
+    model.objects[0]->config.set_key_value("enable_overhang_speed", new ConfigOptionBools{true});
+    model.objects[0]->config.set_key_value("slowdown_for_curled_perimeters", new ConfigOptionBools{false});
+    model.objects[1]->config.set_key_value("enable_overhang_speed", new ConfigOptionBools{false});
+    model.objects[1]->config.set_key_value("slowdown_for_curled_perimeters", new ConfigOptionBools{true});
+    print.apply(model, config);
+    print.process();
+
+    REQUIRE(print.objects().size() == 2);
+    for (const PrintObject *object : print.objects())
+        CHECK(has_curled_lines(*object));
+}
+
+TEST_CASE("Curled walls from an earlier slice are dropped once overhang speed is off", "[ExtrusionProcessor]")
+{
+    DynamicPrintConfig config = overhang_curled_config();
+    Print              print;
+    Model              model;
+    init_print({caged_overhang_mesh()}, print, model, config);
+    print.process();
+    const PrintObject *object     = print.objects().front();
+    const Layer       *first_layer = object->layers().front();
+    REQUIRE(has_curled_lines(*object));
+
+    config.set_deserialize_strict("enable_overhang_speed", "0");
+    print.apply(model, config);
+    print.process();
+    REQUIRE(print.objects().front()->layers().front() == first_layer);
+    CHECK_FALSE(has_curled_lines(*print.objects().front()));
 }

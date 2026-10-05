@@ -3,7 +3,7 @@
     "name": "Creality CR-10S Pro",
     "nozzle_diameter": "0.4",
     "bed_model": "creality_cr10v2_buildplate_model.stl",
-    "default_bed_type": "Cool Plate",
+    "default_bed_type": "Textured PEI Plate",
     "bed_texture": "creality_cr10v2_buildplate_texture.png",
     "family": "Creality",
     "hotend_model": "",

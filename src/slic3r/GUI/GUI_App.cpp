@@ -188,6 +188,7 @@ typedef BOOL (WINAPI *LPFN_ISWOW64PROCESS2)(
 #include <boost/dll/runtime_symbol_info.hpp>
 #endif
 #include "slic3r/Utils/SnapmakerSilentLogin.hpp"
+#include "slic3r/Utils/BambuSyncPolicy.hpp"
 
 #ifdef WIN32
 #include "dev-utils/BaseException.h"
@@ -1608,6 +1609,14 @@ void GUI_App::post_init()
             this->preset_updater->sync(http_url, language, network_ver, sys_preset ? preset_bundle : nullptr);
             this->preset_updater->sync_web_async(true);
             this->check_new_version_sf(false, false);
+            // Bambu Lab's resources only for people with a Bambu printer or login (privacy audit
+            // 2026-10); otherwise look again every 30 s, so a printer added later still gets them.
+            this->maybe_start_bambu_sync("startup");
+            if (!m_bambu_sync_started && !m_bambu_sync_timer) {
+                m_bambu_sync_timer = new wxTimer();
+                m_bambu_sync_timer->Bind(wxEVT_TIMER, [this](wxTimerEvent&) { maybe_start_bambu_sync("later"); });
+                m_bambu_sync_timer->Start(30000);
+            }
 
         });
     }
@@ -1771,6 +1780,11 @@ void GUI_App::shutdown(bool isRecreate)
     }
     if (m_sm_silent_active)
         sm_cancel_silent_login("app closing");
+    if (m_bambu_sync_timer != nullptr) {
+        m_bambu_sync_timer->Stop();
+        delete m_bambu_sync_timer;
+        m_bambu_sync_timer = nullptr;
+    }
 
     if (web_device_dialog != nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": web device dialog");
@@ -2557,7 +2571,12 @@ void GUI_App::init_networking_callbacks()
     if (m_agent) {
 
         // The plug-in's own sign-in / sign-out reports (a session it ended itself) reach the Account button.
-        m_agent->set_on_user_login_fn([](int /*online_login*/, bool /*login*/) { GUI::AccountStatus::refresh_async(); });
+        m_agent->set_on_user_login_fn([](int /*online_login*/, bool login) {
+            GUI::AccountStatus::refresh_async();
+            // Signing in to Bambu Lab is one of the signals that allow the Bambu startup sync.
+            if (login)
+                wxGetApp().CallAfter([] { wxGetApp().maybe_start_bambu_sync("Bambu login"); });
+        });
 
         m_agent->set_server_callback([](std::string url, int status) {
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": server_callback, url=%1%, status=%2%") % url % status;
@@ -4212,7 +4231,32 @@ void GUI_App::machine_find()
 
 void GUI_App::copy_network_if_available()
 {
-    if (app_config->get("update_network_plugin") != "true")
+    // Never over UltraNet (privacy audit follow-up, 2026-10): the staged package is Bambu's and its
+    // library has our plug-in's file name. refresh_ultranet_plugin_state() has run just before this.
+    const OtaPluginInstall ota = ota_plugin_install_decision(app_config->get("update_network_plugin") == "true",
+                                                             m_ultranet_plugin_installed,
+                                                             app_config->get_bool("ultranet_keep_foreign_plugin"));
+    if (ota == OtaPluginInstall::Refuse) {
+        app_config->set("update_network_plugin", "false");
+        namespace fs = boost::filesystem;
+        const fs::path ota_dir = fs::path(data_dir()) / "ota";
+        size_t n = 0;
+        const char *const *names = ota_plugin_staged_names(n);
+        int removed = 0;
+        for (size_t i = 0; i < n; ++i) {
+            boost::system::error_code ec;
+            const fs::path f = ota_dir / names[i]; // exact names, directly inside ota/ only
+            if (fs::is_regular_file(f, ec) && fs::remove(f, ec))
+                ++removed;
+            else if (ec)
+                BOOST_LOG_TRIVIAL(warning) << "[UltraNet] could not remove the staged " << names[i] << ": " << ec.message();
+        }
+        BOOST_LOG_TRIVIAL(warning) << "[UltraNet] refused to install a staged Bambu network plug-in over UltraNet; "
+                                   << "cleared update_network_plugin and removed " << removed << " staged file(s) from "
+                                   << ota_dir.string();
+        return;
+    }
+    if (ota == OtaPluginInstall::NothingStaged)
         return;
     std::string network_library, player_library, live555_library, network_library_dst, player_library_dst, live555_library_dst;
     std::string data_dir_str = data_dir();
@@ -5746,6 +5790,9 @@ void GUI_App::sm_start_silent_login()
 {
     SMSilentLogin::StartupInputs in;
     in.pref_enabled      = app_config->get_bool(SMSilentLogin::k_pref_key);
+    // Only someone who signed in on this computer has a session to come back to; everybody else
+    // gets no Snapmaker traffic at startup (the hidden web view would load id.snapmaker.com).
+    in.signed_in_before  = app_config->get_bool(SMSilentLogin::k_session_key);
     in.is_editor         = is_editor();
     // SNORCA_SM_SILENT_LOGIN=1 runs the attempt in a hidden instance too. Test-only knob: it lets
     // an agent check the never-shown path without a window on anyone's screen. No effect unless set.
@@ -5781,6 +5828,53 @@ void GUI_App::sm_start_silent_login()
     sm_silent_login_dlg->start_silent([this, gen](const SMUserLogin::SilentResult& r) { sm_on_silent_login_result(gen, r); });
 }
 
+void GUI_App::maybe_start_bambu_sync(const char* why)
+{
+    if (m_bambu_sync_started || m_is_closing || !preset_updater || !app_config)
+        return;
+
+    BambuSync::Inputs in;
+    in.stealth_mode    = app_config->get_stealth_mode();
+    in.bambu_login     = m_agent != nullptr && m_agent->is_user_login();
+    const std::string plugin_version = Slic3r::NetworkAgent::get_version();
+    in.network_plugin  = m_agent != nullptr && plugin_version != "00.00.00.00";
+    in.ultranet_plugin = m_ultranet_plugin_installed;
+    // Saved Bambu LAN printers, then the Device tab's lists (bound to the account, or found on the LAN).
+    in.bambu_device = !app_config->get_local_machines().empty();
+    if (!in.bambu_device && m_device_manager)
+        in.bambu_device = !m_device_manager->get_my_machine_list().empty() || !m_device_manager->get_local_machine_list().empty();
+    // A Bambu Lab printer among the visible printer presets: an installed system preset, a user
+    // preset based on one, or the selected printer.
+    if (preset_bundle) {
+        in.bbl_printer_preset = preset_bundle->is_bbl_vendor();
+        for (const Preset& p : preset_bundle->printers.get_presets()) {
+            if (in.bbl_printer_preset)
+                break;
+            if (!p.is_visible)
+                continue;
+            const Preset* sys = p.is_system ? &p : preset_bundle->printers.get_preset_parent(p);
+            if (sys != nullptr && sys->vendor != nullptr && sys->vendor->id == "BBL")
+                in.bbl_printer_preset = true;
+        }
+    }
+
+    const BambuSync::Plan plan = BambuSync::plan(in);
+    if (!plan.run) {
+        if (std::string(why) == "startup")
+            BOOST_LOG_TRIVIAL(info) << "Bambu startup sync: not contacting Bambu Lab (" << plan.reason << ")";
+        return;
+    }
+    m_bambu_sync_started = true;
+    if (m_bambu_sync_timer != nullptr) {
+        m_bambu_sync_timer->Stop();
+        wxTimer* t         = m_bambu_sync_timer;
+        m_bambu_sync_timer = nullptr;
+        CallAfter([t] { delete t; }); // may be inside its own event handler
+    }
+    BOOST_LOG_TRIVIAL(info) << "Bambu startup sync: starting (" << why << "; " << plan.reason << ")";
+    preset_updater->sync_bambu(get_http_url(app_config->get_country_code()), plugin_version, plan.plugin_check);
+}
+
 void GUI_App::sm_on_silent_login_result(unsigned gen, const SMUserLogin::SilentResult& r)
 {
     // Called from inside the hidden dialog's own event handler: tear it down deferred.
@@ -5792,6 +5886,10 @@ void GUI_App::sm_on_silent_login_result(unsigned gen, const SMUserLogin::SilentR
         const SMSilentLogin::Outcome o = r.outcome == "no session" ? SMSilentLogin::Outcome::NoSession :
                                          r.outcome == "timed out"  ? SMSilentLogin::Outcome::TimedOut :
                                                                      SMSilentLogin::Outcome::Failed;
+        // The saved web session is gone: stop asking Snapmaker at every start until the person
+        // signs in again by hand. A time-out or a failure keeps the marker (try again next start).
+        if (SMSilentLogin::session_marker_after(o) == SMSilentLogin::SessionMarker::Clear)
+            app_config->set_bool(SMSilentLogin::k_session_key, false);
         sm_finish_silent_login(SMSilentLogin::log_line(o, r.detail));
         return;
     }
@@ -5858,9 +5956,15 @@ void GUI_App::sm_request_user_logout()
 {
     if (m_sm_silent_active)
         sm_cancel_silent_login("signed out");
+    // Signed out on purpose: no silent sign-in at the next start (SnapmakerSilentLogin.hpp).
+    app_config->set_bool(SMSilentLogin::k_session_key, false);
     if (m_login_userinfo.is_user_login()) {
         m_login_userinfo.set_user_login(false);
     }
+    // Nothing to revoke without a token: a page asking to sign out somebody who never signed in
+    // must not reach Snapmaker either.
+    if (m_login_userinfo.get_user_token().empty())
+        return;
     try {
         wxString region = wxString::FromUTF8(app_config->get_country_code());
         std::string url    = "";

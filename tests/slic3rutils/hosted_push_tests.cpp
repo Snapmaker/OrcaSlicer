@@ -979,3 +979,38 @@ TEST_CASE("integration: real Http against a local mock forwarder", "[HostedPush]
         CHECK(l.find(CIPHER) == std::string::npos);
     }
 }
+
+// Privacy audit 2026-10: a removed device (hub page Remove, the app unpairing, a new phone link)
+// gets nothing more - not even what was still queued for the push service.
+TEST_CASE("forget drops what is queued for a removed device, and only for it", "[HostedPush]")
+{
+    Harness h;
+    h.script = [](const HttpCall&, size_t) { return reply(502, "", "Retry-After: 1\r\n"); };
+    bool queued = false;
+    h.p->deliver("d1", test_request("apns", 1800), queued);
+    REQUIRE(queued);
+    h.p->deliver("d2", test_request("fcm", 1800), queued);
+    REQUIRE(queued);
+    h.p->deliver("d1", test_request("apns", 1800), queued);
+    REQUIRE(h.p->queued() == 3);
+
+    CHECK(h.p->forget("d1") == 2);
+    CHECK(h.p->queued() == 1);
+    CHECK(h.p->forget("nobody") == 0);
+
+    // The service comes back: only d2's notification is still sent.
+    h.script = [](const HttpCall&, size_t) { return reply(200, OK_SEND); };
+    const size_t before = h.calls.size();
+    h.now += 60 * 1000LL;
+    h.p->pump();
+    REQUIRE(h.calls.size() == before + 1);
+    CHECK(h.body(before)["platform"] == "fcm");
+
+    // "" forgets every device's notifications (a new phone link).
+    h.script = [](const HttpCall&, size_t) { return reply(502, "", "Retry-After: 1\r\n"); };
+    h.p->deliver("d3", test_request(), queued);
+    h.p->deliver("d4", test_request(), queued);
+    REQUIRE(h.p->queued() == 2);
+    CHECK(h.p->forget("") == 2);
+    CHECK(h.p->queued() == 0);
+}

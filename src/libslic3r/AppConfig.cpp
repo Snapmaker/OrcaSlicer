@@ -309,6 +309,10 @@ void AppConfig::set_defaults()
     // showing anything (GUI_App::sm_start_silent_login). Preferences > General.
     if (get("snapmaker_auto_login").empty())
         set_bool("snapmaker_auto_login", true);
+    // ... but only once somebody has signed in on this computer (SnapmakerSilentLogin.hpp,
+    // k_session_key). Until then, and after signing out, startup does not contact Snapmaker.
+    if (get("snapmaker_signed_in").empty())
+        set_bool("snapmaker_signed_in", false);
 
 
     // Orca

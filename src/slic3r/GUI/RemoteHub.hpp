@@ -231,6 +231,18 @@ struct MergedPrinterRow
 MergedPrinterRow merge_printer_row(const std::string& cached_row_json, long cached_instance, bool cached_fresh,
                                    const std::string& incoming_row_json, long incoming_instance);
 
+// What a new phone link (HubServer::new_link) revokes besides the token itself: every native-app
+// push device (AppPush) and every phone-page Web Push subscription (WebPush), all of which were
+// registered under the old token. Without this, a phone that lost its link kept receiving this
+// hub's notifications (privacy audit 2026-10). The hosted push service keeps no per-device rows,
+// so nothing is left there. Answers how many of each were forgotten.
+struct LinkRevocation
+{
+    int app_devices { 0 };
+    int web_subscriptions { 0 };
+};
+LinkRevocation revoke_push_for_old_link();
+
 } // namespace Testing
 
 // ---- signing with the hub identity (the push forwarder's X-Hub-Sig) ----

@@ -12,6 +12,7 @@
 // HKDF API and none is used.
 #include "WebPush.hpp"
 
+#include "PushIds.hpp"
 #include "RemoteEvents.hpp"
 
 #include "slic3r/Utils/Http.hpp"
@@ -581,14 +582,13 @@ struct SendResult
 };
 
 // The Topic header coalesces: a second "paused" for the same printer replaces the first on the
-// phone instead of stacking. RFC 8030 caps it at 32 base64url characters, so it is a hash rather
-// than the printer's name.
+// phone instead of stacking. The browser's push service reads it in the clear, so it is the same
+// keyed HMAC the app push collapse id uses (PushIds.hpp) - never the printer id, and not an
+// unkeyed hash of it either (a Bambu serial number could be confirmed against that). 24 base64url
+// characters, inside the 32 RFC 8030 allows.
 static std::string topic_for(const std::string& printer_id, const std::string& kind)
 {
-    const std::string  in = printer_id + "|" + kind;
-    unsigned char      digest[SHA256_DIGEST_LENGTH];
-    SHA256((const unsigned char*) in.data(), in.size(), digest);
-    return b64url(digest, 18); // 18 bytes -> 24 characters, inside the 32 the RFC allows
+    return PushIds::collapse_id(PushIds::key(), printer_id, kind);
 }
 
 static SendResult push_once(const Sub& s, const std::string& payload, const std::string& severity,
@@ -1010,6 +1010,19 @@ std::pair<int, std::string> remove(const std::string& id)
     if (!found) return { 404, json({ { "error", "no such subscription" } }).dump() };
     BOOST_LOG_TRIVIAL(info) << "WebPush: subscription removed from the hub page";
     return { 200, masked_json().dump() };
+}
+
+int forget_all_subscriptions()
+{
+    size_t n;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        n = g_subs.size();
+        g_subs.clear();
+        if (n) g_dirty = true;
+    }
+    if (n) BOOST_LOG_TRIVIAL(info) << "WebPush: " << n << " subscription(s) forgotten with the old phone link";
+    return (int) n;
 }
 
 std::pair<int, std::string> set_options(const std::string& body)

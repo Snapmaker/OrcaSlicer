@@ -359,6 +359,12 @@ private:
     void            sm_finish_silent_login(const std::string& log_line);
     void            sm_teardown_silent_login_dlg();
 
+    // Bambu Lab startup sync (BambuSyncPolicy.hpp, PresetUpdater::sync_bambu): started at most once
+    // per session, as soon as a Bambu printer or a Bambu login exists. Until then this timer looks
+    // again every 30 s, so adding a printer or signing in needs no restart.
+    bool            m_bambu_sync_started{ false };
+    wxTimer*        m_bambu_sync_timer{ nullptr };
+
 
 public:
     // device dialog
@@ -678,6 +684,10 @@ private:
     // Sign back in from the saved id.snapmaker.com session without showing anything; ends quietly
     // signed out if there is none. Called once, a moment after startup (post_init).
     void            sm_start_silent_login();
+    // Asks api.bambulab.com for the Bambu startup resources only when a Bambu printer preset, a
+    // Bambu printer in the device lists or a Bambu login exists (and not in Stealth mode). `why`
+    // names the caller in the log. Does nothing once the sync has run this session.
+    void            maybe_start_bambu_sync(const char* why);
     // Stops an attempt in flight (the user opened the sign-in dialog, signed out, or the app closes).
     void            sm_cancel_silent_login(const std::string& reason);
     bool            sm_silent_login_active() const { return m_sm_silent_active; }

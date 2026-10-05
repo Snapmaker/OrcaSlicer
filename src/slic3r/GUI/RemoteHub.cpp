@@ -1386,6 +1386,14 @@ static void last_reading_only(json& slot)
     slot["filament_why"] = "The last reading: the PC is not connected to this printer right now.";
 }
 
+Testing::LinkRevocation Testing::revoke_push_for_old_link()
+{
+    LinkRevocation r;
+    r.app_devices       = AppPush::forget_all_devices();
+    r.web_subscriptions = WebPush::forget_all_subscriptions();
+    return r;
+}
+
 Testing::MergedPrinterRow Testing::merge_printer_row(const std::string& cached_row_json, long cached_instance, bool cached_fresh,
                                                      const std::string& incoming_row_json, long incoming_instance)
 {
@@ -4115,8 +4123,13 @@ std::string HubServer::new_link()
         ++m_token_version; // this data dir is on its next link; /pair says which
         token   = m_token;
     }
+    // The phones paired under the old token stop getting notifications too, not only the page:
+    // their push registrations go with the link. Re-paired phones register again on next launch.
+    const Testing::LinkRevocation gone = Testing::revoke_push_for_old_link();
     write_hub_json();
-    BOOST_LOG_TRIVIAL(info) << "RemoteHub: a new phone link was made; anything saved from the old one stops working";
+    BOOST_LOG_TRIVIAL(info) << "RemoteHub: a new phone link was made; anything saved from the old one stops working ("
+                            << gone.app_devices << " app device(s) and " << gone.web_subscriptions
+                            << " browser subscription(s) removed)";
     return token;
 }
 
@@ -5414,7 +5427,8 @@ public:
         Bind(wxEVT_MENU, [this](wxCommandEvent&) {
             // The only thing in this menu that breaks something a person made; ask in those words.
             if (wxMessageBox("Make a new phone link?\n\nThe link this hub is using now stops working. Saved links, QR codes "
-                             "and home-screen icons made from it all have to be made again from the new code.",
+                             "and home-screen icons made from it all have to be made again from the new code. Phones paired with "
+                             "the old link also stop getting notifications until they are paired again.",
                              "New phone link", wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION) != wxYES)
                 return;
             m_server.new_link();

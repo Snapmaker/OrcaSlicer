@@ -23,8 +23,9 @@ struct PushRequest
     std::string env;               // APNs only: "production" or "sandbox" (see risk R3)
     std::string bundle;            // APNs apns-topic
     std::string ciphertext_b64u;   // the aes128gcm body, base64url, ready for the JSON envelope
-    std::string collapse_id;       // truncated SHA-256 of "<printer id>|<kind>" - leaks nothing
-    std::string thread_id;         // the printer id, so iOS groups a printer's alerts together
+    std::string collapse_id;       // keyed HMAC of (printer id, kind) under the hub's secret (PushIds.hpp)
+    std::string thread_id;         // keyed HMAC of the printer id - opaque, stable per printer, so iOS
+                                   // groups a printer's alerts; never the printer id (a Bambu serial)
     int         priority { 10 };   // APNs 10 or 5; FCM maps this to "high" or "normal"
     int         ttl_seconds { 1800 };
     // APNs only, and empty unless the device asked for it (`level_hint` on /push/device): the

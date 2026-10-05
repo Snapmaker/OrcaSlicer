@@ -18,6 +18,7 @@ add_executable(${_TEST_NAME}_tests
     step_mesh_tests.cpp
     http_body_redirect_tests.cpp
     snapmaker_silent_login_tests.cpp
+    bambu_sync_policy_tests.cpp
     ff_diagnostics_tests.cpp
     elegoo_canvas_tests.cpp
     splash_animation_tests.cpp
@@ -30,6 +31,7 @@ add_executable(${_TEST_NAME}_tests
     shutdown_gate_tests.cpp
     hosted_push_tests.cpp
     app_push_levels_tests.cpp
+    push_privacy_tests.cpp
     flashforge_tests.cpp
     mqtt_reconnect_tests.cpp
     dock_width_settle_tests.cpp

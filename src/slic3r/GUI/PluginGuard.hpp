@@ -144,6 +144,24 @@ CameraToolsCopy camera_tools_copy_decision(bool plugins_copy_is_stub,
                                            bool cameratools_has_real_filter,
                                            bool cameratools_up_to_date);
 
+// What copy_network_if_available() does at startup with a plug-in staged in <data_dir>/ota by the
+// Bambu plug-in update check (`update_network_plugin` = true in the app config). Stock code copies
+// ota/bambu_networking.dll, BambuSource and live555 straight over <data_dir>/plugins - over UltraNet,
+// whose library carries the same name. That must never happen unless the user deliberately keeps a
+// foreign plug-in (`ultranet_keep_foreign_plugin`).
+enum class OtaPluginInstall {
+    NothingStaged, // the flag is not set: nothing to do (stock)
+    Install,       // stock copy: no UltraNet installed, or the user keeps a foreign plug-in on purpose
+    Refuse,        // UltraNet is installed: clear the flag, remove the staged files by exact name, log
+};
+
+OtaPluginInstall ota_plugin_install_decision(bool update_flag, bool ultranet_installed, bool keep_foreign);
+
+// The exact file names in <data_dir>/ota that a refused install removes: the network library,
+// BambuSource and live555 for this platform, and the network_plugins.json that described them.
+// Never a pattern and never a path outside ota/.
+const char *const *ota_plugin_staged_names(size_t &count);
+
 // Whether the first-run/upgrade copier may write BambuSource over `dest`. A real filter the user
 // obtained from Bambu must survive an EdgeSlicer upgrade, so the sidecar stub never replaces it.
 bool may_overwrite_bambusource(bool dest_exists, bool dest_is_real_filter);

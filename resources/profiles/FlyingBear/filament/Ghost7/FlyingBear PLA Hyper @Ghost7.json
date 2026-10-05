@@ -1,10 +1,10 @@
 {
 	"type": "filament",
-	"name": "Other PLA Hyper @S1",
-	"inherits": "fdm_filament_pla_Hyper_other @S1",
+	"name": "FlyingBear PLA Hyper @Ghost7",
+	"inherits": "fdm_filament_pla_Hyper @Ghost7",
 	"from": "system",
-	"setting_id": "2QHCKH0yDmBzpQnY",
-	"filament_id": "OFklJcWK",
+	"setting_id": "qQZUolZHgJxgLo17",
+	"filament_id": "OFD9taow",
 	"instantiation": "true",
 	"filament_flow_ratio": [
 		"0.94"
@@ -22,6 +22,6 @@
 		"0.02"
 	],
 	"compatible_printers": [
-		"FlyingBear S1 0.4 nozzle"
+		"FlyingBear Ghost7 0.4 nozzle"
 	]
 }

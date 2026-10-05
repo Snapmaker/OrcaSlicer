@@ -1,10 +1,10 @@
 {
 	"type": "filament",
-	"name": "Other PA-CF @S1",
-	"inherits": "fdm_filament_pa_other @S1",
+	"name": "FlyingBear PA-CF @Ghost7",
+	"inherits": "fdm_filament_pa @Ghost7",
 	"from": "system",
-	"setting_id": "sSKkzXv1cn33fF7p",
-	"filament_id": "OFkAltI8",
+	"setting_id": "NZwDOWmMdBYEejNQ",
+	"filament_id": "OFQEGL7z",
 	"instantiation": "true",
 	"filament_type": [
 		"PA-CF"
@@ -27,7 +27,13 @@
 	"filament_retraction_length": [
 		"0.8"
 	],
+	"enable_pressure_advance": [
+		"1"
+	],
+	"pressure_advance": [
+		"0.034"
+	],
 	"compatible_printers": [
-		"FlyingBear S1 0.4 nozzle"
+		"FlyingBear Ghost7 0.4 nozzle"
 	]
 }

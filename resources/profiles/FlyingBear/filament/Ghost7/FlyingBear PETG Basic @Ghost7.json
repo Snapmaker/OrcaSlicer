@@ -1,10 +1,10 @@
 {
 	"type": "filament",
-	"name": "FlyingBear PETG @S1",
-	"inherits": "fdm_filament_pet @S1",
+	"name": "FlyingBear PETG Basic @Ghost7",
+	"inherits": "fdm_filament_pet @Ghost7",
 	"from": "system",
-	"setting_id": "yKU5mMW0nKvNH98B",
-	"filament_id": "OFDgQaca",
+	"setting_id": "k2os2FPNl8K7vTZN",
+	"filament_id": "OFf6ynfH",
 	"instantiation": "true",
 	"reduce_fan_stop_start_freq": [
 		"1"
@@ -34,7 +34,7 @@
 		"12"
 	],
 	"filament_flow_ratio": [
-		"0.94"
+		"0.95"
 	],
 	"filament_max_volumetric_speed": [
 		"12"
@@ -46,9 +46,9 @@
 		"1"
 	],
 	"pressure_advance": [
-		"0.084"
+		"0.034"
 	],
 	"compatible_printers": [
-		"FlyingBear S1 0.4 nozzle"
+		"FlyingBear Ghost7 0.4 nozzle"
 	]
 }

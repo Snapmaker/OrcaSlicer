@@ -1,24 +1,24 @@
 {
 	"type": "filament",
-	"name": "FlyingBear TPU @S1",
-	"inherits": "fdm_filament_tpu @S1",
+	"name": "FlyingBear PC @Ghost7",
+	"inherits": "fdm_filament_pc @Ghost7",
 	"from": "system",
-	"setting_id": "IVFpAlGo8KButueJ",
-	"filament_id": "OFYezc6s",
+	"setting_id": "QYOEUrnmNMUcVOVF",
+	"filament_id": "OFFX1DRD",
 	"instantiation": "true",
 	"filament_max_volumetric_speed": [
-		"3"
+		"12"
 	],
 	"filament_flow_ratio": [
-		"0.94"
+		"0.95"
 	],
 	"enable_pressure_advance": [
 		"1"
 	],
 	"pressure_advance": [
-		"0.13"
+		"0.034"
 	],
 	"compatible_printers": [
-		"FlyingBear S1 0.4 nozzle"
+		"FlyingBear Ghost7 0.4 nozzle"
 	]
 }

@@ -1,16 +1,13 @@
 {
 	"type": "filament",
-	"name": "FlyingBear Generic ABS",
-	"inherits": "fdm_filament_abs",
+	"name": "FlyingBear ABS @Ghost7",
+	"inherits": "fdm_filament_abs @Ghost7",
 	"from": "system",
-	"setting_id": "2aW5bka7pvQhHGqF",
-	"filament_id": "OFY9muEs",
+	"setting_id": "UyTzid0zVMCxSrgx",
+	"filament_id": "OFm4ysMO",
 	"instantiation": "true",
-	"filament_vendor": [
-		"Generic"
-	],
 	"filament_flow_ratio": [
-		"0.94"
+		"0.95"
 	],
 	"filament_max_volumetric_speed": [
 		"15"
@@ -19,13 +16,12 @@
 		"1"
 	],
 	"pressure_advance": [
-		"0.058"
+		"0.034"
 	],
 	"filament_retraction_length": [
 		"0.8"
 	],
 	"compatible_printers": [
-		"FlyingBear Reborn3 0.4 nozzle",
-		"FlyingBear Ghost 6 0.4 nozzle"
+		"FlyingBear Ghost7 0.4 nozzle"
 	]
 }

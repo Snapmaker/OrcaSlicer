@@ -19,6 +19,17 @@ Earlier versions loaded the sign-in page in a hidden window at every start, also
 without a Snapmaker account. After updating, someone who was signed in signs in once more by hand;
 with a valid saved session the sign-in window closes by itself.
 
+# Bambu Lab resources at startup
+
+From version 2.4.4.0, EdgeSlicer only asks Bambu Lab's web service (`api.bambulab.com`,
+`api.bambulab.cn` for the China region) for its printer data updates once a Bambu Lab printer is
+set up: a Bambu Lab printer profile among your printers, a Bambu printer in the Device tab or
+among the saved LAN printers, or a Bambu Lab sign-in. If none of these exists, nothing is sent to
+Bambu Lab. Adding a Bambu printer or signing in starts the check within about 30 seconds, without
+a restart. Stealth mode turns it off altogether. EdgeSlicer no longer asks Bambu Lab about network
+plug-in updates while its own plug-in (UltraNet) is installed. Earlier versions asked at every
+start.
+
 # Crash reports
 
 EdgeSlicer collects no usage statistics and no analytics. The one thing it can send by itself is

@@ -188,6 +188,7 @@ typedef BOOL (WINAPI *LPFN_ISWOW64PROCESS2)(
 #include <boost/dll/runtime_symbol_info.hpp>
 #endif
 #include "slic3r/Utils/SnapmakerSilentLogin.hpp"
+#include "slic3r/Utils/BambuSyncPolicy.hpp"
 
 #ifdef WIN32
 #include "dev-utils/BaseException.h"
@@ -1608,6 +1609,14 @@ void GUI_App::post_init()
             this->preset_updater->sync(http_url, language, network_ver, sys_preset ? preset_bundle : nullptr);
             this->preset_updater->sync_web_async(true);
             this->check_new_version_sf(false, false);
+            // Bambu Lab's resources only for people with a Bambu printer or login (privacy audit
+            // 2026-10); otherwise look again every 30 s, so a printer added later still gets them.
+            this->maybe_start_bambu_sync("startup");
+            if (!m_bambu_sync_started && !m_bambu_sync_timer) {
+                m_bambu_sync_timer = new wxTimer();
+                m_bambu_sync_timer->Bind(wxEVT_TIMER, [this](wxTimerEvent&) { maybe_start_bambu_sync("later"); });
+                m_bambu_sync_timer->Start(30000);
+            }
 
         });
     }
@@ -1771,6 +1780,11 @@ void GUI_App::shutdown(bool isRecreate)
     }
     if (m_sm_silent_active)
         sm_cancel_silent_login("app closing");
+    if (m_bambu_sync_timer != nullptr) {
+        m_bambu_sync_timer->Stop();
+        delete m_bambu_sync_timer;
+        m_bambu_sync_timer = nullptr;
+    }
 
     if (web_device_dialog != nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": web device dialog");
@@ -2557,7 +2571,12 @@ void GUI_App::init_networking_callbacks()
     if (m_agent) {
 
         // The plug-in's own sign-in / sign-out reports (a session it ended itself) reach the Account button.
-        m_agent->set_on_user_login_fn([](int /*online_login*/, bool /*login*/) { GUI::AccountStatus::refresh_async(); });
+        m_agent->set_on_user_login_fn([](int /*online_login*/, bool login) {
+            GUI::AccountStatus::refresh_async();
+            // Signing in to Bambu Lab is one of the signals that allow the Bambu startup sync.
+            if (login)
+                wxGetApp().CallAfter([] { wxGetApp().maybe_start_bambu_sync("Bambu login"); });
+        });
 
         m_agent->set_server_callback([](std::string url, int status) {
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": server_callback, url=%1%, status=%2%") % url % status;
@@ -5782,6 +5801,53 @@ void GUI_App::sm_start_silent_login()
     BOOST_LOG_TRIVIAL(info) << "Snapmaker silent login: started (hidden web view, gives up after "
                             << SMSilentLogin::k_overall_timeout_ms / 1000 << " s)";
     sm_silent_login_dlg->start_silent([this, gen](const SMUserLogin::SilentResult& r) { sm_on_silent_login_result(gen, r); });
+}
+
+void GUI_App::maybe_start_bambu_sync(const char* why)
+{
+    if (m_bambu_sync_started || m_is_closing || !preset_updater || !app_config)
+        return;
+
+    BambuSync::Inputs in;
+    in.stealth_mode    = app_config->get_stealth_mode();
+    in.bambu_login     = m_agent != nullptr && m_agent->is_user_login();
+    const std::string plugin_version = Slic3r::NetworkAgent::get_version();
+    in.network_plugin  = m_agent != nullptr && plugin_version != "00.00.00.00";
+    in.ultranet_plugin = m_ultranet_plugin_installed;
+    // Saved Bambu LAN printers, then the Device tab's lists (bound to the account, or found on the LAN).
+    in.bambu_device = !app_config->get_local_machines().empty();
+    if (!in.bambu_device && m_device_manager)
+        in.bambu_device = !m_device_manager->get_my_machine_list().empty() || !m_device_manager->get_local_machine_list().empty();
+    // A Bambu Lab printer among the visible printer presets: an installed system preset, a user
+    // preset based on one, or the selected printer.
+    if (preset_bundle) {
+        in.bbl_printer_preset = preset_bundle->is_bbl_vendor();
+        for (const Preset& p : preset_bundle->printers.get_presets()) {
+            if (in.bbl_printer_preset)
+                break;
+            if (!p.is_visible)
+                continue;
+            const Preset* sys = p.is_system ? &p : preset_bundle->printers.get_preset_parent(p);
+            if (sys != nullptr && sys->vendor != nullptr && sys->vendor->id == "BBL")
+                in.bbl_printer_preset = true;
+        }
+    }
+
+    const BambuSync::Plan plan = BambuSync::plan(in);
+    if (!plan.run) {
+        if (std::string(why) == "startup")
+            BOOST_LOG_TRIVIAL(info) << "Bambu startup sync: not contacting Bambu Lab (" << plan.reason << ")";
+        return;
+    }
+    m_bambu_sync_started = true;
+    if (m_bambu_sync_timer != nullptr) {
+        m_bambu_sync_timer->Stop();
+        wxTimer* t         = m_bambu_sync_timer;
+        m_bambu_sync_timer = nullptr;
+        CallAfter([t] { delete t; }); // may be inside its own event handler
+    }
+    BOOST_LOG_TRIVIAL(info) << "Bambu startup sync: starting (" << why << "; " << plan.reason << ")";
+    preset_updater->sync_bambu(get_http_url(app_config->get_country_code()), plugin_version, plan.plugin_check);
 }
 
 void GUI_App::sm_on_silent_login_result(unsigned gen, const SMUserLogin::SilentResult& r)

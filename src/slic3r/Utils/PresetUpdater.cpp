@@ -305,6 +305,9 @@ struct PresetUpdater::priv
 
 	bool cancel;
 	std::thread thread;
+	// sync_bambu()'s worker: started at most once per session, joined in the destructor.
+	std::thread bambu_thread;
+	bool        bambu_started { false };
 
     bool m_web_thread_cancel;
     std::thread m_web_resource_thread;
@@ -1926,6 +1929,10 @@ PresetUpdater::~PresetUpdater()
 		p->cancel = true;
 		p->thread.join();
 	}
+	if (p && p->bambu_thread.joinable()) {
+		p->cancel = true;
+		p->bambu_thread.join();
+	}
 
     if (p && p->m_web_resource_thread.joinable())
     {
@@ -1953,12 +1960,29 @@ void PresetUpdater::sync(std::string http_url, std::string language, std::string
 			    return;
             // Note: check_config_updates_from_updater will be called automatically after download completes in download_profiles_resource_async
         }
+		// The Bambu Lab requests (plug-in check, printers/ OTA data) moved to sync_bambu(), which the
+		// GUI starts only once a Bambu printer or a Bambu login exists.
+	});
+}
+
+bool PresetUpdater::sync_bambu(std::string http_url, std::string plugin_version, bool plugin_check)
+{
+	if (!p->enabled_version_check && !p->enabled_config_update) { return false; }
+	if (p->bambu_started)
+		return false;
+	p->bambu_started = true;
+	p->bambu_thread = std::thread([this, http_url, plugin_version, plugin_check]() {
 		if (p->cancel)
 			return;
-        this->p->sync_plugins(http_url, plugin_version);
-        this->p->sync_printer_config(http_url);
-	
+		// UltraNet replaces the Bambu network plug-in, so asking Bambu whether a newer one of theirs
+		// exists has no use there (and a "force" answer would stage their package in ota/).
+		if (plugin_check)
+			this->p->sync_plugins(http_url, plugin_version);
+		if (p->cancel)
+			return;
+		this->p->sync_printer_config(http_url);
 	});
+	return true;
 }
 
 void PresetUpdater::slic3r_update_notify()

@@ -932,6 +932,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/ServerLifetime.hpp
     Utils/SnapmakerSilentLogin.cpp
     Utils/SnapmakerSilentLogin.hpp
+    Utils/BambuSyncPolicy.cpp
+    Utils/BambuSyncPolicy.hpp
     Utils/AccountProviders.cpp
     Utils/AccountProviders.hpp
     Utils/json_diff.cpp

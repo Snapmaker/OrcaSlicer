@@ -355,6 +355,32 @@ static inline void check_add_eol(std::string& gcode)
         gcode += '\n';
 }
 
+// Long retraction when cut: active for a filament only when it is switched on AND its distance is
+// positive. A distance of 0 means "this machine does no cut retraction" (Anycubic and Creality
+// filament switchers that feed one nozzle without a cutter ship 0), so a 0 must never reach
+// change_filament_gcode as "M620.11 S1 ... E-0" or any other long-retraction move, whatever
+// long_retractions_when_cut / enable_long_retraction_when_cut say. Bambu presets ship 10-18 mm,
+// for which this is exactly the raw switch. The distances themselves are published unchanged.
+static bool long_retraction_when_cut_active(const PrintConfig& config, size_t idx)
+{
+    return config.long_retractions_when_cut.get_at(idx) && config.retraction_distances_when_cut.get_at(idx) > 0.;
+}
+
+static ConfigOptionBools* effective_long_retractions_when_cut(const PrintConfig& config)
+{
+    auto* out = new ConfigOptionBools(config.long_retractions_when_cut);
+    for (size_t i = 0; i < out->values.size(); ++i)
+        out->values[i] = long_retraction_when_cut_active(config, i) ? 1 : 0;
+    return out;
+}
+
+// Publishes the scalar pair for one filament (the active / incoming one).
+static void set_cut_retraction_placeholders(PlaceholderParser& pp, const PrintConfig& config, size_t idx)
+{
+    pp.set("retraction_distance_when_cut", config.retraction_distances_when_cut.get_at(idx));
+    pp.set("long_retraction_when_cut", long_retraction_when_cut_active(config, idx));
+}
+
 // BBS: publish the extruder-change long-retraction placeholders for one filament.
 // long_retractions_when_ec / retraction_distances_when_ec are per-filament and NULLABLE: a filament
 // whose preset does not mention the key carries nil, and nil must read as "feature off" rather than
@@ -995,9 +1021,7 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
     }
 
     gcodegen.placeholder_parser().set("current_extruder", new_extruder_id);
-    gcodegen.placeholder_parser().set("retraction_distance_when_cut",
-                                      gcodegen.m_config.retraction_distances_when_cut.get_at(new_extruder_id));
-    gcodegen.placeholder_parser().set("long_retraction_when_cut", gcodegen.m_config.long_retractions_when_cut.get_at(new_extruder_id));
+    set_cut_retraction_placeholders(gcodegen.placeholder_parser(), gcodegen.m_config, size_t(new_extruder_id));
     // (the _ec pair was published above, before change_filament_gcode was expanded)
 
     // Process the start filament gcode.
@@ -2240,8 +2264,7 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
 
     bool activate_long_retraction_when_cut = false;
     for (const auto& extruder : m_writer.extruders())
-        activate_long_retraction_when_cut |= (m_config.long_retractions_when_cut.get_at(extruder.id()) &&
-                                              m_config.retraction_distances_when_cut.get_at(extruder.id()) > 0);
+        activate_long_retraction_when_cut |= long_retraction_when_cut_active(m_config, extruder.id());
 
     m_processor.result().long_retraction_when_cut = activate_long_retraction_when_cut;
     // Ultra (H2C 3MF schema): hand the filament / nozzle entry order to the 3MF writer.
@@ -3112,8 +3135,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     this->placeholder_parser().set("initial_no_support_extruder", initial_non_support_extruder_id);
     this->placeholder_parser().set("current_extruder", initial_extruder_id);
     // Orca: set the key for compatibilty
-    this->placeholder_parser().set("retraction_distance_when_cut", m_config.retraction_distances_when_cut.get_at(initial_extruder_id));
-    this->placeholder_parser().set("long_retraction_when_cut", m_config.long_retractions_when_cut.get_at(initial_extruder_id));
+    set_cut_retraction_placeholders(this->placeholder_parser(), m_config, size_t(initial_extruder_id));
     {
         // Flow-variant keys stay packed on the full config. Placeholders are indexed by
         // filament / tool id (U1 M109 S{first_layer_temperature|temperature[next_extruder]}).
@@ -3135,7 +3157,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     }
 
     this->placeholder_parser().set("retraction_distances_when_cut", new ConfigOptionFloats(m_config.retraction_distances_when_cut));
-    this->placeholder_parser().set("long_retractions_when_cut", new ConfigOptionBools(m_config.long_retractions_when_cut));
+    // Masked like the scalar: a 0 mm distance switches the filament's cut retraction off.
+    this->placeholder_parser().set("long_retractions_when_cut", effective_long_retractions_when_cut(m_config));
     // BBS: initial extruder-change retraction values, plus the whole arrays (upstream publishes both).
     set_ec_retraction_placeholders(this->placeholder_parser(), m_config, size_t(initial_extruder_id));
     this->placeholder_parser().set("retraction_distances_when_ec", new ConfigOptionFloatsNullable(m_config.retraction_distances_when_ec));
@@ -11002,7 +11025,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
             config.set_key_value("filament_extruder_id", new ConfigOptionInt(int(extruder_id)));
             config.set_key_value("retraction_distance_when_cut",
                                  new ConfigOptionFloat(m_config.retraction_distances_when_cut.get_at(extruder_id)));
-            config.set_key_value("long_retraction_when_cut", new ConfigOptionBool(m_config.long_retractions_when_cut.get_at(extruder_id)));
+            config.set_key_value("long_retraction_when_cut", new ConfigOptionBool(long_retraction_when_cut_active(m_config, extruder_id)));
 
             gcode += this->placeholder_parser_process("filament_start_gcode", filament_start_gcode, extruder_id, &config);
             check_add_eol(gcode);
@@ -11028,8 +11051,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         if (m_filament_change_sequence.empty())
             this->record_filament_change(extruder_id);
         this->placeholder_parser().set("current_extruder", extruder_id);
-        this->placeholder_parser().set("retraction_distance_when_cut", m_config.retraction_distances_when_cut.get_at(extruder_id));
-        this->placeholder_parser().set("long_retraction_when_cut", m_config.long_retractions_when_cut.get_at(extruder_id));
+        set_cut_retraction_placeholders(this->placeholder_parser(), m_config, size_t(extruder_id));
         set_ec_retraction_placeholders(this->placeholder_parser(), m_config, size_t(extruder_id));
 
         std::string gcode;
@@ -11300,8 +11322,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
     }
 
     this->placeholder_parser().set("current_extruder", extruder_id);
-    this->placeholder_parser().set("retraction_distance_when_cut", m_config.retraction_distances_when_cut.get_at(extruder_id));
-    this->placeholder_parser().set("long_retraction_when_cut", m_config.long_retractions_when_cut.get_at(extruder_id));
+    set_cut_retraction_placeholders(this->placeholder_parser(), m_config, size_t(extruder_id));
     // BBS: re-publish for everything that runs AFTER the toolchange (filament_start_gcode and the
     // rest of the layer). change_filament_gcode itself already saw these values above.
     set_ec_retraction_placeholders(this->placeholder_parser(), m_config, size_t(extruder_id));

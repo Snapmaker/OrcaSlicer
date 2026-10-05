@@ -426,7 +426,7 @@ std::string bend_temp_3mf(const std::string &name)
 }
 
 // Base cube plus a text volume with the given bend, stored as a project 3MF
-void store_text_project(const std::string &path, const EmbossBend &bend, bool use_surface = false)
+void store_text_project(const std::string &path, const EmbossBend &bend, bool use_surface = false, bool per_glyph = false)
 {
     Model        model;
     ModelObject *object = model.add_object();
@@ -447,6 +447,7 @@ void store_text_project(const std::string &path, const EmbossBend &bend, bool us
     tc.style.path        = "test.ttf";
     tc.style.type        = EmbossStyle::Type::file_path;
     tc.style.prop.size_in_mm = 5.f;
+    tc.style.prop.per_glyph  = per_glyph;
     text->text_configuration = tc;
 
     object->add_instance();
@@ -464,7 +465,7 @@ void store_text_project(const std::string &path, const EmbossBend &bend, bool us
     REQUIRE(store_bbs_3mf(sp));
 }
 
-std::optional<EmbossShape> load_text_shape(const std::string &path)
+std::optional<EmbossShape> load_text_shape(const std::string &path, bool *per_glyph = nullptr)
 {
     Model                     model;
     DynamicPrintConfig        config;
@@ -482,8 +483,11 @@ std::optional<EmbossShape> load_text_shape(const std::string &path)
         return {};
     for (const ModelObject *o : model.objects)
         for (const ModelVolume *v : o->volumes)
-            if (v->emboss_shape.has_value() && v->text_configuration.has_value())
+            if (v->emboss_shape.has_value() && v->text_configuration.has_value()) {
+                if (per_glyph != nullptr)
+                    *per_glyph = v->text_configuration->style.prop.per_glyph;
                 return v->emboss_shape;
+            }
     return {};
 }
 
@@ -554,6 +558,15 @@ TEST_CASE("Curved text parameters round-trip through 3MF", "[EmbossBend][3mf]")
         REQUIRE(es.has_value());
         CHECK(es->projection.use_surface);
         CHECK(es->projection.bend == angle_bend(210.f, false, true));
+    }
+    SECTION("letter by letter: bend, use surface and per glyph") {
+        store_text_project(path, radius_bend(18.f), true, true);
+        bool per_glyph = false;
+        std::optional<EmbossShape> es = load_text_shape(path, &per_glyph);
+        REQUIRE(es.has_value());
+        CHECK(es->projection.use_surface);
+        CHECK(per_glyph);
+        CHECK(es->projection.bend == radius_bend(18.f));
     }
 }
 

@@ -223,6 +223,8 @@
 #include "PrinterWebView.hpp"
 #include "PrintHostDialogs.hpp"
 #include "PlateSettingsDialog.hpp"
+#include "PlatePrintHistoryDialog.hpp"
+#include "PlatePrintHistoryRecorder.hpp"
 #include "DailyTips.hpp"
 #include "CreatePresetsDialog.hpp"
 #include "FileArchiveDialog.hpp"
@@ -21862,7 +21864,10 @@ void Plater::export_gcode_3mf(bool export_all)
         int plate_idx = get_partplate_list().get_curr_plate_index();
         if (export_all)
             plate_idx = PLATE_ALL_IDX;
-        export_3mf(output_path, SaveStrategy::Silence | SaveStrategy::SplitModel | SaveStrategy::WithGcode | SaveStrategy::SkipModel, plate_idx); // BBS: silence
+        const int export_result = export_3mf(output_path, SaveStrategy::Silence | SaveStrategy::SplitModel | SaveStrategy::WithGcode | SaveStrategy::SkipModel, plate_idx); // BBS: silence
+        // Plate print history: a file was written. Recorded as an export, which never turns the plate icon green.
+        if (export_result >= 0)
+            PlateHistoryRecorder::record_export(plate_idx, output_path.string());
 
         RemovableDriveManager& removable_drive_manager = *wxGetApp().removable_drive_manager();
 
@@ -23541,7 +23546,11 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         dialog->set_send_page(dlg.post_action() == PrintHostPostUploadAction::None);
         dialog->set_gcode_file_name(upload_job.upload_data.source_path.string());
         dialog->set_display_file_name(upload_job.upload_data.upload_path.string());
+        SSWCP::plate_history_begin();
         bool res = dialog->run();
+
+        // Plate print history: the page reported success (Upload or Upload + Print).
+        SSWCP::plate_history_finish(dialog->is_send_page(), dialog->is_finish());
 
         if (dialog->is_finish()) {
             wxGetApp().mainframe->select_tab(MainFrame::TabPosition::tpMonitor);
@@ -23770,6 +23779,23 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
 
             upload_job.upload_data.source_path = p->m_print_job_data._3mf_path;
 
+        }
+
+        // Plate print history: the plates this upload carries (every plate for a "send all" 3mf, the
+        // plate whose G-code goes out otherwise) and the printer it is for. The queue reports them
+        // after the upload succeeds.
+        if (use_3mf && plate_idx == PLATE_ALL_IDX)
+            upload_job.history_plates = { PLATE_ALL_IDX };
+        else
+            upload_job.history_plates = { (plate_idx < 0) ? get_partplate_list().get_curr_plate_index() : plate_idx };
+        {
+            std::string history_name = upload_job.device_name;
+            if (history_name.empty() && wxGetApp().preset_bundle != nullptr)
+                history_name = wxGetApp().preset_bundle->physical_printers.get_selected_printer_name();
+            if (history_name.empty())
+                history_name = preset.name;
+            upload_job.history_printer_name  = history_name;
+            upload_job.history_printer_model = printer_model;
         }
 
         p->export_gcode(fs::path(), false, std::move(upload_job));
@@ -26479,7 +26505,27 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
         update();
         p->partplate_list.select_plate(0);
     }
-
+    else if ((action == int(PartPlate::HISTORY_HOVER_ID)) && (!right_click))
+    {
+        // Print history: when, where and on which machine this plate was sent. It only reads the
+        // plate, so the selection and the slicing context stay as they are. Opened once the canvas'
+        // mouse event is over (a modal dialog inside it would leave the mouse state half handled).
+        if (p->partplate_list.get_plate(plate_index) != nullptr) {
+            CallAfter([this, plate_index]() {
+                PartPlate* plate = p->partplate_list.get_plate(plate_index);
+                if (plate == nullptr)
+                    return;
+                wxString label = from_u8(plate->get_plate_name());
+                if (label.empty())
+                    label = wxString::Format(_L("Plate %d"), plate_index + 1);
+                PlatePrintHistoryDialog dlg(this, plate, label);
+                dlg.ShowModal();
+            });
+            ret = 0;
+        } else {
+            ret = -1;
+        }
+    }
     else
     {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << "invalid action %1%, with right_click=%2%" << action << right_click;

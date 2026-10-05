@@ -413,6 +413,8 @@ set(lisbslic3r_sources
     BambuFlowSupport.hpp
     BambuDualNozzleSync.cpp
     BambuDualNozzleSync.hpp
+    PlatePrintHistory.cpp
+    PlatePrintHistory.hpp
     BambuNozzleMappingRequest.cpp
     BambuNozzleMappingRequest.hpp
     MultiNozzleUtils.cpp

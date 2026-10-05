@@ -466,6 +466,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/Plater.hpp
     GUI/PlateSettingsDialog.cpp
     GUI/PlateSettingsDialog.hpp
+    GUI/PlatePrintHistoryDialog.cpp
+    GUI/PlatePrintHistoryDialog.hpp
+    GUI/PlatePrintHistoryRecorder.cpp
+    GUI/PlatePrintHistoryRecorder.hpp
     GUI/Preferences.cpp
     GUI/Preferences.hpp
     GUI/PresetMirror.cpp

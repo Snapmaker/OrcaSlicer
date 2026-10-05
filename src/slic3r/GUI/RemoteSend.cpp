@@ -8,6 +8,7 @@
 #include "HMS.hpp"
 #include "I18N.hpp"
 #include "PartPlate.hpp"
+#include "PlatePrintHistoryRecorder.hpp"
 #include "Plater.hpp"
 #include "RemoteAccess.hpp"
 #include "SelectMachine.hpp" // CloudTaskNozzleId
@@ -1331,6 +1332,34 @@ static void archive_sent(std::shared_ptr<Prepared> p, const std::string& path, j
         }
         return;
     }
+    // Plate print history: a send from the phone is a send of this project's plate, whatever the
+    // archive setting. A dry run sends nothing, and a reprint (handled above) has no plate here.
+    if (!p->dry_run) {
+        try {
+            PlateHistoryRecorder::Send h;
+            h.plates       = { p->plate };
+            h.printer_name = p->printer_name;
+            h.printer_model = p->archive_meta.printer_model;
+            if (p->kind == "bambu") {
+                std::string name, model;
+                PlateHistoryRecorder::bambu_identity(p->printer_id, name, model);
+                if (!name.empty()) h.printer_name = name;
+                if (!model.empty()) h.printer_model = model;
+            }
+            h.connection = "phone_hub";
+            h.file_name  = p->archive_meta.file_name;
+            // A Bambu print command, or a host upload that starts the print itself, is a started
+            // print. An upload that still has to be started (two steps, a Snapmaker LAN start) is
+            // upgraded when the start succeeds.
+            const bool started = p->mode == "print" && (p->kind == "bambu" || (p->kind == "printhost" && !p->two_step));
+            h.action = started ? PlateHistory::Action::SentAndStarted : PlateHistory::Action::UploadedOnly;
+            h.uid    = PlateHistory::make_uid();
+            p->history_uid = h.uid;
+            PlateHistoryRecorder::record(h);
+        } catch (...) {
+            BOOST_LOG_TRIVIAL(warning) << "RemoteSend: recording the plate history failed";
+        }
+    }
     if (p->dry_run || !GcodeArchive::enabled()) return;
     const GcodeArchive::Record r = GcodeArchive::archive(path, p->archive_meta);
     if (!r.id.empty()) result["archived"] = r.id;
@@ -1593,6 +1622,8 @@ static void run_host(std::shared_ptr<Prepared> p, Sink& sink)
         sink.done(false, "the printer did not start the print: " + (r.is_null() ? std::string("no reply") : r["error"].dump()), result);
         return;
     }
+    if (!p->history_uid.empty())
+        PlateHistoryRecorder::upgrade(p->plate, p->history_uid, PlateHistory::Action::SentAndStarted);
     sink.done(true, "", result);
 }
 
@@ -1675,6 +1706,9 @@ static void run_snapmaker(std::shared_ptr<Prepared> p, Sink& sink)
     // An upload made to start later, started now: the record is a print from here on.
     if (p->from_record && !p->record_id.empty())
         GcodeArchive::set_mode(p->record_id, "print", p->reuse_remote ? p->lan_filename : std::string());
+    // Plate print history: the printer accepted the start.
+    if (!p->history_uid.empty())
+        PlateHistoryRecorder::upgrade(p->plate, p->history_uid, PlateHistory::Action::SentAndStarted);
     // What the printer itself says a moment later - the only proof the job took.
     for (int i = 0; i < 6; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));

@@ -4,6 +4,7 @@
 #include "nlohmann/json.hpp"
 #include "MainFrame.hpp"
 #include "GUI_App.hpp"
+#include "PlatePrintHistoryRecorder.hpp"
 
 using namespace nlohmann;
 
@@ -229,6 +230,19 @@ int TaskManager::schedule(TaskStateInfo* task)
                 last_sent_timestamp = std::chrono::system_clock::now();
                 task->set_sent_time(last_sent_timestamp);
                 task->set_state(TaskState::TS_SEND_COMPLETED);
+                // Plate print history: the multi-printer send went through for this printer.
+                try {
+                    const BBL::PrintParams& pp = task->params();
+                    if (pp.print_type == "from_normal" && pp.plate_index >= 1) {
+                        GUI::PlateHistoryRecorder::Send h;
+                        h.plates = { pp.plate_index - 1 };
+                        GUI::PlateHistoryRecorder::bambu_identity(pp.dev_id, h.printer_name, h.printer_model);
+                        h.connection = pp.connection_type == "lan" ? "bambu_lan" : "bambu_cloud";
+                        h.file_name  = pp.project_name;
+                        h.action     = PlateHistory::Action::SentAndStarted;
+                        GUI::PlateHistoryRecorder::record(h);
+                    }
+                } catch (...) {}
             }
             else {
                 if (!task->is_canceled()) {

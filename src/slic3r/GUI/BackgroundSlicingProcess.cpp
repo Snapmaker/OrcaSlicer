@@ -36,6 +36,7 @@
 //#include "RemovableDriveManager.hpp"
 
 #include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/PlatePrintHistoryRecorder.hpp"
 
 namespace Slic3r {
 
@@ -844,6 +845,11 @@ void BackgroundSlicingProcess::finalize_gcode()
 		break;
 	}
 
+	// Plate print history: the G-code reached its file (every non-Bambu printer exports through here,
+	// Bambu printers through export_gcode() below). An export, not a send.
+	if (m_current_plate != nullptr)
+		GUI::PlateHistoryRecorder::record_export(m_current_plate->get_index(), export_path);
+
 	m_print->set_status(100, GUI::format(_L("G-code file exported to %1%"), export_path));
 }
 
@@ -896,6 +902,10 @@ void BackgroundSlicingProcess::export_gcode()
 	wxString output_gcode_str = wxString::FromUTF8(export_path.c_str(), export_path.length());
 	evt->SetString(output_gcode_str);
 	wxQueueEvent(GUI::wxGetApp().mainframe->m_plater, evt);
+
+	// Plate print history: the G-code reached its file. An export, not a send.
+	if (m_current_plate != nullptr)
+		GUI::PlateHistoryRecorder::record_export(m_current_plate->get_index(), export_path);
 
 	// BBS: to be checked. Whether use export_path or output_path.
 	gcode_add_line_number(export_path, m_fff_print->full_print_config());

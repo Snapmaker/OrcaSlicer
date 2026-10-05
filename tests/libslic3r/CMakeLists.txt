@@ -3,6 +3,7 @@ get_filename_component(_TEST_NAME ${CMAKE_CURRENT_LIST_DIR} NAME)
 add_executable(${_TEST_NAME}_tests
 	${_TEST_NAME}_tests.cpp
 	test_3mf.cpp
+	test_plate_print_history.cpp
 	test_bambu_3mf_export.cpp
 	test_bambu_flow_support.cpp
 	test_bambu_import_renames.cpp

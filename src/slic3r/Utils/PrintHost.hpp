@@ -253,6 +253,11 @@ struct PrintHostJob
     // firmware refuses print_task_config commands mid-print), so it goes on the
     // SET_PRINT_PREFERENCES line the task-config script sends before the start.
     bool        unload_at_end { false };
+    // Plate print history: which plates this upload carries and which printer it is for, read on
+    // the GUI thread when the job is made. The queue reports them once the upload succeeded.
+    std::vector<int> history_plates;
+    std::string      history_printer_name;
+    std::string      history_printer_model;
 
     PrintHostJob() {}
     PrintHostJob(const PrintHostJob&) = delete;
@@ -265,6 +270,9 @@ struct PrintHostJob
         , device_name(std::move(other.device_name))
         , filament_mapping(std::move(other.filament_mapping))
         , unload_at_end(other.unload_at_end)
+        , history_plates(std::move(other.history_plates))
+        , history_printer_name(std::move(other.history_printer_name))
+        , history_printer_model(std::move(other.history_printer_model))
     {}
 
     PrintHostJob(DynamicPrintConfig *config)
@@ -282,6 +290,9 @@ struct PrintHostJob
         device_name      = std::move(other.device_name);
         filament_mapping = std::move(other.filament_mapping);
         unload_at_end    = other.unload_at_end;
+        history_plates        = std::move(other.history_plates);
+        history_printer_name  = std::move(other.history_printer_name);
+        history_printer_model = std::move(other.history_printer_model);
         return *this;
     }
 

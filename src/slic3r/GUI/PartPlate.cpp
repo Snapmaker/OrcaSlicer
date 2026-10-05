@@ -177,6 +177,7 @@ PartPlate::~PartPlate()
 void PartPlate::init()
 {
 	m_locked = false;
+	m_history_key = PlateHistory::make_uid();
 	m_ready_for_slice = true;
 	m_slice_result_valid = false;
 	m_slice_percent = 0.0f;
@@ -624,7 +625,7 @@ void PartPlate::calc_vertex_for_icons(int index, PickingModel &model)
     p += Vec2d(gap_left,-1 * (index * (size + gap_y) + gap_top));
 
     if (m_plater && m_plater->get_build_volume_type() == BuildVolume_Type::Circle)
-        p[1] -= std::max(0.0, (bed_ext.size()(1) - (size + gap_y) * 6 /* bed_icon_count */) / 2);
+        p[1] -= std::max(0.0, (bed_ext.size()(1) - (size + gap_y) * 7 /* bed_icon_count */) / 2);
 
     poly.contour.append({ scale_(p(0))       , scale_(p(1) - size) });
     poly.contour.append({ scale_(p(0) + size), scale_(p(1) - size) });
@@ -1147,6 +1148,16 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
             } else
                 render_icon_texture(m_move_front_icon.model, m_partplate_list->m_move_front_texture);
 
+            {
+                // Print history: tinted green once the plate has been sent to a printer.
+                const bool printed = was_sent_to_printer();
+                if (hover_id == int(HISTORY_HOVER_ID)) {
+                    render_icon_texture(m_history_icon.model, printed ? m_partplate_list->m_history_printed_hovered_texture : m_partplate_list->m_history_hovered_texture);
+                    show_tooltip(printed ? _u8L("Print history (this plate was sent to a printer)") : _u8L("Print history"));
+                } else
+                    render_icon_texture(m_history_icon.model, printed ? m_partplate_list->m_history_printed_texture : m_partplate_list->m_history_texture);
+            }
+
 
 			if (m_partplate_list->render_plate_settings) {
 				bool has_plate_settings = get_bed_type() != BedType::btDefault || get_print_seq() != PrintSequence::ByDefault || !get_first_layer_print_sequence().empty() || !get_other_layers_print_sequence().empty() || has_spiral_mode_config();
@@ -1473,6 +1484,7 @@ void PartPlate::register_raycasters_for_picking(GLCanvas3D &canvas)
     }
     register_model_for_picking(canvas, m_plate_name_edit_icon, picking_id_component(6));
     register_model_for_picking(canvas, m_move_front_icon, picking_id_component(7));
+    register_model_for_picking(canvas, m_history_icon, picking_id_component(HISTORY_HOVER_ID));
 }
 
 int PartPlate::picking_id_component(int idx) const
@@ -2803,6 +2815,7 @@ bool PartPlate::set_shape(const Pointfs& shape, const Pointfs& exclude_areas, Ve
 			calc_vertex_for_icons(3, m_lock_icon);
 			calc_vertex_for_icons(4, m_plate_settings_icon);
 			calc_vertex_for_icons(5, m_move_front_icon);
+			calc_vertex_for_icons(6, m_history_icon);
 			// ORCA also change bed_icon_count number in calc_vertex_for_icons() after adding or removing icons for circular shaped beds that uses vertical alingment for icons
 
 			//calc_vertex_for_number(0, (m_plate_index < 9), m_plate_idx_icon);
@@ -3246,6 +3259,90 @@ void PartPlate::print() const
 	return;
 }
 
+// ---- print history ----------------------------------------------------------------------------
+
+const PlateHistory::History& PartPlate::print_history() const
+{
+    static const PlateHistory::History none;
+    if (m_partplate_list == nullptr || m_history_key.empty())
+        return none;
+    const auto it = m_partplate_list->m_print_histories.find(m_history_key);
+    return it == m_partplate_list->m_print_histories.end() ? none : it->second;
+}
+
+void PartPlate::set_print_history(const PlateHistory::History& history)
+{
+    if (m_partplate_list == nullptr || m_history_key.empty())
+        return;
+    if (history.empty())
+        m_partplate_list->m_print_histories.erase(m_history_key);
+    else
+        m_partplate_list->m_print_histories[m_history_key] = history;
+}
+
+bool PartPlate::was_sent_to_printer() const
+{
+    return print_history().was_sent();
+}
+
+std::string PartPlate::input_fingerprint() const
+{
+    if (m_model == nullptr)
+        return {};
+    std::vector<std::pair<int, int>> objects_and_instances(obj_to_instance_set.begin(), obj_to_instance_set.end());
+    return PlateHistory::plate_input_fingerprint(*m_model, objects_and_instances, m_origin);
+}
+
+bool PartPlate::modified_since_last_send() const
+{
+    const PlateHistory::History& h = print_history();
+    if (!h.was_sent())
+        return false;
+    return h.modified_since_last_send(input_fingerprint());
+}
+
+std::string PartPlate::add_print_history_entry(PlateHistory::Entry entry)
+{
+    if (m_partplate_list == nullptr || m_history_key.empty())
+        return {};
+    if (entry.uid.empty())
+        entry.uid = PlateHistory::make_uid();
+    if (entry.input_hash.empty())
+        entry.input_hash = input_fingerprint();
+    if (entry.plate_number <= 0)
+        entry.plate_number = m_plate_index + 1;
+    if (entry.plate_name.empty())
+        entry.plate_name = m_name;
+    if (entry.title.empty() && m_plater != nullptr)
+        entry.title = m_plater->get_project_name().ToUTF8().data();
+    const std::string uid = entry.uid;
+    m_partplate_list->m_print_histories[m_history_key].add(std::move(entry));
+    // A new entry changes what the project file holds: ask the user to save it, like any other edit.
+    if (m_plater != nullptr)
+        m_plater->set_plater_dirty(true);
+    return uid;
+}
+
+bool PartPlate::set_print_history_action(const std::string& uid, PlateHistory::Action action)
+{
+    if (m_partplate_list == nullptr || m_history_key.empty())
+        return false;
+    const auto it = m_partplate_list->m_print_histories.find(m_history_key);
+    if (it == m_partplate_list->m_print_histories.end() || !it->second.set_action(uid, action))
+        return false;
+    if (m_plater != nullptr)
+        m_plater->set_plater_dirty(true);
+    return true;
+}
+
+void PartPlate::clear_print_history()
+{
+    if (m_partplate_list == nullptr || m_history_key.empty())
+        return;
+    if (m_partplate_list->m_print_histories.erase(m_history_key) > 0 && m_plater != nullptr)
+        m_plater->set_plater_dirty(true);
+}
+
 void PartPlate::clear_filament_map()
 {
     if (m_config.has("filament_map"))
@@ -3506,6 +3603,21 @@ void PartPlateList::generate_icon_textures()
         }
     }
 
+	// Print history icon: normal, hovered, and the green "sent to a printer" pair.
+	{
+		const struct { GLTexture* texture; const char* light; const char* dark; } history_icons[] = {
+			{ &m_history_texture,                 "plate_history.svg",               "plate_history_dark.svg" },
+			{ &m_history_hovered_texture,         "plate_history_hover.svg",         "plate_history_hover_dark.svg" },
+			{ &m_history_printed_texture,         "plate_history_printed.svg",       "plate_history_printed_dark.svg" },
+			{ &m_history_printed_hovered_texture, "plate_history_printed_hover.svg", "plate_history_printed_hover_dark.svg" },
+		};
+		for (const auto& icon : history_icons) {
+			file_name = path + (m_is_dark ? icon.dark : icon.light);
+			if (!icon.texture->load_from_svg_file(file_name, true, false, false, icon_size))
+				BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(":load file %1% failed") % file_name;
+		}
+	}
+
 	//if (m_arrange_texture.get_id() == 0)
 	{
 		file_name = path + (m_is_dark ? "plate_arrange_dark.svg" : "plate_arrange.svg");
@@ -3670,6 +3782,10 @@ void PartPlateList::release_icon_textures()
 	m_plate_settings_hovered_texture.reset();
 	m_plate_name_edit_texture.reset();
 	m_plate_name_edit_hovered_texture.reset();
+	m_history_texture.reset();
+	m_history_hovered_texture.reset();
+	m_history_printed_texture.reset();
+	m_history_printed_hovered_texture.reset();
 	for (int i = 0;i < MAX_PLATE_COUNT; i++) {
 		m_idx_textures[i].reset();
 	}
@@ -3861,6 +3977,7 @@ void PartPlateList::reset(bool do_init)
 void PartPlateList::reinit()
 {
 	clear(true, true);
+	m_print_histories.clear();
 
 	init();
 
@@ -5690,6 +5807,7 @@ int PartPlateList::store_to_3mf_structure(PlateDataPtrs& plate_data_list, bool w
 			%(i+1) %plate_data_item->plate_thumbnail.width %plate_data_item->plate_thumbnail.height %plate_data_item->plate_thumbnail.pixels.size();
 		plate_data_item->config.apply(*m_plate_list[i]->config());
 		plate_data_item->dual_nozzle_confirm = m_plate_list[i]->dual_nozzle_confirm();
+		plate_data_item->print_history = m_plate_list[i]->print_history().serialize();
 
 		if (m_plate_list[i]->no_light_thumbnail_data.is_valid())
 			plate_data_item->no_light_thumbnail_file = "valid_no_light";
@@ -5824,12 +5942,15 @@ int PartPlateList::load_from_3mf_structure(PlateDataPtrs& plate_data_list)
 		return -1;
 	}
 	clear(true, true);
+	// A different project: nothing of the previous one's print history carries over.
+	m_print_histories.clear();
 	for (unsigned int i = 0; i < (unsigned int)plate_data_list.size(); ++i)
 	{
 		int index = create_plate(false);
 		m_plate_list[index]->m_locked = plate_data_list[i]->locked;
 		m_plate_list[index]->config()->apply(plate_data_list[i]->config);
 		m_plate_list[index]->set_dual_nozzle_confirm(plate_data_list[i]->dual_nozzle_confirm);
+		m_plate_list[index]->set_print_history(PlateHistory::History::deserialize(plate_data_list[i]->print_history));
 		m_plate_list[index]->set_plate_name(plate_data_list[i]->plate_name);
 		if (plate_data_list[i]->plate_index != index)
 		{

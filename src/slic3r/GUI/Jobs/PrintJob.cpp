@@ -4,6 +4,7 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "slic3r/GUI/BambuSendDiagnosis.hpp"
 #include "slic3r/GUI/GcodeArchive.hpp"
+#include "slic3r/GUI/PlatePrintHistoryRecorder.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -745,6 +746,19 @@ void PrintJob::process(Ctl &ctl)
             am.printer_name = GcodeArchive::bambu_printer_name(m_dev_id);
             am.file_name    = params.project_name + ".gcode.3mf";
             GcodeArchive::archive(params.filename, am);
+        }
+
+        // Plate print history: this plate went to the printer and was told to start. The plate is the
+        // one the job printed (params.plate_index, 1-based): for "print all" that is the current
+        // plate, the only one the printer starts. A calibration or an SD card print has no plate here.
+        if (m_print_type == "from_normal" && !m_is_calibration_task) {
+            PlateHistoryRecorder::Send h;
+            h.plates = { params.plate_index - 1 };
+            PlateHistoryRecorder::bambu_identity(m_dev_id, h.printer_name, h.printer_model);
+            h.connection = connection_type == "lan" ? "bambu_lan" : "bambu_cloud";
+            h.file_name  = params.project_name;
+            h.action     = PlateHistory::Action::SentAndStarted;
+            PlateHistoryRecorder::record(h);
         }
 
         BOOST_LOG_TRIVIAL(error) << "print_job: send ok.";

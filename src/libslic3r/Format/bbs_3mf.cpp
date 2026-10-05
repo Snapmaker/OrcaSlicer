@@ -353,6 +353,10 @@ static constexpr const char* LIMIT_FILAMENT_MAP_ATTR = "limit_filament_maps";
 // EdgeSlicer: the per-plate filament arrangement the user confirmed before slicing on a Bambu
 // two-extruder printer (DualNozzleSync::Confirmation JSON). Not written into Bambu exports.
 static constexpr const char* DUAL_NOZZLE_CONFIRM_ATTR = "edgeslicer_dual_nozzle_confirm";
+// EdgeSlicer: when and where the plate was sent (PlatePrintHistory.hpp). One metadata element per
+// plate, written only when the plate has a history and never into Bambu exports; a build that does
+// not know the key skips it.
+static constexpr const char* PRINT_HISTORY_ATTR = "edgeslicer_print_history";
 static constexpr const char* PAUSE_COUNT_ATTR = "pause_count";
 static constexpr const char* FIRST_LAYER_TIME_ATTR = "first_layer_time";
 static constexpr const char* SUPPORT_MATERIAL_ON_WIPE_TOWER_ATTR = "support_material_on_wipe_tower";
@@ -1746,6 +1750,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             plate->pick_file = it->second->pick_file;
             plate->pattern_bbox_file = it->second->pattern_bbox_file;
             plate->config = it->second->config;
+            plate->print_history = it->second->print_history;
+            plate->dual_nozzle_confirm = it->second->dual_nozzle_confirm;
 
             if (!plate->thumbnail_file.empty())
                 _extract_from_archive(archive, plate->thumbnail_file, [&pixels = plate_data_list[it->first - 1]->plate_thumbnail.pixels](auto &archive, auto const &stat) -> bool {
@@ -2500,6 +2506,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             plate_data_list[it->first-1]->pick_file = in_backup(it->second->pick_file);
             plate_data_list[it->first-1]->pattern_bbox_file = in_backup(it->second->pattern_bbox_file);
             plate_data_list[it->first-1]->config = it->second->config;
+            plate_data_list[it->first-1]->print_history = it->second->print_history;
+            plate_data_list[it->first-1]->dual_nozzle_confirm = it->second->dual_nozzle_confirm;
 
             current_plate_data = plate_data_list[it->first - 1];
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" << __LINE__ << boost::format(", plate %1%, thumbnail_file=%2%, no_light_thumbnail_file=%3%")%it->first %plate_data_list[it->first-1]->thumbnail_file %plate_data_list[it->first-1]->no_light_thumbnail_file;
@@ -5215,6 +5223,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             {
                 if (m_curr_plater)
                     m_curr_plater->dual_nozzle_confirm = value;
+            }
+            else if (key == PRINT_HISTORY_ATTR)
+            {
+                if (m_curr_plater)
+                    m_curr_plater->print_history = value;
             }
         }
 
@@ -8936,6 +8949,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
                 if (!m_bambu_compat && !plate_data->dual_nozzle_confirm.empty())
                     stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << DUAL_NOZZLE_CONFIRM_ATTR << "\" " << VALUE_ATTR << "=\"" << xml_escape(plate_data->dual_nozzle_confirm) << "\"/>\n";
+
+                if (!m_bambu_compat && !plate_data->print_history.empty())
+                    stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << PRINT_HISTORY_ATTR << "\" " << VALUE_ATTR << "=\"" << xml_escape(plate_data->print_history) << "\"/>\n";
 
                 if (save_gcode)
                     stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << GCODE_FILE_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha << xml_escape(plate_data->gcode_file) << "\"/>\n";

@@ -8,6 +8,8 @@
 #include "RemoteSnapmaker.hpp" // Ultra: the phone's own connect reuses this connect's credentials
 #include "SnapmakerLan.hpp"    // Ultra: an archived U1 send is recorded under its LAN card
 #include "GcodeArchive.hpp"    // Ultra: the desktop's Snapmaker send is archived when it finishes
+#include "PlatePrintHistoryRecorder.hpp" // the plate's print history
+#include "PartPlate.hpp"
 #include "SnapmakerTaskConfig.hpp" // Ultra: END_UNLOAD_FILAMENT is built in one place for every send path
 #include "Timelapse/TimelapseDownloadPopup.hpp"
 #include "nlohmann/json.hpp"
@@ -7668,8 +7670,106 @@ bool SSWCP::unload_at_end_was_sent() { return m_unload_at_end_was_sent; }
 //
 // Nothing here may fail a send: archive() swallows its own errors, and every precondition just
 // returns.
+// Plate print history for the same send: once per file, the first hook records it, a later "print"
+// turns an upload into a started print. Independent of the G-code archive being on.
+//
+// The pre-print page gives no completion signal an upload-only send can rely on (see above), so this
+// is recorded when the page takes the file / starts the print, exactly where the archive stores it.
+namespace {
+struct PlateHistoryState
+{
+    std::string                file;
+    int                        plate { -1 };
+    std::string                uid;
+    PlateHistory::Action       action { PlateHistory::Action::UploadedOnly };
+};
+PlateHistoryState g_plate_history;
+} // namespace
+
+static void record_plate_history_once(const std::string& mode)
+{
+    try {
+        const std::string file = SSWCP::get_active_filename();
+        if (file.empty()) return;
+        const PlateHistory::Action wanted = mode == "print" ? PlateHistory::Action::SentAndStarted : PlateHistory::Action::UploadedOnly;
+        if (file == g_plate_history.file) {
+            if (wanted == PlateHistory::Action::SentAndStarted && g_plate_history.action != PlateHistory::Action::SentAndStarted &&
+                !g_plate_history.uid.empty()) {
+                PlateHistoryRecorder::upgrade(g_plate_history.plate, g_plate_history.uid, PlateHistory::Action::SentAndStarted);
+                g_plate_history.action = PlateHistory::Action::SentAndStarted;
+            }
+            return;
+        }
+
+        Plater* plater = wxGetApp().plater();
+        if (!plater) return;
+
+        // Which printer: its LAN card when this connection is one of them, else the connected Device-tab entry.
+        std::shared_ptr<PrintHost> host = nullptr;
+        wxGetApp().get_connect_host(host);
+        PlateHistoryRecorder::Send s;
+        DeviceInfo which;
+        bool       known = false;
+        if (host && wxGetApp().app_config)
+            for (const DeviceInfo& d : wxGetApp().app_config->get_devices()) {
+                if (!d.connected) continue;
+                const bool same_addr = !d.ip.empty() && host->get_host().compare(0, d.ip.size(), d.ip) == 0;
+                if (!known || same_addr) { which = d; known = true; }
+                if (same_addr) break;
+            }
+        SnapmakerLan::Device lan;
+        if (host && (SnapmakerLan::device_for_host(host->get_host(), lan) ||
+                     (known && !which.sn.empty() && SnapmakerLan::find(which.sn, lan)))) {
+            s.printer_name  = GcodeArchive::display_printer_name(lan.name, lan.model, "snapmaker");
+            s.printer_model = lan.model;
+            s.connection    = "snapmaker_lan";
+        } else {
+            s.printer_model = known ? which.model_name : std::string();
+            s.printer_name  = GcodeArchive::display_printer_name(known ? which.dev_name : "", s.printer_model, "connect");
+            s.connection    = "snapmaker_cloud";
+        }
+        if (s.printer_model.empty()) {
+            // The model the file was sliced for, as the archive's meta does.
+            if (PresetBundle* bundle = wxGetApp().preset_bundle)
+                if (auto* model = bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_model"))
+                    s.printer_model = model->value;
+        }
+        s.file_name = SSWCP::get_display_filename();
+        s.action    = wanted;
+        s.uid       = PlateHistory::make_uid();
+        s.plates    = { plater->get_partplate_list().get_curr_plate_index() };
+        g_plate_history.file   = file;
+        g_plate_history.plate  = s.plates.front();
+        g_plate_history.uid    = s.uid;
+        g_plate_history.action = wanted;
+        PlateHistoryRecorder::record(s);
+    } catch (...) {
+        BOOST_LOG_TRIVIAL(warning) << "SSWCP: recording the plate history failed";
+    }
+}
+
+// The pre-print dialog is opening: nothing of an earlier send may suppress this one's entry. The
+// state is keyed on the G-code path, which is the same temporary file for every send of a plate,
+// and the page never calls sw_FinishPreprint to clear it.
+void SSWCP::plate_history_begin()
+{
+    g_plate_history = PlateHistoryState();
+}
+
+// The pre-print dialog is closing. `finished` is the dialog's own success flag (the page's
+// sw_SetFilamentMappingComplete "success"), the one signal both Upload and Upload + Print give:
+// an upload-only send on the current page reaches no other hook. Records the send if no earlier
+// hook did (an Upload + Print was recorded when the print started), then closes the state.
+void SSWCP::plate_history_finish(bool send_page, bool finished)
+{
+    if (finished)
+        record_plate_history_once(send_page ? "upload" : "print");
+    g_plate_history = PlateHistoryState();
+}
+
 void SSWCP::archive_print_once(const std::string& mode, const std::string& remote_path)
 {
+    record_plate_history_once(mode);
     if (!GcodeArchive::enabled()) return;
     const std::string file = SSWCP::get_active_filename();
     if (file.empty()) {
@@ -7743,6 +7843,7 @@ void SSWCP::archive_print_once(const std::string& mode, const std::string& remot
 // A send is over: the next one must be able to store its own file even when it is the same path.
 void SSWCP::clear_archived_print()
 {
+    g_plate_history = PlateHistoryState();
     m_archived_print_file.clear();
     m_archived_record_id.clear();
     m_archived_mode.clear();

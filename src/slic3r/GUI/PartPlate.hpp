@@ -25,6 +25,7 @@
 #include "MeshUtils.hpp"
 #include "libslic3r/ParameterUtils.hpp"
 #include "libslic3r/ExtruderAreas.hpp"
+#include "libslic3r/PlatePrintHistory.hpp"
 
 class GLUquadric;
 typedef class GLUquadric GLUquadricObject;
@@ -104,6 +105,11 @@ private:
     bool m_printable;
     bool m_locked;
     std::string m_dual_nozzle_confirm;
+    // Key of this plate's print history in PartPlateList::m_print_histories. The history lives in
+    // the list, not here, because undo/redo rebuilds every PartPlate: a print that already happened
+    // is not something an undo may take back. The key is part of the undo snapshot, so the rebuilt
+    // plate finds its history again; a plate that did not exist then simply has no history.
+    std::string m_history_key;
     bool        m_dual_nozzle_sliced{ false };
     std::string m_dual_nozzle_sliced_dev;
     std::string m_dual_nozzle_sliced_fp;
@@ -152,6 +158,7 @@ private:
     PickingModel m_plate_settings_icon;
     PickingModel m_plate_name_edit_icon;
     PickingModel m_move_front_icon;
+    PickingModel m_history_icon;
     GLModel m_plate_idx_icon;
     GLTexture m_texture;
 
@@ -212,7 +219,8 @@ private:
 
 public:
     static const unsigned int PLATE_NAME_HOVER_ID = 6;
-    static const unsigned int GRABBER_COUNT = 8;
+    static const unsigned int HISTORY_HOVER_ID = 8;
+    static const unsigned int GRABBER_COUNT = 9;
 
     static ColorRGBA SELECT_COLOR;
     static ColorRGBA UNSELECT_COLOR;
@@ -268,6 +276,26 @@ public:
     // DualNozzleSync::Confirmation JSON (saved in the project; empty = never confirmed).
     const std::string& dual_nozzle_confirm() const { return m_dual_nozzle_confirm; }
     void set_dual_nozzle_confirm(const std::string& json) { m_dual_nozzle_confirm = json; }
+
+    // ---- print history (PlatePrintHistory.hpp) ----
+    // When, where and on which machine this plate was sent. Persisted per plate in the project 3MF.
+    // Kept outside undo/redo on purpose (see m_history_key).
+    const PlateHistory::History& print_history() const;
+    void set_print_history(const PlateHistory::History& history);
+    // True once the plate went to a printer at least once. An export to a file does not count.
+    bool was_sent_to_printer() const;
+    // Fingerprint of what this plate would slice from right now (empty plate: empty string).
+    std::string input_fingerprint() const;
+    // The plate changed after its last send to a printer.
+    bool modified_since_last_send() const;
+    // Records one send or export, stamping the plate's current input fingerprint and, unless the
+    // entry carries them, the time and a uid. Marks the project dirty so the user is asked to save.
+    // Returns the entry's uid. GUI thread only.
+    std::string add_print_history_entry(PlateHistory::Entry entry);
+    // An upload that the printer was then told to start: changes the action of the entry with this
+    // uid. False if there is no such entry. GUI thread only.
+    bool set_print_history_action(const std::string& uid, PlateHistory::Action action);
+    void clear_print_history();
     // The printer (and its state fingerprint) the current slice was made for; the dual-nozzle
     // watcher invalidates the slice when the selected printer or its state moves away from it.
     void set_dual_nozzle_sliced_for(const std::string& dev_id, const std::string& state_fp) { m_dual_nozzle_sliced = true; m_dual_nozzle_sliced_dev = dev_id; m_dual_nozzle_sliced_fp = state_fp; }
@@ -541,7 +569,7 @@ public:
         std::vector<std::pair<int, int>>	objects_and_instances;
         std::vector<std::pair<int, int>>	instances_outside;
 
-        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config);
+        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config, m_history_key);
 
         for (std::vector<std::pair<int, int>>::iterator it = objects_and_instances.begin(); it != objects_and_instances.end(); ++it)
             obj_to_instance_set.insert(std::pair(it->first, it->second));
@@ -559,7 +587,7 @@ public:
         for (std::set<std::pair<int, int>>::iterator it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); ++it)
             objects_and_instances.emplace_back(it->first, it->second);
 
-        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config);
+        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config, m_history_key);
     }
     /*template<class Archive> void serialize(Archive& ar)
     {
@@ -624,6 +652,11 @@ class PartPlateList : public ObjectBase
     GLTexture m_plate_settings_changed_hovered_texture;
     GLTexture m_plate_name_edit_texture;
     GLTexture m_plate_name_edit_hovered_texture;
+    // Print history icon: normal / hovered, and the same two tinted green once the plate was sent.
+    GLTexture m_history_texture;
+    GLTexture m_history_hovered_texture;
+    GLTexture m_history_printed_texture;
+    GLTexture m_history_printed_hovered_texture;
     GLTexture m_idx_textures[MAX_PLATE_COUNT];
     // set render option
     bool render_bedtype_logo = true;
@@ -638,6 +671,10 @@ class PartPlateList : public ObjectBase
     // Snap #930: set when any plate's slice result goes valid→invalid so Preview
     // re-slice can re-show the filament grouping dialog. Cleared at reslice().
     bool m_filament_group_dirty = false;
+
+    // Every plate's print history, by PartPlate::m_history_key. Not part of the undo snapshot and
+    // not cleared by undo/redo's reset(false): only a new or reloaded project empties it.
+    std::map<std::string, PlateHistory::History> m_print_histories;
 
     void init();
     //compute the origin for printable plate with index i

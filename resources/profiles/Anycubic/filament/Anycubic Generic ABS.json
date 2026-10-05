@@ -4,7 +4,7 @@
 	"inherits": "fdm_filament_abs",
 	"from": "system",
 	"setting_id": "az6wmXeWSCKcUEsK",
-	"filament_id": "GFB99",
+	"filament_id": "OFY9muEs",
 	"instantiation": "true",
 	"filament_flow_ratio": [
 		"0.926"
@@ -22,7 +22,6 @@
 		"Anycubic 4Max Pro 0.4 nozzle",
 		"Anycubic 4Max Pro 2 0.4 nozzle",
 		"Anycubic Kobra 2 0.4 nozzle",
-		"Anycubic Kobra 3 0.4 nozzle",
 		"Anycubic Kobra 3 Max 0.4 nozzle"
 	]
 }

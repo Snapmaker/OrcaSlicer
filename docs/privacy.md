@@ -54,20 +54,27 @@ those builds.
 - **The crash itself:** a minidump. It holds the CPU registers and stack memory of each program
   thread at the moment of the crash, plus the list of loaded program modules (file paths and
   versions). Like any Windows crash dump, it also holds the program's command line and
-  environment variables. Those include your Windows user and computer name. EdgeSlicer blanks
-  secret command-line values such as the phone hub's `--hub-token` before anything can crash.
+  environment variables. Those include your Windows user name. They also included your computer
+  name in earlier versions; from the next version EdgeSlicer overwrites it
+  (and the variables derived from it) with a placeholder at start-up, and every report carries the
+  fixed server name `redacted`. EdgeSlicer blanks secret command-line values such as the phone
+  hub's `--hub-token` before anything can crash.
   Sentry turns the minidump into a stack trace using the debug symbols we upload for each
   release. Stack memory can hold fragments of whatever the program was working on at that
   moment. The minidump is used only to compute the trace; the project does not keep raw
   minidumps.
 - **App version and build:** for example release `edgeslicer@2.4.0.0`, environment `release`.
+  Builds that are not made by the project's CI (a build you compile yourself, which has no
+  crash-report destination anyway, or a developer's test copy) name themselves
+  `edgeslicer@<version>-dev+<commit>`, environment `development`.
 - **Operating system:** name, version and CPU architecture.
 - **Recent log lines:** the most recent warning and error lines of the app log from the session
   that crashed, at most 100. There are at most 20 per second, each is cut to 512 characters,
   and each is scrubbed as described below *before* it is stored.
 
 **Not sent:** log files, configuration files, projects or models, presets, printer settings,
-account details, a user or machine ID, the computer name, usage events. EdgeSlicer's old "bury
+account details, a user or machine ID, the computer name (from the next version, see above),
+usage events. EdgeSlicer's old "bury
 point" usage events and Sentry sessions and traces are all switched off in the code.
 
 Reports go over HTTPS to [Sentry](https://sentry.io), the service EdgeSlicer's developers use to
@@ -174,10 +181,15 @@ means no uploads, and that is the case for every local build. Never commit a DSN
 **Environment.** `EDGESLICER_SENTRY_ENVIRONMENT` is set as follows:
 - `release` for tags, `main`, `ci/*` and `release/*`.
 - `ci` for other CI builds.
-- `dev` locally.
+- `nightly` for the nightly builds.
+- `development` for everything else (CMake's default when the variable is empty; `dev` is read as
+  `development`). The CI workflows are the only place that sets the variable, so it is what tells
+  a real release from a local, agent or test build.
 
-**Release.** The app reports `edgeslicer@<Snapmaker_VERSION>`. CI uses the same name when it uploads
-symbols.
+**Release.** CI builds report `edgeslicer@<Snapmaker_VERSION>` (plus the nightly suffix), the name
+CI uses when it uploads symbols. Development builds report `edgeslicer@<version>-dev+<short
+commit>` (the commit as of the last CMake configure), so they never mix with reports from the
+published release and never match uploaded symbols.
 
 **Symbols.** Two workflows upload symbols after a successful build:
 - `build_all.yml` (through `build_deps.yml` and `sentry_cli.yml`), for the Windows PDBs and PE

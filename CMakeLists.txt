@@ -155,7 +155,12 @@ option(SLIC3R_SENTRY            "Build in the Sentry/crashpad crash handler (loc
 # in the build tree, not onto compiler command lines, and is never printed here.
 set(EDGESLICER_SENTRY_DSN "" CACHE STRING "Sentry DSN compiled in for opt-in crash reports (empty = no uploads)")
 mark_as_advanced(EDGESLICER_SENTRY_DSN)
-set(EDGESLICER_SENTRY_ENVIRONMENT "" CACHE STRING "Sentry environment reported with crashes (default: dev)")
+# The environment is also how a build says whether it is a real release. The CI workflows set it
+# (build_orca.yml, build_windows_selfhosted.yml, nightly.yml: release / ci / nightly); nothing else
+# does, so an empty value - every local, agent and test build - means "development": reported as
+# environment "development" and as release edgeslicer@<version>-dev+<short commit>, which keeps
+# those crashes apart from the ones real users send from the published release.
+set(EDGESLICER_SENTRY_ENVIRONMENT "" CACHE STRING "Sentry environment reported with crashes (empty = development; CI sets release, ci or nightly)")
 set(_edge_sentry_dsn "${EDGESLICER_SENTRY_DSN}")
 if (_edge_sentry_dsn STREQUAL "" AND DEFINED ENV{EDGESLICER_SENTRY_DSN})
     set(_edge_sentry_dsn "$ENV{EDGESLICER_SENTRY_DSN}")
@@ -165,8 +170,8 @@ set(_edge_sentry_env "${EDGESLICER_SENTRY_ENVIRONMENT}")
 if (_edge_sentry_env STREQUAL "" AND DEFINED ENV{EDGESLICER_SENTRY_ENVIRONMENT})
     set(_edge_sentry_env "$ENV{EDGESLICER_SENTRY_ENVIRONMENT}")
 endif ()
-if (_edge_sentry_env STREQUAL "")
-    set(_edge_sentry_env "dev")
+if (_edge_sentry_env STREQUAL "" OR _edge_sentry_env STREQUAL "dev")
+    set(_edge_sentry_env "development")
 endif ()
 if (NOT _edge_sentry_dsn STREQUAL "" AND NOT _edge_sentry_dsn MATCHES "^https?://[^\"\\ ]+$")
     message(FATAL_ERROR "EDGESLICER_SENTRY_DSN is not a Sentry DSN (expected https://<key>@<host>/<project>)")
@@ -181,8 +186,19 @@ else ()
 endif ()
 set(EDGESLICER_SENTRY_DSN_VALUE "${_edge_sentry_dsn}")
 set(EDGESLICER_SENTRY_ENVIRONMENT_VALUE "${_edge_sentry_env}")
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/sentry_wrapper/edgeslicer_sentry_config.h.in
-               ${CMAKE_CURRENT_BINARY_DIR}/generated/edgeslicer_sentry_config.h @ONLY)
+# A development build's release suffix is "-dev+<short commit>" (the commit as of this configure
+# run). It goes after the whole version, so it is kept apart until the version suffix is known
+# (below). Build metadata may hold only one '+': a development build that also has a '+' in its
+# version suffix gets "-dev.<commit>" instead.
+set(EDGESLICER_SENTRY_RELEASE_SUFFIX_VALUE "")
+if (_edge_sentry_env STREQUAL "development")
+    set(_edge_sentry_sha "${GIT_COMMIT_HASH}")
+    if (_edge_sentry_sha STREQUAL "" OR NOT _edge_sentry_sha MATCHES "^[0-9A-Za-z]+$")
+        set(_edge_sentry_sha "nogit")
+    endif ()
+    set(EDGESLICER_SENTRY_RELEASE_SUFFIX_VALUE "-dev+${_edge_sentry_sha}")
+endif ()
+# edgeslicer_sentry_config.h is written below, once the version suffix is known.
 
 # Build flavour suffix: empty for releases and local builds, "-nightly.<YYYYMMDD>+<shortsha>" for
 # the nightly builds (.github/workflows/nightly.yml, docs/nightly.md). It is appended to
@@ -208,11 +224,19 @@ if (NOT _edge_version_suffix STREQUAL "" AND NOT _edge_version_suffix MATCHES "^
 endif ()
 set(EDGESLICER_VERSION_SUFFIX_VALUE "${_edge_version_suffix}")
 set(EDGESLICER_FULL_VERSION "${Snapmaker_VERSION}${_edge_version_suffix}")
+if (NOT EDGESLICER_SENTRY_RELEASE_SUFFIX_VALUE STREQUAL "" AND EDGESLICER_FULL_VERSION MATCHES "[+]")
+    string(REPLACE "+" "." EDGESLICER_SENTRY_RELEASE_SUFFIX_VALUE "${EDGESLICER_SENTRY_RELEASE_SUFFIX_VALUE}")
+endif ()
 # File names avoid '+': GitHub renames release assets whose names carry special characters.
 string(REPLACE "+" "-" EDGESLICER_FILE_VERSION "${EDGESLICER_FULL_VERSION}")
 if (NOT _edge_version_suffix STREQUAL "")
     message(STATUS "EdgeSlicer version: ${EDGESLICER_FULL_VERSION}")
 endif ()
+# The release a crash report names, and the one CI uploads symbols for: edgeslicer@<version>, plus
+# "-dev+<commit>" on development builds only (see EDGESLICER_SENTRY_ENVIRONMENT above).
+set(EDGESLICER_SENTRY_RELEASE_VALUE "edgeslicer@${EDGESLICER_FULL_VERSION}${EDGESLICER_SENTRY_RELEASE_SUFFIX_VALUE}")
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/sentry_wrapper/edgeslicer_sentry_config.h.in
+               ${CMAKE_CURRENT_BINARY_DIR}/generated/edgeslicer_sentry_config.h @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/common_func/edgeslicer_version.h.in
                ${CMAKE_CURRENT_BINARY_DIR}/generated/edgeslicer_version.h @ONLY)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/generated)

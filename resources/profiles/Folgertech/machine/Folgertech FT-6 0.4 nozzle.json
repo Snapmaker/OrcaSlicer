@@ -18,5 +18,5 @@
 	"printable_height": "400",
 	"nozzle_type": "undefine",
 	"auxiliary_fan": "0",
-	"default_print_profile": "0.20mm Standard @FT"
+	"default_print_profile": "0.20mm Standard @FT 0.4 nozzle"
 }

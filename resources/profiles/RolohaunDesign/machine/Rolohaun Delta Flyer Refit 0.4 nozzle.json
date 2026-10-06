@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "xRvK2POOU8rx7dLH",
 	"instantiation": "true",
+	"default_print_profile": "0.20mm Standard @Delta Flyer Refit",
 	"bed_custom_model": "",
 	"printer_structure": "delta",
 	"deretraction_speed": [

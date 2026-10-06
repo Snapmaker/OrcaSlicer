@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "jZZeImztqtZ2beVR",
 	"instantiation": "true",
+	"default_print_profile": "0.20mm Quality @RatRig V-Core 4 0.4",
 	"printer_model": "RatRig V-Core 4 300",
 	"printer_variant": "0.4",
 	"nozzle_diameter": [

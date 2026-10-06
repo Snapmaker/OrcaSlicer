@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "OWKgGxZ3ljM0rYf5",
 	"instantiation": "true",
+	"default_print_profile": "0.20mm Optimal @Comgrow T300 0.4 - official",
 	"printer_model": "Comgrow T300",
 	"nozzle_diameter": [
 		"0.4"

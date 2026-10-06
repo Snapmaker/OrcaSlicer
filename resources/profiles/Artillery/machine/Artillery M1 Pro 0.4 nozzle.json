@@ -96,7 +96,7 @@
 	"change_filament_gcode": "G1 E-2 F2400\nG2 Z{z_after_toolchange + 0.4} I0.86 J0.86 P1 F10000\nT[next_extruder]",
 	"cooling_tube_length": "0",
 	"cooling_tube_retraction": "0",
-	"default_print_profile": "0.20mm Standard @Artillery Genius",
+	"default_print_profile": "0.20mm Standard @Artillery M1 Pro 0.4 nozzle",
 	"deretraction_speed": [
 		"40"
 	],

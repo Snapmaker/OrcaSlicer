@@ -16,7 +16,7 @@
 		"0.2"
 	],
 	"printer_variant": "0.2",
-	"default_print_profile": "0.10mm Fine @Geeetech Thunder",
+	"default_print_profile": "0.10mm Standard @Geeetech Thunder 0.2 nozzle",
 	"max_layer_height": [
 		"0.14"
 	],

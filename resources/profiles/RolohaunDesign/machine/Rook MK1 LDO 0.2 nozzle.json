@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "K8SXHwlgTJueqpJW",
 	"instantiation": "true",
+	"default_print_profile": "0.12mm Fine @Rook MK1 LDO",
 	"printer_model": "Rook MK1 LDO",
 	"nozzle_diameter": [
 		"0.2"

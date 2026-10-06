@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "lgltuIatOQ6w6QbU",
 	"instantiation": "true",
+	"default_print_profile": "0.20mm Standard @Tiertime UP300 HS",
 	"printer_model": "Tiertime UP300 HS",
 	"nozzle_diameter": [
 		"0.4"

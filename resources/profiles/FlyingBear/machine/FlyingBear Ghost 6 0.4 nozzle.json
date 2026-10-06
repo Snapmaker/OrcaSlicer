@@ -7,7 +7,7 @@
 	"instantiation": "true",
 	"printer_model": "FlyingBear Ghost 6",
 	"gcode_flavor": "marlin2",
-	"default_print_profile": "0.20mm Standard @FlyingBear Ghost 6",
+	"default_print_profile": "0.20mm Standard @FlyingBear Ghost 6 0.4 nozzle",
 	"nozzle_diameter": [
 		"0.4"
 	],

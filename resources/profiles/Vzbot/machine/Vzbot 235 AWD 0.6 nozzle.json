@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "bb7maLXPfrMcxn8p",
 	"instantiation": "true",
+	"default_print_profile": "0.20mm Standard @Vzbot 0.6nozzle",
 	"printer_model": "Vzbot 235 AWD",
 	"nozzle_diameter": [
 		"0.6"

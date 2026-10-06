@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "PJ1AEctT0fuqipaq",
 	"instantiation": "true",
+	"default_print_profile": "0.12mm Fine @M1",
 	"printer_model": "M1",
 	"nozzle_diameter": [
 		"0.2"

@@ -1,0 +1,69 @@
+{
+    "type": "filament",
+    "name": "Panchroma PLA Temp Shift @U1",
+    "inherits": "Generic PLA @U1 0.4 nozzle",
+    "from": "system",
+    "setting_id": "GFSPM04_50",
+    "filament_id": "OGFPM015",
+    "instantiation": "true",
+    "nozzle_temperature_range_high": [
+        "230"
+    ],
+    "cool_plate_temp": [
+        "60"
+    ],
+    "cool_plate_temp_initial_layer": [
+        "60"
+    ],
+    "eng_plate_temp": [
+        "60"
+    ],
+    "eng_plate_temp_initial_layer": [
+        "60"
+    ],
+    "hot_plate_temp": [
+        "60"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "60"
+    ],
+    "textured_plate_temp": [
+        "60"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "60"
+    ],
+    "graphic_effect_plate_temp": [
+        "60"
+    ],
+    "graphic_effect_plate_temp_initial_layer": [
+        "60"
+    ],
+    "overhang_fan_speed": [
+        "75"
+    ],
+    "slow_down_layer_time": [
+        "4"
+    ],
+    "slow_down_min_speed": [
+        "5"
+    ],
+    "filament_density": [
+        "1.17"
+    ],
+    "filament_cost": [
+        "29.99"
+    ],
+    "filament_max_volumetric_speed": [
+        "15"
+    ],
+    "temperature_vitrification": [
+        "61"
+    ],
+    "filament_vendor": [
+        "Polymaker"
+    ],
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ]
+}

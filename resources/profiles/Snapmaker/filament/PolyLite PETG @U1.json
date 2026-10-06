@@ -1,0 +1,72 @@
+{
+    "type": "filament",
+    "name": "PolyLite PETG @U1",
+    "inherits": "Generic PETG @U1 0.4 nozzle",
+    "from": "system",
+    "setting_id": "GFSPM04_27",
+    "filament_id": "PMPE04",
+    "instantiation": "true",
+    "nozzle_temperature": [
+        "260"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "260"
+    ],
+    "nozzle_temperature_range_high": [
+        "260"
+    ],
+    "cool_plate_temp": [
+        "60"
+    ],
+    "cool_plate_temp_initial_layer": [
+        "60"
+    ],
+    "eng_plate_temp": [
+        "0"
+    ],
+    "eng_plate_temp_initial_layer": [
+        "0"
+    ],
+    "graphic_effect_plate_temp": [
+        "80"
+    ],
+    "graphic_effect_plate_temp_initial_layer": [
+        "80"
+    ],
+    "fan_min_speed": [
+        "0"
+    ],
+    "fan_max_speed": [
+        "40"
+    ],
+    "overhang_fan_speed": [
+        "100"
+    ],
+    "overhang_fan_threshold": [
+        "95%"
+    ],
+    "fan_cooling_layer_time": [
+        "20"
+    ],
+    "slow_down_layer_time": [
+        "6"
+    ],
+    "slow_down_min_speed": [
+        "10"
+    ],
+    "filament_flow_ratio": [
+        "0.92"
+    ],
+    "filament_max_volumetric_speed": [
+        "7.5"
+    ],
+    "temperature_vitrification": [
+        "81"
+    ],
+    "filament_vendor": [
+        "Polymaker"
+    ],
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ]
+}

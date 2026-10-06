@@ -1,0 +1,66 @@
+{
+    "type": "filament",
+    "name": "Fiberon ASA-CF08 @U1",
+    "inherits": "Generic ASA @U1 0.4 nozzle",
+    "from": "system",
+    "setting_id": "GFSPM04_00",
+    "filament_id": "PMAS01",
+    "instantiation": "true",
+    "nozzle_temperature_range_low": [
+        "260"
+    ],
+    "eng_plate_temp": [
+        "100"
+    ],
+    "eng_plate_temp_initial_layer": [
+        "100"
+    ],
+    "hot_plate_temp": [
+        "100"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "100"
+    ],
+    "textured_plate_temp": [
+        "100"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "100"
+    ],
+    "graphic_effect_plate_temp": [
+        "100"
+    ],
+    "graphic_effect_plate_temp_initial_layer": [
+        "100"
+    ],
+    "fan_max_speed": [
+        "30"
+    ],
+    "fan_cooling_layer_time": [
+        "31"
+    ],
+    "slow_down_layer_time": [
+        "8"
+    ],
+    "slow_down_min_speed": [
+        "10"
+    ],
+    "filament_density": [
+        "1.09"
+    ],
+    "filament_flow_ratio": [
+        "0.88"
+    ],
+    "filament_max_volumetric_speed": [
+        "8"
+    ],
+    "temperature_vitrification": [
+        "110.8"
+    ],
+    "filament_vendor": [
+        "Polymaker"
+    ],
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ]
+}

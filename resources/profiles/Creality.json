@@ -1,6 +1,6 @@
 {
     "name": "Creality",
-    "version": "02.03.02.00",
+    "version": "02.03.02.01",
     "force_update": "0",
     "description": "Creality configurations",
     "machine_model_list": [
@@ -167,6 +167,14 @@
         {
             "name": "Creality SPARKX i7",
             "sub_path": "machine/Creality SPARKX i7.json"
+        },
+        {
+            "name": "Creality CR-10S Pro",
+            "sub_path": "machine/Creality CR-10S Pro.json"
+        },
+        {
+            "name": "Creality CR-10S Pro V2",
+            "sub_path": "machine/Creality CR-10S Pro V2.json"
         }
     ],
     "process_list": [
@@ -1549,6 +1557,54 @@
         {
             "name": "0.56mm SuperDraft @Creality K2 Pro 0.8 nozzle",
             "sub_path": "process/0.56mm SuperDraft @Creality K2 Pro 0.8 nozzle.json"
+        },
+        {
+            "name": "0.08mm Extra Fine @Creality CR-10S Pro V2 0.4 nozzle",
+            "sub_path": "process/0.08mm Extra Fine @Creality CR-10S Pro V2 0.4 nozzle.json"
+        },
+        {
+            "name": "0.16mm Optimal @Creality CR-10S Pro V2 0.4 nozzle",
+            "sub_path": "process/0.16mm Optimal @Creality CR-10S Pro V2 0.4 nozzle.json"
+        },
+        {
+            "name": "0.20mm Standard @Creality CR-10S Pro V2 0.4 nozzle",
+            "sub_path": "process/0.20mm Standard @Creality CR-10S Pro V2 0.4 nozzle.json"
+        },
+        {
+            "name": "0.12mm Fine @Creality CR-10S Pro V2 0.4 nozzle",
+            "sub_path": "process/0.12mm Fine @Creality CR-10S Pro V2 0.4 nozzle.json"
+        },
+        {
+            "name": "0.24mm Draft @Creality CR-10S Pro V2 0.4 nozzle",
+            "sub_path": "process/0.24mm Draft @Creality CR-10S Pro V2 0.4 nozzle.json"
+        },
+        {
+            "name": "0.28mm Extra Draft @Creality CR-10S Pro V2 0.4 nozzle",
+            "sub_path": "process/0.28mm Extra Draft @Creality CR-10S Pro V2 0.4 nozzle.json"
+        },
+        {
+            "name": "0.08mm Extra Fine @Creality CR-10S Pro 0.4 nozzle",
+            "sub_path": "process/0.08mm Extra Fine @Creality CR-10S Pro 0.4 nozzle.json"
+        },
+        {
+            "name": "0.16mm Optimal @Creality CR-10S Pro 0.4 nozzle",
+            "sub_path": "process/0.16mm Optimal @Creality CR-10S Pro 0.4 nozzle.json"
+        },
+        {
+            "name": "0.20mm Standard @Creality CR-10S Pro 0.4 nozzle",
+            "sub_path": "process/0.20mm Standard @Creality CR-10S Pro 0.4 nozzle.json"
+        },
+        {
+            "name": "0.12mm Fine @Creality CR-10S Pro 0.4 nozzle",
+            "sub_path": "process/0.12mm Fine @Creality CR-10S Pro 0.4 nozzle.json"
+        },
+        {
+            "name": "0.24mm Draft @Creality CR-10S Pro 0.4 nozzle",
+            "sub_path": "process/0.24mm Draft @Creality CR-10S Pro 0.4 nozzle.json"
+        },
+        {
+            "name": "0.28mm Extra Draft @Creality CR-10S Pro 0.4 nozzle",
+            "sub_path": "process/0.28mm Extra Draft @Creality CR-10S Pro 0.4 nozzle.json"
         }
     ],
     "filament_list": [
@@ -3529,6 +3585,14 @@
         {
             "name": "Creality SPARKX i7 0.8 nozzle",
             "sub_path": "machine/Creality SPARKX i7 0.8 nozzle.json"
+        },
+        {
+            "name": "Creality CR-10S Pro 0.4 nozzle",
+            "sub_path": "machine/Creality CR-10S Pro 0.4 nozzle.json"
+        },
+        {
+            "name": "Creality CR-10S Pro V2 0.4 nozzle",
+            "sub_path": "machine/Creality CR-10S Pro V2 0.4 nozzle.json"
         }
     ]
 }

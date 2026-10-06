@@ -19,6 +19,7 @@
 #include "libslic3r.h"
 #include "Config.hpp"
 #include "Polygon.hpp"
+#include "BoundingBox.hpp"
 #include "PaintDepth.hpp"
 #include <algorithm>
 #include <boost/preprocessor/facilities/empty.hpp>
@@ -2560,6 +2561,18 @@ std::vector<int> identity_filament_map(const ConfigBase &cfg, size_t filament_co
 Points get_bed_shape(const DynamicPrintConfig &cfg);
 Points get_bed_shape(const PrintConfig &cfg);
 Points get_bed_shape(const SLAPrinterConfig &cfg);
+// bed_exclude_area is one flat point list that vendors author two ways: a list of 4-point
+// rectangles (Bambu, Qidi, Anycubic Kobra 3 Max, Snapmaker, Elegoo) or one polygon (upstream
+// Orca's Kobra 3 ring, the option's tooltip). Every reader goes through these helpers so that
+// validation, arrange, the plate's "object inside" check and the timelapse picker agree; see
+// bed_exclude_area_is_rectangles() in PrintConfig.cpp for the rule.
+bool bed_exclude_area_is_rectangles(const Pointfs &points);
+// The excluded region as hole-free, counter-clockwise, scaled polygons (zero-area pieces dropped).
+Slic3r::Polygons bed_exclude_area_polygons(const Pointfs &points);
+// Unscaled boxes for the GUI, which works in boxes (PartPlate exclusion boxes, arrange's fixed
+// items). For a rectangle list this is exactly the old "one box per 4 points" list, zero-area
+// boxes included; for a polygon it is one box per hole-free piece.
+std::vector<BoundingBoxf> bed_exclude_area_boxes(const Pointfs &points);
 Slic3r::Polygons get_bed_excluded_area(const PrintConfig& cfg);
 Slic3r::Polygon get_bed_shape_with_excluded_area(const PrintConfig& cfg);
 bool has_skirt(const DynamicPrintConfig& cfg);

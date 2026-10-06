@@ -382,23 +382,17 @@ void PartPlate::calc_bounding_boxes() const {
 	extended_bounding_box->merge(m_grabber_box);
 
     //calc exclude area bounding box
+    // One box per 4-point rectangle, or per hole-free piece of a polygon exclusion (the Kobra 3
+    // ring); the same reading of bed_exclude_area as print validation (get_bed_excluded_area).
     m_exclude_bounding_box.clear();
-    BoundingBoxf3 exclude_bb;
-    for (int index = 0; index < m_exclude_area.size(); index ++) {
-		const Vec2d& p = m_exclude_area[index];
-
-		if (index % 4 == 0)
-			exclude_bb = BoundingBoxf3();
-
-		exclude_bb.merge({ p(0), p(1), 0.0 });
-
-		if (index % 4 == 3)
-		{
-			exclude_bb.max(2) = m_depth;
-			exclude_bb.min(2) = GROUND_Z;
-			m_exclude_bounding_box.emplace_back(exclude_bb);
-		}
-	}
+    for (const BoundingBoxf &bb : bed_exclude_area_boxes(m_exclude_area)) {
+        BoundingBoxf3 exclude_bb;
+        exclude_bb.merge({ bb.min.x(), bb.min.y(), 0.0 });
+        exclude_bb.merge({ bb.max.x(), bb.max.y(), 0.0 });
+        exclude_bb.max(2) = m_depth;
+        exclude_bb.min(2) = GROUND_Z;
+        m_exclude_bounding_box.emplace_back(exclude_bb);
+    }
 }
 
 void PartPlate::calc_triangles(const ExPolygon &poly)
@@ -2738,6 +2732,16 @@ void PartPlate::generate_exclude_polygon(ExPolygon &exclude_polygon)
 		}
 	}
 	else {
+		// A polygon exclusion (not a list of rectangles) can be a ring - the Kobra 3's outline
+		// plus a reversed inner outline. Draw its filled region, with the hole, rather than the
+		// raw outline with its zero-width slit.
+		if (!bed_exclude_area_is_rectangles(m_exclude_area)) {
+			ExPolygons region = union_ex(bed_exclude_area_polygons(m_exclude_area));
+			if (region.size() == 1) {
+				exclude_polygon = std::move(region.front());
+				return;
+			}
+		}
 		for (const Vec2d& p : m_exclude_area) {
 			exclude_polygon.contour.append({ scale_(p(0)), scale_(p(1)) });
 		}

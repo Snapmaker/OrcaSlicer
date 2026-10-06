@@ -1,9 +1,11 @@
 #include <catch2/catch.hpp>
 
+#include <cmath>
 #include <string>
 
 #include "libslic3r/AppConfig.hpp"
 #include "slic3r/Utils/StartupWizardLogic.hpp"
+#include "slic3r/Utils/ToolbarScaleLogic.hpp"
 
 using namespace Slic3r;
 using StartupWizard::Reason;
@@ -64,4 +66,18 @@ TEST_CASE("Startup wizard: what the wizard writes for firstguide/finish reads ba
     // "finish") missed before Orca #16092 (it looked for "1" in the "app" section).
     cfg.set("firstguide", "finish", std::string("1"));
     CHECK(StartupWizard::finish_flag_set(cfg.get("firstguide", "finish")));
+}
+
+TEST_CASE("3D toolbar auto scale compares logical with logical", "[ToolbarScale]")
+{
+    const float retina = 2.0f;
+    // Stored scale at half the fit on a Retina canvas: the old test, |fit - stored * retina|,
+    // saw no change and the toolbar stayed half size. It must be seen as a change.
+    const float fit = 0.9f, stored = 0.45f;
+    CHECK_FALSE(std::fabs(fit - stored * retina) > 0.05f); // the old comparison (the bug)
+    CHECK(ToolbarScale::auto_scale_changed(stored, fit));
+    // At the fit (or within 5 %) nothing is rewritten.
+    CHECK_FALSE(ToolbarScale::auto_scale_changed(0.9f, 0.9f));
+    CHECK_FALSE(ToolbarScale::auto_scale_changed(0.9f, 0.93f));
+    CHECK(ToolbarScale::auto_scale_changed(0.9f, 0.96f));
 }

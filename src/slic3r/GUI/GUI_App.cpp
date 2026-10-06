@@ -5006,6 +5006,11 @@ void GUI_App::set_auto_toolbar_icon_scale(float scale) const
     long int_val = std::min(int(std::lround(scale / icon_sc * 100)), 100);
     std::string val = std::to_string(int_val);
 
+    // Logged only when the stored value changes (the caller asks every frame while the toolbar
+    // is capped at 100 %): "toolkit_size" is the 3D toolbar's auto-fit size in percent.
+    const std::string old_val = app_config->get("toolkit_size");
+    if (old_val != val)
+        BOOST_LOG_TRIVIAL(warning) << "3D toolbar auto size: toolkit_size " << (old_val.empty() ? std::string("(unset)") : old_val) << " -> " << val;
     app_config->set("toolkit_size", val);
 }
 

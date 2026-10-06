@@ -16,6 +16,12 @@ void set_tag_when_enter_full_screen(bool isfullscreen);
 void set_title_colour_after_set_title(void * window);
 void initGestures(void * view,  wxEvtHandler * handler);
 void openFolderForFile(wxString const & file);
+// The `--hub` helper runs from the same bundle as the slicer. Without this it is a second
+// regular app with its own Dock tile (showing the bundle icon); clicking that tile activated
+// the window-less hub and sent the slicer window behind other apps.
+void mac_make_accessory_app();
+// Bring this process to the front (an accessory app's dialogs open behind the active app).
+void mac_activate_app();
 #endif
 
 

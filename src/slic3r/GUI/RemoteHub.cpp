@@ -78,6 +78,9 @@
 #include <wx/menu.h>
 #include <wx/msgdlg.h>
 #include <wx/taskbar.h>
+#ifdef __APPLE__
+#include "slic3r/Utils/MacDarkMode.hpp" // mac_make_accessory_app, mac_activate_app
+#endif
 #include <wx/timer.h>
 #include <wx/utils.h>
 
@@ -5426,6 +5429,9 @@ public:
         Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_server.set_phone(!m_server.snapshot().phone, ""); refresh(); }, ID_PHONE);
         Bind(wxEVT_MENU, [this](wxCommandEvent&) {
             // The only thing in this menu that breaks something a person made; ask in those words.
+#ifdef __APPLE__
+            mac_activate_app(); // the hub is a menu-bar (accessory) app: bring the question to the front
+#endif
             if (wxMessageBox("Make a new phone link?\n\nThe link this hub is using now stops working. Saved links, QR codes "
                              "and home-screen icons made from it all have to be made again from the new code. Phones paired with "
                              "the old link also stop getting notifications until they are paired again.",
@@ -5541,6 +5547,18 @@ class HubApp : public wxApp
 {
 public:
     HubApp(std::string token, bool phone) : m_owned(new HubServer(std::move(token), phone)), m_server(*m_owned) {}
+
+#ifdef __WXOSX__
+    // Before NSApp finishes launching, so the Dock never shows a tile for the hub. It is the
+    // bundle's own executable, so without this macOS treats it as a second EdgeSlicer: a Dock
+    // icon of its own (the bundle icon) that, when clicked, activated a process with no windows
+    // and the slicer's window seemed to hide itself.
+    void OSXOnWillFinishLaunching() override
+    {
+        wxApp::OSXOnWillFinishLaunching();
+        mac_make_accessory_app();
+    }
+#endif
 
     bool OnInit() override
     {

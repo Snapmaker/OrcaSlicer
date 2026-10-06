@@ -1,6 +1,7 @@
 #include "libslic3r/libslic3r.h"
 #include "GLCanvas3D.hpp"
 #include "SequentialPrintClearance.hpp"
+#include "slic3r/Utils/ToolbarScaleLogic.hpp"
 
 #include <igl/unproject.h>
 
@@ -9477,7 +9478,10 @@ void GLCanvas3D::_check_and_update_toolbar_icon_scale()
         return;
     }
 
-    float scale = wxGetApp().toolbar_icon_scale() * get_scale();
+    // The stored (logical) scale, and the same in framebuffer pixels: Retina (and GTK3 HiDPI)
+    // canvases are get_scale() framebuffer pixels per point. Windows has get_scale() == 1.
+    const float stored_scale = wxGetApp().toolbar_icon_scale();
+    float scale = stored_scale * get_scale();
     Size cnv_size = get_canvas_size();
 
     //BBS: GUI refactor: GLToolbar
@@ -9531,7 +9535,12 @@ void GLCanvas3D::_check_and_update_toolbar_icon_scale()
     // set minimum scale as a auto scale for the toolbars
     float new_scale = std::min(new_h_scale, new_v_scale);
     new_scale /= get_scale();
-    if (fabs(new_scale - scale) > 0.05) // scale is changed by 5% and more
+    // Compare logical with logical. This used to test the logical new_scale against the
+    // framebuffer `scale` (stored * get_scale()), so on a Retina screen a stored scale of half
+    // the fitting one read as "unchanged" and stuck: one frame laid out at a narrower canvas
+    // (startup, a tab or sidebar change) left the 3D toolbar at about half size for good, and
+    // toolkit_size kept it there across launches. It also rewrote toolkit_size every frame.
+    if (ToolbarScale::auto_scale_changed(stored_scale, new_scale))
         wxGetApp().set_auto_toolbar_icon_scale(new_scale);
 }
 

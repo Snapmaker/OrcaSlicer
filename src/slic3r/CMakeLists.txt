@@ -873,6 +873,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/FreeCADLauncher.cpp
     Utils/FreeCADLauncher.hpp
     Utils/InstanceRouting.hpp
+    Utils/StartupWizardLogic.hpp
+    Utils/ToolbarScaleLogic.hpp
     Utils/Bonjour.cpp
     Utils/Bonjour.hpp
     Utils/MeshInspect.cpp

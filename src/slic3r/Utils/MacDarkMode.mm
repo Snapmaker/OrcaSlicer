@@ -105,7 +105,20 @@ void openFolderForFile(wxString const & file)
     NSArray *fileURLs = [NSArray arrayWithObjects:wxCFStringRef(file).AsNSString(), /* ... */ nil];
     [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:fileURLs];
 }
-    
+
+void mac_make_accessory_app()
+{
+    // Accessory = what LSUIElement=YES gives a bundle: no Dock tile, no app menu, never the
+    // active app by itself, but NSStatusItems (the hub's menu-bar icon) still work.
+    [NSApplication sharedApplication];
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+}
+
+void mac_activate_app()
+{
+    [NSApp activateIgnoringOtherApps:YES];
+}
+
 }
 }
 

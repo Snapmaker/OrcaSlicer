@@ -327,8 +327,12 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     switch (wxGetApp().get_app_mode()) {
     default:
     case GUI_App::EAppMode::Editor:
+        // Only for the Dock menu (CreatePopupMenu); wx registers it in the constructor. No
+        // SetIcon(): on a wxTBI_DOCK icon that calls [NSApp setApplicationIconImage:], which
+        // replaced the bundle's Icon.icns (padded to Apple's icon grid) with the unpadded
+        // Windows .ico art the moment the main window opened, so the running Dock tile no
+        // longer matched the installed app. Without it the Dock shows the bundle icon.
         m_taskbar_icon = std::make_unique<Snapmaker_OrcaTaskBarIcon>(wxTBI_DOCK);
-        m_taskbar_icon->SetIcon(wxIcon(Slic3r::var("EdgeSlicer-mac_256px.ico"), wxBITMAP_TYPE_ICO), "EdgeSlicer");
         break;
     case GUI_App::EAppMode::GCodeViewer:
         break;

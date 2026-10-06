@@ -81,8 +81,9 @@ TEST_CASE("Font search over a list restored from the cache finds fonts", "[Embos
         std::vector<int> rows = emboss_face_list::visible_rows(true, search("con", names), faces.size());
         REQUIRE(shown_names(faces, rows) == std::vector<std::string>{"Consolas"});
 
+        // case-insensitive; "Noto Sans" matches at 5, "Comic Sans" at 6, so Noto comes first
         rows = emboss_face_list::visible_rows(true, search("SANS", names), faces.size());
-        REQUIRE(shown_names(faces, rows) == std::vector<std::string>{"Comic Sans MS", "Noto Sans Symbols 2"});
+        REQUIRE(shown_names(faces, rows) == std::vector<std::string>{"Noto Sans Symbols 2", "Comic Sans MS"});
 
         // matches at the start come first, then list order
         rows = emboss_face_list::visible_rows(true, search("a", names), faces.size());

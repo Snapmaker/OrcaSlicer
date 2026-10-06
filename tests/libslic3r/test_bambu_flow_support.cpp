@@ -180,6 +180,13 @@ TEST_CASE("derive offers High Flow on Bambu printers whose extruders take it, no
     CHECK_FALSE(printer_variants_offer_high_flow({ "Direct Drive Standard,Direct Drive TPU High Flow" }));
     CHECK_FALSE(printer_variants_offer_high_flow({ "Direct Drive Standard,Direct Drive E3D High Flow" }));
     CHECK(printer_variants_offer_high_flow({ "Direct Drive Standard,Direct Drive High Flow" }));
+
+    // A High Flow-only extruder (Prusa CORE One INDX: every tool is a High Flow nozzle) has no
+    // Standard to switch to, so it offers no Standard/High Flow choice.
+    CHECK_FALSE(printer_variants_offer_high_flow({ "Direct Drive High Flow" }));
+    CHECK_FALSE(printer_variants_offer_high_flow({ "Direct Drive High Flow", "Direct Drive High Flow", "Direct Drive High Flow", "Direct Drive High Flow" }));
+    DynamicPrintConfig indx = printer_preset({ "Direct Drive High Flow", "Direct Drive High Flow", "Direct Drive High Flow", "Direct Drive High Flow" });
+    CHECK_FALSE(derive(indx).any());
 }
 
 TEST_CASE("derive never rewrites a composed full config", "[BambuFlowSupport]")

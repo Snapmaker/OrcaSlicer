@@ -8,7 +8,7 @@
     "printer_model": "Creality Ender-3 S1 Plus",
     "printer_variant": "0.2",
     "printer_structure": "i3",
-    "default_print_profile": "0.20mm Standard @Creality Ender3S1Plus 0.2",
+    "default_print_profile": "0.16mm Optimal @Creality Ender3S1Plus 0.2",
     "nozzle_diameter": [
         "0.2"
     ],

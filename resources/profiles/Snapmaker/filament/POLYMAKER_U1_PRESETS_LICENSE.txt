@@ -1,0 +1,30 @@
+The Polymaker filament presets for the Snapmaker U1 bundled in this fork
+("... @U1" files with filament_vendor "Polymaker") take their material values
+from https://github.com/Polymaker3D/Polymaker-Preset (presets.polymaker.com,
+preset/<Filament>/Snapmaker/U1/OrcaSlicer/, commit 31cec5acaf67) under the
+following MIT License. Only material properties were imported (temperatures,
+bed temperatures, cooling, density, cost, flow, volumetric speed); the files
+were rewritten as thin overrides of the Snapmaker "Generic ... @U1 0.4 nozzle"
+presets so the U1 tool-change and G-code settings stay Snapmaker's.
+
+MIT License
+
+Copyright (c) 2026 Polymaker
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

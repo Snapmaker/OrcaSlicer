@@ -5867,10 +5867,15 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("retraction_distances_when_cut",coFloats);
     def->label = L("Retraction distance when cut");
-    def->tooltip = L("Experimental feature: Retraction length before cutting off during filament change.");
+    def->tooltip = L("Experimental feature: Retraction length before cutting off during filament change. "
+                     "Set zero to disable the long retraction.");
+    def->sidetext = "mm";	// milimeters, don't need translation
     def->mode = comDevelop;
-    def->min = 10;
-    def->max = 18;
+    // Bambu's cutter takes 10-18 mm, but other vendors ship 0 (no cutter: Anycubic, Creality
+    // filament switchers) or more (Creality SPARKX i7 28, K2 30). Accept them rather than abort
+    // the slice; 0 means no cut retraction at all (see long_retraction_when_cut_active, GCode.cpp).
+    def->min = 0;
+    def->max = 100;
     def->set_default_value(new ConfigOptionFloats {18});
 
     // BBS: per-filament long retraction performed by the firmware when the active extruder changes

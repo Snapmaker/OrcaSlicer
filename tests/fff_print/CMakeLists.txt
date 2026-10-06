@@ -37,6 +37,7 @@ add_executable(${_TEST_NAME}_tests
 	test_trianglemesh.cpp
 	test_wipe.cpp
 	test_adaptive_pa.cpp
+	test_extruder_variant_arrays.cpp
 	)
 # libslic3r_cgal links CGAL privately, so the GMP/MPFR libraries are needed at link time.
 # They are not propagated to this test target; find them under the deps prefix or the

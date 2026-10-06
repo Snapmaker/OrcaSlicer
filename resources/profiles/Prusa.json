@@ -1,6 +1,6 @@
 {
     "name": "Prusa",
-    "version": "02.03.02.00",
+    "version": "02.03.02.01",
     "force_update": "0",
     "description": "Prusa configurations",
     "machine_model_list": [
@@ -11,6 +11,14 @@
         {
             "name": "Prusa CORE One HF",
             "sub_path": "machine/Prusa CORE One HF.json"
+        },
+        {
+            "name": "Prusa CORE One INDX 4T",
+            "sub_path": "machine/Prusa CORE One INDX 4T.json"
+        },
+        {
+            "name": "Prusa CORE One INDX 8T",
+            "sub_path": "machine/Prusa CORE One INDX 8T.json"
         },
         {
             "name": "Prusa CORE One L",
@@ -1393,6 +1401,26 @@
         {
             "name": "0.32mm SPEED @CORE One HF 0.5",
             "sub_path": "process/0.32mm SPEED @CORE One HF 0.5.json"
+        },
+        {
+            "name": "fdm_process_coreone_indx",
+            "sub_path": "process/fdm_process_coreone_indx.json"
+        },
+        {
+            "name": "0.10mm Fine @Prusa CORE One INDX HF 0.4",
+            "sub_path": "process/0.10mm Fine @Prusa CORE One INDX HF 0.4.json"
+        },
+        {
+            "name": "0.15mm Detail @Prusa CORE One INDX HF 0.4",
+            "sub_path": "process/0.15mm Detail @Prusa CORE One INDX HF 0.4.json"
+        },
+        {
+            "name": "0.20mm Balanced @Prusa CORE One INDX HF 0.4",
+            "sub_path": "process/0.20mm Balanced @Prusa CORE One INDX HF 0.4.json"
+        },
+        {
+            "name": "0.25mm Draft @Prusa CORE One INDX HF 0.4",
+            "sub_path": "process/0.25mm Draft @Prusa CORE One INDX HF 0.4.json"
         }
     ],
     "filament_list": [
@@ -2483,6 +2511,42 @@
         {
             "name": "Prusa Generic PLA Silk @MK4S 0.8",
             "sub_path": "filament/Prusa Generic PLA Silk @MK4S 0.8.json"
+        },
+        {
+            "name": "Generic PLA @Prusa base",
+            "sub_path": "filament/Generic PLA @Prusa base.json"
+        },
+        {
+            "name": "Generic PETG @Prusa base",
+            "sub_path": "filament/Generic PETG @Prusa base.json"
+        },
+        {
+            "name": "Generic ABS @Prusa base",
+            "sub_path": "filament/Generic ABS @Prusa base.json"
+        },
+        {
+            "name": "Generic ABS @Prusa CORE One INDX",
+            "sub_path": "filament/Generic ABS @Prusa CORE One INDX.json"
+        },
+        {
+            "name": "Generic PETG @Prusa CORE One INDX",
+            "sub_path": "filament/Generic PETG @Prusa CORE One INDX.json"
+        },
+        {
+            "name": "Generic PLA @Prusa CORE One INDX",
+            "sub_path": "filament/Generic PLA @Prusa CORE One INDX.json"
+        },
+        {
+            "name": "Generic PLA Silk @Prusa CORE One INDX",
+            "sub_path": "filament/Generic PLA Silk @Prusa CORE One INDX.json"
+        },
+        {
+            "name": "Prusament PETG @Prusa CORE One INDX",
+            "sub_path": "filament/Prusament PETG @Prusa CORE One INDX.json"
+        },
+        {
+            "name": "Prusament PLA @Prusa CORE One INDX",
+            "sub_path": "filament/Prusament PLA @Prusa CORE One INDX.json"
         }
     ],
     "machine_list": [
@@ -2741,6 +2805,22 @@
         {
             "name": "Prusa MK4S HF0.8 nozzle",
             "sub_path": "machine/Prusa MK4S HF0.8 nozzle.json"
+        },
+        {
+            "name": "fdm_machine_common_nextruder",
+            "sub_path": "machine/fdm_machine_common_nextruder.json"
+        },
+        {
+            "name": "fdm_machine_common_coreone_indx",
+            "sub_path": "machine/fdm_machine_common_coreone_indx.json"
+        },
+        {
+            "name": "Prusa CORE One INDX 4T HF 0.4 nozzle",
+            "sub_path": "machine/Prusa CORE One INDX 4T HF 0.4 nozzle.json"
+        },
+        {
+            "name": "Prusa CORE One INDX 8T HF 0.4 nozzle",
+            "sub_path": "machine/Prusa CORE One INDX 8T HF 0.4 nozzle.json"
         }
     ]
 }

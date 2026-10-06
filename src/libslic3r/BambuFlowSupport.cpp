@@ -78,14 +78,23 @@ bool printer_variants_offer_high_flow(const std::vector<std::string> &extruder_v
     for (const std::string &extruder : extruder_variant_list) {
         std::vector<std::string> variants;
         boost::split(variants, extruder, boost::is_any_of(","), boost::token_compress_on);
+        bool has_standard       = false;
+        bool has_plain_high_flow = false;
         for (std::string &v : variants) {
             boost::algorithm::trim(v);
             if (v.rfind("Bowden", 0) == 0)
                 return false; // D9: the X2D (Bowden second extruder) stays Standard-only in phase 1
+            if (!variant_type(v, STANDARD_SUFFIX).empty())
+                has_standard = true;
             const std::string type = variant_type(v, HIGH_FLOW_SUFFIX);
             if (!type.empty() && !is_qualified_high_flow_type(type))
-                high_flow = true;
+                has_plain_high_flow = true;
         }
+        // High Flow is a choice only where the extruder also offers Standard. A lone
+        // "Direct Drive High Flow" entry (Prusa CORE One INDX: every nozzle is a High Flow
+        // nozzle) has nothing to switch to, so it must not turn on the Standard/High Flow selectors.
+        if (has_standard && has_plain_high_flow)
+            high_flow = true;
     }
     return high_flow;
 }

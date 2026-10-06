@@ -287,12 +287,14 @@ static void log_gl_context_details()
 
     while (::glGetError() != GL_NO_ERROR) {}
 
-    BOOST_LOG_TRIVIAL(info) << "OpenGL context: version " << OpenGLManager::get_gl_info().get_version()
+    // Logged at warning level on purpose: the default log_severity_level is "warning", and these
+    // two lines are what a user's log has to carry for a rendering report to be diagnosable.
+    BOOST_LOG_TRIVIAL(warning) << "OpenGL context: version " << OpenGLManager::get_gl_info().get_version()
                             << " (" << major << "." << minor << "), profile " << profile
                             << ", GLSL " << OpenGLManager::get_gl_info().get_glsl_version()
                             << ", renderer " << OpenGLManager::get_gl_info().get_renderer()
                             << ", vendor " << OpenGLManager::get_gl_info().get_vendor();
-    BOOST_LOG_TRIVIAL(info) << "OpenGL default framebuffer: RGBA bits " << red << "/" << green << "/" << blue << "/" << alpha
+    BOOST_LOG_TRIVIAL(warning) << "OpenGL default framebuffer: RGBA bits " << red << "/" << green << "/" << blue << "/" << alpha
                             << ", depth bits " << depth << ", stencil bits " << stencil
                             << ", sample buffers " << sample_buffers << ", samples " << samples
                             << ", multisample " << (OpenGLManager::can_multisample() ? "enabled" : "disabled")

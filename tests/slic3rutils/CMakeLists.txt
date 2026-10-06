@@ -54,6 +54,7 @@ add_executable(${_TEST_NAME}_tests
     blender_launcher_tests.cpp
     freecad_launcher_tests.cpp
     instance_routing_tests.cpp
+    startup_wizard_tests.cpp
     page_server_security_tests.cpp
     sentry_scrub_tests.cpp
     dual_nozzle_layout_tests.cpp

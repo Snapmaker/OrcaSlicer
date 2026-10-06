@@ -1,0 +1,66 @@
+{
+    "type": "filament",
+    "name": "Polymaker HT-PLA Pro @U1",
+    "inherits": "Generic PLA @U1 0.4 nozzle",
+    "from": "system",
+    "setting_id": "GFSPM04_43",
+    "filament_id": "PMPL60",
+    "instantiation": "true",
+    "nozzle_temperature_range_low": [
+        "210"
+    ],
+    "nozzle_temperature_range_high": [
+        "230"
+    ],
+    "cool_plate_temp": [
+        "0"
+    ],
+    "cool_plate_temp_initial_layer": [
+        "0"
+    ],
+    "hot_plate_temp": [
+        "60"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "60"
+    ],
+    "textured_plate_temp": [
+        "0"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "0"
+    ],
+    "graphic_effect_plate_temp": [
+        "60"
+    ],
+    "graphic_effect_plate_temp_initial_layer": [
+        "60"
+    ],
+    "overhang_fan_threshold": [
+        "0%"
+    ],
+    "slow_down_layer_time": [
+        "6"
+    ],
+    "slow_down_min_speed": [
+        "15"
+    ],
+    "filament_cost": [
+        "60"
+    ],
+    "filament_flow_ratio": [
+        "0.92"
+    ],
+    "filament_max_volumetric_speed": [
+        "16"
+    ],
+    "temperature_vitrification": [
+        "60"
+    ],
+    "filament_vendor": [
+        "Polymaker"
+    ],
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ]
+}

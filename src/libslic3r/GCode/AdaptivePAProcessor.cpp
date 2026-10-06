@@ -75,7 +75,9 @@ AdaptivePAProcessor::AdaptivePAProcessor(GCode &gcodegen, const std::vector<unsi
     // Constructor body can be used for further initialization if necessary
     for (unsigned int tool : tools_used) {
         // Only enable model for the tool if both PA and adaptive PA options are enabled
+        // enable_pressure_advance is flow-variant; read it through get_value_at.
         if (m_config.adaptive_pressure_advance.get_at(tool) && filament_pa_enabled(m_config, tool)) {
+            m_enabled = true;
             auto interpolator = std::make_unique<AdaptivePAInterpolator>();
             // Get calibration values from extruder
             std::string pa_calibration_values = m_config.adaptive_pressure_advance_model.get_at(tool);
@@ -105,6 +107,16 @@ AdaptivePAInterpolator* AdaptivePAProcessor::getInterpolator(unsigned int tool_i
  * @return A string containing the processed G-code with adaptive pressure advance applied.
  */
 std::string AdaptivePAProcessor::process_layer(std::string &&gcode) {
+    // Without PA_CHANGE tags the loop below would only terminate the layer's last line
+    // and consume PA_RESET markers. Skip the scan when no used tool has adaptive PA
+    // and this layer has neither tag. Keep scanning when PA_RESET is present so
+    // Edge's in-band reset_marker() never leaks into the output.
+    if (!m_enabled && gcode.find("; PA_CHANGE") == std::string::npos &&
+        gcode.find(PA_RESET_TAG) == std::string::npos) {
+        if (!gcode.empty() && gcode.back() != '\n')
+            gcode += '\n';
+        return std::move(gcode);
+    }
     std::istringstream stream(gcode);
     std::string line;
     std::ostringstream output;

@@ -4,8 +4,11 @@
 #include <string>
 
 #include "libslic3r/GCode.hpp"
+#include "libslic3r/GCodeReader.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "test_data.hpp"
+
+#include <cmath>
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
@@ -141,4 +144,84 @@ TEST_CASE("Toolchange custom gcode is not split by FanMover", "[GCode][FanMover]
     const size_t end = gcode.find("; custom gcode end", start);
     REQUIRE(end != std::string::npos);
     CHECK(gcode.substr(start, end - start).find("G1 X10 F5000\nG1 X70 F5000") != std::string::npos);
+}
+
+TEST_CASE("Klipper object labels name each copy without the characters Klipper cannot parse", "[GCode]")
+{
+    const std::pair<const char *, const char *> cases[] = {
+        {"my part (2)", "my_part_2"},
+        {"(cube)",      "cube"},
+    };
+    for (const auto &[name, label] : cases) {
+        DYNAMIC_SECTION(name) {
+            DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+            config.set_deserialize_strict({
+                {"gcode_flavor",   "klipper"},
+                {"exclude_object", "1"},
+                {"printable_area", "0x0,400x0,400x400,0x400"},
+            });
+            Print print;
+            Model model;
+            init_print({TestMesh::cube_20x20x20}, print, model, config);
+            REQUIRE(model.objects.size() == 1);
+            model.objects.front()->name = name;
+            model.objects.front()->add_instance()->set_offset(Vec3d(40., 0., 0.));
+            print.apply(model, config);
+
+            const std::string gcode = Test::gcode(print);
+            for (const char *copy : {"0", "1"}) {
+                const std::string instance_label = std::string(label) + "_id_0_copy_" + copy;
+                INFO(instance_label);
+                CHECK(gcode.find("EXCLUDE_OBJECT_DEFINE NAME=" + instance_label + " ") != std::string::npos);
+                CHECK(gcode.find("EXCLUDE_OBJECT_START NAME=" + instance_label + "\n") != std::string::npos);
+            }
+        }
+    }
+}
+
+namespace {
+
+float second_move_extrusion(GCodeReader &reader)
+{
+    float extrusion = -1.f;
+    reader.parse_buffer("G1 X1 E1\nG1 X2 E1\n", [&extrusion](GCodeReader &reader, const GCodeReader::GCodeLine &line) {
+        extrusion = line.dist_E(reader);
+    });
+    return extrusion;
+}
+
+} // namespace
+
+TEST_CASE("A G-code reader measures extrusion as relative or absolute as its config says", "[GCodeReader]")
+{
+    for (const bool relative : {false, true}) {
+        DYNAMIC_SECTION((relative ? "relative E" : "absolute E")) {
+            const float expected = relative ? 1.f : 0.f;
+
+            GCodeConfig config;
+            config.use_relative_e_distances.value = relative;
+            GCodeReader applied;
+            applied.apply_config(config);
+            CHECK(applied.config().use_relative_e_distances.value == relative);
+            CHECK(std::abs(second_move_extrusion(applied) - expected) < 1e-6f);
+
+            DynamicPrintConfig dynamic;
+            dynamic.set_key_value("use_relative_e_distances", new ConfigOptionBool(relative));
+            GCodeReader applied_dynamic;
+            applied_dynamic.apply_config(dynamic);
+            CHECK(std::abs(second_move_extrusion(applied_dynamic) - expected) < 1e-6f);
+
+            GCodeReader copy = applied;
+            CHECK(copy.config().use_relative_e_distances.value == relative);
+            CHECK(std::abs(second_move_extrusion(copy) - expected) < 1e-6f);
+        }
+    }
+}
+
+TEST_CASE("A G-code reader without a config uses the default one", "[GCodeReader]")
+{
+    const bool  relative = GCodeConfig().use_relative_e_distances.value;
+    GCodeReader reader;
+    CHECK(reader.config().use_relative_e_distances.value == relative);
+    CHECK(std::abs(second_move_extrusion(reader) - (relative ? 1.f : 0.f)) < 1e-6f);
 }

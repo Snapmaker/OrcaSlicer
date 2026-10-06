@@ -9,24 +9,26 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: #2b2b2b; color: #ddd; font-family: 'Segoe UI', Roboto, -apple-system, sans-serif; font-size: 14px; padding: 20px; }
 h1 { font-size: 18px; color: #fff; margin-bottom: 16px; }
-.sub { color: #999; font-size: 12px; margin-bottom: 16px; }
+.sub { color: #a6a6a6; font-size: 12px; margin-bottom: 16px; }
 .row { display: flex; flex-direction: column; gap: 16px; align-items: stretch; max-width: 720px; }
 .card.hubcard { max-width: 720px; }
 .card { background: #333; border-radius: 8px; padding: 14px 16px; min-width: 280px; }
-.card h2 { font-size: 13px; color: #9a9a9a; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 10px; }
-.btn { display: inline-block; padding: 7px 14px; border-radius: 6px; background: #0a9e50; color: #fff; cursor: pointer; user-select: none; font-size: 13px; margin: 4px 6px 4px 0; }
+.card h2 { font-size: 13px; color: #a6a6a6; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 10px; }
+.btn { display: inline-block; padding: 7px 14px; border-radius: 6px; background: #0a7a3e; color: #fff; cursor: pointer; user-select: none; font-size: 13px; margin: 4px 6px 4px 0; }
+button.btn { border: 0; font-family: inherit; line-height: normal; }
 .btn.dim { background: #555; }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .btn.warn { background: #8a3a3a; }
 .qr { display: block; margin: 10px 0; background: #fff; border-radius: 6px; }
 .url { font-family: Consolas, monospace; font-size: 12px; color: #9ed; word-break: break-all; user-select: all; margin: 6px 0 10px; }
 .inst { padding: 8px 10px; border-left: 4px solid #0a9e50; background: #2f2f2f; border-radius: 6px; margin-bottom: 6px; }
 .inst .t { font-weight: 600; color: #fff; }
-.inst .m { color: #999; font-size: 12px; word-break: break-all; }
-.note { color: #999; font-size: 12px; margin-top: 8px; }
+.inst .m { color: #a6a6a6; font-size: 12px; word-break: break-all; }
+.note { color: #a6a6a6; font-size: 12px; margin-top: 8px; }
 .note.strong { color: #ccc; font-weight: 600; }
 .err { color: #e88; }
 .adv { margin-top: 10px; }
-.adv > summary { color: #999; font-size: 12px; cursor: pointer; user-select: none; }
+.adv > summary { color: #a6a6a6; font-size: 12px; cursor: pointer; user-select: none; }
 .adv .cmd { font-family: Consolas, monospace; font-size: 12px; color: #d9b; background: #2a2a2a; border-radius: 4px; padding: 6px 8px; margin: 6px 0; word-break: break-all; user-select: all; }
 .login { display: flex; justify-content: space-between; align-items: center; background: #2f2f2f; border-radius: 6px; padding: 4px 8px; margin: 3px 0; font-size: 13px; }
 .btn.small { padding: 2px 8px; font-size: 12px; margin: 0; }
@@ -36,31 +38,41 @@ h1 { font-size: 18px; color: #fff; margin-bottom: 16px; }
 .dest.off { border-left-color: #666; }
 .dest.bad { border-left-color: #8a3a3a; }
 .dest .t { font-weight: 600; color: #fff; }
-.dest .m { color: #999; font-size: 12px; word-break: break-all; }
+.dest .m { color: #a6a6a6; font-size: 12px; word-break: break-all; }
 .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #444; color: #bbb; margin-left: 6px; vertical-align: 1px; }
 .badge.ok { background: #17402a; color: #7fd1a0; }
 .badge.bad { background: #4a2020; color: #e88; }
 .form { background: #2a2a2a; border-radius: 6px; padding: 10px 12px; margin: 8px 0; }
-.form label { display: block; color: #999; font-size: 12px; margin: 8px 0 2px; }
+.form label { display: block; color: #a6a6a6; font-size: 12px; margin: 8px 0 2px; }
 .form input { width: 100%; background: #222; color: #fff; border: 1px solid #555; border-radius: 6px; padding: 5px 8px; font-size: 13px; }
 select { background: #222; color: #ddd; border: 1px solid #555; border-radius: 6px; padding: 3px 6px; font-size: 12px; }
 .inline { display: flex; gap: 6px; align-items: center; }
 .inline input { flex: 1; min-width: 0; }
 .dest .btn.small, .dest select { margin: 8px 6px 0 0; }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid #444; margin-bottom: 10px; }
-.tab { padding: 6px 12px; font-size: 13px; color: #999; cursor: pointer; user-select: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab { padding: 6px 12px; font-size: 13px; color: #a6a6a6; cursor: pointer; user-select: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tab:hover { color: #ccc; }
 .tab.on { color: #fff; border-bottom-color: #0a9e50; }
 .kinds { margin: 8px 0 2px; font-size: 12px; color: #bbb; line-height: 1.9; }
-.kinds .lbl { color: #999; margin-right: 6px; }
+.kinds .lbl { color: #a6a6a6; margin-right: 6px; }
 .kinds label { display: inline-block; margin-right: 10px; white-space: nowrap; cursor: pointer; }
 .kinds label.off { color: #777; }
 .kinds input { vertical-align: -1px; margin-right: 3px; accent-color: #0a9e50; }
 .phonerow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .phoneicon { width: 22px; height: 22px; color: #0a9e50; flex: none; vertical-align: middle; }
 .acts { margin-top: 8px; }
+[role="button"]:focus-visible, button:focus-visible, .tab:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #3d8fd6; outline-offset: 2px; }
+.tab.on { font-weight: 600; }
+@media (prefers-contrast: more) {
+    body { color: #f0f0f0; }
+    .btn { background: #005f2e; box-shadow: inset 0 0 0 1px #bbb; }
+    .btn.dim { background: #666; }
+    .sub, .note, .inst .m, .dest .m, .card h2, .form label, .tab, .kinds .lbl, .srcoffer, .adv > summary { color: #d0d0d0; }
+    .card { box-shadow: inset 0 0 0 1px #888; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 /* AGPL-3.0 section 13: the source offer every remote user must be able to see. */
-.srcoffer { margin: 22px 0 0; color: #777; font-size: 11px; max-width: 720px; }
+.srcoffer { margin: 22px 0 0; color: #a6a6a6; font-size: 11px; max-width: 720px; }
 .srcoffer a { color: #8ab; }
 </style>
 </head>
@@ -90,12 +102,33 @@ select { background: #222; color: #ddd; border: 1px solid #555; border-radius: 6
 <script>
 (function() {
     var info = null, lastUrl = null;
-    function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+    // A clickable span is a button for the keyboard and assistive tech too: role, a place in the Tab
+    // order, and Enter / Space press it. Every span.btn on this page comes through el().
+    function asButton(node) {
+        node.setAttribute('role', 'button');
+        node.tabIndex = 0;
+        node.addEventListener('keydown', function(e) {
+            if (e.target !== node || e.repeat || e.altKey || e.ctrlKey || e.metaKey) return;
+            if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); node.click(); }
+        });
+        return node;
+    }
+    function el(tag, cls, text) {
+        var e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text !== undefined) e.textContent = text;
+        if (tag === 'span' && cls && /(^| )btn( |$)/.test(cls)) asButton(e);
+        return e;
+    }
+    ['new', 'newhidden', 'quit'].forEach(function(id) { var n = document.getElementById(id); if (n) asButton(n); });
     // Every /hub/* call carries the per-run secret the hub wrote into this page (the CSRF guard).
     var SECRET = (document.querySelector('meta[name="hub-secret"]') || {}).content || '';
     function hdrs() { return { 'X-Hub-Secret': SECRET }; }
     function post(path) { return fetch(path, { method: 'POST', headers: hdrs() }).then(function(r) { return r.json(); }); }
-    function drawQr(canvas, text) {
+    // The QR code is a picture: say what it is, and point at the same thing written out as text.
+    function drawQr(canvas, text, what) {
+        canvas.setAttribute('role', 'img');
+        canvas.setAttribute('aria-label', 'QR code for ' + (what || 'this link') + '. The same link is written out as text below it.');
         if (typeof qrcode !== 'function') return false;
         var qr = qrcode(0, 'M'); qr.addData(text); qr.make();
         var n = qr.getModuleCount(), scale = 5, margin = 4 * scale, size = n * scale + 2 * margin;
@@ -149,7 +182,7 @@ select { background: #222; color: #ddd; border: 1px solid #555; border-radius: 6
         lastUrl = key; body.dataset.done = '1';
         body.innerHTML = '';
         if (info.phone && info.url) {
-            var canvas = el('canvas', 'qr'); body.appendChild(canvas); drawQr(canvas, info.url);
+            var canvas = el('canvas', 'qr'); body.appendChild(canvas); drawQr(canvas, info.url, 'the home network phone link');
             body.appendChild(el('div', 'url', info.url));
             body.appendChild(el('div', 'note', 'The fast path: straight to this PC, no internet in the middle. The phone page\'s Connection control switches between this and the Away link, and remembers which one you chose.'));
             portWarning(body);
@@ -192,14 +225,17 @@ select { background: #222; color: #ddd; border: 1px solid #555; border-radius: 6
     // served over plain http on loopback, and navigator.clipboard is only defined in a secure
     // context, so on some browsers it is simply not there.
     function copyButton(text) {
-        var b = el('span', 'btn dim small', 'Copy link');
+        var b = el('button', 'btn dim small', 'Copy link');
+        b.type = 'button';
+        var live = el('span', 'sr'); live.setAttribute('role', 'status'); // "Copied" is spoken, not only shown
         b.onclick = function() {
-            var done = function() { b.textContent = 'Copied'; setTimeout(function() { b.textContent = 'Copy link'; }, 1500); };
+            var done = function() { b.textContent = 'Copied'; live.textContent = 'Link copied'; setTimeout(function() { b.textContent = 'Copy link'; live.textContent = ''; }, 1500); };
             if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(done, function() {}); return; }
             var ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta);
             ta.select(); try { document.execCommand('copy'); done(); } catch (e) {} document.body.removeChild(ta);
         };
-        return b;
+        var wrap = document.createElement('span'); wrap.appendChild(b); wrap.appendChild(live);
+        return wrap;
     }
     // Funnel is documented and never automated. It publishes this hub to the entire public
     // internet with nothing but the path token in front of it - a deliberate trade for somebody
@@ -258,7 +294,7 @@ select { background: #222; color: #ddd; border: 1px solid #555; border-radius: 6
         }
         if (st === 'serving' && rm.url) {
             body.appendChild(el('div', 'note', 'Tailscale required on this machine and remote device.'));
-            var canvas = el('canvas', 'qr'); body.appendChild(canvas); drawQr(canvas, rm.url);
+            var canvas = el('canvas', 'qr'); body.appendChild(canvas); drawQr(canvas, rm.url, 'the away (Tailscale) phone link');
             body.appendChild(el('div', 'url', rm.url));
             body.appendChild(copyButton(rm.url));
             body.appendChild(el('div', 'note', 'Works from anywhere. Scan the Home code as well: the phone page\'s Connection control hops back to it whenever you are on the home network.'));
@@ -271,7 +307,7 @@ select { background: #222; color: #ddd; border: 1px solid #555; border-radius: 6
         (rm.allowed_logins || []).forEach(function(l) {
             var row = el('div', 'login');
             row.appendChild(el('span', '', l));
-            var x = el('span', 'btn dim small', '✕'); x.title = 'Remove';
+            var x = el('span', 'btn dim small', '✕'); x.title = 'Remove'; x.setAttribute('aria-label', 'Remove ' + l);
             x.onclick = function() { post('/hub/remote?remove=' + encodeURIComponent(l)).then(function(j) { info = j; renderRemote(); }); };
             row.appendChild(x);
             body.appendChild(row);
@@ -307,6 +343,7 @@ select { background: #222; color: #ddd; border: 1px solid #555; border-radius: 6
         strip.innerHTML = '';
         TABS.forEach(function(t) {
             var b = el('div', 'tab' + (tab === t[0] ? ' on' : ''), t[1]);
+            asButton(b); b.setAttribute('aria-pressed', tab === t[0] ? 'true' : 'false');
             b.onclick = function() { setTab(t[0]); };
             strip.appendChild(b);
         });
@@ -424,7 +461,7 @@ select { background: #222; color: #ddd; border: 1px solid #555; border-radius: 6
             var s = (server.value || 'https://ntfy.sh').replace(/\/+$/, ''), t = topic.value.trim();
             if (!t) { link.textContent = ''; return; }
             // ntfy:// opens the ntfy app straight at the subscribe step; the https link only opens a browser tab.
-            drawQr(canvas, s.replace(/^https?:\/\//, 'ntfy://') + '/' + t);
+            drawQr(canvas, s.replace(/^https?:\/\//, 'ntfy://') + '/' + t, 'the ntfy subscription');
             link.textContent = s + '/' + t + '   ·   ' + s.replace(/^https?:\/\//, 'ntfy://') + '/' + t;
         }
         gen.onclick = function() { topic.value = randomTopic(); redraw(); };

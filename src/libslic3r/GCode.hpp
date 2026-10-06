@@ -31,6 +31,7 @@
 
 #include <memory>
 #include <map>
+#include <unordered_map>
 #include <set>
 #include <string>
 #include <cfloat>
@@ -603,6 +604,9 @@ private:
     
     bool m_enable_exclude_object;
     std::vector<size_t> m_label_objects_ids;
+    // Object label names by instance, built on first use from the ids assign_object_and_instance_ids() assigns.
+    std::unordered_map<const PrintInstance*, std::string> m_instance_names;
+    const std::string& instance_name(const PrintInstance &instance);
     std::string _encode_label_ids_to_base64(std::vector<size_t> ids);
     // ORCA: Add support for role based fan speed control
     std::array<bool, ExtrusionRole::erCount> m_is_role_based_fan_on;
@@ -782,7 +786,7 @@ private:
     // accommodates the highest-temperature filament of a compatible mixed print (e.g. PLA + TPU).
     int get_bed_temperature_max(const Print& print, const bool is_first_layer) const;
 
-    std::string _extrude(const ExtrusionPath &path, std::string description = "", double speed = -1);
+    std::string _extrude(const ExtrusionPath &path, const std::string &path_description = "", double speed = -1);
     bool _needSAFC(const ExtrusionPath &path);
 
     // Snapmaker: flow variant — read a process-domain vector option
@@ -827,6 +831,10 @@ private:
 };
 
 std::vector<const PrintInstance*> sort_object_instances_by_model_order(const Print& print, bool init_order = false);
+
+// The overhang data ExtrusionQualityEstimator needs for the object layers in `layers` that process_layer() prepares it
+// for, computed ahead of the generator.
+std::vector<PrecomputedOverhangLayer> precompute_overhang_layers(const std::vector<GCode::LayerToPrint> &layers);
 
 }
 

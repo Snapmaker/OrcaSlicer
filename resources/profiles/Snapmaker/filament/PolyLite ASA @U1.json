@@ -1,0 +1,21 @@
+{
+    "type": "filament",
+    "name": "PolyLite ASA @U1",
+    "inherits": "Generic ASA @U1 0.4 nozzle",
+    "from": "system",
+    "setting_id": "GFSPM04_52",
+    "filament_id": "GFB61",
+    "instantiation": "true",
+    "filament_density": [
+        "1.02"
+    ],
+    "filament_cost": [
+        "23.6"
+    ],
+    "filament_vendor": [
+        "Polymaker"
+    ],
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ]
+}

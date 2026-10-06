@@ -78,6 +78,7 @@ private:
     double m_next_feedrate; ///< First feed rate (speed) for the upcomming island.
     double m_current_feedrate; ///< Current, latest feedrate.
     int m_last_extruder_id; ///< Last used extruder ID.
+    bool m_enabled{false}; ///< Whether any used tool has both PA and adaptive PA, the only ones that emit PA_CHANGE tags.
 
     std::regex m_pa_change_pattern; ///< Regular expression to detect PA_CHANGE pattern.
     std::regex m_g1_f_pattern; ///< Regular expression to detect G1 F pattern.

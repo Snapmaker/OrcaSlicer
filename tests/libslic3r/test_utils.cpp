@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/Utils.hpp"
 #include <test_utils.hpp>
@@ -10,11 +11,14 @@
 
 #include <atomic>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <string>
 #include <system_error>
 #include <thread>
+#include <tuple>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -824,4 +828,99 @@ TEST_CASE("AppConfig save round-trips through the atomic helper", "[utils][atomi
     const std::string load_err = reader.load();
     REQUIRE(load_err.empty());
     REQUIRE(reader.get("atomic_roundtrip_key") == "atomic-value");
+}
+
+TEST_CASE("ascii_iequals compares ASCII letters regardless of case", "[Utils]")
+{
+    CHECK(ascii_iequals("set_velocity_limit", "SET_VELOCITY_LIMIT"));
+    CHECK(ascii_iequals("G28", "g28"));
+    CHECK(ascii_iequals("", ""));
+    CHECK_FALSE(ascii_iequals("G28", "G29"));
+    CHECK_FALSE(ascii_iequals("G2", "G28"));
+    CHECK_FALSE(ascii_iequals("G28", "G2"));
+    // Non-letters 0x20 apart are not equal.
+    CHECK_FALSE(ascii_iequals("[", "{"));
+    CHECK_FALSE(ascii_iequals("@", "`"));
+}
+
+TEST_CASE("atof_decimal_point parses what atof parses in the C locale", "[LocalesUtils]")
+{
+    const auto cases = {
+        std::pair<const char *, double>{"5", 5.},
+        {"  12.5", 12.5},
+        {"\t+3", 3.},
+        {"\r\n7", 7.},
+        {"-1.25", -1.25},
+        {"1e2", 100.},
+        {".5", 0.5},
+        {"12.5;comment", 12.5},
+        {"+-5", 0.},
+        {"1.5abc", 1.5},
+        {"-", 0.},
+        {"+", 0.},
+        {"-abc", 0.},
+        {"+ 5", 0.},
+    };
+    for (const auto &[text, value] : cases) {
+        DYNAMIC_SECTION("parse [" << text << "]") {
+            CHECK(std::abs(atof_decimal_point(text) - value) < 1e-12);
+        }
+    }
+}
+
+TEST_CASE("Floats print as printf prints them in the C locale", "[LocalesUtils]")
+{
+    const std::tuple<double, int, const char *> cases[] = {
+        {0.5,         -1, "0.5"},
+        {25. / 3.,    -1, "8.33333"},
+        {1500.5,      -1, "1500.5"},
+        {1e6,         -1, "1e+06"},
+        {-0.000123,   -1, "-0.000123"},
+        {25. / 3.,     3, "8.333"},
+        {2.,           0, "2"},
+        {1e21,         2, "1000000000000000000000.00"},
+    };
+    for (const auto &[value, precision, text] : cases) {
+        DYNAMIC_SECTION(text) {
+            CHECK(float_to_string_decimal_point(value, precision) == text);
+        }
+    }
+}
+
+TEST_CASE("Floats print with a decimal point in a locale whose decimal separator is a comma", "[LocalesUtils]")
+{
+    CNumericLocalesSetter outer;
+    const char *candidates[] = {"de_DE.UTF-8", "de_DE", "fr_FR.UTF-8", "fr_FR", "C"};
+    bool applied_comma = false;
+    for (const char *name : candidates) {
+        if (std::strcmp(name, "C") == 0)
+            continue;
+        if (std::setlocale(LC_NUMERIC, name) != nullptr) {
+            applied_comma = true;
+            break;
+        }
+    }
+    if (!applied_comma) {
+        WARN("no locale with a comma decimal separator is installed");
+        return;
+    }
+    CHECK(float_to_string_decimal_point(1500.5) == "1500.5");
+    CHECK(float_to_string_decimal_point(25. / 3., 3) == "8.333");
+}
+
+TEST_CASE("atof_decimal_point and string_to_double_decimal_point return 0 for text with no number", "[LocalesUtils]")
+{
+    // fast_float leaves the output untouched on failure; the result must not be indeterminate.
+    // Text with no leading number must give exactly what atof gives: 0 (e.g. an axis letter or a G4
+    // parameter that is not followed by a digit).
+    const char *no_number[] = {"", "abc", "G4 P1000", "-", "+", "-abc", "+-5", ";comment 5", "   "};
+    for (const char *text : no_number) {
+        DYNAMIC_SECTION("no number [" << text << "]") {
+            REQUIRE(atof_decimal_point(text) == 0.);
+            size_t pos = 12345;
+            REQUIRE(string_to_double_decimal_point(text, &pos) == 0.);
+            REQUIRE(pos == 0);
+            REQUIRE(string_to_double_decimal_point(std::string_view(text)) == 0.);
+        }
+    }
 }

@@ -103,6 +103,7 @@ public:
     std::string toolchange_prefix() const;
     std::string toolchange(unsigned int extruder_id);
     std::string set_speed(double F, const std::string &comment = std::string(), const std::string &cooling_marker = std::string());
+    void        set_speed(std::string &out, double F, const std::string &comment = std::string(), const std::string &cooling_marker = std::string());
     // SoftFever NOTE: the returned speed is mm/minute
     double      get_current_speed() const { return m_current_speed;}
 
@@ -145,6 +146,10 @@ public:
     //BBS: generate G2 or G3 extrude which moves by arc
     std::string extrude_arc_to_xy(const Vec2d &point, const Vec2d &center_offset, double dE, const bool is_ccw, const std::string &comment = std::string(), bool force_no_extrusion = false);
     std::string extrude_to_xyz(const Vec3d &point, double dE, const std::string &comment = std::string(), bool force_no_extrusion = false);
+    // Each appends its line to `out` (Orca #16108). Returning overloads above wrap these.
+    void        extrude_to_xy(std::string &out, const Vec2d &point, double dE, const std::string &comment = std::string(), bool force_no_extrusion = false);
+    void        extrude_arc_to_xy(std::string &out, const Vec2d &point, const Vec2d &center_offset, double dE, const bool is_ccw, const std::string &comment = std::string(), bool force_no_extrusion = false);
+    void        extrude_to_xyz(std::string &out, const Vec3d &point, double dE, const std::string &comment = std::string(), bool force_no_extrusion = false);
     std::string retract(bool before_wipe = false, double retract_length = 0);
     std::string retract_for_toolchange(bool before_wipe = false, double retract_length = 0);
     std::string unretract();
@@ -347,8 +352,14 @@ public:
     }
 
     std::string string() {
+        std::string out;
+        this->append_to(out);
+        return out;
+    }
+
+    void append_to(std::string &out) {
         *ptr_err.ptr ++ = '\n';
-        return std::string(this->buf, ptr_err.ptr - buf);
+        out.append(this->buf, ptr_err.ptr - buf);
     }
 
 protected:

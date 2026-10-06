@@ -1,6 +1,6 @@
 {
     "name": "Creality",
-    "version": "02.03.02.01",
+    "version": "02.03.02.02",
     "force_update": "0",
     "description": "Creality configurations",
     "machine_model_list": [
@@ -167,6 +167,10 @@
         {
             "name": "Creality SPARKX i7",
             "sub_path": "machine/Creality SPARKX i7.json"
+        },
+        {
+            "name": "Creality SPARKX i8",
+            "sub_path": "machine/Creality SPARKX i8.json"
         },
         {
             "name": "Creality CR-10S Pro",
@@ -1535,6 +1539,30 @@
             "sub_path": "process/0.40mm Standard @Creality SPARKX i7 0.8 nozzle.json"
         },
         {
+            "name": "0.08mm Standard @Creality SPARKX i8 0.4 nozzle",
+            "sub_path": "process/0.08mm Standard @Creality SPARKX i8 0.4 nozzle.json"
+        },
+        {
+            "name": "0.12mm Standard @Creality SPARKX i8 0.4 nozzle",
+            "sub_path": "process/0.12mm Standard @Creality SPARKX i8 0.4 nozzle.json"
+        },
+        {
+            "name": "0.16mm Standard @Creality SPARKX i8 0.4 nozzle",
+            "sub_path": "process/0.16mm Standard @Creality SPARKX i8 0.4 nozzle.json"
+        },
+        {
+            "name": "0.20mm Standard @Creality SPARKX i8 0.4 nozzle",
+            "sub_path": "process/0.20mm Standard @Creality SPARKX i8 0.4 nozzle.json"
+        },
+        {
+            "name": "0.24mm Standard @Creality SPARKX i8 0.4 nozzle",
+            "sub_path": "process/0.24mm Standard @Creality SPARKX i8 0.4 nozzle.json"
+        },
+        {
+            "name": "0.28mm Standard @Creality SPARKX i8 0.4 nozzle",
+            "sub_path": "process/0.28mm Standard @Creality SPARKX i8 0.4 nozzle.json"
+        },
+        {
             "name": "0.42mm SuperDraft @Creality K2 0.6 nozzle",
             "sub_path": "process/0.42mm SuperDraft @Creality K2 0.6 nozzle.json"
         },
@@ -1973,6 +2001,10 @@
             "sub_path": "filament/CR-PETG @SPARKX i7-all.json"
         },
         {
+            "name": "CR-PETG @SPARKX i8-all",
+            "sub_path": "filament/CR-PETG @SPARKX i8-all.json"
+        },
+        {
             "name": "CR-PLA @Ender-3 V4-all",
             "sub_path": "filament/CR-PLA @Ender-3 V4-all.json"
         },
@@ -2007,6 +2039,10 @@
         {
             "name": "CR-PLA @SPARKX i7-all",
             "sub_path": "filament/CR-PLA @SPARKX i7-all.json"
+        },
+        {
+            "name": "CR-PLA @SPARKX i8-all",
+            "sub_path": "filament/CR-PLA @SPARKX i8-all.json"
         },
         {
             "name": "CR-PLA Carbon @K1 Max_CFS-C-all",
@@ -2045,6 +2081,10 @@
             "sub_path": "filament/CR-PLA Fluo @SPARKX i7-all.json"
         },
         {
+            "name": "CR-PLA Fluo @SPARKX i8-all",
+            "sub_path": "filament/CR-PLA Fluo @SPARKX i8-all.json"
+        },
+        {
             "name": "CR-PLA Matte @Ender-3 V4-all",
             "sub_path": "filament/CR-PLA Matte @Ender-3 V4-all.json"
         },
@@ -2071,6 +2111,10 @@
         {
             "name": "CR-PLA Matte @SPARKX i7-all",
             "sub_path": "filament/CR-PLA Matte @SPARKX i7-all.json"
+        },
+        {
+            "name": "CR-PLA Matte @SPARKX i8-all",
+            "sub_path": "filament/CR-PLA Matte @SPARKX i8-all.json"
         },
         {
             "name": "CR-Silk @Ender-3 V4-all",
@@ -2107,6 +2151,10 @@
         {
             "name": "CR-Silk @SPARKX i7-all",
             "sub_path": "filament/CR-Silk @SPARKX i7-all.json"
+        },
+        {
+            "name": "CR-Silk @SPARKX i8-all",
+            "sub_path": "filament/CR-Silk @SPARKX i8-all.json"
         },
         {
             "name": "CR-TPU @K1 Max_CFS-C-all",
@@ -2169,6 +2217,10 @@
             "sub_path": "filament/EN-PLA+ @SPARKX i7-all.json"
         },
         {
+            "name": "EN-PLA+ @SPARKX i8-all",
+            "sub_path": "filament/EN-PLA+ @SPARKX i8-all.json"
+        },
+        {
             "name": "ENDER FAST PLA @K2 Pro-all",
             "sub_path": "filament/ENDER FAST PLA @K2 Pro-all.json"
         },
@@ -2179,6 +2231,10 @@
         {
             "name": "ENDER FAST PLA @SPARKX i7-all",
             "sub_path": "filament/ENDER FAST PLA @SPARKX i7-all.json"
+        },
+        {
+            "name": "ENDER FAST PLA @SPARKX i8-all",
+            "sub_path": "filament/ENDER FAST PLA @SPARKX i8-all.json"
         },
         {
             "name": "Ender-PLA @Ender-3 V4-all",
@@ -2207,6 +2263,10 @@
         {
             "name": "Ender-PLA @SPARKX i7-all",
             "sub_path": "filament/Ender-PLA @SPARKX i7-all.json"
+        },
+        {
+            "name": "Ender-PLA @SPARKX i8-all",
+            "sub_path": "filament/Ender-PLA @SPARKX i8-all.json"
         },
         {
             "name": "Generic ABS @Creality",
@@ -2497,6 +2557,10 @@
             "sub_path": "filament/Generic PETG @SPARKX i7-all.json"
         },
         {
+            "name": "Generic PETG @SPARKX i8-all",
+            "sub_path": "filament/Generic PETG @SPARKX i8-all.json"
+        },
+        {
             "name": "Generic PETG-CF @K1 Max_CFS-C-all",
             "sub_path": "filament/Generic PETG-CF @K1 Max_CFS-C-all.json"
         },
@@ -2573,6 +2637,10 @@
             "sub_path": "filament/Generic PLA @SPARKX i7-all.json"
         },
         {
+            "name": "Generic PLA @SPARKX i8-all",
+            "sub_path": "filament/Generic PLA @SPARKX i8-all.json"
+        },
+        {
             "name": "Generic PLA High Speed @Creality K2-all",
             "sub_path": "filament/Generic PLA High Speed @Creality K2-all.json"
         },
@@ -2629,6 +2697,10 @@
             "sub_path": "filament/Generic PLA-CF @SPARKX i7-all.json"
         },
         {
+            "name": "Generic PLA-CF @SPARKX i8-all",
+            "sub_path": "filament/Generic PLA-CF @SPARKX i8-all.json"
+        },
+        {
             "name": "Generic PLA-Silk @Ender-3 V4-all",
             "sub_path": "filament/Generic PLA-Silk @Ender-3 V4-all.json"
         },
@@ -2663,6 +2735,14 @@
         {
             "name": "Generic PLA-Silk @SPARKX i7-all",
             "sub_path": "filament/Generic PLA-Silk @SPARKX i7-all.json"
+        },
+        {
+            "name": "Generic PLA-Silk @SPARKX i8-all",
+            "sub_path": "filament/Generic PLA-Silk @SPARKX i8-all.json"
+        },
+        {
+            "name": "Generic Support for PLA @SPARKX i8-all",
+            "sub_path": "filament/Generic Support for PLA @SPARKX i8-all.json"
         },
         {
             "name": "fdm_filament_pp",
@@ -2925,6 +3005,10 @@
             "sub_path": "filament/Hyper Luminous @SPARKX i7-all.json"
         },
         {
+            "name": "Hyper Luminous @SPARKX i8-all",
+            "sub_path": "filament/Hyper Luminous @SPARKX i8-all.json"
+        },
+        {
             "name": "Hyper Marble @K1 Max_CFS-C-all",
             "sub_path": "filament/Hyper Marble @K1 Max_CFS-C-all.json"
         },
@@ -2951,6 +3035,10 @@
         {
             "name": "Hyper Marble @SPARKX i7-all",
             "sub_path": "filament/Hyper Marble @SPARKX i7-all.json"
+        },
+        {
+            "name": "Hyper Marble @SPARKX i8-all",
+            "sub_path": "filament/Hyper Marble @SPARKX i8-all.json"
         },
         {
             "name": "Hyper PA6-CF @K2 Pro-all",
@@ -3021,6 +3109,10 @@
             "sub_path": "filament/Hyper PETG @SPARKX i7-all.json"
         },
         {
+            "name": "Hyper PETG @SPARKX i8-all",
+            "sub_path": "filament/Hyper PETG @SPARKX i8-all.json"
+        },
+        {
             "name": "Hyper PETG-CF @K1 Max_CFS-C-all",
             "sub_path": "filament/Hyper PETG-CF @K1 Max_CFS-C-all.json"
         },
@@ -3089,6 +3181,10 @@
             "sub_path": "filament/Hyper PLA @SPARKX i7-all.json"
         },
         {
+            "name": "Hyper PLA @SPARKX i8-all",
+            "sub_path": "filament/Hyper PLA @SPARKX i8-all.json"
+        },
+        {
             "name": "Hyper PLA-CF @Ender-3 V4-all",
             "sub_path": "filament/Hyper PLA-CF @Ender-3 V4-all.json"
         },
@@ -3125,6 +3221,10 @@
             "sub_path": "filament/Hyper PLA-CF @SPARKX i7-all.json"
         },
         {
+            "name": "Hyper PLA-CF @SPARKX i8-all",
+            "sub_path": "filament/Hyper PLA-CF @SPARKX i8-all.json"
+        },
+        {
             "name": "Hyper PPA-CF @K2 Pro-all",
             "sub_path": "filament/Hyper PPA-CF @K2 Pro-all.json"
         },
@@ -3157,6 +3257,10 @@
             "sub_path": "filament/Hyper Stardust @SPARKX i7-all.json"
         },
         {
+            "name": "Hyper Stardust @SPARKX i8-all",
+            "sub_path": "filament/Hyper Stardust @SPARKX i8-all.json"
+        },
+        {
             "name": "Soleyin Basic PETG @K2 Pro-all",
             "sub_path": "filament/Soleyin Basic PETG @K2 Pro-all.json"
         },
@@ -3167,6 +3271,10 @@
         {
             "name": "Soleyin Basic PETG @SPARKX i7-all",
             "sub_path": "filament/Soleyin Basic PETG @SPARKX i7-all.json"
+        },
+        {
+            "name": "Soleyin Basic PETG @SPARKX i8-all",
+            "sub_path": "filament/Soleyin Basic PETG @SPARKX i8-all.json"
         },
         {
             "name": "Soleyin Ultra PLA @Ender-3 V4-all",
@@ -3199,6 +3307,10 @@
         {
             "name": "Soleyin Ultra PLA @SPARKX i7-all",
             "sub_path": "filament/Soleyin Ultra PLA @SPARKX i7-all.json"
+        },
+        {
+            "name": "Soleyin Ultra PLA @SPARKX i8-all",
+            "sub_path": "filament/Soleyin Ultra PLA @SPARKX i8-all.json"
         }
     ],
     "machine_list": [
@@ -3585,6 +3697,10 @@
         {
             "name": "Creality SPARKX i7 0.8 nozzle",
             "sub_path": "machine/Creality SPARKX i7 0.8 nozzle.json"
+        },
+        {
+            "name": "Creality SPARKX i8 0.4 nozzle",
+            "sub_path": "machine/Creality SPARKX i8 0.4 nozzle.json"
         },
         {
             "name": "Creality CR-10S Pro 0.4 nozzle",

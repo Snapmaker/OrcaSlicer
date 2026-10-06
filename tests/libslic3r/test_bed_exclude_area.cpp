@@ -188,7 +188,11 @@ TEST_CASE("Every shipped bed_exclude_area keeps its excluded region and its arra
         // bounding box unless the region does.
         CHECK(xor_area_mm2(box_polygons(bed_exclude_area_boxes(pts)), now) < 1e-6);
     }
-    CHECK(seen_broken == broken_before);
+    // Every disagreeing list must be a known one (checked above). A known one may stop shipping
+    // (the Kobra 3 presets now carry an empty list), so this is a subset check, not equality;
+    // the ring itself stays covered by the dedicated test below.
+    for (const std::string &value : seen_broken)
+        CHECK(broken_before.count(value) == 1);
 }
 
 TEST_CASE("Upstream Orca's Kobra 3 ring reads as a 2 mm frame, not the whole bed", "[BedExcludeArea]")

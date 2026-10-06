@@ -1677,6 +1677,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloats,               machine_min_travel_rate))
     // M205 S... [mm/sec]
     ((ConfigOptionFloats,               machine_min_extruding_rate))
+    // Bed-slinger mass model (A2L): Y-axis drive force [N] and bed mass [g], 0 = not modelled.
+    ((ConfigOptionFloat,                machine_max_force_Y))
+    ((ConfigOptionFloat,                machine_bed_mass_Y))
 
     //resonance avoidance ported from qidi slicer
     ((ConfigOptionBool,                 resonance_avoidance))

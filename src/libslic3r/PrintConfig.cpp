@@ -4974,6 +4974,29 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionFloats{ 0., 0. });
 
+    // Bed-slinger mass model (Bambu Studio, Bambu Lab A2L): the Y axis drives the bed and the part on
+    // it with a limited force, so its usable acceleration falls as the printed mass grows. Read by
+    // GCode::mass_load_limited_machine_acceleration, which hands the result to layer_change_gcode as
+    // curr_y_acceleration_limit (with curr_accumulated_mass and curr_layer_mass). 0 = not modelled:
+    // the limit is then just the machine's Y acceleration limit.
+    def = this->add("machine_max_force_Y", coFloat);
+    def->full_label = L("Maximum force of the Y axis");
+    def->category   = L("Machine limits");
+    def->tooltip    = L("The allowed maximum output force of Y axis");
+    def->sidetext   = "N"; // Newton
+    def->min        = 0;
+    def->mode       = comDevelop;
+    def->set_default_value(new ConfigOptionFloat(0));
+
+    def = this->add("machine_bed_mass_Y", coFloat);
+    def->full_label = L("Bed mass of the Y axis");
+    def->category   = L("Machine limits");
+    def->tooltip    = L("The machine bed mass load of Y axis");
+    def->sidetext   = "g"; // gram
+    def->min        = 0;
+    def->mode       = comDevelop;
+    def->set_default_value(new ConfigOptionFloat(0));
+
     // M204 P... [mm/sec^2]
     def = this->add("machine_max_acceleration_extruding", coFloats);
     def->full_label = L("Maximum acceleration for extruding");
@@ -11365,7 +11388,7 @@ static std::map<t_custom_gcode_key, t_config_option_keys> s_CustomGcodeSpecificP
     {"machine_start_gcode",         {}},
     {"machine_end_gcode",           {"layer_num", "layer_z", "max_layer_z", "filament_extruder_id"}},
     {"before_layer_change_gcode",   {"layer_num", "layer_z", "max_layer_z"}},
-    {"layer_change_gcode",          {"layer_num", "layer_z", "max_layer_z"}},
+    {"layer_change_gcode",          {"layer_num", "layer_z", "max_layer_z", "curr_y_acceleration_limit", "curr_accumulated_mass", "curr_layer_mass"}},
     {"timelapse_gcode",             {"layer_num", "layer_z", "max_layer_z"}},
     {"change_filament_gcode",       {"layer_num", "layer_z", "max_layer_z", "next_extruder", "previous_extruder", "fan_speed",
                                "first_flush_volume", "flush_length_1", "flush_length_2", "flush_length_3", "flush_length_4",
@@ -11408,6 +11431,11 @@ CustomGcodeSpecificConfigDef::CustomGcodeSpecificConfigDef()
     def = this->add("filament_extruder_id", coInt);
     def->label = L("Filament extruder ID");
     def->tooltip = L("The current extruder ID. The same as current_extruder.");
+
+// layer_change_gcode: Bambu Studio's bed-slinger mass model (GCode::process_layer)
+    new_def("curr_y_acceleration_limit", coFloat, "Current Y acceleration limit", "The Y acceleration (mm/s^2) the printed mass so far allows: machine_max_force_Y / (machine_bed_mass_Y + printed mass), at most the machine's Y acceleration limit. The machine's Y acceleration limit when those two are not set.");
+    new_def("curr_accumulated_mass", coFloat, "Accumulated mass", "Filament mass (g) printed before this layer change.");
+    new_def("curr_layer_mass", coFloat, "Layer mass", "Filament mass (g) printed since the previous layer change.");
 
 // change_filament_gcode
     new_def("previous_extruder", coInt, "Previous extruder", "Index of the extruder that is being unloaded. The index is zero based (first extruder has index 0).");

@@ -638,6 +638,8 @@ private:
     // zaa_enabled off emits byte-identical G-code.
     bool                                m_zaa_z_dirty{ false };
     float                               m_max_layer_z{ 0.0f };
+    // Filament mass (g) printed up to the previous layer change, for curr_layer_mass.
+    double                              m_last_layer_accumulated_mass{ 0.0 };
     float                               m_last_width{ 0.0f };
 
     // SM_Orca

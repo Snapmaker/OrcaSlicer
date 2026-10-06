@@ -1,6 +1,6 @@
 {
     "name": "Volumic",
-    "version": "02.03.01.10",
+    "version": "02.04.00.06",
     "force_update": "1",
     "description": "VOLUMIC configurations",
     "machine_model_list": [
@@ -83,6 +83,10 @@
         {
             "name": "VS30ULTRA",
             "sub_path": "machine/VS30ULTRA.json"
+        },
+        {
+            "name": "VS30SC2 Performance",
+            "sub_path": "machine/VS30SC2 Performance.json"
         }
     ],
     "machine_list": [
@@ -201,6 +205,10 @@
         {
             "name": "VS30ULTRA (0.4 nozzle)",
             "sub_path": "machine/VS30ULTRA (0.4 nozzle).json"
+        },
+        {
+            "name": "VS30SC2 Performance (0.4 nozzle)",
+            "sub_path": "machine/VS30SC2 Performance (0.4 nozzle).json"
         }
     ],
     "process_list": [
@@ -467,6 +475,66 @@
         {
             "name": "Very high speed - 0.30mm",
             "sub_path": "process/Very high speed - 0.30mm.json"
+        },
+        {
+            "name": "Full performance VS30 - 0.10mm",
+            "sub_path": "process/Full performance VS30 - 0.10mm.json"
+        },
+        {
+            "name": "Full performance VS30 - 0.15mm",
+            "sub_path": "process/Full performance VS30 - 0.15mm.json"
+        },
+        {
+            "name": "Full performance VS30 - 0.20mm",
+            "sub_path": "process/Full performance VS30 - 0.20mm.json"
+        },
+        {
+            "name": "Full performance VS30 - 0.25mm",
+            "sub_path": "process/Full performance VS30 - 0.25mm.json"
+        },
+        {
+            "name": "Full performance VS30 - 0.30mm",
+            "sub_path": "process/Full performance VS30 - 0.30mm.json"
+        },
+        {
+            "name": "High performance VS30 - 0.10mm",
+            "sub_path": "process/High performance VS30 - 0.10mm.json"
+        },
+        {
+            "name": "High performance VS30 - 0.15mm",
+            "sub_path": "process/High performance VS30 - 0.15mm.json"
+        },
+        {
+            "name": "High performance VS30 - 0.20mm",
+            "sub_path": "process/High performance VS30 - 0.20mm.json"
+        },
+        {
+            "name": "High performance VS30 - 0.25mm",
+            "sub_path": "process/High performance VS30 - 0.25mm.json"
+        },
+        {
+            "name": "High performance VS30 - 0.30mm",
+            "sub_path": "process/High performance VS30 - 0.30mm.json"
+        },
+        {
+            "name": "Normal performance VS30 - 0.10mm",
+            "sub_path": "process/Normal performance VS30 - 0.10mm.json"
+        },
+        {
+            "name": "Normal performance VS30 - 0.15mm",
+            "sub_path": "process/Normal performance VS30 - 0.15mm.json"
+        },
+        {
+            "name": "Normal performance VS30 - 0.20mm",
+            "sub_path": "process/Normal performance VS30 - 0.20mm.json"
+        },
+        {
+            "name": "Normal performance VS30 - 0.25mm",
+            "sub_path": "process/Normal performance VS30 - 0.25mm.json"
+        },
+        {
+            "name": "Normal performance VS30 - 0.30mm",
+            "sub_path": "process/Normal performance VS30 - 0.30mm.json"
         }
     ],
     "filament_list": [
@@ -601,6 +669,22 @@
         {
             "name": "Volumic FLEX93 Ultra (Performance)",
             "sub_path": "filament/Volumic FLEX93 Ultra Performance.json"
+        },
+        {
+            "name": "PA6 CF20 (Performance)",
+            "sub_path": "filament/PA6 CF20 (Performance).json"
+        },
+        {
+            "name": "PPS Carbone (Performance)",
+            "sub_path": "filament/PPS Carbone (Performance).json"
+        },
+        {
+            "name": "PETG ESD (Performance)",
+            "sub_path": "filament/PETG ESD (Performance).json"
+        },
+        {
+            "name": "Volumic PCTG Ultra (Performance)",
+            "sub_path": "filament/Volumic PCTG Ultra (Performance).json"
         }
     ]
 }

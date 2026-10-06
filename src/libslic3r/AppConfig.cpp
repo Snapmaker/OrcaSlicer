@@ -911,16 +911,47 @@ std::string AppConfig::load()
         }
     }
 
+    // The installed printers as the file holds them: the base the next save() merges against.
+    m_vendors_on_disk = m_vendors;
+
     // Override missing or keys with their defaults.
     this->set_defaults();
     m_dirty = false;
     return "";
 }
 
+AppConfig::VendorMap AppConfig::merge_vendor_maps(const VendorMap &base, const VendorMap &mine, const VendorMap &disk)
+{
+    auto has = [](const VendorMap &m, const std::string &vendor, const std::string &model, const std::string &variant) {
+        const auto it_v = m.find(vendor);
+        if (it_v == m.end()) return false;
+        const auto it_m = it_v->second.find(model);
+        return it_m != it_v->second.end() && it_m->second.count(variant) > 0;
+    };
+    VendorMap out;
+    // Every variant either side holds now; what only `base` holds was dropped by both and stays out.
+    auto visit = [&](const VendorMap &side, const VendorMap &other) {
+        for (const auto &v : side)
+            for (const auto &m : v.second)
+                for (const std::string &variant : m.second) {
+                    const bool in_other = has(other, v.first, m.first, variant);
+                    // Both have it: keep. Only this side has it: keep it if this side added it
+                    // (base lacks it), drop it if the other side removed it (base has it).
+                    if (in_other || !has(base, v.first, m.first, variant))
+                        out[v.first][m.first].insert(variant);
+                }
+    };
+    visit(mine, disk);
+    visit(disk, mine);
+    return out;
+}
+
 // Ultra: several slicer instances share this file (the hub keeps them alive for the phone) and
 // whichever saved last used to win, so a printer added, a project opened or presets chosen in one
-// window vanished when another window saved its stale copy. These sections only ever grow, so
-// before writing we union what is on disk into what this instance knows.
+// window vanished when another window saved its stale copy. Before writing, fold in what is on disk:
+// recent projects and per-project presets are unioned; installed printer models are merged three
+// ways against what this instance last read or wrote (merge_vendor_maps), because they also
+// shrink - a plain union brought back every printer unticked in the Printer Selection dialog.
 void AppConfig::merge_shared_from_disk(const std::string& path)
 {
     json j;
@@ -937,17 +968,21 @@ void AppConfig::merge_shared_from_disk(const std::string& path)
         return; // unreadable or corrupt: write what this instance knows, as before
     }
     try {
-        // Installed printer models.
+        // Installed printer models. A file without the list (none written yet) leaves ours alone.
         if (j.contains(MODELS_STR) && j[MODELS_STR].is_array()) {
+            VendorMap disk;
             for (const auto& j_model : j[MODELS_STR]) {
+                if (!j_model.is_object()) continue;
                 const std::string vendor_name = j_model.value("vendor", "");
                 const std::string model_name  = j_model.value("model", "");
                 if (vendor_name.empty() || model_name.empty()) continue;
                 std::vector<std::string> variants;
-                if (!j_model.contains("nozzle_diameter") || !unescape_strings_cstyle(j_model["nozzle_diameter"].get<std::string>(), variants)) continue;
-                auto& variants_here = m_vendors[vendor_name][model_name];
-                for (const auto& v : variants) variants_here.insert(v);
+                if (!j_model.contains("nozzle_diameter") || !j_model["nozzle_diameter"].is_string() ||
+                    !unescape_strings_cstyle(j_model["nozzle_diameter"].get<std::string>(), variants)) continue;
+                auto& variants_there = disk[vendor_name][model_name];
+                for (const auto& v : variants) variants_there.insert(v);
             }
+            m_vendors = merge_vendor_maps(m_vendors_on_disk, m_vendors, disk);
         }
         // Recent projects: entries on disk that this window does not know were opened by another
         // window after this one loaded the file, so they are newer and go first; this window's own
@@ -1165,6 +1200,8 @@ void AppConfig::save()
         BOOST_LOG_TRIVIAL(error) << "Writing backup configuration to " << backup_path << " failed: " << backup_err;
 #endif
 
+    // The file now holds exactly m_vendors: the base for the next three-way merge.
+    m_vendors_on_disk = m_vendors;
     m_retry_save_at = {};
     m_dirty = false;
 }

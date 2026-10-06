@@ -351,10 +351,10 @@ function OnExitFilter() {
 
 	let nTotal = 0;
 	let ModelAll = {};
-	for (vendor in ModelNozzleSelected) {
-		for (model in ModelNozzleSelected[vendor]) {
+	for (let vendor in ModelNozzleSelected) {
+		for (let model in ModelNozzleSelected[vendor]) {
 			let anyChecked = false;
-			for (nozzel in ModelNozzleSelected[vendor][model]) {
+			for (let nozzel in ModelNozzleSelected[vendor][model]) {
 				if (ModelNozzleSelected[vendor][model][nozzel]) {
 					anyChecked = true;
 					break;
@@ -366,10 +366,12 @@ function OnExitFilter() {
 			for (let i = 0; i < pModel.length; i++) {
 				let pm = pModel[i];
 				if (pm['vendor'] == vendor && pm['model'] == model) {
-					ModelAll[model] = {};
-					ModelAll[model]["model"] = model;
-					ModelAll[model]["nozzle_diameter"] = pm["nozzle_diameter"];
-					ModelAll[model]["vendor"] = vendor;
+					// Keyed by vendor too: two vendors may name a model alike.
+					let key = vendor + "\n" + model;
+					ModelAll[key] = {};
+					ModelAll[key]["model"] = model;
+					ModelAll[key]["nozzle_diameter"] = pm["nozzle_diameter"];
+					ModelAll[key]["vendor"] = vendor;
 					nTotal++;
 					break;
 				}

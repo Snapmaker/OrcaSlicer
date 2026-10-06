@@ -6,9 +6,14 @@
 #include <vector>
 
 #include "libslic3r/libslic3r.h"
+#include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/ExtrusionEntity.hpp"
+#include "libslic3r/ExtrusionEntityCollection.hpp"
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/Layer.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/Polyline.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Surface.hpp"
@@ -193,4 +198,119 @@ TEST_CASE("Turning infill does not replace the anchors of another region", "[Pri
         total_area += area(expected);
     }
     REQUIRE(total_area > 0.);
+}
+
+namespace {
+
+const double tab_top_z = 5.0;
+const double narrow_wall = 1.186;
+
+Print &tube_with_tab(Print &print, Model &model, const DynamicPrintConfig &config)
+{
+    ModelObject *object = model.add_object();
+    object->name = "tube_with_tab.stl";
+    object->add_volume(make_cube(20., 30., 10.), ModelVolumeType::MODEL_PART, false);
+    TriangleMesh tab = make_cube(20., 8.5, 5.);
+    tab.translate(0.f, -8.f, 0.f);
+    object->add_volume(std::move(tab), ModelVolumeType::MODEL_PART, false);
+    TriangleMesh bore = make_cube(20. - 2. * narrow_wall, 30. - 2. * narrow_wall, 12.);
+    bore.translate(float(narrow_wall), float(narrow_wall), -1.f);
+    object->add_volume(std::move(bore), ModelVolumeType::NEGATIVE_VOLUME, false);
+    object->add_instance();
+    object->ensure_on_bed();
+
+    print.auto_assign_extruders(object);
+    print.apply(model, config);
+    print.validate();
+    print.set_status_silent();
+    return print;
+}
+
+DynamicPrintConfig narrow_wall_config(bool only_one_wall_top)
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({
+        { "wall_generator",        "arachne" },
+        { "wall_loops",            2 },
+        { "nozzle_diameter",       "0.4" },
+        { "line_width",            0.42 },
+        { "outer_wall_line_width", 0.42 },
+        { "inner_wall_line_width", 0.45 },
+        { "min_bead_width",        "85%" },
+        { "precise_outer_wall",    true },
+        { "wall_sequence",         "inner wall/outer wall" },
+        { "only_one_wall_top",     only_one_wall_top },
+    });
+    return config;
+}
+
+double perimeter_length_at(const Print &print, double print_z)
+{
+    for (const Layer *layer : print.objects().front()->layers()) {
+        if (std::abs(layer->print_z - print_z) > EPSILON)
+            continue;
+        double length = 0.;
+        for (const LayerRegion *region : layer->regions()) {
+            const ExtrusionEntityCollection walls = region->perimeters.flatten();
+            for (const ExtrusionEntity *entity : walls.entities)
+                length += unscaled<double>(entity->length());
+        }
+        return length;
+    }
+    return 0.;
+}
+
+double far_wall_inner_wall_length(const Print &print, double print_z)
+{
+    for (const Layer *layer : print.objects().front()->layers()) {
+        if (std::abs(layer->print_z - print_z) > EPSILON)
+            continue;
+        BoundingBox band = get_extents(layer->lslices);
+        band.min.y()     = band.max.y() - scaled<coord_t>(3.);
+
+        Polylines inner_walls;
+        auto      collect = [&inner_walls](const ExtrusionPaths &paths) {
+            for (const ExtrusionPath &path : paths)
+                if (path.role() == erPerimeter)
+                    inner_walls.emplace_back(path.as_polyline());
+        };
+        for (const LayerRegion *region : layer->regions()) {
+            const ExtrusionEntityCollection walls = region->perimeters.flatten();
+            for (const ExtrusionEntity *entity : walls.entities) {
+                if (const auto *loop = dynamic_cast<const ExtrusionLoop*>(entity))
+                    collect(loop->paths);
+                else if (const auto *multi_path = dynamic_cast<const ExtrusionMultiPath*>(entity))
+                    collect(multi_path->paths);
+                else if (const auto *path = dynamic_cast<const ExtrusionPath*>(entity))
+                    collect({ *path });
+            }
+        }
+        return unscaled<double>(total_length(intersection_pl(inner_walls, band.polygon())));
+    }
+    return 0.;
+}
+
+} // namespace
+
+TEST_CASE("Only one wall on top surfaces keeps the inner walls of narrow walls away from the top surface", "[PrintObject][Perimeters]")
+{
+    struct TabTopLayer {
+        double perimeters;
+        double far_wall_inner_walls;
+    };
+    auto tab_top_layer_for = [](bool only_one_wall_top) {
+        Print print;
+        Model model;
+        tube_with_tab(print, model, narrow_wall_config(only_one_wall_top));
+        print.process();
+        REQUIRE_FALSE(print.objects().empty());
+        return TabTopLayer{ perimeter_length_at(print, tab_top_z), far_wall_inner_wall_length(print, tab_top_z) };
+    };
+
+    const TabTopLayer plain    = tab_top_layer_for(false);
+    const TabTopLayer one_wall = tab_top_layer_for(true);
+
+    REQUIRE(plain.far_wall_inner_walls > 10.);
+    CHECK(one_wall.perimeters < plain.perimeters);
+    CHECK_THAT(one_wall.far_wall_inner_walls, Catch::Matchers::WithinAbs(plain.far_wall_inner_walls, 1.0));
 }

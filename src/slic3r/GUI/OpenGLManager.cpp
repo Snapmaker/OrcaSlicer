@@ -101,7 +101,7 @@ void OpenGLManager::GLInfo::detect() const
     *const_cast<std::string*>(&m_vendor) = gl_get_string_safe(GL_VENDOR, "N/A");
     *const_cast<std::string*>(&m_renderer) = gl_get_string_safe(GL_RENDERER, "N/A");
 
-    BOOST_LOG_TRIVIAL(info) << boost::format("got opengl version %1%, glsl version %2%, vendor %3%")%m_version %m_glsl_version %m_vendor<< std::endl;
+    BOOST_LOG_TRIVIAL(info) << boost::format("got opengl version %1%, glsl version %2%, vendor %3%, renderer %4%")%m_version %m_glsl_version %m_vendor %m_renderer<< std::endl;
 
     int* max_tex_size = const_cast<int*>(&m_max_tex_size);
     glsafe(::glGetIntegerv(GL_MAX_TEXTURE_SIZE, max_tex_size));
@@ -241,6 +241,65 @@ OpenGLManager::~OpenGLManager()
 
 OpenGLManager* OpenGLManager::s_active = nullptr;
 
+// Logs what the context actually is, not what was asked for: profile and the default
+// framebuffer's colour/depth/stencil/sample bits. A missing depth or alpha plane, or a legacy
+// context where a core one was expected, shows up here first (owner logs, macOS in particular).
+// Uses the raw GL calls and drains glGetError afterwards: some of these queries are invalid on
+// one profile or the other, and a debug-build glsafe() must not assert on a diagnostic.
+static void log_gl_context_details()
+{
+    GLint major = 0, minor = 0;
+    if (GLAD_GL_VERSION_3_0) {
+        ::glGetIntegerv(GL_MAJOR_VERSION, &major);
+        ::glGetIntegerv(GL_MINOR_VERSION, &minor);
+    }
+
+    std::string profile = "legacy (pre-3.2, no profile)";
+    bool        core    = false;
+    if (GLAD_GL_VERSION_3_2) {
+        GLint mask = 0;
+        ::glGetIntegerv(GL_CONTEXT_PROFILE_MASK, &mask);
+        core    = (mask & GL_CONTEXT_CORE_PROFILE_BIT) != 0;
+        profile = core ? "core" : ((mask & GL_CONTEXT_COMPATIBILITY_PROFILE_BIT) != 0 ? "compatibility" : "unknown");
+    }
+
+    GLint red = -1, green = -1, blue = -1, alpha = -1, depth = -1, stencil = -1;
+    if (core && GLAD_GL_VERSION_3_0) {
+        // GL_*_BITS are gone from the core profile; ask the default framebuffer instead.
+        ::glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_BACK_LEFT, GL_FRAMEBUFFER_ATTACHMENT_RED_SIZE, &red);
+        ::glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_BACK_LEFT, GL_FRAMEBUFFER_ATTACHMENT_GREEN_SIZE, &green);
+        ::glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_BACK_LEFT, GL_FRAMEBUFFER_ATTACHMENT_BLUE_SIZE, &blue);
+        ::glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_BACK_LEFT, GL_FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE, &alpha);
+        ::glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_DEPTH, GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE, &depth);
+        ::glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_STENCIL, GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &stencil);
+    } else {
+        ::glGetIntegerv(GL_RED_BITS, &red);
+        ::glGetIntegerv(GL_GREEN_BITS, &green);
+        ::glGetIntegerv(GL_BLUE_BITS, &blue);
+        ::glGetIntegerv(GL_ALPHA_BITS, &alpha);
+        ::glGetIntegerv(GL_DEPTH_BITS, &depth);
+        ::glGetIntegerv(GL_STENCIL_BITS, &stencil);
+    }
+    GLint sample_buffers = -1, samples = -1, max_texture_units = -1;
+    ::glGetIntegerv(GL_SAMPLE_BUFFERS, &sample_buffers);
+    ::glGetIntegerv(GL_SAMPLES, &samples);
+    ::glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &max_texture_units);
+
+    while (::glGetError() != GL_NO_ERROR) {}
+
+    BOOST_LOG_TRIVIAL(info) << "OpenGL context: version " << OpenGLManager::get_gl_info().get_version()
+                            << " (" << major << "." << minor << "), profile " << profile
+                            << ", GLSL " << OpenGLManager::get_gl_info().get_glsl_version()
+                            << ", renderer " << OpenGLManager::get_gl_info().get_renderer()
+                            << ", vendor " << OpenGLManager::get_gl_info().get_vendor();
+    BOOST_LOG_TRIVIAL(info) << "OpenGL default framebuffer: RGBA bits " << red << "/" << green << "/" << blue << "/" << alpha
+                            << ", depth bits " << depth << ", stencil bits " << stencil
+                            << ", sample buffers " << sample_buffers << ", samples " << samples
+                            << ", multisample " << (OpenGLManager::can_multisample() ? "enabled" : "disabled")
+                            << ", combined texture units " << max_texture_units
+                            << ", shader set " << (OpenGLManager::get_gl_info().is_version_greater_or_equal_to(3, 1) ? "140" : "110");
+}
+
 bool OpenGLManager::init_gl(bool popup_error)
 {
     s_active = this;
@@ -256,6 +315,7 @@ bool OpenGLManager::init_gl(bool popup_error)
         }
         BOOST_LOG_TRIVIAL(info) << "GLAD loaded OpenGL " << GLAD_VERSION_MAJOR(version) << "." << GLAD_VERSION_MINOR(version);
         m_gl_initialized = true;
+        log_gl_context_details();
         if (GLAD_GL_EXT_texture_compression_s3tc)
             s_compressed_textures_supported = true;
         else
@@ -343,8 +403,10 @@ wxGLContext* OpenGLManager::init_glcontext(wxGLCanvas& canvas)
                 m_context = nullptr;
             }
         }
-        if (m_context == nullptr)
+        if (m_context == nullptr) {
+            BOOST_LOG_TRIVIAL(warning) << "init_glcontext: compatibility profile context refused, falling back to the default context";
             m_context = new wxGLContext(&canvas);
+        }
 
 #ifdef __APPLE__
         // Part of hack to remove crash when closing the application on OSX 10.9.5 when building against newer wxWidgets
@@ -384,6 +446,9 @@ wxGLCanvas* OpenGLManager::create_wxglcanvas(wxWindow& parent)
 
     if (! can_multisample())
         attribList[12] = 0;
+
+    BOOST_LOG_TRIVIAL(info) << "create_wxglcanvas: pixel format requests RGBA 8/8/8/8, depth 24"
+                            << (can_multisample() ? ", stencil 8, 4x multisample" : " (stencil and multisample dropped: multisample unsupported)");
 
     return new wxGLCanvas(&parent, wxID_ANY, attribList, wxDefaultPosition, wxDefaultSize, wxWANTS_CHARS);
 }

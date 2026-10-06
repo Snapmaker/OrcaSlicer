@@ -606,15 +606,20 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
         } else if (boost::starts_with(sline, "G4 ")) {
             // Parse the wait time.
             line.type = CoolingLine::TYPE_G4;
-            size_t pos_S = sline.find('S', 3);
-            size_t pos_P = sline.find('P', 3);
-            // Long-standing quirk, kept so G-code does not change: find() returns npos, which is > 0,
-            // so a line without 'S' (e.g. "G4 P500") parses from npos + 1 == 0, i.e. the whole line,
-            // and reads as 0 - the P dwell never counts toward the layer time. atof_decimal_point
-            // returns 0 for that text exactly as atof did (tested in test_printgcode.cpp).
+            // Only look for the parameters before a trailing comment ("G4 P500 ; Settle" has no S parameter).
+            // find() returns npos when a parameter is absent, so compare against npos, not 0.
+            const size_t comment = sline.find(';', 3);
+            const size_t limit   = comment == std::string::npos ? sline.size() : comment;
+            const auto   find_param = [&sline, limit](char letter) {
+                const size_t pos = sline.find(letter, 3);
+                return pos < limit ? pos : std::string::npos;
+            };
+            const size_t pos_S = find_param('S');
+            const size_t pos_P = find_param('P');
+            // S is seconds, P is milliseconds; a G4 with neither (or without a number) adds no time.
             line.time = line.time_max = float(
-                (pos_S > 0) ? atof_decimal_point(sline.c_str() + pos_S + 1) :
-                (pos_P > 0) ? atof_decimal_point(sline.c_str() + pos_P + 1) * 0.001 : 0.);
+                (pos_S != std::string::npos) ? atof_decimal_point(sline.c_str() + pos_S + 1) :
+                (pos_P != std::string::npos) ? atof_decimal_point(sline.c_str() + pos_P + 1) * 0.001 : 0.);
         } else if (boost::starts_with(sline, ";_FORCE_RESUME_FAN_SPEED")) {
             line.type = CoolingLine::TYPE_FORCE_RESUME_FAN;
         }

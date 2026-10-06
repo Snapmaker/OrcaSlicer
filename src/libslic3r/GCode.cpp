@@ -355,6 +355,32 @@ static inline void check_add_eol(std::string& gcode)
         gcode += '\n';
 }
 
+// Long retraction when cut: active for a filament only when it is switched on AND its distance is
+// positive. A distance of 0 means "this machine does no cut retraction" (Anycubic and Creality
+// filament switchers that feed one nozzle without a cutter ship 0), so a 0 must never reach
+// change_filament_gcode as "M620.11 S1 ... E-0" or any other long-retraction move, whatever
+// long_retractions_when_cut / enable_long_retraction_when_cut say. Bambu presets ship 10-18 mm,
+// for which this is exactly the raw switch. The distances themselves are published unchanged.
+static bool long_retraction_when_cut_active(const PrintConfig& config, size_t idx)
+{
+    return config.long_retractions_when_cut.get_at(idx) && config.retraction_distances_when_cut.get_at(idx) > 0.;
+}
+
+static ConfigOptionBools* effective_long_retractions_when_cut(const PrintConfig& config)
+{
+    auto* out = new ConfigOptionBools(config.long_retractions_when_cut);
+    for (size_t i = 0; i < out->values.size(); ++i)
+        out->values[i] = long_retraction_when_cut_active(config, i) ? 1 : 0;
+    return out;
+}
+
+// Publishes the scalar pair for one filament (the active / incoming one).
+static void set_cut_retraction_placeholders(PlaceholderParser& pp, const PrintConfig& config, size_t idx)
+{
+    pp.set("retraction_distance_when_cut", config.retraction_distances_when_cut.get_at(idx));
+    pp.set("long_retraction_when_cut", long_retraction_when_cut_active(config, idx));
+}
+
 // BBS: publish the extruder-change long-retraction placeholders for one filament.
 // long_retractions_when_ec / retraction_distances_when_ec are per-filament and NULLABLE: a filament
 // whose preset does not mention the key carries nil, and nil must read as "feature off" rather than
@@ -995,9 +1021,7 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
     }
 
     gcodegen.placeholder_parser().set("current_extruder", new_extruder_id);
-    gcodegen.placeholder_parser().set("retraction_distance_when_cut",
-                                      gcodegen.m_config.retraction_distances_when_cut.get_at(new_extruder_id));
-    gcodegen.placeholder_parser().set("long_retraction_when_cut", gcodegen.m_config.long_retractions_when_cut.get_at(new_extruder_id));
+    set_cut_retraction_placeholders(gcodegen.placeholder_parser(), gcodegen.m_config, size_t(new_extruder_id));
     // (the _ec pair was published above, before change_filament_gcode was expanded)
 
     // Process the start filament gcode.
@@ -2240,8 +2264,7 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
 
     bool activate_long_retraction_when_cut = false;
     for (const auto& extruder : m_writer.extruders())
-        activate_long_retraction_when_cut |= (m_config.long_retractions_when_cut.get_at(extruder.id()) &&
-                                              m_config.retraction_distances_when_cut.get_at(extruder.id()) > 0);
+        activate_long_retraction_when_cut |= long_retraction_when_cut_active(m_config, extruder.id());
 
     m_processor.result().long_retraction_when_cut = activate_long_retraction_when_cut;
     // Ultra (H2C 3MF schema): hand the filament / nozzle entry order to the 3MF writer.
@@ -2492,6 +2515,29 @@ static std::string update_print_stats_and_format_filament_stats(const bool      
     }
     return filament_stats_string_out;
 }
+
+// Bambu Studio's GCode::mass_load_limited_machine_acceleration. On a bed slinger the Y motor drives
+// the bed and the printed part with a limited force, so the Y acceleration it can reach falls as the
+// part grows: a = F / (bed mass + printed mass), capped by the configured Y acceleration limit. With
+// machine_max_force_Y or machine_bed_mass_Y unset (0, every printer but the A2L) the result is just
+// the smallest machine_max_acceleration_y. Mass in g, force in N, acceleration in mm/s^2.
+static void mass_load_limited_machine_acceleration(const PrintStatistics &curr_print_statistics,
+                                                   const Print           &print,
+                                                   double                &y_acceleration_limit_res,
+                                                   double                &accumulated_mass_res)
+{
+    double curr_acceleration_y_config = 1e10;
+    for (double limit : print.config().machine_max_acceleration_y.values)
+        curr_acceleration_y_config = std::min(curr_acceleration_y_config, limit);
+    accumulated_mass_res = curr_print_statistics.total_weight;
+    const double machine_max_force_Y = print.config().machine_max_force_Y.value;
+    const double machine_bed_mass_Y  = print.config().machine_bed_mass_Y.value;
+    if (machine_max_force_Y > EPSILON && machine_bed_mass_Y > EPSILON && accumulated_mass_res > EPSILON) {
+        const double virtual_force_g_mms2 = machine_max_force_Y * 1e6; // N = 1e6 g*mm/s^2
+        y_acceleration_limit_res = std::min(virtual_force_g_mms2 / (machine_bed_mass_Y + accumulated_mass_res), curr_acceleration_y_config);
+    } else
+        y_acceleration_limit_res = curr_acceleration_y_config;
+}
 } // namespace DoExport
 
 #if 0
@@ -2583,6 +2629,9 @@ static BambuBedType to_bambu_bed_type(BedType type)
     return bambu_bed_type;
 }
 
+// Defined further below; used to skip the automatic chamber M141/M191 when the start G-code sets it.
+static bool custom_gcode_sets_temperature(const std::string& gcode, const int mcode_set_temp_dont_wait, const int mcode_set_temp_and_wait, const bool include_g10, int& temp_out);
+
 void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGeneratorCallback thumbnail_cb)
 {
     PROFILE_FUNC();
@@ -2653,6 +2702,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     // resets analyzer's tracking data
     m_last_height  = 0.f;
     m_last_layer_z = 0.f;
+    m_last_layer_accumulated_mass = 0.;
     m_max_layer_z  = 0.f;
     m_last_width   = 0.f;
     m_is_role_based_fan_on.fill(false);
@@ -3112,8 +3162,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     this->placeholder_parser().set("initial_no_support_extruder", initial_non_support_extruder_id);
     this->placeholder_parser().set("current_extruder", initial_extruder_id);
     // Orca: set the key for compatibilty
-    this->placeholder_parser().set("retraction_distance_when_cut", m_config.retraction_distances_when_cut.get_at(initial_extruder_id));
-    this->placeholder_parser().set("long_retraction_when_cut", m_config.long_retractions_when_cut.get_at(initial_extruder_id));
+    set_cut_retraction_placeholders(this->placeholder_parser(), m_config, size_t(initial_extruder_id));
     {
         // Flow-variant keys stay packed on the full config. Placeholders are indexed by
         // filament / tool id (U1 M109 S{first_layer_temperature|temperature[next_extruder]}).
@@ -3135,7 +3184,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     }
 
     this->placeholder_parser().set("retraction_distances_when_cut", new ConfigOptionFloats(m_config.retraction_distances_when_cut));
-    this->placeholder_parser().set("long_retractions_when_cut", new ConfigOptionBools(m_config.long_retractions_when_cut));
+    // Masked like the scalar: a 0 mm distance switches the filament's cut retraction off.
+    this->placeholder_parser().set("long_retractions_when_cut", effective_long_retractions_when_cut(m_config));
     // BBS: initial extruder-change retraction values, plus the whole arrays (upstream publishes both).
     set_ec_retraction_placeholders(this->placeholder_parser(), m_config, size_t(initial_extruder_id));
     this->placeholder_parser().set("retraction_distances_when_ec", new ConfigOptionFloatsNullable(m_config.retraction_distances_when_ec));
@@ -3291,6 +3341,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         this->placeholder_parser().set("bed_temperature_initial_layer_single", new ConfigOptionInt(bed_temp_single));
         this->placeholder_parser().set("bed_temperature_initial_layer_vector", new ConfigOptionString());
         this->placeholder_parser().set("chamber_temperature", new ConfigOptionInts(m_config.chamber_temperature));
+        this->placeholder_parser().set("chamber_minimal_temperature", new ConfigOptionInts(m_config.chamber_minimal_temperature));
         this->placeholder_parser().set("overall_chamber_temperature", new ConfigOptionInt(max_chamber_temp));
 
         // SoftFever: support variables `first_layer_temperature` and `first_layer_bed_temperature`
@@ -3605,8 +3656,12 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
                       ExtrusionEntity::role_to_string(erCustom).c_str());
 
     // Orca: set chamber temperature at the beginning of gcode file
-    if (activate_chamber_temp_control && max_chamber_temp > 0)
-        file.write(m_writer.set_chamber_temperature(max_chamber_temp, true)); // set chamber_temperature
+    // Skip the automatic M141/M191 when the start G-code already sets the chamber temperature itself.
+    if (activate_chamber_temp_control && max_chamber_temp > 0) {
+        int temp_out = 0;
+        if (!custom_gcode_sets_temperature(machine_start_gcode, 141, 191, false, temp_out))
+            file.write(m_writer.set_chamber_temperature(max_chamber_temp, true)); // set chamber_temperature
+    }
 
     // Write the custom start G-code
     file.writeln(machine_start_gcode);
@@ -6310,6 +6365,23 @@ LayerResult GCode::process_layer(const Print& print,
         DynamicConfig config;
         config.set_key_value("layer_num", new ConfigOptionInt(m_layer_index));
         config.set_key_value("layer_z", new ConfigOptionFloat(print_z));
+        // Bambu Studio's bed-slinger variables (the A2L's layer change sets "M201 N1 Y[curr_y_acceleration_limit]"):
+        // the mass printed so far (g, filament statistics as at the end of the print, wipe tower included),
+        // the mass the previous layer added, and the Y acceleration limit that mass allows.
+        {
+            PrintStatistics curr_print_statistics;
+            DoExport::update_print_stats_and_format_filament_stats(has_wipe_tower, print.wipe_tower_data(), m_writer.extruders(),
+                                                                   curr_print_statistics);
+            double curr_y_acceleration_limit = -1., curr_accumulated_mass = -1.;
+            DoExport::mass_load_limited_machine_acceleration(curr_print_statistics, print, curr_y_acceleration_limit, curr_accumulated_mass);
+            double curr_layer_mass = curr_print_statistics.total_weight - m_last_layer_accumulated_mass;
+            if (curr_layer_mass <= EPSILON)
+                curr_layer_mass = 0.;
+            m_last_layer_accumulated_mass = curr_print_statistics.total_weight;
+            config.set_key_value("curr_y_acceleration_limit", new ConfigOptionFloat(curr_y_acceleration_limit));
+            config.set_key_value("curr_accumulated_mass", new ConfigOptionFloat(curr_accumulated_mass));
+            config.set_key_value("curr_layer_mass", new ConfigOptionFloat(curr_layer_mass));
+        }
         gcode += this->placeholder_parser_process("layer_change_gcode", print.config().layer_change_gcode.value, m_writer.extruder()->id(),
                                                   &config) +
                  "\n";
@@ -8776,9 +8848,14 @@ void GCode::append_full_config(const Print& print, std::string& str)
     static const std::set<std::string_view> pre_heating_keys({"enable_pre_heating"sv, "filament_pre_cooling_temperature"sv,
                                                               "filament_preheat_temperature_delta"sv});
     const bool dump_pre_heating_keys = print.config().enable_pre_heating.value;
+    // Likewise the bed-slinger mass model keys: only for a printer that models it (the A2L sets both).
+    static const std::set<std::string_view> mass_model_keys({"machine_max_force_Y"sv, "machine_bed_mass_Y"sv});
+    const bool dump_mass_model_keys = print.config().machine_max_force_Y.value > 0. || print.config().machine_bed_mass_Y.value > 0.;
     std::ostringstream                      ss;
     for (const std::string& key : cfg.keys()) {
         if (!dump_pre_heating_keys && pre_heating_keys.find(key) != pre_heating_keys.end())
+            continue;
+        if (!dump_mass_model_keys && mass_model_keys.find(key) != mass_model_keys.end())
             continue;
         if (!is_banned(key) && !cfg.option(key)->is_nil()) {
             if (key == "wipe_tower_x" || key == "wipe_tower_y") {
@@ -11059,7 +11136,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
             config.set_key_value("filament_extruder_id", new ConfigOptionInt(int(extruder_id)));
             config.set_key_value("retraction_distance_when_cut",
                                  new ConfigOptionFloat(m_config.retraction_distances_when_cut.get_at(extruder_id)));
-            config.set_key_value("long_retraction_when_cut", new ConfigOptionBool(m_config.long_retractions_when_cut.get_at(extruder_id)));
+            config.set_key_value("long_retraction_when_cut", new ConfigOptionBool(long_retraction_when_cut_active(m_config, extruder_id)));
 
             gcode += this->placeholder_parser_process("filament_start_gcode", filament_start_gcode, extruder_id, &config);
             check_add_eol(gcode);
@@ -11085,8 +11162,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         if (m_filament_change_sequence.empty())
             this->record_filament_change(extruder_id);
         this->placeholder_parser().set("current_extruder", extruder_id);
-        this->placeholder_parser().set("retraction_distance_when_cut", m_config.retraction_distances_when_cut.get_at(extruder_id));
-        this->placeholder_parser().set("long_retraction_when_cut", m_config.long_retractions_when_cut.get_at(extruder_id));
+        set_cut_retraction_placeholders(this->placeholder_parser(), m_config, size_t(extruder_id));
         set_ec_retraction_placeholders(this->placeholder_parser(), m_config, size_t(extruder_id));
 
         std::string gcode;
@@ -11357,8 +11433,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
     }
 
     this->placeholder_parser().set("current_extruder", extruder_id);
-    this->placeholder_parser().set("retraction_distance_when_cut", m_config.retraction_distances_when_cut.get_at(extruder_id));
-    this->placeholder_parser().set("long_retraction_when_cut", m_config.long_retractions_when_cut.get_at(extruder_id));
+    set_cut_retraction_placeholders(this->placeholder_parser(), m_config, size_t(extruder_id));
     // BBS: re-publish for everything that runs AFTER the toolchange (filament_start_gcode and the
     // rest of the layer). change_filament_gcode itself already saw these values above.
     set_ec_retraction_placeholders(this->placeholder_parser(), m_config, size_t(extruder_id));

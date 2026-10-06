@@ -9200,9 +9200,9 @@ bool GUI_App::config_wizard_startup()
     BOOST_LOG_TRIVIAL(warning) << "config_wizard_startup changed the privacy policy with: " << (isAgree);
 
     // An empty privacy flag alone no longer means "never set up": the wizard stopped writing it
-    // in 2.4.0.0, so every install made since then re-ran the wizard at each launch (reported on
-    // macOS, where the owner's install was new). See Utils/StartupWizardLogic.hpp.
-    const bool setup_finished = app_config->get_bool("firstguide", "finish");
+    // in 2.4.0.0, so every install set up since then re-ran the wizard at each launch (Windows and
+    // macOS). See Utils/StartupWizardLogic.hpp.
+    const bool setup_finished = StartupWizard::finish_flag_set(app_config->get("firstguide", "finish"));
     const StartupWizard::Reason reason = StartupWizard::reason_to_run(
         m_app_conf_exists, preset_bundle->printers.only_default_printers(), isAgree, setup_finished);
     BOOST_LOG_TRIVIAL(warning) << "config_wizard_startup: config existed=" << m_app_conf_exists

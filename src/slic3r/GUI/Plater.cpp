@@ -1526,7 +1526,9 @@ std::vector<int> get_min_flush_volumes(const DynamicPrintConfig& full_config)
         }
 
         extra_flush_volume -= PI * 1.75 * 1.75 / 4 * retract_length;
-        extra_flush_volumes.emplace_back(extra_flush_volume);
+        // Retractions longer than Bambu's 18 mm (Creality ships 28-30) can pull back more than the
+        // nozzle holds; a minimum flush is never negative.
+        extra_flush_volumes.emplace_back(std::max(extra_flush_volume, 0));
     }
     return extra_flush_volumes;
 }

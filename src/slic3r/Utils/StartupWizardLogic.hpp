@@ -17,10 +17,20 @@ enum class Reason {
     NeverFinished, // a config from an older version whose user never got through the wizard
 };
 
+// The "firstguide" / "finish" value as stored in EdgeSlicer.conf. The wizard has written it as
+// "true" (GuideFrame::SaveProfile's set(..., "1") bound AppConfig's bool overload) and, in older
+// builds and hand-edited configs, as "1"; both mean the wizard was finished. Read from the
+// section directly rather than through AppConfig::get_bool, which before Orca #16092 looked for
+// the "1" form in the "app" section instead of the one asked for.
+inline bool finish_flag_set(const std::string &finish_value)
+{
+    return finish_value == "true" || finish_value == "1";
+}
+
 // conf_existed:          EdgeSlicer.conf was there before this run (GUI_App::m_app_conf_exists).
 // only_default_printers: PresetCollection::only_default_printers() for the printers.
 // privacy_flag:          app section "privacy_policy_isagree", "" when never written.
-// setup_finished:        app_config->get_bool("firstguide", "finish") ("true" or the older "1").
+// setup_finished:        finish_flag_set(app_config->get("firstguide", "finish")).
 //
 // The privacy flag used to be written by the wizard's CEIP page, so an empty flag meant "this
 // user never finished the wizard". EdgeSlicer dropped that page (5941300f5e, 2.4.0.0) and the

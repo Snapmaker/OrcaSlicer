@@ -3,6 +3,7 @@
 #include "Print.hpp"
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include "BoundingBox.hpp"
 #include "Brim.hpp"
 #include "BrimFilament.hpp"
@@ -712,6 +713,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "is_infill_first",
         // Orca
         "chamber_temperature",
+        "chamber_minimal_temperature",
         "thumbnails",
         "thumbnails_format",
         "seam_gap",
@@ -2705,6 +2707,15 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
             };
             for (const auto &width_role : s_width_roles)
                 for (const PrintRegion &region : object->all_regions()) {
+                    // The skin and skeleton widths size only Locked Zag's two bands (Fill.cpp reads them
+                    // for a sparse_infill_pattern of lockedzag and for nothing else). Their default is
+                    // 100% of the nozzle, which equals the layer height of every 0.2 nozzle / 0.20 mm
+                    // preset, so checking them on regions that never print them refused those presets
+                    // with "Too small line width" over a setting that has no effect on their G-code.
+                    const bool locked_zag_band = std::strcmp(width_role.first, "skin_infill_line_width") == 0 ||
+                                                 std::strcmp(width_role.first, "skeleton_infill_line_width") == 0;
+                    if (locked_zag_band && region.config().sparse_infill_pattern.value != ipLockedZag)
+                        continue;
                     const unsigned int filament_id     = region.extruder(width_role.second);
                     const double       nozzle_diameter = nozzle_dmr_of_filament0(unsigned(std::max<int>(int(filament_id), 1) - 1));
                     // A role width left at 0 falls back to the object's line_width, exactly as

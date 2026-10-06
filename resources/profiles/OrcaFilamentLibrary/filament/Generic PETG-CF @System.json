@@ -20,5 +20,6 @@
     "overhang_fan_speed": [
         "100"
     ],
-    "compatible_printers": []
+    "compatible_printers": [],
+    "filament_id": "OGFG99"
 }

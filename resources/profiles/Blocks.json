@@ -1,6 +1,6 @@
 {
     "name": "Blocks",
-    "version": "02.03.01.10",
+    "version": "02.04.00.15",
     "force_update": "0",
     "description": "Blocks configurations",
     "machine_model_list": [
@@ -249,48 +249,148 @@
             "sub_path": "filament/fdm_filament_tpu.json"
         },
         {
+            "name": "Blocks ABS @base",
+            "sub_path": "filament/Blocks ABS @base.json"
+        },
+        {
             "name": "Blocks Generic ABS",
             "sub_path": "filament/Blocks Generic ABS.json"
+        },
+        {
+            "name": "Blocks ASA @base",
+            "sub_path": "filament/Blocks ASA @base.json"
         },
         {
             "name": "Blocks Generic ASA",
             "sub_path": "filament/Blocks Generic ASA.json"
         },
         {
+            "name": "Blocks ASA-CF @base",
+            "sub_path": "filament/Blocks ASA-CF @base.json"
+        },
+        {
             "name": "Blocks Generic ASA-CF",
             "sub_path": "filament/Blocks Generic ASA-CF.json"
+        },
+        {
+            "name": "Blocks PA @base",
+            "sub_path": "filament/Blocks PA @base.json"
         },
         {
             "name": "Blocks Generic PA",
             "sub_path": "filament/Blocks Generic PA.json"
         },
         {
+            "name": "Blocks PA-CF @base",
+            "sub_path": "filament/Blocks PA-CF @base.json"
+        },
+        {
             "name": "Blocks Generic PA-CF",
             "sub_path": "filament/Blocks Generic PA-CF.json"
+        },
+        {
+            "name": "Blocks PC @base",
+            "sub_path": "filament/Blocks PC @base.json"
         },
         {
             "name": "Blocks Generic PC",
             "sub_path": "filament/Blocks Generic PC.json"
         },
         {
+            "name": "Blocks PETG @base",
+            "sub_path": "filament/Blocks PETG @base.json"
+        },
+        {
             "name": "Blocks Generic PETG",
             "sub_path": "filament/Blocks Generic PETG.json"
+        },
+        {
+            "name": "Blocks PLA @base",
+            "sub_path": "filament/Blocks PLA @base.json"
         },
         {
             "name": "Blocks Generic PLA",
             "sub_path": "filament/Blocks Generic PLA.json"
         },
         {
+            "name": "Blocks PLA-CF @base",
+            "sub_path": "filament/Blocks PLA-CF @base.json"
+        },
+        {
             "name": "Blocks Generic PLA-CF",
             "sub_path": "filament/Blocks Generic PLA-CF.json"
+        },
+        {
+            "name": "Blocks PVA @base",
+            "sub_path": "filament/Blocks PVA @base.json"
         },
         {
             "name": "Blocks Generic PVA",
             "sub_path": "filament/Blocks Generic PVA.json"
         },
         {
+            "name": "Blocks TPU @base",
+            "sub_path": "filament/Blocks TPU @base.json"
+        },
+        {
             "name": "Blocks Generic TPU",
             "sub_path": "filament/Blocks Generic TPU.json"
+        },
+        {
+            "name": "Blocks ABS @Blocks_RF50",
+            "sub_path": "filament/Blocks ABS @Blocks_RF50.json"
+        },
+        {
+            "name": "Blocks ASA @Blocks_RF50",
+            "sub_path": "filament/Blocks ASA @Blocks_RF50.json"
+        },
+        {
+            "name": "Blocks ASA-CF @Blocks_RF50",
+            "sub_path": "filament/Blocks ASA-CF @Blocks_RF50.json"
+        },
+        {
+            "name": "Blocks PA @Blocks_RF50",
+            "sub_path": "filament/Blocks PA @Blocks_RF50.json"
+        },
+        {
+            "name": "Blocks PA-CF @Blocks_RF50",
+            "sub_path": "filament/Blocks PA-CF @Blocks_RF50.json"
+        },
+        {
+            "name": "Blocks PC @Blocks_RF50",
+            "sub_path": "filament/Blocks PC @Blocks_RF50.json"
+        },
+        {
+            "name": "Blocks PETG @Blocks_RD50_V2",
+            "sub_path": "filament/Blocks PETG @Blocks_RD50_V2.json"
+        },
+        {
+            "name": "Blocks PETG @Blocks_RF50",
+            "sub_path": "filament/Blocks PETG @Blocks_RF50.json"
+        },
+        {
+            "name": "Blocks PLA @Blocks_RD50_V2",
+            "sub_path": "filament/Blocks PLA @Blocks_RD50_V2.json"
+        },
+        {
+            "name": "Blocks PLA @Blocks_RF50",
+            "sub_path": "filament/Blocks PLA @Blocks_RF50.json"
+        },
+        {
+            "name": "Blocks PLA-CF @Blocks_RF50",
+            "sub_path": "filament/Blocks PLA-CF @Blocks_RF50.json"
+        },
+        {
+            "name": "Blocks PVA @Blocks_RF50",
+            "sub_path": "filament/Blocks PVA @Blocks_RF50.json"
+        },
+        {
+            "name": "Blocks TPU @Blocks_RD50_V2",
+            "sub_path": "filament/Blocks TPU @Blocks_RD50_V2.json"
+        },
+        {
+            "name": "Blocks TPU @Blocks_RF50",
+            "sub_path": "filament/Blocks TPU @Blocks_RF50.json"
         }
     ],
     "machine_list": [

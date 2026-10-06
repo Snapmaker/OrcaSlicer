@@ -7,12 +7,14 @@ add_executable(${_TEST_NAME}_tests
 	test_fill.cpp
 	test_flow.cpp
 	test_gcode.cpp
+	test_mass_limited_acceleration.cpp
 	test_gcodeprocessor.cpp
 	test_gcodewriter.cpp
 	test_image_row_preview.cpp
 	test_image_row_walls.cpp
 	test_model.cpp
 	test_print.cpp
+	test_locked_zag_width_validation.cpp
 	test_printgcode.cpp
 	test_printobject.cpp
 	test_skirt_brim.cpp
@@ -34,9 +36,11 @@ add_executable(${_TEST_NAME}_tests
 	test_fdm_hollowing.cpp
 	test_extra_bridge_layer_determinism.cpp
 	test_bed_temperature.cpp
+	test_chamber_temperature.cpp
 	test_trianglemesh.cpp
 	test_wipe.cpp
 	test_adaptive_pa.cpp
+	test_extruder_variant_arrays.cpp
 	)
 # libslic3r_cgal links CGAL privately, so the GMP/MPFR libraries are needed at link time.
 # They are not propagated to this test target; find them under the deps prefix or the

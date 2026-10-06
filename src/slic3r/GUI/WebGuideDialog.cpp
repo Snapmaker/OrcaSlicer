@@ -455,6 +455,11 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
 
                         wxString s1 = TmpModel["model"];
                         wxString s2 = OneSelect["model"];
+                        // Match the vendor too when the page sends it, so a same-named model of
+                        // another vendor is not ticked along with this one.
+                        if (OneSelect.contains("vendor") && OneSelect["vendor"].is_string() && TmpModel["vendor"].is_string() &&
+                            OneSelect["vendor"].get<std::string>() != TmpModel["vendor"].get<std::string>())
+                            continue;
                         if (s1.compare(s2) == 0) {
                             m_ProfileJson["model"][m]["nozzle_selected"] = OneSelect["nozzle_diameter"];
                             break;

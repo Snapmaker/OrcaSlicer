@@ -249,8 +249,15 @@ public:
 	void                set_vendors(const AppConfig &from);
 	void 				set_vendors(const VendorMap &vendors) { m_vendors = vendors; m_dirty = true; }
 	void 				set_vendors(VendorMap &&vendors) { m_vendors = std::move(vendors); m_dirty = true; }
-	// Ultra: union the additive sections (installed models, recent projects, per-project presets) other instances saved.
+	// Ultra: fold in what other instances saved (installed models, recent projects, per-project presets).
 	void merge_shared_from_disk(const std::string &path);
+	// Three-way merge of the installed-printer map, done per (vendor, model, variant):
+	// `base` is what this instance last read from or wrote to the file, `mine` is what it holds
+	// now, `disk` is what the file holds now. A variant is kept when both sides have it, or when
+	// the side that has it added it since `base`; one that `base` had and either side dropped
+	// stays dropped. So a printer unticked in the Printer Selection dialog is not brought back
+	// by the copy on disk, and one another instance unticked is not brought back by this one.
+	static VendorMap merge_vendor_maps(const VendorMap &base, const VendorMap &mine, const VendorMap &disk);
 	const VendorMap&    vendors() const { return m_vendors; }
 
 	// Orca printer settings
@@ -456,6 +463,9 @@ private:
 
 	// Map of enabled vendors / models / variants
 	VendorMap                                                   m_vendors;
+	// m_vendors as this instance last loaded it from, or saved it to, the config file: the common
+	// ancestor merge_vendor_maps() needs to tell a removal from another instance's addition.
+	VendorMap                                                   m_vendors_on_disk;
 
 	// Preset for each machine
 	MachineSettingMap											m_printer_settings;

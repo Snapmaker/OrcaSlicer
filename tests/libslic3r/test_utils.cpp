@@ -830,6 +830,120 @@ TEST_CASE("AppConfig save round-trips through the atomic helper", "[utils][atomi
     REQUIRE(reader.get("atomic_roundtrip_key") == "atomic-value");
 }
 
+// Printer Selection dialog: a printer the user unticked came back, because save() unioned the
+// installed-models list on disk (still holding it) into what this instance had just set.
+TEST_CASE("merge_vendor_maps keeps removals and additions from either side", "[AppConfig]")
+{
+    using VM = AppConfig::VendorMap;
+    const VM base = {{"BBL", {{"Bambu Lab H2C", {"0.4"}}, {"Bambu Lab X1 Carbon", {"0.4", "0.6"}}}},
+                     {"Snapmaker", {{"Snapmaker U1", {"0.4"}}}}};
+
+    SECTION("nothing changed") {
+        CHECK(AppConfig::merge_vendor_maps(base, base, base) == base);
+    }
+    SECTION("this instance unticked a printer: the copy on disk does not bring it back") {
+        VM mine = base;
+        mine["BBL"].erase("Bambu Lab H2C");
+        CHECK(AppConfig::merge_vendor_maps(base, mine, base) == mine);
+    }
+    SECTION("this instance dropped one nozzle variant") {
+        VM mine = base;
+        mine["BBL"]["Bambu Lab X1 Carbon"].erase("0.6");
+        CHECK(AppConfig::merge_vendor_maps(base, mine, base) == mine);
+    }
+    SECTION("another instance unticked a printer: this stale copy does not bring it back") {
+        VM disk = base;
+        disk["Snapmaker"].erase("Snapmaker U1");
+        disk.erase("Snapmaker");
+        CHECK(AppConfig::merge_vendor_maps(base, base, disk) == disk);
+    }
+    SECTION("additions from both sides are kept, alongside a removal") {
+        VM mine = base;
+        mine["Elegoo"]["Elegoo Centauri Carbon"].insert("0.4");
+        mine["BBL"].erase("Bambu Lab H2C");
+        VM disk = base;
+        disk["BBL"]["Bambu Lab H2D"].insert("0.4");
+        const VM merged = AppConfig::merge_vendor_maps(base, mine, disk);
+        const VM expected = {{"BBL", {{"Bambu Lab H2D", {"0.4"}}, {"Bambu Lab X1 Carbon", {"0.4", "0.6"}}}},
+                             {"Elegoo", {{"Elegoo Centauri Carbon", {"0.4"}}}},
+                             {"Snapmaker", {{"Snapmaker U1", {"0.4"}}}}};
+        CHECK(merged == expected);
+    }
+    SECTION("no common base (first save): a plain union, as before") {
+        const VM mine = {{"Snapmaker", {{"Snapmaker U1", {"0.4"}}}}};
+        const VM disk = {{"BBL", {{"Bambu Lab H2C", {"0.4"}}}}};
+        const VM expected = {{"BBL", {{"Bambu Lab H2C", {"0.4"}}}}, {"Snapmaker", {{"Snapmaker U1", {"0.4"}}}}};
+        CHECK(AppConfig::merge_vendor_maps({}, mine, disk) == expected);
+    }
+}
+
+TEST_CASE("AppConfig save keeps unticked printers removed across instances", "[AppConfig]")
+{
+    ScopedTempDir dir;
+    struct ScopedDataDir
+    {
+        std::string prev;
+        explicit ScopedDataDir(const std::string &next) : prev(data_dir()) { set_data_dir(next); }
+        ~ScopedDataDir() { set_data_dir(prev); }
+    } data{dir.path.string()};
+    save_main_thread_id();
+
+    {
+        AppConfig seed;
+        seed.set_variant("BBL", "Bambu Lab H2C", "0.4", true);
+        seed.set_variant("BBL", "Bambu Lab X1 Carbon", "0.4", true);
+        seed.set_variant("Snapmaker", "Snapmaker U1", "0.4", true);
+        seed.set_variant("Snapmaker", "Snapmaker J1", "0.4", true);
+        seed.save();
+    }
+    auto on_disk = []() {
+        AppConfig reader;
+        REQUIRE(reader.load().empty());
+        return reader.vendors();
+    };
+
+    AppConfig gui; // the window the user works in
+    REQUIRE(gui.load().empty());
+    AppConfig hub; // a second instance sharing the file (e.g. kept alive for the phone)
+    REQUIRE(hub.load().empty());
+
+    // Untick H2C and confirm; the dialog replaces the whole map.
+    AppConfig::VendorMap selection = gui.vendors();
+    selection["BBL"].erase("Bambu Lab H2C");
+    gui.set_vendors(selection);
+    gui.save();
+    CHECK_FALSE(gui.get_variant("BBL", "Bambu Lab H2C", "0.4"));
+    {
+        const AppConfig::VendorMap d = on_disk();
+        CHECK((d.count("BBL") == 0 || d.at("BBL").count("Bambu Lab H2C") == 0));
+    }
+
+    // Untick J1 next: H2C must not come back (the reported symptom).
+    selection = gui.vendors();
+    selection["Snapmaker"].erase("Snapmaker J1");
+    gui.set_vendors(selection);
+    gui.save();
+    CHECK_FALSE(gui.get_variant("BBL", "Bambu Lab H2C", "0.4"));
+    CHECK_FALSE(gui.get_variant("Snapmaker", "Snapmaker J1", "0.4"));
+
+    // The other instance still holds the old list; its next save must not restore either,
+    // while a printer it adds itself is kept.
+    hub.set_variant("Elegoo", "Elegoo Centauri Carbon", "0.4", true);
+    hub.save();
+    CHECK_FALSE(hub.get_variant("BBL", "Bambu Lab H2C", "0.4"));
+    CHECK_FALSE(hub.get_variant("Snapmaker", "Snapmaker J1", "0.4"));
+
+    // And the first window keeps the other's addition when it saves again.
+    gui.set("unrelated_key", "1");
+    gui.save();
+    const AppConfig::VendorMap final_disk = on_disk();
+    const AppConfig::VendorMap expected = {{"BBL", {{"Bambu Lab X1 Carbon", {"0.4"}}}},
+                                           {"Elegoo", {{"Elegoo Centauri Carbon", {"0.4"}}}},
+                                           {"Snapmaker", {{"Snapmaker U1", {"0.4"}}}}};
+    CHECK(final_disk == expected);
+    CHECK(gui.vendors() == expected);
+}
+
 TEST_CASE("ascii_iequals compares ASCII letters regardless of case", "[Utils]")
 {
     CHECK(ascii_iequals("set_velocity_limit", "SET_VELOCITY_LIMIT"));

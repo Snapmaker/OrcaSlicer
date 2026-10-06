@@ -13,6 +13,7 @@ add_executable(${_TEST_NAME}_tests
 	test_image_row_walls.cpp
 	test_model.cpp
 	test_print.cpp
+	test_locked_zag_width_validation.cpp
 	test_printgcode.cpp
 	test_printobject.cpp
 	test_skirt_brim.cpp

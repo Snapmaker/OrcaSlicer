@@ -109,6 +109,7 @@
 
 #include "../Utils/PresetUpdater.hpp"
 #include "../Utils/AppUpdateCheck.hpp"
+#include "../Utils/StartupWizardLogic.hpp"
 #include "../Utils/PrintHost.hpp"
 #include "../Utils/Process.hpp"
 #include "../Utils/MacDarkMode.hpp"
@@ -9192,28 +9193,30 @@ bool GUI_App::config_wizard_startup()
     auto isAgree = wxGetApp().app_config->get("app", PRIVACY_POLICY_FLAGS);
     user_update_privacy_notify(isAgree == "true");
     BOOST_LOG_TRIVIAL(warning) << "config_wizard_startup changed the privacy policy with: " << (isAgree);
-    
-        if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
-            if (m_hub_managed && RemoteAccess::get().hidden()) {
-                // Ultra: the wizard needs a person; a printer-less instance cannot serve the phone anyway.
-                RemoteAccess::get().raise_attention("this slicer has no printer configured yet", "manual");
-                return false;
-            }
-            BOOST_LOG_TRIVIAL(info) << "run wizard...";
-            run_wizard(ConfigWizard::RR_DATA_EMPTY);
-            BOOST_LOG_TRIVIAL(info) << "finished run wizard";
 
-            return true;
-        }
+    // An empty privacy flag alone no longer means "never set up": the wizard stopped writing it
+    // in 2.4.0.0, so every install set up since then re-ran the wizard at each launch (Windows and
+    // macOS). See Utils/StartupWizardLogic.hpp.
+    const bool setup_finished = StartupWizard::finish_flag_set(app_config->get("firstguide", "finish"));
+    const StartupWizard::Reason reason = StartupWizard::reason_to_run(
+        m_app_conf_exists, preset_bundle->printers.only_default_printers(), isAgree, setup_finished);
+    BOOST_LOG_TRIVIAL(warning) << "config_wizard_startup: config existed=" << m_app_conf_exists
+                               << ", firstguide/finish=" << app_config->get("firstguide", "finish")
+                               << ", privacy flag=\"" << isAgree << "\" -> wizard: " << StartupWizard::reason_name(reason);
+    if (reason == StartupWizard::Reason::None)
+        return false;
 
-    if (isAgree.empty())
-    {
-        if (m_hub_managed && RemoteAccess::get().hidden()) { RemoteAccess::get().raise_attention("first-run setup is waiting", "manual"); return false; }
-        run_wizard(ConfigWizard::RR_DATA_EMPTY); // Compatible with older versions
-        return true;
+    if (m_hub_managed && RemoteAccess::get().hidden()) {
+        // Ultra: the wizard needs a person; a printer-less instance cannot serve the phone anyway.
+        RemoteAccess::get().raise_attention(reason == StartupWizard::Reason::NeverFinished ? "first-run setup is waiting" :
+                                                                                             "this slicer has no printer configured yet",
+                                            "manual");
+        return false;
     }
-
-    return false;
+    BOOST_LOG_TRIVIAL(info) << "run wizard...";
+    run_wizard(ConfigWizard::RR_DATA_EMPTY);
+    BOOST_LOG_TRIVIAL(info) << "finished run wizard";
+    return true;
 }
 
 void GUI_App::check_updates(const bool verbose)

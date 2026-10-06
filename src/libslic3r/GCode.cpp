@@ -495,11 +495,20 @@ std::string OozePrevention::pre_toolchange(GCode& gcodegen, double print_z)
         is_last_use = gcodegen.m_curr_print->tool_ordering().is_last_extrusion_layer(print_z, extruder_id);
     }
 
+    // Upstream Orca #15849 (c93acbd2): do not pop_back() on an empty set_temperature() result
+    // (some flavors return "" for a wait, and a missing newline must not be assumed).
+    auto append_cooldown = [&gcode](std::string temp_cmd) {
+        if (temp_cmd.empty())
+            return;
+        if (temp_cmd.back() == '\n')
+            temp_cmd.pop_back();
+        temp_cmd += " ;cooldown\n"; // marker for GCodeProcessor so it can suppress the commands when needed
+        gcode += temp_cmd;
+    };
+
     if (is_last_use) {
         // Toolhead has finished its last layer -> turn off heater completely (0 °C)
-        gcode += gcodegen.writer().set_temperature(0, false, extruder_id);
-        gcode.pop_back();
-        gcode += " ;cooldown\n";
+        append_cooldown(gcodegen.writer().set_temperature(0, false, extruder_id));
         return gcode;
     }
 
@@ -509,16 +518,12 @@ std::string OozePrevention::pre_toolchange(GCode& gcodegen, double print_z)
         // Use the delta value from print config.
         if (gcodegen.config().standby_temperature_delta.value != 0) {
             // we assume that heating is always slower than cooling, so no need to block
-            gcode += gcodegen.writer().set_temperature(this->_get_temp(gcodegen) + gcodegen.config().standby_temperature_delta.value, false,
-                                                       extruder_id);
-            gcode.pop_back();
-            gcode += " ;cooldown\n"; // this is a marker for GCodeProcessor, so it can supress the commands when needed
+            append_cooldown(gcodegen.writer().set_temperature(this->_get_temp(gcodegen) + gcodegen.config().standby_temperature_delta.value,
+                                                              false, extruder_id));
         }
     } else {
         // Use the value from filament settings. That one is absolute, not delta.
-        gcode += gcodegen.writer().set_temperature(filament_idle_temp.get_at(extruder_id), false, extruder_id);
-        gcode.pop_back();
-        gcode += " ;cooldown\n"; // this is a marker for GCodeProcessor, so it can supress the commands when needed
+        append_cooldown(gcodegen.writer().set_temperature(filament_idle_temp.get_at(extruder_id), false, extruder_id));
     }
 
     return gcode;

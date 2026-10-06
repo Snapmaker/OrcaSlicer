@@ -5,6 +5,7 @@
     "from": "system",
     "setting_id": "GM_CUSTOM_001",
     "instantiation": "true",
+    "default_print_profile": "0.12mm Fine @MyToolChanger",
     "printer_model": "Generic ToolChanger Printer",
     "nozzle_diameter": [
         "0.2",

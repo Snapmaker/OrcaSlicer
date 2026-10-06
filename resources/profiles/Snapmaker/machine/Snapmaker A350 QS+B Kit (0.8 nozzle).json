@@ -6,7 +6,7 @@
   "instantiation": "true",
   "inherits": "fdm_a350_qs_bk",
   "printer_model": "Snapmaker A350 QS+B Kit",
-  "default_print_profile": "0.24 Standard @Snapmaker (0.8 nozzle)",
+  "default_print_profile": "0.32 Standard @Snapmaker (0.8 nozzle)",
   "printer_variant": "0.8",
   "max_layer_height": [
     "0.48"

@@ -1,0 +1,54 @@
+{
+    "type": "filament",
+    "name": "Fiberon PA612-ESD @U1",
+    "inherits": "Generic PA-CF @U1 0.4 nozzle",
+    "from": "system",
+    "setting_id": "GFSPM04_05",
+    "filament_id": "PMPA05",
+    "instantiation": "true",
+    "nozzle_temperature_range_low": [
+        "280"
+    ],
+    "textured_plate_temp": [
+        "50"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "50"
+    ],
+    "graphic_effect_plate_temp": [
+        "100"
+    ],
+    "graphic_effect_plate_temp_initial_layer": [
+        "100"
+    ],
+    "fan_min_speed": [
+        "0"
+    ],
+    "fan_max_speed": [
+        "10"
+    ],
+    "fan_cooling_layer_time": [
+        "25"
+    ],
+    "slow_down_layer_time": [
+        "1"
+    ],
+    "reduce_fan_stop_start_freq": [
+        "1"
+    ],
+    "filament_density": [
+        "1.1"
+    ],
+    "filament_flow_ratio": [
+        "0.89"
+    ],
+    "temperature_vitrification": [
+        "190"
+    ],
+    "filament_vendor": [
+        "Polymaker"
+    ],
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ]
+}

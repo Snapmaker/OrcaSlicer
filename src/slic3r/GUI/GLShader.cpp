@@ -8,6 +8,7 @@
 
 #include <boost/nowide/fstream.hpp>
 #include <glad/gl.h>
+#include <algorithm>
 #include <cassert>
 
 #include <boost/log/trivial.hpp>
@@ -204,6 +205,74 @@ void GLShaderProgram::start_using() const
 void GLShaderProgram::stop_using() const
 {
     glsafe(::glUseProgram(0));
+}
+
+void GLShaderProgram::set_sampler_units(std::initializer_list<std::pair<const char*, int>> units) const
+{
+    if (m_id == 0)
+        return;
+
+    GLint previous_program = 0;
+    glsafe(::glGetIntegerv(GL_CURRENT_PROGRAM, &previous_program));
+    glsafe(::glUseProgram(m_id));
+    for (const auto& [name, unit] : units)
+        set_uniform(name, unit);
+    glsafe(::glUseProgram(static_cast<GLuint>(previous_program)));
+}
+
+std::string GLShaderProgram::sampler_unit_conflicts() const
+{
+    if (m_id == 0)
+        return {};
+
+    auto is_sampler = [](GLenum type) {
+        switch (type) {
+        case GL_SAMPLER_1D:
+        case GL_SAMPLER_2D:
+        case GL_SAMPLER_3D:
+        case GL_SAMPLER_CUBE:
+        case GL_SAMPLER_1D_SHADOW:
+        case GL_SAMPLER_2D_SHADOW:
+        case GL_SAMPLER_2D_RECT:
+            return true;
+        default:
+            return false;
+        }
+    };
+
+    struct Sampler { std::string name; GLenum type; GLint unit; };
+    std::vector<Sampler> samplers;
+
+    GLint count = 0;
+    GLint max_length = 0;
+    glsafe(::glGetProgramiv(m_id, GL_ACTIVE_UNIFORMS, &count));
+    glsafe(::glGetProgramiv(m_id, GL_ACTIVE_UNIFORM_MAX_LENGTH, &max_length));
+    std::vector<char> buffer(std::max<GLint>(max_length, 1) + 1, 0);
+    for (GLint i = 0; i < count; ++i) {
+        GLsizei length = 0;
+        GLint   size   = 0;
+        GLenum  type   = 0;
+        glsafe(::glGetActiveUniform(m_id, static_cast<GLuint>(i), static_cast<GLsizei>(buffer.size()), &length, &size, &type, buffer.data()));
+        if (!is_sampler(type))
+            continue;
+        const std::string name(buffer.data(), static_cast<size_t>(length));
+        const GLint location = ::glGetUniformLocation(m_id, name.c_str());
+        if (location < 0)
+            continue;
+        GLint unit = 0;
+        glsafe(::glGetUniformiv(m_id, location, &unit));
+        samplers.push_back({ name, type, unit });
+    }
+
+    std::string out;
+    for (size_t a = 0; a < samplers.size(); ++a)
+        for (size_t b = a + 1; b < samplers.size(); ++b)
+            if (samplers[a].unit == samplers[b].unit && samplers[a].type != samplers[b].type) {
+                if (!out.empty())
+                    out += "; ";
+                out += samplers[a].name + " and " + samplers[b].name + " on unit " + std::to_string(samplers[a].unit);
+            }
+    return out;
 }
 
 void GLShaderProgram::set_uniform(int id, int value) const

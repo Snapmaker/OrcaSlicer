@@ -1,0 +1,30 @@
+{
+    "type": "filament",
+    "name": "Generic PETG @Anycubic Kobra 3 Max V2 0.4 nozzle",
+    "inherits": "Anycubic PETG @Anycubic Kobra 3 Max V2 0.4 nozzle",
+    "from": "system",
+    "setting_id": "4MSBj5GH6Yj7gM7N",
+    "filament_id": "OFYPdQJh",
+    "instantiation": "true",
+    "filament_settings_id": [
+        "Generic PETG @Anycubic Kobra 3 Max V2 0.4 nozzle"
+    ],
+    "filament_vendor": [
+        "Generic"
+    ],
+    "filament_type": [
+        "PETG"
+    ],
+    "compatible_printers": [
+        "Anycubic Kobra 3 Max V2 0.4 nozzle"
+    ],
+    "filament_flow_ratio": [
+        "0.95"
+    ],
+    "filament_max_volumetric_speed": [
+        "8"
+    ],
+    "nozzle_temperature": [
+        "235"
+    ]
+}

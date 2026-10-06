@@ -1,6 +1,7 @@
 #ifndef slic3r_AppConfig_hpp_
 #define slic3r_AppConfig_hpp_
 
+#include <chrono>
 #include <set>
 #include <map>
 #include <string>
@@ -70,11 +71,20 @@ struct BBLocalMachine
     // Ultra: Flashforge device stack (Orca-Flashforge port)
     std::string dev_placement;
     std::string dev_pid;
+    // FlashForge LAN port (8898 for the Creator 5 / Adventurer 5 HTTP API). Empty = the default.
+    std::string dev_port;
+
+    // The Bambu LAN list and the FlashForge Device tab share this one table. A FlashForge entry is
+    // the one that carries a product id (dev_pid): FlashForge's save always writes it, Bambu's never
+    // does. Each side must skip the other's rows - the FlashForge grid used to list every saved
+    // Bambu printer as an Offline tile, and Bambu's loader would treat a FlashForge row as a
+    // Bambu LAN printer.
+    bool is_flashforge() const { return !dev_pid.empty(); }
 
     bool operator==(const BBLocalMachine& other) const
     {
         return dev_name == other.dev_name && dev_ip == other.dev_ip && dev_id == other.dev_id && printer_type == other.printer_type &&
-            dev_placement == other.dev_placement && dev_pid == other.dev_pid;
+            dev_placement == other.dev_placement && dev_pid == other.dev_pid && dev_port == other.dev_port;
     }
     bool operator!=(const BBLocalMachine& other) const { return !operator==(other); }
 };
@@ -116,6 +126,15 @@ public:
 	// Does this config need to be saved?
 	bool 				dirty() const { return m_dirty; }
 
+	static constexpr std::chrono::seconds SAVE_RETRY_BACKOFF{10};
+
+	// Idle path only: a lasting write failure must not retry the write on
+	// every idle event. Explicit save() always attempts.
+	bool				save_due() const
+	{
+		return m_retry_save_at == std::chrono::steady_clock::time_point{} ||
+		       std::chrono::steady_clock::now() >= m_retry_save_at;
+	}
 
 	void				set_dirty() { m_dirty = true; }
 
@@ -137,7 +156,7 @@ public:
 	std::string 		get(const std::string &key) const
 		{ std::string value; this->get("app", key, value); return value; }
 	bool				get_bool(const std::string &section, const std::string &key) const
-		{ return this->get(section, key) == "true" || this->get(key) == "1"; }
+		{ const std::string value = this->get(section, key); return value == "true" || value == "1"; }
 	bool				get_bool(const std::string &key) const
 		{ return this->get_bool("app", key); }
 	void			    set(const std::string &section, const std::string &key, const std::string &value)
@@ -173,6 +192,9 @@ public:
 			m_dirty = true;
 		}
 	}
+
+	void			    set(const std::string &section, const std::string &key, const char *value)
+		{ this->set(section, key, std::string(value)); }
 
 	void				set(const std::string& section, const std::string &key, bool value)
 	{
@@ -227,8 +249,15 @@ public:
 	void                set_vendors(const AppConfig &from);
 	void 				set_vendors(const VendorMap &vendors) { m_vendors = vendors; m_dirty = true; }
 	void 				set_vendors(VendorMap &&vendors) { m_vendors = std::move(vendors); m_dirty = true; }
-	// Ultra: union the additive sections (installed models, recent projects, per-project presets) other instances saved.
+	// Ultra: fold in what other instances saved (installed models, recent projects, per-project presets).
 	void merge_shared_from_disk(const std::string &path);
+	// Three-way merge of the installed-printer map, done per (vendor, model, variant):
+	// `base` is what this instance last read from or wrote to the file, `mine` is what it holds
+	// now, `disk` is what the file holds now. A variant is kept when both sides have it, or when
+	// the side that has it added it since `base`; one that `base` had and either side dropped
+	// stays dropped. So a printer unticked in the Printer Selection dialog is not brought back
+	// by the copy on disk, and one another instance unticked is not brought back by this one.
+	static VendorMap merge_vendor_maps(const VendorMap &base, const VendorMap &mine, const VendorMap &disk);
 	const VendorMap&    vendors() const { return m_vendors; }
 
 	// Orca printer settings
@@ -289,9 +318,15 @@ public:
     // Ultra: Flashforge device stack (Orca-Flashforge port)
     typedef std::map<std::string, std::string> MacInfoMap;
     typedef std::vector<MacInfoMap>            LocalMacInfo;
+    // The saved FlashForge printers only (see BBLocalMachine::is_flashforge); Bambu LAN printers
+    // live in the same table and are not returned. Keys: dev_id, dev_name, dev_placement, dev_pid,
+    // and dev_ip / dev_port when known.
     void get_local_mahcines(LocalMacInfo& local_machines);
+    // `ip` / `port` are kept when given (empty / 0 leaves what is already saved): they are what lets
+    // the Device tab reconnect to the printer at the next start without a LAN scan.
     void save_bind_machine_to_config(const std::string& dev_id, const std::string& dev_name, const std::string& placement,
-                                     const unsigned short& pid, bool modifyPlacement = true);
+                                     const unsigned short& pid, bool modifyPlacement = true,
+                                     const std::string& ip = std::string(), unsigned short port = 0);
     void erase_local_machine(const std::string& dev_id, const std::string& dev_name);
 
     const std::vector<std::string> &get_filament_presets() const { return m_filament_presets; }
@@ -335,6 +370,9 @@ public:
 
 	// Get the default config path from Slic3r::data_dir().
 	std::string			config_path();
+	// <config_path>.lock: the InstanceLock file that orders saves of the config
+	// between instances on one data dir. Empty without a data dir (tests, CLI).
+	std::string			lock_path();
 
 	// Returns true if the user's data directory comes from before Slic3r 1.40.0 (no updating)
 	bool 				legacy_datadir() const { return m_legacy_datadir; }
@@ -425,11 +463,16 @@ private:
 
 	// Map of enabled vendors / models / variants
 	VendorMap                                                   m_vendors;
+	// m_vendors as this instance last loaded it from, or saved it to, the config file: the common
+	// ancestor merge_vendor_maps() needs to tell a removal from another instance's addition.
+	VendorMap                                                   m_vendors_on_disk;
 
 	// Preset for each machine
 	MachineSettingMap											m_printer_settings;
 	// Has any value been modified since the config.ini has been last saved or loaded?
 	bool														m_dirty;
+	// After a failed save(), idle retries wait until this instant. Epoch means "no back-off".
+	std::chrono::steady_clock::time_point						m_retry_save_at{};
 	// Original version found in the ini file before it was overwritten
 	Semver                                                      m_orig_version;
 	// Whether the existing version is before system profiles & configuration updating

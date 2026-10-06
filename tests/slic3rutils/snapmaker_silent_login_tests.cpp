@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "slic3r/Utils/SnapmakerSilentLogin.hpp"
+#include "libslic3r/AppConfig.hpp"
 
 using namespace Slic3r::SMSilentLogin;
 
@@ -106,4 +107,40 @@ TEST_CASE("silent login: log line names the outcome and never needs the token", 
     CHECK(log_line(Outcome::Skipped, "hidden instance") == "Snapmaker silent login: skipped (hidden instance)");
     CHECK(log_line(Outcome::Cancelled, "sign-in dialog opened") == "Snapmaker silent login: cancelled (sign-in dialog opened)");
     CHECK(log_line(Outcome::Failed, "account lookup HTTP 401") == "Snapmaker silent login: failed (account lookup HTTP 401)");
+}
+
+// Privacy (EdgeSlicerSite PR 4): somebody who never signed in to Snapmaker on this computer gets
+// no Snapmaker traffic at startup - the hidden web view is never created for them.
+TEST_CASE("silent login: never signed in on this computer means no attempt", "[SMSilentLogin]")
+{
+    StartupInputs in;
+    in.signed_in_before = false;
+    CHECK(skip_reason(in) == "not signed in to Snapmaker on this computer");
+    // Even with everything else saying go, and before the network is ever asked about.
+    in.network_down = true;
+    CHECK(skip_reason(in) == "not signed in to Snapmaker on this computer");
+    // The preference still names itself first when both apply.
+    in.pref_enabled = false;
+    CHECK(skip_reason(in) == "turned off in Preferences");
+}
+
+TEST_CASE("silent login: the outcome decides whether the next start may try again", "[SMSilentLogin]")
+{
+    CHECK(session_marker_after(Outcome::SignedIn) == SessionMarker::Set);
+    // The saved session is gone: stop contacting Snapmaker until the person signs in by hand.
+    CHECK(session_marker_after(Outcome::NoSession) == SessionMarker::Clear);
+    // A network hiccup or a cancelled attempt says nothing about the session.
+    CHECK(session_marker_after(Outcome::TimedOut) == SessionMarker::Keep);
+    CHECK(session_marker_after(Outcome::Failed) == SessionMarker::Keep);
+    CHECK(session_marker_after(Outcome::Cancelled) == SessionMarker::Keep);
+    CHECK(session_marker_after(Outcome::Skipped) == SessionMarker::Keep);
+}
+
+TEST_CASE("silent login: a fresh config has no Snapmaker sign-in to come back to", "[SMSilentLogin]")
+{
+    Slic3r::AppConfig cfg;
+    REQUIRE(cfg.has(k_session_key));
+    CHECK_FALSE(cfg.get_bool(k_session_key));
+    // The Preferences toggle keeps its default; it only matters once somebody has signed in.
+    CHECK(cfg.get_bool(k_pref_key));
 }

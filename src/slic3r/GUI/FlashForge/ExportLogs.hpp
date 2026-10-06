@@ -7,6 +7,7 @@
 #include <wx/dialog.h>
 #include <wx/event.h>
 #include <wx/string.h>
+#include <wx/textctrl.h>
 #include "libslic3r/miniz_extension.hpp"
 
 namespace Slic3r { namespace GUI {

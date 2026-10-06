@@ -553,3 +553,97 @@ TEST_CASE("[RemoteEvents] an error with no actions carries no actions field at a
         REQUIRE(j["code"] == "05008051");
     }
 }
+
+// ---- one event per occurrence (2026-09-25: an HMS code three times, a start twice) ----
+//
+// The owner's history showed "AMS B slot 3 feed resistance is too high" three times in one minute
+// and "Nozzle Camera is malfunctioning" three times. The watcher used to fire on every change of
+// the printer's single worst code, so a printer that re-sent the item, dropped it for a status
+// push, or let another code take the top spot, announced it again once the cooldown ran out.
+
+namespace {
+PrinterState with_code(const PrinterState& in, const std::string& code, std::vector<std::string> also = {})
+{
+    PrinterState p = in;
+    p.error_code   = code;
+    p.error_text   = code.empty() ? std::string() : "problem " + code;
+    p.active_codes = also;
+    if (!code.empty()) p.active_codes.insert(p.active_codes.begin(), code);
+    return p;
+}
+} // namespace
+
+TEST_CASE("[RemoteEvents] a persisting HMS code is announced once until it clears", "[RemoteEvents]")
+{
+    Driver d;
+    REQUIRE(d.poll(pr("printing")).empty()); // seeding
+    REQUIRE(count_of(d.poll(with_code(pr("printing"), "0701220000020025")), "error") == 1);
+    // Re-sent on every status push, long past the three-minute cooldown: still the one occurrence.
+    for (int i = 0; i < 5; ++i) REQUIRE(count_of(d.poll(with_code(pr("printing"), "0701220000020025")), "error") == 0);
+    // Dropped for one status push (a few seconds) and back: the same occurrence.
+    REQUIRE(d.poll(pr("printing"), 5000).empty());
+    REQUIRE(count_of(d.poll(with_code(pr("printing"), "0701220000020025"), 5000), "error") == 0);
+    // Gone for longer than ERROR_CLEAR_MS: it cleared, and coming back is a new occurrence.
+    REQUIRE(d.poll(pr("printing"), 5000).empty());
+    REQUIRE(d.poll(pr("printing"), ERROR_CLEAR_MS).empty());
+    REQUIRE(count_of(d.poll(with_code(pr("printing"), "0701220000020025")), "error") == 1);
+}
+
+TEST_CASE("[RemoteEvents] two codes taking turns at the top are each announced once", "[RemoteEvents]")
+{
+    const std::string a = "0701220000020025", b = "0C00010000020015";
+    Driver d;
+    d.poll(pr("printing"));
+    REQUIRE(count_of(d.poll(with_code(pr("printing"), a)), "error") == 1);
+    REQUIRE(count_of(d.poll(with_code(pr("printing"), b, { a })), "error") == 1);
+    for (int i = 0; i < 4; ++i) {
+        REQUIRE(count_of(d.poll(with_code(pr("printing"), a, { b })), "error") == 0);
+        REQUIRE(count_of(d.poll(with_code(pr("printing"), b, { a })), "error") == 0);
+    }
+}
+
+TEST_CASE("[RemoteEvents] a code already up when the watcher first sees the printer stays quiet", "[RemoteEvents]")
+{
+    Driver d;
+    REQUIRE(d.poll(with_code(pr("printing"), "0C00010000020015")).empty()); // seeding, with the code up
+    REQUIRE(d.poll(with_code(pr("printing"), "0C00010000020015")).empty());
+    // Offline and back with the code still up: not a new occurrence either.
+    d.poll(offline(pr("printing")));
+    REQUIRE(d.poll(with_code(pr("printing"), "0C00010000020015")).empty());
+    REQUIRE(d.poll(with_code(pr("printing"), "0C00010000020015")).empty());
+}
+
+TEST_CASE("[RemoteEvents] a start is keyed on the printer's job id when it has one", "[RemoteEvents]")
+{
+    auto job = [](const std::string& name, const std::string& id) {
+        PrinterState p = pr("printing", name);
+        p.job_id       = id;
+        return p;
+    };
+    SECTION("the same job id under another name is the same print")
+    {
+        Driver d;
+        d.poll(pr("idle", ""));
+        std::vector<Event> ev = d.poll(job("0623_Golurk_x_Franky_MC", "4471"));
+        REQUIRE(count_of(ev, "started") == 1);
+        REQUIRE(ev[0].job_id == "4471");
+        REQUIRE(ev[0].to_json(0)["job_id"] == "4471");
+        REQUIRE(count_of(d.poll(job("Golurk plate 1", "4471")), "started") == 0);
+    }
+    SECTION("a new job id is a new print, even under the same name")
+    {
+        Driver d;
+        d.poll(pr("idle", ""));
+        REQUIRE(count_of(d.poll(job("Cube", "100")), "started") == 1);
+        d.poll(pr("idle", "Cube", "IDLE"));
+        REQUIRE(count_of(d.poll(job("Cube", "101")), "started") == 1);
+    }
+    SECTION("no job id on one side falls back to the name")
+    {
+        Driver d;
+        d.poll(pr("idle", ""));
+        REQUIRE(count_of(d.poll(job("Cube", "")), "started") == 1);
+        d.poll(pr("idle", "Cube", "IDLE"));
+        REQUIRE(count_of(d.poll(job("Cube", "0")), "started") == 0);
+    }
+}

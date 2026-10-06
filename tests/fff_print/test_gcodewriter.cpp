@@ -2,9 +2,13 @@
 
 #include <algorithm>
 #include <memory>
+#include <string>
+#include <vector>
 
+#include "libslic3r/Exception.hpp"
 #include "libslic3r/GCodeReader.hpp"
 #include "libslic3r/GCodeWriter.hpp"
+#include "libslic3r/PrintConfig.hpp"
 
 using namespace Slic3r;
 using Catch::Matchers::WithinAbs;
@@ -208,4 +212,83 @@ TEST_CASE("Custom retraction state stays per-filament when SEMM is off", "[GCode
     CHECK_THAT(writer.extruders()[0].retracted(), WithinAbs(0., 1e-9));
     CHECK_THAT(writer.extruders()[1].retracted(), WithinAbs(0.5, 1e-9));
     CHECK_THAT(writer.extruder()->restart_extra(), WithinAbs(0.2, 1e-9));
+}
+
+TEST_CASE("GCodeWriter::toolchange throws when the extruder is not registered", "[GCodeWriter][GCode]")
+{
+    GCodeWriter writer;
+    writer.set_extruders({0});
+    REQUIRE_THROWS_AS(writer.toolchange(2), SlicingError);
+    REQUIRE(writer.extruder() == nullptr);
+}
+
+TEST_CASE("Acceleration and velocity limit commands print their values in general notation", "[GCodeWriter]")
+{
+    enum class Command { Print, Travel, KlipperLimits };
+    struct Case
+    {
+        GCodeFlavor              flavor;
+        Command                  command;
+        unsigned int             acceleration;
+        double                   jerk;
+        bool                     comments;
+        std::vector<std::string> present;
+        std::vector<std::string> absent;
+    };
+    // accel_to_decel_factor is 50%, so ACCEL_TO_DECEL is half the acceleration.
+    const Case cases[] = {
+        {gcfKlipper, Command::KlipperLimits, 2000000, 25. / 3., false,
+         {"SET_VELOCITY_LIMIT ACCEL=2000000 ", "ACCEL_TO_DECEL=1e+06 ", "SQUARE_CORNER_VELOCITY=8.33333\n"}, {}},
+        {gcfKlipper, Command::KlipperLimits, 12345, 0., false, {"ACCEL=12345 ", "ACCEL_TO_DECEL=6172.5\n"}, {"SQUARE_CORNER_VELOCITY"}},
+        {gcfKlipper, Command::KlipperLimits, 0, 0.25, true, {"SQUARE_CORNER_VELOCITY=0.25 ", "; adjust VELOCITY_LIMIT"}, {"ACCEL"}},
+        {gcfKlipper, Command::Print, 3001, 0., true, {"ACCEL=3001 ", "ACCEL_TO_DECEL=1500.5 ", "; adjust ACCEL_TO_DECEL", "; adjust acceleration"}, {}},
+        {gcfMarlinFirmware, Command::Print, 2500, 0., false, {"M204 P2500\n"}, {}},
+        {gcfMarlinFirmware, Command::Travel, 7000, 0., false, {"M204 T7000\n"}, {}},
+        {gcfRepRapFirmware, Command::Travel, 7000, 0., true, {"M204 T7000 ", "; adjust acceleration"}, {}},
+        {gcfMarlinLegacy, Command::Print, 2500, 0., false, {"M204 S2500\n"}, {}},
+        {gcfRepetier, Command::Print, 2500, 0., false, {"M201 X2500 Y2500\n"}, {}},
+        {gcfRepetier, Command::Travel, 7000, 0., false, {"M202 X7000 Y7000\n"}, {}},
+    };
+
+    for (const Case &c : cases) {
+        DYNAMIC_SECTION("flavor " << int(c.flavor) << " command " << int(c.command) << " accel " << c.acceleration) {
+            struct CommentGuard
+            {
+                bool saved = GCodeWriter::full_gcode_comment;
+                ~CommentGuard() { GCodeWriter::full_gcode_comment = saved; }
+            } comment_guard;
+            GCodeWriter::full_gcode_comment = c.comments;
+
+            DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+            config.set_key_value("gcode_flavor", new ConfigOptionEnum<GCodeFlavor>(c.flavor));
+            config.option<ConfigOptionBools>("accel_to_decel_enable")->values.assign(1, true);
+            config.option<ConfigOptionPercents>("accel_to_decel_factor")->values.assign(1, 50.);
+            for (const char *limit : {"machine_max_acceleration_extruding", "machine_max_acceleration_travel", "machine_max_acceleration_x",
+                                      "machine_max_acceleration_y", "machine_max_jerk_x", "machine_max_jerk_y"}) {
+                std::vector<double> &values = config.option<ConfigOptionFloats>(limit)->values;
+                std::fill(values.begin(), values.end(), 0.);
+            }
+            PrintConfig print_config;
+            print_config.apply(config, true);
+            GCodeWriter writer;
+            writer.apply_print_config(print_config);
+
+            const std::string line = c.command == Command::Print         ? writer.set_print_acceleration(c.acceleration) :
+                                     c.command == Command::Travel        ? writer.set_travel_acceleration(c.acceleration) :
+                                                                           writer.set_accel_and_jerk(c.acceleration, c.jerk);
+            INFO(line);
+            for (const std::string &token : c.present)
+                CHECK(line.find(token) != std::string::npos);
+            for (const std::string &token : c.absent)
+                CHECK(line.find(token) == std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("GCodeWriter append overloads emit the same line as the returning overloads", "[GCodeWriter]")
+{
+    GCodeWriter writer;
+    std::string appended;
+    writer.set_speed(appended, 1800.);
+    CHECK(appended == writer.set_speed(1800.));
 }

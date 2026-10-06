@@ -29,6 +29,9 @@ namespace RemoteNotify {
 //   {id, time, instance, printer:{id,name,kind}, kind, severity, title, text, code?, job?}
 // Queued and sent by the worker; returns immediately. Safe to call before configure().
 void deliver(const nlohmann::json& event);
+// Whether an event would go anywhere at all: a configured destination, a subscribed browser or a
+// registered app. The hub asks before claiming a printer's notifications (HubPushOwner).
+bool has_destinations();
 
 // Load the destinations the hub read out of settings.json (the "notify" object, or a null/absent
 // value on a data dir that has none) and start the worker. Called once from HubServer::start().

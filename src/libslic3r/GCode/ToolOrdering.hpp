@@ -128,6 +128,15 @@ public:
     bool is_extruder_order(unsigned int a, unsigned int b) const;
     bool has_extruder(unsigned int extruder) const { return std::find(this->extruders.begin(), this->extruders.end(), extruder) != this->extruders.end(); }
 
+    // Resolve a 1-based filament ID the same way ToolOrdering::collect_extruders
+    // schedules support: MixedFilamentManager::resolve plus the auto-row A/B
+    // layer-height cycle (mixed_color_layer_height_a/_b). GCode support
+    // bucketing must use this, not mixed_mgr->resolve() directly.
+    unsigned int resolve_mixed_1based_at(unsigned int        filament_id,
+                                         float               layer_print_z,
+                                         float               layer_height,
+                                         const PrintObject  *current_object) const;
+
     // Return a zero based extruder from the region, or extruder_override if overriden.
     unsigned int wall_filament(const PrintRegion &region) const;
     unsigned int outer_wall_filament(const PrintRegion &region) const;

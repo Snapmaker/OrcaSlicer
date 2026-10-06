@@ -1,4 +1,36 @@
-# Privacy: crash reports
+# Privacy
+
+EdgeSlicer collects no usage statistics and no analytics. This page covers the two things that
+can leave your computer: crash reports (off unless you turn them on) and phone app notifications.
+The full privacy policy, including the other connections EdgeSlicer makes, is at
+<https://edgeslicer.com/privacy>.
+
+# Snapmaker sign-in at startup
+
+From version 2.4.4.0, EdgeSlicer only contacts Snapmaker's sign-in service (`id.snapmaker.com`,
+`id.snapmaker.cn` in mainland China) at startup if you have signed in to a Snapmaker account on
+this computer. It then reuses the saved session in a hidden window, so you stay signed in. If you
+never signed in, signed out, or the saved session has expired, nothing is sent to Snapmaker when
+EdgeSlicer starts. Preferences > General > "Sign in to my Snapmaker account automatically at
+startup" turns the quiet sign-in off altogether. Snapmaker U1 printers on your network work
+without a Snapmaker account.
+
+Earlier versions loaded the sign-in page in a hidden window at every start, also for people
+without a Snapmaker account. After updating, someone who was signed in signs in once more by hand;
+with a valid saved session the sign-in window closes by itself.
+
+# Bambu Lab resources at startup
+
+From version 2.4.4.0, EdgeSlicer only asks Bambu Lab's web service (`api.bambulab.com`,
+`api.bambulab.cn` for the China region) for its printer data updates once a Bambu Lab printer is
+set up: a Bambu Lab printer profile among your printers, a Bambu printer in the Device tab or
+among the saved LAN printers, or a Bambu Lab sign-in. If none of these exists, nothing is sent to
+Bambu Lab. Adding a Bambu printer or signing in starts the check within about 30 seconds, without
+a restart. Stealth mode turns it off altogether. EdgeSlicer no longer asks Bambu Lab about network
+plug-in updates while its own plug-in (UltraNet) is installed. Earlier versions asked at every
+start.
+
+# Crash reports
 
 EdgeSlicer collects no usage statistics and no analytics. The one thing it can send by itself is
 a **crash report**, and only after you turn that on.
@@ -22,20 +54,27 @@ those builds.
 - **The crash itself:** a minidump. It holds the CPU registers and stack memory of each program
   thread at the moment of the crash, plus the list of loaded program modules (file paths and
   versions). Like any Windows crash dump, it also holds the program's command line and
-  environment variables. Those include your Windows user and computer name. EdgeSlicer blanks
-  secret command-line values such as the phone hub's `--hub-token` before anything can crash.
+  environment variables. Those include your Windows user name. They also included your computer
+  name in earlier versions; from the next version EdgeSlicer overwrites it
+  (and the variables derived from it) with a placeholder at start-up, and every report carries the
+  fixed server name `redacted`. EdgeSlicer blanks secret command-line values such as the phone
+  hub's `--hub-token` before anything can crash.
   Sentry turns the minidump into a stack trace using the debug symbols we upload for each
   release. Stack memory can hold fragments of whatever the program was working on at that
   moment. The minidump is used only to compute the trace; the project does not keep raw
   minidumps.
 - **App version and build:** for example release `edgeslicer@2.4.0.0`, environment `release`.
+  Builds that are not made by the project's CI (a build you compile yourself, which has no
+  crash-report destination anyway, or a developer's test copy) name themselves
+  `edgeslicer@<version>-dev+<commit>`, environment `development`.
 - **Operating system:** name, version and CPU architecture.
 - **Recent log lines:** the most recent warning and error lines of the app log from the session
   that crashed, at most 100. There are at most 20 per second, each is cut to 512 characters,
   and each is scrubbed as described below *before* it is stored.
 
 **Not sent:** log files, configuration files, projects or models, presets, printer settings,
-account details, a user or machine ID, the computer name, usage events. EdgeSlicer's old "bury
+account details, a user or machine ID, the computer name (from the next version, see above),
+usage events. EdgeSlicer's old "bury
 point" usage events and Sentry sessions and traces are all switched off in the code.
 
 Reports go over HTTPS to [Sentry](https://sentry.io), the service EdgeSlicer's developers use to
@@ -68,6 +107,68 @@ They are in `%LOCALAPPDATA%\EdgeSlicer\reports` on Windows and in
 `~/Library/Application Support/EdgeSlicer/SentryData` on macOS. An instance started with
 `--datadir <dir>` keeps them in `<dir>/SentryData` instead. You can delete them at any time.
 
+# Phone app notifications
+
+The EdgeSlicer phone app can show notifications when a printer starts, finishes, fails or reports
+an error. Your EdgeSlicer on the PC (the phone hub) creates them.
+
+## How a notification reaches your phone
+
+Apple and Google only deliver notifications to an app when the request is signed with the app
+developer's keys. Starting with 2.4.1.0, a hub that doesn't have its own keys hands each
+notification to the **EdgeSlicer push service** at `push.edgeslicer.com`, which forwards it to
+Apple (APNs) or Google (Firebase Cloud Messaging). You don't need to change anything to use it.
+
+**The content is end-to-end encrypted.** Your hub encrypts the title and text with a key that only
+your phone holds (Web Push encryption, RFC 8291). The push service, Apple and Google only see a
+placeholder ("Printer update", "Tap to open") and an encrypted blob. The phone decrypts it on the
+device.
+
+## What the push service sees and keeps
+
+| What | Kept |
+|---|---|
+| Your hub's random ID and its public signing key (created by the hub, not tied to you or your account) | until the hub is unused for 365 days |
+| When the hub registered and when it was last seen, and how many notifications it sent per day | daily counts for 90 days |
+| Your phone's push token (issued by Apple or Google for this app), with each notification | not stored; passed on to Apple or Google (a keyed hash is held in memory for the day, to count devices per hub) |
+| A service log line per request: time, hub ID, result, platform, size | 7 days |
+| Your IP address | not logged; used only in memory, as a hashed network prefix, to limit sign-up abuse |
+
+Nightly backups of the hub list are kept for 30 days. The service never sees printer names, file
+names, your e-mail or anything else about your prints; those are inside the encrypted part.
+
+Next to the encrypted part, each notification carries two short identifiers that the push
+service, Apple and Google can read: a collapse ID, so that a second "paused" for the same printer
+replaces the first instead of stacking, and on iPhone a thread ID, so that one printer's
+notifications are grouped. From version 2.4.4.0 both are keyed hashes made with a secret that only
+your hub holds: they stay the same for one printer on one hub, but nobody else can tell which
+printer they belong to. In earlier versions the iPhone thread ID was the printer's ID, which for a
+Bambu Lab printer is its serial number, and the collapse ID was an unkeyed hash of it. The real
+printer ID is inside the encrypted part only, and the app uses it to open the right printer when
+you tap a notification.
+
+The service runs on a server rented from Hetzner in Helsinki, Finland. There is a limit of 300
+notifications per hub per day; past it, the hub page shows a notice and the rest of that day's
+notifications are not sent.
+
+## Not using it
+
+- To use your own Apple/Firebase keys instead, add them in the hub page's push settings. A hub
+  with its own keys uses them and never contacts the push service.
+- To have no phone notifications at all, don't pair the phone app, or turn notifications off for
+  the app in your phone's settings.
+
+## Removing a phone
+
+- **One phone:** the hub page's phone list has a **Remove** button for each registered phone. The
+  phone app's **Unpair** also tells the hub to forget that phone, when the hub can be reached.
+- **Every phone:** **New link** on the hub page or in the tray menu replaces the phone link. From
+  version 2.4.4.0 it also forgets every phone app and phone-page notification subscription that
+  was registered with the old link, including notifications still waiting to be sent, so those
+  phones stop getting notifications until they are paired again.
+- The push service keeps no list of phones, so there is nothing to remove there. To make it forget
+  the hub itself, use **Forget this hub on the service** on the hub page.
+
 ---
 
 ## For maintainers
@@ -80,10 +181,15 @@ means no uploads, and that is the case for every local build. Never commit a DSN
 **Environment.** `EDGESLICER_SENTRY_ENVIRONMENT` is set as follows:
 - `release` for tags, `main`, `ci/*` and `release/*`.
 - `ci` for other CI builds.
-- `dev` locally.
+- `nightly` for the nightly builds.
+- `development` for everything else (CMake's default when the variable is empty; `dev` is read as
+  `development`). The CI workflows are the only place that sets the variable, so it is what tells
+  a real release from a local, agent or test build.
 
-**Release.** The app reports `edgeslicer@<Snapmaker_VERSION>`. CI uses the same name when it uploads
-symbols.
+**Release.** CI builds report `edgeslicer@<Snapmaker_VERSION>` (plus the nightly suffix), the name
+CI uses when it uploads symbols. Development builds report `edgeslicer@<version>-dev+<short
+commit>` (the commit as of the last CMake configure), so they never mix with reports from the
+published release and never match uploaded symbols.
 
 **Symbols.** Two workflows upload symbols after a successful build:
 - `build_all.yml` (through `build_deps.yml` and `sentry_cli.yml`), for the Windows PDBs and PE

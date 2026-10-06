@@ -1767,6 +1767,13 @@ static LayerColorStat compute_layer_color_stat(const ConstLayerPtrsAdaptor &laye
     bool  fallback_gapfill_off = false;
     float applicable_small_region_threshold = 0.f, applicable_extrusion_spacing = 0.f;
     bool  have_applicable = false, applicable_gapfill_off = false;
+    // Paint penetration (top_color_penetration_layers / bottom_color_penetration_layers, Bambu
+    // Studio's keys): a region with a value >= 1 sets its paint depth in layers directly, the
+    // surface layer included, instead of deriving it from its shell settings; 0 (the default)
+    // keeps the shell-derived depth below untouched. Maxed over the regions present on this
+    // layer exactly like the shell depth, and applied after the Wave B deepening further down
+    // so an explicit depth is never deepened by the paint-depth normal thickness.
+    int top_penetration_layers = 0, bottom_penetration_layers = 0;
     for (const LayerRegion *region : layer.regions()) {
         const PrintRegionConfig &config = region->region().config();
         // Fix-wave I2 (.superpowers/sdd/2026-08-31-paint-depth/vertical-depth-fix-review.md):
@@ -1808,10 +1815,16 @@ static LayerColorStat compute_layer_color_stat(const ConstLayerPtrsAdaptor &laye
             // REAL layer heights need to cover the configured thickness) - see
             // effective_shell_layers_by_thickness() above, which mirrors discover_vertical_
             // shells / discover_horizontal_shells exactly, including variable layer height.
-            out.top_shell_layers    = std::max(out.top_shell_layers,
-                                                effective_shell_layers_by_thickness(layers, layer_idx, true,  config.top_shell_layers.value,    config.top_shell_thickness.value));
-            out.bottom_shell_layers = std::max(out.bottom_shell_layers,
-                                                effective_shell_layers_by_thickness(layers, layer_idx, false, config.bottom_shell_layers.value, config.bottom_shell_thickness.value));
+            if (config.top_color_penetration_layers.value > 0)
+                top_penetration_layers = std::max(top_penetration_layers, config.top_color_penetration_layers.value);
+            else
+                out.top_shell_layers    = std::max(out.top_shell_layers,
+                                                    effective_shell_layers_by_thickness(layers, layer_idx, true,  config.top_shell_layers.value,    config.top_shell_thickness.value));
+            if (config.bottom_color_penetration_layers.value > 0)
+                bottom_penetration_layers = std::max(bottom_penetration_layers, config.bottom_color_penetration_layers.value);
+            else
+                out.bottom_shell_layers = std::max(out.bottom_shell_layers,
+                                                    effective_shell_layers_by_thickness(layers, layer_idx, false, config.bottom_shell_layers.value, config.bottom_shell_thickness.value));
         }
         if (// color_idx == 0 means "don't know" extruder aka the underlying extruder.
             // As this region may split existing regions, we collect statistics over all regions for color_idx == 0.
@@ -1918,6 +1931,22 @@ static LayerColorStat compute_layer_color_stat(const ConstLayerPtrsAdaptor &laye
             out.bottom_descent_layers = std::max(out.bottom_shell_layers,
                                                  effective_shell_layers_by_thickness(layers, layer_idx, false, 1, double(paint_depth_normal_mm)));
     }
+    // Paint penetration override (see the loop above). It stands in for the shell depth in
+    // every role *_shell_layers plays here - the "is anything claimed" gate, the legacy shadow
+    // and the flat-top cap threshold - and it is the descent depth itself, so a flat painted top
+    // with a penetration of P is claimed exactly P layers deep whatever the shell settings and
+    // the paint-depth mode say (descent == shell leaves the flat-top cap inactive). Unlike a
+    // shell count it claims even where the region's own shell count is 0: that is what the
+    // setting asks for, and what Bambu Studio does with it. With every region at 0 both fields
+    // keep the values computed above, so existing projects slice exactly as before.
+    if (top_penetration_layers > 0) {
+        out.top_shell_layers   = std::max(out.top_shell_layers,   top_penetration_layers);
+        out.top_descent_layers = std::max(out.top_descent_layers, top_penetration_layers);
+    }
+    if (bottom_penetration_layers > 0) {
+        out.bottom_shell_layers   = std::max(out.bottom_shell_layers,   bottom_penetration_layers);
+        out.bottom_descent_layers = std::max(out.bottom_descent_layers, bottom_penetration_layers);
+    }
     return out;
 }
 
@@ -2002,8 +2031,14 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
         // C1's "a zero shell count claims nothing at all" is unchanged, and so is the meaning of
         // max_top_layers / max_bottom_layers as the gate that decides whether slice_mesh_slabs
         // runs at all (both stay zero exactly when they were zero before).
-        const int top_descent_eff    = top_layers_eff    > 0 ? std::max(top_layers_eff,    paint_depth_normal_layers) : 0;
-        const int bottom_descent_eff = bottom_layers_eff > 0 ? std::max(bottom_layers_eff, paint_depth_normal_layers) : 0;
+        // Paint penetration: a region with an explicit depth descends exactly that far (see
+        // compute_layer_color_stat()), so that depth is its bound instead of the shell's.
+        const int top_penetration    = config.top_color_penetration_layers.value;
+        const int bottom_penetration = config.bottom_color_penetration_layers.value;
+        const int top_descent_eff    = top_penetration > 0 ? top_penetration :
+                                       top_layers_eff    > 0 ? std::max(top_layers_eff,    paint_depth_normal_layers) : 0;
+        const int bottom_descent_eff = bottom_penetration > 0 ? bottom_penetration :
+                                       bottom_layers_eff > 0 ? std::max(bottom_layers_eff, paint_depth_normal_layers) : 0;
         max_top_layers    = std::max(max_top_layers, top_descent_eff);
         max_bottom_layers = std::max(max_bottom_layers, bottom_descent_eff);
         granularity       = std::max(granularity, std::max(top_descent_eff, bottom_descent_eff) - 1);

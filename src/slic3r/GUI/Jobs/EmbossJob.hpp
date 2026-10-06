@@ -2,10 +2,13 @@
 #define slic3r_EmbossJob_hpp_
 
 #include <atomic>
+#include <optional>
+#include <vector>
 #include <memory>
 #include <string>
 #include <libslic3r/Emboss.hpp>
 #include <libslic3r/EmbossShape.hpp> // ExPolygonsWithIds
+#include <libslic3r/EmbossBendSurface.hpp> // SurfaceArcPreview
 #include "libslic3r/Point.hpp" // Transform3d
 #include "libslic3r/ObjectID.hpp"
 
@@ -79,6 +82,16 @@ public:
 
     // shape to emboss
     EmbossShape shape;
+
+    // Curved text placed letter by letter on the surface (curve + per glyph + use surface).
+    // Set by create_shape(), which then leaves the outlines straight: the job places every glyph.
+    bool bend_per_glyph = false;
+    // advance boxes of the glyphs (same order as shape.shapes_with_ids) for the arc layout
+    Slic3r::Emboss::GlyphAdvances bend_advances;
+    // Reference curve of the placement (worker thread), published in finalize (main thread) into
+    // bend_preview_out, which the gizmo shares, for its overlay
+    Slic3r::Emboss::SurfaceArcPreview bend_preview;
+    std::shared_ptr<Slic3r::Emboss::SurfaceArcPreview> bend_preview_out;
 };
 
 /// <summary>
@@ -248,6 +261,31 @@ bool start_create_volume(CreateVolumeParams &input, DataBasePtr data, const Vec2
 /// Need to suggest position or put near the selection
 /// </summary>
 bool start_create_volume_without_position(CreateVolumeParams &input, DataBasePtr data);
+
+/// <summary>
+/// One of volumes created together by start_create_volumes
+/// </summary>
+struct CreateVolumePart
+{
+    DataBasePtr     base;
+    ModelVolumeType volume_type;
+    // 0 .. default(inherit from object), otherwise 1 based index of filament
+    int extruder = 0;
+};
+using CreateVolumeParts = std::vector<CreateVolumePart>;
+
+/// <summary>
+/// Create several volumes with the same transformation at once
+/// e.g. parts of QR code (dark modules, light modules, logo).
+/// Volumes are added into object under mouse / selected object or into new object on the bed.
+/// Creation is stored as one undo/redo snapshot, first part is selected at the end.
+/// </summary>
+/// <param name="input">canvas + camera + bed shape + ...</param>
+/// <param name="parts">Shapes to emboss, have to contain at least one part</param>
+/// <param name="mouse_pos">Where to create volumes, when not set it is created near to the selection</param>
+/// <param name="object_name">Name of new object when it is created on the bed</param>
+/// <returns>True on success otherwise False</returns>
+bool start_create_volumes(CreateVolumeParams &input, CreateVolumeParts &&parts, const std::optional<Vec2d> &mouse_pos, const std::string &object_name);
 
 /// <summary>
 /// Start job for update embossed volume

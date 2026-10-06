@@ -39,6 +39,14 @@ nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall delete rule name="Ed
 Pop $0
 nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall add rule name="EdgeSlicer LAN discovery" dir=in action=allow program="$INSTDIR\EdgeSlicer.exe" protocol=UDP localport=2021,1990 profile=private,domain enable=yes'
 Pop $0
+; FlashForge LAN search (Flashforge::discover_printers, the printer dialog's Browse and the Device
+; tab's Add printer > Search): EdgeSlicer broadcasts to UDP 48899 and the printers answer to UDP
+; 18007, the port it listens on. The broadcast goes out freely; the answers are what Windows
+; Firewall drops without this rule. Private and Domain only, like the rules above.
+nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall delete rule name="EdgeSlicer FlashForge discovery"'
+Pop $0
+nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall add rule name="EdgeSlicer FlashForge discovery" dir=in action=allow program="$INSTDIR\EdgeSlicer.exe" protocol=UDP localport=18007 profile=private,domain enable=yes'
+Pop $0
 ; WebRTC camera video: go2rtc (bundled, $INSTDIR\resources\tools\go2rtc\go2rtc.exe) carries the
 ; media straight from this PC to the phone rather than through the hub, so unlike everything else
 ; the hub runs it needs an inbound port. It takes the first free one in 8555-8574 (RemoteHub.cpp,

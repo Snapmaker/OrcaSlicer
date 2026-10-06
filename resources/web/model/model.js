@@ -199,32 +199,91 @@ function ShowProjectInfo( p3MF )
 
 // Ultra: everything below comes out of the 3MF, i.e. from whoever made the file. Plain fields are
 // shown as text; the descriptions keep their formatting, but nothing in them may run or load from
-// this machine: scripts, frames, forms and event handlers are dropped, links and images only keep
-// http(s) addresses. Parsing in a DOMParser document is inert (no script runs, nothing loads).
+// this machine. Tags not on the allowlist keep their text but lose every attribute. Listed tags
+// keep only the named attributes: img src (https only, no userinfo), alt, width, height, title;
+// a href (http(s) or '#', no userinfo) and title. Formatting tags keep no attributes. srcset,
+// <source>, on*, dynsrc,
+// lowsrc, imagesrcset, style, svg, ping and longdesc are therefore dropped. The page is file://
+// so mixed content is not blocked — that is why srcset/<source> are removed, not prefix-checked.
+// Parsing in a DOMParser document is inert (no script runs, nothing loads).
 function EscapeHtml( s )
 {
 	return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// Path used in a single-quoted onClick handler inside HTML. & first so a name containing
+// &quot; cannot become a real quote after HTML decode.
+function EscapeClickPath( s )
+{
+	return String(s).replace(/&/g,'&amp;').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+// Browsers strip tab / CR / LF (and form-feed) from URL attributes. They do not strip a regular
+// space, so 'ht tps://' must not collapse to https. Userinfo is refused via the URL parser
+// (username/password), so https:///u:p@h and https:\\u:p@h cannot slip past a regex.
+function SafeUrlValue( raw )
+{
+	return String(raw).replace(/[\t\r\n\f\u0000]/g,'').replace(/^ +| +$/g,'').toLowerCase();
+}
+
+function SafeKeepUrl( raw, httpsOnly )
+{
+	let v=SafeUrlValue(raw);
+	if( v.charAt(0)=='#' )
+		return !httpsOnly;
+	try {
+		let u=new URL(v);
+		if( u.username || u.password )
+			return false;
+		if( httpsOnly )
+			return u.protocol=='https:';
+		return u.protocol=='https:' || u.protocol=='http:';
+	} catch(e) {
+		return false;
+	}
+}
+
 function SafeHtml( html )
 {
 	let doc=new DOMParser().parseFromString('<!DOCTYPE html><html><body>'+String(html)+'</body></html>','text/html');
-	let bad=doc.body.querySelectorAll('script,style,iframe,frame,frameset,object,embed,applet,link,meta,base,form,input,button,textarea,select,option,svg,math,template,noscript,portal');
+	let bad=doc.body.querySelectorAll('script,style,iframe,frame,frameset,object,embed,applet,link,meta,base,form,input,button,textarea,select,option,svg,math,template,noscript,portal,source,track,video,audio');
 	for( let i=0;i<bad.length;i++ )
 		bad[i].remove();
+	let allow={
+		a:{href:1,title:1},
+		img:{src:1,alt:1,width:1,height:1,title:1},
+		p:{title:1},div:{title:1},span:{title:1},
+		br:{},hr:{},
+		b:{},i:{},em:{},strong:{},u:{},s:{},strike:{},small:{},mark:{},
+		sub:{},sup:{},del:{},ins:{},
+		ul:{},ol:{},li:{},dl:{},dt:{},dd:{},
+		h1:{},h2:{},h3:{},h4:{},h5:{},h6:{},
+		blockquote:{title:1},pre:{},code:{},
+		table:{},thead:{},tbody:{},tfoot:{},tr:{},
+		th:{colspan:1,rowspan:1},td:{colspan:1,rowspan:1},
+		figure:{},figcaption:{},picture:{},
+		abbr:{title:1},cite:{},q:{}
+	};
 	let all=doc.body.querySelectorAll('*');
 	for( let i=0;i<all.length;i++ )
 	{
 		let el=all[i];
+		let tag=el.tagName.toLowerCase();
+		let ok=allow[tag]||{};
 		for( let j=el.attributes.length-1;j>=0;j-- )
 		{
 			let name=el.attributes[j].name.toLowerCase();
-			let value=el.attributes[j].value.replace(/[\s\u0000-\u001f]/g,'').toLowerCase();
-			let isUrl=(name=='href' || name=='src' || name=='xlink:href' || name=='action' || name=='formaction' || name=='background' || name=='poster' || name=='srcset' || name=='data');
-			if( name.indexOf('on')==0 || name=='style' || (isUrl && !/^(https?:|#)/.test(value)) )
+			if( !ok[name] )
+			{
+				el.removeAttribute(el.attributes[j].name);
+				continue;
+			}
+			if( name=='src' && !SafeKeepUrl(el.attributes[j].value, true) )
+				el.removeAttribute(el.attributes[j].name);
+			else if( name=='href' && !SafeKeepUrl(el.attributes[j].value, false) )
 				el.removeAttribute(el.attributes[j].name);
 		}
-		if( el.tagName=='A' )
+		if( tag=='a' )
 		{
 			el.setAttribute('target','_blank');
 			el.setAttribute('rel','noopener noreferrer');
@@ -321,7 +380,7 @@ function ShowModelInfo( pModel )
 		for(let pn=0;pn<TotalPreview;pn++)			
 		{	
 			//let FTmpPath=decodeURIComponent(ModelPreviewList[pn]);
-			let FTmpPath=ModelPreviewList[pn]['filepath'];
+			let FTmpPath=EscapeHtml(String(ModelPreviewList[pn]['filepath']||''));
 			
 			htmlPreview+='<div class="swiper-slide"><img class="Model_PrevImg" src="'+FTmpPath+'" /></div>';
 		}
@@ -454,7 +513,7 @@ function ConstructFileHtml( ID, pItem )
 		// Attachment names come from the 3MF: escape them for HTML, and the path for the
 		// single-quoted JS string inside onClick (a name may contain ' on Windows).
 		let tPathRaw=String(pOne['filepath']);
-		let tPath=tPathRaw.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/</g,'&lt;');
+		let tPath=EscapeClickPath(tPathRaw);
 		let tName=EscapeHtml(decodeURIComponent(pOne['filename']));
 		
 		let sTail=getFileTail(tName).toLowerCase();
@@ -541,7 +600,7 @@ function ShowProfilelInfo( pProfile )
 		let htmlPreview='';
 		for(let pn=0;pn<TotalPreview;pn++)			
 		{	
-			let FTmpPath=ProfilePreviewList[pn]['filepath'];
+			let FTmpPath=EscapeHtml(String(ProfilePreviewList[pn]['filepath']||''));
 			
 			htmlPreview+='<div class="swiper-slide"><img class="Model_PrevImg" src="'+FTmpPath+'" /></div>';
 		}

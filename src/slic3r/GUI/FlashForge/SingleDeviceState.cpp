@@ -1,4 +1,5 @@
 #include "SingleDeviceState.hpp"
+#include <boost/log/trivial.hpp>
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/BitmapCache.hpp"
 #include "slic3r/GUI/GUI.hpp"
@@ -15,6 +16,7 @@
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <wx/dcgraph.h>
+#include <wx/mstream.h>
 using namespace std::literals;
 using json   = nlohmann::json;
 namespace pt = boost::property_tree;

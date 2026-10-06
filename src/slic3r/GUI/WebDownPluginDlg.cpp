@@ -5,6 +5,7 @@
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
 #include "slic3r/GUI/wxExtensions.hpp"
+#include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "common_func/common_func.hpp"
 
@@ -38,9 +39,7 @@ DownPluginFrame::DownPluginFrame(GUI_App *pGUI) : wxDialog((wxWindow *) (pGUI->m
 
     // set the frame icon
     wxBoxSizer *topsizer = new wxBoxSizer(wxVERTICAL);
-    wxString TargetUrl    = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/6/index.html").make_preferred().string());
-
-    TargetUrl = "file://" + TargetUrl;
+    wxString TargetUrl    = file_url_from_path((boost::filesystem::path(resources_dir()) / "web/guide/6/index.html").make_preferred());
 
     // Create the webview
     m_browser = WebView::CreateWebView(this, TargetUrl);

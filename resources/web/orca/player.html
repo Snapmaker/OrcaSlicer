@@ -21,7 +21,15 @@ html, body { height: 100%; width: 100%; margin: 0; padding: 0; background: #000;
     const params = new URLSearchParams(location.search);
     const lt = params.get('lt');
     const video = document.createElement('video-stream');
-    video.background = params.get('background') !== 'false';
+    // go2rtc's own page runs this player with background=true, which switches off the player's
+    // built-in "stop when the page is hidden" (and a hidden page would keep its WebSocket and peer
+    // connection - so a go2rtc consumer, an ffmpeg transcode and a camera client slot - for as long
+    // as the tab, the phone's screen lock or the app's backgrounding lasted). The player's version
+    // of it is also timer-based (5 s, via setTimeout), and timers do not run in a hidden page. So
+    // the player's own switch stays off and the page does it below: stop at once when hidden,
+    // start again when shown. ?background=true opts a page out (keeps playing while hidden).
+    video.background = true;
+    const keepWhenHidden = params.get('background') === 'true';
     video.mode = params.get('mode') || video.mode;
     video.style.flex = '1 0 ' + (params.get('width') || '320px');
     video.src = new URL('api/ws?src=' + encodeURIComponent(params.get('src') || '') + (lt ? '&lt=' + encodeURIComponent(lt) : ''), location.href);
@@ -134,12 +142,38 @@ html, body { height: 100%; width: 100%; margin: 0; padding: 0; background: #000;
         };
         if (!hook()) { let n = 0; const h = setInterval(() => { if (hook() || ++n > 40) clearInterval(h); }, 250); }
     }
-    if (both && giveUp > 0) setTimeout(() => {
+    const armGiveUp = () => { if (both && giveUp > 0) setTimeout(() => {
         if (video.pcState === WebSocket.OPEN || !video.pc) return; // WebRTC won, or was never started
         video.pcState = WebSocket.CLOSED;
         video.pc.close();
         video.pc = null;
-    }, giveUp);
+    }, giveUp); };
+    armGiveUp();
+
+    // Stop when the page is not showing, start again when it is. The embedding page parks whole
+    // tiles when they scroll out of view (stream_center.html); this covers the page being hidden
+    // under it (a background tab, a locked screen, an app in the background) and a player opened
+    // on its own, such as the phone app's printer screen. document.hidden inside an iframe follows
+    // the top-level page, so both cases arrive here. ondisconnect() is video-rtc's own teardown:
+    // it closes the WebSocket and the peer connection and empties the <video>.
+    let paused = false;
+    const pausePlayer = () => {
+        if (paused || keepWhenHidden) return;
+        paused = true;
+        if (video.disconnectTID) { clearTimeout(video.disconnectTID); video.disconnectTID = 0; }
+        if (video.reconnectTID) { clearTimeout(video.reconnectTID); video.reconnectTID = 0; }
+        if (video.video) { try { video.ondisconnect(); } catch (e) {} }
+    };
+    const resumePlayer = () => {
+        if (!paused) return;
+        paused = false;
+        if (video.isConnected) video.connectedCallback(); // seeks to live, plays, and reopens the WebSocket
+        armGiveUp(); // a path that could not carry WebRTC the first time still cannot: bound it again
+    };
+    document.addEventListener('visibilitychange', () => { if (document.hidden) pausePlayer(); else resumePlayer(); });
+    window.addEventListener('pagehide', pausePlayer);
+    window.addEventListener('pageshow', resumePlayer);
+    if (document.hidden) pausePlayer(); // opened in a background tab: do not start at all
 </script>
 </body>
 </html>

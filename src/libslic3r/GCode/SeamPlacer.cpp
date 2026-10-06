@@ -1,4 +1,5 @@
 #include "SeamPlacer.hpp"
+#include "PreciseSeam.hpp"
 
 #include "Polygon.hpp"
 #include "PrintConfig.hpp"
@@ -8,7 +9,12 @@
 #include <boost/log/trivial.hpp>
 #include <random>
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <queue>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 #include "libslic3r/AABBTreeLines.hpp"
 #include "libslic3r/KDTreeIndirect.hpp"
@@ -17,6 +23,7 @@
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/Layer.hpp"
+#include "libslic3r/I18N.hpp"
 
 #include "libslic3r/Geometry/Curves.hpp"
 #include "libslic3r/ShortEdgeCollapse.hpp"
@@ -32,6 +39,11 @@
 #endif
 
 namespace Slic3r {
+
+SeamPlacer::SeamPlacer() = default;
+SeamPlacer::SeamPlacer(SeamPlacer &&) noexcept = default;
+SeamPlacer &SeamPlacer::operator=(SeamPlacer &&) noexcept = default;
+SeamPlacer::~SeamPlacer() = default;
 
 namespace SeamPlacerImpl {
 
@@ -125,6 +137,44 @@ Vec3f sample_power_cosine_hemisphere(const Vec2f &samples, float power) {
   return Vec3f(cos(term1) * term3, sin(term1) * term3, term2);
 }
 
+// The "aligned" seam positions that bias the seam toward one side of the bed by penalising
+// surfaces that face the OPPOSITE side (so those surfaces look "more visible" and get avoided,
+// steering the seam toward the biased side instead). `bias_direction` points toward the biased
+// side; the surfaces that get penalised are the ones facing away from it, i.e. whose normal is
+// close to `-bias_direction`. Aligned back is biased toward the back (+Y): it penalises surfaces
+// facing -Y (front-facing surfaces). Aligned front is its mirror image, biased toward the front (-Y):
+// it penalises back-facing surfaces. Aligned left/right do the same thing along X, biased toward
+// -X/+X respectively. Every other SeamPosition is left alone (returns false) and keeps no penalty
+// at all.
+// The penalty is applied via `normal.dot(-bias_direction)`, i.e. the existing Aligned back formula
+// `normal.dot(0,-1,0)` is `-bias_direction` with `bias_direction = (0,1,0)`. This keeps the
+// Aligned back arithmetic bit-for-bit identical to before this became a parameter.
+static inline bool aligned_penalty_direction(SeamPosition setup, Vec3f &bias_direction)
+{
+  // Every value is listed and there is no default, so a new SeamPosition makes the compiler ask
+  // whether it belongs here.
+  switch (setup) {
+  case spAlignedBack: bias_direction = Vec3f(0.0f, 1.0f, 0.0f);  return true; // biased to the back
+  case spAlignedFront: bias_direction = Vec3f(0.0f, -1.0f, 0.0f); return true; // biased to the front
+  case spLeft:        bias_direction = Vec3f(-1.0f, 0.0f, 0.0f); return true; // biased to the left
+  case spRight:        bias_direction = Vec3f(1.0f, 0.0f, 0.0f); return true; // biased to the right
+  case spNearest:
+  case spAligned:
+  case spRear:
+  case spRandom:
+    break;
+  }
+  return false;
+}
+
+// True for the setups that are "Aligned" in every other respect (occlusion/visibility computed,
+// candidates picked by visibility and angle, concave-corner preference via central_enforcer, then
+// aligned): plain Aligned plus the four biased variants.
+static inline bool is_aligned_setup(SeamPosition setup)
+{
+  return setup == spAligned || setup == spAlignedBack || setup == spAlignedFront || setup == spLeft || setup == spRight;
+}
+
 std::vector<float> raycast_visibility(const AABBTreeIndirect::Tree<3, float> &raycasting_tree,
                                       const indexed_triangle_set &triangles,
                                       const TriangleSetSamples &samples,
@@ -149,10 +199,13 @@ std::vector<float> raycast_visibility(const AABBTreeIndirect::Tree<3, float> &ra
 
   bool model_contains_negative_parts = negative_volumes_start_index < triangles.indices.size();
 
+  Vec3f bias_direction       = Vec3f(0.0f, 1.0f, 0.0f);
+  bool  has_directional_bias = aligned_penalty_direction(seam_position, bias_direction);
+
   std::vector<float> result(samples.positions.size());
   tbb::parallel_for(tbb::blocked_range<size_t>(0, result.size()),
                     [&triangles, &precomputed_sample_directions, model_contains_negative_parts, negative_volumes_start_index,
-                     &raycasting_tree, &result, &samples, seam_position](tbb::blocked_range<size_t> r) {
+                     &raycasting_tree, &result, &samples, has_directional_bias, bias_direction](tbb::blocked_range<size_t> r) {
                       // Maintaining hits memory outside of the loop, so it does not have to be reallocated for each query.
                       std::vector<igl::Hit> hits;
                       for (size_t s_idx = r.begin(); s_idx < r.end(); ++s_idx) {
@@ -162,8 +215,8 @@ std::vector<float> raycast_visibility(const AABBTreeIndirect::Tree<3, float> &ra
 
                         const Vec3f &center = samples.positions[s_idx];
                         const Vec3f &normal = samples.normals[s_idx];
-                        if (seam_position == spAlignedBack) {
-                            const float front_adjustment = std::clamp((normal.dot(Vec3f(0.0f, -1.0f, 0.0f)) + 1.2f) * 0.5f, 0.0f, 1.0f);
+                        if (has_directional_bias) {
+                            const float front_adjustment = std::clamp((normal.dot(-bias_direction) + 1.2f) * 0.5f, 0.0f, 1.0f);
                             result[s_idx] += front_adjustment;
                         }
 
@@ -303,6 +356,56 @@ struct GlobalModelInfo {
   AABBTreeIndirect::Tree<3, float> enforcers_tree;
   AABBTreeIndirect::Tree<3, float> blockers_tree;
 
+  // Precise Seam modifiers: strong modifiers (CENTER/LEFT/RIGHT) determine exact seam placement
+  std::vector<const ModelVolume *> precise_seam_strong_volumes;
+  // Precise Seam modifiers: weak modifiers (ENFORCED/BLOCKED/NEUTRAL) provide hints for seam placement
+  std::vector<const ModelVolume *> precise_seam_weak_volumes;
+
+  // Pre-sliced modifier polygons, keyed by ModelVolume pointer.
+  // Populated once in SeamPlacer::init_object() to avoid re-slicing on every perimeter.
+  PreciseSeam::ModifierSlicesCache precise_seam_slices;
+
+  // Part joints (seam_prefer_part_joints): points on the surface of one part that touch another part,
+  // see gather_part_joints(). Empty unless the object has touching parts (or touches another object).
+  std::vector<Vec3f> part_joint_points;
+  CoordinateFunctor part_joint_coordinate_functor;
+  KDTreeIndirect<3, float, CoordinateFunctor> part_joint_tree { CoordinateFunctor { } };
+  // Spacing of the joint samples; a perimeter point is on a joint within flow width + half of this.
+  float part_joint_sample_spacing = 0.f;
+
+  bool has_part_joints() const { return !part_joint_points.empty(); }
+
+  // Is any joint sample within `radius`? A bounded search that stops at the first hit: most perimeter points are
+  // nowhere near a joint, and an unbounded closest-point query is slow for those.
+  bool is_near_part_joint(const Vec3f &position, float radius) const {
+    if (part_joint_points.empty()) {
+      return false;
+    }
+    struct Visitor {
+      const KDTreeIndirect<3, float, CoordinateFunctor> &tree;
+      const Vec3f                                       &center;
+      const float                                        radius_sqr;
+      bool                                               found = false;
+      unsigned int operator()(size_t idx, size_t dimension) {
+        if (found) {
+          return (unsigned int) VisitorReturnMask::STOP;
+        }
+        float dist_sqr = 0.f;
+        for (size_t i = 0; i < 3; ++i) {
+          const float d = center[i] - tree.coordinate(idx, i);
+          dist_sqr += d * d;
+        }
+        if (dist_sqr <= radius_sqr) {
+          found = true;
+          return (unsigned int) VisitorReturnMask::STOP;
+        }
+        return tree.descent_mask(center[dimension], radius_sqr, idx, dimension);
+      }
+    } visitor { part_joint_tree, position, radius * radius };
+    part_joint_tree.visit(visitor);
+    return visitor.found;
+  }
+
   bool is_enforced(const Vec3f &position, float radius) const {
     if (enforcers.empty()) {
       return false;
@@ -402,8 +505,15 @@ struct GlobalModelInfo {
 }
 ;
 
+// How far from a joint sample a perimeter point still counts as "on the joint". The outer wall runs half a
+// line width inside the surface, and the samples are part_joint_sample_spacing apart.
+static float part_joint_radius(const Perimeter &perimeter, const GlobalModelInfo &global_model_info) {
+  return std::max(perimeter.flow_width, 0.4f) + 0.5f * global_model_info.part_joint_sample_spacing;
+}
+
 //Extract perimeter polygons of the given layer
-Polygons extract_perimeter_polygons(const Layer *layer, std::vector<const LayerRegion*> &corresponding_regions_out) {
+Polygons extract_perimeter_polygons(const Layer *layer, std::vector<const LayerRegion*> &corresponding_regions_out,
+                                   bool has_precise_seam_modifiers) {
   Polygons polygons;
   for (const LayerRegion *layer_region : layer->regions()) {
     for (const ExtrusionEntity *ex_entity : layer_region->perimeters.entities) {
@@ -440,6 +550,18 @@ Polygons extract_perimeter_polygons(const Layer *layer, std::vector<const LayerR
     }
   }
 
+  if (has_precise_seam_modifiers) {
+    // Extrusion loops repeat their start point; Polygon closes the contour implicitly.
+    // Normalize here for Precise Seam without changing ordinary seam candidates.
+    for (Polygon &polygon : polygons) {
+      // Adjacent extrusion paths share endpoints; zero-length edges would prevent refinement at their junctions.
+      // Remove only consecutive duplicates, preserving distinct visits to a self-touching contour point.
+      polygon.points.erase(std::unique(polygon.points.begin(), polygon.points.end()), polygon.points.end());
+      while (polygon.size() > 1 && polygon.points.front() == polygon.points.back())
+        polygon.points.pop_back();
+    }
+  }
+
   if (polygons.empty()) { // If there are no perimeter polygons for whatever reason (disabled perimeters .. ) insert dummy point
     // it is easier than checking everywhere if the layer is not emtpy, no seam will be placed to this layer anyway
     polygons.emplace_back(Points{ { 0, 0 } });
@@ -454,12 +576,34 @@ Polygons extract_perimeter_polygons(const Layer *layer, std::vector<const LayerR
 //each SeamCandidate also contains pointer to shared Perimeter structure representing the polygon
 // if Custom Seam modifiers are present, oversamples the polygon if necessary to better fit user intentions
 void process_perimeter_polygon(const Polygon &orig_polygon, float z_coord, const LayerRegion *region,
-                               const GlobalModelInfo &global_model_info, PrintObjectSeamData::LayerSeams &result) {
+                               const GlobalModelInfo &global_model_info, PrintObjectSeamData::LayerSeams &result,
+                               PreciseSeam::PreciseSeamWarnings *warnings = nullptr) {
   if (orig_polygon.size() == 0) {
     return;
   }
   Polygon polygon = orig_polygon;
   bool was_clockwise = polygon.make_counter_clockwise();
+
+  const Layer *layer = region ? region->layer() : nullptr;
+  const auto  &strong_volumes = global_model_info.precise_seam_strong_volumes;
+  const auto  &weak_volumes   = global_model_info.precise_seam_weak_volumes;
+
+  auto seam_point = PreciseSeam::insert_strong_seam_point(strong_volumes, polygon, layer,
+                                                          global_model_info.precise_seam_slices, warnings);
+
+  std::optional<Vec3f> inserted_seam_position;
+  if (seam_point.has_value()) {
+    Vec2f unscaled_p = unscale(seam_point.value()).cast<float>();
+    inserted_seam_position = Vec3f(unscaled_p.x(), unscaled_p.y(), z_coord);
+  }
+
+  // Weak modifiers only apply when no strong modifier pinned this perimeter.
+  std::vector<PreciseSeam::WeakModifierSegment> weak_segments;
+  if (!inserted_seam_position.has_value()) {
+    weak_segments = PreciseSeam::collect_weak_modifier_segments(weak_volumes, polygon, layer,
+                                                                global_model_info.precise_seam_slices, warnings);
+  }
+
   float angle_arm_len = region != nullptr ? region->flow(FlowRole::frExternalPerimeter).nozzle_diameter() : 0.5f;
 
   std::vector<float> lengths { };
@@ -512,7 +656,13 @@ void process_perimeter_polygon(const Polygon &orig_polygon, float z_coord, const
     if (orig_point) {
       Vec3f pos_of_next = orig_polygon_points.empty() ? first : orig_polygon_points.front();
       float distance_to_next = (position - pos_of_next).norm();
-      if (global_model_info.is_enforced(position, distance_to_next)) {
+      // Part joints: a joint usually crosses a long straight edge far from its vertices, so the edge is
+      // oversampled like an enforced one when a joint sample is anywhere near it (the query sphere is
+      // centred on the edge and covers it). No joint samples: is_near_part_joint() is false, no change.
+      const bool edge_near_part_joint = global_model_info.has_part_joints() &&
+          global_model_info.is_near_part_joint(0.5f * (position + pos_of_next),
+                                               0.5f * distance_to_next + part_joint_radius(perimeter, global_model_info));
+      if (global_model_info.is_enforced(position, distance_to_next) || edge_near_part_joint) {
         Vec3f vec_to_next = (pos_of_next - position).normalized();
         float step_size = SeamPlacer::enforcer_oversampling_distance;
         float step = step_size;
@@ -524,9 +674,18 @@ void process_perimeter_polygon(const Polygon &orig_polygon, float z_coord, const
     }
 
     result.points.emplace_back(position, perimeter, local_ccw_angle, type);
+    if (global_model_info.has_part_joints()) {
+      result.points.back().part_joint =
+          global_model_info.is_near_part_joint(position, part_joint_radius(perimeter, global_model_info));
+    }
   }
 
   perimeter.end_index = result.points.size();
+
+  // Apply weak modifiers if no strong modifier was inserted
+  if (!inserted_seam_position.has_value() && !weak_segments.empty()) {
+    PreciseSeam::apply_weak_modifiers_to_perimeter(weak_segments, result, perimeter, some_point_enforced);
+  }
 
   if (some_point_enforced) {
     // We will patches of enforced points (patch: continuous section of enforced points), choose
@@ -560,17 +719,11 @@ void process_perimeter_polygon(const Polygon &orig_polygon, float z_coord, const
       }
       //now pick the longest patch
       std::pair<size_t, size_t> longest_patch { 0, 0 };
-      auto patch_len = [perimeter_size](const std::pair<size_t, size_t> &start_end) {
-        if (start_end.second < start_end.first) {
-          return start_end.first + (perimeter_size - start_end.second);
-        } else {
-          return start_end.second - start_end.first;
-        }
-      };
       for (size_t patch_idx = start_on_second ? 1 : 0; patch_idx < patches_starts_ends.size(); patch_idx += 2) {
         std::pair<size_t, size_t> current_patch { patches_starts_ends[patch_idx], patches_starts_ends[patch_idx
                                                                                                     + 1] };
-        if (patch_len(longest_patch) < patch_len(current_patch)) {
+        if (enforced_patch_length(longest_patch.first, longest_patch.second, perimeter_size) <
+            enforced_patch_length(current_patch.first, current_patch.second, perimeter_size)) {
           longest_patch = current_patch;
         }
       }
@@ -591,6 +744,21 @@ void process_perimeter_polygon(const Polygon &orig_polygon, float z_coord, const
       } else {
         size_t central_idx = large_angle_points_indices.size() / 2;
         result.points[large_angle_points_indices[central_idx]].central_enforcer = true;
+      }
+    }
+  }
+
+  // Strong Precise Seam: pin one point and block every other candidate on this perimeter.
+  if (inserted_seam_position.has_value()) {
+    for (size_t i = perimeter.start_index; i < perimeter.end_index; ++i) {
+      if (result.points[i].position == inserted_seam_position.value()) {
+        result.points[i].type = EnforcedBlockedSeamPoint::Enforced;
+        result.points[i].central_enforcer = true;
+        perimeter.precise_seam_point = inserted_seam_position;
+        perimeter.precise_seam_index = i;
+      } else {
+        result.points[i].type = EnforcedBlockedSeamPoint::Blocked;
+        result.points[i].central_enforcer = false;
       }
     }
   }
@@ -621,6 +789,361 @@ std::pair<size_t, size_t> find_previous_and_next_perimeter_point(const std::vect
   return {size_t(prev),size_t(next)};
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Part joints (seam_prefer_part_joints).
+//
+// An assembly - an object made of several parts, or objects placed against each other - has joints: lines on the
+// outer surface where one part meets the next. A seam hides well in such a line. The ordinary scoring rarely finds
+// it: once the parts are unioned per layer a flush joint has no corner for the angle term, the visibility estimate
+// only sees it diluted, and any concave corner elsewhere wins. So, for the Aligned seam positions only
+// (is_aligned_setup: Aligned, Aligned back, Aligned left/right), the contact regions are detected on the meshes
+// (gather_part_joints), the outer wall points near them are marked (SeamCandidate::part_joint), the middle of each
+// run of marked points is promoted (central_part_joint, mark_part_joint_centers), and that point then beats
+// everything but painted enforcers and blockers, including during alignment. An object with a single part and nothing touching it gets no samples, so no flag is ever set
+// and its seams are exactly what they were.
+
+namespace PartJoints {
+// Two surfaces closer than this and facing each other (normals at least ~135 degrees apart) touch.
+constexpr float contact_gap = 0.2f;
+constexpr float facing_cos  = -0.7f;
+// A surface point inside another part (interpenetrating parts) is in contact too. Only points within `reach` of
+// that part's surface are looked at: a deeper one is further than a line width from every outer wall anyway, and
+// a part buried well under the surface must not mark the surface above it.
+constexpr float inside_epsilon = 0.01f;
+constexpr float reach          = 0.5f;
+// A contact on a (nearly) horizontal face - a part standing on another - crosses every wall of a layer or two
+// and says nothing about where along the loop the seam should go.
+constexpr float max_abs_normal_z = 0.95f;
+// Sample spacing on the contact surfaces, widened with the total candidate area to bound the work.
+constexpr float  min_spacing = 0.15f;
+constexpr float  max_spacing = 1.0f;
+constexpr double max_samples = 300000.;
+
+struct Body {
+  indexed_triangle_set             its;
+  BoundingBoxf3                    bbox;
+  bool                             own = false; // a part of the object being processed (only these get samples)
+  AABBTreeIndirect::Tree<3, float> tree;
+};
+
+struct Candidate {
+  size_t body;
+  size_t facet;
+  size_t other;
+};
+
+// Closest point of `its` to `point`, if one is within `max_dist`.
+static bool closest_point_within(const indexed_triangle_set &its, const AABBTreeIndirect::Tree<3, float> &tree,
+                                 const Vec3f &point, float max_dist, size_t &hit_idx, Vec3f &hit_point)
+{
+  if (tree.empty())
+    return false;
+  auto distancer = AABBTreeIndirect::detail::IndexedTriangleSetDistancer<Vec3f, stl_triangle_vertex_indices,
+                                                                          AABBTreeIndirect::Tree<3, float>, Vec3f>
+      { its.vertices, its.indices, tree, point };
+  hit_idx   = size_t(-1);
+  hit_point = Vec3f::Constant(std::numeric_limits<float>::quiet_NaN());
+  AABBTreeIndirect::detail::squared_distance_to_indexed_primitives_recursive(distancer, size_t(0), 0.f,
+                                                                             max_dist * max_dist, hit_idx, hit_point);
+  return hit_point.allFinite() && hit_idx < its.indices.size();
+}
+} // namespace PartJoints
+
+// Fills result.part_joint_points with samples of the part surfaces of `po` that touch another part of `po`, or a
+// part of another object of the same print placed against it. All in the print object's (centred) coordinates,
+// the same as the seam candidates.
+void gather_part_joints(GlobalModelInfo &result, const Print &print, const PrintObject *po,
+                        const std::function<void(void)> &throw_if_canceled)
+{
+  using namespace PartJoints;
+  const auto time_start = std::chrono::steady_clock::now();
+
+  std::vector<Body> bodies;
+  auto add_body = [&bodies](const ModelVolume *mv, const Transform3d &trafo, bool own) {
+    Body body;
+    body.its = mv->mesh().its;
+    its_transform(body.its, trafo, true);
+    for (const Vec3f &v : body.its.vertices)
+      body.bbox.merge(v.cast<double>());
+    body.own = own;
+    bodies.emplace_back(std::move(body));
+  };
+  // Embossed text and SVG are decoration on a surface, not assembly parts: their outline must not pull the seam.
+  auto is_assembly_part = [](const ModelVolume *mv) {
+    return mv->type() == ModelVolumeType::MODEL_PART && !mv->is_text() && !mv->is_svg() && !mv->mesh().empty();
+  };
+
+  const Transform3d obj_transform = po->trafo_centered();
+  for (const ModelVolume *mv : po->model_object()->volumes)
+    if (is_assembly_part(mv))
+      add_body(mv, obj_transform * mv->get_matrix(), true);
+  if (bodies.empty())
+    return;
+
+  BoundingBoxf3 own_bbox;
+  for (const Body &body : bodies)
+    own_bbox.merge(body.bbox);
+  const auto          own_bbox_reach = own_bbox.inflated(reach);
+
+  // Separate objects placed against this one. The seams of a print object are shared by all its instances, so
+  // this only makes sense with a single instance - and likewise only when no identical object shares its slices
+  // (Print::process shares layers between identical objects, and G-code export then looks the seams up through
+  // the shared layers, so a copy would get this object's joints at the wrong place). By-object printing keeps
+  // objects apart anyway; skip it there.
+  bool shares_layers = po->get_shared_object() != nullptr;
+  for (const PrintObject *other : print.objects())
+    shares_layers = shares_layers || other->get_shared_object() == po;
+  if (po->instances().size() == 1 && !shares_layers && print.config().print_sequence != PrintSequence::ByObject) {
+    const Point own_shift = po->instances().front().shift;
+    for (const PrintObject *other : print.objects()) {
+      if (other == po)
+        continue;
+      for (const PrintInstance &instance : other->instances()) {
+        // A print object's centred coordinates plus its instance shift are bed coordinates (PrintApply.cpp), so
+        // this takes the other object's parts into our centred coordinates.
+        const Vec2d offset = unscale(Point(instance.shift - own_shift));
+        Transform3d to_own = other->trafo_centered();
+        to_own.pretranslate(Vec3d(offset.x(), offset.y(), 0.));
+        for (const ModelVolume *mv : other->model_object()->volumes) {
+          if (!is_assembly_part(mv))
+            continue;
+          const Transform3d trafo = to_own * mv->get_matrix();
+          if (mv->mesh().bounding_box().transformed(trafo).intersects(own_bbox_reach))
+            add_body(mv, trafo, false);
+        }
+      }
+    }
+  }
+  if (bodies.size() < 2)
+    return;
+
+  // Pairs (own part, any other part) whose boxes come within reach of each other.
+  std::vector<std::vector<size_t>> others_of(bodies.size());
+  std::vector<char>                needs_tree(bodies.size(), 0);
+  bool                             any_pair = false;
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    if (!bodies[i].own)
+      continue;
+    const auto          reach_box = bodies[i].bbox.inflated(reach);
+    for (size_t j = 0; j < bodies.size(); ++j)
+      if (j != i && reach_box.intersects(bodies[j].bbox)) {
+        others_of[i].push_back(j);
+        needs_tree[j] = 1;
+        any_pair      = true;
+      }
+  }
+  if (!any_pair)
+    return;
+
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, bodies.size()), [&bodies, &needs_tree](tbb::blocked_range<size_t> r) {
+    for (size_t i = r.begin(); i < r.end(); ++i)
+      if (needs_tree[i])
+        bodies[i].tree = AABBTreeIndirect::build_aabb_tree_over_indexed_triangle_set(bodies[i].its.vertices,
+                                                                                     bodies[i].its.indices);
+  });
+  throw_if_canceled();
+  const auto time_trees = std::chrono::steady_clock::now();
+
+  // Facets of each own part that come within reach of another part: cheap test on the facet's bounding sphere.
+  std::vector<Candidate> candidates;
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    for (size_t j : others_of[i]) {
+      const Body         &body      = bodies[i];
+      const Body         &other     = bodies[j];
+      const auto          reach_box = other.bbox.inflated(reach);
+      std::vector<char>   hit(body.its.indices.size(), 0);
+      tbb::parallel_for(tbb::blocked_range<size_t>(0, body.its.indices.size()),
+                        [&body, &other, &reach_box, &hit](tbb::blocked_range<size_t> r) {
+        for (size_t f = r.begin(); f < r.end(); ++f) {
+          const stl_triangle_vertex_indices &face = body.its.indices[f];
+          const Vec3f &a = body.its.vertices[face[0]];
+          const Vec3f &b = body.its.vertices[face[1]];
+          const Vec3f &c = body.its.vertices[face[2]];
+          BoundingBoxf3 facet_box;
+          facet_box.merge(a.cast<double>());
+          facet_box.merge(b.cast<double>());
+          facet_box.merge(c.cast<double>());
+          if (!facet_box.intersects(reach_box))
+            continue;
+          const Vec3f cross = (b - a).cross(c - a);
+          const float cross_norm = cross.norm();
+          if (!(cross_norm > 1e-9f) || std::abs(cross.z()) > max_abs_normal_z * cross_norm)
+            continue; // degenerate or horizontal
+          const Vec3f centroid = (a + b + c) / 3.f;
+          const float radius   = std::sqrt(std::max({ (a - centroid).squaredNorm(), (b - centroid).squaredNorm(),
+                                                      (c - centroid).squaredNorm() }));
+          size_t hit_idx;
+          Vec3f  hit_point;
+          if (closest_point_within(other.its, other.tree, centroid, radius + reach, hit_idx, hit_point))
+            hit[f] = 1;
+        }
+      });
+      for (size_t f = 0; f < hit.size(); ++f)
+        if (hit[f])
+          candidates.push_back({ i, f, j });
+    }
+  }
+  throw_if_canceled();
+  const auto time_candidates = std::chrono::steady_clock::now();
+  if (candidates.empty())
+    return;
+
+  double candidate_area = 0.;
+  for (const Candidate &cand : candidates) {
+    const indexed_triangle_set &its = bodies[cand.body].its;
+    const stl_triangle_vertex_indices &face = its.indices[cand.facet];
+    candidate_area += 0.5 * double((its.vertices[face[1]] - its.vertices[face[0]])
+                                       .cross(its.vertices[face[2]] - its.vertices[face[0]]).norm());
+  }
+  // Leaves of the longest-edge bisection below average about a quarter of spacing^2.
+  const float spacing = std::clamp(float(std::sqrt(4. * candidate_area / max_samples)), min_spacing, max_spacing);
+
+  // Sample each candidate facet (longest-edge bisection down to `spacing`, one sample per leaf) and keep the
+  // samples that touch the other part or lie just inside it.
+  std::vector<std::vector<Vec3f>> found(candidates.size());
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, candidates.size()),
+                    [&bodies, &candidates, &found, spacing](tbb::blocked_range<size_t> r) {
+    std::vector<std::array<Vec3f, 3>> stack;
+    const float                       sqr_spacing = spacing * spacing;
+    for (size_t k = r.begin(); k < r.end(); ++k) {
+      const Candidate                   &cand  = candidates[k];
+      const Body                        &body  = bodies[cand.body];
+      const Body                        &other = bodies[cand.other];
+      const stl_triangle_vertex_indices &face  = body.its.indices[cand.facet];
+      const Vec3f                        normal = its_face_normal(body.its, cand.facet);
+      stack.clear();
+      stack.push_back({ body.its.vertices[face[0]], body.its.vertices[face[1]], body.its.vertices[face[2]] });
+      while (!stack.empty()) {
+        const std::array<Vec3f, 3> t = stack.back();
+        stack.pop_back();
+        const float l01 = (t[1] - t[0]).squaredNorm();
+        const float l12 = (t[2] - t[1]).squaredNorm();
+        const float l20 = (t[0] - t[2]).squaredNorm();
+        if (std::max({ l01, l12, l20 }) > sqr_spacing) {
+          if (l01 >= l12 && l01 >= l20) {
+            const Vec3f m = 0.5f * (t[0] + t[1]);
+            stack.push_back({ t[0], m, t[2] });
+            stack.push_back({ m, t[1], t[2] });
+          } else if (l12 >= l20) {
+            const Vec3f m = 0.5f * (t[1] + t[2]);
+            stack.push_back({ t[0], t[1], m });
+            stack.push_back({ t[0], m, t[2] });
+          } else {
+            const Vec3f m = 0.5f * (t[2] + t[0]);
+            stack.push_back({ t[0], t[1], m });
+            stack.push_back({ m, t[1], t[2] });
+          }
+          continue;
+        }
+        const Vec3f sample = (t[0] + t[1] + t[2]) / 3.f;
+        size_t      hit_idx;
+        Vec3f       hit_point;
+        if (!closest_point_within(other.its, other.tree, sample, reach, hit_idx, hit_point))
+          continue;
+        const Vec3f other_normal = its_face_normal(other.its, int(hit_idx));
+        const bool  touching     = (sample - hit_point).squaredNorm() <= contact_gap * contact_gap &&
+                                  normal.dot(other_normal) <= facing_cos;
+        const bool  inside       = (sample - hit_point).dot(other_normal) < -inside_epsilon;
+        if (touching || inside)
+          found[k].push_back(sample);
+      }
+    }
+  });
+  throw_if_canceled();
+  const auto time_sampled = std::chrono::steady_clock::now();
+
+  size_t count = 0;
+  for (const std::vector<Vec3f> &samples : found)
+    count += samples.size();
+  if (count == 0)
+    return;
+  result.part_joint_points.reserve(count);
+  for (const std::vector<Vec3f> &samples : found)
+    result.part_joint_points.insert(result.part_joint_points.end(), samples.begin(), samples.end());
+  result.part_joint_sample_spacing     = spacing;
+  result.part_joint_coordinate_functor = CoordinateFunctor(&result.part_joint_points);
+  result.part_joint_tree = KDTreeIndirect<3, float, CoordinateFunctor>(result.part_joint_coordinate_functor,
+                                                                       result.part_joint_points.size());
+
+  BOOST_LOG_TRIVIAL(debug) << "SeamPlacer: part joints of " << po->model_object()->name << ": " << bodies.size()
+                           << " parts, " << candidates.size() << " candidate facets, " << count
+                           << " joint samples at " << spacing << " mm; meshes and trees "
+                           << std::chrono::duration<double>(time_trees - time_start).count() << " s, candidates "
+                           << std::chrono::duration<double>(time_candidates - time_trees).count() << " s, samples "
+                           << std::chrono::duration<double>(time_sampled - time_candidates).count() << " s, total "
+                           << std::chrono::duration<double>(std::chrono::steady_clock::now() - time_start).count()
+                           << " s";
+}
+
+// Promotes the middle of every run of joint points on each perimeter to central_part_joint. Runs of points that
+// are blocked or overhang are split there. A loop that is on a joint all the way round (a part standing on
+// another, cut through by the layer) has no run and gets nothing.
+void mark_part_joint_centers(std::vector<PrintObjectSeamData::LayerSeams> &layers)
+{
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, layers.size()), [&layers](tbb::blocked_range<size_t> r) {
+    std::vector<size_t> run;
+    std::vector<size_t> preferred;
+    for (size_t layer_idx = r.begin(); layer_idx < r.end(); ++layer_idx) {
+      std::vector<SeamCandidate> &points = layers[layer_idx].points;
+      auto eligible = [&points](size_t idx) {
+        const SeamCandidate &c = points[idx];
+        return c.part_joint && c.type != EnforcedBlockedSeamPoint::Blocked && c.overhang <= 0.f;
+      };
+      // The middle of a run: a point hidden inside the print if there are any (a joint between two materials),
+      // else a sharp concave corner (where interpenetrating parts meet), else the middle by length.
+      auto run_center = [&points, &preferred](const std::vector<size_t> &seg) {
+        preferred.clear();
+        for (size_t idx : seg)
+          if (points[idx].embedded_distance < -0.5f)
+            preferred.push_back(idx);
+        if (preferred.empty())
+          for (size_t idx : seg)
+            if (points[idx].local_ccw_angle < -SeamPlacer::sharp_angle_snapping_threshold)
+              preferred.push_back(idx);
+        if (!preferred.empty())
+          return preferred[preferred.size() / 2];
+        float length = 0.f;
+        for (size_t k = 1; k < seg.size(); ++k)
+          length += (points[seg[k]].position - points[seg[k - 1]].position).norm();
+        float walked = 0.f;
+        for (size_t k = 1; k < seg.size(); ++k) {
+          walked += (points[seg[k]].position - points[seg[k - 1]].position).norm();
+          if (walked >= 0.5f * length)
+            return seg[k];
+        }
+        return seg.front();
+      };
+
+      for (size_t start = 0; start < points.size(); start = points[start].perimeter.end_index) {
+        const size_t begin = points[start].perimeter.start_index;
+        const size_t end   = points[start].perimeter.end_index;
+        const size_t count = end - begin;
+        if (count < 3)
+          continue;
+        // Start the walk where a run starts, so no run wraps around the end of the loop.
+        size_t first = count;
+        for (size_t i = 0; i < count; ++i)
+          if (eligible(begin + i) && !eligible(begin + (i + count - 1) % count)) {
+            first = i;
+            break;
+          }
+        if (first == count)
+          continue; // no joint point, or all of them
+        run.clear();
+        for (size_t i = 0; i <= count; ++i) {
+          const size_t idx = begin + (first + i) % count;
+          if (i < count && eligible(idx)) {
+            run.push_back(idx);
+          } else if (!run.empty()) {
+            points[run_center(run)].central_part_joint = true;
+            run.clear();
+          }
+        }
+      }
+    }
+  });
+}
+
 // Computes all global model info - transforms object, performs raycasting
 void compute_global_occlusion(GlobalModelInfo &result, const PrintObject *po,
                               std::function<void(void)> throw_if_canceled,
@@ -636,7 +1159,9 @@ void compute_global_occlusion(GlobalModelInfo &result, const PrintObject *po,
         || model_volume->type() == ModelVolumeType::NEGATIVE_VOLUME) {
       auto model_transformation = model_volume->get_matrix();
       indexed_triangle_set model_its = model_volume->mesh().its;
-      its_transform(model_its, model_transformation);
+      // Keep outward winding when the volume is mirrored, otherwise occlusion rays
+      // see the inside of the shell as the front face.
+      its_transform(model_its, model_transformation, true);
       if (model_volume->type() == ModelVolumeType::MODEL_PART) {
         its_merge(triangle_set, model_its);
       } else {
@@ -656,7 +1181,7 @@ void compute_global_occlusion(GlobalModelInfo &result, const PrintObject *po,
 
   size_t negative_volumes_start_index = triangle_set.indices.size();
   its_merge(triangle_set, negative_volumes_set);
-  its_transform(triangle_set, obj_transform);
+  its_transform(triangle_set, obj_transform, true);
   BOOST_LOG_TRIVIAL(debug)
       << "SeamPlacer: decimate: end";
 
@@ -706,22 +1231,26 @@ void compute_global_occlusion(GlobalModelInfo &result, const PrintObject *po,
 #endif
 }
 
-void gather_enforcers_blockers(GlobalModelInfo &result, const PrintObject *po) {
+// With use_painted_seams false the painted enforcers and blockers are left out, as if the object had none
+// (SeamPlacer::plan_object_seams, for Auto-paint replacing the existing paint).
+void gather_enforcers_blockers(GlobalModelInfo &result, const PrintObject *po, bool use_painted_seams = true) {
   BOOST_LOG_TRIVIAL(debug)
       << "SeamPlacer: build AABB trees for raycasting enforcers/blockers: start";
 
   auto obj_transform = po->trafo_centered();
 
   for (const ModelVolume *mv : po->model_object()->volumes) {
-    if (mv->is_seam_painted()) {
+    if (use_painted_seams && mv->is_seam_painted()) {
       auto model_transformation = obj_transform * mv->get_matrix();
 
       indexed_triangle_set enforcers = mv->seam_facets.get_facets(*mv, EnforcerBlockerType::ENFORCER);
-      its_transform(enforcers, model_transformation);
+      // Painted enforcer/blocker facets on a mirrored volume must keep outward winding
+      // so raycasts hit the painted side.
+      its_transform(enforcers, model_transformation, true);
       its_merge(result.enforcers, enforcers);
 
       indexed_triangle_set blockers = mv->seam_facets.get_facets(*mv, EnforcerBlockerType::BLOCKER);
-      its_transform(blockers, model_transformation);
+      its_transform(blockers, model_transformation, true);
       its_merge(result.blockers, blockers);
     }
   }
@@ -735,23 +1264,26 @@ void gather_enforcers_blockers(GlobalModelInfo &result, const PrintObject *po) {
       << "SeamPlacer: build AABB trees for raycasting enforcers/blockers: end";
 }
 
-// The seam positions that steer the seam toward one side of the bed. They are all one rule with a
-// different axis and sign: score the candidate by `sign * position[axis]` and prefer the largest
-// score. Back is +Y, Right is +X, Left is -X. Returns false for every other setup, which then falls
-// through to the visibility/angle penalty.
-// The sign is applied as a multiplication by exactly +/-1.0f, so the Back path is bit-for-bit the
+// The seam position that steers the seam toward one side of the bed by a hard rule rather than by
+// a visibility penalty: score the candidate by `sign * position[axis]` and prefer the largest
+// score. Back is +Y. Returns false for every other setup, which then falls through to the
+// visibility/angle penalty. Left and Right are NOT here: they are Aligned setups (see
+// aligned_penalty_direction above) that bias toward -X/+X via the occlusion penalty, instead of
+// pinning the seam to the extreme coordinate the way Back does.
+// The sign is applied as a multiplication by exactly +1.0f, so the Back path is bit-for-bit the
 // comparison it was before this became a parameter.
 static inline bool directional_seam_axis(SeamPosition setup, int &axis, float &sign)
 {
   // Every value is listed and there is no default, so a new SeamPosition makes the compiler ask
   // whether it belongs here.
   switch (setup) {
-  case spRear:  axis = 1; sign =  1.0f; return true;
-  case spLeft:  axis = 0; sign = -1.0f; return true;
-  case spRight: axis = 0; sign =  1.0f; return true;
+  case spRear: axis = 1; sign = 1.0f; return true;
   case spNearest:
   case spAligned:
   case spAlignedBack:
+  case spAlignedFront:
+  case spLeft:
+  case spRight:
   case spRandom:
     break;
   }
@@ -761,7 +1293,7 @@ static inline bool directional_seam_axis(SeamPosition setup, int &axis, float &s
 struct SeamComparator {
   SeamPosition setup;
   float angle_importance;
-  // Set for spRear/spLeft/spRight; picks out the coordinate the seam is pulled along.
+  // Set for spRear; picks out the coordinate the seam is pulled along.
   bool  directional;
   int   directional_axis;
   float directional_sign;
@@ -783,13 +1315,19 @@ struct SeamComparator {
   // should return if a is better seamCandidate than b
   bool is_first_better(const SeamCandidate &a, const SeamCandidate &b, const Vec2f &preffered_location = Vec2f { 0.0f,
                                                                                                                0.0f }) const {
-    if ((setup == SeamPosition::spAligned || setup == SeamPosition::spAlignedBack) && a.central_enforcer != b.central_enforcer) {
+    if (is_aligned_setup(setup) && a.central_enforcer != b.central_enforcer) {
       return a.central_enforcer;
     }
 
     // Blockers/Enforcers discrimination, top priority
     if (a.type != b.type) {
       return a.type > b.type;
+    }
+
+    // Part joints: the middle of a joint beats any ordinary point (only ever set for the Aligned family; never an
+    // overhanging or blocked point, see mark_part_joint_centers). Painted enforcers and blockers were settled above.
+    if (a.central_part_joint != b.central_part_joint) {
+      return a.central_part_joint;
     }
 
     //avoid overhangs
@@ -836,7 +1374,7 @@ struct SeamComparator {
   // Also used by the random seam generator.
   bool is_first_not_much_worse(const SeamCandidate &a, const SeamCandidate &b) const {
     // Blockers/Enforcers discrimination, top priority
-    if ((setup == SeamPosition::spAligned || setup == SeamPosition::spAlignedBack) && a.central_enforcer != b.central_enforcer) {
+    if (is_aligned_setup(setup) && a.central_enforcer != b.central_enforcer) {
       // Prefer centers of enforcers.
       return a.central_enforcer;
     }
@@ -851,6 +1389,11 @@ struct SeamComparator {
 
     if (a.type != b.type) {
       return a.type > b.type;
+    }
+
+    // Part joints: alignment must not trade the middle of a joint for an ordinary point.
+    if (a.central_part_joint != b.central_part_joint) {
+      return a.central_part_joint;
     }
 
     //avoid overhangs
@@ -1046,13 +1589,14 @@ void pick_random_seam_point(const std::vector<SeamCandidate> &perimeter_points, 
 // Parallel process and extract each perimeter polygon of the given print object.
 // Gather SeamCandidates of each layer into vector and build KDtree over them
 // Store results in the SeamPlacer variables m_seam_per_object
-void SeamPlacer::gather_seam_candidates(const PrintObject *po, const SeamPlacerImpl::GlobalModelInfo &global_model_info) {
+void SeamPlacer::gather_seam_candidates(const PrintObject *po, const SeamPlacerImpl::GlobalModelInfo &global_model_info,
+                                        PreciseSeam::PreciseSeamWarnings *warnings) {
   using namespace SeamPlacerImpl;
   PrintObjectSeamData &seam_data = m_seam_per_object.emplace(po, PrintObjectSeamData { }).first->second;
   seam_data.layers.resize(po->layer_count());
 
   tbb::parallel_for(tbb::blocked_range<size_t>(0, po->layers().size()),
-                    [po, &global_model_info, &seam_data]
+                    [po, &global_model_info, &seam_data, warnings]
                     (tbb::blocked_range<size_t> r) {
                       for (size_t layer_idx = r.begin(); layer_idx < r.end(); ++layer_idx) {
                         PrintObjectSeamData::LayerSeams &layer_seams = seam_data.layers[layer_idx];
@@ -1060,10 +1604,13 @@ void SeamPlacer::gather_seam_candidates(const PrintObject *po, const SeamPlacerI
                         auto unscaled_z = layer->slice_z;
                         std::vector<const LayerRegion*> regions;
                         //NOTE corresponding region ptr may be null, if the layer has zero perimeters
-                        Polygons polygons = extract_perimeter_polygons(layer, regions);
+                        const bool has_precise_seam_modifiers = !global_model_info.precise_seam_strong_volumes.empty() ||
+                                                               !global_model_info.precise_seam_weak_volumes.empty();
+                        Polygons polygons = extract_perimeter_polygons(layer, regions, has_precise_seam_modifiers);
                         for (size_t poly_index = 0; poly_index < polygons.size(); ++poly_index) {
                           process_perimeter_polygon(polygons[poly_index], unscaled_z,
-                                                    regions[poly_index], global_model_info, layer_seams);
+                                                    regions[poly_index], global_model_info, layer_seams,
+                                                    warnings);
                         }
                         auto functor = SeamCandidateCoordinateFunctor { layer_seams.points };
                         seam_data.layers[layer_idx].points_tree =
@@ -1193,6 +1740,13 @@ std::optional<std::pair<size_t, size_t>> SeamPlacer::find_next_seam_in_layer(
 
   // First try to pick central enforcer if any present
   if (next_layer_seam.central_enforcer
+      && (next_layer_seam.position - projected_position).squaredNorm()
+             < sqr(3 * max_distance)) {
+    return {std::pair<size_t, size_t> {layer_idx, nearest_point.perimeter.seam_index}};
+  }
+
+  // Likewise follow a part joint from layer to layer.
+  if (next_layer_seam.central_part_joint
       && (next_layer_seam.position - projected_position).squaredNorm()
              < sqr(3 * max_distance)) {
     return {std::pair<size_t, size_t> {layer_idx, nearest_point.perimeter.seam_index}};
@@ -1392,6 +1946,10 @@ void SeamPlacer::align_seam_points(const PrintObject *po, const SeamPlacerImpl::
           curling_influence = 1.0f;
           weights[index] += 3.0f;
         }
+        if (current.central_part_joint) {
+          curling_influence = 1.0f;
+          weights[index] += 3.0f;
+        }
         total_length += curling_influence * (last_point_pos - current.position).norm();
         last_point_pos = current.position;
       }
@@ -1422,6 +1980,14 @@ void SeamPlacer::align_seam_points(const PrintObject *po, const SeamPlacerImpl::
         Vec3f final_position = t * current_pos + (1.0f - t) * to_3d(fitted_pos, current_pos.z());
 
         Perimeter &perimeter = layers[pair.first].points[pair.second].perimeter;
+        if (layers[pair.first].points[pair.second].central_part_joint) {
+          // Smooth along the joint, but never off it: stay within half a line width of the joint point.
+          const Vec3f shift     = final_position - current_pos;
+          const float max_shift = 0.5f * perimeter.flow_width;
+          if (shift.norm() > max_shift) {
+            final_position = current_pos + shift * (max_shift / shift.norm());
+          }
+        }
         perimeter.seam_index = pair.second;
         perimeter.final_seam_position = final_position;
         perimeter.finalized = true;
@@ -1459,30 +2025,96 @@ void SeamPlacer::align_seam_points(const PrintObject *po, const SeamPlacerImpl::
 
 }
 
+PreciseSeam::PreciseSeamWarnings &SeamPlacer::precise_seam_warnings()
+{
+  if (!m_precise_seam_warnings)
+    m_precise_seam_warnings = std::make_unique<PreciseSeam::PreciseSeamWarnings>();
+  return *m_precise_seam_warnings;
+}
+
+std::string SeamPlacer::precise_seam_warning_message() const
+{
+  if (!m_precise_seam_warnings)
+    return {};
+  const auto &w = *m_precise_seam_warnings;
+  const bool mi = w.multiple_intersections.load(std::memory_order_relaxed);
+  const bool tb = w.through_body.load(std::memory_order_relaxed);
+  const bool mc = w.multiply_connected.load(std::memory_order_relaxed);
+  const bool fc = w.full_containment.load(std::memory_order_relaxed);
+  std::vector<std::string> parts;
+  if (mi)
+    parts.push_back(_u8L("multiple intersections with a perimeter detected"));
+  if (tb)
+    parts.push_back(_u8L("modifier fully crosses the printable perimeter"));
+  if (mc)
+    parts.push_back(_u8L("modifier shape is not solid (has holes inside) and was ignored"));
+  if (fc)
+    parts.push_back(_u8L("perimeter is fully contained inside modifier and was ignored"));
+  if (parts.empty())
+    return {};
+  // One line: the export warnings dialog shows only the first line of each warning.
+  std::string warning_text = _u8L("Precise Seam") + ": ";
+  for (size_t i = 0; i < parts.size(); ++i) {
+    if (i > 0)
+      warning_text += "; ";
+    warning_text += parts[i];
+  }
+  warning_text += ". ";
+  warning_text += _u8L("Seam placement may differ from expected.");
+  return warning_text;
+}
+
 void SeamPlacer::init(const Print &print, std::function<void(void)> throw_if_canceled_func) {
-  using namespace SeamPlacerImpl;
   m_seam_per_object.clear();
+  m_precise_seam_warnings = std::make_unique<PreciseSeam::PreciseSeamWarnings>();
 
   for (const PrintObject *po : print.objects()) {
     throw_if_canceled_func();
-    SeamPosition configured_seam_preference = po->config().seam_position.value;
+    init_object(print, po, po->config().seam_position.value, po->config().seam_prefer_part_joints.value, true,
+                throw_if_canceled_func);
+  }
+}
+
+void SeamPlacer::init_object(const Print &print, const PrintObject *po, SeamPosition configured_seam_preference,
+                             bool prefer_part_joints, bool use_painted_seams,
+                             const std::function<void(void)> &throw_if_canceled_func) {
+  using namespace SeamPlacerImpl;
+  {
     SeamComparator comparator { configured_seam_preference };
+    bool has_part_joints = false;
 
     {
       GlobalModelInfo global_model_info { };
-      gather_enforcers_blockers(global_model_info, po);
+      if (prefer_part_joints && is_aligned_setup(configured_seam_preference)) {
+        gather_part_joints(global_model_info, print, po, throw_if_canceled_func);
+        has_part_joints = global_model_info.has_part_joints();
+      }
+      gather_enforcers_blockers(global_model_info, po, use_painted_seams);
+      // Precise Seam modifiers are explicit volumes, not paint, so they also steer Auto-paint
+      // (plan_object_seams) even when use_painted_seams is false. Gate on the volume list.
+      PreciseSeam::init_precise_seam_data(global_model_info.precise_seam_strong_volumes,
+                                          global_model_info.precise_seam_weak_volumes,
+                                          m_seam_per_object[po].has_precise_seam_strong_volumes,
+                                          po->model_object());
+      if (!global_model_info.precise_seam_strong_volumes.empty() ||
+          !global_model_info.precise_seam_weak_volumes.empty()) {
+        for (const ModelVolume *vol : global_model_info.precise_seam_strong_volumes)
+          global_model_info.precise_seam_slices[vol] = po->slice_single_volume(vol);
+        for (const ModelVolume *vol : global_model_info.precise_seam_weak_volumes)
+          global_model_info.precise_seam_slices[vol] = po->slice_single_volume(vol);
+      }
       throw_if_canceled_func();
-      if (configured_seam_preference == spAligned || configured_seam_preference == spNearest || configured_seam_preference == spAlignedBack) {
+      if (is_aligned_setup(configured_seam_preference) || configured_seam_preference == spNearest) {
         compute_global_occlusion(global_model_info, po, throw_if_canceled_func, configured_seam_preference);
       }
       throw_if_canceled_func();
       BOOST_LOG_TRIVIAL(debug)
           << "SeamPlacer: gather_seam_candidates: start";
-      gather_seam_candidates(po, global_model_info);
+      gather_seam_candidates(po, global_model_info, &precise_seam_warnings());
       BOOST_LOG_TRIVIAL(debug)
           << "SeamPlacer: gather_seam_candidates: end";
       throw_if_canceled_func();
-      if (configured_seam_preference == spAligned || configured_seam_preference == spNearest || configured_seam_preference == spAlignedBack) {
+      if (is_aligned_setup(configured_seam_preference) || configured_seam_preference == spNearest) {
         BOOST_LOG_TRIVIAL(debug)
             << "SeamPlacer: calculate_candidates_visibility : start";
         calculate_candidates_visibility(po, global_model_info);
@@ -1497,6 +2129,10 @@ void SeamPlacer::init(const Print &print, std::function<void(void)> throw_if_can
     BOOST_LOG_TRIVIAL(debug)
         << "SeamPlacer: calculate_overhangs and layer embdedding: end";
     throw_if_canceled_func();
+    if (has_part_joints) {
+      mark_part_joint_centers(m_seam_per_object[po].layers);
+      throw_if_canceled_func();
+    }
     if (configured_seam_preference != spNearest) { // For spNearest, the seam is picked in the place_seam method with actual nozzle position information
       BOOST_LOG_TRIVIAL(debug)
           << "SeamPlacer: pick_seam_point : start";
@@ -1518,14 +2154,16 @@ void SeamPlacer::init(const Print &print, std::function<void(void)> throw_if_can
           << "SeamPlacer: pick_seam_point : end";
     }
     throw_if_canceled_func();
-    if (configured_seam_preference == spAligned || configured_seam_preference == spRear || configured_seam_preference == spAlignedBack ||
-        configured_seam_preference == spLeft || configured_seam_preference == spRight) {
+    if (is_aligned_setup(configured_seam_preference) || configured_seam_preference == spRear) {
       BOOST_LOG_TRIVIAL(debug)
           << "SeamPlacer: align_seam_points : start";
       align_seam_points(po, comparator);
       BOOST_LOG_TRIVIAL(debug)
           << "SeamPlacer: align_seam_points : end";
     }
+
+    if (m_seam_per_object[po].has_precise_seam_strong_volumes)
+      PreciseSeam::restore_precise_seam_positions(m_seam_per_object[po].layers);
 
 #ifdef DEBUG_FILES
     debug_export_points(m_seam_per_object[po].layers, po->bounding_box(), comparator);
@@ -1663,6 +2301,71 @@ void SeamPlacer::place_seam(const Layer *layer, ExtrusionLoop &loop,
     loop.split_at(seam_point, true);
   }
 
+}
+
+std::vector<std::vector<SeamPlacer::PlannedSeam>> SeamPlacer::plan_object_seams(
+    const Print &print, const PrintObject &po, SeamPosition seam_position, bool prefer_part_joints,
+    bool use_painted_seams, const std::function<void(void)> &throw_if_canceled_func) {
+  using namespace SeamPlacerImpl;
+  SeamPlacer placer;
+  placer.init_object(print, &po, seam_position, prefer_part_joints, use_painted_seams, throw_if_canceled_func);
+  throw_if_canceled_func();
+
+  std::vector<std::vector<PlannedSeam>> result;
+  auto it = placer.m_seam_per_object.find(&po);
+  if (it == placer.m_seam_per_object.end())
+    return result;
+  std::vector<PrintObjectSeamData::LayerSeams> &layers = it->second.layers;
+  result.resize(layers.size());
+
+  const SeamComparator comparator { seam_position };
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, layers.size()),
+                    [&layers, &result, &comparator, seam_position](tbb::blocked_range<size_t> r) {
+    for (size_t layer_idx = r.begin(); layer_idx < r.end(); ++layer_idx) {
+      std::vector<SeamCandidate> &points = layers[layer_idx].points;
+      // Each loop of the layer as a polygon, to tell holes from outer outlines by nesting depth (the loop's own
+      // orientation says nothing when the walls are printed clockwise).
+      std::vector<std::pair<size_t, size_t>> loops;
+      std::vector<Polygon>                   polygons;
+      for (size_t start = 0; start < points.size(); start = points[start].perimeter.end_index) {
+        const Perimeter &perimeter = points[start].perimeter;
+        // extract_perimeter_polygons() puts a one-point dummy loop into a layer without walls.
+        if (perimeter.end_index - perimeter.start_index < 3 || perimeter.flow_width <= 0.f)
+          continue;
+        if (seam_position == spNearest)
+          pick_seam_point(points, start, comparator);
+        loops.emplace_back(perimeter.start_index, perimeter.end_index);
+        Polygon polygon;
+        polygon.points.reserve(perimeter.end_index - perimeter.start_index);
+        for (size_t i = perimeter.start_index; i < perimeter.end_index; ++i)
+          polygon.points.emplace_back(Point::new_scale(points[i].position.x(), points[i].position.y()));
+        polygons.emplace_back(std::move(polygon));
+      }
+      std::vector<PlannedSeam> &out = result[layer_idx];
+      out.reserve(loops.size());
+      for (size_t loop_idx = 0; loop_idx < loops.size(); ++loop_idx) {
+        const Perimeter &perimeter = points[loops[loop_idx].first].perimeter;
+        PlannedSeam      seam;
+        seam.position   = perimeter.finalized ? perimeter.final_seam_position : points[perimeter.seam_index].position;
+        if (perimeter.finalized) {
+          // The aligned position comes off a smoothing spline; place_seam() splits the loop at its projection.
+          const Point projected = polygons[loop_idx].point_projection(Point::new_scale(seam.position.x(), seam.position.y()));
+          seam.position.x()     = float(unscale<double>(projected.x()));
+          seam.position.y()     = float(unscale<double>(projected.y()));
+        }
+        seam.flow_width = perimeter.flow_width;
+        // A loop inside an odd number of other loops of the layer outlines a hole.
+        const Point probe = polygons[loop_idx].points.front();
+        size_t      depth = 0;
+        for (size_t other = 0; other < polygons.size(); ++other)
+          if (other != loop_idx && polygons[other].contains(probe))
+            ++depth;
+        seam.is_hole = (depth % 2) == 1;
+        out.push_back(seam);
+      }
+    }
+  });
+  return result;
 }
 
 } // namespace Slic3r

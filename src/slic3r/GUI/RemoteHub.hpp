@@ -41,6 +41,7 @@ struct Info
     int                      go2rtc_port { 0 };
     int                      relay_port { 0 };
     std::string              version;
+    std::string              exe;             // the executable the hub runs from, resolved; "" from a hub older than the field
     std::vector<std::string> ips; // LAN IPv4 addresses, default-route one first (phone on only)
     std::string              remote_url; // https://<machine>.<tailnet>.ts.net/r/<token>/ while Tailscale remote access is on
     std::string              relay_url;  // the hosted-relay link; always "" in phase 0 (nothing hosts it yet)
@@ -71,6 +72,10 @@ Info new_link();                                        // replace the phone lin
                                                         // saved links, QR codes and home-screen
                                                         // icons made from the old one stop working
 bool post_state(const std::string& json); // full Stream-tab state; remembered for a hub started later
+// The camera list the Stream tab last saved: from the running hub, else what this process last
+// posted, else <datadir>/hub/streams.json. Empty when there is none. Every window's Stream tab
+// opens with this rather than its own localStorage, which is per port and so per window.
+std::string saved_state();
 // One printer event from this instance's watcher (RemoteEvents.hpp), handed to the hub's
 // POST /hub/event on the loopback control plane. Fire and forget: with no hub running it is a
 // failed connect and false, never an error anybody sees. The hub assigns the id and the time.
@@ -181,6 +186,62 @@ bool trusted_proxy_headers(bool peer_is_loopback, bool via_relay);
 std::string pair_identity_json(const std::string& lan_url, const std::string& remote_url,
                                const std::string& relay_url, const std::string& hubid,
                                const std::string& public_key_hex);
+
+// ---- joining a camera to the printer it watches (summary_json's "camera" field) ----
+// One entry of the Stream tab's camera wall, reduced to what the join needs: its own id, the
+// alias a person gave it, the address a "LAN camera on this printer's address" match goes by
+// (streams.json's own `ip`), and the host pulled out of its stream URL (`rurl` for a browser
+// camera, `rsrc` for a go2rtc one) for a printer whose row never got an `ip` of its own recorded
+// under that exact string - a camera someone typed in by hostname, or a printer whose LAN address
+// changed since the camera was added.
+struct CameraCandidate
+{
+    std::string id;
+    std::string alias;
+    std::string ip;
+    std::string url_host; // host_of(rurl), or host_of(rsrc) when rurl is empty
+};
+
+// Which camera (its id, or "" for none) watches `printer_id`: the camera's own id first, then one
+// on the same address as `printer_ip` - by its recorded `ip`, or failing that by the host its own
+// stream URL names. Never guesses from the printer's *name*; that join is the app's own alias
+// fallback and happens on the phone, not here. Empty strings on either side are never a match, so
+// a printer or a camera missing an address does not accidentally pair with every other one that is
+// also missing it.
+std::string camera_for_printer(const std::string& printer_id, const std::string& printer_ip,
+                               const std::vector<CameraCandidate>& cams);
+
+// ---- one printer reported by several windows (poll_printers) ----
+// Every slicer window lists every Bambu printer it knows, but a Bambu LAN printer reports only to
+// the one window holding its MQTT session (the network plug-in has one LAN session per window):
+// the visible window's selected printer, the hidden instance's current watch. Every other window's
+// row for it is a MachineObject nobody is updating - no temperatures, and no AMS unless it was once
+// selected there. Last-polled-wins let such a row replace the live one.
+//
+// So: a fresh row (`cached_fresh`) from the window that is `connected` to the printer is kept over a
+// not-connected row from another window (`keep_cached`). Otherwise the incoming row is taken, and
+// when it carries no filament at all (no AMS tray, no external spool) while the cached one did, the
+// cached `ams` / `ext_spools` are carried into it as the last reading, with load / unload off on
+// every slot: the window that answers would not be the one connected to the printer.
+struct MergedPrinterRow
+{
+    bool        keep_cached { false };
+    std::string row; // the row to store when !keep_cached (JSON)
+};
+MergedPrinterRow merge_printer_row(const std::string& cached_row_json, long cached_instance, bool cached_fresh,
+                                   const std::string& incoming_row_json, long incoming_instance);
+
+// What a new phone link (HubServer::new_link) revokes besides the token itself: every native-app
+// push device (AppPush) and every phone-page Web Push subscription (WebPush), all of which were
+// registered under the old token. Without this, a phone that lost its link kept receiving this
+// hub's notifications (privacy audit 2026-10). The hosted push service keeps no per-device rows,
+// so nothing is left there. Answers how many of each were forgotten.
+struct LinkRevocation
+{
+    int app_devices { 0 };
+    int web_subscriptions { 0 };
+};
+LinkRevocation revoke_push_for_old_link();
 
 } // namespace Testing
 

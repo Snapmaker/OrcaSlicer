@@ -3,9 +3,10 @@
 
 #include <string>
 
-// The Home tab shows the phone hub page (resources/web/orca/stream_center.html, served by the
-// separate --hub process at /r/<token>/). These are the rules that view follows, kept free of wx
-// so they can be tested on their own (tests/slic3rutils/hub_home_tests.cpp):
+// Rules for embedding the phone hub page (resources/web/orca/stream_center.html, served by the
+// separate --hub process at /r/<token>/) in a desktop view - the Home tab showed it until it became
+// Recent / Print History - kept free of wx so they can be tested on their own
+// (tests/slic3rutils/hub_home_tests.cpp). RemoteHub classifies the hub's record with them:
 //   * which address it loads (always built from the hub's own /hub/info answer, never a fixed port),
 //   * where it may navigate (the hub page only; http(s) links elsewhere go to the system browser),
 //   * what a re-check of the hub means for the page on screen (port moved, new link, hub gone),

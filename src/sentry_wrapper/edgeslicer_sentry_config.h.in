@@ -5,3 +5,5 @@
 
 #define EDGESLICER_SENTRY_DSN "@EDGESLICER_SENTRY_DSN_VALUE@"
 #define EDGESLICER_SENTRY_ENVIRONMENT "@EDGESLICER_SENTRY_ENVIRONMENT_VALUE@"
+// edgeslicer@<version>; development builds (no CI environment) get "-dev+<short commit>" after it.
+#define EDGESLICER_SENTRY_RELEASE "@EDGESLICER_SENTRY_RELEASE_VALUE@"

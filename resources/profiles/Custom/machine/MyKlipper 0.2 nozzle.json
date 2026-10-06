@@ -5,6 +5,7 @@
     "from": "system",
     "setting_id": "GM002",
     "instantiation": "true",
+    "default_print_profile": "0.12mm Fine @MyKlipper",
     "printer_model": "Generic Klipper Printer",
     "nozzle_diameter": [
         "0.2"

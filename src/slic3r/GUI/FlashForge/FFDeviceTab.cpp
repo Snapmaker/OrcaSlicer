@@ -3,6 +3,7 @@
 #include "slic3r/GUI/Monitor.hpp"
 #include "slic3r/GUI/FlashForge/DeviceListPanel.hpp"
 #include "slic3r/GUI/FlashForge/SingleDeviceState.hpp"
+#include "slic3r/GUI/FlashForge/DeviceData.hpp"
 
 #include <wx/button.h>
 #include <wx/filedlg.h>
@@ -42,6 +43,14 @@ FFDeviceTab::FFDeviceTab(wxWindow* parent)
     });
     Bind(EVT_SWITCH_TO_DEVICE_LIST, [this](wxCommandEvent&) {
         m_book->SetSelection(0);
+    });
+    // The print-host settings may have been edited since the tab was last on screen (another model's
+    // device list, the Printer settings): read them again whenever it is shown, so a tile follows
+    // an edit and a printer added there turns up without pressing anything.
+    Bind(wxEVT_SHOW, [this](wxShowEvent& event) {
+        if (event.IsShown() && m_device_list != nullptr && wxGetApp().flashnetwork_loaded())
+            CallAfter([this]() { OnActivate(); });
+        event.Skip();
     });
 
     refresh_availability();
@@ -166,6 +175,14 @@ void FFDeviceTab::OnActivate()
     // Re-checked on every activation: the user may have used Locate since the tab was built.
     if (!refresh_availability())
         return;
+    // Saved printers reconnect from their saved address. They used to wait for a LAN scan that
+    // nothing ever ran, so a printer added once sat Offline for good.
+    // First what the print-host settings ask for (a Creator 5 set up there needs no Add printer),
+    // then whatever else was saved.
+    if (m_device_list != nullptr)
+        m_device_list->syncSettingsPrinters();
+    if (DeviceObjectOpr* opr = wxGetApp().getDeviceObjectOpr())
+        opr->connect_saved_machines();
     if (m_device_list != nullptr)
         m_device_list->OnActivate();
 }

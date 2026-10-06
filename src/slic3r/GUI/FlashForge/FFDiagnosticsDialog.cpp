@@ -1,6 +1,7 @@
 #include "FFDiagnosticsDialog.hpp"
 
 #include <algorithm>
+#include <memory>
 
 #include <boost/log/trivial.hpp>
 

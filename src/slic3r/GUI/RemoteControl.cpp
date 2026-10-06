@@ -1,5 +1,7 @@
 #include "RemoteControl.hpp"
 
+#include "DeviceControls.hpp"
+#include "FilamentCommands.hpp"
 #include "DeviceManager.hpp"
 #include "GUI_App.hpp"
 #include "HMS.hpp"
@@ -122,6 +124,160 @@ static json print_error_json(MachineObject* m)
     return e;
 }
 
+// What the phone may set on a Bambu printer, read off the same MachineObject fields the desktop
+// Device tab reads and gated by the same capability flags:
+//   * the bed (limit get_bed_temperature_limit), each nozzle as the Device tab lists them (one row,
+//     or L above R on the two-nozzle machines; limit nozzle_max_temperature, else 300), and the
+//     chamber - settable where the printer says support_chamber_temp_edit (limit 60, the Device
+//     tab's own), read-only on an X1 whose chamber is only a sensor;
+//   * the speed level, which the Device tab only lets a person change while a print runs;
+//   * the chamber light, when the printer reports one (lights_report);
+//   * the part fan, and the aux and chamber fans where is_support_aux_fan / is_support_chamber_fan.
+static DeviceControls::Caps bambu_caps(MachineObject* m)
+{
+    using namespace DeviceControls;
+    using DeviceControls::Fan; // not the Device tab's widget of the same name (Widgets/FanControl.hpp)
+    Caps caps;
+    const int bed_limit = m->get_bed_temperature_limit();
+    caps.heaters.push_back(Heater { "bed", "Bed", m->bed_temp, m->bed_temp_target, bed_limit > 0 ? bed_limit : DEFAULT_BED_MAX, true, false });
+    std::vector<NozzleTempSample> samples;
+    for (const Extder& e : m->m_extder_data.extders) samples.push_back({ e.id, e.temp, e.target_temp });
+    for (Heater& h : bambu_nozzle_heaters(samples, m->m_extder_data.total_extder_count, m->m_extder_data.current_extder_id,
+                                          m->nozzle_max_temperature))
+        caps.heaters.push_back(h);
+    if (m->is_support_chamber_edit)
+        caps.heaters.push_back(Heater { "chamber", "Chamber", m->chamber_temp, m->chamber_temp_target, DEFAULT_CHAMBER_MAX, true, false });
+    else if (m->get_printer_series() == PrinterSeries::SERIES_X1)
+        caps.heaters.push_back(Heater { "chamber", "Chamber", m->chamber_temp, 0, DEFAULT_CHAMBER_MAX, false, false });
+
+    caps.has_speed = true;
+    caps.speed     = Speed { "level", (int) m->printing_speed_lvl, 1, 4, m->is_in_printing() };
+    const MachineObject::LIGHT_EFFECT light = m->chamber_light_state(); // both of an H2's lights
+    if (light != MachineObject::LIGHT_EFFECT::LIGHT_EFFECT_UNKOWN) {
+        caps.has_light = true;
+        caps.light_on  = light == MachineObject::LIGHT_EFFECT::LIGHT_EFFECT_ON;
+    }
+    caps.fans.push_back(Fan { "part", "Part cooling", percent_of_byte(m->cooling_fan_speed) });
+    if (m->is_support_aux_fan) caps.fans.push_back(Fan { "aux", "Aux", percent_of_byte(m->big_fan1_speed) });
+    if (m->is_support_chamber_fan) caps.fans.push_back(Fan { "chamber", "Chamber", percent_of_byte(m->big_fan2_speed) });
+    caps.filament_actions = true; // StatusPanel's Load / Unload, which every Bambu printer has
+    return caps;
+}
+
+// ------------------------------------------------------ filament load / unload ----
+
+// The printer as the load / unload rules see it (FilamentCommands::availability).
+static FilamentCommands::PrinterState filament_state(MachineObject* m)
+{
+    FilamentCommands::PrinterState s;
+    s.printing             = m->is_in_printing();
+    s.changing_filament    = m->ams_status_main == AmsStatusMain::AMS_STATUS_MAIN_FILAMENT_CHANGE;
+    s.calibrating          = m->is_in_extrusion_cali();
+    s.filament_at_extruder = m->is_filament_at_extruder();
+    return s;
+}
+
+// Whether this slot is the one feeding: an extruder's tray_now on the new protocol (two-extruder
+// printers), the printer's single tray_now otherwise - the same test StatusPanel's unload makes.
+static bool slot_loaded(MachineObject* m, const std::string& ams_id, const std::string& slot_id)
+{
+    if (m->is_enable_np) {
+        for (const Extder& e : m->m_extder_data.extders)
+            if (e.snow.ams_id == ams_id && (e.snow.slot_id == slot_id || ams_id == "254" || ams_id == "255")) return true;
+        return false;
+    }
+    return m->m_tray_now == FilamentCommands::tray_now_of(ams_id, slot_id);
+}
+
+// The external spools: vir_slots on a two-extruder printer (254 left, 255 right), the one
+// vt_tray (254) otherwise.
+static std::vector<const AmsTray*> ext_trays(MachineObject* m)
+{
+    std::vector<const AmsTray*> out;
+    if (m->is_multi_extruders() && !m->vir_slots.empty()) {
+        for (const AmsTray& t : m->vir_slots) out.push_back(&t);
+    } else {
+        out.push_back(&m->vt_tray);
+    }
+    return out;
+}
+
+static bool tray_present(const AmsTray& t) { return t.is_exists || !t.type.empty(); }
+
+// "#RRGGBB" out of the tray's RRGGBBAA; empty when there is no colour.
+static std::string tray_rgb(const std::string& rrggbbaa)
+{
+    if (rrggbbaa.size() < 6) return std::string();
+    for (size_t i = 0; i < 6; ++i)
+        if (!std::isxdigit((unsigned char) rrggbbaa[i])) return std::string();
+    std::string out = "#" + rrggbbaa.substr(0, 6);
+    for (char& c : out) c = (char) std::toupper((unsigned char) c);
+    return out;
+}
+
+// Every AMS unit the printer reports, read-only: which nozzle it feeds (on the two-nozzle machines
+// the Device tab's own L / R split), how damp it is, and each tray's colour, material and what is
+// left. The desktop's AMS panel reads the same fields.
+static json ams_json(MachineObject* m)
+{
+    json out = json::array();
+    const bool dual = m->m_extder_data.total_extder_count > 1;
+    for (const auto& kv : m->amsList) {
+        const Ams* a = kv.second;
+        if (!a) continue;
+        json u;
+        u["id"]             = a->id;
+        u["nozzle"]         = a->nozzle;
+        u["side"]           = dual ? (a->nozzle == 1 ? "L" : "R") : "";
+        u["type"]           = a->type;
+        u["humidity_level"] = a->humidity;
+        if (a->humidity_raw >= 0) u["humidity_pct"] = a->humidity_raw;
+        if (a->current_temperature != INVALID_AMS_TEMPERATURE) u["temp"] = a->current_temperature;
+        json trays = json::array();
+        for (const auto& tk : a->trayList) {
+            const AmsTray* t = tk.second;
+            if (!t) continue;
+            AmsTray copy = *t; // get_display_filament_type is not const
+            json j;
+            j["id"]       = t->id;
+            j["exists"]   = t->is_exists;
+            j["type"]     = copy.get_display_filament_type();
+            j["sub_type"] = t->sub_brands;
+            j["color"]    = tray_rgb(t->color);
+            j["remain"]   = t->remain;
+            FilamentCommands::write_availability(
+                FilamentCommands::availability(filament_state(m), t->is_exists, slot_loaded(m, a->id, t->id)), j);
+            trays.push_back(j);
+        }
+        u["trays"] = trays;
+        out.push_back(u);
+    }
+    return out;
+}
+
+// The external spool holders, in the tray shape plus the id the load / unload verbs take:
+// [{ams_id "254"|"255", side L|R|"", exists, type, sub_type, color, can_load, can_unload}].
+static json ext_spools_json(MachineObject* m)
+{
+    json       out  = json::array();
+    const bool dual = m->is_multi_extruders();
+    for (const AmsTray* t : ext_trays(m)) {
+        const std::string id = dual ? (t->id.empty() ? std::string("254") : t->id) : std::string("254");
+        AmsTray copy = *t;
+        json    j;
+        j["ams_id"]   = id;
+        j["side"]     = dual ? (id == "254" ? "L" : "R") : "";
+        j["exists"]   = tray_present(*t);
+        j["type"]     = copy.get_display_filament_type();
+        j["sub_type"] = t->sub_brands;
+        j["color"]    = tray_rgb(t->color);
+        FilamentCommands::write_availability(
+            FilamentCommands::availability(filament_state(m), tray_present(*t), slot_loaded(m, id, "0")), j);
+        out.push_back(j);
+    }
+    return out;
+}
+
 // A print host address turned into the base URL of its Moonraker HTTP API. This is
 // Moonraker::make_url's own rule (MoonRaker.cpp), which is protected: an address without a scheme
 // becomes http://, and the MQTT ports the Device tab stores (1884 plain, 8883 TLS) are dropped so
@@ -183,6 +339,9 @@ struct Probe
     bool        moonraker { false };
     std::string state; // Klipper print_stats.state: standby | printing | paused | complete | ...
     long long   when { 0 };
+    // What the same answer said the printer can be told (heaters and their limits, speed factor,
+    // light, fans): the settings verbs are checked against it, since prepare() cannot ask now.
+    DeviceControls::Caps caps;
 };
 static std::mutex                   s_probe_mutex;
 static std::map<std::string, Probe> s_probes;
@@ -192,10 +351,11 @@ static long long now_ms()
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-static void remember_probe(const std::string& base, bool moonraker, const std::string& state)
+static void remember_probe(const std::string& base, bool moonraker, const std::string& state,
+                           const DeviceControls::Caps& caps = DeviceControls::Caps())
 {
     std::lock_guard<std::mutex> lock(s_probe_mutex);
-    s_probes[base] = Probe { moonraker, state, now_ms() };
+    s_probes[base] = Probe { moonraker, state, now_ms(), caps };
 }
 
 // An address that did not answer is not asked again for half a minute: /api/printers is polled
@@ -209,12 +369,13 @@ static bool ask_again(const std::string& base)
 }
 
 // tri-state: 1 = a Moonraker printer, 0 = it answered something else, -1 = never asked.
-static int probed(const std::string& base, std::string* state = nullptr)
+static int probed(const std::string& base, std::string* state = nullptr, DeviceControls::Caps* caps = nullptr)
 {
     std::lock_guard<std::mutex> lock(s_probe_mutex);
     auto it = s_probes.find(base);
     if (it == s_probes.end()) return -1;
     if (state) *state = it->second.state;
+    if (caps) *caps = it->second.caps;
     return it->second.moonraker ? 1 : 0;
 }
 
@@ -434,8 +595,332 @@ static std::pair<int, std::string> prepare_error_action(const Request& req, std:
     return { 200, "" };
 }
 
+// ------------------------------------------------------ the settings verbs ----
+//
+// set_temp, set_speed, set_light and set_fan: the Device tab's own temperature boxes, speed popup,
+// lamp switch and fan popup, for the phone. Each is checked against the printer's `controls` (the
+// same Caps GET /api/printers shows) at the moment it is prepared, so a request for a heater the
+// printer has not got, a target above its limit, or a light it does not have is refused before
+// anything is sent. Heating above DeviceControls::CONFIRM_ABOVE_C while idle needs confirm=1.
+
+bool is_setting_verb(const std::string& action)
+{
+    return action == "set_temp" || action == "set_speed" || action == "set_light" || action == "set_fan";
+}
+
+static const char* speed_level_name(int level)
+{
+    switch (level) {
+    case 1: return "Silent";
+    case 2: return "Standard";
+    case 3: return "Sport";
+    case 4: return "Ludicrous";
+    default: return "?";
+    }
+}
+
+// The pure checks, shared by every kind of printer. Fills the parts of `p` that do not depend on how
+// the command travels: the verb's value, and the sentence the job reports.
+static std::pair<int, std::string> check_setting(const Request& req, const DeviceControls::Caps& caps, bool printing,
+                                                 Prepared& p)
+{
+    using namespace DeviceControls;
+    std::string why;
+    int         status = 0;
+    if (req.action == "set_temp") {
+        status = check_set_temp(caps, req.heater, req.target, req.confirm, printing, p.int_value, why);
+        if (status == 0) {
+            p.heater = req.heater;
+            const Heater*     h    = find_heater(caps, req.heater);
+            const std::string what = (h->label == "L" || h->label == "R") ? h->label + " nozzle" : h->label;
+            p.setting_text = what + (p.int_value == 0 ? std::string(" off") : " to " + std::to_string(p.int_value) + " C");
+        }
+    } else if (req.action == "set_speed") {
+        status = check_set_speed(caps, req.value, p.int_value, why);
+        if (status == 0)
+            p.setting_text = caps.speed.kind == "level" ? std::string("speed to ") + speed_level_name(p.int_value)
+                                                        : "speed to " + std::to_string(p.int_value) + " %";
+    } else if (req.action == "set_light") {
+        status = check_set_light(caps, req.on, p.light_on, why);
+        if (status == 0) p.setting_text = p.light_on ? "light on" : "light off";
+    } else { // set_fan
+        int percent = 0;
+        status      = check_set_fan(caps, req.fan, req.percent, percent, why);
+        if (status == 0) {
+            p.heater       = req.fan; // the fan id rides in the same slot; run() reads it by verb
+            p.int_value    = percent;
+            p.setting_text = find_fan(caps, req.fan)->label + " fan to " + std::to_string(percent) + " %";
+        }
+    }
+    if (status != 0) return { status, why };
+    p.is_setting = true;
+    return { 200, "" };
+}
+
+// The Klipper G-code for a checked setting.
+static std::string moonraker_setting_script(const Prepared& p)
+{
+    using namespace DeviceControls;
+    if (p.action == "set_temp") return moonraker_temp_script(p.heater, p.int_value);
+    if (p.action == "set_speed") return moonraker_speed_script(p.int_value);
+    if (p.action == "set_light") return moonraker_light_script(p.light_on);
+    return moonraker_fan_script(p.heater, p.int_value);
+}
+
+static std::pair<int, std::string> prepare_setting_bambu(const Request& req, std::shared_ptr<Prepared> p,
+                                                         std::shared_ptr<Prepared>& out)
+{
+    DeviceManager* dm = wxGetApp().getDeviceManager();
+    if (!dm) return { 503, "no device manager" };
+    MachineObject* obj = find_machine(dm, req.printer);
+    if (!obj) return { 404, "no such printer: " + req.printer };
+    if (!obj->is_online()) return { 409, obj->dev_name + " is offline" };
+    if (obj->is_lan_mode_printer() && !obj->has_access_right())
+        return { 409, obj->dev_name + " needs its access code entered on the PC first" };
+    if (!obj->is_connected())
+        return { 409, obj->dev_name + " is not connected; open it on the PC's Device tab once, or pick it in a send" };
+    const DeviceControls::Caps caps    = bambu_caps(obj);
+    const auto                 checked = check_setting(req, caps, obj->is_in_printing(), *p);
+    if (checked.first != 200) return checked;
+    p->kind         = "bambu";
+    p->printer_name = obj->dev_name;
+    p->command      = req.action;
+    if (req.action == "set_temp") {
+        const int n = DeviceControls::nozzle_index_of(p->heater);
+        if (n >= 0) {
+            int nozzles = 0;
+            for (const DeviceControls::Heater& h : caps.heaters)
+                if (DeviceControls::nozzle_index_of(h.id) >= 0) ++nozzles;
+            p->extruder_id = n;
+            p->dual_nozzle = nozzles > 1;
+            // The Device tab's own guard: the printer ignores a target for an empty hotend slot.
+            if (p->dual_nozzle)
+                for (const Extder& e : obj->m_extder_data.extders)
+                    if (e.id == n && !e.nozzle_exist)
+                        return { 409, std::string(n == 1 ? "Left" : "Right") + " hotend not detected on " + obj->dev_name +
+                                          ", so its temperature cannot be set" };
+            p->call = p->dual_nozzle ? "command_set_nozzle_new" : "command_set_nozzle";
+        } else {
+            p->call = p->heater == "bed" ? "command_set_bed" : "command_set_chamber";
+        }
+    } else if (req.action == "set_speed") {
+        p->call = "command_set_printing_speed";
+    } else if (req.action == "set_light") {
+        p->call = "command_set_chamber_light";
+    } else {
+        p->fan_type = DeviceControls::bambu_fan_type(p->heater);
+        p->call     = "command_control_fan_val";
+    }
+    p->status_before      = obj->print_status;
+    p->print_error_before = obj->print_error;
+    out                   = p;
+    BOOST_LOG_TRIVIAL(info) << "RemoteControl: " << p->call << " (" << p->setting_text << ") prepared for " << obj->dev_name;
+    return { 200, "" };
+}
+
+// A Moonraker printer: the print host "host", the Device tab's "connect", or a LAN Snapmaker.
+static std::pair<int, std::string> prepare_setting_moonraker(const Request& req, std::shared_ptr<Prepared> p,
+                                                             std::shared_ptr<Prepared>& out)
+{
+    std::string          base;
+    DeviceControls::Caps caps;
+    std::string          state;
+    if (req.printer.compare(0, 3, "sm:") == 0) {
+        SnapmakerLan::Device d;
+        if (!SnapmakerLan::find(req.printer.substr(3), d)) return { 404, "no such printer: " + req.printer };
+        p->kind         = "snapmaker";
+        p->printer_name = d.name.empty() ? d.ip : d.name;
+        SnapmakerLan::Status s;
+        if (!SnapmakerLan::cached_status(d, s))
+            return { 409, p->printer_name + " has not answered yet; open its card once and try again" };
+        if (!s.online) return { 409, p->printer_name + " is offline" };
+        if (s.login_required)
+            return { 409, p->printer_name + " requires a login for its LAN API, so it cannot be controlled from here" };
+        caps  = s.caps;
+        state = s.state;
+        base  = SnapmakerLan::base_url(d);
+    } else {
+        std::shared_ptr<PrintHost> host;
+        std::string                address;
+        if (req.printer == "connect") {
+            wxGetApp().get_connect_host(host);
+            if (!host) return { 409, "no Snapmaker printer is connected on the PC's Device tab" };
+            p->kind         = "connect";
+            p->printer_name = "Snapmaker " + host->get_host();
+            address         = host->get_host();
+        } else {
+            PresetBundle* bundle = wxGetApp().preset_bundle;
+            if (!bundle) return { 503, "no preset bundle" };
+            if (bundle->use_bbl_network())
+                return { 409, "the current printer preset sends through the Bambu network; pick that printer by its id" };
+            address = bundle->printers.get_edited_preset().config.opt_string("print_host");
+            if (address.empty()) return { 409, "the printer preset has no print host address" };
+            p->kind         = "printhost";
+            p->printer_name = address;
+        }
+        base = moonraker_base(address);
+        if (base.empty()) return { 409, "this printer has no address" };
+        if (probed(base, &state, &caps) != 1)
+            return { 409, p->printer_name + " has not answered as a Klipper / Moonraker printer yet, so it cannot be set from here" };
+    }
+    const bool printing = state == "printing" || state == "paused";
+    const auto checked  = check_setting(req, caps, printing, *p);
+    if (checked.first != 200) return checked;
+    p->script = moonraker_setting_script(*p);
+    if (p->script.empty()) return { 409, "this printer has no command for that" };
+    p->url              = base + "/printer/gcode/script?script=" + Http::url_encode(p->script);
+    p->moonraker_method = "printer.gcode.script";
+    out                 = p;
+    BOOST_LOG_TRIVIAL(info) << "RemoteControl: " << p->script << " prepared for " << p->printer_name;
+    return { 200, "" };
+}
+
+bool is_filament_verb(const std::string& action) { return action == "load_filament" || action == "unload_filament"; }
+
+static bool all_digits(const std::string& s)
+{
+    if (s.empty() || s.size() > 3) return false;
+    for (char c : s)
+        if (c < '0' || c > '9') return false;
+    return true;
+}
+
+// A Bambu printer: StatusPanel::on_ams_load_curr / on_ams_unload, for one named slot.
+static std::pair<int, std::string> prepare_filament_bambu(const Request& req, std::shared_ptr<Prepared> p, std::shared_ptr<Prepared>& out)
+{
+    const bool load = req.action == "load_filament";
+    if (!all_digits(req.ams) || !all_digits(req.slot))
+        return { 400, "ams and slot are required (ams: the AMS id, 128+ for an AMS HT, 254 / 255 for an external spool; slot: 0..3)" };
+    DeviceManager* dm = wxGetApp().getDeviceManager();
+    if (!dm) return { 503, "no device manager" };
+    MachineObject* obj = find_machine(dm, req.printer);
+    if (!obj) return { 404, "no such printer: " + req.printer };
+    if (!obj->is_online()) return { 409, obj->dev_name + " is offline" };
+    if (obj->is_lan_mode_printer() && !obj->has_access_right())
+        return { 409, obj->dev_name + " needs its access code entered on the PC first" };
+    if (!obj->is_connected())
+        return { 409, obj->dev_name + " is not connected; open it on the PC's Device tab once, or pick it in a send" };
+
+    const std::string ams  = std::to_string(std::atoi(req.ams.c_str()));
+    const std::string slot = std::to_string(std::atoi(req.slot.c_str()));
+    const bool        ext  = ams == "254" || (ams == "255" && obj->is_multi_extruders());
+    const AmsTray*    tray = nullptr;
+    if (ext) {
+        for (const AmsTray* t : ext_trays(obj))
+            if (!obj->is_multi_extruders() || t->id == ams) tray = t;
+        if (!tray) return { 404, obj->dev_name + " has no external spool " + ams };
+    } else {
+        tray = obj->get_ams_tray(ams, slot);
+        if (!tray) return { 404, obj->dev_name + " has no AMS " + ams + " slot " + slot };
+    }
+    const bool exists = ext ? tray_present(*tray) : tray->is_exists;
+    const auto a      = FilamentCommands::availability(filament_state(obj), exists, slot_loaded(obj, ams, ext ? "0" : slot));
+    if (load && !a.can_load)
+        return { 409, "cannot load that slot: " + (a.why.empty() ? std::string("it is already loaded") : a.why) };
+    if (!load && !a.can_unload)
+        return { 409, "cannot unload that slot: " + (a.why.empty() ? std::string("it is not the one loaded") : a.why) };
+
+    p->kind            = "bambu";
+    p->printer_name    = obj->dev_name;
+    p->is_setting      = true;
+    p->command         = req.action;
+    p->call            = "command_ams_change_filament";
+    p->multi_extruders = obj->is_multi_extruders();
+    const std::string where = ext ? (p->multi_extruders ? (ams == "254" ? "left external spool" : "right external spool") : "external spool")
+                                  : (std::atoi(ams.c_str()) >= FilamentCommands::BAMBU_HT_FIRST ? "AMS HT " + std::to_string(std::atoi(ams.c_str()) - 127)
+                                                                                                 : "AMS " + std::to_string(std::atoi(ams.c_str()) + 1)) +
+                                        " slot " + std::to_string(std::atoi(slot.c_str()) + 1);
+    if (load) {
+        if (ext) {
+            // The external spool's own range, both ways (StatusPanel: old and new both from it);
+            // the new protocol names the spool, the old one always 254.
+            p->fil_old_temp = p->fil_new_temp = FilamentCommands::tray_mid_temp(tray->nozzle_temp_min, tray->nozzle_temp_max);
+            p->fil_ams      = (obj->is_enable_np || obj->is_enable_ams_np) ? ams : std::string("254");
+            p->fil_slot     = "0";
+        } else {
+            const AmsTray* curr = obj->get_curr_tray();
+            if (curr) {
+                p->fil_old_temp = FilamentCommands::tray_mid_temp(curr->nozzle_temp_min, curr->nozzle_temp_max);
+                p->fil_new_temp = FilamentCommands::tray_mid_temp(tray->nozzle_temp_min, tray->nozzle_temp_max);
+            }
+            p->fil_ams  = ams;
+            p->fil_slot = slot;
+        }
+        p->setting_text = "load " + where;
+    } else {
+        p->fil_ams      = ams;
+        p->fil_slot     = "255";
+        p->fil_old_temp = p->fil_new_temp = FilamentCommands::UNLOAD_DEFAULT_TEMP;
+        p->setting_text = "unload " + where;
+    }
+    p->status_before      = obj->print_status;
+    p->print_error_before = obj->print_error;
+    out                   = p;
+    BOOST_LOG_TRIVIAL(info) << "RemoteControl: " << p->setting_text << " prepared for " << obj->dev_name;
+    return { 200, "" };
+}
+
+// A Snapmaker U1 over the LAN: the toolhead macros, only where its G-code help lists them.
+static std::pair<int, std::string> prepare_filament_u1(const Request& req, std::shared_ptr<Prepared> p, std::shared_ptr<Prepared>& out)
+{
+    const bool load = req.action == "load_filament";
+    if (!all_digits(req.slot)) return { 400, "slot is required (the toolhead, 0..3)" };
+    SnapmakerLan::Device d;
+    if (!SnapmakerLan::find(req.printer.substr(3), d)) return { 404, "no such printer: " + req.printer };
+    p->kind         = "snapmaker";
+    p->printer_name = d.name.empty() ? d.ip : d.name;
+    SnapmakerLan::Status s;
+    if (!SnapmakerLan::cached_status(d, s)) return { 409, p->printer_name + " has not answered yet; open its card once and try again" };
+    if (!s.online) return { 409, p->printer_name + " is offline" };
+    if (s.login_required) return { 409, p->printer_name + " requires a login for its LAN API, so it cannot be controlled from here" };
+    if (!s.filament_macros)
+        return { 409, p->printer_name + " does not list the load / unload commands (INNER_FILAMENT_UNLOAD, SM_PRINT_AUTO_FEED, ...), so this is left to its screen" };
+    const int                                 index = std::atoi(req.slot.c_str());
+    const std::vector<SnapmakerLan::Toolhead> heads = SnapmakerLan::toolheads(d);
+    if (index < 0 || index >= (int) heads.size()) return { 404, p->printer_name + " has no toolhead " + std::to_string(index + 1) };
+    const SnapmakerLan::Toolhead& h = heads[index];
+    FilamentCommands::PrinterState ps;
+    ps.printing  = s.printing();
+    const auto a = FilamentCommands::availability(ps, true, h.loaded, FilamentCommands::is_flexible(h.type));
+    if (load && !a.can_load) return { 409, "cannot load toolhead " + std::to_string(index + 1) + ": " + (a.why.empty() ? std::string("it is already loaded") : a.why) };
+    if (!load && !a.can_unload) return { 409, "cannot unload toolhead " + std::to_string(index + 1) + ": " + (a.why.empty() ? std::string("it is empty") : a.why) };
+
+    p->is_setting       = true;
+    p->script           = load ? FilamentCommands::u1_load_script(index)
+                               : FilamentCommands::u1_unload_script(index, FilamentCommands::u1_unload_temp(h.type), h.nozzle);
+    p->setting_text     = (load ? "load toolhead " : "unload toolhead ") + std::to_string(index + 1);
+    p->url              = SnapmakerLan::base_url(d) + "/printer/gcode/script?script=" + Http::url_encode(p->script);
+    p->moonraker_method = "printer.gcode.script";
+    p->timeout_s        = 300; // heating and feeding: the printer answers when the macro is done
+    out                 = p;
+    BOOST_LOG_TRIVIAL(info) << "RemoteControl: " << p->setting_text << " prepared for " << p->printer_name << " (assumed macros)";
+    return { 200, "" };
+}
+
 std::pair<int, std::string> prepare(const Request& req, std::shared_ptr<Prepared>& out)
 {
+    if (is_filament_verb(req.action)) {
+        if (req.printer.empty()) return { 400, "printer is required" };
+        auto p        = std::make_shared<Prepared>();
+        p->action     = req.action;
+        p->dry_run    = req.dry_run || env_flag("SNORCA_SEND_DRYRUN");
+        p->printer_id = req.printer;
+        if (req.printer.compare(0, 3, "sm:") == 0) return prepare_filament_u1(req, p, out);
+        if (req.printer == "host" || req.printer == "connect" || req.printer.compare(0, 3, "ph:") == 0)
+            return { 409, "loading and unloading filament is not offered for this printer" };
+        return prepare_filament_bambu(req, p, out);
+    }
+    if (is_setting_verb(req.action)) {
+        if (req.printer.empty()) return { 400, "printer is required" };
+        if (req.printer.compare(0, 3, "ph:") == 0) return { 409, "this printer's settings cannot be changed from here" };
+        auto p        = std::make_shared<Prepared>();
+        p->action     = req.action;
+        p->dry_run    = req.dry_run || env_flag("SNORCA_SEND_DRYRUN");
+        p->printer_id = req.printer;
+        if (req.printer == "host" || req.printer == "connect" || req.printer.compare(0, 3, "sm:") == 0)
+            return prepare_setting_moonraker(req, p, out);
+        return prepare_setting_bambu(req, p, out);
+    }
     if (is_print_error_verb(req.action)) {
         if (req.printer.empty()) return { 400, "printer is required" };
         // Only a Bambu printer has printer errors in this sense; "host", "connect" and sm:<id> are
@@ -471,7 +956,7 @@ std::pair<int, std::string> prepare(const Request& req, std::shared_ptr<Prepared
 // What the phone is told while the command is in flight.
 static std::string error_wait_text(const std::shared_ptr<Prepared>& p)
 {
-    if (p->is_error_action) return "waiting for the printer to answer";
+    if (p->is_error_action || p->is_setting) return "waiting for the printer to answer";
     if (p->action == "pause")  return "waiting for the printer to pause";
     if (p->action == "resume") return "waiting for the printer to resume";
     return "waiting for the printer to stop";
@@ -539,6 +1024,33 @@ static void run_bambu(std::shared_ptr<Prepared> p, Sink& sink)
         result["err_arg"]      = p->err_arg;
         result["job_id"]       = p->job_id;
     }
+    if (p->is_setting) {
+        result["setting"] = p->setting_text;
+        json args         = json::object();
+        if (p->action == "set_temp") {
+            args["heater"] = p->heater;
+            args["target"] = p->int_value;
+            if (p->extruder_id >= 0) args["extruder_id"] = p->extruder_id;
+        } else if (p->action == "set_speed") {
+            args["level"] = p->int_value;
+        } else if (p->action == "set_light") {
+            args["on"] = p->light_on;
+        } else if (is_filament_verb(p->action)) {
+            args["ams_id"]    = p->fil_ams;
+            args["slot_id"]   = p->fil_slot;
+            args["curr_temp"] = p->fil_old_temp;
+            args["tar_temp"]  = p->fil_new_temp;
+            // What goes over MQTT, bar the sequence id: the same builder the Device tab uses.
+            args["payload"]   = FilamentCommands::ams_change_filament_json(p->action == "load_filament", p->fil_ams, p->fil_slot,
+                                                                           p->fil_old_temp, p->fil_new_temp, p->multi_extruders);
+        } else {
+            args["fan"]      = p->heater;
+            args["fan_type"] = p->fan_type;
+            args["percent"]  = p->int_value;
+            args["value"]    = DeviceControls::bambu_fan_value(p->int_value);
+        }
+        result["args"] = args;
+    }
     if (p->dry_run) {
         result["dry_run"] = true;
         sink.progress(99, "dry run: nothing was sent");
@@ -579,6 +1091,27 @@ static void run_bambu(std::shared_ptr<Prepared> p, Sink& sink)
             else                                       *rc = -3; // no path here builds one of the rest
             return;
         }
+        if (p->is_setting) {
+            // Exactly the calls the Device tab's own controls make (StatusPanel::on_set_bed_temp,
+            // send_nozzle_temp, on_set_chamber_temp, the speed popup, on_lamp_switch, FanControl).
+            if (is_filament_verb(p->action)) {
+                *rc = obj->command_ams_change_filament(p->action == "load_filament", p->fil_ams, p->fil_slot, p->fil_old_temp,
+                                                       p->fil_new_temp);
+            } else if (p->action == "set_temp") {
+                if (p->heater == "bed")          *rc = obj->command_set_bed(p->int_value);
+                else if (p->heater == "chamber") *rc = obj->command_set_chamber(p->int_value);
+                else if (p->dual_nozzle)         *rc = obj->command_set_nozzle_new(p->extruder_id, p->int_value);
+                else                             *rc = obj->command_set_nozzle(p->int_value);
+            } else if (p->action == "set_speed") {
+                *rc = obj->command_set_printing_speed((PrintingSpeedLevel) p->int_value);
+            } else if (p->action == "set_light") {
+                *rc = obj->command_set_chamber_light(p->light_on ? MachineObject::LIGHT_EFFECT::LIGHT_EFFECT_ON
+                                                                 : MachineObject::LIGHT_EFFECT::LIGHT_EFFECT_OFF);
+            } else {
+                *rc = obj->command_control_fan_val((MachineObject::FanType) p->fan_type, DeviceControls::bambu_fan_value(p->int_value));
+            }
+            return;
+        }
         if (p->action == "pause")       *rc = obj->command_task_pause();
         else if (p->action == "resume") *rc = obj->command_task_resume();
         else                            *rc = obj->command_task_abort();
@@ -596,7 +1129,11 @@ static void run_bambu(std::shared_ptr<Prepared> p, Sink& sink)
     if (*rc != 0) { sink.done(false, p->printer_name + " did not accept the command (code " + std::to_string(*rc) + ")", result); return; }
 
     BOOST_LOG_TRIVIAL(info) << "RemoteControl: " << p->call << " sent to " << p->printer_name
-                            << (p->is_error_action ? " for error " + p->err_code : std::string());
+                            << (p->is_error_action ? " for error " + p->err_code : std::string())
+                            << (p->is_setting ? " (" + p->setting_text + ")" : std::string());
+    // A setting is one publish with nothing to watch for: the new target, level or switch shows up
+    // in the printer's next status push, which the phone's next refresh reads.
+    if (p->is_setting) { sink.done(true, "", result); return; }
     sink.progress(60, error_wait_text(p));
     watch_bambu(p, result);
     if (result["printer_state"] == "error") {
@@ -627,6 +1164,10 @@ static void run_host(std::shared_ptr<Prepared> p, Sink& sink)
     result["url"]       = p->url;
     result["method"]    = p->moonraker_method;
     result["transport"] = "http";
+    if (p->is_setting) {
+        result["setting"] = p->setting_text;
+        result["script"]  = p->script;
+    }
     if (p->dry_run) {
         result["dry_run"] = true;
         sink.progress(99, "dry run: nothing was sent");
@@ -635,13 +1176,16 @@ static void run_host(std::shared_ptr<Prepared> p, Sink& sink)
     }
     sink.progress(40, "sending " + p->action + " to the printer");
     std::string body, error;
-    if (moonraker_http(p->url, true, body, error, 15)) {
+    if (is_filament_verb(p->action)) sink.progress(30, p->setting_text + ": the printer is heating and feeding");
+    if (moonraker_http(p->url, true, body, error, p->timeout_s)) {
         result["reply"] = parse_or_raw(body);
         sink.done(true, "", result);
         return;
     }
     result["http_error"] = error;
     if (!body.empty()) result["reply"] = parse_or_raw(body);
+    // A setting has no MQTT fallback: the Device tab's socket speaks print controls, not G-code.
+    if (p->is_setting) { sink.done(false, p->printer_name + " refused the command: " + error, result); return; }
     if (!p->host) { sink.done(false, p->printer_name + " refused the command: " + error, result); return; }
 
     // The MQTT fallback: the socket the PC's Device tab opened, the way its own page pauses.
@@ -707,6 +1251,10 @@ void describe_bambu(MachineObject* m, json& p)
             hms["message"] = std::string(q->describe_error(m->dev_id, code).ToUTF8().data());
     }
     p["hms"] = hms;
+    // The native printer screen's controls and the AMS, from the same object.
+    p["controls"]   = DeviceControls::to_json(bambu_caps(m));
+    p["ams"]        = ams_json(m);
+    p["ext_spools"] = ext_spools_json(m);
 }
 
 void list_host_targets(std::vector<HostTarget>& out)
@@ -732,7 +1280,11 @@ void list_host_targets(std::vector<HostTarget>& out)
     }
     std::shared_ptr<PrintHost> connected;
     wxGetApp().get_connect_host(connected);
-    if (connected) out.push_back({ "connect", moonraker_base(connected->get_host()), "", "", "", "", "" });
+    // Not when the Device tab reached the printer through the Snapmaker cloud: its host is then the
+    // cloud's MQTT broker, which answers no Moonraker request - asking it cost a timeout on every
+    // poll and could only ever say "offline". The connect card keeps the MQTT link's own state.
+    if (connected && !SnapmakerLan::is_cloud_host(connected->get_host()))
+        out.push_back({ "connect", moonraker_base(connected->get_host()), "", "", "", "", "" });
     // The model's own devices (<datadir>/hub/print_host_devices.json), under the ids /api/printers
     // gives them. Only the Moonraker-shaped ones are worth asking - an Elegoo Link box answers SDCP
     // over its own websocket and would just spend this call's timeout - so the rest are left with
@@ -883,7 +1435,8 @@ void describe_hosts(const std::vector<HostTarget>& targets, json& printers)
             // list asks a Snapmaker for; extruder1.. answer empty where there is no such nozzle).
             // Never a command.
             std::string body;
-            if (moonraker_http(t.base + "/printer/objects/query?print_stats&heater_bed&extruder&extruder1&extruder2&extruder3",
+            if (moonraker_http(t.base + "/printer/objects/query?print_stats&heater_bed&extruder&extruder1&extruder2&extruder3&" +
+                                   DeviceControls::moonraker_controls_query(),
                                false, body, a.error, 2)) {
                 const json j = parse_or_raw(body);
                 if (j.is_object()) {
@@ -910,7 +1463,8 @@ void describe_hosts(const std::vector<HostTarget>& targets, json& printers)
         // The backoff cache is keyed on "this address answers a status API we speak", which a
         // PrusaLink printer does - so it is polled every five seconds like a Moonraker one, and an
         // address that answered neither is left alone for half a minute.
-        if (a.asked) remember_probe(t.base, answered, state);
+        const DeviceControls::Caps caps = (answered && !a.prusalink) ? DeviceControls::moonraker_caps(a.status) : DeviceControls::Caps();
+        if (a.asked) remember_probe(t.base, answered, state, caps);
         const bool is_device = t.id.compare(0, 3, "ph:") == 0; // a print-host device, not the preset
         if (answered) {
             if (a.prusalink) {
@@ -918,6 +1472,9 @@ void describe_hosts(const std::vector<HostTarget>& targets, json& printers)
             } else {
                 fill_from_print_stats(a.stats, *entry);
                 fill_from_heaters(a.status, *entry);
+                // The settings a Moonraker printer takes from the phone. Only the preset's host and
+                // the Device tab's connect can be told anything (a ph: device is read-only here).
+                if (!is_device && !caps.heaters.empty()) (*entry)["controls"] = DeviceControls::to_json(caps);
             }
             // A device card carries the same `status` string a Snapmaker card does; list_hosts left
             // it "unknown" for everything that was not probed.

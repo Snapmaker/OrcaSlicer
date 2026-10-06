@@ -25,6 +25,7 @@
 #include "slic3r/GUI/Gizmos/GLGizmoSimplify.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoSculpt.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoEdit.hpp"
+#include "slic3r/GUI/Gizmos/GLGizmoCadFillet.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoEmboss.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoSVG.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoMeshBoolean.hpp"
@@ -183,6 +184,7 @@ void GLGizmosManager::switch_gizmos_icon_filename()
             gizmo->set_icon_filename(m_is_dark ? "toolbar_sculpt_dark.svg" : "toolbar_sculpt.svg");
             break;
         case (EType::Edit):
+        case (EType::CadFillet):
             gizmo->set_icon_filename(m_is_dark ? "toolbar_edit_dark.svg" : "toolbar_edit.svg");
             break;
         }
@@ -229,6 +231,7 @@ bool GLGizmosManager::init()
     m_gizmos.emplace_back(new GLGizmoBrimEars(m_parent, m_is_dark ? "toolbar_brimears_dark.svg" : "toolbar_brimears.svg", EType::BrimEars));
     m_gizmos.emplace_back(new GLGizmoSculpt(m_parent, m_is_dark ? "toolbar_sculpt_dark.svg" : "toolbar_sculpt.svg", EType::Sculpt));
     m_gizmos.emplace_back(new GLGizmoEdit(m_parent, m_is_dark ? "toolbar_edit_dark.svg" : "toolbar_edit.svg", EType::Edit));
+    m_gizmos.emplace_back(new GLGizmoCadFillet(m_parent, m_is_dark ? "toolbar_edit_dark.svg" : "toolbar_edit.svg", EType::CadFillet));
     //m_gizmos.emplace_back(new GLGizmoSlaSupports(m_parent, "sla_supports.svg", sprite_id++));
     //m_gizmos.emplace_back(new GLGizmoFaceDetector(m_parent, "face recognition.svg", sprite_id++));
     //m_gizmos.emplace_back(new GLGizmoHollow(m_parent, "hollow.svg", sprite_id++));
@@ -665,6 +668,12 @@ bool GLGizmosManager::on_mouse_wheel(const wxMouseEvent &evt)
 {
     bool processed = false;
 
+    // EdgeSlicer: the Move gizmo's Snap face to surface spins the dragged selection with the wheel.
+    if (m_current == Move) {
+        if (auto *move = dynamic_cast<GLGizmoMove3D *>(m_gizmos[Move].get()); move != nullptr && move->on_mouse_wheel_snap(evt))
+            return true;
+    }
+
     if (/*m_current == SlaSupports || m_current == Hollow ||*/ m_current == FdmSupports || m_current == Seam || m_current == MmSegmentation || m_current == FuzzySkin || m_current == BrimEars || m_current == Sculpt) {
         float rot = (float)evt.GetWheelRotation() / (float)evt.GetWheelDelta();
         if (gizmo_event((rot > 0.f ? SLAGizmoEventType::MouseWheelUp : SLAGizmoEventType::MouseWheelDown), Vec2d::Zero(), evt.ShiftDown(), evt.AltDown()
@@ -853,6 +862,14 @@ bool GLGizmosManager::on_char(wxKeyEvent& evt)
     if (m_current == Edit) {
         if (auto *edit = dynamic_cast<GLGizmoEdit *>(m_gizmos[Edit].get());
             edit != nullptr && edit->on_edit_char(keyCode, evt.ShiftDown(), evt.CmdDown())) {
+            m_parent.set_as_dirty();
+            return true;
+        }
+    }
+
+    // Move gizmo: Esc cancels "pick target surface" mode before it would close the gizmo.
+    if (m_current == Move && keyCode == WXK_ESCAPE && !evt.HasModifiers()) {
+        if (auto *move = dynamic_cast<GLGizmoMove3D *>(m_gizmos[Move].get()); move != nullptr && move->on_snap_escape()) {
             m_parent.set_as_dirty();
             return true;
         }
@@ -1555,6 +1572,8 @@ std::string get_name_from_gizmo_etype(GLGizmosManager::EType type)
         return "Sculpt";
     case GLGizmosManager::EType::Edit:
         return "Edit";
+    case GLGizmosManager::EType::CadFillet:
+        return "CAD Fillet";
     default:
         return "";
     }

@@ -91,7 +91,11 @@ jobs:
           url="https://github.com/getsentry/sentry-cli/releases/download/${SENTRY_CLI_VERSION}/${asset}"
           echo "downloading $url"
           curl -fsSL --retry 3 --max-time 300 -o "$dir/$exe" "$url"
+          # sha256sum prefixes the whole line with a backslash when the path needs escaping
+          # (e.g. a backslash-containing path, as Git Bash on Windows can hand it via
+          # $RUNNER_TEMP) - strip that marker, not just take cut's word for the first field.
           got=$( (sha256sum "$dir/$exe" 2>/dev/null || shasum -a 256 "$dir/$exe") | cut -d' ' -f1)
+          got="${got#\\}"
           if [ "$got" != "$want" ]; then
             echo "::error::sentry-cli sha256 mismatch (got $got, want $want) - not running it"
             rm -f "$dir/$exe"

@@ -171,6 +171,8 @@ public:
     long long           next_due() const; // 0 when empty
     size_t              size() const { return m_items.size(); }
     std::vector<Queued> drain();          // everything, oldest first
+    // Removes everything queued for that device ("" = every device); answers how many went.
+    size_t              forget(const std::string& device_id);
 private:
     std::deque<Queued> m_items; // oldest first
 };
@@ -237,6 +239,11 @@ public:
     size_t    queued() const;
     long long clock_offset_s() const;
     std::string url() const;
+
+    // A device row was removed (the hub page, the app unpairing, or a new phone link): drop what is
+    // still queued for it, so a removed phone gets nothing more ("" = every device). A send already
+    // in flight on the worker cannot be recalled. Answers how many were dropped.
+    size_t forget(const std::string& device_id);
 
     // Stop the worker and forget the queue (a hub that is quitting keeps nothing).
     void stop();

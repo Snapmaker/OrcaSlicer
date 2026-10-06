@@ -1,5 +1,7 @@
 #include "SelectMachinePop.hpp"
 #include "I18N.hpp"
+#include "FirewallCheckDialog.hpp"
+#include "BambuSetupNoticeDialog.hpp"
 
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Thread.hpp"
@@ -581,14 +583,40 @@ void SelectMachinePopup::update_other_devices()
         m_scrolledWindow->RemoveChild(m_placeholder_panel);
         m_placeholder_panel->Destroy();
         m_placeholder_panel = nullptr;
+        m_firewall_link     = nullptr; // was a child of the panel
+        m_setup_link        = nullptr;
     }
 
-    m_placeholder_panel = new wxWindow(m_scrolledWindow, wxID_ANY, wxDefaultPosition, wxSize(-1,FromDIP(26)));
+    const bool firewall_link = FirewallCheckDialog::supported();
+    m_placeholder_panel = new wxWindow(m_scrolledWindow, wxID_ANY, wxDefaultPosition, wxSize(-1, FromDIP(firewall_link ? 74 : 50)));
     wxBoxSizer* placeholder_sizer = new wxBoxSizer(wxVERTICAL);
 
     m_hyperlink = new wxHyperlinkCtrl(m_placeholder_panel, wxID_ANY, _L("Can't find my devices?"), wxT("https://wiki.bambulab.com/en/software/bambu-studio/failed-to-connect-printer"), wxDefaultPosition, wxDefaultSize, wxHL_DEFAULT_STYLE);
     m_hyperlink->SetNormalColour(StateColor::darkModeColorFor("#009789"));
     placeholder_sizer->Add(m_hyperlink, 0, wxALIGN_CENTER | wxALL, 5);
+
+    // The most common reason a LAN printer is missing here: Windows Firewall dropping its
+    // discovery broadcasts (UDP 2021/1990). Clicks are routed through OnLeftUp like the link above.
+    if (firewall_link) {
+        m_firewall_link = new wxStaticText(m_placeholder_panel, wxID_ANY, _L("Check Windows Firewall"));
+        wxFont f = m_firewall_link->GetFont();
+        f.SetUnderlined(true);
+        m_firewall_link->SetFont(f);
+        m_firewall_link->SetForegroundColour(StateColor::darkModeColorFor("#009789"));
+        m_firewall_link->SetCursor(wxCURSOR_HAND);
+        placeholder_sizer->Add(m_firewall_link, 0, wxALIGN_CENTER | wxLEFT | wxRIGHT | wxBOTTOM, 5);
+    }
+
+    // What a Bambu Lab printer needs to show up and connect (the first-time notice's checklist).
+    m_setup_link = new wxStaticText(m_placeholder_panel, wxID_ANY, _L("Bambu printer setup"));
+    {
+        wxFont f = m_setup_link->GetFont();
+        f.SetUnderlined(true);
+        m_setup_link->SetFont(f);
+    }
+    m_setup_link->SetForegroundColour(StateColor::darkModeColorFor("#009789"));
+    m_setup_link->SetCursor(wxCURSOR_HAND);
+    placeholder_sizer->Add(m_setup_link, 0, wxALIGN_CENTER | wxLEFT | wxRIGHT | wxBOTTOM, 5);
 
 
     m_placeholder_panel->SetSizer(placeholder_sizer);
@@ -846,6 +874,26 @@ void SelectMachinePopup::OnLeftUp(wxMouseEvent &event)
         auto h_rect = m_hyperlink->ClientToScreen(wxPoint(0, 0));
         if (mouse_pos.x > h_rect.x && mouse_pos.y > h_rect.y && mouse_pos.x < (h_rect.x + m_hyperlink->GetSize().x) && mouse_pos.y < (h_rect.y + m_hyperlink->GetSize().y)) {
           wxLaunchDefaultBrowser(wxT("https://wiki.bambulab.com/en/software/bambu-studio/failed-to-connect-printer"));
+        }
+
+        //firewall check (Windows)
+        if (m_firewall_link != nullptr) {
+            auto f_rect = m_firewall_link->ClientToScreen(wxPoint(0, 0));
+            if (mouse_pos.x > f_rect.x && mouse_pos.y > f_rect.y && mouse_pos.x < (f_rect.x + m_firewall_link->GetSize().x) &&
+                mouse_pos.y < (f_rect.y + m_firewall_link->GetSize().y)) {
+                Dismiss();
+                wxGetApp().CallAfter([]() { FirewallCheckDialog::show_modal(wxGetApp().mainframe); });
+            }
+        }
+
+        //Bambu printer setup checklist
+        if (m_setup_link != nullptr) {
+            auto s_rect = m_setup_link->ClientToScreen(wxPoint(0, 0));
+            if (mouse_pos.x > s_rect.x && mouse_pos.y > s_rect.y && mouse_pos.x < (s_rect.x + m_setup_link->GetSize().x) &&
+                mouse_pos.y < (s_rect.y + m_setup_link->GetSize().y)) {
+                Dismiss();
+                wxGetApp().CallAfter([]() { BambuSetupNoticeDialog::show_modal(wxGetApp().mainframe); });
+            }
         }
     }
 }

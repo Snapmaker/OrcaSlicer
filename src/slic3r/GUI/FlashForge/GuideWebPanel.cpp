@@ -1,6 +1,7 @@
 #include "GuideWebPanel.h"
 #include "slic3r/GUI/Widgets/Label.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include <wx/dcbuffer.h>
 #include <wx/graphics.h>
 
 #define LOADING_INTERVAL 200

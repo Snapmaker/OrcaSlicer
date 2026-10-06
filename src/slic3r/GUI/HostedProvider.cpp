@@ -142,6 +142,9 @@ std::string body_for_send(const PushRequest& req, long long ts, const std::strin
     j["thread"]   = req.thread_id;
     j["priority"] = req.priority >= 10 ? 10 : 5;
     j["ttl"]      = std::max(0, std::min(86400, req.ttl_seconds));
+    // Additive and only when the device asked for it: the push service ignores fields it does not
+    // know, so this is inert until it builds `aps.interruption-level` from it (research note H8).
+    if (req.platform == "apns" && !req.interruption_level.empty()) j["level"] = req.interruption_level;
     return j.dump();
 }
 
@@ -340,6 +343,15 @@ std::vector<Queued> Queue::drain()
     std::vector<Queued> all(std::make_move_iterator(m_items.begin()), std::make_move_iterator(m_items.end()));
     m_items.clear();
     return all;
+}
+
+size_t Queue::forget(const std::string& device_id)
+{
+    const size_t before = m_items.size();
+    m_items.erase(std::remove_if(m_items.begin(), m_items.end(),
+                                 [&](const Queued& q) { return device_id.empty() || q.device_id == device_id; }),
+                  m_items.end());
+    return before - m_items.size();
 }
 
 // ------------------------------------------------------------------- the hooks ----
@@ -805,6 +817,17 @@ void HostedProvider::worker_main()
         try { pump(); } catch (...) {}
         lock.lock();
     }
+}
+
+size_t HostedProvider::forget(const std::string& device_id)
+{
+    size_t n;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        n = m_queue.forget(device_id);
+    }
+    if (n) m_hooks.log(false, "AppPush hosted: " + std::to_string(n) + " queued notification(s) dropped for a removed device");
+    return n;
 }
 
 void HostedProvider::stop()

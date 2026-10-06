@@ -490,3 +490,104 @@ TEST_CASE("a non-loopback peer never gets Tailscale-User-Login trusted", "[Remot
     // upstream of it strips these headers, so it must never inherit the trust.
     REQUIRE_FALSE(trusted_proxy_headers(true, true));
 }
+
+// ---- joining a camera to the printer it watches (summary_json's "camera" field) -------------
+
+TEST_CASE("camera_for_printer matches a camera added as the printer itself", "[RemoteHub][camera]")
+{
+    const std::vector<CameraCandidate> cams = { { "00M09D542800682", "X1C", "", "" } };
+    REQUIRE(camera_for_printer("00M09D542800682", "", cams) == "00M09D542800682");
+    // The printer's own id wins even when an address would also have matched something else.
+    REQUIRE(camera_for_printer("00M09D542800682", "10.0.0.150", cams) == "00M09D542800682");
+}
+
+TEST_CASE("camera_for_printer matches a LAN camera by its recorded ip", "[RemoteHub][camera]")
+{
+    // The owner's actual reports: streams.json's H2C camera (id is go2rtc's own id, alias "H2C",
+    // ip 10.0.0.206) against a Bambu printer row whose name ("ToyPrinterX1C"-style) never matches
+    // the camera's alias. Once the row carries the printer's LAN ip, the address join finds it
+    // without the name ever entering into it.
+    const std::vector<CameraCandidate> cams = {
+        { "cmtpxb0uqqhnf2", "H2C", "10.0.0.206", "" },
+        { "cmtqambvc4pbba", "X1C", "10.0.0.150", "" },
+    };
+    REQUIRE(camera_for_printer("some-h2c-serial", "10.0.0.206", cams) == "cmtpxb0uqqhnf2");
+    REQUIRE(camera_for_printer("00M09D542800682", "10.0.0.150", cams) == "cmtqambvc4pbba");
+}
+
+TEST_CASE("camera_for_printer matches a camera keyed by address under its own id", "[RemoteHub][camera]")
+{
+    // A camera streams.json stored under its LAN address as the id (the "auto" kind U1 cameras use)
+    // rather than a separate `ip` field.
+    const std::vector<CameraCandidate> cams = { { "10.0.0.108", "U1", "", "" } };
+    REQUIRE(camera_for_printer("printer-1", "10.0.0.108", cams) == "10.0.0.108");
+}
+
+TEST_CASE("camera_for_printer falls back to the host inside the camera's own stream URL", "[RemoteHub][camera]")
+{
+    // A camera whose `ip` was never recorded (added by hostname, or the field is simply blank) but
+    // whose rurl/rsrc still names an address - RemoteHub::summary_json reduces those to url_host
+    // with SnapmakerLan::host_of before this is called.
+    const std::vector<CameraCandidate> cams = { { "camid1", "Shop cam", "", "10.0.0.206" } };
+    REQUIRE(camera_for_printer("some-h2c-serial", "10.0.0.206", cams) == "camid1");
+}
+
+TEST_CASE("camera_for_printer never matches on name, and never matches two blanks", "[RemoteHub][camera]")
+{
+    // A printer row with no known address (the gap this fix closes for Bambu, but any kind can hit
+    // it) must not pair with a camera that also has no address, and the alias/name is not consulted
+    // here at all - that fallback is the app's own, over a printer's *name*.
+    const std::vector<CameraCandidate> cams = { { "cam1", "ToyPrinterX1C", "", "" } };
+    REQUIRE(camera_for_printer("printer-1", "", cams).empty());
+    REQUIRE(camera_for_printer("printer-1", "10.0.0.206", cams).empty());
+}
+
+TEST_CASE("camera_for_printer returns empty when nothing matches", "[RemoteHub][camera]")
+{
+    const std::vector<CameraCandidate> cams = { { "cam1", "X1C", "10.0.0.150", "10.0.0.150" } };
+    REQUIRE(camera_for_printer("printer-1", "10.0.0.206", cams).empty());
+    REQUIRE(camera_for_printer("printer-1", "", cams).empty());
+    REQUIRE(camera_for_printer("printer-1", "10.0.0.206", {}).empty());
+}
+
+// ---- merge_printer_row -------------------------------------------------------------------
+
+namespace {
+const char* const LIVE_ROW = R"({"id":"X1C","kind":"bambu","connected":true,"bed_temp":60,
+    "ams":[{"id":"0","trays":[{"id":"0","exists":true,"type":"PLA","can_load":true,"can_unload":false}]}],
+    "ext_spools":[{"ams_id":"254","exists":true,"type":"PETG","can_load":true,"can_unload":false}]})";
+const char* const IDLE_ROW = R"({"id":"X1C","kind":"bambu","connected":false,"bed_temp":0,"ams":[],"ext_spools":[{"ams_id":"254","exists":false}]})";
+} // namespace
+
+TEST_CASE("merge_printer_row keeps the connected window's fresh row over another window's idle one", "[RemoteHub]")
+{
+    const MergedPrinterRow m = merge_printer_row(LIVE_ROW, 100, true, IDLE_ROW, 200);
+    REQUIRE(m.keep_cached);
+}
+
+TEST_CASE("merge_printer_row takes the same window's row, and a row once the live one is stale", "[RemoteHub]")
+{
+    REQUIRE_FALSE(merge_printer_row(LIVE_ROW, 100, true, IDLE_ROW, 100).keep_cached);
+    REQUIRE_FALSE(merge_printer_row(LIVE_ROW, 100, false, IDLE_ROW, 200).keep_cached);
+}
+
+TEST_CASE("merge_printer_row carries the last AMS reading into a row with none, load and unload off", "[RemoteHub]")
+{
+    const MergedPrinterRow m = merge_printer_row(LIVE_ROW, 100, false, IDLE_ROW, 200);
+    REQUIRE_FALSE(m.keep_cached);
+    const nlohmann::json row = nlohmann::json::parse(m.row);
+    REQUIRE(row["bed_temp"] == 0); // everything else is the incoming row's
+    REQUIRE(row["ams"][0]["trays"][0]["type"] == "PLA");
+    REQUIRE(row["ams"][0]["trays"][0]["can_load"] == false);
+    REQUIRE(row["ext_spools"][0]["type"] == "PETG");
+    REQUIRE(row["ext_spools"][0]["can_load"] == false);
+    REQUIRE(row["ext_spools"][0].contains("filament_why"));
+}
+
+TEST_CASE("merge_printer_row never overrides a row that reports filament of its own", "[RemoteHub]")
+{
+    const char* const other = R"({"id":"X1C","kind":"bambu","connected":true,
+        "ams":[{"id":"0","trays":[{"id":"0","exists":true,"type":"ABS"}]}]})";
+    const MergedPrinterRow m = merge_printer_row(LIVE_ROW, 100, false, other, 200);
+    REQUIRE(nlohmann::json::parse(m.row)["ams"][0]["trays"][0]["type"] == "ABS");
+}

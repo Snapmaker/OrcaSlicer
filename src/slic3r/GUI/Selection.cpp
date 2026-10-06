@@ -11,6 +11,7 @@
 #include "Plater.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
 
+#include "libslic3r/LayOnFace.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -67,7 +68,7 @@ bool Selection::Clipboard::is_sla_compliant() const
             return false;
 
         for (const ModelVolume* v : o->volumes) {
-            if (v->is_modifier())
+            if (v->is_modifier() || v->is_precise_seam()) // Precise Seam not supported in SLA
                 return false;
         }
     }
@@ -445,7 +446,8 @@ void Selection::add_curr_plate()
 
     PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
     for (int obj_idx = 0; obj_idx < m_model->objects.size(); obj_idx++) {
-        if (plate && plate->contain_instance_totally(obj_idx, 0)) {
+        // Membership, not contain_instance_totally(): objects outside the bed still need selecting.
+        if (plate && plate->contain_instance(obj_idx, 0)) {
             std::vector<unsigned int> volume_idxs = get_volume_idxs_from_object(obj_idx);
             do_add_volumes(volume_idxs);
         }
@@ -631,9 +633,23 @@ void Selection::set_deserialized(EMode mode, const std::vector<std::pair<size_t,
     for (unsigned int i : m_list)
         (*m_volumes)[i]->selected = false;
     m_list.clear();
+    // Volumes are re-added in index order; keep the previous click order (the alignment anchor
+    // is the last-selected item) for those that stay selected.
+    const std::vector<SelectionOrderKey> previous_order = std::move(m_selection_order);
+    m_selection_order.clear();
     for (unsigned int i = 0; i < (unsigned int)m_volumes->size(); ++ i)
 		if (std::binary_search(volumes_and_instances.begin(), volumes_and_instances.end(), (*m_volumes)[i]->geometry_id))
 			do_add_volume(i);
+    {
+        std::vector<SelectionOrderKey> reordered;
+        for (const SelectionOrderKey& k : m_selection_order)
+            if (std::find(previous_order.begin(), previous_order.end(), k) == previous_order.end())
+                reordered.push_back(k);
+        for (const SelectionOrderKey& k : previous_order)
+            if (std::find(m_selection_order.begin(), m_selection_order.end(), k) != m_selection_order.end())
+                reordered.push_back(k);
+        m_selection_order = std::move(reordered);
+    }
     update_type();
     set_bounding_boxes_dirty();
 }
@@ -642,6 +658,8 @@ void Selection::clear(bool notify_sidebar)
 {
     if (!m_valid)
         return;
+
+    m_selection_order.clear();
 
     if (m_list.empty())
         return;
@@ -1372,6 +1390,26 @@ void Selection::flattening_rotate(const Vec3d& normal)
     // but respect their possibly diffrent z-rotation.
     if (m_mode == Instance)
         synchronize_unselected_instances(SyncRotationType::GENERAL);
+#endif // !DISABLE_INSTANCES_SYNCH
+
+    this->set_bounding_boxes_dirty();
+}
+
+void Selection::flattening_rotate_part(const Vec3d& normal)
+{
+    assert(Slic3r::is_approx(normal.norm(), 1.));
+
+    if (!m_valid || !is_single_volume())
+        return;
+
+    GLVolume& v = *(*m_volumes)[*m_list.begin()];
+    const ModelVolume& model_volume = *m_model->objects[v.object_idx()]->volumes[v.volume_idx()];
+    v.set_volume_transformation(lay_part_on_face_matrix(model_volume, v.get_volume_transformation().get_matrix(),
+                                                        v.get_instance_transformation().get_matrix(), normal));
+
+#if !DISABLE_INSTANCES_SYNCH
+    // The part is shared by all instances of the object.
+    synchronize_unselected_volumes();
 #endif // !DISABLE_INSTANCES_SYNCH
 
     this->set_bounding_boxes_dirty();
@@ -2552,10 +2590,52 @@ void Selection::set_caches()
     m_cache.rotation_pivot = get_bounding_sphere().first;
 }
 
+int Selection::get_anchor_volume_idx() const
+{
+    return find_ordered_volume_idx(false);
+}
+
+int Selection::get_first_selected_volume_idx() const
+{
+    return find_ordered_volume_idx(true);
+}
+
+// The oldest (oldest_first) or newest still-selected volume in the selection order, or -1.
+int Selection::find_ordered_volume_idx(bool oldest_first) const
+{
+    if (!m_valid)
+        return -1;
+    auto find_selected = [this](const SelectionOrderKey& key) -> int {
+        for (unsigned int i : m_list) {
+            if (i >= (unsigned int) m_volumes->size())
+                continue;
+            const GLVolume& v = *(*m_volumes)[i];
+            if (v.object_idx() == key.object_idx && v.instance_idx() == key.instance_idx && v.volume_idx() == key.volume_idx)
+                return (int) i;
+        }
+        return -1;
+    };
+    if (oldest_first) {
+        for (auto it = m_selection_order.begin(); it != m_selection_order.end(); ++it)
+            if (int i = find_selected(*it); i >= 0)
+                return i;
+    } else {
+        for (auto it = m_selection_order.rbegin(); it != m_selection_order.rend(); ++it)
+            if (int i = find_selected(*it); i >= 0)
+                return i;
+    }
+    return -1;
+}
+
 void Selection::do_add_volume(unsigned int volume_idx)
 {
     m_list.insert(volume_idx);
     GLVolume* v = (*m_volumes)[volume_idx];
+    {
+        const SelectionOrderKey key{v->object_idx(), v->instance_idx(), v->volume_idx()};
+        m_selection_order.erase(std::remove(m_selection_order.begin(), m_selection_order.end(), key), m_selection_order.end());
+        m_selection_order.push_back(key);
+    }
     v->selected = true;
     if (v->hover == GLVolume::HS_Select || v->hover == GLVolume::HS_Deselect)
         v->hover = GLVolume::HS_Hover;
@@ -2578,6 +2658,11 @@ void Selection::do_remove_volume(unsigned int volume_idx)
 
     m_list.erase(v_it);
 
+    {
+        const GLVolume& rv = *(*m_volumes)[volume_idx];
+        const SelectionOrderKey key{rv.object_idx(), rv.instance_idx(), rv.volume_idx()};
+        m_selection_order.erase(std::remove(m_selection_order.begin(), m_selection_order.end(), key), m_selection_order.end());
+    }
     (*m_volumes)[volume_idx]->selected = false;
 }
 

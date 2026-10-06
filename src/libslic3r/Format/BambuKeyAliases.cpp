@@ -117,7 +117,6 @@ std::vector<Alias> make_aliases()
     { "only_one_wall_top",              "top_one_wall_type",                    one_wall_top_to_bambu, one_wall_top_from_bambu, nullptr },
     // Same setting, ported under another name by Orca or this fork.
     { "support_ironing",                "enable_support_ironing",               nullptr, nullptr, nullptr },
-    { "extruder_clearance_radius",      "extruder_clearance_max_radius",        nullptr, nullptr, nullptr },
     { "dont_slow_down_outer_wall",      "no_slow_down_for_cooling_on_outwalls", nullptr, nullptr, nullptr },
     { "role_based_wipe_speed",          "role_base_wipe_speed",                 nullptr, nullptr, nullptr },
     { "reduce_infill_retraction",       "reduce_infill_retraction_mode",        reduce_retraction_to_bambu, reduce_retraction_from_bambu, nullptr },
@@ -146,6 +145,14 @@ std::vector<EnumAlias> make_enum_aliases()
         { "ensure_vertical_shell_thickness", "ensure_critical_only", "partial",  false },
         { "ensure_vertical_shell_thickness", "ensure_moderate",      "partial",  true },
         { "ensure_vertical_shell_thickness", "ensure_all",           "enabled",  true },
+        // Front/Left/Right are Aligned biased toward one side; Bambu Studio has no such concept, so on
+        // export they fall back to its closest equivalent, plain Aligned (Aligned back has no
+        // Bambu equivalent either, but is handled by the generated table, which maps it to "").
+        // Not reversible (import=false): loading a Bambu project that says "aligned" must stay
+        // "aligned" for us, not turn into "left".
+        { "seam_position", "left",          "aligned", false },
+        { "seam_position", "right",         "aligned", false },
+        { "seam_position", "aligned_front", "aligned", false },
     };
     for (const char *key : { "sparse_infill_pattern", "top_surface_pattern", "bottom_surface_pattern", "internal_solid_infill_pattern",
                              "ironing_pattern", "support_ironing_pattern", "locked_skin_infill_pattern", "locked_skeleton_infill_pattern" })
@@ -259,6 +266,35 @@ bool shadowed_by_our_key(const std::string &key, const std::function<bool(const 
 {
     const Alias *a = by_bambu(key);
     return a != nullptr && file_has(a->ours);
+}
+
+namespace {
+struct Fallback
+{
+    const char *bambu; // loaded as itself
+    const char *ours;  // also takes its value when the same source does not set it
+};
+// extruder_clearance_max_radius is Bambu Studio's only clearance radius. It used to be a rename
+// alias of our extruder_clearance_radius; it is a setting of its own now (the timelapse position
+// picker reads it), and still feeds extruder_clearance_radius exactly where the alias did, so the
+// by-object clearance of Bambu projects and of the profiles that set only Bambu's key is unchanged.
+const Fallback s_fallbacks[] = {
+    { "extruder_clearance_max_radius", "extruder_clearance_radius" },
+};
+} // namespace
+
+void load_fallbacks(ConfigBase &config, const std::function<bool(const std::string &)> &source_has)
+{
+    for (const Fallback &f : s_fallbacks) {
+        if (! source_has(f.bambu) || source_has(f.ours))
+            continue;
+        const ConfigOption *src = config.option(f.bambu);
+        if (src == nullptr)
+            continue;
+        ConfigOption *dst = config.option(f.ours, true);
+        if (dst != nullptr && dst->type() == src->type())
+            dst->set(src);
+    }
 }
 
 } // namespace BambuKeyAliases

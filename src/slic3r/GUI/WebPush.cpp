@@ -12,6 +12,7 @@
 // HKDF API and none is used.
 #include "WebPush.hpp"
 
+#include "PushIds.hpp"
 #include "RemoteEvents.hpp"
 
 #include "slic3r/Utils/Http.hpp"
@@ -581,14 +582,13 @@ struct SendResult
 };
 
 // The Topic header coalesces: a second "paused" for the same printer replaces the first on the
-// phone instead of stacking. RFC 8030 caps it at 32 base64url characters, so it is a hash rather
-// than the printer's name.
+// phone instead of stacking. The browser's push service reads it in the clear, so it is the same
+// keyed HMAC the app push collapse id uses (PushIds.hpp) - never the printer id, and not an
+// unkeyed hash of it either (a Bambu serial number could be confirmed against that). 24 base64url
+// characters, inside the 32 RFC 8030 allows.
 static std::string topic_for(const std::string& printer_id, const std::string& kind)
 {
-    const std::string  in = printer_id + "|" + kind;
-    unsigned char      digest[SHA256_DIGEST_LENGTH];
-    SHA256((const unsigned char*) in.data(), in.size(), digest);
-    return b64url(digest, 18); // 18 bytes -> 24 characters, inside the 32 the RFC allows
+    return PushIds::collapse_id(PushIds::key(), printer_id, kind);
 }
 
 static SendResult push_once(const Sub& s, const std::string& payload, const std::string& severity,
@@ -700,6 +700,9 @@ static std::string payload_for(const json& e, const std::string& link, const std
     if (!remote.empty()) p["remote_url"] = remote;
     if (e.is_object() && e.contains("id") && e["id"].is_number_integer()) p["id"] = e["id"];
     if (e.is_object() && e.contains("time") && e["time"].is_number_integer()) p["time"] = e["time"];
+    // The stable id (<hub instance>-<id>): the app keys its history on it, so the pushed copy and
+    // the pulled copy of one event are one row even across a data-dir reset or a second hub.
+    if (e.is_object() && e.contains("uid") && e["uid"].is_string()) p["uid"] = e["uid"];
     std::string out = p.dump();
     if (out.size() > MAX_PLAINTEXT) {
         // Trim the sentence rather than dropping the notification: a title alone still tells the
@@ -1007,6 +1010,19 @@ std::pair<int, std::string> remove(const std::string& id)
     if (!found) return { 404, json({ { "error", "no such subscription" } }).dump() };
     BOOST_LOG_TRIVIAL(info) << "WebPush: subscription removed from the hub page";
     return { 200, masked_json().dump() };
+}
+
+int forget_all_subscriptions()
+{
+    size_t n;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        n = g_subs.size();
+        g_subs.clear();
+        if (n) g_dirty = true;
+    }
+    if (n) BOOST_LOG_TRIVIAL(info) << "WebPush: " << n << " subscription(s) forgotten with the old phone link";
+    return (int) n;
 }
 
 std::pair<int, std::string> set_options(const std::string& body)

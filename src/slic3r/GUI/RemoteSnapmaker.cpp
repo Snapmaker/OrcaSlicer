@@ -8,6 +8,7 @@
 #include "RemoteAccess.hpp"
 #include "RemoteHub.hpp" // hub_dir
 #include "SSWCP.hpp"     // query_machine_info
+#include "SnapmakerLan.hpp" // is_cloud_host
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -217,7 +218,16 @@ void list(json& out)
     for (const DeviceInfo& d : devices) {
         json j = device_json(d);
         // The connected host is addressed as ip[:port]; match on the address, as list_hosts does.
-        j["is_host"] = host && !d.ip.empty() && host_addr.compare(0, d.ip.size(), d.ip) == 0;
+        // Not for a connection through the Snapmaker cloud: then the host is the cloud's broker,
+        // which is the recorded "ip" of EVERY cloud-bound printer, and only the record the Device
+        // tab marked connected is the one.
+        const bool by_cloud = host && SnapmakerLan::is_cloud_host(host_addr);
+        j["is_host"] = host && !d.ip.empty() && host_addr.compare(0, d.ip.size(), d.ip) == 0 && (!by_cloud || d.connected);
+        if (SnapmakerLan::is_cloud_host(d.ip)) {
+            // Where the phone shows an address it must not show the broker as the printer's.
+            j["ip"]  = "";
+            j["via"] = "cloud";
+        }
         out["devices"].push_back(j);
     }
     out["connected"]       = host != nullptr;

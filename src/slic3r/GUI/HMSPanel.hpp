@@ -14,7 +14,7 @@ namespace GUI {
 
 class HMSNotifyItem : public wxPanel
 {
-    HMSItem &   m_hms_item;
+    HMSItem     m_hms_item; // a copy: the row outlives the loop variable it is built from
     std::string dev_id;
     std::string m_url;
     std::string long_error_code;

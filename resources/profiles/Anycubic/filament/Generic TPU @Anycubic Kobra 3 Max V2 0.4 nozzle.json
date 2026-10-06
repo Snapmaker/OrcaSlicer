@@ -1,0 +1,27 @@
+{
+    "type": "filament",
+    "name": "Generic TPU @Anycubic Kobra 3 Max V2 0.4 nozzle",
+    "inherits": "Anycubic TPU @Anycubic Kobra 3 Max V2 0.4 nozzle",
+    "from": "system",
+    "setting_id": "y4v034SoS8NwGXeA",
+    "filament_id": "OFgbpcy9",
+    "instantiation": "true",
+    "filament_settings_id": [
+        "Generic TPU @Anycubic Kobra 3 Max V2 0.4 nozzle"
+    ],
+    "filament_vendor": [
+        "Generic"
+    ],
+    "filament_type": [
+        "TPU"
+    ],
+    "compatible_printers": [
+        "Anycubic Kobra 3 Max V2 0.4 nozzle"
+    ],
+    "filament_flow_ratio": [
+        "0.97"
+    ],
+    "filament_max_volumetric_speed": [
+        "3"
+    ]
+}

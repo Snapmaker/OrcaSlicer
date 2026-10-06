@@ -4,11 +4,13 @@
 #include <map>
 #include <vector>
 #include <array>
+#include <memory>
 
 #include <wx/bitmap.h>
 
 #include "libslic3r/PrintConfig.hpp"
 #include "wxExtensions.hpp"
+#include "CustomModelsMenu.hpp"
 
 class wxMenu;
 class wxMenuItem;
@@ -131,6 +133,11 @@ private:
     MenuWithSeparators m_assemble_object_menu;
     MenuWithSeparators m_assemble_part_menu;
 
+    // "Add Custom Models": one submenu in the empty-space menu and one in the plate menu; the
+    // list is re-read from the folder every time the menu is about to be shown.
+    std::unique_ptr<CustomModelsMenu> m_custom_models_default;
+    std::unique_ptr<CustomModelsMenu> m_custom_models_plate;
+
     wxMenu m_filament_action_menu;
    
 
@@ -159,12 +166,19 @@ private:
     wxMenu*     append_submenu_add_generic(wxMenu* menu, ModelVolumeType type);
     // Orca: add submenu for adding handy models
     wxMenu*     append_submenu_add_handy_model(wxMenu* menu, ModelVolumeType type);
+    // "Add Custom Models": the user's own library (CustomModelsMenu.hpp). `holder` keeps the
+    // menu's state so it can be refreshed before the menu is shown.
+    wxMenu*     append_submenu_add_custom_model(wxMenu* menu, std::unique_ptr<CustomModelsMenu>& holder);
+    void        append_menu_item_save_custom_model(wxMenu* menu);
     void        append_menu_item_add_text(wxMenu* menu, ModelVolumeType type, bool is_submenu_item = true);
     void        append_menu_item_add_svg(wxMenu *menu, ModelVolumeType type, bool is_submenu_item = true);    
+    void        append_menu_item_add_code(wxMenu *menu, ModelVolumeType type);
+    void        append_menu_item_add_shape(wxMenu *menu, ModelVolumeType type);
     void        append_menu_items_add_volume(wxMenu* menu);
     wxMenuItem* append_menu_item_layers_editing(wxMenu* menu);
     wxMenuItem* append_menu_item_settings(wxMenu* menu);
     wxMenuItem* append_menu_item_change_type(wxMenu* menu);
+    void        append_menu_item_precise_seam_submenu(wxMenu* menu);
     wxMenuItem* append_menu_item_instance_to_object(wxMenu* menu);
     wxMenuItem* append_menu_item_printable(wxMenu* menu);
     void        append_menu_item_rename(wxMenu* menu);
@@ -174,8 +188,12 @@ private:
     // Ultra: "Export part as STL" for a single selected ModelVolume (part, modifier,
     // negative volume or support blocker/enforcer - they are all meshes).
     void        append_menu_item_export_stl_part(wxMenu* menu);
+    void        append_menu_item_export_step(wxMenu* menu);
     void        append_menu_item_reload_from_disk(wxMenu* menu);
     void        append_menu_item_replace_with_stl(wxMenu* menu);
+    void        append_menu_item_edit_in_blender(wxMenu* menu);
+    void        append_menu_item_edit_in_freecad(wxMenu* menu);
+    void        append_menu_item_cad_fillet(wxMenu* menu);
     void        append_menu_item_change_extruder(wxMenu* menu);
     void        append_menu_item_set_visible(wxMenu* menu);
     void        append_menu_item_delete(wxMenu* menu);

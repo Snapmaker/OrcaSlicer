@@ -1,4 +1,5 @@
 #include "PrinterModelPanel.hpp"
+#include <memory>
 #include <wx/dcgraph.h>
 #include <wx/filefn.h>
 #include <wx/image.h>

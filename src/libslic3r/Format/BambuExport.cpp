@@ -432,8 +432,37 @@ size_t source_slot(size_t j, size_t n, const Layout &ours, const Layout &target,
     return std::min(j, n - 1);
 }
 
+// Bambu variant names that slice our High Flow column: "... High Flow" and, owner decision D6,
+// "... E3D High Flow". "... TPU High Flow" slices Standard.
+bool slices_high_flow_column(const std::string &variant_name)
+{
+    return variant_name.find("High Flow") != std::string::npos && variant_name.find("TPU High Flow") == std::string::npos;
+}
+
+// Our full config packs a flow-variant filament option per filament: filament f owns
+// filament_flow_step_size[f] consecutive slots, named by the packed filament_flow_support
+// ("standard", "high_flow"). False when the project carries no such table or `n` is not its total.
+bool packed_filament_segments(const Context &ctx, size_t n, size_t filament_count, std::vector<size_t> &starts,
+                              std::vector<size_t> &sizes)
+{
+    auto it = ctx.numbers.find("filament_flow_step_size");
+    if (it == ctx.numbers.end() || it->second.size() != filament_count)
+        return false;
+    size_t total = 0;
+    starts.clear();
+    sizes.clear();
+    for (double d : it->second) {
+        const size_t sz = size_t(std::max(1., d));
+        starts.push_back(total);
+        sizes.push_back(sz);
+        total += sz;
+    }
+    return total == n;
+}
+
 void fit_layout(Value &v, VariantClass cls, const Context &ctx, const Layout &ours_print, const Layout &ours_printer,
-                const Layout &ours_filament, const Layout &target_print, const Layout &target_printer, const Layout &target_filament, size_t filament_count, bool &changed)
+                const Layout &ours_filament, const Layout &target_print, const Layout &target_printer, const Layout &target_filament, size_t filament_count, bool &changed,
+                bool packed_flow_variant = false)
 {
     if (! v.vector || v.values.empty())
         return;
@@ -460,6 +489,24 @@ void fit_layout(Value &v, VariantClass cls, const Context &ctx, const Layout &ou
         break;
     }
     case VariantClass::Filament: {
+        std::vector<size_t> starts, sizes;
+        if (packed_flow_variant && packed_filament_segments(ctx, n, filament_count, starts, sizes)) {
+            // A flow-variant option of our full config: per filament a Standard slot and, when the
+            // preset declares one, a High Flow slot (filament_flow_support). Bambu's High Flow (and
+            // E3D High Flow) variants take the High Flow slot, every other variant the Standard one.
+            // With mixed step sizes the plain "n / filament_count" grouping below would read another
+            // filament's slot.
+            const auto support_it = ctx.lists.find("filament_flow_support");
+            for (size_t j = 0; j < target_filament.size(); ++j) {
+                const size_t f   = std::min(size_t(std::max(1, target_filament.ids[j]) - 1), starts.size() - 1);
+                size_t       src = starts[f];
+                if (slices_high_flow_column(target_filament.names[j]) && support_it != ctx.lists.end())
+                    for (size_t k = starts[f]; k < starts[f] + sizes[f] && k < support_it->second.size(); ++k)
+                        if (support_it->second[k] == FLOW_MODE_HIGH_FLOW) { src = k; break; }
+                out.push_back(in[std::min(src, n - 1)]);
+            }
+            break;
+        }
         // Bambu: one slot per (filament, variant), filament_self_index names the filament.
         // Ours: our full config keeps one slot per filament (or, for a preset with several
         // variants, g consecutive slots per filament); within a filament's group match the
@@ -522,6 +569,63 @@ Layout filament_layout(const Layout &printer, size_t filament_count)
     return l;
 }
 
+// Paint penetration (top_color_penetration_layers / bottom_color_penetration_layers). Bambu Studio
+// always sets the depth (min 1, default 4 / 3); ours adds 0 = "follow the shell", which Bambu
+// cannot represent: written as "0" it would claim no painted depth at all there. So a 0 goes out as
+// the depth our own shell settings give (MultiMaterialSegmentation.cpp, compute_layer_color_stat):
+// the shell layer count, raised to however many layers of layer_height the shell thickness needs,
+// and at least 1 (Bambu's minimum; a 0-layer shell claims nothing here, the closest Bambu can do is
+// the surface layer). A value >= 1 is Bambu's own and was already written as it is.
+//
+// An object that overrides its shells (or layer height) but not the penetration would otherwise
+// take the project's converted depth in Bambu Studio, computed from the PROJECT's shells, so it
+// gets its own when the project follows the shell too.
+double number_of(const ConfigBase &cfg, const Context &ctx, const char *key, double fallback)
+{
+    if (const ConfigOption *opt = cfg.option(key)) {
+        const Value v = read_value(*opt);
+        double      d;
+        if (! v.values.empty() && parse_number(v.values.front(), d))
+            return d;
+    }
+    if (auto it = ctx.numbers.find(key); it != ctx.numbers.end() && ! it->second.empty())
+        return it->second.front();
+    return fallback;
+}
+
+void write_paint_penetration(const ConfigBase &cfg, const Context &ctx, Scope scope, Config &out, Report &local, const std::string &where)
+{
+    if (scope != Scope::Project && scope != Scope::Print && scope != Scope::Object)
+        return;
+    for (const bool top : { true, false }) {
+        const char *key        = top ? "top_color_penetration_layers" : "bottom_color_penetration_layers";
+        const char *layers_key = top ? "top_shell_layers" : "bottom_shell_layers";
+        const char *thick_key  = top ? "top_shell_thickness" : "bottom_shell_thickness";
+        if (cfg.has(key)) {
+            if (number_of(cfg, ctx, key, 0.) >= 1.)
+                continue; // an explicit depth, already written as it is
+        } else {
+            if (scope != Scope::Object || ! (cfg.has(layers_key) || cfg.has(thick_key) || cfg.has("layer_height")))
+                continue;
+            if (number_of(cfg, ctx, key, 0.) >= 1.)
+                continue; // the object inherits the project's explicit depth, in Bambu Studio too
+        }
+        const int    layers    = int(std::lround(number_of(cfg, ctx, layers_key, 0.)));
+        const double thickness = number_of(cfg, ctx, thick_key, 0.);
+        const double height    = number_of(cfg, ctx, "layer_height", 0.);
+        int          depth     = layers;
+        if (layers > 0 && thickness > 0. && height > 0.)
+            depth = std::max(depth, int(std::ceil((thickness - 1e-4) / height)));
+        depth = std::max(depth, 1);
+        Value v;
+        v.values = { std::to_string(depth) };
+        out[key] = v;
+        local.converted.insert(key);
+        local.notes.push_back(where + ": " + key + " 0 (follow the shell) written as " + std::to_string(depth) +
+                              ", the depth the " + (top ? "top" : "bottom") + " shell settings give");
+    }
+}
+
 // The core: convert every key of `cfg`.
 Config convert_impl(const ConfigBase &cfg, const Context &ctx, Scope scope, Report &report, const std::string &where)
 {
@@ -567,7 +671,8 @@ Config convert_impl(const ConfigBase &cfg, const Context &ctx, Scope scope, Repo
         }
         bool layout_changed = false;
         if (scope != Scope::Object || def->variant != VariantClass::Filament) {
-            fit_layout(v, def->variant, ctx, ours_print, ours_printer, ours_filament, ctx.print, ctx.printer, target_filament, filament_count, layout_changed);
+            fit_layout(v, def->variant, ctx, ours_print, ours_printer, ours_filament, ctx.print, ctx.printer, target_filament, filament_count, layout_changed,
+                       scope == Scope::Project && is_filament_flow_variant_option(our_key));
         } else {
             // A per-object override of a filament-variant option is a single value.
             fit_layout(v, def->variant, ctx, ours_print, ours_printer, ours_filament, ctx.print, ctx.printer, filament_layout(ctx.printer, 1), 1, layout_changed);
@@ -583,6 +688,8 @@ Config convert_impl(const ConfigBase &cfg, const Context &ctx, Scope scope, Repo
         }
         out[bkey] = std::move(v);
     }
+
+    write_paint_penetration(cfg, ctx, scope, out, local, where);
 
     // Layout keys.
     if (scope == Scope::Project || scope == Scope::Print) {
@@ -724,7 +831,8 @@ Context Context::from_project(const ConfigBase &project)
         }
     }
     for (const char *key : { "print_extruder_variant", "print_extruder_id", "printer_extruder_variant", "printer_extruder_id",
-                             "filament_extruder_variant", "filament_self_index", "extruder_type", "nozzle_volume_type" })
+                             "filament_extruder_variant", "filament_self_index", "extruder_type", "nozzle_volume_type",
+                             "filament_flow_support" })
         if (const ConfigOption *opt = project.option(key))
             ctx.lists[key] = read_value(*opt).values;
     if (auto it = ctx.numbers.find("nozzle_diameter"); it != ctx.numbers.end() && ! it->second.empty()) {

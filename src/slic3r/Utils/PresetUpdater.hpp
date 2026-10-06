@@ -24,7 +24,16 @@ public:
 	~PresetUpdater();
 
 	// If either version check or config updating is enabled, get the appropriate data in the background and cache it.
+	// Only the profile feed (no server by default): the Bambu Lab requests are sync_bambu()'s, and
+	// http_url / plugin_version are no longer used here.
 	void sync(std::string http_url, std::string language, std::string plugin_version, PresetBundle *preset_bundle);
+
+	// The Bambu Lab part of the startup sync, against api.bambulab.com (or .cn): the printers/ OTA
+	// data and, with plugin_check, the Bambu network plug-in update check. At most once per session,
+	// on its own thread. GUI_App::maybe_start_bambu_sync() decides whether and when
+	// (BambuSyncPolicy.hpp): only once a Bambu printer or a Bambu login exists (privacy audit 2026-10).
+	// Returns false if it had already been started.
+	bool sync_bambu(std::string http_url, std::string plugin_version, bool plugin_check);
 
 	// If version check is enabled, check if chaced online slic3r version is newer, notify if so.
 	void slic3r_update_notify();

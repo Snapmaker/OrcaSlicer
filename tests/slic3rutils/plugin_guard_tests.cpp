@@ -36,6 +36,9 @@ using Slic3r::GUI::storage_browser_use_lan_url;
 using Slic3r::GUI::plugin_guard_decision;
 using Slic3r::GUI::PluginSync;
 using Slic3r::GUI::plugin_sync_decision;
+using Slic3r::GUI::OtaPluginInstall;
+using Slic3r::GUI::ota_plugin_install_decision;
+using Slic3r::GUI::ota_plugin_staged_names;
 
 TEST_CASE("UltraNet is a library AND a marker, never one alone", "[PluginGuard]")
 {
@@ -276,4 +279,42 @@ TEST_CASE("Storage browser route: stock rule, plus the LAN address for a LAN-onl
     // ...but only with both the IP and the access code; otherwise the stock flow decides.
     CHECK_FALSE(storage_browser_use_lan_url(false, true, true, false, true, true));
     CHECK_FALSE(storage_browser_use_lan_url(false, true, true, true, false, true));
+}
+
+// copy_network_if_available(): a Bambu package staged in ota/ by the plug-in update check must never
+// be copied over UltraNet (same library file name) unless the user keeps a foreign plug-in.
+TEST_CASE("A staged Bambu plug-in is never installed over UltraNet", "[PluginGuard]")
+{
+    // No flag: nothing staged, whatever is installed.
+    CHECK(ota_plugin_install_decision(false, true, false) == OtaPluginInstall::NothingStaged);
+    CHECK(ota_plugin_install_decision(false, false, false) == OtaPluginInstall::NothingStaged);
+    CHECK(ota_plugin_install_decision(false, true, true) == OtaPluginInstall::NothingStaged);
+    // UltraNet installed: refused (flag cleared, staged files removed).
+    CHECK(ota_plugin_install_decision(true, true, false) == OtaPluginInstall::Refuse);
+    // ...unless the user keeps a foreign plug-in on purpose.
+    CHECK(ota_plugin_install_decision(true, true, true) == OtaPluginInstall::Install);
+    // No UltraNet (a self-built tree, or Bambu's plug-in): the stock copy.
+    CHECK(ota_plugin_install_decision(true, false, false) == OtaPluginInstall::Install);
+    CHECK(ota_plugin_install_decision(true, false, true) == OtaPluginInstall::Install);
+}
+
+TEST_CASE("A refused ota install removes only exact file names inside ota/", "[PluginGuard]")
+{
+    size_t n = 0;
+    const char *const *names = ota_plugin_staged_names(n);
+    REQUIRE(n == 4);
+    bool has_library = false, has_changelog = false;
+    for (size_t i = 0; i < n; ++i) {
+        const std::string name = names[i];
+        CHECK_FALSE(name.empty());
+        // A bare file name: no directory part, no parent reference, no wildcard.
+        CHECK(name.find('/') == std::string::npos);
+        CHECK(name.find('\\') == std::string::npos);
+        CHECK(name.find("..") == std::string::npos);
+        CHECK(name.find('*') == std::string::npos);
+        has_library   = has_library || name == Slic3r::GUI::network_library_name();
+        has_changelog = has_changelog || name == "network_plugins.json";
+    }
+    CHECK(has_library);
+    CHECK(has_changelog);
 }

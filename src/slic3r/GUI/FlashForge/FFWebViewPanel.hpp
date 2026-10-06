@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <wx/dialog.h>
 #include <wx/event.h>
 #include <wx/gdicmn.h>
 #include <wx/panel.h>

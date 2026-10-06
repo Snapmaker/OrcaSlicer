@@ -40,8 +40,24 @@ protected:
     std::string get_gizmo_leaving_text() const override { return "Leaving Paint-on supports"; }
     std::string get_action_snapshot_name() const override { return "Paint-on supports editing"; }
 
+    // Painting stabilizer points (EnforcerBlockerType::STABILIZER) instead of enforcers and blockers:
+    // left paints them, right erases.
+    EnforcerBlockerType get_left_button_state_type() const override
+    {
+        return m_paint_stabilizers ? EnforcerBlockerType::STABILIZER : EnforcerBlockerType::ENFORCER;
+    }
+    EnforcerBlockerType get_right_button_state_type() const override
+    {
+        return m_paint_stabilizers ? EnforcerBlockerType::NONE : EnforcerBlockerType::BLOCKER;
+    }
+    ColorRGBA get_cursor_sphere_left_button_color() const override
+    {
+        return m_paint_stabilizers ? ColorRGBA{ 0.62f, 0.36f, 0.90f, 0.25f } : GLGizmoPainterBase::get_cursor_sphere_left_button_color();
+    }
+
     // BBS
     wchar_t                           m_current_tool = 0;
+    bool                              m_paint_stabilizers = false;
 
 private:
     bool on_init() override;

@@ -940,6 +940,44 @@ bool make_boolean(const TriangleMesh &src_mesh, const TriangleMesh &cut_mesh, st
     }
 }
 
+bool union_all(const std::vector<indexed_triangle_set> &meshes, indexed_triangle_set &out)
+{
+    try {
+        std::vector<manifold::Manifold> parts;
+        parts.reserve(meshes.size());
+        for (const indexed_triangle_set &m : meshes) {
+            if (m.indices.empty())
+                continue;
+            indexed_triangle_set its = m;
+            orient_outward(its);
+            manifold::Manifold part = to_manifold(its);
+            if (part.Status() != manifold::Manifold::Error::NoError) {
+                BOOST_LOG_TRIVIAL(info) << "MeshBoolean::mfd::union_all: input not manifold (" << int(part.Status()) << ")";
+                return false;
+            }
+            parts.emplace_back(std::move(part));
+        }
+        if (parts.empty())
+            return false;
+        manifold::MeshGL res = manifold::Manifold::BatchBoolean(parts, manifold::OpType::Add).GetMeshGL();
+        indexed_triangle_set its;
+        const size_t stride = res.numProp;
+        const size_t nv     = stride > 0 ? res.vertProperties.size() / stride : 0;
+        its.vertices.reserve(nv);
+        for (size_t i = 0; i < nv; ++i)
+            its.vertices.emplace_back(res.vertProperties[i * stride], res.vertProperties[i * stride + 1], res.vertProperties[i * stride + 2]);
+        its.indices.reserve(res.triVerts.size() / 3);
+        for (size_t i = 0; i + 2 < res.triVerts.size(); i += 3)
+            its.indices.emplace_back(int(res.triVerts[i]), int(res.triVerts[i + 1]), int(res.triVerts[i + 2]));
+        orient_outward(its);
+        out = std::move(its);
+        return true;
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(warning) << "MeshBoolean::mfd::union_all: exception: " << e.what();
+        return false;
+    }
+}
+
 } // namespace mfd
 
 } // namespace MeshBoolean

@@ -24,9 +24,13 @@ bool GLGizmoFlatten::on_mouse(const wxMouseEvent &mouse_event)
     if (mouse_event.LeftDown()) {
         if (m_hover_id != -1) {
             Selection &selection = m_parent.get_selection();
-            if (selection.is_single_full_instance()) {
-                // Rotate the object so the normal points downward:
-                selection.flattening_rotate(m_planes[m_hover_id].normal);
+            if (is_selection_supported()) {
+                // Rotate the object, or only the selected part, so the normal points downward.
+                // do_rotate() then drops the object back onto the bed.
+                if (selected_part_idx() >= 0)
+                    selection.flattening_rotate_part(m_planes[m_hover_id].normal);
+                else
+                    selection.flattening_rotate(m_planes[m_hover_id].normal);
                 m_parent.do_rotate(L("Gizmo-Place on Face"));
                 wxGetApp().obj_manipul()->set_dirty();
             }
@@ -49,7 +53,25 @@ void GLGizmoFlatten::data_changed(bool is_serializing)
         model_object = selection.get_model()->objects[selection.get_object_idx()];
         instance_id = selection.get_instance_idx();
     }
-    set_flattening_data(model_object, instance_id);
+    set_flattening_data(model_object, instance_id, selected_part_idx());
+}
+
+int GLGizmoFlatten::selected_part_idx() const
+{
+    // A single model part of a multi-part object. Modifiers and negative volumes are not selectable here:
+    // they select as SingleModifier.
+    const Selection& selection = m_parent.get_selection();
+    if (!selection.is_single_volume())
+        return -1;
+    const GLVolume*    v  = selection.get_first_volume();
+    const ModelObject* mo = selection.get_model()->objects[v->object_idx()];
+    const int          idx = v->volume_idx();
+    return idx >= 0 && idx < (int)mo->volumes.size() && mo->volumes[idx]->is_model_part() ? idx : -1;
+}
+
+bool GLGizmoFlatten::is_selection_supported() const
+{
+    return m_parent.get_selection().is_single_full_instance() || selected_part_idx() >= 0;
 }
 
 bool GLGizmoFlatten::on_init()
@@ -76,7 +98,7 @@ bool GLGizmoFlatten::on_is_activable() const
 {
     // This is assumed in GLCanvas3D::do_rotate, do not change this
     // without updating that function too.
-    return m_parent.get_selection().is_single_full_instance();
+    return is_selection_supported();
 }
 
 void GLGizmoFlatten::on_render()
@@ -93,7 +115,7 @@ void GLGizmoFlatten::on_render()
     glsafe(::glEnable(GL_DEPTH_TEST));
     glsafe(::glEnable(GL_BLEND));
 
-    if (selection.is_single_full_instance()) {
+    if (is_selection_supported()) {
         const Transform3d& inst_matrix = selection.get_first_volume()->get_instance_transformation().get_matrix();
         const Camera& camera = wxGetApp().plater()->get_camera();
         const Transform3d model_matrix = Geometry::translation_transform(selection.get_first_volume()->get_sla_shift_z() * Vec3d::UnitZ()) * inst_matrix;
@@ -139,9 +161,9 @@ void GLGizmoFlatten::on_unregister_raycasters_for_picking()
     m_planes_casters.clear();
 }
 
-void GLGizmoFlatten::set_flattening_data(const ModelObject* model_object, int instance_id)
+void GLGizmoFlatten::set_flattening_data(const ModelObject* model_object, int instance_id, int volume_id)
 {
-    if (model_object != m_old_model_object || instance_id != m_old_instance_id) {
+    if (model_object != m_old_model_object || instance_id != m_old_instance_id || volume_id != m_old_volume_id) {
         m_planes.clear();
         if (get_state() == On) { // Only touch the raycasters if it's current
             on_unregister_raycasters_for_picking();
@@ -154,7 +176,10 @@ void GLGizmoFlatten::update_planes()
     const ModelObject* mo = m_c->selection_info()->model_object();
     const Transform3d &inst_matrix = mo->instances.front()->get_matrix_no_offset();
     // The candidate faces are shared with the CLI --ground-* options, the rest only prepares them for rendering.
-    std::vector<LayOnFacePlane> planes = lay_on_face_planes(*mo, inst_matrix);
+    // With a single part selected, only that part's faces are offered.
+    const int volume_id = selected_part_idx();
+    std::vector<LayOnFacePlane> planes = volume_id >= 0 ? lay_on_face_planes(*mo->volumes[volume_id], inst_matrix) :
+                                                          lay_on_face_planes(*mo, inst_matrix);
     m_planes.clear();
     on_unregister_raycasters_for_picking();
 
@@ -233,6 +258,7 @@ void GLGizmoFlatten::update_planes()
     m_first_instance_mirror = mo->instances.front()->get_mirror();
     m_old_model_object = mo;
     m_old_instance_id = m_c->selection_info()->get_active_instance();
+    m_old_volume_id = volume_id;
 
     // And finally create respective VBOs. The polygon is convex with
     // the vertices in order, so triangulation is trivial.
@@ -271,7 +297,8 @@ bool GLGizmoFlatten::is_plane_update_necessary() const
         return false;
 
     if (m_planes.empty() || mo != m_old_model_object
-        || mo->volumes.size() != m_volumes_matrices.size())
+        || mo->volumes.size() != m_volumes_matrices.size()
+        || selected_part_idx() != m_old_volume_id)
         return true;
 
     // We want to recalculate when the scale changes - some planes could (dis)appear.

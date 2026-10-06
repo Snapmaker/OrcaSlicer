@@ -6,6 +6,7 @@
 #include <boost/nowide/fstream.hpp>
 #include "ClipperUtils.hpp"
 #include "Emboss.hpp" // heal for shape
+#include "UntrustedInput.hpp"
 
 namespace {    
 using namespace Slic3r; // Polygon
@@ -15,17 +16,23 @@ bool is_line(const float *p, float precision = 1e-4f);
 struct LinesPath{
     Polygons polygons;
     Polylines polylines; };
-LinesPath linearize_path(NSVGpath *first_path, const NSVGLineParams &param);
+// total_points: running count of polygon points over the shapes of one image; the flattening
+// stops when it passes param.max_flat_points (when that is not 0) and too_complex is set.
+LinesPath linearize_path(NSVGpath *first_path, const NSVGLineParams &param, size_t &total_points, bool &too_complex);
 HealedExPolygons fill_to_expolygons(const LinesPath &lines_path, const NSVGshape &shape, const NSVGLineParams &param);
 HealedExPolygons stroke_to_expolygons(const LinesPath &lines_path, const NSVGshape &shape, const NSVGLineParams &param);
 } // namespace
 
 namespace Slic3r {
 
-ExPolygonsWithIds create_shape_with_ids(const NSVGimage &image, const NSVGLineParams &param)
+ExPolygonsWithIds create_shape_with_ids(const NSVGimage &image, const NSVGLineParams &param, bool *too_complex_out, bool center_result)
 {
     ExPolygonsWithIds result;
     size_t shape_id = 0;
+    size_t total_points = 0;
+    bool   too_complex  = false;
+    if (too_complex_out != nullptr)
+        *too_complex_out = false;
     for (NSVGshape *shape_ptr = image.shapes; shape_ptr != NULL; shape_ptr = shape_ptr->next, ++shape_id) {
         const NSVGshape &shape = *shape_ptr;
         if (!(shape.flags & NSVG_FLAGS_VISIBLE))
@@ -39,7 +46,12 @@ ExPolygonsWithIds create_shape_with_ids(const NSVGimage &image, const NSVGLinePa
         if (!is_fill_used && !is_stroke_used)
             continue;
 
-        const LinesPath lines_path = linearize_path(shape.paths, param);
+        const LinesPath lines_path = linearize_path(shape.paths, param, total_points, too_complex);
+        if (too_complex) {
+            if (too_complex_out != nullptr)
+                *too_complex_out = true;
+            return {};
+        }
 
         if (is_fill_used) {
             unsigned unique_id = static_cast<unsigned>(2 * shape_id);
@@ -55,7 +67,8 @@ ExPolygonsWithIds create_shape_with_ids(const NSVGimage &image, const NSVGLinePa
 
     // SVG is used as centered
     // Do not disturb user by settings of pivot position
-    center(result);
+    if (center_result)
+        center(result);
     return result;
 }
 
@@ -67,7 +80,9 @@ Polygons to_polygons(const NSVGimage &image, const NSVGLineParams &param)
             continue;
         if (shape->fill.type == NSVG_PAINT_NONE)
             continue;
-        const LinesPath lines_path = linearize_path(shape->paths, param);
+        size_t total_points = 0;
+        bool   too_complex  = false;
+        const LinesPath lines_path = linearize_path(shape->paths, param, total_points, too_complex);
         polygons_append(result, lines_path.polygons);
         // close polyline to create polygon
         polygons_append(result, to_polygons(lines_path.polylines));        
@@ -96,14 +111,35 @@ NSVGimage_ptr nsvgParseFromFile(const std::string &filename, const char *units, 
     return {image, &nsvgDelete};
 }
 
-std::unique_ptr<std::string> read_from_disk(const std::string &path)
+std::unique_ptr<std::string> read_from_disk(const std::string &path, std::uint64_t max_size, bool *too_large)
 {
-    boost::nowide::ifstream fs{path};
+    if (too_large != nullptr)
+        *too_large = false;
+    boost::nowide::ifstream fs{path, std::ios::binary};
     if (!fs.is_open())
         return nullptr;
-    std::stringstream ss;
-    ss << fs.rdbuf();
-    return std::make_unique<std::string>(ss.str());
+    // Never trust the size the file system reports (it can change, or be a device): read in
+    // blocks and stop one byte past the limit.
+    auto text = std::make_unique<std::string>();
+    std::array<char, 64 * 1024> block;
+    while (fs) {
+        fs.read(block.data(), static_cast<std::streamsize>(block.size()));
+        const std::streamsize got = fs.gcount();
+        if (got <= 0)
+            break;
+        if (text->size() + static_cast<std::uint64_t>(got) > max_size) {
+            if (too_large != nullptr)
+                *too_large = true;
+            return nullptr;
+        }
+        text->append(block.data(), static_cast<size_t>(got));
+    }
+    return text;
+}
+
+std::unique_ptr<std::string> read_from_disk(const std::string &path)
+{
+    return read_from_disk(path, untrusted::SVG_SIZE_LIMIT, nullptr);
 }
 
 NSVGimage_ptr nsvgParse(const std::string& file_data, const char *units, float dpi){
@@ -117,25 +153,78 @@ NSVGimage_ptr nsvgParse(const std::string& file_data, const char *units, float d
     return {image, &nsvgDelete};
 }
 
-NSVGimage *init_image(EmbossShape::SvgFile &svg_file){
+bool svg_within_limits(const NSVGimage &image, std::string *why)
+{
+    size_t shapes = 0, paths = 0, points = 0;
+    auto refuse = [&why](const char *what) {
+        if (why != nullptr)
+            *why = what;
+        return false;
+    };
+    for (const NSVGshape *shape = image.shapes; shape != NULL; shape = shape->next) {
+        if (++shapes > untrusted::SVG_MAX_SHAPES)
+            return refuse("too many shapes");
+        for (const NSVGpath *path = shape->paths; path != NULL; path = path->next) {
+            if (++paths > untrusted::SVG_MAX_PATHS)
+                return refuse("too many paths");
+            points += static_cast<size_t>(std::max(path->npts, 0));
+            if (points > untrusted::SVG_MAX_POINTS)
+                return refuse("too many points");
+        }
+    }
+    return true;
+}
+
+NSVGimage_ptr nsvgParse_checked(const std::string &file_data, SvgRefusal &refusal, std::string *why)
+{
+    refusal = SvgRefusal::None;
+    if (!untrusted::svg_size_ok(file_data.size())) {
+        refusal = SvgRefusal::TooLarge;
+        if (why != nullptr)
+            *why = "file is too large";
+        return {nullptr, &nsvgDelete};
+    }
+    NSVGimage_ptr image = nsvgParse(file_data);
+    if (image.get() == nullptr) {
+        refusal = SvgRefusal::Unreadable;
+        return image;
+    }
+    if (!svg_within_limits(*image, why)) {
+        refusal = SvgRefusal::TooComplex;
+        return {nullptr, &nsvgDelete};
+    }
+    return image;
+}
+
+NSVGimage *init_image(EmbossShape::SvgFile &svg_file, SvgRefusal *refusal_out, std::string *why){
+    SvgRefusal refusal = SvgRefusal::None;
+    struct SetOut { SvgRefusal *out; SvgRefusal &value; ~SetOut() { if (out != nullptr) *out = value; } } set_out{refusal_out, refusal};
+
     // is already initialized?
     if (svg_file.image.get() != nullptr)
         return svg_file.image.get();
 
     if (svg_file.file_data == nullptr) {
         // chech if path is known
-        if (svg_file.path.empty())
+        if (svg_file.path.empty()) {
+            refusal = SvgRefusal::Unreadable;
             return nullptr;
-        svg_file.file_data = read_from_disk(svg_file.path);
-        if (svg_file.file_data == nullptr)
+        }
+        bool too_large = false;
+        svg_file.file_data = read_from_disk(svg_file.path, untrusted::SVG_SIZE_LIMIT, &too_large);
+        if (svg_file.file_data == nullptr) {
+            refusal = too_large ? SvgRefusal::TooLarge : SvgRefusal::Unreadable;
+            if (too_large && why != nullptr)
+                *why = "file is too large";
             return nullptr;
+        }
     }
 
-    // init svg image
-    svg_file.image = nsvgParse(*svg_file.file_data);
-    if (svg_file.image.get() == NULL)
-        return nullptr;
-
+    // init svg image (size and complexity checked)
+    NSVGimage_ptr image = nsvgParse_checked(*svg_file.file_data, refusal, why);
+    if (image.get() == nullptr)
+        return nullptr; // file_data stays: a project keeps the user's file even when it cannot be edited
+    svg_file.image = std::move(image);
     return svg_file.image.get();
 }
 
@@ -322,7 +411,7 @@ void flatten_cubic_bez(Points &points, float tessTol, const Vec2f& p1, const Vec
     flatten_cubic_bez(points, tessTol, p1234, p234, p34, p4, level);
 }
 
-LinesPath linearize_path(NSVGpath *first_path, const NSVGLineParams &param)
+LinesPath linearize_path(NSVGpath *first_path, const NSVGLineParams &param, size_t &total_points, bool &too_complex)
 {
     LinesPath result;
     Polygons  &polygons  = result.polygons;
@@ -349,13 +438,24 @@ LinesPath linearize_path(NSVGpath *first_path, const NSVGLineParams &param)
             Vec2f p2(p[2], p[3]);
             Vec2f p3(p[4], p[5]);
             Vec2f p4(p[6], p[7]);
-            flatten_cubic_bez(points, param.tesselation_tolerance, 
-                p1 * param.scale, p2 * param.scale, p3 * param.scale, p4 * param.scale, 
+            flatten_cubic_bez(points, param.tesselation_tolerance,
+                p1 * param.scale, p2 * param.scale, p3 * param.scale, p4 * param.scale,
                 param.max_level);
+            // one path alone may not run away either (a Bezier gives at most 2^max_level points)
+            if (param.max_flat_points != 0 && total_points + points.size() > param.max_flat_points) {
+                too_complex = true;
+                return {};
+            }
         }
         assert(!points.empty());
-        if (points.empty()) 
+        if (points.empty())
             continue;
+
+        total_points += points.size();
+        if (param.max_flat_points != 0 && total_points > param.max_flat_points) {
+            too_complex = true;
+            return {};
+        }
 
         if (param.is_y_negative)
             for (Point &p : points)

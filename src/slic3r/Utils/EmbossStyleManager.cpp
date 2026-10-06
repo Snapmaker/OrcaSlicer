@@ -1,4 +1,5 @@
 #include "EmbossStyleManager.hpp"
+#include <libslic3r/InlineShapes.hpp> // rasterize_shape
 #include <optional>
 #include <glad/gl.h> // Imgui texture
 #include <imgui/imgui_internal.h> // ImTextCharFromUtf8
@@ -95,6 +96,8 @@ bool StyleManager::store_styles_to_app_config(bool use_modification, bool store_
         if (exist_stored_style()) {
             // update stored item
             m_styles[m_style_cache.style_index] = m_style_cache.style;
+            // curved text belongs to the text volume, never to a style preset
+            m_styles[m_style_cache.style_index].projection.bend = {};
         } else {
             // add new into stored list
             EmbossStyle &style = m_style_cache.style;
@@ -439,6 +442,11 @@ float StyleManager::get_imgui_font_size(const FontProp &prop, const FontFile &fi
 
 ImFont *StyleManager::create_imgui_font(const std::string &text, double scale)
 {
+    return create_imgui_font(text, scale, ImGuiExtraGlyphs{});
+}
+
+ImFont *StyleManager::create_imgui_font(const std::string &text, double scale, const ImGuiExtraGlyphs &extra)
+{
     // inspiration inside of ImGuiWrapper::init_font
     auto& ff = m_style_cache.font_file;
     if (!ff.has_value()) return nullptr;
@@ -479,9 +487,95 @@ ImFont *StyleManager::create_imgui_font(const std::string &text, double scale)
     ImFont * font = m_style_cache.atlas.AddFontFromMemoryTTF(
         (void *) buffer.data(), buffer.size(), font_size, &font_config, m_style_cache.ranges.Data);
 
+    const FontFile::Info &info = get_font_info(font_file, font_prop);
+    // pixels per font unit, as ImGui scales the font (stbtt_ScaleForPixelHeight: ascent - descent)
+    const double px_per_unit = (info.ascent - info.descent) > 0 ? font_size / double(info.ascent - info.descent) : 0.;
+
+    // Characters the selected font lacks, from the fallback (bundled symbol) font, merged into the same
+    // ImFont at the same em size; ImGui puts merged glyphs on the baseline of the first font.
+    m_style_cache.fallback_ranges.clear();
+    m_style_cache.fallback_font.reset();
+    if (font != nullptr && extra.fallback_font != nullptr && !extra.fallback_text.empty() && !extra.fallback_font->infos.empty() &&
+        extra.fallback_font->data != nullptr && px_per_unit > 0.) {
+        const FontFile::Info &fb = extra.fallback_font->infos.front();
+        if (fb.unit_per_em > 0 && fb.ascent - fb.descent > 0 && info.unit_per_em > 0) {
+            ImFontGlyphRangesBuilder fb_builder;
+            fb_builder.AddText(extra.fallback_text.c_str());
+            fb_builder.BuildRanges(&m_style_cache.fallback_ranges);
+            m_style_cache.fallback_font = extra.fallback_font; // keep the data alive with the atlas
+            const double px_per_em = px_per_unit * info.unit_per_em;
+            ImFontConfig fb_config;
+            fb_config.MergeMode            = true;
+            fb_config.FontDataOwnedByAtlas = false;
+            fb_config.GlyphExtraSpacing    = font_config.GlyphExtraSpacing;
+            const float fb_size = static_cast<float>(px_per_em * double(fb.ascent - fb.descent) / double(fb.unit_per_em));
+            const std::vector<unsigned char> &fb_buffer = *extra.fallback_font->data;
+            m_style_cache.atlas.AddFontFromMemoryTTF((void *) fb_buffer.data(), fb_buffer.size(), fb_size, &fb_config,
+                                                     m_style_cache.fallback_ranges.Data);
+        }
+    }
+
+    // Inline shapes: one custom rectangle glyph per shape, rasterised into the atlas after it is built
+    struct ShapeRect
+    {
+        int    rect = -1;
+        Vec2d  origin;
+        double scale = 0.;
+        const ExPolygons *shape = nullptr;
+    };
+    std::vector<ShapeRect> shape_rects;
+    // ImGui's baseline in the glyph box: ImFontAtlasBuildWithStbTruetype rounds the ascent like this
+    const float imgui_ascent = std::floor(static_cast<float>(info.ascent * px_per_unit) + (info.ascent > 0 ? 1.f : -1.f));
+    if (font != nullptr && px_per_unit > 0.) {
+        // shape units -> font units (the same factor the text uses, independent of the size)
+        FontProp unit_prop = font_prop;
+        unit_prop.size_in_mm = static_cast<float>(info.unit_per_em);
+        const double shape_to_px = get_text_shape_scale(unit_prop, font_file) * px_per_unit;
+        for (const ImGuiExtraGlyphs::Shape &sh : extra.shapes) {
+            if (sh.code == 0 || sh.shape.empty() || !(shape_to_px > 0.))
+                continue;
+            const BoundingBox bb = get_extents(sh.shape);
+            const int x0 = static_cast<int>(std::floor(bb.min.x() * shape_to_px)) - 1;
+            const int x1 = static_cast<int>(std::ceil(bb.max.x() * shape_to_px)) + 1;
+            const int y_top = static_cast<int>(std::ceil(bb.max.y() * shape_to_px)) + 1; // up from the baseline
+            const int y_bot = static_cast<int>(std::floor(bb.min.y() * shape_to_px)) - 1;
+            const int w = x1 - x0, h = y_top - y_bot;
+            if (w <= 0 || h <= 0 || w > 512 || h > 512)
+                continue;
+            const float offset_y = imgui_ascent - static_cast<float>(y_top);
+            ShapeRect r;
+            r.rect   = m_style_cache.atlas.AddCustomRectFontGlyph(font, sh.code, w, h, static_cast<float>(sh.advance * shape_to_px),
+                                                                ImVec2(static_cast<float>(x0), offset_y));
+            r.scale  = shape_to_px;
+            r.origin = Vec2d(x0 / shape_to_px, y_top / shape_to_px);
+            r.shape  = &sh.shape;
+            shape_rects.push_back(r);
+        }
+    }
+
     unsigned char *pixels;
     int            width, height;
     m_style_cache.atlas.GetTexDataAsRGBA32(&pixels, &width, &height);
+
+    // draw the shapes into their rectangles (white, alpha = coverage: they take the text colour), before
+    // the texture is compressed and uploaded below
+    for (const ShapeRect &r : shape_rects) {
+        const ImFontAtlasCustomRect *rect = m_style_cache.atlas.GetCustomRectByIndex(r.rect);
+        if (rect == nullptr || !rect->IsPacked())
+            continue;
+        std::vector<uint8_t> alpha = rasterize_shape(*r.shape, rect->Width, rect->Height, r.origin, r.scale);
+        if (alpha.size() != size_t(rect->Width) * size_t(rect->Height))
+            continue;
+        for (int y = 0; y < rect->Height; ++y)
+            for (int x = 0; x < rect->Width; ++x) {
+                const int px = rect->X + x, py = rect->Y + y;
+                if (px < 0 || py < 0 || px >= width || py >= height)
+                    continue;
+                unsigned char *dst = pixels + (size_t(py) * size_t(width) + size_t(px)) * 4;
+                dst[0] = dst[1] = dst[2] = 255;
+                dst[3] = alpha[size_t(y) * rect->Width + x];
+            }
+    }
 
     // Upload texture to graphics system
     GLint last_texture;

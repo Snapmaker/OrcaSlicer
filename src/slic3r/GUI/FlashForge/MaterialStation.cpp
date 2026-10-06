@@ -1,5 +1,8 @@
 #include "MaterialStation.hpp"
+#include <memory>
 #include <slic3r/GUI/wxExtensions.hpp>
+#include <wx/dcbuffer.h>
+#include <wx/display.h>
 #include <wx/graphics.h>
 #include "slic3r/GUI/FFUtils.hpp"
 #include "slic3r/GUI/FlashForge/MultiComMgr.hpp"

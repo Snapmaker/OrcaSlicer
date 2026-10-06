@@ -155,8 +155,25 @@ public:
     // Initialize imgui font(generate texture) when doesn't exist yet.
     // Extend font atlas when not in glyph range
     ImFont *get_imgui_font();
+    // Glyphs of the text box beyond the selected font
+    struct ImGuiExtraGlyphs
+    {
+        // characters the selected font lacks, drawn from fallback_font (merged into the same ImFont)
+        std::string                                      fallback_text;
+        std::shared_ptr<const Slic3r::Emboss::FontFile>  fallback_font;
+        // inline shapes drawn as bitmap glyphs: outline and advance in shape units of the selected font
+        // (as Emboss::Glyph, y up, baseline at 0)
+        struct Shape
+        {
+            ImWchar           code = 0;
+            Slic3r::ExPolygons shape;
+            int               advance = 0;
+        };
+        std::vector<Shape> shapes;
+    };
     // initialize font range by unique symbols in text
     ImFont *create_imgui_font(const std::string& text, double scale);
+    ImFont *create_imgui_font(const std::string& text, double scale, const ImGuiExtraGlyphs &extra);
     
     // init truncated names of styles
     void init_trunc_names(float max_width);
@@ -207,9 +224,12 @@ public:
 
         bool operator==(const Style &other) const
         {
-            return EmbossStyle::operator==(other) && 
-                projection == other.projection &&
-                distance == other.distance && 
+            // NOTE: projection.bend (curved text) is a per-volume property, not part of a style,
+            // so it does not mark the style as modified
+            return EmbossStyle::operator==(other) &&
+                projection.depth == other.projection.depth &&
+                projection.use_surface == other.projection.use_surface &&
+                distance == other.distance &&
                 angle == other.angle;
         }
 
@@ -249,6 +269,9 @@ private:
 
         // must live same as imgui_font inside of atlas
         ImVector<ImWchar> ranges = {};
+        // the same for the merged fallback font
+        ImVector<ImWchar> fallback_ranges = {};
+        std::shared_ptr<const Slic3r::Emboss::FontFile> fallback_font;
 
         // Keep only actual style in atlas
         ImFontAtlas atlas = {};

@@ -19,8 +19,13 @@ class CNumericLocalesSetter {
 public:
     CNumericLocalesSetter();
     ~CNumericLocalesSetter();
+    // A copy would restore the locale twice, and count down once more than up.
+    CNumericLocalesSetter(const CNumericLocalesSetter &) = delete;
+    CNumericLocalesSetter &operator=(const CNumericLocalesSetter &) = delete;
 
 private:
+    // Inside another setter on this thread, which does the setting and restoring.
+    bool m_nested{false};
 #ifdef _WIN32
     std::string m_orig_numeric_locale;
 #else
@@ -29,6 +34,13 @@ private:
 #endif
 
 };
+
+// Diagnostics / test-only: this-thread counts of actual setlocale/uselocale vs
+// nested skips. Not a production API; Catch2 uses them to prove inner setters
+// skipped setlocale. Do not call from slicer paths.
+void reset_numeric_locale_setter_counts();
+int  numeric_locale_setter_installs();
+int  numeric_locale_setter_nested_skips();
 
 // A function to check that current C locale uses decimal point as a separator.
 // Intended mostly for asserts.
@@ -42,6 +54,11 @@ bool is_decimal_separator_point();
 std::string float_to_string_decimal_point(double value, int precision = -1);
 //std::string float_to_string_decimal_point(float value,  int precision = -1);
 double string_to_double_decimal_point(const std::string_view str, size_t* pos = nullptr);
+// Parses like atof in the C locale, skipping leading whitespace and a '+',
+// without the C runtime's per-call locale lookup. Like atof it consumes the leading number only
+// ("12.5;x" -> 12.5) and returns 0 when the text does not start with a number ("", "abc", "G4 P1").
+// Differs from atof only for hex floats, which G-code never contains.
+double atof_decimal_point(std::string_view str);
 
 } // namespace Slic3r
 

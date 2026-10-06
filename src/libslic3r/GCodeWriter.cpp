@@ -1,9 +1,13 @@
 #include "GCodeWriter.hpp"
 #include "CustomGCode.hpp"
+#include "Exception.hpp"
+#include "format.hpp"
+#include "LocalesUtils.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <assert.h>
 #include <boost/log/trivial.hpp>
@@ -243,28 +247,38 @@ std::string GCodeWriter::set_acceleration_internal(Acceleration type, unsigned i
         return std::string();
     
     last_value = acceleration;
-    
-    std::ostringstream gcode;
-    if (FLAVOR_IS(gcfRepetier))
-        gcode << (separate_travel ? "M202 X" : "M201 X") << acceleration << " Y" << acceleration;
-    else if (FLAVOR_IS(gcfRepRapFirmware) || FLAVOR_IS(gcfMarlinFirmware))
-        gcode << (separate_travel ? "M204 T" : "M204 P") << acceleration;
-    else if (FLAVOR_IS(gcfKlipper)) {
-        gcode << "SET_VELOCITY_LIMIT ACCEL=" << acceleration;
+
+    const std::string value = std::to_string(acceleration);
+    std::string       gcode;
+    if (FLAVOR_IS(gcfRepetier)) {
+        gcode += separate_travel ? "M202 X" : "M201 X";
+        gcode += value;
+        gcode += " Y";
+        gcode += value;
+    } else if (FLAVOR_IS(gcfRepRapFirmware) || FLAVOR_IS(gcfMarlinFirmware)) {
+        gcode += separate_travel ? "M204 T" : "M204 P";
+        gcode += value;
+    } else if (FLAVOR_IS(gcfKlipper)) {
+        gcode.reserve(96);
+        gcode += "SET_VELOCITY_LIMIT ACCEL=";
+        gcode += value;
         unsigned int filament_id = m_extruder != nullptr ? m_extruder->id() : 0;
         if (get_value_at(this->config, this->config.accel_to_decel_enable, ConfigFlowDomain::Process, filament_id)) {
-            gcode << " ACCEL_TO_DECEL=" << acceleration * get_value_at(this->config, this->config.accel_to_decel_factor, ConfigFlowDomain::Process, filament_id) / 100;
+            gcode += " ACCEL_TO_DECEL=";
+            gcode += float_to_string_decimal_point(
+                acceleration * get_value_at(this->config, this->config.accel_to_decel_factor, ConfigFlowDomain::Process, filament_id) / 100);
             if (GCodeWriter::full_gcode_comment)
-                gcode << " ; adjust ACCEL_TO_DECEL";
+                gcode += " ; adjust ACCEL_TO_DECEL";
         }
+    } else {
+        gcode += "M204 S";
+        gcode += value;
     }
-    else
-        gcode << "M204 S" << acceleration;
 
-    if (GCodeWriter::full_gcode_comment) gcode << " ; adjust acceleration";
-    gcode << "\n";
-    
-    return gcode.str();
+    if (GCodeWriter::full_gcode_comment) gcode += " ; adjust acceleration";
+    gcode += "\n";
+
+    return gcode;
 }
 
 std::string GCodeWriter::set_jerk_xy(double jerk)
@@ -314,39 +328,43 @@ std::string GCodeWriter::set_accel_and_jerk(unsigned int acceleration, double je
     // Clamp the acceleration to the allowed maximum.
     if (m_max_acceleration > 0 && acceleration > m_max_acceleration)
         acceleration = m_max_acceleration;
-    
-    bool is_empty = true;
-    std::ostringstream gcode;
-    gcode << "SET_VELOCITY_LIMIT";
-    if (acceleration != 0 && acceleration != m_last_acceleration) {
-        gcode << " ACCEL=" << acceleration;
-        unsigned int filament_id = m_extruder != nullptr ? m_extruder->id() : 0;
-        if (get_value_at(this->config, this->config.accel_to_decel_enable, ConfigFlowDomain::Process, filament_id)) {
-            gcode << " ACCEL_TO_DECEL=" << acceleration * get_value_at(this->config, this->config.accel_to_decel_factor, ConfigFlowDomain::Process, filament_id) / 100;
-        }
-        m_last_acceleration = acceleration;
-        is_empty = false;
-    }
+
     // Clamp the jerk to the allowed maximum.
     if (m_max_jerk_x > 0 && jerk > m_max_jerk_x)
         jerk = m_max_jerk_x;
     if (m_max_jerk_y > 0 && jerk > m_max_jerk_y)
         jerk = m_max_jerk_y;
 
-    if (jerk > 0.01 && !is_approx(jerk, m_last_jerk)) {
-        gcode << " SQUARE_CORNER_VELOCITY=" << jerk;
-        m_last_jerk = jerk;
-        is_empty = false;
-    }
-
-    if(is_empty)
+    const bool set_acceleration = acceleration != 0 && acceleration != m_last_acceleration;
+    const bool set_jerk         = jerk > 0.01 && !is_approx(jerk, m_last_jerk);
+    if (!set_acceleration && !set_jerk)
         return std::string();
 
-    if (GCodeWriter::full_gcode_comment)
-        gcode << " ; adjust VELOCITY_LIMIT(accel/jerk)";
-    gcode << "\n";
+    std::string gcode;
+    gcode.reserve(96);
+    gcode += "SET_VELOCITY_LIMIT";
+    if (set_acceleration) {
+        gcode += " ACCEL=";
+        gcode += std::to_string(acceleration);
+        unsigned int filament_id = m_extruder != nullptr ? m_extruder->id() : 0;
+        if (get_value_at(this->config, this->config.accel_to_decel_enable, ConfigFlowDomain::Process, filament_id)) {
+            gcode += " ACCEL_TO_DECEL=";
+            gcode += float_to_string_decimal_point(
+                acceleration * get_value_at(this->config, this->config.accel_to_decel_factor, ConfigFlowDomain::Process, filament_id) / 100);
+        }
+        m_last_acceleration = acceleration;
+    }
+    if (set_jerk) {
+        gcode += " SQUARE_CORNER_VELOCITY=";
+        gcode += float_to_string_decimal_point(jerk);
+        m_last_jerk = jerk;
+    }
 
-    return gcode.str();
+    if (GCodeWriter::full_gcode_comment)
+        gcode += " ; adjust VELOCITY_LIMIT(accel/jerk)";
+    gcode += "\n";
+
+    return gcode;
 
 }
 
@@ -492,7 +510,17 @@ std::string GCodeWriter::toolchange(unsigned int extruder_id)
 {
     // set the new extruder
 	auto it_extruder = Slic3r::lower_bound_by_predicate(m_extruders.begin(), m_extruders.end(), [extruder_id](const Extruder &e) { return e.id() < extruder_id; });
-    assert(it_extruder != m_extruders.end() && it_extruder->id() == extruder_id);
+    if (it_extruder == m_extruders.end() || it_extruder->id() != extruder_id) {
+        // A missing physical Extruder used to leave a dangling m_extruder (Release asserts
+        // compiled out) or, after a silent return, keep E/retract/temp on the old tool while
+        // the placeholder already names the new one. Refuse hard so the caller cannot continue.
+        const std::string msg = Slic3r::format(
+            "GCodeWriter::toolchange: no physical extruder registered for id %1%. "
+            "Mixed virtual filament IDs must be resolved to physical extruders before export.",
+            extruder_id);
+        BOOST_LOG_TRIVIAL(error) << msg;
+        throw SlicingError(msg);
+    }
     m_extruder = &*it_extruder;
 
     // return the toolchange command
@@ -510,6 +538,13 @@ std::string GCodeWriter::toolchange(unsigned int extruder_id)
 }
 
 std::string GCodeWriter::set_speed(double F, const std::string &comment, const std::string &cooling_marker)
+{
+    std::string gcode;
+    this->set_speed(gcode, F, comment, cooling_marker);
+    return gcode;
+}
+
+void GCodeWriter::set_speed(std::string &out, double F, const std::string &comment, const std::string &cooling_marker)
 {
     if (! std::isfinite(F) || F <= 0.) {
         // Release-active guard: the asserts below are compiled out in Release builds, which used
@@ -540,7 +575,7 @@ std::string GCodeWriter::set_speed(double F, const std::string &comment, const s
     //BBS
     w.emit_comment(GCodeWriter::full_gcode_comment, comment);
     w.emit_string(cooling_marker);
-    return w.string();
+    w.append_to(out);
 }
 
 
@@ -781,6 +816,13 @@ bool GCodeWriter::will_move_z(double z) const
 
 std::string GCodeWriter::extrude_to_xy(const Vec2d &point, double dE, const std::string &comment, bool force_no_extrusion)
 {
+    std::string gcode;
+    this->extrude_to_xy(gcode, point, dE, comment, force_no_extrusion);
+    return gcode;
+}
+
+void GCodeWriter::extrude_to_xy(std::string &out, const Vec2d &point, double dE, const std::string &comment, bool force_no_extrusion)
+{
     m_pos(0) = point(0);
     m_pos(1) = point(1);
     if(std::abs(dE) <= std::numeric_limits<double>::epsilon())
@@ -798,13 +840,20 @@ std::string GCodeWriter::extrude_to_xy(const Vec2d &point, double dE, const std:
         w.emit_e(m_extruder->E());
     //BBS
     w.emit_comment(GCodeWriter::full_gcode_comment, comment);
-    return w.string();
+    w.append_to(out);
 }
 
 //BBS: generate G2 or G3 extrude which moves by arc
 //point is end point which means X and Y axis
 //center_offset is I and J axis
 std::string GCodeWriter::extrude_arc_to_xy(const Vec2d& point, const Vec2d& center_offset, double dE, const bool is_ccw, const std::string& comment, bool force_no_extrusion)
+{
+    std::string gcode;
+    this->extrude_arc_to_xy(gcode, point, center_offset, dE, is_ccw, comment, force_no_extrusion);
+    return gcode;
+}
+
+void GCodeWriter::extrude_arc_to_xy(std::string &out, const Vec2d& point, const Vec2d& center_offset, double dE, const bool is_ccw, const std::string& comment, bool force_no_extrusion)
 {
     m_pos(0) = point(0);
     m_pos(1) = point(1);
@@ -820,10 +869,17 @@ std::string GCodeWriter::extrude_arc_to_xy(const Vec2d& point, const Vec2d& cent
         w.emit_e(m_extruder->E());
     //BBS
     w.emit_comment(GCodeWriter::full_gcode_comment, comment);
-    return w.string();
+    w.append_to(out);
 }
 
 std::string GCodeWriter::extrude_to_xyz(const Vec3d &point, double dE, const std::string &comment, bool force_no_extrusion)
+{
+    std::string gcode;
+    this->extrude_to_xyz(gcode, point, dE, comment, force_no_extrusion);
+    return gcode;
+}
+
+void GCodeWriter::extrude_to_xyz(std::string &out, const Vec3d &point, double dE, const std::string &comment, bool force_no_extrusion)
 {
     m_pos = point;
     m_lifted = 0;
@@ -839,7 +895,7 @@ std::string GCodeWriter::extrude_to_xyz(const Vec3d &point, double dE, const std
         w.emit_e(m_extruder->E());
     //BBS
     w.emit_comment(GCodeWriter::full_gcode_comment, comment);
-    return w.string();
+    w.append_to(out);
 }
 
 std::string GCodeWriter::retract(bool before_wipe, double retract_length)

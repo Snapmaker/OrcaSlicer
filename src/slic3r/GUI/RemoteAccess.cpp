@@ -16,6 +16,8 @@
 #include "RemoteHub.hpp"
 #include "RemoteSend.hpp"
 #include "RemoteSnapmaker.hpp"
+#include "RemoteTimelapse.hpp"
+#include "PrinterTimelapse.hpp"
 #include "SnapmakerLan.hpp"
 #include "Selection.hpp"
 #include "Tab.hpp"
@@ -180,6 +182,10 @@ static const ClassRule k_class_rules[] = {
     // colour import (OBJ / glTF): its OK handler is what fills the filament ids, so a returned OK
     // without a click imports without colour anyway; say so instead of pretending to agree
     { "ObjColorDialog",          wxID_CANCEL, false },
+    // Confirm's button id is wxID_APPLY but EndModal is wxID_OK. The hook returns
+    // ShowModal's result (it does not click the button), so wxID_OK is the
+    // apply-equivalent that lets confirm_grouping_before_slice proceed.
+    { "FilamentGroupDialog",     wxID_OK,     false },
 };
 
 static bool has_btn(wxDialog* d, int id) { return d->FindWindow(id) != nullptr; }
@@ -209,6 +215,9 @@ static long style_of(wxDialog* d)
     if (has_btn(d, wxID_YES))    s |= wxYES;
     if (has_btn(d, wxID_NO))     s |= wxNO;
     if (has_btn(d, wxID_CANCEL)) s |= wxCANCEL;
+    // DialogButtons "Confirm" is wxID_APPLY; treat it as the affirmative OK so a
+    // missed class rule in Request mode still returns wxID_OK, not Cancel.
+    if (has_btn(d, wxID_APPLY))  s |= wxOK;
     return s;
 }
 
@@ -232,10 +241,11 @@ static int default_answer(long s, bool affirmative)
 static const char* answer_name(int id)
 {
     switch (id) {
-    case wxID_YES: return "yes";
-    case wxID_NO:  return "no";
-    case wxID_OK:  return "ok";
-    default:       return "cancel";
+    case wxID_YES:   return "yes";
+    case wxID_NO:    return "no";
+    case wxID_OK:    return "ok";
+    case wxID_APPLY: return "ok";
+    default:         return "cancel";
     }
 }
 
@@ -289,6 +299,16 @@ public:
         if (DeviceManager* dm = wxGetApp().getDeviceManager()) {
             try {
                 dm->lan_reconnect_tick();
+            } catch (...) {}
+            // And a cloud printer that has never reported its AMS / spools is asked to, so the
+            // phone's printer screen has a filament list for it (DeviceManager::full_report_tick).
+            try {
+                dm->full_report_tick();
+            } catch (...) {}
+            // And every LAN printer besides the selected one gets a session of its own to report
+            // over, when the plug-in can do that (DeviceManager::lan_watch_tick).
+            try {
+                dm->lan_watch_tick();
             } catch (...) {}
         }
         // The printer event watcher rides on this tick: it needs the GUI thread for the Bambu
@@ -509,6 +529,7 @@ void RemoteAccess::stop()
         return;
     m_on = false;
     RemoteEvents::stop();
+    RemoteTimelapse::shutdown();
     if (s_heartbeat) s_heartbeat->Stop();
     boost::system::error_code ig;
     fs::remove(fs::path(RemoteHub::instances_dir()) / (std::to_string(wxGetProcessId()) + ".json"), ig);
@@ -1064,6 +1085,11 @@ RemoteAccess::ApiResponse RemoteAccess::api_printers(int plate)
             p["task"]         = m->subtask_name;
             p["bed_temp"]     = m->bed_temp;
             p["bed_target"]   = m->bed_temp_target;
+            // The LAN address, when this PC knows it - a LAN-mode printer always has it, and a
+            // cloud-bound one usually does too once discovery or a previous LAN session has seen it.
+            // This is what lets the hub join a Bambu printer to the camera streams.json added for
+            // its address (RemoteHub::summary_json); never invented when the printer object has none.
+            if (!m->dev_ip.empty()) p["ip"] = m->dev_ip;
             p["nozzles"]      = nlohmann::json::array();
             for (const Extder& e : m->m_extder_data.extders) {
                 nlohmann::json n;
@@ -1098,6 +1124,9 @@ RemoteAccess::ApiResponse RemoteAccess::api_printers(int plate)
     // A print host has no live status in the app: ask it over Moonraker's HTTP API from this
     // request thread, never from the GUI one (api_snapmaker_devices probes the same way).
     try { RemoteControl::describe_hosts(*targets, (*out)["printers"]); } catch (...) {}
+    // One card per printer: the Device tab's connect (often through the Snapmaker cloud) gives way
+    // to the same printer's LAN card while that one answers.
+    try { SnapmakerLan::prefer_lan((*out)["printers"]); } catch (...) {}
     r.body = out->dump();
     return r;
 }
@@ -1266,6 +1295,15 @@ RemoteAccess::ApiResponse RemoteAccess::api_archive_send(const std::string& id, 
     req.name    = get("name");
     req.mapping = get("mapping");
     req.unload_at_end = get("unload_at_end");
+    // A Bambu printer: the AMS slot per filament (the preview's "mapping", edited or not) and the
+    // print options; anything not given is what the desktop's send dialog would pick.
+    auto tri = [&](const char* k) { const std::string v = get(k); return v.empty() ? -1 : ((v == "1" || v == "true") ? 1 : 0); };
+    req.ams_mapping        = get("ams_mapping");
+    req.bed_leveling       = tri("bed_leveling");
+    req.flow_cali          = tri("flow_cali");
+    req.timelapse          = tri("timelapse");
+    req.use_ams            = tri("use_ams");
+    req.nozzle_offset_cali = tri("nozzle_offset_cali");
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_send_running) { r.status = 409; r.body = json_error("a send is already running; wait for it to finish"); return r; }
@@ -1319,6 +1357,57 @@ RemoteAccess::ApiResponse RemoteAccess::api_archive_send(const std::string& id, 
     j["mode"]    = p->mode;
     j["dry_run"] = p->dry_run;
     r.body       = j.dump();
+    return r;
+}
+
+// A Bambu reprint's mapping sheet, before anything is sent (RemoteSend::preview_record): the job
+// read back from the archived .gcode.3mf, matched against the target printer's AMS the way the
+// desktop's send dialog matches a plate. Form: [printer=<id>][&mode=print|upload][&ams_mapping=
+// 0:0-2,1:1-0][&use_ams=&bed_leveling=&flow_cali=&timelapse=&nozzle_offset_cali=]. It selects the
+// printer on the PC (which connects it, as picking it in the send dialog does) and may take a few
+// seconds while the printer's status and, on an H2C, its nozzle-mapping answer arrive. Nothing is
+// uploaded or started; /api/archive/{id}/send does that with the same form plus confirm=1.
+RemoteAccess::ApiResponse RemoteAccess::api_archive_preview(const std::string& id, const std::string& form_body)
+{
+    ApiResponse r;
+    auto get = [&](const char* k) { return query_param(form_body, k); };
+    auto tri = [&](const char* k) { const std::string v = get(k); return v.empty() ? -1 : ((v == "1" || v == "true") ? 1 : 0); };
+    RemoteSend::Request req;
+    req.record             = id;
+    req.plate              = -1;
+    req.printer            = get("printer");
+    req.mode               = get("mode");
+    req.force              = get("force") == "1";
+    req.ams_mapping        = get("ams_mapping");
+    req.bed_leveling       = tri("bed_leveling");
+    req.flow_cali          = tri("flow_cali");
+    req.timelapse          = tri("timelapse");
+    req.use_ams            = tri("use_ams");
+    req.nozzle_offset_cali = tri("nozzle_offset_cali");
+    // One preview at a time, and never while a send is running: both select a printer on the PC.
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_send_running) { r.status = 409; r.body = json_error("a send is already running; wait for it to finish"); return r; }
+        m_send_running = true;
+    }
+    nlohmann::json              out;
+    std::pair<int, std::string> result(500, "not run");
+    take_error();
+    try {
+        result = RemoteSend::preview_record(req, out);
+    } catch (const std::exception& e) {
+        result = { 500, std::string("preparing the preview failed: ") + e.what() };
+    } catch (...) {
+        result = { 500, "preparing the preview failed" };
+    }
+    { std::lock_guard<std::mutex> lock(m_mutex); m_send_running = false; }
+    if (result.first != 200) {
+        const std::string shown = take_error();
+        r.status = result.first;
+        r.body   = json_error(result.second + (shown.empty() ? "" : ": " + shown));
+        return r;
+    }
+    r.body = out.dump();
     return r;
 }
 
@@ -1422,6 +1511,12 @@ RemoteAccess::ApiResponse RemoteAccess::api_send(int plate, const std::string& f
 // `err` and are refused (409) unless it is still the code the printer is reporting; the verbs this
 // phase keeps desktop-only are refused 403. Which are offered for a given error is in that
 // printer's print_error.actions on GET /api/printers.
+//
+// And the settings the desktop Device tab changes, for the phone's native printer screen:
+// action=set_temp&heater=<bed|chamber|nozzle<N>>&target=<C>[&confirm=1] (confirm=1 above 50 C while
+// the printer is idle), action=set_speed&value=<1..4 | %>, action=set_light&on=<1|0> and
+// action=set_fan&fan=<id>&percent=<0..100>. Which a printer takes, with its limits, is that row's
+// `controls` on GET /api/printers; anything else is refused before it is sent.
 RemoteAccess::ApiResponse RemoteAccess::api_printer_control(const std::string& printer, const std::string& form_body)
 {
     ApiResponse r;
@@ -1435,6 +1530,17 @@ RemoteAccess::ApiResponse RemoteAccess::api_printer_control(const std::string& p
     // against what the printer is reporting right now (RemoteControl::prepare), so a status page
     // left open cannot resume an error that has since been replaced by another one.
     req.err     = get("err");
+    // The settings verbs (set_temp | set_speed | set_light | set_fan): what to set and to what.
+    // Checked against the printer's own `controls` in RemoteControl::prepare, never trusted here.
+    req.heater  = get("heater");
+    req.target  = get("target");
+    req.value   = get("value");
+    req.fan     = get("fan");
+    req.percent = get("percent");
+    req.on      = get("on");
+    // load_filament / unload_filament: which AMS / spool and slot (Bambu), or which toolhead (U1).
+    req.ams     = get("ams");
+    req.slot    = get("slot");
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_control_running) { r.status = 409; r.body = json_error("another pause / resume / stop is still running"); return r; }
@@ -2051,6 +2157,10 @@ RemoteAccess::ApiResponse RemoteAccess::api_info()
     // <id>/thumbnail.png): the sidecars are plain files, but only an instance knows which
     // folder the preference points at. A path on this PC, and this API is loopback-only.
     j["archive_dir"] = GcodeArchive::dir();
+    // And whether it is on, and how many records it keeps, so the hub can list the archive itself
+    // (GET /r/<token>/api/archive) with the same "storing is off" note the instance's own list has.
+    j["archive_enabled"] = GcodeArchive::enabled();
+    j["archive_max"]     = GcodeArchive::max_records();
     j["needs_attention"]  = m_needs_attention;
     j["attention_reason"] = m_attention_reason;
     j["attention_kind"]   = m_attention_kind;
@@ -2333,8 +2443,11 @@ RemoteAccess::ApiResponse RemoteAccess::handle_api(const std::string& method, co
             { {"method", "GET"},  {"path", "/api/plates/{index}/preview.png?view=front|rear|left|right&layer={index}&w=&h=[&zoom=&cx=&cy=]"}, {"description", "orthographic render of the toolpaths up to that layer (the PC's layer slider follows); zoom over the fit and the fitted-image fraction shown at the centre; X-Preview-Zoom = zoom really used"} },
             { {"method", "GET"},  {"path", "/api/plates/{index}/preview/status"}, {"description", "sliced / slicing / slicing_percent / result_id for that plate, without changing what the PC shows"} },
             { {"method", "POST"}, {"path", "/api/objects/transform"},       {"description", "form obj=&inst=[&x=&y=][&rz=][&scale=][&center=1]: move / rotate / scale one instance like the sidebar (undoable)"} },
-            { {"method", "GET"},  {"path", "/api/printers[?plate={index}]"}, {"description", "known printers with live status and what a send needs: kind bambu|printhost|connect|snapmaker, online, lan_mode, access_code_set, sdcard, has_ams, model_matches, can_upload, can_print, options (the desktop's remembered defaults), upload_name (the file name the desktop's export would give plate {index}, the current plate without it - print hosts, the connected Snapmaker and a Snapmaker over the LAN); a Snapmaker over the LAN adds ip, port, added_by, toolheads, layer, total_layers and left_time_s, so one card can show everything /api/snapmaker/devices reports; and what a control needs: can_pause, can_resume, can_stop, print_status, stage, print_error {code, message, job_id, actions[]} (null when there is none; each action is {id, verb, label, needs_job_id, remote_safe} - the same buttons the desktop error dialog draws for that code) and the hms summary; a print host or connected Snapmaker that answers as a Moonraker printer adds bed_temp, bed_target and nozzles too (absent when it does not)"} },
-            { {"method", "POST"}, {"path", "/api/printers/{id}/control"},  {"description", "form action=pause|resume|stop[&confirm=1][&dry_run=1]: pause, resume or stop the print on that printer, exactly as the desktop's own buttons do (stop = cancel the print and needs confirm=1; pause and resume do not). Returns a job id; the job's result says what the printer then reported. 409 when the printer's own state does not allow it (see can_pause / can_resume / can_stop). {id} is any id /api/printers lists, sm:{id} for a Snapmaker over the LAN included. The same route answers a Bambu printer error with the buttons its own dialog would draw: action=resume_error|stop_error|ignore_error|idle_ignore_error|ack_close&err={code} (stop_error needs confirm=1). Which of them a given error offers is print_error.actions on GET /api/printers, where each entry is {id, verb, label, needs_job_id, remote_safe}; a verb the error does not offer, one whose code is no longer the one the printer reports, or one that needs a job_id the printer has not got, is 409, and a verb this phase keeps desktop-only (the AMS controls, drying, nozzle recheck, buzzer, purification) is 403"} },
+            { {"method", "GET"},  {"path", "/api/printers[?plate={index}]"}, {"description", "known printers with live status and what a send needs: kind bambu|printhost|connect|snapmaker, online, lan_mode, access_code_set, sdcard, has_ams, model_matches, can_upload, can_print, options (the desktop's remembered defaults), upload_name (the file name the desktop's export would give plate {index}, the current plate without it - print hosts, the connected Snapmaker and a Snapmaker over the LAN); a Snapmaker over the LAN adds ip, port, added_by, toolheads, layer, total_layers and left_time_s, so one card can show everything /api/snapmaker/devices reports; and what a control needs: can_pause, can_resume, can_stop, print_status, stage, print_error {code, message, job_id, actions[]} (null when there is none; each action is {id, verb, label, needs_job_id, remote_safe} - the same buttons the desktop error dialog draws for that code) and the hms summary; a print host or connected Snapmaker that answers as a Moonraker printer adds bed_temp, bed_target and nozzles too (absent when it does not); and what the phone's native printer screen draws: controls {heaters[] {id bed|chamber|nozzle{N}, label, temp, target, min, max, settable, active}, speed {kind level|factor, value, min, max, settable, levels[]}, light {on} (absent without one), fans[] {id, label, percent}} on a Bambu printer, a LAN Snapmaker and a Moonraker print host, and ams[] {id, nozzle, side L|R|'', humidity_level, humidity_pct, temp, trays[] {id, exists, type, sub_type, color, remain, can_load, can_unload, filament_why}} plus ext_spools[] {ams_id 254|255, side, exists, type, color, can_load, can_unload} on a Bambu printer; controls.filament {load, unload, assumed} where load / unload is offered, and can_load / can_unload on each U1 toolhead"} },
+            { {"method", "POST"}, {"path", "/api/printers/{id}/control"},  {"description", "form action=pause|resume|stop[&confirm=1][&dry_run=1]: pause, resume or stop the print on that printer, exactly as the desktop's own buttons do (stop = cancel the print and needs confirm=1; pause and resume do not). Returns a job id; the job's result says what the printer then reported. 409 when the printer's own state does not allow it (see can_pause / can_resume / can_stop). {id} is any id /api/printers lists, sm:{id} for a Snapmaker over the LAN included. The same route answers a Bambu printer error with the buttons its own dialog would draw: action=resume_error|stop_error|ignore_error|idle_ignore_error|ack_close&err={code} (stop_error needs confirm=1). Which of them a given error offers is print_error.actions on GET /api/printers, where each entry is {id, verb, label, needs_job_id, remote_safe}; a verb the error does not offer, one whose code is no longer the one the printer reports, or one that needs a job_id the printer has not got, is 409, and a verb this phase keeps desktop-only (the AMS controls, drying, nozzle recheck, buzzer, purification) is 403. The same route also changes the settings the desktop Device tab changes, as that printer's `controls` on GET /api/printers lists them: action=set_temp&heater=bed|chamber|nozzle{N}&target={C} (0 = off; confirm=1 is required above 50 C while the printer is not printing; 400 above the heater's max, 409 for a read-only heater), action=set_speed&value={level 1..4 on a Bambu, only while printing | speed factor % on a Klipper printer}, action=set_light&on=1|0, action=set_fan&fan={id}&percent=0..100 - a Bambu printer through the same MachineObject calls the Device tab makes, a Moonraker printer as one /printer/gcode/script. And filament: action=load_filament|unload_filament&ams={AMS id, 128+ AMS HT, 254/255 external spool}&slot={0..3} on a Bambu printer (command_ams_change_filament, as the Device tab's Load / Unload), slot={toolhead 0..3} on a Snapmaker U1 whose G-code help lists the macros (controls.filament.assumed: INNER_FILAMENT_UNLOAD / SM_PRINT_AUTO_FEED, unverified); 409 while printing or paused, or when that slot's can_load / can_unload is false"} },
+            { {"method", "GET"},  {"path", "/api/printers/{id}/timelapses"}, {"description", "the timelapse videos on that printer, newest first: {printer {id, name, kind}, source bambu_storage|moonraker, files [{name, size, time (unix s, 0 = unknown), duration_s (null = unknown), mime, has_thumbnail}], note?, stale}. A Snapmaker over the LAN (sm:{id}) or a Moonraker print host (host, ph:{id}, connect) is read through Moonraker's `timelapse` file root; a Bambu printer through the storage tunnel the Device tab uses, over the LAN (it needs the printer's IP and access code on this PC, an SD card, and the network plug-in's storage component). stale = the printer's storage was busy (a video being copied) and this is the last list. Failures are {error, code}: no_printer 404, offline 409, no_storage 409, no_lan 409, busy 409, unsupported 501, no_tunnel 501, printer_error 502/504"} },
+            { {"method", "GET"},  {"path", "/api/printers/{id}/timelapses/thumbnail?name={file}"}, {"description", "one video's preview picture (image/jpeg or image/png); 404 no_thumbnail when it has none"} },
+            { {"method", "GET"},  {"path", "/api/printers/{id}/timelapses/video?name={file}[&download=1]"}, {"description", "the video itself. A single-range Range header is honoured (206 + Content-Range; 416 when it is not in the file), Accept-Ranges: bytes is always sent, Content-Type follows the extension, download=1 adds Content-Disposition: attachment. A Moonraker printer's file is proxied with the Range passed on; a Bambu printer's is copied to this PC's temp folder on the first request (that request is answered from the part that has arrived, so playback starts at once) and every later request for it is answered from that copy. Errors before the first byte are JSON as for the list"} },
             { {"method", "POST"}, {"path", "/api/slice?plate={index}|all"}, {"description", "start slicing one plate (selects it) or all; returns a job id; 409 while slicing"} },
             { {"method", "POST"}, {"path", "/api/plates/{index}/send"},    {"description", "form printer={id}&mode=upload|print[&confirm=1][&force=1][&dry_run=1][&bed_leveling=0|1&flow_cali=0|1&timelapse=0|1&vibration_cali=0|1&use_ams=0|1][&name=][&mapping=0:1,1:2]: send the sliced plate to a printer exactly like the desktop's Send / Print dialogs (upload = to the printer's storage, print = start it; print needs confirm=1). A Snapmaker over the LAN (printer sm:{id}) takes `mapping` = which toolhead prints each of the file's filaments, defaulting to the colour match its own app makes; returns a job id; 409 unless the plate is sliced and no other send is running"} },
             { {"method", "GET"},  {"path", "/api/events?since={id}"},      {"description", "what this instance's printer watcher has seen, newest last: {events, last_id, watcher}. Each event is {local_id, time, instance, printer {id, name, kind}, kind started|finished|failed|cancelled|paused|resumed|runout|error, severity info|warning|error, title, text, code?, job?}. The hub keeps the merged history of every instance at /events on the phone link. `watcher` says what the live poll has seen: {poll_ms, last_poll, last_poll_ms, printers[{id, kind, online, watched, state, seen_at?}]}, where seen_at is the poll that seeded that printer - until it has one, and until last_poll has moved past it, a change on that printer seeds the watcher instead of making an event"} },
@@ -2356,7 +2469,8 @@ RemoteAccess::ApiResponse RemoteAccess::handle_api(const std::string& method, co
             { {"method", "GET"},  {"path", "/api/archive[?printer={id}]"}, {"description", "the G-code archive (Preferences > Ultra > Store G-Code Files): every file this PC has sent to a printer while it was on, newest first, as {enabled, max, records}. Each record is {id, time, file, sent_name, size, sha256, printer {id, kind bambu|snapmaker|printhost|connect, name, model}, plate, plate_name, project_title, filaments [{index, type, colour, grams}], estimated_time_s, estimated_weight_g, source desktop|phone, mode upload|print, has_thumbnail, exists (its file is still on disk), mapping (the toolhead mapping a Snapmaker send used, in the wire form /send takes) and spoolman_deduct (a Spoolman deduction was asked for)} - names and sizes only, never a path on the PC. `printer` filters by the printer id a send used"} },
             { {"method", "GET"},  {"path", "/api/archive/{id}"},        {"description", "one record, the same fields a row of /api/archive carries plus `exists` (its file is still on disk)"} },
             { {"method", "GET"},  {"path", "/api/archive/{id}/thumbnail.png"}, {"description", "the plate preview stored with that record"} },
-            { {"method", "POST"}, {"path", "/api/archive/{id}/send"},     {"description", "form [printer={id}][&mode=upload|print]&confirm=1[&force=1][&dry_run=1][&name=][&mapping=0:1,1:2]: send that archived file to a printer again - the stored bytes are the payload, so nothing is re-sliced and no project has to be open. `printer` and every option not given fall back to the record; confirm=1 is always required. Returns the same job id and progress shape as /api/plates/{index}/send (kind send, followed through /api/jobs/{id}). 404 for an unknown record, 409 when its file is gone or the target printer is of another kind (a .gcode.3mf cannot go to a Moonraker host); reprinting to a bambu or connect printer is not supported yet"} },
+            { {"method", "POST"}, {"path", "/api/archive/{id}/send"},     {"description", "form [printer={id}][&mode=upload|print]&confirm=1[&force=1][&dry_run=1][&name=][&mapping=0:1,1:2][&ams_mapping=0:0-2,1:128-0][&use_ams=&bed_leveling=&flow_cali=&timelapse=&nozzle_offset_cali=]: send that archived file to a printer again - the stored bytes are the payload, so nothing is re-sliced and no project has to be open. `printer` and every option not given fall back to the record; confirm=1 is always required. Returns the same job id and progress shape as /api/plates/{index}/send (kind send, followed through /api/jobs/{id}). 404 for an unknown record, 409 when its file is gone or the target printer is of another kind (a .gcode.3mf cannot go to a Moonraker host); reprinting over the PC's Snapmaker connection (\"connect\") is not supported. `printer` may name another printer of the same kind and model as the record's (a sliced file fits any printer of its model); a record with no known model may only go back to its own printer, and a file is started in place only on the very printer it was sent to. A Bambu printer gets the job read back from the .gcode.3mf and sent the way the desktop's send dialog sends a plate: `ams_mapping` is the AMS slot per filament (<filament>:<ams_id>-<slot_id>, what /preview proposes; empty = the automatic mapping), the options default to the dialog's remembered choices, and the send is refused with the reason when the printer is offline, busy, of another model or nozzle diameter, has no usable storage, or a filament has no slot of its type on the side it was sliced for. Every reprint is added to the record's `reprints` history"} },
+            { {"method", "POST"}, {"path", "/api/archive/{id}/preview"},  {"description", "form [printer={id}][&mode=print|upload][&ams_mapping=][&use_ams=&bed_leveling=&flow_cali=&timelapse=&nozzle_offset_cali=][&force=1]: a Bambu reprint's mapping sheet, nothing sent. Selects the printer on the PC (connecting it) and answers within ~25 s with {record, mode, file, printer {id, name, model, model_name, dual, has_ams, lan_mode, nozzle_rack}, job {plate, model, model_name, dual, nozzle_diameters, bed_type, estimated_time_s, estimated_weight_g}, filaments [{index, type, colour, grams, side L|R|\"\", tray \"<ams>-<slot>\"|null, auto, problems []}], trays [{id \"<ams>-<slot>\", ams_id, slot_id, name A1|HT-A, side, exists, ready, type, match_type, colour}], mapping (the ams_mapping to send back), problems [{filament, code unmapped|type|side, text}], options {bed_leveling|flow_cali|timelapse|use_ams|nozzle_offset_cali: {value, shown}}, warnings [], nozzle_mapping {applies, state accepted|refused|no_answer, reason?} (H2C, advisory), can_send}. 409 with the reason when the printer cannot take the job at all (offline, busy, another model or nozzle, no storage, no LAN access)"} },
             { {"method", "POST"}, {"path", "/api/archive/{id}/delete"},   {"description", "delete one stored file with its details and preview"} },
             { {"method", "DELETE"}, {"path", "/api/archive/{id}"},        {"description", "delete one stored file with its details and preview (the same as POST /api/archive/{id}/delete)"} }
         });
@@ -2433,6 +2547,20 @@ RemoteAccess::ApiResponse RemoteAccess::handle_api(const std::string& method, co
         return api_object_transform(body.empty() ? query : body);
     if (path == "/printers" && method == "GET")
         return api_printers(num(query_param(query, "plate"), -1));
+    // The timelapse list and pictures (the video itself is streamed by serve(), see there). The id
+    // is a printer id like /control's, percent-decoded; the name is checked by RemoteTimelapse.
+    if (method == "GET") {
+        std::string printer, what;
+        if (Timelapse::match_route(path, printer, what) && what != "video") {
+            const RemoteTimelapse::Answer a = what == "list" ? RemoteTimelapse::list(percent_decode(printer)) :
+                                                               RemoteTimelapse::thumbnail(percent_decode(printer), query_param(query, "name"));
+            r.status  = a.status;
+            r.type    = a.type;
+            r.body    = a.body;
+            r.headers = a.headers;
+            return r;
+        }
+    }
     if (path.compare(0, 10, "/printers/") == 0 && method == "POST") {
         const std::string rest  = path.substr(10);
         const size_t      slash = rest.find('/');
@@ -2489,6 +2617,8 @@ RemoteAccess::ApiResponse RemoteAccess::handle_api(const std::string& method, co
             return api_archive_delete(rest.substr(0, slash));
         if (what == "/send" && method == "POST")
             return api_archive_send(rest.substr(0, slash), body.empty() ? query : body);
+        if (what == "/preview" && method == "POST")
+            return api_archive_preview(rest.substr(0, slash), body.empty() ? query : body);
     }
     r.status = 404;
     r.body   = json_error("no such route; see /api");
@@ -2537,7 +2667,8 @@ void RemoteAccess::serve(void* socket_ptr)
         std::istringstream first(head.substr(0, head.find("\r\n")));
         std::string        method, target, version;
         first >> method >> target >> version;
-        size_t content_length = 0;
+        size_t      content_length = 0;
+        std::string range; // the Range header, for the timelapse video route
         {
             size_t pos = head.find("\r\n") + 2;
             while (pos < head_end - 2) {
@@ -2547,6 +2678,8 @@ void RemoteAccess::serve(void* socket_ptr)
                 std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return (char) std::tolower(c); });
                 if (key == "content-length:")
                     content_length = (size_t) std::max(0, std::atoi(line.c_str() + 15));
+                else if (key.compare(0, 6, "range:") == 0)
+                    range = line.substr(6);
                 pos = nl + 2;
             }
         }
@@ -2567,11 +2700,25 @@ void RemoteAccess::serve(void* socket_ptr)
             size_t n = client.read_some(asio::buffer(buf, std::min(sizeof(buf), content_length - body.size())));
             body.append(buf, n);
         }
+        // A timelapse video is the one answer too large to build in memory: RemoteTimelapse writes
+        // it to the socket itself, Range and all, while the bytes arrive from the printer.
+        {
+            std::string printer, what;
+            if (method == "GET" && Timelapse::match_route(path.substr(4), printer, what) && what == "video") {
+                if (gui_closing()) {
+                    respond(client, "503 Service Unavailable", "application/json", json_error("the slicer is closing"));
+                    return;
+                }
+                RemoteTimelapse::video(client, percent_decode(printer), query_param(query, "name"), range, query_param(query, "download") == "1");
+                return;
+            }
+        }
         ApiResponse ar = handle_api(method, path.substr(4), query, body);
         if (ar.status == 503 && gui_closing()) // it began before the close; its GUI step was dropped
             ar.body = json_error("the slicer is closing");
         const char* status = ar.status == 200 ? "200 OK" : ar.status == 400 ? "400 Bad Request" : ar.status == 404 ? "404 Not Found"
                            : ar.status == 409 ? "409 Conflict" : ar.status == 413 ? "413 Payload Too Large"
+                           : ar.status == 501 ? "501 Not Implemented"
                            : ar.status == 502 ? "502 Bad Gateway" : ar.status == 504 ? "504 Gateway Timeout"
                            : ar.status == 503 ? "503 Service Unavailable" : "500 Internal Server Error";
         respond(client, status, ar.type, ar.body, ar.headers);

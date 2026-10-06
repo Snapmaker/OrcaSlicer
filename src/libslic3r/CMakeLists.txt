@@ -108,6 +108,8 @@ set(lisbslic3r_sources
     ColorSplitShell.cpp
     BuildVolume.cpp
     BuildVolume.hpp
+    ExtruderAreas.cpp
+    ExtruderAreas.hpp
     calib.cpp
     calib.hpp
     Circle.cpp
@@ -123,6 +125,8 @@ set(lisbslic3r_sources
     Config.hpp
     CustomGCode.cpp
     CustomGCode.hpp
+    CustomModels.cpp
+    CustomModels.hpp
     DataDirMigration.cpp
     DataDirMigration.hpp
     CutUtils.cpp
@@ -140,6 +144,21 @@ set(lisbslic3r_sources
     Emboss.cpp
     Emboss.hpp
     EmbossShape.hpp
+    EmbossBend.cpp
+    EmbossBend.hpp
+    EmbossBendSurface.cpp
+    EmbossBendSurface.hpp
+    InlineShapes.cpp
+    InlineShapes.hpp
+    InlineShapeTable.hpp
+    FontFallback.cpp
+    FontFallback.hpp
+    Barcode.cpp
+    Barcode.hpp
+    CodeEmboss.cpp
+    CodeEmboss.hpp
+    SimpleShape.cpp
+    SimpleShape.hpp
     enum_bitmask.hpp
     Execution/Execution.hpp
     Execution/ExecutionSeq.hpp
@@ -169,6 +188,7 @@ set(lisbslic3r_sources
     Feature/Interlocking/VoxelUtils.hpp
     FileParserError.hpp
     AllowlistManager.cpp
+    AlignMath.hpp
     AllowlistManager.hpp
     FilamentColorLibrary.cpp
     FilamentColorLibrary.hpp
@@ -186,6 +206,8 @@ set(lisbslic3r_sources
     Fill/FillConcentric.hpp
     Fill/FillConcentricInternal.cpp
     Fill/FillConcentricInternal.hpp
+    FDMHollowing.cpp
+    FDMHollowing.hpp
     Fill/Fill.cpp
     Fill/FillCrossHatch.cpp
     Fill/FillCrossHatch.hpp
@@ -222,6 +244,8 @@ set(lisbslic3r_sources
     Format/3mf.hpp
     Format/AMF.cpp
     Format/AMF.hpp
+    Format/AssembleList.cpp
+    Format/AssembleList.hpp
     Format/bbs_3mf.cpp
     Format/bbs_3mf.hpp
     Format/BambuExport.cpp
@@ -240,6 +264,15 @@ set(lisbslic3r_sources
     Format/SL1.hpp
     Format/STEP.cpp
     Format/STEP.hpp
+    Format/STEPExport.cpp
+    Format/STEPExport.hpp
+    BRep/MeshToBRep.cpp
+    BRep/MeshToBRep.hpp
+    BRep/CadBody.cpp
+    BRep/CadBody.hpp
+    BRep/CadEdit.cpp
+    BRep/CadEdit.hpp
+    BRep/CadShape.hpp
     Format/STL.cpp
     Format/STL.hpp
     Format/svg.cpp
@@ -283,8 +316,14 @@ set(lisbslic3r_sources
     GCodeReader.hpp
     GCode/RetractWhenCrossingPerimeters.cpp
     GCode/RetractWhenCrossingPerimeters.hpp
+    GCode/TimelapsePosPicker.cpp
+    GCode/TimelapsePosPicker.hpp
+    GCode/PreciseSeam.cpp
+    GCode/PreciseSeam.hpp
     GCode/SeamPlacer.cpp
     GCode/SeamPlacer.hpp
+    GCode/SeamAutoPaint.cpp
+    GCode/SeamAutoPaint.hpp
     #GCodeSender.cpp
     #GCodeSender.hpp
     GCode/SmallAreaInfillFlowCompensator.cpp
@@ -331,6 +370,8 @@ set(lisbslic3r_sources
     Geometry/VoronoiUtils.hpp
     Geometry/VoronoiVisualUtils.hpp
     Int128.hpp
+    InstanceLock.cpp
+    InstanceLock.hpp
     KDTreeIndirect.hpp
     Layer.cpp
     Layer.hpp
@@ -368,8 +409,12 @@ set(lisbslic3r_sources
     MixedFilamentCliGates.hpp
     BambuExtruderMap.cpp
     BambuExtruderMap.hpp
+    BambuFlowSupport.cpp
+    BambuFlowSupport.hpp
     BambuDualNozzleSync.cpp
     BambuDualNozzleSync.hpp
+    PlatePrintHistory.cpp
+    PlatePrintHistory.hpp
     BambuNozzleMappingRequest.cpp
     BambuNozzleMappingRequest.hpp
     MultiNozzleUtils.cpp
@@ -389,6 +434,8 @@ set(lisbslic3r_sources
     ModelArrange.hpp
     Model.cpp
     Model.hpp
+    PartMeshReplace.cpp
+    PartMeshReplace.hpp
     MTUtils.hpp
     MultiMaterialSegmentation.cpp
     MultiMaterialSegmentation.hpp
@@ -443,6 +490,7 @@ set(lisbslic3r_sources
     PrincipalComponents2D.hpp
     PrintApply.cpp
     PrintBase.cpp
+    MemoryGuardPolicy.hpp
     PrintBase.hpp
     PrintConfig.cpp
     PrintConfig.hpp
@@ -520,6 +568,12 @@ set(lisbslic3r_sources
     Support/SupportMaterial.cpp
     Support/SupportMaterial.hpp
     Support/SupportParameters.hpp
+    Support/Stabilizers.cpp
+    Support/Stabilizers.hpp
+    Support/StabilizerMesh.cpp
+    Support/StabilizerMesh.hpp
+    Support/StabilizerBake.cpp
+    Support/StabilizerBake.hpp
     Support/SupportSpotsGenerator.cpp
     Support/SupportSpotsGenerator.hpp
     Support/TreeModelVolumes.cpp
@@ -562,6 +616,8 @@ set(lisbslic3r_sources
     Utils.hpp
     UntrustedInput.cpp
     UntrustedInput.hpp
+    ModelBrowserRules.cpp
+    ModelBrowserRules.hpp
     VariableWidth.cpp
     VariableWidth.hpp
     Zipper.cpp
@@ -579,6 +635,49 @@ endif ()
 add_library(libslic3r STATIC ${lisbslic3r_sources} 
     ${OpenVDBUtils_SOURCES})
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${lisbslic3r_sources})
+# -DSLIC3R_UNITY_BUILD=ON: these sources do not survive being merged with their batch neighbours
+# (duplicate file-local names or leaking macros), so they keep their own translation unit.
+slic3r_unity_build(libslic3r SKIP
+    Config.cpp                      # CEREAL_REGISTER_TYPE binds to every archive included before it
+    Model.cpp                       # CEREAL_REGISTER_TYPE binds to every archive included before it
+    ObjectID.cpp                    # CEREAL_REGISTER_TYPE binds to every archive included before it
+    PrintConfig.cpp                 # CEREAL_REGISTER_TYPE binds to every archive included before it
+    GCode/WipeTower.cpp             # file-local constants also defined in WipeTower2.cpp
+    GCode/WipeTowerInterface.cpp    # anonymous-namespace option_of() also in WipeTowerEstimate.cpp
+    MixedFilament.cpp               # its struct RGB clashes with Slic3r::RGB from Color.hpp
+    SLA/Rotfinder.cpp               # DOWN becomes ambiguous
+    SLA/SupportTree.cpp             # libnest2d nlopt optimizer headers clash with Optimize/NLoptOptimizer.hpp
+    SLA/SupportTreeMesher.cpp       # sphere()/Portion clash with a neighbour
+    Support/SupportMaterial.cpp     # support_types_interface also defined in SupportCommon.cpp
+    utils.cpp                       # needs <windows.h> without a neighbour's lean/extra macros
+    InstanceLock.cpp                # boost::interprocess file_lock pulls in <windows.h>; keep out of unity batches
+    Format/bbs_3mf.cpp              # file-local tag/version constants also defined in Format/3mf.cpp
+    Emboss.cpp                      # defines STB_TRUETYPE_IMPLEMENTATION before its include
+    FontFallback.cpp                # includes imstb_truetype.h without the implementation, keep away from Emboss.cpp
+    InlineShapes.cpp                # file-local helpers (fnv1a64, append_utf8, fail) with common names
+    CodeEmboss.cpp                  # file-local rectangle()/circle()/to_svg() helpers with common names
+    Format/GLTF.cpp                 # defines CGLTF_IMPLEMENTATION before its include
+    FilamentGroup.cpp               # namespace-scope using namespace FilamentGroupUtils - FilamentInfo ambiguity
+    Format/ZipperArchiveImport.cpp  # read_ini()/CONFIG_FNAME also in Format/SL1.cpp
+    Arrange.cpp                     # namespace-scope using namespace libnest2d
+    CutUtils.cpp                    # namespace-scope using namespace Geometry
+    Fill/FillTpmsFK.cpp             # file-scope using namespace std
+    Format/svg.cpp                  # file-scope using namespace ClipperLib
+    QuadricEdgeCollapse.cpp         # namespace-scope using namespace QuadricEdgeCollapse
+    Arachne/utils/SquareGrid.cpp    # namespace-scope using namespace Slic3r::Arachne
+    SLA/ConcaveHull.cpp             # its to_vec2() differs only by return type from SupportTreeBuildsteps.hpp's
+    MinAreaBoundingBox.cpp          # libnest2d headers (opt namespace, boost.geometry traits for Point) clash with neighbours
+    SLAPrint.cpp                    # libnest2d headers clash with neighbours
+    SLA/Pad.cpp                     # libnest2d headers clash with neighbours
+    Support/TreeSupport.cpp         # libnest2d headers clash with neighbours
+    Format/STEP.cpp                 # OCCT's Handle() macro breaks CGAL headers in neighbours
+    Format/STEPExport.cpp           # OCCT's Handle() macro breaks CGAL headers in neighbours
+    BRep/MeshToBRep.cpp             # OCCT's Handle() macro breaks CGAL headers in neighbours
+    BRep/CadEdit.cpp                # OCCT's Handle() macro breaks CGAL headers in neighbours
+    Shape/TextShape.cpp             # OCCT's Handle() macro breaks CGAL headers in neighbours
+    Geometry/VoronoiUtilsCgal.cpp   # CGAL must come before OCCT's Handle() macro (Model.hpp -> STEP.hpp)
+    FlushVolCalc.cpp                # calls RGB2HSV() from libslic3r_gui; alone it is dropped by the linker in libslic3r_tests
+)
 
 if (SLIC3R_STATIC)
     set(CGAL_Boost_USE_STATIC_LIBS ON CACHE BOOL "" FORCE)
@@ -630,7 +729,7 @@ target_include_directories(libslic3r PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_
 target_include_directories(libslic3r SYSTEM PUBLIC ${EXPAT_INCLUDE_DIRS})
 
 # Find the OCCT and related libraries
-set(OpenCASCADE_DIR "${CMAKE_PREFIX_PATH}/lib/cmake/occt")
+set(OpenCASCADE_DIR "${OCCT_PREFIX}/lib/cmake/occt")
 find_package(OpenCASCADE REQUIRED)
 target_include_directories(libslic3r SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
 
@@ -651,6 +750,11 @@ set(OCCT_LIBS
     TKV3d
     TKService
     TKMesh
+    # ModelingAlgorithms (deps/OCCT/OCCT.cmake): B-rep fillet/chamfer, offset/shell, features.
+    TKFeat
+    TKOffset
+    TKFillet
+    TKBool
     TKBO
     TKPrim
     TKHLR
@@ -741,6 +845,11 @@ endif()
 
 if (SLIC3R_PCH AND NOT SLIC3R_SYNTAXONLY)
     add_precompiled_header(libslic3r pchheader.hpp FORCEINCLUDE)
+elseif (SLIC3R_UNITY_BUILD AND MSVC)
+    # A unity build without the PCH (a compiler cache cannot cache /Yc /Yu compiles) still starts
+    # every translation unit with pchheader.hpp, so the batches see the same Windows macros and
+    # include order as the PCH build instead of whatever their first source happened to include.
+    target_compile_options(libslic3r PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/FI${CMAKE_CURRENT_SOURCE_DIR}/pchheader.hpp>")
 endif ()
 
 # Sentry crash reporting integration

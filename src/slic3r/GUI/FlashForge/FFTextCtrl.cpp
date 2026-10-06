@@ -1,5 +1,10 @@
 #include "FFTextCtrl.hpp"
 #include <wx/clipbrd.h>
+#include <wx/dcclient.h>
+#include <wx/dcmemory.h>
+#include <wx/sizer.h>
+#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/split.hpp>
 
 namespace Slic3r { namespace GUI {
 

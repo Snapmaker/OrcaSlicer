@@ -1,6 +1,6 @@
 {
     "name": "FLSun",
-    "version": "02.03.01.10",
+    "version": "02.04.00.06",
     "force_update": "0",
     "description": "FLSun configurations",
     "machine_model_list": [
@@ -15,6 +15,10 @@
         {
             "name": "FLSun S1",
             "sub_path": "machine/FLSun S1.json"
+        },
+        {
+            "name": "FLSun S1 Pro",
+            "sub_path": "machine/FLSun S1 Pro.json"
         },
         {
             "name": "FLSun Super Racer (SR)",
@@ -129,6 +133,26 @@
         {
             "name": "0.30mm Extra Draft @FLSun S1",
             "sub_path": "process/0.30mm Extra Draft @FLSun S1.json"
+        },
+        {
+            "name": "0.20mm Standard @FLSun S1 Pro",
+            "sub_path": "process/0.20mm Standard @FLSun S1 Pro.json"
+        },
+        {
+            "name": "0.12mm Fine @FLSun S1 Pro",
+            "sub_path": "process/0.12mm Fine @FLSun S1 Pro.json"
+        },
+        {
+            "name": "0.16mm Optimal @FLSun S1 Pro",
+            "sub_path": "process/0.16mm Optimal @FLSun S1 Pro.json"
+        },
+        {
+            "name": "0.24mm Draft @FLSun S1 Pro",
+            "sub_path": "process/0.24mm Draft @FLSun S1 Pro.json"
+        },
+        {
+            "name": "0.30mm Extra Draft @FLSun S1 Pro",
+            "sub_path": "process/0.30mm Extra Draft @FLSun S1 Pro.json"
         },
         {
             "name": "0.30mm Extra Draft @FLSun SR",
@@ -269,6 +293,62 @@
             "sub_path": "filament/FLSun S1 TPU.json"
         },
         {
+            "name": "FLSun S1 Pro FLSun PLA-HS",
+            "sub_path": "filament/FLSun S1 Pro FLSun PLA-HS.json"
+        },
+        {
+            "name": "FLSun S1 Pro PLA High Speed",
+            "sub_path": "filament/FLSun S1 Pro PLA High Speed.json"
+        },
+        {
+            "name": "FLSun S1 Pro PLA Generic",
+            "sub_path": "filament/FLSun S1 Pro PLA Generic.json"
+        },
+        {
+            "name": "FLSun S1 Pro PLA Silk",
+            "sub_path": "filament/FLSun S1 Pro PLA Silk.json"
+        },
+        {
+            "name": "FLSun S1 Pro PLA+",
+            "sub_path": "filament/FLSun S1 Pro PLA+.json"
+        },
+        {
+            "name": "FLSun S1 Pro PLA-CF",
+            "sub_path": "filament/FLSun S1 Pro PLA-CF.json"
+        },
+        {
+            "name": "FLSun S1 Pro eSUN ePLA-Lite",
+            "sub_path": "filament/FLSun S1 Pro eSUN ePLA-Lite.json"
+        },
+        {
+            "name": "FLSun S1 Pro PETG",
+            "sub_path": "filament/FLSun S1 Pro PETG.json"
+        },
+        {
+            "name": "FLSun S1 Pro PET",
+            "sub_path": "filament/FLSun S1 Pro PET.json"
+        },
+        {
+            "name": "FLSun S1 Pro ABS",
+            "sub_path": "filament/FLSun S1 Pro ABS.json"
+        },
+        {
+            "name": "FLSun S1 Pro ASA",
+            "sub_path": "filament/FLSun S1 Pro ASA.json"
+        },
+        {
+            "name": "FLSun S1 Pro PA",
+            "sub_path": "filament/FLSun S1 Pro PA.json"
+        },
+        {
+            "name": "FLSun S1 Pro PC",
+            "sub_path": "filament/FLSun S1 Pro PC.json"
+        },
+        {
+            "name": "FLSun S1 Pro TPU",
+            "sub_path": "filament/FLSun S1 Pro TPU.json"
+        },
+        {
             "name": "FLSun T1 TPU",
             "sub_path": "filament/FLSun T1 TPU.json"
         }
@@ -289,6 +369,10 @@
         {
             "name": "FLSun S1 0.4 nozzle",
             "sub_path": "machine/FLSun S1 0.4 nozzle.json"
+        },
+        {
+            "name": "FLSun S1 Pro 0.4 nozzle",
+            "sub_path": "machine/FLSun S1 Pro 0.4 nozzle.json"
         },
         {
             "name": "FLSun Super Racer 0.4 nozzle",

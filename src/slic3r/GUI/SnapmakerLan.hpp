@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "DeviceControls.hpp"      // Caps: what the phone may set on the printer
 #include "SnapmakerTaskConfig.hpp" // TOOLHEAD_COUNT, end_unload_parameter, with_end_unload
 
 namespace Slic3r {
@@ -51,7 +52,74 @@ struct Status
     int         layer { 0 }, total_layers { 0 };
     double      print_duration { 0 }, total_duration { 0 };
     std::string klippy;       // klippy_state: ready | startup | shutdown | error
+    // How old this reading is: 0 for a probe that just answered, more while the printer is still
+    // counted online through a probe or two that did not (see Presence), -1 when it never answered.
+    long long   age_ms { -1 };
+    // What the phone's printer screen may set, from the same query: the bed and each toolhead with
+    // their limits, the speed factor, the cavity light and the fans (DeviceControls::moonraker_caps).
+    DeviceControls::Caps caps;
+    // The printer's G-code help lists every command the load / unload scripts use
+    // (FilamentCommands::u1_filament_macros_available). Asked with the login check, not every probe.
+    bool        filament_macros { false };
     bool        printing() const { return state == "printing" || state == "paused"; }
+};
+
+// ---- addresses ----
+//
+// A U1 bound to a Snapmaker account is connected by the Device tab through the cloud's MQTT broker,
+// and the Device tab then records that broker (a1pr8yczi3n0se.iot.us-west-1.amazonaws.com) as the
+// printer's "ip". That is not an address the printer answers HTTP on - it is not the printer at
+// all - so it must never become a LAN card's address or be probed.
+//
+// The bare host of an address: no scheme, no path, no port, no IPv6 brackets.
+std::string host_of(const std::string& address);
+// A cloud broker / cloud service endpoint (AWS IoT, Aliyun, Snapmaker's own domains).
+bool        is_cloud_host(const std::string& host);
+// An address worth probing over the LAN: anything that is not empty, not a cloud endpoint and not
+// obviously malformed. A typed-in "u1.home.example" is accepted; only the cloud is refused.
+bool        is_lan_host(const std::string& host);
+// Stricter, for sources that are known to mix in the cloud broker (the Device tab's record): an IP
+// literal, a .local name or a single-label name only.
+bool        is_local_address(const std::string& host);
+
+// The list rules, without the file: add or update `d` in `list` (by serial number first, then by
+// address, so a printer that moved to another address moves rather than doubling up). A cloud
+// endpoint never enters the list and never replaces a LAN address. Returns false when `d` was
+// refused. Any other entry carrying the same id afterwards is dropped.
+bool                merge_device(std::vector<Device>& list, const Device& d);
+// What a stored list looks like once read: cloud endpoints dropped and one entry per id (the first
+// one with a usable address wins), so no two cards - and no two status slots - share an id.
+std::vector<Device> sanitize(const std::vector<Device>& raw);
+// The LAN card a connection address belongs to: the PC's Device tab connects a U1 over MQTT at
+// "<ip>:<port>", and this finds the printer in `list` that answers HTTP on the same host. False for
+// a cloud broker (a cloud-bound U1 has no LAN identity from its connection alone) or no match.
+bool                match_host(const std::vector<Device>& list, const std::string& address, Device& out);
+// The same against the stored list (devices()).
+bool                device_for_host(const std::string& address, Device& out);
+
+// ---- online / offline ----
+//
+// A printer is online as soon as one probe answers, and offline only after FAILS_TO_OFFLINE probes
+// in a row did not, or after SILENCE_MS without an answer - one slow reply from a busy printer (or
+// one dropped Wi-Fi packet) no longer turns its card grey for half a minute.
+struct Presence
+{
+    static constexpr int       FAILS_TO_OFFLINE = 3;
+    static constexpr long long SILENCE_MS       = 60000;
+    // How often a printer is asked: every PROBE_TTL_MS while it is online (or still being given the
+    // benefit of the doubt), every OFFLINE_RETRY_MS once it is offline, so a printer that is off
+    // does not cost a timeout on every poll but one that comes back is seen within seconds.
+    static constexpr long long PROBE_TTL_MS     = 4000;
+    static constexpr long long OFFLINE_RETRY_MS = 10000;
+
+    int       fails { 0 };      // probes in a row that did not answer
+    long long last_ok_ms { -1 }; // when the printer last answered (-1 = never)
+    bool      online { false };
+
+    // Feed one probe result. Returns true when `online` changed.
+    bool      observe(bool answered, long long now_ms);
+    // How long a reading taken now stays good before the printer is asked again.
+    long long refresh_after_ms() const { return online ? PROBE_TTL_MS : OFFLINE_RETRY_MS; }
 };
 
 // One of the printer's toolheads and what is loaded in it (print_task_config, per-toolhead arrays).
@@ -90,7 +158,9 @@ void                merge_stream_devices();
 // toolhead order, up to TOOLHEAD_COUNT; stops at the first toolhead the answer lacks so the index
 // stays the toolhead number.
 std::vector<std::pair<double, double>> nozzle_temps_of(const nlohmann::json& status_obj);
-// Probes the printer, at most once every few seconds per device.
+// Probes the printer, at most once every few seconds per device. Online/offline follows Presence:
+// a probe that does not answer leaves a printer that was online online (with its last reading)
+// until it has missed FAILS_TO_OFFLINE probes or been silent for SILENCE_MS.
 Status status(const Device& d);
 // The same, ignoring that cache: for watching a printer right after telling it to do something.
 Status status_now(const Device& d);
@@ -99,10 +169,20 @@ Status status_now(const Device& d);
 bool cached_status(const Device& d, Status& out);
 // What each toolhead holds, from the same cached probe.
 std::vector<Toolhead> toolheads(const Device& d);
+// Probe several printers side by side and wait at most `budget_ms` for all of them together; a
+// printer still being asked when the budget runs out is reported from its last reading (or as
+// offline if it never answered), and its probe lands in the cache for the next call. One slow or
+// switched-off printer therefore never holds up the others' cards. Any thread but the GUI one.
+std::vector<Status> status_all(const std::vector<Device>& list, long long budget_ms);
 // The whole list with each printer's state, probed in parallel. Any thread but the GUI one.
 void   list_json(nlohmann::json& out);
 // What /api/printers needs for the send picker (one entry per device).
 void   list_printers(nlohmann::json& printers);
+// The LAN wins: a "connect" row (the Device tab's MQTT link, possibly through the Snapmaker cloud)
+// whose `lan_id` names a LAN row that is online is dropped from `printers`, so the printer has one
+// card and a send goes over the LAN. While the LAN row is offline the connect row stays - it is
+// then the only way to the printer - and the LAN row is marked `cloud_online` with its state.
+void   prefer_lan(nlohmann::json& printers);
 
 // ---- sending ----
 // Multipart upload to /server/files/upload with print=false, so a failed print start still leaves
@@ -111,6 +191,9 @@ bool upload(const Device& d, const std::string& source_path, const std::string& 
             std::function<void(int)> progress, std::string& error);
 // GET /server/files/metadata?filename= - proof that the file really landed.
 bool metadata(const Device& d, const std::string& filename, long long& size, std::string& error);
+// The file is still on the printer, byte for byte as far as a size can tell: what lets a reprint
+// start it in place instead of uploading it again. `expected_size` <= 0 accepts any size.
+bool file_on_printer(const Device& d, const std::string& filename, long long expected_size);
 // POST /printer/print/start?filename= - the whole file as it was sliced, no mapping.
 bool start_print(const Device& d, const std::string& filename, std::string& error);
 

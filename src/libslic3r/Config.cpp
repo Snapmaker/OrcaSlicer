@@ -4,6 +4,7 @@
 #include "LocalesUtils.hpp"
 #include "Preset.hpp"
 
+#include <set>
 #include <algorithm>
 #include <assert.h>
 #include <cstdlib>
@@ -914,6 +915,7 @@ ConfigSubstitutions ConfigBase::load_string_map(std::map<std::string, std::strin
             // ignore
         }
     }
+    BambuKeyAliases::load_fallbacks(*this, [&key_values](const std::string &k) { return key_values.count(k) > 0; });
     return std::move(substitutions_ctxt.substitutions);
 }
 
@@ -942,6 +944,19 @@ ConfigSubstitutions ConfigBase::load_from_json(const std::string &file, ForwardC
 
     ret = load_from_json(file, substitutions_ctxt, true, key_values, reason);
     return std::move(substitutions_ctxt.substitutions);
+}
+
+// Case-insensitive compare of a JSON key against a fixed ASCII one, without
+// boost::iequals, whose std::locale() takes a lock the whole process shares in the
+// MSVC runtime.
+static bool ascii_iequals(const std::string &key, const char *literal)
+{
+    auto   lower = [](char c) { return (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : c; };
+    size_t i     = 0;
+    for (; i < key.size() && literal[i] != '\0'; ++i)
+        if (lower(key[i]) != lower(literal[i]))
+            return false;
+    return i == key.size() && literal[i] == '\0';
 }
 
 // Read one preset file and turn it into a json document, resolving any "include"
@@ -1004,8 +1019,8 @@ int ConfigBase::parse_json_document(const std::string &file, json &j, std::strin
                     while (!dir.empty()) {
                         size_t s = dir.find_last_of("/\\");
                         std::string leaf = (s == std::string::npos) ? dir : dir.substr(s + 1);
-                        if (boost::iequals(leaf, std::string("filament")) || boost::iequals(leaf, std::string("process"))
-                            || boost::iequals(leaf, std::string("machine"))) {
+                        if (ascii_iequals(leaf, "filament") || ascii_iequals(leaf, "process")
+                            || ascii_iequals(leaf, "machine")) {
                             category_dir = dir + "/";
                             break;
                         }
@@ -1018,7 +1033,7 @@ int ConfigBase::parse_json_document(const std::string &file, json &j, std::strin
                     // preset meta keys the template files carry - never merge these
                     static const char* mk[] = {"name","instantiation","from","inherits","type",
                         "setting_id","filament_id","version","url","description","is_custom_defined"};
-                    for (const char* m : mk) if (boost::iequals(k, m)) return true;
+                    for (const char* m : mk) if (ascii_iequals(k, m)) return true;
                     return false;
                 };
                 for (auto& inc : *inc_it) {
@@ -1048,7 +1063,7 @@ int ConfigBase::parse_json_document(const std::string &file, json &j, std::strin
                                                          << " resolved through " << candidates[ci].second << ": " << inc_path;
                             for (auto iit = inc_j.begin(); iit != inc_j.end(); ++iit) {
                                 std::string k = iit.key();
-                                if (boost::iequals(k, std::string("include")) || is_meta_key(k))
+                                if (ascii_iequals(k, "include") || is_meta_key(k))
                                     continue;
                                 if (j.find(k) == j.end())
                                     j[k] = iit.value();
@@ -1111,41 +1126,41 @@ int ConfigBase::load_from_json_document(const std::string &file, json &j, Config
         }
         //parse the json elements
         for (auto it = j.begin(); it != j.end(); it++) {
-            if (boost::iequals(it.key(),BBL_JSON_KEY_VERSION)) {
+            if (ascii_iequals(it.key(), BBL_JSON_KEY_VERSION)) {
                 key_values.emplace(BBL_JSON_KEY_VERSION, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_IS_CUSTOM)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_IS_CUSTOM)) {
                 key_values.emplace(BBL_JSON_KEY_IS_CUSTOM, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_NAME)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_NAME)) {
                 key_values.emplace(BBL_JSON_KEY_NAME, it.value());
                 if (it.value() == "project_settings")
                     is_project_settings = true;
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_URL)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_URL)) {
                 key_values.emplace(BBL_JSON_KEY_URL, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_TYPE)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_TYPE)) {
                 key_values.emplace(BBL_JSON_KEY_TYPE, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_SETTING_ID)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_SETTING_ID)) {
                 key_values.emplace(BBL_JSON_KEY_SETTING_ID, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_FILAMENT_ID)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_FILAMENT_ID)) {
                 key_values.emplace(BBL_JSON_KEY_FILAMENT_ID, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_FROM)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_FROM)) {
                 key_values.emplace(BBL_JSON_KEY_FROM, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_DESCRIPTION)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_DESCRIPTION)) {
                 key_values.emplace(BBL_JSON_KEY_DESCRIPTION, it.value());
             }
-            else if (boost::iequals(it.key(), BBL_JSON_KEY_INSTANTIATION)) {
+            else if (ascii_iequals(it.key(), BBL_JSON_KEY_INSTANTIATION)) {
                 key_values.emplace(BBL_JSON_KEY_INSTANTIATION, it.value());
             }
-            else if (!load_inherits_to_config && boost::iequals(it.key(), BBL_JSON_KEY_INHERITS)) {
+            else if (!load_inherits_to_config && ascii_iequals(it.key(), BBL_JSON_KEY_INHERITS)) {
                 key_values.emplace(BBL_JSON_KEY_INHERITS, it.value());
-            } else if (boost::iequals(it.key(), ORCA_JSON_KEY_RENAMED_FROM)) {
+            } else if (ascii_iequals(it.key(), ORCA_JSON_KEY_RENAMED_FROM)) {
                 key_values.emplace(ORCA_JSON_KEY_RENAMED_FROM, it.value());
             } else if (BambuKeyAliases::shadowed_by_our_key(it.key(), [&j](const std::string &k) { return j.contains(k); })) {
                 // Bambu Studio's name for a setting this file also sets under our own name: ours
@@ -1208,6 +1223,10 @@ int ConfigBase::load_from_json_document(const std::string &file, json &j, Config
                     if (optdef && optdef->type == coStrings) {
                         use_comma = false;
                     }
+                    // A list of point groups (extruder_printable_area: one polygon per extruder, each a string
+                    // "x1xy1,x2xy2,...") is joined with '#' like Bambu Studio does; a ',' merged every nozzle's
+                    // polygon into one group and the left / right reach of the H2D, H2C and X2D was lost.
+                    const bool use_hash = optdef && optdef->type == coPointsGroups;
                     std::vector<std::string> array_values;
                     array_values.reserve(it.value().size());
                     for (auto iter = it.value().begin(); iter != it.value().end(); iter++) {
@@ -1284,7 +1303,9 @@ int ConfigBase::load_from_json_document(const std::string &file, json &j, Config
                     if (valid && value_str.empty()) {
                         for (const std::string &array_value : array_values) {
                             if (!first) {
-                                if (use_comma)
+                                if (use_hash)
+                                    value_str += "#";
+                                else if (use_comma)
                                     value_str += ",";
                                 else
                                     value_str += ";";
@@ -1441,6 +1462,8 @@ int ConfigBase::load_from_json_document(const std::string &file, json &j, Config
             }
         }
         
+        // Bambu keys that also feed one of ours when this file does not set ours.
+        BambuKeyAliases::load_fallbacks(*this, [&j](const std::string &k) { return j.contains(k); });
         // Do legacy conversion on a completely loaded dictionary.
         // Perform composite conversions, for example merging multiple keys into one key.
         this->handle_legacy_composite();
@@ -1544,6 +1567,7 @@ ConfigSubstitutions ConfigBase::load(const boost::property_tree::ptree &tree, Fo
             // ignore
         }
     }
+    BambuKeyAliases::load_fallbacks(*this, [&tree](const std::string &k) { return tree.find(k) != tree.not_found(); });
     // Do legacy conversion on a completely loaded dictionary.
     // Perform composite conversions, for example merging multiple keys into one key.
     this->handle_legacy_composite();
@@ -1589,6 +1613,7 @@ size_t ConfigBase::load_from_gcode_string_legacy(ConfigBase& config, const char*
     // boost::nowide::ifstream seems to cook the text data somehow, so less then the 64k of characters may be retrieved.
     const char *end = data_start + strlen(data_start);
     size_t num_key_value_pairs = 0;
+    std::set<std::string> loaded_keys;
     for (;;) {
         // Extract next line.
         for (--end; end > data_start && (*end == '\r' || *end == '\n'); --end);
@@ -1624,6 +1649,7 @@ size_t ConfigBase::load_from_gcode_string_legacy(ConfigBase& config, const char*
         if (key == nullptr)
             break;
         try {
+            loaded_keys.emplace(key, key_end);
             config.set_deserialize(std::string(key, key_end), std::string(value, end), substitutions);
             ++num_key_value_pairs;
         }
@@ -1633,6 +1659,7 @@ size_t ConfigBase::load_from_gcode_string_legacy(ConfigBase& config, const char*
         end = start;
     }
 
+    BambuKeyAliases::load_fallbacks(config, [&loaded_keys](const std::string &k) { return loaded_keys.count(k) > 0; });
     // Do legacy conversion on a completely loaded dictionary.
     // Perform composite conversions, for example merging multiple keys into one key.
     config.handle_legacy_composite();
@@ -1895,17 +1922,18 @@ ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, Fo
 }
 
 //BBS: add json support
-void ConfigBase::save_to_json(const std::string &file, const std::string &name, const std::string &from, const std::string &version, const std::string is_custom) const
+bool ConfigBase::save_to_json(const std::string &file, const std::string &name, const std::string &from, const std::string &version, const std::string is_custom) const
 {
     // Serialize first: if that throws (invalid UTF-8), the existing file stays untouched.
     std::ostringstream ss;
     this->save_to_json(ss, name, from, version, false, is_custom);
-    boost::nowide::ofstream c;
-    c.open(file, std::ios::out | std::ios::trunc);
-    c << ss.str();
-    c.close();
-
+    std::string err;
+    if (!write_file_atomically(file, ss.str(), &err)) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": failed to save config to %1%: %2%") % file % err;
+        return false;
+    }
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" <<__LINE__ << boost::format(", saved config to %1%\n")%file;
+    return true;
 }
 
 void ConfigBase::save_to_json(std::ostream &os, const std::string &name, const std::string &from, const std::string &version, bool replace_invalid_utf8, const std::string is_custom) const

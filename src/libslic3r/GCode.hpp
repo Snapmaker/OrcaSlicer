@@ -17,6 +17,7 @@
 #include "GCode/ToolOrdering.hpp"
 #include "GCode/WipeTower.hpp"
 #include "GCode/SeamPlacer.hpp"
+#include "GCode/TimelapsePosPicker.hpp"
 #include "GCode/GCodeProcessor.hpp"
 #include "EdgeGrid.hpp"
 #include "GCode/ThumbnailData.hpp"
@@ -30,6 +31,7 @@
 
 #include <memory>
 #include <map>
+#include <unordered_map>
 #include <set>
 #include <string>
 #include <cfloat>
@@ -295,6 +297,12 @@ public:
     std::string     retract(bool toolchange = false, bool is_last_retraction = false, LiftType lift_type = LiftType::NormalLift, ExtrusionRole role = erNone);
     std::string     unretract() { return m_writer.unlift() + m_writer.unretract(); }
     std::string     set_extruder(unsigned int extruder_id, double print_z, bool by_object=false);
+    // Emit PA for this filament's active flow variant (Standard / High-Flow), not raw column = id.
+    // reset_adaptive=false keeps the two set_extruder sites that historically skipped the reset.
+    std::string     set_filament_pressure_advance(unsigned filament_id, bool reset_adaptive = true);
+    // Orca: Adaptive PA. Tell the adaptive PA processor a tool change has just set the PA to `pa`.
+    // Returns G-code to append right after that PA command (empty outside the layer pipeline).
+    std::string     reset_adaptive_pa(double pa);
     bool is_BBL_Printer();
 
     // SoftFever
@@ -436,15 +444,16 @@ private:
     std::string     preamble();
     // BBS
     std::string     change_layer(coordf_t print_z);
+    using ConstExtrusionEntitiesPtr = std::vector<const ExtrusionEntity*>;
     // Orca: pass the complete collection of region perimeters to the extrude loop to check whether the wipe before external loop
     // should be executed
     std::string     extrude_entity(const ExtrusionEntity &entity, std::string description = "", double speed = -1.,
-                                   const ExtrusionEntitiesPtr& region_perimeters = ExtrusionEntitiesPtr(),
+                                   const ConstExtrusionEntitiesPtr& region_perimeters = {},
                                    const WipeInwardSupport* wipe_support = nullptr);
     // Orca: pass the complete collection of region perimeters to the extrude loop to check whether the wipe before external loop
     // should be executed
     std::string     extrude_loop(ExtrusionLoop loop, std::string description, double speed = -1.,
-                                 const ExtrusionEntitiesPtr& region_perimeters = ExtrusionEntitiesPtr(),
+                                 const ConstExtrusionEntitiesPtr& region_perimeters = {},
                                  const Point* start_point = nullptr, const WipeInwardSupport* wipe_support = nullptr);
     std::string     extrude_multi_path(ExtrusionMultiPath multipath, std::string description = "", double speed = -1.);
     std::string     extrude_path(ExtrusionPath path, std::string description = "", double speed = -1.);
@@ -476,10 +485,9 @@ private:
         {
             struct Region {
             	// Non-owned references to LayerRegion::perimeters::entities
-            	// std::vector<const ExtrusionEntity*> would be better here, but there is no way in C++ to convert from std::vector<T*> std::vector<const T*> without copying.
-                ExtrusionEntitiesPtr perimeters;
+                ConstExtrusionEntitiesPtr perimeters;
             	// Non-owned references to LayerRegion::fills::entities
-                ExtrusionEntitiesPtr infills;
+                ConstExtrusionEntitiesPtr infills;
 
                 std::vector<const WipingExtrusions::ExtruderPerCopy*> infills_overrides;
                 std::vector<const WipingExtrusions::ExtruderPerCopy*> perimeters_overrides;
@@ -547,6 +555,10 @@ private:
        methods. */
     Vec2d                               m_origin;
     FullPrintConfig                     m_config;
+    // Per-filament flow ratio / max volumetric speed / PA enable that _extrude
+    // reads on every path, resolved in apply_print_config (the only place the
+    // filament options of m_config change during an export).
+    ResolvedFilamentFlow                m_filament_flow;
     DynamicConfig                       m_calib_config;
     // scaled G-code resolution
     double                              m_scaled_resolution;
@@ -596,6 +608,9 @@ private:
     
     bool m_enable_exclude_object;
     std::vector<size_t> m_label_objects_ids;
+    // Object label names by instance, built on first use from the ids assign_object_and_instance_ids() assigns.
+    std::unordered_map<const PrintInstance*, std::string> m_instance_names;
+    const std::string& instance_name(const PrintInstance &instance);
     std::string _encode_label_ids_to_base64(std::vector<size_t> ids);
     // ORCA: Add support for role based fan speed control
     std::array<bool, ExtrusionRole::erCount> m_is_role_based_fan_on;
@@ -627,6 +642,8 @@ private:
     // zaa_enabled off emits byte-identical G-code.
     bool                                m_zaa_z_dirty{ false };
     float                               m_max_layer_z{ 0.0f };
+    // Filament mass (g) printed up to the previous layer change, for curr_layer_mass.
+    double                              m_last_layer_accumulated_mass{ 0.0 };
     float                               m_last_width{ 0.0f };
 
     // SM_Orca
@@ -656,6 +673,8 @@ private:
     std::unique_ptr<PressureEqualizer>  m_pressure_equalizer;
     
     std::unique_ptr<AdaptivePAProcessor>      m_pa_processor;
+    // True while a layer pipeline that ends in the AdaptivePAProcessor filter is running.
+    bool                                      m_pa_reset_in_band { false };
 
     std::unique_ptr<WipeTowerIntegration> m_wipe_tower;
 
@@ -680,6 +699,46 @@ private:
     int m_timelapse_photo_extruder = 0;
     int timelapse_extruder_of_filament(int filament_id) const;
     int timelapse_physical_extruder(int extruder_id) const;
+
+    // BambuStudio's timelapse position picker (GCode/TimelapsePosPicker): the safe spot the
+    // time_lapse_gcode hands the firmware (M9711 U/V), so both nozzles of a dual-nozzle machine
+    // are photographed the same way. Initialised at the start of every export.
+    TimelapsePosPicker m_timelapse_pos_picker;
+    // Objects printed so far in a print-by-object export, the current one last (BambuStudio's
+    // m_printed_objects); the picker keeps clear of the finished ones.
+    std::vector<const PrintObject*> m_printed_objects;
+
+    // BambuStudio 2.8 farthest-point timelapse (machine option farthest_point_timelapse, traditional
+    // mode, non-i3): take the photo where the layer reaches farthest from the camera.
+    struct FarthestPointTimelapseContext {
+        // Whether farthest-point timelapse is active for this layer
+        bool    enabled{false};
+        // The farthest extrusion point from camera (0,0) in global scaled coordinates (includes inst.shift)
+        Point   farthest_point{0, 0};
+        // farthest_point in mm (the frame of point_to_gcode() without the extruder offset)
+        Vec2d   farthest_gcode_pos{0, 0};
+        // Extruder index (0-based) that prints the farthest point
+        int     farthest_extruder_id{0};
+        // Whether the farthest point is printed by the photo head (the most used extruder)
+        bool    farthest_is_photo_head{false};
+        // Whether the photo has already been inserted on this layer (inline or at a tool change)
+        bool    inserted_this_layer{false};
+        // The photo head: m_timelapse_photo_extruder
+        int     most_used_extruder{0};
+    };
+    FarthestPointTimelapseContext m_farthest_point_timelapse;
+    void compute_farthest_point(const std::vector<LayerToPrint> &layers, const LayerTools &layer_tools,
+                                const std::map<std::pair<const SupportLayer *, ExtrusionRole>, unsigned int> &support_filaments);
+
+    struct TimelapseGCodeResult {
+        std::string gcode;
+        Point       safe_pos{DefaultTimelapsePos};
+    };
+    // BambuStudio's generate_timelapse_gcode: expands time_lapse_gcode for the active filament, with
+    // the picked safe position (none when skip_pos_pick: the inline farthest-point photo).
+    TimelapseGCodeResult generate_timelapse_gcode(const Print &print, coordf_t print_z, int photo_extruder, bool skip_pos_pick = false);
+    // Inline farthest-point photo: called with the end point of every extrusion move.
+    void check_and_insert_inline_timelapse(std::string &gcode, const Point &endpoint_scaled);
 
     bool m_silent_time_estimator_enabled;
 
@@ -733,7 +792,7 @@ private:
     // accommodates the highest-temperature filament of a compatible mixed print (e.g. PLA + TPU).
     int get_bed_temperature_max(const Print& print, const bool is_first_layer) const;
 
-    std::string _extrude(const ExtrusionPath &path, std::string description = "", double speed = -1);
+    std::string _extrude(const ExtrusionPath &path, const std::string &path_description = "", double speed = -1);
     bool _needSAFC(const ExtrusionPath &path);
 
     // Snapmaker: flow variant — read a process-domain vector option
@@ -779,6 +838,10 @@ private:
 };
 
 std::vector<const PrintInstance*> sort_object_instances_by_model_order(const Print& print, bool init_order = false);
+
+// The overhang data ExtrusionQualityEstimator needs for the object layers in `layers` that process_layer() prepares it
+// for, computed ahead of the generator.
+std::vector<PrecomputedOverhangLayer> precompute_overhang_layers(const std::vector<GCode::LayerToPrint> &layers);
 
 }
 

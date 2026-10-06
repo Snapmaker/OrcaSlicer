@@ -2,6 +2,9 @@
 #define slic3r_GLShader_hpp_
 
 #include <array>
+#include <initializer_list>
+#include <utility>
+#include <vector>
 #include <string>
 #include <string_view>
 
@@ -46,6 +49,16 @@ public:
 
     void start_using() const;
     void stop_using() const;
+
+    // Sets sampler uniforms to fixed texture units once, outside any draw. The program is bound
+    // for the duration and the previously bound program is restored. A uniform the linker
+    // removed (inactive) is skipped.
+    void set_sampler_units(std::initializer_list<std::pair<const char*, int>> units) const;
+    // Returns a description of every pair of active samplers of DIFFERENT types that read the same
+    // texture unit, empty if there is none. Such a program is invalid at draw time (GL spec:
+    // GL_INVALID_OPERATION at the next draw); Windows drivers tolerate it, macOS does not and
+    // skips the draw entirely.
+    std::string sampler_unit_conflicts() const;
 
     void set_uniform(const char* name, int value) const { set_uniform(get_uniform_location(name), value); }
     void set_uniform(const char* name, bool value) const { set_uniform(get_uniform_location(name), value); }

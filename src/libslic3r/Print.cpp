@@ -3,6 +3,7 @@
 #include "Print.hpp"
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include "BoundingBox.hpp"
 #include "Brim.hpp"
 #include "BrimFilament.hpp"
@@ -567,6 +568,26 @@ std::map<int, std::set<NozzleVolumeType>> Print::get_filament_unprintable_flow(c
     return {};
 }
 
+// Dual-nozzle reach, plate-local. Fewer than two nozzles, or a profile without extruder_printable_area
+// (single-nozzle machines, the four-toolhead U1) gives an empty result, which every caller treats as
+// "no constraint".
+ExtruderAreas Print::get_extruder_areas() const
+{
+    if (m_config.nozzle_diameter.size() < 2)
+        return {};
+    return extruder_areas_from_config(m_config);
+}
+
+std::vector<Polygons> Print::get_extruder_printable_polygons() const
+{
+    return get_extruder_areas().printable;
+}
+
+std::vector<Polygons> Print::get_extruder_unprintable_polygons() const
+{
+    return get_extruder_areas().unprintable;
+}
+
 // Called by Print::apply().
 // This method only accepts PrintConfig option keys.
 bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* new_config */, const std::vector<t_config_option_key> &opt_keys)
@@ -608,6 +629,10 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "extruder_clearance_height_to_rod",
         "extruder_clearance_height_to_lid",
         "extruder_clearance_radius",
+        // The timelapse position picker, farthest-point timelapse and (Bambu Lab printers) the
+        // by-object clearance read these.
+        "extruder_clearance_max_radius",
+        "farthest_point_timelapse",
         "nozzle_height",
         "extruder_colour",
         "extruder_offset",
@@ -688,6 +713,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "is_infill_first",
         // Orca
         "chamber_temperature",
+        "chamber_minimal_temperature",
         "thumbnails",
         "thumbnails_format",
         "seam_gap",
@@ -993,6 +1019,8 @@ std::vector<unsigned int> Print::object_extruders() const
     for (const PrintObject* object : m_objects) {
         const ModelObject* mo = object->model_object();
         for (const ModelVolume* mv : mo->volumes) {
+            if (mv->is_precise_seam())
+                continue; // non-printing helper; get_extruders() also skips these
             std::vector<int> volume_extruders = mv->get_extruders();
             for (int extruder : volume_extruders) {
                 assert(extruder > 0);
@@ -1013,6 +1041,7 @@ std::vector<unsigned int> Print::object_extruders() const
         }
     }
     sort_remove_duplicates(extruders);
+    m_mixed_filament_mgr.expand_0based_extruder_ids(extruders, m_config.filament_diameter.size());
     return extruders;
 }
 
@@ -1021,8 +1050,10 @@ std::vector<unsigned int> Print::support_material_extruders() const
 {
     std::vector<unsigned int> extruders;
     bool support_uses_current_extruder = false;
-    // BBS
-    auto num_extruders = (unsigned int)m_config.filament_diameter.size();
+    // Bound by physical + mixed virtual count so a mixed support filament is not
+    // clamped to 0 before expand_0based_extruder_ids resolves it.
+    auto num_physical  = (unsigned int)m_config.filament_diameter.size();
+    auto num_extruders = (unsigned int)m_mixed_filament_mgr.total_filaments(num_physical);
 
     for (PrintObject *object : m_objects) {
         if (object->has_support_material()) {
@@ -1048,6 +1079,7 @@ std::vector<unsigned int> Print::support_material_extruders() const
         append(extruders, this->object_extruders());
 
     sort_remove_duplicates(extruders);
+    m_mixed_filament_mgr.expand_0based_extruder_ids(extruders, m_config.filament_diameter.size());
     return extruders;
 }
 
@@ -1077,6 +1109,7 @@ std::vector<unsigned int> Print::extruders(bool conside_custom_gcode) const
     }
 
     sort_remove_duplicates(extruders);
+    m_mixed_filament_mgr.expand_0based_extruder_ids(extruders, m_config.filament_diameter.size());
 
     return extruders;
 }
@@ -1242,9 +1275,10 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
             polygons->clear();
         std::vector<size_t> intersecting_idxs;
 
-        // Shrink the extruder_clearance_radius a tiny bit, so that if the object arrangement algorithm placed the objects
-        // exactly by satisfying the extruder_clearance_radius, this test will not trigger collision.
-        float obj_distance = print.is_all_objects_are_short() ? scale_(std::max(0.5f * MAX_OUTER_NOZZLE_DIAMETER, object_skirt_offset) - 0.1) : scale_(0.5 * print.config().extruder_clearance_radius.value + object_skirt_offset - 0.1);
+        // Shrink the clearance radius a tiny bit, so that if the object arrangement algorithm placed the objects
+        // exactly by satisfying it, this test will not trigger collision. Bambu Lab printers use Bambu
+        // Studio's extruder_clearance_max_radius (sequential_clearance_radius).
+        float obj_distance = print.is_all_objects_are_short() ? scale_(std::max(0.5f * MAX_OUTER_NOZZLE_DIAMETER, object_skirt_offset) - 0.1) : scale_(0.5 * sequential_clearance_radius(print.config()) + object_skirt_offset - 0.1);
 
         for (const PrintObject *print_object : print.objects()) {
             assert(! print_object->model_object()->instances.empty());
@@ -1636,7 +1670,7 @@ CompactedTowerZone compacted_wipe_tower_zone(const PrintConfig &config, const Po
     // slack the sequential check applies, 0.1 mm per side. Both rings are built here; which one a
     // given object is measured against depends on its own height and is decided in
     // compacted_wipe_tower_clearance().
-    zone.body_radius  = config.extruder_clearance_radius.value;
+    zone.body_radius  = sequential_clearance_radius(config); // Bambu Studio: extruder_clearance_max_radius
     zone.grown_body   = offset(zone.hull, float(scale_(compacted_tower_half_clearance(zone.body_radius))), jtRound, scale_(0.1));
     zone.grown_nozzle = offset(zone.hull, float(scale_(compacted_tower_half_clearance(MAX_OUTER_NOZZLE_DIAMETER))), jtRound, scale_(0.1));
     return zone;
@@ -2023,6 +2057,27 @@ static StringObjectException layered_print_cleareance_valid(const Print &print, 
             warning->string += L("Prime Tower") + L(" is too close to others, and collisions may be caused.\n");
         }
     }
+    // Dual-nozzle (H2D / H2C / X2D): every nozzle that changes filament purges into the tower, so it must sit
+    // where each of them reaches. Only a warning (the tower outline is an estimate), and only when the
+    // plate really uses both nozzles: a manual map that keeps every used filament on one nozzle is fine
+    // anywhere that nozzle reaches.
+    if (warning && !convex_hulls_temp.empty()) {
+        const ExtruderAreas areas = print.get_extruder_areas();
+        if (areas.multi() && areas.has_exclusive_regions()) {
+            bool uses_several_nozzles = true;
+            const FilamentMapMode mode = config.filament_map_mode.value;
+            if (mode == fmmManual || mode == fmmNozzleManual) {
+                std::set<int> nozzles;
+                for (unsigned int f : print.extruders(true))
+                    if (f < print.filament_map_input().size())
+                        nozzles.insert(print.filament_map_input()[f]);
+                uses_several_nozzles = nozzles.size() > 1;
+            }
+            const ExtruderAreas world = translate_extruder_areas(areas, Vec2d(plate_origin(0), plate_origin(1)));
+            if (uses_several_nozzles && !footprint_within(convex_hulls_temp, world.shared))
+                warning->string += L("Prime Tower") + L(" is outside the area both nozzles can reach, so the nozzle that cannot reach it cannot purge into it. Move it into the middle of the plate.\n");
+        }
+    }
     if (!intersection(exclude_polys, convex_hulls_temp).empty()) {
         /*if (warning) {
             warning->string += L("Prime Tower is too close to exclusion area, there may be collisions when printing.\n");
@@ -2112,6 +2167,88 @@ boost::regex regex_g92e0 { "^[ \\t]*[gG]92[ \\t]*[eE](0(\\.0*)?|\\.0+)[ \\t]*(;.
 
 // Precondition: Print::validate() requires the Print::apply() to be called its invocation.
 //BBS: refine seq-print validation logic
+// Dual-nozzle (H2D / H2C / X2D): each nozzle reaches only part of the bed (extruder_printable_area) and only up
+// to its own height (extruder_printable_height). A filament tied to one nozzle must only print what that nozzle
+// reaches; Bambu Studio refuses such a plate, so does this. Returns an empty string for everything that cannot
+// be affected: one nozzle, no declared areas (the U1), or nozzles that reach the same bed to the same height.
+static std::string extruder_reach_error(const Print &print, const ModelObject **first_object)
+{
+    const ExtruderAreas areas = print.get_extruder_areas();
+    if (!areas.multi() || (!areas.has_exclusive_regions() && !areas.has_height_limits()))
+        return {};
+
+    // Print instances sit in the plate grid; the areas are plate-local like printable_area.
+    const Vec3d origin = print.get_plate_origin();
+    const Point shift(scaled(origin.x()), scaled(origin.y()));
+
+    std::vector<ObjectReach>        reaches;
+    std::vector<const ModelObject*> owners; // ObjectReach::id -> the model object
+    for (const PrintObject *object : print.objects()) {
+        const ModelObject *model_object = object->model_object();
+        std::vector<int>   filaments;
+        for (unsigned int f : object->object_extruders())
+            filaments.push_back(int(f));
+        if (filaments.empty())
+            continue;
+        for (const PrintInstance &instance : object->instances()) {
+            Polygon hull = model_object->convex_hull_2d(instance.model_instance->get_matrix());
+            hull.translate(-shift);
+            ObjectReach reach;
+            reach.id        = int(owners.size());
+            reach.filaments = filaments;
+            reach.reach     = extruders_reaching(areas, Polygons{ std::move(hull) }, model_object->instance_bounding_box(*instance.model_instance, false).max.z());
+            owners.push_back(model_object);
+            reaches.push_back(std::move(reach));
+        }
+    }
+
+    // Print by object with several objects skips the filament grouping, so the filament_map the settings carry
+    // is what the G-code uses even when the plate says "auto"; treat it as binding there too.
+    const FilamentMapMode mode       = print.config().filament_map_mode.value;
+    const bool            sequential = print.config().print_sequence == PrintSequence::ByObject && print.objects().size() > 1;
+    const bool            binding    = mode == fmmManual || mode == fmmNozzleManual || sequential;
+    const std::vector<ReachViolation> violations = find_reach_violations(reaches, areas.count(), print.filament_map_input(), binding);
+    if (violations.empty())
+        return {};
+
+    auto nozzle_name = [&areas](int e) -> std::string {
+        if (areas.count() == 2)
+            return e == 0 ? _u8L("left") : _u8L("right");
+        return Slic3r::format(_u8L("nozzle %1%"), e + 1);
+    };
+    auto object_names = [&owners](const std::vector<int> &ids) {
+        std::string names;
+        for (size_t i = 0; i < ids.size() && i < 3; ++i)
+            names += (i == 0 ? "" : ", ") + owners[size_t(ids[i])]->name;
+        if (ids.size() > 3)
+            names += Slic3r::format(_u8L(" and %1% more"), ids.size() - 3);
+        return names;
+    };
+    auto range_text = [&areas, &print](int e) {
+        const BoundingBox bb = get_extents(areas.printable[size_t(e)]);
+        const double      z  = areas.height_limit(size_t(e)) > 0. ? areas.height_limit(size_t(e)) : print.config().printable_height.value;
+        return Slic3r::format("X:%1$.0f-%2$.0f, Y:%3$.0f-%4$.0f, Z:0-%5$.0f", unscale<double>(bb.min.x()), unscale<double>(bb.max.x()),
+                              unscale<double>(bb.min.y()), unscale<double>(bb.max.y()), z);
+    };
+
+    std::string text;
+    for (const ReachViolation &v : violations) {
+        if (!text.empty())
+            text += "\n";
+        if (*first_object == nullptr && !v.object_ids.empty())
+            *first_object = owners[size_t(v.object_ids.front())];
+        if (v.extruder >= 0)
+            text += Slic3r::format(_u8L("Filament %1% is assigned to the %2% nozzle, but %3% is outside what that nozzle can reach (%4%). "
+                                        "Move the object into the area the %2% nozzle reaches, or assign the filament to the other nozzle."),
+                                   v.filament + 1, nozzle_name(v.extruder), object_names(v.object_ids), range_text(v.extruder));
+        else
+            text += Slic3r::format(_u8L("No nozzle can print everything filament %1% is used for: %2% are outside what some nozzle can reach. "
+                                        "Move them so every object using this filament fits one nozzle's reach."),
+                                   v.filament + 1, object_names(v.object_ids));
+    }
+    return text;
+}
+
 StringObjectException Print::validate(StringObjectException *warning, Polygons* collison_polygons, std::vector<std::pair<Polygon, float>>* height_polygons) const
 {
     std::vector<unsigned int> extruders = this->extruders();
@@ -2151,6 +2288,13 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
             ret.type = STRING_EXCEPT_OBJECT_COLLISION_IN_LAYER_PRINT;
             return ret;
         }
+    }
+
+    {
+        const ModelObject *offending = nullptr;
+        std::string        reach_error = extruder_reach_error(*this, &offending);
+        if (!reach_error.empty())
+            return { reach_error, offending, "" };
     }
 
     if (m_config.spiral_mode) {
@@ -2563,6 +2707,15 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
             };
             for (const auto &width_role : s_width_roles)
                 for (const PrintRegion &region : object->all_regions()) {
+                    // The skin and skeleton widths size only Locked Zag's two bands (Fill.cpp reads them
+                    // for a sparse_infill_pattern of lockedzag and for nothing else). Their default is
+                    // 100% of the nozzle, which equals the layer height of every 0.2 nozzle / 0.20 mm
+                    // preset, so checking them on regions that never print them refused those presets
+                    // with "Too small line width" over a setting that has no effect on their G-code.
+                    const bool locked_zag_band = std::strcmp(width_role.first, "skin_infill_line_width") == 0 ||
+                                                 std::strcmp(width_role.first, "skeleton_infill_line_width") == 0;
+                    if (locked_zag_band && region.config().sparse_infill_pattern.value != ipLockedZag)
+                        continue;
                     const unsigned int filament_id     = region.extruder(width_role.second);
                     const double       nozzle_diameter = nozzle_dmr_of_filament0(unsigned(std::max<int>(int(filament_id), 1) - 1));
                     // A role width left at 0 falls back to the object's line_width, exactly as
@@ -4946,6 +5099,14 @@ static void chameleon_assign_support_interfaces(Print &print)
 }
 
 // Slicing process, running at a background thread.
+void Print::process_perimeters_only(PrintObject &object)
+{
+    assert(object.print() == this);
+    name_tbb_thread_pool_threads_set_locale();
+    object.clear_shared_object();
+    object.make_perimeters();
+}
+
 void Print::process(long long *time_cost_with_cache, bool use_cache)
 {
     long long start_time = 0, end_time = 0;
@@ -5182,6 +5343,20 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
     // in ToolOrdering.cpp reads SupportLayer::interface_by_extruder at ctor time, so it
     // must already be populated by the time psWipeTower constructs the tool ordering.
     chameleon_assign_support_interfaces(*this);
+
+    // Dual-nozzle (H2D / H2C / X2D): tell the filament grouping which filaments each nozzle cannot reach
+    // (something it prints lies in the strip only the other nozzle reaches, or above its own height limit),
+    // so an automatic grouping never assigns a filament to a nozzle that would have to leave its reach.
+    // Cheap no-op (empty sets) for single-nozzle machines and the U1, which declare no extruder areas.
+    {
+        std::vector<std::set<int>> geometric_unprintables(m_config.nozzle_diameter.size());
+        for (PrintObject *obj : m_objects) {
+            const std::vector<std::set<int>> object_unprintables = obj->detect_extruder_geometric_unprintables();
+            for (size_t idx = 0; idx < object_unprintables.size() && idx < geometric_unprintables.size(); ++idx)
+                geometric_unprintables[idx].insert(object_unprintables[idx].begin(), object_unprintables[idx].end());
+        }
+        this->set_geometric_unprintable_filaments(geometric_unprintables);
+    }
 
     if (this->set_started(psWipeTower)) {
         m_wipe_tower_data.clear();
@@ -6405,8 +6580,8 @@ std::tuple<float, float> Print::object_skirt_offset(double margin_height) const
         object_skirt_offset = config().skirt_distance + object_skirt_witdh;
     else if (config().draft_shield == dsEnabled || config().skirt_height * max_layer_height > config().nozzle_height - margin_height)
         object_skirt_offset = config().skirt_distance + line_width;
-    else if (config().skirt_distance + object_skirt_witdh > config().extruder_clearance_radius/2)
-        object_skirt_offset = (config().skirt_distance + object_skirt_witdh - config().extruder_clearance_radius/2);
+    else if (config().skirt_distance + object_skirt_witdh > sequential_clearance_radius(config()) / 2)
+        object_skirt_offset = (config().skirt_distance + object_skirt_witdh - sequential_clearance_radius(config()) / 2);
     else
         return std::make_tuple(0, 0);
 

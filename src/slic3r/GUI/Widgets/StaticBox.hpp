@@ -39,7 +39,17 @@ public:
 
     static wxColor GetParentBackgroundColor(wxWindow * parent);
 
+    // The active UI theme's corner radii in DIP (GUI/Theme.cpp); -1 keeps each control's own.
+    // Square controls stay square and round ones stay round.
+    static void SetThemeRadius(int button_dip, int box_dip);
+
 protected:
+    // Whether the theme's button radius (rather than its box radius) applies.
+    virtual bool IsThemeButton() const { return false; }
+
+    // The corner radius drawn: `radius`, or the theme's.
+    double drawn_radius() const;
+
     void eraseEvent(wxEraseEvent& evt);
 
     void paintEvent(wxPaintEvent& evt);

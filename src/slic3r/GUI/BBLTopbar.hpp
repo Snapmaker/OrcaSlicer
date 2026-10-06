@@ -18,6 +18,8 @@ public:
     ~BBLTopbar();
     void UpdateToolbarWidth(int width);
     void Rescale();
+    // The UI theme changed (GUI_App::apply_theme_live): forget the scaled banner, remake the icons, redraw.
+    void ThemeChanged();
     void OnIconize(wxAuiToolBarEvent& event);
     void OnFullScreen(wxAuiToolBarEvent& event);
     void OnCloseFrame(wxAuiToolBarEvent& event);
@@ -58,6 +60,10 @@ public:
 
     void ShowCalibrationButton(bool show = true);
 
+    // Shows the Account button's text in the theme's warning colour (yellow) with `tooltip`, or
+    // normally when `warn` is false. Called by GUI/AccountStatus.cpp.
+    void SetAccountWarning(bool warn, const wxString& tooltip);
+
 private:
     wxFrame* m_frame;
     wxAuiToolBarItem* m_file_menu_item;
@@ -69,7 +75,7 @@ private:
     wxMenu m_calib_menu;
     wxMenu m_account_menu;   // Ultra: contextual per-brand account menu
     wxAuiToolBarItem* m_title_item;
-    wxAuiToolBarItem* m_account_item;
+    wxAuiToolBarItem* m_account_item{nullptr};
     wxAuiToolBarItem* m_model_store_item;
     
     wxAuiToolBarItem *m_publish_item;

@@ -1,6 +1,8 @@
 #include "ReLoginDialog.hpp"
 #include "slic3r/GUI/I18N.hpp"
 
+#include <boost/filesystem.hpp>
+#include <boost/log/trivial.hpp>
 #include "libslic3r/Utils.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"

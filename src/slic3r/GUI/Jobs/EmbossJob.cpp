@@ -9,6 +9,10 @@
 #include <libslic3r/CutSurface.hpp> // use surface cuts
 #include <libslic3r/BuildVolume.hpp> // create object
 #include <libslic3r/SLA/ReprojectPointsOnMesh.hpp>
+#include <libslic3r/CodeEmboss.hpp> // parts of code are not projected onto each other
+#include <libslic3r/EmbossBend.hpp>
+#include <libslic3r/ClipperUtils.hpp> // union_ex
+#include <libslic3r/EmbossBendSurface.hpp> // curved text letter by letter on the surface
 
 #include "libslic3r/libslic3r.h"
 #include "slic3r/GUI/Plater.hpp"
@@ -154,6 +158,53 @@ public:
 };
 
 /// <summary>
+/// Hold neccessary data to create more volumes at once (e.g. parts of QR code)
+/// </summary>
+struct DataCreateVolumes
+{
+    CreateVolumeParts parts;
+
+    // Object where to add volumes, invalid means create new object
+    ObjectID object_id;
+
+    // Transformation of volumes inside of object,
+    // when not set volumes are placed near the object
+    std::optional<Transform3d> trmat;
+
+    // Source meshes to project volumes on surface
+    SurfaceVolumeData::ModelSources sources;
+
+    // To place new object on the bed
+    Vec2d              screen_coor;
+    Camera             camera;
+    std::vector<Vec2d> bed_shape;
+    std::string        object_name;
+
+    // Define which gizmo open on the success
+    GLGizmosManager::EType gizmo;
+};
+
+/// <summary>
+/// Create more volumes with same transformation in one undo/redo step
+/// </summary>
+class CreateVolumesJob : public Job
+{
+    DataCreateVolumes         m_input;
+    std::vector<TriangleMesh> m_results;
+    // Transformation of instance for new object
+    Transform3d m_object_tr = Transform3d::Identity();
+
+public:
+    explicit CreateVolumesJob(DataCreateVolumes &&input) : m_input(std::move(input)) {}
+    void process(Ctl &ctl) override;
+    void finalize(bool canceled, std::exception_ptr &eptr) override;
+
+private:
+    void add_to_object(ModelObject &object, size_t object_idx);
+    void create_object();
+};
+
+/// <summary>
 /// Assert check of inputs data
 /// </summary>
 bool check(const DataBase &input, bool check_fontfile = true, bool use_surface = false);
@@ -248,11 +299,13 @@ TriangleMesh cut_surface(/*const*/ DataBase &input1, const SurfaceVolumeData &in
 /// Copied triangles from object to be able create mesh for cut surface from
 /// </summary>
 /// <param name="volumes">Source object volumes for cut surface from</param>
-/// <param name="text_volume_id">Source volume id</param>
+/// <param name="skip_volume_ids">Volumes which are not used as source e.g. edited text volume</param>
 /// <returns>Source data for cut surface from</returns>
-SurfaceVolumeData::ModelSources create_sources(const ModelVolumePtrs &volumes, std::optional<size_t> text_volume_id = {});
+SurfaceVolumeData::ModelSources create_sources(const ModelVolumePtrs &volumes, const std::vector<size_t> &skip_volume_ids = {});
 
 void create_message(const std::string &message); // only in finalize
+// non modal, for failures during live preview (only in finalize)
+void create_notification(const std::string &message);
 bool process(std::exception_ptr &eptr);
 bool finalize(bool canceled, std::exception_ptr &eptr, const DataBase &input);
 
@@ -492,9 +545,192 @@ void UpdateSurfaceVolumeJob::finalize(bool canceled, std::exception_ptr &eptr)
     if (!::finalize(canceled, eptr, *m_input.base))
         return;
 
+    // curved text letter by letter: the reference curve for the gizmo overlay
+    if (m_input.base->bend_preview_out != nullptr)
+        *m_input.base->bend_preview_out = m_input.base->bend_preview;
+
     // when start using surface it is wanted to move text origin on surface of model
     // also when repeteadly move above surface result position should match
     ::update_volume(std::move(m_result), m_input, &m_input.transform);
+}
+
+/////////////////
+/// Create more volumes at once
+void CreateVolumesJob::process(Ctl &ctl)
+{
+    if (m_input.parts.empty())
+        throw JobException("Nothing to create.");
+    m_results.clear();
+    for (CreateVolumePart &part : m_input.parts) {
+        DataBase &base         = *part.base;
+        auto      was_canceled = ::was_canceled(ctl, base);
+        bool     &use_surface  = base.shape.projection.use_surface;
+        if (!m_input.object_id.valid() || !m_input.trmat.has_value() || m_input.sources.empty())
+            use_surface = false;
+
+        TriangleMesh mesh;
+        if (use_surface) {
+            SurfaceVolumeData surface{*m_input.trmat, m_input.sources};
+            try {
+                mesh = cut_surface(base, surface, was_canceled);
+            } catch (const JobException &) {
+                // e.g. part is out of the surface, emboss it at least flat
+                use_surface = false;
+            }
+        }
+        if (was_canceled())
+            return;
+        if (!use_surface)
+            mesh = try_create_mesh(base, was_canceled);
+        if (was_canceled())
+            return;
+        if (mesh.its.empty())
+            throw JobException(_u8L("Can't create empty volume.").c_str());
+        m_results.push_back(std::move(mesh));
+    }
+
+    if (m_input.object_id.valid())
+        return;
+
+    // New object is placed on the bed under the screen coordinate
+    Vec2d   bed_coor = CameraUtils::get_z0_position(m_input.camera, m_input.screen_coor);
+    Points  bed_shape_;
+    bed_shape_.reserve(m_input.bed_shape.size());
+    for (const Vec2d &p : m_input.bed_shape)
+        bed_shape_.emplace_back(p.cast<coord_t>());
+    Slic3r::Polygon bed(bed_shape_);
+    if (!bed.contains(bed_coor.cast<coord_t>()))
+        bed_coor = bed.centroid().cast<double>();
+    m_object_tr = Transform3d(Eigen::Translation<double, 3>(bed_coor.x(), bed_coor.y(), 0.));
+}
+
+void CreateVolumesJob::finalize(bool canceled, std::exception_ptr &eptr)
+{
+    if (m_input.parts.empty()) {
+        ::process(eptr); // report and clear, never rethrow
+        return;
+    }
+    if (!::finalize(canceled, eptr, *m_input.parts.front().base))
+        return;
+    if (m_results.size() != m_input.parts.size())
+        return; // canceled in the middle
+
+    if (!m_input.object_id.valid())
+        return create_object();
+
+    Plater          *plater  = wxGetApp().plater();
+    ModelObjectPtrs &objects = plater->model().objects;
+    for (size_t object_idx = 0; object_idx < objects.size(); ++object_idx)
+        if (objects[object_idx]->id() == m_input.object_id)
+            return add_to_object(*objects[object_idx], object_idx);
+
+    // Parent object was probably removed meanwhile
+    create_message("Bad object to create volume.");
+}
+
+void CreateVolumesJob::add_to_object(ModelObject &object, size_t object_idx)
+{
+    GUI_App    &app      = wxGetApp();
+    Plater     *plater   = app.plater();
+    ObjectList *obj_list = app.obj_list();
+    GLCanvas3D *canvas   = plater->get_view3D_canvas3D();
+
+    // TRN: This is the title of the action appearing in undo/redo stack.
+    plater->take_snapshot(_u8L("Add embossed parts"));
+
+    Transform3d volume_trmat;
+    if (m_input.trmat.has_value()) {
+        volume_trmat = *m_input.trmat;
+    } else {
+        // Same as create_volume: under the object, lay on bed
+        BoundingBoxf3 instance_bb   = object.instance_bounding_box(0);
+        Vec3d         volume_size   = m_results.front().bounding_box().size();
+        Vec3d         offset_tr(0, -instance_bb.size().y() / 2 - volume_size.y() / 2, volume_size.z() / 2 - instance_bb.size().z() / 2);
+        Transform3d   tr = object.instances.front()->get_transformation().get_matrix_no_offset().inverse();
+        volume_trmat     = tr * Eigen::Translation3d(offset_tr);
+    }
+
+    bool                     has_model_part = false;
+    std::vector<ModelVolume *> created;
+    for (size_t i = 0; i < m_input.parts.size(); ++i) {
+        const CreateVolumePart &part = m_input.parts[i];
+        // do not center geometry, all volumes have to share the same origin
+        ModelVolume *volume = object.add_volume(std::move(m_results[i]), part.volume_type, false);
+        volume->calculate_convex_hull();
+        volume->config.set_key_value("extruder", new ConfigOptionInt(part.extruder));
+        volume->source.is_from_builtin_objects = true; // do not allow model reload from disk
+        volume->set_transformation(volume_trmat);
+        part.base->write(*volume);
+        has_model_part |= part.volume_type == ModelVolumeType::MODEL_PART;
+        created.push_back(volume);
+    }
+    object.invalidate_bounding_box();
+
+    if (has_model_part) {
+        object.ensure_on_bed();
+        canvas->update_instance_printable_state_for_object(object_idx);
+    }
+
+    const ModelVolume *first  = created.front();
+    auto add_to_selection     = [first](const ModelVolume *vol) { return vol == first; };
+    wxDataViewItemArray sel   = obj_list->reorder_volumes_and_get_selection(int(object_idx), add_to_selection);
+    if (!sel.IsEmpty())
+        obj_list->select_item(sel.front());
+    obj_list->selection_changed();
+
+    if (first->type() == ModelVolumeType::PARAMETER_MODIFIER)
+        obj_list->switch_to_object_process();
+
+    GLGizmosManager &manager = canvas->get_gizmos_manager();
+    if (manager.get_current_type() != m_input.gizmo)
+        manager.open_gizmo(m_input.gizmo);
+    plater->update();
+}
+
+void CreateVolumesJob::create_object()
+{
+    GUI_App &app    = wxGetApp();
+    Plater  *plater = app.plater();
+    // TRN: This is the title of the action appearing in undo/redo stack.
+    plater->take_snapshot(_u8L("Add embossed object"));
+
+    Model       &model      = plater->model();
+    ModelObject *new_object = model.add_object();
+    new_object->name        = m_input.object_name;
+    new_object->add_instance();
+    ModelVolume *first = nullptr;
+    for (size_t i = 0; i < m_input.parts.size(); ++i) {
+        const CreateVolumePart &part = m_input.parts[i];
+        // Object without model part is not valid
+        ModelVolumeType type   = ModelVolumeType::MODEL_PART;
+        ModelVolume    *volume = new_object->add_volume(std::move(m_results[i]), type, false);
+        volume->calculate_convex_hull();
+        volume->config.set_key_value("extruder", new ConfigOptionInt(part.extruder));
+        part.base->write(*volume);
+        if (first == nullptr)
+            first = volume;
+    }
+    new_object->invalidate_bounding_box();
+    new_object->instances.front()->set_transformation(Slic3r::Geometry::Transformation(m_object_tr));
+    new_object->ensure_on_bed();
+    model.InitializeAssemblyPositions({new_object});
+
+    size_t      object_idx = model.objects.size() - 1;
+    ObjectList *obj_list   = app.obj_list();
+    obj_list->paste_objects_into_list({object_idx});
+
+    // Gizmo edit only one volume, select the first one
+    auto add_to_selection   = [first](const ModelVolume *vol) { return vol == first; };
+    wxDataViewItemArray sel = obj_list->reorder_volumes_and_get_selection(int(object_idx), add_to_selection);
+    if (!sel.IsEmpty())
+        obj_list->select_item(sel.front());
+    obj_list->selection_changed();
+
+    GLCanvas3D      *canvas  = plater->get_view3D_canvas3D();
+    GLGizmosManager &manager = canvas->get_gizmos_manager();
+    if (manager.get_current_type() != m_input.gizmo)
+        manager.open_gizmo(m_input.gizmo);
+    canvas->reload_scene(true);
 }
 
 namespace {
@@ -559,11 +795,17 @@ namespace Slic3r::GUI::Emboss {
 
 SurfaceVolumeData::ModelSources create_volume_sources(const ModelVolume &text_volume)
 {
-    const ModelVolumePtrs &volumes = text_volume.get_object()->volumes;
+    const ModelObject     *object  = text_volume.get_object();
+    const ModelVolumePtrs &volumes = object->volumes;
     // no other volume in object
     if (volumes.size() <= 1)
         return {};
-    return ::create_sources(volumes, text_volume.id().id);
+    std::vector<size_t> skip{text_volume.id().id};
+    // Parts of one code (QR, barcode) lay side by side, they must not be projected onto each other
+    if (std::optional<CodeEmbossMeta> meta = read_code_emboss_meta(text_volume); meta.has_value())
+        for (const ModelVolume *v : get_code_volumes(*object, meta->params.group_id))
+            skip.push_back(v->id().id);
+    return ::create_sources(volumes, skip);
 }
 
 bool start_create_volume(CreateVolumeParams &input, DataBasePtr data, const Vec2d &mouse_pos)
@@ -613,6 +855,62 @@ bool start_create_volume_without_position(CreateVolumeParams &input, DataBasePtr
     
     bool try_no_coor = false;
     return ::start_create_volume_on_surface_job(input, std::move(data), coor, try_no_coor);
+}
+
+bool start_create_volumes(CreateVolumeParams &input, CreateVolumeParts &&parts, const std::optional<Vec2d> &mouse_pos, const std::string &object_name)
+{
+    if (parts.empty() || !check(input))
+        return false;
+    for (const CreateVolumePart &part : parts)
+        if (part.base == nullptr || !is_valid(part.volume_type))
+            return false;
+
+    const Selection       &selection = input.canvas.get_selection();
+    const ModelObjectPtrs &objects   = selection.get_model()->objects;
+    Size                   s         = input.canvas.get_canvas_size();
+    Vec2d                  screen_center(s.get_width() / 2., s.get_height() / 2.);
+
+    DataCreateVolumes data;
+    data.gizmo       = static_cast<GLGizmosManager::EType>(input.gizmo);
+    data.object_name = object_name;
+    data.camera      = input.camera;
+    data.bed_shape   = input.build_volume.printable_area();
+    data.screen_coor = mouse_pos.value_or(screen_center);
+
+    // Find the object for the volumes, same as start_create_volume(_without_position)
+    const GLVolume *gl_volume = mouse_pos.has_value() ? input.gl_volume : nullptr;
+    Vec2d           coor      = data.screen_coor;
+    if (gl_volume == nullptr && !mouse_pos.has_value()) {
+        int object_idx = selection.get_object_idx();
+        if (!selection.is_empty() && object_idx >= 0 && static_cast<size_t>(object_idx) < objects.size())
+            gl_volume = ::find_closest(selection, screen_center, input.camera, objects, &coor);
+    }
+
+    const ModelVolume   *volume   = gl_volume != nullptr ? get_model_volume(*gl_volume, objects) : nullptr;
+    const ModelInstance *instance = gl_volume != nullptr ? get_model_instance(*gl_volume, objects) : nullptr;
+    if (volume != nullptr && instance != nullptr && volume->get_object() != nullptr) {
+        const ModelObject *object = volume->get_object();
+        data.object_id            = object->id();
+
+        auto                   cond   = RaycastManager::AllowVolumes({volume->id().id});
+        RaycastManager::Meshes meshes = create_meshes(input.canvas, cond);
+        input.raycaster.actualize(*instance, &cond, &meshes);
+        std::optional<RaycastManager::Hit> hit = ray_from_camera(input.raycaster, coor, input.camera, &cond);
+        if (hit.has_value()) {
+            Transform3d surface_trmat = create_transformation_onto_surface(hit->position, hit->normal, UP_LIMIT);
+            apply_transformation(input.angle, input.distance, surface_trmat);
+            data.trmat = instance->get_matrix().inverse() * surface_trmat;
+        }
+        // Surface is copied before any of new volumes exist, so they are not projected onto each other
+        bool use_surface = std::any_of(parts.begin(), parts.end(),
+                                       [](const CreateVolumePart &p) { return p.base->shape.projection.use_surface; });
+        if (use_surface && data.trmat.has_value())
+            data.sources = create_sources(object->volumes);
+    }
+
+    data.parts = std::move(parts);
+    auto job   = std::make_unique<CreateVolumesJob>(std::move(data));
+    return queue_job(input.worker, std::move(job));
 }
 
 #ifdef EXECUTE_UPDATE_ON_MAIN_THREAD
@@ -1358,12 +1656,73 @@ TriangleMesh cut_per_glyph_surface(DataBase &input1, const SurfaceVolumeData &in
     return TriangleMesh(std::move(result));
 }
 
+
+// Curved text letter by letter: every glyph gets its own frame on the surface (EmbossBendSurface.hpp)
+// and is projected along its own normal, like per glyph text along a section.
+TriangleMesh cut_curved_glyph_surface(DataBase &input1, const SurfaceVolumeData &input2, std::function<bool()> was_canceled)
+{
+    using namespace Slic3r::Emboss;
+    const EmbossShape &es = input1.create_shape();
+    if (was_canceled()) return {};
+    if (es.shapes_with_ids.empty())
+        throw JobException(_u8L("Font doesn't have any shape for given text.").c_str());
+
+    const ExPolygonsWithIds &shapes   = es.shapes_with_ids;
+    const GlyphAdvances     *advances = input1.bend_advances.size() == shapes.size() ? &input1.bend_advances : nullptr;
+    const EmbossBend        &bend     = es.projection.bend;
+    const double             scale    = es.scale;
+    std::optional<SurfaceGlyphLayout> layout = surface_glyph_layout(shapes, advances, bend, scale);
+    if (!layout.has_value())
+        throw JobException(_u8L("Font doesn't have any shape for given text.").c_str());
+
+    // the surface in text coordinates
+    const Transform3d text_inv = input2.transform.inverse();
+    indexed_triangle_set surface_its;
+    for (const SurfaceVolumeData::ModelSource &source : input2.sources) {
+        indexed_triangle_set its = source.mesh->its; // copy
+        its_transform(its, text_inv * source.tr, true);
+        its_merge(surface_its, std::move(its));
+    }
+    if (was_canceled()) return {};
+    BendSurface surface(std::move(surface_its));
+    if (surface.empty())
+        throw JobException(_u8L("There is no valid surface for text projection.").c_str());
+    // text on the inside of a shell (cup, bowl) faces against the normals
+    if (std::optional<BendSurface::Point> o = surface.closest(Vec3d::Zero()); o.has_value() && o->normal.z() < 0.)
+        surface.set_flip_normals(true);
+
+    SurfaceArc arc = place_on_surface_arc(surface, layout->pivots_mm, layout->x_min, layout->x_max, layout->params);
+    input1.bend_preview = arc.preview;
+    if (was_canceled()) return {};
+
+    indexed_triangle_set result;
+    for (size_t i = 0; i < shapes.size(); ++i) {
+        if (shapes[i].expoly.empty() || !arc.frames[i].has_value())
+            continue;
+        ExPolygons glyph = surface_glyph_shape(shapes[i].expoly, layout->pivots[i], arc.curvature_radius[i], bend, scale);
+        if (glyph.empty())
+            continue;
+        const Transform3d &frame = *arc.frames[i];
+        indexed_triangle_set glyph_its = cut_surface_to_its(glyph, input2.transform * frame, input2.sources, input1, was_canceled);
+        its_transform(glyph_its, frame);
+        its_merge(result, std::move(glyph_its));
+        if (was_canceled())
+            return {};
+    }
+    if (result.empty())
+        throw JobException(_u8L("There is no valid surface for text projection.").c_str());
+    return TriangleMesh(std::move(result));
+}
+
 // input can't be const - cache of font
 template<typename Fnc>
 TriangleMesh cut_surface(DataBase& input1, const SurfaceVolumeData& input2, const Fnc& was_canceled)
 {
     if (!input1.text_lines.empty())
         return cut_per_glyph_surface(input1, input2, was_canceled);
+    input1.create_shape(); // decides about the curved letter by letter placement
+    if (input1.bend_per_glyph)
+        return cut_curved_glyph_surface(input1, input2, was_canceled);
     
     ExPolygons shapes = create_shape(input1, was_canceled);
     if (was_canceled()) return {};
@@ -1378,12 +1737,12 @@ TriangleMesh cut_surface(DataBase& input1, const SurfaceVolumeData& input2, cons
     return TriangleMesh(std::move(its));
 }
 
-SurfaceVolumeData::ModelSources create_sources(const ModelVolumePtrs &volumes, std::optional<size_t> text_volume_id)
+SurfaceVolumeData::ModelSources create_sources(const ModelVolumePtrs &volumes, const std::vector<size_t> &skip_volume_ids)
 {
     SurfaceVolumeData::ModelSources result;
-    result.reserve(volumes.size() - 1);
+    result.reserve(volumes.size());
     for (const ModelVolume *v : volumes) {
-        if (text_volume_id.has_value() && v->id().id == *text_volume_id)
+        if (std::find(skip_volume_ids.begin(), skip_volume_ids.end(), v->id().id) != skip_volume_ids.end())
             continue;
         // skip modifiers and negative volumes, ...
         if (!v->is_model_part())
@@ -1406,8 +1765,17 @@ bool process(std::exception_ptr &eptr)
         std::rethrow_exception(eptr);
     } catch (JobException &e) {
         create_message(e.what());
-        eptr = nullptr;
+    } catch (const std::exception &e) {
+        // A geometry kernel failure (e.g. CGAL on degenerate outlines) must never take the application
+        // down, least of all during a slider drag: report it, the volume keeps its previous mesh.
+        BOOST_LOG_TRIVIAL(error) << "Emboss job failed: " << e.what();
+        create_notification(GUI::format(_u8L("The text could not be updated (%1%). The previous shape is kept."), e.what()));
+    } catch (...) {
+        BOOST_LOG_TRIVIAL(error) << "Emboss job failed with an unknown exception";
+        create_notification(_u8L("The text could not be updated. The previous shape is kept."));
     }
+    // handled here, nothing is passed on to the worker / main loop
+    eptr = nullptr;
     return true;
 }
 
@@ -1586,6 +1954,15 @@ bool start_create_volume_on_surface_job(CreateVolumeParams &input, DataBasePtr d
 
 void create_message(const std::string &message) {
     show_error(nullptr, message.c_str());
+}
+
+void create_notification(const std::string &message)
+{
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr || plater->get_notification_manager() == nullptr)
+        return;
+    plater->get_notification_manager()->push_notification(NotificationType::CustomNotification,
+                                                          NotificationManager::NotificationLevel::WarningNotificationLevel, message);
 }
 
 } // namespace

@@ -1,5 +1,6 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/InstanceLock.hpp"
 #include "AppConfig.hpp"
 //BBS
 #include "Preset.hpp"
@@ -9,6 +10,7 @@
 #include "format.hpp"
 #include "nlohmann/json.hpp"
 
+#include <sstream>
 #include <utility>
 #include <vector>
 #include <stdexcept>
@@ -131,6 +133,9 @@ void AppConfig::set_defaults()
             set_bool("associate_stl", false);
         if (get("associate_step").empty())
             set_bool("associate_step", false);
+        // Home > Models (the in-app model browser), beta: on by default while the owner tests it.
+        if (get("model_browser_beta").empty())
+            set_bool("model_browser_beta", true);
 
 #endif // _WIN32
 
@@ -295,11 +300,19 @@ void AppConfig::set_defaults()
     // works regardless. Preferences > General.
     if (get("check_for_updates_on_startup").empty())
         set_bool("check_for_updates_on_startup", true);
+    // Which builds that check offers: "stable" (releases) or "nightly" (the nightly pre-release,
+    // docs/nightly.md). Preferences > General > Update channel.
+    if (get("update_channel").empty())
+        set("update_channel", "stable");
 
     // Sign back in to the Snapmaker account at startup from the web view's saved session, without
     // showing anything (GUI_App::sm_start_silent_login). Preferences > General.
     if (get("snapmaker_auto_login").empty())
         set_bool("snapmaker_auto_login", true);
+    // ... but only once somebody has signed in on this computer (SnapmakerSilentLogin.hpp,
+    // k_session_key). Until then, and after signing out, startup does not contact Snapmaker.
+    if (get("snapmaker_signed_in").empty())
+        set_bool("snapmaker_signed_in", false);
 
 
     // Orca
@@ -333,6 +346,10 @@ void AppConfig::set_defaults()
 
     if (get("remember_printer_config").empty()) {
         set_bool("remember_printer_config", true);
+    }
+
+    if (get("remember_print_action").empty()) {
+        set_bool("remember_print_action", false);
     }
 
     if (get("auto_calculate_when_filament_change").empty()){
@@ -452,11 +469,27 @@ void AppConfig::set_defaults()
         set_bool("hide_other_plates_on_move", false);
     }
 
+    // Move gizmo, Align row: which point of the moved item goes to the target, per axis
+    // (auto | center | min | max). Auto = the same side as the button, as it always was.
+    // Align selected anchor: last | first | none (a specific item is never stored).
+    if (get("align_anchor_mode").empty())
+        set("align_anchor_mode", "last");
+    for (const char* key : {"align_origin_x", "align_origin_y", "align_origin_z"}) {
+        if (get(key).empty())
+            set(key, "auto");
+    }
+
     // Print-by-object advisory notices (the yellow "suggest auto-arrange" warning and the
     // pre-slice U1 caution). Both are informational, not slicing errors; default on, and
     // each has its own "Do not show again" link that clears this same key.
     if (get("show_print_by_object_caution").empty()) {
         set_bool("show_print_by_object_caution", true);
+    }
+
+    // Slicing "Memory Usage Warning" dialog (PrintBase memory guard). On by default; the dialog's
+    // "Don't ask again" box and Preferences > General switch it off.
+    if (get("warn_low_memory_slicing").empty()) {
+        set_bool("warn_low_memory_slicing", true);
     }
 
     if (get("auto_shadow_system_presets").empty()) {
@@ -805,6 +838,8 @@ std::string AppConfig::load()
                         local_machine.dev_placement = p["dev_placement"].get<std::string>();
                     if (p.contains("dev_pid"))
                         local_machine.dev_pid = p["dev_pid"].get<std::string>();
+                    if (p.contains("dev_port"))
+                        local_machine.dev_port = p["dev_port"].get<std::string>();
                     m_local_machines[local_machine.dev_id] = local_machine;
                 }
             } else {
@@ -876,16 +911,47 @@ std::string AppConfig::load()
         }
     }
 
+    // The installed printers as the file holds them: the base the next save() merges against.
+    m_vendors_on_disk = m_vendors;
+
     // Override missing or keys with their defaults.
     this->set_defaults();
     m_dirty = false;
     return "";
 }
 
+AppConfig::VendorMap AppConfig::merge_vendor_maps(const VendorMap &base, const VendorMap &mine, const VendorMap &disk)
+{
+    auto has = [](const VendorMap &m, const std::string &vendor, const std::string &model, const std::string &variant) {
+        const auto it_v = m.find(vendor);
+        if (it_v == m.end()) return false;
+        const auto it_m = it_v->second.find(model);
+        return it_m != it_v->second.end() && it_m->second.count(variant) > 0;
+    };
+    VendorMap out;
+    // Every variant either side holds now; what only `base` holds was dropped by both and stays out.
+    auto visit = [&](const VendorMap &side, const VendorMap &other) {
+        for (const auto &v : side)
+            for (const auto &m : v.second)
+                for (const std::string &variant : m.second) {
+                    const bool in_other = has(other, v.first, m.first, variant);
+                    // Both have it: keep. Only this side has it: keep it if this side added it
+                    // (base lacks it), drop it if the other side removed it (base has it).
+                    if (in_other || !has(base, v.first, m.first, variant))
+                        out[v.first][m.first].insert(variant);
+                }
+    };
+    visit(mine, disk);
+    visit(disk, mine);
+    return out;
+}
+
 // Ultra: several slicer instances share this file (the hub keeps them alive for the phone) and
 // whichever saved last used to win, so a printer added, a project opened or presets chosen in one
-// window vanished when another window saved its stale copy. These sections only ever grow, so
-// before writing we union what is on disk into what this instance knows.
+// window vanished when another window saved its stale copy. Before writing, fold in what is on disk:
+// recent projects and per-project presets are unioned; installed printer models are merged three
+// ways against what this instance last read or wrote (merge_vendor_maps), because they also
+// shrink - a plain union brought back every printer unticked in the Printer Selection dialog.
 void AppConfig::merge_shared_from_disk(const std::string& path)
 {
     json j;
@@ -902,17 +968,21 @@ void AppConfig::merge_shared_from_disk(const std::string& path)
         return; // unreadable or corrupt: write what this instance knows, as before
     }
     try {
-        // Installed printer models.
+        // Installed printer models. A file without the list (none written yet) leaves ours alone.
         if (j.contains(MODELS_STR) && j[MODELS_STR].is_array()) {
+            VendorMap disk;
             for (const auto& j_model : j[MODELS_STR]) {
+                if (!j_model.is_object()) continue;
                 const std::string vendor_name = j_model.value("vendor", "");
                 const std::string model_name  = j_model.value("model", "");
                 if (vendor_name.empty() || model_name.empty()) continue;
                 std::vector<std::string> variants;
-                if (!j_model.contains("nozzle_diameter") || !unescape_strings_cstyle(j_model["nozzle_diameter"].get<std::string>(), variants)) continue;
-                auto& variants_here = m_vendors[vendor_name][model_name];
-                for (const auto& v : variants) variants_here.insert(v);
+                if (!j_model.contains("nozzle_diameter") || !j_model["nozzle_diameter"].is_string() ||
+                    !unescape_strings_cstyle(j_model["nozzle_diameter"].get<std::string>(), variants)) continue;
+                auto& variants_there = disk[vendor_name][model_name];
+                for (const auto& v : variants) variants_there.insert(v);
             }
+            m_vendors = merge_vendor_maps(m_vendors_on_disk, m_vendors, disk);
         }
         // Recent projects: entries on disk that this window does not know were opened by another
         // window after this one loaded the file, so they are newer and go first; this window's own
@@ -951,10 +1021,17 @@ void AppConfig::save()
     if (! is_main_thread_active())
         throw CriticalException("Calling AppConfig::save() from a worker thread!");
 
-    // The config is first written to a file with a PID suffix and then moved
-    // to avoid race conditions with multiple instances of Slic3r
+    // Best-effort cross-instance lock (upstream Orca #15861), held from the
+    // merge_shared_from_disk() read to the last write so two instances'
+    // read-merge-write cycles do not interleave. Never refuses: if another
+    // instance holds it past the timeout this logs and saves anyway.
+    InstanceLock instance_lock(lock_path());
+
+    // Serialized first, then written through a unique temp file and renamed
+    // so a crash or a concurrent reader never sees a half-written config.
+    // Not flushed to the device (no fsync): the idle handler saves on the GUI
+    // thread after any change, and the rename already gives a complete old or new file.
     const auto path = config_path();
-    std::string path_pid = (boost::format("%1%.%2%") % path % get_current_pid()).str();
 
     json j;
 
@@ -1093,39 +1170,39 @@ void AppConfig::save()
             m_json["dev_placement"] = local_machine.second.dev_placement;
         if (!local_machine.second.dev_pid.empty())
             m_json["dev_pid"]       = local_machine.second.dev_pid;
+        if (!local_machine.second.dev_port.empty())
+            m_json["dev_port"]      = local_machine.second.dev_port;
 
         j["local_machines"][local_machine.first] = m_json;
     }
-    boost::nowide::ofstream c;
-    c.open(path_pid, std::ios::out | std::ios::trunc);
-    c << std::setw(4) << j << std::endl;
-
+    std::ostringstream body;
+    body << std::setw(4) << j << std::endl;
 #ifdef WIN32
-    // WIN32 specific: The final "rename_file()" call is not safe in case of an application crash, there is no atomic "rename file" API
+    // WIN32 specific: the final replace is not safe in case of an application crash, there is no atomic "rename file" API
     // provided by Windows (sic!). Therefore we save a MD5 checksum to be able to verify file corruption. In addition,
-    // we save the config file into a backup first before moving it to the final destination.
-    c << appconfig_md5_hash_line(j.dump(4));
+    // we save the config file into a backup after the main write is confirmed.
+    body << appconfig_md5_hash_line(j.dump(4));
 #endif
 
-    c.close();
-    if (c.fail()) {
-      BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path_pid << "; aborting attempt to overwrite original configuration";
-      return;
+    std::string err;
+    if (!write_file_atomically(path, body.str(), &err)) {
+        BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path << ": " << err
+                                 << "; aborting attempt to overwrite original configuration";
+        m_retry_save_at = std::chrono::steady_clock::now() + SAVE_RETRY_BACKOFF;
+        return;
     }
 
 #ifdef WIN32
-    // Make a backup of the configuration file before copying it to the final destination.
-    std::string error_message;
+    // Written after the config, so the backup never holds a state that was not confirmed written.
+    std::string backup_err;
     std::string backup_path = (boost::format("%1%.bak") % path).str();
-    // Copy configuration file with PID suffix into the configuration file with "bak" suffix.
-    if (copy_file(path_pid, backup_path, error_message, false) != SUCCESS)
-        BOOST_LOG_TRIVIAL(error) << "Copying from " << path_pid << " to " << backup_path << " failed. Failed to create a backup configuration.";
+    if (!write_file_atomically(backup_path, body.str(), &backup_err))
+        BOOST_LOG_TRIVIAL(error) << "Writing backup configuration to " << backup_path << " failed: " << backup_err;
 #endif
 
-    // Rename the config atomically.
-    // On Windows, the rename is likely NOT atomic, thus it may fail if PrusaSlicer crashes on another thread in the meanwhile.
-    // To cope with that, we already made a backup of the config on Windows.
-    rename_file(path_pid, path);
+    // The file now holds exactly m_vendors: the base for the next three-way merge.
+    m_vendors_on_disk = m_vendors;
+    m_retry_save_at = {};
     m_dirty = false;
 }
 
@@ -1267,10 +1344,17 @@ void AppConfig::save()
     if (! is_main_thread_active())
         throw CriticalException("Calling AppConfig::save() from a worker thread!");
 
-    // The config is first written to a file with a PID suffix and then moved
-    // to avoid race conditions with multiple instances of Slic3r
+    // Best-effort cross-instance lock (upstream Orca #15861), held from the
+    // merge_shared_from_disk() read to the last write so two instances'
+    // read-merge-write cycles do not interleave. Never refuses: if another
+    // instance holds it past the timeout this logs and saves anyway.
+    InstanceLock instance_lock(lock_path());
+
+    // Serialized first, then written through a unique temp file and renamed
+    // so a crash or a concurrent reader never sees a half-written config.
+    // Not flushed to the device (no fsync): the idle handler saves on the GUI
+    // thread after any change, and the rename already gives a complete old or new file.
     const auto path = config_path();
-    std::string path_pid = (boost::format("%1%.%2%") % path % get_current_pid()).str();
 
     std::stringstream config_ss;
     if (m_mode == EAppMode::Editor)
@@ -1307,34 +1391,30 @@ void AppConfig::save()
     config_ss << std::endl;
 
     std::string config_str = config_ss.str();
-    boost::nowide::ofstream c;
-    c.open(path_pid, std::ios::out | std::ios::trunc);
-    c << config_str;
 #ifdef WIN32
-    // WIN32 specific: The final "rename_file()" call is not safe in case of an application crash, there is no atomic "rename file" API
+    // WIN32 specific: the final replace is not safe in case of an application crash, there is no atomic "rename file" API
     // provided by Windows (sic!). Therefore we save a MD5 checksum to be able to verify file corruption. In addition,
-    // we save the config file into a backup first before moving it to the final destination.
-    c << appconfig_md5_hash_line(config_str);
+    // we save the config file into a backup after the main write is confirmed.
+    config_str += appconfig_md5_hash_line(config_ss.str());
 #endif
-    c.close();
-    if (c.fail()) {
-      BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path_pid << "; aborting attempt to overwrite original configuration";
-      return;
+
+    std::string err;
+    if (!write_file_atomically(path, config_str, &err)) {
+        BOOST_LOG_TRIVIAL(error) << "Failed to write new configuration to " << path << ": " << err
+                                 << "; aborting attempt to overwrite original configuration";
+        m_retry_save_at = std::chrono::steady_clock::now() + SAVE_RETRY_BACKOFF;
+        return;
     }
 
 #ifdef WIN32
-    // Make a backup of the configuration file before copying it to the final destination.
-    std::string error_message;
+    // Written after the config, so the backup never holds a state that was not confirmed written.
+    std::string backup_err;
     std::string backup_path = (boost::format("%1%.bak") % path).str();
-    // Copy configuration file with PID suffix into the configuration file with "bak" suffix.
-    if (copy_file(path_pid, backup_path, error_message, false) != SUCCESS)
-        BOOST_LOG_TRIVIAL(error) << "Copying from " << path_pid << " to " << backup_path << " failed. Failed to create a backup configuration.";
+    if (!write_file_atomically(backup_path, config_str, &backup_err))
+        BOOST_LOG_TRIVIAL(error) << "Writing backup configuration to " << backup_path << " failed: " << backup_err;
 #endif
 
-    // Rename the config atomically.
-    // On Windows, the rename is likely NOT atomic, thus it may fail if PrusaSlicer crashes on another thread in the meanwhile.
-    // To cope with that, we already made a backup of the config on Windows.
-    rename_file(path_pid, path);
+    m_retry_save_at = {};
     m_dirty = false;
 }
 #endif
@@ -1594,18 +1674,26 @@ void AppConfig::get_local_mahcines(LocalMacInfo& local_machines)
     local_machines.clear();
     local_machines.reserve(m_local_machines.size());
     for (const auto& [dev_id, machine] : m_local_machines) {
+        // A Bambu LAN printer (no product id) is not ours: this table is shared with the Bambu
+        // Device tab, and listing its rows here put them in the FlashForge grid.
+        if (!machine.is_flashforge())
+            continue;
         MacInfoMap info;
         info.emplace("dev_id", dev_id);
         info.emplace("dev_name", machine.dev_name);
         if (!machine.dev_placement.empty())
             info.emplace("dev_placement", machine.dev_placement);
-        if (!machine.dev_pid.empty())
-            info.emplace("dev_pid", machine.dev_pid);
+        info.emplace("dev_pid", machine.dev_pid);
+        if (!machine.dev_ip.empty())
+            info.emplace("dev_ip", machine.dev_ip);
+        if (!machine.dev_port.empty())
+            info.emplace("dev_port", machine.dev_port);
         local_machines.emplace_back(std::move(info));
     }
 }
 
-void AppConfig::save_bind_machine_to_config(const std::string& dev_id, const std::string& dev_name, const std::string& placement, const unsigned short& pid, bool modifyPlacement)
+void AppConfig::save_bind_machine_to_config(const std::string& dev_id, const std::string& dev_name, const std::string& placement, const unsigned short& pid, bool modifyPlacement,
+                                            const std::string& ip, unsigned short port)
 {
     if (dev_id.empty())
         return;
@@ -1620,6 +1708,10 @@ void AppConfig::save_bind_machine_to_config(const std::string& dev_id, const std
     if (modifyPlacement)
         machine.dev_placement = placement;
     machine.dev_pid = std::to_string(pid);
+    if (!ip.empty())
+        machine.dev_ip = ip;
+    if (port != 0)
+        machine.dev_port = std::to_string(port);
     update_local_machine(machine);
 }
 
@@ -1677,6 +1769,11 @@ void AppConfig::reset_selections()
         it->second.erase("physical_printer");
         m_dirty = true;
     }
+}
+
+std::string AppConfig::lock_path()
+{
+    return Slic3r::data_dir().empty() ? std::string() : config_path() + ".lock";
 }
 
 std::string AppConfig::config_path()

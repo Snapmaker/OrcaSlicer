@@ -4,6 +4,7 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace Slic3r {
 namespace GUI {
@@ -55,7 +56,60 @@ nlohmann::json masked_json();
 // POST /r/<token>/push/device - the app registering its platform push token and the public half
 // of the key pair it made. Idempotent on (platform, token): the app re-registers on every cold
 // launch, because push tokens rotate and no platform reliably tells us when.
+//
+// Three optional per-device fields (notification levels, app phase 1). Absent means the default,
+// so an app version that does not send them - or re-registers without them - gets exactly the
+// behaviour it had before:
+//   "priority_kinds": ["finished", ...]  kinds this device wants at APNs priority 10 / FCM high
+//                                        even when their severity is info (a raise, never a lower)
+//   "all_events": true                   this device receives every kind at every severity, past
+//                                        the hub's own min_severity / kinds filter, because the
+//                                        phone decides how each one is shown (decision D2)
+//   "level_hint": true                   APNs: put a cleartext aps.interruption-level on the
+//                                        priority kinds (the fallback if the app's extension
+//                                        cannot set the level itself)
+// Nothing about printers, schedules or time windows is ever sent: the rules stay on the phone.
+// The answer names what this hub supports under "features", so the app can say when it is older.
 std::pair<int, std::string> register_device(const std::string& body);
+
+// POST /r/<token>/push/test {"platform","token","kind","delay_s"} - one test notification of that
+// kind, to the device that names its own push token, built exactly as a real event of that kind
+// would be for that device (priority, TTL, level hint). `delay_s` (0-30) waits first, so the
+// person can lock the phone. It ignores the hub's filters (it is a test) and carries event id 0,
+// which no app stores in its history. One at a time, at most one every 3 s.
+std::pair<int, std::string> test_device(const std::string& body);
+
+// What a device asked for (see register_device), and the rules applied to it. Pure functions,
+// exposed for the unit tests.
+namespace policy {
+
+struct DevicePrefs
+{
+    std::vector<std::string> priority_kinds;
+    bool                     all_events { false };
+    bool                     level_hint { false };
+};
+
+// Reads the three fields out of a registration body; anything malformed is ignored rather than
+// refused, so a newer app with a kind this hub does not know still registers.
+DevicePrefs read_prefs(const nlohmann::json& in);
+
+// Whether an event of this severity and kind goes to this device, given the hub's own filter.
+bool wants(const DevicePrefs& d, const std::string& severity, const std::string& kind,
+           const std::string& min_severity, const std::vector<std::string>& kinds);
+
+// APNs priority (10 or 5; FCM high or normal): 10 for warning and error, and for a kind the device
+// listed in priority_kinds.
+int priority(const DevicePrefs& d, const std::string& severity, const std::string& kind);
+
+// Seconds the push service keeps trying: 4 h for failed / error / runout (a phone that was off at
+// 03:10 should still hear at 04:00 that the print failed), 5 min for started / resumed, else 30 min.
+int ttl(const std::string& kind);
+
+// "time-sensitive" when the device asked for the hint and listed this kind; "" otherwise.
+std::string interruption_level(const DevicePrefs& d, const std::string& kind);
+
+} // namespace policy
 
 // DELETE /r/<token>/push/device - the app unpairing. Answers {"ok":true} whether or not the row
 // existed, so it cannot be used to find out whether some token is registered here.
@@ -63,6 +117,13 @@ std::pair<int, std::string> forget_device(const std::string& body);
 
 // DELETE /hub/apppush?id=<id> - the hub page removing a device by its short id.
 std::pair<int, std::string> remove(const std::string& id);
+
+// A new phone link (HubServer::new_link): every registered device was paired under the old token,
+// which no longer lets anybody in, so all of them are forgotten together with anything still queued
+// for the hosted service. A phone that is re-paired with the new link registers again on its next
+// launch. The hosted service keeps no per-device rows, so there is nothing to tell it. Answers how
+// many devices were forgotten.
+int forget_all_devices();
 
 // POST /hub/apppush/options - enabled, min_severity, the per-kind filter (as "kinds":[...] or
 // "events":{kind:bool}; see RemoteEvents.hpp) and the two providers' settings. Credential

@@ -369,74 +369,49 @@ void GLGizmoMeshBoolean::on_render_input_window(float x, float y, float bottom_l
     }
     part_picker("##pick_tool", m_tool, false);
 
+    // Boolean the two picked parts in OBJECT coordinates and replace the source with the
+    // result. The matrices are read now, not taken from the pick (m_src/m_tool.trafo): a part
+    // can be moved, rotated or scaled while the gizmo is open (sidebar, object list, undo),
+    // and the result must be computed with the same transformation it is applied with.
+    auto run_boolean = [this](const char* op, bool delete_input) {
+        // fix_left_handed: a MIRRORED volume has a negative-determinant matrix, and
+        // transforming by it without flipping the triangles back leaves the mesh
+        // inside-out. The right-click Mesh boolean path has always passed true here.
+        m_src.trafo  = m_src.mv->get_matrix();
+        m_tool.trafo = m_tool.mv->get_matrix();
+        TriangleMesh temp_src_mesh = m_src.mv->mesh();
+        temp_src_mesh.transform(m_src.trafo, true);
+        TriangleMesh temp_tool_mesh = m_tool.mv->mesh();
+        temp_tool_mesh.transform(m_tool.trafo, true);
+        std::vector<TriangleMesh> temp_mesh_resuls;
+        if (!Slic3r::MeshBoolean::mfd::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, op))
+            Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, op);
+        if (temp_mesh_resuls.size() != 0) {
+            generate_new_volume(delete_input, *temp_mesh_resuls.begin());
+            wxGetApp().notification_manager()->close_plater_warning_notification(warning_text);
+        }
+        else {
+            wxGetApp().notification_manager()->push_plater_warning_notification(warning_text);
+        }
+    };
+
     bool enable_button = m_src.mv && m_tool.mv;
     if (m_operation_mode == MeshBooleanOperation::Union)
     {
         if (operate_button(_L("Union") + "##btn", enable_button)) {
-            TriangleMesh temp_src_mesh = m_src.mv->mesh();
-            // fix_left_handed: a MIRRORED volume has a negative-determinant matrix, and
-            // transforming by it without flipping the triangles back leaves the mesh
-            // inside-out. The right-click Mesh boolean path has always passed true here;
-            // the gizmo did not, which is why only the gizmo produced inverted normals.
-            temp_src_mesh.transform(m_src.trafo, true);
-            TriangleMesh temp_tool_mesh = m_tool.mv->mesh();
-            temp_tool_mesh.transform(m_tool.trafo, true);
-            std::vector<TriangleMesh> temp_mesh_resuls;
-            if (!Slic3r::MeshBoolean::mfd::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "UNION"))
-                Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "UNION");
-            if (temp_mesh_resuls.size() != 0) {
-                generate_new_volume(true, *temp_mesh_resuls.begin());
-                wxGetApp().notification_manager()->close_plater_warning_notification(warning_text);
-            }
-            else {
-                wxGetApp().notification_manager()->push_plater_warning_notification(warning_text);
-            }
+            run_boolean("UNION", true);
         }
     }
     else if (m_operation_mode == MeshBooleanOperation::Difference) {
         m_imgui->bbl_checkbox(_L("Delete input"), m_diff_delete_input);
         if (operate_button(_L("Difference") + "##btn", enable_button)) {
-            TriangleMesh temp_src_mesh = m_src.mv->mesh();
-            // fix_left_handed: a MIRRORED volume has a negative-determinant matrix, and
-            // transforming by it without flipping the triangles back leaves the mesh
-            // inside-out. The right-click Mesh boolean path has always passed true here;
-            // the gizmo did not, which is why only the gizmo produced inverted normals.
-            temp_src_mesh.transform(m_src.trafo, true);
-            TriangleMesh temp_tool_mesh = m_tool.mv->mesh();
-            temp_tool_mesh.transform(m_tool.trafo, true);
-            std::vector<TriangleMesh> temp_mesh_resuls;
-            if (!Slic3r::MeshBoolean::mfd::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "A_NOT_B"))
-                Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "A_NOT_B");
-            if (temp_mesh_resuls.size() != 0) {
-                generate_new_volume(m_diff_delete_input, *temp_mesh_resuls.begin());
-                wxGetApp().notification_manager()->close_plater_warning_notification(warning_text);
-            }
-            else {
-                wxGetApp().notification_manager()->push_plater_warning_notification(warning_text);
-            }
+            run_boolean("A_NOT_B", m_diff_delete_input);
         }
     }
     else if (m_operation_mode == MeshBooleanOperation::Intersection){
         m_imgui->bbl_checkbox(_L("Delete input"), m_inter_delete_input);
         if (operate_button(_L("Intersection") + "##btn", enable_button)) {
-            TriangleMesh temp_src_mesh = m_src.mv->mesh();
-            // fix_left_handed: a MIRRORED volume has a negative-determinant matrix, and
-            // transforming by it without flipping the triangles back leaves the mesh
-            // inside-out. The right-click Mesh boolean path has always passed true here;
-            // the gizmo did not, which is why only the gizmo produced inverted normals.
-            temp_src_mesh.transform(m_src.trafo, true);
-            TriangleMesh temp_tool_mesh = m_tool.mv->mesh();
-            temp_tool_mesh.transform(m_tool.trafo, true);
-            std::vector<TriangleMesh> temp_mesh_resuls;
-            if (!Slic3r::MeshBoolean::mfd::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "INTERSECTION"))
-                Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "INTERSECTION");
-            if (temp_mesh_resuls.size() != 0) {
-                generate_new_volume(m_inter_delete_input, *temp_mesh_resuls.begin());
-                wxGetApp().notification_manager()->close_plater_warning_notification(warning_text);
-            }
-            else {
-                wxGetApp().notification_manager()->push_plater_warning_notification(warning_text);
-            }
+            run_boolean("INTERSECTION", m_inter_delete_input);
         }
     }
 
@@ -471,15 +446,21 @@ void GLGizmoMeshBoolean::on_save(cereal::BinaryOutputArchive &ar) const
 
 void GLGizmoMeshBoolean::generate_new_volume(bool delete_input, const TriangleMesh& mesh_result) {
 
-    wxGetApp().plater()->take_snapshot("Mesh Boolean");
-
     ModelObject* curr_model_object = m_c->selection_info()->model_object();
 
-    // generate new volume
-    ModelVolume* new_volume = curr_model_object->add_volume(std::move(mesh_result));
+    // The cached indices can be stale (parts added, deleted or reordered since the pick);
+    // the picked volumes are what was booleaned, so look their slots up again.
+    auto slot_of = [curr_model_object](const ModelVolume* mv) {
+        auto it = std::find(curr_model_object->volumes.begin(), curr_model_object->volumes.end(), mv);
+        return it == curr_model_object->volumes.end() ? -1 : int(it - curr_model_object->volumes.begin());
+    };
+    m_src.volume_idx  = slot_of(m_src.mv);
+    m_tool.volume_idx = slot_of(m_tool.mv);
+    if (m_src.volume_idx < 0 || m_tool.volume_idx < 0)
+        return;
 
-    // assign to new_volume from old_volume
-    ModelVolume* old_volume = m_src.mv;
+    wxGetApp().plater()->take_snapshot("Mesh Boolean");
+
     std::string suffix;
     switch (m_operation_mode)
     {
@@ -493,21 +474,8 @@ void GLGizmoMeshBoolean::generate_new_volume(bool delete_input, const TriangleMe
         suffix = "intersection";
         break;
     }
-    new_volume->name = old_volume->name + " - " + suffix;
-    new_volume->set_new_unique_id();
-    new_volume->config.apply(old_volume->config);
-    new_volume->set_type(old_volume->type());
-    new_volume->set_material_id(old_volume->material_id());
-    new_volume->set_offset(old_volume->get_transformation().get_offset());
-    //Vec3d translate_z = { 0,0, (new_volume->source.mesh_offset - old_volume->source.mesh_offset).z() };
-    //new_volume->translate(new_volume->get_transformation().get_matrix_no_offset() * translate_z);
-    //new_volume->supported_facets.assign(old_volume->supported_facets);
-    //new_volume->seam_facets.assign(old_volume->seam_facets);
-    //new_volume->mmu_segmentation_facets.assign(old_volume->mmu_segmentation_facets);
-
-    // delete old_volume
-    std::swap(curr_model_object->volumes[m_src.volume_idx], curr_model_object->volumes.back());
-    curr_model_object->delete_volume(curr_model_object->volumes.size() - 1);
+    // The new volume replaces the source volume in its slot (libslic3r, unit-tested).
+    ModelVolume* new_volume = curr_model_object->replace_volume_with_object_mesh(size_t(m_src.volume_idx), TriangleMesh(mesh_result), suffix);
 
     if (delete_input) {
         std::vector<ItemForDelete> items;

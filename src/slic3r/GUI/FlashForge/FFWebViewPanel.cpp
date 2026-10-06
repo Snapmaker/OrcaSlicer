@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <chrono>
 #include <map>
+#include <boost/filesystem.hpp>
 #include <boost/json/src.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -12,6 +13,7 @@
 #include <wx/base64.h>
 #include <wx/file.h>
 #include <wx/filefn.h>
+#include <wx/filename.h>
 #include <wx/object.h>
 #include <wx/sizer.h>
 #include <wx/url.h>

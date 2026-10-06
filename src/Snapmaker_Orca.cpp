@@ -62,6 +62,7 @@ using namespace nlohmann;
 #include "libslic3r/Format/3mf.hpp"
 #include "libslic3r/Format/BambuExport.hpp"
 #include "libslic3r/Format/STL.hpp"
+#include "libslic3r/Format/STEPExport.hpp"
 #include "libslic3r/Format/OBJ.hpp"
 #include "libslic3r/Format/SL1.hpp"
 #include "libslic3r/Utils.hpp"
@@ -85,10 +86,12 @@ using namespace nlohmann;
 #endif
 #include "slic3r/Utils/MeshInspect.hpp"
 #include "slic3r/Utils/PaintCLI.hpp"
+#include "slic3r/Utils/WinFirewall.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/BitmapCache.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/ProjectConfigFill.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -166,6 +169,7 @@ std::map<int, std::string> cli_errors = {
     {CLI_OBJECT_COLLISION_IN_LAYER_PRINT, "Object conflicts were detected. Please verify the slicing of all plates in EdgeSlicer before uploading."},
     {CLI_SPIRAL_MODE_INVALID_PARAMS, "Some slicing parameters cannot work with Spiral Vase mode. Please solve the issue in EdgeSlicer before uploading."},
     {CLI_MIXED_FILAMENT_INVALID, "A mixed filament is invalid: its components are different filament types, or it has no filament of its own."},
+    {CLI_EXPORT_STEP_ERROR, "Failed exporting the STEP file."},
     {CLI_SLICING_ERROR, "Failed slicing the model. Please verify the slicing of all plates on EdgeSlicer before uploading."},
     {CLI_GCODE_PATH_CONFLICTS, " G-code conflicts detected after slicing. Please make sure the 3mf file can be successfully sliced in the latest EdgeSlicer."}
 };
@@ -903,162 +907,6 @@ static void load_default_gcodes_to_config(DynamicPrintConfig& config, Preset::Ty
     }
 }
 
-static int load_assemble_plate_list(std::string config_file, std::vector<assemble_plate_info_t> &assemble_plate_info_list)
-{
-    int ret = 0;
-    boost::filesystem::path directory_path(config_file);
-
-    BOOST_LOG_TRIVIAL(info) << boost::format("%1% enter, file %2%")%__FUNCTION__ % config_file;
-    if (!fs::exists(directory_path)) {
-        BOOST_LOG_TRIVIAL(error) << boost::format("directory %1% not exist.")%config_file;
-        return CLI_FILE_NOTFOUND;
-    }
-
-    try {
-        json root_json;
-        boost::nowide::ifstream ifs(config_file);
-        ifs >> root_json;
-        ifs.close();
-
-        int plate_count = root_json[JSON_ASSEMPLE_PLATES].size();
-        if ((plate_count <= 0) || (plate_count > MAX_PLATE_COUNT)) {
-            BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< boost::format(": invalid plate count %1%")%plate_count;
-            return CLI_CONFIG_FILE_ERROR;
-        }
-        assemble_plate_info_list.resize(plate_count);
-
-        for (int plate_index = 0; plate_index < plate_count; plate_index++)
-        {
-            assemble_plate_info_t &assemble_plate = assemble_plate_info_list[plate_index];
-            const json& plate_json = root_json[JSON_ASSEMPLE_PLATES][plate_index];
-            assemble_plate.plate_name = plate_json[JSON_ASSEMPLE_PLATE_NAME];
-            assemble_plate.need_arrange = plate_json[JSON_ASSEMPLE_PLATE_NEED_ARRANGE];
-
-            if (plate_json.contains(JSON_ASSEMPLE_PLATE_PARAMS)) {
-                assemble_plate.plate_params = plate_json[JSON_ASSEMPLE_PLATE_PARAMS].get<std::map<std::string, std::string>>();
-                BOOST_LOG_TRIVIAL(debug) << boost::format("Plate %1%, has %2% plate params") % (plate_index + 1)  % assemble_plate.plate_params.size();
-            }
-
-            int object_count = plate_json[JSON_ASSEMPLE_OBJECTS].size();
-            if (object_count <= 0) {
-                BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< boost::format(": invalid object count %1% in plate %2%")%object_count %(plate_index+1);
-                return CLI_CONFIG_FILE_ERROR;
-            }
-
-            assemble_plate.assemble_obj_list.resize(object_count);
-            for (int object_index = 0; object_index < object_count; object_index++)
-            {
-                assemble_object_info_t& assemble_object = assemble_plate.assemble_obj_list[object_index];
-                const json& object_json = plate_json[JSON_ASSEMPLE_OBJECTS][object_index];
-
-                assemble_object.path = object_json[JSON_ASSEMPLE_OBJECT_PATH];
-                assemble_object.count = object_json[JSON_ASSEMPLE_OBJECT_COUNT];
-
-                if (assemble_object.count <= 0) {
-                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": invalid object clone count %1% in plate %2% Object %3%") % assemble_object.count % (plate_index + 1) % assemble_object.path;
-                    return CLI_CONFIG_FILE_ERROR;
-                }
-
-                assemble_object.filaments = object_json.at(JSON_ASSEMPLE_OBJECT_FILAMENTS).get<std::vector<int>>();
-                if ((assemble_object.filaments.size() > 0) && (assemble_object.filaments.size() != assemble_object.count) && (assemble_object.filaments.size() != 1))
-                {
-                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": object %1%'s filaments count %2% not equal to clone count %3%, also not equal to 1") % assemble_object.path % assemble_object.filaments.size() % assemble_object.count;
-                    return CLI_CONFIG_FILE_ERROR;
-                }
-
-                if (object_json.contains(JSON_ASSEMPLE_OBJECT_ASSEMBLE_INDEX)) {
-                    assemble_object.assemble_index = object_json[JSON_ASSEMPLE_OBJECT_ASSEMBLE_INDEX].get<std::vector<int>>();
-                    if ((assemble_object.assemble_index.size() > 0) && (assemble_object.assemble_index.size() != assemble_object.count) && (assemble_object.assemble_index.size() != 1))
-                    {
-                        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": object %1%'s assemble_index count %2% not equal to clone count %3%, also not equal to 1") % assemble_object.path % assemble_object.assemble_index.size() % assemble_object.count;
-                        return CLI_CONFIG_FILE_ERROR;
-                    }
-                }
-
-                if (object_json.contains(JSON_ASSEMPLE_OBJECT_POS_X)) {
-                    assemble_object.pos_x = object_json[JSON_ASSEMPLE_OBJECT_POS_X].get<std::vector<float>>();
-                    if ((assemble_object.pos_x.size() > 0) && (assemble_object.pos_x.size() != assemble_object.count) && (assemble_object.pos_x.size() != 1))
-                    {
-                        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": object %1%'s pos_x count %2% not equal to clone count %3%, also not equal to 1") % assemble_object.path % assemble_object.pos_x.size() % assemble_object.count;
-                        return CLI_CONFIG_FILE_ERROR;
-                    }
-                }
-                if (object_json.contains(JSON_ASSEMPLE_OBJECT_POS_Y)) {
-                    assemble_object.pos_y = object_json[JSON_ASSEMPLE_OBJECT_POS_Y].get<std::vector<float>>();
-                    if ((assemble_object.pos_y.size() > 0) && (assemble_object.pos_y.size() != assemble_object.count) && (assemble_object.pos_y.size() != 1))
-                    {
-                        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": object %1%'s pos_y count %2% not equal to clone count %3%, also not equal to 1") % assemble_object.path % assemble_object.pos_y.size() % assemble_object.count;
-                        return CLI_CONFIG_FILE_ERROR;
-                    }
-                }
-                if (object_json.contains(JSON_ASSEMPLE_OBJECT_POS_Z)) {
-                    assemble_object.pos_z = object_json[JSON_ASSEMPLE_OBJECT_POS_Z].get<std::vector<float>>();
-                    if ((assemble_object.pos_z.size() > 0) && (assemble_object.pos_z.size() != assemble_object.count) && (assemble_object.pos_z.size() != 1))
-                    {
-                        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": object %1%'s pos_z count %2% not equal to clone count %3%, also not equal to 1") % assemble_object.path % assemble_object.pos_z.size() % assemble_object.count;
-                        return CLI_CONFIG_FILE_ERROR;
-                    }
-                }
-                if (object_json.contains(JSON_ASSEMPLE_OBJECT_PRINT_PARAMS)) {
-                    assemble_object.print_params = object_json[JSON_ASSEMPLE_OBJECT_PRINT_PARAMS].get<std::map<std::string, std::string>>();
-                    BOOST_LOG_TRIVIAL(debug) << boost::format("Plate %1%, object %2% has %3% print params") % (plate_index + 1) %assemble_object.path % assemble_object.print_params.size();
-                }
-                if (object_json.contains(JSON_ASSEMPLE_OBJECT_HEIGHT_RANGES)) {
-                    json height_range_json = object_json[JSON_ASSEMPLE_OBJECT_HEIGHT_RANGES];
-                    int range_count = height_range_json.size();
-
-                    BOOST_LOG_TRIVIAL(debug) << boost::format("Plate %1%, object %2% has %3% height ranges") % (plate_index + 1) %assemble_object.path % range_count;
-
-                    assemble_object.height_ranges.resize(range_count);
-                    for (int range_index = 0; range_index < range_count; range_index++)
-                    {
-                        height_range_info_t& height_range = assemble_object.height_ranges[range_index];
-                        height_range.min_z = height_range_json[range_index][JSON_ASSEMPLE_OBJECT_MIN_Z];
-                        height_range.max_z = height_range_json[range_index][JSON_ASSEMPLE_OBJECT_MAX_Z];
-                        height_range.range_params = height_range_json[range_index][JSON_ASSEMPLE_OBJECT_RANGE_PARAMS].get<std::map<std::string, std::string>>();
-                    }
-                }
-            }
-            if (plate_json.contains(JSON_ASSEMPLE_ASSEMBLE_PARAMS)) {
-                json assemble_params_json = plate_json[JSON_ASSEMPLE_ASSEMBLE_PARAMS];
-                int assemble_count = assemble_params_json.size();
-                for (int i = 0; i < assemble_count; i++)
-                {
-                    assembled_param_info_t assembled_param;
-                    int assemble_index = assemble_params_json[i][JSON_ASSEMPLE_OBJECT_ASSEMBLE_INDEX];
-                    if (assemble_params_json[i].contains(JSON_ASSEMPLE_OBJECT_PRINT_PARAMS)) {
-                        assembled_param.print_params = assemble_params_json[i][JSON_ASSEMPLE_OBJECT_PRINT_PARAMS].get<std::map<std::string, std::string>>();
-                        BOOST_LOG_TRIVIAL(debug) << boost::format("Plate %1%, assemble object %2% has %3% print params") % (plate_index + 1) %i % assembled_param.print_params.size();
-                    }
-                    if (assemble_params_json[i].contains(JSON_ASSEMPLE_OBJECT_HEIGHT_RANGES)) {
-                        json height_range_json = assemble_params_json[i][JSON_ASSEMPLE_OBJECT_HEIGHT_RANGES];
-                        int range_count = height_range_json.size();
-
-                        BOOST_LOG_TRIVIAL(debug) << boost::format("Plate %1%, assemble object %2% has %3% height ranges") % (plate_index + 1) %i % range_count;
-
-                        assembled_param.height_ranges.resize(range_count);
-                        for (int range_index = 0; range_index < range_count; range_index++)
-                        {
-                            height_range_info_t& height_range = assembled_param.height_ranges[range_index];
-                            height_range.min_z = height_range_json[range_index][JSON_ASSEMPLE_OBJECT_MIN_Z];
-                            height_range.max_z = height_range_json[range_index][JSON_ASSEMPLE_OBJECT_MAX_Z];
-                            height_range.range_params = height_range_json[range_index][JSON_ASSEMPLE_OBJECT_RANGE_PARAMS].get<std::map<std::string, std::string>>();
-                        }
-                    }
-                    assemble_plate.assembled_param_list.emplace(assemble_index, std::move(assembled_param));
-                }
-                BOOST_LOG_TRIVIAL(debug) << boost::format("Plate %1%, has %2% plate params") % (plate_index + 1)  % assemble_plate.plate_params.size();
-            }
-        }
-    }
-    catch(std::exception &err) {
-        BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": parse file "<<config_file<<" got a generic exception, reason = " << err.what();
-        ret = CLI_CONFIG_FILE_ERROR;
-    }
-
-    return ret;
-}
-
 void merge_or_add_object(assemble_plate_info_t& assemble_plate_info, Model &model, int assemble_index, std::map<int, ModelObject*> &merged_objects, ModelObject *ori_object)
 {
     if (assemble_index > 0) {
@@ -1226,9 +1074,10 @@ static int construct_assemble_list(std::vector<assemble_plate_info_t> &assemble_
                 ModelObject* copy_obj = temp_model.add_object(*object);
                 copy_obj->name = object_name + "_" + std::to_string(copy_index + 1);
 
-                if (copy_index >= assemble_object.pos_x.size())
-                    array_index = 0;
-                copy_obj->translate(assemble_object.pos_x[array_index], assemble_object.pos_y[array_index], assemble_object.pos_z[array_index]);
+                const size_t pos_x_index = (copy_index < assemble_object.pos_x.size()) ? copy_index : 0;
+                const size_t pos_y_index = (copy_index < assemble_object.pos_y.size()) ? copy_index : 0;
+                const size_t pos_z_index = (copy_index < assemble_object.pos_z.size()) ? copy_index : 0;
+                copy_obj->translate(assemble_object.pos_x[pos_x_index], assemble_object.pos_y[pos_y_index], assemble_object.pos_z[pos_z_index]);
 
                 if (copy_index < assemble_object.filaments.size())
                     array_index = copy_index;
@@ -1244,7 +1093,7 @@ static int construct_assemble_list(std::vector<assemble_plate_info_t> &assemble_
                 merge_or_add_object(assemble_plate_info, model, assemble_object.assemble_index[array_index], merged_objects, copy_obj);
 
                 BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": cloned object %1%, name %2%, pos_x %3% pos_y %4%, pos_z %5%")
-                    %copy_index %object->name %assemble_object.pos_x[array_index] %assemble_object.pos_y[array_index] %assemble_object.pos_z[array_index];
+                    %copy_index %object->name %assemble_object.pos_x[pos_x_index] %assemble_object.pos_y[pos_y_index] %assemble_object.pos_z[pos_z_index];
             }
         }
 
@@ -1395,6 +1244,14 @@ int CLI::run(int argc, char **argv)
         return CLI_ENVIRONMENT_ERROR;
     }
 
+#ifdef _WIN32
+    // `EdgeSlicer.exe --fix-firewall`: the elevated helper Help > Check Windows Firewall starts
+    // (one UAC prompt). Headless and ahead of setup(): it reads no config and opens no window;
+    // it only rewrites the Windows Firewall rules of this exe and its go2rtc.exe.
+    if (Slic3r::WinFirewall::is_fix_cli(argc, argv))
+        return Slic3r::WinFirewall::run_fix_cli(argc, argv);
+#endif
+
     if (!this->setup(argc, argv))
     {
         boost::nowide::cerr << "setup params error" << std::endl;
@@ -1527,6 +1384,9 @@ int CLI::run(int argc, char **argv)
             boost::nowide::cerr << "--inspect-paint cannot be combined with --hub" << std::endl;
             return CLI_INVALID_PARAMS;
         }
+        // The hub is headless: it never reaches the single-instance check, so it holds no lock and owns
+        // no window, and files another process hands over (Send to EdgeSlicer) can never end up in it.
+        BOOST_LOG_TRIVIAL(info) << "hub instance: ignores single-instance messages (no lock, no window)";
         return Slic3r::GUI::RemoteHub::run_server(m_config.opt_string("hub_token"), m_config.opt_bool("hub_phone"));
     }
 #endif
@@ -1589,6 +1449,10 @@ int CLI::run(int argc, char **argv)
     // --load-filaments lists, so everything downstream stays as it was.
     std::vector<std::string> load_configs_all(load_configs.begin(), load_configs.end());
     std::vector<std::string> load_filaments_all(load_filaments.begin(), load_filaments.end());
+    // NamedPresets for --printer-preset lives in this block so vendor bundles are gone
+    // before a GUI launch (S8). The CLI missing-key fill constructs its own store later.
+    // Scans resources_dir()/profiles only; user-installed data_dir()/system vendors are
+    // not consulted, same as --printer-preset today.
     {
         const std::string printer_name = m_config.opt_string("printer_preset", true);
         const std::string process_name = m_config.opt_string("process_preset", true);
@@ -1596,7 +1460,7 @@ int CLI::run(int argc, char **argv)
         if (auto* opt = m_config.option<ConfigOptionStrings>("filament_presets"))
             filament_names = opt->values;
         if (!printer_name.empty() || !process_name.empty() || !filament_names.empty()) {
-            NamedPresets      presets;
+            NamedPresets presets;
             const std::string preset_dir = (boost::filesystem::path(temporary_dir()) / ("ultra_cli_presets_" + std::to_string(get_current_pid()))).string();
             auto resolve = [&](const std::string& name, Preset::Type t, int ordinal, std::vector<std::string>& into) -> bool {
                 if (name.empty()) return true;
@@ -1829,6 +1693,14 @@ int CLI::run(int argc, char **argv)
         }
     }
 
+    // CLI-only: vendor bundles for the missing-key fill. Not constructed on a GUI launch (S8).
+    std::optional<NamedPresets> named_presets_store;
+    auto named_presets = [&named_presets_store]() -> NamedPresets & {
+        if (!named_presets_store)
+            named_presets_store.emplace();
+        return *named_presets_store;
+    };
+
     global_begin_time = (long long)Slic3r::Utils::get_current_time_utc();
     BOOST_LOG_TRIVIAL(warning) << boost::format("cli mode, Current Snapmaker_Orca Version %1%")%SLIC3R_VERSION;
 
@@ -1844,6 +1716,8 @@ int CLI::run(int argc, char **argv)
     std::string new_printer_name, current_printer_name, new_process_name, current_process_name, current_printer_system_name, current_process_system_name, new_process_system_name, new_printer_system_name, printer_model_id, current_printer_model, printer_model;//, printer_inherits, print_inherits;
     std::vector<std::string> upward_compatible_printers, new_print_compatible_printers, current_print_compatible_printers, current_different_settings;
     std::vector<std::string> current_filaments_name, current_filaments_system_name, current_inherits_group;
+    // Keys present in the 3MF right after read_from_file, before create=true inserts defaults (S2).
+    std::set<std::string> project_file_keys;
     DynamicPrintConfig load_process_config, load_machine_config;
     bool new_process_config_is_system = true, new_printer_config_is_system = true;
     std::string pipe_name, makerlab_name, makerlab_version, different_process_setting;
@@ -2042,7 +1916,17 @@ int CLI::run(int argc, char **argv)
                 // BBS: adjust whebackup
                 //LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig|LoadStrategy::AddDefaultInstances;
                 //if (load_aux) strategy = strategy | LoadStrategy::LoadAuxiliary;
-                model = Model::read_from_file(file, &config, &config_substitutions, strategy, &plate_data_src, &project_presets, &is_bbl_3mf, &file_version, nullptr, nullptr, nullptr, plate_to_slice);
+                if (boost::algorithm::iends_with(file, ".step") || boost::algorithm::iends_with(file, ".stp")) {
+                    // STEP, tessellated with the GUI's default precision (linear 0.003 mm, angular
+                    // 0.5 rad), compounds kept whole: the GUI import without its dialog.
+                    model = Model::read_from_step(file, strategy, nullptr, nullptr, nullptr, 0.003, 0.5, false);
+                } else {
+                    model = Model::read_from_file(file, &config, &config_substitutions, strategy, &plate_data_src, &project_presets, &is_bbl_3mf, &file_version, nullptr, nullptr, nullptr, plate_to_slice);
+                    // Snapshot keys the file actually carried before create=true reads insert defaults
+                    // (printer_model, printable_area, bed_exclude_area, upward_compatible_machine, …).
+                    if (project_file_keys.empty() && !config.empty())
+                        project_file_keys = project_config_snapshot_loaded_keys(config);
+                }
                 // The importer flags any 3mf written by Bambu Studio / Orca / this fork as a project file,
                 // including geometry-only ones without Metadata/project_settings.config (the bundled handy
                 // models, for instance). Only a file that actually carried a config is a project: the GUI
@@ -2123,27 +2007,22 @@ int CLI::run(int argc, char **argv)
                     // its end; a shorter one leaves current_filaments_system_name smaller than
                     // filament_count for the --uptodate-filaments check that indexes it later.
                     // Treat any mis-sized vector the same as a missing one and fall back to the
-                    // current names.
-                    if (option_strings && option_strings->values.size() == current_filaments_name.size() + 2) {
+                    // current names. No renamed_from / alias lookup.
+                    const std::vector<std::string> *inherits_group_values = option_strings ? &option_strings->values : nullptr;
+                    const size_t filament_name_count = current_filaments_name.size();
+                    current_printer_system_name = resolve_project_system_preset_name(current_printer_name, inherits_group_values, filament_name_count, true);
+                    current_process_system_name = resolve_project_system_preset_name(current_process_name, inherits_group_values, filament_name_count, false);
+                    if (option_strings && option_strings->values.size() == filament_name_count + 2) {
                         current_inherits_group = option_strings->values;
                         size_t size = current_inherits_group.size();
-                        if (current_inherits_group[size-1].empty()) {
-                            current_printer_system_name = current_printer_name;
+                        if (current_inherits_group[size-1].empty())
                             BOOST_LOG_TRIVIAL(info) << boost::format("inherits of printer is null, should be system preset");
-                        }
-                        else {
-                            current_printer_system_name = current_inherits_group[size-1];
+                        else
                             BOOST_LOG_TRIVIAL(info) << boost::format("inherits of printer valid, current_printer_system_name is %1%") %current_printer_system_name;
-                        }
-
-                        if (current_inherits_group[0].empty()) {
-                            current_process_system_name = current_process_name;
+                        if (current_inherits_group[0].empty())
                             BOOST_LOG_TRIVIAL(info) << boost::format("inherits of process is null, should be system preset");
-                        }
-                        else {
-                            current_process_system_name = current_inherits_group[0];
+                        else
                             BOOST_LOG_TRIVIAL(info) << boost::format("inherits of process valid, current_process_system_name is %1%") %current_process_system_name;
-                        }
 
                         current_filaments_system_name.resize(size - 2);
                         for (int index = 1; index < (size - 1); index++) {
@@ -2156,9 +2035,12 @@ int CLI::run(int argc, char **argv)
                         }
                     }
                     else {
-                        current_printer_system_name = current_printer_name;
-                        current_process_system_name = current_process_name;
                         current_filaments_system_name = current_filaments_name;
+                        if (option_strings) {
+                            boost::nowide::cerr << "Warning: project inherits_group has " << option_strings->values.size()
+                                                << " entries, expected " << (filament_name_count + 2)
+                                                << " (filaments+2); using current preset names." << std::endl;
+                        }
                         BOOST_LOG_TRIVIAL(info) << boost::format("no inherits_group: use system name the same as current name");
                     }
                     filament_count = current_filaments_name.size();
@@ -2173,15 +2055,14 @@ int CLI::run(int argc, char **argv)
                         old_printable_width = (int)(old_printable_area[2].x() - old_printable_area[0].x());
                         old_printable_depth = (int)(old_printable_area[2].y() - old_printable_area[0].y());
                     }
-                    if (config.option<ConfigOptionFloat>("printable_height"))
-                        old_printable_height = (int)(config.opt_float("printable_height"));
+                    old_printable_height = cli_printable_height_or_zero(config);
 
                     if (config.option<ConfigOptionFloat>("extruder_clearance_height_to_rod"))
                         old_height_to_rod = config.opt_float("extruder_clearance_height_to_rod");
                     if (config.option<ConfigOptionFloat>("extruder_clearance_height_to_lid"))
                         old_height_to_lid = config.opt_float("extruder_clearance_height_to_lid");
                     if (config.option<ConfigOptionFloat>("extruder_clearance_radius"))
-                        old_max_radius = config.opt_float("extruder_clearance_radius");
+                        old_max_radius = float(sequential_clearance_radius(config));
                     if (config.option<ConfigOptionFloats>("max_layer_height"))
                         old_max_layer_height = config.option<ConfigOptionFloats>("max_layer_height")->values;
                     if (config.option<ConfigOptionFloats>("min_layer_height"))
@@ -2284,7 +2165,12 @@ int CLI::run(int argc, char **argv)
         //parse the json and assemble object here
         Model model;
 
-        int ret = load_assemble_plate_list(load_assemble_list, assemble_plate_info_list);
+        AssembleListResult list_result = load_assemble_plate_list(load_assemble_list, assemble_plate_info_list, MAX_PLATE_COUNT);
+        int ret = CLI_SUCCESS;
+        if (list_result == AssembleListResult::FileNotFound)
+            ret = CLI_FILE_NOTFOUND;
+        else if (list_result == AssembleListResult::ConfigError)
+            ret = CLI_CONFIG_FILE_ERROR;
         if (ret) {
             record_exit_reson(outfile_dir, ret, 0, cli_errors[ret], sliced_info);
             flush_and_exit(ret);
@@ -2655,7 +2541,11 @@ int CLI::run(int argc, char **argv)
                             orig_printable_width = (int)(orig_printable_area[2].x() - orig_printable_area[0].x());
                             orig_printable_depth = (int)(orig_printable_area[2].y() - orig_printable_area[0].y());
                         }
-                        orig_printable_height = (int)(config.opt_float("printable_height"));
+                        // --uptodate / --uptodate_settings (~L2640): load_config_file() uses the
+                        // 4-arg load_from_json() form and does not flatten inherits. option(
+                        // "printable_area", true) still creates the 200x200 default, so this
+                        // read used to crash on every inheriting machine JSON (P1S/X1C, …).
+                        orig_printable_height = cli_printable_height_or_zero(config);
                         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(":%1%, check printable size: old_printable_width=%2%, orig_printable_width=%3%, old_printable_depth=%4%, orig_printable_depth=%5%, old_printable_height=%6%, orig_printable_height=%7%")
                                     %__LINE__ %old_printable_width %orig_printable_width %old_printable_depth %orig_printable_depth %old_printable_height %orig_printable_height;
                         if ((orig_printable_width > 0) && (orig_printable_depth > 0) && (orig_printable_height > 0))
@@ -2975,6 +2865,46 @@ int CLI::run(int argc, char **argv)
         flush_and_exit(CLI_PROCESS_NOT_COMPATIBLE);
     }
     sliced_info.upward_machines = upward_compatible_printers;
+
+    // A project saved before a printer or process option existed has no value for it. The GUI
+    // takes such keys from the project's system preset (load_external_preset refreshes every
+    // key the project did not override). Fill them from NamedPresets too instead of leaving
+    // them to the option default. Printer and process only — filament vector keys are a
+    // follow-up. Runs here so the embedded (auto) process preset below sees the filled keys.
+    {
+        size_t filled = 0;
+        const std::set<std::string> *present = project_file_keys.empty() ? nullptr : &project_file_keys;
+        auto fill_from_system = [&](const std::string &system_name, Preset::Type type) {
+            const std::vector<std::string> &options =
+                type == Preset::TYPE_PRINTER ? Preset::printer_options() : Preset::print_options();
+            std::vector<std::string> filled_keys;
+            const size_t n = fill_cli_system_preset(
+                m_print_config, system_name, options,
+                [&](const std::string &name) -> const DynamicPrintConfig * {
+                    const Preset *sys = named_presets().find_system(name, type);
+                    if (sys == nullptr) {
+                        BOOST_LOG_TRIVIAL(warning)
+                            << boost::format("CLI: system preset '%1%' not resolved; keys missing from the project keep their defaults")
+                                   % name;
+                        return nullptr;
+                    }
+                    return &sys->config;
+                },
+                &filled_keys, present);
+            filled += n;
+            for (const std::string &key : filled_keys) {
+                const ConfigOption *opt = m_print_config.option(key);
+                BOOST_LOG_TRIVIAL(info) << boost::format("CLI: %1% missing from the project, taken from '%2%': %3%")
+                    % key % system_name % project_config_fill_log_value(opt);
+            }
+        };
+        if (cli_fill_from_system_preset(new_printer_name))
+            fill_from_system(current_printer_system_name, Preset::TYPE_PRINTER);
+        if (cli_fill_from_system_preset(new_process_name))
+            fill_from_system(current_process_system_name, Preset::TYPE_PRINT);
+        if (filled > 0)
+            BOOST_LOG_TRIVIAL(info) << "CLI: filled " << filled << " missing project keys from system presets";
+    }
 
     //create project embedded preset if needed
     Preset *new_preset = NULL;
@@ -3766,7 +3696,8 @@ int CLI::run(int argc, char **argv)
     double print_height = m_print_config.opt_float("printable_height");
     double height_to_lid = m_print_config.opt_float("extruder_clearance_height_to_lid");
     double height_to_rod = m_print_config.opt_float("extruder_clearance_height_to_rod");
-    double clearance_radius = m_print_config.opt_float("extruder_clearance_radius");
+    // Bambu Studio arranges with extruder_clearance_max_radius (sequential_clearance_radius on Bambu Lab printers).
+    double clearance_radius = sequential_clearance_radius(m_print_config);
     //double plate_stride;
     std::string bed_texture;
 
@@ -4124,7 +4055,10 @@ int CLI::run(int argc, char **argv)
             if (temp_printable_area.size() >= 4) {
                 printer_plate.printable_width = (int)(temp_printable_area[2].x() - temp_printable_area[0].x());
                 printer_plate.printable_depth = (int)(temp_printable_area[2].y() - temp_printable_area[0].y());
-                printer_plate.printable_height = (int)(config.opt_float("printable_height"));
+                // Same un-flattened load_config_file() path as --uptodate_settings.
+                // Height stays 0 (struct default); the ~L4236 size.z() > height check
+                // then marks the printer failed (conservative #16016 outcome).
+                printer_plate.printable_height = cli_printable_height_or_zero(config);
             }
             if (temp_exclude_area.size() >= 4) {
                 printer_plate.exclude_width = (int)(temp_exclude_area[2].x() - temp_exclude_area[0].x());
@@ -4221,6 +4155,12 @@ int CLI::run(int argc, char **argv)
                 record_exit_reson(outfile_dir, CLI_INVALID_PARAMS, 0, cli_errors[CLI_INVALID_PARAMS], sliced_info);
                 flush_and_exit(CLI_INVALID_PARAMS);
             }
+            if (m_models.empty()) {
+                boost::nowide::cerr << "Invalid params: --assemble needs at least one input model." << std::endl;
+                BOOST_LOG_TRIVIAL(error) << "Invalid params: --assemble needs at least one input model.";
+                record_exit_reson(outfile_dir, CLI_INVALID_PARAMS, 0, cli_errors[CLI_INVALID_PARAMS], sliced_info);
+                flush_and_exit(CLI_INVALID_PARAMS);
+            }
             Model m;
             ModelObject* new_object = m.add_object();
             new_object->name = _u8L("Assembly");
@@ -4234,6 +4174,12 @@ int CLI::run(int argc, char **argv)
                         new_volume->config.set_key_value("extruder", new ConfigOptionInt(o->config.extruder()));
                     }
                 }
+            if (new_object->volumes.empty()) {
+                boost::nowide::cerr << "Invalid params: --assemble needs at least one input model." << std::endl;
+                BOOST_LOG_TRIVIAL(error) << "Invalid params: --assemble needs at least one input model.";
+                record_exit_reson(outfile_dir, CLI_INVALID_PARAMS, 0, cli_errors[CLI_INVALID_PARAMS], sliced_info);
+                flush_and_exit(CLI_INVALID_PARAMS);
+            }
             m_models.clear();
             m_models.emplace_back(std::move(m));
         }
@@ -5107,14 +5053,17 @@ int CLI::run(int argc, char **argv)
                             }
                         }
                         else {
-                            //keep the original
+                            // keep the original. ConfigOptionVector::get_at clamps a past-the-end
+                            // index to values.front() when the vector is non-empty (wipe_tower_x/y
+                            // are per-plate floats; a short vector is not a crash).
                             x = dynamic_cast<const ConfigOptionFloats *>(m_print_config.option("wipe_tower_x"))->get_at(plate_to_slice-1);
                             y = dynamic_cast<const ConfigOptionFloats *>(m_print_config.option("wipe_tower_y"))->get_at(plate_to_slice-1);
                         }
                         float w = dynamic_cast<const ConfigOptionFloat *>(m_print_config.option("prime_tower_width"))->value;
                         float a = dynamic_cast<const ConfigOptionFloat *>(m_print_config.option("wipe_tower_rotation_angle"))->value;
                         float v = dynamic_cast<const ConfigOptionFloat *>(m_print_config.option("prime_volume"))->value;
-                        unsigned int filaments_cnt = plate_data_src[plate_to_slice-1]->slice_filaments_info.size();
+                        unsigned int filaments_cnt = (plate_to_slice > 0 && plate_data_src.size() >= size_t(plate_to_slice))
+                            ? plate_data_src[plate_to_slice - 1]->slice_filaments_info.size() : 0;
                         if ((filaments_cnt == 0) || need_skip)
                         {
                             // slice filaments info invalid
@@ -5564,8 +5513,11 @@ int CLI::run(int argc, char **argv)
             const std::string &settings_file = m_config.opt_string(opt_key);
             if (settings_file == "-")
                 m_print_config.save_to_json(boost::nowide::cout, "project_settings", "project", Snapmaker_VERSION, /*replace_invalid_utf8=*/true);
-            else
-                m_print_config.save_to_json(settings_file, std::string("project_settings"), std::string("project"), std::string(Snapmaker_VERSION));
+            else if (!m_print_config.save_to_json(settings_file, std::string("project_settings"), std::string("project"), std::string(Snapmaker_VERSION))) {
+                BOOST_LOG_TRIVIAL(error) << "Failed to export settings to " << settings_file;
+                record_exit_reson(outfile_dir, CLI_EXPORT_CACHE_WRITE_FAILED, 0, "Failed to export settings.", sliced_info);
+                flush_and_exit(CLI_EXPORT_CACHE_WRITE_FAILED);
+            }
         } else if (opt_key == "info") {
             // --info works on unrepaired model
             for (Model &model : m_models) {
@@ -5650,6 +5602,33 @@ int CLI::run(int argc, char **argv)
                 record_exit_reson(outfile_dir, CLI_EXPORT_STL_ERROR, 0, cli_errors[CLI_EXPORT_STL_ERROR], sliced_info);
                 flush_and_exit(CLI_EXPORT_STL_ERROR);
             }
+        } else if (opt_key == "export_step") {
+            // Every object of every loaded model, all instances, into ONE STEP file.
+            boost::filesystem::path step_path(m_config.opt_string(opt_key));
+            const std::string outdir = m_config.opt_string("outputdir");
+            if (step_path.is_relative() && !outdir.empty())
+                step_path = boost::filesystem::path(outdir) / step_path;
+            std::vector<StepExportItem> items;
+            for (auto &model : m_models) {
+                model.add_default_instances();
+                for (const ModelObject *object : model.objects)
+                    items.push_back({object, -1});
+            }
+            StepExportParams step_params;
+            if (const ConfigOptionStrings *colours = m_print_config.option<ConfigOptionStrings>("filament_colour"))
+                step_params.extruder_colours = colours->values;
+            step_params.product_name = step_path.stem().string();
+            StepExportReport step_report;
+            if (! store_step(step_path.string(), items, step_params, step_report)) {
+                boost::nowide::cerr << "STEP export to " << step_path.string() << " failed: " << step_report.error << std::endl;
+                record_exit_reson(outfile_dir, CLI_EXPORT_STEP_ERROR, 0, cli_errors[CLI_EXPORT_STEP_ERROR], sliced_info);
+                flush_and_exit(CLI_EXPORT_STEP_ERROR);
+            }
+            for (const std::string &warning : step_report.warnings)
+                BOOST_LOG_TRIVIAL(warning) << "STEP export: " << warning;
+            boost::nowide::cout << "Exported " << step_report.parts << " parts (" << step_report.exact_parts << " exact from STEP, "
+                                << step_report.mesh_parts << " from mesh, " << step_report.open_parts << " open) to "
+                                << step_path.string() << " in " << step_report.seconds << " s" << std::endl;
         } else if (opt_key == "export_obj") {
             for (auto &model : m_models)
                 model.add_default_instances();
@@ -5736,6 +5715,32 @@ int CLI::run(int argc, char **argv)
                         plate->estimate_wipe_tower_polygon(m_print_config, index, wt_pos, wt_size);
                         if (wt_size(0) < EPSILON || wt_size(1) < EPSILON)
                             continue;
+                        // That clamp only knows the bed edges. A tower left on bed_exclude_area fails
+                        // validation ("Prime Tower is too close to exclusion area", -64; Qidi Q1 Pro:
+                        // the raw default y = 220 reaches the y 240-245 strip), where the GUI never puts
+                        // one: PartPlateList::set_default_wipe_tower_pos_for_plate starts new plates at its
+                        // default corner WIPE_TOWER_AUTO_MARGIN + brim inside the bed. Re-place such a
+                        // tower the same way; a tower already clear of the area is not touched.
+                        {
+                            PrintConfig exclusion_config;
+                            if (const auto *area = m_print_config.option<ConfigOptionPoints>("bed_exclude_area"))
+                                exclusion_config.bed_exclude_area.values = area->values;
+                            const Polygons excluded = get_bed_excluded_area(exclusion_config);
+                            int plate_width = 0, plate_depth = 0, plate_height = 0;
+                            partplate_list.get_plate_size(plate_width, plate_depth, plate_height);
+                            auto printer_structure_opt = m_print_config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
+                            const bool i3 = printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3;
+                            const Vec2d preferred = i3 ? Vec2d(double(I3_WIPE_TOWER_DEFAULT_X_POS), double(I3_WIPE_TOWER_DEFAULT_Y_POS)) :
+                                                         Vec2d(double(WIPE_TOWER_DEFAULT_X_POS), double(WIPE_TOWER_DEFAULT_Y_POS));
+                            const WipeTowerFootprint footprint = plate->estimate_wipe_tower_footprint(m_print_config);
+                            if (const std::optional<Vec2d> clear = wipe_tower_position_clear_of_exclusion(
+                                    m_print_config, footprint, excluded, Vec2d(double(plate_width), double(plate_depth)), preferred, Vec2d(wt_pos(0), wt_pos(1)))) {
+                                BOOST_LOG_TRIVIAL(info) << boost::format("plate %1%: wipe tower at {%2%, %3%} meets bed_exclude_area, moved to {%4%, %5%}")
+                                    % (index + 1) % wt_pos(0) % wt_pos(1) % clear->x() % clear->y();
+                                wt_pos(0) = clear->x();
+                                wt_pos(1) = clear->y();
+                            }
+                        }
                         ConfigOptionFloat wt_x_opt((float) wt_pos(0));
                         ConfigOptionFloat wt_y_opt((float) wt_pos(1));
                         m_print_config.option<ConfigOptionFloats>("wipe_tower_x", true)->set_at(&wt_x_opt, index, 0);
@@ -6128,11 +6133,37 @@ int CLI::run(int argc, char **argv)
                                     // invalid print speed would exit 0. CI and scripted slicing
                                     // have no notification UI at all, so this is the only place
                                     // the message can reach them.
-                                    for (unsigned int i = 0; i < g_slicing_warnings.size(); i++) {
+                                    // Precise Seam warnings are also raised during export_gcode
+                                    // (SeamPlacer::init), so they miss the pre-export sweep too.
+                                    // Record them as non-fatal NON_CRITICAL; --strict still fails.
+                                    // Do not clear the whole list afterwards: other post-export
+                                    // statuses (invalid print speed among them) must stay. Drop
+                                    // only the Precise Seam entries we just recorded, or a later
+                                    // plate's pre-export sweep would re-emit them under plate N+1.
+                                    for (unsigned int i = 0; i < g_slicing_warnings.size(); ) {
                                         PrintBase::SlicingStatus& status = g_slicing_warnings[i];
-                                        if (status.warning_step == -1 ||
-                                            status.message_type != PrintStateBase::SlicingInvalidPrintSpeed)
+                                        if (status.warning_step == -1) {
+                                            ++i;
                                             continue;
+                                        }
+                                        if (status.message_type == PrintStateBase::SlicingPreciseSeamWarning) {
+                                            sliced_plate_info.warning_message = status.text;
+                                            sliced_plate_info.warnings.push_back(status.text);
+                                            cli_record_warning(sliced_info, "slicing_warning_non_critical",
+                                                               nlohmann::json{{"plate_id", index+1}, {"text", status.text}});
+                                            BOOST_LOG_TRIVIAL(warning) << "plate "<< index+1<< ": found NON_CRITICAL slicing warnings: "<<status.text <<std::endl;
+                                            if (sliced_info.strict_mode) {
+                                                sliced_info.sliced_plates.push_back(sliced_plate_info);
+                                                record_exit_reson(outfile_dir, CLI_SLICING_ERROR, index+1, cli_errors[CLI_SLICING_ERROR], sliced_info);
+                                                flush_and_exit(CLI_SLICING_ERROR);
+                                            }
+                                            g_slicing_warnings.erase(g_slicing_warnings.begin() + i);
+                                            continue;
+                                        }
+                                        if (status.message_type != PrintStateBase::SlicingInvalidPrintSpeed) {
+                                            ++i;
+                                            continue;
+                                        }
                                         sliced_plate_info.warning_message = status.text;
                                         sliced_plate_info.warnings.push_back(status.text);
                                         cli_record_warning(sliced_info, "invalid_print_speed",
@@ -7404,18 +7435,27 @@ int main(int argc, char **argv)
 {
     // Before initSentry(): it reads the crash-report preference from the EdgeSlicer.conf that
     // --datadir points at.
+    // A relaunch waits for the instance it replaces first (see common_func.hpp).
+    common::wait_for_relaunch_parent(argc, argv);
     common::set_datadir_from_command_line(argc, argv);
     initSentry();
     auto soft_start_time = get_time_timestamp();    
     // Parse from copies, then blank secret option values in the originals: those sit at the
     // top of the main thread's stack, which a crash minidump includes.
-    std::vector<std::string> arg_copies(argv, argv + argc);
+    std::vector<std::string> arg_copies;
+    for (int i = 0; i < argc; ++i) {
+        if (i > 0 && common::is_relaunch_after_arg(argv[i])) { // handled above, not a CLI option
+            ++i;
+            continue;
+        }
+        arg_copies.emplace_back(argv[i]);
+    }
     std::vector<char*>       arg_ptrs;
     for (std::string& a : arg_copies)
         arg_ptrs.push_back(a.data());
     arg_ptrs.push_back(nullptr);
     common::mask_secret_args(argc, argv);
-    auto res = CLI().run(argc, arg_ptrs.data());
+    auto res = CLI().run(int(arg_copies.size()), arg_ptrs.data());
     auto soft_end_time = get_time_timestamp();    
 
     std::string softEndTime = BP_SOFT_WORKS_TIME + std::string(":") + get_works_time(soft_end_time - soft_start_time);

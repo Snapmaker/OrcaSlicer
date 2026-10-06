@@ -274,7 +274,16 @@ TEST_CASE("The Bambu alias table names real keys, once each", "[BambuAliases]")
         REQUIRE(def != nullptr);
         REQUIRE(def->enum_keys_map != nullptr);
         CHECK(def->enum_keys_map->count(e.ours) == 1);
-        CHECK(def->enum_keys_map->count(e.bambu) == 0);
+        // For an export-only row (import=false), e.bambu is allowed to already be one of our own
+        // enum keys: that is exactly how a many-of-ours-to-one-of-theirs fallback (e.g. seam
+        // position Left/Right export as our own "aligned", which Bambu Studio also spells that
+        // way) is written. import_enum_value() guards this on the way in - it returns immediately
+        // when the incoming value is already a native key of ours (BambuKeyAliases.cpp), before it
+        // ever consults this table - so such a row can never shadow a native import. A reversible
+        // row (import=true) still must not collide: it is the one whose Bambu spelling has to
+        // round-trip back through this table rather than the "already native" fast path.
+        if (e.import)
+            CHECK(def->enum_keys_map->count(e.bambu) == 0);
         CHECK(BambuExport::translate_enum_value(e.key, e.ours) == e.bambu);
     }
 }
@@ -287,7 +296,11 @@ TEST_CASE("Bambu Studio's names load as our keys, with the value converted", "[B
     CHECK(legacy("prime_tower_extra_rib_length", "2") == "wipe_tower_extra_rib_length=2");
     CHECK(legacy("prime_tower_fillet_wall", "0") == "wipe_tower_fillet_wall=0");
     CHECK(legacy("prime_tower_skip_points", "0") == "wipe_tower_wall_gap=0");
-    CHECK(legacy("extruder_clearance_max_radius", "73") == "extruder_clearance_radius=73");
+    // Not a rename any more: extruder_clearance_max_radius is a setting of ours too (the timelapse
+    // position picker reads it, as Bambu Studio's does). Loading a whole file still feeds
+    // extruder_clearance_radius from it when the file does not set ours (BambuKeyAliases::load_fallbacks),
+    // which the 3MF and machine-preset cases below pin.
+    CHECK(legacy("extruder_clearance_max_radius", "73") == "extruder_clearance_max_radius=73");
     CHECK(legacy("enable_support_ironing", "1") == "support_ironing=1");
     CHECK(legacy("role_base_wipe_speed", "0") == "role_based_wipe_speed=0");
     CHECK(legacy("no_slow_down_for_cooling_on_outwalls", "1,0") == "dont_slow_down_outer_wall=1,0");
@@ -473,6 +486,7 @@ TEST_CASE("A genuine Bambu Studio project keeps its prime tower and other rename
     CHECK(cfg.opt_bool("wipe_tower_fillet_wall"));
     CHECK(cfg.opt_float("wipe_tower_max_purge_speed") == Approx(90.));
     CHECK(cfg.opt_float("extruder_clearance_radius") == Approx(73.)); // our default is 40
+    CHECK(cfg.opt_float("extruder_clearance_max_radius") == Approx(73.)); // Bambu's own key, loaded as itself
     CHECK(cfg.opt_bool("role_based_wipe_speed"));
     CHECK(cfg.opt_bool("only_one_wall_top"));
     CHECK(cfg.opt_float("ironing_angle") == Approx(45.));             // our default is -1
@@ -520,5 +534,6 @@ TEST_CASE("Bambu Studio presets map their renamed keys", "[BambuAliases][Config]
         ConfigSubstitutionContext ctxt{ ForwardCompatibilitySubstitutionRule::EnableSilent };
         REQUIRE(load_json(data_path("Bambu Lab H2D 0.4 nozzle.json"), cfg, ctxt));
         CHECK(cfg.opt_float("extruder_clearance_radius") == Approx(49.));
+        CHECK(cfg.opt_float("extruder_clearance_max_radius") == Approx(96.));
     }
 }

@@ -4,6 +4,7 @@
 #include "slic3r/Utils/LoginUserAgent.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <boost/log/trivial.hpp>
 
 #include <wx/webviewarchivehandler.h>
@@ -33,6 +34,8 @@
 #define WEBKIT_API
 struct WebKitWebView;
 struct WebKitJavascriptResult;
+struct WebKitWebContext;
+struct WebKitUserContentManager;
 extern "C" {
 WEBKIT_API void
 webkit_web_view_run_javascript                       (WebKitWebView             *web_view,
@@ -46,6 +49,16 @@ webkit_web_view_run_javascript_finish                (WebKitWebView             
 						      GError                    **error);
 WEBKIT_API void
 webkit_javascript_result_unref              (WebKitJavascriptResult *js_result);
+WEBKIT_API WebKitWebContext *
+webkit_web_context_get_default              (void);
+WEBKIT_API void
+webkit_web_context_set_preferred_languages  (WebKitWebContext          *context,
+                                             const gchar * const       *languages);
+WEBKIT_API WebKitUserContentManager *
+webkit_web_view_get_user_content_manager    (WebKitWebView             *web_view);
+WEBKIT_API void
+webkit_user_content_manager_unregister_script_message_handler(WebKitUserContentManager *manager,
+                                                              const gchar              *name);
 }
 #endif
 
@@ -359,6 +372,63 @@ public:
     wxWebView *m_webView;
 };
 
+#if defined(__linux__)
+// The flatpak launcher exports LC_ALL=C.UTF-8 (BambuStudio #3440). WebKitGTK derives
+// navigator.languages from LC_CTYPE and maps only a bare "C" to en-US, so "C.UTF-8" becomes
+// the tag "C". Intl.Locale rejects that, the Flutter web engine shipped since v2.4.0 fails to
+// start, and every web view stays blank. Hand WebKit the UI language as a valid BCP 47 tag.
+static std::string to_bcp47_language_tag(std::string name)
+{
+    name = name.substr(0, name.find_first_of(".@")); // drop codeset / modifier: "ja_JP.UTF-8" -> "ja_JP"
+    std::replace(name.begin(), name.end(), '_', '-');
+    const size_t primary = std::min(name.find('-'), name.size());
+    const bool valid = (primary == 2 || primary == 3) &&
+        std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isalnum(c) || c == '-'; });
+    return valid ? name : "en-US"; // "C", "POSIX", "" or anything odd would reintroduce the bug
+}
+
+static void apply_webkit_preferred_language()
+{
+    const wxLocale *locale = wxGetLocale();
+    const std::string tag = to_bcp47_language_tag(locale ? locale->GetCanonicalName().ToStdString() : std::string());
+    static std::string s_applied; // re-applied only when the UI language changes
+    if (tag == s_applied)
+        return;
+    WebKitWebContext *ctx = webkit_web_context_get_default();
+    if (ctx == nullptr)
+        return;
+    const gchar *const languages[] = {tag.c_str(), nullptr};
+    webkit_web_context_set_preferred_languages(ctx, languages);
+    s_applied = tag;
+    BOOST_LOG_TRIVIAL(info) << "WebKit preferred language: " << tag;
+}
+
+// wx connects "script-message-received" on the view's WebKitUserContentManager with the
+// wxWebViewWebKit as user data, but ~wxWebViewWebKit only disconnects handlers from the
+// WebKitWebView. A message the page still has in flight during teardown (e.g. a language
+// switch, where AddScriptMessageHandler() on a new view spins a nested main loop) then reaches
+// a freed object. Unregister the handler and drop wx's connections before the view goes away.
+// The native view is captured here: on the plain delete path wxEVT_DESTROY is only sent from
+// ~wxWindow, when calling back into the wxWebView is no longer safe, while the GTK widget itself
+// is disposed only after that event.
+static void disconnect_script_messages_on_destroy(wxWebView *webView)
+{
+    WebKitWebView *view = static_cast<WebKitWebView *>(webView->GetNativeBackend());
+    if (view == nullptr)
+        return;
+    webView->Bind(wxEVT_DESTROY, [webView, view](wxWindowDestroyEvent &evt) {
+        evt.Skip();
+        if (evt.GetEventObject() != webView)
+            return; // destroy events of child windows propagate up to us
+        WebKitUserContentManager *ucm = webkit_web_view_get_user_content_manager(view);
+        if (ucm == nullptr)
+            return;
+        webkit_user_content_manager_unregister_script_message_handler(ucm, "wx");
+        g_signal_handlers_disconnect_by_data(ucm, webView);
+    });
+}
+#endif
+
 wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url, wxString const & brand_tag, bool script_bridge)
 {
 #if wxUSE_WEBVIEW_EDGE
@@ -384,6 +454,9 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url, wxStr
 #elif defined(__WXOSX__)
     wxWebView *webView = new WebViewWebKit(url2);
 #else
+#if defined(__linux__)
+    apply_webkit_preferred_language();
+#endif
     auto webView = wxWebView::New();
 #endif
     if (webView) {
@@ -423,6 +496,9 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url, wxStr
         static_cast<WebViewWebKit *>(webView)->AttachNavigationGate();
 #else
         webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+#endif
+#if defined(__linux__)
+        disconnect_script_messages_on_destroy(webView);
 #endif
         // Same UA layout as the Windows branch above; macOS/Linux WebKit prefix.
         webView->SetUserAgent(wxString::FromUTF8(Slic3r::bbl_login_user_agent(
@@ -483,6 +559,12 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url, wxStr
 #endif
         } // script_bridge
         webView->EnableContextMenu(true);
+        // Snapmaker's Flutter pages follow the slicer's dark mode (ApplyFlutterTheme). Bound on the
+        // view itself, so it runs ahead of the hosts' handlers, which sit on their windows.
+        webView->Bind(wxEVT_WEBVIEW_LOADED, [webView](wxWebViewEvent &evt) {
+            evt.Skip();
+            WebView::ApplyFlutterTheme(webView);
+        });
     } else {
         BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__ << ": failed. Use fake web view.";
         Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL, "bury_point_create webview fail and use fakewebview", BP_WEB_VIEW);
@@ -563,9 +645,69 @@ void WebView::RecreateAll()
             Slic3r::current_login_ua_platform(), dark,
             Slic3r::GUI::wxGetApp().current_language_code().ToStdString(),
             "SM-Slicer", SLIC3R_VERSION)));
-        if (std::find(g_no_theme_reload.begin(), g_no_theme_reload.end(), webView) == g_no_theme_reload.end())
+        // A Flutter page switches its theme live (ApplyFlutterTheme); a reload would lose its
+        // state (a pre-print page's filament mapping, the Device tab's connection).
+        if (IsFlutterPage(webView))
+            WebView::ApplyFlutterTheme(webView);
+        else if (std::find(g_no_theme_reload.begin(), g_no_theme_reload.end(), webView) == g_no_theme_reload.end())
             webView->Reload();
     }
+}
+
+bool WebView::IsFlutterPage(wxWebView *webView)
+{
+    if (webView == nullptr)
+        return false;
+    const wxString url = webView->GetCurrentURL();
+    return url.Contains("/web/flutter_web/") && Slic3r::GUI::wxGetApp().is_own_page_url(url.ToStdString(wxConvUTF8));
+}
+
+void WebView::ApplyFlutterTheme(wxWebView *webView)
+{
+    if (!IsFlutterPage(webView))
+        return;
+    // index.html defines edgeSetDarkMode (scripts/patch_flutter_web_dark.py); the app follows it
+    // with its own dark theme, live. The page also starts from its dark_mode= and dark_<role>= URL
+    // parameters, which can be out of date after a theme change, hence on every load too.
+    std::string colours;
+    for (const auto &[role, hex] : FlutterDarkColours())
+        colours += (colours.empty() ? "" : ",") + role + ":'" + hex + "'";
+    RunScript(webView, wxString::Format("window.edgeSetDarkMode && window.edgeSetDarkMode(%s, {%s});",
+                                        Slic3r::GUI::wxGetApp().dark_mode() ? "true" : "false", wxString::FromUTF8(colours)));
+}
+
+std::vector<std::pair<std::string, std::string>> WebView::FlutterDarkColours()
+{
+    // The pages look like the slicer's own (Bambu) Device page, StatusPanel.cpp, whose light colours
+    // UpdateDarkUI turns dark through StateColor's table (or a theme pack's map):
+    //   bg    - the page behind the panels, STATUS_PANEL_BG #EEEEEE -> #4C4C55 (theme: separator)
+    //   card  - the panels, white #FFFFFF                           -> #2D2D31 (theme: window_bg)
+    //   strip - the panel title bars, STATUS_TITLE_BG #F8F8F8       -> #36363C (theme: panel_bg)
+    //   title - the panel titles, PAGE_TITLE_FONT_COL #6B6B6B        -> #818183 (theme: text_disabled)
+    // and the slicer's accent for the Control panel's buttons:
+    //   accent      - the Orca accent #009688                        -> #00675B (theme: accent)
+    //   accent_text - text and icons on it #FEFEFE                   -> #FEFEFE (theme: accent_text)
+    static const std::pair<const char *, const char *> roles[] = {
+        {"bg", "#EEEEEE"}, {"card", "#FFFFFF"}, {"strip", "#F8F8F8"}, {"title", "#6B6B6B"},
+        {"accent", "#009688"}, {"accent_text", "#FEFEFE"}};
+    const auto &stock = StateColor::GetDarkMap();
+    auto stock_dark = [&stock](const wxColour &light) {
+        auto it = stock.find(light);
+        return it != stock.end() ? it->second : light;
+    };
+    const bool dark = Slic3r::GUI::wxGetApp().dark_mode();
+    std::vector<std::pair<std::string, wxColour>> picked;
+    for (const auto &[role, light] : roles)
+        picked.emplace_back(role, dark ? StateColor::darkModeColorFor(wxColour(light)) : stock_dark(wxColour(light)));
+    // A dark look whose window background is not dark after all: the stock greys.
+    const wxColour &bg = picked.front().second;
+    if (!bg.IsOk() || 0.2126 * bg.Red() + 0.7152 * bg.Green() + 0.0722 * bg.Blue() > 110)
+        for (size_t i = 0; i < picked.size(); ++i)
+            picked[i].second = stock_dark(wxColour(roles[i].second));
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const auto &[role, colour] : picked)
+        out.emplace_back(role, colour.GetAsString(wxC2S_HTML_SYNTAX).ToStdString());
+    return out;
 }
 
 void WebView::SetReloadOnThemeChange(wxWebView *webView, bool reload)

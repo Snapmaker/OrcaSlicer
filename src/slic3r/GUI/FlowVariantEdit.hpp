@@ -46,6 +46,17 @@ bool replicate_flow_variant_value(DynamicPrintConfig          &config,
                                   size_t                       source_index,
                                   const std::vector<std::string> &modes);
 
+// Slot the filament tab / ConfigManipulation must read for a flow-variant key.
+// Matches Tab::flow_variant_view_index() (0 Standard, 1 High-Flow). When the
+// filament has no variants the view index is 0, so non-U1 behaviour is unchanged.
+// Non-variant keys stay on index 0 even if the High-Flow view is selected.
+int filament_tab_option_index(const std::string &key, size_t view_index);
+
+// Range warnings used by ConfigManipulation. nozzle_temperature_range_* stay
+// per-filament (index 0); only the temperature value follows the view index.
+bool filament_nozzle_temperature_out_of_range(const DynamicPrintConfig &config, int variant_index);
+bool filament_nozzle_temperature_initial_layer_out_of_range(const DynamicPrintConfig &config, int variant_index);
+
 } // namespace GUI
 } // namespace Slic3r
 

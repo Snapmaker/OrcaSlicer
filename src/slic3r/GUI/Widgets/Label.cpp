@@ -7,6 +7,25 @@
 #include <boost/log/trivial.hpp>
 
 
+static wxString g_theme_body_face;
+static wxString g_theme_heading_face;
+static wxString g_theme_button_face;
+
+void Label::SetThemeFaces(wxString const &body, wxString const &heading, wxString const &button)
+{
+    g_theme_body_face    = body;
+    g_theme_heading_face = heading;
+    g_theme_button_face  = button;
+}
+
+wxFont Label::ThemedButtonFont(wxFont const &font)
+{
+    if (g_theme_button_face.empty() || !font.IsOk())
+        return font;
+    wxFont themed = font;
+    return themed.SetFaceName(g_theme_button_face) ? themed : font;
+}
+
 wxFont Label::sysFont(int size, bool bold)
 {
 //#ifdef __linux__
@@ -21,6 +40,14 @@ wxFont Label::sysFont(int size, bool bold)
     // Check if the current locale is Korean
     if (wxLocale::GetSystemLanguage() == wxLANGUAGE_KOREAN) {
         face = "NanumGothic";
+    }
+
+    const wxString &theme_face = bold ? g_theme_heading_face : g_theme_body_face;
+    if (!theme_face.empty()) {
+        wxFont themed{size, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, bold ? wxFONTWEIGHT_BOLD : wxFONTWEIGHT_NORMAL, false, theme_face};
+        if (themed.IsOk() && themed.SetFaceName(theme_face))
+            return themed;
+        BOOST_LOG_TRIVIAL(warning) << "Theme font face \"" << theme_face.ToUTF8().data() << "\" is not available; using " << face.ToUTF8().data();
     }
 
     wxFont font{size, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, bold ? wxFONTWEIGHT_BOLD : wxFONTWEIGHT_NORMAL, false, face};

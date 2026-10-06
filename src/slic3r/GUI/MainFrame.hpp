@@ -13,6 +13,7 @@
 
 #include <string>
 #include <map>
+#include <vector>
 
 #include "GUI_Utils.hpp"
 #include "Event.hpp"
@@ -227,7 +228,8 @@ public:
 
     // Ultra: the only way a hub-managed (hidden-launch) instance really closes; a plain
     // close just hides it. discard = skip the unsaved-project handling (Close(true)).
-    void request_quit(bool discard = false);
+    // Returns false when the close was cancelled (the unsaved-project prompt, say).
+    bool request_quit(bool discard = false);
 
     //BBS GUI refactor
     enum TabPosition
@@ -361,6 +363,20 @@ public:
     // Propagate changed configuration from the Tab to the Plater and save changes to the AppConfig
     void        on_config_changed(DynamicPrintConfig* cfg) const ;
     void        set_print_button_to_default(PrintSelectType select_type);
+    // The print/export actions the current printer offers, in the order the dropdown lists them.
+    // The dropdown is built from this, and a remembered action is only restored if it appears here.
+    std::vector<PrintSelectType> available_print_actions() const;
+    // Apply an action picked from the print dropdown to the print button and remember it.
+    void        select_print_action(PrintSelectType select_type);
+    // Remember the user's preferred print/export action across sessions (see "remember_print_action").
+    void        remember_print_select(PrintSelectType select_type);
+    bool        get_remembered_print_select(PrintSelectType &out) const;
+
+private:
+    // Label + m_print_select + always-recompute enable via get_enable_print_status() only.
+    void        apply_print_select_state(PrintSelectType select_type);
+
+public:
 
     bool can_save() const;
     bool can_save_as() const;
@@ -404,6 +420,7 @@ public:
 
     // BBS. Replace title bar and menu bar with top bar.
     BBLTopbar*            m_topbar{ nullptr };
+    wxPanel*              m_mac_topbar_panel{ nullptr }; // macOS: the plain bar the UI theme's title bar colour goes on
     PrintHostQueueDialog* printhost_queue_dlg() { return m_printhost_queue_dlg; }
     Plater*               m_plater { nullptr };
     //BBS: GUI refactor
@@ -441,10 +458,9 @@ public:
     // Dark-mode/DPI treatment for a panel built after the startup theme pass.
     void              apply_theme_to_lazy_panel(wxWindow* panel);
 
-    // The Home tab (HomePanel): the phone hub page, with the old flutter start page kept behind it.
-    // m_webview IS that start page. It is built only when something asks for it (File > Start page,
-    // EVT_LOAD_URL, the hub view's "Open start page"), so test it for null before use - or go
-    // through start_page(), which builds it.
+    // The Home tab (HomePanel): Recent and Print History, with the old flutter start page kept behind
+    // it. m_webview IS that start page. It is built only when something asks for it (File > Start
+    // page, EVT_LOAD_URL), so test it for null before use - or go through start_page(), which builds it.
     HomePanel*            m_home { nullptr };
     WebViewPanel*         m_webview { nullptr };
     WebViewPanel*         start_page();

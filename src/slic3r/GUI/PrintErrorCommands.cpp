@@ -405,6 +405,176 @@ bool parse_command_error_reply(const json& print_block, bool is_studio_seq, int&
     return true;
 }
 
+// ---- which replies are answers to something this slicer actually sent ----
+
+bool is_status_or_info_command(const std::string& command)
+{
+    if (command == "push_status" || command == "pushall" || command == "get_version" ||
+        command == "get_access_code")
+        return true;
+    // get_accessories, extrusion_cali_get and the like: requests for information, whose answers
+    // describe the printer rather than accept or refuse anything.
+    const std::string get_prefix = "get_";
+    const std::string get_suffix = "_get";
+    if (command.compare(0, get_prefix.size(), get_prefix) == 0) return true;
+    if (command.size() >= get_suffix.size() &&
+        command.compare(command.size() - get_suffix.size(), get_suffix.size(), get_suffix) == 0)
+        return true;
+    return false;
+}
+
+bool is_print_action_command(const std::string& command)
+{
+    return command == "project_file" || command == "gcode_file" || command == "pause" ||
+           command == "resume" || command == "stop" || command == "ignore";
+}
+
+namespace {
+
+// Sequence ids go out as strings but some firmware answers with a number; both compare as text.
+std::string sequence_id_of(const json& block)
+{
+    if (!block.is_object() || !block.contains("sequence_id")) return std::string();
+    const json& seq = block["sequence_id"];
+    if (seq.is_string()) return seq.get<std::string>();
+    if (seq.is_number_integer()) return std::to_string(seq.get<long long>());
+    return std::string();
+}
+
+} // namespace
+
+SentCommandTracker::SentCommandTracker(const SentCommandTracker& other)
+{
+    std::lock_guard<std::mutex> lock(other.m_mutex);
+    m_by_seq   = other.m_by_seq;
+    m_by_agent = other.m_by_agent;
+}
+
+SentCommandTracker& SentCommandTracker::operator=(const SentCommandTracker& other)
+{
+    if (this == &other) return *this;
+    std::lock(m_mutex, other.m_mutex);
+    std::lock_guard<std::mutex> a(m_mutex, std::adopt_lock);
+    std::lock_guard<std::mutex> b(other.m_mutex, std::adopt_lock);
+    m_by_seq   = other.m_by_seq;
+    m_by_agent = other.m_by_agent;
+    return *this;
+}
+
+void SentCommandTracker::expire_locked(Clock::time_point now)
+{
+    for (auto it = m_by_seq.begin(); it != m_by_seq.end();) {
+        if (it->second.expires <= now) it = m_by_seq.erase(it);
+        else ++it;
+    }
+    for (auto it = m_by_agent.begin(); it != m_by_agent.end();) {
+        if (it->second <= now) it = m_by_agent.erase(it);
+        else ++it;
+    }
+}
+
+void SentCommandTracker::note_sent(const std::string& sequence_id, const std::string& command, Clock::time_point now,
+                                   std::chrono::seconds ttl)
+{
+    if (sequence_id.empty() || command.empty() || is_status_or_info_command(command)) return;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    expire_locked(now);
+    m_by_seq[sequence_id] = Entry{command, now + ttl};
+}
+
+void SentCommandTracker::note_sent_payload(const json& payload, Clock::time_point now)
+{
+    if (!payload.is_object()) return;
+    for (const auto& el : payload.items()) {
+        const json& block = el.value();
+        if (!block.is_object() || !block.contains("command") || !block["command"].is_string()) continue;
+        note_sent(sequence_id_of(block), block["command"].get<std::string>(), now);
+    }
+}
+
+void SentCommandTracker::note_sent_by_agent(const std::string& command, Clock::time_point now, std::chrono::seconds ttl)
+{
+    if (command.empty() || is_status_or_info_command(command)) return;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    expire_locked(now);
+    m_by_agent[command] = now + ttl;
+}
+
+bool SentCommandTracker::is_awaiting(const std::string& sequence_id, const std::string& command, Clock::time_point now)
+{
+    if (command.empty()) return false;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    expire_locked(now);
+    if (!sequence_id.empty()) {
+        auto it = m_by_seq.find(sequence_id);
+        if (it != m_by_seq.end()) return it->second.command == command;
+    }
+    // Only a sequence id we never used can be the plug-in's: one we did use belongs to the command
+    // we sent under it, and a different command name under it is somebody else's reply.
+    return m_by_agent.count(command) != 0;
+}
+
+void SentCommandTracker::forget(const std::string& sequence_id, const std::string& command)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto it = m_by_seq.find(sequence_id);
+    if (it != m_by_seq.end() && it->second.command == command) {
+        m_by_seq.erase(it);
+        return;
+    }
+    m_by_agent.erase(command);
+}
+
+size_t SentCommandTracker::pending_count(Clock::time_point now)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    expire_locked(now);
+    return m_by_seq.size() + m_by_agent.size();
+}
+
+bool accept_command_refusal(const json& print_block, SentCommandTracker& tracker, SentCommandTracker::Clock::time_point now,
+                            int& err_code, json& action_json, std::string& command)
+{
+    command.clear();
+    // is_studio_seq is passed as true: the range check is superseded by the tracker, which only
+    // ever holds ids this process put on the wire.
+    if (!parse_command_error_reply(print_block, true, err_code, action_json)) return false;
+    if (print_block["command"].is_string()) command = print_block["command"].get<std::string>();
+
+    const std::string seq = sequence_id_of(print_block);
+    // A status or info reply is never a refusal, whatever error fields it carries: the push_status
+    // answering our pushall echoes the pushall's sequence id and the printer's standing error.
+    const bool ours = !command.empty() && !is_status_or_info_command(command) && tracker.is_awaiting(seq, command, now);
+    if (!ours) {
+        err_code    = 0;
+        action_json = json();
+        return false;
+    }
+    tracker.forget(seq, command);
+    return true;
+}
+
+std::vector<int> resolve_command_error_actions(const std::vector<int>& table_actions, bool print_action,
+                                               bool& used_fallback)
+{
+    if (print_action) return resolve_print_error_actions(table_actions, used_fallback);
+
+    // Stop Printing and the resume family are exactly the ids that carry a job_id: they act on the
+    // print the printer holds, and a refused non-print command is not a reason to touch it.
+    std::vector<int> kept;
+    for (int id : table_actions)
+        if (!print_error_action_needs_job_id(id)) kept.push_back(id);
+
+    std::vector<int> out = resolve_print_error_actions(kept, used_fallback);
+    if (used_fallback) {
+        out.clear();
+        out.push_back(PrintErrorAction::OK_BUTTON);
+        if (std::find(kept.begin(), kept.end(), PrintErrorAction::REMOVE_CLOSE_BTN) != kept.end())
+            out.push_back(PrintErrorAction::REMOVE_CLOSE_BTN);
+    }
+    return out;
+}
+
 // ---- payload builders ----
 
 json build_hms_resume(const std::string& err, const std::string& job_id, const std::string& sequence_id)

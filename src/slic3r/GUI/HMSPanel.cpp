@@ -16,6 +16,37 @@ namespace GUI {
 
 wxDEFINE_EVENT(EVT_ALREADY_READ_HMS, wxCommandEvent);
 
+namespace {
+
+// Opens an HMS wiki page. Called from a row's click handler, so it must not run the browser
+// launch inside that handler: on Windows ShellExecute can pump messages while it works, and a
+// printer update arriving in that window rebuilds the list (HMSPanel::update ->
+// DestroyChildren) and frees the row whose handler is still on the stack. The handler used to
+// read the row's members after the launch and crashed there (Sentry EDGESLICER-3). The launch is
+// queued instead, by value, so no row is referenced once the handler has returned.
+void open_hms_wiki_later(const std::string& url)
+{
+    if (url.empty())
+        return;
+    wxGetApp().CallAfter([url]() { wxLaunchDefaultBrowser(url); });
+}
+
+// Tells the monitor panel the row's error was looked at. Takes the code by value for the same
+// reason; a missing main frame (shutdown) is not an error.
+void post_hms_already_read(const std::string& long_error_code)
+{
+    MainFrame* frame = wxGetApp().mainframe;
+    if (frame == nullptr)
+        return;
+    if (MonitorPanel* monitor_panel = frame->monitor()) {
+        wxCommandEvent evt(EVT_ALREADY_READ_HMS);
+        evt.SetString(long_error_code);
+        wxPostEvent(monitor_panel, evt);
+    }
+}
+
+} // namespace
+
 HMSNotifyItem::HMSNotifyItem(const std::string& dev_id, wxWindow *parent, HMSItem& item)
     : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL) 
     , m_hms_item(item)
@@ -91,11 +122,11 @@ HMSNotifyItem::HMSNotifyItem(const std::string& dev_id, wxWindow *parent, HMSIte
             SetCursor(wxCURSOR_ARROW);
         }
         });
-    m_panel_hms->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& e) {
-        if (!m_url.empty()) wxLaunchDefaultBrowser(m_url);
+    m_panel_hms->Bind(wxEVT_LEFT_UP, [url = m_url](wxMouseEvent& e) {
+        open_hms_wiki_later(url);
         });
-    m_hms_content->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& e) {
-        if (!m_url.empty()) wxLaunchDefaultBrowser(m_url);
+    m_hms_content->Bind(wxEVT_LEFT_UP, [url = m_url](wxMouseEvent& e) {
+        open_hms_wiki_later(url);
         });
 #else
     m_hms_content->Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent& e) {
@@ -118,12 +149,11 @@ HMSNotifyItem::HMSNotifyItem(const std::string& dev_id, wxWindow *parent, HMSIte
             SetCursor(wxCURSOR_ARROW);
         }
         });
-    m_hms_content->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& e) {
-        if (!m_url.empty()) wxLaunchDefaultBrowser(m_url);
-            wxCommandEvent evt(EVT_ALREADY_READ_HMS);
-            evt.SetString(long_error_code);
-            if (MonitorPanel* monitor_panel = wxGetApp().mainframe->monitor())
-                wxPostEvent(monitor_panel, evt);
+    // Captures the url and the code by value: the row can be destroyed while this runs (see
+    // open_hms_wiki_later), so the handler never reads `this` after it starts.
+    m_hms_content->Bind(wxEVT_LEFT_UP, [url = m_url, code = long_error_code](wxMouseEvent& e) {
+        post_hms_already_read(code);
+        open_hms_wiki_later(url);
         });
 #endif
 }

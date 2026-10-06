@@ -1,12 +1,14 @@
 #include "../GCode.hpp"
 #include "CoolingBuffer.hpp"
 #include "../ContourZ.hpp"
+#include "../LocalesUtils.hpp"
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/log/trivial.hpp>
 #include <algorithm>
 #include <iostream>
 #include <float.h>
+#include <string_view>
 #include <system_error>
 #include <unordered_map>
 
@@ -459,13 +461,13 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
                 if (*c == 0 || *c == ';')
                     break;
 
-                assert(is_decimal_separator_point()); // for atof
                 //BBS: Parse the axis.
                 size_t axis = (*c >= 'X' && *c <= 'Z') ? (*c - 'X') :
                               (*c == 'E') ? 3 : (*c == 'F') ? 4 :
                               (*c == 'I') ? 5 : (*c == 'J') ? 6 : size_t(-1);
                 if (axis != size_t(-1)) {
-                    new_pos[axis] = float(atof(++c));
+                    ++ c;
+                    new_pos[axis] = float(atof_decimal_point(std::string_view(c, sline.data() + sline.size() - c)));
                     if (axis == 4) {
                         // Convert mm/min to mm/sec.
                         new_pos[4] /= 60.f;
@@ -604,12 +606,20 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
         } else if (boost::starts_with(sline, "G4 ")) {
             // Parse the wait time.
             line.type = CoolingLine::TYPE_G4;
-            size_t pos_S = sline.find('S', 3);
-            size_t pos_P = sline.find('P', 3);
-            assert(is_decimal_separator_point()); // for atof
+            // Only look for the parameters before a trailing comment ("G4 P500 ; Settle" has no S parameter).
+            // find() returns npos when a parameter is absent, so compare against npos, not 0.
+            const size_t comment = sline.find(';', 3);
+            const size_t limit   = comment == std::string::npos ? sline.size() : comment;
+            const auto   find_param = [&sline, limit](char letter) {
+                const size_t pos = sline.find(letter, 3);
+                return pos < limit ? pos : std::string::npos;
+            };
+            const size_t pos_S = find_param('S');
+            const size_t pos_P = find_param('P');
+            // S is seconds, P is milliseconds; a G4 with neither (or without a number) adds no time.
             line.time = line.time_max = float(
-                (pos_S > 0) ? atof(sline.c_str() + pos_S + 1) :
-                (pos_P > 0) ? atof(sline.c_str() + pos_P + 1) * 0.001 : 0.);
+                (pos_S != std::string::npos) ? atof_decimal_point(sline.c_str() + pos_S + 1) :
+                (pos_P != std::string::npos) ? atof_decimal_point(sline.c_str() + pos_P + 1) * 0.001 : 0.);
         } else if (boost::starts_with(sline, ";_FORCE_RESUME_FAN_SPEED")) {
             line.type = CoolingLine::TYPE_FORCE_RESUME_FAN;
         }

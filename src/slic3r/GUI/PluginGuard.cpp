@@ -271,6 +271,30 @@ CameraToolsCopy camera_tools_copy_decision(bool plugins_copy_is_stub,
     return cameratools_up_to_date ? CameraToolsCopy::KeepExisting : CameraToolsCopy::CopyFromPlugins;
 }
 
+OtaPluginInstall ota_plugin_install_decision(bool update_flag, bool ultranet_installed, bool keep_foreign)
+{
+    if (! update_flag)
+        return OtaPluginInstall::NothingStaged;
+    // The staged package is Bambu's: with UltraNet installed it would replace ours. Only somebody who
+    // keeps a foreign plug-in on purpose gets the stock copy.
+    if (ultranet_installed && ! keep_foreign)
+        return OtaPluginInstall::Refuse;
+    return OtaPluginInstall::Install;
+}
+
+const char *const *ota_plugin_staged_names(size_t &count)
+{
+#if defined(_WIN32)
+    static const char *const names[] = { "bambu_networking.dll", "BambuSource.dll", "live555.dll", "network_plugins.json" };
+#elif defined(__APPLE__)
+    static const char *const names[] = { "libbambu_networking.dylib", "libBambuSource.dylib", "liblive555.dylib", "network_plugins.json" };
+#else
+    static const char *const names[] = { "libbambu_networking.so", "libBambuSource.so", "liblive555.so", "network_plugins.json" };
+#endif
+    count = sizeof(names) / sizeof(names[0]);
+    return names;
+}
+
 bool may_overwrite_bambusource(bool dest_exists, bool dest_is_real_filter)
 {
     // Upgrades re-run the first-run copier. A real filter the user fetched from Bambu must outlive

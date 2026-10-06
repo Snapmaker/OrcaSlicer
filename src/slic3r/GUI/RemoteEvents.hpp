@@ -61,7 +61,14 @@ struct PrinterState
     // put the buttons on the notification's card instead of only the sentence. Empty for every
     // other source of an error_code (HMS items, a Klipper message, a relayed hub's event).
     std::vector<PrintErrorEventAction> error_actions;
-    std::string                        job_id; // the printer's job, for the actions that need one
+    // The printer's own id for the job it is on (Bambu's job_id), when it reports one. It is what
+    // tells "the same print, seen again" from "the same file, printed again", so a start is keyed
+    // on it where there is one; the actions that need a job read it too. "" or "0" = none.
+    std::string                        job_id;
+    // Every serious code the printer is reporting right now, `error_code` included. Only
+    // `error_code` (the worst) is ever announced; the rest keep an already-announced code "held"
+    // while a worse one sits on top of it, so it is not announced again when it resurfaces.
+    std::vector<std::string>           active_codes;
 };
 
 struct Snapshot
@@ -220,6 +227,7 @@ inline std::string test_kind(const std::vector<std::string>& filter)
 struct JobMemory
 {
     std::string job;            // the job whose "started" was announced (may be empty: an unnamed print)
+    std::string job_id;         // the printer's id for that job, when it reported one
     bool        announced { false }; // a "started" has gone out for it
     long long   started_at { 0 };    // when that went out (snapshot time)
     std::string terminal;       // finished | cancelled | failed, once one has been seen for it
@@ -243,7 +251,18 @@ struct Memory
     // The last raw state each printer reported, so a change in the printer's own words can be
     // logged even where it maps to the same normalised state. This is what names a flap source.
     std::map<std::string, std::string> last_raw;
+    // The error codes each printer is holding: printer id -> code -> 0 while the code is being
+    // reported, or the snapshot time it was first seen missing. A code is announced once when it
+    // appears and not again until it has been gone for ERROR_CLEAR_MS of visible snapshots - the
+    // printer re-sending the same HMS item on every status push, or two codes taking turns at
+    // being the worst, is one event, not one per change. Survives the printer going offline, for
+    // the same reason `jobs` does: not seeing a code is not the code clearing.
+    std::map<std::string, std::map<std::string, long long>> codes;
 };
+
+// How long a code must be missing (while the printer is visible) before it counts as cleared, so
+// that its return is a new occurrence and announced again.
+static constexpr long long ERROR_CLEAR_MS = 60000;
 
 // One line per raw-state change, for the hub log. `step` fills this so the caller can log it
 // without the rule touching a logger (it stays pure and testable).

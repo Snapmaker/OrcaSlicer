@@ -4,6 +4,8 @@
 #include "GUI_App.hpp"
 #include "PartPlate.hpp"
 #include "Plater.hpp"
+#include "SnapmakerLan.hpp"
+#include "DeviceModelCode.hpp"
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/GCode/Thumbnails.hpp"
 #include "libslic3r/Model.hpp"
@@ -19,6 +21,8 @@
 #include <openssl/sha.h>
 
 #include <algorithm>
+#include <cctype>
+#include <map>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -254,6 +258,7 @@ static json meta_json(const Meta& m)
 {
     json j;
     j["printer"] = { { "id", m.printer_id }, { "kind", m.printer_kind }, { "name", m.printer_name }, { "model", m.printer_model } };
+    if (!m.printer_serial.empty()) j["printer"]["serial"] = m.printer_serial;
     j["plate"]   = m.plate;
     j["plate_name"]    = m.plate_name;
     j["project_title"] = m.project_title;
@@ -268,6 +273,7 @@ static json meta_json(const Meta& m)
     if (m.estimated_weight_g > 0.0) j["estimated_weight_g"] = m.estimated_weight_g;
     if (!m.mapping.empty())         j["mapping"] = m.mapping;
     if (m.unload_at_end)            j["unload_at_end"] = true;
+    if (!m.remote_path.empty())     j["remote_path"] = m.remote_path;
     j["spoolman_deduct"] = m.spoolman_deduct;
     return j;
 }
@@ -431,10 +437,15 @@ std::vector<Record> list(const std::string& printer_id_filter)
         const fs::path            root(dir());
         boost::system::error_code ec;
         if (!fs::is_directory(root, ec)) return out;
+        // The LAN cards, read once for the whole pass: a record's printer is named and filtered as
+        // the phone sees it (normalize_printer), so a "connect" record listed under its LAN card is
+        // also found under that card's id.
+        const std::vector<SnapmakerLan::Device> lan = SnapmakerLan::devices();
         for (fs::directory_iterator it(root, ec), end; it != end && !ec; it.increment(ec)) {
             if (it->path().extension() != ".json") continue;
             Record r = record_from_sidecar(it->path());
             if (r.id.empty()) continue;
+            normalize_printer(r.json, lan);
             if (!printer_id_filter.empty()) {
                 const std::string id = r.json.contains("printer") && r.json["printer"].is_object()
                                            ? r.json["printer"].value("id", std::string())
@@ -469,7 +480,8 @@ Record find(const std::string& id)
             // a caller comes back with. They are the same for every record this module writes, but
             // a folder that was renamed, restored from a backup or copied from another PC can hold
             // a sidecar whose stem and "id" have drifted apart. Take it when it names itself right.
-            if (r.id == id) return r;
+            // As list() hands it out: a reprint of a record listed under a LAN card goes to that card.
+            if (r.id == id) { normalize_printer(r.json, SnapmakerLan::devices()); return r; }
             if (r.id.empty()) return Record();
         }
         // No sidecar at <id>.json, or one that calls itself something else: the id the caller has
@@ -496,6 +508,69 @@ static fs::path sidecar_path_of(const fs::path& root, const std::string& id)
     return direct;
 }
 
+bool set_mode_in(const std::string& root_dir, const std::string& id, const std::string& mode, const std::string& remote_path)
+{
+    if (mode != "upload" && mode != "print") return false;
+    if (id.empty() || id.size() > 200 || id != sanitize(id, 200)) return false;
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        const fs::path root(root_dir);
+        const fs::path sidecar = sidecar_path_of(root, id);
+        boost::system::error_code ec;
+        if (!fs::is_regular_file(sidecar, ec)) return false;
+        boost::nowide::ifstream f(sidecar.string().c_str(), std::ios::binary);
+        if (!f) return false;
+        std::stringstream ss;
+        ss << f.rdbuf();
+        f.close();
+        json j = json::parse(ss.str());
+        if (!j.is_object() || j.value("id", std::string()) != id) return false;
+        j["mode"] = mode;
+        if (!remote_path.empty()) j["remote_path"] = remote_path;
+        return write_atomic(sidecar, j.dump(2));
+    } catch (...) {
+        return false;
+    }
+}
+
+bool set_mode(const std::string& id, const std::string& mode, const std::string& remote_path)
+{
+    return set_mode_in(dir(), id, mode, remote_path);
+}
+
+bool note_reprint_in(const std::string& root_dir, const std::string& id, const nlohmann::json& entry)
+{
+    if (id.empty() || id.size() > 200 || id != sanitize(id, 200) || !entry.is_object()) return false;
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        const fs::path root(root_dir);
+        const fs::path sidecar = sidecar_path_of(root, id);
+        boost::system::error_code ec;
+        if (!fs::is_regular_file(sidecar, ec)) return false;
+        boost::nowide::ifstream f(sidecar.string().c_str(), std::ios::binary);
+        if (!f) return false;
+        std::stringstream ss;
+        ss << f.rdbuf();
+        f.close();
+        json j = json::parse(ss.str());
+        if (!j.is_object() || j.value("id", std::string()) != id) return false;
+        json& list = j["reprints"];
+        if (!list.is_array()) list = json::array();
+        list.push_back(entry);
+        // The newest REPRINT_HISTORY_MAX: a job reprinted every day for years must not grow its
+        // sidecar without bound, and nobody reads that far back.
+        while (list.size() > REPRINT_HISTORY_MAX) list.erase(list.begin());
+        return write_atomic(sidecar, j.dump(2));
+    } catch (...) {
+        return false;
+    }
+}
+
+bool note_reprint(const std::string& id, const nlohmann::json& entry)
+{
+    return note_reprint_in(dir(), id, entry);
+}
+
 bool remove(const std::string& id)
 {
     const Record r = find(id);
@@ -514,6 +589,321 @@ bool remove(const std::string& id)
         return true;
     } catch (...) {}
     return false;
+}
+
+// ---------------------------------------------------------- printer names ----
+
+static std::string lower_ascii(std::string s)
+{
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+    return s;
+}
+
+static bool is_ipv4(const std::string& h)
+{
+    int parts = 0, digits = 0, value = 0;
+    for (size_t i = 0; i <= h.size(); ++i) {
+        if (i == h.size() || h[i] == '.') {
+            if (digits == 0 || value > 255) return false;
+            ++parts;
+            digits = value = 0;
+        } else if (std::isdigit((unsigned char) h[i]) && digits < 3) {
+            value = value * 10 + (h[i] - '0');
+            ++digits;
+        } else {
+            return false;
+        }
+    }
+    return parts == 4;
+}
+
+// One word of a name: is it an address rather than a word?
+static bool word_is_address(std::string w)
+{
+    // Brackets and trailing punctuation around it: "(192.168.1.5)", "host.example.com,".
+    while (!w.empty() && std::string("()[]<>,;\"'").find(w.back()) != std::string::npos && w.back() != ']') w.pop_back();
+    while (!w.empty() && std::string("(<,;\"'").find(w.front()) != std::string::npos) w.erase(w.begin());
+    if (w.empty()) return false;
+    if (w.find("://") != std::string::npos) return true;          // a URL
+    if (w.front() == '[' && w.find(']') != std::string::npos) return true; // [fe80::1]:7125
+    std::string host = lower_ascii(w);
+    // host:port, a port being 2 to 5 digits: "a1pr8y....amazonaws.com:8883", "192.168.1.5:7125".
+    const size_t colon = host.rfind(':');
+    if (colon != std::string::npos && colon > 0) {
+        const std::string port = host.substr(colon + 1);
+        if (port.size() >= 2 && port.size() <= 5 && port.find_first_not_of("0123456789") == std::string::npos) {
+            const std::string h = host.substr(0, colon);
+            if (h.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789.-_") == std::string::npos) return true;
+        }
+    }
+    while (!host.empty() && host.back() == '.') host.pop_back();
+    if (host.empty()) return false;
+    if (is_ipv4(host)) return true;
+    if (host.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789.-_") != std::string::npos) return false;
+    if (host.find('.') == std::string::npos) return false; // a plain word ("H2D2", "3DPO")
+    if (SnapmakerLan::is_cloud_host(host)) return true;
+    // A dotted host name: two dots or more and a top-level label of letters only
+    // ("reaper.tail2dff02.ts.net"), or one of the names a LAN hands out ("u1.local").
+    const size_t last = host.rfind('.');
+    const std::string tld = host.substr(last + 1);
+    for (const char* lan : { "local", "lan", "home", "internal", "arpa" })
+        if (tld == lan) return true;
+    const bool letters = tld.size() >= 2 && tld.find_first_not_of("abcdefghijklmnopqrstuvwxyz") == std::string::npos;
+    return letters && std::count(host.begin(), host.end(), '.') >= 2;
+}
+
+bool name_is_address(const std::string& name)
+{
+    std::string word;
+    for (size_t i = 0; i <= name.size(); ++i) {
+        if (i == name.size() || std::isspace((unsigned char) name[i])) {
+            if (word_is_address(word)) return true;
+            word.clear();
+        } else {
+            word += name[i];
+        }
+    }
+    return false;
+}
+
+static std::string trimmed(const std::string& s)
+{
+    const size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) return "";
+    return s.substr(a, s.find_last_not_of(" \t\r\n") - a + 1);
+}
+
+std::string display_printer_name(const std::string& name_in, const std::string& model_in, const std::string& kind)
+{
+    const std::string name = trimmed(name_in), model = trimmed(model_in);
+    // "Snapmaker" alone is a brand, not a printer; the old cloud-bound records were "Snapmaker <broker>".
+    if (!name.empty() && !name_is_address(name) && lower_ascii(name) != "snapmaker") return name;
+    if (!model.empty() && !name_is_address(model)) return model;
+    if (kind == "connect" || kind == "snapmaker") return "Snapmaker U1";
+    if (kind == "bambu") return "Bambu Lab printer";
+    if (kind == "printhost") return "Print host";
+    return "Printer";
+}
+
+bool normalize_printer(nlohmann::json& record, const std::vector<SnapmakerLan::Device>& lan)
+{
+    if (!record.is_object() || !record.contains("printer") || !record["printer"].is_object()) return false;
+    const json recorded = record["printer"];
+    json       p        = recorded;
+    const std::string kind = p.value("kind", std::string());
+    const std::string id   = p.value("id", std::string());
+    if (kind == "connect" || id == "connect") {
+        const std::string serial = p.contains("serial") && p["serial"].is_string() ? p["serial"].get<std::string>() : "";
+        if (!serial.empty())
+            for (const SnapmakerLan::Device& d : lan)
+                if (!d.id.empty() && lower_ascii(d.id) == lower_ascii(serial)) {
+                    p["id"]   = "sm:" + d.id;
+                    p["kind"] = "snapmaker";
+                    if (!d.model.empty()) p["model"] = d.model;
+                    p["name"] = d.name;
+                    break;
+                }
+    }
+    const std::string name = display_printer_name(p.value("name", std::string()), p.value("model", std::string()),
+                                                  p.value("kind", std::string()));
+    if (p.value("name", std::string()) != name) p["name"] = name;
+    if (p == recorded) return false;
+    record["printer"] = p;
+    if (!record.contains("printer_recorded")) record["printer_recorded"] = recorded;
+    return true;
+}
+
+// ------------------------------------------------------------------ models ----
+
+std::map<std::string, std::string> load_model_names(const std::string& printers_dir)
+{
+    // What resources/printers held on 2026-09-26, for a folder that cannot be read.
+    std::map<std::string, std::string> names = {
+        { "BL-P001", "Bambu Lab X1 Carbon" }, { "BL-P002", "Bambu Lab X1" }, { "C11", "Bambu Lab P1P" },
+        { "C12", "Bambu Lab P1S" },           { "C13", "Bambu Lab X1E" },    { "N1", "Bambu Lab A1 mini" },
+        { "N2S", "Bambu Lab A1" },            { "O1C2", "Bambu Lab H2C" },   { "O1D", "Bambu Lab H2D" },
+        { "O1S", "Bambu Lab H2S" },
+    };
+    boost::system::error_code ec;
+    if (printers_dir.empty() || !fs::is_directory(printers_dir, ec)) return names;
+    for (fs::directory_iterator it(printers_dir, ec), end; !ec && it != end; it.increment(ec)) {
+        const fs::path& p = it->path();
+        if (p.extension() != ".json") continue;
+        try {
+            boost::nowide::ifstream f(p.string().c_str());
+            if (!f.is_open()) continue;
+            json jj;
+            f >> jj;
+            if (!jj.is_object() || !jj.contains("00.00.00.00") || !jj["00.00.00.00"].is_object()) continue;
+            const json& printer = jj["00.00.00.00"];
+            const std::string display = printer.value("display_name", std::string());
+            if (display.empty()) continue;
+            names[p.stem().string()] = display;
+            if (printer.contains("model_id") && printer["model_id"].is_string()) names[printer["model_id"].get<std::string>()] = display;
+            if (printer.contains("subseries") && printer["subseries"].is_array())
+                for (const json& s : printer["subseries"])
+                    if (s.is_string()) names[s.get<std::string>()] = display;
+        } catch (...) {
+            // filaments_blacklist.json and friends share the folder and have another shape.
+        }
+    }
+    return names;
+}
+
+const std::map<std::string, std::string>& model_names()
+{
+    static const std::map<std::string, std::string> names =
+        load_model_names((fs::path(Slic3r::resources_dir()) / "printers").string());
+    return names;
+}
+
+std::string canonical_model(const std::string& model_in, const std::map<std::string, std::string>& names)
+{
+    const std::string model = trimmed(model_in);
+    if (model.empty() || name_is_address(model)) return "";
+    auto it = names.find(model);
+    if (it == names.end()) it = names.find(strip_model_revision(model));
+    return it != names.end() ? it->second : model;
+}
+
+std::string model_key(const std::string& canonical)
+{
+    std::string key;
+    for (char c : lower_ascii(trimmed(canonical))) {
+        if (std::isspace((unsigned char) c)) {
+            if (!key.empty() && key.back() != ' ') key += ' ';
+        } else {
+            key += c;
+        }
+    }
+    return key.empty() ? "other" : key;
+}
+
+std::string model_label(const std::string& canonical_in)
+{
+    const std::string canonical = trimmed(canonical_in);
+    if (canonical.empty()) return "Other";
+    const std::string key = model_key(canonical);
+    if (key == "bambu lab x1 carbon") return "Bambu X1C";
+    if (key == "elegoo centauri carbon") return "Elegoo CC";
+    if (key.compare(0, 10, "bambu lab ") == 0) return "Bambu " + canonical.substr(10);
+    return canonical;
+}
+
+int fill_from_siblings(std::vector<json>& records)
+{
+    // Per printer id: the newest model and the newest real name any of its records has.
+    std::map<std::string, std::string> model_of, name_of;
+    for (const json& r : records) {
+        if (!r.is_object() || !r.contains("printer") || !r["printer"].is_object()) continue;
+        const json&       p    = r["printer"];
+        const std::string id   = p.value("id", std::string());
+        const std::string name = p.value("name", std::string());
+        const std::string model = p.value("model", std::string());
+        if (id.empty()) continue;
+        if (!model.empty() && !name_is_address(model) && !model_of.count(id)) model_of[id] = model;
+        if (!name.empty() && name != id && !name_is_address(name) && !name_of.count(id)) name_of[id] = name;
+    }
+    int filled = 0;
+    for (json& r : records) {
+        if (!r.is_object() || !r.contains("printer") || !r["printer"].is_object()) continue;
+        json&             p  = r["printer"];
+        const std::string id = p.value("id", std::string());
+        if (id.empty()) continue;
+        bool changed = false;
+        if (trimmed(p.value("model", std::string())).empty() && model_of.count(id)) {
+            p["model"] = model_of[id];
+            changed    = true;
+        }
+        const std::string name = p.value("name", std::string());
+        if ((name.empty() || name == id) && name_of.count(id)) {
+            p["name"] = name_of[id];
+            changed   = true;
+        }
+        if (changed) ++filled;
+    }
+    return filled;
+}
+
+std::string reprint_target_refusal(const std::string& recorded_id, const std::string& recorded_kind,
+                                   const std::string& record_model, const std::string& target_id,
+                                   const std::string& target_kind, const std::string& target_model,
+                                   const std::map<std::string, std::string>& names)
+{
+    if (target_id.empty()) return "no printer was named";
+    if (!recorded_id.empty() && target_id == recorded_id) return "";
+    // A U1 send filed under the Snapmaker cloud ("connect") and a U1's LAN card take the same file.
+    auto family = [](const std::string& k) { return k == "connect" ? std::string("snapmaker") : k; };
+    if (!recorded_kind.empty() && family(recorded_kind) != family(target_kind))
+        return "this file was sent to a " + recorded_kind + " printer and " + target_id + " is a " + target_kind +
+               " one; the file a printer takes differs by kind";
+    const std::string rm = canonical_model(record_model, names);
+    const std::string tm = canonical_model(target_model, names);
+    if (rm.empty())
+        return "this record does not say which printer model it was sliced for, so it can only go back to the printer it was sent to";
+    if (tm.empty()) return "which model " + target_id + " is is not known, so it cannot take a file sliced for a " + rm;
+    if (model_key(rm) != model_key(tm)) return "this file was sliced for a " + rm + " and " + target_id + " is a " + tm;
+    return "";
+}
+
+bool reprint_in_place_allowed(const std::string& recorded_id, const std::string& target_id)
+{
+    return !recorded_id.empty() && recorded_id == target_id;
+}
+
+void annotate_models(std::vector<json>& records, const std::map<std::string, std::string>& names)
+{
+    fill_from_siblings(records);
+    for (json& j : records) {
+        if (!j.is_object()) continue;
+        const json        p         = j.contains("printer") && j["printer"].is_object() ? j["printer"] : json::object();
+        const std::string canonical = canonical_model(p.value("model", std::string()), names);
+        j["model_key"]  = model_key(canonical);
+        j["model_name"] = model_label(canonical);
+    }
+}
+
+json archive_models(const std::vector<json>& records, const json& printer_rows, const std::map<std::string, std::string>& names)
+{
+    std::vector<std::string>                           order;
+    std::map<std::string, std::pair<std::string, int>> seen; // key -> (label, records)
+    for (const json& r : records) {
+        if (!r.is_object()) continue;
+        const std::string key = r.value("model_key", std::string("other"));
+        auto it = seen.find(key);
+        if (it == seen.end()) {
+            seen[key] = { r.value("model_name", std::string("Other")), 1 };
+            order.push_back(key);
+        } else {
+            ++it->second.second;
+        }
+    }
+    std::stable_partition(order.begin(), order.end(), [](const std::string& k) { return k != "other"; });
+
+    std::map<std::string, json> targets; // model key -> printers of that model
+    if (printer_rows.is_array())
+        for (const json& row : printer_rows) {
+            if (!row.is_object()) continue;
+            const std::string kind = row.value("kind", std::string());
+            const std::string id   = row.value("id", std::string());
+            if (id.empty() || kind == "connect") continue;
+            const std::string canonical = canonical_model(row.value("model", std::string()), names);
+            if (canonical.empty()) continue;
+            json& list = targets[model_key(canonical)];
+            if (!list.is_array()) list = json::array();
+            list.push_back({ { "id", id },
+                             { "name", display_printer_name(row.value("name", std::string()), canonical, kind) },
+                             { "kind", kind },
+                             { "online", row.value("online", false) && !row.value("stale", false) } });
+        }
+
+    json models = json::array();
+    for (const std::string& key : order) {
+        json m = { { "key", key }, { "name", seen[key].first }, { "count", seen[key].second } };
+        m["printers"] = key != "other" && targets.count(key) ? targets[key] : json::array();
+        models.push_back(m);
+    }
+    return models;
 }
 
 } // namespace GcodeArchive

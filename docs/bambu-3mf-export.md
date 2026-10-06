@@ -125,6 +125,17 @@ per-object, per-part and per-height-range settings):
    - `ooze_prevention` is left out when the prime tower is enabled: Bambu's `Print::validate`
      refuses the combination ("Ooze prevention is currently not supported with the prime tower
      enabled."), this fork supports it for tool changers.
+   - `top_color_penetration_layers` / `bottom_color_penetration_layers` (paint penetration): same
+     keys and type as Bambu, but ours has an extra value, 0 = "follow the shell" (the default), and
+     Bambu's minimum is 1 (default 4 / 3). A value >= 1 goes out as it is. A 0 goes out as the depth
+     our shell settings give, the number `MultiMaterialSegmentation.cpp` uses for a flat painted
+     top or bottom: `max(shell layers, ceil(shell thickness / layer_height))`, at least 1 (a
+     0-layer shell claims nothing here; the closest Bambu can do is the surface layer). An object
+     that overrides its shells or layer height, under a project that follows the shell, gets its
+     own converted depth in `model_settings.config`, since Bambu would otherwise apply the
+     project's number to it. Bambu's defaults (4 / 3) are not written: they would change how deep
+     the colour goes whenever our shells differ from them. On import a Bambu value (always >= 1)
+     is taken as it is, so a Bambu project keeps its penetration.
 
 No value is invented: a key that cannot be represented is left out and Bambu uses its default.
 

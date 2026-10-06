@@ -581,6 +581,15 @@ void set_phone_links(const std::string& remote, const std::string& lan)
     g_lan_link   = lan;
 }
 
+bool has_destinations()
+{
+    if (WebPush::has_subscriptions() || AppPush::has_devices()) return true;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (const Dest& d : g_dests)
+        if (d.enabled) return true;
+    return false;
+}
+
 void deliver(const json& event)
 {
     // Nowhere to send it - no relay and no subscribed phone - means there is nothing to queue;

@@ -9,6 +9,7 @@
 #include "format.hpp"
 
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/EnumChoice.hpp"
 
 #include <algorithm>
 #include <regex>
@@ -1602,23 +1603,13 @@ void Choice::set_value(const boost::any& value, bool change_event)
         if (m_opt_id.compare("host_type") == 0 && val != 0 &&
 			m_opt.enum_values.size() > field->GetCount()) // for case, when PrusaLink isn't used as a HostType
 			val--;
-        if (m_opt_id == "top_surface_pattern" || m_opt_id == "undertop_surface_pattern" || m_opt_id == "bottom_surface_pattern" ||
-            m_opt_id == "internal_solid_infill_pattern" || m_opt_id == "sparse_infill_pattern" ||
-            m_opt_id == "support_base_pattern" || m_opt_id == "support_interface_pattern" ||
-            m_opt_id == "ironing_pattern" || m_opt_id == "support_ironing_pattern" ||
-            m_opt_id == "support_style" || m_opt_id == "curr_bed_type")
+        // Options whose list is not in value order (a subset, or an enum with a gap) map the stored
+        // value to its row through the key; see libslic3r/EnumChoice.hpp. A value not in the list
+        // shows the first row, as before.
+        if (enum_choice_maps_by_key(m_opt_id) && !(m_opt.nullable && val == ConfigOptionEnumsGenericNullable::nil_value()))
 		{
-			std::string key;
-			const t_config_enum_values& map_names = *m_opt.enum_keys_map;
-			for (auto it : map_names)
-				if (val == it.second) {
-					key = it.first;
-					break;
-				}
-
-			const std::vector<std::string>& values = m_opt.enum_values;
-			auto it = std::find(values.begin(), values.end(), key);
-			val = it == values.end() ? 0 : it - values.begin();
+			const int row = enum_choice_index_of_value(m_opt, val);
+			val = row < 0 ? 0 : row;
 		}
         if (m_opt.nullable) {
             if (val != ConfigOptionEnumsGenericNullable::nil_value())
@@ -1693,11 +1684,7 @@ boost::any& Choice::get_value()
     {
         if (m_opt.nullable && field->GetSelection() == -1)
             m_value = ConfigOptionEnumsGenericNullable::nil_value();
-        else if (   m_opt_id == "top_surface_pattern" || m_opt_id == "undertop_surface_pattern" || m_opt_id == "bottom_surface_pattern" ||
-                    m_opt_id == "internal_solid_infill_pattern" || m_opt_id == "sparse_infill_pattern" ||
-                    m_opt_id == "support_base_pattern" || m_opt_id == "support_interface_pattern" ||
-                    m_opt_id == "ironing_pattern" || m_opt_id == "support_ironing_pattern" ||
-                    m_opt_id == "support_style" || m_opt_id == "curr_bed_type")
+        else if (enum_choice_maps_by_key(m_opt_id))
         {
             // Selection can be invalid when the current value is not present in the rebuilt
             // enum list (e.g. stale support_style vs support_type); fall back to the first
@@ -1705,8 +1692,8 @@ boost::any& Choice::get_value()
             const int selection = field->GetSelection();
             if (! m_opt.enum_values.empty()) {
                 const int index = (selection >= 0 && selection < static_cast<int>(m_opt.enum_values.size())) ? selection : 0;
-                const std::string &key = m_opt.enum_values[index];
-                m_value = static_cast<int>(m_opt.enum_keys_map->at(key));
+                if (const int value = enum_choice_value_at_index(m_opt, index); value >= 0)
+                    m_value = value;
             }
         }
         // Support ThirdPartyPrinter

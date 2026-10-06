@@ -44,6 +44,13 @@ struct Request
     // minutes is exactly how a resume meant for a filament runout would otherwise land on the
     // nozzle-crash that replaced it.
     std::string err;               // "0C00402D" - required by every error verb, ignored by the rest
+    // The settings verbs (DeviceControls.hpp): set_temp heater=<bed|chamber|nozzle<N>>&target=<C>,
+    // set_speed value=<level or %>, set_light on=<1|0>, set_fan fan=<id>&percent=<0..100>. Carried as
+    // the form spelled them and checked against the printer's own `controls` before anything goes out.
+    std::string heater, target, value, fan, percent, on;
+    // load_filament / unload_filament: ams=<AMS id, 128+ for an AMS HT, 254 / 255 for an external
+    // spool>&slot=<0..3> on a Bambu printer; slot=<toolhead 0..3> (no ams) on a Snapmaker U1.
+    std::string ams, slot;
 };
 
 // Everything prepare() worked out on the GUI thread; run() only sends the command.
@@ -72,6 +79,26 @@ struct Prepared
     std::string url;                // http://<printer>/printer/print/{pause,resume,cancel}
     std::string moonraker_method;   // printer.print.pause | .resume | .cancel (the MQTT name)
     std::shared_ptr<PrintHost> host; // only for "connect": the live MQTT host, used if the POST fails
+    // A settings verb (set_temp | set_speed | set_light | set_fan): what prepare() checked, and what
+    // run() sends. For a Moonraker printer `script` is the G-code and `url` its /printer/gcode/script
+    // POST; for a Bambu printer `call` names the MachineObject method and these are its arguments.
+    bool        is_setting { false };
+    std::string setting_text;       // "Bed to 60 C", for the job text and the log
+    std::string script;             // the Klipper G-code, Moonraker printers only
+    std::string heater;             // set_temp: bed | chamber | nozzle<N>
+    int         int_value { 0 };    // the target, the speed level / %, the fan value sent (0..255)
+    int         extruder_id { -1 }; // set_temp on a nozzle: the Bambu extruder id
+    bool        dual_nozzle { false }; // command_set_nozzle_new (per extruder) rather than command_set_nozzle
+    int         fan_type { 0 };     // MachineObject::FanType
+    bool        light_on { false };
+    // load_filament / unload_filament on a Bambu printer: the arguments of
+    // command_ams_change_filament, as StatusPanel's Load / Unload work them out.
+    std::string fil_ams, fil_slot;
+    int         fil_old_temp { -1 }, fil_new_temp { -1 };
+    bool        multi_extruders { false };
+    // How long a Moonraker command may take: a filament load or unload runs for minutes and the
+    // printer answers the script only when it is done.
+    int         timeout_s { 15 };
 };
 
 struct Sink
@@ -89,7 +116,9 @@ std::pair<int, std::string> prepare(const Request& req, std::shared_ptr<Prepared
 void run(std::shared_ptr<Prepared> p, Sink sink);
 
 // GUI thread. What GET /api/printers adds for the control buttons of one Bambu printer:
-// can_pause / can_resume / can_stop, print_status, the current stage and the print error.
+// can_pause / can_resume / can_stop, print_status, the current stage and the print error, and the
+// native controls: `controls` (DeviceControls::to_json - heaters with limits, speed level, chamber
+// light, fans) and `ams` (every AMS unit with its side, humidity and trays).
 //
 // print_error is {code, message, job_id, has_details, actions[]} while one is reported and null
 // otherwise. `actions` is the dialog's own button set for that code, resolved through the same
@@ -101,6 +130,11 @@ void run(std::shared_ptr<Prepared> p, Sink sink);
 // for this very code; the two actions with needs_details=true are remote_safe only then, which is
 // the same rule needs_job_id follows.
 void describe_bambu(MachineObject* m, nlohmann::json& p);
+
+// Whether an action is one of the settings verbs (set_temp, set_speed, set_light, set_fan).
+bool is_setting_verb(const std::string& action);
+// load_filament / unload_filament.
+bool is_filament_verb(const std::string& action);
 
 // GUI thread. The action ids the desktop's error dialog would draw for this printer and this
 // code: the shipped hms_action_<devtype>.json entry, StatusPanel's 0300-800x liveview special

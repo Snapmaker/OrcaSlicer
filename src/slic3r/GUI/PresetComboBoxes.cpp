@@ -996,16 +996,50 @@ bool PlaterPresetComboBox::switch_to_tab()
     const Preset* selected_filament_preset = nullptr;
     if (m_type == Preset::TYPE_FILAMENT)
     {
-        const std::string& selected_preset = GetString(GetSelection()).ToUTF8().data();
-        if (!boost::algorithm::starts_with(selected_preset, Preset::suffix_modified()))
+        PresetBundle* preset_bundle = wxGetApp().preset_bundle;
+        if (m_filament_idx < 0 || size_t(m_filament_idx) >= preset_bundle->filament_presets.size())
+            return false;
+        TabPresetComboBox* tab_combo = tab->get_combo_box();
+        // The slot the Tab is editing now. Until a slot is bound, the Tab holds filament_presets[0].
+        const int bound_idx = (tab_combo && tab_combo->get_filament_idx() >= 0) ? tab_combo->get_filament_idx() : 0;
+        if (bound_idx != m_filament_idx && tab->current_preset_is_dirty())
         {
-            const std::string& preset_name = wxGetApp().preset_bundle->filaments.get_preset_name_by_alias(selected_preset);
-            if (wxGetApp().get_tab(m_type)->select_preset(preset_name))
-                wxGetApp().get_tab(m_type)->get_combo_box()->set_filament_idx(m_filament_idx);
-            else {
-                return false;
+            // Unsaved edits belong to the slot being left. Resolve them for that slot first with
+            // Save / Discard / Cancel - never Transfer: carrying them over (or letting select_preset()
+            // auto-transfer them) would move slot 1's edits onto slot 2.
+            const std::vector<std::string> slots_before = preset_bundle->filament_presets;
+            if (!tab->may_discard_current_dirty_preset(nullptr, "", true))
+                return false; // Cancel: keep editing the old slot
+            if (tab->current_preset_is_dirty()) {
+                // Discarded (may_discard_current_dirty_preset() leaves that to the caller).
+                preset_bundle->filaments.discard_current_changes();
+                tab->load_current_preset();
+                tab->update_dirty();
+            } else {
+                // Saved: only the old slot moves to the saved preset. Saving under a new name renames
+                // every slot that used the old preset (Sidebar::update_presets_from_to()), which would
+                // hand the edits to the clicked slot too; overwriting another existing preset renames none.
+                const std::string saved_name = preset_bundle->filaments.get_selected_preset_name();
+                for (size_t i = 0; i < slots_before.size() && i < preset_bundle->filament_presets.size(); ++i)
+                    preset_bundle->set_filament_preset(i, i == size_t(bound_idx) ? saved_name : slots_before[i]);
+                wxGetApp().sidebar().update_presets(Preset::TYPE_FILAMENT);
+                preset_bundle->export_selections(*wxGetApp().app_config);
             }
         }
+        // Compare the slot's actual assigned preset against what the Tab editor currently holds
+        // open - not the combo's own label (every slot's combo reads the same shared
+        // PresetCollection, so "(modified)" doesn't identify which slot is dirty) and not just the
+        // slot index (stale if this slot's preset changed from the sidebar without going through the Tab).
+        const std::string slot_preset_name = preset_bundle->filament_presets[m_filament_idx];
+        if (slot_preset_name != preset_bundle->filaments.get_selected_preset_name())
+        {
+            if (!tab->select_preset(slot_preset_name))
+                return false;
+        }
+        // Bind the editor to this slot regardless: a same-preset slot still needs Save/re-edit to
+        // target the slot that was actually clicked, not whichever slot last called select_preset().
+        if (tab_combo)
+            tab_combo->set_filament_idx(m_filament_idx);
     }
 
     /*

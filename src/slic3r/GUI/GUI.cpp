@@ -16,6 +16,9 @@
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/any.hpp>
 
+#include <wx/filename.h>
+#include <wx/filesys.h>
+
 #if __APPLE__
 #import <IOKit/pwr_mgt/IOPMLib.h>
 #elif _WIN32
@@ -35,6 +38,7 @@
 #include "WebSMUserLoginDialog.hpp"
 
 #include "libslic3r/Print.hpp"
+#include "libslic3r/EnumChoice.hpp"
 
 namespace Slic3r {
 
@@ -311,32 +315,13 @@ static void add_config_substitutions(const ConfigSubstitutions& conf_substitutio
 			const std::vector<std::string>& values = def->enum_values;
 			int val = conf_substitution.new_value->getInt();
 
-			bool is_infill = def->opt_key == "top_surface_pattern"	   ||
-							 def->opt_key == "undertop_surface_pattern"	   ||
-							 def->opt_key == "bottom_surface_pattern" ||
-							 def->opt_key == "internal_solid_infill_pattern" ||
-							 def->opt_key == "support_base_pattern" ||
-							 def->opt_key == "support_interface_pattern" ||
-							 def->opt_key == "ironing_pattern" ||
-							 def->opt_key == "support_ironing_pattern" ||
-							 def->opt_key == "sparse_infill_pattern";
-
-			// Each infill doesn't use all list of infill declared in PrintConfig.hpp.
-			// So we should "convert" val to the correct one
-			if (is_infill) {
-				for (const auto& key_val : *def->enum_keys_map)
-					if ((int)key_val.second == val) {
-						auto it = std::find(values.begin(), values.end(), key_val.first);
-						if (it == values.end())
-							break;
-						auto idx = it - values.begin();
-						new_val = wxString("\"") + values[idx] + "\"" + " (" + from_u8(_utf8(labels[idx])) + ")";
-						break;
-					}
-				if (new_val.IsEmpty()) {
-					assert(false);
+			// Options whose list is not in value order (e.g. each infill menu lists a subset of
+			// InfillPattern) map the value to its list entry through the key.
+			if (enum_choice_maps_by_key(def->opt_key)) {
+				if (const int idx = enum_choice_index_of_value(*def, val); idx >= 0 && size_t(idx) < labels.size())
+					new_val = wxString("\"") + values[idx] + "\"" + " (" + from_u8(_utf8(labels[idx])) + ")";
+				if (new_val.IsEmpty())
 					new_val = _L("Undefined");
-				}
 			}
 			else
 				new_val = wxString("\"") + values[val] + "\"" + " (" + from_u8(_utf8(labels[val])) + ")";
@@ -564,6 +549,11 @@ wxString from_path(const boost::filesystem::path &path)
 boost::filesystem::path into_path(const wxString &str)
 {
 	return boost::filesystem::path(str.wx_str());
+}
+
+wxString file_url_from_path(const boost::filesystem::path &path)
+{
+	return wxFileSystem::FileNameToURL(wxFileName(from_path(path)));
 }
 
 void about()

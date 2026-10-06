@@ -9,6 +9,7 @@
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "slic3r/GUI/wxExtensions.hpp"
+#include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "common_func/common_func.hpp"
 
@@ -221,18 +222,19 @@ wxString GuideFrame::SetStartPage(GuidePage startpage, bool load)
     m_page = startpage;
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(" enter, load=%1%, start_page=%2%")%load%int(startpage);
     //wxLogMessage("GUIDE: webpage_1  %s", (boost::filesystem::path(resources_dir()) / "web\\guide\\1\\index.html").make_preferred().string().c_str() );
-    wxString TargetUrl = from_u8( (boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=1").make_preferred().string() );
+    const wxString guide_url = file_url_from_path(boost::filesystem::path(resources_dir()) / "web/guide/0/index.html");
+    wxString TargetUrl = guide_url + "?target=1";
     //wxLogMessage("GUIDE: webpage_2  %s", TargetUrl.mb_str());
 
     if (startpage == BBL_WELCOME){
         SetTitle(_L("Setup Wizard"));
-        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=1").make_preferred().string());
+        TargetUrl = guide_url + "?target=1";
     } else if (startpage == BBL_REGION) {
         SetTitle(_L("Setup Wizard"));
-        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=11").make_preferred().string());
+        TargetUrl = guide_url + "?target=11";
     } else if (startpage == BBL_MODELS) {
         SetTitle(_L("Setup Wizard"));
-        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=21").make_preferred().string());
+        TargetUrl = guide_url + "?target=21";
     } else if (startpage == BBL_FILAMENTS) {
         SetTitle(_L("Setup Wizard"));
 
@@ -243,27 +245,26 @@ wxString GuideFrame::SetStartPage(GuidePage startpage, bool load)
         }
 
         if (nSize>0)
-            TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=22").make_preferred().string());
+            TargetUrl = guide_url + "?target=22";
         else
-            TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=21").make_preferred().string());
+            TargetUrl = guide_url + "?target=21";
     } else if (startpage == BBL_FILAMENT_ONLY) {
         SetTitle("");
-        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=23").make_preferred().string());
+        TargetUrl = guide_url + "?target=23";
     } else if (startpage == BBL_MODELS_ONLY) {
         SetTitle("");
-        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=24").make_preferred().string());
+        TargetUrl = guide_url + "?target=24";
     }
     else {
         SetTitle(_L("Setup Wizard"));
-        TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/0/index.html?target=21").make_preferred().string());
+        TargetUrl = guide_url + "?target=21";
     }
 
     wxString strlang = wxGetApp().current_language_code_safe();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(", strlang=%1%") % into_u8(strlang);
     if (strlang != "")
-        TargetUrl = wxString::Format("%s&lang=%s", w2s(TargetUrl), strlang);
+        TargetUrl += "&lang=" + strlang;
 
-    TargetUrl = "file://" + TargetUrl;
     if (load)
         load_url(TargetUrl);
 
@@ -454,6 +455,11 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
 
                         wxString s1 = TmpModel["model"];
                         wxString s2 = OneSelect["model"];
+                        // Match the vendor too when the page sends it, so a same-named model of
+                        // another vendor is not ticked along with this one.
+                        if (OneSelect.contains("vendor") && OneSelect["vendor"].is_string() && TmpModel["vendor"].is_string() &&
+                            OneSelect["vendor"].get<std::string>() != TmpModel["vendor"].get<std::string>())
+                            continue;
                         if (s1.compare(s2) == 0) {
                             m_ProfileJson["model"][m]["nozzle_selected"] = OneSelect["nozzle_diameter"];
                             break;
@@ -651,7 +657,7 @@ int GuideFrame::SaveProfile()
     m_MainPtr->app_config->set_bool("stealth_mode", StealthMode);
 
     //finish
-    m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "finish", "1");
+    m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "finish", true);
 
     m_MainPtr->app_config->save();
 
@@ -1294,7 +1300,7 @@ int GuideFrame::LoadProfileFamily(std::string strVendor, std::string strFilePath
                          cover_file)
                             .make_preferred();
                 }
-                OneModel["cover"] = cover_path.string();
+                OneModel["cover"] = into_u8(file_url_from_path(cover_path));
 
                 OneModel["nozzle_selected"] = "";
 

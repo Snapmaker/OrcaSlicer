@@ -62,6 +62,11 @@ std::pair<int, std::string> remove_subscription(const std::string& endpoint);
 // DELETE /hub/push?id=<id>: the hub page removing a row by its short id.
 std::pair<int, std::string> remove(const std::string& id);
 
+// A new phone link (HubServer::new_link): every subscription was made from the phone page under
+// the old token, so all of them are forgotten - a phone that kept the old page open would
+// otherwise go on receiving this hub's notifications. Answers how many were forgotten.
+int forget_all_subscriptions();
+
 // POST /hub/push/options {"min_severity":"info|warning|error", "enabled":bool, and the per-kind
 // filter as either "kinds":[...] or "events":{kind:bool}} - see RemoteEvents.hpp for the list.
 std::pair<int, std::string> set_options(const std::string& body);

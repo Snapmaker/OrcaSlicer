@@ -7,8 +7,10 @@
 #include <cereal/cereal.hpp>
 #include <cereal/types/optional.hpp>
 #include <cereal/types/string.hpp>
+#include <cereal/types/vector.hpp>
 #include <cereal/archives/binary.hpp>
 #include "Point.hpp" // Transform3d
+#include "InlineShapeTable.hpp"
 
 namespace Slic3r {
 
@@ -178,8 +180,12 @@ struct TextConfiguration
     // Embossed text value
     std::string text = "None";
 
+    // Inline shapes: every code of the table is a private-use placeholder character in `text` that is
+    // drawn as that shape (InlineShapes.hpp). Empty for plain text. Per volume, not part of the style.
+    InlineShapeTable inline_shapes;
+
     // undo / redo stack recovery
-    template<class Archive> void serialize(Archive &ar) { ar(style, text); }
+    template<class Archive> void serialize(Archive &ar) { ar(style, text, inline_shapes); }
 };    
 
 } // namespace Slic3r

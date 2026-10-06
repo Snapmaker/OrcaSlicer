@@ -3,6 +3,7 @@
 
 #include <map>
 #include <string>
+#include <wx/dc.h>
 #include <wx/gdicmn.h>
 #include <wx/string.h>
 

@@ -12,6 +12,8 @@
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/split.hpp>
 #include <boost/format.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/log/trivial.hpp>
@@ -280,7 +282,8 @@ static t_config_enum_values s_keys_map_SeamPosition {
     { "back",           spRear },
     { "random",         spRandom },
     { "left",           spLeft },
-    { "right",          spRight }
+    { "right",          spRight },
+    { "aligned_front",  spAlignedFront }
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(SeamPosition)
 
@@ -400,6 +403,20 @@ static const t_config_enum_values s_keys_map_DraftShield = {
     { "enabled",  dsEnabled  }
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(DraftShield)
+
+static const t_config_enum_values s_keys_map_StabilizerMode = {
+    { "off",    smOff    },
+    { "auto",   smAuto   },
+    { "manual", smManual }
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(StabilizerMode)
+
+static const t_config_enum_values s_keys_map_StabilizerColumnShape = {
+    { "round",        scsRound       },
+    { "rounded_rect", scsRoundedRect },
+    { "auto",         scsAuto        }
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(StabilizerColumnShape)
 
 static const t_config_enum_values s_keys_map_ForwardCompatibilitySubstitutionRule = {
     { "disable",        ForwardCompatibilitySubstitutionRule::Disable },
@@ -654,7 +671,8 @@ std::vector<std::map<NozzleVolumeType, int>> get_extruder_nozzle_stats(const std
 }
 
 // True when the printer's extruders carry more than one distinct extruder variant (dual-nozzle grouping
-// machine: H2D/H2C/X2D). Same-variant toolchangers (U1) and single-nozzle machines return false.
+// machine: H2D/H2C/X2D). Same-variant toolchangers (U1) and machines with more than two extruders return
+// false.
 bool DynamicPrintConfig::support_different_extruders(int& extruder_count)
 {
     extruder_count = 0;
@@ -675,7 +693,12 @@ bool DynamicPrintConfig::support_different_extruders(int& extruder_count)
                 variant_set.insert(variants_list.begin(), variants_list.end());
         }
     }
-    return (variant_set.size() > 1);
+    // Bambu's grouping machines have one or two extruders, and the filament->nozzle grouping engine
+    // (FilamentGroup, collect_unprintable_limits) is built for two. A larger toolchanger whose extruders
+    // merely list several possible variants (upstream Orca's Custom MyToolChanger: five extruders, each
+    // "Direct Drive Standard,Direct Drive High Flow,Direct Drive Extra High Flow") is not one: its
+    // filaments keep their own tools, like the Snapmaker U1's or the Flashforge Creator 5's.
+    return variant_set.size() > 1 && extruder_count <= 2;
 }
 
 static t_config_enum_values s_keys_map_PrinterStructure {
@@ -1266,6 +1289,22 @@ void PrintConfigDef::init_fff_params()
     def->sidetext = "mm";	// milimeters, don't need translation
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(0.));
+
+    // Bambu Studio's key, same name and type so Bambu projects/presets import 1:1. Bambu's own
+    // definition is min 1 / default 3; ours adds 0 = "follow the bottom shell" (today's
+    // behaviour, the default) - see top_color_penetration_layers and docs/bambu-3mf-export.md.
+    def = this->add("bottom_color_penetration_layers", coInt);
+    def->label = L("Bottom paint penetration layers");
+    def->category = L("Strength");
+    def->sidetext = L("layers");
+    def->tooltip = L("How many layers deep the colour painted on a bottom surface is carried into the object, "
+                     "counting the bottom surface layer itself.\n"
+                     "0 means the same depth as the bottom shell (bottom shell layers or bottom shell thickness, "
+                     "whichever is deeper).\n"
+                     "More layers give a more solid colour, but cost more filament changes and purge.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("gap_fill_target", coEnum);
     def->label = L("Apply gap fill");
@@ -2184,6 +2223,17 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(120));
+
+    // Bambu Studio's definition (PrintConfig.cpp, v02.08.04.57). Loaded from the BBL profiles as its own
+    // key; a file that sets it without extruder_clearance_radius also feeds that key, as the rename
+    // alias used to (BambuKeyAliases::load_fallbacks), so by-object clearance is unchanged.
+    def           = this->add("extruder_clearance_max_radius", coFloat);
+    def->label    = L("Max Radius");
+    def->tooltip  = L("Max clearance radius around extruder. Used for collision avoidance in by-object printing.");
+    def->sidetext = L("mm");
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(68));
 
     def = this->add("extruder_clearance_radius", coFloat);
     def->label = L("Radius");
@@ -4924,6 +4974,29 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionFloats{ 0., 0. });
 
+    // Bed-slinger mass model (Bambu Studio, Bambu Lab A2L): the Y axis drives the bed and the part on
+    // it with a limited force, so its usable acceleration falls as the printed mass grows. Read by
+    // GCode::mass_load_limited_machine_acceleration, which hands the result to layer_change_gcode as
+    // curr_y_acceleration_limit (with curr_accumulated_mass and curr_layer_mass). 0 = not modelled:
+    // the limit is then just the machine's Y acceleration limit.
+    def = this->add("machine_max_force_Y", coFloat);
+    def->full_label = L("Maximum force of the Y axis");
+    def->category   = L("Machine limits");
+    def->tooltip    = L("The allowed maximum output force of Y axis");
+    def->sidetext   = "N"; // Newton
+    def->min        = 0;
+    def->mode       = comDevelop;
+    def->set_default_value(new ConfigOptionFloat(0));
+
+    def = this->add("machine_bed_mass_Y", coFloat);
+    def->full_label = L("Bed mass of the Y axis");
+    def->category   = L("Machine limits");
+    def->tooltip    = L("The machine bed mass load of Y axis");
+    def->sidetext   = "g"; // gram
+    def->min        = 0;
+    def->mode       = comDevelop;
+    def->set_default_value(new ConfigOptionFloat(0));
+
     // M204 P... [mm/sec^2]
     def = this->add("machine_max_acceleration_extruding", coFloats);
     def->full_label = L("Maximum acceleration for extruding");
@@ -5823,10 +5896,15 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("retraction_distances_when_cut",coFloats);
     def->label = L("Retraction distance when cut");
-    def->tooltip = L("Experimental feature: Retraction length before cutting off during filament change.");
+    def->tooltip = L("Experimental feature: Retraction length before cutting off during filament change. "
+                     "Set zero to disable the long retraction.");
+    def->sidetext = "mm";	// milimeters, don't need translation
     def->mode = comDevelop;
-    def->min = 10;
-    def->max = 18;
+    // Bambu's cutter takes 10-18 mm, but other vendors ship 0 (no cutter: Anycubic, Creality
+    // filament switchers) or more (Creality SPARKX i7 28, K2 30). Accept them rather than abort
+    // the slice; 0 means no cut retraction at all (see long_retraction_when_cut_active, GCode.cpp).
+    def->min = 0;
+    def->max = 100;
     def->set_default_value(new ConfigOptionFloats {18});
 
     // BBS: per-filament long retraction performed by the firmware when the active extruder changes
@@ -6003,22 +6081,31 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Seam position");
     def->category = L("Quality");
     def->tooltip = L("The start position to print each part of outer wall. "
-                     "Back/Left/Right place the seam toward that side of the bed.");
+                     "Back places the seam toward the back of the bed. "
+                     "Aligned front/left/right work like Aligned back, but bias the seam toward the "
+                     "front/left/right of the bed instead: hidden and low-visibility points on that "
+                     "side of the model are still preferred over an exposed point.");
     def->enum_keys_map = &ConfigOptionEnum<SeamPosition>::get_enum_values();
-    def->enum_values.push_back("nearest");
-    def->enum_values.push_back("aligned");
-    def->enum_values.push_back("aligned_back");
-    def->enum_values.push_back("back");
-    def->enum_values.push_back("left");
-    def->enum_values.push_back("right");
-    def->enum_values.push_back("random");
+    // The settings combo box maps the enum's NUMBER straight to the list index (Choice::set_value /
+    // get_value in Field.cpp), so this list must follow the SeamPosition order exactly: a value
+    // inserted in the middle makes every later one show - and save - as its neighbour.
+    // test_config.cpp checks it for every enum option.
+    def->enum_values.push_back("nearest");       // spNearest
+    def->enum_values.push_back("aligned");       // spAligned
+    def->enum_values.push_back("aligned_back");  // spAlignedBack
+    def->enum_values.push_back("back");          // spRear
+    def->enum_values.push_back("random");        // spRandom
+    def->enum_values.push_back("left");          // spLeft
+    def->enum_values.push_back("right");         // spRight
+    def->enum_values.push_back("aligned_front"); // spAlignedFront
     def->enum_labels.push_back(L("Nearest"));
     def->enum_labels.push_back(L("Aligned"));
     def->enum_labels.push_back(L("Aligned back"));
     def->enum_labels.push_back(L("Back"));
-    def->enum_labels.push_back(L("Left"));
-    def->enum_labels.push_back(L("Right"));
     def->enum_labels.push_back(L("Random"));
+    def->enum_labels.push_back(L("Aligned left"));
+    def->enum_labels.push_back(L("Aligned right"));
+    def->enum_labels.push_back(L("Aligned front"));
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionEnum<SeamPosition>(spAligned));
 
@@ -6027,7 +6114,17 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("This option causes the inner seams to be shifted backwards based on their depth, forming a zigzag pattern.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
-    
+
+    def = this->add("seam_prefer_part_joints", coBool);
+    def->label = L("Hide seam in part joints");
+    def->category = L("Quality");
+    def->tooltip = L("For the Aligned seam positions (Aligned, Aligned back, Aligned front, Aligned left and Aligned right): when an object is an "
+                     "assembly of parts, or touches another object, put the seam on the line where two parts meet, "
+                     "so it hides in the joint instead of on a corner elsewhere. Painted seam enforcers and blockers "
+                     "still take priority. Objects made of a single part are not affected.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
     def = this->add("seam_gap", coFloatOrPercent);
     def->label = L("Seam gap");
     def->tooltip = L("In order to reduce the visibility of the seam in a closed loop extrusion, the loop is interrupted and shortened by a specified amount.\n"
@@ -6386,6 +6483,15 @@ void PrintConfigDef::init_fff_params()
     def->max = 1;
     def->set_default_value(new ConfigOptionFloat(0));
     def->mode = comAdvanced;
+
+    // Bambu Studio 2.8 (set by the BBL machine profiles, not shown in the UI).
+    def = this->add("farthest_point_timelapse", coBool);
+    def->label = L("Farthest point timelapse");
+    def->tooltip = L("When enabled, the timelapse snapshot is taken at the farthest point from camera "
+                     "instead of traveling to the wipe tower or excess chute. "
+                     "Only effective in instant timelapse mode on non-I3 printers.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("timelapse_type", coEnum);
     def->label = L("Timelapse");
@@ -7143,6 +7249,249 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
 
+    // Side stabilizers: pinpoint struts on pillars that touch tall, thin parts on their sides
+    // (Support/Stabilizers.hpp).
+    def = this->add("stabilizer_supports", coEnum);
+    def->label = L("Side stabilizers");
+    def->category = L("Support");
+    def->tooltip = L("Add thin struts that touch tall, slender parts on their sides with a small pinpoint tip "
+                     "and stand on the build plate next to it. They keep the part from wobbling while it prints "
+                     "and snap off at the tip afterwards. Printed as support, so supports must be enabled.\n\n"
+                     "Off: no stabilizers.\n"
+                     "Auto: rings of touch points up the part's height, plus any stabilizer points painted with "
+                     "the support painting tool.\n"
+                     "Manual: only the painted stabilizer points.");
+    def->enum_keys_map = &ConfigOptionEnum<StabilizerMode>::get_enum_values();
+    def->enum_values.push_back("off");
+    def->enum_values.push_back("auto");
+    def->enum_values.push_back("manual");
+    def->enum_labels.push_back(L("Off"));
+    def->enum_labels.push_back(L("Auto"));
+    def->enum_labels.push_back(L("Manual"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<StabilizerMode>(smOff));
+
+    def = this->add("stabilizer_ring_spacing", coFloat);
+    def->label = L("Stabilizer ring spacing");
+    def->category = L("Support");
+    def->tooltip = L("Height between two rings of side touch points. The first ring is this high above the plate.");
+    def->sidetext = "mm";
+    def->min = 2;
+    def->max = 200;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(15.));
+
+    def = this->add("stabilizer_points_per_ring", coInt);
+    def->label = L("Touch points per ring");
+    def->category = L("Support");
+    def->tooltip = L("How many struts touch the part in each ring, spread evenly around it. "
+                     "Every ring uses the same angles, so each pillar carries one strut per ring.");
+    def->min = 1;
+    def->max = 12;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(3));
+
+    def = this->add("stabilizer_tip_diameter", coFloat);
+    def->label = L("Stabilizer tip diameter");
+    def->category = L("Support");
+    def->tooltip = L("Diameter of the pinpoint tip where a strut touches the part. Smaller leaves a smaller mark "
+                     "but holds less; keep it at least about twice the line width.");
+    def->sidetext = "mm";
+    def->min = 0.3;
+    def->max = 5;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.8));
+
+    def = this->add("stabilizer_tip_gap", coFloat);
+    def->label = L("Stabilizer tip gap");
+    def->category = L("Support");
+    def->tooltip = L("Space left between each tip and the part. 0 makes the tips touch the part, which is what "
+                     "stabilizes it; a small gap leaves no mark but only catches the part once it starts to sway.");
+    def->sidetext = "mm";
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.));
+
+    def = this->add("stabilizer_pillar_diameter", coFloat);
+    def->label = L("Stabilizer pillar diameter");
+    def->category = L("Support");
+    def->tooltip = L("Diameter of the pillars that carry the tips down to the build plate. "
+                     "A pillar is never thinner than four support lines, two on each side.");
+    def->sidetext = "mm";
+    def->min = 1;
+    def->max = 15;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(2.));
+
+    def = this->add("stabilizer_max_island_width", coFloat);
+    def->label = L("Stabilize parts up to width");
+    def->category = L("Support");
+    def->tooltip = L("Only sections of the part narrower than this get touch points, so a wide base under a thin "
+                     "spire stays unmarked. 0 means every section.");
+    def->sidetext = "mm";
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(20.));
+
+    // Side stabilizers v2: tapered pillars, pillar-to-pillar bracing, rounded-rectangle columns and
+    // walls / infill for the stabilizer bodies. Every default leaves the v1 stabilizers unchanged.
+    def = this->add("stabilizer_pillar_base_diameter", coFloat);
+    def->label = L("Stabilizer pillar base diameter");
+    def->category = L("Support");
+    def->tooltip = L("Diameter of the stabilizer pillars at the build plate. Pillars taper from this diameter at the "
+                     "plate to the pillar diameter at their top, like tree supports, which makes tall pillars much "
+                     "stiffer. 0, or anything not larger than the pillar diameter, keeps the pillars straight.");
+    def->sidetext = "mm";
+    def->min = 0;
+    def->max = 20;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.));
+
+    def = this->add("stabilizer_bracing", coBool);
+    def->label = L("Brace stabilizer pillars");
+    def->category = L("Support");
+    def->tooltip = L("Tie neighbouring stabilizer pillars together with 45 degree diagonal braces wherever a pillar "
+                     "would otherwise stand unbraced for longer than the maximum unbraced height. Braces climb at "
+                     "45 degrees from one pillar to the next, so they print without bridges, and never pass closer "
+                     "to the part than the support XY distance.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("stabilizer_brace_max_unbraced", coFloat);
+    def->label = L("Max unbraced pillar height");
+    def->category = L("Support");
+    def->tooltip = L("The longest stretch of a stabilizer pillar between two ties - the plate, a strut or a brace - "
+                     "before a brace is added. Also what the Auto column shape calls a long unbraced pillar.");
+    def->sidetext = "mm";
+    def->min = 3;
+    def->max = 200;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(10.));
+
+    def = this->add("stabilizer_brace_max_span", coFloat);
+    def->label = L("Max bracing span");
+    def->category = L("Support");
+    def->tooltip = L("Pillars farther apart than this (axis to axis) are never braced to each other. A brace "
+                     "rises as much as it spans, so a long span also needs a long stretch of both pillars.");
+    def->sidetext = "mm";
+    def->min = 2;
+    def->max = 100;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(25.));
+
+    def = this->add("stabilizer_column_shape", coEnum);
+    def->label = L("Stabilizer column shape");
+    def->category = L("Support");
+    def->tooltip = L("Cross-section of the stabilizer pillars.\n\n"
+                     "Round: round pillars.\n"
+                     "Rounded rectangle: every pillar is a column with a filleted rectangular cross-section, like a "
+                     "prime tower, which is much stiffer than a thin round pillar.\n"
+                     "Auto: round pillars, and a rounded-rectangle column for a pillar at least the column height "
+                     "tall that stands alone or still has a stretch longer than the max unbraced height.");
+    def->enum_keys_map = &ConfigOptionEnum<StabilizerColumnShape>::get_enum_values();
+    def->enum_values.push_back("round");
+    def->enum_values.push_back("rounded_rect");
+    def->enum_values.push_back("auto");
+    def->enum_labels.push_back(L("Round"));
+    def->enum_labels.push_back(L("Rounded rectangle"));
+    def->enum_labels.push_back(L("Auto"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<StabilizerColumnShape>(scsRound));
+
+    def = this->add("stabilizer_column_width", coFloat);
+    def->label = L("Stabilizer column width");
+    def->category = L("Support");
+    def->tooltip = L("Size of a rounded-rectangle column along its struts, towards the part. The column's side "
+                     "facing the part stays where a round pillar's would, so a wider column grows away from the part. "
+                     "Never less than the pillar diameter.");
+    def->sidetext = "mm";
+    def->min = 1;
+    def->max = 30;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(6.));
+
+    def = this->add("stabilizer_column_length", coFloat);
+    def->label = L("Stabilizer column length");
+    def->category = L("Support");
+    def->tooltip = L("Size of a rounded-rectangle column across its struts, along the part's side. "
+                     "Never less than the pillar diameter.");
+    def->sidetext = "mm";
+    def->min = 1;
+    def->max = 50;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(10.));
+
+    def = this->add("stabilizer_column_min_height", coFloat);
+    def->label = L("Auto column height");
+    def->category = L("Support");
+    def->tooltip = L("With the Auto column shape, only pillars at least this tall can become rounded-rectangle columns.");
+    def->sidetext = "mm";
+    def->min = 0;
+    def->max = 500;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(30.));
+
+    def = this->add("stabilizer_wall_loops", coInt);
+    def->label = L("Stabilizer walls");
+    def->category = L("Support");
+    def->tooltip = L("Number of walls around the stabilizer pillars, columns and braces, with sparse infill inside. "
+                     "0 prints them solid. Parts too narrow for infill (thin pillars and the tips) always print solid.");
+    def->min = 0;
+    def->max = 10;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
+    def = this->add("stabilizer_infill_density", coPercent);
+    def->label = L("Stabilizer infill density");
+    def->category = L("Support");
+    // xgettext:no-c-format, no-boost-format
+    def->tooltip = L("Density of the sparse infill inside the stabilizer walls. 100% prints them solid.");
+    def->sidetext = "%";
+    def->min = 0;
+    def->max = 100;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionPercent(15));
+
+    def = this->add("stabilizer_infill_pattern", coEnum);
+    def->label = L("Stabilizer infill pattern");
+    def->category = L("Support");
+    def->tooltip = L("Line pattern of the sparse infill inside the stabilizer walls.");
+    def->enum_keys_map = &ConfigOptionEnum<InfillPattern>::get_enum_values();
+    def->enum_values.push_back("rectilinear");
+    def->enum_values.push_back("grid");
+    def->enum_values.push_back("honeycomb");
+    def->enum_values.push_back("gyroid");
+    def->enum_labels.push_back(L("Rectilinear"));
+    def->enum_labels.push_back(L("Grid"));
+    def->enum_labels.push_back(L("Honeycomb"));
+    def->enum_labels.push_back(L("Gyroid"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipRectilinear));
+
+    // FDM hollowing: an even-thickness shell around an empty cavity (FDMHollowing.hpp).
+    def = this->add("hollow_interior", coBool);
+    def->label = L("Hollow interior");
+    def->category = L("Strength");
+    def->tooltip = L("Print the part as a closed shell of even thickness with an empty cavity inside. The shell follows "
+                     "the surface in 3D, so sloped and curved faces get the same thickness as walls, unlike top and bottom "
+                     "shell layers. The cavity's ceiling is bridged. Can be set per part: a part's own setting "
+                     "overrides the object's.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("hollow_shell_thickness", coFloat);
+    def->label = L("Hollow shell thickness");
+    def->category = L("Strength");
+    def->tooltip = L("Thickness of the shell left around the cavity, measured into the part from its surface. "
+                     "A part has to be thicker than about twice this plus 4 mm to leave a cavity; the slicer warns "
+                     "about parts it could not hollow. Can be set per part.");
+    def->sidetext = "mm";
+    def->min = 0.5;
+    def->max = 50;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(3.));
+
     def = this->add("tree_support_with_infill", coBool);
     def->label = L("Tree support with infill");
     def->category = L("Support");
@@ -7263,6 +7612,21 @@ void PrintConfigDef::init_fff_params()
     def->max = max_temp;
     def->set_default_value(new ConfigOptionInts{0});
 
+    def = this->add("chamber_minimal_temperature", coInts);
+    def->label = L("Minimal");
+    def->tooltip = L("This is the chamber temperature at which printing should start, while the chamber continues heating "
+                     "toward the \"Target\" chamber temperature. For example, set the Target to 60 and the Minimal to 50 to "
+                     "begin printing once the chamber reaches 50℃, without waiting for the full 60℃.\n\n"
+                     "It sets a G-code variable named chamber_minimal_temperature, which can be passed to your print start macro "
+                     "or a heat soak macro, like this: PRINT_START (other variables) CHAMBER_MIN_TEMP=[chamber_minimal_temperature].\n\n"
+                     "Unlike the \"Target\" chamber temperature, this option does not emit any M141/M191 commands; it only exposes "
+                     "the value to your custom G-code. It should not exceed the \"Target\" chamber temperature.");
+    def->sidetext = u8"℃" /* °C */;	// degrees Celsius, don't need translation
+    def->full_label = L("Chamber minimal temperature");
+    def->min = 0;
+    def->max = max_temp;
+    def->set_default_value(new ConfigOptionInts{0});
+
     def = this->add("nozzle_temperature", coInts);
     def->label = L("Other layers");
     def->tooltip = L("Nozzle temperature for layers after the initial one.");
@@ -7361,6 +7725,25 @@ void PrintConfigDef::init_fff_params()
     def->sidetext = "mm";	// milimeters, don't need translation
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(0.6));
+
+    // Bambu Studio's key, same name and type so Bambu projects/presets import 1:1. Bambu's own
+    // definition is min 1 / default 4 and always sets the depth; ours adds 0 = "follow the top
+    // shell" (today's behaviour, the default), so an EdgeSlicer project slices exactly as before
+    // until the user sets a value. A Bambu value (always >= 1) is taken as-is on import; Export
+    // Bambu 3MF writes the depth our shell settings give in place of 0 (BambuExport.cpp).
+    // Consumed by MultiMaterialSegmentation.cpp's compute_layer_color_stat().
+    def = this->add("top_color_penetration_layers", coInt);
+    def->label = L("Top paint penetration layers");
+    def->category = L("Strength");
+    def->sidetext = L("layers");
+    def->tooltip = L("How many layers deep the colour painted on a top surface is carried into the object, "
+                     "counting the top surface layer itself.\n"
+                     "0 means the same depth as the top shell (top shell layers or top shell thickness, "
+                     "whichever is deeper).\n"
+                     "More layers give a more solid colour, but cost more filament changes and purge.");
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("top_surface_density", coPercent);
     def->label = L("Top surface density");
@@ -8953,6 +9336,10 @@ bool is_machine_flow_variant_option(const std::string &key)
 
 size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigned int filament_id)
 {
+    // An id of -1 (unsigned wrap) used to run the Filament segment loop ~4e9 times.
+    if (filament_id == (unsigned int) -1)
+        return 0;
+
     const ConfigOptionEnumsGeneric* volume_types = enums_option(config, "filament_volume_type");
     const ConfigOptionStrings*      flow_support = strings_option(config, flow_support_key(domain));
 
@@ -9002,6 +9389,57 @@ size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigne
     }
 
     return 0;
+}
+
+double ResolvedFilamentFlow::uncached_flow_ratio(const ConfigBase &config, unsigned int filament_id)
+{
+    const auto *opt = config.option<ConfigOptionFloats>("filament_flow_ratio");
+    if (opt == nullptr || opt->values.empty())
+        return 1.;
+    return filament_flow_variants_active(config) ? get_value_at(config, *opt, ConfigFlowDomain::Filament, filament_id) :
+                                                   opt->get_at(0);
+}
+
+double ResolvedFilamentFlow::uncached_max_volumetric_speed(const ConfigBase &config, unsigned int filament_id)
+{
+    const auto *opt = config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    if (opt == nullptr || opt->values.empty())
+        return 0.;
+    return get_value_at(config, *opt, ConfigFlowDomain::Filament, filament_id);
+}
+
+bool ResolvedFilamentFlow::uncached_enable_pressure_advance(const ConfigBase &config, unsigned int filament_id)
+{
+    const auto *opt = config.option<ConfigOptionBools>("enable_pressure_advance");
+    if (opt == nullptr || opt->values.empty())
+        return false;
+    return get_value_at(config, *opt, ConfigFlowDomain::Filament, filament_id);
+}
+
+ResolvedFilamentFlow ResolvedFilamentFlow::resolve(const ConfigBase &config)
+{
+    ResolvedFilamentFlow out;
+    out.variants_active = filament_flow_variants_active(config);
+    const auto *ratio   = config.option<ConfigOptionFloats>("filament_flow_ratio");
+    const auto *mvs     = config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    const auto *pa      = config.option<ConfigOptionBools>("enable_pressure_advance");
+    // Left empty when an option is missing: the *_for accessors then fall back to
+    // the uncached expression for every id.
+    if (ratio == nullptr || ratio->values.empty() || mvs == nullptr || mvs->values.empty() || pa == nullptr ||
+        pa->values.empty())
+        return out;
+    const size_t n = flow_variant_filament_count(config);
+    out.flow_ratio.reserve(n);
+    out.max_volumetric_speed.reserve(n);
+    out.enable_pressure_advance.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+        const unsigned int id  = static_cast<unsigned int>(i);
+        const size_t       idx = get_config_idx(config, ConfigFlowDomain::Filament, id);
+        out.flow_ratio.push_back(out.variants_active ? ratio->get_at(idx) : ratio->get_at(0));
+        out.max_volumetric_speed.push_back(mvs->get_at(idx));
+        out.enable_pressure_advance.push_back(pa->get_at(idx) ? 1 : 0);
+    }
+    return out;
 }
 
 // ==== end Snapmaker: flow-variant support ========================================================
@@ -9123,6 +9561,13 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         opt_key = "thumbnails";
     } else if (opt_key == "counterbole_hole_bridging") {
         opt_key = "counterbore_hole_bridging";
+    } else if (opt_key == "stabilizer_supports") {
+        // Side stabilizers were an on/off checkbox before the Off / Auto / Manual choice (projects
+        // saved with the first version of the feature): on was the automatic rings.
+        if (value == "1" || value == "true")
+            value = "auto";
+        else if (value == "0" || value == "false")
+            value = "off";
     } else if (opt_key == "draft_shield" && value == "limited") {
         value = "disabled";
     } else if (opt_key == "support_interface_filament_source") {
@@ -9355,6 +9800,16 @@ DynamicPrintConfig* DynamicPrintConfig::new_from_defaults_keys(const std::vector
     return out;
 }
 
+double sequential_clearance_radius(const ConfigBase &cfg)
+{
+    const auto *radius     = cfg.option<ConfigOptionFloat>("extruder_clearance_radius");
+    const auto *max_radius = cfg.option<ConfigOptionFloat>("extruder_clearance_max_radius");
+    const auto *model      = cfg.option<ConfigOptionString>("printer_model");
+    if (model != nullptr && model->value.compare(0, 9, "Bambu Lab") == 0 && max_radius != nullptr && max_radius->value > 0.)
+        return max_radius->value;
+    return radius != nullptr ? radius->value : 0.;
+}
+
 double min_object_distance(const ConfigBase &cfg)
 {
     const ConfigOptionEnum<PrinterTechnology> *opt_printer_technology = cfg.option<ConfigOptionEnum<PrinterTechnology>>("printer_technology");
@@ -9374,8 +9829,9 @@ double min_object_distance(const ConfigBase &cfg)
             ret = 0.;
         else {
             // min object distance is max(duplicate_distance, clearance_radius)
-            ret = ((co_opt->value == PrintSequence::ByObject) && ecr_opt->value > duplicate_distance) ?
-                      ecr_opt->value : duplicate_distance;
+            const double clearance = sequential_clearance_radius(cfg);
+            ret = ((co_opt->value == PrintSequence::ByObject) && clearance > duplicate_distance) ?
+                      clearance : duplicate_distance;
         }
     }
 
@@ -9831,6 +10287,10 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
     if (cfg.extruder_clearance_radius <= 0) {
         error_message.emplace("extruder_clearance_radius", L("invalid value ") + std::to_string(cfg.extruder_clearance_radius));
     }
+    // Bambu Studio's check of its (only) clearance radius.
+    if (cfg.extruder_clearance_max_radius <= 0) {
+        error_message.emplace("extruder_clearance_max_radius", L("invalid value ") + std::to_string(cfg.extruder_clearance_max_radius));
+    }
     if (cfg.extruder_clearance_height_to_rod <= 0) {
         error_message.emplace("extruder_clearance_height_to_rod", L("invalid value ") + std::to_string(cfg.extruder_clearance_height_to_rod));
     }
@@ -9968,6 +10428,21 @@ PRINT_CONFIG_CACHE_INITIALIZE((
     SLAMaterialConfig, SLAPrintConfig, SLAPrintObjectConfig, SLAPrinterConfig, SLAFullPrintConfig))
 static int print_config_static_initialized = print_config_static_initializer();
 
+// The same set() calls ConfigBase::apply_only() makes, without looking every key up by name. Out of line so the
+// option list is expanded for this once, not in every file that includes PrintConfig.hpp.
+#define PRINT_CONFIG_APPLY_TO_DEFINITION(r, data, CLASS_NAME) \
+    bool CLASS_NAME::apply_to(ConfigBase &target) const \
+    { \
+        auto *dst = dynamic_cast<CLASS_NAME*>(&target); \
+        if (dst == nullptr) \
+            return false; \
+        visit_option_pairs(*dst, *this, [](const char*, ConfigOption &a, const ConfigOption &b) { a.set(&b); return true; }); \
+        return true; \
+    }
+BOOST_PP_SEQ_FOR_EACH(PRINT_CONFIG_APPLY_TO_DEFINITION, _, (PrintObjectConfig)(PrintRegionConfig)(MachineEnvelopeConfig)(GCodeConfig)
+    (SLAMaterialConfig)(SLAPrintConfig)(SLAPrintObjectConfig)(SLAPrinterConfig))
+#undef PRINT_CONFIG_APPLY_TO_DEFINITION
+
 //BBS: remove unused command currently
 CLIActionsConfigDef::CLIActionsConfigDef()
 {
@@ -10024,6 +10499,12 @@ CLIActionsConfigDef::CLIActionsConfigDef()
     def->label = L("Export multiple STLs");
     def->tooltip = L("Export the objects as multiple STLs to directory.");
     def->set_default_value(new ConfigOptionString("stl_path"));
+
+    def = this->add("export_step", coString);
+    def->label = L("Export STEP");
+    def->tooltip = L("Export all objects as one STEP file of solids (parts imported from STEP keep their exact geometry).");
+    def->cli_params = "filename.step";
+    def->set_default_value(new ConfigOptionString("output.step"));
 
     /*def = this->add("export_gcode", coBool);
     def->label = L("Export G-code");
@@ -10395,13 +10876,17 @@ CLIMiscConfigDef::CLIMiscConfigDef()
     /*def = this->add("output", coString);
     def->label = L("Output File");
     def->tooltip = L("The file where the output will be written (if not specified, it will be based on the input file).");
-    def->cli = "output|o";
+    def->cli = "output|o";*/
 
+    // Re-enabled: InstanceCheck reads --single-instance / --no-single-instance, and the Blender bridge
+    // (and anything else handing files to a running EdgeSlicer) passes it. With it commented out the
+    // CLI parser rejected the flag as an invalid option and the process exited before the hand-off.
     def = this->add("single_instance", coBool);
     def->label = L("Single instance mode");
     def->tooltip = L("If enabled, the command line arguments are sent to an existing instance of GUI OrcaSlicer, "
                      "or an existing EdgeSlicer window is activated. "
-                     "Overrides the \"single_instance\" configuration value from application preferences.");*/
+                     "Overrides the \"single_instance\" configuration value from application preferences.");
+    def->set_default_value(new ConfigOptionBool(false));
 
 /*
     def = this->add("autosave", coString);
@@ -10705,6 +11190,8 @@ OtherSlicingStatesConfigDef::OtherSlicingStatesConfigDef()
 
     new_def("initial_no_support_extruder", coInt, "Initial no support extruder", "Zero-based index of the first extruder used for printing without support. Same as initial_no_support_tool.");
     new_def("in_head_wrap_detect_zone", coBool, "In head wrap detect zone", "Indicates if the first layer overlaps with the head wrap zone.");
+    new_def("curr_bed_type", coString, "Current bed type",
+            "Bed type of the current plate, e.g. \"Textured PEI Plate\", \"High Temp Plate\", \"Cool Plate\".");
 }
 
 PrintStatisticsConfigDef::PrintStatisticsConfigDef()
@@ -10916,7 +11403,7 @@ static std::map<t_custom_gcode_key, t_config_option_keys> s_CustomGcodeSpecificP
     {"machine_start_gcode",         {}},
     {"machine_end_gcode",           {"layer_num", "layer_z", "max_layer_z", "filament_extruder_id"}},
     {"before_layer_change_gcode",   {"layer_num", "layer_z", "max_layer_z"}},
-    {"layer_change_gcode",          {"layer_num", "layer_z", "max_layer_z"}},
+    {"layer_change_gcode",          {"layer_num", "layer_z", "max_layer_z", "curr_y_acceleration_limit", "curr_accumulated_mass", "curr_layer_mass"}},
     {"timelapse_gcode",             {"layer_num", "layer_z", "max_layer_z"}},
     {"change_filament_gcode",       {"layer_num", "layer_z", "max_layer_z", "next_extruder", "previous_extruder", "fan_speed",
                                "first_flush_volume", "flush_length_1", "flush_length_2", "flush_length_3", "flush_length_4",
@@ -10959,6 +11446,11 @@ CustomGcodeSpecificConfigDef::CustomGcodeSpecificConfigDef()
     def = this->add("filament_extruder_id", coInt);
     def->label = L("Filament extruder ID");
     def->tooltip = L("The current extruder ID. The same as current_extruder.");
+
+// layer_change_gcode: Bambu Studio's bed-slinger mass model (GCode::process_layer)
+    new_def("curr_y_acceleration_limit", coFloat, "Current Y acceleration limit", "The Y acceleration (mm/s^2) the printed mass so far allows: machine_max_force_Y / (machine_bed_mass_Y + printed mass), at most the machine's Y acceleration limit. The machine's Y acceleration limit when those two are not set.");
+    new_def("curr_accumulated_mass", coFloat, "Accumulated mass", "Filament mass (g) printed before this layer change.");
+    new_def("curr_layer_mass", coFloat, "Layer mass", "Filament mass (g) printed since the previous layer change.");
 
 // change_filament_gcode
     new_def("previous_extruder", coInt, "Previous extruder", "Index of the extruder that is being unloaded. The index is zero based (first extruder has index 0).");
@@ -11043,19 +11535,163 @@ Points get_bed_shape(const PrintConfig &cfg)
 
 Points get_bed_shape(const SLAPrinterConfig &cfg) { return to_points(make_counter_clockwise(cfg.printable_area.values)); }
 
-Polygons get_bed_excluded_area(const PrintConfig& cfg)
-{
-    const Pointfs exclude_area_points = cfg.bed_exclude_area.values;
+// bed_exclude_area: one list of "XxY" points, historically read two different ways.
+//
+//  * As consecutive groups of 4 points, one rectangle each: Bambu's original model. PartPlate's
+//    exclusion boxes (the "object fully inside" check and arrange's fixed items), Model.cpp's
+//    speed table and Bambu Studio's clearance / brim checks all read it so, and Bambu Studio
+//    still does everywhere.
+//  * As one polygon: the option's tooltip, upstream Orca's get_bed_excluded_area (#9633, print
+//    validation and arrange's bed outline), the timelapse picker and the plate rendering.
+//
+// Vendor profiles are written for one or the other. A single 4-point rectangle (Bambu, Elegoo,
+// Snapmaker, FlyingBear, Qidi Q2 / X-Plus 5) reads the same both ways. Qidi Q1 Pro / X-Max 4 /
+// X-Plus 4 and Anycubic Kobra 3 Max list several rectangles and pad the list with repeated points
+// so that the groups of 4 stay aligned (the padding makes zero-width connectors when the list is
+// read as a polygon). Upstream Orca's Kobra 3 (#10914) is a 10-point ring - the bed outline, then
+// the inner outline the other way round - that only makes sense as one polygon: read as
+// rectangles its first 4 points are the whole bed, which excluded everything.
+//
+// The rule: when every complete group of 4 points is an axis-aligned rectangle, or a zero-area
+// group (all points on one vertical or horizontal line, the padding), the list is rectangles and
+// a trailing partial group is ignored, exactly as the box readers always did. Otherwise it is one
+// polygon, filled with the non-zero rule, so an outline plus a reversed inner outline is a ring.
+// A list of fewer than 3 points (the default is a single 0x0) excludes nothing.
 
-    Polygon exclude_poly;
-    for (int i = 0; i < exclude_area_points.size(); i++) {
-        auto pt = exclude_area_points[i];
-        exclude_poly.points.emplace_back(scale_(pt.x()), scale_(pt.y()));
+static bool exclude_group_is_rectangle(const Vec2d *p)
+{
+    constexpr double eps = EPSILON;
+    BoundingBoxf bb;
+    for (int i = 0; i < 4; ++i)
+        bb.merge(p[i]);
+    if (bb.max.x() - bb.min.x() < eps || bb.max.y() - bb.min.y() < eps)
+        return true; // zero-area padding
+    bool corner_used[4] = { false, false, false, false };
+    for (int i = 0; i < 4; ++i) {
+        const bool lo_x = std::abs(p[i].x() - bb.min.x()) < eps, hi_x = std::abs(p[i].x() - bb.max.x()) < eps;
+        const bool lo_y = std::abs(p[i].y() - bb.min.y()) < eps, hi_y = std::abs(p[i].y() - bb.max.y()) < eps;
+        if (!(lo_x || hi_x) || !(lo_y || hi_y))
+            return false;
+        corner_used[(hi_x ? 1 : 0) + (hi_y ? 2 : 0)] = true;
+    }
+    return corner_used[0] && corner_used[1] && corner_used[2] && corner_used[3];
+}
+
+bool bed_exclude_area_is_rectangles(const Pointfs &points)
+{
+    if (points.size() < 4)
+        return false;
+    for (size_t i = 0; i + 4 <= points.size(); i += 4)
+        if (!exclude_group_is_rectangle(&points[i]))
+            return false;
+    return true;
+}
+
+static BoundingBoxf exclude_group_box(const Pointfs &points, size_t first)
+{
+    BoundingBoxf bb;
+    for (size_t i = first; i < first + 4; ++i)
+        bb.merge(points[i]);
+    return bb;
+}
+
+Polygons bed_exclude_area_polygons(const Pointfs &points)
+{
+    Polygons out;
+    if (points.size() < 3)
+        return out;
+
+    if (bed_exclude_area_is_rectangles(points)) {
+        for (size_t i = 0; i + 4 <= points.size(); i += 4) {
+            const BoundingBoxf bb = exclude_group_box(points, i);
+            if (bb.max.x() - bb.min.x() < EPSILON || bb.max.y() - bb.min.y() < EPSILON)
+                continue;
+            const Point lo(scale_(bb.min.x()), scale_(bb.min.y())), hi(scale_(bb.max.x()), scale_(bb.max.y()));
+            out.emplace_back(Points{ lo, Point(hi.x(), lo.y()), hi, Point(lo.x(), hi.y()) });
+        }
+        return out;
     }
 
-    exclude_poly.make_counter_clockwise();
+    Polygon poly;
+    poly.points.reserve(points.size());
+    for (const Vec2d &pt : points)
+        poly.points.emplace_back(scale_(pt.x()), scale_(pt.y()));
+    // Non-zero fill: the orientation of the whole outline does not matter, a reversed inner
+    // outline is a hole, and zero-width connectors vanish.
+    for (ExPolygon &ex : union_ex(Polygons{ poly }, ClipperLib::pftNonZero)) {
+        if (ex.holes.empty()) {
+            out.emplace_back(std::move(ex.contour));
+            continue;
+        }
+        // Arrange's fixed items and the GUI's boxes cannot carry holes: cut a holed piece into
+        // horizontal slabs between consecutive vertex heights. No vertex lies strictly inside a
+        // slab, so the boundary edges crossing a slab are straight across it and, sorted along
+        // the slab's middle line, pair up into hole-free trapezoids (rectangles for an
+        // axis-aligned ring: the Kobra 3 ring becomes 4 strips). Computed directly rather than
+        // by clipping against the slab, which keeps the two sides of a hole joined by a
+        // zero-width bridge along the slab edge.
+        std::vector<coord_t> ys;
+        std::vector<Line>    edges;
+        std::vector<const Polygon *> rings{ &ex.contour };
+        for (const Polygon &hole : ex.holes)
+            rings.emplace_back(&hole);
+        for (const Polygon *ring : rings) {
+            for (size_t i = 0; i < ring->points.size(); ++i) {
+                const Point &a = ring->points[i], &b = ring->points[(i + 1) % ring->points.size()];
+                ys.emplace_back(a.y());
+                if (a.y() != b.y())
+                    edges.emplace_back(a, b);
+            }
+        }
+        sort_remove_duplicates(ys);
+        auto x_at = [](const Line &e, double y) {
+            return double(e.a.x()) + double(e.b.x() - e.a.x()) * (y - double(e.a.y())) / double(e.b.y() - e.a.y());
+        };
+        for (size_t k = 0; k + 1 < ys.size(); ++k) {
+            const double y0 = double(ys[k]), y1 = double(ys[k + 1]), ym = 0.5 * (y0 + y1);
+            std::vector<std::pair<double, const Line *>> crossings;
+            for (const Line &e : edges)
+                if (std::min(e.a.y(), e.b.y()) <= ys[k] && std::max(e.a.y(), e.b.y()) >= ys[k + 1])
+                    crossings.emplace_back(x_at(e, ym), &e);
+            std::sort(crossings.begin(), crossings.end(),
+                      [](const auto &l, const auto &r) { return l.first < r.first; });
+            for (size_t c = 0; c + 1 < crossings.size(); c += 2) {
+                const Line &l = *crossings[c].second, &r = *crossings[c + 1].second;
+                Polygon trapezoid(Points{ Point(coord_t(std::round(x_at(l, y0))), ys[k]), Point(coord_t(std::round(x_at(r, y0))), ys[k]),
+                                          Point(coord_t(std::round(x_at(r, y1))), ys[k + 1]), Point(coord_t(std::round(x_at(l, y1))), ys[k + 1]) });
+                trapezoid.remove_duplicate_points();
+                if (trapezoid.size() >= 3 && std::abs(trapezoid.area()) > 0.)
+                    out.emplace_back(std::move(trapezoid));
+            }
+        }
+    }
+    return out;
+}
 
-    return {exclude_poly};
+std::vector<BoundingBoxf> bed_exclude_area_boxes(const Pointfs &points)
+{
+    std::vector<BoundingBoxf> out;
+    if (points.size() < 3)
+        return out;
+    if (bed_exclude_area_is_rectangles(points)) {
+        // Unscaled and unfiltered, so a rectangle list gives exactly the boxes PartPlate always
+        // built (zero-area padding boxes included: arrange inflates them).
+        for (size_t i = 0; i + 4 <= points.size(); i += 4)
+            out.emplace_back(exclude_group_box(points, i));
+        return out;
+    }
+    for (const Polygon &piece : bed_exclude_area_polygons(points)) {
+        BoundingBoxf bb;
+        for (const Point &pt : piece.points)
+            bb.merge(Vec2d(unscale_(pt.x()), unscale_(pt.y())));
+        out.emplace_back(bb);
+    }
+    return out;
+}
+
+Polygons get_bed_excluded_area(const PrintConfig& cfg)
+{
+    return bed_exclude_area_polygons(cfg.bed_exclude_area.values);
 }
 
 Polygon get_bed_shape_with_excluded_area(const PrintConfig& cfg)
@@ -11125,8 +11761,9 @@ bool is_identical_multi_extruder_printer(const ConfigBase &cfg)
     // ...and all of the same kind. A machine with two different extruder variants is a grouping
     // machine (H2D/H2C/X2D): its filament->nozzle assignment is computed by ToolOrdering, and
     // this identity map must not pre-empt it. Mirrors
-    // DynamicPrintConfig::support_different_extruders(), which is that path's own gate.
-    if (const auto *variants = cfg.option<ConfigOptionStrings>("extruder_variant_list")) {
+    // DynamicPrintConfig::support_different_extruders(), which is that path's own gate - including
+    // its two-extruder limit: a larger toolchanger is never grouped, whatever variants it lists.
+    if (const auto *variants = cfg.option<ConfigOptionStrings>("extruder_variant_list"); variants != nullptr && nozzles->size() <= 2) {
         std::set<std::string> variant_set;
         const int             n = std::min<int>((int) nozzles->size(), (int) variants->values.size());
         for (int i = 0; i < n; ++i) {

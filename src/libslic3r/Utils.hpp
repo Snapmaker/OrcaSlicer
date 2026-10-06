@@ -8,6 +8,8 @@
 #include <type_traits>
 #include <system_error>
 #include <regex>
+#include <string_view>
+#include <algorithm>
 
 #include <boost/system/error_code.hpp>
 #include <boost/algorithm/string.hpp>
@@ -48,6 +50,7 @@
 #define CLI_OBJECT_ORIENT_FAILED       -22
 #define CLI_MODIFIED_PARAMS_TO_PRINTER -23
 #define CLI_FILE_VERSION_NOT_SUPPORTED -24
+#define CLI_EXPORT_STEP_ERROR       -25
 
 
 #define CLI_NO_SUITABLE_OBJECTS     -50
@@ -97,6 +100,10 @@ extern size_t total_physical_memory();
 // crash (malloc returns null).  Taking the min catches both failure modes.
 // Used by the runtime memory guard in PrintBase.hpp.
 extern size_t get_available_physical_memory();
+// Human-readable breakdown of what get_available_physical_memory() saw, for log lines, e.g.
+// "available 412 MB (physical 8123 MB, commit 412 MB)". On Windows it names which of the two
+// limits is the binding one; elsewhere it is just the available figure.
+extern std::string get_available_memory_description();
 
 // Set a path with GUI resource files.
 void set_var_dir(const std::string &path);
@@ -202,6 +209,75 @@ extern std::string normalize_utf8_nfc(const char *src);
 // On Windows, the file explorer (or anti-virus or whatever else) often locks the file
 // for a short while, so the file may not be movable. Retry while we see recoverable errors.
 extern std::error_code rename_file(const std::string &from, const std::string &to);
+#ifndef _WIN32
+// True for a first-rename errno that is worth the bak-then-rename fallback
+// (sshfs / gvfs / MTP / SMB). ENOENT / EXDEV / ENOTDIR / EISDIR cannot be
+// helped by moving the target aside.
+extern bool posix_rename_worth_retrying(int err);
+
+enum class PosixRenameFallbackFate {
+	NotAttempted,
+	Replaced,
+	TargetRestored,
+	TargetRemoved,
+	BakMoveFailed
+};
+
+// After a replace-refused first rename, move `to` aside to a unique
+// `<to>.<pid>.<n>.atomic.bak` (reusing the temp's pid/counter suffix when
+// `from` is `<to>.<pid>.<n>.tmp`), then rename `from` into place and delete
+// the bak. A stale bak at that exact path is removed first. On a failed
+// second rename the bak is restored when possible and the second errno is
+// returned. If the target cannot be moved aside, BakMoveFailed is reported
+// with that errno. A leftover bak after a successful replace is logged.
+extern std::error_code posix_rename_retry_after_replace_refused(const std::string &from,
+                                                                const std::string &to,
+                                                                int                first_errno,
+                                                                PosixRenameFallbackFate *fate = nullptr);
+
+// Test seam: when set, every POSIX rename in rename_file / the fallback goes
+// through this hook (return 0 or -1+errno). nullptr restores libc rename.
+using AtomicPosixRenameFn = int (*)(const char *from, const char *to);
+extern void set_atomic_posix_rename_hook(AtomicPosixRenameFn hook);
+
+// Test seam: called after the temp is fchmod 0600 and before the payload is
+// written. nullptr disables the hook.
+using AtomicWriteTempInspectFn = void (*)(const char *tmp_path, int fd);
+extern void set_atomic_write_temp_inspect_hook(AtomicWriteTempInspectFn hook);
+// Test seam: called immediately after open (before fchmod) so a test can see
+// the kernel-applied create mode. nullptr disables the hook.
+extern void set_atomic_write_temp_create_hook(AtomicWriteTempInspectFn hook);
+#endif
+// Unique sibling used by write_file_atomically: <path>.<pid>.<counter>.tmp
+// (at most 26 characters longer than <path>, so long data dirs stay under
+// MAX_PATH). consume=true advances the process-wide counter (same generator
+// the helper uses); consume=false peeks so a test can plant a blocker on the
+// next temporary. Two processes that share a pid (Flatpak) cannot collide:
+// the create is exclusive and an existing name moves on to the next counter.
+extern std::string atomic_write_temp_path(const std::string &path, bool consume = true);
+// How many O_EXCL EEXIST retries write_file_atomically will make.
+constexpr int ATOMIC_WRITE_TEMP_ATTEMPTS = 100;
+// Write `data` through that temporary, flush (no fsync, as upstream), then rename over `path`.
+// POSIX opens an existing target's temp with mode 0600 (no world-readable
+// window) and a new file with 0666 (kernel applies the umask). fstat captures
+// the create mode (0644 if fstat fails, never 0666). The fd is then fchmod
+// 0600 before the payload. Mode restore is after the flush, so a crash mid-write
+// leaves the temp at 0600 (the safe direction); a target that vanishes
+// mid-save is also restored as 0600 / the captured default. Before the rename
+// the temp is fchmod'd to the existing target's mode (07777, keeping
+// suid/sgid/sticky), or back to the captured default for a new file.
+// umask() is never called.
+// When the replace is refused (Windows: the target held open without
+// FILE_SHARE_DELETE by an indexer or AV; POSIX: a mount that cannot replace a
+// file) the target is written in place instead, as upstream Orca #15861 does,
+// and a warning is logged: losing the save is worse than a reader seeing a
+// partial file. If that fails too, the temporary is removed only if the
+// target is still there. If the target is already gone the temporary is kept so the new
+// contents survive. A dangling or looping symlink is a hard error (the link
+// is not replaced with a regular file).
+// Text mode unless `binary` (Windows CRLF translation matches the ofstreams this replaces).
+// Returns true on success. If `err` is non-null it receives a message on failure.
+extern bool write_file_atomically(const std::string &path, const std::string &data, std::string *err = nullptr, bool binary = false);
 
 enum CopyFileResult {
 	SUCCESS = 0,
@@ -234,6 +310,14 @@ extern bool is_gallery_file(const std::string& path, char const* type);
 extern bool is_shapes_dir(const std::string& dir);
 //BBS: add json support
 extern bool is_json_file(const std::string& path);
+
+// Case-insensitive compare against a fixed ASCII keyword, without boost::iequals, whose
+// std::locale() takes a lock the whole process shares in the MSVC runtime.
+inline bool ascii_iequals(std::string_view a, std::string_view b)
+{
+    auto lower = [](char c) { return (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : c; };
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [&lower](char x, char y) { return lower(x) == lower(y); });
+}
 
 // Orca: custom protocal support utils
 inline bool is_orca_open(const std::string& url)

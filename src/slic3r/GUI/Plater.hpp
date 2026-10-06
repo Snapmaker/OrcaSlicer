@@ -18,6 +18,7 @@
 #include "libslic3r/enum_bitmask.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/BoundingBox.hpp"
+#include "libslic3r/ExtruderAreas.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "Jobs/Job.hpp"
 #include "Jobs/Worker.hpp"
@@ -191,6 +192,8 @@ public:
     void update_dynamic_filament_list();
 
     void update_nozzle_settings(bool switch_machine = false);
+    // Sets the per-nozzle Flow combos from the project nozzle_volume_type (after a device auto-match).
+    void sync_nozzle_flow_combos();
 
     ObjectList*             obj_list();
     ObjectSettings*         obj_settings();
@@ -515,6 +518,9 @@ public:
     void export_stl(bool extended = false, bool selection_only = false, bool multi_stls = false);
     // Export just the one selected part (ModelVolume) as a binary STL, in world coordinates.
     void export_stl_part();
+    // Export as a STEP file of B-rep solids (Format/STEPExport): the selected objects, or with no
+    // object selected every object on the current plate (placed relative to that plate).
+    void export_step(bool selection_only = false);
     //BBS: remove amf
     //void export_amf();
     //BBS add extra param for exporting 3mf silence
@@ -528,6 +534,10 @@ public:
 
     void reload_from_disk();
     void replace_with_stl();
+    // Opens the selected part in Blender; saving there updates the part (GUI/BlenderBridge).
+    void edit_in_blender();
+    // Opens the selected part in FreeCAD; saving there updates the part (GUI/FreeCADBridge).
+    void edit_in_freecad();
     void reload_all_from_disk();
     bool has_toolpaths_to_export() const;
     void export_toolpaths_to_obj() const;
@@ -585,7 +595,7 @@ public:
     bool leave_gizmos_stack();
 
     void on_filaments_change(size_t extruders_count);
-    void on_filaments_delete(size_t extruders_count, size_t filament_id, int replace_filament_id = -1, const std::vector<unsigned char>& is_mixed_snapshot = {});
+    void on_filaments_delete(size_t extruders_count, size_t filament_id, int replace_filament_id = -1);
     bool confirm_auto_generated_gradients(size_t num_physical);
     void set_auto_generated_gradient_decision(size_t num_physical, bool create_auto_gradients);
     // BBS
@@ -665,6 +675,10 @@ public:
     /// @brief Sync (close + re-push) cold-plate notifications for the current plate.
     /// @return True if slicing is allowed on current plate after sync.
     bool sync_cold_plate_notification();
+    /// Snap #930: grouping dialog (or volume-type sync) before an explicit slice.
+    /// On success the plate-list dirty flag is cleared so later slice entry
+    /// points do not re-prompt until the next valid-to-invalid transition.
+    bool confirm_filament_grouping_before_slice();
     /// Check and guard filament temp mixing before slicing current plate.
     bool guard_before_slice_plate();
     /// Live (non-slice) warning: yellow notification when the CURRENT plate's
@@ -792,6 +806,8 @@ public:
     bool can_redo() const;
     bool can_reload_from_disk() const;
     bool can_replace_with_stl() const;
+    bool can_edit_in_blender() const;
+    bool can_edit_in_freecad() const;
     bool can_mirror() const;
     bool can_split(bool to_objects) const;
     bool can_split_by_color() const;
@@ -877,7 +893,8 @@ public:
 
     //BBS: add bed exclude area
 	void set_bed_shape() const;
-    void set_bed_shape(const Pointfs& shape, const Pointfs& exclude_area, const double printable_height, const std::string& custom_texture, const std::string& custom_model, bool force_as_custom = false) const;
+    // extruder_areas: dual-nozzle reach (empty on every other printer, which clears the nozzle-only strips).
+    void set_bed_shape(const Pointfs& shape, const Pointfs& exclude_area, const double printable_height, const std::string& custom_texture, const std::string& custom_model, bool force_as_custom = false, const ExtruderAreas& extruder_areas = ExtruderAreas()) const;
 
 	const NotificationManager* get_notification_manager() const;
 	NotificationManager* get_notification_manager();

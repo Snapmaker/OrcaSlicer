@@ -2,6 +2,7 @@
 #define slic3r_GUI_MultiComHelper_hpp_
 
 #include <cstdio>
+#include <wx/event.h>
 #include "ComThreadPool.hpp"
 #include "MultiComDef.hpp"
 #include "Singleton.hpp"

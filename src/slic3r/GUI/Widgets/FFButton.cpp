@@ -1,4 +1,5 @@
 #include "FFButton.hpp"
+#include <memory>
 #include <wx/dcgraph.h>
 #include "slic3r/GUI/wxExtensions.hpp"
 

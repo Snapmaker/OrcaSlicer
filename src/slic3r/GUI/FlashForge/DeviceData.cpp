@@ -1,4 +1,5 @@
 #include "DeviceData.hpp"
+#include <boost/log/trivial.hpp>
 #include "slic3r/GUI/GUI_App.hpp"
 #include "MultiComMgr.hpp"
 #include "slic3r/GUI/FlashForge/FFConnectPrinter.hpp"
@@ -486,6 +487,24 @@ void DeviceObjectOpr::read_local_machine_from_config()
                     std::string   code = GUI::wxGetApp().app_config->get("user_access_code", dev_id);
                     if (!code.empty())
                         obj->set_user_access_code(code, false);
+                    // With the address saved, the printer can be reconnected at start-up. Without
+                    // it (an entry from before the address was kept) it waits for a LAN scan.
+                    std::string ip, port_text, pid_text;
+                    if (auto f = mac.find("dev_ip"); f != mac.end())
+                        ip = f->second;
+                    if (auto f = mac.find("dev_port"); f != mac.end())
+                        port_text = f->second;
+                    if (auto f = mac.find("dev_pid"); f != mac.end())
+                        pid_text = f->second;
+                    if (!ip.empty()) {
+                        unsigned short port = 8898, pid = 0;
+                        try { if (!port_text.empty()) port = (unsigned short) std::stoi(port_text); } catch (const std::exception&) {}
+                        try { if (!pid_text.empty()) pid = (unsigned short) std::stoi(pid_text); } catch (const std::exception&) {}
+                        obj->set_lan_dev_info(make_lan_info(dev_id, dev_name, ip, port, pid));
+                    }
+                    BOOST_LOG_TRIVIAL(warning) << "[FlashForge] saved printer " << dev_id << " (" << dev_name << "): address "
+                                               << (ip.empty() ? std::string("not saved") : ip) << ", check code "
+                                               << (code.empty() ? "missing" : "present");
                     m_local_devices.emplace(dev_id, obj);
                 }
             }
@@ -528,25 +547,198 @@ bool DeviceObjectOpr::set_selected_machine(const std::string& dev_id, bool my_ma
 
     if (it != my_machine_list.end()) {
         DeviceObject *devObj = it->second;
-        if (devObj->get_lan_dev_info() != nullptr) {
-            devObj->set_connecting(true);
-            com_id_t id = MultiComMgr::inst()->addLanDev(*devObj->get_lan_dev_info(), devObj->get_user_access_code(true));
-            if (id != ComInvalidId) {
-                 auto it = m_lan_dev_connect_map.find(dev_id);
-                if (it != m_lan_dev_connect_map.end())
-                     m_lan_dev_connect_map.erase(it);
-                id_connect_mode mode;
-                mode.id = id;
-                mode.mode = COM_CONNECT_LAN;
-                m_lan_dev_connect_map.emplace(make_pair(dev_id, mode));
-            }
-        }
-
+        connect_lan(devObj);
         m_selected_machine = dev_id;
     }
     BOOST_LOG_TRIVIAL(info) << "set_selected_machine end";
     flush_logs();
     return true;
+}
+
+bool DeviceObjectOpr::connect_lan(DeviceObject *devObj)
+{
+    if (devObj == nullptr || devObj->get_lan_dev_info() == nullptr)
+        return false;
+    const std::string dev_id = devObj->get_dev_id();
+    devObj->set_connecting(true);
+    com_id_t id = MultiComMgr::inst()->addLanDev(*devObj->get_lan_dev_info(), devObj->get_user_access_code(true));
+    if (id == ComInvalidId) {
+        devObj->set_connecting(false);
+        BOOST_LOG_TRIVIAL(warning) << "[FlashForge] could not start a LAN connection to " << dev_id;
+        return false;
+    }
+    auto it = m_lan_dev_connect_map.find(dev_id);
+    if (it != m_lan_dev_connect_map.end())
+        m_lan_dev_connect_map.erase(it);
+    id_connect_mode mode;
+    mode.id = id;
+    mode.mode = COM_CONNECT_LAN;
+    m_lan_dev_connect_map.emplace(make_pair(dev_id, mode));
+    BOOST_LOG_TRIVIAL(warning) << "[FlashForge] connecting to " << dev_id << " at " << devObj->get_dev_ip() << ":" << devObj->get_dev_port();
+    return true;
+}
+
+fnet_lan_dev_info DeviceObjectOpr::make_lan_info(const std::string& serial, const std::string& name,
+                                                 const std::string& ip, unsigned short port, unsigned short pid)
+{
+    fnet_lan_dev_info info;
+    memset(&info, 0, sizeof(info));
+    snprintf(info.serialNumber, sizeof(info.serialNumber), "%s", serial.c_str());
+    snprintf(info.name, sizeof(info.name), "%s", name.c_str());
+    snprintf(info.ip, sizeof(info.ip), "%s", ip.c_str());
+    info.port        = port;
+    info.pid         = pid;
+    info.connectMode = 0; // lan
+    info.bindStatus  = 0;
+    info.bindType    = 1;
+    return info;
+}
+
+bool DeviceObjectOpr::add_manual_lan_machine(const fnet_lan_dev_info& info, const std::string& check_code)
+{
+    const std::string serial = info.serialNumber;
+    if (serial.empty() || check_code.empty())
+        return false;
+    BOOST_LOG_TRIVIAL(warning) << "[FlashForge] adding printer " << serial << " by address " << info.ip << ":" << info.port;
+
+    // The printer answered the test the dialog ran, so the code is good: keep it and the address
+    // now, rather than only after the connection comes up, so a printer that is switched off at
+    // this moment is still in the list at the next start.
+    if (AppConfig* config = GUI::wxGetApp().app_config) {
+        config->set_str("user_access_code", serial, check_code);
+        config->save_bind_machine_to_config(serial, info.name, "", info.pid, false, info.ip, info.port);
+    }
+
+    DeviceObject* obj = nullptr;
+    auto local = m_local_devices.find(serial);
+    if (local != m_local_devices.end() && local->second) {
+        obj = local->second;
+        obj->set_lan_dev_info(info);
+        obj->init_lan_obj();
+    } else {
+        obj = new DeviceObject(info);
+        obj->set_device_type(DT_LOCAL);
+        m_local_devices[serial] = obj;
+    }
+    obj->set_connection_type(CONNECTTYPE_LAN);
+    obj->set_user_access_code(check_code, true);
+    // The tile appears when the connection comes up (onConnectReady), with the printer's own name
+    // and state; an entry made now would be a nameless Offline tile.
+    return connect_lan(obj);
+}
+
+void DeviceObjectOpr::sync_settings_printers(const std::vector<FFPrinterEntry>& entries)
+{
+    AppConfig* config = GUI::wxGetApp().app_config;
+    auto saved_by_add = [&](const std::string& serial) {
+        if (config == nullptr) return false;
+        const auto& rows = config->get_local_machines();
+        auto        it   = rows.find(serial);
+        return it != rows.end() && it->second.is_flashforge();
+    };
+    auto drop = [&](const std::string& serial) {
+        auto conn = m_lan_dev_connect_map.find(serial);
+        if (conn != m_lan_dev_connect_map.end()) {
+            MultiComMgr::inst()->removeLanDev(conn->second.id);
+            m_lan_dev_connect_map.erase(conn);
+        }
+        auto local = m_local_devices.find(serial);
+        if (local != m_local_devices.end()) {
+            delete local->second;
+            m_local_devices.erase(local);
+        }
+    };
+
+    std::set<std::string> now_keys, ready_serials;
+    int connecting = 0, needs_setup = 0;
+    for (const FFPrinterEntry& e : entries) {
+        now_keys.insert(e.serial);
+        if (e.state != FFPrinterState::Ready) {
+            ++needs_setup;
+            // It was ready before and lost a field (the check code was cleared): it must not stay
+            // connected on the old values. A printer the user saved with Add printer keeps its own.
+            if (!e.serial.empty() && m_settings_serials.count(e.serial) && !saved_by_add(e.serial))
+                drop(e.serial);
+            continue;
+        }
+        ready_serials.insert(e.serial);
+        m_settings_serials.insert(e.serial);
+
+        DeviceObject* obj  = nullptr;
+        auto          it   = m_local_devices.find(e.serial);
+        bool          need_connect = false;
+        if (it == m_local_devices.end() || it->second == nullptr) {
+            obj = new DeviceObject(make_lan_info(e.serial, e.name, e.ip, e.port, 0));
+            obj->set_device_type(DT_LOCAL);
+            m_local_devices[e.serial] = obj;
+            need_connect = true;
+        } else {
+            obj = it->second;
+            fnet_lan_dev_info* cur = obj->get_lan_dev_info();
+            const bool changed = cur == nullptr || e.ip != cur->ip || e.port != cur->port || e.check_code != obj->get_user_access_code(true);
+            if (changed) {
+                // The settings were edited: leave the old connection, whatever it was, and come
+                // back with the new address / code. The product id is the printer's, not the
+                // settings', so it is kept.
+                auto conn = m_lan_dev_connect_map.find(e.serial);
+                if (conn != m_lan_dev_connect_map.end()) {
+                    MultiComMgr::inst()->removeLanDev(conn->second.id);
+                    m_lan_dev_connect_map.erase(conn);
+                }
+                const unsigned short pid = cur != nullptr ? cur->pid : 0;
+                obj->set_lan_dev_info(make_lan_info(e.serial, obj->get_dev_name().empty() ? e.name : obj->get_dev_name(), e.ip, e.port, pid));
+                obj->set_online_state(false);
+                obj->set_connecting(false);
+                need_connect = true;
+            } else if (!obj->is_online() && !obj->is_connecting()) {
+                need_connect = true;
+            }
+        }
+        // In memory only (only_refresh = false): the settings hold the code; this must not copy it
+        // into the config next to the saved printers.
+        obj->set_user_access_code(e.check_code, false);
+        obj->set_connection_type(CONNECTTYPE_LAN);
+        if (need_connect && connect_lan(obj))
+            ++connecting;
+    }
+
+    // Printers the settings asked for last time and no longer do.
+    for (auto it = m_settings_serials.begin(); it != m_settings_serials.end();) {
+        if (!now_keys.count(*it)) {
+            if (!saved_by_add(*it))
+                drop(*it);
+            it = m_settings_serials.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    // A settings printer that lost a field is no longer connected by the settings.
+    for (auto it = m_settings_serials.begin(); it != m_settings_serials.end();) {
+        if (!ready_serials.count(*it)) it = m_settings_serials.erase(it);
+        else ++it;
+    }
+    BOOST_LOG_TRIVIAL(warning) << "[FlashForge] print-host settings: " << ready_serials.size() << " FlashForge printer(s) ready ("
+                               << connecting << " connecting), " << needs_setup << " needing setup";
+}
+
+void DeviceObjectOpr::connect_saved_machines()
+{
+    int started = 0, skipped = 0;
+    for (auto& entry : m_local_devices) {
+        DeviceObject* obj = entry.second;
+        if (obj == nullptr || obj->is_online() || obj->is_connecting())
+            continue;
+        const std::string code = obj->get_user_access_code(true);
+        if (obj->get_lan_dev_info() == nullptr || code.empty() || code == " ") {
+            ++skipped;
+            continue;
+        }
+        if (connect_lan(obj))
+            ++started;
+    }
+    if (started != 0 || skipped != 0)
+        BOOST_LOG_TRIVIAL(warning) << "[FlashForge] reconnecting saved printers: " << started << " started, " << skipped
+                                   << " without an address or check code (they need a scan or Add printer)";
 }
 
 DeviceObject *DeviceObjectOpr::get_selected_machine()
@@ -842,6 +1034,8 @@ void DeviceObjectOpr::onConnectExit(ComConnectionExitEvent &event)
     std::string     devId = find_dev_from_id(mode, event.id);
     if (devId.empty())
         return;
+    BOOST_LOG_TRIVIAL(warning) << "[FlashForge] connection to " << devId << " ended (" << (mode.mode == COM_CONNECT_WAN ? "cloud" : "LAN")
+                               << ", result " << (int) event.ret << (event.ret == COM_VERIFY_LAN_DEV_FAILED ? ": serial number or check code rejected" : "") << ")";
     DeviceObject *devObj = nullptr;
     if (mode.mode == COM_CONNECT_WAN) {
         auto it = m_user_devices.find(devId);
@@ -868,11 +1062,20 @@ void DeviceObjectOpr::onConnectExit(ComConnectionExitEvent &event)
             devObj->set_connecting(false);
 
             if (event.ret == COM_VERIFY_LAN_DEV_FAILED) {
+                // The printer refused the stored serial number / check code. Unbinding here used to
+                // delete the saved printer outright; now that saved printers reconnect on their own
+                // at every start, one refused connection (a changed check code, a printer still
+                // booting) would wipe a good entry. Keep it, show it Offline, and let "Add printer"
+                // replace the code.
                 auto tmpIt = m_user_devices.find(devId);
                 if (tmpIt != m_user_devices.end()) {
                     tmpIt->second->set_device_type(DT_USER);
                 }
-                unbind_lan_machine(devObj);
+                bool state = devObj->is_online();
+                devObj->set_online_state(false);
+                if (state) {
+                    sendDeviceListUpdateEvent(devObj->get_dev_id(), -1);
+                }
             }  else {
                 if (devObj->is_lan_mode_printer()) {
                     bool state = devObj->is_online();
@@ -977,8 +1180,17 @@ void DeviceObjectOpr::onConnectReady(ComConnectionReadyEvent &event)
         std::string   serialNum = data.lanDevInfo.serialNumber;
         DeviceObject *devObj    = get_scan_device(serialNum);
         if (devObj == nullptr) {
-            return;
+            // Not a scan result: a saved or typed-in printer reconnecting. It used to be dropped
+            // here, so only a printer found by a LAN scan could ever come online - and nothing
+            // runs a scan.
+            auto saved = m_local_devices.find(serialNum);
+            if (saved == m_local_devices.end() || saved->second == nullptr) {
+                BOOST_LOG_TRIVIAL(warning) << "[FlashForge] a LAN connection for " << serialNum << " came up but the printer is not known; ignored";
+                return;
+            }
+            devObj = saved->second;
         }
+        BOOST_LOG_TRIVIAL(warning) << "[FlashForge] LAN connection ready: " << serialNum << " (" << data.lanDevInfo.name << ")";
 
         DeviceObject *userObj = nullptr;
         auto it = m_local_devices.find(serialNum);
@@ -996,7 +1208,10 @@ void DeviceObjectOpr::onConnectReady(ComConnectionReadyEvent &event)
 
             AppConfig *config = GUI::wxGetApp().app_config;
             if (config) {
-                config->save_bind_machine_to_config(devObj->get_dev_id(), devObj->get_dev_name(), data.devDetail->location, devObj->get_dev_pid());
+                config->save_bind_machine_to_config(devObj->get_dev_id(), devObj->get_dev_name(),
+                                                    (data.devDetail && data.devDetail->location) ? data.devDetail->location : "",
+                                                    devObj->get_dev_pid(),
+                                                    true, data.lanDevInfo.ip, data.lanDevInfo.port);
             }
             sendDeviceListUpdateEvent(serialNum, connectId);
             BOOST_LOG_TRIVIAL(info) << "Add new lan dev: " << data.lanDevInfo.name;
@@ -1004,6 +1219,14 @@ void DeviceObjectOpr::onConnectReady(ComConnectionReadyEvent &event)
         } else {
             sendDeviceListUpdateEvent(serialNum, connectId);
             userObj = it->second;
+            // Keep the address, so the next start can reconnect without a scan.
+            const unsigned short pid = data.lanDevInfo.pid != 0 ? data.lanDevInfo.pid
+                                       : (data.devDetail ? (unsigned short) data.devDetail->pid : (unsigned short) 0);
+            // (Not for a printer the print-host settings own: they hold its address, and a saved
+            // row here would outlive it.)
+            if (AppConfig *config = GUI::wxGetApp().app_config; config && pid != 0 && data.lanDevInfo.ip[0] != '\0' && !is_settings_serial(serialNum))
+                config->save_bind_machine_to_config(serialNum, userObj->get_dev_name(), "", pid, false,
+                                                    data.lanDevInfo.ip, data.lanDevInfo.port);
         }
         userObj->set_online_state(true);
         userObj->set_connecting(false);

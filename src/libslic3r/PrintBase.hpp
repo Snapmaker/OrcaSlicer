@@ -3,6 +3,7 @@
 
 #include "libslic3r.h"
 #include "Utils.hpp"
+#include "MemoryGuardPolicy.hpp"
 #include <set>
 #include <vector>
 #include <string>
@@ -105,7 +106,23 @@ public:
         // id for the usual reason (active_step_add_warning de-duplicates by id), and critically so
         // that the CLI's result.json filter - which drops anything left on
         // SlicingDefaultNotification - actually reports it. Appended, so no existing value moves.
-        SlicingInvalidPrintSpeed
+        SlicingInvalidPrintSpeed,
+        // Precise Seam (Orca #12974 stage D): unsupported modifier intersections (multiple, through
+        // body, multiply-connected, full containment). Appended, so no existing value moves. Own id
+        // because active_step_add_warning de-duplicates by id. Raised during export_gcode, after
+        // the CLI's pre-export g_slicing_warnings sweep, so Snapmaker_Orca.cpp records it in the
+        // post-export loop (same place as SlicingInvalidPrintSpeed) via cli_record_warning.
+        SlicingPreciseSeamWarning,
+        // FDM hollowing (FDMHollowing.hpp): a part asked to be hollowed and its shell left no room for
+        // a cavity, or only some of its bodies were hollowed. Appended, so no existing value moves;
+        // own id because active_step_add_warning de-duplicates by id.
+        SlicingHollowingSkipped,
+        // Side stabilizers (Support/Stabilizers.hpp): painted stabilizer points that no strut can reach
+        // under the printability rules. Appended, so no existing value moves; own id because
+        // active_step_add_warning de-duplicates by id.
+        SlicingStabilizerPaintUnreachable,
+        // Side stabilizers set to Manual on an object with no painted stabilizer points. Appended; own id.
+        SlicingStabilizerManualUnpainted
     };
 
     typedef size_t TimeStamp;
@@ -534,6 +551,8 @@ public:
     // "Available" = min(physical RAM available, system commit available),
     // so the guard catches both page-fault thrashing and OOM crashes.
     // Adjust this constant to change the warning threshold.
+    // The EDGESLICER_MEM_GUARD_FORCE_MB environment variable (see MemoryGuardPolicy.hpp) overrides it
+    // for testing; unset, this is the threshold.
     static constexpr size_t MEM_GUARD_THRESHOLD = 512ULL * 1024 * 1024; // 512 MB
 
     // Runtime memory guard: callback invoked from throw_if_canceled() when
@@ -608,7 +627,7 @@ protected:
     }
 
     // Runtime memory guard: samples available system memory every 500ms.
-    // If below MEM_GUARD_THRESHOLD (512 MB), invokes m_memory_guard_callback.
+    // If below MEM_GUARD_THRESHOLD (512 MB, or the env override), invokes m_memory_guard_callback.
     // The callback may block (e.g., to show a UI dialog). If it returns
     // false, sets CANCELED_INTERNAL and throws CanceledException.
     // An atomic flag prevents concurrent dialog invocations from TBB workers.
@@ -623,7 +642,8 @@ protected:
         if (avail == 0)
             return;
 
-        if (avail < MEM_GUARD_THRESHOLD) {
+        static const size_t threshold = memory_guard_threshold_bytes(std::getenv(MEMORY_GUARD_FORCE_MB_ENV), MEM_GUARD_THRESHOLD);
+        if (avail < threshold) {
             // Require sustained low memory (2 consecutive samples = 1 second)
             // to avoid false triggers from transient OS cache fluctuations.
             int prev = m_low_mem_count.fetch_add(1, std::memory_order_relaxed);

@@ -686,12 +686,18 @@ public:
     static void note_unload_at_end_sent();
     static bool unload_at_end_was_sent();
 
-    // Ultra: store this send's G-code in the archive, at most once per send. Called both from
-    // sw_MachinePrintStart (every started print, including one whose page is dismissed straight
-    // after) and from sw_FinishPreprint (an upload that never starts). clear_archived_print()
-    // closes the send so the next one can store the same path again.
-    static void archive_print_once(const std::string& mode);
+    // Ultra: store this send's G-code in the archive, at most once per send. Called from every
+    // hook the pre-print page reaches: sw_GetPrintZip (the page takes the file to upload it - the
+    // only hook an upload-only send on the current page reaches), sw_StartLocalPrint /
+    // sw_StartCloudPrint / sw_MachinePrintStart (a print is started) and sw_FinishPreprint (the
+    // page closes itself). The first stores the record; a later "print" turns an "upload" record
+    // into a print and notes where the printer keeps the file. clear_archived_print() closes the
+    // send so the next one can store the same path again.
+    static void archive_print_once(const std::string& mode, const std::string& remote_path = "");
     static void clear_archived_print();
+    // Plate print history of the pre-print dialog: reset when it opens, completed when it closes.
+    static void plate_history_begin();
+    static void plate_history_finish(bool send_page, bool finished);
 
     // get the active file name
     static std::string get_active_filename();
@@ -730,6 +736,8 @@ private:
     static std::string m_active_gcode_filename; // name of the file which is pretend to be upload and print
     static std::string m_display_gcode_filename; // name for display
     static std::string m_archived_print_file;   // the file archive_print_once() already stored
+    static std::string m_archived_record_id;    // the record it stored it as
+    static std::string m_archived_mode;         // and that record's mode (upload | print)
 
     // WebSocket Debug Server
     static std::unique_ptr<WebSocketDebugServer> m_debug_server;

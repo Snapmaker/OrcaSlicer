@@ -12,6 +12,7 @@
 #include <sstream>
 #include <vector>
 #include <map>
+#include <set>
 #include <ctime>
 
 namespace bfs = boost::filesystem;
@@ -44,33 +45,22 @@ long long read_updated_time(const bfs::path& info_path)
     return 0;
 }
 
-// Copy an .info, forcing sync_info blank so the mirrored preset is inert to the fork's cloud
-// delete/upload gates (keeps user_id + setting_id + base_id).
-void copy_info_inert(const bfs::path& src_info, const bfs::path& dst_info)
-{
-    boost::system::error_code ec;
-    if (!bfs::exists(src_info, ec)) return;
-    std::ifstream in(src_info.string());
-    std::vector<std::string> lines;
-    std::string line;
-    bool had_sync = false;
-    while (std::getline(in, line)) {
-        std::string trimmed = line;
-        trimmed.erase(0, trimmed.find_first_not_of(" \t"));
-        if (trimmed.rfind("sync_info", 0) == 0) { lines.push_back("sync_info = "); had_sync = true; }
-        else lines.push_back(line);
-    }
-    if (!had_sync) lines.push_back("sync_info = ");
-    std::ofstream out(dst_info.string(), std::ios::binary | std::ios::trunc);
-    for (auto& l : lines) out << l << "\n";
-}
-
 std::string read_file(const bfs::path& p)
 {
     std::ifstream in(p.string(), std::ios::binary);
     std::ostringstream ss;
     ss << in.rdbuf();
     return ss.str();
+}
+
+// Copy an .info, forcing sync_info blank so the mirrored preset is inert to the fork's cloud
+// delete/upload gates (keeps user_id + setting_id + base_id). Replace-write: a crash leaves the
+// previous sidecar, not a torn one. Returns false when the write failed.
+bool copy_info_inert(const bfs::path& src_info, const bfs::path& dst_info, std::string* err = nullptr)
+{
+    boost::system::error_code ec;
+    if (!bfs::exists(src_info, ec)) return true;
+    return mirror::write_info_inert(dst_info.string(), read_file(src_info), err);
 }
 
 // Every option this fork declares nullable, i.e. where a literal "nil" is a legal value. Any other
@@ -157,7 +147,8 @@ mirror::SourceListing list_source(const bfs::path& src_uid)
                 mirror::SourceFile f;
                 f.rel = std::string(typ) + "/base/" + it->path().filename().string();
                 f.t   = (long long) bfs::last_write_time(it->path(), ec);
-                f.parseable = source_is_usable(read_file(it->path()), nullable);
+                f.body = read_file(it->path());
+                f.parseable = source_is_usable(f.body, nullable);
                 out.files.push_back(f);
             }
         }
@@ -176,7 +167,10 @@ mirror::SourceListing list_source(const bfs::path& src_uid)
                 bfs::path info = it->path(); info.replace_extension(".info");
                 f.t = read_updated_time(info);
                 if (f.t == 0) f.t = (long long) bfs::last_write_time(it->path(), ec);
-                f.parseable = source_is_usable(read_file(it->path()), nullable);
+                f.body = read_file(it->path());
+                if (bfs::exists(info, ec))
+                    f.info = read_file(info);
+                f.parseable = source_is_usable(f.body, nullable);
                 out.files.push_back(f);
             }
         }
@@ -209,11 +203,21 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
             return 0;
         }
 
-        // Which of our tracked/listed files are on disk right now.
+        // Which of our tracked/listed files are on disk right now. Bytes are
+        // needed so an untracked dest that already matches can be adopted.
         mirror::DestState dst;
+        dst.nullable_keys = nullable_option_keys();
         auto note_present = [&](const std::string& rel) {
             bfs::path p = dst_root / bfs::path(rel);
-            dst.present[rel] = bfs::exists(p, ec);
+            const bool exists = bfs::exists(p, ec);
+            dst.present[rel] = exists;
+            if (!exists)
+                return;
+            dst.bytes[rel] = read_file(p);
+            bfs::path info = p;
+            info.replace_extension(".info");
+            if (bfs::exists(info, ec))
+                dst.info_bytes[rel] = read_file(info);
         };
         for (const auto& f : src.files) note_present(f.rel);
         for (const auto& kv : manifest) note_present(kv.first);
@@ -224,7 +228,12 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
         std::map<std::string, const mirror::SourceFile*> by_rel;
         for (const auto& f : src.files) by_rel[f.rel] = &f;
 
-        int copied = 0, uptodate = 0, native_protected = 0, respected = 0, skipped = 0, retired = 0, errors = 0, sanitized = 0;
+        int copied = 0, uptodate = 0, adopted = 0, native_protected = 0, respected = 0, skipped = 0, retired = 0, errors = 0, sanitized = 0;
+        // Copies whose files all landed. Only these are recorded in the manifest: a
+        // failed copy recorded as done would look like a user deletion next run
+        // (tracked, dest missing) and never be pulled again.
+        std::set<std::string>    copied_rels;
+        std::vector<std::string> pending;
 
         for (const auto& item : plan) {
             switch (item.action) {
@@ -234,39 +243,61 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
                 bfs::path dstp = dst_root / bfs::path(item.rel);
                 bfs::create_directories(dstp.parent_path(), ec);
 
-                // Collapse Bambu's per-extruder "nil" padding where it is unambiguous, so the
-                // preset loads here instead of being rejected (and then deleted) by the loader.
-                std::string text = read_file(srcp);
-                std::string fixed;
-                int         collapsed = 0;
-                if (!mirror::preset_is_parseable(text, nullable_option_keys())
-                    && mirror::sanitize_nil_arrays(text, nullable_option_keys(), &fixed, &collapsed)) {
-                    std::ofstream o(dstp.string(), std::ios::binary | std::ios::trunc);
-                    o << fixed;
-                    if (!o) {
-                        BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] write failed " << dstp.string();
-                        ++errors;
-                        break;
-                    }
-                    sanitized += collapsed ? 1 : 0;
-                } else {
-                    bfs::copy_file(srcp, dstp, bfs::copy_option::overwrite_if_exists, ec);
-                    if (ec) {
-                        BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] copy failed " << srcp.string() << ": " << ec.message();
-                        ++errors;
-                        break;
-                    }
-                }
-                // base\ entries have no .info; only the top-level user presets carry one.
-                if (item.rel.find("/base/") == std::string::npos) {
+                // Sidecar first: a kill between the two writes leaves no new dest JSON,
+                // so the next run copies again. A JSON without its .info (older write
+                // order, or a torn sidecar) is adopted and the sidecar rewritten.
+                const bool writes_info = item.rel.find("/base/") == std::string::npos;
+                bool       info_ok     = true;
+                if (writes_info) {
                     bfs::path si = srcp; si.replace_extension(".info");
                     bfs::path di = dstp; di.replace_extension(".info");
-                    copy_info_inert(si, di);
+                    std::string info_err;
+                    info_ok = copy_info_inert(si, di, &info_err);
+                    if (!info_ok) {
+                        BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] .info write failed " << di.string()
+                                                   << (info_err.empty() ? "" : (": " + info_err));
+                        ++errors;
+                    }
                 }
-                ++copied;
+
+                bool json_ok = false;
+                if (info_ok) {
+                    // Collapse Bambu's per-extruder "nil" padding where it is unambiguous, so the
+                    // preset loads here instead of being rejected (and then deleted) by the loader.
+                    std::string text = read_file(srcp);
+                    std::string fixed;
+                    int         collapsed = 0;
+                    const bool  sanitize  = !mirror::preset_is_parseable(text, nullable_option_keys())
+                                         && mirror::sanitize_nil_arrays(text, nullable_option_keys(), &fixed, &collapsed);
+                    std::string err;
+                    json_ok = mirror::replace_file_bytes(dstp.string(), sanitize ? fixed : text, &err);
+                    if (!json_ok) {
+                        BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] write failed " << dstp.string() << ": " << err;
+                        ++errors;
+                    } else if (sanitize && collapsed) {
+                        ++sanitized;
+                    }
+                }
+                if (mirror::copy_ready_to_record(json_ok, writes_info, info_ok))
+                    pending.push_back(item.rel);
                 break;
             }
             case mirror::Action::UpToDate:        ++uptodate;         break;
+            case mirror::Action::Adopt: {
+                ++adopted;
+                auto sit = by_rel.find(item.rel);
+                if (sit != by_rel.end() && mirror::dest_info_needs_rewrite(*sit->second, dst)) {
+                    bfs::path di = dst_root / bfs::path(item.rel);
+                    di.replace_extension(".info");
+                    std::string err;
+                    if (!mirror::write_info_inert(di.string(), sit->second->info, &err)) {
+                        BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] adopt .info rewrite failed " << di.string()
+                                                   << (err.empty() ? "" : (": " + err));
+                        ++errors;
+                    }
+                }
+                break;
+            }
             case mirror::Action::ProtectNative:   ++native_protected; break;
             case mirror::Action::RespectDelete:   ++respected;        break;
             case mirror::Action::SkipUnparseable: ++skipped;          break;
@@ -274,14 +305,20 @@ int mirror_bambu_user_presets(const std::string& logged_in_uid)
             }
         }
 
-        auto updated = mirror::apply_plan(manifest, plan);
-        try {
-            std::ofstream out(man_path.string(), std::ios::binary | std::ios::trunc);
-            out << mirror::dump_manifest(updated);
-        } catch (...) {}
+        // One replace-write of the manifest at the end. If it fails, nothing from this run is
+        // recorded; the copies that landed are adopted by content on the next run.
+        {
+            std::string err;
+            if (mirror::commit_pending_copies(copied_rels, pending, manifest, plan, man_path.string(), &err))
+                copied = static_cast<int>(copied_rels.size());
+            else {
+                BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] manifest write failed: " << err;
+                ++errors;
+            }
+        }
 
         BOOST_LOG_TRIVIAL(info) << "[preset-mirror] from " << src_uid.string()
-            << " -> copied=" << copied << " uptodate=" << uptodate
+            << " -> copied=" << copied << " uptodate=" << uptodate << " adopted=" << adopted
             << " fork_native_protected=" << native_protected << " user_deletions_respected=" << respected
             << " skipped_unparseable=" << skipped << " retired=" << retired
             << " nil_collapsed=" << sanitized
@@ -309,8 +346,11 @@ int repull_mirrored_presets()
         for (auto& kv : manifest)
             if (kv.second.deleted) { kv.second.deleted = false; kv.second.t = 0; ++cleared; }
         if (cleared > 0) {
-            std::ofstream out(man_path.string(), std::ios::binary | std::ios::trunc);
-            out << mirror::dump_manifest(manifest);
+            std::string err;
+            if (!mirror::write_manifest_bytes(man_path.string(), mirror::dump_manifest(manifest), &err)) {
+                BOOST_LOG_TRIVIAL(warning) << "[preset-mirror] re-pull manifest write failed: " << err;
+                return 0;
+            }
         }
         BOOST_LOG_TRIVIAL(info) << "[preset-mirror] re-pull requested: cleared " << cleared << " deletion flag(s)";
         return cleared;

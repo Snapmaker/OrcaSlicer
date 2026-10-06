@@ -59,6 +59,7 @@ namespace GUI {
 
 class Bed3D;
 class PartPlateList;
+class FrameProfiler;
 
 #if ENABLE_RETINA_GL
 class RetinaHelper;
@@ -660,6 +661,10 @@ private:
     bool m_reload_delayed;
 
     RenderStats m_render_stats;
+    // Orca #15884 Stage B: per-pass timings inside the existing Render statistics
+    // window. Armed only while that window is visible (no Preferences toggle).
+    std::unique_ptr<FrameProfiler> m_frame_profiler;
+    bool                           m_frame_profiler_armed{false};
 
     int m_imgui_undo_redo_hovered_pos{ -1 };
     int m_mouse_wheel{ 0 };
@@ -1112,7 +1117,9 @@ public:
 
     // the following methods add a snapshot to the undo/redo stack, unless the given string is empty
     // BBS: force_volume_move applies volume-level transforms even in Instance selection mode (used by part alignment)
-    void do_move(const std::string& snapshot_type, bool force_volume_move = false);
+    // fix_flying_instances = false skips the pass that drops an instance floating above the bed
+    // back onto it (the alignment tools use that to let one object rest on top of another).
+    void do_move(const std::string& snapshot_type, bool force_volume_move = false, bool fix_flying_instances = true);
     void do_rotate(const std::string& snapshot_type);
     void do_scale(const std::string& snapshot_type);
     void do_center();
@@ -1263,10 +1270,12 @@ public:
     Vec3d _mouse_to_3d(const Point& mouse_pos, float* z = nullptr);
 
     bool make_current_for_postinit();
-    // Ultra: make this canvas' GL context current and finish the one-time GL init, with no
-    // dependency on the canvas ever having been shown on screen. render() does the same work but
-    // refuses to run when not on screen; an instance that serves the phone is never shown, so
-    // every offscreen path calls this first. False = OpenGL unusable (fail the request, do not draw).
+    // Ultra: make a usable GL context current and finish the one-time GL init, with no
+    // dependency on this canvas ever having been shown on screen. Prefers the visible
+    // canvas's context (GTK hidden-canvas SetCurrent fails) and falls back to this.
+    // render() does the same work but refuses to run when not on screen; an instance
+    // that serves the phone is never shown, so every offscreen path calls this first.
+    // False = OpenGL unusable (fail the request, do not draw).
     bool ensure_gl_ready();
 
 private:
@@ -1343,6 +1352,7 @@ private:
     bool _init_collapse_toolbar();
 
     bool _set_current();
+    bool _set_shown_canvas_current();
     void _resize(unsigned int w, unsigned int h);
 
     //BBS: add part plate related logic

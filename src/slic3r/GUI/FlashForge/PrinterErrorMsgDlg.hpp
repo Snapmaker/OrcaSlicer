@@ -3,6 +3,7 @@
 
 #include <map>
 #include <string>
+#include <wx/dialog.h>
 #include <wx/event.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>

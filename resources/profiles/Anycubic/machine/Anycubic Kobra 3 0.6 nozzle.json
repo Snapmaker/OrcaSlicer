@@ -34,18 +34,7 @@
 	"bbl_use_printhost": "0",
 	"bed_custom_model": "",
 	"bed_custom_texture": "",
-	"bed_exclude_area": [
-		"0x0",
-		"255x0",
-		"255x255",
-		"0x255",
-		"0x0",
-		"2x2",
-		"2x253",
-		"253x253",
-		"253x2",
-		"2x2"
-	],
+	"bed_exclude_area": [],
 	"bed_mesh_max": "0,0",
 	"bed_mesh_min": "0,0",
 	"bed_mesh_probe_distance": "0,0",
@@ -208,7 +197,6 @@
 		"30"
 	],
 	"scan_first_layer": "0",
-	"silent_mode": "0",
 	"single_extruder_multi_material": "1",
 	"support_air_filtration": "1",
 	"support_chamber_temp_control": "1",

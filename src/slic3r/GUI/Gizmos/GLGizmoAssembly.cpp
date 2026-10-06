@@ -142,6 +142,7 @@ void GLGizmoAssembly::on_render_input_window(float x, float y, float bottom_limi
             if (m_imgui->button(_L("Merge parts"))) { ultra_merge_parts(); }
             m_imgui->disabled_end();
         }
+        ultra_show_exact_ui();
         ultra_show_curve_pick_ui();
         ultra_show_adjust_ui();
     }

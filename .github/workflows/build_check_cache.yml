@@ -12,6 +12,15 @@ on:
       build-deps-only:
         required: false
         type: boolean
+      # Nightly builds only (nightly.yml); passed through to build_orca.yml.
+      version-suffix:
+        required: false
+        type: string
+        default: ''
+      sentry-environment:
+        required: false
+        type: string
+        default: ''
   
 jobs:
   check_cache: # determines if there is a cache and outputs variables used in caching process
@@ -55,4 +64,6 @@ jobs:
       os: ${{ inputs.os }}
       arch: ${{ inputs.arch }}
       build-deps-only: ${{ inputs.build-deps-only }}
+      version-suffix: ${{ inputs.version-suffix }}
+      sentry-environment: ${{ inputs.sentry-environment }}
     secrets: inherit

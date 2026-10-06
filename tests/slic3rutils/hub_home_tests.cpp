@@ -6,8 +6,8 @@
 using namespace Slic3r;
 using namespace Slic3r::HubHome;
 
-// The Home tab's hub view (src/slic3r/GUI/HubHomeView.cpp) follows these rules; the view itself
-// needs a running hub and a WebView2 and is click-tested by hand.
+// Rules for embedding the phone hub page (the Home tab showed it until it became Recent / Print
+// History); RemoteHub still classifies the hub's record with them.
 
 static const std::string TOKEN = "abc123def456ghi7";
 

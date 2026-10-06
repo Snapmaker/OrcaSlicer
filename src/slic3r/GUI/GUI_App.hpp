@@ -32,6 +32,8 @@
 #include <wx/msgdlg.h>
 
 #include <atomic>
+#include <set>
+#include <boost/filesystem/path.hpp>
 #include <mutex>
 #include <stack>
 #include <unordered_map>
@@ -312,6 +314,7 @@ private:
 
     std::unique_ptr<Downloader> m_downloader;
     DownloadManager* m_download_manager;
+    std::set<std::wstring> m_web_downloads; // mark_web_download()
 
     //BBS
     bool m_is_closing {false};
@@ -319,6 +322,10 @@ private:
     // "start_hidden"). It has no window until the hub shows it, closing hides it again,
     // and only an explicit quit (tray, hub page, POST /api/quit, File > Quit) ends it.
     bool m_hub_managed { false };
+    bool m_relaunch_pending { false };
+    bool m_relaunch_started { false }; // the new process has been started (relaunch_now)
+    void relaunch_when_idle(int attempt);
+    void relaunch_now();
     Slic3r::DeviceManager* m_device_manager { nullptr };
     Slic3r::UserManager* m_user_manager { nullptr };
     Slic3r::TaskManager* m_task_manager { nullptr };
@@ -351,6 +358,12 @@ private:
     void            sm_on_silent_login_result(unsigned gen, const SMUserLogin::SilentResult& r);
     void            sm_finish_silent_login(const std::string& log_line);
     void            sm_teardown_silent_login_dlg();
+
+    // Bambu Lab startup sync (BambuSyncPolicy.hpp, PresetUpdater::sync_bambu): started at most once
+    // per session, as soon as a Bambu printer or a Bambu login exists. Until then this timer looks
+    // again every 30 s, so adding a printer or signing in needs no restart.
+    bool            m_bambu_sync_started{ false };
+    wxTimer*        m_bambu_sync_timer{ nullptr };
 
 
 public:
@@ -563,6 +576,12 @@ private:
 
     void            recreate_GUI(const wxString& message);
     void            schedule_recreate_gui_when_no_modal(const wxString& message);
+    // Close EdgeSlicer the way File > Quit does (an unsaved project is offered for saving, and
+    // cancelling that cancels the restart) and start it again once it has exited, with the same
+    // command line. Call it after the window that asked has been closed (the Preferences dialog
+    // is modal). Used when a setting only takes effect at startup, such as the UI theme.
+    void            request_relaunch();
+    bool            relaunch_pending() const { return m_relaunch_pending; }
     void            system_info();
     void            keyboard_shortcuts();
     void            load_project(wxWindow *parent, wxString& input_file) const;
@@ -665,6 +684,10 @@ private:
     // Sign back in from the saved id.snapmaker.com session without showing anything; ends quietly
     // signed out if there is none. Called once, a moment after startup (post_init).
     void            sm_start_silent_login();
+    // Asks api.bambulab.com for the Bambu startup resources only when a Bambu printer preset, a
+    // Bambu printer in the device lists or a Bambu login exists (and not in Stealth mode). `why`
+    // names the caller in the log. Does nothing once the sync has run this session.
+    void            maybe_start_bambu_sync(const char* why);
     // Stops an attempt in flight (the user opened the sign-in dialog, signed out, or the app closes).
     void            sm_cancel_silent_login(const std::string& reason);
     bool            sm_silent_login_active() const { return m_sm_silent_active; }
@@ -791,6 +814,11 @@ private:
     bool            is_localized() const { return m_wxLocale->GetLocale() != "English"; }
 
     void            open_preferences(size_t open_on_tab = 0, const std::string& highlight_option = std::string());
+    // Menu > Themes...: the themes window, built when it opens.
+    void            open_themes();
+    // Makes the theme app_config "ui_theme" names the running look without a restart: colours,
+    // corner radii, icons, title bar, 3D view and Home page. Fonts still need one (Theme::fonts_pending()).
+    void            apply_theme_live();
 
     virtual bool OnExceptionInMainLoop() override;
     // Calls wxLaunchDefaultBrowser if user confirms in dialog.
@@ -877,6 +905,8 @@ private:
     wxSingleInstanceChecker* single_instance_checker() {return m_single_instance_checker.get();}
 
 	void        init_single_instance_checker(const std::string &name, const std::string &path);
+	// A hidden instance gives the single-instance lock back right after the check (see instance_check()).
+	void        release_single_instance_checker() { m_single_instance_checker.reset(); }
 	void        set_instance_hash (const size_t hash) { m_instance_hash_int = hash; m_instance_hash_string = std::to_string(hash); }
     std::string get_instance_hash_string ()           { return m_instance_hash_string; }
 	size_t      get_instance_hash_int ()              { return m_instance_hash_int; }
@@ -915,6 +945,11 @@ private:
 
     // URL download - PrusaSlicer gets system call to open prusaslicer:// URL which should contain address of download
     void            start_download(std::string url);
+    // Files this session downloaded from the web (an "Open in" link, a MakerWorld import, the model
+    // browser). Opening one of them always shows the modified-G-code warning, whatever "Don't show
+    // again" said for local files.
+    void            mark_web_download(const boost::filesystem::path& path);
+    bool            is_web_download(const boost::filesystem::path& path) const;
 
     std::string     get_plugin_url(std::string name, std::string country_code);
     int             download_plugin(std::string name, std::string package_name, InstallProgressFn pro_fn = nullptr, WasCancelledFn cancel_fn = nullptr);

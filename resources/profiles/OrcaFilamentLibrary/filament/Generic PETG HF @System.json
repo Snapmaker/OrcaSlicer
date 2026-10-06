@@ -8,5 +8,6 @@
     "filament_max_volumetric_speed": [
         "20"
     ],
-    "compatible_printers": []
+    "compatible_printers": [],
+    "filament_id": "OGFG99"
 }

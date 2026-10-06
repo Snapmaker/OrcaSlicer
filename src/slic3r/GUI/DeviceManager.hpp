@@ -1,6 +1,7 @@
 #ifndef slic3r_DeviceManager_hpp_
 #define slic3r_DeviceManager_hpp_
 
+#include <atomic>
 #include <map>
 #include <mutex>
 #include <set>
@@ -18,6 +19,7 @@
 #include "CameraPopup.hpp"
 #include "LanReconnectLadder.hpp"
 #include "AmsDrying.hpp"
+#include "PrintErrorCommands.hpp"
 #include "libslic3r/calib.hpp"
 #include "libslic3r/Utils.hpp"
 #define USE_LOCAL_SOCKET_BIND 0
@@ -580,6 +582,10 @@ public:
     bool m_lan_session_up{false};
     void set_lan_session_up(bool up) { m_lan_session_up = up; }
     bool lan_session_up() const { return m_lan_session_up; }
+    // Ultra: whether a report carrying the AMS / external spools has been parsed in full for this
+    // printer, and when DeviceManager::full_report_tick last asked it for one (see there).
+    bool m_full_report_seen{false};
+    std::chrono::steady_clock::time_point m_full_report_asked{};
     void set_ctt_dlg( wxString text);
     int  parse_msg_count = 0;
     int  keep_alive_count = 0;
@@ -682,6 +688,13 @@ public:
     /* lights */
     LIGHT_EFFECT chamber_light;
     LIGHT_EFFECT work_light;
+    // The H2 series has a second chamber light (lights_report node "chamber_light2"); a toggle has
+    // to reach both (ChamberLights.hpp).
+    LIGHT_EFFECT chamber_light2 { LIGHT_EFFECT_UNKOWN };
+    bool         chamber_light2_reported { false };
+    bool         has_two_chamber_lights() const;
+    // What the light switch shows: the chamber light, or on when either of the H2's two is.
+    LIGHT_EFFECT chamber_light_state() const;
     std::string light_effect_str(LIGHT_EFFECT effect);
     LIGHT_EFFECT light_effect_parse(std::string effect_str);
 
@@ -784,7 +797,18 @@ public:
     // The printer refused a command with `command_err`. Shows the error dialog for it (on the GUI
     // thread, guarded by the object's weak token) and keeps `action_json` for the Proceed /
     // Don't-remind buttons on every surface. Mirrors Bambu Studio's method of the same name.
-    void add_command_error_code_dlg(int command_err, const nlohmann::json& action_json = nlohmann::json());
+    // `command` is the refused command's name: only a refused print action (project_file, pause,
+    // resume, stop, ...) is offered Stop / Resume Printing; anything else gets OK.
+    void add_command_error_code_dlg(int command_err, const nlohmann::json& action_json = nlohmann::json(),
+                                    const std::string& command = std::string());
+
+    // What this slicer has published to the printer and is still waiting on an answer for,
+    // sequence id -> command name. A reply only counts as a refusal when it answers one of these;
+    // see accept_command_refusal. Filled by publish_json.
+    GUI::SentCommandTracker          m_sent_commands;
+    // A command the network plug-in publishes on our behalf (project_file), whose sequence id we
+    // never see. PrintJob calls this just before handing the job over.
+    void note_agent_command_sent(const std::string& command);
 
     // The window this printer's refused commands are shown in.
     //
@@ -996,6 +1020,11 @@ public:
     std::string  subtask_id_;
     std::string  job_id_;
     std::string  last_subtask_id_;
+    // Ultra: how many times the printer has answered a "project_file" (start print) command with
+    // "mqtt message verify failed" - Bambu firmware refusing unsigned commands because LAN Only Mode
+    // and Developer Mode are not both on. Written on the GUI thread, read by the send jobs, which
+    // compare it before and after a send (BambuSendDiagnosis).
+    std::atomic<int> project_file_refusals { 0 };
     BBLSliceInfo* slice_info {nullptr};
     boost::thread* get_slice_info_thread { nullptr };
     boost::thread* get_model_task_thread { nullptr };
@@ -1252,6 +1281,9 @@ public:
     void update_filament_list();
     void update_printer_preset_name();
     void check_ams_filament_valid();
+    // check_ams_filament_valid runs once per status push; the "external spool reported under a
+    // nozzle this printer does not have" note is logged the first time only.
+    bool m_vt_tray_unmapped_logged { false };
 
 };
 
@@ -1287,6 +1319,23 @@ public:
     // Call it on the GUI thread only: it touches MachineObject and the network agent.
     void lan_reconnect_tick();
 
+    // Ultra: the phone's printer screen lists every printer's AMS trays and external spools, and a
+    // cloud printer the PC has not selected only reports those when they change (a P1 / A1) or as
+    // diffs against a full report it may never have been asked for. So a cloud printer that is
+    // online and has not had a full report parsed is asked for one (pushall), at most once every
+    // FULL_REPORT_RETRY_MS. GUI thread, off the same one-second heartbeat as lan_reconnect_tick.
+    void full_report_tick();
+    static constexpr long long FULL_REPORT_RETRY_MS = 5 * 60 * 1000;
+
+    // Ultra: the agent holds one LAN session, to the selected printer, so every other LAN-only
+    // Bambu printer was online (SSDP) with no report behind it: no AMS, no spools, no state on the
+    // phone. With the UltraNet plug-in the visible slicer hands it the rest of its LAN printers
+    // (those with an access code and an address) to watch over read-only sessions of their own;
+    // each asks for a full report when it comes up. The hidden instance keeps its round robin
+    // (lan_watch_rotate). Every LAN_WATCH_SET_MS, GUI thread, off the same heartbeat.
+    void lan_watch_tick();
+    static constexpr long long LAN_WATCH_SET_MS = 10 * 1000;
+
     // The backoff ladder, in milliseconds: how long a LAN printer must have looked disconnected
     // before the first retry, and how long between retries after that. The numbers and the formula
     // live in LanReconnectLadder.hpp, which is wx-free, so a unit test can check the
@@ -1309,6 +1358,8 @@ private:
     // The hidden hub-managed instance's round robin over its LAN printers (see the .cpp): which
     // printer currently holds the agent's single LAN session, and since when.
     std::string m_lan_watch_id;
+    std::chrono::steady_clock::time_point m_lan_watch_set_at {};
+    std::string m_lan_watch_set; // the last set handed to the plug-in, for the log
     long long   m_lan_watch_since { 0 };
     MachineObject* lan_watch_rotate();
     // When something other than the rotation last chose a printer (set_selected_machine: a send,

@@ -1,6 +1,7 @@
 // #include "libslic3r/GCodeSender.hpp"
 //#include "slic3r/Utils/Serial.hpp"
 #include "Tab.hpp"
+#include "BambuSetupNoticeDialog.hpp"
 #include "PresetHints.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -67,6 +68,7 @@
 #include "Widgets/Button.hpp"
 #include "Widgets/SegmentedToggle.hpp"
 #include "FlowVariantEdit.hpp"
+#include "libslic3r/PresetFlowVariant.hpp"
 #include "FlowTypeHelper.hpp"
 #include <wx/textdlg.h>
 #ifdef WIN32
@@ -2728,6 +2730,7 @@ void TabPrint::build()
         optgroup = page->new_optgroup(L("Seam"), L"param_seam");
         optgroup->append_single_option_line("seam_position", "quality_settings_seam#seam-position");
         optgroup->append_single_option_line("staggered_inner_seams", "quality_settings_seam#staggered-inner-seams");
+        optgroup->append_single_option_line("seam_prefer_part_joints", "quality_settings_seam#seam-position");
         optgroup->append_single_option_line("seam_gap","quality_settings_seam#seam-gap");
         optgroup->append_single_option_line("seam_slope_type", "quality_settings_seam#scarf-joint-seam");
         optgroup->append_single_option_line("seam_slope_conditional", "quality_settings_seam#scarf-joint-seam");
@@ -2839,13 +2842,23 @@ void TabPrint::build()
 
         optgroup = page->new_optgroup(L("Top/bottom shells"), L"param_shell");
         optgroup->append_single_option_line("top_surface_pattern", "fill-patterns#Infill of the top surface and bottom surface");
+        optgroup->append_single_option_line("top_surface_density", "fill-patterns#Top and bottom surface density");
+        // Shown only while top_surface_density < 100% (see ConfigManipulation::toggle_print_fff_options)
         optgroup->append_single_option_line("undertop_surface_pattern", "fill-patterns#Infill of the top surface and bottom surface");
         optgroup->append_single_option_line("top_shell_layers");
         optgroup->append_single_option_line("top_shell_thickness");
+        optgroup->append_single_option_line("top_color_penetration_layers");
         optgroup->append_single_option_line("bottom_surface_pattern", "fill-patterns#Infill of the top surface and bottom surface");
+        optgroup->append_single_option_line("bottom_surface_density", "fill-patterns#Top and bottom surface density");
         optgroup->append_single_option_line("bottom_shell_layers");
         optgroup->append_single_option_line("bottom_shell_thickness");
+        optgroup->append_single_option_line("bottom_color_penetration_layers");
         optgroup->append_single_option_line("top_bottom_infill_wall_overlap");
+
+        // Hollowing: an even-thickness shell around an empty cavity (libslic3r/FDMHollowing.hpp).
+        optgroup = page->new_optgroup(L("Hollowing"), L"param_infill");
+        optgroup->append_single_option_line("hollow_interior");
+        optgroup->append_single_option_line("hollow_shell_thickness");
 
         optgroup = page->new_optgroup(L("Infill"), L"param_infill");
         optgroup->append_single_option_line("sparse_infill_density", "strength_settings_infill#sparse-infill-density");
@@ -3073,6 +3086,28 @@ void TabPrint::build()
         optgroup->append_single_option_line("tree_support_adaptive_layer_height", "support_settings_tree");
         optgroup->append_single_option_line("tree_support_auto_brim", "support_settings_tree");
         optgroup->append_single_option_line("tree_support_brim_width", "support_settings_tree");
+
+        // Side stabilizers: resin-style pinpoint struts on the sides of tall, thin parts
+        // (libslic3r/Support/Stabilizers.hpp).
+        optgroup = page->new_optgroup(L("Side stabilizers"), L"param_support_tree");
+        optgroup->append_single_option_line("stabilizer_supports");
+        optgroup->append_single_option_line("stabilizer_ring_spacing");
+        optgroup->append_single_option_line("stabilizer_points_per_ring");
+        optgroup->append_single_option_line("stabilizer_tip_diameter");
+        optgroup->append_single_option_line("stabilizer_tip_gap");
+        optgroup->append_single_option_line("stabilizer_pillar_diameter");
+        optgroup->append_single_option_line("stabilizer_max_island_width");
+        optgroup->append_single_option_line("stabilizer_pillar_base_diameter");
+        optgroup->append_single_option_line("stabilizer_bracing");
+        optgroup->append_single_option_line("stabilizer_brace_max_unbraced");
+        optgroup->append_single_option_line("stabilizer_brace_max_span");
+        optgroup->append_single_option_line("stabilizer_column_shape");
+        optgroup->append_single_option_line("stabilizer_column_width");
+        optgroup->append_single_option_line("stabilizer_column_length");
+        optgroup->append_single_option_line("stabilizer_column_min_height");
+        optgroup->append_single_option_line("stabilizer_wall_loops");
+        optgroup->append_single_option_line("stabilizer_infill_density");
+        optgroup->append_single_option_line("stabilizer_infill_pattern");
 
     page = add_options_page(L("Multimaterial"), "custom-gcode_multi_material"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Prime tower"), L"param_tower");
@@ -3719,7 +3754,10 @@ void TabPrint::update()
         m_config_manipulation.initialize_support_material_overhangs_queried(is_user_and_saved_preset && support_material_overhangs_queried);
     }
 
+    // Ultra: values the saved process preset itself stores are never "corrected" (see ConfigManipulation).
+    m_config_manipulation.set_reference_config(m_type == Preset::TYPE_PRINT ? &m_presets->get_selected_preset().config : nullptr);
     m_config_manipulation.update_print_fff_config(m_config, m_type < Preset::TYPE_COUNT, m_type == Preset::TYPE_PLATE);
+    m_config_manipulation.set_reference_config(nullptr);
 
     update_description_lines();
     //BBS: GUI refactor
@@ -4488,6 +4526,19 @@ PageShp TabFilament::add_filament_overrides_page()
                         field->toggle(is_checked);
 
                         if (is_checked) {
+                            // A High-Flow (or other non-first) slot with no value of its own starts
+                            // from the Standard override, or the printer value when that is unset
+                            // too - never from whatever the field held (nan for a nil default).
+                            const ConfigOption *opt = m_config->option(opt_key);
+                            const auto *vec = dynamic_cast<const ConfigOptionVectorBase *>(opt);
+                            if (option_index > 0 && vec != nullptr && vec->is_nil(size_t(option_index))) {
+                                const int slot = filament_override_effective_slot(opt, size_t(option_index));
+                                const boost::any seed = slot == 0 ?
+                                    optgroup_sh->get_config_value(*m_config, opt_key, 0) :
+                                    optgroup_sh->get_config_value(m_preset_bundle->printers.get_edited_preset().config,
+                                                                  opt_key.substr(strlen("filament_")), 0);
+                                field->set_value(seed, false);
+                            }
                             field->update_na_value(_(L("N/A")));
                             field->set_last_meaningful_value();
                         }
@@ -4622,10 +4673,17 @@ void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* print
             field->toggle(is_checked && filament_enabled && machine_enabled);
         } else {
             if (!is_checked) {
+                // What applies when this slot has no override: in a High-Flow (non-first)
+                // view the Standard override if it is set, else the printer value. This is
+                // also what slicing uses (compose_filament_flow_variant_segment).
+                const bool from_standard = option_index > 0 &&
+                    filament_override_effective_slot(m_config->option(opt_key), size_t(option_index)) == 0;
                 const std::string printer_opt_key = opt_key.substr(strlen("filament_"));
-                boost::any printer_config_value = optgroup->get_config_value(*printers_config, printer_opt_key, extruder_idx);
-                field->update_na_value(printer_config_value);
-                field->set_value(printer_config_value, false);
+                boost::any fallback_value = from_standard ?
+                    optgroup->get_config_value(*m_config, opt_key, 0) :
+                    optgroup->get_config_value(*printers_config, printer_opt_key, extruder_idx);
+                field->update_na_value(fallback_value);
+                field->set_value(fallback_value, false);
             }
 
             field->toggle(is_checked);
@@ -4698,8 +4756,25 @@ void TabFilament::build()
         //
 
         optgroup = page->new_optgroup(L("Print chamber temperature"), L"param_chamber_temp");
-        optgroup->append_single_option_line("chamber_temperature", "chamber-temperature");
         optgroup->append_single_option_line("activate_chamber_temp_control", "chamber-temperature");
+        line = { L("Chamber temperature"), L("Target chamber temperature, and the minimal chamber temperature at which printing should start") };
+        line.label_path = "chamber-temperature";
+        Option chamber_temp_target_opt = optgroup->get_option("chamber_temperature");
+        chamber_temp_target_opt.opt.label = L("Target");
+        line.append_option(chamber_temp_target_opt);
+        Option chamber_min_temp_opt = optgroup->get_option("chamber_minimal_temperature");
+        chamber_min_temp_opt.opt.label = L("Minimal");
+        line.append_option(chamber_min_temp_opt);
+        optgroup->append_line(line);
+        optgroup->m_on_change = [this](t_config_option_key opt_key, boost::any value) {
+            DynamicPrintConfig& filament_config = m_preset_bundle->filaments.get_edited_preset().config;
+
+            update_dirty();
+            if (opt_key == "chamber_minimal_temperature" || opt_key == "chamber_temperature")
+                m_config_manipulation.check_chamber_minimal_temperature(&filament_config);
+
+            on_value_change(opt_key, value);
+        };
 
         optgroup->append_separator();
 
@@ -4781,10 +4856,10 @@ void TabFilament::build()
                 m_config_manipulation.check_bed_temperature_difference(BedType::btPTE, &filament_config);
             }
             else */if (opt_key == "nozzle_temperature") {
-                m_config_manipulation.check_nozzle_temperature_range(&filament_config);
+                m_config_manipulation.check_nozzle_temperature_range(&filament_config, int(flow_variant_view_index()));
             }
             else if (opt_key == "nozzle_temperature_initial_layer") {
-                m_config_manipulation.check_nozzle_temperature_initial_layer_range(&filament_config);
+                m_config_manipulation.check_nozzle_temperature_initial_layer_range(&filament_config, int(flow_variant_view_index()));
             }
             else if (opt_key == "chamber_temperatures") {
                 m_config_manipulation.check_chamber_temperature(&filament_config);
@@ -5027,7 +5102,8 @@ void TabFilament::toggle_options()
     }
     if (m_active_page->title() == L("Filament"))
     {
-        bool pa = m_config->opt_bool("enable_pressure_advance", 0);
+        const int variant_index = int(flow_variant_view_index());
+        bool pa = m_config->opt_bool("enable_pressure_advance", variant_index);
         toggle_option("pressure_advance", pa);
 
         // BBS: 控制床温选项的显示
@@ -5131,7 +5207,7 @@ void TabFilament::toggle_options()
                         "filament_cooling_initial_speed", "filament_cooling_final_speed"})
             toggle_option(el, !is_BBL_printer);
 
-        bool multitool_ramming = m_config->opt_bool("filament_multitool_ramming", 0);
+        bool multitool_ramming = m_config->opt_bool("filament_multitool_ramming", int(flow_variant_view_index()));
         toggle_option("filament_multitool_ramming_volume", multitool_ramming);
         toggle_option("filament_multitool_ramming_flow", multitool_ramming);
     }
@@ -5300,6 +5376,7 @@ void TabPrinter::build_fff()
 
         optgroup = page->new_optgroup(L("Extruder Clearance"), "param_extruder_clearence");
         optgroup->append_single_option_line("extruder_clearance_radius");
+        optgroup->append_single_option_line("extruder_clearance_max_radius");
         optgroup->append_single_option_line("extruder_clearance_dist_to_rod");
         optgroup->append_single_option_line("extruder_clearance_height_to_rod");
         optgroup->append_single_option_line("extruder_clearance_height_to_lid");
@@ -6518,6 +6595,10 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
     bool canceled      = false;
     bool no_transfer = false;
     bool technology_changed = false;
+    // Ultra: FFF -> FFF printer switch carries the process settings (PresetBundle::apply_print_settings_carry).
+    bool               carry_process = false;
+    PrintSettingsCarry print_settings_carry;
+    m_carry_notes.clear();
     m_dependent_tabs.clear();
     if ((m_presets->type() == Preset::TYPE_FILAMENT) && !preset_name.empty())
     {
@@ -6592,8 +6673,15 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
                 { Preset::Type::TYPE_FILAMENT,      &m_preset_bundle->filaments,    ptFFF },
                 //{ Preset::Type::TYPE_SLA_MATERIAL,  &m_preset_bundle->sla_materials,ptSLA }
             };
+            // Ultra: on an FFF -> FFF switch the process settings (modifications included) are carried
+            // onto whatever process preset the new printer ends up with, so the process preset needs
+            // neither the transfer/discard dialog nor a discard here. Snapshot it before anything changes.
+            carry_process = old_printer_technology == ptFFF && new_printer_technology == ptFFF;
+            if (carry_process)
+                print_settings_carry = m_preset_bundle->capture_print_settings_carry();
             for (PresetUpdate &pu : updates) {
-                pu.old_preset_dirty = (old_printer_technology == pu.technology) && pu.presets->current_is_dirty();
+                pu.old_preset_dirty = (old_printer_technology == pu.technology) && pu.presets->current_is_dirty() &&
+                                      !(carry_process && pu.tab_type == Preset::Type::TYPE_PRINT);
                 pu.new_preset_compatible = (new_printer_technology == pu.technology) && is_compatible_with_printer(pu.presets->get_edited_preset_with_vendor_profile(), new_printer_preset_with_vendor_profile);
                 if (!canceled)
                     canceled = pu.old_preset_dirty && !force_select && !may_discard_current_dirty_preset(pu.presets, preset_name) && !pu.new_preset_compatible;
@@ -6795,6 +6883,28 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
                 wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());
             }
         }
+
+        // Ultra: carry the previous process settings onto the process preset the new printer ended
+        // up with. The preset the carried values came from (A in A -> B -> A), or the one last used
+        // on this printer, wins over the auto-match and the remembered one (update_selections above,
+        // which is why this runs last) when it is compatible. Carried values stay dirty, so each one
+        // can be reverted and "discard all" restores the selected profile exactly.
+        if (carry_process && m_type == Preset::TYPE_PRINTER) {
+            m_preset_bundle->select_print_carry_target(print_settings_carry);
+            const std::vector<std::string> carried = m_preset_bundle->apply_print_settings_carry(print_settings_carry);
+            if (!carried.empty()) {
+                const auto *new_nozzles = dynamic_cast<const ConfigOptionFloats *>(
+                    m_preset_bundle->printers.get_edited_preset().config.option("nozzle_diameter"));
+                const bool same_nozzle_size = new_nozzles != nullptr &&
+                                              print_carry_same_nozzle_size(print_settings_carry.nozzle_diameters, new_nozzles->values);
+                std::string note = carried.size() == 1 ?
+                    (boost::format(_u8L("Kept 1 process setting from \"%1%\" (revertable).")) % print_settings_carry.from_preset).str() :
+                    (boost::format(_u8L("Kept %1% process settings from \"%2%\" (revertable).")) % carried.size() % print_settings_carry.from_preset).str();
+                if (!same_nozzle_size)
+                    note += " " + _u8L("Line widths and layer heights follow the new nozzle size.");
+                m_carry_notes.insert(m_carry_notes.begin(), note);
+            }
+        }
         load_current_preset();
 
         // Ultra: switching to a printer re-pulls that printer's newest Bambu Studio user presets.
@@ -6837,13 +6947,46 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
         on_presets_changed();
     }
 
+    // Ultra: one short notification per switch for everything that was carried over.
+    if (canceled)
+        m_carry_notes.clear();
+    else
+        show_carry_notification();
+
     if (technology_changed)
         wxGetApp().mainframe->technology_changed();
     if (!canceled && m_presets->type() == Preset::TYPE_FILAMENT)
         validate_filament_hot_bed_nozzle_relation(parent());
     BOOST_LOG_TRIVIAL(info) << boost::format("select preset, exit");
 
+    // First-time Bambu printer setup notice: a printer picked by hand (not a project load or a remote switch).
+    if (!canceled && !force_select && m_presets->type() == Preset::TYPE_PRINTER)
+        BambuSetupNoticeDialog::on_printer_preset_selected();
+
     return !canceled;
+}
+
+// Ultra: show what the current select_preset() carried over (printer-switch process carry and/or
+// auto-transferred modifications) as one short, fading notification.
+void Tab::show_carry_notification()
+{
+    if (m_carry_notes.empty())
+        return;
+    std::string text;
+    for (const std::string &note : m_carry_notes) {
+        if (!text.empty())
+            text += "\n";
+        text += note;
+    }
+    m_carry_notes.clear();
+    BOOST_LOG_TRIVIAL(info) << "Settings carried on preset switch: " << text;
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr)
+        return;
+    if (NotificationManager *nm = plater->get_notification_manager()) {
+        nm->close_notification_of_type(NotificationType::PresetSettingsCarried);
+        nm->push_notification(NotificationType::PresetSettingsCarried, NotificationManager::NotificationLevel::RegularNotificationLevel, text);
+    }
 }
 
 // If the current preset is dirty, the user is asked whether the changes may be discarded.
@@ -6911,6 +7054,26 @@ bool Tab::may_discard_current_dirty_preset(PresetCollection* presets /*= nullptr
         }
         else
             wxGetApp().get_tab(presets->type())->cache_config_diff(selected_options);
+
+        // Ultra: the transfer happens without asking (UnsavedChangesDialog::ShowModal), so say
+        // what was kept; select_preset() shows it once the switch is done.
+        std::set<std::string> kept_keys;
+        for (const std::string &opt : selected_options)
+            kept_keys.insert(opt.substr(0, opt.find('#')));
+        if (!kept_keys.empty()) {
+            const std::string from = presets->get_edited_preset().name;
+            const size_t      n    = kept_keys.size();
+            std::string       note;
+            if (presets->type() == Preset::TYPE_PRINT)
+                note = n == 1 ? (boost::format(_u8L("Kept 1 modified process setting from \"%1%\" (revertable).")) % from).str() :
+                                (boost::format(_u8L("Kept %1% modified process settings from \"%2%\" (revertable).")) % n % from).str();
+            else if (presets->type() == Preset::TYPE_FILAMENT)
+                note = n == 1 ? (boost::format(_u8L("Kept 1 modified filament setting from \"%1%\" (revertable).")) % from).str() :
+                                (boost::format(_u8L("Kept %1% modified filament settings from \"%2%\" (revertable).")) % n % from).str();
+            else
+                note = (boost::format(_u8L("Kept %1% modified settings from \"%2%\" (revertable).")) % n % from).str();
+            m_carry_notes.emplace_back(std::move(note));
+        }
     }
 
     return true;

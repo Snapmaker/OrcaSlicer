@@ -3,6 +3,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include "slic3r/GUI/Gizmos/GizmoObjectManipulation.hpp"
+#include "slic3r/GUI/Gizmos/EmbossFaceList.hpp"
 #include "slic3r/GUI/MainFrame.hpp" // to update title when add text
 #include "slic3r/GUI/NotificationManager.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -10,6 +11,8 @@
 #include "slic3r/GUI/format.hpp"
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/CameraUtils.hpp"
+#include "slic3r/GUI/Camera.hpp"
+#include "slic3r/GUI/GLShader.hpp"
 #include "slic3r/GUI/Jobs/EmbossJob.hpp"
 #include "slic3r/GUI/Jobs/CreateFontNameImageJob.hpp"
 #include "slic3r/GUI/Jobs/NotificationProgressIndicator.hpp"
@@ -118,6 +121,7 @@ static const float SELECTABLE_INNER_OFFSET = 8.0f;
 /// <returns>Base data for emboss text</returns>
 std::unique_ptr<DataBase> create_emboss_data_base(
     const std::string& text,
+    const InlineShapeTable& inline_shapes,
     StyleManager& style_manager,
     TextLinesModel& text_lines,
     const Selection& selection,
@@ -240,6 +244,8 @@ struct Facenames
 bool store(const Facenames &facenames);
 bool load(Facenames &facenames);
 void init_face_names(Facenames &facenames);
+// Rebuild Facenames::faces_names (what the font search filters) from Facenames::faces.
+bool sync_face_names(Facenames &facenames);
 void init_truncated_names(Facenames &face_names, float max_width);
 
 // This configs holds GUI layout size given by translated texts.
@@ -295,6 +301,15 @@ struct GuiCfg
         std::string rotation;
         std::string keep_up;
         std::string collection;
+
+        // curved text
+        std::string curve;
+        std::string curve_define_by;
+        std::string curve_angle;
+        std::string curve_radius;
+        std::string curve_side;
+        std::string curve_letters;
+        std::string curve_projection;
     };
     Translations translations;
 };
@@ -328,7 +343,7 @@ bool GLGizmoEmboss::create_volume(ModelVolumeType volume_type, const Vec2d& mous
         return false;
 
     // NOTE: change style manager - be carefull with order changes
-    DataBasePtr base = create_emboss_data_base(m_text, m_style_manager, m_text_lines, m_parent.get_selection(), volume_type, m_job_cancel);
+    DataBasePtr base = create_emboss_data_base(m_text, m_inline_shapes, m_style_manager, m_text_lines, m_parent.get_selection(), volume_type, m_job_cancel);
     CreateVolumeParams input = create_input(m_parent, m_style_manager.get_style(), m_raycast_manager, volume_type);
     return start_create_volume(input, std::move(base), mouse_pos);
 }
@@ -340,7 +355,7 @@ bool GLGizmoEmboss::create_volume(ModelVolumeType volume_type)
         return false;
 
     // NOTE: change style manager - be carefull with order changes
-    DataBasePtr base = create_emboss_data_base(m_text, m_style_manager, m_text_lines, m_parent.get_selection(), volume_type, m_job_cancel);
+    DataBasePtr base = create_emboss_data_base(m_text, m_inline_shapes, m_style_manager, m_text_lines, m_parent.get_selection(), volume_type, m_job_cancel);
     CreateVolumeParams input = create_input(m_parent, m_style_manager.get_style(), m_raycast_manager, volume_type);
     return start_create_volume_without_position(input, std::move(base));
 }
@@ -380,7 +395,7 @@ bool GLGizmoEmboss::re_emboss(const ModelVolume &text_volume, std::shared_ptr<st
 
     TextLinesModel text_lines;
     const Selection &selection = wxGetApp().plater()->canvas3D()->get_selection();
-    DataBasePtr base = create_emboss_data_base(tc.text, style_manager, text_lines, selection, text_volume.type(), job_cancel);
+    DataBasePtr base = create_emboss_data_base(tc.text, tc.inline_shapes, style_manager, text_lines, selection, text_volume.type(), job_cancel);
     DataUpdate  data{std::move(base), text_volume.id(), false};
 
     RaycastManager raycast_manager; // Nothing is cached now, so It need to create raycasters
@@ -453,7 +468,7 @@ bool GLGizmoEmboss::do_mirror(size_t axis)
     // mirror
     tr = tr * Eigen::Scaling(scale);
 
-    if (is_per_glyph) { 
+    if (is_per_glyph && m_style_manager.get_style().projection.bend.mode == EmbossBend::Mode::off) {
         // init textlines before mirroring on mirrored text volume transformation
         ModelVolumePtrs volumes = prepare_volumes_to_slice(*m_volume);
         m_text_lines.init(tr, volumes, m_style_manager, m_text_lines.get_lines().size());
@@ -498,6 +513,10 @@ bool GLGizmoEmboss::init_create(ModelVolumeType volume_type)
 
     // set default text
     m_text = _u8L("Embossed text");
+    if (!m_inline_shapes.empty())
+        m_style_manager.clear_imgui_font();
+    m_inline_shapes.clear();
+    m_insert.on_text_reset(m_text);
     return true;
 }
 
@@ -755,9 +774,12 @@ void GLGizmoEmboss::on_render() {
         const auto &fix = m_volume->emboss_shape->fix_3mf_tr;
         if (fix.has_value()) 
             m_text_lines.render(tr * fix->inverse());
-        else 
+        else
             m_text_lines.render(tr);
     }
+
+    // reference circle of curved text, only while the curve options are visible
+    render_bend_overlay();
 
     bool is_surface_dragging = m_surface_drag.has_value();
     bool is_parent_dragging = m_parent.is_mouse_dragging();
@@ -943,6 +965,8 @@ void GLGizmoEmboss::on_set_state()
         // TODO: what to do when can't store into file?
         m_style_manager.store_styles_to_app_config(false);
         remove_notification_not_valid_font();
+        // thumbnails of the Insert popup
+        m_insert.release_textures();
     } else if (m_state == GLGizmoBase::On) {
         // to reload fonts from system, when install new one
         wxFontEnumerator::InvalidateCache();
@@ -1093,6 +1117,11 @@ std::optional<wxString> get_installed_face_name(const std::optional<std::string>
 
 void init_text_lines(TextLinesModel &text_lines, const Selection& selection, /* const*/ StyleManager &style_manager, unsigned count_lines)
 {    
+    // Curved text places its letters along the arc, not along a section of the object
+    if (style_manager.get_style().projection.bend.mode != EmbossBend::Mode::off) {
+        text_lines.reset();
+        return;
+    }
     const GLVolume *gl_volume_ptr = selection.get_first_volume();
     if (gl_volume_ptr == nullptr)
         return;
@@ -1233,8 +1262,37 @@ void GLGizmoEmboss::set_volume_by_selection()
         m_job_cancel->store(true);
         m_job_cancel = nullptr;
     }
+    // a waiting curve preview belongs to the previous volume
+    m_bend_preview_pending = false;
+    m_bend_surface_key.reset();
+    m_bend_surface_preview.reset(); // a running job keeps writing into its own copy
+    m_bend_letter_drawn.reset();
 
     m_text   = tc.text;
+    // Inline shapes: an update of the same volume (it gets a new id) writes back only the entries the text
+    // uses; keep the whole table of this editing session then, so the text box's undo finds them.
+    {
+        InlineShapeTable table = tc.inline_shapes;
+        if (m_volume == volume)
+            for (const InlineShape &entry : m_inline_shapes)
+                if (find_inline_shape(table, entry.code) == nullptr)
+                    table.push_back(entry);
+        auto same = [](const InlineShapeTable &a, const InlineShapeTable &b) {
+            if (a.size() != b.size())
+                return false;
+            for (const InlineShape &e : a) {
+                const InlineShape *o = find_inline_shape(b, e.code);
+                if (o == nullptr || !o->same_content(e))
+                    return false;
+            }
+            return true;
+        };
+        if (!same(table, m_inline_shapes))
+            m_style_manager.clear_imgui_font(); // the text box draws the shapes of this table
+        m_inline_shapes = std::move(table);
+        if (m_volume != volume)
+            m_insert.on_text_reset(m_text);
+    }
     m_volume = volume;
     m_volume_id = volume->id();
         
@@ -1257,6 +1315,10 @@ void GLGizmoEmboss::reset_volume()
 
     m_volume = nullptr;
     m_volume_id.id = 0;
+    m_bend_preview_pending = false;
+    m_bend_surface_key.reset();
+    m_bend_surface_preview.reset();
+    m_bend_letter_drawn.reset();
 
     // No more need of current notification
     remove_notification_not_valid_font();
@@ -1304,7 +1366,13 @@ bool GLGizmoEmboss::process(bool make_snapshot)
     if (!m_style_manager.is_active_font()) return false;
 
     const Selection& selection = m_parent.get_selection();
-    DataBasePtr base = create_emboss_data_base(m_text, m_style_manager, m_text_lines, selection, m_volume->type(), m_job_cancel);
+    DataBasePtr base = create_emboss_data_base(m_text, m_inline_shapes, m_style_manager, m_text_lines, selection, m_volume->type(), m_job_cancel);
+    if (base == nullptr)
+        return false;
+    // curved text letter by letter: the job publishes its reference curve for the overlay
+    if (m_bend_surface_preview == nullptr)
+        m_bend_surface_preview = std::make_shared<Slic3r::Emboss::SurfaceArcPreview>();
+    base->bend_preview_out = m_bend_surface_preview;
     DataUpdate  data{std::move(base), m_volume->id(), make_snapshot};
 
     // check valid count of text lines
@@ -1347,6 +1415,10 @@ void GLGizmoEmboss::draw_window()
     if (ImGui::Button("re-process")) process();
 #endif //  ALLOW_DEBUG_MODE
 
+    // Curve slider dragged over a surface: start the waiting preview once the previous cut is done
+    if (m_bend_preview_pending)
+        request_bend_preview();
+
     // Setter of indent must be befor disable !!!
     ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, m_gui_cfg->indent);
     ScopeGuard indent_sc([](){ ImGui::PopStyleVar(/*ImGuiStyleVar_IndentSpacing*/); });
@@ -1383,6 +1455,22 @@ void GLGizmoEmboss::draw_window()
         m_is_advanced_edit_style = false;
         m_imgui->set_requires_extra_frame();
     }
+
+    // Curved text: closed with unknown font, open by default when the text is curved
+    if (m_is_unknown_font)
+        ImGui::SetNextItemOpen(false);
+    else if (m_style_manager.get_style().projection.bend.mode != EmbossBend::Mode::off)
+        ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+    bool is_curve_open = ImGui::TreeNode(_u8L("Curve").c_str());
+    if (ImGui::IsItemToggledOpen())
+        m_imgui->set_requires_extra_frame();
+    if (is_curve_open) {
+        if (!m_is_unknown_font)
+            draw_curve();
+        ImGui::TreePop();
+    }
+    if (!is_curve_open || m_is_unknown_font)
+        m_bend_result.reset(); // hide the arc overlay
 
     ImGui::Separator();
 
@@ -1444,24 +1532,87 @@ void GLGizmoEmboss::draw_window()
 
 #include "imgui/imgui_internal.h" // scroll bar existence
 
+void GLGizmoEmboss::update_glyph_split()
+{
+    auto &ff = m_style_manager.get_font_file_with_cache();
+    if (!ff.has_value())
+        return;
+    const unsigned int font_index = m_style_manager.get_font_prop().collection_number.value_or(0);
+    // the font is part of the key: the same text splits differently with another font
+    std::string key = m_text;
+    key += '\x1F';
+    key += inline_shapes_to_json(m_inline_shapes);
+    key += '\x1F';
+    key += std::to_string(reinterpret_cast<uintptr_t>(ff.font_file.get())) + ":" + std::to_string(font_index);
+    if (key == m_glyph_split_key)
+        return;
+    m_glyph_split_key = std::move(key);
+
+    GlyphCoverage primary = make_font_coverage(*ff.font_file, font_index);
+    GlyphCoverage fallback;
+    if (std::shared_ptr<const Slic3r::Emboss::FontFile> symbols = bundled_symbol_font())
+        fallback = [symbols, cover = make_font_coverage(*symbols, 0)](uint32_t cp) { return cover(cp); };
+    const InlineShapeTable &table = m_inline_shapes;
+    m_glyph_split = split_text_by_glyph_source(m_text, primary, fallback,
+                                               [&table](uint32_t cp) { return find_inline_shape(table, cp) != nullptr; });
+    m_text_contain_unknown_glyph = m_glyph_split.exist_unknown;
+}
+
+Slic3r::GUI::Emboss::StyleManager::ImGuiExtraGlyphs GLGizmoEmboss::create_text_box_glyphs() const
+{
+    Emboss::StyleManager::ImGuiExtraGlyphs extra;
+    if (!m_glyph_split.fallback.empty()) {
+        extra.fallback_text = m_glyph_split.fallback;
+        extra.fallback_font = bundled_symbol_font();
+    }
+    if (m_glyph_split.inline_shapes.empty())
+        return extra;
+    const Slic3r::Emboss::FontFileWithCache &ff = const_cast<Emboss::StyleManager &>(m_style_manager).get_font_file_with_cache();
+    if (!ff.has_value())
+        return extra;
+    // the text box shows neither boldness nor skew (see the warnings), so the shapes do not either
+    FontProp prop = m_style_manager.get_font_prop();
+    prop.boldness.reset();
+    prop.skew.reset();
+    const InlineFontMetrics metrics = inline_font_metrics(*ff.font_file, prop);
+    InlineShapeCache        cache;
+    for (uint32_t code : m_glyph_split.inline_shapes) {
+        const InlineShape *entry = find_inline_shape(m_inline_shapes, code);
+        if (entry == nullptr)
+            continue;
+        std::optional<Slic3r::Emboss::Glyph> glyph = make_inline_glyph(*entry, BuiltinShapeLibrary::instance(), cache, metrics);
+        if (!glyph.has_value())
+            continue;
+        Emboss::StyleManager::ImGuiExtraGlyphs::Shape shape;
+        shape.code    = static_cast<ImWchar>(code);
+        shape.shape   = std::move(glyph->shape);
+        shape.advance = glyph->advance_width;
+        extra.shapes.push_back(std::move(shape));
+    }
+    return extra;
+}
+
 void GLGizmoEmboss::draw_text_input()
 {
-    auto create_range_text_prep = [&mng = m_style_manager, &text = m_text, &exist_unknown = m_text_contain_unknown_glyph]() {
-        auto& ff = mng.get_font_file_with_cache();
-        assert(ff.has_value());
-        const auto &cn = mng.get_font_prop().collection_number;
-        unsigned int font_index = (cn.has_value()) ? *cn : 0;
-        return create_range_text(text, *ff.font_file, font_index, &exist_unknown);
+    // which font draws each character: selected font, bundled symbol font, inline shape (or nobody)
+    update_glyph_split();
+    auto glyph_key = [this]() {
+        std::string key = m_glyph_split.primary + '\x1F' + m_glyph_split.fallback + '\x1F';
+        for (uint32_t code : m_glyph_split.inline_shapes)
+            if (const InlineShape *entry = find_inline_shape(m_inline_shapes, code))
+                key += inline_shapes_to_json({*entry});
+        return key;
     };
-    
+
     double scale = m_scale_height.has_value() ? *m_scale_height : 1.;
     ImFont *imgui_font = m_style_manager.get_imgui_font();
     if (imgui_font == nullptr) {
         // try create new imgui font
         double screen_scale = wxDisplay(wxGetApp().plater()).GetScaleFactor();
         double imgui_scale = scale * screen_scale;
-        m_style_manager.create_imgui_font(create_range_text_prep(), imgui_scale);
+        m_style_manager.create_imgui_font(m_glyph_split.primary, imgui_scale, create_text_box_glyphs());
         imgui_font = m_style_manager.get_imgui_font();
+        m_imgui_glyph_key = glyph_key();
     }
     bool exist_font = 
         imgui_font != nullptr &&
@@ -1504,18 +1655,20 @@ void GLGizmoEmboss::draw_text_input()
     
     // flag for extend font ranges if neccessary
     // ranges can't be extend during font is activ(pushed)
-    std::string range_text;
+    bool text_changed = false;
     ImVec2 input_size(m_gui_cfg->text_size.x, m_gui_cfg->text_size.y);
-    const ImGuiInputTextFlags flags = ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll;
-    if (ImGui::InputTextMultiline("##Text", &m_text, input_size, flags)) {
+    // CallbackAlways: the Insert popup inserts at the caret the box reports
+    const ImGuiInputTextFlags flags = ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_AutoSelectAll |
+                                      ImGuiInputTextFlags_CallbackAlways;
+    if (ImGui::InputTextMultiline("##Text", &m_text, input_size, flags, &EmbossInsert::text_callback, &m_insert)) {
         if (m_style_manager.get_font_prop().per_glyph) {
             unsigned count_lines = get_count_lines(m_text);
-            if (count_lines != m_text_lines.get_lines().size()) 
+            if (count_lines != m_text_lines.get_lines().size())
                 // Necesarry to initialize count by given number (differ from stored in volume at the moment)
-                reinit_text_lines(count_lines);         
+                reinit_text_lines(count_lines);
         }
         process();
-        range_text = create_range_text_prep();
+        text_changed = true;
     }
 
     if (exist_font) ImGui::PopFont();
@@ -1542,13 +1695,36 @@ void GLGizmoEmboss::draw_text_input()
         ImGui::SetCursorPos(cursor);
     }
 
-    // NOTE: must be after ImGui::font_pop() 
+    // Insert a shape, a symbol or a user SVG at the caret
+    {
+        auto &ff = m_style_manager.get_font_file_with_cache();
+        EmbossInsert::Context ctx{m_text, m_inline_shapes};
+        ctx.font       = ff.has_value() ? ff.font_file.get() : nullptr;
+        ctx.font_index = m_style_manager.get_font_prop().collection_number.value_or(0);
+        ctx.model      = &wxGetApp().model();
+        ctx.gui_scale  = m_parent.get_scale();
+        if (m_insert.draw(ctx)) {
+            process();
+            text_changed = true;
+        }
+    }
+
+    // NOTE: must be after ImGui::font_pop()
     //          -> imgui_font has to be unused
     // IMPROVE: only extend not clear
-    // Extend font ranges
-    if (!range_text.empty() &&
-        !ImGuiWrapper::contain_all_glyphs(imgui_font, range_text) )
-        m_style_manager.clear_imgui_font();    
+    // Extend the font when a character of the text is missing from it (once per set of characters, so
+    // a glyph ImGui cannot make does not rebuild the atlas every frame)
+    if (text_changed && imgui_font != nullptr) {
+        update_glyph_split();
+        bool all = true;
+        auto has = [imgui_font](uint32_t cp) { return cp <= 0xFFFF && imgui_font->FindGlyphNoFallback(static_cast<ImWchar>(cp)) != nullptr; };
+        for (uint32_t cp : utf8_to_codepoints(m_glyph_split.primary + m_glyph_split.fallback))
+            all &= has(cp);
+        for (uint32_t cp : m_glyph_split.inline_shapes)
+            all &= has(cp);
+        if (!all && glyph_key() != m_imgui_glyph_key)
+            m_style_manager.clear_imgui_font();
+    }
 }
 
 // create texture for visualization font face
@@ -1721,11 +1897,16 @@ void GLGizmoEmboss::draw_font_list()
     ImGui::SetNextItemWidth(2 * m_gui_cfg->input_width);
     std::vector<int> filtered_items_idx;
     bool             is_filtered = false;
+    // The search box filters faces_names and returns indices into it, which are used to index
+    // faces below - the two lists must match before the filter runs (cheap size check per frame).
+    if (m_face_names->faces_names.size() != m_face_names->faces.size())
+        sync_face_names(*m_face_names);
     if (m_imgui->bbl_combo_with_filter("##Combo_Font", selected, m_face_names->faces_names,
         &filtered_items_idx, &is_filtered, m_imgui->scaled(32.f / 15.f))) {
         bool set_selection_focus = false;
         if (!m_face_names->is_init) {
             init_face_names(*m_face_names);
+            sync_face_names(*m_face_names);
             set_selection_focus = true;
         }
 
@@ -1735,14 +1916,13 @@ void GLGizmoEmboss::draw_font_list()
         if (m_face_names->texture_id == 0)
             init_font_name_texture();
 
-        int show_items_count = is_filtered ? filtered_items_idx.size() : m_face_names->faces.size();
+        const std::vector<int> rows = emboss_face_list::visible_rows(is_filtered, filtered_items_idx, m_face_names->faces.size());
 
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0);
 
-        for (int i = 0; i < show_items_count; i++) {
-            int idx = is_filtered ? filtered_items_idx[i] : i;
+        for (int idx : rows) {
             FaceName &face = m_face_names->faces[idx];
             const wxString &wx_face_name = face.wx_name;
 
@@ -1789,14 +1969,15 @@ void GLGizmoEmboss::draw_font_list()
     }
 
     // delete unloadable face name when try to use
-    if (del_index.has_value()) {
-        auto face = m_face_names->faces.begin() + (*del_index);
+    if (del_index.has_value() && *del_index < m_face_names->faces.size()) {
+        const wxString wx_name = m_face_names->faces[*del_index].wx_name;
         std::vector<wxString>& bad = m_face_names->bad;
         // sorted insert into bad fonts
-        auto it = std::upper_bound(bad.begin(), bad.end(), face->wx_name);
-        bad.insert(it, face->wx_name);
-        m_face_names->faces.erase(face);
-        m_face_names->faces_names.erase(m_face_names->faces_names.begin() + (*del_index));
+        auto it = std::upper_bound(bad.begin(), bad.end(), wx_name);
+        bad.insert(it, wx_name);
+        // faces and faces_names go together, or the search would show the wrong fonts
+        emboss_face_list::erase_face(m_face_names->faces, m_face_names->faces_names, *del_index);
+        sync_face_names(*m_face_names);
         // update cached file
         store(*m_face_names);
     }
@@ -1891,7 +2072,7 @@ void GLGizmoEmboss::draw_model_type()
         if ((is_volume_move_inside || is_volume_move_outside))
             process();
 
-        // inspiration in ObjectList::change_part_type()
+        // inspiration in ObjectList::set_volume_type()
         // how to view correct side panel with objects
         ObjectList *obj_list = app.obj_list();
         wxDataViewItemArray sel = obj_list->reorder_volumes_and_get_selection(
@@ -2072,6 +2253,8 @@ void GLGizmoEmboss::draw_delete_style_button() {
 
     if (draw_button(m_icons, IconType::erase, !can_delete)) {
         std::string style_name = m_style_manager.get_style().name; // copy
+        // curved text is a property of the volume, not of the style
+        const EmbossBend volume_bend = m_style_manager.get_style().projection.bend; // copy
         wxString dialog_title = _L("Remove style");
         size_t next_style_index = std::numeric_limits<size_t>::max();
         Plater *plater = wxGetApp().plater();
@@ -2102,10 +2285,12 @@ void GLGizmoEmboss::draw_delete_style_button() {
                 // delete style
                 m_style_manager.erase(active_index);
                 exist_change = true;
+                m_style_manager.get_style().projection.bend = volume_bend;
                 process();
             } else {
                 // load back style
                 m_style_manager.load_style(active_index);
+                m_style_manager.get_style().projection.bend = volume_bend;
             }
             break;
         }
@@ -2260,6 +2445,8 @@ void GLGizmoEmboss::draw_style_list() {
         StyleManager::Style cur_s = current_style;  // copy
         StyleManager::Style new_s = style;    // copy
         if (m_style_manager.load_style(*selected_style_index)) {
+            // curved text is a property of the volume, not of the style
+            m_style_manager.get_style().projection.bend = cur_s.projection.bend;
             ::fix_transformation(cur_s, new_s, m_parent);
             process();
         } else {
@@ -2664,6 +2851,10 @@ void GLGizmoEmboss::draw_advanced()
         stored_style = m_style_manager.get_stored_style();
     
     bool is_the_only_one_part = m_volume->is_the_only_one_part();
+    // Curved text works with surface projection. Per glyph then places it letter by letter on the
+    // surface; without the surface per glyph (along a section of the object) is not combined with it.
+    const bool is_curved = m_style_manager.get_style().projection.bend.mode != EmbossBend::Mode::off;
+    const std::string curved_hint = _u8L("Curved text is placed letter by letter only on the surface. Turn on \"Use surface\" first.");
     bool can_use_surface = (m_volume->emboss_shape->projection.use_surface)? true : // already used surface must have option to uncheck
                             !is_the_only_one_part;
     m_imgui->disabled_begin(!can_use_surface);
@@ -2675,14 +2866,19 @@ void GLGizmoEmboss::draw_advanced()
                      _u8L("Revert using of model surface."))) {
         if (use_surface)
             // when using surface distance is not used
-            current_style.distance.reset();        
+            current_style.distance.reset();
+        // curved text: letter by letter on the surface by default, never along a section
+        if (is_curved)
+            font_prop.per_glyph = use_surface;
         process();
     }
     m_imgui->disabled_end(); // !can_use_surface
 
     bool &per_glyph = font_prop.per_glyph;
     bool can_use_per_glyph = (per_glyph) ? true : // already used surface must have option to uncheck
-                            !is_the_only_one_part;
+                            (!is_the_only_one_part && (!is_curved || use_surface));
+    if (is_curved && m_text_lines.is_init())
+        m_text_lines.reset();
     m_imgui->disabled_begin(!can_use_per_glyph);
     const bool *def_per_glyph = stored_style ? &stored_style->prop.per_glyph : nullptr;
     if (rev_checkbox(tr.per_glyph, per_glyph, def_per_glyph,
@@ -2690,6 +2886,10 @@ void GLGizmoEmboss::draw_advanced()
         if (per_glyph && !m_text_lines.is_init())
             reinit_text_lines();
         process();
+    } else if (is_curved && can_use_per_glyph && ImGui::IsItemHovered()) {
+        m_imgui->tooltip(_u8L("Curved text: place and orient every letter on the surface along the arc "
+                              "(the same as Projection: Per letter in the Curve section)."),
+                         m_gui_cfg->max_tooltip_width);
     } else if (ImGui::IsItemHovered()) {
         if (per_glyph) {
             m_imgui->tooltip(_u8L("Set global orientation for whole text."), m_gui_cfg->max_tooltip_width);
@@ -2698,6 +2898,8 @@ void GLGizmoEmboss::draw_advanced()
             if (!m_text_lines.is_init())
                 reinit_text_lines();
         }
+    } else if (!can_use_per_glyph && is_curved && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        m_imgui->tooltip(curved_hint, m_gui_cfg->max_tooltip_width);
     } else if (!per_glyph && m_text_lines.is_init())
         m_text_lines.reset();
     m_imgui->disabled_end(); // !can_use_per_glyph
@@ -3005,6 +3207,760 @@ void GLGizmoEmboss::draw_advanced()
 #endif // ALLOW_DEBUG_MODE
 }
 
+namespace {
+// number with fixed decimals for readouts (GUI::format would print all digits of a double)
+std::string curve_number(double value, int decimals)
+{
+    char buffer[64];
+    snprintf(buffer, sizeof(buffer), "%.*f", decimals, value);
+    return buffer;
+}
+// Default span when curving starts in angle mode [deg]
+constexpr float CURVE_DEFAULT_ANGLE = 120.f;
+// Slider ranges, typed values may go further (clamped below)
+constexpr float CURVE_MIN_RADIUS = 0.1f;    // [mm]
+constexpr float CURVE_MAX_RADIUS = 10000.f; // [mm]
+constexpr float CURVE_SLIDER_MAX_RADIUS = 300.f; // [mm]
+} // namespace
+
+bool GLGizmoEmboss::is_curve_per_letter() const
+{
+    const StyleManager::Style &style = m_style_manager.get_style();
+    return style.projection.bend.mode != EmbossBend::Mode::off && style.prop.per_glyph && style.projection.use_surface &&
+           m_volume != nullptr && !m_volume->is_the_only_one_part();
+}
+
+void GLGizmoEmboss::request_bend_preview()
+{
+    m_bend_preview_pending = false;
+    if (m_volume == nullptr)
+        return;
+    // Flat text is fast enough for every slider tick. The surface cut can take longer than a frame:
+    // start the next preview only when the previous one is done, so the shown text never lags
+    // behind a queue of cancelled cuts.
+    if (m_style_manager.get_style().projection.use_surface && !wxGetApp().plater()->get_ui_job_worker().is_idle()) {
+        m_bend_preview_pending = true;
+        m_imgui->set_requires_extra_frame();
+        return;
+    }
+    process(false);
+}
+
+std::optional<Slic3r::Emboss::BendInput> GLGizmoEmboss::measure_text_for_bend()
+{
+    Slic3r::Emboss::FontFileWithCache &ff = m_style_manager.get_font_file_with_cache();
+    if (!ff.has_value() || is_text_empty(m_text))
+        return {};
+
+    // Private glyph cache: the cache of the style manager belongs to the job thread
+    const FontProp &fp = m_style_manager.get_font_prop();
+    bool same_font = m_bend_glyphs != nullptr && m_bend_font == ff.font_file && m_bend_prop == fp &&
+                     m_bend_prop.collection_number == fp.collection_number;
+    if (!same_font) {
+        m_bend_glyphs = std::make_shared<Slic3r::Emboss::Glyphs>();
+        m_bend_font   = ff.font_file;
+        m_bend_prop   = fp;
+        m_bend_input.reset();
+    }
+    const std::string inline_key = inline_shapes_to_json(m_inline_shapes);
+    if (!m_bend_input.has_value() || m_bend_text != m_text || m_bend_inline_key != inline_key) {
+        Slic3r::Emboss::FontFileWithCache font;
+        font.font_file = ff.font_file;
+        font.cache     = m_bend_glyphs;
+        Slic3r::Emboss::GlyphAdvances advances;
+        std::wstring text_w = boost::nowide::widen(m_text);
+        Slic3r::Emboss::TextGlyphSources sources;
+        sources.inline_shapes = &m_inline_shapes;
+        ExPolygonsWithIds shapes = Slic3r::Emboss::text2vshapes(font, text_w, fp, []() { return false; }, advances, sources);
+        m_bend_input = Slic3r::Emboss::measure_bend_input(shapes, &advances);
+        m_bend_text  = m_text;
+        m_bend_inline_key = inline_key;
+    }
+    if (!m_bend_input->is_valid())
+        return {};
+    return m_bend_input;
+}
+
+std::optional<Slic3r::Emboss::BendResult> GLGizmoEmboss::calc_bend_result()
+{
+    const StyleManager::Style &style = m_style_manager.get_style();
+    const EmbossBend &bend = style.projection.bend;
+    if (!bend.is_active())
+        return {};
+    std::optional<Slic3r::Emboss::BendInput> input = measure_text_for_bend();
+    if (!input.has_value())
+        return {};
+    Slic3r::Emboss::FontFileWithCache &ff = m_style_manager.get_font_file_with_cache();
+    double scale = get_text_shape_scale(m_style_manager.get_font_prop(), *ff.font_file);
+    Slic3r::Emboss::BendResult result = Slic3r::Emboss::resolve_bend(bend, *input, scale,
+                                                                     Slic3r::Emboss::bend_tolerance_mm(style.projection.use_surface));
+    if (!result.is_active())
+        return {};
+    return result;
+}
+
+Transform3d GLGizmoEmboss::get_text_world_matrix() const
+{
+    const GLVolume *gl_volume = m_parent.get_selection().get_first_volume();
+    if (gl_volume == nullptr)
+        return Transform3d::Identity();
+    Transform3d tr = gl_volume->world_matrix();
+    if (m_volume != nullptr && m_volume->emboss_shape.has_value() && m_volume->emboss_shape->fix_3mf_tr.has_value())
+        tr = tr * m_volume->emboss_shape->fix_3mf_tr->inverse();
+    return tr;
+}
+
+std::optional<GLGizmoEmboss::FaceCircle> GLGizmoEmboss::detect_face_circle(std::optional<Vec2d> *face_center) const
+{
+    if (face_center != nullptr)
+        face_center->reset();
+    if (m_volume == nullptr)
+        return {};
+    const GLVolume *gl_volume = m_parent.get_selection().get_first_volume();
+    const ModelObject *object = m_volume->get_object();
+    if (gl_volume == nullptr || object == nullptr)
+        return {};
+    int instance_idx = gl_volume->instance_idx();
+    if (instance_idx < 0 || instance_idx >= static_cast<int>(object->instances.size()))
+        return {};
+
+    // Everything in the text plane: x, y along the text, z = 0 on the surface under the text.
+    // With "Use surface" this is also the projection plane: the text is projected along -z.
+    const StyleManager::Style &style = m_style_manager.get_style();
+    const bool        on_surface  = style.projection.use_surface;
+    const Transform3d instance_tr = object->instances[instance_idx]->get_matrix();
+    const Transform3d to_text     = get_text_world_matrix().inverse();
+    const double      face_z      = -static_cast<double>(style.distance.value_or(0.f));
+    const double      band        = 0.05; // [mm] vertices this close to the text plane lie on the face
+
+    std::vector<Vec2d> face_points;
+    std::vector<Vec3d> all_points; // only with surface
+    BoundingBoxf       face_bb, all_bb;
+    for (const ModelVolume *volume : object->volumes) {
+        // other texts / svgs are not the face the text sits on
+        if (volume == m_volume || !volume->is_model_part() || volume->emboss_shape.has_value())
+            continue;
+        const Transform3d tr = to_text * instance_tr * volume->get_matrix();
+        for (const stl_vertex &vertex : volume->mesh().its.vertices) {
+            Vec3d p = tr * vertex.cast<double>();
+            Vec2d p2(p.x(), p.y());
+            all_bb.merge(p2);
+            if (on_surface)
+                all_points.push_back(p);
+            if (std::abs(p.z() - face_z) <= band) {
+                face_points.push_back(p2);
+                face_bb.merge(p2);
+            }
+        }
+    }
+
+    // Curved target (dome, sphere, lid): round outline seen along the projection direction
+    std::optional<Slic3r::Emboss::SurfaceRound> outline;
+    if (on_surface)
+        outline = Slic3r::Emboss::surface_round_area(all_points);
+
+    if (face_center != nullptr) {
+        if (outline.has_value())
+            *face_center = outline->center;
+        else if (face_bb.defined && !on_surface) // on a curved surface the band holds only a few points around the text
+            *face_center = face_bb.center();
+        else if (all_bb.defined)
+            *face_center = all_bb.center();
+    }
+
+    // Round flat face: its outer rim is a circle around the face centre
+    auto flat_face = [&]() -> std::optional<FaceCircle> {
+        if (face_points.size() < 12 || !face_bb.defined)
+            return {};
+        const Vec2d c0    = face_bb.center();
+        double      r_max = 0.;
+        for (const Vec2d &p : face_points)
+            r_max = std::max(r_max, (p - c0).norm());
+        if (r_max <= EPSILON)
+            return {};
+        std::vector<Vec2d> rim;
+        for (const Vec2d &p : face_points)
+            if ((p - c0).norm() >= 0.85 * r_max)
+                rim.push_back(p);
+        std::optional<Slic3r::Emboss::RoundOutline> circle = Slic3r::Emboss::fit_round_outline(rim);
+        if (!circle.has_value())
+            return {};
+        if ((circle->center - c0).norm() > 0.05 * circle->radius)
+            return {}; // an arc of some other outline, not a round face
+        return FaceCircle{circle->center, circle->radius};
+    };
+    std::optional<FaceCircle> flat = flat_face();
+
+    if (outline.has_value()) {
+        // A flat face spanning most of the outline (a cylinder end cap) wins; a handful of
+        // vertices around the top of a dome does not.
+        if (flat.has_value() && flat->radius >= 0.5 * outline->radius)
+            return flat;
+        // keep the text where the surface is not too steep for a clean projection
+        return FaceCircle{outline->center, outline->usable_radius};
+    }
+    return flat;
+}
+
+bool GLGizmoEmboss::prepare_surface_raycast(RaycastManager::AllowVolumes &condition)
+{
+    if (m_volume == nullptr)
+        return false;
+    const GLVolume    *gl_volume = m_parent.get_selection().get_first_volume();
+    const ModelObject *object    = m_volume->get_object();
+    if (gl_volume == nullptr || object == nullptr)
+        return false;
+    int instance_idx = gl_volume->instance_idx();
+    if (instance_idx < 0 || instance_idx >= static_cast<int>(object->instances.size()))
+        return false;
+    condition = create_condition(object->volumes, m_volume->id());
+    m_raycast_manager.actualize(*object->instances[instance_idx], &condition);
+    return true;
+}
+
+std::optional<Vec3d> GLGizmoEmboss::project_on_surface(const Vec3d &point, const Vec3d &direction,
+                                                       const RaycastManager::AllowVolumes &condition, Vec3d *normal) const
+{
+    std::optional<RaycastManager::Hit> hit = m_raycast_manager.closest_hit(point, direction, &condition);
+    if (!hit.has_value())
+        return {};
+    const Transform3d tr = m_raycast_manager.get_transformation(hit->tr_key);
+    if (normal != nullptr) {
+        Vec3d n = tr.linear().inverse().transpose() * hit->normal.cast<double>();
+        *normal = (n.squaredNorm() > 0.) ? Vec3d(n.normalized()) : Vec3d(-direction.normalized());
+    }
+    return Vec3d(tr * hit->position.cast<double>());
+}
+
+bool GLGizmoEmboss::center_arc_on_object()
+{
+    if (m_volume == nullptr || m_volume->is_the_only_one_part())
+        return false;
+    std::optional<Slic3r::Emboss::BendResult> result = calc_bend_result();
+    if (!result.has_value())
+        return false;
+
+    std::optional<Vec2d>      face_center;
+    std::optional<FaceCircle> circle = detect_face_circle(&face_center);
+    Vec2d target;
+    if (circle.has_value())
+        target = circle->center;
+    else if (face_center.has_value())
+        target = *face_center;
+    else
+        return false;
+
+    // arc centre in the text plane [mm], which is also the projection plane with "Use surface";
+    // letter by letter the centre the last placement found on the surface
+    Vec2d arc_center(0., -result->spec.side() * result->radius_mm);
+    if (is_curve_per_letter() && m_bend_surface_preview != nullptr && m_bend_surface_preview->valid)
+        arc_center = Vec2d(m_bend_surface_preview->center.x(), m_bend_surface_preview->center.y());
+    const Vec2d move = target - arc_center;
+
+    const Transform3d text_tr    = get_text_world_matrix();
+    Vec3d             move_world = text_tr.linear() * Vec3d(move.x(), move.y(), 0.);
+
+    // On a curved surface the moved origin would float above (or sink into) the surface, and the
+    // cut could pick another layer of the object. Keep the projection direction and slide the
+    // origin along it back onto the surface.
+    if (m_style_manager.get_style().projection.use_surface) {
+        RaycastManager::AllowVolumes condition(std::vector<size_t>{});
+        if (prepare_surface_raycast(condition)) {
+            const Vec3d dir    = text_tr.linear().col(2).normalized();
+            const Vec3d origin = text_tr.translation() + move_world;
+            if (std::optional<Vec3d> hit = project_on_surface(origin, -dir, condition); hit.has_value())
+                move_world += dir * dir.dot(*hit - origin);
+        }
+    }
+    if (move_world.squaredNorm() < sqr(1e-6))
+        return true;
+
+    Selection &selection = m_parent.get_selection();
+    selection.setup_cache();
+    selection.translate(move_world, TransformationType::World);
+    m_parent.do_move(_u8L("Centre arc on object"));
+    volume_transformation_changed();
+    return true;
+}
+
+void GLGizmoEmboss::update_bend_surface_overlay(const Transform3d &text_tr, const Vec2d &center, double radius, double cross)
+{
+    if (m_bend_surface_key.has_value() && m_bend_surface_key->text_tr.isApprox(text_tr, 1e-12) &&
+        m_bend_surface_key->center == center && m_bend_surface_key->radius == radius &&
+        m_bend_surface_key->volume_id == m_volume_id)
+        return;
+    m_bend_surface_key = BendOverlayKey{text_tr, center, radius, m_volume_id};
+    m_bend_surface.reset();
+
+    RaycastManager::AllowVolumes condition(std::vector<size_t>{});
+    if (!prepare_surface_raycast(condition))
+        return;
+
+    // Project the circle the way the text is projected: along the text's -z onto the closest surface
+    const Vec3d  dir  = text_tr.linear().col(2).normalized();
+    const double lift = 0.1; // [mm] along the surface normal, against z-fighting
+    auto project = [&](const Vec2d &p) -> std::optional<Vec3d> {
+        const Vec3d world = text_tr * Vec3d(p.x(), p.y(), 0.);
+        Vec3d       n;
+        std::optional<Vec3d> hit = project_on_surface(world, -dir, condition, &n);
+        if (!hit.has_value())
+            return {};
+        return Vec3d(*hit + lift * n);
+    };
+
+    GLModel::Geometry geometry;
+    geometry.format = {GLModel::Geometry::EPrimitiveType::Lines, GLModel::Geometry::EVertexLayout::P3};
+    const unsigned int count = 360;
+    std::vector<std::optional<Vec3d>> ring(count);
+    for (unsigned int i = 0; i < count; ++i) {
+        const double angle = 2. * PI * i / count;
+        ring[i] = project(center + radius * Vec2d(std::cos(angle), std::sin(angle)));
+    }
+    // Segments only where both ends lie on the surface: beyond the object the circle has gaps,
+    // and no bridge where the closest surface jumps to another layer (a steep wall)
+    const double max_segment = 4. * 2. * PI * radius / count + 1.;
+    for (unsigned int i = 0; i < count; ++i) {
+        const std::optional<Vec3d> &a = ring[i];
+        const std::optional<Vec3d> &b = ring[(i + 1) % count];
+        if (!a.has_value() || !b.has_value() || (*a - *b).norm() > max_segment)
+            continue;
+        const unsigned int v = static_cast<unsigned int>(geometry.vertices_count());
+        geometry.add_vertex(Vec3f(a->cast<float>()));
+        geometry.add_vertex(Vec3f(b->cast<float>()));
+        geometry.add_line(v, v + 1);
+    }
+    // Centre cross along the text axes, sitting on the surface
+    if (std::optional<Vec3d> c = project(center); c.has_value()) {
+        const Vec3d x = text_tr.linear().col(0).normalized() * cross;
+        const Vec3d y = text_tr.linear().col(1).normalized() * cross;
+        const unsigned int v = static_cast<unsigned int>(geometry.vertices_count());
+        geometry.add_vertex(Vec3f((*c - x).cast<float>()));
+        geometry.add_vertex(Vec3f((*c + x).cast<float>()));
+        geometry.add_vertex(Vec3f((*c - y).cast<float>()));
+        geometry.add_vertex(Vec3f((*c + y).cast<float>()));
+        geometry.add_line(v, v + 1);
+        geometry.add_line(v + 2, v + 3);
+    }
+    if (geometry.vertices_count() > 0)
+        m_bend_surface.init_from(std::move(geometry));
+}
+
+void GLGizmoEmboss::update_bend_letter_overlay()
+{
+    if (m_bend_surface_preview == nullptr || !m_bend_surface_preview->valid) {
+        m_bend_letter.reset();
+        m_bend_letter_drawn.reset();
+        return;
+    }
+    const Slic3r::Emboss::SurfaceArcPreview &preview = *m_bend_surface_preview;
+    if (m_bend_letter_drawn.has_value() && m_bend_letter_drawn->center == preview.center &&
+        m_bend_letter_drawn->radius == preview.radius && m_bend_letter_drawn->circle == preview.circle)
+        return;
+    m_bend_letter_drawn = preview; // copy
+    m_bend_letter.reset();
+
+    const double lift = 0.1; // [mm] along the surface normal, against z-fighting
+    GLModel::Geometry geometry;
+    geometry.format = {GLModel::Geometry::EPrimitiveType::Lines, GLModel::Geometry::EVertexLayout::P3};
+    const size_t count = preview.circle.size();
+    for (size_t i = 0; i < count; ++i) {
+        const size_t j = (i + 1) % count;
+        if (!preview.circle_ok[i] || !preview.circle_ok[j])
+            continue;
+        const unsigned int v = static_cast<unsigned int>(geometry.vertices_count());
+        geometry.add_vertex(Vec3f((preview.circle[i] + lift * preview.circle_normal[i]).cast<float>()));
+        geometry.add_vertex(Vec3f((preview.circle[j] + lift * preview.circle_normal[j]).cast<float>()));
+        geometry.add_line(v, v + 1);
+    }
+    // centre cross in the tangent plane of the arc centre
+    const Vec3d  n     = preview.normal;
+    Vec3d        a     = n.cross(std::abs(n.x()) < 0.9 ? Vec3d::UnitX() : Vec3d::UnitY()).normalized();
+    const Vec3d  b     = n.cross(a);
+    const double cross = std::clamp(0.08 * preview.radius, 1., 5.);
+    const Vec3d  c     = preview.center + lift * n;
+    const unsigned int v = static_cast<unsigned int>(geometry.vertices_count());
+    geometry.add_vertex(Vec3f((c - cross * a).cast<float>()));
+    geometry.add_vertex(Vec3f((c + cross * a).cast<float>()));
+    geometry.add_vertex(Vec3f((c - cross * b).cast<float>()));
+    geometry.add_vertex(Vec3f((c + cross * b).cast<float>()));
+    geometry.add_line(v, v + 1);
+    geometry.add_line(v + 2, v + 3);
+    m_bend_letter.init_from(std::move(geometry));
+}
+
+void GLGizmoEmboss::render_bend_overlay()
+{
+    if (!m_bend_result.has_value() || !m_bend_result->is_active() || m_volume == nullptr)
+        return;
+    if (m_parent.get_selection().get_first_volume() == nullptr)
+        return;
+
+    GUI_App &app = wxGetApp();
+    GLShaderProgram *shader = app.get_shader("flat");
+    if (shader == nullptr)
+        return;
+
+    // Same accent in light and dark theme
+    const ColorRGBA   color(0.f, 0.59f, 0.53f, 1.f);
+    const double      radius  = m_bend_result->radius_mm;
+    const Vec2d       center(0., -m_bend_result->spec.side() * radius);
+    const Transform3d text_tr = get_text_world_matrix();
+    const double      cross   = std::clamp(0.08 * radius, 1., 5.);
+    // Projected text: draw the circle where the text lands, on the surface
+    const bool on_surface = m_style_manager.get_style().projection.use_surface && !m_volume->is_the_only_one_part();
+    // Letter by letter: the reference curve the last placement used (geodesic circle)
+    const bool per_letter = is_curve_per_letter();
+
+    if (per_letter) {
+        update_bend_letter_overlay();
+        if (!m_bend_letter.is_initialized())
+            return;
+        m_bend_letter.set_color(color);
+    } else if (on_surface) {
+        update_bend_surface_overlay(text_tr, center, radius, cross);
+        if (!m_bend_surface.is_initialized())
+            return;
+        m_bend_surface.set_color(color);
+    } else {
+        if (!m_bend_circle.is_initialized()) {
+            GLModel::Geometry geometry;
+            geometry.format = {GLModel::Geometry::EPrimitiveType::LineLoop, GLModel::Geometry::EVertexLayout::P3};
+            const unsigned int count = 180;
+            geometry.reserve_vertices(count);
+            geometry.reserve_indices(count);
+            for (unsigned int i = 0; i < count; ++i) {
+                double angle = 2. * PI * i / count;
+                geometry.add_vertex(Vec3f(static_cast<float>(std::cos(angle)), static_cast<float>(std::sin(angle)), 0.f));
+                geometry.add_index(i);
+            }
+            m_bend_circle.init_from(std::move(geometry));
+        }
+        if (!m_bend_cross.is_initialized()) {
+            GLModel::Geometry geometry;
+            geometry.format = {GLModel::Geometry::EPrimitiveType::Lines, GLModel::Geometry::EVertexLayout::P3};
+            geometry.reserve_vertices(4);
+            geometry.reserve_indices(4);
+            geometry.add_vertex(Vec3f(-1.f, 0.f, 0.f));
+            geometry.add_vertex(Vec3f(1.f, 0.f, 0.f));
+            geometry.add_vertex(Vec3f(0.f, -1.f, 0.f));
+            geometry.add_vertex(Vec3f(0.f, 1.f, 0.f));
+            geometry.add_line(0, 1);
+            geometry.add_line(2, 3);
+            m_bend_cross.init_from(std::move(geometry));
+        }
+        m_bend_circle.set_color(color);
+        m_bend_cross.set_color(color);
+    }
+
+    const Camera &camera = app.plater()->get_camera();
+    shader->start_using();
+    shader->set_uniform("projection_matrix", camera.get_projection_matrix());
+
+    bool is_depth_test = glIsEnabled(GL_DEPTH_TEST);
+    if (!is_depth_test)
+        glsafe(::glEnable(GL_DEPTH_TEST));
+
+    if (per_letter) {
+        // geometry in text coordinates
+        shader->set_uniform("view_model_matrix", camera.get_view_matrix() * text_tr);
+        m_bend_letter.render();
+    } else if (on_surface) {
+        // geometry in world coordinates
+        shader->set_uniform("view_model_matrix", camera.get_view_matrix());
+        m_bend_surface.render();
+    } else {
+        const double      lift      = 0.05; // [mm] above the face, against z-fighting
+        const Transform3d center_tr = text_tr * Geometry::translation_transform(Vec3d(center.x(), center.y(), lift));
+        shader->set_uniform("view_model_matrix", camera.get_view_matrix() * center_tr * Geometry::scale_transform(Vec3d(radius, radius, 1.)));
+        m_bend_circle.render();
+        shader->set_uniform("view_model_matrix", camera.get_view_matrix() * center_tr * Geometry::scale_transform(Vec3d(cross, cross, 1.)));
+        m_bend_cross.render();
+    }
+
+    if (!is_depth_test)
+        glsafe(::glDisable(GL_DEPTH_TEST));
+    shader->stop_using();
+}
+
+void GLGizmoEmboss::draw_curve()
+{
+    const GuiCfg::Translations &tr = m_gui_cfg->translations;
+    const float offset        = m_gui_cfg->advanced_input_offset;
+    const float tooltip_width = m_gui_cfg->max_tooltip_width;
+
+    StyleManager::Style &style = m_style_manager.get_style();
+    EmbossBend &bend = style.projection.bend;
+    const bool was_on   = bend.mode != EmbossBend::Mode::off;
+    const bool is_text_object = m_volume->is_the_only_one_part();
+
+    auto draw_label = [offset](const std::string &text, bool highlight) {
+        ImGui::AlignTextToFramePadding();
+        if (highlight)
+            ImGuiWrapper::text_colored(ImGuiWrapper::COL_ORCA, text);
+        else
+            ImGuiWrapper::text(text);
+        ImGui::SameLine(offset);
+    };
+    // grey wrapped note under the controls
+    auto draw_note = [this, offset](const std::string &text) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + offset + m_gui_cfg->input_width);
+        ImGui::TextDisabled("%s", text.c_str());
+        ImGui::PopTextWrapPos();
+    };
+    auto draw_warning = [this, offset](const std::string &text) {
+        draw(get_icon(m_icons, IconType::exclamation, IconState::hovered));
+        ImGui::SameLine();
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + offset + m_gui_cfg->input_width - m_gui_cfg->icon_width);
+        ImGui::TextWrapped("%s", text.c_str());
+        ImGui::PopTextWrapPos();
+    };
+
+    // Discrete change (checkbox, radio, button): one undo step made by the job
+    bool commit = false;
+
+    // Enable
+    draw_label(tr.curve, was_on);
+    bool enable = was_on;
+    if (m_imgui->bbl_checkbox(wxString::FromUTF8("##curve_text"), enable)) {
+        if (enable) {
+            // Round face under the text: start with its radius, otherwise with an angle
+            std::optional<FaceCircle> circle;
+            if (!is_text_object)
+                circle = detect_face_circle();
+            std::optional<Slic3r::Emboss::BendInput> input = measure_text_for_bend();
+            Slic3r::Emboss::FontFileWithCache &ff = m_style_manager.get_font_file_with_cache();
+            if (circle.has_value() && input.has_value() && ff.has_value()) {
+                double scale = get_text_shape_scale(style.prop, *ff.font_file);
+                // Keep the text inside the face: the part of the glyphs outside the reference circle plus a margin
+                double outward = (bend.inside ? -input->y_min : input->y_max) * scale;
+                double margin  = std::clamp(0.05 * circle->radius, 0.5, 2.);
+                double radius  = circle->radius - std::max(outward, 0.) - margin;
+                bend.mode   = EmbossBend::Mode::radius;
+                bend.radius = static_cast<float>(std::max(radius, 1.));
+            } else {
+                bend.mode = EmbossBend::Mode::angle;
+                if (bend.angle <= 0.f)
+                    bend.angle = CURVE_DEFAULT_ANGLE;
+            }
+            // On a surface letter by letter by default. Per glyph along a section of the object
+            // (without the surface) is not combined with a curve.
+            style.prop.per_glyph = style.projection.use_surface && !is_text_object;
+            if (m_text_lines.is_init())
+                m_text_lines.reset();
+        } else {
+            bend.mode = EmbossBend::Mode::off;
+            // straight per glyph text follows a section of the object again
+            if (style.prop.per_glyph)
+                reinit_text_lines();
+        }
+        commit = true;
+    } else if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        m_imgui->tooltip(_u8L("Bend the text along a circular arc. With \"Use surface\" the letters follow the arc on "
+                              "the surface."),
+                         tooltip_width);
+    }
+
+    const bool is_on = bend.mode != EmbossBend::Mode::off;
+    if (!is_on) {
+        m_bend_result.reset();
+        if (commit)
+            process();
+        return;
+    }
+
+    std::optional<Slic3r::Emboss::BendResult> result = calc_bend_result();
+
+    // Define by: angle | radius
+    draw_label(tr.curve_define_by, false);
+    ImGuiWrapper::push_radio_style();
+    const bool by_angle = bend.mode == EmbossBend::Mode::angle;
+    if (ImGui::RadioButton(_u8L("Angle").c_str(), by_angle)) {
+        if (!by_angle) {
+            // keep the current look
+            bend.mode  = EmbossBend::Mode::angle;
+            bend.angle = result.has_value() ? std::clamp(static_cast<float>(std::round(result->angle_deg)), 1.f, 359.f) :
+                                              (bend.angle > 0.f ? bend.angle : CURVE_DEFAULT_ANGLE);
+            commit = true;
+        }
+    } else if (ImGui::IsItemHovered()) {
+        m_imgui->tooltip(_u8L("Set the span of the text; the radius follows the text length."), tooltip_width);
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton(_u8L("Radius").c_str(), !by_angle)) {
+        if (by_angle) {
+            bend.mode = EmbossBend::Mode::radius;
+            if (result.has_value())
+                bend.radius = static_cast<float>(std::round(result->radius_mm * 10.) / 10.);
+            if (bend.radius <= 0.f)
+                bend.radius = 20.f;
+            commit = true;
+        }
+    } else if (ImGui::IsItemHovered()) {
+        m_imgui->tooltip(_u8L("Set the radius of the circle; the span follows the text length. Best for text along the edge of a disc."),
+                         tooltip_width);
+    }
+    ImGuiWrapper::pop_radio_style();
+
+    // Value slider with numeric input; live preview without undo snapshot while dragging
+    bool slider_changed = false;
+    if (bend.mode == EmbossBend::Mode::angle) {
+        draw_label(tr.curve_angle, false);
+        ImGui::SetNextItemWidth(m_gui_cfg->input_width);
+        float value = bend.angle;
+        if (m_imgui->slider_float("##curve_angle", &value, 0.f, 359.f, u8"%.0f °", 1.f, false,
+                                  _L("Span of the longest text line around the circle. 0 is straight text."))) {
+            value = std::clamp(value, 0.f, 359.f);
+            if (value != bend.angle) {
+                bend.angle     = value;
+                slider_changed = true;
+            }
+        }
+    } else {
+        draw_label(tr.curve_radius, false);
+        ImGui::SetNextItemWidth(m_gui_cfg->input_width);
+        float value = bend.radius;
+        if (m_imgui->slider_float("##curve_radius", &value, 1.f, CURVE_SLIDER_MAX_RADIUS, "%.1f mm", 1.f, false,
+                                  _L("Radius of the circle through the text's middle line (the vertical alignment line)."))) {
+            value = std::clamp(value, CURVE_MIN_RADIUS, CURVE_MAX_RADIUS);
+            if (value != bend.radius) {
+                bend.radius    = value;
+                slider_changed = true;
+            }
+        }
+    }
+    const bool slider_released = m_imgui->get_last_slider_status().deactivated_after_edit;
+    if (slider_changed) {
+        if (!m_bend_drag_snapshot) {
+            // One undo step for the whole drag, taken before the first preview changes the volume
+            Plater::TakeSnapshot snapshot(wxGetApp().plater(), _u8L("Curve text"), UndoRedo::SnapshotType::GizmoAction);
+            m_bend_drag_snapshot = true;
+        }
+        request_bend_preview();
+        result = calc_bend_result();
+    }
+    if (slider_released)
+        m_bend_drag_snapshot = false;
+
+    // Derived value and limits
+    if (result.has_value()) {
+        std::string info = (bend.mode == EmbossBend::Mode::angle) ?
+            GUI::format(_u8L("Radius: %1% mm"), curve_number(result->radius_mm, 1)) :
+            GUI::format(_u8L("Span: %1% °"), curve_number(result->angle_deg, 0));
+        ImGui::Dummy(ImVec2(0.f, 0.f));
+        ImGui::SameLine(offset);
+        ImGui::TextDisabled("%s", info.c_str());
+        if (result->limited_by_length)
+            draw_warning(GUI::format(_u8L("Text is too long for this radius; the minimum is %1% mm."),
+                                     curve_number(result->radius_mm, 1)));
+        if (result->limited_by_height)
+            draw_warning(_u8L("The text is too tall for a tighter curve; the curve was limited."));
+    }
+
+    // Side: arch | smile
+    draw_label(tr.curve_side, false);
+    ImGuiWrapper::push_radio_style();
+    if (ImGui::RadioButton(_u8L("Arch").c_str(), !bend.inside)) {
+        if (bend.inside) {
+            bend.inside = false;
+            commit      = true;
+        }
+    } else if (ImGui::IsItemHovered()) {
+        m_imgui->tooltip(_u8L("Text on the outside of the circle, reading clockwise over the top."), tooltip_width);
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton(_u8L("Smile").c_str(), bend.inside)) {
+        if (!bend.inside) {
+            bend.inside = true;
+            commit      = true;
+        }
+    } else if (ImGui::IsItemHovered()) {
+        m_imgui->tooltip(_u8L("Text on the inside of the circle, reading along the bottom."), tooltip_width);
+    }
+    ImGuiWrapper::pop_radio_style();
+
+    // Letters: bent | rigid
+    draw_label(tr.curve_letters, false);
+    ImGuiWrapper::push_radio_style();
+    if (ImGui::RadioButton(_u8L("Bent").c_str(), !bend.rigid)) {
+        if (bend.rigid) {
+            bend.rigid = false;
+            commit     = true;
+        }
+    } else if (ImGui::IsItemHovered()) {
+        m_imgui->tooltip(_u8L("Letters follow the arc and become slightly wedge-shaped."), tooltip_width);
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton(_u8L("Rigid").c_str(), bend.rigid)) {
+        if (!bend.rigid) {
+            bend.rigid = true;
+            commit     = true;
+        }
+    } else if (ImGui::IsItemHovered()) {
+        m_imgui->tooltip(_u8L("Letters keep their shape; each one is only turned to follow the arc."), tooltip_width);
+    }
+    ImGuiWrapper::pop_radio_style();
+
+    // Projection onto the surface: per letter (default) | parallel
+    const bool on_surface = style.projection.use_surface && !is_text_object;
+    if (on_surface) {
+        draw_label(tr.curve_projection, false);
+        ImGuiWrapper::push_radio_style();
+        if (ImGui::RadioButton(_u8L("Per letter").c_str(), style.prop.per_glyph)) {
+            if (!style.prop.per_glyph) {
+                style.prop.per_glyph = true;
+                commit               = true;
+            }
+        } else if (ImGui::IsItemHovered()) {
+            m_imgui->tooltip(_u8L("Every letter is placed on the surface along the arc and projected along the local "
+                                  "surface normal. Letters keep their shape all the way round, also past the edge "
+                                  "seen from the text."),
+                             tooltip_width);
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton(_u8L("Parallel").c_str(), !style.prop.per_glyph)) {
+            if (style.prop.per_glyph) {
+                style.prop.per_glyph = false;
+                commit               = true;
+            }
+        } else if (ImGui::IsItemHovered()) {
+            m_imgui->tooltip(_u8L("The arc is laid out in the text plane and the whole text is projected onto the "
+                                  "surface in one direction. Letters stretch where the surface gets steep."),
+                             tooltip_width);
+        }
+        ImGuiWrapper::pop_radio_style();
+        // what the surface made of the arc (last placement)
+        if (style.prop.per_glyph && m_bend_surface_preview != nullptr && m_bend_surface_preview->valid) {
+            const Slic3r::Emboss::SurfaceArcPreview &preview = *m_bend_surface_preview;
+            ImGui::Dummy(ImVec2(0.f, 0.f));
+            ImGui::SameLine(offset);
+            ImGui::TextDisabled("%s", GUI::format(_u8L("On the surface: radius %1% mm, span %2% °"),
+                                                  curve_number(preview.radius, 1), curve_number(preview.span_deg, 0)).c_str());
+            if (preview.limited)
+                draw_warning(_u8L("The surface has no arc of that size; the curve was limited."));
+        }
+    }
+
+    // Move the text so the arc centre lies on the centre of the face / object
+    m_imgui->disabled_begin(is_text_object || !result.has_value());
+    if (ImGui::Button(_u8L("Centre arc on object").c_str())) {
+        center_arc_on_object();
+    } else if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        m_imgui->tooltip(is_text_object ?
+                             _u8L("The text is an object of its own, so there is nothing to centre it on.") :
+                             _u8L("Move the text so the centre of its arc lies on the centre of the round face under the text, "
+                                  "or of the object."),
+                         tooltip_width);
+    }
+    m_imgui->disabled_end();
+
+    if (commit) {
+        m_bend_preview_pending = false; // the full update below covers it
+        process();
+        result = calc_bend_result();
+    }
+    m_bend_result = result;
+}
+
 #ifdef ALLOW_ADD_FONT_BY_OS_SELECTOR
 bool GLGizmoEmboss::choose_font_by_wxdialog()
 {
@@ -3251,7 +4207,28 @@ EmbossShape &TextDataBase::create_shape()
     const FontProp &fp = m_text_configuration.style.prop;
     auto was_canceled = [&c = cancel](){ return c->load(); };
 
-    shape.shapes_with_ids = text2vshapes(m_font_file, text_w, fp, was_canceled);
+    Slic3r::Emboss::GlyphAdvances advances;
+    Slic3r::Emboss::TextGlyphSources sources;
+    sources.inline_shapes = &m_text_configuration.inline_shapes;
+    shape.shapes_with_ids = text2vshapes(m_font_file, text_w, fp, was_canceled, advances, sources);
+
+    // Curved text: bend the 2D outlines before they are united and extruded; with "Use surface"
+    // they are then projected onto the object along one direction (parallel).
+    // With "Use surface" and per glyph ("Per letter") the outlines stay straight: the surface job
+    // places and orients every glyph on the surface along the arc (cut_curved_glyph_surface).
+    const EmbossBend &bend = shape.projection.bend;
+    bend_per_glyph = false;
+    bend_advances.clear();
+    if (bend.is_active() && !was_canceled()) {
+        if (fp.per_glyph && shape.projection.use_surface) {
+            bend_per_glyph = true;
+            bend_advances  = std::move(advances);
+        } else {
+            // per glyph along a section of the object is not used for curved text (no text lines)
+            Slic3r::Emboss::apply_bend(shape.shapes_with_ids, bend, shape.scale, &advances,
+                                       Slic3r::Emboss::bend_tolerance_mm(shape.projection.use_surface));
+        }
+    }
     return shape;
 }
 
@@ -3263,18 +4240,20 @@ void TextDataBase::write(ModelVolume &volume) const
 }
 
 std::unique_ptr<DataBase> create_emboss_data_base(const std::string                  &text,
+                                       const InlineShapeTable             &inline_shapes,
                                        StyleManager                       &style_manager,
                                        TextLinesModel                     &text_lines,
                                        const Selection                    &selection,
                                        ModelVolumeType                     type,
                                        std::shared_ptr<std::atomic<bool>> &cancel)
 {
-    // create volume_name
-    std::string volume_name = text; // copy
-    // contain_enter?
-    if (volume_name.find('\n') != std::string::npos)
-        // change enters to space
-        std::replace(volume_name.begin(), volume_name.end(), '\n', ' ');
+    // Inline shapes: only the entries the text uses go into the volume (the gizmo keeps its whole table
+    // so the undo of the text box can bring a deleted shape back)
+    InlineShapeTable used_shapes = inline_shapes; // copy
+    purge_unused_inline_shapes(used_shapes, text);
+
+    // create volume_name: line breaks become spaces, shapes "[star]" (never the placeholder characters)
+    std::string volume_name = text_volume_name(text, used_shapes);
 
     if (!style_manager.is_active_font()) {
         style_manager.load_valid_style();
@@ -3289,7 +4268,7 @@ std::unique_ptr<DataBase> create_emboss_data_base(const std::string             
     assert(style_manager.get_wx_font().IsOk());
     assert(style.path.compare(WxFontUtils::store_wxFont(style_manager.get_wx_font())) == 0);
 
-    if (style.prop.per_glyph) {
+    if (style.prop.per_glyph && style.projection.bend.mode == EmbossBend::Mode::off) {
         if (!text_lines.is_init())
             init_text_lines(text_lines, selection, style_manager);
     } else
@@ -3311,7 +4290,7 @@ std::unique_ptr<DataBase> create_emboss_data_base(const std::string             
     base.from_surface = style.distance;
 
     FontFileWithCache &font = style_manager.get_font_file_with_cache();
-    TextConfiguration tc{static_cast<EmbossStyle>(style), text};
+    TextConfiguration tc{static_cast<EmbossStyle>(style), text, std::move(used_shapes)};
     return std::make_unique<TextDataBase>(std::move(base), font, std::move(tc), style.projection);
 }
 
@@ -3397,11 +4376,21 @@ bool load(Facenames &facenames) {
     assert(std::is_sorted(data.good.begin(), data.good.end()));
 
     facenames.hash = data.hash;
+    facenames.faces.clear();
     facenames.faces.reserve(data.good.size());
     for (const wxString &face : data.good)
         facenames.faces.push_back({face});
+    // The font search filters faces_names; without this every search came back empty whenever
+    // the list was restored from this cache (every run after the first).
+    sync_face_names(facenames);
     facenames.bad = data.bad;
     return true;
+}
+
+bool sync_face_names(Facenames &facenames)
+{
+    return emboss_face_list::sync_names(facenames.faces, facenames.faces_names,
+                                        [](const FaceName &face) { return face.wx_name.utf8_string(); });
 }
 
 void init_truncated_names(Facenames &face_names, float max_width)
@@ -3669,7 +4658,29 @@ GuiCfg create_gui_configuration()
     // this is numerical selector of font inside font collections
     tr.collection = _u8L("Collection");
 
+    // TRN - Input label. Be short as possible. Bend the text along a circular arc
+    tr.curve = _u8L("Curve text");
+    // TRN - Input label. Be short as possible. Choose whether the arc angle or the radius is set
+    tr.curve_define_by = _u8L("Define by");
+    // TRN - Input label. Be short as possible. Span of the curved text in degrees
+    tr.curve_angle = _u8L("Arc angle");
+    // TRN - Input label. Be short as possible. Radius of the circle the text follows
+    tr.curve_radius = _u8L("Radius");
+    // TRN - Input label. Be short as possible. Text on the outside (arch) or inside (smile) of the circle
+    tr.curve_side = _u8L("Side");
+    // TRN - Input label. Be short as possible. Letters bent with the arc or kept rigid
+    tr.curve_letters = _u8L("Letters");
+    // TRN - Input label. Be short as possible. Curved text on a surface: placed per letter or projected in one direction
+    tr.curve_projection = _u8L("Projection");
+
     float max_advanced_text_width = std::max({
+        ImGui::CalcTextSize(tr.curve.c_str()).x,
+        ImGui::CalcTextSize(tr.curve_define_by.c_str()).x,
+        ImGui::CalcTextSize(tr.curve_angle.c_str()).x,
+        ImGui::CalcTextSize(tr.curve_radius.c_str()).x,
+        ImGui::CalcTextSize(tr.curve_side.c_str()).x,
+        ImGui::CalcTextSize(tr.curve_letters.c_str()).x,
+        ImGui::CalcTextSize(tr.curve_projection.c_str()).x,
         ImGui::CalcTextSize(tr.use_surface.c_str()).x,
         ImGui::CalcTextSize(tr.per_glyph.c_str()).x,
         ImGui::CalcTextSize(tr.alignment.c_str()).x,

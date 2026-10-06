@@ -151,14 +151,14 @@ save("Snapmaker_Orca_512px_maskable.png", mask)
 
 # ---- .ico / .icns -----------------------------------------------------------------
 sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
-master.resize((256, 256), Image.LANCZOS).save(os.path.join(OUT, "Snapmaker_Orca.ico"), sizes=sizes)
-print("   Snapmaker_Orca.ico", sizes)
-master.resize((154, 154), Image.LANCZOS).save(os.path.join(OUT, "Snapmaker_OrcaTitle.ico"),
+master.resize((256, 256), Image.LANCZOS).save(os.path.join(OUT, "EdgeSlicer.ico"), sizes=sizes)
+print("   EdgeSlicer.ico", sizes)
+master.resize((154, 154), Image.LANCZOS).save(os.path.join(OUT, "EdgeSlicerTitle.ico"),
                                               sizes=[(154, 154)])
-print("   Snapmaker_OrcaTitle.ico [(154, 154)]")
-master.resize((256, 256), Image.LANCZOS).save(os.path.join(OUT, "Snapmaker_Orca-mac_256px.ico"),
+print("   EdgeSlicerTitle.ico [(154, 154)]")
+master.resize((256, 256), Image.LANCZOS).save(os.path.join(OUT, "EdgeSlicer-mac_256px.ico"),
                                               sizes=[(256, 256)])
-print("   Snapmaker_Orca-mac_256px.ico [(256, 256)]")
+print("   EdgeSlicer-mac_256px.ico [(256, 256)]")
 
 # ICNS by hand: the container is just a header plus PNG-carrying entries, and Pillow's own
 # writer is not available on every platform.
@@ -171,9 +171,9 @@ for tag, n in ICNS:
     data = buf.getvalue()
     entries.append(tag + struct.pack(">I", len(data) + 8) + data)
 blob = b"".join(entries)
-with open(os.path.join(OUT, "Snapmaker_Orca.icns"), "wb") as f:
+with open(os.path.join(OUT, "EdgeSlicer.icns"), "wb") as f:
     f.write(b"icns" + struct.pack(">I", len(blob) + 8) + blob)
-print("   Snapmaker_Orca.icns", [n for _, n in ICNS])
+print("   EdgeSlicer.icns", [n for _, n in ICNS])
 
 # ---- the SVGs the app renders through NanoSVG (paths only, no <text>) ---------------
 save_text("splash_app_icon.svg", svg(140))

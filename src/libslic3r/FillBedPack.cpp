@@ -1,5 +1,6 @@
 #include "FillBedPack.hpp"
 
+#include "BoundingBox.hpp"
 #include "ClipperUtils.hpp"
 #include "libslic3r.h"
 #include "Polygon.hpp"

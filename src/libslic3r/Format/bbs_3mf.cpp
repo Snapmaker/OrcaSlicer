@@ -12,8 +12,10 @@
 #include "../Semver.hpp"
 #include "../Time.hpp"
 #include "../BambuConfigCompat.hpp"
+#include "../BRep/CadEdit.hpp"
 
 #include "../I18N.hpp"
+#include "../UntrustedInput.hpp"
 
 #include "bbs_3mf.hpp"
 
@@ -51,6 +53,7 @@ namespace pt = boost::property_tree;
 #include "nlohmann/json.hpp"
 
 #include "TextConfiguration.hpp"
+#include "InlineShapes.hpp"
 #include "EmbossShape.hpp"
 #include "ExPolygonSerialize.hpp" 
 
@@ -182,6 +185,9 @@ const std::string AUXILIARY_DIR = "Auxiliaries/";
 // SHA-256, plus a manifest so a reader can tell an Image Fill asset from any other stray PNG and
 // can check the bytes it got are the bytes that were written.
 const std::string IMAGE_FILL_DIR = "Metadata/image_fill/";
+// Exact CAD bodies of parts (BRep/CadBody.hpp), one blob per part, referenced from the part's
+// CAD_BODY_FILE_KEY metadata. Versions that do not know the key ignore it and the file.
+const std::string CAD_BODY_DIR = "Metadata/cad_bodies/";
 const std::string IMAGE_FILL_MANIFEST_FILE = "Metadata/image_fill/manifest.json";
 const std::string PROJECT_EMBEDDED_PRINT_PRESETS_FILE = "Metadata/print_setting_";
 const std::string PROJECT_EMBEDDED_SLICE_PRESETS_FILE = "Metadata/process_settings_";
@@ -347,6 +353,10 @@ static constexpr const char* LIMIT_FILAMENT_MAP_ATTR = "limit_filament_maps";
 // EdgeSlicer: the per-plate filament arrangement the user confirmed before slicing on a Bambu
 // two-extruder printer (DualNozzleSync::Confirmation JSON). Not written into Bambu exports.
 static constexpr const char* DUAL_NOZZLE_CONFIRM_ATTR = "edgeslicer_dual_nozzle_confirm";
+// EdgeSlicer: when and where the plate was sent (PlatePrintHistory.hpp). One metadata element per
+// plate, written only when the plate has a history and never into Bambu exports; a build that does
+// not know the key skips it.
+static constexpr const char* PRINT_HISTORY_ATTR = "edgeslicer_print_history";
 static constexpr const char* PAUSE_COUNT_ATTR = "pause_count";
 static constexpr const char* FIRST_LAYER_TIME_ATTR = "first_layer_time";
 static constexpr const char* SUPPORT_MATERIAL_ON_WIPE_TOWER_ATTR = "support_material_on_wipe_tower";
@@ -369,6 +379,10 @@ static constexpr const char* PART_TYPE = "part";
 static constexpr const char* NAME_KEY = "name";
 static constexpr const char* VOLUME_TYPE_KEY = "volume_type";
 static constexpr const char* PART_TYPE_KEY = "part_type";
+// Keep seam modes separate from the base type so older readers see a non-printing modifier.
+static constexpr const char* PRECISE_SEAM_TYPE_KEY = "precise_seam_type";
+// Preserve dormant settings without turning an older reader's modifier into an active override.
+static constexpr char PRECISE_SEAM_CONFIG_PREFIX[] = "precise_seam_config:";
 static constexpr const char* MATRIX_KEY = "matrix";
 static constexpr const char* SOURCE_FILE_KEY = "source_file";
 static constexpr const char* SOURCE_OBJECT_ID_KEY = "source_object_id";
@@ -376,6 +390,7 @@ static constexpr const char* SOURCE_VOLUME_ID_KEY = "source_volume_id";
 static constexpr const char* SOURCE_OFFSET_X_KEY = "source_offset_x";
 static constexpr const char* SOURCE_OFFSET_Y_KEY = "source_offset_y";
 static constexpr const char* SOURCE_OFFSET_Z_KEY = "source_offset_z";
+static constexpr const char* CAD_BODY_FILE_KEY = "cad_body_file";
 static constexpr const char* SOURCE_IN_INCHES    = "source_in_inches";
 static constexpr const char* SOURCE_IN_METERS    = "source_in_meters";
 
@@ -390,6 +405,9 @@ static constexpr const char* MESH_STAT_BACKWARDS_EDGES      = "backwards_edges";
 // Store / load of TextConfiguration
 static constexpr const char *TEXT_TAG = "slic3rpe:text";
 static constexpr const char *TEXT_DATA_ATTR = "text";
+// Inline shapes of the text (JSON, InlineShapes.hpp), written only when the text has any.
+// User SVGs of the table travel as the zip entries "3D/inline_<hash8>.svg" named in it.
+static constexpr const char *INLINE_SHAPES_ATTR = "inline_shapes";
 // TextConfiguration::EmbossStyle
 static constexpr const char *STYLE_NAME_ATTR      = "style_name";
 static constexpr const char *FONT_DESCRIPTOR_ATTR = "font_descriptor";
@@ -421,6 +439,11 @@ static constexpr const char *SVG_FILE_PATH_IN_3MF_ATTR = "filepath3mf";
 // EmbossProjection
 static constexpr const char *DEPTH_ATTR       = "depth";
 static constexpr const char *USE_SURFACE_ATTR = "use_surface";
+// EmbossBend (curved text), written only when the bend is active; absent = straight text
+static constexpr const char *BEND_ANGLE_ATTR  = "bend_angle";  // [deg], angle mode
+static constexpr const char *BEND_RADIUS_ATTR = "bend_radius"; // [mm], radius mode
+static constexpr const char *BEND_INSIDE_ATTR = "bend_inside"; // 1 = smile
+static constexpr const char *BEND_RIGID_ATTR  = "bend_rigid";  // 1 = keep letter shape
 // static constexpr const char *FIX_TRANSFORMATION_ATTR = "transform";
 
 
@@ -1205,6 +1228,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         /*IdToSlaSupportPointsMap m_sla_support_points;
         IdToSlaDrainHolesMap    m_sla_drain_holes;*/
         PathToEmbossShapeFileMap m_path_to_emboss_shape_files;
+        // CAD body blobs by their path in the archive, read before the volumes are generated.
+        std::map<std::string, std::string> m_cad_body_files;
         std::string m_curr_metadata_name;
         std::string m_curr_characters;
         std::string m_name;
@@ -1499,9 +1524,13 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 if (boost::filesystem::exists(model.get_backup_path() + "/origin.txt"))
                     load_string_file(model.get_backup_path() + "/origin.txt", m_origin_file);
             } catch (...) {}
-            save_string_file(
-                model.get_backup_path() + "/lock.txt",
-                boost::lexical_cast<std::string>(get_current_pid()));
+            try {
+                save_string_file(
+                    model.get_backup_path() + "/lock.txt",
+                    boost::lexical_cast<std::string>(get_current_pid()));
+            } catch (const std::exception &e) {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to write lock.txt: " << e.what();
+            }
         }
         else {
             m_backup_path = model.get_backup_path();
@@ -1512,7 +1541,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             file_version = *m_bambuslicer_generator_version;
         // save for restore
         if (result && m_load_aux && !m_load_restore) {
-            save_string_file(model.get_backup_path() + "/origin.txt", filename);
+            try {
+                save_string_file(model.get_backup_path() + "/origin.txt", filename);
+            } catch (const std::exception &e) {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to write origin.txt: " << e.what();
+            }
         }
         if (m_load_restore && !result) // not clear failed backup data for later analyze
             model.set_backup_path("detach");
@@ -1676,7 +1709,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         }
         while (it != m_plater_data.end())
         {
-            if (it->first > m_plater_data.size())
+            if (it->first <= 0 || static_cast<size_t>(it->first) > m_plater_data.size())
             {
                 add_error("invalid plate index");
                 return false;
@@ -1717,6 +1750,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             plate->pick_file = it->second->pick_file;
             plate->pattern_bbox_file = it->second->pattern_bbox_file;
             plate->config = it->second->config;
+            plate->print_history = it->second->print_history;
+            plate->dual_nozzle_confirm = it->second->dual_nozzle_confirm;
 
             if (!plate->thumbnail_file.empty())
                 _extract_from_archive(archive, plate->thumbnail_file, [&pixels = plate_data_list[it->first - 1]->plate_thumbnail.pixels](auto &archive, auto const &stat) -> bool {
@@ -2048,6 +2083,14 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 }
                 else if (_is_svg_shape_file(name)) {
                     _extract_embossed_svg_shape_file(name, archive, stat);
+                }
+                else if (boost::algorithm::istarts_with(name, CAD_BODY_DIR)) {
+                    // A part's exact CAD body; attached in _generate_volumes_new() if its mesh still matches.
+                    if (stat.m_uncomp_size > 0 && stat.m_uncomp_size < 1024ull * 1024ull * 1024ull) {
+                        std::string blob(size_t(stat.m_uncomp_size), '\0');
+                        if (mz_zip_reader_extract_to_mem(&archive, stat.m_file_index, blob.data(), blob.size(), 0))
+                            m_cad_body_files[name] = std::move(blob);
+                    }
                 }
                 else if (!dont_load_config && boost::algorithm::iequals(name, SLICE_INFO_CONFIG_FILE)) {
                     m_parsing_slice_info = true;
@@ -2415,7 +2458,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         }
         while (it != m_plater_data.end())
         {
-            if (it->first > m_plater_data.size())
+            if (it->first <= 0 || static_cast<size_t>(it->first) > m_plater_data.size())
             {
                 add_error("invalid plate index");
                 return false;
@@ -2463,6 +2506,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             plate_data_list[it->first-1]->pick_file = in_backup(it->second->pick_file);
             plate_data_list[it->first-1]->pattern_bbox_file = in_backup(it->second->pattern_bbox_file);
             plate_data_list[it->first-1]->config = it->second->config;
+            plate_data_list[it->first-1]->print_history = it->second->print_history;
+            plate_data_list[it->first-1]->dual_nozzle_confirm = it->second->dual_nozzle_confirm;
 
             current_plate_data = plate_data_list[it->first - 1];
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" << __LINE__ << boost::format(", plate %1%, thumbnail_file=%2%, no_light_thumbnail_file=%3%")%it->first %plate_data_list[it->first-1]->thumbnail_file %plate_data_list[it->first-1]->no_light_thumbnail_file;
@@ -2624,19 +2669,26 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         XML_SetElementHandler(m_xml_parser, start_handler, end_handler);
         XML_SetCharacterDataHandler(m_xml_parser, _BBS_3MF_Importer::_handle_xml_characters);
 
-        void* parser_buffer = XML_GetBuffer(m_xml_parser, (int)stat.m_uncomp_size);
+        // expat sizes its buffer with an int, so a larger entry cannot be parsed in one piece.
+        if (!untrusted::xml_entry_size_ok(stat.m_uncomp_size)) {
+            add_error("Found invalid size");
+            return false;
+        }
+        const int xml_size = static_cast<int>(stat.m_uncomp_size);
+
+        void* parser_buffer = XML_GetBuffer(m_xml_parser, xml_size);
         if (parser_buffer == nullptr) {
             add_error("Unable to create buffer");
             return false;
         }
 
-        mz_bool res = mz_zip_reader_extract_file_to_mem(&archive, stat.m_filename, parser_buffer, (size_t)stat.m_uncomp_size, 0);
+        mz_bool res = mz_zip_reader_extract_file_to_mem(&archive, stat.m_filename, parser_buffer, static_cast<size_t>(xml_size), 0);
         if (res == 0) {
             add_error("Error while reading config data to buffer");
             return false;
         }
 
-        if (!XML_ParseBuffer(m_xml_parser, (int)stat.m_uncomp_size, 1)) {
+        if (!XML_ParseBuffer(m_xml_parser, xml_size, 1)) {
             char error_buf[1024];
             ::snprintf(error_buf, 1024, "Error (%s) while parsing xml file at line %d", XML_ErrorString(XML_GetErrorCode(m_xml_parser)), (int)XML_GetCurrentLineNumber(m_xml_parser));
             add_error(error_buf);
@@ -3363,10 +3415,18 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 dest_file = dest_file.substr(found + AUXILIARY_STR_LEN);
             else
                 return;
-            // zip-slip: an entry named "Auxiliaries/../../x" must not leave the temp folder.
-            if (!untrusted::is_safe_archive_relative_path(dest_file)) {
-                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping auxiliary entry with an unsafe path: " << stat.m_filename;
-                return;
+            // zip-slip: an entry named "Auxiliaries/../../x" must not leave the temp folder. Names
+            // are normalised first (backslashes, "./", "a//b") like every confined extractor's.
+            {
+                std::string normalized;
+                const untrusted::ArchiveEntryName verdict = untrusted::normalize_archive_entry_path(dest_file, normalized);
+                if (verdict == untrusted::ArchiveEntryName::Skip)
+                    return;
+                if (verdict == untrusted::ArchiveEntryName::Reject) {
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping auxiliary entry with an unsafe path: " << stat.m_filename;
+                    return;
+                }
+                dest_file = std::move(normalized);
             }
 
             if (dest_file.find('/') != std::string::npos) {
@@ -3378,10 +3438,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     boost::filesystem::create_directories(parent_full_path);
             }
             dest_file = dir.string() + std::string("/") + dest_file;
-            std::string dest_zip_file = encode_path(dest_file.c_str());
-            mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_zip_file.c_str(), 0);
+            // Wide API on Windows: the validated UTF-8 name is never narrowed through the ANSI code page.
+            const bool res = extract_entry_to_file(archive, stat.m_file_index, dest_file);
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", extract  %1% from 3mf %2%, ret %3%\n") % dest_file % stat.m_filename % res;
-            if (res == 0) {
+            if (!res) {
                 add_error("Error while extract auxiliary file to file");
                 return;
             }
@@ -3392,17 +3452,24 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
     {
         if (stat.m_uncomp_size > 0) {
             std::string src_file = decode_path(stat.m_filename);
-            if (!untrusted::is_safe_archive_relative_path(src_file)) {
-                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping entry with an unsafe path: " << stat.m_filename;
-                return;
+            {
+                std::string normalized;
+                const untrusted::ArchiveEntryName verdict = untrusted::normalize_archive_entry_path(src_file, normalized);
+                if (verdict == untrusted::ArchiveEntryName::Skip)
+                    return;
+                if (verdict == untrusted::ArchiveEntryName::Reject) {
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping entry with an unsafe path: " << stat.m_filename;
+                    return;
+                }
+                src_file = std::move(normalized);
             }
             // BBS: use backup path
             //aux directory from model
             boost::filesystem::path dest_path = boost::filesystem::path(m_backup_path + "/" + src_file);
-            std::string dest_zip_file = encode_path(dest_path.string().c_str());
-            mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_zip_file.c_str(), 0);
+            // Wide API on Windows: the validated UTF-8 name is never narrowed through the ANSI code page.
+            const bool res = extract_entry_to_file(archive, stat.m_file_index, m_backup_path + "/" + src_file);
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", extract  %1% from 3mf %2%, ret %3%\n") % dest_path % stat.m_filename % res;
-            if (res == 0) {
+            if (!res) {
                 add_error("Error while extract file to temp directory");
                 return;
             }
@@ -3769,14 +3836,34 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
     }*/
 
     void _BBS_3MF_Importer::_extract_embossed_svg_shape_file(const std::string &filename, mz_zip_archive &archive, const mz_zip_archive_file_stat &stat){
-        assert(m_path_to_emboss_shape_files.find(filename) == m_path_to_emboss_shape_files.end());
-        auto file = std::make_unique<std::string>(stat.m_uncomp_size, '\0');
-        mz_bool res  = mz_zip_reader_extract_to_mem(&archive, stat.m_file_index, (void *) file->data(), stat.m_uncomp_size, 0);
-        if (res == 0) {
-            add_error("Error while reading svg shape for emboss");
+        // Inline shapes of text ("3D/inline_*.svg"): the name must be a plain, normalised entry name of the
+        // form the writer makes, or the entry is not read at all (it then matches no table entry). The
+        // size cap below (untrusted::SVG_SIZE_LIMIT) applies before anything is allocated.
+        if (boost::istarts_with(filename, "3D/inline_")) {
+            std::string normalized;
+            if (untrusted::normalize_archive_entry_path(filename, normalized) != untrusted::ArchiveEntryName::Ok ||
+                normalized != filename || !is_inline_svg_entry_name(filename)) {
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": inline shape entry with an unexpected name skipped: " << filename;
+                return;
+            }
+        }
+        if (m_path_to_emboss_shape_files.find(filename) != m_path_to_emboss_shape_files.end()) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": duplicate SVG entry skipped: " << filename;
             return;
         }
-        
+        // The entry comes from a file we did not write: check its declared size before allocating
+        // and inflate through a capped sink (untrusted::SVG_SIZE_LIMIT), so a zip bomb or an
+        // entry whose header lies cannot exhaust memory. A refused SVG only costs the option to
+        // re-edit the shape as SVG; the baked mesh of the volume and the rest of the project load.
+        auto file = std::make_unique<std::string>();
+        std::string why;
+        if (!read_zip_entry_capped(archive, stat.m_file_index, untrusted::SVG_SIZE_LIMIT, *file, &why)) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": SVG shape \"" << filename << "\" in the project was not loaded ("
+                                       << why << "; declared " << stat.m_uncomp_size << " bytes, limit "
+                                       << untrusted::SVG_SIZE_LIMIT << "). The shape keeps its mesh but cannot be edited as SVG.";
+            return;
+        }
+
         // store for case svg is loaded before volume
         m_path_to_emboss_shape_files[filename] = std::move(file);
         
@@ -4628,7 +4715,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             return type_name->second;
         }
 
-        static void to_xml(std::stringstream &stream, const TextConfiguration &tc);
+        // entry name -> data of the inline SVG entries already in the archive (one entry per content)
+        using InlineSvgEntries = std::map<std::string, std::shared_ptr<const std::string>>;
+        static void to_xml(std::stringstream &stream, const TextConfiguration &tc, mz_zip_archive *archive = nullptr,
+                           InlineSvgEntries *written = nullptr);
         static std::optional<TextConfiguration> read(const char **attributes, unsigned int num_attributes);
         static EmbossShape read_old(const char **attributes, unsigned int num_attributes);
     };
@@ -5133,6 +5223,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             {
                 if (m_curr_plater)
                     m_curr_plater->dual_nozzle_confirm = value;
+            }
+            else if (key == PRINT_HISTORY_ATTR)
+            {
+                if (m_curr_plater)
+                    m_curr_plater->print_history = value;
             }
         }
 
@@ -5684,18 +5779,36 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             
             if (auto &es = volume_data->shape_configuration; es.has_value())
                 volume->emboss_shape = std::move(es);            
-            if (auto &tc = volume_data->text_configuration; tc.has_value())
-                volume->text_configuration = std::move(tc);
+            if (auto &tc = volume_data->text_configuration; tc.has_value()) {
+                // user SVGs of inline shapes: the zip entries were read before the volumes are made
+                TextConfiguration text = *tc;
+                for (InlineShape &shape : text.inline_shapes)
+                    if (shape.source == InlineShapeSource::Svg && !shape.path_in_3mf.empty()) {
+                        auto it = m_path_to_emboss_shape_files.find(shape.path_in_3mf);
+                        if (it != m_path_to_emboss_shape_files.end() && it->second != nullptr)
+                            shape.svg_data = it->second;
+                    }
+                volume->text_configuration = std::move(text);
+            }
 
+            // Apply the seam mode after all base-type metadata, regardless of XML key order.
+            ModelVolumeType precise_seam_type = ModelVolumeType::INVALID;
+            std::string     cad_body_file;
             // apply the remaining volume's metadata
             for (const Metadata& metadata : volume_data->metadata) {
                 if (metadata.key == NAME_KEY)
                     volume->name = metadata.value;
+                else if (metadata.key == CAD_BODY_FILE_KEY)
+                    cad_body_file = metadata.value;
                 //else if ((metadata.key == MODIFIER_KEY) && (metadata.value == "1"))
 				//	volume->set_type(ModelVolumeType::PARAMETER_MODIFIER);
 				//for old format
                 else if ((metadata.key == VOLUME_TYPE_KEY) || (metadata.key == PART_TYPE_KEY))
                     volume->set_type(ModelVolume::type_from_string(metadata.value));
+                else if (metadata.key == PRECISE_SEAM_TYPE_KEY)
+                    precise_seam_type = ModelVolume::type_from_string(metadata.value);
+                else if (boost::starts_with(metadata.key, PRECISE_SEAM_CONFIG_PREFIX))
+                    continue; // Restore dormant settings only after the final volume type is known.
                 else if (metadata.key == SOURCE_FILE_KEY)
                     volume->source.input_file = metadata.value;
                 else if (metadata.key == SOURCE_OBJECT_ID_KEY)
@@ -5716,6 +5829,36 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     continue;
                 else
                     volume->config.set_deserialize(metadata.key, metadata.value, config_substitutions);
+            }
+
+            // Missing or unknown seam modes retain the ordinary modifier fallback.
+            // Ignore seam metadata on other base types; legacy inline seam types still load above.
+            if (volume->is_modifier() && is_precise_seam(precise_seam_type))
+                volume->set_type(precise_seam_type);
+
+            // The part's exact CAD body, trusted only while it still describes the loaded mesh.
+            if (!cad_body_file.empty()) {
+                auto it = m_cad_body_files.find(cad_body_file);
+                if (it != m_cad_body_files.end()) {
+                    volume->cad_body = BRep::CadBody::from_blob(it->second);
+                    // attached_cad_body() checks the mesh fingerprint and folds in the centring shift.
+                    volume->cad_body = volume->cad_body ? BRep::attached_cad_body(*volume) : nullptr;
+                    if (!volume->cad_body)
+                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": the CAD body " << cad_body_file << " of \"" << volume->name
+                                                   << "\" does not match its mesh and was dropped";
+                } else
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": the CAD body " << cad_body_file << " is missing from the archive";
+            }
+
+            // Unknown seam modes must remain inert modifiers, even when dormant settings are present.
+            if (volume->is_precise_seam()) {
+                for (const Metadata& metadata : volume_data->metadata) {
+                    if (boost::starts_with(metadata.key, PRECISE_SEAM_CONFIG_PREFIX)) {
+                        const std::string key = metadata.key.substr(sizeof(PRECISE_SEAM_CONFIG_PREFIX) - 1);
+                        if (!key.empty())
+                            volume->config.set_deserialize(key, metadata.value, config_substitutions);
+                    }
+                }
             }
 
             // this may happen for 3mf saved by 3rd part softwares
@@ -5837,6 +5980,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
             volume->set_type(volume_data.part_type);
 
+            // Apply the seam mode after all base-type metadata, regardless of XML key order.
+            ModelVolumeType precise_seam_type = ModelVolumeType::INVALID;
             // apply the remaining volume's metadata
             for (const Metadata& metadata : volume_data.metadata) {
                 if (metadata.key == NAME_KEY)
@@ -5846,6 +5991,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 				//for old format
                 else if ((metadata.key == VOLUME_TYPE_KEY) || (metadata.key == PART_TYPE_KEY))
                     volume->set_type(ModelVolume::type_from_string(metadata.value));
+                else if (metadata.key == PRECISE_SEAM_TYPE_KEY)
+                    precise_seam_type = ModelVolume::type_from_string(metadata.value);
+                else if (boost::starts_with(metadata.key, PRECISE_SEAM_CONFIG_PREFIX))
+                    continue; // Restore dormant settings only after the final volume type is known.
                 else if (metadata.key == SOURCE_FILE_KEY)
                     volume->source.input_file = metadata.value;
                 else if (metadata.key == SOURCE_OBJECT_ID_KEY)
@@ -5864,6 +6013,22 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     volume->source.is_converted_from_meters = metadata.value == "1";
                 else
                     volume->config.set_deserialize(metadata.key, metadata.value, config_substitutions);
+            }
+
+            // Missing or unknown seam modes retain the ordinary modifier fallback.
+            // Ignore seam metadata on other base types; legacy inline seam types still load above.
+            if (volume->is_modifier() && is_precise_seam(precise_seam_type))
+                volume->set_type(precise_seam_type);
+
+            // Unknown seam modes must remain inert modifiers, even when dormant settings are present.
+            if (volume->is_precise_seam()) {
+                for (const Metadata& metadata : volume_data.metadata) {
+                    if (boost::starts_with(metadata.key, PRECISE_SEAM_CONFIG_PREFIX)) {
+                        const std::string key = metadata.key.substr(sizeof(PRECISE_SEAM_CONFIG_PREFIX) - 1);
+                        if (!key.empty())
+                            volume->config.set_deserialize(key, metadata.value, config_substitutions);
+                    }
+                }
             }
 
             // this may happen for 3mf saved by 3rd part softwares
@@ -6443,6 +6608,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         // Export Bambu 3MF (StoreParams::bambu_compat): the project config converted once up front,
         // the context the per-object conversions need, and what was changed.
         bool m_bambu_compat { false };
+        // Names the CAD body blobs of one export uniquely.
+        int  m_cad_body_count { 0 };
         BambuExport::Context m_bambu_ctx;
         BambuExport::Config  m_bambu_project;
         BambuExport::Report  m_bambu_report;
@@ -6584,8 +6751,13 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 boost::filesystem::remove(filename + ".tmp", ec);
                 return false;
             }
-            if (!(store_params.strategy & SaveStrategy::Silence))
-                save_string_file(store_params.model->get_backup_path() + "/origin.txt", filename);
+            if (!(store_params.strategy & SaveStrategy::Silence)) {
+                try {
+                    save_string_file(store_params.model->get_backup_path() + "/origin.txt", filename);
+                } catch (const std::exception &e) {
+                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " failed to write origin.txt: " << e.what();
+                }
+            }
         }
         if (m_bambu_compat) {
             BOOST_LOG_TRIVIAL(info) << "Export Bambu 3MF " << filename << ": " << m_bambu_report.summary();
@@ -8437,7 +8609,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         }
         const std::string& temp_path = model.get_backup_path();
         std::string temp_file = temp_path + std::string("/") + "_temp_1.config";
-        config.save_to_json(temp_file, std::string("project_settings"), std::string("project"), std::string(Snapmaker_VERSION));
+        if (!config.save_to_json(temp_file, std::string("project_settings"), std::string("project"), std::string(Snapmaker_VERSION))) {
+            add_error("Unable to write project config file");
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << " failed to write " << temp_file;
+            return false;
+        }
         return _add_file_to_archive(archive, BBS_PROJECT_CONFIG_FILE, temp_file);
     }
 
@@ -8463,9 +8639,18 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                                                      preset->type == Preset::TYPE_FILAMENT ? BambuExport::Scope::Filament :
                                                                                              BambuExport::Scope::Printer;
                     const BambuExport::Config converted = BambuExport::convert(config, m_bambu_ctx, scope, m_bambu_report, "preset " + preset->name);
-                    save_string_file(preset->file, BambuExport::to_json(converted, preset->name, "project", BambuExport::export_version()));
-                } else
-                config.save_to_json(preset->file, preset->name, std::string("project"), preset->version.to_string());
+                    try {
+                        save_string_file(preset->file, BambuExport::to_json(converted, preset->name, "project", BambuExport::export_version()));
+                    } catch (const std::exception &e) {
+                        add_error("Unable to write project embedded preset " + preset->name);
+                        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << " failed to write " << preset->file << ": " << e.what();
+                        return false;
+                    }
+                } else if (!config.save_to_json(preset->file, preset->name, std::string("project"), preset->version.to_string())) {
+                    add_error("Unable to write project embedded preset " + preset->name);
+                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << " failed to write " << preset->file;
+                    return false;
+                }
 
                 std::string dest_file;
                 if (preset->type == Preset::TYPE_PRINT) {
@@ -8513,6 +8698,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 return a->second.object_id < b->second.object_id;
             });
 
+        // inline SVG shapes of text volumes already written into the archive
+        TextConfigurationSerialization::InlineSvgEntries inline_svg_entries;
+
         if (!m_skip_model)
         for (const ObjectToObjectDataMap::value_type* obj_metadata_ptr : ordered_objects_data) {
             const ObjectToObjectDataMap::value_type& obj_metadata = *obj_metadata_ptr;
@@ -8537,7 +8725,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                         stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << kv.first << "\" " << VALUE_ATTR << "=\"" << xml_escape(BambuExport::serialize(kv.second)) << "\"/>\n";
                 } else
                 for (const std::string& key : obj->config.keys()) {
-                    stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\"" << obj->config.opt_serialize(key) << "\"/>\n";
+                    const std::string value = obj->config.opt_serialize(key);
+                    // Config serialization is C-style, not XML: escape values too, including tabs.
+                    stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\""
+                           << xml_escape_double_quotes_attribute_value(value) << "\"/>\n";
                 }
 
                 for (const ModelVolume* volume : obj_metadata.second.object->volumes) {
@@ -8554,7 +8745,12 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                                 volume_id = m_volume_paths.find(volume)->second.second;
                             stream << ID_ATTR << "=\"" << volume_id << "\" ";
 
-                            stream << SUBTYPE_ATTR << "=\"" << ModelVolume::type_to_string(volume->type()) << "\">\n";
+                            // Older slicers must recognize the base type even when they ignore seam metadata.
+                            const ModelVolumeType stored_type = volume->is_precise_seam() ? ModelVolumeType::PARAMETER_MODIFIER : volume->type();
+                            stream << SUBTYPE_ATTR << "=\"" << ModelVolume::type_to_string(stored_type) << "\">\n";
+                            if (volume->is_precise_seam())
+                                stream << "      <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << PRECISE_SEAM_TYPE_KEY << "\" " << VALUE_ATTR << "=\"" <<
+                                    ModelVolume::type_to_string(volume->type()) << "\"/>\n";
                             //stream << "    <" << PART_TAG << " " << ID_ATTR << "=\"" << it->second << "\" " << SUBTYPE_ATTR << "=\"" << ModelVolume::type_to_string(volume->type()) << "\">\n";
 
                             // stores volume's name
@@ -8583,7 +8779,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
                             // stores volume's source data
                             {
-                                std::string input_file = xml_escape(m_fullpath_sources ? volume->source.input_file : boost::filesystem::path(volume->source.input_file).filename().string());
+                                const std::string raw_source = m_fullpath_sources ? volume->source.input_file :
+                                                               boost::filesystem::path(volume->source.input_file).filename().string();
+                                const std::string input_file = xml_escape_double_quotes_attribute_value(raw_source);
                                 //std::string prefix = std::string("      <") + METADATA_TAG + " " + KEY_ATTR + "=\"";
                                 std::string prefix = std::string("      <") + METADATA_TAG + " " + KEY_ATTR + "=\"";
                                 if (! volume->source.input_file.empty()) {
@@ -8601,13 +8799,33 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                                     stream << prefix << SOURCE_IN_METERS << "\" " << VALUE_ATTR << "=\"1\"/>\n";
                             }
 
+                            // stores the part's exact CAD body (fillets / chamfers / shells stay exact
+                            // and editable after a reopen). Not in a Bambu-compatible export.
+                            if (!m_bambu_compat)
+                                if (const std::shared_ptr<const BRep::CadBody> body = BRep::attached_cad_body(*volume)) {
+                                    const std::string path = CAD_BODY_DIR + "body_" + std::to_string(++m_cad_body_count) + ".bin";
+                                    const std::string blob = body->to_blob();
+                                    if (mz_zip_writer_add_mem(&archive, path.c_str(), blob.data(), blob.size(), MZ_DEFAULT_COMPRESSION))
+                                        stream << "      <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << CAD_BODY_FILE_KEY << "\" " << VALUE_ATTR
+                                               << "=\"" << xml_escape(path) << "\"/>\n";
+                                    else
+                                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": could not store the CAD body of " << volume->name;
+                                }
+
                             // stores volume's config data
                             if (m_bambu_compat) {
-                                for (const auto &kv : BambuExport::convert(volume->config.get(), m_bambu_ctx, BambuExport::Scope::Object, m_bambu_report, "part " + volume->name))
-                                    stream << "      <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << kv.first << "\" " << VALUE_ATTR << "=\"" << xml_escape(BambuExport::serialize(kv.second)) << "\"/>\n";
+                                for (const auto &kv : BambuExport::convert(volume->config.get(), m_bambu_ctx, BambuExport::Scope::Object, m_bambu_report, "part " + volume->name)) {
+                                    const std::string stored_key = volume->is_precise_seam() ? PRECISE_SEAM_CONFIG_PREFIX + kv.first : kv.first;
+                                    stream << "      <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << stored_key << "\" " << VALUE_ATTR << "=\"" << xml_escape(BambuExport::serialize(kv.second)) << "\"/>\n";
+                                }
                             } else
                             for (const std::string& key : volume->config.keys()) {
-                                stream << "      <" << METADATA_TAG << " "<< KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\"" << volume->config.opt_serialize(key) << "\"/>\n";
+                                // Seam settings are inactive but must survive changing the helper back into a part/modifier.
+                                const bool dormant = volume->is_precise_seam();
+                                const std::string stored_key = dormant ? PRECISE_SEAM_CONFIG_PREFIX + key : key;
+                                const std::string value = volume->config.opt_serialize(key);
+                                // Config serialization is C-style, not XML: escape active settings too, including tabs.
+                                stream << "      <" << METADATA_TAG << " "<< KEY_ATTR << "=\"" << stored_key << "\" " << VALUE_ATTR << "=\"" << xml_escape_double_quotes_attribute_value(value) << "\"/>\n";
                             }
 
                             if (const std::optional<EmbossShape> &es = volume->emboss_shape;
@@ -8616,7 +8834,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     
                             if (const std::optional<TextConfiguration> &tc = volume->text_configuration;
                                 tc.has_value())
-                                TextConfigurationSerialization::to_xml(stream, *tc);
+                                TextConfigurationSerialization::to_xml(stream, *tc, &archive, &inline_svg_entries);
 
                             // stores mesh's statistics
                             const RepairedMeshErrors& stats = volume->mesh().stats().repaired_errors;
@@ -8731,6 +8949,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
                 if (!m_bambu_compat && !plate_data->dual_nozzle_confirm.empty())
                     stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << DUAL_NOZZLE_CONFIRM_ATTR << "\" " << VALUE_ATTR << "=\"" << xml_escape(plate_data->dual_nozzle_confirm) << "\"/>\n";
+
+                if (!m_bambu_compat && !plate_data->print_history.empty())
+                    stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << PRINT_HISTORY_ATTR << "\" " << VALUE_ATTR << "=\"" << xml_escape(plate_data->print_history) << "\"/>\n";
 
                 if (save_gcode)
                     stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << GCODE_FILE_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha << xml_escape(plate_data->gcode_file) << "\"/>\n";
@@ -10286,11 +10507,49 @@ const TextConfigurationSerialization::VerticalAlignToName TextConfigurationSeria
     (FontProp::VerticalAlign::bottom, "bottom");
 
 
-void TextConfigurationSerialization::to_xml(std::stringstream &stream, const TextConfiguration &tc)
+void TextConfigurationSerialization::to_xml(std::stringstream &stream, const TextConfiguration &tc, mz_zip_archive *archive,
+                                            InlineSvgEntries *written)
 {
     stream << "   <" << TEXT_TAG << " ";
 
     stream << TEXT_DATA_ATTR << "=\"" << xml_escape_double_quotes_attribute_value(tc.text) << "\" ";
+
+    // Inline shapes: user SVGs are written once per content as "3D/inline_<hash8>.svg" (named from the
+    // data, so equal shapes of several volumes share one entry); an SVG without data (refused when the
+    // project was loaded) is left out of the table. Old builds ignore the attribute and keep the mesh.
+    if (!tc.inline_shapes.empty()) {
+        InlineShapeTable table;
+        table.reserve(tc.inline_shapes.size());
+        for (const InlineShape &shape : tc.inline_shapes) {
+            if (shape.source != InlineShapeSource::Svg) {
+                table.push_back(shape);
+                continue;
+            }
+            if (shape.svg_data == nullptr || shape.svg_data->empty() || archive == nullptr || written == nullptr)
+                continue;
+            InlineShape       entry = shape;
+            const std::string base  = inline_svg_entry_name(*shape.svg_data);
+            std::string       name  = base;
+            // another content with the same short hash: number it
+            for (int n = 2; n < 1000; ++n) {
+                auto it = written->find(name);
+                if (it == written->end() || it->second == shape.svg_data || *it->second == *shape.svg_data)
+                    break;
+                name = base.substr(0, base.size() - 4) + "_" + std::to_string(n) + ".svg";
+            }
+            if (written->find(name) == written->end()) {
+                if (!mz_zip_writer_add_mem(archive, name.c_str(), shape.svg_data->data(), shape.svg_data->size(), MZ_DEFAULT_COMPRESSION)) {
+                    BOOST_LOG_TRIVIAL(warning) << "Can't write inline svg shape " << name << " into 3mf";
+                    continue;
+                }
+                written->emplace(name, shape.svg_data);
+            }
+            entry.path_in_3mf = name;
+            table.push_back(std::move(entry));
+        }
+        if (std::string json = inline_shapes_to_json(table); !json.empty())
+            stream << INLINE_SHAPES_ATTR << "=\"" << xml_escape_double_quotes_attribute_value(json) << "\" ";
+    }
     // font item
     const EmbossStyle &style = tc.style;
     stream << STYLE_NAME_ATTR <<  "=\"" << xml_escape_double_quotes_attribute_value(style.name) << "\" ";
@@ -10413,7 +10672,21 @@ std::optional<TextConfiguration> TextConfigurationSerialization::read(const char
 
     std::string text = bbs_get_attribute_value_string(attributes, num_attributes, TEXT_DATA_ATTR);
     EmbossStyle es{style_name, std::move(font_descriptor), type, std::move(fp)};
-    return TextConfiguration{std::move(es), std::move(text)};
+    TextConfiguration tc{std::move(es), std::move(text)};
+
+    // Inline shapes (untrusted JSON: inline_shapes_from_json skips bad entries and clamps values). The
+    // data of user SVGs is attached when the volume is created (_generate_volumes_new).
+    std::string inline_json = bbs_get_attribute_value_string(attributes, num_attributes, INLINE_SHAPES_ATTR);
+    if (!inline_json.empty()) {
+        size_t skipped = 0;
+        if (std::optional<InlineShapeTable> table = inline_shapes_from_json(inline_json, &skipped); table.has_value())
+            tc.inline_shapes = std::move(*table);
+        else
+            BOOST_LOG_TRIVIAL(warning) << "Text volume: the inline shapes attribute is not valid and is ignored";
+        if (skipped > 0)
+            BOOST_LOG_TRIVIAL(warning) << "Text volume: " << skipped << " inline shape(s) were not valid and are ignored";
+    }
+    return tc;
 }
 
 EmbossShape TextConfigurationSerialization::read_old(const char **attributes, unsigned int num_attributes)
@@ -10483,7 +10756,7 @@ bool to_xml(std::stringstream &stream, const EmbossShape::SvgFile &svg, const Mo
     stream << SVG_FILE_PATH_IN_3MF_ATTR << "=\"" << xml_escape_double_quotes_attribute_value(svg.path_in_3mf) << "\" ";
 
     std::shared_ptr<std::string> file_data = svg.file_data;
-    assert(file_data != nullptr); 
+    // file_data is null for an SVG entry the importer refused (too large), see _extract_embossed_svg_shape_file
     if (file_data == nullptr && !svg.path.empty())
         file_data = read_from_disk(svg.path);
     if (file_data == nullptr) {
@@ -10515,7 +10788,19 @@ void to_xml(std::stringstream &stream, const EmbossShape &es, const ModelVolume 
     stream << DEPTH_ATTR << "=\"" << p.depth << "\" ";
     if (p.use_surface)
         stream << USE_SURFACE_ATTR << "=\"" << 1 << "\" ";
-    
+
+    // curved text: only when active, so straight text files stay byte-identical
+    if (const EmbossBend &bend = p.bend; bend.is_active()) {
+        if (bend.mode == EmbossBend::Mode::radius)
+            stream << BEND_RADIUS_ATTR << "=\"" << bend.radius << "\" ";
+        else
+            stream << BEND_ANGLE_ATTR << "=\"" << bend.angle << "\" ";
+        if (bend.inside)
+            stream << BEND_INSIDE_ATTR << "=\"" << 1 << "\" ";
+        if (bend.rigid)
+            stream << BEND_RIGID_ATTR << "=\"" << 1 << "\" ";
+    }
+
     // FIX of baked transformation
     Transform3d fix = create_fix(es.fix_3mf_tr, volume);
     stream << TRANSFORM_ATTR << "=\"";
@@ -10537,7 +10822,25 @@ std::optional<EmbossShape> read_emboss_shape(const char **attributes, unsigned i
 
     int use_surface  = bbs_get_attribute_value_int(attributes, num_attributes, USE_SURFACE_ATTR);
     if (use_surface == 1)
-        projection.use_surface = true;     
+        projection.use_surface = true;
+
+    // curved text, absent attributes = straight text (files from older builds)
+    {
+        EmbossBend &bend   = projection.bend;
+        float       radius = bbs_get_attribute_value_float(attributes, num_attributes, BEND_RADIUS_ATTR);
+        float       angle  = bbs_get_attribute_value_float(attributes, num_attributes, BEND_ANGLE_ATTR);
+        if (std::isfinite(radius) && radius > 0.f) {
+            bend.mode   = EmbossBend::Mode::radius;
+            bend.radius = radius;
+        } else if (std::isfinite(angle) && angle > 0.f) {
+            bend.mode  = EmbossBend::Mode::angle;
+            bend.angle = std::min(angle, 359.f);
+        }
+        if (bend.mode != EmbossBend::Mode::off) {
+            bend.inside = bbs_get_attribute_value_int(attributes, num_attributes, BEND_INSIDE_ATTR) == 1;
+            bend.rigid  = bbs_get_attribute_value_int(attributes, num_attributes, BEND_RIGID_ATTR) == 1;
+        }
+    }
 
     std::optional<Transform3d> fix_tr_mat;
     std::string fix_tr_mat_str = bbs_get_attribute_value_string(attributes, num_attributes, TRANSFORM_ATTR);

@@ -1,4 +1,5 @@
 #include "MultiComHelper.hpp"
+#include <boost/log/trivial.hpp>
 #include "MultiComEvent.hpp"
 #include "MultiComMgr.hpp"
 #include "MultiComUtils.hpp"

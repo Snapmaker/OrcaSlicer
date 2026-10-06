@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Printer camera</title>
+<!--
+  EdgeSlicer: the FlashForge Device tab camera (PrinterCameraPanel). The panel posts
+  {command: "modify_rtsp_player_address", address} once the printer's detail reports a stream
+  URL, and {command: "close_rtsp"} when the printer goes offline or has no camera.
+
+  LAN printers (Creator 5, Adventurer 5M, AD5X) report an MJPEG URL ending in "?action=stream",
+  shown with a plain <img>. FlashForge cloud streams are .flv (flv.js) or .m3u8 (hls.js, or the
+  browser's own HLS). Like FlashForge's player, the stream starts on a click, which also sends
+  rtsp_player_continue so a cloud printer is asked to open its stream.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+               font-family: "Segoe UI", -apple-system, Helvetica, Arial, sans-serif; }
+  #stage { position: relative; width: 100%; height: 100%; display: flex;
+           align-items: center; justify-content: center; }
+  #mjpeg, #video { display: none; max-width: 100%; max-height: 100%; width: 100%; height: 100%;
+                   object-fit: contain; background: #000; }
+  #overlay { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px;
+             align-items: center; justify-content: center; color: #c8c8c8; font-size: 13px;
+             text-align: center; padding: 0 16px; box-sizing: border-box; }
+  #play { width: 46px; height: 46px; border-radius: 50%; border: 2px solid #e6e6e6;
+          background: rgba(255,255,255,0.08); cursor: pointer; display: none; padding: 0; }
+  #play:hover { background: rgba(255,255,255,0.18); }
+  #play svg { display: block; margin: auto; }
+  #spinner { display: none; width: 34px; height: 34px; border-radius: 50%;
+             border: 4px solid rgba(255,255,255,0.25); border-top-color: #009688;
+             animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #fullscreen { position: absolute; right: 8px; bottom: 8px; display: none; cursor: pointer;
+                width: 28px; height: 28px; border: 0; border-radius: 4px; padding: 0;
+                background: rgba(0,0,0,0.45); }
+  #fullscreen:hover { background: rgba(0,0,0,0.7); }
+  #fullscreen svg { display: block; margin: auto; }
+</style>
+<script src="flv.min.js"></script>
+<script src="hls.min.js"></script>
+</head>
+<body>
+<div id="stage">
+  <img id="mjpeg" alt="">
+  <video id="video" autoplay muted playsinline></video>
+  <div id="overlay">
+    <div id="spinner"></div>
+    <button id="play" title="Start camera" aria-label="Start camera">
+      <svg width="18" height="20" viewBox="0 0 18 20"><path d="M2 1.5v17L17 10z" fill="#e6e6e6"/></svg>
+    </button>
+    <div id="message">Waiting for the printer's camera...</div>
+  </div>
+  <button id="fullscreen" title="Enlarge" aria-label="Enlarge">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#e6e6e6" stroke-width="1.6">
+      <path d="M1 5V1h4M11 1h4v4M15 11v4h-4M5 15H1v-4"/>
+    </svg>
+  </button>
+</div>
+<script src="ff_camera.js"></script>
+</body>
+</html>

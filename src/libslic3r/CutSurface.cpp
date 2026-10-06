@@ -262,7 +262,8 @@ CutAOIs cut_from_model(CutMesh                &cgal_model,
                        const ExPolygons       &shapes,
                        /*const*/ CutMesh      &cgal_shape,
                        float                   projection_ratio,
-                       const ExPolygonsIndices &s2i);
+                       const ExPolygonsIndices &s2i,
+                       const Project          &projection);
 
 using Loop  = std::vector<VI>;
 using Loops = std::vector<Loop>;
@@ -576,7 +577,7 @@ SurfaceCut Slic3r::cut_surface(const ExPolygons &shapes,
     // cut shape from each cgal model
     for (priv::CutMesh &cgal_model : cgal_models) { 
         priv::CutAOIs cutAOIs = priv::cut_from_model(
-            cgal_model, shapes, cgal_shape, projection_ratio, s2i);
+            cgal_model, shapes, cgal_shape, projection_ratio, s2i, projection);
 #ifdef DEBUG_OUTPUT_DIR
         size_t index = &cgal_model - &cgal_models.front();
         priv::store(cutAOIs, cgal_model, DEBUG_OUTPUT_DIR + "model_AOIs/" + std::to_string(index) + "/"); // only debug
@@ -1198,12 +1199,17 @@ bool is_face_inside(HI                      hi,
 /// <param name="ecm">Dynamic Edge Constrained Map of bool</param>
 /// <param name="shape_mesh">Vertices of mesh made by shapes</param>
 /// <param name="shape2index">Convert index to shape point from ExPolygons</param>
+/// <param name="shapes">2d contours, for faces whose constrained edge ends in an original model
+/// vertex lying exactly on a side of the shape (no intersection record)</param>
+/// <param name="projection">Projection of the shapes</param>
 void set_face_type(FaceTypeMap            &face_type_map,
                    const CutMesh          &mesh,
                    const VertexShapeMap   &vertex_shape_map,
                    const EdgeBoolMap          &ecm,
                    const CutMesh          &shape_mesh,
-                   const ExPolygonsIndices &shape2index);
+                   const ExPolygonsIndices &shape2index,
+                   const ExPolygons       &shapes,
+                   const Project          &projection);
 
 /// <summary>
 /// Change FaceType from not_constrained to inside
@@ -1379,16 +1385,50 @@ void priv::set_face_type(FaceTypeMap            &face_type_map,
                          const VertexShapeMap   &vertex_shape_map,
                          const EdgeBoolMap      &ecm,
                          const CutMesh          &shape_mesh,
-                         const ExPolygonsIndices &shape2index)
+                         const ExPolygonsIndices &shape2index,
+                         const ExPolygons       &shapes,
+                         const Project          &projection)
 {
+    // Fallback when an end of the constrained edge is an original model vertex that lies exactly on
+    // a side of the shape: corefine reports no intersection for it, so it has no source in the
+    // shape. Decide by the centre of the face instead (point in shape).
+    auto is_face_inside_by_point = [&](FI fi) -> bool {
+        if (!fi.is_valid())
+            return false;
+        Vec3d  center = Vec3d::Zero();
+        int    count  = 0;
+        for (VI vi : mesh.vertices_around_face(mesh.halfedge(fi))) {
+            const P3 &p = mesh.point(vi);
+            center += Vec3d(CGAL::to_double(p.x()), CGAL::to_double(p.y()), CGAL::to_double(p.z()));
+            ++count;
+        }
+        if (count == 0)
+            return false;
+        std::optional<Vec2d> p2 = projection.unproject(center / count);
+        if (!p2.has_value())
+            return false;
+        const Point point(static_cast<coord_t>(std::llround(p2->x())), static_cast<coord_t>(std::llround(p2->y())));
+        for (const ExPolygon &shape : shapes)
+            if (shape.contains(point))
+                return true;
+        return false;
+    };
+
     for (EI ei : mesh.edges()) {
         if (!ecm[ei]) continue;
         HI hi = mesh.halfedge(ei);
         FI fi = mesh.face(hi);
-        bool is_inside = is_face_inside(hi, mesh, shape_mesh, vertex_shape_map, shape2index);        
-        face_type_map[fi] = is_inside ? FaceType::inside : FaceType::outside;
         HI hi_op = mesh.opposite(hi);
         assert(hi_op.is_valid());
+        if (vertex_shape_map[mesh.source(hi)] == nullptr || vertex_shape_map[mesh.target(hi)] == nullptr) {
+            if (fi.is_valid())
+                face_type_map[fi] = is_face_inside_by_point(fi) ? FaceType::inside : FaceType::outside;
+            if (hi_op.is_valid() && mesh.face(hi_op).is_valid())
+                face_type_map[mesh.face(hi_op)] = is_face_inside_by_point(mesh.face(hi_op)) ? FaceType::inside : FaceType::outside;
+            continue;
+        }
+        bool is_inside = is_face_inside(hi, mesh, shape_mesh, vertex_shape_map, shape2index);
+        face_type_map[fi] = is_inside ? FaceType::inside : FaceType::outside;
         if (!hi_op.is_valid()) continue;
         FI fi_op = mesh.face(hi_op);
         assert(fi_op.is_valid());
@@ -1401,7 +1441,8 @@ priv::CutAOIs priv::cut_from_model(CutMesh                &cgal_model,
                                    const ExPolygons       &shapes,
                                    CutMesh                &cgal_shape,
                                    float                   projection_ratio,
-                                   const ExPolygonsIndices &s2i)
+                                   const ExPolygonsIndices &s2i,
+                                   const Project          &projection)
 {
     // pointer to edge or face shape_map
     VertexShapeMap vert_shape_map = cgal_model.add_property_map<VI, const IntersectingElement*>(vert_shape_map_name, nullptr).first;
@@ -1426,7 +1467,7 @@ priv::CutAOIs priv::cut_from_model(CutMesh                &cgal_model,
     FaceTypeMap face_type_map = cgal_model.add_property_map<FI, FaceType>(face_type_map_name, FaceType::not_constrained).first;
 
     // Select inside and outside face in model
-    set_face_type(face_type_map, cgal_model, vert_shape_map, ecm, cgal_shape, s2i);
+    set_face_type(face_type_map, cgal_model, vert_shape_map, ecm, cgal_shape, s2i, shapes, projection);
 #ifdef DEBUG_OUTPUT_DIR
     store(cgal_model, face_type_map, DEBUG_OUTPUT_DIR + "constrained/"); // only debug
 #endif // DEBUG_OUTPUT_DIR

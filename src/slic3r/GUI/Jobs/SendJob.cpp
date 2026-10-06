@@ -2,7 +2,9 @@
 #include "libslic3r/MTUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "slic3r/GUI/BambuSendDiagnosis.hpp"
 #include "slic3r/GUI/GcodeArchive.hpp"
+#include "slic3r/GUI/PlatePrintHistoryRecorder.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -180,6 +182,7 @@ void SendJob::process(Ctl &ctl)
     params.use_ssl_for_mqtt = m_local_use_ssl_for_mqtt;
     wxString error_text;
     std::string msg_text;
+    std::string last_error_info; // the plug-in's own words for its last error, for BambuSendDiagnosis
 
     const int StagePercentPoint[(int)PrintingStageFinished + 1] = {
         20,  // PrintingStageCreate
@@ -192,7 +195,7 @@ void SendJob::process(Ctl &ctl)
     };
 
     auto update_fn = [this, &ctl,
-        &msg, &curr_percent, &error_text, StagePercentPoint](int stage, int code, std::string info) {
+        &msg, &curr_percent, &error_text, &last_error_info, StagePercentPoint](int stage, int code, std::string info) {
                         if (stage == SendingPrintJobStage::PrintingStageCreate) {
                             if (this->connection_type == "lan") {
                                 msg = _u8L("Sending G-code file over LAN");
@@ -236,6 +239,8 @@ void SendJob::process(Ctl &ctl)
 
                         //get errors 
                         if (code > 100 || code < 0 || stage == BBL::SendingPrintJobStage::PrintingStageERROR) {
+                            if (!info.empty())
+                                last_error_info = info;
                             if (code == BAMBU_NETWORK_ERR_PRINT_WR_FILE_OVER_SIZE || code == BAMBU_NETWORK_ERR_PRINT_SP_FILE_OVER_SIZE) {
                                 m_plater->update_print_error_info(code, desc_file_too_large, info);
                             }
@@ -259,19 +264,24 @@ void SendJob::process(Ctl &ctl)
         };
 
 
-    if (params.connection_type != "lan") {
-        if (params.dev_ip.empty())
-            params.comments = "no_ip";
-        else if (this->cloud_print_only)
-            params.comments = "low_version";
-        else if (!this->has_sdcard)
-            params.comments = "no_sdcard";
-        else if (params.password.empty())
-            params.comments = "no_password";
+    // Ultra: a send to the printer's storage only ever goes over LAN. When it cannot run, or fails,
+    // say why in plain words (BambuSendDiagnosis) instead of "Failed to send the print job".
+    BambuSendFailure diag;
+    diag.upload_only  = true;
+    diag.cloud_bound  = false;
+    diag.ultranet_log = wxGetApp().is_ultranet_plugin_installed();
+    diag.log_dir      = bambu_log_dir_for_display();
+    diag.log_prefix   = "send_job:";
+    bool use_diag     = false;
 
-        if (!params.password.empty() 
-            && !params.dev_ip.empty()
-            && this->has_sdcard) {
+    if (params.connection_type != "lan") {
+        params.comments = bambu_lan_skip_tag(bambu_lan_skip_reason(!params.dev_ip.empty(), this->cloud_print_only, this->has_sdcard,
+                                                                   !params.password.empty()));
+        // Firmware that only prints through the cloud can still take a file over LAN, so
+        // cloud_print_only does not gate this send (it never did).
+        const BambuLanSkip lan_skip = bambu_lan_skip_reason(!params.dev_ip.empty(), false, this->has_sdcard, !params.password.empty());
+
+        if (lan_skip == BambuLanSkip::None) {
             // try to send local with record
             BOOST_LOG_TRIVIAL(info) << "send_job: try to send gcode to printer";
             ctl.update_status(curr_percent, _u8L("Sending G-code file over LAN"));
@@ -285,15 +295,27 @@ void SendJob::process(Ctl &ctl)
                 // try to send with cloud
                 BOOST_LOG_TRIVIAL(info) << "send_job: try to send gcode file to printer";
                 ctl.update_status(curr_percent, _u8L("Sending G-code file over LAN"));
+                diag.lan_code   = result;
+                diag.lan_detail = last_error_info;
+                use_diag        = true;
             }
         } else {
-            BOOST_LOG_TRIVIAL(info) << "send_job: try to send gcode file to printer";
+            BOOST_LOG_TRIVIAL(info) << "send_job: skipped LAN: " << bambu_lan_skip_tag(lan_skip) << ", nothing sent (no cloud route for uploads)";
             ctl.update_status(curr_percent, _u8L("Sending G-code file over LAN"));
+            diag.lan_skip     = lan_skip;
+            diag.skipped_code = result;
+            use_diag          = true;
         }
     } else {
         if (this->has_sdcard) {
+            BOOST_LOG_TRIVIAL(info) << "send_job: LAN printer, send over LAN";
             ctl.update_status(curr_percent, _u8L("Sending G-code file over LAN"));
             result = m_agent->start_send_gcode_to_sdcard(params, update_fn, cancel_fn, nullptr);
+            if (result < 0) {
+                diag.lan_code   = result;
+                diag.lan_detail = last_error_info;
+                use_diag        = true;
+            }
         } else {
             ctl.update_status(curr_percent, _u8L("An SD card needs to be inserted before sending to printer."));
             return;
@@ -308,7 +330,16 @@ void SendJob::process(Ctl &ctl)
     if (result < 0) {
         curr_percent = -1;
 
-        if (result == BAMBU_NETWORK_ERR_PRINT_WR_FILE_NOT_EXIST || result == BAMBU_NETWORK_ERR_PRINT_SP_FILE_NOT_EXIST) {
+        if (use_diag && result != BAMBU_NETWORK_ERR_CANCELED) {
+            const BambuSendFailureText text = bambu_send_failure_text(diag);
+            std::string                extra = text.where;
+            if (!diag.lan_detail.empty() && text.detail.find(diag.lan_detail) == std::string::npos)
+                extra += "\n" + diag.lan_detail;
+            msg_text = text.headline;
+            m_plater->update_print_error_info(text.code, text.detail, extra);
+            BOOST_LOG_TRIVIAL(error) << "send_job: " << text.full();
+        }
+        else if (result == BAMBU_NETWORK_ERR_PRINT_WR_FILE_NOT_EXIST || result == BAMBU_NETWORK_ERR_PRINT_SP_FILE_NOT_EXIST) {
             msg_text = file_is_not_exists_str;
         }
         else if (result == BAMBU_NETWORK_ERR_PRINT_SP_FILE_OVER_SIZE || result == BAMBU_NETWORK_ERR_PRINT_WR_FILE_OVER_SIZE) {
@@ -346,6 +377,17 @@ void SendJob::process(Ctl &ctl)
             am.printer_name = GcodeArchive::bambu_printer_name(m_dev_id);
             am.file_name    = params.project_name;
             GcodeArchive::archive(params.filename, am);
+        }
+
+        // Plate print history: the plate's file is on the printer's storage (not started).
+        {
+            PlateHistoryRecorder::Send h;
+            h.plates = { job_data.plate_idx };
+            PlateHistoryRecorder::bambu_identity(m_dev_id, h.printer_name, h.printer_model);
+            h.connection = connection_type == "lan" ? "bambu_lan" : "bambu_cloud";
+            h.file_name  = params.project_name;
+            h.action     = PlateHistory::Action::UploadedOnly;
+            PlateHistoryRecorder::record(h);
         }
 
         BOOST_LOG_TRIVIAL(error) << "send_job: send ok.";

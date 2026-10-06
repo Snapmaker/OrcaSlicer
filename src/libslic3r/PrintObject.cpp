@@ -19,6 +19,8 @@
 #include "Utils.hpp"
 #include "ContourZ.hpp"
 #include "SLA/IndexedMesh.hpp"
+#include "Support/Stabilizers.hpp"
+#include "ExtruderAreas.hpp"
 #include "Fill/FillAdaptive.hpp"
 #include "Fill/Fill.hpp"
 #include "Fill/FillLightning.hpp"
@@ -29,6 +31,7 @@
 #include <oneapi/tbb/blocked_range.h>
 #include <oneapi/tbb/concurrent_vector.h>
 #include <oneapi/tbb/parallel_for.h>
+#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -777,6 +780,27 @@ void PrintObject::generate_support_material()
 
             this->_generate_support_material();
             m_print->throw_if_canceled();
+
+            // Side stabilizers ride on the support layers the generator above just made.
+            if (m_config.stabilizer_supports.value != smOff && !m_shared_object) {
+                m_print->set_status(50, L("Generating side stabilizers"));
+                const stabilizers::PlanReport stab = generate_stabilizer_supports(*this, [this]() { this->throw_if_canceled(); });
+                // Painted stabilizer points are an explicit ask: say so when one cannot be honoured.
+                if (! stab.unreachable.empty()) {
+                    const Vec3d &p = stab.unreachable.front();
+                    this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL,
+                        Slic3r::format(_u8L("Object %1%: %2% painted stabilizer point(s) cannot be reached by a printable strut (the first at a height of %3% mm). "
+                                            "Move the paint higher, away from the bed or out of recesses, or give the struts more room."),
+                                       this->model_object()->name, stab.unreachable.size(), std::round(p.z() * 10.) / 10.),
+                        PrintStateBase::SlicingStabilizerPaintUnreachable);
+                }
+                if (stab.manual_without_paint)
+                    this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL,
+                        Slic3r::format(_u8L("Object %1%: side stabilizers are set to Manual but no stabilizer points are painted, so none were generated. "
+                                            "Paint them with the support painting tool, or set the stabilizers to Auto."),
+                                       this->model_object()->name),
+                        PrintStateBase::SlicingStabilizerManualUnpainted);
+            }
         }
         // Ultra (support groups, plan 2026-09-02 3.7): both this feature and support filament
         // matching (Chameleon) write SupportLayer::interface_by_extruder, so running both would
@@ -849,8 +873,20 @@ void PrintObject::generate_support_material()
 void PrintObject::estimate_curled_extrusions()
 {
     if (this->set_started(posEstimateCurledExtrusions)) {
-        if ( std::any_of(this->print()->m_print_regions.begin(), this->print()->m_print_regions.end(),
-                        [](const PrintRegion *region) { return region->config().enable_overhang_speed.values.front(); })) {
+        const auto &regions = this->print()->m_print_regions;
+        // The rule this step always had: curled lines exist only when some region has overhang speed on
+        // (its first value). Kept as it was so the G-code does not move.
+        const bool overhang_speed = std::any_of(regions.begin(), regions.end(),
+                                                [](const PrintRegion *region) { return region->config().enable_overhang_speed.values.front(); });
+        // Only the slowdown for curled perimeters reads the curled lines. GCode::_extrude extrudes each region's
+        // walls with that region's config applied, so it reads that region's slowdown value for whichever filament
+        // prints. The estimate may therefore be skipped only when NO region has it on in ANY flow-variant column;
+        // a per-object override that turns it off for one object must not skip it while another region (or
+        // the print default) has it on, or that object's neighbours would lose lines they read on main.
+        const bool slowdown_read = std::any_of(regions.begin(), regions.end(), [](const PrintRegion *region) {
+            return any_enabled(region->config().slowdown_for_curled_perimeters);
+        });
+        if (overhang_speed && slowdown_read) {
 
             // Estimate curling of support material and add it to the malformaition lines of each layer
             float support_flow_width = support_material_flow(this, this->config().layer_height).width();
@@ -860,6 +896,9 @@ void PrintObject::estimate_curled_extrusions()
                                                  float(this->config().brim_width.getFloat())};
             SupportSpotsGenerator::estimate_malformations(this->layers(), params);
             m_print->throw_if_canceled();
+        } else {
+            for (Layer *layer : m_layers)
+                layer->curled_lines.clear();
         }
         //this->set_done(posEstimateCurledExtrusions);
     }
@@ -1142,6 +1181,9 @@ bool PrintObject::invalidate_state_by_config_options(
             // the MMU segmentation, not just the later shell-generation step.
             || opt_key == "top_shell_thickness"
             || opt_key == "bottom_shell_thickness"
+            // Paint penetration: read by the same MMU segmentation top/bottom descent.
+            || opt_key == "top_color_penetration_layers"
+            || opt_key == "bottom_color_penetration_layers"
             || opt_key == "raft_layers"
             || opt_key == "raft_contact_distance"
             || opt_key == "slice_closing_radius"
@@ -1262,8 +1304,30 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "tree_support_branch_angle"
             || opt_key == "tree_support_branch_angle_organic"
             || opt_key == "tree_support_angle_slow"
-            || opt_key == "tree_support_wall_count") {
+            || opt_key == "tree_support_wall_count"
+            || opt_key == "stabilizer_supports"
+            || opt_key == "stabilizer_ring_spacing"
+            || opt_key == "stabilizer_points_per_ring"
+            || opt_key == "stabilizer_tip_diameter"
+            || opt_key == "stabilizer_tip_gap"
+            || opt_key == "stabilizer_pillar_diameter"
+            || opt_key == "stabilizer_max_island_width"
+            || opt_key == "stabilizer_pillar_base_diameter"
+            || opt_key == "stabilizer_bracing"
+            || opt_key == "stabilizer_brace_max_unbraced"
+            || opt_key == "stabilizer_brace_max_span"
+            || opt_key == "stabilizer_column_shape"
+            || opt_key == "stabilizer_column_width"
+            || opt_key == "stabilizer_column_length"
+            || opt_key == "stabilizer_column_min_height"
+            || opt_key == "stabilizer_wall_loops"
+            || opt_key == "stabilizer_infill_density"
+            || opt_key == "stabilizer_infill_pattern") {
             steps.emplace_back(posSupportMaterial);
+        } else if (
+               opt_key == "hollow_interior"
+            || opt_key == "hollow_shell_thickness") {
+            steps.emplace_back(posSlice);
         } else if (
                opt_key == "bottom_shell_layers"
             || opt_key == "top_shell_layers") {
@@ -1396,6 +1460,7 @@ bool PrintObject::invalidate_state_by_config_options(
             steps.emplace_back(posSlice);
         } else if (
                opt_key == "seam_position"
+            || opt_key == "seam_prefer_part_joints"
             || opt_key == "seam_slope_type"
             || opt_key == "seam_slope_conditional"
             || opt_key == "scarf_angle_threshold"
@@ -1962,7 +2027,12 @@ void PrintObject::detect_surfaces_type()
         // Only iterate to the second-to-last layer, since we look at layer i+1.
         if( (this->config().enable_extra_bridge_layer.value == eblApplyToAll) || (this->config().enable_extra_bridge_layer.value == eblExternalBridgeOnly)){
             const size_t last = (m_layers.empty() ? 0 : m_layers.size() - 1);
-            tbb::parallel_for( tbb::blocked_range<size_t>(0, last), [this, region_id](const tbb::blocked_range<size_t> &range) {
+            // Iteration i reads layer i and rewrites layer i+1, so rewriting in place raced with iteration i+1 reading
+            // the same vector on another thread. The rewritten layers go to this buffer and are swapped in after the
+            // loop. Nothing a rewrite reads can change under it: it only splits stInternal surfaces and passes every
+            // stBottomBridge surface through untouched, so this is what a serial run produces.
+            std::vector<std::optional<Surfaces>> rewritten(m_layers.size());
+            tbb::parallel_for( tbb::blocked_range<size_t>(0, last), [this, region_id, &rewritten](const tbb::blocked_range<size_t> &range) {
                 for (size_t i = range.begin(); i < range.end(); ++i) {
                     m_print->throw_if_canceled();
                     
@@ -1970,7 +2040,7 @@ void PrintObject::detect_surfaces_type()
                     // Current layer (i): Search for stBottomBridge polygons.
                     const Surfaces &bot_surfs = m_layers[i]->m_regions[region_id]->slices.surfaces;
                     // Next layer (i+1): The layer where stInternal polygons may be re-classified.
-                    Surfaces &top_surfs = m_layers[i + 1]->m_regions[region_id]->slices.surfaces;
+                    const Surfaces &top_surfs = m_layers[i + 1]->m_regions[region_id]->slices.surfaces;
                     
                     // Step 2: Collect the bridge polygons in the current layer region
                     Polygons polygons_bridge;
@@ -2001,11 +2071,11 @@ void PrintObject::detect_surfaces_type()
                     // TODO: Monitor GitHub issues to check whether second bridge layers are ommited where they should be generated. If yes, reduce the filtering distance
                     
                     // For each surface in the layer above
-                    for (Surface &s_up : top_surfs) {
+                    for (const Surface &s_up : top_surfs) {
                         // Only reclassify stInternal polygons (i.e. what will become later solid and sparse infill)
                         // Leave the rest unaffected
                         if (s_up.surface_type != stInternal) {
-                            new_surfaces.push_back(std::move(s_up)); // do not modify them
+                            new_surfaces.push_back(s_up); // do not modify them
                             continue; // continue to the next surface
                         }
                         // Identify stInternal polygons that overlap with the bridging polygons on the layer underneath.
@@ -2031,10 +2101,13 @@ void PrintObject::detect_surfaces_type()
                             new_surfaces.push_back(std::move(s));
                         }
                     }
-                    top_surfs = std::move(new_surfaces);
+                    rewritten[i + 1] = std::move(new_surfaces);
                 }
             }
             );
+            for (size_t i = 0; i < m_layers.size(); ++i)
+                if (rewritten[i])
+                    m_layers[i]->m_regions[region_id]->slices.surfaces = std::move(*rewritten[i]);
             // ==============================================================================================================
             // === ORCA: Interim workaround - for now the new stInternalAfterExternalBridge surfaace is re-classified  ==============
             // === back to a bottom bridge. As a starting point, this improves bridging reliability as it extrudes ==========
@@ -2770,44 +2843,56 @@ void PrintObject::bridge_over_infill()
             backup_surfaces[lidx] = {};
         }
 
-        tbb::parallel_for(tbb::blocked_range<size_t>(0, this->layers().size()), [po = this, &backup_surfaces,
-                                                                                 &surfaces_by_layer](tbb::blocked_range<size_t> r) {
+        // A layer is expanded only if a lightning region of the layer below has sparse infill, and expanding a layer
+        // rewrites its own fill_surfaces - so doing both in one parallel_for raced: layer lidx read layer lidx-1's
+        // fill_surfaces while another thread moved them out and rebuilt them. Split into a read-only parallel pass, a
+        // serial decision pass and a write pass. A layer's expansion depends only on its own unmodified surfaces, so
+        // it is computed up front for every candidate layer; which layers really get expanded is then decided bottom
+        // up, each one looking at the layer below as expanded or not - exactly what a serial run decides.
+        const size_t num_layers = this->layers().size();
+        // Expanded fill surfaces of every layer that has bridge candidates, one SurfaceCollection per layer region.
+        std::vector<std::vector<SurfaceCollection>> expanded_fills(num_layers);
+        // Whether a lightning region of layer lidx has any sparse infill, as sliced and once expanded.
+        std::vector<char> lightning_sparse(num_layers, 0);
+        std::vector<char> lightning_sparse_expanded(num_layers, 0);
+        auto has_lightning_sparse = [](const Layer *layer, const auto &fill_of) {
+            for (size_t region_idx = 0; region_idx < layer->regions().size(); ++region_idx)
+                if (layer->regions()[region_idx]->region().config().sparse_infill_pattern == ipLightning &&
+                    !to_polygons(fill_of(region_idx).filter_by_type(stInternal)).empty())
+                    return true;
+            return false;
+        };
+
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, num_layers), [po = static_cast<const PrintObject *>(this), &expanded_fills,
+                                                                      &lightning_sparse, &lightning_sparse_expanded, &has_lightning_sparse,
+                                                                      &surfaces_by_layer](tbb::blocked_range<size_t> r) {
             PRINT_OBJECT_TIME_LIMIT_MILLIS(PRINT_OBJECT_TIME_LIMIT_DEFAULT);
             for (size_t lidx = r.begin(); lidx < r.end(); lidx++) {
-                if (surfaces_by_layer.find(lidx) == surfaces_by_layer.end())
+                const Layer *layer = po->get_layer(lidx);
+                lightning_sparse[lidx] = has_lightning_sparse(layer, [layer](size_t region_idx) -> const SurfaceCollection & {
+                    return layer->regions()[region_idx]->fill_surfaces;
+                });
+
+                auto candidates = surfaces_by_layer.find(lidx);
+                if (candidates == surfaces_by_layer.end() || layer->lower_layer == nullptr)
                     continue;
 
-                Layer       *layer       = po->get_layer(lidx);
-                const Layer *lower_layer = layer->lower_layer;
-                if (lower_layer == nullptr)
-                    continue;
+                // Copy the surfaces, the copy is modified and later discarded
+                std::vector<SurfaceCollection> &fills = expanded_fills[lidx];
+                fills.reserve(layer->regions().size());
+                for (const LayerRegion *region : layer->regions())
+                    fills.push_back(region->fill_surfaces);
 
-                Polygons lightning_fill;
-                for (const LayerRegion *region : lower_layer->regions()) {
-                    if (region->region().config().sparse_infill_pattern == ipLightning) {
-                        Polygons lf = to_polygons(region->fill_surfaces.filter_by_type(stInternal));
-                        lightning_fill.insert(lightning_fill.end(), lf.begin(), lf.end());
-                    }
-                }
-
-                if (lightning_fill.empty())
-                    continue;
-
-                for (LayerRegion *region : layer->regions()) {
-                    backup_surfaces[lidx][region] = std::move(
-                        region->fill_surfaces); // Make backup copy by move!! so that pointers in candidate surfaces stay valid
-                    // Copy the surfaces back, this will make copy, but we will later discard it anyway
-                    region->fill_surfaces = backup_surfaces[lidx][region];
-                }
-
-                for (LayerRegion *region : layer->regions()) {
-                    ExPolygons sparse_infill = to_expolygons(region->fill_surfaces.filter_by_type(stInternal));
-                    ExPolygons solid_infill  = to_expolygons(region->fill_surfaces.filter_by_type(stInternalSolid));
+                for (size_t region_idx = 0; region_idx < layer->regions().size(); ++region_idx) {
+                    const LayerRegion *region = layer->regions()[region_idx];
+                    SurfaceCollection &fill   = fills[region_idx];
+                    ExPolygons sparse_infill = to_expolygons(fill.filter_by_type(stInternal));
+                    ExPolygons solid_infill  = to_expolygons(fill.filter_by_type(stInternalSolid));
 
                     if (sparse_infill.empty()) {
                         break;
                     }
-                    for (const auto &surface : surfaces_by_layer[lidx]) {
+                    for (const auto &surface : candidates->second) {
                         if (surface.region != region)
                             continue;
                         ExPolygons expansion = intersection_ex(sparse_infill, expand(surface.new_polys, scaled<float>(3.0)));
@@ -2817,16 +2902,41 @@ void PrintObject::bridge_over_infill()
                     solid_infill  = union_safety_offset_ex(solid_infill);
                     sparse_infill = diff_ex(sparse_infill, solid_infill);
 
-                    region->fill_surfaces.remove_types({stInternalSolid, stInternal});
+                    fill.remove_types({stInternalSolid, stInternal});
                     for (const ExPolygon &ep : solid_infill) {
-                        region->fill_surfaces.surfaces.emplace_back(stInternalSolid, ep);
+                        fill.surfaces.emplace_back(stInternalSolid, ep);
                     }
                     for (const ExPolygon &ep : sparse_infill) {
-                        region->fill_surfaces.surfaces.emplace_back(stInternal, ep);
+                        fill.surfaces.emplace_back(stInternal, ep);
                     }
                 }
+
+                lightning_sparse_expanded[lidx] = has_lightning_sparse(layer, [&fills](size_t region_idx) -> const SurfaceCollection & {
+                    return fills[region_idx];
+                });
             }
         });
+
+        std::vector<char> expand_layer(num_layers, 0);
+        for (size_t lidx = 1; lidx < num_layers; lidx++) {
+            if (expanded_fills[lidx].empty())
+                continue;
+            assert(this->get_layer(lidx)->lower_layer == this->get_layer(lidx - 1));
+            expand_layer[lidx] = expand_layer[lidx - 1] ? lightning_sparse_expanded[lidx - 1] : lightning_sparse[lidx - 1];
+        }
+
+        for (size_t lidx = 0; lidx < num_layers; lidx++) {
+            if (!expand_layer[lidx])
+                continue;
+            Layer *layer = this->get_layer(lidx);
+            for (size_t region_idx = 0; region_idx < layer->regions().size(); ++region_idx) {
+                LayerRegion *region = layer->regions()[region_idx];
+                backup_surfaces[lidx][region] = std::move(
+                    region->fill_surfaces); // Make backup copy by move!! so that pointers in candidate surfaces stay valid
+                region->fill_surfaces = std::move(expanded_fills[lidx][region_idx]);
+            }
+        }
+        expanded_fills.clear();
 
         // Use the modified surfaces to generate expanded lightning anchors
         this->m_lightning_generator = this->prepare_lightning_infill_data();
@@ -3345,9 +3455,9 @@ void PrintObject::bridge_over_infill()
                     if (area_to_be_bridge.empty())
                         continue;
 
-                    Polylines boundary_plines = to_polylines(expand(total_fill_area, 1.3 * flow.scaled_spacing()));
+                    Polylines boundary_plines = to_polylines(expand(total_fill_area, 1.3f * flow.scaled_spacing()));
                     {
-                        Polylines limiting_plines = to_polylines(expand(limiting_area, 0.3*flow.spacing()));
+                        Polylines limiting_plines = to_polylines(expand(limiting_area, 0.3f * flow.scaled_spacing()));
                         boundary_plines.insert(boundary_plines.end(), limiting_plines.begin(), limiting_plines.end());
                     }
 
@@ -3423,7 +3533,7 @@ void PrintObject::bridge_over_infill()
                     // Check collision with other expanded surfaces
                     {
                         bool     reconstruct       = false;
-                        Polygons tmp_expanded_area = expand(bridging_area, 3.0 * flow.scaled_spacing());
+                        Polygons tmp_expanded_area = expand(bridging_area, 3.0f * flow.scaled_spacing());
                         for (const CandidateSurface &s : expanded_surfaces) {
                             if (!intersection(s.new_polys, tmp_expanded_area).empty()) {
                                 bridging_angle = s.bridge_angle;
@@ -3440,7 +3550,7 @@ void PrintObject::bridge_over_infill()
 
                     // Orca: Keep fine details for better anchoring
                     // bridging_area         = opening(bridging_area, flow.scaled_spacing());
-                    bridging_area          = opening(bridging_area, flow.scaled_spacing() * 0.75);
+                    bridging_area          = opening(bridging_area, flow.scaled_spacing() * 0.75f);
                     bridging_area          = closing(bridging_area, flow.scaled_spacing());
                     bridging_area          = intersection(bridging_area, limiting_area);
                     bridging_area          = intersection(bridging_area, total_fill_area);
@@ -3543,8 +3653,14 @@ void PrintObject::bridge_over_infill()
     // === ORCA: Create a second internal bridge layer above the first bridge layer. ========================================================
     // ======================================================================================================================================
     if ( this->m_config.enable_extra_bridge_layer == eblApplyToAll || this->m_config.enable_extra_bridge_layer == eblInternalBridgeOnly) {
+        // Iteration lidx reads layer lidx and rewrites layer lidx+1, so rewriting in place raced with iteration lidx+1
+        // reading the same fill_surfaces on another thread. The rewritten layers go to this buffer (one Surfaces per
+        // layer region) and are swapped in after the loop. Nothing a rewrite reads can change under it: it only splits
+        // stInternal / stInternalSolid surfaces and keeps every stInternalBridge surface, in order, so this is what a
+        // serial run produces.
+        std::vector<std::vector<Surfaces>> rewritten(this->layers().size());
         // Process layers in parallel up to second-to-last
-        tbb::parallel_for( tbb::blocked_range<size_t>(0, this->layers().size() - 1), [this](const tbb::blocked_range<size_t>& r) {
+        tbb::parallel_for( tbb::blocked_range<size_t>(0, this->layers().size() - 1), [this, &rewritten](const tbb::blocked_range<size_t>& r) {
             for (size_t lidx = r.begin(); lidx < r.end(); ++lidx)
             {
                 Layer* layer = this->get_layer(lidx);
@@ -3590,7 +3706,9 @@ void PrintObject::bridge_over_infill()
                     // Union the bridging polygons
                     ExPolygons bridging_union = union_safety_offset_ex(bridging_current_layer);
                     
-                    for (LayerRegion *next_region : next_layer->regions()) {
+                    std::vector<Surfaces> &next_rewritten = rewritten[lidx + 1];
+                    next_rewritten.reserve(next_layer->regions().size());
+                    for (const LayerRegion *next_region : next_layer->regions()) {
                         Surfaces next_new_surfaces;
                         Surfaces keep_surfaces;
                         
@@ -3648,14 +3766,22 @@ void PrintObject::bridge_over_infill()
                             }
                         }
                         
-                        // 3) Rebuild next_region surfaces
-                        next_region->fill_surfaces.surfaces.clear();
-                        next_region->fill_surfaces.append(keep_surfaces);
-                        next_region->fill_surfaces.append(next_new_surfaces);
+                        // 3) Rebuild next_region surfaces (applied after the loop)
+                        append(keep_surfaces, std::move(next_new_surfaces));
+                        next_rewritten.emplace_back(std::move(keep_surfaces));
                     } // end for next_layer->regions
                 } // end if next layer
             }
         }); // end parallel_for
+        for (size_t lidx = 0; lidx < rewritten.size(); ++lidx) {
+            std::vector<Surfaces> &layer_rewritten = rewritten[lidx];
+            if (layer_rewritten.empty())
+                continue;
+            Layer *layer = this->get_layer(lidx);
+            assert(layer_rewritten.size() == layer->regions().size());
+            for (size_t region_idx = 0; region_idx < layer_rewritten.size(); ++region_idx)
+                layer->regions()[region_idx]->fill_surfaces.surfaces = std::move(layer_rewritten[region_idx]);
+        }
         
         // =================================================================================================================
         // === ORCA: Interim workaround - for now the new stSecondInternalBridge surfaces are re-classified  ===============
@@ -4124,6 +4250,8 @@ std::vector<unsigned int> PrintObject::object_extruders() const
 
     const ModelObject* mo = this->model_object();
     for (const ModelVolume* mv : mo->volumes) {
+        if (mv->is_precise_seam())
+            continue; // non-printing helper; get_extruders() also skips these
         std::vector<int> volume_extruders = mv->get_extruders();
         for (int extruder : volume_extruders) {
             assert(extruder > 0);
@@ -4131,7 +4259,114 @@ std::vector<unsigned int> PrintObject::object_extruders() const
         }
     }
     sort_remove_duplicates(extruders);
+    this->print()->mixed_filament_manager().expand_0based_extruder_ids(extruders, this->print()->config().filament_diameter.size());
     return extruders;
+}
+
+// Dual-nozzle (H2D / H2C / X2D): which filaments does this object print somewhere a nozzle cannot reach?
+// Ported from Bambu Studio's PrintObject::detect_extruder_geometric_unprintables. A layer region counts when
+// its walls or its infill touch the bed strip the extruder cannot reach, or sit above the extruder's own
+// height limit; the filaments of that region are then unprintable on that extruder. Empty sets for single-nozzle
+// machines and for printers that declare no extruder areas (the U1).
+std::vector<std::set<int>> PrintObject::detect_extruder_geometric_unprintables() const
+{
+    const ExtruderAreas areas = m_print->get_extruder_areas();
+    std::vector<std::set<int>> result(std::max<size_t>(1, m_print->config().nozzle_diameter.size()));
+    if (!areas.multi() || (!areas.has_exclusive_regions() && !areas.has_height_limits()) || areas.count() > result.size())
+        return result;
+
+    const int filament_count = int(m_print->config().filament_diameter.size());
+    auto add = [&](std::set<int> &into, int filament_1based) {
+        if (filament_1based > 0 && filament_1based <= filament_count)
+            into.insert(filament_1based - 1);
+    };
+    // The filaments a region prints with, the same ones Bambu inspects (mixed-filament virtual slots above
+    // the real count are dropped by `add`).
+    struct RegionFilaments { int wall; int outer_wall; int solid; int sparse; };
+    auto region_filaments = [](const LayerRegion *layerm) {
+        const PrintRegionConfig &c = layerm->region().config();
+        return RegionFilaments{ c.wall_filament.value, c.outer_wall_filament.value, c.solid_infill_filament.value, c.sparse_infill_filament.value };
+    };
+    auto add_walls = [&](std::set<int> &into, const RegionFilaments &f) {
+        add(into, f.wall);
+        if (f.outer_wall > 0)
+            add(into, f.outer_wall);
+    };
+    auto add_infill = [&](std::set<int> &into, const RegionFilaments &f) {
+        add(into, f.solid);
+        add(into, f.sparse);
+    };
+
+    // Taller than an extruder can print: every filament printing in the layers above its limit.
+    for (size_t e = 0; e < areas.count(); ++e) {
+        const double limit = areas.height_limit(e);
+        if (limit <= 0.)
+            continue;
+        for (const Layer *layer : m_layers) {
+            if (layer->print_z <= limit + 0.01)
+                continue;
+            for (const LayerRegion *layerm : layer->regions()) {
+                const RegionFilaments f = region_filaments(layerm);
+                if (!layerm->fills.entities.empty())
+                    add_infill(result[e], f);
+                if (!layerm->perimeters.entities.empty())
+                    add_walls(result[e], f);
+            }
+        }
+    }
+
+    // Outside the strip an extruder reaches. The strips are plate-local; slices are object-local, so move the
+    // strips once per instance instead of every slice into the plate.
+    for (const PrintInstance &instance : m_instances) {
+        const Point shift = instance.shift_without_plate_offset();
+        std::vector<Polygons>    strips(areas.count());
+        std::vector<BoundingBox> strip_boxes(areas.count());
+        for (size_t e = 0; e < areas.count(); ++e) {
+            strips[e] = areas.unprintable[e];
+            for (Polygon &p : strips[e])
+                p.translate(-shift);
+            // Shrink slightly so a slice that only shares an edge with the strip does not count as inside it.
+            strips[e]      = shrink(strips[e], float(SCALED_EPSILON));
+            strip_boxes[e] = get_extents(strips[e]);
+        }
+
+        tbb::spin_mutex                  mutex;
+        std::vector<std::set<int>> found(areas.count());
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, m_layers.size()), [&](const tbb::blocked_range<size_t> &range) {
+            std::vector<std::set<int>> local(areas.count());
+            for (size_t li = range.begin(); li < range.end(); ++li) {
+                for (const LayerRegion *layerm : m_layers[li]->regions()) {
+                    const RegionFilaments f = region_filaments(layerm);
+                    const BoundingBox     fill_box = get_extents(layerm->fill_expolygons);
+                    for (size_t e = 0; e < areas.count(); ++e) {
+                        if (strips[e].empty())
+                            continue;
+                        bool infill_blocked = false;
+                        if (!layerm->fills.entities.empty() && fill_box.overlap(strip_boxes[e]) && !intersection(layerm->fill_expolygons, strips[e]).empty()) {
+                            add_infill(local[e], f);
+                            infill_blocked = true;
+                        }
+                        if (layerm->perimeters.entities.empty())
+                            continue;
+                        if (infill_blocked) {
+                            // The walls surround the infill, so they are in the strip too.
+                            add_walls(local[e], f);
+                            continue;
+                        }
+                        const ExPolygons walls = diff_ex(layerm->raw_slices, layerm->fill_expolygons);
+                        if (get_extents(walls).overlap(strip_boxes[e]) && !intersection(walls, strips[e]).empty())
+                            add_walls(local[e], f);
+                    }
+                }
+            }
+            tbb::spin_mutex::scoped_lock lock(mutex);
+            for (size_t e = 0; e < local.size(); ++e)
+                found[e].insert(local[e].begin(), local[e].end());
+        });
+        for (size_t e = 0; e < found.size(); ++e)
+            result[e].insert(found[e].begin(), found[e].end());
+    }
+    return result;
 }
 
 namespace {

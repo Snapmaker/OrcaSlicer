@@ -220,6 +220,10 @@ public:
         on_sys_color_changed();
     }
 #endif
+
+    // A live UI theme switch (GUI_App::apply_theme_live): the window redoes its colours as it does
+    // for a system colour change. No system event is sent for a theme, so this is the way in.
+    void theme_changed() { on_sys_color_changed(); }
     
     int ShowModal()
     {

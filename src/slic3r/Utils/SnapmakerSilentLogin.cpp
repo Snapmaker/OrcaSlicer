@@ -9,6 +9,8 @@ std::string skip_reason(const StartupInputs& in)
     // most permanent reasons first.
     if (!in.pref_enabled)
         return "turned off in Preferences";
+    if (!in.signed_in_before)
+        return "not signed in to Snapmaker on this computer";
     if (!in.is_editor)
         return "G-code viewer";
     if (in.hidden_instance)
@@ -57,6 +59,15 @@ const char* outcome_name(Outcome o)
     case Outcome::Skipped:   return "skipped";
     }
     return "unknown";
+}
+
+SessionMarker session_marker_after(Outcome o)
+{
+    switch (o) {
+    case Outcome::SignedIn:  return SessionMarker::Set;
+    case Outcome::NoSession: return SessionMarker::Clear;
+    default:                 return SessionMarker::Keep;
+    }
 }
 
 std::string log_line(Outcome o, const std::string& detail)

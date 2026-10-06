@@ -107,7 +107,7 @@ public:
     bool split_multi_line{false};
     bool option_label_at_right{false};
     // BBS: new layout
-    wxWindow *     stb;
+    wxWindow *     stb{ nullptr };
     const wxString  icon;
     const wxString  title;
     size_t			label_width = 20 ;// {200};

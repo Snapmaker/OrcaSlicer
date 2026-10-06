@@ -8,6 +8,7 @@
 #include "libslic3r/BambuExtruderMap.hpp"
 #include "libslic3r/BambuNozzleMappingRequest.hpp"
 #include "DualNozzleState.hpp"
+#include "BambuSendMapping.hpp"
 #include <chrono>
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "GUI.hpp"
@@ -1127,37 +1128,10 @@ bool SelectMachineDialog::do_ams_mapping(MachineObject *obj_)
         }
     }
 
-    // try color and type mapping
-    int result = 0;
-    const std::vector<int> fil_map = sliced_filament_map();
-    if (!fil_map.empty()) {
-        /* Two-extruder job: a filament can only be fed from an AMS connected to the extruder the
-         * G-code prints it with, so map each side against its own AMS units, as BambuStudio's
-         * do_ams_mapping does. Mapping every filament against every AMS let the 2026-09-23 H2C job
-         * (sliced all on the right rack) send filament 10 from the left extruder's AMS HT; the
-         * printer then re-arranged the filaments itself. */
-        const std::vector<int> pem = printer_physical_extruder_map();
-        std::vector<FilamentInfo> per_side[3]; // left, right, unknown
-        for (const FilamentInfo& f : m_filaments) {
-            const int logical = (f.id >= 0 && f.id < (int) fil_map.size()) ? fil_map[f.id] - 1 : -1;
-            per_side[(logical == 0 || logical == 1) ? logical : 2].push_back(f);
-        }
-        m_ams_mapping_result.clear();
-        for (int side = 0; side < 3; ++side) {
-            if (per_side[side].empty())
-                continue;
-            std::vector<FilamentInfo> side_result;
-            const int only_physical = side < 2 ? BambuExtruderMap::logical_to_physical(pem, side) : -1;
-            const int rc = obj_->ams_filament_mapping(per_side[side], side_result, std::vector<int>(), only_physical);
-            if (rc != 0)
-                result = rc;
-            m_ams_mapping_result.insert(m_ams_mapping_result.end(), side_result.begin(), side_result.end());
-        }
-        std::sort(m_ams_mapping_result.begin(), m_ams_mapping_result.end(),
-                  [](const FilamentInfo& a, const FilamentInfo& b) { return a.id < b.id; });
-    } else {
-        result = obj_->ams_filament_mapping(m_filaments, m_ams_mapping_result);
-    }
+    // try color and type mapping. A two-extruder job maps each side against the AMS units that
+    // feed it (BambuSendMapping::auto_map, shared with the phone's sends so both map alike).
+    const int result = BambuSendMapping::auto_map(obj_, m_filaments, sliced_filament_map(), printer_physical_extruder_map(),
+                                                  m_ams_mapping_result);
     apply_confirmed_trays(obj_);
     for (const auto& r : m_ams_mapping_result)
         BOOST_LOG_TRIVIAL(warning) << "[Ultra P10] map F(" << (r.id+1) << ") -> tray " << (r.tray_id+1)
@@ -1225,148 +1199,38 @@ std::vector<int> SelectMachineDialog::printer_physical_extruder_map() const
 
 std::vector<int> SelectMachineDialog::filaments_mapped_to_wrong_extruder(MachineObject* obj_) const
 {
-    if (!obj_)
-        return {};
-    const std::vector<int> fil_map = sliced_filament_map();
-    if (fil_map.empty())
-        return {};
-    std::vector<BambuExtruderMap::MappedTray> mapped;
-    for (const FilamentInfo& f : m_ams_mapping_result) {
-        if (f.tray_id < 0 || f.ams_id.empty())
-            continue;
-        auto ams_it = obj_->amsList.find(f.ams_id);
-        if (ams_it == obj_->amsList.end() || !ams_it->second)
-            continue; // external spool or unknown unit: no AMS binding to check
-        mapped.push_back({ f.id, ams_it->second->nozzle });
-    }
-    return BambuExtruderMap::filaments_on_wrong_extruder(fil_map, printer_physical_extruder_map(), mapped);
-}
-
-/* project_config "filament_map" numbers the nozzles 1 = left, 2 = right; the print task
- * numbers them 1 = left, 0 = right. Ported from BambuStudio SelectMachine.cpp. */
-static int s_convert_filament_map_nozzle_id_to_task_nozzle_id(int nozzle_id)
-{
-    if (nozzle_id == (int) FilamentMapNozzleId::NOZZLE_LEFT) {
-        return (int) CloudTaskNozzleId::NOZZLE_LEFT;
-    } else if (nozzle_id == (int) FilamentMapNozzleId::NOZZLE_RIGHT) {
-        return (int) CloudTaskNozzleId::NOZZLE_RIGHT;
-    }
-    /* unsupported nozzle id - pass it through rather than asserting in a send path */
-    BOOST_LOG_TRIVIAL(error) << "convert_filament_map_nozzle_id, unexpected nozzle id " << nozzle_id;
-    return nozzle_id;
+    return BambuSendMapping::wrong_extruder(obj_, m_ams_mapping_result, sliced_filament_map(), printer_physical_extruder_map());
 }
 
 bool SelectMachineDialog::get_ams_mapping_result(std::string &mapping_array_str, std::string& mapping_array_str2, std::string &ams_mapping_info)
 {
-    if (m_ams_mapping_result.empty())
-        return false;
-
-    bool valid_mapping_result = true;
-    int invalid_count = 0;
-    for (int i = 0; i < m_ams_mapping_result.size(); i++) {
-        if (m_ams_mapping_result[i].tray_id == -1) {
-            valid_mapping_result = false;
-            invalid_count++;
-        }
+    /* The three strings, composed by BambuSendMapping::compose (shared with the phone's sends).
+     *
+     * Per-filament nozzle assignment, 1 based (1 = left, 2 = right). On a dual-nozzle
+     * machine BambuStudio puts the task form of this into every ams_mapping_info entry as
+     * "nozzleId"; it is what tells the printer which nozzle each filament belongs to, both
+     * for the running job and for the copy it stores for a re-print. Without it a stored
+     * H2D/H2C job looks single-nozzle when re-printed from the screen.
+     *
+     * Only filled for a machine that really has two nozzles: on a single-nozzle printer the
+     * key would be a payload change for no gain, and this fork keeps those payloads exactly
+     * as they were. */
+    PresetBundle*                  bundle = wxGetApp().preset_bundle;
+    BambuSendMapping::ComposeInput in;
+    in.project_filament_count = bundle->filament_presets.size();
+    for (const std::string& name : bundle->filament_presets) {
+        const Preset* it = bundle->filaments.find_preset(name);
+        in.filament_ids.push_back(it != nullptr ? it->filament_id : std::string());
     }
-
-    if (invalid_count == m_ams_mapping_result.size()) {
-        return false;
-    } else {
-
-        json mapping_v0_json    = json::array();
-        json mapping_v1_json    = json::array();
-
-        json mapping_info_json  = json::array();
-
-        /* Per-filament nozzle assignment, 1 based (1 = left, 2 = right). On a dual-nozzle
-         * machine BambuStudio puts the task form of this into every ams_mapping_info entry as
-         * "nozzleId"; it is what tells the printer which nozzle each filament belongs to, both
-         * for the running job and for the copy it stores for a re-print. Without it a stored
-         * H2D/H2C job looks single-nozzle when re-printed from the screen.
-         *
-         * Only filled for a machine that really has two nozzles: on a single-nozzle printer the
-         * key would be a payload change for no gain, and this fork keeps those payloads exactly
-         * as they were. */
-        std::vector<int> filament_maps;
-        bool             emit_nozzle_id = false;
-        {
-            auto opt_nozzle_diameters = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
-            if (opt_nozzle_diameters && opt_nozzle_diameters->size() == 2) {
-                // The map the plate was sliced with, so nozzleId agrees with the G-code.
-                filament_maps = sliced_filament_map();
-                if (filament_maps.empty())
-                    if (auto *fm = wxGetApp().preset_bundle->project_config.option<ConfigOptionInts>("filament_map"))
-                        filament_maps = fm->values;
-                emit_nozzle_id = !filament_maps.empty();
-            }
-        }
-
-        for (int i = 0; i < wxGetApp().preset_bundle->filament_presets.size(); i++) {
-
-            int tray_id = -1;
-
-            json mapping_item_v1;
-            mapping_item_v1["ams_id"] = 0xff;
-            mapping_item_v1["slot_id"] = 0xff;
-
-            json mapping_item;
-            mapping_item["ams"] = tray_id;
-            mapping_item["targetColor"] = "";
-            mapping_item["filamentId"] = "";
-            mapping_item["filamentType"] = "";
-
-            
-
-            for (int k = 0; k < m_ams_mapping_result.size(); k++) {
-                if (m_ams_mapping_result[k].id == i) {
-                    tray_id = m_ams_mapping_result[k].tray_id;
-                    mapping_item["ams"]             = tray_id;
-                    mapping_item["filamentType"]    = m_filaments[k].type;
-                    auto it = wxGetApp().preset_bundle->filaments.find_preset(wxGetApp().preset_bundle->filament_presets[i]);
-                    if (it != nullptr) {
-                        mapping_item["filamentId"] = it->filament_id;
-                    }
-                    /* nozzle id */
-                    if (emit_nozzle_id && i >= 0 && i < (int) filament_maps.size())
-                        mapping_item["nozzleId"] = s_convert_filament_map_nozzle_id_to_task_nozzle_id(filament_maps[i]);
-
-                    //convert #RRGGBB to RRGGBBAA
-                    mapping_item["sourceColor"]     = m_filaments[k].color;
-                    mapping_item["targetColor"]     = m_ams_mapping_result[k].color;
-
-
-                    /*new ams mapping data*/
-                    
-                    try
-                    {
-                        if (m_ams_mapping_result[k].ams_id.empty() || m_ams_mapping_result[k].slot_id.empty()) {  // invalid case
-                            mapping_item_v1["ams_id"]  = 255; // TODO: Orca hack
-                            mapping_item_v1["slot_id"] = 255;
-                        }
-                        else {
-                            mapping_item_v1["ams_id"] = std::stoi(m_ams_mapping_result[k].ams_id);
-                            mapping_item_v1["slot_id"] = std::stoi(m_ams_mapping_result[k].slot_id);
-                        }
-                    }
-                    catch (...)
-                    {
-                    }
-                }
-            }
-            mapping_v0_json.push_back(tray_id);
-            mapping_v1_json.push_back(mapping_item_v1);
-            mapping_info_json.push_back(mapping_item);
-        }
-
-
-        mapping_array_str = mapping_v0_json.dump();
-        mapping_array_str2 = mapping_v1_json.dump();
-
-        ams_mapping_info = mapping_info_json.dump();
-        return valid_mapping_result;
+    auto opt_nozzle_diameters = bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (opt_nozzle_diameters && opt_nozzle_diameters->size() == 2) {
+        // The map the plate was sliced with, so nozzleId agrees with the G-code.
+        in.nozzle_filament_map = sliced_filament_map();
+        if (in.nozzle_filament_map.empty())
+            if (auto *fm = bundle->project_config.option<ConfigOptionInts>("filament_map"))
+                in.nozzle_filament_map = fm->values;
     }
-    return true;
+    return BambuSendMapping::compose(m_ams_mapping_result, m_filaments, in, mapping_array_str, mapping_array_str2, ams_mapping_info);
 }
 
 /* The flow-variant label the print task uses. Ported from BambuStudio SelectMachine.cpp;
@@ -1405,35 +1269,16 @@ bool SelectMachineDialog::build_nozzles_info(std::string& nozzles_info)
     auto opt_nozzle_volume_type = preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
     if (opt_nozzle_volume_type == nullptr)
         BOOST_LOG_TRIVIAL(warning) << "build_nozzles_info, opt_nozzle_volume_type is nullptr, assuming standard flow";
-    json nozzle_item;
-    /* only o1d two nozzles has build_nozzles info now */
+    /* only the two-nozzle machines (H2D / H2D Pro / H2C) have nozzles info */
     if (opt_nozzle_diameters->size() != 2) {
         return false;
     }
-    for (size_t i = 0; i < opt_nozzle_diameters->size(); i++) {
-        if (i == (size_t)ConfigNozzleIdx::NOZZLE_LEFT) {
-            nozzle_item["id"] = CloudTaskNozzleId::NOZZLE_LEFT;
-        }
-        else if (i == (size_t)ConfigNozzleIdx::NOZZLE_RIGHT) {
-            nozzle_item["id"] = CloudTaskNozzleId::NOZZLE_RIGHT;
-        }
-        else {
-            /* unknown ConfigNozzleIdx */
-            BOOST_LOG_TRIVIAL(error) << "build_nozzles_info, unknown ConfigNozzleIdx = " << i;
-            assert(false);
-            continue;
-        }
-        nozzle_item["type"] = nullptr;
-        if (opt_nozzle_volume_type && i < opt_nozzle_volume_type->size())
-            nozzle_item["flowSize"] = get_nozzle_volume_type_cloud_string(opt_nozzle_volume_type->get_at(i));
-        else
-            nozzle_item["flowSize"] = "standard_flow";
-        if (i >= 0 && i < opt_nozzle_diameters->size()) {
-            nozzle_item["diameter"] = opt_nozzle_diameters->get_at(i);
-        }
-        nozzle_info_json.push_back(nozzle_item);
-    }
-    nozzles_info = nozzle_info_json.dump();
+    // Composed by BambuSendMapping::nozzles_info, shared with the phone's sends.
+    std::vector<int> volume_types;
+    if (opt_nozzle_volume_type)
+        for (size_t i = 0; i < opt_nozzle_volume_type->size(); ++i)
+            volume_types.push_back(opt_nozzle_volume_type->get_at(i));
+    nozzles_info = BambuSendMapping::nozzles_info(opt_nozzle_diameters->values, volume_types);
     return true;
 }
 

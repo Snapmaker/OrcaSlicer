@@ -76,6 +76,21 @@ public:
 
     static PrintHost* get_print_host(DynamicPrintConfig *config, bool change_engine = true);
 
+    // Non-throwing reader for the {"err": N} bodies Duet/MKS return. Http callbacks have no try,
+    // so a throw would kill Test on the GUI thread or the upload worker. -1 means "unknown error".
+    //
+    //   missing err                         → 0 (Duet connect often has no err field)
+    //   integer / unsigned                  → that value
+    //   numeric string ("0", "+3", " 1 ")   → that value via try_parse_json_err_int (ptree lexical_cast)
+    //   discarded JSON / HTML               → -1
+    //   non-object (including [])           → -1  (stricter than ptree/upstream: array root was 0)
+    //   float / bool / object / other string→ -1  (stricter than ptree, which could coerce 1.0 → 1)
+    //   out of int range (2^32, INT_MIN-1)  → -1  (must not truncate to 0 / "success")
+    //
+    // {"err":-1} returns -1, the same sentinel as a parse failure. That collision is accepted:
+    // Duet's switch already treats -1 as "Unknown error", and hosts do not use -1 as success.
+    static int get_err_code_from_body(const std::string &body);
+
     virtual bool send_gcodes(const std::vector<std::string>& codes, std::string& extraInfo) { return false; }
 
     virtual bool get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, nlohmann::json& response) { return false; }
@@ -238,6 +253,11 @@ struct PrintHostJob
     // firmware refuses print_task_config commands mid-print), so it goes on the
     // SET_PRINT_PREFERENCES line the task-config script sends before the start.
     bool        unload_at_end { false };
+    // Plate print history: which plates this upload carries and which printer it is for, read on
+    // the GUI thread when the job is made. The queue reports them once the upload succeeded.
+    std::vector<int> history_plates;
+    std::string      history_printer_name;
+    std::string      history_printer_model;
 
     PrintHostJob() {}
     PrintHostJob(const PrintHostJob&) = delete;
@@ -250,6 +270,9 @@ struct PrintHostJob
         , device_name(std::move(other.device_name))
         , filament_mapping(std::move(other.filament_mapping))
         , unload_at_end(other.unload_at_end)
+        , history_plates(std::move(other.history_plates))
+        , history_printer_name(std::move(other.history_printer_name))
+        , history_printer_model(std::move(other.history_printer_model))
     {}
 
     PrintHostJob(DynamicPrintConfig *config)
@@ -267,6 +290,9 @@ struct PrintHostJob
         device_name      = std::move(other.device_name);
         filament_mapping = std::move(other.filament_mapping);
         unload_at_end    = other.unload_at_end;
+        history_plates        = std::move(other.history_plates);
+        history_printer_name  = std::move(other.history_printer_name);
+        history_printer_model = std::move(other.history_printer_model);
         return *this;
     }
 

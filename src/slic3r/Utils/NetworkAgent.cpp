@@ -70,10 +70,12 @@ func_stop_device_subscribe          NetworkAgent::stop_device_subscribe_ptr = nu
 func_send_message                   NetworkAgent::send_message_ptr = nullptr;
 func_connect_printer                NetworkAgent::connect_printer_ptr = nullptr;
 func_disconnect_printer             NetworkAgent::disconnect_printer_ptr = nullptr;
+func_watch_printers                 NetworkAgent::watch_printers_ptr = nullptr;
 func_send_message_to_printer        NetworkAgent::send_message_to_printer_ptr = nullptr;
 func_check_cert                     NetworkAgent::check_cert_ptr = nullptr;
 func_install_device_cert            NetworkAgent::install_device_cert_ptr = nullptr;
 func_start_discovery                NetworkAgent::start_discovery_ptr = nullptr;
+std::function<void()>               NetworkAgent::s_login_changed_hook;
 func_change_user                    NetworkAgent::change_user_ptr = nullptr;
 func_is_user_login                  NetworkAgent::is_user_login_ptr = nullptr;
 func_user_logout                    NetworkAgent::user_logout_ptr = nullptr;
@@ -325,6 +327,7 @@ int NetworkAgent::initialize_network_module(bool using_backup)
     send_message_ptr                  =  reinterpret_cast<func_send_message>(get_network_function("bambu_network_send_message"));
     connect_printer_ptr               =  reinterpret_cast<func_connect_printer>(get_network_function("bambu_network_connect_printer"));
     disconnect_printer_ptr            =  reinterpret_cast<func_disconnect_printer>(get_network_function("bambu_network_disconnect_printer"));
+    watch_printers_ptr                =  reinterpret_cast<func_watch_printers>(get_network_function("bambu_network_ultranet_watch_printers"));
     send_message_to_printer_ptr       =  reinterpret_cast<func_send_message_to_printer>(get_network_function("bambu_network_send_message_to_printer"));
     check_cert_ptr                    =  reinterpret_cast<func_check_cert>(get_network_function("bambu_network_update_cert"));
     install_device_cert_ptr           =  reinterpret_cast<func_install_device_cert>(get_network_function("bambu_network_install_device_cert"));
@@ -450,6 +453,7 @@ int NetworkAgent::unload_network_module()
     send_message_ptr                  =  nullptr;
     connect_printer_ptr               =  nullptr;
     disconnect_printer_ptr            =  nullptr;
+    watch_printers_ptr                =  nullptr;
     send_message_to_printer_ptr       =  nullptr;
     check_cert_ptr                    =  nullptr;
     start_discovery_ptr               =  nullptr;
@@ -944,6 +948,13 @@ int NetworkAgent::disconnect_printer()
     return ret;
 }
 
+int NetworkAgent::watch_printers(const std::string& targets_json)
+{
+    if (network_agent && watch_printers_ptr)
+        return watch_printers_ptr(network_agent, targets_json);
+    return -1;
+}
+
 int NetworkAgent::send_message_to_printer(std::string dev_id, std::string json_str, int qos, int flag)
 {
     int ret = 0;
@@ -995,8 +1006,15 @@ int  NetworkAgent::change_user(std::string user_info)
         ret = change_user_ptr(network_agent, user_info);
         if (ret)
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" error: network_agent=%1%, ret=%2%, user_info=%3%")%network_agent %ret %user_info ;
+        if (s_login_changed_hook)
+            s_login_changed_hook();
     }
     return ret;
+}
+
+void NetworkAgent::set_login_changed_hook(std::function<void()> hook)
+{
+    s_login_changed_hook = std::move(hook);
 }
 
 bool NetworkAgent::is_user_login()
@@ -1015,6 +1033,8 @@ int  NetworkAgent::user_logout(bool request)
         ret = user_logout_ptr(network_agent, request);
         if (ret)
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(" error: network_agent=%1%, ret=%2%")%network_agent %ret;
+        if (s_login_changed_hook)
+            s_login_changed_hook();
     }
     return ret;
 }

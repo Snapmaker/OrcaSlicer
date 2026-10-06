@@ -150,6 +150,17 @@ private:
     EType m_type;
     // set of indices to m_volumes
     IndicesList m_list;
+    // Volumes in the order they joined the selection, most recent last. Identified by (object,
+    // instance, volume) rather than by index so it survives scene reloads; entries that are no
+    // longer selected are skipped when read. Feeds get_anchor_volume_idx().
+    struct SelectionOrderKey {
+        int object_idx;
+        int instance_idx;
+        int volume_idx;
+        bool operator==(const SelectionOrderKey &o) const { return object_idx == o.object_idx && instance_idx == o.instance_idx && volume_idx == o.volume_idx; }
+    };
+    std::vector<SelectionOrderKey> m_selection_order;
+    int find_ordered_volume_idx(bool oldest_first) const;
     Cache m_cache;
     Clipboard m_clipboard;
     std::optional<BoundingBoxf3> m_bounding_box;
@@ -296,6 +307,10 @@ public:
     const InstanceIdxsList& get_instance_idxs() const;
 
     const IndicesList& get_volume_idxs() const { return m_list; }
+    // The most recently selected volume that is still selected (the alignment anchor), or -1.
+    int get_anchor_volume_idx() const;
+    // The earliest selected volume that is still selected ("first selected"), or -1.
+    int get_first_selected_volume_idx() const;
     const GLVolume* get_volume(unsigned int volume_idx) const;
     const GLVolume* get_first_volume() const { return get_volume(*m_list.begin()); }
     GLVolume* get_volume(unsigned int volume_idx);
@@ -335,6 +350,8 @@ public:
     void move_to_center(const Vec3d& displacement, bool local = false);
     void rotate(const Vec3d& rotation, TransformationType transformation_type);
     void flattening_rotate(const Vec3d& normal);
+    // Lay on face for a single selected part: turns only that part so `normal` (object coordinates) points down.
+    void flattening_rotate_part(const Vec3d& normal);
     void scale(const Vec3d& scale, TransformationType transformation_type);
     // True when every selected instance is square to the bed (each Euler angle a multiple of 90
     // degrees). A non-uniform world-frame scale shears anything else; the dialog warns on it.

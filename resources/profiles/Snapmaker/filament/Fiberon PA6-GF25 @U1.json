@@ -1,0 +1,75 @@
+{
+    "type": "filament",
+    "name": "Fiberon PA6-GF25 @U1",
+    "inherits": "Generic PA-CF @U1 0.4 nozzle",
+    "from": "system",
+    "setting_id": "GFSPM04_03",
+    "filament_id": "PMPA03",
+    "instantiation": "true",
+    "nozzle_temperature": [
+        "300"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "300"
+    ],
+    "nozzle_temperature_range_low": [
+        "280"
+    ],
+    "hot_plate_temp": [
+        "50"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "50"
+    ],
+    "graphic_effect_plate_temp": [
+        "50"
+    ],
+    "graphic_effect_plate_temp_initial_layer": [
+        "50"
+    ],
+    "fan_min_speed": [
+        "0"
+    ],
+    "fan_max_speed": [
+        "20"
+    ],
+    "overhang_fan_speed": [
+        "95"
+    ],
+    "overhang_fan_threshold": [
+        "10%"
+    ],
+    "full_fan_speed_layer": [
+        "0"
+    ],
+    "fan_cooling_layer_time": [
+        "25"
+    ],
+    "slow_down_layer_time": [
+        "10"
+    ],
+    "slow_down_min_speed": [
+        "10"
+    ],
+    "filament_density": [
+        "1.2"
+    ],
+    "filament_flow_ratio": [
+        "0.98"
+    ],
+    "filament_max_volumetric_speed": [
+        "12"
+    ],
+    "temperature_vitrification": [
+        "70.4"
+    ],
+    "filament_type": [
+        "PA-GF"
+    ],
+    "filament_vendor": [
+        "Polymaker"
+    ],
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ]
+}

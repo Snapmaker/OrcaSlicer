@@ -8,8 +8,49 @@
 #include <sstream>
 #include <iostream>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 namespace Slic3r {
+
+namespace {
+// Never reaches the output: process_layer() consumes it.
+const std::string PA_RESET_TAG = "; PA_RESET:";
+
+bool filament_pa_enabled(const PrintConfig &config, unsigned filament_id)
+{
+    return get_value_at(config, config.enable_pressure_advance, ConfigFlowDomain::Filament, filament_id);
+}
+
+double filament_pa_or_zero(const PrintConfig &config, unsigned filament_id)
+{
+    return filament_pa_enabled(config, filament_id) ? get_value_at(config, config.pressure_advance, ConfigFlowDomain::Filament, filament_id) :
+                                                      0.;
+}
+} // namespace
+
+// The value travels as the bit pattern of the double, so the reset is exact and no locale can
+// change the decimal separator between writing and reading it.
+std::string AdaptivePAProcessor::reset_marker(double PA)
+{
+    std::uint64_t bits;
+    static_assert(sizeof(bits) == sizeof(PA), "double is expected to be 64 bits");
+    std::memcpy(&bits, &PA, sizeof(bits));
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "%016llx\n", static_cast<unsigned long long>(bits));
+    return PA_RESET_TAG + buf;
+}
+
+bool AdaptivePAProcessor::applyResetMarker(const std::string &line)
+{
+    if (line.compare(0, PA_RESET_TAG.size(), PA_RESET_TAG) != 0)
+        return false;
+    const std::uint64_t bits = std::strtoull(line.c_str() + PA_RESET_TAG.size(), nullptr, 16);
+    std::memcpy(&m_last_predicted_pa, &bits, sizeof(bits));
+    return true;
+}
 
 /**
  * @brief Constructor for AdaptivePAProcessor.
@@ -34,7 +75,9 @@ AdaptivePAProcessor::AdaptivePAProcessor(GCode &gcodegen, const std::vector<unsi
     // Constructor body can be used for further initialization if necessary
     for (unsigned int tool : tools_used) {
         // Only enable model for the tool if both PA and adaptive PA options are enabled
-        if(m_config.adaptive_pressure_advance.get_at(tool) && m_config.enable_pressure_advance.get_at(tool)){
+        // enable_pressure_advance is flow-variant; read it through get_value_at.
+        if (m_config.adaptive_pressure_advance.get_at(tool) && filament_pa_enabled(m_config, tool)) {
+            m_enabled = true;
             auto interpolator = std::make_unique<AdaptivePAInterpolator>();
             // Get calibration values from extruder
             std::string pa_calibration_values = m_config.adaptive_pressure_advance_model.get_at(tool);
@@ -64,6 +107,16 @@ AdaptivePAInterpolator* AdaptivePAProcessor::getInterpolator(unsigned int tool_i
  * @return A string containing the processed G-code with adaptive pressure advance applied.
  */
 std::string AdaptivePAProcessor::process_layer(std::string &&gcode) {
+    // Without PA_CHANGE tags the loop below would only terminate the layer's last line
+    // and consume PA_RESET markers. Skip the scan when no used tool has adaptive PA
+    // and this layer has neither tag. Keep scanning when PA_RESET is present so
+    // Edge's in-band reset_marker() never leaks into the output.
+    if (!m_enabled && gcode.find("; PA_CHANGE") == std::string::npos &&
+        gcode.find(PA_RESET_TAG) == std::string::npos) {
+        if (!gcode.empty() && gcode.back() != '\n')
+            gcode += '\n';
+        return std::move(gcode);
+    }
     std::istringstream stream(gcode);
     std::string line;
     std::ostringstream output;
@@ -74,7 +127,11 @@ std::string AdaptivePAProcessor::process_layer(std::string &&gcode) {
 
     // Iterate through each line of the layer G-code
     while (std::getline(stream, line)) {
-        
+
+        // A tool change set the PA here. Track it from this point on and drop the marker.
+        if (applyResetMarker(line))
+            continue;
+
         // If a wipe start command is found, ignore all speed changes till the wipe end part is found
         if (line.find("WIPE_START") != std::string::npos) {
             wipe_command = true;
@@ -133,6 +190,9 @@ std::string AdaptivePAProcessor::process_layer(std::string &&gcode) {
                 // Carry on searching for feedrates to find the maximum print speed
                 // until a feature change pattern or a wipe command is detected
                 while (std::getline(stream, next_line)) {
+                    // Reset markers are not G-code; the look-ahead must not count them.
+                    if (next_line.compare(0, PA_RESET_TAG.size(), PA_RESET_TAG) == 0)
+                        continue;
                     line_counter++;
                     // Found an extrude move, set extrude move found flag and move to the next line
                     if ((!extrude_move_found) && next_line.find("G1 ") == 0 &&
@@ -218,7 +278,7 @@ std::string AdaptivePAProcessor::process_layer(std::string &&gcode) {
             
                 if(!interpolator){ // Tool not found in the interpolator map
                     // Tool not found in the PA interpolator to tool map
-                    predicted_pa = m_config.enable_pressure_advance.get_at(m_last_extruder_id) ? m_config.pressure_advance.get_at(m_last_extruder_id) : 0;
+                    predicted_pa = filament_pa_or_zero(m_config, static_cast<unsigned>(m_last_extruder_id));
                     if(m_config.gcode_comments) output << "; APA: Tool doesnt have APA enabled\n";
                 } else if (!interpolator->isInitialised() || (!m_config.adaptive_pressure_advance.get_at(m_last_extruder_id)) )
                     // Check if the model is not initialised by the constructor for the active extruder
@@ -227,7 +287,7 @@ std::string AdaptivePAProcessor::process_layer(std::string &&gcode) {
                     // however check for robustness sake.
                 {
                     // Model failed or adaptive pressure advance not enabled - use default value from m_config
-                    predicted_pa = m_config.enable_pressure_advance.get_at(m_last_extruder_id) ? m_config.pressure_advance.get_at(m_last_extruder_id) : 0;
+                    predicted_pa = filament_pa_or_zero(m_config, static_cast<unsigned>(m_last_extruder_id));
                     if(m_config.gcode_comments) output << "; APA: Interpolator setup failed, using default pressure advance\n";
                 } else { // Model setup succeeded
                     // Proceed to identify the print speed to use to calculate the adaptive PA value
@@ -252,7 +312,7 @@ std::string AdaptivePAProcessor::process_layer(std::string &&gcode) {
                         predicted_pa = m_config.adaptive_pressure_advance_bridges.get_at(m_last_extruder_id);
                     
                     if (predicted_pa < 0) { // If extrapolation fails, fall back to the default PA for the extruder.
-                        predicted_pa = m_config.enable_pressure_advance.get_at(m_last_extruder_id) ? m_config.pressure_advance.get_at(m_last_extruder_id) : 0;
+                        predicted_pa = filament_pa_or_zero(m_config, static_cast<unsigned>(m_last_extruder_id));
                         if(m_config.gcode_comments) output << "; APA: Interpolation failed, using fallback pressure advance value\n";
                     }
                 }

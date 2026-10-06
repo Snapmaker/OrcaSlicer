@@ -13,6 +13,7 @@
 
 #include "../ClipperUtils.hpp"
 #include "../ExPolygon.hpp"
+#include "../format.hpp"
 #include "../Geometry.hpp"
 #include "../Surface.hpp"
 #include "../ShortestPath.hpp"
@@ -3513,6 +3514,13 @@ std::unique_ptr<Fill> FillLockedZag::make_band_filler(InfillPattern pattern) con
     // the caller falls back to this->fill_surface(). This is the default, and it is what makes an
     // existing Locked Zag profile slice exactly as it did before the per-band patterns existed.
     if (pattern == ipCount || pattern == ipLockedZag)
+        return nullptr;
+    // Not in the band menus because their fillers need state built elsewhere (the adaptive octree,
+    // the lightning generator), which is null here. A stored value can still carry them: a Bambu
+    // preset (its list has them), or a pick made while the GUI combo stored the row index as the
+    // value ("3D Honeycomb" -> adaptivecubic, "Lateral Lattice" -> supportcubic, "Cross Hatch" ->
+    // lightning). Keep this filler's own pattern rather than dereference the null state.
+    if (pattern == ipAdaptiveCubic || pattern == ipSupportCubic || pattern == ipLightning)
         return nullptr;
     std::unique_ptr<Fill> filler(Fill::new_from_type(pattern));
     if (filler)

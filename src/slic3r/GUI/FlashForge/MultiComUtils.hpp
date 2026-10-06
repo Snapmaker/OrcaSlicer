@@ -2,6 +2,7 @@
 #define slic3r_GUI_MultiComUtils_hpp_
 
 #include <string>
+#include <wx/string.h>
 #include "FlashNetworkIntfc.h"
 #include "MultiComDef.hpp"
 

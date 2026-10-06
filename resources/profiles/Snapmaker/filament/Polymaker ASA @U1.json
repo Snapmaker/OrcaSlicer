@@ -1,0 +1,39 @@
+{
+    "type": "filament",
+    "name": "Polymaker ASA @U1",
+    "inherits": "Generic ASA @U1 0.4 nozzle",
+    "from": "system",
+    "setting_id": "GFSPM04_53",
+    "filament_id": "PMAS02",
+    "instantiation": "true",
+    "nozzle_temperature_range_low": [
+        "230"
+    ],
+    "nozzle_temperature_range_high": [
+        "260"
+    ],
+    "fan_min_speed": [
+        "40"
+    ],
+    "fan_max_speed": [
+        "70"
+    ],
+    "fan_cooling_layer_time": [
+        "30"
+    ],
+    "slow_down_layer_time": [
+        "6"
+    ],
+    "filament_density": [
+        "1.13"
+    ],
+    "temperature_vitrification": [
+        "105"
+    ],
+    "filament_vendor": [
+        "Polymaker"
+    ],
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ]
+}

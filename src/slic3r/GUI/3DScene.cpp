@@ -1,6 +1,7 @@
 #include <glad/gl.h>
 
 #include "3DScene.hpp"
+#include "OpaqueVolumeSort.hpp"
 #include "GLShader.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Colors.hpp"
@@ -10,6 +11,7 @@
 #include "Frustum.hpp"
 #include "libslic3r/BuildVolume.hpp"
 #include "libslic3r/CurvedCut.hpp"
+#include "libslic3r/Model.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/ExtrusionEntityCollection.hpp"
 #include "libslic3r/Geometry.hpp"
@@ -176,6 +178,14 @@ ColorRGBA GLVolume::SUPPORT_ENFORCER_COL = {0.3f, 0.3f, 1.0f, 0.4f};
 ColorRGBA GLVolume::SUPPORT_BLOCKER_COL  = {1.0f, 0.3f, 0.3f, 0.4f};
 
 ColorRGBA GLVolume::MODEL_HIDDEN_COL = {0.f, 0.f, 0.f, 0.3f};
+
+// Precise Seam modifier colors
+ColorRGBA GLVolume::PRECISE_SEAM_CENTER_COL   = {1.0f,   0.627f, 0.082f, 0.6f};  // FFA015 - orange
+ColorRGBA GLVolume::PRECISE_SEAM_LEFT_COL     = {1.0f,   0.753f, 0.0f,   0.6f};  // FFC000 - golden
+ColorRGBA GLVolume::PRECISE_SEAM_RIGHT_COL    = {1.0f,   0.514f, 0.0f,   0.6f};  // FF8300 - dark orange
+ColorRGBA GLVolume::PRECISE_SEAM_ENFORCED_COL = {0.412f, 0.820f, 0.412f, 0.6f};  // 69D169 - green
+ColorRGBA GLVolume::PRECISE_SEAM_NEUTRAL_COL  = {0.655f, 0.655f, 0.655f, 0.6f};  // A7A7A7 - gray
+ColorRGBA GLVolume::PRECISE_SEAM_BLOCKED_COL  = {0.820f, 0.412f, 0.412f, 0.6f};  // D16969 - red
 
 std::array<ColorRGBA, 5> GLVolume::MODEL_COLOR = {
     {{1.0f, 1.0f, 0.0f, 1.f}, {1.0f, 0.5f, 0.5f, 1.f}, {0.5f, 1.0f, 0.5f, 1.f}, {0.5f, 0.5f, 1.0f, 1.f}, {1.0f, 1.0f, 0.0f, 1.f}}};
@@ -359,6 +369,28 @@ ColorRGBA color_from_model_volume(const ModelVolume& model_volume)
     ColorRGBA color;
     if (model_volume.is_negative_volume())
         return GLVolume::MODEL_NEGTIVE_COL;
+    else if (model_volume.is_precise_seam()) {
+        // Return color based on Precise Seam subtype.
+        // Exhaustive switch (no default) so -Wswitch flags any future PRECISE_SEAM_* additions.
+        switch (model_volume.type()) {
+            case ModelVolumeType::PRECISE_SEAM_CENTER:   return GLVolume::PRECISE_SEAM_CENTER_COL;
+            case ModelVolumeType::PRECISE_SEAM_LEFT:     return GLVolume::PRECISE_SEAM_LEFT_COL;
+            case ModelVolumeType::PRECISE_SEAM_RIGHT:    return GLVolume::PRECISE_SEAM_RIGHT_COL;
+            case ModelVolumeType::PRECISE_SEAM_ENFORCED: return GLVolume::PRECISE_SEAM_ENFORCED_COL;
+            case ModelVolumeType::PRECISE_SEAM_NEUTRAL:  return GLVolume::PRECISE_SEAM_NEUTRAL_COL;
+            case ModelVolumeType::PRECISE_SEAM_BLOCKED:  return GLVolume::PRECISE_SEAM_BLOCKED_COL;
+            // Non-seam types are unreachable due to the outer is_precise_seam() guard;
+            // listed explicitly so this switch stays exhaustive over ModelVolumeType.
+            case ModelVolumeType::INVALID:
+            case ModelVolumeType::MODEL_PART:
+            case ModelVolumeType::NEGATIVE_VOLUME:
+            case ModelVolumeType::PARAMETER_MODIFIER:
+            case ModelVolumeType::SUPPORT_BLOCKER:
+            case ModelVolumeType::SUPPORT_ENFORCER:
+                break;
+        }
+        return GLVolume::MODEL_MIDIFIER_COL; // unreachable fallback
+    }
     else if (model_volume.is_modifier())
 #if ENABLE_MODIFIERS_ALWAYS_TRANSPARENT
         return GLVolume::MODEL_MIDIFIER_COL;
@@ -872,8 +904,14 @@ GLVolumeWithIdAndZList volumes_to_render(const GLVolumePtrs&                  vo
         std::sort(list.begin(), list.end(),
                   [](const GLVolumeWithIdAndZ& v1, const GLVolumeWithIdAndZ& v2) -> bool { return v1.second.second < v2.second.second; });
     } else if (type == GLVolumeCollection::ERenderType::Opaque && list.size() > 1) {
+        // Orca #15884: nearest first after the selected ones, so the depth test skips shading hidden surfaces.
+        for (GLVolumeWithIdAndZ& volume : list) {
+            volume.second.second = volume.first->transformed_bounding_box().transformed(view_matrix).max(2);
+        }
+
         std::sort(list.begin(), list.end(), [](const GLVolumeWithIdAndZ& v1, const GLVolumeWithIdAndZ& v2) -> bool {
-            return v1.first->selected && !v2.first->selected;
+            return opaque_volume_front_to_back_less({v1.first->selected, v1.second.second},
+                                                    {v2.first->selected, v2.second.second});
         });
     }
 
@@ -1019,13 +1057,18 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
         // Curved cut: split the two halves by the sheet's height field rather
         // than by the flat plane. Texture unit 3 - 0/1/2 stay free for the
         // environment map and other scene textures; do not collide with paint/cut.
+        // The sampler units are set on EVERY draw, active or not: curved_sheet_tex is a
+        // sampler2D and draw_field_tex a sampler3D, and left on the default unit 0 together
+        // they make the program invalid at draw time - macOS then skips every object draw
+        // (see GLShadersManager::init, which also parks them once after linking).
+        shader->set_uniform("curved_sheet_tex", 3);
+        shader->set_uniform("draw_field_tex", 4);
         const bool curved_split = m_use_color_clip_plane && m_curved_sheet_tex != 0;
         shader->set_uniform("curved_sheet_active", curved_split);
         if (curved_split) {
             glsafe(::glActiveTexture(GL_TEXTURE3));
             glsafe(::glBindTexture(GL_TEXTURE_2D, (GLuint) m_curved_sheet_tex));
             glsafe(::glActiveTexture(GL_TEXTURE0));
-            shader->set_uniform("curved_sheet_tex", 3);
             shader->set_uniform("curved_sheet_matrix", m_curved_sheet_matrix);
             shader->set_uniform("curved_sheet_half_size", m_curved_sheet_half_size);
             shader->set_uniform("curved_sheet_range", m_curved_sheet_range);
@@ -1038,7 +1081,6 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
             glsafe(::glActiveTexture(GL_TEXTURE4));
             glsafe(::glBindTexture(GL_TEXTURE_3D, (GLuint) m_draw_field_tex));
             glsafe(::glActiveTexture(GL_TEXTURE0));
-            shader->set_uniform("draw_field_tex", 4);
             shader->set_uniform("draw_field_matrix", m_draw_field_matrix);
             shader->set_uniform("draw_field_origin", m_draw_field_origin);
             shader->set_uniform("draw_field_size", m_draw_field_size);

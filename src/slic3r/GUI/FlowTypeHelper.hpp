@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+class wxWindow;
+
 namespace Slic3r { namespace GUI { namespace FlowType {
 
 // Snapmaker requirement 7.1: all functions read/write wxGetApp().preset_bundle state.
@@ -19,6 +21,16 @@ namespace Slic3r { namespace GUI { namespace FlowType {
 
 // True when the edited printer preset declares "high_flow" in printer_flow_support.
 bool printer_supports_high_flow();
+
+// Owner decisions D2 / D8: true on a dual-nozzle Bambu printer (H2D, H2D Pro, H2C) with High Flow
+// support. There each filament slices the flow type of the nozzle its extruder carries (from the
+// filament map), the Standard / Custom grouping mode is always Standard and the slice-mode popup
+// and FilamentGroupDialog never show.
+bool flow_follows_filament_map();
+
+// The Standard / Custom slice-mode popup applies: nozzles mix flow types and the flow types do not
+// follow the filament map (flow_follows_filament_map()).
+bool slice_mode_popup_enabled();
 
 // True when at least one selected filament preset declares "high_flow" in its
 // filament_flow_support. The custom grouping popup/dialog only makes sense when some
@@ -50,6 +62,12 @@ void reset_nozzle_volume_types_to_standard();
 // Silently ignores mismatches between the vector size and the nozzle count.
 void set_nozzle_volume_types(const std::vector<std::string> &volume_types);
 
+// Adopts the nozzle_volume_type values a connected printer reports (one per logical extruder),
+// written in place and remembered like a combo pick, and re-derives the per-filament flow types
+// when they follow the filament map. No notification: called right before a slice. Returns true
+// when the nozzle types changed (the caller then refreshes the sidebar combos).
+bool adopt_device_nozzle_volume_types(const std::vector<int> &volume_types);
+
 // Restores the flow types saved by the setters above ("nozzle_volume_types"
 // section, keyed by printer preset). No-op without memory; callers rebuild the UI.
 void restore_nozzle_volume_types_from_app_config();
@@ -69,6 +87,17 @@ void apply_custom_mapping(const std::vector<FilamentVolumeType> &mapping);
 // standard mode with mixed nozzles everything falls back to standard. No-op when the
 // mapping already matches. Only meaningful outside the custom+mixed case.
 void sync_filament_volume_types_for_slice();
+
+// Same target sync_filament_volume_types_for_slice would produce for one
+// filament, without writing project_config or opening FilamentGroupDialog.
+// Calib reads this before the first slice, when filament_volume_type is still stale.
+FilamentVolumeType synced_filament_volume_type(unsigned int filament_id = 0);
+
+// Edge Slice-button / Preview-reslice gate: show FilamentGroupDialog when
+// filament_group_dialog_required() and a person is at the PC; skip the dialog
+// (keep the current mapping) for phone / agent / hidden slices; otherwise sync
+// volume types. Returns true if slicing may proceed; false if the dialog was cancelled.
+bool confirm_grouping_before_slice(wxWindow* parent);
 
 }}} // namespace Slic3r::GUI::FlowType
 

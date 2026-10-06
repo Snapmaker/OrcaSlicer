@@ -24,6 +24,8 @@
 #include "3DBed.hpp"
 #include "MeshUtils.hpp"
 #include "libslic3r/ParameterUtils.hpp"
+#include "libslic3r/ExtruderAreas.hpp"
+#include "libslic3r/PlatePrintHistory.hpp"
 
 class GLUquadric;
 typedef class GLUquadric GLUquadricObject;
@@ -103,6 +105,11 @@ private:
     bool m_printable;
     bool m_locked;
     std::string m_dual_nozzle_confirm;
+    // Key of this plate's print history in PartPlateList::m_print_histories. The history lives in
+    // the list, not here, because undo/redo rebuilds every PartPlate: a print that already happened
+    // is not something an undo may take back. The key is part of the undo snapshot, so the rebuilt
+    // plate finds its history again; a plate that did not exist then simply has no history.
+    std::string m_history_key;
     bool        m_dual_nozzle_sliced{ false };
     std::string m_dual_nozzle_sliced_dev;
     std::string m_dual_nozzle_sliced_fp;
@@ -133,6 +140,11 @@ private:
     std::vector<Vec3f> positions;
     PickingModel m_triangles;
     GLModel m_exclude_triangles;
+    // Dual-nozzle: the strips of this plate only one nozzle reaches (index = extruder, 0 = left): shaded fill,
+    // diagonal hatching on top, and the "left / right nozzle only" label quad. Empty on every other printer.
+    std::vector<GLModel> m_extruder_only_fill;
+    std::vector<GLModel> m_extruder_only_hatch;
+    std::vector<GLModel> m_extruder_only_label;
     GLModel m_logo_triangles;
     GLModel m_gridlines;
     GLModel m_gridlines_bolder;
@@ -146,6 +158,7 @@ private:
     PickingModel m_plate_settings_icon;
     PickingModel m_plate_name_edit_icon;
     PickingModel m_move_front_icon;
+    PickingModel m_history_icon;
     GLModel m_plate_idx_icon;
     GLTexture m_texture;
 
@@ -184,6 +197,8 @@ private:
     void render_logo(bool bottom, bool render_cali = true);
     void render_logo_texture(GLTexture &logo_texture, GLModel &logo_buffer, bool bottom);
     void render_exclude_area(bool force_default_color);
+    void render_extruder_only_areas(bool force_default_color);
+    void render_extruder_only_labels(bool bottom);
     //void render_background_for_picking(const ColorRGBA render_color) const;
     void render_grid(bool bottom);
     void render_height_limit(PartPlate::HeightLimitMode mode = HEIGHT_LIMIT_BOTH);
@@ -204,7 +219,8 @@ private:
 
 public:
     static const unsigned int PLATE_NAME_HOVER_ID = 6;
-    static const unsigned int GRABBER_COUNT = 8;
+    static const unsigned int HISTORY_HOVER_ID = 8;
+    static const unsigned int GRABBER_COUNT = 9;
 
     static ColorRGBA SELECT_COLOR;
     static ColorRGBA UNSELECT_COLOR;
@@ -260,6 +276,26 @@ public:
     // DualNozzleSync::Confirmation JSON (saved in the project; empty = never confirmed).
     const std::string& dual_nozzle_confirm() const { return m_dual_nozzle_confirm; }
     void set_dual_nozzle_confirm(const std::string& json) { m_dual_nozzle_confirm = json; }
+
+    // ---- print history (PlatePrintHistory.hpp) ----
+    // When, where and on which machine this plate was sent. Persisted per plate in the project 3MF.
+    // Kept outside undo/redo on purpose (see m_history_key).
+    const PlateHistory::History& print_history() const;
+    void set_print_history(const PlateHistory::History& history);
+    // True once the plate went to a printer at least once. An export to a file does not count.
+    bool was_sent_to_printer() const;
+    // Fingerprint of what this plate would slice from right now (empty plate: empty string).
+    std::string input_fingerprint() const;
+    // The plate changed after its last send to a printer.
+    bool modified_since_last_send() const;
+    // Records one send or export, stamping the plate's current input fingerprint and, unless the
+    // entry carries them, the time and a uid. Marks the project dirty so the user is asked to save.
+    // Returns the entry's uid. GUI thread only.
+    std::string add_print_history_entry(PlateHistory::Entry entry);
+    // An upload that the printer was then told to start: changes the action of the entry with this
+    // uid. False if there is no such entry. GUI thread only.
+    bool set_print_history_action(const std::string& uid, PlateHistory::Action action);
+    void clear_print_history();
     // The printer (and its state fingerprint) the current slice was made for; the dual-nozzle
     // watcher invalidates the slice when the selected printer or its state moves away from it.
     void set_dual_nozzle_sliced_for(const std::string& dev_id, const std::string& state_fp) { m_dual_nozzle_sliced = true; m_dual_nozzle_sliced_dev = dev_id; m_dual_nozzle_sliced_fp = state_fp; }
@@ -396,6 +432,9 @@ public:
     /*rendering related functions*/
     const Pointfs& get_shape() const { return m_shape; }
     bool set_shape(const Pointfs& shape, const Pointfs& exclude_areas, Vec2d position, float height_to_lid, float height_to_rod);
+    // Rebuild the nozzle-only strips from the plate list's extruder areas; `position` is this plate's place in
+    // the plate grid (the same offset set_shape gets).
+    void update_extruder_only_triangles(const Vec2d& position);
     bool contains(const Vec3d& point) const;
     bool contains(const GLVolume& v) const;
     bool contains(const BoundingBoxf3& bb) const;
@@ -530,7 +569,7 @@ public:
         std::vector<std::pair<int, int>>	objects_and_instances;
         std::vector<std::pair<int, int>>	instances_outside;
 
-        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config);
+        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config, m_history_key);
 
         for (std::vector<std::pair<int, int>>::iterator it = objects_and_instances.begin(); it != objects_and_instances.end(); ++it)
             obj_to_instance_set.insert(std::pair(it->first, it->second));
@@ -548,7 +587,7 @@ public:
         for (std::set<std::pair<int, int>>::iterator it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); ++it)
             objects_and_instances.emplace_back(it->first, it->second);
 
-        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config);
+        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config, m_history_key);
     }
     /*template<class Archive> void serialize(Archive& ar)
     {
@@ -585,6 +624,12 @@ class PartPlateList : public ObjectBase
     PartPlate unprintable_plate;
     Pointfs m_shape;
     Pointfs m_exclude_areas;
+    // Dual-nozzle reach, plate-local; not serialized (it follows the printer preset, not the project).
+    ExtruderAreas m_extruder_areas;
+    // "Left / right nozzle only" label textures: [0] English, [1] Chinese; each [left, right].
+    GLTexture m_extruder_label_textures[2][2];
+    bool      m_extruder_label_textures_loaded = false;
+    void      load_extruder_label_textures();
     BoundingBoxf3 m_bounding_box;
     bool m_intialized;
     std::string m_logo_texture_filename;
@@ -607,6 +652,11 @@ class PartPlateList : public ObjectBase
     GLTexture m_plate_settings_changed_hovered_texture;
     GLTexture m_plate_name_edit_texture;
     GLTexture m_plate_name_edit_hovered_texture;
+    // Print history icon: normal / hovered, and the same two tinted green once the plate was sent.
+    GLTexture m_history_texture;
+    GLTexture m_history_hovered_texture;
+    GLTexture m_history_printed_texture;
+    GLTexture m_history_printed_hovered_texture;
     GLTexture m_idx_textures[MAX_PLATE_COUNT];
     // set render option
     bool render_bedtype_logo = true;
@@ -614,8 +664,17 @@ class PartPlateList : public ObjectBase
     bool render_cali_logo = true;
 
     bool m_is_dark = false;
+    bool m_icon_textures_dark = false;
 
     int m_filament_count = 1;
+
+    // Snap #930: set when any plate's slice result goes valid→invalid so Preview
+    // re-slice can re-show the filament grouping dialog. Cleared at reslice().
+    bool m_filament_group_dirty = false;
+
+    // Every plate's print history, by PartPlate::m_history_key. Not part of the undo snapshot and
+    // not cleared by undo/redo's reset(false): only a new or reloaded project empties it.
+    std::map<std::string, PlateHistory::History> m_print_histories;
 
     void init();
     //compute the origin for printable plate with index i
@@ -627,6 +686,8 @@ class PartPlateList : public ObjectBase
     //generate icon textures
     void generate_icon_textures();
     void release_icon_textures();
+    bool icon_textures_loaded() const { return m_del_texture.get_id() != 0 && m_icon_textures_dark == m_is_dark; }
+    void load_icon_textures();
 
     void set_default_wipe_tower_pos_for_plate(int plate_idx);
 
@@ -747,6 +808,9 @@ public:
     PartPlate* get_curr_plate() { return m_plate_list[m_current_plate]; }
     const PartPlate* get_curr_plate() const { return m_plate_list[m_current_plate]; }
 
+    bool is_filament_group_dirty() const { return m_filament_group_dirty; }
+    void set_filament_group_dirty(bool dirty) { m_filament_group_dirty = dirty; }
+
     std::vector<PartPlate*>& get_plate_list() { return m_plate_list; };
 
     PartPlate* get_selected_plate();
@@ -849,6 +913,9 @@ public:
     void calc_bounding_boxes();
     void select_plate_view();
     bool set_shapes(const Pointfs& shape, const Pointfs& exclude_areas, const std::string& custom_texture, float height_to_lid, float height_to_rod);
+    // Dual-nozzle: what each nozzle reaches (plate-local). Empty clears the overlay. Returns true when it changed.
+    bool set_extruder_areas(const ExtruderAreas& areas);
+    const ExtruderAreas& get_extruder_areas() const { return m_extruder_areas; }
     void set_hover_id(int id);
     void reset_hover_id();
     bool intersects(const BoundingBoxf3 &bb);

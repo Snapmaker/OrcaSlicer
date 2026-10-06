@@ -317,3 +317,75 @@ TEST_CASE("A one-filament plate estimate has depth 0, so the plate set must incl
     CHECK_THAT(estimate_wipe_tower_footprint(config, WipeTowerType::Type2, {0}, 0.2, 20.).depth, WithinAbs(0., 1e-9));
     CHECK(estimate_wipe_tower_footprint(config, WipeTowerType::Type2, {0, 1}, 0.2, 20.).depth > 0.);
 }
+
+// Qidi Q1 Pro: 245 x 245 bed, bed_exclude_area two notches along the back edge (y 240-245), written as
+// one padded point list. The CLI's raw default tower position (15, 220) reached into the notches and
+// every Q1 Pro slice failed "Prime Tower is too close to exclusion area" (-64).
+static Polygons q1_pro_exclusion()
+{
+    PrintConfig config;
+    config.bed_exclude_area.values = { Vec2d(25, 245), Vec2d(25, 240),  Vec2d(115, 240), Vec2d(115, 245), Vec2d(208, 245),
+                                       Vec2d(208, 240), Vec2d(245, 240), Vec2d(245, 245), Vec2d(208, 245) };
+    return get_bed_excluded_area(config);
+}
+
+static WipeTowerFootprint q1_pro_tower()
+{
+    WipeTowerFootprint footprint;
+    footprint.width      = 35.;
+    footprint.depth      = 20.;
+    footprint.height     = 20.;
+    footprint.brim_width = 3.2;
+    return footprint;
+}
+
+TEST_CASE("A tower clear of the bed exclusion area keeps its position", "[WipeTowerEstimate][ExcludeArea]") {
+    const DynamicPrintConfig config = make_config();
+    CHECK_FALSE(wipe_tower_position_clear_of_exclusion(config, q1_pro_tower(), q1_pro_exclusion(), Vec2d(245, 245), Vec2d(13, 214.5), Vec2d(15, 15)));
+    CHECK_FALSE(wipe_tower_position_clear_of_exclusion(config, q1_pro_tower(), q1_pro_exclusion(), Vec2d(245, 245), Vec2d(13, 214.5), Vec2d(100, 200)));
+    // No exclusion area, no tower: nothing to do.
+    CHECK_FALSE(wipe_tower_position_clear_of_exclusion(config, q1_pro_tower(), Polygons(), Vec2d(245, 245), Vec2d(13, 214.5), Vec2d(15, 220)));
+    CHECK_FALSE(wipe_tower_position_clear_of_exclusion(config, WipeTowerFootprint(), q1_pro_exclusion(), Vec2d(245, 245), Vec2d(13, 214.5), Vec2d(15, 220)));
+}
+
+TEST_CASE("A tower on the bed exclusion area moves where the GUI places a new plate's tower", "[WipeTowerEstimate][ExcludeArea]") {
+    const DynamicPrintConfig config   = make_config();
+    const Polygons           excluded = q1_pro_exclusion();
+    const WipeTowerFootprint tower    = q1_pro_tower();
+    REQUIRE_FALSE(intersection(excluded, Polygons{ placed_wipe_tower_footprint(config, tower, Vec2d(15, 220)) }).empty());
+
+    const std::optional<Vec2d> moved = wipe_tower_position_clear_of_exclusion(config, tower, excluded, Vec2d(245, 245), Vec2d(13, 214.5), Vec2d(15, 220));
+    REQUIRE(moved);
+    // PartPlateList::set_default_wipe_tower_pos_for_plate: the default corner, brim + 15 mm inside the bed.
+    CHECK_THAT(moved->x(), WithinAbs(15. + 3.2, 1e-6));
+    CHECK_THAT(moved->y(), WithinAbs(245. - 20. - 15. - 3.2, 1e-6));
+    CHECK(intersection(excluded, Polygons{ placed_wipe_tower_footprint(config, tower, *moved) }).empty());
+}
+
+TEST_CASE("A blocked default corner falls back to the next clear corner", "[WipeTowerEstimate][ExcludeArea]") {
+    const DynamicPrintConfig config = make_config();
+    // The whole back-left quarter is excluded.
+    PrintConfig exclusion_config;
+    exclusion_config.bed_exclude_area.values = { Vec2d(0, 120), Vec2d(120, 120), Vec2d(120, 245), Vec2d(0, 245) };
+    const Polygons           excluded = get_bed_excluded_area(exclusion_config);
+    const WipeTowerFootprint tower    = q1_pro_tower();
+    const std::optional<Vec2d> moved = wipe_tower_position_clear_of_exclusion(config, tower, excluded, Vec2d(245, 245), Vec2d(13, 214.5), Vec2d(15, 220));
+    REQUIRE(moved);
+    // Back right.
+    CHECK_THAT(moved->x(), WithinAbs(245. - 35. - 15. - 3.2, 1e-6));
+    CHECK_THAT(moved->y(), WithinAbs(245. - 20. - 15. - 3.2, 1e-6));
+    CHECK(intersection(excluded, Polygons{ placed_wipe_tower_footprint(config, tower, *moved) }).empty());
+}
+
+TEST_CASE("The placed footprint is the validation hull: brim grown, then rotated about the corner", "[WipeTowerEstimate][ExcludeArea]") {
+    DynamicPrintConfig config = make_config();
+    const WipeTowerFootprint tower = q1_pro_tower();
+    const BoundingBox flat = get_extents(placed_wipe_tower_footprint(config, tower, Vec2d(100, 50)));
+    CHECK_THAT(unscale<double>(flat.min.x()), WithinAbs(100. - 3.2, 1e-3));
+    CHECK_THAT(unscale<double>(flat.max.y()), WithinAbs(50. + 20. + 3.2, 1e-3));
+    config.set_key_value("wipe_tower_rotation_angle", new ConfigOptionFloat(90.));
+    const BoundingBox turned = get_extents(placed_wipe_tower_footprint(config, tower, Vec2d(100, 50)));
+    // 90 degrees about the corner: the 35 mm side now runs along +y, the 20 mm side along -x.
+    CHECK_THAT(unscale<double>(turned.max.y()), WithinAbs(50. + 35. + 3.2, 1e-3));
+    CHECK_THAT(unscale<double>(turned.min.x()), WithinAbs(100. - 20. - 3.2, 1e-3));
+}

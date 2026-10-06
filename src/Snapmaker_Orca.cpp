@@ -5715,6 +5715,32 @@ int CLI::run(int argc, char **argv)
                         plate->estimate_wipe_tower_polygon(m_print_config, index, wt_pos, wt_size);
                         if (wt_size(0) < EPSILON || wt_size(1) < EPSILON)
                             continue;
+                        // That clamp only knows the bed edges. A tower left on bed_exclude_area fails
+                        // validation ("Prime Tower is too close to exclusion area", -64; Qidi Q1 Pro:
+                        // the raw default y = 220 reaches the y 240-245 strip), where the GUI never puts
+                        // one: PartPlateList::set_default_wipe_tower_pos_for_plate starts new plates at its
+                        // default corner WIPE_TOWER_AUTO_MARGIN + brim inside the bed. Re-place such a
+                        // tower the same way; a tower already clear of the area is not touched.
+                        {
+                            PrintConfig exclusion_config;
+                            if (const auto *area = m_print_config.option<ConfigOptionPoints>("bed_exclude_area"))
+                                exclusion_config.bed_exclude_area.values = area->values;
+                            const Polygons excluded = get_bed_excluded_area(exclusion_config);
+                            int plate_width = 0, plate_depth = 0, plate_height = 0;
+                            partplate_list.get_plate_size(plate_width, plate_depth, plate_height);
+                            auto printer_structure_opt = m_print_config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
+                            const bool i3 = printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3;
+                            const Vec2d preferred = i3 ? Vec2d(double(I3_WIPE_TOWER_DEFAULT_X_POS), double(I3_WIPE_TOWER_DEFAULT_Y_POS)) :
+                                                         Vec2d(double(WIPE_TOWER_DEFAULT_X_POS), double(WIPE_TOWER_DEFAULT_Y_POS));
+                            const WipeTowerFootprint footprint = plate->estimate_wipe_tower_footprint(m_print_config);
+                            if (const std::optional<Vec2d> clear = wipe_tower_position_clear_of_exclusion(
+                                    m_print_config, footprint, excluded, Vec2d(double(plate_width), double(plate_depth)), preferred, Vec2d(wt_pos(0), wt_pos(1)))) {
+                                BOOST_LOG_TRIVIAL(info) << boost::format("plate %1%: wipe tower at {%2%, %3%} meets bed_exclude_area, moved to {%4%, %5%}")
+                                    % (index + 1) % wt_pos(0) % wt_pos(1) % clear->x() % clear->y();
+                                wt_pos(0) = clear->x();
+                                wt_pos(1) = clear->y();
+                            }
+                        }
                         ConfigOptionFloat wt_x_opt((float) wt_pos(0));
                         ConfigOptionFloat wt_y_opt((float) wt_pos(1));
                         m_print_config.option<ConfigOptionFloats>("wipe_tower_x", true)->set_at(&wt_x_opt, index, 0);

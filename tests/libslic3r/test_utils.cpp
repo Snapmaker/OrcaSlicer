@@ -911,8 +911,8 @@ TEST_CASE("Floats print with a decimal point in a locale whose decimal separator
 TEST_CASE("atof_decimal_point and string_to_double_decimal_point return 0 for text with no number", "[LocalesUtils]")
 {
     // fast_float leaves the output untouched on failure; the result must not be indeterminate.
-    // CoolingBuffer feeds "G4 P1000" (no 'S', so find() == npos and npos + 1 wraps to the line
-    // start) to atof_decimal_point, which must give exactly what atof gives: 0.
+    // Text with no leading number must give exactly what atof gives: 0 (e.g. an axis letter or a G4
+    // parameter that is not followed by a digit).
     const char *no_number[] = {"", "abc", "G4 P1000", "-", "+", "-abc", "+-5", ";comment 5", "   "};
     for (const char *text : no_number) {
         DYNAMIC_SECTION("no number [" << text << "]") {

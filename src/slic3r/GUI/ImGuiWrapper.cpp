@@ -705,7 +705,8 @@ bool ImGuiWrapper::bbl_combo_with_filter(const char* label, const std::string& p
                 if (priority != wxNOT_FOUND)
                     filtered_items_with_priority.push_back({ i, priority });
             }
-            std::sort(filtered_items_with_priority.begin(), filtered_items_with_priority.end(), [](const std::pair<int, int>& a, const std::pair<int, int>& b) {return (b.second > a.second); });
+            // stable: matches at the same position keep the list order (alphabetical for fonts)
+            std::stable_sort(filtered_items_with_priority.begin(), filtered_items_with_priority.end(), [](const std::pair<int, int>& a, const std::pair<int, int>& b) {return (b.second > a.second); });
             for (auto item : filtered_items_with_priority)
             {
                 filtered_items_idx->push_back(item.first);

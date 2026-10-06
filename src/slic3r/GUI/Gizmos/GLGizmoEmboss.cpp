@@ -3,6 +3,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include "slic3r/GUI/Gizmos/GizmoObjectManipulation.hpp"
+#include "slic3r/GUI/Gizmos/EmbossFaceList.hpp"
 #include "slic3r/GUI/MainFrame.hpp" // to update title when add text
 #include "slic3r/GUI/NotificationManager.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -243,6 +244,8 @@ struct Facenames
 bool store(const Facenames &facenames);
 bool load(Facenames &facenames);
 void init_face_names(Facenames &facenames);
+// Rebuild Facenames::faces_names (what the font search filters) from Facenames::faces.
+bool sync_face_names(Facenames &facenames);
 void init_truncated_names(Facenames &face_names, float max_width);
 
 // This configs holds GUI layout size given by translated texts.
@@ -1894,11 +1897,16 @@ void GLGizmoEmboss::draw_font_list()
     ImGui::SetNextItemWidth(2 * m_gui_cfg->input_width);
     std::vector<int> filtered_items_idx;
     bool             is_filtered = false;
+    // The search box filters faces_names and returns indices into it, which are used to index
+    // faces below - the two lists must match before the filter runs (cheap size check per frame).
+    if (m_face_names->faces_names.size() != m_face_names->faces.size())
+        sync_face_names(*m_face_names);
     if (m_imgui->bbl_combo_with_filter("##Combo_Font", selected, m_face_names->faces_names,
         &filtered_items_idx, &is_filtered, m_imgui->scaled(32.f / 15.f))) {
         bool set_selection_focus = false;
         if (!m_face_names->is_init) {
             init_face_names(*m_face_names);
+            sync_face_names(*m_face_names);
             set_selection_focus = true;
         }
 
@@ -1908,14 +1916,13 @@ void GLGizmoEmboss::draw_font_list()
         if (m_face_names->texture_id == 0)
             init_font_name_texture();
 
-        int show_items_count = is_filtered ? filtered_items_idx.size() : m_face_names->faces.size();
+        const std::vector<int> rows = emboss_face_list::visible_rows(is_filtered, filtered_items_idx, m_face_names->faces.size());
 
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(0, 0));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0);
 
-        for (int i = 0; i < show_items_count; i++) {
-            int idx = is_filtered ? filtered_items_idx[i] : i;
+        for (int idx : rows) {
             FaceName &face = m_face_names->faces[idx];
             const wxString &wx_face_name = face.wx_name;
 
@@ -1962,14 +1969,15 @@ void GLGizmoEmboss::draw_font_list()
     }
 
     // delete unloadable face name when try to use
-    if (del_index.has_value()) {
-        auto face = m_face_names->faces.begin() + (*del_index);
+    if (del_index.has_value() && *del_index < m_face_names->faces.size()) {
+        const wxString wx_name = m_face_names->faces[*del_index].wx_name;
         std::vector<wxString>& bad = m_face_names->bad;
         // sorted insert into bad fonts
-        auto it = std::upper_bound(bad.begin(), bad.end(), face->wx_name);
-        bad.insert(it, face->wx_name);
-        m_face_names->faces.erase(face);
-        m_face_names->faces_names.erase(m_face_names->faces_names.begin() + (*del_index));
+        auto it = std::upper_bound(bad.begin(), bad.end(), wx_name);
+        bad.insert(it, wx_name);
+        // faces and faces_names go together, or the search would show the wrong fonts
+        emboss_face_list::erase_face(m_face_names->faces, m_face_names->faces_names, *del_index);
+        sync_face_names(*m_face_names);
         // update cached file
         store(*m_face_names);
     }
@@ -4368,11 +4376,21 @@ bool load(Facenames &facenames) {
     assert(std::is_sorted(data.good.begin(), data.good.end()));
 
     facenames.hash = data.hash;
+    facenames.faces.clear();
     facenames.faces.reserve(data.good.size());
     for (const wxString &face : data.good)
         facenames.faces.push_back({face});
+    // The font search filters faces_names; without this every search came back empty whenever
+    // the list was restored from this cache (every run after the first).
+    sync_face_names(facenames);
     facenames.bad = data.bad;
     return true;
+}
+
+bool sync_face_names(Facenames &facenames)
+{
+    return emboss_face_list::sync_names(facenames.faces, facenames.faces_names,
+                                        [](const FaceName &face) { return face.wx_name.utf8_string(); });
 }
 
 void init_truncated_names(Facenames &face_names, float max_width)

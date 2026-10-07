@@ -5409,7 +5409,7 @@ void PrintObject::slice_volumes()
 
     apply_surface_emboss_mixed_region_override(*this, [print]() { print->throw_if_canceled(); });
 
-    InterlockingGenerator::generate_interlocking_structure(this);
+    InterlockingGenerator::generate_interlocking_structure(this, [print]() { print->throw_if_canceled(); });
     m_print->throw_if_canceled();
 
     BOOST_LOG_TRIVIAL(debug) << "Slicing volumes - make_slices in parallel - begin";

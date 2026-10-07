@@ -776,7 +776,8 @@ public:
     // Ultra: split a painted part into one solid part per filament (docs/superpowers/specs/2026-09-01-color-split-design.md).
     void split_by_color();
     // Image Fill (Phase 2): apply a picture or a gradient to the selected part.
-    void apply_image_fill();
+    // image_path .. image dropped onto the 3D scene, the dialog starts with it
+    void apply_image_fill(const wxString &image_path = wxEmptyString);
     void optimize_rotation();
     // find all empty cells on the plate and won't overlap with exclusion areas
     static std::vector<Vec2f> get_empty_cells(const Vec2f step);

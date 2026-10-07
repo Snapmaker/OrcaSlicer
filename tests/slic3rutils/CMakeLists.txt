@@ -77,6 +77,8 @@ add_executable(${_TEST_NAME}_tests
     ff_printer_sources_tests.cpp
     emboss_font_search_tests.cpp
     printers_monitor_tests.cpp
+    # Hidden GLFW window + forward-compatible 3.3 core context; skips itself where none can be made.
+    gl_core_profile_tests.cpp
     # The crash-report scrubber is plain C++ with no library of its own; the test compiles
     # the very file the app does.
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/sentry_wrapper/SentryScrub.cpp

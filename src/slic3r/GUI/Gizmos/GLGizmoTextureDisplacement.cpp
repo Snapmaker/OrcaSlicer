@@ -965,7 +965,14 @@ void GLGizmoTextureDisplacement::render_seam_overlay()
     const bool         have_anchor = m_seam_edit_mode && m_seam_anchor_glmodel.is_initialized();
     if (mo == nullptr || mv == nullptr || (!have_marked && !have_hover && !have_anchor))
         return;
-    GLShaderProgram *shader = wxGetApp().get_shader("flat");
+    // EDGE (core profile): wide lines are gone there, so the seams go through the thick-line geometry
+    // shader instead of glLineWidth(4) - the seams are the one thing this overlay must make visible.
+#if !SLIC3R_OPENGL_ES
+    const bool core = OpenGLManager::get_gl_info().is_core_profile();
+#else
+    const bool core = false;
+#endif // !SLIC3R_OPENGL_ES
+    GLShaderProgram *shader = wxGetApp().get_shader(core ? "dashed_thick_lines" : "flat");
     if (shader == nullptr)
         return;
 
@@ -976,6 +983,14 @@ void GLGizmoTextureDisplacement::render_seam_overlay()
     shader->start_using();
     shader->set_uniform("view_model_matrix", camera.get_view_matrix() * trafo_matrix);
     shader->set_uniform("projection_matrix", camera.get_projection_matrix());
+    if (core) {
+        const std::array<int, 4>& viewport = camera.get_viewport();
+        shader->set_uniform("viewport_size", Vec2d(double(viewport[2]), double(viewport[3])));
+        shader->set_uniform("width", 3.0f); // + the shader's 1 px anti-aliasing fringe = the 4 px of the wide-line path
+        shader->set_uniform("gap_size", 0.0f);
+        // The geometry shader turns each line into two triangles, which take the FILL offset, not the LINE one.
+        glsafe(::glEnable(GL_POLYGON_OFFSET_FILL));
+    }
     glsafe(::glEnable(GL_POLYGON_OFFSET_LINE));
     glsafe(::glPolygonOffset(-2.0f, -2.0f)); // pull further forward than the wireframe so seams read on top
     // A seam edge is geometrically the same line as a wireframe edge, so a mere polygon offset is a
@@ -1013,6 +1028,8 @@ void GLGizmoTextureDisplacement::render_seam_overlay()
         glsafe(::glLineWidth(1.0f));
 #endif // !SLIC3R_OPENGL_ES
     glsafe(::glDisable(GL_POLYGON_OFFSET_LINE));
+    if (core)
+        glsafe(::glDisable(GL_POLYGON_OFFSET_FILL));
     if (seams_on_top)
         glsafe(::glEnable(GL_DEPTH_TEST));
     shader->stop_using();

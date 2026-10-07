@@ -4052,7 +4052,7 @@ void GCodeViewer::render_toolpaths()
                 switch (buffer.render_primitive_type)
                 {
                 case TBuffer::ERenderPrimitiveType::Line: {
-                    glsafe(::glLineWidth(static_cast<GLfloat>(line_width(zoom))));
+                    OpenGLManager::set_line_width(static_cast<GLfloat>(line_width(zoom)));
                     render_as_lines(it_path, buffer.render_paths.end(), *shader, uniform_color);
                     break;
                 }

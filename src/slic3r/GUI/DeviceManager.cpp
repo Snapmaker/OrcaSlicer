@@ -2087,12 +2087,23 @@ int MachineObject::command_go_home2()
 
 int MachineObject::command_control_fan(FanType fan_type, bool on_off)
 {
-    std::string gcode = (boost::format("M106 P%1% S%2% \n") % (int)fan_type % (on_off ? 255 : 0)).str();
-    return this->publish_gcode(gcode);
+    return command_control_fan_val(fan_type, on_off ? 255 : 0);
 }
 
+// val is 0..255. A printer that reports this fan in device.airduct (the H2 series) takes Bambu
+// Studio's new-protocol set_fan in percent (DevFan::command_control_fan_new); every other printer
+// takes M106 P<fan> S<val>, as before.
 int MachineObject::command_control_fan_val(FanType fan_type, int val)
 {
+    const int fan_index = GUI::BambuFans::airduct_fan_index((int) fan_type);
+    const int reported  = fan_type == COOLING_FAN ? m_airduct_fans.part :
+                          fan_type == BIG_COOLING_FAN ? m_airduct_fans.aux :
+                          fan_type == CHAMBER_FAN ? m_airduct_fans.chamber : -1;
+    if (is_enable_np && m_airduct_fans.present && fan_index >= 0 && reported >= 0) {
+        json j = GUI::BambuFans::set_fan_command(fan_index, val, std::to_string(MachineObject::m_sequence_id++));
+        BOOST_LOG_TRIVIAL(info) << "command_control_fan_val: set_fan fan_index=" << fan_index << " speed=" << j["print"]["speed"];
+        return this->publish_json(j.dump());
+    }
     std::string gcode = (boost::format("M106 P%1% S%2% \n") % (int)fan_type % (val)).str();
     return this->publish_gcode(gcode);
 }
@@ -3949,29 +3960,16 @@ int MachineObject::parse_json(std::string payload, bool key_field_only)
                             cooling_fan_speed = (int)((fan_gear & 0x000000FF) >> 0);
                         }
                         else {
-                            if (jj.contains("cooling_fan_speed")) {
-                                cooling_fan_speed = stoi(jj["cooling_fan_speed"].get<std::string>());
-                                cooling_fan_speed = round(floor(cooling_fan_speed / float(1.5)) * float(25.5));
-                            }
-                            else {
-                                cooling_fan_speed = 0;
-                            }
-
-                            if (jj.contains("big_fan1_speed")) {
-                                big_fan1_speed = stoi(jj["big_fan1_speed"].get<std::string>());
-                                big_fan1_speed = round( floor(big_fan1_speed / float(1.5)) * float(25.5) );
-                            }
-                            else {
-                                big_fan1_speed = 0;
-                            }
-
-                            if (jj.contains("big_fan2_speed")) {
-                                big_fan2_speed = stoi(jj["big_fan2_speed"].get<std::string>());
-                                big_fan2_speed = round( floor(big_fan2_speed / float(1.5)) * float(25.5) );
-                            }
-                            else {
-                                big_fan2_speed = 0;
-                            }
+                            // "0".."15" steps as 0..255 (BambuFans::classic_fan_byte, Bambu
+                            // Studio's DevFan::ParseV1_0); missing or unreadable reads as off
+                            // instead of throwing out of the rest of the report.
+                            auto classic = [&jj](const char* key) {
+                                const int v = jj.contains(key) ? GUI::BambuFans::classic_fan_byte(jj[key]) : -1;
+                                return v < 0 ? 0 : v;
+                            };
+                            cooling_fan_speed = classic("cooling_fan_speed");
+                            big_fan1_speed    = classic("big_fan1_speed");
+                            big_fan2_speed    = classic("big_fan2_speed");
                         }
 
                         if (jj.contains("heatbreak_fan_speed")) {
@@ -5890,6 +5888,7 @@ void MachineObject::parse_new_info(json print)
     is_enable_np = check_enable_np(print);
     if (!is_enable_np)
     {
+        m_airduct_fans = GUI::BambuFans::AirductFans();
         return;
     }
 
@@ -6034,12 +6033,14 @@ void MachineObject::parse_new_info(json print)
             chamber_temp_target = get_flag_bits(device["cham_temp"].get<int>(), 16, 16);
         }
 
-        if (device.contains("fan")) {
-            big_fan1_speed = get_flag_bits(device["fan"].get<int>(), 0, 3);
-            big_fan2_speed = get_flag_bits(device["fan"].get<int>(), 4, 3);
-            cooling_fan_speed = get_flag_bits(device["fan"].get<int>(), 8, 3);
-            heatbreak_fan_speed = get_flag_bits(device["fan"].get<int>(), 12, 3);
-        }
+        // Fans. device.fan is not read: its 3-bit fields are not speeds (Bambu Studio dropped them
+        // in Dec 2024), and reading them overwrote the classic 0..255 values with 0..7 - the Device
+        // tab's 0 % and the phone's 2 %. An H2-series printer's device.airduct gives each fan's
+        // speed in percent, which then replaces the classic value (BambuFans.hpp).
+        m_airduct_fans = GUI::BambuFans::parse_airduct_fans(device);
+        if (m_airduct_fans.part >= 0) cooling_fan_speed = GUI::BambuFans::byte_of_percent(m_airduct_fans.part);
+        if (m_airduct_fans.aux >= 0) big_fan1_speed = GUI::BambuFans::byte_of_percent(m_airduct_fans.aux);
+        if (m_airduct_fans.chamber >= 0) big_fan2_speed = GUI::BambuFans::byte_of_percent(m_airduct_fans.chamber);
 
         if (device.contains("nozzle")) {
             json const &nozzle = device["nozzle"];

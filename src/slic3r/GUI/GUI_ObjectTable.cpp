@@ -1448,6 +1448,41 @@ void ObjectGridTable::update_value_to_config(ModelConfig* config, std::string& k
     config->touch();
 }
 
+// Orca #14479 (adapted): the Outer wall speed key is a vector option here (one value per flow
+// variant) while the grid edits a scalar. Writing the scalar ConfigOptionFloat under that key left
+// a wrongly typed option in the object/part config (later static_cast to ConfigOptionFloats), so
+// write a vector instead: the existing override (or the global vector) with the standard (first)
+// value replaced.
+void ObjectGridTable::update_speed_value_to_config(ModelConfig* config, std::string& key, ConfigOptionFloat& new_value, ConfigOptionFloat& ori_value)
+{
+    if (new_value.value == ori_value.value) {
+        if (config->has(key))
+            config->erase(key);
+        config->touch();
+        return;
+    }
+
+    std::unique_ptr<ConfigOptionFloats> speeds;
+    if (config->has(key)) {
+        if (const auto* existing = dynamic_cast<const ConfigOptionFloats*>(config->option(key)))
+            speeds.reset(static_cast<ConfigOptionFloats*>(existing->clone()));
+    }
+    if (!speeds) {
+        const DynamicPrintConfig& global_config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+        if (const auto* global_speeds = global_config.option<ConfigOptionFloats>(key))
+            speeds.reset(static_cast<ConfigOptionFloats*>(global_speeds->clone()));
+    }
+    if (!speeds)
+        speeds = std::make_unique<ConfigOptionFloats>();
+    if (speeds->values.empty())
+        speeds->values.push_back(new_value.value);
+    else
+        speeds->values.front() = new_value.value;
+
+    config->set_key_value(key, speeds.release());
+    config->touch();
+}
+
 void ObjectGridTable::update_volume_values_from_object(int row, int col)
 {
     ObjectGridRow* grid_row = m_grid_data[row - 1];
@@ -1598,7 +1633,10 @@ void ObjectGridTable::SetValue( int row, int col, const wxString& value )
         value.ToDouble(&double_value);
         option_value.value = (float)double_value;
 
-        update_value_to_config(grid_row->config, grid_col->key, option_value, option_ori_value);
+        if (col == col_speed_perimeter)
+            update_speed_value_to_config(grid_row->config, grid_col->key, option_value, option_ori_value);
+        else
+            update_value_to_config(grid_row->config, grid_col->key, option_value, option_ori_value);
     }
     else if (grid_col->type == coInt) {
         ConfigOptionInt &option_value = dynamic_cast<ConfigOptionInt &>((*grid_row)[(GridColType)col]);
@@ -1724,7 +1762,10 @@ void ObjectGridTable::SetValueAsDouble(int row, int col, double value)
 
     option_value.value = (float)value;
 
-    update_value_to_config(grid_row->config, grid_col->key, option_value, option_ori_value);
+    if (col == col_speed_perimeter)
+        update_speed_value_to_config(grid_row->config, grid_col->key, option_value, option_ori_value);
+    else
+        update_value_to_config(grid_row->config, grid_col->key, option_value, option_ori_value);
 
     return;
 }
@@ -2545,6 +2586,9 @@ bool ObjectGridTable::OnCellLeftClick(int row, int col, ConfigOptionType &type)
 void ObjectGridTable::OnSelectCell(int row, int col)
 {
     m_selected_cells.clear();
+    // Orca #14479: the side window can be gone while the grid still reports a selection
+    if (!m_panel->m_side_window)
+        return;
     m_panel->m_side_window->Freeze();
     if (row == 0 || col == col_filaments) {
         m_panel->m_object_settings->UpdateAndShow(row, false, false, false, nullptr, nullptr, std::string());

@@ -87,6 +87,10 @@ if (SLIC3R_GUI)
 #    list(REMOVE_ITEM wxWidgets_LIBRARIES oleacc)
     message(STATUS "wx libs: ${wxWidgets_LIBRARIES}")
 
+    # libvgcode (PrusaSlicer 2.8 G-code viewer, AGPL-3.0; via OrcaSlicer #10735). Spike: built
+    # and linked, fed by GUI/LibVGCode/EdgeVGCodeInput; the legacy GCodeViewer still renders.
+    add_subdirectory(libvgcode)
+
     add_subdirectory(slic3r)
 endif()
 

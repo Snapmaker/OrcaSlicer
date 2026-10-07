@@ -492,8 +492,10 @@ public:
                     this->values.resize(n, static_cast<const ConfigOptionSingle<T>*>(opt_default)->value);
                 }
             } else {
-                // Resize by duplicating the last value.
-                this->values.resize(n, this->values./*back*/front());
+                // Resize by duplicating the first value. Copy it first: resize() may reallocate and
+                // invalidate the reference to values.front() while it is still being read.
+                T v = this->values./*back*/front();
+                this->values.resize(n, v);
             }
         }
     }
@@ -565,8 +567,11 @@ public:
 
         if (this->values.empty())
             this->values.resize(rhs_vec->size());
-        else
-            this->values.resize(rhs_vec->size(), this->values.front());
+        else {
+            // Copy first: resize() may reallocate and invalidate the reference to values.front().
+            T v = this->values.front();
+            this->values.resize(rhs_vec->size(), v);
+        }
 
     	bool modified = false;
         auto default_value = this->values[0];

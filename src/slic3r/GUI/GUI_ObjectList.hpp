@@ -441,6 +441,8 @@ public:
     void update_settings_item_and_selection(wxDataViewItem item, wxDataViewItemArray& selections);
     void update_object_list_by_printer_technology();
     void update_info_items(size_t obj_idx, wxDataViewItemArray* selections = nullptr, bool added_object = false);
+    // EdgeSlicer: refreshes the text/SVG icon of every part row of an object from its ModelVolumes.
+    void update_volume_text_svg_icons(size_t obj_idx);
 
     void instances_to_separated_object(const int obj_idx, const std::set<int>& inst_idx);
     void instances_to_separated_objects(const int obj_idx);

@@ -350,7 +350,7 @@ void PartPlate::set_spiral_vase_mode(bool spiral_mode, bool as_global)
 	}
 }
 
-bool PartPlate::valid_instance(int obj_id, int instance_id)
+bool PartPlate::valid_instance(int obj_id, int instance_id) const
 {
 	if ((obj_id >= 0) && (obj_id < m_model->objects.size()))
 	{
@@ -959,13 +959,8 @@ void PartPlate::render_exclude_area(bool force_default_color) {
 	// draw exclude area
 	glsafe(::glDepthMask(GL_FALSE));
 
-	if (m_selected) {
-		glsafe(::glColor4fv(select_color.data()));
-	}
-	else {
-		glsafe(::glColor4fv(unselect_color.data()));
-	}
-
+	// EDGE (core profile): no glColor4fv() - fixed-function colour is gone from core profiles and the
+	// shader takes the colour from set_color() below anyway.
 	m_exclude_triangles.set_color(m_selected ? select_color : unselect_color);
     m_exclude_triangles.render();
 	glsafe(::glDepthMask(GL_TRUE));
@@ -984,10 +979,33 @@ void PartPlate::render_exclude_area(bool force_default_color) {
 	glsafe(::glDepthMask(GL_TRUE));
 }*/
 
-void PartPlate::render_grid(bool bottom) {
+void PartPlate::render_grid(bool bottom, const Transform3d& view_matrix, const Transform3d& projection_matrix) {
 	//glsafe(::glEnable(GL_MULTISAMPLE));
 	// draw grid
-	glsafe(::glLineWidth(1.0f * m_scale_factor));
+
+    // ORCA: OpenGL Core Profile support
+    // FIXME: ideally, we'd use the same shader for both the thin and thick lines, but for some reason setting the uniforms has no effect
+    GLShaderProgram* shader = wxGetApp().get_shader("flat");
+    if (shader == nullptr) {
+        return;
+    }
+
+    shader->start_using();
+    glsafe(::glEnable(GL_BLEND));
+    glsafe(::glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+
+    // EDGE: the matrices render() was given (not the plater camera), and the viewport actually bound,
+    // so an off-screen pass (thumbnails, phone capture) draws the grid with its own camera.
+    std::array<GLint, 4> viewport = { 0, 0, 1, 1 };
+    glsafe(::glGetIntegerv(GL_VIEWPORT, viewport.data()));
+
+    shader->set_uniform("view_model_matrix", view_matrix);
+    shader->set_uniform("projection_matrix", projection_matrix);
+
+#if !SLIC3R_OPENGL_ES
+    if (!OpenGLManager::get_gl_info().is_core_profile())
+        glsafe(::glLineWidth(1.0f * m_scale_factor));
+#endif // !SLIC3R_OPENGL_ES
 
     ColorRGBA color;
 	if (bottom)
@@ -1001,9 +1019,41 @@ void PartPlate::render_grid(bool bottom) {
     m_gridlines.set_color(color);
     m_gridlines.render();
 
-	glsafe(::glLineWidth(2.0f * m_scale_factor));
+    shader->stop_using();
+
+    // ORCA: OpenGL Core Profile support
+#if SLIC3R_OPENGL_ES
+    shader = wxGetApp().get_shader("dashed_lines");
+#else
+    shader = OpenGLManager::get_gl_info().is_core_profile() ? wxGetApp().get_shader("dashed_thick_lines") : wxGetApp().get_shader("flat");
+#endif // SLIC3R_OPENGL_ES
+    if (shader == nullptr) {
+        return;
+    }
+    shader->start_using();
+
+    shader->set_uniform("view_model_matrix", view_matrix);
+    shader->set_uniform("projection_matrix", projection_matrix);
+
+#if !SLIC3R_OPENGL_ES
+    if (OpenGLManager::get_gl_info().is_core_profile()) {
+#endif // !SLIC3R_OPENGL_ES
+        shader->set_uniform("viewport_size", Vec2d(double(viewport[2]), double(viewport[3])));
+        shader->set_uniform("width", 0.25f);
+        // EDGE: uniforms keep their last value per program; the selection rectangle leaves dashes set.
+        shader->set_uniform("gap_size", 0.0f);
+#if !SLIC3R_OPENGL_ES
+    } else {
+        glsafe(::glLineWidth(2.0f * m_scale_factor));
+    }
+#endif // !SLIC3R_OPENGL_ES
+
     m_gridlines_bolder.set_color(color);
     m_gridlines_bolder.render();
+    // EDGE: render() used to disable blending after the grid; the grid now draws after that point.
+    glsafe(::glDisable(GL_BLEND));
+
+    shader->stop_using();
 }
 
 void PartPlate::render_height_limit(PartPlate::HeightLimitMode mode)
@@ -1017,20 +1067,32 @@ void PartPlate::render_height_limit(PartPlate::HeightLimitMode mode)
 	if (relevant_for_print_mode && mode != HEIGHT_LIMIT_NONE)
 	{
 		// draw lower limit
-		glsafe(::glLineWidth(3.0f * m_scale_factor));
+	    // ORCA: OpenGL Core Profile
+#if !SLIC3R_OPENGL_ES
+	    if (!OpenGLManager::get_gl_info().is_core_profile())
+	        glsafe(::glLineWidth(3.0f * m_scale_factor));
+#endif // !SLIC3R_OPENGL_ES
         m_height_limit_common.set_color(HEIGHT_LIMIT_BOTTOM_COLOR);
         m_height_limit_common.render();
 
 		if ((mode == HEIGHT_LIMIT_BOTTOM) || (mode == HEIGHT_LIMIT_BOTH)) {
-			glsafe(::glLineWidth(3.0f * m_scale_factor));
-            m_height_limit_bottom.set_color(HEIGHT_LIMIT_BOTTOM_COLOR);
+		    // ORCA: OpenGL Core Profile
+#if !SLIC3R_OPENGL_ES
+		    if (!OpenGLManager::get_gl_info().is_core_profile())
+		        glsafe(::glLineWidth(3.0f * m_scale_factor));
+#endif // !SLIC3R_OPENGL_ES
+		    m_height_limit_bottom.set_color(HEIGHT_LIMIT_BOTTOM_COLOR);
             m_height_limit_bottom.render();
 		}
 
 		// draw upper limit
 		if ((mode == HEIGHT_LIMIT_TOP) || (mode == HEIGHT_LIMIT_BOTH)){
-            glsafe(::glLineWidth(3.0f * m_scale_factor));
-            m_height_limit_top.set_color(HEIGHT_LIMIT_TOP_COLOR);
+		    // ORCA: OpenGL Core Profile
+#if !SLIC3R_OPENGL_ES
+		    if (!OpenGLManager::get_gl_info().is_core_profile())
+		        glsafe(::glLineWidth(3.0f * m_scale_factor));
+#endif // !SLIC3R_OPENGL_ES
+		    m_height_limit_top.set_color(HEIGHT_LIMIT_TOP_COLOR);
             m_height_limit_top.render();
 		}
 	}
@@ -1906,6 +1968,9 @@ void PartPlate::set_pos_and_size(Vec3d& origin, int width, int depth, int height
 		for (std::set<std::pair<int, int>>::iterator it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); ++it) {
 			int obj_id = it->first;
 			int instance_id = it->second;
+			if (!valid_instance(obj_id, instance_id))
+				continue;
+
 			ModelObject* object = m_model->objects[obj_id];
 			ModelInstance* instance = object->instances[instance_id];
 
@@ -2395,7 +2460,7 @@ void PartPlate::duplicate_all_instance(unsigned int dup_count, bool need_skip, s
         int obj_id = it->first;
         int instance_id = it->second;
 
-        if ((obj_id >= 0) && (obj_id < m_model->objects.size()))
+        if (valid_instance(obj_id, instance_id))
         {
             ModelObject* object = m_model->objects[obj_id];
             ModelInstance* instance = object->instances[instance_id];
@@ -2428,7 +2493,7 @@ void PartPlate::duplicate_all_instance(unsigned int dup_count, bool need_skip, s
         int obj_id = it->first;
         int instance_id = it->second;
 
-        if ((obj_id >= 0) && (obj_id < m_model->objects.size()))
+        if (valid_instance(obj_id, instance_id))
         {
             ModelObject* object = m_model->objects[obj_id];
             ModelInstance* instance = object->instances[instance_id];
@@ -2546,8 +2611,8 @@ int PartPlate::printable_instance_size()
         int obj_id      = it->first;
         int instance_id = it->second;
 
-        if (obj_id >= m_model->objects.size())
-			continue;
+        if (!valid_instance(obj_id, instance_id))
+            continue;
 
         ModelObject *  object   = m_model->objects[obj_id];
         ModelInstance *instance = object->instances[instance_id];
@@ -2569,7 +2634,7 @@ bool PartPlate::has_printable_instances()
 		int obj_id = it->first;
 		int instance_id = it->second;
 
-		if (obj_id >= m_model->objects.size())
+		if (!valid_instance(obj_id, instance_id))
 			continue;
 
 		ModelObject* object = m_model->objects[obj_id];
@@ -2593,7 +2658,8 @@ bool PartPlate::is_all_instances_unprintable()
         int obj_id      = it->first;
         int instance_id = it->second;
 
-        if (obj_id >= m_model->objects.size()) continue;
+        if (!valid_instance(obj_id, instance_id))
+            continue;
 
         ModelObject *  object   = m_model->objects[obj_id];
         ModelInstance *instance = object->instances[instance_id];
@@ -2896,9 +2962,6 @@ void PartPlate::render(const Transform3d& view_matrix, const Transform3d& projec
             render_extruder_only_areas(force_background_color);
         }
 
-        if (show_grid)
-            render_grid(bottom);
-
         render_height_limit(mode);
 
         glsafe(::glDisable(GL_BLEND));
@@ -2909,6 +2972,9 @@ void PartPlate::render(const Transform3d& view_matrix, const Transform3d& projec
 
         shader->stop_using();
     }
+
+    if (show_grid)
+        render_grid(bottom, view_matrix, projection_matrix);
 
     if (!bottom && m_selected && !force_background_color) {
         if (m_partplate_list)
@@ -3054,6 +3120,9 @@ int PartPlate::load_gcode_from_file(const std::string& filename)
 		assert(m_tmp_gcode_path.empty());
 		m_tmp_gcode_path = filename;
 		m_gcode_result->filename = filename;
+		// The G-code is taken as it is in the 3MF: match the filament prices switch to the current
+		// preference first, so the next apply does not throw the loaded G-code away over it.
+		m_print->set_gcode_filament_prices(wxGetApp().app_config->get_bool("gcode_include_filament_prices"));
 		m_print->set_gcode_file_ready();
 
 		update_slice_result_valid_state(true);
@@ -3446,7 +3515,10 @@ void PartPlate::on_filament_deleted(int filament_count, int filament_id)
 {
     if (m_config.has("filament_map")) {
         std::vector<int>& filament_maps = m_config.option<ConfigOptionInts>("filament_map")->values;
-        filament_maps.erase(filament_maps.begin() + filament_id);
+        // Orca #14055: the per-plate filament_map can be out of sync with the global filament
+        // count after a profile switch; erasing at/past end() is an out-of-bounds memmove.
+        if (filament_id >= 0 && filament_id < (int) filament_maps.size())
+            filament_maps.erase(filament_maps.begin() + filament_id);
     }
     update_first_layer_print_sequence_when_delete_filament(filament_id);
 }
@@ -4020,6 +4092,9 @@ int PartPlateList::create_plate(bool adjust_position)
 		return -1;
 	int cols = compute_colum_count(new_index + 1);
 	int old_cols = compute_colum_count(new_index);
+	// Orca #14850: rebuild plate membership before the grid reflow moves instances with their plates
+	if (adjust_position && old_cols != cols)
+		reload_all_objects();
 
 	origin = compute_origin(new_index, cols);
 	plate = new PartPlate(this, origin, m_plate_width, m_plate_depth, m_plate_height, m_plater, m_model, true, printer_technology);
@@ -4500,6 +4575,9 @@ int PartPlateList::move_plate_to_index(int old_index, int new_index)
 		BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":should not happen, the same index %1%") % old_index;
 		return -1;
 	}
+
+	// Orca #14850: rebuild plate membership before the plates (and their instances) are moved
+	reload_all_objects();
 
 	if (old_index < new_index)
 	{

@@ -87,3 +87,21 @@ input[type=checkbox]:checked{
 {
 	color: #BEBEC0;
 }
+
+/*----Printer Selection table (css/printer_table.css)----*/
+:root
+{
+	--pt-bg: #2D2D31;
+	--pt-fg: #EFEFF0;
+	--pt-muted: #A8A8AD;
+	--pt-head-bg: #36363C;
+	--pt-head-fg: #EFEFF0;
+	--pt-border: #4A4A51;
+	--pt-rule: #3A3A40;
+	--pt-hover: #3A4644;
+	--pt-on-bg: #303A39;
+	--pt-accent-soft: #24433F;
+	--pt-pop-bg: #36363C;
+	--pt-pop-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+	--pt-input-bg: #2D2D31;
+}

@@ -249,6 +249,13 @@ public:
     void init_button_list();
     void on_webrequest_state(wxWebRequestEvent& evt);
 
+    // Size the window to what it now holds: the message and code lines are wrapped at a fixed
+    // width (so the width does not wander with the text), the text area takes the height of its
+    // content up to a cap, beyond which it scrolls, and the frame then fits the text area plus
+    // however many buttons are showing. Called whenever the text, the picture or the buttons
+    // change - the same dialog is reused for every error.
+    void refit_to_content();
+
     // Which error this dialog is currently showing, and the job it belongs to.
     //
     // The buttons need both: command_hms_resume/stop/ignore carry "err" and "job_id" so the
@@ -295,6 +302,9 @@ public:
     Label* m_staticText_error_code{ nullptr };
     wxBoxSizer* m_sizer_main;
     wxBoxSizer* m_sizer_button;
+    wxBoxSizer* m_sizer_text{ nullptr };
+    wxString m_message_text;
+    wxString m_code_text;
     wxScrolledWindow* m_vebview_release_note{ nullptr };
     std::map<int, Button*> m_button_list;
     std::vector<int> m_used_button;

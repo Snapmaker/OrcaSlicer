@@ -10,6 +10,7 @@
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/AABBTreeIndirect.hpp"
 #include "libslic3r/Arachne/SkeletalTrapezoidation.hpp"
+#include "libslic3r/Config.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/TriangleMesh.hpp"
@@ -150,4 +151,28 @@ TEST_CASE("cut_mesh splits a cube", "[CoreGuards][Cut]")
         CHECK(its_volume(upper) == Approx(10. * 10. * (10. - z)).margin(1e-3));
         CHECK(its_volume(lower) == Approx(10. * 10. * z).margin(1e-3));
     }
+}
+
+// Orca #15877: ConfigOptionVector::resize() passed a reference to values.front() to
+// std::vector::resize(), which may reallocate before it copies the value.
+TEST_CASE("ConfigOptionVector resize duplicates the first value across a reallocation", "[CoreGuards][Config]")
+{
+    ConfigOptionStrings strings(std::vector<std::string>{ std::string(200, 'x') });
+    strings.values.shrink_to_fit();
+    strings.resize(64);
+    REQUIRE(strings.values.size() == 64);
+    for (const std::string &s : strings.values)
+        CHECK(s == std::string(200, 'x'));
+
+    ConfigOptionFloats floats(std::vector<double>{ 1.5 });
+    floats.resize(1000);
+    REQUIRE(floats.values.size() == 1000);
+    CHECK(floats.values.back() == 1.5);
+
+    // apply_override() with a nullable rhs is the second resize site.
+    ConfigOptionFloats         dst(std::vector<double>{ 2.0 });
+    ConfigOptionFloatsNullable src(std::vector<double>(500, 3.0));
+    dst.apply_override(&src);
+    REQUIRE(dst.values.size() == 500);
+    CHECK(dst.values.back() == 3.0);
 }

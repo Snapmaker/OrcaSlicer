@@ -8927,6 +8927,9 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
     long        pStyle    = wxCAPTION | wxCLOSE_BOX | wxSYSTEM_MENU;
     if (strFinish == "false" || strFinish.empty())
         pStyle = wxCAPTION | wxTAB_TRAVERSAL;
+    // The Printer Selection table (sidebar "Select/Remove printers") can be resized and maximised.
+    if (start_page == ConfigWizard::SP_PRINTERS)
+        pStyle |= wxRESIZE_BORDER | wxMAXIMIZE_BOX;
 
     GuideFrame wizard(this, pStyle);
     auto page = start_page == ConfigWizard::SP_WELCOME ? GuideFrame::BBL_WELCOME :

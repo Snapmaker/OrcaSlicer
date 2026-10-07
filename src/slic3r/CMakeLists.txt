@@ -385,6 +385,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Jobs/Worker.hpp
     GUI/KBShortcutsDialog.cpp
     GUI/KBShortcutsDialog.hpp
+    GUI/LibVGCode/LibVGCodeWrapper.cpp
+    GUI/LibVGCode/LibVGCodeWrapper.hpp
     GUI/MainFrame.cpp
     GUI/MainFrame.hpp
     GUI/PrintSelectKeys.hpp

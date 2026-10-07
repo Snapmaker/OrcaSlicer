@@ -1515,6 +1515,7 @@ void IMSlider::on_mouse_wheel(wxMouseEvent& evt) {
             const int new_pos = GetHigherValue() + wheel;
             SetHigherValue(new_pos);
             set_as_dirty();
+            wxGetApp().imgui()->set_requires_extra_frame(); // OrcaSlicer #10735 (libvgcode)
         }
     }
     else {
@@ -1532,6 +1533,7 @@ void IMSlider::on_mouse_wheel(wxMouseEvent& evt) {
                 m_selection == ssLower ? SetLowerValue(new_pos) : SetHigherValue(new_pos);
             }
             set_as_dirty();
+            wxGetApp().imgui()->set_requires_extra_frame(); // OrcaSlicer #10735 (libvgcode)
         }
     }
 }

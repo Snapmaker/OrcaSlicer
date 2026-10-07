@@ -581,7 +581,7 @@ void Preview::update_layers_slider(const std::vector<double>& layers_z, bool kee
         ticks_info_from_curr_plate = plater->model().get_curr_plate_custom_gcodes();
     else {
         ticks_info_from_curr_plate.mode   = CustomGCode::Mode::SingleExtruder;
-        ticks_info_from_curr_plate.gcodes = m_canvas->get_custom_gcode_per_print_z();
+        ticks_info_from_curr_plate.gcodes = m_gcode_result->custom_gcode_per_print_z;
     }
     check_layers_slider_values(ticks_info_from_curr_plate.gcodes, layers_z);
 
@@ -613,7 +613,8 @@ void Preview::update_layers_slider(const std::vector<double>& layers_z, bool kee
     m_layers_slider->SetTicksValues(ticks_info_from_curr_plate);
 
     auto print_mode_stat = m_gcode_result->print_statistics.modes.front();
-    m_layers_slider->SetLayersTimes(print_mode_stat.layers_times, print_mode_stat.time);
+    // libvgcode stage 3 (OrcaSlicer #10735): libvgcode's own per-layer times, on the same layers as the slider
+    m_layers_slider->SetLayersTimes(m_canvas->get_gcode_layers_times_cache(), print_mode_stat.time);
 
     // Suggest the auto color change, if model looks like sign
     if (m_layers_slider->IsNewPrint()) {
@@ -705,28 +706,18 @@ void Preview::load_print_as_fff(bool keep_z_range, bool only_gcode)
     else if (directly_preview && !has_layers)
         keep_z_range = false;
 
-    GCodeViewer::EViewType gcode_view_type = m_canvas->get_gcode_view_preview_type();
-    bool gcode_preview_data_valid = !m_gcode_result->moves.empty();
+    const bool gcode_preview_data_valid = !m_gcode_result->moves.empty();
 
-    // Collect colors per extruder.
-    std::vector<std::string> colors;
-    std::vector<CustomGCode::Item> color_print_values = {};
-    // set color print values, if it si selected "ColorPrint" view type
-    if (gcode_view_type == GCodeViewer::EViewType::ColorPrint) {
-        colors = wxGetApp().plater()->get_colors_for_color_print(m_gcode_result);
-
-        if (!gcode_preview_data_valid) {
-            if (wxGetApp().is_editor())
-                //BBS
-                color_print_values = wxGetApp().plater()->model().get_curr_plate_custom_gcodes().gcodes;
-            else
-                color_print_values = m_canvas->get_custom_gcode_per_print_z();
-            colors.push_back("#808080"); // gray color for pause print or custom G-code
-        }
-    }
-    else if (gcode_preview_data_valid || gcode_view_type == GCodeViewer::EViewType::Tool) {
-        colors = wxGetApp().plater()->get_extruder_colors_from_plater_config(m_gcode_result);
-        color_print_values.clear();
+    // libvgcode stage 3 (OrcaSlicer #10735): libvgcode takes the tool colours (Tool view; EdgeSlicer's list
+    // includes the mixed filaments' display colours and, for a G-code opened on its own, the file's
+    // colours) and the colour-print colours (Filament view: tools + colour changes + grey) at once.
+    const std::vector<std::string> tool_colors = wxGetApp().plater()->get_extruder_colors_from_plater_config(m_gcode_result);
+    const std::vector<CustomGCode::Item>& color_print_values = wxGetApp().is_editor() ?
+        wxGetApp().plater()->model().get_curr_plate_custom_gcodes().gcodes : m_gcode_result->custom_gcode_per_print_z;
+    std::vector<std::string> color_print_colors;
+    if (!color_print_values.empty()) {
+        color_print_colors = wxGetApp().plater()->get_colors_for_color_print(m_gcode_result);
+        color_print_colors.push_back("#808080"); // gray color for pause print or custom G-code
     }
 
     std::vector<double> zs;
@@ -739,7 +730,7 @@ void Preview::load_print_as_fff(bool keep_z_range, bool only_gcode)
             //BBS: add more log
             BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": will load gcode_preview from result, moves count %1%") % m_gcode_result->moves.size();
             //BBS: add only gcode mode
-            m_canvas->load_gcode_preview(*m_gcode_result, colors, only_gcode, m_skip_toolpath_preview);
+            m_canvas->load_gcode_preview(*m_gcode_result, tool_colors, color_print_colors, only_gcode, m_skip_toolpath_preview);
             //BBS show sliders
             show_moves_sliders();
 
@@ -768,7 +759,7 @@ void Preview::load_print_as_fff(bool keep_z_range, bool only_gcode)
             std::vector<CustomGCode::Item> gcodes = wxGetApp().is_editor() ?
                 //BBS
                 wxGetApp().plater()->model().get_curr_plate_custom_gcodes().gcodes :
-                m_canvas->get_custom_gcode_per_print_z();
+                m_gcode_result->custom_gcode_per_print_z;
             const wxString choice = !gcodes.empty() ?
                 _L("Multicolor Print") :
                 (number_extruders > 1) ? _L("Filaments") : _L("Line Type");

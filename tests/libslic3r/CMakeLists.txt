@@ -24,6 +24,7 @@ add_executable(${_TEST_NAME}_tests
 	test_paint_depth.cpp
 	test_paint_depth_clamp.cpp
 	test_paint_penetration.cpp
+	test_paint_remap.cpp
 	test_color_mix_solver.cpp
 	test_color_split.cpp
 	test_code_emboss.cpp
@@ -130,6 +131,8 @@ add_executable(${_TEST_NAME}_tests
     test_align_math.cpp
     # test_png_io.cpp
     test_indexed_triangle_set.cpp
+    test_texture_displacement.cpp
+    test_texture_displacement_edge.cpp
     ../libnest2d/printer_parts.cpp
 	)
 

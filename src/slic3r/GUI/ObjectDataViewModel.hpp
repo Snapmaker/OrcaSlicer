@@ -234,6 +234,7 @@ public:
     void            SetName(const wxString &);
     bool            SetValue(const wxVariant &variant, unsigned int col);
     void            SetVolumeType(ModelVolumeType type) { m_volume_type = type; }
+    void            SetTextSvgVolume(bool is_text, bool is_svg) { m_is_text_volume = is_text; m_is_svg_volume = is_svg; }
     void            SetBitmap(const wxBitmap &icon) { m_bmp = icon; }
     void            SetExtruder(const wxString &extruder) { m_extruder = extruder; }
     void            SetWarningIconName(const std::string& warning_icon_name) { m_warning_icon_name = warning_icon_name; }
@@ -495,6 +496,9 @@ public:
     void    UpdateObjectPrintable(wxDataViewItem parent_item);
     void    UpdateInstancesPrintable(wxDataViewItem parent_item);
     void    SetVolumeType(const wxDataViewItem &item, const Slic3r::ModelVolumeType type);
+    // EdgeSlicer: re-sets a part row's text/SVG flags (and so its icon), e.g. once a part stopped being
+    // editable text/SVG because texture displacement changed its mesh.
+    void    SetVolumeTextSvg(const wxDataViewItem &item, bool is_text, bool is_svg);
     ModelVolumeType GetVolumeType(const wxDataViewItem &item);
     wxDataViewItem SetPrintableState( PrintIndicator printable, int obj_idx,
                                       int subobj_idx = -1,

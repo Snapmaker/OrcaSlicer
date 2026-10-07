@@ -4367,6 +4367,19 @@ static bool can_add_volumes_to_object(const ModelObject *object)
     return can;
 }
 
+void ObjectList::update_volume_text_svg_icons(size_t obj_idx)
+{
+    if (m_objects == nullptr || obj_idx >= m_objects->size())
+        return;
+    const ModelObject *object = (*m_objects)[obj_idx];
+    // A single-part object has no part rows (GetItemByVolumeId() then returns the object row, which
+    // SetVolumeTextSvg() ignores).
+    for (size_t vol_idx = 0; vol_idx < object->volumes.size(); ++vol_idx) {
+        const ModelVolume *volume = object->volumes[vol_idx];
+        m_objects_model->SetVolumeTextSvg(m_objects_model->GetItemByVolumeId(int(obj_idx), int(vol_idx)), volume->is_text(), volume->is_svg());
+    }
+}
+
 wxDataViewItemArray ObjectList::add_volumes_to_object_in_list(size_t obj_idx, std::function<bool(const ModelVolume *)> add_to_selection /* = nullptr*/)
 {
     const bool is_prevent_list_events = m_prevent_list_events;

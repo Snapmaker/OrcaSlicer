@@ -38,6 +38,7 @@ add_executable(${_TEST_NAME}_tests
 	test_extra_bridge_layer_determinism.cpp
 	test_bed_temperature.cpp
 	test_chamber_temperature.cpp
+	test_texture_displacement.cpp
 	test_trianglemesh.cpp
 	test_wipe.cpp
 	test_adaptive_pa.cpp

@@ -427,14 +427,6 @@ CostsDialog::CostsDialog(wxWindow *parent, Page page)
     const int em        = GetTextExtent("m").x;
     auto     *top       = new wxBoxSizer(wxVERTICAL);
 
-    auto *intro = new wxStaticText(this, wxID_ANY,
-                                   _L("Your own costs apply over the presets' values: a filament price for every printer and nozzle "
-                                      "variant of a filament, a machine rate for every nozzle variant of a printer model. A user "
-                                      "preset you gave a value of its own keeps it. Saved on this computer and used for every "
-                                      "project you slice here; never written into project files. Leave a value empty to use the "
-                                      "preset's. The Project tab adds fees and a markup for a selling price."));
-    intro->Wrap(90 * em);
-    top->Add(intro, 0, wxEXPAND | wxALL, FromDIP(10));
 
     // Two tabs: the fork's own buttons over a simplebook (follows the dark palette, unlike wxNotebook).
     auto *tabs      = new wxBoxSizer(wxHORIZONTAL);
@@ -541,11 +533,13 @@ wxWindow *CostsDialog::build_page(wxWindow *parent, Table &table)
         table.list->AppendTextColumn(_L("Model"), wxDATAVIEW_CELL_INERT, 34 * em, wxALIGN_LEFT, sortable);
         table.list->AppendTextColumn(_L("Preset time cost"), wxDATAVIEW_CELL_INERT, 13 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
         table.list->AppendTextColumn(_L("Your rate"), wxDATAVIEW_CELL_EDITABLE, 10 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
+        table.list->AppendTextColumn(_L("Applied rate"), wxDATAVIEW_CELL_INERT, 12 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
     } else {
         table.list->AppendTextColumn(_L("Filament"), wxDATAVIEW_CELL_INERT, 26 * em, wxALIGN_LEFT, sortable);
         table.list->AppendTextColumn(_L("Type"), wxDATAVIEW_CELL_INERT, 8 * em, wxALIGN_LEFT, sortable);
         table.list->AppendTextColumn(_L("Preset price"), wxDATAVIEW_CELL_INERT, 12 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
         table.list->AppendTextColumn(_L("Your price"), wxDATAVIEW_CELL_EDITABLE, 10 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
+        table.list->AppendTextColumn(_L("Applied price"), wxDATAVIEW_CELL_INERT, 12 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
     }
     top->Add(table.list, 1, wxEXPAND);
 
@@ -602,14 +596,20 @@ void CostsDialog::commit_default_rate()
         return;
     double value = 0.;
     bool   empty = false;
+    bool   changed = false;
     if (parse_money(m_default_rate->GetValue(), value, empty)) {
         if (!m_store.has_default_rate() || std::abs(m_store.default_rate() - value) > 1e-9)
-            m_changed |= m_store.set_default_rate(value);
+            changed = m_store.set_default_rate(value);
     } else if (empty) {
-        m_changed |= m_store.clear_default_rate();
+        changed = m_store.clear_default_rate();
     } else {
         // Not a number: show what applies.
         m_default_rate->ChangeValue(m_store.has_default_rate() ? wxString::Format("%.2f", m_store.default_rate()) : wxString());
+    }
+    if (changed) {
+        m_changed = true;
+        // The Applied rate column follows the default rate. Not inside the list's own events.
+        CallAfter([this]() { reload(m_machines); });
     }
 }
 
@@ -822,6 +822,12 @@ void CostsDialog::reload(Table &table)
             values.push_back(wxVariant(from_u8(row.type)));
         values.push_back(wxVariant(preset_value));
         values.push_back(wxVariant(has_yours ? wxString::Format("%.2f", yours) : wxString()));
+        // What slicing uses: yours when set, else (machines) your default rate, else the preset's. A user
+        // preset with a value of its own keeps it.
+        wxString applied = has_yours ? unit(yours) : preset_value;
+        if (!has_yours && table.machines && m_store.has_default_rate())
+            applied = unit(m_store.default_rate());
+        values.push_back(wxVariant(applied));
         table.list->AppendItem(values);
         if (!keep_key.empty() && row.key == keep_key && row.preset_scope == keep_scope)
             select = int(table.shown.size());
@@ -1072,7 +1078,7 @@ static wxString pricing_field_tip(PricingField field)
     }
 }
 
-// The value of one field as text, for the "My default" column.
+// The value of one field as text, for the "Default Cost" and "Applied Cost" columns.
 static wxString pricing_field_text(const PricingSettings &s, PricingField field)
 {
     switch (field) {
@@ -1132,28 +1138,19 @@ wxWindow *CostsDialog::build_project_page(wxWindow *parent)
     const PricingSettings defaults = m_store.pricing();
     m_project_values               = project.resolve(defaults);
 
-    auto *intro = new wxStaticText(panel, wxID_ANY,
-                                   _L("Fees and markup turn the cost of a plate into a selling price in the cost breakdown after "
-                                      "slicing. They never change the slice and are never written into G-code. This project's values "
-                                      "are saved in the project file (not in \"Export Bambu 3MF\" or in files sent to a printer); every "
-                                      "field set to \"Use my default\" follows your defaults, which apply to every project.\n"
-                                      "Fees are per plate: setup and packaging once per plate, the object fee for every printable "
-                                      "object (each copy counts), the part fee for every model part of those objects (not modifiers, "
-                                      "negative parts or support blockers). The all-plates total adds the plates."));
-    intro->Wrap(80 * em);
-    top->Add(intro, 0, wxEXPAND | wxBOTTOM, FromDIP(10));
-
-    auto *grid = new wxFlexGridSizer(4, FromDIP(6), FromDIP(12));
-    grid->AddGrowableCol(1);
+    // Description | Use Default | Default Cost | This project | Applied Cost
+    auto *grid = new wxFlexGridSizer(5, FromDIP(6), FromDIP(12));
+    grid->AddGrowableCol(3);
     auto bold = [panel](const wxString &text) {
         auto *t = new wxStaticText(panel, wxID_ANY, text);
         t->SetFont(t->GetFont().Bold());
         return t;
     };
-    grid->Add(bold(wxEmptyString));
+    grid->Add(bold(_L("Description")));
+    grid->Add(bold(_L("Use Default")));
+    grid->Add(bold(_L("Default Cost")));
     grid->Add(bold(_L("This project")));
-    grid->Add(bold(wxEmptyString));
-    grid->Add(bold(_L("My default")));
+    grid->Add(bold(_L("Applied Cost")));
 
     m_pricing_rows.clear();
     m_pricing_rows.reserve(PRICING_FIELDS);
@@ -1163,6 +1160,16 @@ wxWindow *CostsDialog::build_project_page(wxWindow *parent)
         auto *label = new wxStaticText(panel, wxID_ANY, pricing_field_name(row.field) + ":");
         label->SetToolTip(pricing_field_tip(row.field));
         grid->Add(label, 0, wxALIGN_CENTER_VERTICAL);
+
+        // A toggle in the app's button style: highlighted while the default applies.
+        row.use_default    = new ::Button(panel, _L("Use Default"));
+        row.use_default_on = !project.is_set(row.field);
+        row.use_default->SetToolTip(_L("On: this field follows your default. Off: this project's own value below applies."));
+        grid->Add(row.use_default, 0, wxALIGN_CENTER_VERTICAL);
+
+        row.default_text = new wxStaticText(panel, wxID_ANY, wxEmptyString);
+        row.default_text->SetToolTip(_L("Your default, used by every project that does not set its own value."));
+        grid->Add(row.default_text, 0, wxALIGN_CENTER_VERTICAL);
 
         auto *editors = new wxBoxSizer(wxHORIZONTAL);
         if (row.field == PricingField::Markup) {
@@ -1185,12 +1192,9 @@ wxWindow *CostsDialog::build_project_page(wxWindow *parent)
         }
         grid->Add(editors, 0, wxALIGN_CENTER_VERTICAL);
 
-        row.use_default = new wxCheckBox(panel, wxID_ANY, _L("Use my default"));
-        row.use_default->SetValue(!project.is_set(row.field));
-        grid->Add(row.use_default, 0, wxALIGN_CENTER_VERTICAL);
-
-        row.default_text = new wxStaticText(panel, wxID_ANY, wxEmptyString);
-        grid->Add(row.default_text, 0, wxALIGN_CENTER_VERTICAL);
+        row.applied_text = new wxStaticText(panel, wxID_ANY, wxEmptyString);
+        row.applied_text->SetToolTip(_L("What the cost breakdown uses for this project."));
+        grid->Add(row.applied_text, 0, wxALIGN_CENTER_VERTICAL);
         m_pricing_rows.push_back(row);
     }
     top->Add(grid, 0, wxEXPAND);
@@ -1198,7 +1202,7 @@ wxWindow *CostsDialog::build_project_page(wxWindow *parent)
     auto *btns = new wxBoxSizer(wxHORIZONTAL);
     auto *save = new ::Button(panel, _L("Save as my defaults"));
     save->SetStyle(ButtonStyle::Regular, ButtonType::Choice);
-    save->SetToolTip(_L("Make the values shown under \"This project\" your defaults, for every project that does not set its own."));
+    save->SetToolTip(_L("Make the Applied Cost values your defaults, for every project that does not set its own."));
     btns->Add(save, 0, wxALIGN_CENTER_VERTICAL);
     top->Add(btns, 0, wxEXPAND | wxTOP, FromDIP(12));
     if (plater == nullptr)
@@ -1208,9 +1212,13 @@ wxWindow *CostsDialog::build_project_page(wxWindow *parent)
     for (PricingRow &row : m_pricing_rows) {
         update_pricing_row(row);
         const size_t idx = size_t(row.field);
-        row.use_default->Bind(wxEVT_CHECKBOX, [this, idx](wxCommandEvent &) { on_use_default(m_pricing_rows[idx]); });
-        if (row.type != nullptr)
+        row.use_default->Bind(wxEVT_BUTTON, [this, idx](wxCommandEvent &) { on_use_default(m_pricing_rows[idx]); });
+        // Applied Cost follows every keystroke and choice.
+        row.value->Bind(wxEVT_TEXT, [this, idx](wxCommandEvent &) { update_applied_text(m_pricing_rows[idx]); });
+        if (row.type != nullptr) {
             row.type->Bind(wxEVT_CHOICE, [this, idx](wxCommandEvent &) { update_pricing_row(m_pricing_rows[idx]); });
+            row.basis->Bind(wxEVT_CHOICE, [this, idx](wxCommandEvent &) { update_applied_text(m_pricing_rows[idx]); });
+        }
     }
     update_default_texts();
     save->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { on_save_as_defaults(); });
@@ -1247,7 +1255,10 @@ bool CostsDialog::read_pricing_value(const PricingRow &row, PricingSettings &to,
 
 void CostsDialog::update_pricing_row(const PricingRow &row)
 {
-    const bool own = !row.use_default->GetValue();
+    const bool own = !row.use_default_on;
+    row.use_default->SetValue(row.use_default_on);
+    row.use_default->SetStyle(row.use_default_on ? ButtonStyle::Confirm : ButtonStyle::Regular, ButtonType::Choice);
+    row.use_default->Refresh();
     if (!own)
         show_pricing_value(row, m_store.pricing());
     row.value->Enable(own);
@@ -1258,20 +1269,42 @@ void CostsDialog::update_pricing_row(const PricingRow &row)
     }
     if (own && row.field == PricingField::Markup)
         row.value->SetHint(row.type->GetSelection() == 1 ? from_u8(currency_symbol()) : wxString("%"));
+    update_applied_text(row);
+}
+
+void CostsDialog::update_applied_text(const PricingRow &row)
+{
+    if (row.applied_text == nullptr)
+        return;
+    wxString text;
+    if (row.use_default_on) {
+        text = pricing_field_text(m_store.pricing(), row.field);
+    } else {
+        PricingSettings value = m_project_values;
+        wxString        error;
+        text = read_pricing_value(row, value, error) ? pricing_field_text(value, row.field) : _L("not a number");
+    }
+    if (row.applied_text->GetLabel() != text) {
+        row.applied_text->SetLabel(text);
+        row.applied_text->GetParent()->Layout();
+    }
 }
 
 void CostsDialog::update_default_texts()
 {
     for (const PricingRow &row : m_pricing_rows)
         row.default_text->SetLabel(pricing_field_text(m_store.pricing(), row.field));
+    for (const PricingRow &row : m_pricing_rows)
+        update_applied_text(row);
     if (!m_pricing_rows.empty())
         m_pricing_rows.front().default_text->GetParent()->Layout();
 }
 
 void CostsDialog::on_use_default(PricingRow &row)
 {
-    if (row.use_default->GetValue()) {
-        // Remember what was typed, in case the box is unticked again.
+    row.use_default_on = !row.use_default_on;
+    if (row.use_default_on) {
+        // Remember what was typed, in case the toggle is switched off again.
         wxString error;
         read_pricing_value(row, m_project_values, error);
     } else {
@@ -1285,7 +1318,7 @@ bool CostsDialog::read_project(ProjectPricing &out, bool show_errors)
     Plater *plater = wxGetApp().plater();
     out            = plater != nullptr ? plater->model().pricing : ProjectPricing();
     for (const PricingRow &row : m_pricing_rows) {
-        if (row.use_default->GetValue()) {
+        if (row.use_default_on) {
             out.clear_field(row.field);
             continue;
         }

@@ -78,7 +78,7 @@ protected:
     void on_sys_color_changed() override {}
 
 private:
-    // Columns: Vendor, Filament / Model, [Type], Preset value, Your value (last, editable).
+    // Columns: Vendor, Filament / Model, [Type], Preset value, Your value (editable), Applied value.
     struct Row
     {
         bool        preset_scope{false};   // a "this preset only" value
@@ -124,11 +124,13 @@ private:
     struct PricingRow
     {
         PricingField  field{PricingField::Markup};
-        wxCheckBox   *use_default{nullptr};
+        Button       *use_default{nullptr};   // a toggle: highlighted while on
+        bool          use_default_on{true};
         wxTextCtrl   *value{nullptr};
         wxChoice     *type{nullptr};    // Markup only
         wxChoice     *basis{nullptr};   // Markup only
         wxStaticText *default_text{nullptr};
+        wxStaticText *applied_text{nullptr};   // what the breakdown uses: the default or this project's
     };
     wxWindow *build_project_page(wxWindow *parent);
     // Shows `from`'s value of the row's field in its editors.
@@ -137,6 +139,7 @@ private:
     bool      read_pricing_value(const PricingRow &row, PricingSettings &to, wxString &error) const;
     void      update_pricing_row(const PricingRow &row);
     void      update_default_texts();
+    void      update_applied_text(const PricingRow &row);
     void      on_use_default(PricingRow &row);
     void      on_save_as_defaults();
     // The project's pricing as the page shows it; false on a bad value (an error was shown).

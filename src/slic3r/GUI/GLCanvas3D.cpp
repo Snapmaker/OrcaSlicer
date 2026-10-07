@@ -5386,7 +5386,7 @@ void GLCanvas3D::on_mouse_wheel(wxMouseEvent& evt)
     if (m_gizmos.on_mouse_wheel(evt))
         return;
 
-    if (m_canvas_type == CanvasAssembleView && (evt.AltDown() || evt.CmdDown())) {
+    if (m_canvas_type == CanvasAssembleView && (evt.AltDown() || evt.CmdDown()) && m_gizmos.m_assemble_view_data != nullptr) {
         float rotation = (float)evt.GetWheelRotation() / (float)evt.GetWheelDelta();
         if (evt.AltDown()) {
             auto clp_dist = m_gizmos.m_assemble_view_data->model_objects_clipper()->get_position();
@@ -9372,7 +9372,7 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
                 }
                 },
                 partly_inside_enable);
-            if (m_canvas_type == CanvasAssembleView && m_gizmos.m_assemble_view_data->model_objects_clipper()->get_position() > 0) {
+            if (m_canvas_type == CanvasAssembleView && m_gizmos.m_assemble_view_data != nullptr && m_gizmos.m_assemble_view_data->model_objects_clipper()->get_position() > 0) {
                 const GLGizmosManager& gm = get_gizmos_manager();
                 shader->stop_using();
                 gm.render_painter_assemble_view();
@@ -10518,6 +10518,9 @@ void GLCanvas3D::_render_assemble_control()
         GLVolume::explosion_ratio = m_explosion_ratio = 1.0;
         return;
     }
+    // Orca #13413: the assemble view data is gone while the assembly view is being torn down
+    if (m_gizmos.m_assemble_view_data == nullptr)
+        return;
     if (m_gizmos.get_current_type() == GLGizmosManager::EType::MmSegmentation) {
         m_gizmos.m_assemble_view_data->model_objects_clipper()->set_position(0.0, true);
         return;

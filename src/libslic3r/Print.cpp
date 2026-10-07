@@ -6,6 +6,7 @@
 #include <cstring>
 #include "BoundingBox.hpp"
 #include "Brim.hpp"
+#include "CostEstimate.hpp"
 #include "BrimFilament.hpp"
 #include "ClipperUtils.hpp"
 #include "Extruder.hpp"
@@ -651,6 +652,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "filament_diameter",
         "filament_density",
         "filament_cost",
+        // Only the cost statistics read it (machine time cost); not a slicing input.
+        "time_cost",
         "filament_notes",
         "outer_wall_acceleration",
         "inner_wall_acceleration",
@@ -6544,6 +6547,16 @@ void Print::set_gcode_file_invalidated()
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ <<  boost::format(": done");
 }
 
+bool Print::set_gcode_filament_prices(bool include)
+{
+    std::scoped_lock<std::mutex> lock(this->state_mutex());
+    if (m_gcode_filament_prices == include)
+        return false;
+    m_gcode_filament_prices = include;
+    // Only the export writes the prices: slicing results stay valid.
+    return this->invalidate_step(psGCodeExport);
+}
+
 //BBS: add gcode file preload logic
 void Print::export_gcode_from_previous_file(const std::string& file, GCodeProcessorResult* result, ThumbnailsGeneratorCallback thumbnail_cb)
 {
@@ -6556,6 +6569,22 @@ void Print::export_gcode_from_previous_file(const std::string& file, GCodeProces
         processor.process_file(file);
 
         *result = std::move(processor.extract_result());
+
+        // A G-code exported with the filament prices left out (or an older one without time_cost)
+        // still gets its cost: this Print holds the project's config the G-code was sliced with,
+        // so take the prices from there instead of showing 0.00 until the next reslice.
+        if (!result->has_filament_costs) {
+            const size_t n = std::max(result->extruders_count, m_config.filament_cost.values.size());
+            result->filament_costs.resize(n, 0.f);
+            for (size_t i = 0; i < n; ++i)
+                result->filament_costs[i] = static_cast<float>(m_config.filament_cost.get_at(i));
+            result->has_filament_costs = !m_config.filament_cost.values.empty();
+        }
+        if (!result->has_time_cost) {
+            result->time_cost    = m_config.time_cost.value;
+            result->has_time_cost = true;
+        }
+        m_print_statistics.total_cost = compute_cost(*result).total;
     } catch (std::exception & /* ex */) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ <<  boost::format(": found errors when process gcode file %1%") %file.c_str();
         throw Slic3r::RuntimeError(

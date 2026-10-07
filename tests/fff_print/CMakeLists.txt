@@ -8,6 +8,7 @@ add_executable(${_TEST_NAME}_tests
 	test_flow.cpp
 	test_gcode.cpp
 	test_mass_limited_acceleration.cpp
+	test_cost_breakdown.cpp
 	test_gcodeprocessor.cpp
 	test_gcodewriter.cpp
 	test_image_row_preview.cpp

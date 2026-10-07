@@ -3054,6 +3054,9 @@ int PartPlate::load_gcode_from_file(const std::string& filename)
 		assert(m_tmp_gcode_path.empty());
 		m_tmp_gcode_path = filename;
 		m_gcode_result->filename = filename;
+		// The G-code is taken as it is in the 3MF: match the filament prices switch to the current
+		// preference first, so the next apply does not throw the loaded G-code away over it.
+		m_print->set_gcode_filament_prices(wxGetApp().app_config->get_bool("gcode_include_filament_prices"));
 		m_print->set_gcode_file_ready();
 
 		update_slice_result_valid_state(true);

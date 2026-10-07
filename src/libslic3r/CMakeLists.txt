@@ -168,6 +168,8 @@ set(lisbslic3r_sources
     ExPolygonSerialize.hpp
     ExPolygonsIndex.cpp
     ExPolygonsIndex.hpp
+    CostEstimate.cpp
+    CostEstimate.hpp
     Extruder.cpp
     Extruder.hpp
     ExtrusionEntityCollection.cpp

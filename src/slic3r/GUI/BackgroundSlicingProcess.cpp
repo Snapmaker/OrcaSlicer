@@ -692,6 +692,16 @@ Print::ApplyStatus BackgroundSlicingProcess::apply(const Model &model, const Dyn
 	new_config.apply(*m_current_plate->config());
 	Print::ApplyStatus invalidated = m_print->apply(model, new_config);
 
+	// "Include filament prices in exported G-code" (Preferences, default off). Not a config key:
+	// a change re-runs only the G-code export. Left alone in the G-code viewer mode, whose G-code
+	// is a file that is never exported again.
+	if (m_print->technology() == ptFFF) {
+		const auto plater = GUI::wxGetApp().mainframe->m_plater;
+		if (!(plater && plater->only_gcode_mode()) &&
+			m_fff_print->set_gcode_filament_prices(GUI::wxGetApp().app_config->get_bool("gcode_include_filament_prices")))
+			invalidated = PrintBase::APPLY_STATUS_INVALIDATED;
+	}
+
 	// Orca: prevent resetting under gcode viewer mode
     if (invalidated != PrintBase::APPLY_STATUS_UNCHANGED) {
         const auto plater = GUI::wxGetApp().mainframe->m_plater;

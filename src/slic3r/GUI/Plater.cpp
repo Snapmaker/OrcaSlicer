@@ -108,6 +108,7 @@
 #include "libslic3r/SLA/ReprojectPointsOnMesh.hpp"
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/CostEstimate.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/SliceCompare/Snapshot.hpp"
@@ -20349,16 +20350,9 @@ void Plater::load_gcode(const wxString& filename)
     current_print.apply(this->model(), wxGetApp().preset_bundle->full_config());
 
     //BBS: add cost info when drag in gcode
-    auto& ps = current_result->print_statistics;
-    double total_cost = 0.0;
-    for (auto volume : ps.total_volumes_per_extruder) {
-        size_t extruder_id = volume.first;
-        double density = current_result->filament_densities.at(extruder_id);
-        double cost = current_result->filament_costs.at(extruder_id);
-        double weight = volume.second * density * 0.001;
-        total_cost += weight * cost * 0.001;
-    }
-    current_print.print_statistics().total_cost = total_cost;
+    // Same breakdown as a sliced plate, machine time included. Prices come only from the file: one
+    // exported without filament prices shows "not in file" rather than today's preset prices.
+    current_print.print_statistics().total_cost = compute_cost(*current_result).total;
 
     current_print.set_gcode_file_ready();
 

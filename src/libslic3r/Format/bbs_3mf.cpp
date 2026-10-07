@@ -7773,8 +7773,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             // Costs > Project: the project's own fees and markup, in project saves only. Not in
             // "Export Bambu 3MF" (a file for another slicer, often handed on) and not in a sliced-plate
             // file (sent to a printer or a customer): a selling price is a business number.
+            // Backups carry it (SaveStrategy::Backup includes WithGcode), so crash recovery keeps it.
             metadata_item_map.erase(PRICING_METADATA_KEY);
-            if (!sub_model && !m_bambu_compat && !m_skip_model && !m_save_gcode) {
+            if (!sub_model && !m_bambu_compat && !m_skip_model && (!m_save_gcode || m_from_backup_save)) {
                 if (std::string pricing = pricing_to_json(model.pricing); !pricing.empty())
                     metadata_item_map[PRICING_METADATA_KEY] = std::move(pricing);
             }

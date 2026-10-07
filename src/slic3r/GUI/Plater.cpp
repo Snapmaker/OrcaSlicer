@@ -233,6 +233,8 @@
 #include "StepMeshDialog.hpp"
 #include "ColorSplitDialog.hpp"
 #include "ImageFillDialog.hpp"
+#include <wx/filename.h>
+#include "ImageTraceDialog.hpp"
 #include "CloneDialog.hpp"
 #include "WebPreprintDialog.hpp"
 #include "SSWCP.hpp" // Ultra: the U1 send leaves its end-of-print unload choice for sw_SendGCodes
@@ -10391,6 +10393,54 @@ bool emboss_svg(Plater& plater, const wxString &svg_file, const Vec2d& mouse_dro
 
     return svg->create_volume(svg_file_str, mouse_drop_position, ModelVolumeType::MODEL_PART);
 }
+
+bool is_traceable_image(const wxString &file)
+{
+    wxString ext = wxFileName(file).GetExt().Lower();
+    return ext == "png" || ext == "jpg" || ext == "jpeg";
+}
+
+// Dropped image: trace it into shapes, or paint it onto the object by Image Fill
+bool drop_image(Plater &plater, const wxString &image_file, const Vec2d &mouse_drop_position)
+{
+    GLCanvas3D *canvas = plater.canvas3D();
+    if (canvas == nullptr)
+        return false;
+    GLGizmoSVG *svg = dynamic_cast<GLGizmoSVG *>(canvas->get_gizmos_manager().get_gizmo(GLGizmosManager::Svg));
+    if (svg == nullptr)
+        return false;
+
+    // Refresh hover state to find the object under mouse
+    auto refresh_hover = [canvas, &mouse_drop_position]() {
+        wxMouseEvent evt(wxEVT_MOTION);
+        evt.SetPosition(wxPoint(mouse_drop_position.x(), mouse_drop_position.y()));
+        canvas->on_mouse(evt); // call render where is call GLCanvas3D::_picking_pass()
+    };
+    refresh_hover();
+    const GLVolume *hovered        = get_first_hovered_gl_volume(*canvas);
+    int             hovered_object = hovered != nullptr ? hovered->object_idx() : -1;
+    if (hovered_object >= int(plater.model().objects.size()))
+        hovered_object = -1;
+
+    bool can_color_fill = hovered_object >= 0 || plater.can_apply_image_fill();
+    switch (ask_image_drop_action(nullptr, wxFileName(image_file).GetFullName(), can_color_fill)) {
+    case ImageDropAction::Trace:
+        // the question took the mouse out of the canvas
+        refresh_hover();
+        return svg->create_image(ModelVolumeType::MODEL_PART, mouse_drop_position, into_u8(image_file));
+    case ImageDropAction::ColorFill:
+        if (hovered_object >= 0) {
+            canvas->get_selection().add_object(unsigned(hovered_object), true);
+            wxGetApp().obj_list()->update_selections();
+            canvas->set_as_dirty();
+        }
+        if (!plater.can_apply_image_fill())
+            return false;
+        plater.apply_image_fill(image_file);
+        return true;
+    default: return false;
+    }
+}
 }
 
 // State to manage showing after export notifications and device ejecting
@@ -11042,6 +11092,14 @@ bool PlaterDropTarget::OnDropFiles(wxCoord x, wxCoord y, const wxArrayString &fi
             const GLCanvas3D *canvas = m_plater.canvas3D();
             canvas->apply_retina_scale(mouse_position);
             return emboss_svg(m_plater, filename, mouse_position);
+        }
+        // Image: trace it into shapes or paint it by Image Fill
+        if (is_traceable_image(filename) && !m_plater.only_gcode_mode() && wxGetApp().is_editor()) {
+            const wxPoint offset = m_plater.GetPosition() + m_plater.p->current_panel->GetPosition();
+            Vec2d mouse_position(x - offset.x, y - offset.y);
+            const GLCanvas3D *canvas = m_plater.canvas3D();
+            canvas->apply_retina_scale(mouse_position);
+            return drop_image(m_plater, filename, mouse_position);
         }
     }
     bool res = m_plater.load_files(filenames);
@@ -27043,7 +27101,7 @@ bool Plater::can_apply_image_fill() const
     return false;
 }
 
-void Plater::apply_image_fill()
+void Plater::apply_image_fill(const wxString &image_path)
 {
     const int obj_idx = get_selection().get_object_idx();
     if (obj_idx < 0 || obj_idx >= int(model().objects.size()))
@@ -27110,6 +27168,15 @@ void Plater::apply_image_fill()
         base.apply(object.config.get(), true);
         if (const ConfigOptionFloat *d = base.option<ConfigOptionFloat>("image_fill_detail"))
             initial.detail_mm = float(d->value);
+    }
+    if (!image_path.empty()) {
+        std::string asset = GUI::ImageFillDialog::add_image_file(image_path, model().image_assets);
+        if (asset.empty()) {
+            show_error(this, _L("This image could not be read."));
+            return;
+        }
+        initial.asset            = asset;
+        initial.gradient.enabled = false;
     }
 
     // Phase 3 (image row): whether this part is ALREADY bound to an enabled ImageWeighted row,

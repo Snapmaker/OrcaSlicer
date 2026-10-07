@@ -157,6 +157,8 @@ set(lisbslic3r_sources
     Barcode.hpp
     CodeEmboss.cpp
     CodeEmboss.hpp
+    ImageTrace.cpp
+    ImageTrace.hpp
     SimpleShape.cpp
     SimpleShape.hpp
     enum_bitmask.hpp
@@ -686,6 +688,7 @@ slic3r_unity_build(libslic3r SKIP
     FontFallback.cpp                # includes imstb_truetype.h without the implementation, keep away from Emboss.cpp
     InlineShapes.cpp                # file-local helpers (fnv1a64, append_utf8, fail) with common names
     CodeEmboss.cpp                  # file-local rectangle()/circle()/to_svg() helpers with common names
+    ImageTrace.cpp                  # using namespace image_trace_detail (to_svg(), luminance() ...)
     Format/GLTF.cpp                 # defines CGLTF_IMPLEMENTATION before its include
     FilamentGroup.cpp               # namespace-scope using namespace FilamentGroupUtils - FilamentInfo ambiguity
     Format/ZipperArchiveImport.cpp  # read_ini()/CONFIG_FNAME also in Format/SL1.cpp

@@ -263,6 +263,15 @@ ImageFillDialog::ImageFillDialog(wxWindow                                      *
     CenterOnParent();
 }
 
+std::string ImageFillDialog::add_image_file(const wxString &path, ImageAssetStore &assets)
+{
+    std::vector<uint8_t> png;
+    wxImage              decoded;
+    if (!load_image_as_png(path, png, decoded))
+        return {};
+    return assets.add(std::move(png));
+}
+
 void ImageFillDialog::on_pick_image()
 {
     wxFileDialog dlg(this, _L("Choose an image"), wxEmptyString, wxEmptyString,

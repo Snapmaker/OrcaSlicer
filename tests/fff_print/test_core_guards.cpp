@@ -1,8 +1,11 @@
 // Slicing-level regression tests for the crash / UB / hang guards ported from OrcaSlicer in batch 1A.
 #include <catch2/catch.hpp>
 
+#include "libslic3r/Layer.hpp"
+#include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/TriangleMesh.hpp"
 
 #include "test_data.hpp"
 
@@ -24,4 +27,50 @@ TEST_CASE("Multi-extruder slice stays in bounds with a short max_layer_height", 
     Print print;
     init_and_process_print({ TestMesh::cube_20x20x20 }, print, config);
     REQUIRE_FALSE(print.objects().front()->layers().empty());
+}
+
+namespace {
+
+// A pillar carrying a wide deck, so tree support has something to hold up. Returns the number of
+// support layers the generator produced.
+size_t slice_overhang_with_tree_support(std::initializer_list<ConfigBase::SetDeserializeItem> overrides)
+{
+    Print print;
+    Model model;
+    print.set_status_silent();
+
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({
+        { "enable_support", "1" },
+        { "support_type", "tree(auto)" },
+        { "wall_generator", "classic" },
+        { "layer_height", "0.2" },
+        { "initial_layer_print_height", "0.2" },
+    });
+    config.set_deserialize_strict(overrides);
+
+    ModelObject *object = model.add_object();
+    object->name        = "pillar_deck";
+    TriangleMesh pillar = make_cube(6., 6., 8.);
+    pillar.translate(-3.f, -3.f, 0.f);
+    object->add_volume(pillar);
+    TriangleMesh deck = make_cube(24., 24., 1.6);
+    deck.translate(-12.f, -12.f, 8.f);
+    object->add_volume(deck);
+    object->add_instance();
+    object->ensure_on_bed();
+
+    print.auto_assign_extruders(model.objects.front());
+    print.apply(model, config);
+    print.process();
+    return print.objects().front()->support_layers().size();
+}
+
+} // namespace
+
+// Orca #11189: organic tree support with a zero XY distance made calculateAvoidance() divide by a
+// zero move step.
+TEST_CASE("Organic tree support survives a zero support XY distance", "[CoreGuards][TreeSupport]")
+{
+    CHECK(slice_overhang_with_tree_support({ { "support_style", "organic" }, { "support_object_xy_distance", "0" } }) > 0);
 }

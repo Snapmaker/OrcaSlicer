@@ -686,6 +686,9 @@ private:
     std::vector<PageShp>			m_pages_sla;
 
     wxBoxSizer*         m_presets_sizer                 {nullptr};
+    // Under Time cost: which machine rate slicing uses (yours from Costs, or the preset's) and why.
+    wxStaticText*       m_rate_note                     {nullptr};
+    wxSizer*            rate_note_create_widget(wxWindow* parent);
 public:
 	ScalableButton*	m_reset_to_filament_color = nullptr;
 
@@ -708,6 +711,8 @@ public:
 	void		reload_config() override;
 	void		activate_selected_page(std::function<void()> throw_if_canceled) override;
 	void		clear_pages() override;
+    // Refreshes the line under Time cost (also called when your costs change).
+    void        update_rate_note();
 	void		toggle_options() override;
     void		update() override;
     void		update_fff();

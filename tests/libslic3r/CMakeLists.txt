@@ -129,7 +129,7 @@ add_executable(${_TEST_NAME}_tests
     test_shortest_path.cpp
     test_gcode_import.cpp
     test_cost_estimate.cpp
-    test_filament_prices.cpp
+    test_cost_overrides.cpp
     test_align_math.cpp
     # test_png_io.cpp
     test_indexed_triangle_set.cpp

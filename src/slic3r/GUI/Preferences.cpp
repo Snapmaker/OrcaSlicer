@@ -1,7 +1,7 @@
 #include "Preferences.hpp"
 #include "OptionsGroup.hpp"
 #include "GUI_App.hpp"
-#include "FilamentPriceDialog.hpp"
+#include "CostsDialog.hpp"
 #include "MainFrame.hpp"
 #include "Plater.hpp"
 #include "FreeCADBridge.hpp"
@@ -2110,11 +2110,11 @@ wxWindow* PreferencesDialog::create_ultra_page()
            "still show their cost here."), 50, "gcode_include_filament_prices");
     currency_symbol(); // the locale's symbol becomes the stored default the first time
     auto item_currency_symbol = create_item_text_input(_L("Currency symbol"), page,
-        _L("Shown before every price and cost (filament prices, the cost after slicing). A label only: prices are never "
+        _L("Shown before every price and cost (filament prices, machine rates, the cost after slicing). A label only: prices are never "
            "converted. Leave it empty for plain numbers."), "cost_currency_symbol");
-    auto item_filament_prices = create_item_button(_L("Your own filament prices"), _L("Filament prices") + dots, page,
-        _L("Prices per kilogram that apply over the presets' prices, for every printer and nozzle variant of a filament"),
-        _L("Open the table of filament prices"), [this]() { show_filament_price_dialog(this); });
+    auto item_filament_prices = create_item_button(_L("Your own costs"), _L("Costs") + dots, page,
+        _L("Filament prices per kilogram and machine rates per hour that apply over the presets' values"),
+        _L("Open the Costs window"), [this]() { show_costs_dialog(this); });
 
     auto title_presets = create_item_title(_L("Presets"), page, _L("Presets"));
     auto item_prefer_last_print = create_item_checkbox(_L("Prefer Last Used Print Profile"), page,

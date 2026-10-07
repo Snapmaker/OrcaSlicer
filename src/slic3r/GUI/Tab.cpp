@@ -68,7 +68,7 @@
 #include "Widgets/Button.hpp"
 #include "Widgets/SegmentedToggle.hpp"
 #include "FlowVariantEdit.hpp"
-#include "FilamentPriceDialog.hpp"
+#include "CostsDialog.hpp"
 #include "libslic3r/PresetFlowVariant.hpp"
 #include "FlowTypeHelper.hpp"
 #include <wx/textdlg.h>
@@ -5087,8 +5087,8 @@ wxSizer* TabFilament::price_note_create_widget(wxWindow* parent)
                _L("Your own price per kilogram for this filament on every printer and nozzle (or for this preset only). "
                   "Kept on this computer, never in the preset or in project files."),
                [this, parent]() { edit_filament_price(parent, *m_presets); });
-    add_button(_L("Filament prices") + dots, _L("Every filament with your prices, in one table"),
-               [parent]() { show_filament_price_dialog(parent); });
+    add_button(_L("Costs") + dots, _L("Your filament prices and machine rates, in one window"),
+               [parent]() { show_costs_dialog(parent, CostsDialog::Page::Filaments); });
     vsizer->Add(hsizer, 0);
     update_price_note();
     return vsizer;
@@ -5423,6 +5423,13 @@ void TabPrinter::build_fff()
         optgroup->append_single_option_line("use_firmware_retraction");
         // optgroup->append_single_option_line("spaghetti_detector");
         optgroup->append_single_option_line("time_cost");
+        {
+            // Your own machine rate (Costs window) shadows this preset's Time cost when set: say so here.
+            Line rate_note_line = Line{ "", "" };
+            rate_note_line.full_width = 1;
+            rate_note_line.widget = [this](wxWindow* parent) { return rate_note_create_widget(parent); };
+            optgroup->append_line(rate_note_line);
+        }
 
         optgroup  = page->new_optgroup(L("Cooling Fan"), "param_cooling_fan");
         Line line = Line{ L("Fan speed-up time"), optgroup->get_option("fan_speedup_time").opt.tooltip };
@@ -6194,6 +6201,7 @@ void TabPrinter::reload_config()
 {
     refresh_flow_variant_view();
     Tab::reload_config();
+    update_rate_note();
 
     // "extruders_count" doesn't update from the update_config(),
     // so update it implicitly
@@ -6215,6 +6223,48 @@ void TabPrinter::clear_pages()
 {
     Tab::clear_pages();
     m_reset_to_filament_color = nullptr;
+    m_rate_note = nullptr;
+}
+
+wxSizer* TabPrinter::rate_note_create_widget(wxWindow* parent)
+{
+    const int em = em_unit(parent);
+    auto* vsizer = new wxBoxSizer(wxVERTICAL);
+    m_rate_note = new wxStaticText(parent, wxID_ANY, wxEmptyString);
+    m_rate_note->SetFont(wxGetApp().normal_font());
+    vsizer->Add(m_rate_note, 0, wxEXPAND);
+
+    auto* hsizer = new wxBoxSizer(wxHORIZONTAL);
+    auto add_button = [parent, hsizer, em](const wxString& label, const wxString& tip, std::function<void()> on_click) {
+        auto* btn = new Button(parent, label);
+        btn->SetStyle(ButtonStyle::Regular, ButtonType::Compact);
+        btn->SetToolTip(tip);
+        btn->Bind(wxEVT_BUTTON, [on_click](wxCommandEvent&) { on_click(); });
+        hsizer->Add(btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT | wxTOP, em / 2);
+    };
+    add_button(_L("Set my rate") + dots,
+               _L("Your own cost per hour of printing for every nozzle variant of this printer model (or for this preset only). "
+                  "Kept on this computer, never in the preset or in project files."),
+               [this, parent]() { edit_machine_rate(parent, *m_presets); });
+    add_button(_L("Costs") + dots, _L("Your filament prices and machine rates, in one window"),
+               [parent]() { show_costs_dialog(parent, CostsDialog::Page::Machines); });
+    vsizer->Add(hsizer, 0);
+    update_rate_note();
+    return vsizer;
+}
+
+void TabPrinter::update_rate_note()
+{
+    if (m_rate_note == nullptr || m_presets == nullptr || m_presets->get_edited_preset().printer_technology() != ptFFF)
+        return;
+    const wxString text = machine_rate_note(edited_machine_rate(*m_presets));
+    if (m_rate_note->GetLabel() == text)
+        return;
+    m_rate_note->SetLabel(text);
+    m_rate_note->SetToolTip(text);
+    m_rate_note->Wrap(em_unit(m_rate_note) * 45);
+    if (wxWindow* parent = m_rate_note->GetParent())
+        parent->Layout();
 }
 
 void TabPrinter::toggle_options()
@@ -6369,6 +6419,7 @@ void TabPrinter::update()
     m_update_cnt--;
 
     update_description_lines();
+    update_rate_note();
     //BBS: GUI refactor
     //Layout();
     m_parent->Layout();

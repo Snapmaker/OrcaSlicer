@@ -4,7 +4,7 @@
 #include "../Model.hpp"
 #include "../MixedFilament.hpp"
 #include "../Preset.hpp"
-#include "../FilamentPrices.hpp"
+#include "../CostOverrides.hpp"
 #include "../Utils.hpp"
 #include "../LocalesUtils.hpp"
 #include "../GCode.hpp"
@@ -10494,13 +10494,13 @@ bool store_bbs_3mf(StoreParams& store_params)
     if (store_params.strip_filament_prices) {
         if (caller_config != nullptr) {
             stripped_config = *caller_config;
-            FilamentPrices::strip_prices(stripped_config);
+            CostOverrides::strip_prices(stripped_config);
             store_params.config = &stripped_config;
         }
         for (Preset*& preset : store_params.project_presets)
             if (preset != nullptr && preset->type == Preset::TYPE_FILAMENT) {
                 stripped_presets.emplace_back(std::make_unique<Preset>(*preset));
-                FilamentPrices::strip_prices(stripped_presets.back()->config);
+                CostOverrides::strip_prices(stripped_presets.back()->config);
                 preset = stripped_presets.back().get();
             }
     }

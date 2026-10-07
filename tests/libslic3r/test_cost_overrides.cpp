@@ -4,7 +4,7 @@
 
 #include <catch2/catch.hpp>
 
-#include "libslic3r/FilamentPrices.hpp"
+#include "libslic3r/CostOverrides.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Preset.hpp"
@@ -26,7 +26,7 @@
 #include <string>
 
 using namespace Slic3r;
-using namespace Slic3r::FilamentPrices;
+using namespace Slic3r::CostOverrides;
 using Catch::Matchers::WithinAbs;
 using nlohmann::json;
 namespace fs = boost::filesystem;
@@ -125,7 +125,7 @@ std::vector<double> costs_of(const DynamicPrintConfig &config) { return config.o
 
 // ------------------------------------------------------------------------------------------- key
 
-TEST_CASE("Family name drops the printer and nozzle part of a preset name", "[FilamentPrices]")
+TEST_CASE("Family name drops the printer and nozzle part of a preset name", "[CostOverrides]")
 {
     CHECK(family_name("Bambu PLA Basic @BBL X1C") == "Bambu PLA Basic");
     CHECK(family_name("Bambu PLA Basic @BBL A1 0.2 nozzle") == "Bambu PLA Basic");
@@ -142,7 +142,7 @@ TEST_CASE("Family name drops the printer and nozzle part of a preset name", "[Fi
     CHECK(family_key("Bambu Lab", "PLA", "Bambu PLA Basic") != family_key("Bambu Lab", "PLA-CF", "Bambu PLA Basic"));
 }
 
-TEST_CASE("Shipped presets: every printer variant of a filament shares one key", "[FilamentPrices][profiles]")
+TEST_CASE("Shipped presets: every printer variant of a filament shares one key", "[CostOverrides][profiles]")
 {
     const PresetCollection &filaments = shipped_bundle().filaments;
 
@@ -191,7 +191,7 @@ TEST_CASE("Shipped presets: every printer variant of a filament shares one key",
 
 // ------------------------------------------------------------------------------------ precedence
 
-TEST_CASE("Precedence: this preset only > deliberate user price > family > preset price", "[FilamentPrices]")
+TEST_CASE("Precedence: this preset only > deliberate user price > family > preset price", "[CostOverrides]")
 {
     Identity id;
     id.preset = "Bambu PLA Basic @BBL X1C";
@@ -268,7 +268,7 @@ TEST_CASE("Precedence: this preset only > deliberate user price > family > prese
     }
 }
 
-TEST_CASE("A user preset priced deliberately = its price differs from its parent's", "[FilamentPrices][profiles]")
+TEST_CASE("A user preset priced deliberately = its price differs from its parent's", "[CostOverrides][profiles]")
 {
     PresetCollection &filaments = shipped_bundle().filaments;
     const auto        variants  = system_variants(filaments, "Bambu PLA Basic");
@@ -315,7 +315,7 @@ TEST_CASE("A user preset priced deliberately = its price differs from its parent
 
 // ----------------------------------------------------------------------------------------- funnel
 
-TEST_CASE("apply() rewrites only filament_cost, per slot, idempotently", "[FilamentPrices]")
+TEST_CASE("apply() rewrites only filament_cost, per slot, idempotently", "[CostOverrides]")
 {
     Store store;
     REQUIRE(store.set_family("Bambu Lab", "PLA", "Bambu PLA Basic", 20.));
@@ -352,7 +352,7 @@ TEST_CASE("apply() rewrites only filament_cost, per slot, idempotently", "[Filam
     CHECK(costs_of(untouched) == costs_of(before));
 }
 
-TEST_CASE("apply() never writes past a short filament_cost", "[FilamentPrices]")
+TEST_CASE("apply() never writes past a short filament_cost", "[CostOverrides]")
 {
     Store store;
     REQUIRE(store.set_family("Generic", "PLA", "Generic PLA", 15.));
@@ -365,7 +365,7 @@ TEST_CASE("apply() never writes past a short filament_cost", "[FilamentPrices]")
 
 // ------------------------------------------------------------------------------------------ store
 
-TEST_CASE("Price store: round trip, unknown fields kept, versioned", "[FilamentPrices][store]")
+TEST_CASE("Price store: round trip, unknown fields kept, versioned", "[CostOverrides][store]")
 {
     const fs::path dir  = scratch_dir("store");
     const fs::path path = dir / "cost" / "filament_overrides.json";
@@ -395,7 +395,7 @@ TEST_CASE("Price store: round trip, unknown fields kept, versioned", "[FilamentP
 
     // A later version's fields, at the top and in an entry, survive a rewrite by this one.
     json j = json::parse(read_text(path));
-    CHECK(j["version"] == 1);
+    CHECK(j["version"] == Store::VERSION);
     j["version"]                   = 3;
     j["currency_note"]             = "set by a newer EdgeSlicer";
     j["filament"][0]["density"]    = 1.31;
@@ -422,7 +422,7 @@ TEST_CASE("Price store: round trip, unknown fields kept, versioned", "[FilamentP
     fs::remove_all(dir);
 }
 
-TEST_CASE("Price store: missing or unreadable files", "[FilamentPrices][store]")
+TEST_CASE("Price store: missing or unreadable files", "[CostOverrides][store]")
 {
     const fs::path dir = scratch_dir("store_bad");
 
@@ -458,7 +458,7 @@ TEST_CASE("Price store: missing or unreadable files", "[FilamentPrices][store]")
     fs::remove_all(dir);
 }
 
-TEST_CASE("Global store: test path, save, revision, unreadable file kept", "[FilamentPrices][store]")
+TEST_CASE("Global store: test path, save, revision, unreadable file kept", "[CostOverrides][store]")
 {
     const fs::path dir  = scratch_dir("global");
     const fs::path path = dir / "filament_overrides.json";
@@ -550,7 +550,7 @@ std::string store_plate(const fs::path &path, DynamicPrintConfig &cfg, bool stri
 
 } // namespace
 
-TEST_CASE("Sliced-plate 3MF without filament prices: none in its settings", "[FilamentPrices][3MF]")
+TEST_CASE("Sliced-plate 3MF without filament prices: none in its settings", "[CostOverrides][3MF]")
 {
     const fs::path dir = scratch_dir("3mf");
     set_temporary_dir(dir.string());
@@ -618,9 +618,9 @@ TEST_CASE("Sliced-plate 3MF without filament prices: none in its settings", "[Fi
     fs::remove_all(dir);
 }
 
-TEST_CASE("Project files keep preset prices while your prices apply to slicing", "[FilamentPrices][3MF]")
+TEST_CASE("Project files keep preset prices while your prices apply to slicing", "[CostOverrides][3MF]")
 {
-    // What the GUI does: the slice gets FilamentPrices::apply() on its own copy of the config; the
+    // What the GUI does: the slice gets CostOverrides::apply() on its own copy of the config; the
     // project writer gets full_config_secure(), the presets' values.
     const fs::path dir = scratch_dir("3mf_project");
     set_temporary_dir(dir.string());
@@ -640,7 +640,7 @@ TEST_CASE("Project files keep preset prices while your prices apply to slicing",
     fs::remove_all(dir);
 }
 
-TEST_CASE("strip_prices() removes filament_cost and its 'different from system' mention", "[FilamentPrices]")
+TEST_CASE("strip_prices() removes filament_cost and its 'different from system' mention", "[CostOverrides]")
 {
     DynamicPrintConfig cfg;
     cfg.set_key_value("filament_cost", new ConfigOptionFloats({1., 2.}));
@@ -650,4 +650,292 @@ TEST_CASE("strip_prices() removes filament_cost and its 'different from system' 
     CHECK_FALSE(cfg.has("filament_cost"));
     CHECK(cfg.has("time_cost"));   // the machine rate is not a filament price
     CHECK(cfg.option<ConfigOptionStrings>("different_settings_to_system")->values == std::vector<std::string>{"layer_height", "", "a;b"});
+}
+
+// ===================================================================================== machines
+
+namespace {
+
+DynamicPrintConfig machine_config(const std::string &preset, const std::string &model, double time_cost)
+{
+    DynamicPrintConfig config;
+    config.set_key_value("printer_settings_id", new ConfigOptionString(preset));
+    config.set_key_value("printer_model", new ConfigOptionString(model));
+    config.set_key_value("time_cost", new ConfigOptionFloat(time_cost));
+    config.set_key_value("filament_settings_id", new ConfigOptionStrings({"Generic PLA @System"}));
+    config.set_key_value("filament_cost", new ConfigOptionFloats({20.}));
+    return config;
+}
+
+double time_cost_of(const DynamicPrintConfig &config) { return config.option<ConfigOptionFloat>("time_cost")->value; }
+
+} // namespace
+
+TEST_CASE("Printer family name drops only the nozzle part", "[CostOverrides][machines]")
+{
+    CHECK(printer_family_name("Bambu Lab X1 Carbon 0.4 nozzle") == "Bambu Lab X1 Carbon");
+    CHECK(printer_family_name("My Voron (0.6 nozzle)") == "My Voron");
+    CHECK(printer_family_name("Snapmaker U1") == "Snapmaker U1");
+    CHECK(machine_key("Bambulab", "Bambu Lab X1 Carbon") == machine_key(" bambulab ", "bambu lab  x1 carbon"));
+}
+
+TEST_CASE("Shipped printers: every nozzle variant of a model shares one key", "[CostOverrides][machines][profiles]")
+{
+    const PresetCollection &printers = shipped_bundle().printers;
+    auto keys_of = [&printers](const std::string &prefix, size_t &count) {
+        std::set<std::string> keys;
+        count = 0;
+        for (const Preset &p : printers)
+            if (p.is_system && p.name.rfind(prefix + " 0.", 0) == 0 && p.name.find("nozzle") != std::string::npos) {
+                ++count;
+                const MachineIdentity id = identify_machine(p, p.config.opt_float("time_cost"), &printers);
+                INFO(p.name << " -> " << id.key());
+                CHECK_FALSE(id.own_rate);
+                CHECK_FALSE(id.vendor.empty());
+                keys.insert(id.key());
+            }
+        return keys;
+    };
+    size_t     n_x1c = 0, n_p1s = 0;
+    const auto x1c   = keys_of("Bambu Lab X1 Carbon", n_x1c);
+    const auto p1s   = keys_of("Bambu Lab P1S", n_p1s);
+    CHECK(n_x1c >= 4);   // 0.2 / 0.4 / 0.6 / 0.8
+    CHECK(n_p1s >= 4);
+    REQUIRE(x1c.size() == 1);
+    REQUIRE(p1s.size() == 1);
+    CHECK(*x1c.begin() != *p1s.begin());
+    CHECK(x1c.begin()->find("|bambu lab x1 carbon") != std::string::npos);
+
+    // Every shipped printer preset has a model.
+    for (const Preset &p : printers)
+        if (p.is_system && p.printer_technology() == ptFFF) {
+            INFO(p.name);
+            CHECK_FALSE(identify_machine(p, 0., &printers).model.empty());
+        }
+}
+
+TEST_CASE("Machine precedence: preset only > deliberate user rate > model > default > preset", "[CostOverrides][machines]")
+{
+    MachineIdentity id;
+    id.preset = "Bambu Lab X1 Carbon 0.4 nozzle";
+    id.vendor = "Bambulab";
+    id.model  = "Bambu Lab X1 Carbon";
+
+    Store store;
+    SECTION("nothing of yours: the preset's time cost")
+    {
+        const MachineResolved r = store.resolve_machine(id, 0.5);
+        CHECK(r.source == MachineSource::Preset);
+        CHECK_THAT(r.rate, WithinAbs(0.5, 1e-12));
+        CHECK_FALSE(r.yours());
+    }
+    SECTION("default rate beats the preset's")
+    {
+        REQUIRE(store.set_default_rate(0.8));
+        const MachineResolved r = store.resolve_machine(id, 0.5);
+        CHECK(r.source == MachineSource::Default);
+        CHECK_THAT(r.rate, WithinAbs(0.8, 1e-12));
+        CHECK(r.yours());
+    }
+    SECTION("model rate beats the default; another model gets the default")
+    {
+        REQUIRE(store.set_default_rate(0.8));
+        REQUIRE(store.set_machine_model("Bambulab", "Bambu Lab X1 Carbon", 1.25));
+        CHECK(store.resolve_machine(id, 0.5).source == MachineSource::Model);
+        CHECK_THAT(store.resolve_machine(id, 0.5).rate, WithinAbs(1.25, 1e-12));
+        MachineIdentity p1s = id;
+        p1s.preset          = "Bambu Lab P1S 0.4 nozzle";
+        p1s.model           = "Bambu Lab P1S";
+        CHECK(store.resolve_machine(p1s, 0.5).source == MachineSource::Default);
+    }
+    SECTION("this preset only beats the model rate; 0 is a rate")
+    {
+        REQUIRE(store.set_machine_model("Bambulab", "Bambu Lab X1 Carbon", 1.25));
+        REQUIRE(store.set_machine_preset(id.preset, id, 0.));
+        const MachineResolved r = store.resolve_machine(id, 0.5);
+        CHECK(r.source == MachineSource::PresetOnly);
+        CHECK_THAT(r.rate, WithinAbs(0., 1e-12));
+        MachineIdentity other = id;
+        other.preset          = "Bambu Lab X1 Carbon 0.2 nozzle";
+        CHECK(store.resolve_machine(other, 0.5).source == MachineSource::Model);
+    }
+    SECTION("a user preset with its own time cost keeps it over model and default")
+    {
+        REQUIRE(store.set_default_rate(0.8));
+        MachineIdentity user = id;
+        user.preset          = "My X1C";
+        user.own_rate        = true;
+        MachineResolved r    = store.resolve_machine(user, 2.);
+        CHECK(r.source == MachineSource::OwnRate);
+        CHECK_THAT(r.rate, WithinAbs(2., 1e-12));
+        CHECK(r.shadowed);
+        CHECK_THAT(r.shadowed_rate, WithinAbs(0.8, 1e-12));
+        REQUIRE(store.set_machine_model("Bambulab", "Bambu Lab X1 Carbon", 1.25));
+        r = store.resolve_machine(user, 2.);
+        CHECK(r.source == MachineSource::OwnRate);
+        CHECK_THAT(r.shadowed_rate, WithinAbs(1.25, 1e-12));
+        REQUIRE(store.set_machine_preset("My X1C", user, 3.));
+        CHECK(store.resolve_machine(user, 2.).source == MachineSource::PresetOnly);
+    }
+    SECTION("refused values")
+    {
+        CHECK_FALSE(store.set_default_rate(-1.));
+        CHECK_FALSE(store.set_machine_model("Bambulab", "", 1.));
+        CHECK_FALSE(store.set_machine_model("Bambulab", "X", std::numeric_limits<double>::infinity()));
+        CHECK(store.empty());
+    }
+}
+
+TEST_CASE("A user printer preset with a deliberate time cost = it differs from its parent's", "[CostOverrides][machines][profiles]")
+{
+    PresetCollection &printers    = shipped_bundle().printers;
+    const std::string parent_name = "Bambu Lab X1 Carbon 0.4 nozzle";
+    const Preset     *parent      = printers.find_preset(parent_name, false);
+    REQUIRE(parent != nullptr);
+    REQUIRE(parent->name == parent_name);
+    const double parent_rate = parent->config.opt_float("time_cost");
+
+    auto add_user = [&printers, &parent_name](const std::string &name, double rate) {
+        DynamicPrintConfig config = printers.find_preset(parent_name, false)->config;
+        config.set_key_value("inherits", new ConfigOptionString(parent_name));
+        config.option<ConfigOptionFloat>("time_cost", true)->value = rate;
+        printers.load_preset((scratch_dir("user_printer") / (name + ".json")).string(), name, config, false);
+    };
+    add_user("Rate test X1C same", parent_rate);
+    add_user("Rate test X1C own", parent_rate + 2.);
+    const Preset &same = *printers.find_preset("Rate test X1C same", false);
+    const Preset &own  = *printers.find_preset("Rate test X1C own", false);
+    REQUIRE(same.name == "Rate test X1C same");
+    REQUIRE(own.name == "Rate test X1C own");
+
+    const MachineIdentity same_id = identify_machine(same, parent_rate, &printers);
+    const MachineIdentity own_id  = identify_machine(own, parent_rate + 2., &printers);
+    const MachineIdentity sys_id  = identify_machine(*printers.find_preset(parent_name, false), parent_rate, &printers);
+    CHECK_FALSE(same_id.own_rate);
+    CHECK(own_id.own_rate);
+    // User presets take their parent's vendor and model.
+    CHECK(same_id.key() == sys_id.key());
+    CHECK(own_id.key() == sys_id.key());
+
+    Store store;
+    REQUIRE(store.set_machine_model(sys_id.vendor, sys_id.model, 1.75));
+    DynamicPrintConfig a = machine_config(parent_name, "Bambu Lab X1 Carbon", parent_rate);
+    DynamicPrintConfig b = machine_config("Rate test X1C same", "Bambu Lab X1 Carbon", parent_rate);
+    DynamicPrintConfig c = machine_config("Rate test X1C own", "Bambu Lab X1 Carbon", parent_rate + 2.);
+    for (DynamicPrintConfig *cfg : {&a, &b, &c})
+        apply(*cfg, store, nullptr, &printers);
+    CHECK_THAT(time_cost_of(a), WithinAbs(1.75, 1e-12));
+    CHECK_THAT(time_cost_of(b), WithinAbs(1.75, 1e-12));
+    CHECK_THAT(time_cost_of(c), WithinAbs(parent_rate + 2., 1e-12));
+}
+
+TEST_CASE("apply() rewrites time_cost only when a machine rate of yours applies", "[CostOverrides][machines]")
+{
+    // Without the printers collection: model from the config, no vendor.
+    Store store;
+    REQUIRE(store.set_family("Generic", "PLA", "Generic PLA", 15.));
+    DynamicPrintConfig config = machine_config("My Voron 0.4 nozzle", "", 0.5);
+    apply(config, store, nullptr);
+    CHECK_THAT(time_cost_of(config), WithinAbs(0.5, 1e-12));   // filament prices only: time_cost untouched
+
+    REQUIRE(store.set_machine_model("", "My Voron", 2.5));
+    const DynamicPrintConfig before = config;
+    apply(config, store, nullptr);
+    CHECK_THAT(time_cost_of(config), WithinAbs(2.5, 1e-12));
+    CHECK(resolve_machine(before, store, nullptr).source == MachineSource::Model);
+    for (const std::string &key : before.keys())
+        if (key != "time_cost" && key != "filament_cost") {
+            INFO(key);
+            CHECK(config.opt_serialize(key) == before.opt_serialize(key));
+        }
+
+    // A default applies to a printer without a rate of its own.
+    Store defaults;
+    REQUIRE(defaults.set_default_rate(0.9));
+    DynamicPrintConfig other = machine_config("Another printer", "Other Model", 0.);
+    apply(other, defaults, nullptr);
+    CHECK_THAT(time_cost_of(other), WithinAbs(0.9, 1e-12));
+}
+
+TEST_CASE("Cost store: a version 1 file is read and rewritten as version 2", "[CostOverrides][store][machines]")
+{
+    const fs::path dir  = scratch_dir("migrate");
+    const fs::path path = dir / "filament_overrides.json";
+    // What the first version of PR 1b wrote, plus fields from somewhere else.
+    write_text(path, R"({"version":1,"note":"keep me","filament":[
+        {"scope":"family","vendor":"Bambu Lab","type":"PLA","family":"Bambu PLA Basic","price_per_kg":23.5,"updated":1791300000,"density":1.26}]})");
+
+    Store store;
+    REQUIRE(store.load(path.string()));
+    CHECK(store.version() == Store::VERSION);
+    REQUIRE(store.entries().size() == 1);
+    CHECK(store.machines().empty());
+    CHECK_FALSE(store.has_default_rate());
+    MachineIdentity id;
+    id.vendor = "Bambulab";
+    id.model  = "Bambu Lab X1 Carbon";
+    REQUIRE(store.set_machine_model("Bambulab", "Bambu Lab X1 Carbon", 1.5));
+    REQUIRE(store.set_machine_preset("My X1C", id, 2.));
+    REQUIRE(store.set_default_rate(0.75));
+    REQUIRE(store.save(path.string()));
+
+    json j = json::parse(read_text(path));
+    CHECK(j["version"] == 2);
+    CHECK(j["note"] == "keep me");
+    CHECK(j["filament"][0]["density"] == 1.26);
+    CHECK(j["filament"][0]["price_per_kg"] == 23.5);
+    REQUIRE(j["machine"].size() == 2);
+    CHECK(j["machine_default"]["rate_per_h"] == 0.75);
+
+    // Unknown machine fields survive too, and the result reads back the same.
+    j["machine"][0]["kwh"]           = 0.3;
+    j["machine_default"]["currency"] = "EUR";
+    write_text(path, j.dump());
+    Store back;
+    REQUIRE(back.load(path.string()));
+    REQUIRE(back.save(path.string()));
+    const json k = json::parse(read_text(path));
+    CHECK(k["machine"][0]["kwh"] == 0.3);
+    CHECK(k["machine_default"]["currency"] == "EUR");
+    const std::string x1c = machine_key("Bambulab", "Bambu Lab X1 Carbon");
+    REQUIRE(back.find_machine_model(x1c) != nullptr);
+    CHECK_THAT(back.find_machine_model(x1c)->rate_per_h, WithinAbs(1.5, 1e-12));
+    REQUIRE(back.find_machine_preset("My X1C") != nullptr);
+    CHECK(back.has_default_rate());
+    CHECK_THAT(back.default_rate(), WithinAbs(0.75, 1e-12));
+    CHECK(back.clear_default_rate());
+    CHECK(back.clear_machine_preset("My X1C"));
+    CHECK(back.clear_machine_model(machine_key("bambulab", "bambu lab x1 carbon")));
+    CHECK(back.machines().empty());
+
+    // A machine list that is not a list is not our file.
+    write_text(path, R"({"version":2,"machine":5})");
+    CHECK_FALSE(back.load(path.string()));
+    fs::remove_all(dir);
+}
+
+TEST_CASE("Project files keep the preset time cost while your rate applies to slicing", "[CostOverrides][3MF][machines]")
+{
+    const fs::path dir = scratch_dir("3mf_machine");
+    set_temporary_dir(dir.string());
+    Store store;
+    REQUIRE(store.set_default_rate(3.25));
+
+    DynamicPrintConfig project = priced_project_config();
+    project.option<ConfigOptionFloat>("time_cost")->value = 0.5;
+    project.set_key_value("printer_settings_id", new ConfigOptionString("Bambu Lab X1 Carbon 0.4 nozzle"));
+    DynamicPrintConfig for_slicing = project;
+    apply(for_slicing, store, nullptr);
+    CHECK_THAT(time_cost_of(for_slicing), WithinAbs(3.25, 1e-12));
+
+    for (const bool sliced : {false, true}) {
+        DYNAMIC_SECTION((sliced ? "sliced plate" : "project")) {
+            const SaveStrategy strategy = sliced ? SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary |
+                                                       SaveStrategy::WithGcode | SaveStrategy::SkipModel :
+                                                   SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary;
+            const json proj = json::parse(store_plate(dir / (sliced ? "plate.gcode.3mf" : "project.3mf"), project, sliced, strategy));
+            CHECK(proj["time_cost"] == "0.5");
+        }
+    }
+    fs::remove_all(dir);
 }

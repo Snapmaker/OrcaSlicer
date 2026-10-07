@@ -172,8 +172,8 @@ set(lisbslic3r_sources
     ExPolygonsIndex.hpp
     CostEstimate.cpp
     CostEstimate.hpp
-    FilamentPrices.cpp
-    FilamentPrices.hpp
+    CostOverrides.cpp
+    CostOverrides.hpp
     Extruder.cpp
     Extruder.hpp
     ExtrusionEntityCollection.cpp

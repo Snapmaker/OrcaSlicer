@@ -267,7 +267,7 @@ struct StoreParams
     BambuExport::Report* bambu_report = nullptr;
     // A sliced-plate file (.gcode.3mf, the config 3MF of a cloud send) made while the preference
     // "Include filament prices in exported G-code" is off: filament_cost is left out of
-    // project_settings.config and of the embedded filament presets (FilamentPrices::strip_prices()).
+    // project_settings.config and of the embedded filament presets (CostOverrides::strip_prices()).
     // Project saves never set it.
     bool strip_filament_prices = false;
 

@@ -1,4 +1,4 @@
-#include "FilamentPrices.hpp"
+#include "CostOverrides.hpp"
 
 #include "Config.hpp"
 #include "Preset.hpp"
@@ -20,7 +20,7 @@
 #include <sstream>
 
 namespace Slic3r {
-namespace FilamentPrices {
+namespace CostOverrides {
 
 using nlohmann::json;
 namespace fs = boost::filesystem;
@@ -118,6 +118,54 @@ Identity identify(const Preset &preset, double price, const PresetCollection *fi
     return id;
 }
 
+std::string printer_family_name(const std::string &preset_name)
+{
+    std::string name = collapse_spaces(preset_name);
+    static const std::regex nozzle(R"(\s*[\(\[]?\s*\d+(?:\.\d+)?\s*(?:mm)?\s*nozzle\s*[\)\]]?\s*$)", std::regex::icase);
+    for (;;) {
+        std::smatch m;
+        if (!std::regex_search(name, m, nozzle) || m.position(0) == 0)
+            break;
+        name = collapse_spaces(name.substr(0, size_t(m.position(0))));
+    }
+    return name;
+}
+
+std::string machine_key(const std::string &vendor, const std::string &model)
+{
+    return lowered(collapse_spaces(vendor)) + "|" + lowered(collapse_spaces(model));
+}
+
+static double time_cost_of(const DynamicPrintConfig &config)
+{
+    const auto *opt = config.option<ConfigOptionFloat>("time_cost");
+    return opt != nullptr ? opt->value : 0.;
+}
+
+MachineIdentity identify_machine(const Preset &preset, double rate, const PresetCollection *printers)
+{
+    MachineIdentity id;
+    id.preset = preset.name;
+    const Preset *parent = nullptr;
+    if (!preset.is_system && !preset.is_default && printers != nullptr)
+        parent = printers->get_preset_parent(preset);
+    // A user preset carries no vendor profile of its own: its parent's.
+    if (preset.vendor != nullptr)
+        id.vendor = preset.vendor->name;
+    else if (parent != nullptr && parent->vendor != nullptr)
+        id.vendor = parent->vendor->name;
+    id.model = collapse_spaces(first_string(preset.config, "printer_model"));
+    if (id.model.empty() && parent != nullptr)
+        id.model = collapse_spaces(first_string(parent->config, "printer_model"));
+    if (id.model.empty())
+        id.model = printer_family_name(parent != nullptr ? parent->name : preset.name);
+    if (parent != nullptr) {
+        id.parent_rate = time_cost_of(parent->config);
+        id.own_rate    = !same_price(rate, id.parent_rate);
+    }
+    return id;
+}
+
 // ---------------------------------------------------------------- the store ----
 
 static long long now_s()
@@ -130,13 +178,41 @@ static std::string str_of(const json &j, const char *key)
     return j.contains(key) && j[key].is_string() ? j[key].get<std::string>() : std::string();
 }
 
-static const char *const ENTRY_KEYS[] = {"scope", "preset", "vendor", "type", "family", "price_per_kg", "updated"};
+static const char *const ENTRY_KEYS[]   = {"scope", "preset", "vendor", "type", "family", "price_per_kg", "updated"};
+static const char *const MACHINE_KEYS[] = {"scope", "preset", "vendor", "model", "rate_per_h", "updated"};
+static const char *const DEFAULT_KEYS[] = {"rate_per_h", "updated"};
+
+template<size_t N> static std::string unknown_fields(const json &e, const char *const (&known)[N])
+{
+    json unknown = json::object();
+    for (auto it = e.begin(); it != e.end(); ++it)
+        if (std::find(std::begin(known), std::end(known), it.key()) == std::end(known))
+            unknown[it.key()] = it.value();
+    return unknown.empty() ? std::string() : unknown.dump();
+}
+
+static void merge_fields(json &into, const std::string &extra)
+{
+    if (extra.empty())
+        return;
+    try {
+        json e = json::parse(extra);
+        if (e.is_object())
+            for (auto it = e.begin(); it != e.end(); ++it)
+                into[it.key()] = it.value();
+    } catch (...) {}
+}
 
 bool Store::load(const std::string &path)
 {
     m_entries.clear();
+    m_machines.clear();
+    m_has_default_rate = false;
+    m_default_rate     = 0.;
+    m_default_updated  = 0;
+    m_default_extra.clear();
     m_extra.clear();
-    m_version    = 1;
+    m_version    = VERSION;
     m_load_error.clear();
 
     boost::system::error_code ec;
@@ -154,16 +230,18 @@ bool Store::load(const std::string &path)
         m_load_error = e.what();
         return false;
     }
-    if (!j.is_object() || (j.contains("filament") && !j["filament"].is_array())) {
-        m_load_error = "not a filament price file";
+    if (!j.is_object() || (j.contains("filament") && !j["filament"].is_array()) || (j.contains("machine") && !j["machine"].is_array())) {
+        m_load_error = "not a cost file";
         return false;
     }
+    // Version 1 (filament prices only) is read as it is and written back as VERSION; a later
+    // version keeps its number.
     if (j.contains("version") && j["version"].is_number_integer())
-        m_version = std::max(1, j["version"].get<int>());
+        m_version = std::max(int(VERSION), j["version"].get<int>());
 
     json extra = json::object();
     for (auto it = j.begin(); it != j.end(); ++it)
-        if (it.key() != "version" && it.key() != "filament")
+        if (it.key() != "version" && it.key() != "filament" && it.key() != "machine" && it.key() != "machine_default")
             extra[it.key()] = it.value();
     if (!extra.empty())
         m_extra = extra.dump();
@@ -191,12 +269,7 @@ bool Store::load(const std::string &path)
                 entry.updated = e["updated"].get<long long>();
             if (entry.scope == Entry::Scope::Preset ? entry.preset.empty() : entry.family.empty())
                 continue;
-            json unknown = json::object();
-            for (auto it = e.begin(); it != e.end(); ++it)
-                if (std::find(std::begin(ENTRY_KEYS), std::end(ENTRY_KEYS), it.key()) == std::end(ENTRY_KEYS))
-                    unknown[it.key()] = it.value();
-            if (!unknown.empty())
-                entry.extra = unknown.dump();
+            entry.extra = unknown_fields(e, ENTRY_KEYS);
             // A duplicate key (hand edit): the later one wins, as it would on screen.
             auto same = std::find_if(m_entries.begin(), m_entries.end(), [&entry](const Entry &o) {
                 return o.scope == entry.scope && (entry.scope == Entry::Scope::Preset ? o.preset == entry.preset : o.key() == entry.key());
@@ -205,6 +278,52 @@ bool Store::load(const std::string &path)
                 *same = std::move(entry);
             else
                 m_entries.emplace_back(std::move(entry));
+        }
+    }
+
+    if (j.contains("machine")) {
+        for (const json &e : j["machine"]) {
+            if (!e.is_object() || !e.contains("rate_per_h") || !e["rate_per_h"].is_number())
+                continue;
+            MachineEntry entry;
+            const std::string scope = str_of(e, "scope");
+            if (scope == "preset")
+                entry.scope = MachineEntry::Scope::Preset;
+            else if (scope == "model" || scope.empty())
+                entry.scope = MachineEntry::Scope::Model;
+            else
+                continue;
+            entry.preset     = str_of(e, "preset");
+            entry.vendor     = str_of(e, "vendor");
+            entry.model      = str_of(e, "model");
+            entry.rate_per_h = e["rate_per_h"].get<double>();
+            if (!std::isfinite(entry.rate_per_h) || entry.rate_per_h < 0.)
+                continue;
+            if (e.contains("updated") && e["updated"].is_number_integer())
+                entry.updated = e["updated"].get<long long>();
+            if (entry.scope == MachineEntry::Scope::Preset ? entry.preset.empty() : entry.model.empty())
+                continue;
+            entry.extra = unknown_fields(e, MACHINE_KEYS);
+            auto same = std::find_if(m_machines.begin(), m_machines.end(), [&entry](const MachineEntry &o) {
+                return o.scope == entry.scope && (entry.scope == MachineEntry::Scope::Preset ? o.preset == entry.preset : o.key() == entry.key());
+            });
+            if (same != m_machines.end())
+                *same = std::move(entry);
+            else
+                m_machines.emplace_back(std::move(entry));
+        }
+    }
+    if (j.contains("machine_default") && j["machine_default"].is_object()) {
+        const json &d = j["machine_default"];
+        if (d.contains("rate_per_h") && d["rate_per_h"].is_number()) {
+            const double rate = d["rate_per_h"].get<double>();
+            if (std::isfinite(rate) && rate >= 0.) {
+                m_has_default_rate = true;
+                m_default_rate     = rate;
+                if (d.contains("updated") && d["updated"].is_number_integer())
+                    m_default_updated = d["updated"].get<long long>();
+                m_default_extra = unknown_fields(d, DEFAULT_KEYS);
+            }
         }
     }
     return true;
@@ -221,7 +340,7 @@ bool Store::save(const std::string &path) const
                     j[it.key()] = it.value();
         } catch (...) {}
     }
-    j["version"] = m_version;
+    j["version"] = std::max(m_version, int(VERSION));
     json list    = json::array();
     for (const Entry &entry : m_entries) {
         json e = json::object();
@@ -246,6 +365,30 @@ bool Store::save(const std::string &path) const
     }
     j["filament"] = std::move(list);
 
+    json machines = json::array();
+    for (const MachineEntry &entry : m_machines) {
+        json e = json::object();
+        merge_fields(e, entry.extra);
+        e["scope"] = entry.scope == MachineEntry::Scope::Preset ? "preset" : "model";
+        if (entry.scope == MachineEntry::Scope::Preset)
+            e["preset"] = entry.preset;
+        e["vendor"]     = entry.vendor;
+        e["model"]      = entry.model;
+        e["rate_per_h"] = entry.rate_per_h;
+        if (entry.updated != 0)
+            e["updated"] = entry.updated;
+        machines.push_back(std::move(e));
+    }
+    j["machine"] = std::move(machines);
+    if (m_has_default_rate) {
+        json d = json::object();
+        merge_fields(d, m_default_extra);
+        d["rate_per_h"] = m_default_rate;
+        if (m_default_updated != 0)
+            d["updated"] = m_default_updated;
+        j["machine_default"] = std::move(d);
+    }
+
     try {
         boost::system::error_code ec;
         const fs::path            final(path);
@@ -269,13 +412,13 @@ bool Store::save(const std::string &path) const
             fs::rename(temp, final, ec);
         }
         if (ec) {
-            BOOST_LOG_TRIVIAL(warning) << "[FilamentPrices] could not write " << path << ": " << ec.message();
+            BOOST_LOG_TRIVIAL(warning) << "[CostOverrides] could not write " << path << ": " << ec.message();
             fs::remove(temp, ec);
             return false;
         }
         return true;
     } catch (const std::exception &e) {
-        BOOST_LOG_TRIVIAL(warning) << "[FilamentPrices] could not write " << path << ": " << e.what();
+        BOOST_LOG_TRIVIAL(warning) << "[CostOverrides] could not write " << path << ": " << e.what();
         return false;
     }
 }
@@ -380,6 +523,123 @@ Resolved Store::resolve(const Identity &id, double preset_price) const
     return r;
 }
 
+const MachineEntry *Store::find_machine_model(const std::string &key) const
+{
+    for (const MachineEntry &e : m_machines)
+        if (e.scope == MachineEntry::Scope::Model && e.key() == key)
+            return &e;
+    return nullptr;
+}
+
+const MachineEntry *Store::find_machine_preset(const std::string &preset_name) const
+{
+    for (const MachineEntry &e : m_machines)
+        if (e.scope == MachineEntry::Scope::Preset && e.preset == preset_name)
+            return &e;
+    return nullptr;
+}
+
+bool Store::set_machine_model(const std::string &vendor, const std::string &model, double rate_per_h)
+{
+    if (!valid_price(rate_per_h) || collapse_spaces(model).empty())
+        return false;
+    MachineEntry *entry = const_cast<MachineEntry *>(find_machine_model(machine_key(vendor, model)));
+    if (entry == nullptr) {
+        m_machines.emplace_back();
+        entry        = &m_machines.back();
+        entry->scope = MachineEntry::Scope::Model;
+    }
+    entry->vendor     = collapse_spaces(vendor);
+    entry->model      = collapse_spaces(model);
+    entry->rate_per_h = rate_per_h;
+    entry->updated    = now_s();
+    return true;
+}
+
+bool Store::set_machine_preset(const std::string &preset_name, const MachineIdentity &id, double rate_per_h)
+{
+    if (!valid_price(rate_per_h) || preset_name.empty())
+        return false;
+    MachineEntry *entry = const_cast<MachineEntry *>(find_machine_preset(preset_name));
+    if (entry == nullptr) {
+        m_machines.emplace_back();
+        entry         = &m_machines.back();
+        entry->scope  = MachineEntry::Scope::Preset;
+        entry->preset = preset_name;
+    }
+    entry->vendor     = id.vendor;
+    entry->model      = id.model;
+    entry->rate_per_h = rate_per_h;
+    entry->updated    = now_s();
+    return true;
+}
+
+bool Store::clear_machine_model(const std::string &key)
+{
+    const auto before = m_machines.size();
+    m_machines.erase(std::remove_if(m_machines.begin(), m_machines.end(),
+                                    [&key](const MachineEntry &e) { return e.scope == MachineEntry::Scope::Model && e.key() == key; }),
+                     m_machines.end());
+    return m_machines.size() != before;
+}
+
+bool Store::clear_machine_preset(const std::string &preset_name)
+{
+    const auto before = m_machines.size();
+    m_machines.erase(std::remove_if(m_machines.begin(), m_machines.end(),
+                                    [&preset_name](const MachineEntry &e) {
+                                        return e.scope == MachineEntry::Scope::Preset && e.preset == preset_name;
+                                    }),
+                     m_machines.end());
+    return m_machines.size() != before;
+}
+
+bool Store::set_default_rate(double rate_per_h)
+{
+    if (!valid_price(rate_per_h))
+        return false;
+    m_has_default_rate = true;
+    m_default_rate     = rate_per_h;
+    m_default_updated  = now_s();
+    return true;
+}
+
+bool Store::clear_default_rate()
+{
+    const bool had     = m_has_default_rate;
+    m_has_default_rate = false;
+    return had;
+}
+
+MachineResolved Store::resolve_machine(const MachineIdentity &id, double preset_rate) const
+{
+    MachineResolved r;
+    r.preset_rate = preset_rate;
+    r.rate        = preset_rate;
+    if (const MachineEntry *e = id.preset.empty() ? nullptr : find_machine_preset(id.preset)) {
+        r.rate   = e->rate_per_h;
+        r.source = MachineSource::PresetOnly;
+        return r;
+    }
+    const MachineEntry *model = id.model.empty() ? nullptr : find_machine_model(id.key());
+    if (id.own_rate) {
+        r.source = MachineSource::OwnRate;
+        if (model != nullptr || m_has_default_rate) {
+            r.shadowed      = true;
+            r.shadowed_rate = model != nullptr ? model->rate_per_h : m_default_rate;
+        }
+        return r;
+    }
+    if (model != nullptr) {
+        r.rate   = model->rate_per_h;
+        r.source = MachineSource::Model;
+    } else if (m_has_default_rate) {
+        r.rate   = m_default_rate;
+        r.source = MachineSource::Default;
+    }
+    return r;
+}
+
 // ------------------------------------------------------------ the global one ----
 
 static std::mutex                   s_mutex;
@@ -412,7 +672,7 @@ std::shared_ptr<const Store> global()
     auto store = std::make_shared<Store>();
     const std::string path = store_path();
     if (!store->load(path))
-        BOOST_LOG_TRIVIAL(warning) << "[FilamentPrices] " << path << " is unreadable (" << store->load_error()
+        BOOST_LOG_TRIVIAL(warning) << "[CostOverrides] " << path << " is unreadable (" << store->load_error()
                                    << "); starting without prices of your own. It is kept as .unreadable on the next save.";
     std::lock_guard<std::mutex> lock(s_mutex);
     if (!s_global)
@@ -487,7 +747,29 @@ std::vector<Resolved> resolve_slots(const DynamicPrintConfig &config, const Stor
     return out;
 }
 
-std::vector<Resolved> apply(DynamicPrintConfig &config, const Store &store, const PresetCollection *filaments)
+MachineResolved resolve_machine(const DynamicPrintConfig &config, const Store &store, const PresetCollection *printers)
+{
+    const double      rate = time_cost_of(config);
+    const std::string name = first_string(config, "printer_settings_id");
+    MachineIdentity   id;
+    const Preset     *preset = printers != nullptr && !name.empty() ? printers->find_preset(name, false) : nullptr;
+    if (preset != nullptr && preset->name == name) {
+        id = identify_machine(*preset, rate, printers);
+    } else {
+        // Not in the collection: what the config says (no vendor, no parent).
+        id.preset = name;
+        id.model  = collapse_spaces(first_string(config, "printer_model"));
+        if (id.model.empty()) {
+            const auto       *inherits = config.option<ConfigOptionStrings>("inherits_group");
+            const std::string parent   = inherits != nullptr && !inherits->values.empty() ? inherits->values.back() : std::string();
+            id.model                   = printer_family_name(parent.empty() ? name : parent);
+        }
+    }
+    return store.resolve_machine(id, rate);
+}
+
+std::vector<Resolved> apply(DynamicPrintConfig &config, const Store &store, const PresetCollection *filaments,
+                            const PresetCollection *printers)
 {
     std::vector<Resolved> slots = resolve_slots(config, store, filaments);
     if (store.empty())
@@ -495,6 +777,9 @@ std::vector<Resolved> apply(DynamicPrintConfig &config, const Store &store, cons
     if (auto *costs = config.option<ConfigOptionFloats>("filament_cost"); costs != nullptr)
         for (size_t i = 0; i < slots.size() && i < costs->values.size(); ++i)
             costs->values[i] = slots[i].price;
+    if (!store.machines().empty() || store.has_default_rate())
+        if (auto *time_cost = config.option<ConfigOptionFloat>("time_cost"); time_cost != nullptr)
+            time_cost->value = resolve_machine(config, store, printers).rate;
     return slots;
 }
 
@@ -515,5 +800,5 @@ void strip_prices(DynamicPrintConfig &config)
     }
 }
 
-} // namespace FilamentPrices
+} // namespace CostOverrides
 } // namespace Slic3r

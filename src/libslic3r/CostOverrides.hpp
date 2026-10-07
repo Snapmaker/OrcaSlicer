@@ -1,7 +1,10 @@
 #pragma once
 
-// Your own filament prices: per-kg prices that apply over every preset of a filament, kept outside
-// the presets in <datadir>/cost/filament_overrides.json.
+// Your own costs: filament prices per kg that apply over every preset of a filament, and machine
+// rates per hour that apply over every preset of a printer model, kept outside the presets in
+// <datadir>/cost/filament_overrides.json (the "Costs" window).
+//
+// ---- Filament prices
 //
 // Key. A price is set for a filament FAMILY, identified by
 //     vendor | type | family name
@@ -28,6 +31,21 @@
 //   4. the preset's own price (system value, user preset copying its parent's price, project value).
 // A price of 0 is a real value ("free"), distinct from "no price of your own".
 //
+// ---- Machine rates (time_cost, money per hour of printing)
+//
+// Key: vendor | printer model, where vendor is the printer's vendor profile name (a user preset
+// takes its parent's) and the model is printer_model ("Bambu Lab X1 Carbon"), so every nozzle
+// variant of a model shares one rate. A printer without printer_model (a custom printer) uses its
+// preset name without the nozzle part. A rate can also be set for ONE printer preset, and one
+// default rate for every printer.
+//
+// Precedence, first that applies:
+//   1. a "this printer preset only" rate;
+//   2. the preset's own time_cost, when it is a user preset whose time_cost differs from its parent's;
+//   3. your rate for the model;
+//   4. your default rate;
+//   5. the preset's time_cost.
+//
 // Applied in exactly one place: the config handed to Print::apply by the GUI's background slicing
 // (BackgroundSlicingProcess::apply). Presets, their dirty state, compare, sync and project files
 // (3MF / AMF, written from PresetBundle::full_config_secure()) never see these prices.
@@ -42,7 +60,7 @@ class DynamicPrintConfig;
 class Preset;
 class PresetCollection;
 
-namespace FilamentPrices {
+namespace CostOverrides {
 
 // "Bambu PLA Basic @BBL X1C 0.2 nozzle" -> "Bambu PLA Basic"; spacing collapsed, case kept.
 std::string family_name(const std::string &preset_name);
@@ -101,6 +119,61 @@ struct Entry
     std::string key() const { return family_key(vendor, type, family); }
 };
 
+// ---- machines
+
+// "Bambu Lab X1 Carbon 0.4 nozzle" -> "Bambu Lab X1 Carbon" (the nozzle part only).
+std::string printer_family_name(const std::string &preset_name);
+std::string machine_key(const std::string &vendor, const std::string &model);
+
+struct MachineIdentity
+{
+    std::string preset;   // printer_settings_id
+    std::string vendor;
+    std::string model;
+    bool        own_rate{false};   // a user preset whose time_cost differs from its parent's
+    double      parent_rate{0.};
+
+    std::string key() const { return machine_key(vendor, model); }
+};
+
+// `rate` is the time_cost slicing would use (the edited value); `printers` finds the parent of a
+// user preset and its vendor (may be null).
+MachineIdentity identify_machine(const Preset &preset, double rate, const PresetCollection *printers);
+
+enum class MachineSource {
+    Preset,       // the preset's time_cost
+    OwnRate,      // a user preset's deliberately set time_cost
+    Default,      // your default rate
+    Model,        // your rate for the model
+    PresetOnly,   // your rate for this printer preset only
+};
+
+struct MachineResolved
+{
+    double        rate{0.};
+    double        preset_rate{0.};
+    MachineSource source{MachineSource::Preset};
+    // When source is OwnRate: your rate (model, else default) that would otherwise have applied.
+    bool          shadowed{false};
+    double        shadowed_rate{0.};
+
+    bool yours() const { return source == MachineSource::Model || source == MachineSource::PresetOnly || source == MachineSource::Default; }
+};
+
+struct MachineEntry
+{
+    enum class Scope { Model, Preset };
+    Scope       scope{Scope::Model};
+    std::string preset;   // Scope::Preset: the printer preset name
+    std::string vendor;
+    std::string model;
+    double      rate_per_h{0.};
+    long long   updated{0};
+    std::string extra;
+
+    std::string key() const { return machine_key(vendor, model); }
+};
+
 class Store
 {
 public:
@@ -111,7 +184,8 @@ public:
     bool save(const std::string &path) const;
 
     const std::vector<Entry> &entries() const { return m_entries; }
-    bool                      empty() const { return m_entries.empty(); }
+    // Nothing of yours at all (filaments, machines, default rate).
+    bool                      empty() const { return m_entries.empty() && m_machines.empty() && !m_has_default_rate; }
     const std::string        &load_error() const { return m_load_error; }
 
     const Entry *find_family(const std::string &key) const;
@@ -122,13 +196,39 @@ public:
     bool set_preset(const std::string &preset_name, const Identity &id, double price_per_kg);
     bool clear_family(const std::string &key);
     bool clear_preset(const std::string &preset_name);
-    void clear_all() { m_entries.clear(); }
+    void clear_all_filaments() { m_entries.clear(); }
+    void clear_all() { m_entries.clear(); m_machines.clear(); m_has_default_rate = false; }
 
     Resolved resolve(const Identity &id, double preset_price) const;
 
+    // Machines.
+    const std::vector<MachineEntry> &machines() const { return m_machines; }
+    const MachineEntry *find_machine_model(const std::string &key) const;
+    const MachineEntry *find_machine_preset(const std::string &preset_name) const;
+    bool set_machine_model(const std::string &vendor, const std::string &model, double rate_per_h);
+    bool set_machine_preset(const std::string &preset_name, const MachineIdentity &id, double rate_per_h);
+    bool clear_machine_model(const std::string &key);
+    bool clear_machine_preset(const std::string &preset_name);
+    bool has_default_rate() const { return m_has_default_rate; }
+    double default_rate() const { return m_default_rate; }
+    bool set_default_rate(double rate_per_h);
+    bool clear_default_rate();
+    void clear_all_machines() { m_machines.clear(); m_has_default_rate = false; }
+
+    MachineResolved resolve_machine(const MachineIdentity &id, double preset_rate) const;
+
+    // The file format this version writes (older files are read and rewritten in it).
+    static constexpr int VERSION = 2;
+    int version() const { return m_version; }
+
 private:
     std::vector<Entry> m_entries;
-    int                m_version{1};
+    std::vector<MachineEntry> m_machines;
+    bool               m_has_default_rate{false};
+    double             m_default_rate{0.};
+    long long          m_default_updated{0};
+    std::string        m_default_extra;
+    int                m_version{VERSION};
     std::string        m_extra;   // unknown top-level fields
     std::string        m_load_error;
 };
@@ -148,9 +248,14 @@ void reset_global();
 unsigned revision();
 
 // Rewrites filament_cost[i] of a full print config (PresetBundle::full_fff_config() shape:
-// filament_settings_id, filament_vendor, filament_type, inherits_group) with the resolved prices.
-// Only slots that exist in filament_cost are touched. Returns one Resolved per filament slot.
-std::vector<Resolved> apply(DynamicPrintConfig &config, const Store &store, const PresetCollection *filaments);
+// filament_settings_id, filament_vendor, filament_type, inherits_group) with the resolved prices,
+// and time_cost with the resolved machine rate (printer_settings_id, printer_model). Only slots that
+// exist in filament_cost are touched; nothing else changes. Returns one Resolved per filament slot.
+std::vector<Resolved> apply(DynamicPrintConfig &config, const Store &store, const PresetCollection *filaments,
+                            const PresetCollection *printers = nullptr);
+
+// The machine rate the config's printer slices with, for display, without changing the config.
+MachineResolved resolve_machine(const DynamicPrintConfig &config, const Store &store, const PresetCollection *printers);
 
 // The same resolution for display, without changing the config.
 std::vector<Resolved> resolve_slots(const DynamicPrintConfig &config, const Store &store, const PresetCollection *filaments);
@@ -161,5 +266,5 @@ std::vector<Resolved> resolve_slots(const DynamicPrintConfig &config, const Stor
 // modified with a default price).
 void strip_prices(DynamicPrintConfig &config);
 
-} // namespace FilamentPrices
+} // namespace CostOverrides
 } // namespace Slic3r

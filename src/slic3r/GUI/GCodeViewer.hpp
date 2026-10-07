@@ -778,8 +778,10 @@ private:
     PrintEstimatedStatistics m_print_statistics;
     // Cost of the loaded G-code (current plate), and whether the breakdown under "Cost" is unfolded.
     CostBreakdown m_cost_breakdown;
-    // Per filament slot: your price (Filament prices) it sliced with, or -1 for the preset's own.
+    // Per filament slot: your price (Costs) it sliced with, or -1 for the preset's own.
     std::vector<double> m_cost_your_price;
+    // The machine rate of yours it sliced with, or -1 for the preset's time cost.
+    double m_cost_your_rate{ -1. };
     mutable bool m_cost_expanded{ false };
     mutable bool m_all_plates_cost_expanded{ false };
     PrintEstimatedStatistics::ETimeMode m_time_estimate_mode{ PrintEstimatedStatistics::ETimeMode::Normal };

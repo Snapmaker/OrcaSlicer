@@ -1,5 +1,5 @@
 // Your own filament prices (PR 1b) through a real slice: the config the GUI hands to Print::apply
-// goes through FilamentPrices::apply() (BackgroundSlicingProcess::apply), and the G-code, the
+// goes through CostOverrides::apply() (BackgroundSlicingProcess::apply), and the G-code, the
 // processor result and the statistics then all carry your price.
 
 #include <catch2/catch.hpp>
@@ -14,7 +14,7 @@
 #include <boost/nowide/cstdio.hpp>
 
 #include "libslic3r/CostEstimate.hpp"
-#include "libslic3r/FilamentPrices.hpp"
+#include "libslic3r/CostOverrides.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
@@ -86,9 +86,9 @@ std::string export_to(Print &print, GCodeProcessorResult *result)
 }
 
 // What the GUI funnel does before Print::apply.
-DynamicPrintConfig funnel(DynamicPrintConfig config, const FilamentPrices::Store &store)
+DynamicPrintConfig funnel(DynamicPrintConfig config, const CostOverrides::Store &store)
 {
-    FilamentPrices::apply(config, store, nullptr);
+    CostOverrides::apply(config, store, nullptr);
     return config;
 }
 
@@ -111,16 +111,16 @@ std::vector<double> numbers(const std::string &csv)
     return out;
 }
 
-FilamentPrices::Store bambu_basic_at(double price)
+CostOverrides::Store bambu_basic_at(double price)
 {
-    FilamentPrices::Store store;
+    CostOverrides::Store store;
     REQUIRE(store.set_family("Bambu Lab", "PLA", "Bambu PLA Basic", price));
     return store;
 }
 
 } // namespace
 
-TEST_CASE("Your filament price is what the slice, its G-code and its statistics use", "[FilamentPrices][GCode]")
+TEST_CASE("Your filament price is what the slice, its G-code and its statistics use", "[CostOverrides][GCode]")
 {
     Print                plain_print, priced_print;
     Model                plain_model, priced_model;
@@ -128,7 +128,7 @@ TEST_CASE("Your filament price is what the slice, its G-code and its statistics 
     two_cubes(plain_model);
     two_cubes(priced_model);
 
-    plain_print.apply(plain_model, funnel(two_named_filaments(), FilamentPrices::Store()));
+    plain_print.apply(plain_model, funnel(two_named_filaments(), CostOverrides::Store()));
     plain_print.set_gcode_filament_prices(true);
     const std::string plain = export_to(plain_print, &plain_result);
 
@@ -164,7 +164,7 @@ TEST_CASE("Your filament price is what the slice, its G-code and its statistics 
     CHECK(priced_cost.total > plain_cost.total);
 }
 
-TEST_CASE("Your filament price with prices left out of the G-code: statistics only", "[FilamentPrices][GCode]")
+TEST_CASE("Your filament price with prices left out of the G-code: statistics only", "[CostOverrides][GCode]")
 {
     Print                print;
     Model                model;
@@ -183,7 +183,7 @@ TEST_CASE("Your filament price with prices left out of the G-code: statistics on
     CHECK_THAT(print.print_statistics().total_cost, WithinRel(compute_cost(result).total, 1e-6));
 }
 
-TEST_CASE("Changing your filament price re-runs only the G-code export", "[FilamentPrices][Invalidation]")
+TEST_CASE("Changing your filament price re-runs only the G-code export", "[CostOverrides][Invalidation]")
 {
     Print print;
     Model model;
@@ -198,6 +198,81 @@ TEST_CASE("Changing your filament price re-runs only the G-code export", "[Filam
 
     // A new price: only the export.
     CHECK(print.apply(model, funnel(two_named_filaments(), bambu_basic_at(18.))) == PrintBase::APPLY_STATUS_INVALIDATED);
+    CHECK_FALSE(print.is_step_done(psGCodeExport));
+    CHECK(print.is_step_done(psWipeTower));
+    CHECK(print.is_step_done(psSkirtBrim));
+    CHECK(print.is_step_done(posSlice));
+    CHECK(print.is_step_done(posPerimeters));
+    CHECK(print.is_step_done(posInfill));
+}
+
+// ----------------------------------------------------------------------------- machine rates
+
+namespace {
+
+DynamicPrintConfig named_printer(DynamicPrintConfig config)
+{
+    config.set_key_value("printer_settings_id", new ConfigOptionString("Bambu Lab X1 Carbon 0.4 nozzle"));
+    config.set_key_value("printer_model", new ConfigOptionString("Bambu Lab X1 Carbon"));
+    return config;
+}
+
+CostOverrides::Store x1c_at(double rate)
+{
+    CostOverrides::Store store;
+    // No printers collection in the funnel here: the key has no vendor.
+    REQUIRE(store.set_machine_model("", "Bambu Lab X1 Carbon", rate));
+    return store;
+}
+
+} // namespace
+
+TEST_CASE("Your machine rate is what the slice's machine cost and statistics use", "[CostOverrides][GCode][machines]")
+{
+    Print                print;
+    Model                model;
+    GCodeProcessorResult result;
+    two_cubes(model);
+    print.apply(model, funnel(named_printer(two_named_filaments()), x1c_at(4.)));
+    print.set_gcode_filament_prices(false);
+    const std::string gcode = export_to(print, &result);
+
+    CHECK_THAT(result.time_cost, WithinRel(4., 1e-12));
+    const CostBreakdown cost = compute_cost(result);
+    CHECK_THAT(cost.machine_rate_per_h, WithinRel(4., 1e-12));
+    CHECK_THAT(cost.machine, WithinRel(4. * cost.print_time_s / 3600., 1e-9));
+    CHECK_THAT(print.print_statistics().total_cost, WithinRel(cost.total, 1e-6));
+    // Filament prices stay the presets' (no filament price of yours).
+    CHECK_THAT(double(result.filament_costs[0]), WithinRel(25., 1e-6));
+    // time_cost is a machine setting, not a filament price line: the CONFIG_BLOCK carries the rate
+    // used, as it carries a typed preset value (see the PR notes).
+    CHECK(gcode.find("\n; time_cost = 4\n") != std::string::npos);
+
+    // The default rate does the same for a printer without a rate of its own.
+    CostOverrides::Store defaults;
+    REQUIRE(defaults.set_default_rate(2.5));
+    Print                d_print;
+    Model                d_model;
+    GCodeProcessorResult d_result;
+    two_cubes(d_model);
+    d_print.apply(d_model, funnel(named_printer(two_named_filaments()), defaults));
+    export_to(d_print, &d_result);
+    CHECK_THAT(d_result.time_cost, WithinRel(2.5, 1e-12));
+}
+
+TEST_CASE("Changing your machine rate re-runs only the G-code export", "[CostOverrides][Invalidation][machines]")
+{
+    Print print;
+    Model model;
+    two_cubes(model);
+    print.apply(model, funnel(named_printer(two_named_filaments()), x1c_at(4.)));
+    export_to(print, nullptr);
+    REQUIRE(print.is_step_done(psGCodeExport));
+
+    CHECK(print.apply(model, funnel(named_printer(two_named_filaments()), x1c_at(4.))) == PrintBase::APPLY_STATUS_UNCHANGED);
+    CHECK(print.is_step_done(psGCodeExport));
+
+    CHECK(print.apply(model, funnel(named_printer(two_named_filaments()), x1c_at(6.))) == PrintBase::APPLY_STATUS_INVALIDATED);
     CHECK_FALSE(print.is_step_done(psGCodeExport));
     CHECK(print.is_step_done(psWipeTower));
     CHECK(print.is_step_done(psSkirtBrim));

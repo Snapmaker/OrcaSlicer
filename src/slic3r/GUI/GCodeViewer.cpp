@@ -25,8 +25,8 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Layer.hpp"
 #include "Widgets/ProgressDialog.hpp"
-#include "FilamentPriceDialog.hpp"
-#include "libslic3r/FilamentPrices.hpp"
+#include "CostsDialog.hpp"
+#include "libslic3r/CostOverrides.hpp"
 
 #include <imgui/imgui_internal.h>
 
@@ -1154,13 +1154,17 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
 
     m_print_statistics = gcode_result.print_statistics;
     m_cost_breakdown   = compute_cost(gcode_result);
-    // Which filament slots slice with a price of yours (Filament prices), so the breakdown can say
-    // so. Not for a G-code opened on its own: nothing of yours was applied to it.
+    // Which filament slots and which machine rate slice with a value of yours (Costs), so the
+    // breakdown can say so. Not for a G-code opened on its own: nothing of yours was applied to it.
     m_cost_your_price.clear();
+    m_cost_your_rate = -1.;
     if (PresetBundle *bundle = wxGetApp().preset_bundle; bundle != nullptr && !(wxGetApp().plater() && wxGetApp().plater()->only_gcode_mode())) {
-        for (const FilamentPrices::Resolved &slot :
-             FilamentPrices::resolve_slots(bundle->full_config(), *FilamentPrices::global(), &bundle->filaments))
+        const DynamicPrintConfig full = bundle->full_config();
+        for (const CostOverrides::Resolved &slot : CostOverrides::resolve_slots(full, *CostOverrides::global(), &bundle->filaments))
             m_cost_your_price.push_back(slot.yours() ? slot.price : -1.);
+        if (const CostOverrides::MachineResolved machine = CostOverrides::resolve_machine(full, *CostOverrides::global(), &bundle->printers);
+            machine.yours())
+            m_cost_your_rate = machine.rate;
     }
 
     if (m_time_estimate_mode != PrintEstimatedStatistics::ETimeMode::Normal) {
@@ -1356,6 +1360,7 @@ void GCodeViewer::reset()
     m_filament_densities = std::vector<float>();
     m_cost_breakdown = CostBreakdown();
     m_cost_your_price.clear();
+    m_cost_your_rate = -1.;
     m_extrusions.reset_ranges();
     //BBS: always load shell at preview
     //m_shells.volumes.clear();
@@ -4538,6 +4543,9 @@ void GCodeViewer::render_cost_section(const CostBreakdown &cost, const std::stri
             std::string row = _u8L("Machine time") + ": " + money(cost.machine) + "  (" + short_time(get_time_dhms(float(cost.print_time_s)));
             if (cost.machine_rate_per_h > 0. && !cost.machine_rate_varies) {
                 row += " x " + money(cost.machine_rate_per_h) + "/h";
+                // The rate of yours from Costs (model, preset or default) it sliced with.
+                if (m_cost_your_rate >= 0. && std::abs(m_cost_your_rate - cost.machine_rate_per_h) < 1e-6)
+                    row += ", " + _u8L("your rate");
             }
             imgui.text(row + ")");
         } else

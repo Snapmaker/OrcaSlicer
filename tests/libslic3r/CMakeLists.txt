@@ -124,6 +124,7 @@ add_executable(${_TEST_NAME}_tests
     test_toolordering_cyclic.cpp
     test_shortest_path.cpp
     test_gcode_import.cpp
+    test_cost_estimate.cpp
     test_align_math.cpp
     # test_png_io.cpp
     test_indexed_triangle_set.cpp

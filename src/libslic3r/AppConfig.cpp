@@ -469,6 +469,11 @@ void AppConfig::set_defaults()
         set_bool("hide_other_plates_on_move", false);
     }
 
+    // Filament prices stay out of exported / uploaded G-code unless asked for (Print::set_gcode_filament_prices()).
+    if (get("gcode_include_filament_prices").empty()) {
+        set_bool("gcode_include_filament_prices", false);
+    }
+
     // Move gizmo, Align row: which point of the moved item goes to the target, per axis
     // (auto | center | min | max). Auto = the same side as the button, as it always was.
     // Align selected anchor: last | first | none (a specific item is never stored).

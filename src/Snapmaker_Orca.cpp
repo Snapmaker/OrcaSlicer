@@ -1445,6 +1445,11 @@ int CLI::run(int argc, char **argv)
     bool no_thumbnails = false;
     if (auto* opt = m_config.option<ConfigOptionBool>("no_thumbnails"))
         no_thumbnails = opt->value;
+    // The GUI leaves filament prices out of G-code by default (Preferences); the CLI has no
+    // preferences and keeps writing them unless --no-filament-prices is given.
+    bool gcode_filament_prices = true;
+    if (auto* opt = m_config.option<ConfigOptionBool>("no_filament_prices"))
+        gcode_filament_prices = !opt->value;
     // Presets by name are turned into flat JSON files that join the --load-settings /
     // --load-filaments lists, so everything downstream stays as it was.
     std::vector<std::string> load_configs_all(load_configs.begin(), load_configs.end());
@@ -6121,6 +6126,7 @@ int CLI::run(int argc, char **argv)
                                     }
                                     BOOST_LOG_TRIVIAL(info) << "process finished, will export gcode temporily to " << outfile << std::endl;
                                     temp_time = (long long)Slic3r::Utils::get_current_time_utc();
+                                    print_fff->set_gcode_filament_prices(gcode_filament_prices);
                                     outfile = print_fff->export_gcode(outfile, gcode_result, nullptr);
                                     time_using_cache = time_using_cache + ((long long)Slic3r::Utils::get_current_time_utc() - temp_time);
                                     BOOST_LOG_TRIVIAL(info) << "export_gcode finished: time_using_cache update to " << time_using_cache << " secs.";

@@ -1294,6 +1294,15 @@ public:
     void set_gcode_file_ready();
     void set_gcode_file_invalidated();
     void export_gcode_from_previous_file(const std::string& file, GCodeProcessorResult* result, ThumbnailsGeneratorCallback thumbnail_cb = nullptr);
+
+    // Whether the exported G-code carries the filament prices: the "; filament cost" and
+    // "; total filament cost" lines and filament_cost in the CONFIG_BLOCK. Everything else in the
+    // file is the same either way. A GUI preference ("gcode_include_filament_prices", default off,
+    // applied by BackgroundSlicingProcess) and a CLI switch (--no-filament-prices); a Print built
+    // any other way keeps today's G-code (on). Not a config key, so it never reaches presets,
+    // projects or the G-code itself. Returns true when the change invalidated an exported G-code.
+    bool set_gcode_filament_prices(bool include);
+    bool gcode_filament_prices() const { return m_gcode_filament_prices; }
     //BBS: add modify_count logic
     int get_modified_count() const {return m_modified_count;}
     //BBS: add status for whether support used
@@ -1403,6 +1412,8 @@ private:
     // value for a Print built any other way (tests, tools): as an uninitialized member of a stack Print it
     // was garbage, and a non-zero byte moved the whole config dump into the G-code header.
     bool m_isBBLPrinter = false;
+    // See set_gcode_filament_prices().
+    bool m_gcode_filament_prices = true;
 
     // Ordered collections of extrusion paths to build skirt loops and brim.
     ExtrusionEntityCollection               m_skirt;

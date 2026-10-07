@@ -3,6 +3,7 @@
 
 #include "3DScene.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "libslic3r/CostEstimate.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "IMSlider.hpp"
 #include "GLModel.hpp"
@@ -775,6 +776,10 @@ private:
     bool m_legend_enabled{ true };
     float m_legend_height;
     PrintEstimatedStatistics m_print_statistics;
+    // Cost of the loaded G-code (current plate), and whether the breakdown under "Cost" is unfolded.
+    CostBreakdown m_cost_breakdown;
+    mutable bool m_cost_expanded{ false };
+    mutable bool m_all_plates_cost_expanded{ false };
     PrintEstimatedStatistics::ETimeMode m_time_estimate_mode{ PrintEstimatedStatistics::ETimeMode::Normal };
 #if ENABLE_GCODE_VIEWER_STATISTICS
     Statistics m_statistics;
@@ -906,6 +911,11 @@ private:
 
     //BBS: GUI refactor: add canvas size
     void render_legend(float &legend_height, int canvas_width, int canvas_height, int right_margin);
+    // The one "Cost" section of every statistics view (current plate, Feature type summary, all
+    // plates): the total on one line, a click on [+] unfolds filament per slot (model / support /
+    // flush / tower), machine time and the total. value_x 0 puts the value right after the label.
+    void render_cost_section(const CostBreakdown &cost, const std::string &label, float value_x, float window_padding,
+                             bool &expanded, const char *imgui_id) const;
     void render_slider(int canvas_width, int canvas_height);
 
 #if ENABLE_GCODE_VIEWER_STATISTICS

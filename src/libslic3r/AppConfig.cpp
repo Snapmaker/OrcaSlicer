@@ -210,6 +210,24 @@ void AppConfig::set_defaults()
     if (get("enable_multi_machine").empty())
         set_bool("enable_multi_machine", false);
 
+    // ORCA (#14705 / #15001, libvgcode stage 3): darken the layers the preview layer slider is not
+    // scrubbed to; brightness of those dimmed layers in percent, 0 = black, capped at 99 because 100
+    // would render them unchanged, which is what disabling the option already does
+    if (get("preview_dim_previous_layers").empty())
+        set_bool("preview_dim_previous_layers", false);
+    if (get("preview_dim_previous_layers_brightness").empty())
+        set("preview_dim_previous_layers_brightness", "40");
+    else {
+        int brightness = 40;
+        try {
+            brightness = std::stoi(get("preview_dim_previous_layers_brightness"));
+        }
+        catch (...) {
+            brightness = 40;
+        }
+        set("preview_dim_previous_layers_brightness", std::to_string(std::max(0, std::min(brightness, 99))));
+    }
+
     if (get("show_gcode_window").empty())
         set_bool("show_gcode_window", true);
 

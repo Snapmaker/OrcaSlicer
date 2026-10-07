@@ -74,3 +74,10 @@ TEST_CASE("Organic tree support survives a zero support XY distance", "[CoreGuar
 {
     CHECK(slice_overhang_with_tree_support({ { "support_style", "organic" }, { "support_object_xy_distance", "0" } }) > 0);
 }
+
+// Orca #11084: Tree Slim spawned its infill with the raw support_base_pattern_spacing, so a zero
+// spacing meant a zero line distance.
+TEST_CASE("Tree Slim survives a zero support base pattern spacing", "[CoreGuards][TreeSupport]")
+{
+    CHECK(slice_overhang_with_tree_support({ { "support_style", "tree_slim" }, { "support_base_pattern_spacing", "0" } }) > 0);
+}

@@ -814,12 +814,14 @@ std::vector<Resolved> apply(DynamicPrintConfig &config, const Store &store, cons
 void strip_prices(DynamicPrintConfig &config)
 {
     config.erase("filament_cost");
+    config.erase("time_cost");
     if (auto *diff = config.option<ConfigOptionStrings>("different_settings_to_system"); diff != nullptr) {
         for (std::string &entry : diff->values) {
             std::vector<std::string> keys;
             if (!unescape_strings_cstyle(entry, keys))
                 continue;
-            const auto end = std::remove(keys.begin(), keys.end(), std::string("filament_cost"));
+            const auto end = std::remove_if(keys.begin(), keys.end(),
+                                            [](const std::string &k) { return k == "filament_cost" || k == "time_cost"; });
             if (end == keys.end())
                 continue;
             keys.erase(end, keys.end());

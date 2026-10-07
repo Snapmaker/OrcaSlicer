@@ -4592,7 +4592,9 @@ void GCodeViewer::render_cost_section(const CostBreakdown &cost, const PricedCos
                     row += ", " + _u8L("your rate");
             }
             imgui.text(row + ")");
-        } else
+        } else if (!cost.machine_rate_known)
+            imgui.text(_u8L("Machine time: machine rate not in file"));
+        else
             imgui.text(_u8L("Machine time: not priced (Printer settings > Advanced > Time cost)"));
 
         // The fees of Costs > Project that come to something.

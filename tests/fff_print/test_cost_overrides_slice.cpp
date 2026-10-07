@@ -234,7 +234,7 @@ TEST_CASE("Your machine rate is what the slice's machine cost and statistics use
     GCodeProcessorResult result;
     two_cubes(model);
     print.apply(model, funnel(named_printer(two_named_filaments()), x1c_at(4.)));
-    print.set_gcode_filament_prices(false);
+    print.set_gcode_filament_prices(true);
     const std::string gcode = export_to(print, &result);
 
     CHECK_THAT(result.time_cost, WithinRel(4., 1e-12));
@@ -244,9 +244,21 @@ TEST_CASE("Your machine rate is what the slice's machine cost and statistics use
     CHECK_THAT(print.print_statistics().total_cost, WithinRel(cost.total, 1e-6));
     // Filament prices stay the presets' (no filament price of yours).
     CHECK_THAT(double(result.filament_costs[0]), WithinRel(25., 1e-6));
-    // time_cost is a machine setting, not a filament price line: the CONFIG_BLOCK carries the rate
-    // used, as it carries a typed preset value (see the PR notes).
+    // With costs in the G-code, the CONFIG_BLOCK carries the rate used...
     CHECK(gcode.find("\n; time_cost = 4\n") != std::string::npos);
+    // ...and with them left out, it does not, while the slice's own numbers still use it.
+    {
+        Print                hidden;
+        Model                hidden_model;
+        GCodeProcessorResult hidden_result;
+        two_cubes(hidden_model);
+        hidden.apply(hidden_model, funnel(named_printer(two_named_filaments()), x1c_at(4.)));
+        hidden.set_gcode_filament_prices(false);
+        const std::string hidden_gcode = export_to(hidden, &hidden_result);
+        CHECK(hidden_gcode.find("time_cost") == std::string::npos);
+        CHECK_THAT(hidden_result.time_cost, WithinRel(4., 1e-12));
+        CHECK_THAT(hidden.print_statistics().total_cost, WithinRel(compute_cost(hidden_result).total, 1e-6));
+    }
 
     // The default rate does the same for a printer without a rate of its own.
     CostOverrides::Store defaults;
@@ -258,6 +270,33 @@ TEST_CASE("Your machine rate is what the slice's machine cost and statistics use
     d_print.apply(d_model, funnel(named_printer(two_named_filaments()), defaults));
     export_to(d_print, &d_result);
     CHECK_THAT(d_result.time_cost, WithinRel(2.5, 1e-12));
+}
+
+TEST_CASE("A G-code with costs left out opened on its own: rate and prices unknown", "[CostOverrides][GCodeImport][machines]")
+{
+    Print print;
+    Model model;
+    two_cubes(model);
+    print.apply(model, funnel(named_printer(two_named_filaments()), x1c_at(4.)));
+    print.set_gcode_filament_prices(false);
+    print.set_status_silent();
+    print.process();
+    const boost::filesystem::path path = scratch_path();
+    print.export_gcode(path.string(), nullptr, nullptr);
+
+    // Drag-in: the processor reads only the file.
+    GCodeProcessor processor;
+    processor.process_file(path.string());
+    const GCodeProcessorResult &r = processor.get_result();
+    boost::nowide::remove(path.string().c_str());
+    CHECK_FALSE(r.has_time_cost);
+    CHECK_FALSE(r.has_filament_costs);
+    const CostBreakdown c = compute_cost(r);
+    CHECK_FALSE(c.machine_rate_known);
+    CHECK_FALSE(c.prices_known);
+    CHECK_THAT(c.machine, WithinAbs(0., 1e-12));
+    CHECK_THAT(c.total, WithinAbs(0., 1e-12));
+    CHECK(c.print_time_s > 0.);
 }
 
 TEST_CASE("Changing your machine rate re-runs only the G-code export", "[CostOverrides][Invalidation][machines]")

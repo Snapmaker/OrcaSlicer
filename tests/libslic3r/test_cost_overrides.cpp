@@ -562,7 +562,11 @@ TEST_CASE("Sliced-plate 3MF without filament prices: none in its settings", "[Co
     user.config = DynamicPrintConfig::full_print_config();
     user.config.option<ConfigOptionFloats>("filament_cost")->values = {42.};
     user.config.set_key_value("inherits", new ConfigOptionString("Bambu PLA Basic @BBL X1C"));
-    std::vector<Preset *> presets{&user};
+    // And an embedded user printer preset with a time cost of its own.
+    Preset printer(Preset::TYPE_PRINTER, "My X1C");
+    printer.config = DynamicPrintConfig::full_print_config();
+    printer.config.option<ConfigOptionFloat>("time_cost")->value = 2.5;
+    std::vector<Preset *> presets{&user, &printer};
 
     SECTION("preference on: prices written, as before")
     {
@@ -571,6 +575,7 @@ TEST_CASE("Sliced-plate 3MF without filament prices: none in its settings", "[Co
         REQUIRE(proj.contains("filament_cost"));
         CHECK(proj["filament_cost"] == json::array({"24.99", "31.5"}));
         CHECK(zip_entry((dir / "on.gcode.3mf").string(), "Metadata/filament_settings_1.config").find("filament_cost") != std::string::npos);
+        CHECK(zip_entry((dir / "on.gcode.3mf").string(), "Metadata/machine_settings_1.config").find("time_cost") != std::string::npos);
     }
     SECTION("preference off: no filament_cost anywhere in the archive's settings")
     {
@@ -579,6 +584,7 @@ TEST_CASE("Sliced-plate 3MF without filament prices: none in its settings", "[Co
         const json         proj  = json::parse(text);
         CHECK_FALSE(proj.contains("filament_cost"));
         CHECK(text.find("filament_cost") == std::string::npos);
+        CHECK(text.find("time_cost") == std::string::npos);
         // Its mention in different_settings_to_system goes too, the rest stays.
         CHECK(proj["different_settings_to_system"] == json::array({"", "nozzle_temperature", "", ""}));
         CHECK(proj["filament_settings_id"] == json::array({"Bambu PLA Basic @BBL X1C", "Bambu PLA-CF @BBL X1C"}));
@@ -586,6 +592,10 @@ TEST_CASE("Sliced-plate 3MF without filament prices: none in its settings", "[Co
         const std::string embedded = zip_entry((dir / "off.gcode.3mf").string(), "Metadata/filament_settings_1.config");
         CHECK_FALSE(embedded.empty());
         CHECK(embedded.find("filament_cost") == std::string::npos);
+        const std::string machine = zip_entry((dir / "off.gcode.3mf").string(), "Metadata/machine_settings_1.config");
+        CHECK_FALSE(machine.empty());
+        CHECK(machine.find("time_cost") == std::string::npos);
+        CHECK(printer.config.has("time_cost"));
         // The caller's config and preset are not changed.
         CHECK(cfg.has("filament_cost"));
         CHECK(user.config.has("filament_cost"));
@@ -645,10 +655,11 @@ TEST_CASE("strip_prices() removes filament_cost and its 'different from system' 
     DynamicPrintConfig cfg;
     cfg.set_key_value("filament_cost", new ConfigOptionFloats({1., 2.}));
     cfg.set_key_value("time_cost", new ConfigOptionFloat(3.));
-    cfg.set_key_value("different_settings_to_system", new ConfigOptionStrings({"layer_height", "filament_cost", "a;filament_cost;b"}));
+    cfg.set_key_value("different_settings_to_system", new ConfigOptionStrings({"layer_height", "filament_cost", "a;filament_cost;b;time_cost"}));
+    cfg.set_key_value("layer_height", new ConfigOptionFloat(0.2));
     strip_prices(cfg);
     CHECK_FALSE(cfg.has("filament_cost"));
-    CHECK(cfg.has("time_cost"));   // the machine rate is not a filament price
+    CHECK_FALSE(cfg.has("time_cost"));   // the machine rate goes too
     CHECK(cfg.option<ConfigOptionStrings>("different_settings_to_system")->values == std::vector<std::string>{"layer_height", "", "a;b"});
 }
 
@@ -934,7 +945,11 @@ TEST_CASE("Project files keep the preset time cost while your rate applies to sl
                                                        SaveStrategy::WithGcode | SaveStrategy::SkipModel :
                                                    SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary;
             const json proj = json::parse(store_plate(dir / (sliced ? "plate.gcode.3mf" : "project.3mf"), project, sliced, strategy));
-            CHECK(proj["time_cost"] == "0.5");
+            // A project keeps the preset value; a sliced plate with costs left out has none.
+            if (sliced)
+                CHECK_FALSE(proj.contains("time_cost"));
+            else
+                CHECK(proj["time_cost"] == "0.5");
         }
     }
     fs::remove_all(dir);

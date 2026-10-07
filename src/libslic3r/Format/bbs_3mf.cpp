@@ -10523,7 +10523,7 @@ bool store_bbs_3mf(StoreParams& store_params)
             store_params.config = &stripped_config;
         }
         for (Preset*& preset : store_params.project_presets)
-            if (preset != nullptr && preset->type == Preset::TYPE_FILAMENT) {
+            if (preset != nullptr && (preset->type == Preset::TYPE_FILAMENT || preset->type == Preset::TYPE_PRINTER)) {
                 stripped_presets.emplace_back(std::make_unique<Preset>(*preset));
                 CostOverrides::strip_prices(stripped_presets.back()->config);
                 preset = stripped_presets.back().get();

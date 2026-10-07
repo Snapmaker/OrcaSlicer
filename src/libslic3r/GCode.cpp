@@ -8854,12 +8854,13 @@ void GCode::append_full_config(const Print& print, std::string& str)
     // Likewise the bed-slinger mass model keys: only for a printer that models it (the A2L sets both).
     static const std::set<std::string_view> mass_model_keys({"machine_max_force_Y"sv, "machine_bed_mass_Y"sv});
     const bool dump_mass_model_keys = print.config().machine_max_force_Y.value > 0. || print.config().machine_bed_mass_Y.value > 0.;
-    // Filament prices only when wanted (Print::set_gcode_filament_prices()); nothing reads them back
-    // but our own cost views, which fall back to the project's prices or say "not in file".
+    // Filament prices and the machine rate (time_cost) only when wanted (Print::set_gcode_filament_prices());
+    // nothing reads them back but our own cost views, which fall back to the project's values or say
+    // "not in file".
     const bool dump_filament_prices = print.gcode_filament_prices();
     std::ostringstream                      ss;
     for (const std::string& key : cfg.keys()) {
-        if (!dump_filament_prices && key == "filament_cost")
+        if (!dump_filament_prices && (key == "filament_cost" || key == "time_cost"))
             continue;
         if (!dump_pre_heating_keys && pre_heating_keys.find(key) != pre_heating_keys.end())
             continue;

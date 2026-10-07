@@ -8258,7 +8258,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 // One attribute per texture displacement layer slot. Older readers ignore attributes they do
                 // not know, so a project written here still opens in a build without the feature - it just
                 // loses the paint, which is also all it could have done with it.
-                for (int slot = 0; slot < TEXTURE_DISPLACEMENT_MAX_LAYERS; ++slot) {
+                // EdgeSlicer: not in "Export Bambu 3MF" - Bambu Studio has no texture displacement.
+                for (int slot = 0; !m_bambu_compat && slot < TEXTURE_DISPLACEMENT_MAX_LAYERS; ++slot) {
                     const std::string texture_paint = volume->texture_displacement_facet(slot).get_triangle_as_string(i);
                     if (texture_paint.empty())
                         continue;
@@ -8980,7 +8981,11 @@ static void add_texture_displacement(std::stringstream &stream, const ModelVolum
                                 es.has_value())
                                 to_xml(stream, *es, *volume, archive);
 
-                            add_texture_displacement(stream, *volume, archive, std::to_string(volume->id().id));
+                            // EdgeSlicer: unbaked texture layers are EdgeSlicer project data, like the CAD body
+                            // above; "Export Bambu 3MF" leaves them out (a baked texture is plain mesh and stays).
+                            // Sliced-plate files (SkipModel: print jobs, plate export) never reach this loop.
+                            if (!m_bambu_compat)
+                                add_texture_displacement(stream, *volume, archive, std::to_string(volume->id().id));
                     
                             if (const std::optional<TextConfiguration> &tc = volume->text_configuration;
                                 tc.has_value())

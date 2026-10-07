@@ -374,3 +374,72 @@ TEST_CASE("Texture colour is offered only without mixed filaments", "[TextureDis
     CHECK(!TextureDisplacementLayer().color_enabled);
 }
 
+// ------------------------------------------------------------------------------------------------
+// 3MF
+// ------------------------------------------------------------------------------------------------
+
+TEST_CASE("An EdgeSlicer project keeps unbaked texture layers; Export Bambu 3MF leaves them out", "[TextureDisplacementEdge][3mf]")
+{
+    Model model;
+    build_textured_model(model);
+    DynamicPrintConfig cfg = project_config();
+
+    SECTION("our own project") {
+        const std::string path = temp_file("texdisp_project.3mf");
+        REQUIRE(store(path, model, cfg, nullptr));
+        const std::vector<std::string> entries = zip_entries(path);
+        CHECK(any_entry_under(entries, "Metadata/texture_displacement/"));
+
+        Model loaded;
+        REQUIRE(load(path, loaded));
+        REQUIRE(loaded.objects.size() == 1);
+        const ModelVolume &v = *loaded.objects.front()->volumes.front();
+        REQUIRE(v.texture_displacement_layers.size() == 2);
+        CHECK(v.texture_displacement_layers[1].slot == 3);
+        REQUIRE(v.texture_displacement_layers[1].image_data);
+        CHECK(*v.texture_displacement_layers[1].image_data == *model.objects.front()->volumes.front()->texture_displacement_layers[1].image_data);
+        CHECK(v.texture_displacement_options.color_despeckle == 4);
+        CHECK(!v.texture_displacement_facet(0).empty());
+        CHECK(!v.texture_displacement_facet(3).empty());
+        CHECK(v.texture_displacement_facet(1).empty());
+        // For the hand check that an older EdgeSlicer opens such a project (see the PR): keep a copy.
+        if (const char *keep = std::getenv("EDGE_TEXDISP_KEEP_3MF"); keep != nullptr && *keep != 0)
+            boost::filesystem::copy_file(path, keep, boost::filesystem::copy_option::overwrite_if_exists);
+        boost::filesystem::remove(path);
+    }
+
+    SECTION("Export Bambu 3MF") {
+        const std::string   path = temp_file("texdisp_bambu.3mf");
+        BambuExport::Report report;
+        REQUIRE(store(path, model, cfg, &report));
+        const std::vector<std::string> entries = zip_entries(path);
+        CHECK(!any_entry_under(entries, "Metadata/texture_displacement/"));
+        for (const std::string &e : entries) {
+            if (e.size() < 6 || e.compare(e.size() - 6, 6, ".model") != 0)
+                continue;
+            INFO(e);
+            CHECK(zip_entry(path, e).find("paint_texture_") == std::string::npos);
+        }
+        CHECK(zip_entry(path, "Metadata/model_settings.config").find("texture_displacement") == std::string::npos);
+
+        Model loaded;
+        REQUIRE(load(path, loaded));
+        const ModelVolume &v = *loaded.objects.front()->volumes.front();
+        CHECK(v.texture_displacement_layers.empty());
+        CHECK(!v.is_texture_displacement_painted());
+        boost::filesystem::remove(path);
+    }
+}
+
+TEST_CASE("A build without the feature drops the texture metadata key quietly", "[TextureDisplacementEdge][3mf]")
+{
+    // An older EdgeSlicer reader does not know the "texture_displacement" volume metadata key and
+    // hands it to the part's config, like any per-part setting. That must neither throw nor leave a
+    // key behind (it is no print setting); the paint_texture_N triangle attributes and the files
+    // under Metadata/texture_displacement/ are simply never read.
+    REQUIRE(!print_config_def.has("texture_displacement"));
+    ModelConfig               config;
+    ConfigSubstitutionContext ctxt{ ForwardCompatibilitySubstitutionRule::Enable };
+    CHECK_NOTHROW(config.set_deserialize("texture_displacement", "Metadata/texture_displacement/12.json", ctxt));
+    CHECK(!config.has("texture_displacement"));
+}

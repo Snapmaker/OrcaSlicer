@@ -20,6 +20,7 @@
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoTextureDisplacement.hpp"
+#include "slic3r/GUI/Jobs/TextureDisplacementBakeJob.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
 #include "libslic3r/CutUtils.hpp"
 #include "libslic3r/TriangleMesh.hpp"
@@ -106,6 +107,7 @@ void TextureDisplacementPrepareJob::finalize(bool canceled, std::exception_ptr &
         volume->restore_painting(saved_painting);
         for (int i = 0; i < int(TEXTURE_DISPLACEMENT_MAX_LAYERS); ++i)
             volume->texture_displacement_facet(i).set_data(std::move(m_result.masks[size_t(i)]));
+        detach_mesh_recipes_after_texture_displacement(*volume);
 
         if (ObjectList *obj_list = wxGetApp().obj_list()) {
             const ModelObjectPtrs &objs = plater->model().objects;

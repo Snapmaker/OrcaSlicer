@@ -13,6 +13,7 @@
 #include "libslic3r/Model.hpp"
 #include "libslic3r/format.hpp"
 #include "libslic3r/TriangleSelector.hpp"
+#include "libslic3r/TextureDisplacementGuards.hpp"
 
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI.hpp"
@@ -120,6 +121,7 @@ void TextureDisplacementBakeJob::finalize(bool canceled, std::exception_ptr &ept
         volume->set_mesh(std::move(m_result));
         volume->set_new_unique_id();
         volume->calculate_convex_hull();
+        detach_mesh_recipes_after_texture_displacement(*volume);
 
         // Colour lands in mmu_segmentation_facets, merged *over* whatever is already painted there
         // rather than replacing it: a triangle the texture does not colour keeps its existing filament,
@@ -198,6 +200,19 @@ void TextureDisplacementBakeJob::finalize(bool canceled, std::exception_ptr &ept
                                 "the budget kept %2%. Raise Budget or use a coarser Resolution for the full detail."),
                            count(m_stats.triangles_refined), count(m_stats.triangles_budget)));
     }
+}
+
+void detach_mesh_recipes_after_texture_displacement(ModelVolume &volume)
+{
+    const TextureDisplacementMeshRecipes found = detach_mesh_recipes_for_texture_displacement(volume);
+    if (!found.text && !found.svg)
+        return;
+    ObjectList *obj_list = wxGetApp().obj_list();
+    if (obj_list == nullptr)
+        return;
+    const ModelObjectPtrs &objs = wxGetApp().plater()->model().objects;
+    if (auto it = std::find(objs.begin(), objs.end(), volume.get_object()); it != objs.end())
+        obj_list->update_volume_text_svg_icons(size_t(it - objs.begin()));
 }
 
 void queue_texture_displacement_bake(const ModelVolume &volume, const TextureColorSettings &color,

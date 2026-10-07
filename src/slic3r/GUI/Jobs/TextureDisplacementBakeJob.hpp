@@ -69,6 +69,12 @@ private:
 void queue_texture_displacement_bake(const ModelVolume &volume, const TextureColorSettings &color,
                                      std::function<void()> on_finished, bool take_snapshot = true);
 
+// EdgeSlicer: call right after texture displacement replaced `volume`'s mesh (bake, prepare, subdivide,
+// smooth). An editable text/SVG part becomes a plain mesh part and an exact CAD body is dropped (see
+// libslic3r/TextureDisplacementGuards.hpp), and the object list row loses its text/SVG icon. The gizmo
+// asks the user first (GLGizmoTextureDisplacement::confirm_mesh_change()).
+void detach_mesh_recipes_after_texture_displacement(ModelVolume &volume);
+
 } // namespace Slic3r::GUI
 
 #endif // slic3r_TextureDisplacementBakeJob_hpp_

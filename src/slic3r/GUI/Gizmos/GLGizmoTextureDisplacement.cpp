@@ -11,6 +11,8 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/MeshBoolean.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/TextureDisplacementGuards.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/format.hpp"
 
@@ -1207,7 +1209,7 @@ void GLGizmoTextureDisplacement::rebuild_shaded_preview_mesh()
     // colour of its own - the palette and the colour texture are uniforms, and every pixel matches the
     // image rather than the facet it landed on. What the *bake* will produce, at facet resolution, is
     // what the Normal view shows.
-    m_shaded_preview_palette = (active != nullptr && active->color_enabled) ? cached_palette()
+    m_shaded_preview_palette = (active != nullptr && layer_colors_on(*active)) ? cached_palette()
                                                                          : std::vector<PaletteEntry>{};
 
     GLModel::Geometry init_data;
@@ -3924,6 +3926,8 @@ void GLGizmoTextureDisplacement::subdivide_model()
     ModelObject *mo = m_c->selection_info()->model_object();
     if (mv == nullptr || mo == nullptr || m_subdivide_count < 1)
         return; // 0 passes means "no subdivision" - don't take a snapshot for a no-op
+    if (!confirm_mesh_change(*mv))
+        return;
 
     Plater *plater = wxGetApp().plater();
     Plater::TakeSnapshot snapshot(plater, _u8L("Subdivide model for texture displacement"), UndoRedo::SnapshotType::GizmoAction);
@@ -3941,6 +3945,7 @@ void GLGizmoTextureDisplacement::subdivide_model()
     mv->set_new_unique_id();
     mv->calculate_convex_hull();
     mv->restore_painting(saved_painting);
+    detach_mesh_recipes_after_texture_displacement(*mv);
 
     if (ObjectList *obj_list = wxGetApp().obj_list()) {
         const ModelObjectPtrs &objs = plater->model().objects;
@@ -4214,9 +4219,54 @@ TextureDisplacementFacetsData GLGizmoTextureDisplacement::facets_data_of(const M
 bool GLGizmoTextureDisplacement::any_layer_colors(const ModelVolume &mv)
 {
     for (const TextureDisplacementLayer &layer : mv.texture_displacement_layers)
-        if (layer.color_enabled && !layer.empty() && decode_height_texture(layer).has_color())
+        if (layer_colors_on(layer) && !layer.empty() && decode_height_texture(layer).has_color())
             return true;
     return false;
+}
+
+bool GLGizmoTextureDisplacement::colors_allowed()
+{
+    const PresetBundle *bundle = wxGetApp().preset_bundle;
+    return bundle == nullptr || texture_displacement_colors_allowed(bundle->mixed_filaments.enabled_count());
+}
+
+bool GLGizmoTextureDisplacement::layer_colors_on(const TextureDisplacementLayer &layer)
+{
+    return layer.color_enabled && colors_allowed();
+}
+
+bool GLGizmoTextureDisplacement::confirm_mesh_change(const ModelVolume &mv)
+{
+    TextureDisplacementMeshRecipes recipes = texture_displacement_mesh_recipes(mv);
+    const ObjectID object_id = mv.get_object() != nullptr ? mv.get_object()->id() : ObjectID();
+    // The cut is the object's and survives every mesh change, so it is pointed out once per object;
+    // text/SVG/CAD are detached by the first change, so they cannot come up twice for one part.
+    if (recipes.cut_recipe && object_id == m_cut_recipe_warned_for)
+        recipes.cut_recipe = false;
+    if (!recipes.any() || m_mesh_change_confirmed_for == mv.id())
+        return true;
+
+    wxString what;
+    if (recipes.text)
+        what += _L("This part is editable text. Changing its mesh turns it into a plain part: it can no longer "
+                   "be edited as text (a text edit would rebuild it and lose the texture).") + "\n\n";
+    else if (recipes.svg)
+        what += _L("This part is an editable SVG. Changing its mesh turns it into a plain part: it can no longer "
+                   "be edited as an SVG (an SVG edit would rebuild it and lose the texture).") + "\n\n";
+    if (recipes.cad_body)
+        what += _L("This part has an exact CAD body (from CAD fillet or a STEP import). It no longer matches the "
+                   "textured mesh and is dropped: the CAD tools and exact STEP export stop working for this part.") + "\n\n";
+    if (recipes.cut_recipe)
+        what += _L("This object is an editable cut. Re-editing the cut starts again from the mesh before the cut, "
+                   "so the texture would be lost then.") + "\n\n";
+    what += _L("Undo restores the part as it was. Continue?");
+
+    MessageDialog dlg(nullptr, what, _L("Texture displacement"), wxYES_NO | wxNO_DEFAULT | wxICON_WARNING);
+    if (dlg.ShowModal() != wxID_YES)
+        return false;
+    m_mesh_change_confirmed_for = mv.id();
+    m_cut_recipe_warned_for     = object_id;
+    return true;
 }
 
 TextureColorSettings GLGizmoTextureDisplacement::color_settings_for(const ModelVolume &mv)
@@ -4688,6 +4738,9 @@ void GLGizmoTextureDisplacement::smooth_model()
         return;
     }
 
+    if (!confirm_mesh_change(*mv))
+        return;
+
     indexed_triangle_set smoothed = its;
     {
         wxBusyCursor wait;
@@ -4712,6 +4765,7 @@ void GLGizmoTextureDisplacement::smooth_model()
     mv->restore_painting(saved_painting);
     for (int i = 0; i < int(TEXTURE_DISPLACEMENT_MAX_LAYERS); ++i)
         mv->texture_displacement_facet(i).set_data(std::move(saved_texture[size_t(i)]));
+    detach_mesh_recipes_after_texture_displacement(*mv);
 
     if (ObjectList *obj_list = wxGetApp().obj_list()) {
         const ModelObjectPtrs &objs = plater->model().objects;
@@ -4895,7 +4949,7 @@ GLTexture *GLGizmoTextureDisplacement::get_layer_thumbnail(const TextureDisplace
 
 GLTexture *GLGizmoTextureDisplacement::get_layer_color_texture(const TextureDisplacementLayer &layer)
 {
-    if (layer.empty() || !layer.color_enabled)
+    if (layer.empty() || !layer_colors_on(layer))
         return nullptr;
     if (m_color_tex && m_color_tex_source == layer.image_data.get() && m_color_tex_smoothing == layer.smoothing)
         return m_color_tex.get();
@@ -4946,6 +5000,8 @@ void GLGizmoTextureDisplacement::bake(bool own_snapshot)
         show_error(nullptr, _u8L("Nothing is painted, there is nothing to bake."));
         return;
     }
+    if (!confirm_mesh_change(*mv))
+        return;
 
     m_bake_in_progress = true;
     queue_texture_displacement_bake(*mv, color_settings_for(*mv), [this]() {
@@ -5250,6 +5306,8 @@ void GLGizmoTextureDisplacement::queue_prepare(const TextureDisplacementPrepareP
 {
     ModelVolume *mv = texture_volume();
     if (mv == nullptr || m_prepare_in_progress || m_bake_in_progress)
+        return;
+    if (!confirm_mesh_change(*mv))
         return;
 
     TextureDisplacementPrepareInput input;
@@ -6058,15 +6116,21 @@ void GLGizmoTextureDisplacement::on_render_input_window(float x, float y, float 
                     // and a checkbox that silently does nothing on nine textures out of ten is worse than no
                     // checkbox. Disabled rather than hidden so it is clear the feature exists and what it wants.
                     const bool has_color     = decode_height_texture(layer).has_color();
-                    bool       color_enabled = layer.color_enabled && has_color;
-                    m_imgui->disabled_begin(!has_color);
+                    // EdgeSlicer: off (and offered off) while mixed filaments are enabled - see colors_allowed().
+                    const bool colors_ok     = colors_allowed();
+                    bool       color_enabled = layer.color_enabled && has_color && colors_ok;
+                    m_imgui->disabled_begin(!has_color || !colors_ok);
                     if (m_imgui->bbl_checkbox(_L("Colors"), color_enabled)) {
                         layer.color_enabled    = color_enabled;
                         m_preview_params_dirty = true;
                     }
                     m_imgui->disabled_end();
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                        m_imgui->tooltip(has_color ?
+                        m_imgui->tooltip(!colors_ok ?
+                                             _u8L("Texture colors are off while mixed filaments are enabled: they do "
+                                                  "their own filament mixing and do not know your mixed filaments. "
+                                                  "Use Image Fill to color with mixed filaments.") :
+                                         has_color ?
                                              _u8L("Prints the painted area in the texture's colors as well as its "
                                                   "relief. Each color is matched to the nearest of your loaded "
                                                   "filaments; anything you did not paint keeps the object's own.") :

@@ -18,6 +18,7 @@
 #include "libslic3r/TriangleSelector.hpp"
 #include <cstdint>
 #include "libslic3r/Point.hpp"
+#include "libslic3r/ObjectID.hpp"
 #include <imgui.h>
 #include <map>
 #include <memory>
@@ -143,6 +144,19 @@ public:
     // texture that has colour to give. What decides whether a palette is captured into a job at all,
     // and so whether the colour criterion and the mmu write ever run.
     static bool any_layer_colors(const ModelVolume &mv);
+    // EdgeSlicer: texture colour does its own filament mixing and does not know our mixed (virtual)
+    // filaments, so it is switched off while any are enabled (TextureDisplacementGuards.hpp).
+    static bool colors_allowed();
+    // A layer's colour is used: its toggle is on and colours_allowed().
+    static bool layer_colors_on(const TextureDisplacementLayer &layer);
+
+    // EdgeSlicer: before an action that replaces the part's mesh (bake, remesh, subdivide, smooth), asks
+    // once per part whether to go ahead when that turns editable text/SVG into a plain mesh or drops an
+    // exact CAD body. Also names a re-editable cut that would start again from the pre-cut mesh.
+    // Returns false when the user cancels.
+    bool confirm_mesh_change(const ModelVolume &mv);
+    ObjectID m_mesh_change_confirmed_for;  // volume the user said yes for
+    ObjectID m_cut_recipe_warned_for;       // object whose re-editable cut was already pointed out
 
     void render_painter_gizmo() override;
 

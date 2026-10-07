@@ -2220,6 +2220,51 @@ void ModelVolume::reset_extra_facets()
     this->fuzzy_skin_facets.reset();
 }
 
+// OrcaSlicer #13472 (Keep painting after cut), merge 1c0d0b89cc: save the painting of a model
+// part before its mesh is replaced, then remap it onto the new mesh by spatial lookup.
+std::optional<TriangleSelector::SavedPainting> ModelVolume::save_painting() const
+{
+    if (is_any_painted() && is_model_part() && !mesh().empty()) {
+        TriangleSelector::SavedPainting sp;
+        sp.mesh      = mesh();
+        sp.supported = supported_facets.get_data();
+        sp.seam      = seam_facets.get_data();
+        sp.mmu       = mmu_segmentation_facets.get_data();
+        sp.fuzzy     = fuzzy_skin_facets.get_data();
+        return sp;
+    }
+
+    return {};
+}
+
+void ModelVolume::restore_painting(const std::optional<TriangleSelector::SavedPainting>& saved, const bool keep_existing_paint)
+{
+    if (!keep_existing_paint) {
+        reset_extra_facets();
+    }
+
+    if (!saved) {
+        return;
+    }
+
+    auto remap_one = [&](const TriangleSelector::TriangleSplittingData& src_data,
+                         FacetsAnnotation& target_facets) {
+        if (src_data.bitstream.empty())
+            return;
+        auto result =
+            TriangleSelector::remap_painting(saved->mesh.its, src_data, mesh().its, Geometry::translation_transform(mesh().get_init_shift()),
+                                             keep_existing_paint ?
+                                                 std::optional<std::reference_wrapper<const TriangleSelector::TriangleSplittingData>>{std::ref(target_facets.get_data())} :
+                                                 std::optional<std::reference_wrapper<const TriangleSelector::TriangleSplittingData>>{});
+        if (!result.bitstream.empty())
+            target_facets.set_data(std::move(result));
+    };
+    remap_one(saved->supported, supported_facets);
+    remap_one(saved->seam,      seam_facets);
+    remap_one(saved->mmu,       mmu_segmentation_facets);
+    remap_one(saved->fuzzy,     fuzzy_skin_facets);
+}
+
 static void invalidate_translations(ModelObject* object, const ModelInstance* src_instance)
 {
     if (!object->origin_translation.isApprox(Vec3d::Zero()) && src_instance->get_offset().isApprox(Vec3d::Zero())) {

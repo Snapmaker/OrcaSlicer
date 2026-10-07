@@ -305,7 +305,8 @@ ImageTraceDialog::ImageTraceDialog(wxWindow                      *parent,
 
     m_despeckle = spin_double(m_params.despeckle, 0., 10., 0.05);
     m_despeckle->SetToolTip(_L("Islands and holes smaller than this area are removed."));
-    row(_L("Remove specks") + " (mm²):", m_despeckle);
+    // The unit is spelled as UTF-8 bytes: a plain char* is converted with the system code page.
+    row(_L("Remove specks") + wxString::FromUTF8(" (mm\xC2\xB2):"), m_despeckle);
 
     m_detail = spin_double(m_params.detail, 0.1, 3., 0.1);
     m_detail->SetToolTip(_L("Allowed deviation of the outline [in pixels]. Bigger value = fewer points, smaller file."));

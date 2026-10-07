@@ -1950,7 +1950,8 @@ const int PresetBundle::get_required_hrc_by_filament_type(const std::string& fil
 
 //BBS: add project embedded preset logic
 void PresetBundle::save_changes_for_preset(const std::string& new_name, Preset::Type type,
-                                           const std::vector<std::string>& unselected_options, bool save_to_project)
+                                           const std::vector<std::string>& unselected_options, bool save_to_project,
+                                           ProjectPresetPrinters project_printers)
 {
     PresetCollection& presets = type == Preset::TYPE_PRINT          ? prints :
                                 type == Preset::TYPE_SLA_PRINT      ? sla_prints :
@@ -1966,7 +1967,7 @@ void PresetBundle::save_changes_for_preset(const std::string& new_name, Preset::
     // Save the preset into Slic3r::data_dir / presets / section_name / preset_name.ini
     //BBS: add project embedded preset logic
     //presets.save_current_preset(new_name);
-    presets.save_current_preset(new_name, false, save_to_project);
+    presets.save_current_preset(new_name, false, save_to_project, nullptr, nullptr, project_printers);
     // Mark the print & filament enabled if they are compatible with the currently selected preset.
     // If saving the preset changes compatibility with other presets, keep the now incompatible dependent presets selected, however with a "red flag" icon showing that they are no more compatible.
     update_compatible(PresetSelectCompatibleType::Never);

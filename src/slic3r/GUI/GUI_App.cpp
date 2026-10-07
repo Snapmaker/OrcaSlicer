@@ -8253,7 +8253,7 @@ bool GUI_App::check_and_save_current_preset_changes(const wxString& caption, con
         {
             //BBS: add project embedded preset relate logic
             for (const UnsavedChangesDialog::PresetData& nt : dlg.get_names_and_types())
-                preset_bundle->save_changes_for_preset(nt.name, nt.type, dlg.get_unselected_options(nt.type), nt.save_to_project);
+                preset_bundle->save_changes_for_preset(nt.name, nt.type, dlg.get_unselected_options(nt.type), nt.save_to_project, nt.project_printers);
             //for (const std::pair<std::string, Preset::Type>& nt : dlg.get_names_and_types())
             //    preset_bundle->save_changes_for_preset(nt.first, nt.second, dlg.get_unselected_options(nt.second));
 
@@ -8318,7 +8318,7 @@ bool GUI_App::check_and_keep_current_preset_changes(const wxString& caption, con
             const auto& preset_names_and_types = dlg.get_names_and_types();
             if (dlg.save_preset()) {
                 for (const UnsavedChangesDialog::PresetData& nt : preset_names_and_types)
-                    preset_bundle->save_changes_for_preset(nt.name, nt.type, dlg.get_unselected_options(nt.type), nt.save_to_project);
+                    preset_bundle->save_changes_for_preset(nt.name, nt.type, dlg.get_unselected_options(nt.type), nt.save_to_project, nt.project_printers);
 
                 // if we saved changes to the new presets, we should to
                 // synchronize config.ini with the current selections.

@@ -15,9 +15,11 @@
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/libslic3r.h"
+#include "libslic3r/miniz_extension.hpp"
 
 #include <boost/filesystem/operations.hpp>
 #include <boost/filesystem/path.hpp>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <memory>
@@ -79,10 +81,13 @@ void select_machine(PresetBundle &bundle, const std::string &printer, const std:
 }
 
 // What Tab::save_preset does after "Save to project": the edited preset becomes a project preset.
-void save_to_project(PresetBundle &bundle, PresetCollection &presets, const std::string &name)
+// `printers` is the Save Preset dialog's "Use for every printer" (ticked: EveryPrinter, not ticked:
+// FollowParent; Keep when the dialog is not involved).
+void save_to_project(PresetBundle &bundle, PresetCollection &presets, const std::string &name,
+                     ProjectPresetPrinters printers = ProjectPresetPrinters::Keep)
 {
     const Preset *printer = presets.type() == Preset::TYPE_FILAMENT ? &bundle.printers.get_selected_preset_base() : nullptr;
-    presets.save_current_preset(name, false, /* save_to_project */ true, nullptr, printer);
+    presets.save_current_preset(name, false, /* save_to_project */ true, nullptr, printer, printers);
     bundle.update_compatible(PresetSelectCompatibleType::Never);
 }
 
@@ -187,18 +192,18 @@ void check_project_presets_selected(PresetBundle &bundle)
 }
 
 // Session 1: X1C, process and slot-1 filament changed and saved to the project, project stored.
-std::string make_project(const std::string &file_name)
+std::string make_project(const std::string &file_name, ProjectPresetPrinters printers = ProjectPresetPrinters::Keep)
 {
     auto bundle = bbl_bundle();
     select_machine(*bundle, X1C, X1C_PROC, X1C_PLA);
 
     bundle->prints.get_edited_preset().config.set_key_value("wall_loops", new ConfigOptionInt(5));
     bundle->prints.update_dirty();
-    save_to_project(*bundle, bundle->prints, PROJ_PROC);
+    save_to_project(*bundle, bundle->prints, PROJ_PROC, printers);
 
     bundle->filaments.get_edited_preset().config.option<ConfigOptionInts>("nozzle_temperature")->values[0] = 231;
     bundle->filaments.update_dirty();
-    save_to_project(*bundle, bundle->filaments, PROJ_PLA);
+    save_to_project(*bundle, bundle->filaments, PROJ_PLA, printers);
     bundle->set_filament_preset(0, PROJ_PLA);
 
     REQUIRE(bundle->prints.get_selected_preset_name() == PROJ_PROC);
@@ -209,6 +214,25 @@ std::string make_project(const std::string &file_name)
     store_project(*bundle, path);
     return path;
 }
+
+std::string zip_entry(const std::string &zip_path, const std::string &entry_name)
+{
+    mz_zip_archive archive;
+    mz_zip_zero_struct(&archive);
+    if (!open_zip_reader(&archive, zip_path))
+        return {};
+    size_t      size = 0;
+    void       *data = mz_zip_reader_extract_file_to_heap(&archive, entry_name.c_str(), &size, 0);
+    std::string result;
+    if (data != nullptr) {
+        result.assign(static_cast<const char *>(data), size);
+        mz_free(data);
+    }
+    close_zip_reader(&archive);
+    return result;
+}
+
+bool fits_every_printer(const Preset *preset) { return preset != nullptr && Preset::fits_every_printer(preset->config); }
 
 } // namespace
 
@@ -374,4 +398,105 @@ TEST_CASE("A printer saved to the project comes back and keeps its project on it
 
     const std::vector<std::string> lost = bundle->project_presets_lost_on_printer(H2D);
     CHECK(std::find(lost.begin(), lost.end(), PROJ_X1C) != lost.end());
+}
+
+// The owner's choice on PR #357 (option B): "Use for every printer" next to "Preset Inside Project"
+// in the Save Preset dialog. The project preset then has no printer list and no condition of its
+// own, so it is listed for every printer and a printer switch keeps it selected. Not ticked, nothing
+// changes.
+TEST_CASE("A project preset saved for every printer stays selected across printer switches and re-opens", "[Preset][Bundle][ProjectPreset]")
+{
+    const std::string path = make_project("every_printer.3mf", ProjectPresetPrinters::EveryPrinter);
+
+    // Stored as the preset's own empty list and condition: the shape a user preset set to "All"
+    // printers has, which older builds and Bambu Studio read as "compatible with everything".
+    const nlohmann::json proc = nlohmann::json::parse(zip_entry(path, "Metadata/process_settings_1.config"));
+    CHECK(proc["name"] == PROJ_PROC);
+    CHECK(proc["inherits"] == X1C_PROC);
+    REQUIRE(proc.contains("compatible_printers"));
+    CHECK(proc["compatible_printers"].empty());
+    const nlohmann::json pla = nlohmann::json::parse(zip_entry(path, "Metadata/filament_settings_1.config"));
+    CHECK(pla["name"] == PROJ_PLA);
+    REQUIRE(pla.contains("compatible_printers"));
+    CHECK(pla["compatible_printers"].empty());
+
+    auto bundle = bbl_bundle();
+    select_machine(*bundle, X1C, X1C_PROC, X1C_PLA);
+    REQUIRE(open_project(*bundle, path) == 2);
+    check_project_presets_present(*bundle);
+    check_project_presets_selected(*bundle);
+    CHECK(fits_every_printer(find(bundle->prints, PROJ_PROC)));
+    CHECK(fits_every_printer(find(bundle->filaments, PROJ_PLA)));
+    // Nothing for Keep my printer to protect either.
+    CHECK(bundle->project_presets_lost_on_printer(H2D).empty());
+
+    // A manual switch to a printer neither parent covers keeps both selected and listed.
+    switch_printer(*bundle, H2D);
+    CHECK(bundle->prints.get_selected_preset_name() == PROJ_PROC);
+    CHECK(find(bundle->prints, PROJ_PROC)->is_compatible);
+    CHECK(find(bundle->prints, PROJ_PROC)->is_visible);
+    CHECK(bundle->prints.get_edited_preset().config.opt_int("wall_loops") == 5);
+    CHECK(bundle->filament_presets[0] == PROJ_PLA);
+    CHECK(find(bundle->filaments, PROJ_PLA)->is_compatible);
+    // The second slot held an X1C system filament: that one is replaced as before.
+    CHECK(bundle->filament_presets[1] != X1C_PLA);
+
+    // Saved on the H2D and opened again: still for every printer, still selected.
+    const std::string again = project_path("every_printer_on_h2d.3mf");
+    store_project(*bundle, again);
+    auto next = bbl_bundle();
+    select_machine(*next, X1C, X1C_PROC, X1C_PLA);
+    REQUIRE(open_project(*next, again) == 2);
+    CHECK(next->printers.get_selected_preset_name() == H2D);
+    CHECK(next->prints.get_selected_preset_name() == PROJ_PROC);
+    CHECK(next->filament_presets[0] == PROJ_PLA);
+    CHECK(fits_every_printer(find(next->prints, PROJ_PROC)));
+    CHECK(fits_every_printer(find(next->filaments, PROJ_PLA)));
+    switch_printer(*next, P1S);
+    CHECK(next->prints.get_selected_preset_name() == PROJ_PROC);
+    CHECK(next->filament_presets[0] == PROJ_PLA);
+}
+
+TEST_CASE("A project preset saved without Use-for-every-printer behaves as before", "[Preset][Bundle][ProjectPreset]")
+{
+    const std::string path = make_project("follow_parent.3mf", ProjectPresetPrinters::FollowParent);
+
+    auto bundle = bbl_bundle();
+    select_machine(*bundle, X1C, X1C_PROC, X1C_PLA);
+    REQUIRE(open_project(*bundle, path) == 2);
+    check_project_presets_selected(*bundle);
+    // The parents' printer lists, as with the dialog's default.
+    CHECK_FALSE(fits_every_printer(find(bundle->prints, PROJ_PROC)));
+    CHECK_FALSE(fits_every_printer(find(bundle->filaments, PROJ_PLA)));
+
+    switch_printer(*bundle, H2D);
+    CHECK(bundle->prints.get_selected_preset_name() != PROJ_PROC);
+    CHECK_FALSE(find(bundle->prints, PROJ_PROC)->is_compatible);
+    CHECK(bundle->filament_presets[0] != PROJ_PLA);
+    CHECK_FALSE(find(bundle->filaments, PROJ_PLA)->is_compatible);
+}
+
+TEST_CASE("Unticking Use-for-every-printer gives a project preset its parent's printers back", "[Preset][Bundle][ProjectPreset]")
+{
+    auto bundle = bbl_bundle();
+    select_machine(*bundle, X1C, X1C_PROC, X1C_PLA);
+    bundle->prints.get_edited_preset().config.set_key_value("wall_loops", new ConfigOptionInt(5));
+    save_to_project(*bundle, bundle->prints, PROJ_PROC, ProjectPresetPrinters::EveryPrinter);
+    REQUIRE(fits_every_printer(find(bundle->prints, PROJ_PROC)));
+
+    // Saved again under the same name, box not ticked.
+    save_to_project(*bundle, bundle->prints, PROJ_PROC, ProjectPresetPrinters::FollowParent);
+    const Preset *proc = find(bundle->prints, PROJ_PROC);
+    REQUIRE(proc != nullptr);
+    CHECK(proc->config.option<ConfigOptionStrings>("compatible_printers")->values ==
+          find(bundle->prints, X1C_PROC)->config.option<ConfigOptionStrings>("compatible_printers")->values);
+    // Saved without the dialog (Keep), the preset's list is left alone.
+    save_to_project(*bundle, bundle->prints, PROJ_PROC, ProjectPresetPrinters::Keep);
+    CHECK_FALSE(fits_every_printer(find(bundle->prints, PROJ_PROC)));
+
+    // Only project presets take the choice.
+    Preset user = *find(bundle->prints, PROJ_PROC);
+    user.is_project_embedded = false;
+    bundle->prints.set_project_preset_printers(user, ProjectPresetPrinters::EveryPrinter);
+    CHECK_FALSE(Preset::fits_every_printer(user.config));
 }

@@ -814,6 +814,13 @@ bool is_compatible_with_printer(const PresetWithVendorProfile &preset, const Pre
            (!active_printer.preset.is_system && is_compatible_with_parent_printer(preset, active_printer));
 }
 
+bool Preset::fits_every_printer(const DynamicPrintConfig &cfg)
+{
+    const auto *list      = cfg.option<ConfigOptionStrings>("compatible_printers");
+    const auto *condition = cfg.option<ConfigOptionString>("compatible_printers_condition");
+    return (list == nullptr || list->values.empty()) && (condition == nullptr || condition->value.empty());
+}
+
 bool is_compatible_with_printer(const PresetWithVendorProfile &preset, const PresetWithVendorProfile &active_printer)
 {
     DynamicPrintConfig config;
@@ -2284,6 +2291,16 @@ std::pair<Preset*, bool> PresetCollection::load_external_preset(
         }
     }
 
+    // Ultra: a project preset decides its own printers ("Use for every printer" in the Save Preset
+    // dialog). The project config carries no per-preset binding - the parent restore above or
+    // PresetBundle's project-printer fallback put one into cfg - and the paths below copy cfg into
+    // the preset or its edited copy, which would quietly bind it to the parent's printers again.
+    if (found && it->is_project_embedded && m_type != Preset::TYPE_PRINTER) {
+        const auto *own = it->config.option<ConfigOptionStrings>("compatible_printers");
+        cfg.option<ConfigOptionStrings>("compatible_printers", true)->values = own ? own->values : std::vector<std::string>();
+        Preset::compatible_printers_condition(cfg) = Preset::compatible_printers_condition(it->config);
+    }
+
     //BBS: add config related logs
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" enter, type %1% , path %2%, name %3%, original_name %4%, inherits %5%")%Preset::get_type_string(m_type) %path %name %original_name %inherits;
     if (select == LoadAndSelect::Never) {
@@ -2602,7 +2619,8 @@ std::map<std::string, std::vector<Preset const *>> PresetCollection::get_filamen
 }
 
 //BBS: add project embedded preset logic
-void PresetCollection::save_current_preset(const std::string &new_name, bool detach, bool save_to_project, Preset* _curr_preset, const Preset* _current_printer)
+void PresetCollection::save_current_preset(const std::string &new_name, bool detach, bool save_to_project, Preset* _curr_preset, const Preset* _current_printer,
+                                           ProjectPresetPrinters project_printers)
 {
     Preset curr_preset = _curr_preset ? *_curr_preset : m_edited_preset;
     //BBS: add lock logic for sync preset in background
@@ -2706,6 +2724,12 @@ void PresetCollection::save_current_preset(const std::string &new_name, bool det
         final_inherits = inherits;
         unlock();
     }
+    // 1b) Ultra: the printers a project preset is listed for ("Use for every printer").
+    if (project_printers != ProjectPresetPrinters::Keep) {
+        auto it_saved = this->find_preset_internal(new_name);
+        if (it_saved != m_presets.end() && it_saved->name == new_name)
+            this->set_project_preset_printers(*it_saved, project_printers);
+    }
     // 2) Activate the saved preset.
     this->select_preset_by_name(new_name, true);
     // 2) Store the active preset to disk.
@@ -2722,6 +2746,30 @@ void PresetCollection::save_current_preset(const std::string &new_name, bool det
         this->get_selected_preset().save(&(parent_preset->config));
     else
         this->get_selected_preset().save(nullptr);
+}
+
+// Ultra: see ProjectPresetPrinters. Kept apart from save_current_preset() so a later "carry the
+// project presets over to the new printer" step can reuse the same notion of a preset's printers.
+void PresetCollection::set_project_preset_printers(Preset &preset, ProjectPresetPrinters project_printers)
+{
+    if (project_printers == ProjectPresetPrinters::Keep || !preset.is_project_embedded || m_type == Preset::TYPE_PRINTER)
+        return;
+    ConfigOptionStrings *list      = preset.config.option<ConfigOptionStrings>("compatible_printers", true);
+    std::string         &condition = Preset::compatible_printers_condition(preset.config);
+    if (project_printers == ProjectPresetPrinters::EveryPrinter) {
+        list->values.clear();
+        condition.clear();
+        return;
+    }
+    // FollowParent only undoes "every printer": printers picked by hand on the Dependencies page stay.
+    if (!Preset::fits_every_printer(preset.config))
+        return;
+    Preset *parent = preset.inherits().empty() ? nullptr : this->find_preset(preset.inherits(), false, true);
+    if (parent == nullptr)
+        return;
+    if (const auto *parent_list = parent->config.option<ConfigOptionStrings>("compatible_printers"))
+        list->values = parent_list->values;
+    condition = Preset::compatible_printers_condition(parent->config);
 }
 
 bool PresetCollection::delete_current_preset()

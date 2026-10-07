@@ -22821,6 +22821,12 @@ int Plater::export_3mf(const boost::filesystem::path& output_path, SaveStrategy 
     store_params.strategy = strategy | SaveStrategy::Zip64;
     store_params.bambu_compat = bambu_report != nullptr;
     store_params.bambu_report = bambu_report;
+    // A sliced-plate file (exported .gcode.3mf, a send to a printer, the config 3MF of a cloud print)
+    // follows "Include filament prices in exported G-code": with it off the prices stay out of the
+    // archive's settings too. Project saves and backups keep the preset prices, as always.
+    store_params.strip_filament_prices = ((strategy & SaveStrategy::WithGcode) || (strategy & SaveStrategy::WithSliceInfo)) &&
+                                         !(strategy & SaveStrategy::Backup) &&
+                                         !wxGetApp().app_config->get_bool("gcode_include_filament_prices");
 
 
     // get type and color for platedata

@@ -66,6 +66,7 @@
 #include <ctime>
 
 #include "GUI_App.hpp"
+#include "CostsDialog.hpp"
 #include "DualNozzleState.hpp"
 #include "FlowTypeHelper.hpp"
 #include "SliceModePopup.hpp"
@@ -3404,6 +3405,10 @@ void MainFrame::init_menubar_as_editor()
         parent_menu, wxID_ANY, _L("Themes") + dots, _L("Colours, fonts, corners and the title bar"),
         [this](wxCommandEvent &) { wxGetApp().open_themes(); },
         "", nullptr, []() { return true; }, this, 2);
+    append_menu_item(
+        parent_menu, wxID_ANY, _L("Costs") + dots, _L("Your own filament prices and machine rates, over the presets' values"),
+        [this](wxCommandEvent &) { show_costs_dialog(this); },
+        "", nullptr, []() { return true; }, this, 3);
     //parent_menu->Insert(1, preference_item);
 #endif
     // Help menu
@@ -3430,6 +3435,11 @@ void MainFrame::init_menubar_as_editor()
     append_menu_item(
         m_topbar->GetTopMenu(), wxID_ANY, _L("Themes") + dots, _L("Colours, fonts, corners and the title bar"),
         [this](wxCommandEvent &) { wxGetApp().open_themes(); },
+        "", nullptr, []() { return true; }, this);
+    // Your own costs: filament prices and machine rates over every preset (also in the Filament and Printer tabs).
+    append_menu_item(
+        m_topbar->GetTopMenu(), wxID_ANY, _L("Costs") + dots, _L("Your own filament prices and machine rates, over the presets' values"),
+        [this](wxCommandEvent &) { show_costs_dialog(this); },
         "", nullptr, []() { return true; }, this);
 
     m_topbar->AddDropDownSubMenu(helpMenu, _L("Help"));

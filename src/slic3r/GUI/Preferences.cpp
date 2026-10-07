@@ -1,6 +1,7 @@
 #include "Preferences.hpp"
 #include "OptionsGroup.hpp"
 #include "GUI_App.hpp"
+#include "CostsDialog.hpp"
 #include "MainFrame.hpp"
 #include "Plater.hpp"
 #include "GLCanvas3D.hpp"
@@ -2150,12 +2151,21 @@ wxWindow* PreferencesDialog::create_ultra_page()
         _L("While the Move tool is open, show only the plate you are working on. The other plates and their objects come back when the Move tool closes, and a plate you drag onto reappears when you release."), 50, "hide_other_plates_on_move");
 
     auto title_cost = create_item_title(_L("Cost"), page, _L("Cost"));
-    auto item_gcode_prices = create_item_checkbox(_L("Include filament prices in exported G-code"), page,
-        _L("Write the filament prices into G-code you export or send to a printer: the \"; filament cost\" and "
-           "\"; total filament cost\" lines and filament_cost in the settings block. Off by default, so a G-code you "
-           "share does not tell anyone what you pay for filament; the rest of the file is the same either way. "
+    // The key keeps its first name (gcode_include_filament_prices) so existing settings carry over.
+    auto item_gcode_prices = create_item_checkbox(_L("Include costs in exported G-code"), page,
+        _L("Write your costs into G-code you export or send to a printer, and into the settings of an exported "
+           "3MF with G-code: the filament prices (the \"; filament cost\" and \"; total filament cost\" lines, "
+           "filament_cost) and the machine rate (time_cost). Off by default, so a file you share does not tell "
+           "anyone what you pay for filament or charge per hour; the rest of the file is the same either way. "
            "With it off, the cost of a G-code opened on its own reads \"not in file\"; projects and sliced plates "
            "still show their cost here."), 50, "gcode_include_filament_prices");
+    currency_symbol(); // the locale's symbol becomes the stored default the first time
+    auto item_currency_symbol = create_item_text_input(_L("Currency symbol"), page,
+        _L("Shown before every price and cost (filament prices, machine rates, the cost after slicing). A label only: prices are never "
+           "converted. Leave it empty for plain numbers."), "cost_currency_symbol");
+    auto item_filament_prices = create_item_button(_L("Your own costs"), _L("Costs") + dots, page,
+        _L("Filament prices per kilogram and machine rates per hour that apply over the presets' values"),
+        _L("Open the Costs window"), [this]() { show_costs_dialog(this); });
 
     auto title_presets = create_item_title(_L("Presets"), page, _L("Presets"));
     auto item_prefer_last_print = create_item_checkbox(_L("Prefer Last Used Print Profile"), page,
@@ -2245,6 +2255,8 @@ wxWindow* PreferencesDialog::create_ultra_page()
     sizer_page->Add(item_hide_other_plates, 0, wxTOP, FromDIP(3));
     sizer_page->Add(title_cost, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_gcode_prices, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_currency_symbol, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_filament_prices, 0, wxTOP, FromDIP(3));
     sizer_page->Add(title_presets, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_prefer_last_print, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_auto_shadow, 0, wxTOP, FromDIP(3));

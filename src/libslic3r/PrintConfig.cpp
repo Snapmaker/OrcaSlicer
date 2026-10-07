@@ -11001,10 +11001,11 @@ CLIMiscConfigDef::CLIMiscConfigDef()
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("no_filament_prices", coBool);
-    def->label = L("Leave filament prices out of the G-code");
-    def->tooltip = L("Do not write the filament prices into the G-code (\"; filament cost\", \"; total filament cost\" "
-                     "and filament_cost in the config block), like the GUI preference \"Include filament prices in "
-                     "exported G-code\" switched off. Without it the CLI writes them, as it always has.");
+    def->label = L("Leave costs out of the G-code");
+    def->tooltip = L("Do not write the filament prices and the machine rate into the G-code (\"; filament cost\", "
+                     "\"; total filament cost\", and filament_cost and time_cost in the config block) or into the "
+                     "settings of an exported 3MF with G-code, like the GUI preference \"Include costs in exported "
+                     "G-code\" switched off. Without it the CLI writes them, as it always has.");
     def->cli_params = "option";
     def->set_default_value(new ConfigOptionBool(false));
 

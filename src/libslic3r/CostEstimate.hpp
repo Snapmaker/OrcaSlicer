@@ -45,6 +45,9 @@ struct CostBreakdown
     double material{0.};                   // sum of lines' total_cost
     double print_time_s{0.};               // Normal-mode total time, prepare / heat-up included
     double machine_rate_per_h{0.};         // printer preset time_cost
+    // False when the G-code carried no time_cost (exported with costs left out, or by another
+    // slicer): the machine part is unknown and reported as 0.
+    bool   machine_rate_known{true};
     bool   machine_rate_varies{false};     // a sum over plates whose printers charge different rates
     double machine{0.};                    // print_time_s / 3600 * machine_rate_per_h
     double total{0.};                      // material + machine: PrintStatistics::total_cost

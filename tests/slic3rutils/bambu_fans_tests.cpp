@@ -1,5 +1,8 @@
 #include <catch2/catch.hpp>
 
+// The wx / Windows headers first, as every GUI source has them (GUI_App.hpp): a libslic3r header
+// read before them leaves std::byte and the SDK's byte ambiguous (see bambu_reprint_tests.cpp).
+#include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/BambuFans.hpp"
 #include "slic3r/GUI/DeviceControls.hpp"
 #include "slic3r/GUI/DeviceManager.hpp"

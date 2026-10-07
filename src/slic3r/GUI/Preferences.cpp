@@ -1808,6 +1808,20 @@ wxWindow* PreferencesDialog::create_general_page()
         _L("Background opacity of the tool panels on the 3D view. Lower values let you see the model behind a docked panel. Applies immediately."));
     auto camera_orbit_mult = create_camera_orbit_mult_input(_L("Orbit speed multiplier"), page, _L("Multiplies the orbit speed for finer or coarser camera movement."));
     auto item_selection_highlight = create_item_selection_highlight(page);
+    // OrcaSlicer #15769 (libvgcode stage 3): the view type the sliced preview opens with.
+    std::vector<wxString>    preview_view_type_labels;
+    std::vector<std::string> preview_view_type_values;
+    for (const auto& [value, label] : GCodeViewer::default_view_type_choices()) {
+        preview_view_type_values.push_back(value);
+        preview_view_type_labels.push_back(from_u8(label));
+    }
+    auto item_preview_view_type = create_item_combobox(_L("Default preview view type"), page,
+        _L("The color scheme the sliced preview opens with.\n"
+           "Automatic: Filament for multi material prints, Line Type for single material ones.\n"
+           "Last used: the view type you selected last.\n"
+           "Any other value always opens that view type.\n"
+           "You can still switch the view type in the preview afterwards."),
+        "preview_default_view_type", preview_view_type_labels, preview_view_type_values);
     // OrcaSlicer #14705 / #15001 (libvgcode stage 3): darken the layers below the one the layer slider shows.
     auto item_dim_previous_layers = create_item_checkbox(_L("Dim lower layers in the G-code preview"), page,
         _L("When scrubbing the layer slider in the sliced preview, render the layers below the current one darkened so that only the layer being viewed is shown at full brightness."),
@@ -2016,6 +2030,7 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(item_panel_opacity, 0, wxTOP, FromDIP(3));
     sizer_page->Add(camera_orbit_mult, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_selection_highlight, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_preview_view_type, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_dim_previous_layers, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_dim_previous_layers_brightness, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_show_splash_screen, 0, wxTOP, FromDIP(3));

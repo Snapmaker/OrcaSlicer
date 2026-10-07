@@ -213,6 +213,10 @@ void AppConfig::set_defaults()
     // ORCA (#14705 / #15001, libvgcode stage 3): darken the layers the preview layer slider is not
     // scrubbed to; brightness of those dimmed layers in percent, 0 = black, capped at 99 because 100
     // would render them unchanged, which is what disabling the option already does
+    // ORCA (#15769): the view type the sliced preview opens with ("auto", "last" or a view type name)
+    if (get("preview_default_view_type").empty())
+        set("preview_default_view_type", "auto");
+
     if (get("preview_dim_previous_layers").empty())
         set_bool("preview_dim_previous_layers", false);
     if (get("preview_dim_previous_layers_brightness").empty())

@@ -2283,6 +2283,19 @@ void ObjectDataViewModel::SetVolumeType(const wxDataViewItem &item, const Slic3r
     ItemChanged(item);
 }
 
+void ObjectDataViewModel::SetVolumeTextSvg(const wxDataViewItem &item, bool is_text, bool is_svg)
+{
+    if (!item.IsOk() || GetItemType(item) != itVolume)
+        return;
+
+    ObjectDataViewModelNode *node = static_cast<ObjectDataViewModelNode*>(item.GetID());
+    if (node->is_text_volume() == is_text && node->is_svg_volume() == is_svg)
+        return;
+    node->SetTextSvgVolume(is_text, is_svg);
+    UpdateBitmapForNode(node);
+    ItemChanged(item);
+}
+
 ModelVolumeType ObjectDataViewModel::GetVolumeType(const wxDataViewItem& item)
 {
     if (!item.IsOk() || GetItemType(item) != itVolume)

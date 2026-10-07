@@ -485,7 +485,9 @@ wxBitmap create_scaled_bitmap(  const std::string& bmp_name_in,
         return create_scaled_bitmap2(bmp_name_in, cache, win, px_cnt, grayscale, resize, array_new_color);
     }
     unsigned int width = 0;
-    unsigned int height = (unsigned int) (win->FromDIP(px_cnt) + 0.5f);
+    // win may be nullptr; use the static overload, which falls back to the primary display DPI.
+    // Calling win->FromDIP() on a null win is UB and lets the optimizer drop later null checks.
+    unsigned int height = (unsigned int) (wxWindow::FromDIP(px_cnt, win) + 0.5f);
 
     // An empty name means the caller's icon lookup failed (unknown printer type, etc.).
     // Do not throw or assert: return Edge's transparent placeholder so SetBitmap() stays valid.
@@ -507,7 +509,7 @@ wxBitmap create_scaled_bitmap(  const std::string& bmp_name_in,
     // Try loading an SVG first, then PNG if SVG was not found:
     wxBitmap *bmp = cache.load_svg(bmp_name, width, height, grayscale, dark_mode, new_color, resize ? em_unit(win) * 0.1f : 0.f);
     if (bmp == nullptr) {
-        bmp = cache.load_png(bmp_name, width, height, grayscale, resize ? win->FromDIP(10) * 0.1f : 0.f);
+        bmp = cache.load_png(bmp_name, width, height, grayscale, resize ? wxWindow::FromDIP(10, win) * 0.1f : 0.f);
     }
 
     if (bmp == nullptr) {
@@ -523,7 +525,8 @@ wxBitmap create_scaled_bitmap2(const std::string& bmp_name_in, Slic3r::GUI::Bitm
     const vector<std::string>& array_new_color/* = vector<std::string>()*/) // color witch will used instead of orange
 {
     unsigned int width = 0;
-    unsigned int height = (unsigned int)(win->FromDIP(px_cnt) + 0.5f);
+    // win may be nullptr; see create_scaled_bitmap() above.
+    unsigned int height = (unsigned int)(wxWindow::FromDIP(px_cnt, win) + 0.5f);
 
     if (bmp_name_in.empty() || bmp_name_in == ".png") {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": empty bitmap name";
@@ -1025,6 +1028,15 @@ wxSize ScalableBitmap::GetBmpSize() const
     return m_bmp.GetScaledSize();
 #else
     return m_bmp.GetSize();
+#endif
+}
+
+wxSize ScalableBitmap::GetBmpSize(const wxBitmap &bmp)
+{
+#ifdef __APPLE__
+    return bmp.GetScaledSize();
+#else
+    return bmp.GetSize();
 #endif
 }
 

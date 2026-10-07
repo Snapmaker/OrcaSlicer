@@ -271,6 +271,9 @@ struct CreateVolumePart
     ModelVolumeType volume_type;
     // 0 .. default(inherit from object), otherwise 1 based index of filament
     int extruder = 0;
+    // Move of the volume in its local XY plane [in mm]. SVG shapes are centered by their own
+    // bounding box, levels of a traced image use it to stay aligned with each other.
+    Vec2d offset = Vec2d::Zero();
 };
 using CreateVolumeParts = std::vector<CreateVolumePart>;
 

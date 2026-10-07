@@ -349,7 +349,8 @@ public:
     bool open_3mf_file(const fs::path &file_path, bool from_url = false);
     int  get_3mf_file_count(std::vector<fs::path> paths);
     void add_file();
-    void add_model(bool imperial_units = false, std::string fname = "");
+    // Returns false when no object was added (e.g. the user cancelled the load dialog).
+    bool add_model(bool imperial_units = false, std::string fname = "");
     void import_zip_archive();
     void import_sl1_archive();
     void extract_config_from_project();
@@ -739,6 +740,13 @@ public:
     GLCanvas3D* get_assmeble_canvas3D();
     wxWindow* get_select_machine_dialog();
 
+    // Docked UV-editor pane used by GLGizmoTextureDisplacement's LSCM projection preview (see
+    // UVEditorCanvas.hpp). Returns nullptr only before the main window is fully constructed.
+    class UVEditorCanvas* get_uv_editor_canvas();
+    // Shows or hides the UV-editor AUI pane, updating its docked layout accordingly. Safe to call
+    // repeatedly (e.g. every time the gizmo's active layer/projection method changes).
+    void show_uv_editor(bool show);
+
     void arrange();
     void orient();
     void find_new_position(const ModelInstancePtrs  &instances);
@@ -776,7 +784,8 @@ public:
     // Ultra: split a painted part into one solid part per filament (docs/superpowers/specs/2026-09-01-color-split-design.md).
     void split_by_color();
     // Image Fill (Phase 2): apply a picture or a gradient to the selected part.
-    void apply_image_fill();
+    // image_path .. image dropped onto the 3D scene, the dialog starts with it
+    void apply_image_fill(const wxString &image_path = wxEmptyString);
     void optimize_rotation();
     // find all empty cells on the plate and won't overlap with exclusion areas
     static std::vector<Vec2f> get_empty_cells(const Vec2f step);

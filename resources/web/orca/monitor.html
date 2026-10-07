@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+// Theme, decided before anything is drawn - the same contract as stream_center.html:
+//   1. ?theme=dark|light (the slicer passes its own); 2. window.__edgeTheme('dark'|'light') (a live
+//   switch, no reload); 3. prefers-color-scheme; 4. dark.
+(function() {
+    var root = document.documentElement, explicit = '', mq = null, q = null;
+    try { q = new URLSearchParams(location.search); } catch (e) {}
+    if (q && (q.get('theme') === 'dark' || q.get('theme') === 'light')) explicit = q.get('theme');
+    if (q && q.get('embed') === '1') root.setAttribute('data-embed', '1');
+    try { mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null; } catch (e) {}
+    function device() { return mq && mq.matches ? 'light' : 'dark'; }
+    function apply(t) { root.setAttribute('data-theme', t); }
+    apply(explicit || device());
+    if (mq) {
+        var follow = function() { if (!explicit) apply(device()); };
+        if (mq.addEventListener) mq.addEventListener('change', follow);
+        else if (mq.addListener) mq.addListener(follow);
+    }
+    window.__edgeTheme = function(t) {
+        if (t !== 'dark' && t !== 'light') return;
+        explicit = t;
+        apply(t);
+        try { var u = new URL(location.href); u.searchParams.set('theme', t); history.replaceState(history.state, '', u.toString()); } catch (e) {}
+    };
+})();
+</script>
+<title>Printers</title>
+<style>
+:root { --bg: #2b2b2b; --bar: #1f1f1f; --card: #333; --card-off: #2e2e2e; --chip: #3d3d3d; --ctl: #3a3a3a; --ctl-hover: #474747; --border: #4a4a4a; --fg: #fff; --fg2: #ddd; --mute: #b0b0b0; --track: #222; --fill: #19a35a; --ok-fg: #5fd08a; --warn-fg: #f0a030; --err-fg: #ff9a9a; --err-bg: #3a2222; --accent: #0a7a3e; --accent-fg: #fff; --stop: #a8321f; --focus: #5aa9ef;
+        --p-printing: #0a7a3e; --p-paused: #8a5a00; --p-error: #a8321f; --p-idle: #4a4a4a; --p-offline: #3a3a3a; --pill-fg: #fff; }
+:root[data-theme="light"] { --bg: #f4f4f4; --bar: #ffffff; --card: #ffffff; --card-off: #f0f0f1; --chip: #ececec; --ctl: #eeeeee; --ctl-hover: #e0e0e0; --border: #d6d6d6; --fg: #262e30; --fg2: #323a3d; --mute: #5f6566; --track: #e3e3e3; --fill: #0a7a3e; --ok-fg: #0a6a36; --warn-fg: #7d4a00; --err-fg: #b0281b; --err-bg: #fdecea; --accent: #0a7a3e; --accent-fg: #fff; --stop: #b0281b; --focus: #1f6fb2;
+        --p-printing: #0a7a3e; --p-paused: #8f5400; --p-error: #b0281b; --p-idle: #5f6566; --p-offline: #6b6b6b; --pill-fg: #fff; }
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme]) { --bg: #f4f4f4; --bar: #ffffff; --card: #ffffff; --card-off: #f0f0f1; --chip: #ececec; --ctl: #eeeeee; --ctl-hover: #e0e0e0; --border: #d6d6d6; --fg: #262e30; --fg2: #323a3d; --mute: #5f6566; --track: #e3e3e3; --fill: #0a7a3e; --ok-fg: #0a6a36; --warn-fg: #7d4a00; --err-fg: #b0281b; --err-bg: #fdecea; --accent: #0a7a3e; --accent-fg: #fff; --stop: #b0281b; --focus: #1f6fb2;
+        --p-printing: #0a7a3e; --p-paused: #8f5400; --p-error: #b0281b; --p-idle: #5f6566; --p-offline: #6b6b6b; --pill-fg: #fff; }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg); color: var(--fg); font-family: 'Segoe UI', Roboto, -apple-system, sans-serif; font-size: 14px; }
+body { display: flex; flex-direction: column; overflow: hidden; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 16px; background: var(--bar); border-bottom: 1px solid var(--border); }
+header h1 { font-size: 16px; font-weight: 600; margin-right: 4px; }
+#counts { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; }
+#counts li { padding: 3px 9px; border-radius: 12px; background: var(--chip); color: var(--fg2); font-size: 12px; white-space: nowrap; }
+#counts li .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+#spacer { flex: 1; }
+label.sel { display: inline-flex; align-items: center; gap: 6px; color: var(--mute); font-size: 12px; }
+select, .hbtn { background: var(--ctl); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; font: inherit; font-size: 13px; }
+.hbtn { cursor: pointer; }
+.hbtn:hover { background: var(--ctl-hover); }
+#updated { color: var(--mute); font-size: 12px; white-space: nowrap; }
+#banner { display: none; margin: 10px 16px 0; padding: 8px 12px; border-radius: 6px; background: var(--err-bg); color: var(--err-fg); }
+main { flex: 1; overflow-y: auto; padding: 12px 16px 24px; }
+#grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); align-items: start; }
+.empty { color: var(--mute); padding: 24px 4px; line-height: 1.5; max-width: 640px; }
+.pcard { background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--p-idle); border-radius: 8px; padding: 12px 12px 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.pcard.st-printing { border-left-color: var(--p-printing); }
+.pcard.st-paused { border-left-color: var(--p-paused); }
+.pcard.st-error { border-left-color: var(--p-error); }
+.pcard.st-offline { border-left-color: var(--p-offline); background: var(--card-off); }
+.pcard.st-offline .pname { color: var(--fg2); }
+.phead { display: flex; align-items: center; gap: 10px; }
+.picon { flex: none; width: 36px; height: 36px; object-fit: contain; border-radius: 6px; background: #fff; padding: 2px; }
+.pjobrow { display: flex; gap: 10px; align-items: flex-start; }
+.pjobrow .pjob { flex: 1; min-width: 0; }
+.pthumb { flex: none; width: 64px; height: 64px; object-fit: contain; border-radius: 6px; background: var(--track); border: 1px solid var(--border); }
+.ptitles { flex: 1; min-width: 0; }
+.pname { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pmodel { color: var(--mute); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ppill { flex: none; padding: 2px 9px; border-radius: 10px; font-size: 12px; font-weight: 600; color: var(--pill-fg); background: var(--p-idle); }
+.st-printing .ppill { background: var(--p-printing); }
+.st-paused .ppill { background: var(--p-paused); }
+.st-error .ppill { background: var(--p-error); }
+.st-offline .ppill { background: var(--p-offline); }
+.pjob { display: flex; flex-direction: column; gap: 4px; }
+.ptask { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg2); }
+.pbar { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; }
+.pfill { height: 100%; background: var(--fill); }
+.pprog, .pstage, .pnote { color: var(--mute); font-size: 12px; }
+/* Temperatures, Fans and Filament: one outlined group each, named on the border. */
+.pgroup { border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px 6px; min-width: 0; }
+.pgroup legend { padding: 0 4px; color: var(--mute); font-size: 11px; }
+.pitems { display: flex; flex-wrap: wrap; gap: 4px 12px; list-style: none; font-size: 12px; }
+.pitems.one { flex-wrap: nowrap; overflow: hidden; white-space: nowrap; }
+.pitem { display: inline-flex; gap: 5px; white-space: nowrap; }
+.pitem .k { color: var(--mute); }
+.pitem .v { color: var(--fg); font-variant-numeric: tabular-nums; }
+.pfil { display: flex; flex-direction: column; gap: 4px; }
+.pfrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pfname { color: var(--mute); font-size: 12px; min-width: 64px; }
+.pswatches { display: flex; gap: 4px; list-style: none; flex-wrap: wrap; align-items: center; }
+/* Every slot the same size, filled or empty. */
+.psw { position: relative; flex: 0 0 34px; width: 34px; min-width: 34px; max-width: 34px; height: 22px; min-height: 22px; max-height: 22px; border-radius: 4px; border: 1px solid rgba(127,127,127,0.55); display: flex; align-items: center; justify-content: center; background: var(--chip); overflow: visible; }
+.psw.vacant { background: transparent; border-style: dashed; }
+.psw.low::after { content: ''; position: absolute; right: -3px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--warn-fg); border: 1px solid var(--card); }
+.pswt { font-size: 9px; font-weight: 700; color: #fff; text-shadow: 0 0 2px #000, 0 0 1px #000; letter-spacing: 0.2px; }
+.perr { display: flex; align-items: flex-start; gap: 6px; color: var(--err-fg); background: var(--err-bg); border-radius: 6px; padding: 6px 4px 6px 8px; font-size: 13px; line-height: 1.35; }
+.perrt { flex: 1; min-width: 0; }
+.perrx { flex: none; font: inherit; font-size: 16px; line-height: 1; width: 24px; height: 24px; border: 0; border-radius: 4px; background: transparent; color: var(--err-fg); cursor: pointer; }
+.perrx:hover { background: rgba(127,127,127,0.2); }
+.pacts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.pbtn { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--ctl); color: var(--fg); cursor: pointer; }
+.pbtn:hover { background: var(--ctl-hover); }
+.pbtn.stop { border-color: var(--stop); color: var(--err-fg); }
+.pbtn.alt { margin-left: auto; }
+.pbtn.off { opacity: 0.5; cursor: default; }
+.pbtn.off:hover { background: var(--ctl); }
+.pbtn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.pbtn.danger { background: var(--stop); color: #fff; border-color: var(--stop); }
+.pjobline { font-size: 12px; color: var(--mute); }
+.pjobline.ok { color: var(--ok-fg); }
+.pjobline.err { color: var(--err-fg); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* The Stop confirmation */
+#scrim { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 10; padding: 16px; }
+#scrim.open { display: flex; }
+#dialog { background: var(--card); color: var(--fg); border: 1px solid var(--border); border-radius: 10px; max-width: 440px; width: 100%; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+#dialog h2 { font-size: 16px; }
+#dialog p { line-height: 1.45; color: var(--fg2); }
+#dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
+@media (max-width: 520px) { header { padding: 8px 10px; } main { padding: 10px; } #grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+    <h1 id="title">Printers</h1>
+    <ul id="counts" aria-label="Printer states"></ul>
+    <span id="spacer"></span>
+    <label class="sel">Group <select id="group" aria-label="Group"></select></label>
+    <label class="sel">Sort <select id="sort" aria-label="Sort by">
+        <option value="status">Status</option>
+        <option value="name">Name</option>
+    </select></label>
+    <button type="button" class="hbtn" id="tasks" hidden title="The cloud Send to Multi-device queue and history">Multi-device tasks</button>
+    <button type="button" class="hbtn" id="refresh">Refresh</button>
+    <span id="updated" aria-live="off"></span>
+</header>
+<div id="banner" role="alert"></div>
+<main>
+    <div id="grid" aria-labelledby="title"></div>
+    <div id="empty" class="empty" hidden></div>
+</main>
+<div id="announce" class="sr" role="status" aria-live="polite"></div>
+<div id="scrim">
+    <div id="dialog" role="dialog" aria-modal="true" aria-labelledby="dlgtitle" aria-describedby="dlgtext">
+        <h2 id="dlgtitle">Stop the print</h2>
+        <p id="dlgtext"></p>
+        <div class="row">
+            <button type="button" class="pbtn danger" id="dlgstop">Stop print</button>
+            <button type="button" class="pbtn" id="dlgkeep">Keep printing</button>
+        </div>
+    </div>
+</div>
+<script src="printer_cards.js"></script>
+<script>
+(function() {
+    'use strict';
+    var REFRESH_MS = 10000;      // the hub's own cadence
+    var READ_TIMEOUT_MS = 30000; // a read that never answered no longer blocks the next one
+    var GROUP_KEY = 'edgeslicer_printers_group', SORT_KEY = 'edgeslicer_printers_sort';
+
+    var rows = [], groups = [{ id: 'all', name: 'All printers', all: true, printers: [] }];
+    var loaded = false, active = true, timer = 0, readingSince = 0, lastAt = 0;
+    var jobs = {};       // printer id -> { action, phase, text, error, job }
+    var jobOf = {};      // job number -> printer id
+    var groupSel = 'all', sortBy = 'status';
+    // Plate pictures from the G-code archive, by record id: a data: URL, or 'pending' / '' (none).
+    var thumbs = {};
+    // Dismissed errors, by printer + error code: kept for this session (sessionStorage), so a new
+    // error code - or the next start of the slicer - shows the banner again.
+    var DISMISS_KEY = 'edgeslicer_printers_dismissed', dismissed = {};
+    try { dismissed = JSON.parse(sessionStorage.getItem(DISMISS_KEY) || '{}') || {}; } catch (e) { dismissed = {}; }
+    try { groupSel = localStorage.getItem(GROUP_KEY) || 'all'; sortBy = localStorage.getItem(SORT_KEY) || 'status'; } catch (e) {}
+    var q = null;
+    try { q = new URLSearchParams(location.search); } catch (e) {}
+
+    // ---- the slicer: the app-wide "wx" script channel (never the loopback API or the hub) ----
+    function post(msg) {
+        try { window.wx.postMessage(msg); return true; } catch (e) {}
+        return false;
+    }
+    function $(id) { return document.getElementById(id); }
+    var announceTimer = 0;
+    function announce(text) {
+        var n = $('announce');
+        n.textContent = '';
+        if (announceTimer) clearTimeout(announceTimer);
+        announceTimer = setTimeout(function() { n.textContent = text; }, 60);
+    }
+
+    function requestPrinters() {
+        if (readingSince && Date.now() - readingSince < READ_TIMEOUT_MS) return;
+        readingSince = Date.now();
+        if (!post('printers_get')) {
+            readingSince = 0;
+            showBanner('This page talks to EdgeSlicer only inside the slicer.');
+        }
+    }
+    function schedule() {
+        if (timer) { clearInterval(timer); timer = 0; }
+        if (active) timer = setInterval(requestPrinters, REFRESH_MS);
+    }
+    // The tab is on screen (true) or not (false). Back on screen: refresh at once.
+    window.__printersActive = function(on) {
+        var was = active;
+        active = !!on;
+        schedule();
+        if (active && !was) requestPrinters();
+    };
+
+    function showBanner(text) {
+        var b = $('banner');
+        b.textContent = text || '';
+        b.style.display = text ? 'block' : 'none';
+    }
+
+    window.__printers = function(payload) {
+        readingSince = 0;
+        payload = payload || {};
+        if (!payload.ok) {
+            // Keep the last cards; say why they are not fresh.
+            showBanner('Could not read the printers: ' + (payload.error || 'no answer') + (loaded ? '. Showing the last known state.' : '.'));
+            if (!loaded) render();
+            return;
+        }
+        showBanner('');
+        loaded = true;
+        rows = Array.isArray(payload.printers) ? payload.printers : [];
+        lastAt = payload.at || Date.now();
+        render();
+    };
+
+    window.__printerGroups = function(list) {
+        if (!Array.isArray(list) || !list.length) return;
+        groups = list;
+        renderGroups();
+        render();
+    };
+
+    function renderGroups() {
+        var s = $('group');
+        while (s.firstChild) s.removeChild(s.firstChild);
+        groups.forEach(function(g) {
+            var o = document.createElement('option');
+            o.value = g.id; o.textContent = g.name;
+            s.appendChild(o);
+        });
+        if (!groups.some(function(g) { return g.id === groupSel; })) groupSel = 'all';
+        s.value = groupSel;
+        // One group only ("All printers"): nothing to choose.
+        s.parentNode.hidden = groups.length < 2;
+    }
+
+    function visibleRows() {
+        var g = groups.filter(function(x) { return x.id === groupSel; })[0];
+        var list = rows;
+        if (g && !g.all) {
+            var ids = {};
+            (g.printers || []).forEach(function(id) { ids[id] = true; });
+            list = rows.filter(function(p) { return ids[p.id]; });
+        }
+        return PrinterCards.sortRows(list, sortBy);
+    }
+
+    var STATE_WORDS = [['printing', 'printing'], ['paused', 'paused'], ['error', 'with an error'], ['idle', 'idle'], ['offline', 'offline']];
+    function renderCounts(list) {
+        var c = $('counts'), s = PrinterCards.summary(list);
+        while (c.firstChild) c.removeChild(c.firstChild);
+        STATE_WORDS.forEach(function(w) {
+            if (!s[w[0]]) return;
+            var li = document.createElement('li');
+            var dot = document.createElement('span');
+            dot.className = 'dot'; dot.setAttribute('aria-hidden', 'true');
+            dot.style.background = 'var(--p-' + w[0] + ')';
+            li.appendChild(dot);
+            li.appendChild(document.createTextNode(s[w[0]] + ' ' + w[1]));
+            c.appendChild(li);
+        });
+    }
+
+    function render() {
+        var list = visibleRows();
+        renderCounts(list);
+        PrinterCards.render($('grid'), list, { jobs: jobs, onAction: onAction, onOpen: onOpen, showOpen: false,
+                                               thumbFor: thumbFor, isDismissed: isDismissed, onDismiss: onDismiss });
+        var empty = $('empty');
+        if (!loaded) { empty.hidden = false; empty.textContent = 'Reading the printers…'; }
+        else if (!rows.length) { empty.hidden = false; empty.textContent = 'No printers yet. Bambu Lab printers appear once they are bound or found on the LAN (Device tab), Snapmaker printers once they are found or added on the LAN, and Klipper / Moonraker printers once a printer preset or a saved device has their address.'; }
+        else if (!list.length) { empty.hidden = false; empty.textContent = 'No printer of this group is known to the slicer right now.'; }
+        else empty.hidden = true;
+        $('updated').textContent = lastAt ? 'Updated ' + new Date(lastAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+    }
+
+    // ---- Pause / Resume / Stop ----
+    function word(action, done) {
+        if (action === 'pause') return done ? 'Paused.' : 'Pausing…';
+        if (action === 'resume') return done ? 'Resumed.' : 'Resuming…';
+        return done ? 'Stopped.' : 'Stopping…';
+    }
+    function onAction(p, action) {
+        var cur = jobs[p.id];
+        if (cur && cur.phase === 'running') return;
+        if (action === 'stop') { askStop(p); return; }
+        run(p, action, false);
+    }
+    function run(p, action, confirm) {
+        jobs[p.id] = { action: action, phase: 'running', text: word(action, false), error: '', job: 0 };
+        render();
+        post('printers_control:' + action + ':' + (confirm ? '1' : '0') + ':' + p.id);
+    }
+    window.__printerControl = function(r) {
+        if (!r || !jobs[r.id]) return;
+        var s = jobs[r.id];
+        if (!r.ok) { finish(r.id, 'error', r.error || 'The command was refused.'); return; }
+        s.job = r.job; s.dry_run = !!r.dry_run;
+        jobOf[r.job] = r.id;
+        setTimeout(function() { post('printers_job:' + r.job); }, 800);
+    };
+    window.__printerJob = function(r) {
+        if (!r) return;
+        var id = jobOf[r.id], s = id !== undefined ? jobs[id] : null;
+        if (!s || s.job !== r.id) return;
+        if (r.state === 'running') {
+            if (r.text) s.text = r.text;
+            render();
+            setTimeout(function() { post('printers_job:' + r.id); }, 1000);
+            return;
+        }
+        delete jobOf[r.id];
+        if (r.state === 'done') finish(id, 'done', s.dry_run ? 'Dry run: nothing was sent.' : word(s.action, true));
+        else finish(id, 'error', r.error || ('The ' + s.action + ' ' + (r.state || 'failed')));
+    };
+    function finish(id, phase, text) {
+        var s = jobs[id];
+        if (!s) return;
+        s.phase = phase;
+        if (phase === 'error') s.error = text; else s.text = text;
+        announce((phase === 'error' ? 'Error: ' : '') + text);
+        render();
+        if (active) requestPrinters(); // the buttons follow the printer's new state
+        setTimeout(function() { if (jobs[id] === s) { delete jobs[id]; render(); } }, phase === 'error' ? 20000 : 8000);
+    }
+
+    // The Stop confirmation: the safe answer has the focus; Escape keeps printing.
+    // The card under the dialog is redrawn by every read, so the focus goes back by its key.
+    var askFor = null, askReturn = '';
+    function askStop(p) {
+        askFor = p;
+        askReturn = 'act:' + p.id + ':stop';
+        $('dlgtext').textContent = 'Stop the print on ' + (p.name || p.id) + '? It cannot be resumed: the printer throws the job away and the plate has to be started again.';
+        $('scrim').classList.add('open');
+        $('dlgkeep').focus();
+    }
+    function closeAsk() {
+        askFor = null;
+        $('scrim').classList.remove('open');
+        var nodes = document.querySelectorAll('#grid [data-fk]');
+        for (var i = 0; i < nodes.length; i++)
+            if (nodes[i].getAttribute('data-fk') === askReturn) { try { nodes[i].focus(); } catch (e) {} break; }
+    }
+    $('dlgkeep').addEventListener('click', closeAsk);
+    $('dlgstop').addEventListener('click', function() { var p = askFor; closeAsk(); if (p) run(p, 'stop', true); });
+    $('scrim').addEventListener('click', function(e) { if (e.target === $('scrim')) closeAsk(); });
+    document.addEventListener('keydown', function(e) {
+        if (!askFor) return;
+        if (e.key === 'Escape') { e.preventDefault(); closeAsk(); return; }
+        if (e.key === 'Tab') { // keep the focus inside the dialog
+            var a = $('dlgstop'), b = $('dlgkeep');
+            if (e.shiftKey && document.activeElement === a) { e.preventDefault(); b.focus(); }
+            else if (!e.shiftKey && document.activeElement === b) { e.preventDefault(); a.focus(); }
+        }
+    });
+
+    // ---- plate pictures ----
+    // The cloud's picture of a Bambu job (cover_url, https) is used as it is; a job sent from this PC
+    // has its plate picture in the G-code archive (thumb_id), which the slicer hands over once.
+    function thumbFor(p) {
+        if (p.cover_url && /^https:\/\//.test(p.cover_url)) return p.cover_url;
+        var id = p.thumb_id;
+        if (!id) return '';
+        if (!(id in thumbs)) { thumbs[id] = 'pending'; post('printers_thumb:' + id); }
+        var t = thumbs[id];
+        return t && t !== 'pending' ? t : '';
+    }
+    window.__printerThumb = function(r) {
+        if (!r || !r.id) return;
+        thumbs[r.id] = /^data:image\/png;base64,/.test(r.data || '') ? r.data : '';
+        if (thumbs[r.id]) render();
+    };
+
+    // ---- dismissing an error ----
+    function isDismissed(key) { return !!dismissed[key]; }
+    function onDismiss(p, key) {
+        dismissed[key] = 1;
+        try { sessionStorage.setItem(DISMISS_KEY, JSON.stringify(dismissed)); } catch (e) {}
+        announce('Error dismissed on ' + (p.name || p.id) + '.');
+        render();
+        // The focus was on the button that is gone: put it on the card's first control.
+        var c = document.querySelector('.pcard[data-printer-id="' + String(p.id).replace(/[\\"]/g, '\\$&') + '"]');
+        var f = c && c.querySelector('button');
+        if (f) f.focus();
+    }
+
+    // ---- Open Device page ----
+    function onOpen(p) { post('printers_open:' + p.id); }
+    window.__printerOpen = function(r) {
+        if (r && !r.ok && r.error) { showBanner(r.error); announce(r.error); }
+    };
+
+    // ---- header ----
+    $('refresh').addEventListener('click', function() { readingSince = 0; requestPrinters(); });
+    $('sort').value = sortBy === 'name' ? 'name' : 'status';
+    $('sort').addEventListener('change', function() {
+        sortBy = this.value;
+        try { localStorage.setItem(SORT_KEY, sortBy); } catch (e) {}
+        render();
+    });
+    $('group').addEventListener('change', function() {
+        groupSel = this.value;
+        try { localStorage.setItem(GROUP_KEY, groupSel); } catch (e) {}
+        render();
+    });
+    if (q && q.get('tasks') === '1') {
+        $('tasks').hidden = false;
+        $('tasks').addEventListener('click', function() { post('printers_tasks'); });
+    }
+
+    renderGroups();
+    render();
+    post('printers_groups_get');
+    requestPrinters();
+    schedule();
+})();
+</script>
+</body>
+</html>

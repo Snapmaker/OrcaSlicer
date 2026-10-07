@@ -1159,7 +1159,7 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
     m_cost_your_price.clear();
     if (PresetBundle *bundle = wxGetApp().preset_bundle; bundle != nullptr && !(wxGetApp().plater() && wxGetApp().plater()->only_gcode_mode())) {
         for (const FilamentPrices::Resolved &slot :
-             FilamentPrices::resolve_slots(bundle->full_fff_config(), *FilamentPrices::global(), &bundle->filaments))
+             FilamentPrices::resolve_slots(bundle->full_config(), *FilamentPrices::global(), &bundle->filaments))
             m_cost_your_price.push_back(slot.yours() ? slot.price : -1.);
     }
 

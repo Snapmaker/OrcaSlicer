@@ -503,6 +503,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/PrinterWebView.hpp
     GUI/StreamPanel.cpp
     GUI/StreamPanel.hpp
+    GUI/PrintersPanel.cpp
+    GUI/PrintersPanel.hpp
     GUI/HomePanel.cpp
     GUI/ModelBrowserPanel.cpp
     GUI/Theme.cpp
@@ -947,6 +949,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/LoginUserAgent.hpp
     Utils/HubHomeLogic.cpp
     Utils/HubHomeLogic.hpp
+    Utils/PrintersMonitor.cpp
+    Utils/PrintersMonitor.hpp
     Utils/HubHandover.hpp
     Utils/HomeTabLogic.cpp
     Utils/HomeTabLogic.hpp

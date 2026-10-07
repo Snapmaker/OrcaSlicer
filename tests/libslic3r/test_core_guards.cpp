@@ -8,6 +8,7 @@
 #include "libslic3r/Flow.hpp"
 #include "libslic3r/MultiMaterialSegmentation.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/AABBTreeIndirect.hpp"
 #include "libslic3r/Arachne/SkeletalTrapezoidation.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/Polygon.hpp"
@@ -123,4 +124,13 @@ TEST_CASE("Empty extrusion loop and polygon split cleanly", "[CoreGuards][Extrus
 
     Polygon empty;
     CHECK(empty.split_at_index(0).empty());
+}
+
+// Orca #15399: BoundingBoxWrapper::centroid() lacked parentheses and returned min + max / 2.
+TEST_CASE("AABB tree bounding box wrapper centroid is the box centre", "[CoreGuards][AABBIndirect]")
+{
+    const BoundingBox bbox(Point(1000, 2000), Point(3000, 6000));
+    const AABBTreeIndirect::BoundingBoxWrapper wrapper(0, bbox);
+    // The wrapper inflates the box symmetrically, so the centre is unchanged.
+    CHECK(wrapper.centroid() == Point(2000, 4000));
 }

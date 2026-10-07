@@ -648,6 +648,10 @@ private:
 
     std::map<std::string, ::CheckBox*> m_overrides_options;
 
+    // Under Price: which price slicing uses (yours from Filament prices, or the preset's) and why.
+    wxStaticText*   m_price_note {nullptr};
+    wxSizer*        price_note_create_widget(wxWindow* parent);
+
 public:
 	//BBS: GUI refactor
 	TabFilament(ParamsPanel* parent) :
@@ -660,6 +664,8 @@ public:
 	void		toggle_options() override;
 	void		update() override;
 	void		clear_pages() override;
+    // Refreshes the line under Price (also called when your filament prices change).
+    void        update_price_note();
 	bool 		supports_printer_technology(const PrinterTechnology tech) const override { return tech == ptFFF; }
 
     const std::string&	get_custom_gcode(const t_config_option_key& opt_key) override;

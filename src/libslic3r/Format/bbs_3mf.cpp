@@ -4,6 +4,7 @@
 #include "../Model.hpp"
 #include "../MixedFilament.hpp"
 #include "../Preset.hpp"
+#include "../FilamentPrices.hpp"
 #include "../Utils.hpp"
 #include "../LocalesUtils.hpp"
 #include "../GCode.hpp"
@@ -10330,11 +10331,32 @@ bool store_bbs_3mf(StoreParams& store_params)
     if (store_params.path == nullptr || store_params.model == nullptr)
         return false;
 
+    // Sliced-plate file without filament prices: write stripped copies, leave the caller's own alone.
+    DynamicPrintConfig* const   caller_config  = store_params.config;
+    const std::vector<Preset*>  caller_presets = store_params.project_presets;
+    DynamicPrintConfig          stripped_config;
+    std::vector<std::unique_ptr<Preset>> stripped_presets;
+    if (store_params.strip_filament_prices) {
+        if (caller_config != nullptr) {
+            stripped_config = *caller_config;
+            FilamentPrices::strip_prices(stripped_config);
+            store_params.config = &stripped_config;
+        }
+        for (Preset*& preset : store_params.project_presets)
+            if (preset != nullptr && preset->type == Preset::TYPE_FILAMENT) {
+                stripped_presets.emplace_back(std::make_unique<Preset>(*preset));
+                FilamentPrices::strip_prices(stripped_presets.back()->config);
+                preset = stripped_presets.back().get();
+            }
+    }
+
     _BBS_3MF_Exporter exporter;
     bool res = exporter.save_model_to_file(store_params);
     if (!res)
         exporter.log_errors();
 
+    store_params.config          = caller_config;
+    store_params.project_presets = caller_presets;
     return res;
 }
 

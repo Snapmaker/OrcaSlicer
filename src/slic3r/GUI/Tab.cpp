@@ -68,6 +68,7 @@
 #include "Widgets/Button.hpp"
 #include "Widgets/SegmentedToggle.hpp"
 #include "FlowVariantEdit.hpp"
+#include "FilamentPriceDialog.hpp"
 #include "libslic3r/PresetFlowVariant.hpp"
 #include "FlowTypeHelper.hpp"
 #include <wx/textdlg.h>
@@ -4714,6 +4715,13 @@ void TabFilament::build()
         optgroup->append_single_option_line("filament_shrink");
         optgroup->append_single_option_line("filament_shrinkage_compensation_z");
         optgroup->append_single_option_line("filament_cost");
+        {
+            // Your own price (Filament prices window) shadows this preset's Price when set: say so here.
+            Line price_note_line = Line{ "", "" };
+            price_note_line.full_width = 1;
+            price_note_line.widget = [this](wxWindow* parent) { return price_note_create_widget(parent); };
+            optgroup->append_line(price_note_line);
+        }
         optgroup->append_single_option_line("filament_z_offset");
         //BBS
         optgroup->append_single_option_line("temperature_vitrification");
@@ -5051,6 +5059,48 @@ void TabFilament::reload_config()
     this->compatible_widget_reload(m_compatible_printers);
     this->compatible_widget_reload(m_compatible_prints);
     Tab::reload_config();
+    update_price_note();
+}
+
+wxSizer* TabFilament::price_note_create_widget(wxWindow* parent)
+{
+    const int em = em_unit(parent);
+    auto* vsizer = new wxBoxSizer(wxVERTICAL);
+    m_price_note = new wxStaticText(parent, wxID_ANY, wxEmptyString);
+    m_price_note->SetFont(wxGetApp().normal_font());
+    vsizer->Add(m_price_note, 0, wxEXPAND);
+
+    auto* hsizer = new wxBoxSizer(wxHORIZONTAL);
+    auto add_button = [parent, hsizer, em](const wxString& label, const wxString& tip, std::function<void()> on_click) {
+        auto* btn = new Button(parent, label);
+        btn->SetStyle(ButtonStyle::Regular, ButtonType::Compact);
+        btn->SetToolTip(tip);
+        btn->Bind(wxEVT_BUTTON, [on_click](wxCommandEvent&) { on_click(); });
+        hsizer->Add(btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT | wxTOP, em / 2);
+    };
+    add_button(_L("Set my price") + dots,
+               _L("Your own price per kilogram for this filament on every printer and nozzle (or for this preset only). "
+                  "Kept on this computer, never in the preset or in project files."),
+               [this, parent]() { edit_filament_price(parent, *m_presets); });
+    add_button(_L("Filament prices") + dots, _L("Every filament with your prices, in one table"),
+               [parent]() { show_filament_price_dialog(parent); });
+    vsizer->Add(hsizer, 0);
+    update_price_note();
+    return vsizer;
+}
+
+void TabFilament::update_price_note()
+{
+    if (m_price_note == nullptr || m_presets == nullptr)
+        return;
+    const wxString text = filament_price_note(edited_filament_price(*m_presets));
+    if (m_price_note->GetLabel() == text)
+        return;
+    m_price_note->SetLabel(text);
+    m_price_note->SetToolTip(text);
+    m_price_note->Wrap(em_unit(m_price_note) * 45);
+    if (wxWindow* parent = m_price_note->GetParent())
+        parent->Layout();
 }
 
 //void TabFilament::update_volumetric_flow_preset_hints()
@@ -5223,6 +5273,7 @@ void TabFilament::update()
     m_update_cnt++;
 
     update_description_lines();
+    update_price_note();
     //BBS: GUI refactor
     //Layout();
     m_parent->Layout();
@@ -5241,6 +5292,7 @@ void TabFilament::clear_pages()
 
     m_volumetric_speed_description_line = nullptr;
 	m_cooling_description_line = nullptr;
+    m_price_note = nullptr;
 
     //BBS: GUI refactor
     m_overrides_options.clear();

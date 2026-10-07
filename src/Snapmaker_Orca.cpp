@@ -7324,6 +7324,9 @@ bool CLI::export_project(Model *model, std::string& path, PlateDataPtrs &partpla
     store_params.export_plate_idx = plate_to_export;
     if (minimum_save)
         store_params.strategy = store_params.strategy | SaveStrategy::SkipModel;
+    // --no-filament-prices leaves the prices out of the 3MF's settings as well as out of its G-code.
+    if (const ConfigOptionBool *opt = m_config.option<ConfigOptionBool>("no_filament_prices"); opt != nullptr && opt->value)
+        store_params.strip_filament_prices = true;
     BambuExport::Report bambu_report;
     if (const ConfigOptionBool *opt = m_config.option<ConfigOptionBool>("export_bambu_3mf"); opt != nullptr && opt->value) {
         store_params.bambu_compat = true;

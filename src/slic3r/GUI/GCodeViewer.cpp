@@ -25,6 +25,8 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Layer.hpp"
 #include "Widgets/ProgressDialog.hpp"
+#include "FilamentPriceDialog.hpp"
+#include "libslic3r/FilamentPrices.hpp"
 
 #include <imgui/imgui_internal.h>
 
@@ -1152,6 +1154,14 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
 
     m_print_statistics = gcode_result.print_statistics;
     m_cost_breakdown   = compute_cost(gcode_result);
+    // Which filament slots slice with a price of yours (Filament prices), so the breakdown can say
+    // so. Not for a G-code opened on its own: nothing of yours was applied to it.
+    m_cost_your_price.clear();
+    if (PresetBundle *bundle = wxGetApp().preset_bundle; bundle != nullptr && !(wxGetApp().plater() && wxGetApp().plater()->only_gcode_mode())) {
+        for (const FilamentPrices::Resolved &slot :
+             FilamentPrices::resolve_slots(bundle->full_fff_config(), *FilamentPrices::global(), &bundle->filaments))
+            m_cost_your_price.push_back(slot.yours() ? slot.price : -1.);
+    }
 
     if (m_time_estimate_mode != PrintEstimatedStatistics::ETimeMode::Normal) {
         const float time = m_print_statistics.modes[static_cast<size_t>(m_time_estimate_mode)].time;
@@ -1345,6 +1355,7 @@ void GCodeViewer::reset()
     m_filament_diameters = std::vector<float>();
     m_filament_densities = std::vector<float>();
     m_cost_breakdown = CostBreakdown();
+    m_cost_your_price.clear();
     m_extrusions.reset_ranges();
     //BBS: always load shell at preview
     //m_shells.volumes.clear();
@@ -4441,10 +4452,12 @@ void GCodeViewer::render_cost_section(const CostBreakdown &cost, const std::stri
                                       bool &expanded, const char *imgui_id) const
 {
     ImGuiWrapper &imgui = *wxGetApp().imgui();
-    auto money = [](double value) {
+    // Currency symbol of the Cost preferences: a label, never a conversion.
+    const std::string symbol = currency_symbol();
+    auto money = [&symbol](double value) {
         char buf[64];
         ::sprintf(buf, "%.2f", round_money(value));
-        return std::string(buf);
+        return symbol + buf;
     };
     auto start_row = [window_padding](float indent) {
         ImGui::Dummy({ window_padding, window_padding });
@@ -4483,7 +4496,6 @@ void GCodeViewer::render_cost_section(const CostBreakdown &cost, const std::stri
 
     if (expanded) {
         const float indent  = ImGui::GetFontSize();
-        char        buf[256];
 
         // Filament, one row per slot, with its model / support / flush / tower split below.
         if (!cost.prices_known) {
@@ -4496,9 +4508,11 @@ void GCodeViewer::render_cost_section(const CostBreakdown &cost, const std::stri
             for (const FilamentCostLine &line : cost.lines) {
                 start_row(indent);
                 std::string row = (boost::format(_u8L("Filament %1%")) % (line.slot + 1)).str() + ": " + money(line.total_cost);
-                if (line.price_per_kg > 0.) {
-                    ::sprintf(buf, "  (%.2f/kg)", line.price_per_kg);
-                    row += buf;
+                // "your price": the slot sliced with a price of yours from Filament prices.
+                const bool yours = line.slot < m_cost_your_price.size() && m_cost_your_price[line.slot] >= 0. &&
+                                   std::abs(m_cost_your_price[line.slot] - line.price_per_kg) < 1e-6;
+                if (line.price_per_kg > 0. || yours) {
+                    row += "  (" + money(line.price_per_kg) + "/kg" + (yours ? ", " + _u8L("your price") : std::string()) + ")";
                 } else
                     row += "  (" + _u8L("no price") + ")";
                 imgui.text(row);
@@ -4523,8 +4537,7 @@ void GCodeViewer::render_cost_section(const CostBreakdown &cost, const std::stri
         if (cost.display_machine > 0.) {
             std::string row = _u8L("Machine time") + ": " + money(cost.machine) + "  (" + short_time(get_time_dhms(float(cost.print_time_s)));
             if (cost.machine_rate_per_h > 0. && !cost.machine_rate_varies) {
-                ::sprintf(buf, " x %.2f/h", cost.machine_rate_per_h);
-                row += buf;
+                row += " x " + money(cost.machine_rate_per_h) + "/h";
             }
             imgui.text(row + ")");
         } else

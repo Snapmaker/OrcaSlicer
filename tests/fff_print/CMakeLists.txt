@@ -9,6 +9,7 @@ add_executable(${_TEST_NAME}_tests
 	test_gcode.cpp
 	test_mass_limited_acceleration.cpp
 	test_cost_breakdown.cpp
+	test_filament_price_overrides.cpp
 	test_gcodeprocessor.cpp
 	test_gcodewriter.cpp
 	test_image_row_preview.cpp

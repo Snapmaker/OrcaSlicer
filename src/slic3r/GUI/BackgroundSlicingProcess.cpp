@@ -16,6 +16,7 @@
 #include <miniz.h>
 
 // Print now includes tbb, and tbb includes Windows. This breaks compilation of wxWidgets if included before wx.
+#include "libslic3r/FilamentPrices.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/Utils.hpp"
@@ -690,6 +691,15 @@ Print::ApplyStatus BackgroundSlicingProcess::apply(const Model &model, const Dyn
 	// TODO: add partplate config
 	DynamicPrintConfig new_config = config;
 	new_config.apply(*m_current_plate->config());
+	// Your own filament prices (Filament prices window): they replace filament_cost here and only
+	// here, so the slice, its G-code and the statistics agree while presets, projects and every
+	// other export keep the preset prices. A change re-runs only the G-code export. Not in the
+	// G-code viewer mode, whose G-code is a file that is never exported again.
+	if (m_print->technology() == ptFFF) {
+		const auto plater = GUI::wxGetApp().mainframe->m_plater;
+		if (!(plater && plater->only_gcode_mode()))
+			FilamentPrices::apply(new_config, *FilamentPrices::global(), &GUI::wxGetApp().preset_bundle->filaments);
+	}
 	Print::ApplyStatus invalidated = m_print->apply(model, new_config);
 
 	// "Include filament prices in exported G-code" (Preferences, default off). Not a config key:

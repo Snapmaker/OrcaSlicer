@@ -284,8 +284,11 @@ TEST_CASE("OpenGL core profile: start-up, shaders, GLModel, plain VBO and dashed
               << "G1 X10 Y60 E2" << nl << "G1 X10 Y10 E2" << nl;
         }
         // An OrcaSlicer-produced G-code must carry its config block.
-        o << "; CONFIG_BLOCK_START" << nl << "; filament_diameter = 1.75" << nl << "; filament_density = 1.24" << nl
-          << "; layer_height = 0.2" << nl << "; CONFIG_BLOCK_END" << nl;
+        // (The processor refuses a block with suspiciously few values, so pad it.)
+        o << "; CONFIG_BLOCK_START" << nl << "; filament_diameter = 1.75" << nl << "; filament_density = 1.24" << nl;
+        for (int i = 0; i < 80; ++i)
+            o << "; layer_height = 0.2" << nl;
+        o << "; CONFIG_BLOCK_END" << nl;
         const bool was_bbl = GCodeProcessor::s_IsBBLPrinter;
         GCodeProcessor::s_IsBBLPrinter = true;
         const boost::filesystem::path path = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("edge_vgcode_gl_%%%%%%%%.gcode");

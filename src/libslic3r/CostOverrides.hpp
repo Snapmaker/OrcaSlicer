@@ -46,9 +46,17 @@
 //   4. your default rate;
 //   5. the preset's time_cost.
 //
+// ---- Fees and markup (file version 3)
+//
+// Your default fees and markup (CostPricing.hpp) are kept in the same file, under "pricing". They are
+// display only and never reach Print::apply. A version 2 file has none: it reads as no fees and no
+// markup and is written back as version 3.
+//
 // Applied in exactly one place: the config handed to Print::apply by the GUI's background slicing
 // (BackgroundSlicingProcess::apply). Presets, their dirty state, compare, sync and project files
 // (3MF / AMF, written from PresetBundle::full_config_secure()) never see these prices.
+
+#include "CostPricing.hpp"
 
 #include <memory>
 #include <string>
@@ -184,7 +192,7 @@ public:
     bool save(const std::string &path) const;
 
     const std::vector<Entry> &entries() const { return m_entries; }
-    // Nothing of yours at all (filaments, machines, default rate).
+    // Nothing of yours that changes slicing (filaments, machines, default rate); fees and markup do not count.
     bool                      empty() const { return m_entries.empty() && m_machines.empty() && !m_has_default_rate; }
     const std::string        &load_error() const { return m_load_error; }
 
@@ -217,8 +225,14 @@ public:
 
     MachineResolved resolve_machine(const MachineIdentity &id, double preset_rate) const;
 
+    // Your default fees and markup (Costs > Project, "Save as my defaults").
+    const PricingSettings &pricing() const { return m_pricing; }
+    // Negative or non-finite amounts are refused (false).
+    bool set_pricing(const PricingSettings &pricing);
+
     // The file format this version writes (older files are read and rewritten in it).
-    static constexpr int VERSION = 2;
+    // 1: filament prices; 2: + machine rates; 3: + default fees and markup ("pricing").
+    static constexpr int VERSION = 3;
     int version() const { return m_version; }
 
 private:
@@ -228,6 +242,8 @@ private:
     double             m_default_rate{0.};
     long long          m_default_updated{0};
     std::string        m_default_extra;
+    PricingSettings    m_pricing;
+    std::string        m_pricing_extra;   // unknown fields of "pricing"
     int                m_version{VERSION};
     std::string        m_extra;   // unknown top-level fields
     std::string        m_load_error;

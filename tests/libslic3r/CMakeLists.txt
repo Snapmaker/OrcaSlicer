@@ -130,6 +130,7 @@ add_executable(${_TEST_NAME}_tests
     test_gcode_import.cpp
     test_cost_estimate.cpp
     test_cost_overrides.cpp
+    test_cost_pricing.cpp
     test_align_math.cpp
     # test_png_io.cpp
     test_indexed_triangle_set.cpp

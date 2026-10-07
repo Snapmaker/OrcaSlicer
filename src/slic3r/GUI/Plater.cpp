@@ -12548,6 +12548,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         this->model.plates_custom_gcodes = model.plates_custom_gcodes;
                         this->model.design_info = model.design_info;
                         this->model.model_info = model.model_info;
+                        // Costs > Project: the project's own fees and markup (display only).
+                        this->model.pricing = model.pricing;
                     }
                 }
 
@@ -13788,6 +13790,8 @@ void Plater::priv::reset(bool apply_presets_change)
     //BBS
     model.calib_pa_pattern.reset();
     model.plates_custom_gcodes.clear();
+    // A new project starts on your default fees and markup.
+    model.pricing.clear();
 
     // BBS
     m_saved_timestamp = m_backup_timestamp = size_t(-1);

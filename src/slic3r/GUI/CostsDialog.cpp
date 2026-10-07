@@ -1,6 +1,7 @@
 #include "CostsDialog.hpp"
 
 #include <wx/checkbox.h>
+#include <wx/choice.h>
 #include <wx/dataview.h>
 #include <wx/panel.h>
 #include <wx/radiobut.h>
@@ -17,6 +18,7 @@
 
 #include "GUI.hpp"
 #include "GUI_App.hpp"
+#include "GLCanvas3D.hpp"
 #include "I18N.hpp"
 #include "MsgDialog.hpp"
 #include "Plater.hpp"
@@ -93,6 +95,14 @@ std::string currency_symbol()
 wxString format_money(double amount)
 {
     return from_u8(currency_symbol()) + wxString::Format("%.2f", amount);
+}
+
+std::string display_vendor(const std::string &vendor)
+{
+    // The BBL vendor profile is called "Bambulab"; its printers' model names say "Bambu Lab".
+    if (boost::algorithm::to_lower_copy(vendor) == "bambulab")
+        return "Bambu Lab";
+    return vendor;
 }
 
 static wxString per_kg(double amount) { return format_money(amount) + "/kg"; }
@@ -422,7 +432,7 @@ CostsDialog::CostsDialog(wxWindow *parent, Page page)
                                       "variant of a filament, a machine rate for every nozzle variant of a printer model. A user "
                                       "preset you gave a value of its own keeps it. Saved on this computer and used for every "
                                       "project you slice here; never written into project files. Leave a value empty to use the "
-                                      "preset's."));
+                                      "preset's. The Project tab adds fees and a markup for a selling price."));
     intro->Wrap(90 * em);
     top->Add(intro, 0, wxEXPAND | wxALL, FromDIP(10));
 
@@ -430,13 +440,17 @@ CostsDialog::CostsDialog(wxWindow *parent, Page page)
     auto *tabs      = new wxBoxSizer(wxHORIZONTAL);
     m_tab_filaments = new ::Button(this, _L("Filaments"));
     m_tab_machines  = new ::Button(this, _L("Machines"));
+    m_tab_project   = new ::Button(this, _L("Project"));
+    m_tab_project->SetToolTip(_L("Fees and markup: this project's selling price"));
     tabs->Add(m_tab_filaments, 0, wxRIGHT, FromDIP(6));
-    tabs->Add(m_tab_machines, 0);
+    tabs->Add(m_tab_machines, 0, wxRIGHT, FromDIP(6));
+    tabs->Add(m_tab_project, 0);
     top->Add(tabs, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(10));
 
     m_book = new wxSimplebook(this, wxID_ANY);
     m_book->AddPage(build_page(m_book, m_filaments), _L("Filaments"));
     m_book->AddPage(build_page(m_book, m_machines), _L("Machines"));
+    m_book->AddPage(build_project_page(m_book), _L("Project"));
     top->Add(m_book, 1, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(10));
 
     auto *btns   = new wxBoxSizer(wxHORIZONTAL);
@@ -456,14 +470,18 @@ CostsDialog::CostsDialog(wxWindow *parent, Page page)
 
     m_tab_filaments->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { show_page(Page::Filaments); });
     m_tab_machines->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { show_page(Page::Machines); });
+    m_tab_project->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { show_page(Page::Project); });
     m_btn_ok->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
         commit_default_rate();
-        if (m_changed)
+        // A value that is not a number keeps the window open on the Project page.
+        if (!commit_project())
+            return;
+        if (m_changed || m_pricing_changed)
             save_or_warn(this, m_store);
         EndModal(wxID_OK);
     });
     m_btn_cancel->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
-        m_changed = false;
+        m_changed = m_pricing_changed = m_project_changed = false;
         EndModal(wxID_CANCEL);
     });
     SetEscapeId(wxID_CANCEL);
@@ -569,11 +587,12 @@ wxWindow *CostsDialog::build_page(wxWindow *parent, Table &table)
 
 void CostsDialog::show_page(Page page)
 {
-    const bool machines = page == Page::Machines;
-    m_book->SetSelection(machines ? 1 : 0);
-    m_tab_filaments->SetStyle(machines ? ButtonStyle::Regular : ButtonStyle::Confirm, ButtonType::Choice);
-    m_tab_machines->SetStyle(machines ? ButtonStyle::Confirm : ButtonStyle::Regular, ButtonType::Choice);
-    (machines ? m_machines : m_filaments).search->SetFocus();
+    m_book->SetSelection(page == Page::Project ? 2 : page == Page::Machines ? 1 : 0);
+    m_tab_filaments->SetStyle(page == Page::Filaments ? ButtonStyle::Confirm : ButtonStyle::Regular, ButtonType::Choice);
+    m_tab_machines->SetStyle(page == Page::Machines ? ButtonStyle::Confirm : ButtonStyle::Regular, ButtonType::Choice);
+    m_tab_project->SetStyle(page == Page::Project ? ButtonStyle::Confirm : ButtonStyle::Regular, ButtonType::Choice);
+    if (page != Page::Project)
+        (page == Page::Machines ? m_machines : m_filaments).search->SetFocus();
     Layout();
 }
 
@@ -756,7 +775,8 @@ void CostsDialog::reload(Table &table)
     std::sort(order.begin(), order.end(), [&table](size_t ia, size_t ib) {
         const Row        &a  = table.rows[ia];
         const Row        &b  = table.rows[ib];
-        const std::string va = boost::algorithm::to_lower_copy(a.vendor), vb = boost::algorithm::to_lower_copy(b.vendor);
+        const std::string va = boost::algorithm::to_lower_copy(display_vendor(a.vendor)),
+                          vb = boost::algorithm::to_lower_copy(display_vendor(b.vendor));
         if (va != vb)
             return va < vb;
         const std::string na = boost::algorithm::to_lower_copy(a.name), nb = boost::algorithm::to_lower_copy(b.name);
@@ -779,7 +799,8 @@ void CostsDialog::reload(Table &table)
         if (!show_all && !row.visible && !has_yours)
             continue;
         if (!needle.empty()) {
-            const std::string hay = boost::algorithm::to_lower_copy(row.vendor + " " + row.name + " " + row.type + " " + row.preset);
+            const std::string hay = boost::algorithm::to_lower_copy(display_vendor(row.vendor) + " " + row.vendor + " " + row.name + " " +
+                                                                    row.type + " " + row.preset);
             if (hay.find(needle) == std::string::npos)
                 continue;
         }
@@ -795,7 +816,7 @@ void CostsDialog::reload(Table &table)
             preset_value = std::abs(row.max_value - row.min_value) < 1e-6 ? unit(row.min_value) :
                                                                             format_money(row.min_value) + " - " + unit(row.max_value);
         wxVector<wxVariant> values;
-        values.push_back(wxVariant(from_u8(row.vendor)));
+        values.push_back(wxVariant(from_u8(display_vendor(row.vendor))));
         values.push_back(wxVariant(name));
         if (!table.machines)
             values.push_back(wxVariant(from_u8(row.type)));
@@ -902,7 +923,7 @@ void CostsDialog::on_set(Table &table)
     const bool     has     = value_of(table, *row, current);
     const wxString what    = row->preset_scope ? from_u8(row->preset) :
                              table.machines    ? from_u8(row->name) :
-                                                 from_u8(row->name) + " (" + from_u8(row->vendor) + ", " + from_u8(row->type) + ")";
+                                                 from_u8(row->name) + " (" + from_u8(display_vendor(row->vendor)) + ", " + from_u8(row->type) + ")";
     const wxString prompt  = table.machines ?
                                  format_wxstr(_L("Your rate per hour for %1%, in %2%. Leave it empty to use the preset's time cost."), what,
                                               from_u8(currency_symbol())) :
@@ -951,10 +972,367 @@ bool show_costs_dialog(wxWindow *parent, CostsDialog::Page page)
     if (wxGetApp().preset_bundle == nullptr)
         return false;
     CostsDialog dlg(parent, page);
-    const bool  saved = dlg.ShowModal() == wxID_OK && dlg.changed();
-    if (saved)
+    if (dlg.ShowModal() != wxID_OK)
+        return false;
+    // The project's own fees / markup are saved with it: a change is a modified project.
+    if (dlg.project_changed())
+        if (Plater *plater = wxGetApp().plater())
+            plater->set_plater_dirty(true);
+    if (dlg.changed())
         notify_costs_changed();
-    return saved;
+    else if (dlg.pricing_changed())
+        notify_pricing_changed();
+    return dlg.changed() || dlg.pricing_changed();
+}
+
+void notify_pricing_changed()
+{
+    // Display only: nothing is resliced, the cost breakdown is drawn again.
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr)
+        return;
+    if (GLCanvas3D *canvas = plater->get_current_canvas3D()) {
+        canvas->set_as_dirty();
+        canvas->request_extra_frame();
+    }
+}
+
+
+// ---------------------------------------------------------------- the project page ----
+
+// "2.50" -> "2.5", "3.00" -> "3": hours and percentages.
+static wxString short_number(double value)
+{
+    wxString s = wxString::Format("%.2f", value);
+    while (s.EndsWith("0"))
+        s.RemoveLast();
+    if (s.EndsWith("."))
+        s.RemoveLast();
+    return s;
+}
+
+// "35", "35%", "2,5", "$2.50" -> a number >= 0. Empty is 0.
+static bool parse_amount(wxString text, double &out)
+{
+    text.Replace("%", "");
+    text.Replace("/h", "");
+    text.Replace("h", "");
+    bool empty = false;
+    if (parse_money(text, out, empty))
+        return true;
+    if (empty) {
+        out = 0.;
+        return true;
+    }
+    return false;
+}
+
+static wxString pricing_field_name(PricingField field)
+{
+    switch (field) {
+    case PricingField::Markup: return _L("Markup");
+    case PricingField::AssemblyHours: return _L("Assembly time per plate");
+    case PricingField::AssemblyRate: return _L("Assembly rate");
+    case PricingField::ObjectFee: return _L("Fee per object");
+    case PricingField::PartFee: return _L("Fee per part");
+    case PricingField::PlateFee: return _L("Setup fee per plate");
+    case PricingField::Packaging: return _L("Packaging per plate");
+    default: return {};
+    }
+}
+
+static wxString pricing_field_unit(PricingField field)
+{
+    const wxString symbol = from_u8(currency_symbol());
+    switch (field) {
+    case PricingField::AssemblyHours: return _L("h");
+    case PricingField::AssemblyRate: return symbol + "/h";
+    case PricingField::Markup: return {};
+    default: return symbol;
+    }
+}
+
+static wxString pricing_field_tip(PricingField field)
+{
+    switch (field) {
+    case PricingField::Markup:
+        return _L("Percent: a markup on cost, 100% doubles it (a margin on the price is markup / (100 + markup)). Of material: only the "
+                  "filament is marked up. Of total cost: material, machine time and every fee below.\n"
+                  "Flat: a fixed amount added once per plate.");
+    case PricingField::AssemblyHours: return _L("Hours of work (removing supports, assembly, finishing) charged for each plate.");
+    case PricingField::AssemblyRate: return _L("What an hour of that work is charged.");
+    case PricingField::ObjectFee:
+        return _L("Charged for every object on the plate: every printable copy counts, so 4 copies of a part pay it 4 times.");
+    case PricingField::PartFee:
+        return _L("Charged for every part of every object on the plate. Only model parts count: modifiers, negative parts, support "
+                  "blockers and enforcers do not.");
+    case PricingField::PlateFee: return _L("Charged once for each plate (preparing the printer, the bed, the job).");
+    case PricingField::Packaging: return _L("Charged once for each plate. A project of 3 plates pays it 3 times.");
+    default: return {};
+    }
+}
+
+// The value of one field as text, for the "My default" column.
+static wxString pricing_field_text(const PricingSettings &s, PricingField field)
+{
+    switch (field) {
+    case PricingField::Markup:
+        if (!s.has_markup())
+            return _L("none");
+        if (s.markup_type == MarkupType::Flat)
+            return format_wxstr(_L("%1% per plate"), format_money(s.markup_value));
+        return s.markup_basis == MarkupBasis::Material ? format_wxstr(_L("%1%%% of material"), short_number(s.markup_value)) :
+                                                         format_wxstr(_L("%1%%% of total cost"), short_number(s.markup_value));
+    case PricingField::AssemblyHours: return short_number(s.assembly_hours) + " " + _L("h");
+    case PricingField::AssemblyRate: return format_money(s.assembly_rate_per_h) + "/h";
+    case PricingField::ObjectFee: return format_money(s.fee_per_object);
+    case PricingField::PartFee: return format_money(s.fee_per_part);
+    case PricingField::PlateFee: return format_money(s.fee_per_plate);
+    case PricingField::Packaging: return format_money(s.packaging_per_plate);
+    default: return {};
+    }
+}
+
+static double pricing_number(const PricingSettings &s, PricingField field)
+{
+    switch (field) {
+    case PricingField::Markup: return s.markup_value;
+    case PricingField::AssemblyHours: return s.assembly_hours;
+    case PricingField::AssemblyRate: return s.assembly_rate_per_h;
+    case PricingField::ObjectFee: return s.fee_per_object;
+    case PricingField::PartFee: return s.fee_per_part;
+    case PricingField::PlateFee: return s.fee_per_plate;
+    case PricingField::Packaging: return s.packaging_per_plate;
+    default: return 0.;
+    }
+}
+
+static void set_pricing_number(PricingSettings &s, PricingField field, double value)
+{
+    switch (field) {
+    case PricingField::Markup: s.markup_value = value; break;
+    case PricingField::AssemblyHours: s.assembly_hours = value; break;
+    case PricingField::AssemblyRate: s.assembly_rate_per_h = value; break;
+    case PricingField::ObjectFee: s.fee_per_object = value; break;
+    case PricingField::PartFee: s.fee_per_part = value; break;
+    case PricingField::PlateFee: s.fee_per_plate = value; break;
+    case PricingField::Packaging: s.packaging_per_plate = value; break;
+    default: break;
+    }
+}
+
+wxWindow *CostsDialog::build_project_page(wxWindow *parent)
+{
+    const int em    = GetTextExtent("m").x;
+    auto     *panel = new wxPanel(parent);
+    auto     *top   = new wxBoxSizer(wxVERTICAL);
+
+    Plater *plater = wxGetApp().plater();
+    const ProjectPricing project  = plater != nullptr ? plater->model().pricing : ProjectPricing();
+    const PricingSettings defaults = m_store.pricing();
+    m_project_values               = project.resolve(defaults);
+
+    auto *intro = new wxStaticText(panel, wxID_ANY,
+                                   _L("Fees and markup turn the cost of a plate into a selling price in the cost breakdown after "
+                                      "slicing. They never change the slice and are never written into G-code. This project's values "
+                                      "are saved in the project file (not in \"Export Bambu 3MF\" or in files sent to a printer); every "
+                                      "field set to \"Use my default\" follows your defaults, which apply to every project.\n"
+                                      "Fees are per plate: setup and packaging once per plate, the object fee for every printable "
+                                      "object (each copy counts), the part fee for every model part of those objects (not modifiers, "
+                                      "negative parts or support blockers). The all-plates total adds the plates."));
+    intro->Wrap(80 * em);
+    top->Add(intro, 0, wxEXPAND | wxBOTTOM, FromDIP(10));
+
+    auto *grid = new wxFlexGridSizer(4, FromDIP(6), FromDIP(12));
+    grid->AddGrowableCol(1);
+    auto bold = [panel](const wxString &text) {
+        auto *t = new wxStaticText(panel, wxID_ANY, text);
+        t->SetFont(t->GetFont().Bold());
+        return t;
+    };
+    grid->Add(bold(wxEmptyString));
+    grid->Add(bold(_L("This project")));
+    grid->Add(bold(wxEmptyString));
+    grid->Add(bold(_L("My default")));
+
+    m_pricing_rows.clear();
+    m_pricing_rows.reserve(PRICING_FIELDS);
+    for (size_t i = 0; i < PRICING_FIELDS; ++i) {
+        PricingRow row;
+        row.field = PricingField(i);
+        auto *label = new wxStaticText(panel, wxID_ANY, pricing_field_name(row.field) + ":");
+        label->SetToolTip(pricing_field_tip(row.field));
+        grid->Add(label, 0, wxALIGN_CENTER_VERTICAL);
+
+        auto *editors = new wxBoxSizer(wxHORIZONTAL);
+        if (row.field == PricingField::Markup) {
+            row.type = new wxChoice(panel, wxID_ANY);
+            row.type->Append(_L("Percent"));
+            row.type->Append(_L("Flat per plate"));
+            row.basis = new wxChoice(panel, wxID_ANY);
+            row.basis->Append(_L("of material"));
+            row.basis->Append(_L("of total cost"));
+            row.basis->SetToolTip(_L("What a percent markup is taken of. Total cost: material, machine time and the fees."));
+            editors->Add(row.type, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+        }
+        row.value = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(8 * em, -1));
+        row.value->SetToolTip(pricing_field_tip(row.field));
+        editors->Add(row.value, 0, wxALIGN_CENTER_VERTICAL);
+        if (row.field == PricingField::Markup) {
+            editors->Add(row.basis, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(6));
+        } else {
+            editors->Add(new wxStaticText(panel, wxID_ANY, pricing_field_unit(row.field)), 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(6));
+        }
+        grid->Add(editors, 0, wxALIGN_CENTER_VERTICAL);
+
+        row.use_default = new wxCheckBox(panel, wxID_ANY, _L("Use my default"));
+        row.use_default->SetValue(!project.is_set(row.field));
+        grid->Add(row.use_default, 0, wxALIGN_CENTER_VERTICAL);
+
+        row.default_text = new wxStaticText(panel, wxID_ANY, wxEmptyString);
+        grid->Add(row.default_text, 0, wxALIGN_CENTER_VERTICAL);
+        m_pricing_rows.push_back(row);
+    }
+    top->Add(grid, 0, wxEXPAND);
+
+    auto *btns = new wxBoxSizer(wxHORIZONTAL);
+    auto *save = new ::Button(panel, _L("Save as my defaults"));
+    save->SetStyle(ButtonStyle::Regular, ButtonType::Choice);
+    save->SetToolTip(_L("Make the values shown under \"This project\" your defaults, for every project that does not set its own."));
+    btns->Add(save, 0, wxALIGN_CENTER_VERTICAL);
+    top->Add(btns, 0, wxEXPAND | wxTOP, FromDIP(12));
+    if (plater == nullptr)
+        panel->Disable();
+    panel->SetSizer(top);
+
+    for (PricingRow &row : m_pricing_rows) {
+        update_pricing_row(row);
+        const size_t idx = size_t(row.field);
+        row.use_default->Bind(wxEVT_CHECKBOX, [this, idx](wxCommandEvent &) { on_use_default(m_pricing_rows[idx]); });
+        if (row.type != nullptr)
+            row.type->Bind(wxEVT_CHOICE, [this, idx](wxCommandEvent &) { update_pricing_row(m_pricing_rows[idx]); });
+    }
+    update_default_texts();
+    save->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { on_save_as_defaults(); });
+    return panel;
+}
+
+void CostsDialog::show_pricing_value(const PricingRow &row, const PricingSettings &from)
+{
+    if (row.field == PricingField::Markup) {
+        row.type->SetSelection(from.markup_type == MarkupType::Flat ? 1 : 0);
+        row.basis->SetSelection(from.markup_basis == MarkupBasis::Material ? 0 : 1);
+        row.value->ChangeValue(from.markup_type == MarkupType::Flat ? wxString::Format("%.2f", from.markup_value) :
+                                                                       short_number(from.markup_value));
+        return;
+    }
+    const double value = pricing_number(from, row.field);
+    row.value->ChangeValue(row.field == PricingField::AssemblyHours ? short_number(value) : wxString::Format("%.2f", value));
+}
+
+bool CostsDialog::read_pricing_value(const PricingRow &row, PricingSettings &to, wxString &error) const
+{
+    double value = 0.;
+    if (!parse_amount(row.value->GetValue(), value)) {
+        error = format_wxstr(_L("%1%: \"%2%\" is not a number of 0 or more."), pricing_field_name(row.field), row.value->GetValue());
+        return false;
+    }
+    if (row.field == PricingField::Markup) {
+        to.markup_type  = row.type->GetSelection() == 1 ? MarkupType::Flat : MarkupType::Percent;
+        to.markup_basis = row.basis->GetSelection() == 0 ? MarkupBasis::Material : MarkupBasis::Overall;
+    }
+    set_pricing_number(to, row.field, value);
+    return true;
+}
+
+void CostsDialog::update_pricing_row(const PricingRow &row)
+{
+    const bool own = !row.use_default->GetValue();
+    if (!own)
+        show_pricing_value(row, m_store.pricing());
+    row.value->Enable(own);
+    if (row.type != nullptr) {
+        row.type->Enable(own);
+        // The basis is for a percent markup; a flat amount is added as it is.
+        row.basis->Enable(own && row.type->GetSelection() == 0);
+    }
+    if (own && row.field == PricingField::Markup)
+        row.value->SetHint(row.type->GetSelection() == 1 ? from_u8(currency_symbol()) : wxString("%"));
+}
+
+void CostsDialog::update_default_texts()
+{
+    for (const PricingRow &row : m_pricing_rows)
+        row.default_text->SetLabel(pricing_field_text(m_store.pricing(), row.field));
+    if (!m_pricing_rows.empty())
+        m_pricing_rows.front().default_text->GetParent()->Layout();
+}
+
+void CostsDialog::on_use_default(PricingRow &row)
+{
+    if (row.use_default->GetValue()) {
+        // Remember what was typed, in case the box is unticked again.
+        wxString error;
+        read_pricing_value(row, m_project_values, error);
+    } else {
+        show_pricing_value(row, m_project_values);
+    }
+    update_pricing_row(row);
+}
+
+bool CostsDialog::read_project(ProjectPricing &out, bool show_errors)
+{
+    Plater *plater = wxGetApp().plater();
+    out            = plater != nullptr ? plater->model().pricing : ProjectPricing();
+    for (const PricingRow &row : m_pricing_rows) {
+        if (row.use_default->GetValue()) {
+            out.clear_field(row.field);
+            continue;
+        }
+        PricingSettings value = m_project_values;
+        wxString        error;
+        if (!read_pricing_value(row, value, error)) {
+            if (show_errors) {
+                show_page(Page::Project);
+                show_error(this, error);
+                row.value->SetFocus();
+            }
+            return false;
+        }
+        out.set_field(row.field, value);
+    }
+    return true;
+}
+
+void CostsDialog::on_save_as_defaults()
+{
+    ProjectPricing shown;
+    if (!read_project(shown, true))
+        return;
+    const PricingSettings values = shown.resolve(m_store.pricing());
+    if (values == m_store.pricing())
+        return;
+    if (m_store.set_pricing(values)) {
+        m_pricing_changed = true;
+        update_default_texts();
+        for (const PricingRow &row : m_pricing_rows)
+            update_pricing_row(row);
+    }
+}
+
+bool CostsDialog::commit_project()
+{
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr || m_pricing_rows.empty())
+        return true;
+    ProjectPricing pricing;
+    if (!read_project(pricing, true))
+        return false;
+    if (pricing != plater->model().pricing) {
+        plater->model().pricing = pricing;
+        m_project_changed       = true;
+    }
+    return true;
 }
 
 void notify_costs_changed()

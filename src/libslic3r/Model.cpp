@@ -94,6 +94,7 @@ Model& Model::assign_copy(const Model &rhs)
     // BBS: for design info
     this->design_info = rhs.design_info;
     this->model_info = rhs.model_info;
+    this->pricing = rhs.pricing;
     this->stl_design_id = rhs.stl_design_id;
     this->stl_design_country = rhs.stl_design_country;
     this->profile_info = rhs.profile_info;
@@ -145,6 +146,7 @@ Model& Model::assign_copy(Model &&rhs)
     this->next_object_backup_id = rhs.next_object_backup_id;
     this->design_info = rhs.design_info;
     rhs.design_info.reset();
+    this->pricing = std::move(rhs.pricing);
     this->model_info = rhs.model_info;
     rhs.model_info.reset();
     this->profile_info = rhs.profile_info;
@@ -1220,6 +1222,7 @@ void Model::load_from(Model& model)
     stl_design_country = model.stl_design_country;
     model_info  = model.model_info;
     profile_info  = model.profile_info;
+    pricing = model.pricing;
     mk_name = model.mk_name;
     mk_version = model.mk_version;
     md_name = model.md_name;

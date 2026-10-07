@@ -181,6 +181,8 @@ static std::string str_of(const json &j, const char *key)
 static const char *const ENTRY_KEYS[]   = {"scope", "preset", "vendor", "type", "family", "price_per_kg", "updated"};
 static const char *const MACHINE_KEYS[] = {"scope", "preset", "vendor", "model", "rate_per_h", "updated"};
 static const char *const DEFAULT_KEYS[] = {"rate_per_h", "updated"};
+static const char *const PRICING_KEYS[] = {"markup", "assembly_hours", "assembly_rate_per_h", "fee_per_object",
+                                           "fee_per_part", "fee_per_plate", "packaging_per_plate"};
 
 template<size_t N> static std::string unknown_fields(const json &e, const char *const (&known)[N])
 {
@@ -211,6 +213,8 @@ bool Store::load(const std::string &path)
     m_default_rate     = 0.;
     m_default_updated  = 0;
     m_default_extra.clear();
+    m_pricing = PricingSettings();
+    m_pricing_extra.clear();
     m_extra.clear();
     m_version    = VERSION;
     m_load_error.clear();
@@ -234,14 +238,15 @@ bool Store::load(const std::string &path)
         m_load_error = "not a cost file";
         return false;
     }
-    // Version 1 (filament prices only) is read as it is and written back as VERSION; a later
-    // version keeps its number.
+    // Version 1 (filament prices only) and 2 (no "pricing": no fees, no markup) are read as they
+    // are and written back as VERSION; a later version keeps its number.
     if (j.contains("version") && j["version"].is_number_integer())
         m_version = std::max(int(VERSION), j["version"].get<int>());
 
     json extra = json::object();
     for (auto it = j.begin(); it != j.end(); ++it)
-        if (it.key() != "version" && it.key() != "filament" && it.key() != "machine" && it.key() != "machine_default")
+        if (it.key() != "version" && it.key() != "filament" && it.key() != "machine" && it.key() != "machine_default" &&
+            it.key() != "pricing")
             extra[it.key()] = it.value();
     if (!extra.empty())
         m_extra = extra.dump();
@@ -326,6 +331,11 @@ bool Store::load(const std::string &path)
             }
         }
     }
+    if (j.contains("pricing") && j["pricing"].is_object()) {
+        // Field by field: an invalid value reads as "none" (0), the others are kept.
+        pricing_settings_from_json(j["pricing"].dump(), m_pricing);
+        m_pricing_extra = unknown_fields(j["pricing"], PRICING_KEYS);
+    }
     return true;
 }
 
@@ -387,6 +397,14 @@ bool Store::save(const std::string &path) const
         if (m_default_updated != 0)
             d["updated"] = m_default_updated;
         j["machine_default"] = std::move(d);
+    }
+    {
+        json p = json::object();
+        merge_fields(p, m_pricing_extra);
+        const json ours = json::parse(pricing_settings_to_json(m_pricing));
+        for (auto it = ours.begin(); it != ours.end(); ++it)
+            p[it.key()] = it.value();
+        j["pricing"] = std::move(p);
     }
 
     try {
@@ -601,6 +619,16 @@ bool Store::set_default_rate(double rate_per_h)
     m_has_default_rate = true;
     m_default_rate     = rate_per_h;
     m_default_updated  = now_s();
+    return true;
+}
+
+bool Store::set_pricing(const PricingSettings &pricing)
+{
+    for (double v : {pricing.markup_value, pricing.assembly_hours, pricing.assembly_rate_per_h, pricing.fee_per_object,
+                     pricing.fee_per_part, pricing.fee_per_plate, pricing.packaging_per_plate})
+        if (!std::isfinite(v) || v < 0.)
+            return false;
+    m_pricing = pricing;
     return true;
 }
 

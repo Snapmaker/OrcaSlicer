@@ -365,6 +365,21 @@ static constexpr const char* DUAL_NOZZLE_CONFIRM_ATTR = "edgeslicer_dual_nozzle_
 // plate, written only when the plate has a history and never into Bambu exports; a build that does
 // not know the key skips it.
 static constexpr const char* PRINT_HISTORY_ATTR = "edgeslicer_print_history";
+
+// Costs > Project (CostPricing.hpp): the project's fees and markup are read from the model
+// metadata into Model::pricing, which is then the only copy (the writer adds it back from there).
+static void take_project_pricing(Slic3r::Model &model)
+{
+    model.pricing.clear();
+    if (!model.model_info)
+        return;
+    auto &items = model.model_info->metadata_items;
+    if (auto it = items.find(Slic3r::PRICING_METADATA_KEY); it != items.end()) {
+        if (!Slic3r::pricing_from_json(it->second, model.pricing))
+            BOOST_LOG_TRIVIAL(warning) << "load_3mf: ignoring an unreadable " << Slic3r::PRICING_METADATA_KEY << " value";
+        items.erase(it);
+    }
+}
 static constexpr const char* PAUSE_COUNT_ATTR = "pause_count";
 static constexpr const char* FIRST_LAYER_TIME_ATTR = "first_layer_time";
 static constexpr const char* SUPPORT_MATERIAL_ON_WIPE_TOWER_ATTR = "support_material_on_wipe_tower";
@@ -1674,6 +1689,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
         m_model->model_info = std::make_shared<ModelInfo>();
         m_model->model_info->load(model_info);
+        take_project_pricing(*m_model);
 
         if (m_thumbnail_middle.empty()) m_thumbnail_middle = m_thumbnail_path;
         if (m_thumbnail_small.empty()) m_thumbnail_small = m_thumbnail_path;
@@ -1980,6 +1996,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
         m_model->model_info = std::make_shared<ModelInfo>();
         m_model->model_info->load(model_info);
+        take_project_pricing(*m_model);
         if (!m_thumbnail_small.empty()) m_model->model_info->metadata_items.emplace("Thumbnail_Small", m_thumbnail_small);
         if (!m_thumbnail_middle.empty()) m_model->model_info->metadata_items.emplace("Thumbnail_Middle", m_thumbnail_middle);
 
@@ -7752,6 +7769,14 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     metadata_item_map[BBL_APPLICATION_TAG] = (boost::format("%1%-%2%") % "BambuStudio" % Snapmaker_VERSION).str();
                 else
                     metadata_item_map[BBL_APPLICATION_TAG] = (boost::format("%1%-%2%") % SLIC3R_APP_NAME % Snapmaker_VERSION).str();
+            }
+            // Costs > Project: the project's own fees and markup, in project saves only. Not in
+            // "Export Bambu 3MF" (a file for another slicer, often handed on) and not in a sliced-plate
+            // file (sent to a printer or a customer): a selling price is a business number.
+            metadata_item_map.erase(PRICING_METADATA_KEY);
+            if (!sub_model && !m_bambu_compat && !m_skip_model && !m_save_gcode) {
+                if (std::string pricing = pricing_to_json(model.pricing); !pricing.empty())
+                    metadata_item_map[PRICING_METADATA_KEY] = std::move(pricing);
             }
             metadata_item_map[BBS_3MF_VERSION] = std::to_string(VERSION_BBS_3MF);
 

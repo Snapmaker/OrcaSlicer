@@ -1272,13 +1272,12 @@ LazyPanelHolder* MainFrame::make_calibration_holder()
     });
 }
 
-LazyPanelHolder* MainFrame::make_multi_machine_holder()
+LazyPanelHolder* MainFrame::make_printers_holder()
 {
-    return new LazyPanelHolder(m_tabpanel, "MainFrame lazy=MultiMachinePage", [this](wxWindow* parent) -> wxWindow* {
-        m_multi_machine = new MultiMachinePage(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize);
-        m_multi_machine->SetBackgroundColour(*wxWHITE);
-        apply_theme_to_lazy_panel(m_multi_machine);
-        return m_multi_machine;
+    // Lazy like the others: the page is a web view, built when the tab is first opened.
+    return new LazyPanelHolder(m_tabpanel, "MainFrame lazy=PrintersPanel", [this](wxWindow* parent) -> wxWindow* {
+        m_printers = new PrintersPanel(parent);
+        return m_printers;
     });
 }
 
@@ -1321,8 +1320,26 @@ CalibrationPanel* MainFrame::calibration()
 
 MultiMachinePage* MainFrame::multi_machine()
 {
-    if (m_multi_machine == nullptr && m_multi_machine_holder != nullptr)
-        m_multi_machine_holder->realize();
+    // The old Multi-device tab's pages (Device / Task Sending / Task Sent) live on for the cloud
+    // "Send to Multi-device" dialog, in a window of their own: the Printers tab took their slot.
+    if (m_multi_machine == nullptr) {
+        m_multi_machine_dlg = new wxDialog(this, wxID_ANY, _L("Multi-device tasks"), wxDefaultPosition, wxDefaultSize,
+                                           wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER | wxMAXIMIZE_BOX);
+        m_multi_machine = new MultiMachinePage(m_multi_machine_dlg, wxID_ANY, wxDefaultPosition, wxDefaultSize);
+        m_multi_machine->SetBackgroundColour(*wxWHITE);
+        auto* sizer = new wxBoxSizer(wxVERTICAL);
+        sizer->Add(m_multi_machine, 1, wxEXPAND);
+        m_multi_machine_dlg->SetSizer(sizer);
+        m_multi_machine_dlg->SetSize(m_multi_machine_dlg->FromDIP(wxSize(1000, 700)));
+        m_multi_machine_dlg->CentreOnParent();
+        // Closing hides the window (its pages keep their state) and stops their refresh timer.
+        m_multi_machine_dlg->Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent&) {
+            if (m_multi_machine)
+                m_multi_machine->Show(false);
+            m_multi_machine_dlg->Hide();
+        });
+        apply_theme_to_lazy_panel(m_multi_machine_dlg);
+    }
     return m_multi_machine;
 }
 
@@ -1511,11 +1528,12 @@ void MainFrame::init_tabpanel() {
 
     m_printer_view->Hide();
 
-    if (wxGetApp().is_enable_multi_machine()) {
-        Slic3r::StartupScopedTimer t("MainFrame::init_tabpanel step=MultiMachinePage(deferred)");
-        m_multi_machine_holder = make_multi_machine_holder();
-        // TODO: change the bitmap
-        m_tabpanel->AddPage(m_multi_machine_holder, _L("Multi-device"), std::string("tab_multi_active"), std::string("tab_multi_active"), false);
+    {
+        // Printers: every printer at a glance. Always present (whatever the printer preset and the
+        // "Multi-device Management" preference), in the slot the Multi-device tab had (tpPrinters).
+        Slic3r::StartupScopedTimer t("MainFrame::init_tabpanel step=PrintersPanel(deferred)");
+        m_printers_holder = make_printers_holder();
+        m_tabpanel->AddPage(m_printers_holder, _L("Printers"), std::string("tab_multi_active"), std::string("tab_multi_active"), false);
     }
 
     {
@@ -1577,19 +1595,11 @@ void MainFrame::show_device(bool bBBLPrinter) {
         m_monitor_holder->Show(false);
         m_tabpanel->InsertPage(tpMonitor, m_monitor_holder, _L("Device"), std::string("tab_monitor_active"), std::string("tab_monitor_active"));
 
-        if (wxGetApp().is_enable_multi_machine()) {
-            if (!m_multi_machine_holder)
-                m_multi_machine_holder = make_multi_machine_holder();
-            // TODO: change the bitmap
-            m_multi_machine_holder->Show(false);
-            m_tabpanel->InsertPage(tpMultiDevice, m_multi_machine_holder, _L("Multi-device"), std::string("tab_multi_active"),
-                                   std::string("tab_multi_active"), false);
-        }
         if (!m_calibration_holder)
             m_calibration_holder = make_calibration_holder();
         m_calibration_holder->Show(false);
-        // Calibration is always the last page, so don't use InsertPage here. Otherwise, if multi_machine page is not enabled,
-        // the calibration tab won't be properly added as well, due to the TabPosition::tpCalibration no longer matches the real tab position.
+        // Calibration is always the last page, so don't use InsertPage here: AddPage needs no index to agree
+        // with TabPosition::tpCalibration.
         m_tabpanel->AddPage(m_calibration_holder, _L("Calibration"), std::string("tab_calibration_active"),
                                std::string("tab_calibration_active"), false);
 
@@ -1603,10 +1613,6 @@ void MainFrame::show_device(bool bBBLPrinter) {
 
         if (m_calibration_holder && (idx = m_tabpanel->FindPage(m_calibration_holder)) != wxNOT_FOUND) {
             m_calibration_holder->Show(false);
-            m_tabpanel->RemovePage(idx);
-        }
-        if (m_multi_machine_holder && (idx = m_tabpanel->FindPage(m_multi_machine_holder)) != wxNOT_FOUND) {
-            m_multi_machine_holder->Show(false);
             m_tabpanel->RemovePage(idx);
         }
         if (m_monitor_holder && (idx = m_tabpanel->FindPage(m_monitor_holder)) != wxNOT_FOUND) {
@@ -1635,10 +1641,6 @@ void MainFrame::show_flashforge_device()
     int idx;
     if (m_calibration_holder && (idx = m_tabpanel->FindPage(m_calibration_holder)) != wxNOT_FOUND) {
         m_calibration_holder->Show(false);
-        m_tabpanel->RemovePage(idx);
-    }
-    if (m_multi_machine_holder && (idx = m_tabpanel->FindPage(m_multi_machine_holder)) != wxNOT_FOUND) {
-        m_multi_machine_holder->Show(false);
         m_tabpanel->RemovePage(idx);
     }
     if (m_monitor_holder && (idx = m_tabpanel->FindPage(m_monitor_holder)) != wxNOT_FOUND) {
@@ -2673,6 +2675,9 @@ void MainFrame::on_sys_color_changed()
     // Before RecreateAll: the hub view switches theme in place (it is excluded from the reload).
     if (m_home)
         m_home->sys_color_changed();
+    // So does the Printers page.
+    if (m_printers)
+        m_printers->sys_color_changed();
     WebView::RecreateAll();
 
     this->Refresh();
@@ -4127,11 +4132,46 @@ ProgressDialog* MainFrame::createLogProgress()
 
 void MainFrame::jump_to_multipage()
 {
-    m_tabpanel->SetSelection(tpMultiDevice);
     MultiMachinePage* mm = multi_machine();
-    if (!mm)
+    if (!mm || !m_multi_machine_dlg)
         return;
+    m_multi_machine_dlg->Show();
+    m_multi_machine_dlg->Raise();
+    mm->Show(true); // starts its refresh timer
     mm->jump_to_send_page();
+}
+
+bool MainFrame::open_printer_device_page(const std::string& id, const PrintersMonitor::Target& target, std::string& why)
+{
+    using PrintersMonitor::OpenWay;
+    // What the Device tab holds right now follows the selected printer preset (show_device): the
+    // Bambu MonitorPanel, the PrinterWebView, or the Flashforge tab. The preset is never switched
+    // from here - that would change the plate's printer behind the person's back.
+    const bool bambu_shown = m_monitor_holder && m_tabpanel->FindPage(m_monitor_holder) != wxNOT_FOUND;
+    const bool view_shown  = m_printer_view && m_tabpanel->FindPage(m_printer_view) != wxNOT_FOUND;
+    switch (PrintersMonitor::open_way(target, bambu_shown, view_shown)) {
+    case OpenWay::BambuMonitor:
+        // What the old Multi-device tab's View button did: the Device tab, on that printer.
+        jump_to_monitor(id);
+        return true;
+    case OpenWay::PrinterWebView: {
+        wxString url = wxString::FromUTF8(target.url);
+        m_printer_view->load_url(url);
+        const int idx = m_tabpanel->FindPage(m_printer_view);
+        if (idx != wxNOT_FOUND)
+            select_tab(size_t(idx));
+        return true;
+    }
+    case OpenWay::Browser:
+        if (wxLaunchDefaultBrowser(wxString::FromUTF8(target.url)))
+            return true;
+        why = "The system browser did not open " + target.url;
+        return false;
+    case OpenWay::NotHere:
+    default:
+        why = PrintersMonitor::not_here_reason(target);
+        return false;
+    }
 }
 
 

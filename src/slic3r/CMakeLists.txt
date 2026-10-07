@@ -106,6 +106,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/CodeEmbossDialog.hpp
     GUI/SimpleShapeDialog.cpp
     GUI/SimpleShapeDialog.hpp
+    GUI/ImageTraceDialog.cpp
+    GUI/ImageTraceDialog.hpp
     GUI/ConfigManipulation.cpp
     GUI/ConfigManipulation.hpp
     GUI/ConfigWizard.cpp
@@ -234,6 +236,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/Gizmos/GLGizmosManager.hpp
     GUI/Gizmos/GLGizmoSVG.cpp
     GUI/Gizmos/GLGizmoSVG.hpp
+    GUI/Gizmos/GLGizmoTextureDisplacement.cpp
+    GUI/Gizmos/GLGizmoTextureDisplacement.hpp
+    GUI/Gizmos/GLGizmoUtils.cpp
+    GUI/Gizmos/GLGizmoUtils.hpp
     #GUI/Gizmos/GLGizmoText.cpp
     #GUI/Gizmos/GLGizmoText.hpp
     GUI/GLCanvas3D.cpp
@@ -365,6 +371,14 @@ set(SLIC3R_GUI_SOURCES
     GUI/Jobs/SLAImportDialog.hpp
     GUI/Jobs/SLAImportJob.cpp
     GUI/Jobs/SLAImportJob.hpp
+    GUI/Jobs/TextureDisplacementBakeJob.cpp
+    GUI/Jobs/TextureDisplacementBakeJob.hpp
+    GUI/Jobs/TextureDisplacementPrepareJob.cpp
+    GUI/Jobs/TextureDisplacementPrepareJob.hpp
+    GUI/Jobs/TextureDisplacementDebugJob.cpp
+    GUI/Jobs/TextureDisplacementDebugJob.hpp
+    GUI/Jobs/TextureDisplacementPreviewJob.cpp
+    GUI/Jobs/TextureDisplacementPreviewJob.hpp
     GUI/Jobs/ThreadSafeQueue.hpp
     GUI/Jobs/UpgradeNetworkJob.cpp
     GUI/Jobs/UpgradeNetworkJob.hpp
@@ -489,6 +503,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/PrinterWebView.hpp
     GUI/StreamPanel.cpp
     GUI/StreamPanel.hpp
+    GUI/PrintersPanel.cpp
+    GUI/PrintersPanel.hpp
     GUI/HomePanel.cpp
     GUI/ModelBrowserPanel.cpp
     GUI/Theme.cpp
@@ -740,6 +756,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/TextLines.cpp
     GUI/TextLines.hpp
     GUI/ThumbnailView.hpp
+    GUI/TextureLibrary.cpp
+    GUI/TextureLibrary.hpp
+    GUI/TextureProjectorFrame.cpp
+    GUI/TextureProjectorFrame.hpp
     GUI/TickCode.cpp
     GUI/TickCode.hpp
     GUI/UnsavedChangesDialog.cpp
@@ -752,6 +772,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/UserManager.hpp
     GUI/UserNotification.cpp
     GUI/UserNotification.hpp
+    GUI/UVEditorCanvas.cpp
+    GUI/UVEditorCanvas.hpp
     GUI/WebDownPluginDlg.cpp
     GUI/WebDownPluginDlg.hpp
     GUI/WebGuideDialog.cpp
@@ -929,6 +951,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/LoginUserAgent.hpp
     Utils/HubHomeLogic.cpp
     Utils/HubHomeLogic.hpp
+    Utils/PrintersMonitor.cpp
+    Utils/PrintersMonitor.hpp
     Utils/HubHandover.hpp
     Utils/HomeTabLogic.cpp
     Utils/HomeTabLogic.hpp
@@ -1084,6 +1108,7 @@ slic3r_unity_build(libslic3r_gui SKIP
     GUI/Gizmos/GLGizmoMeshBoolean.cpp             # needs IMGUI_DEFINE_MATH_OPERATORS before the first imgui.h
     GUI/CodeEmbossDialog.cpp                      # CFG_SECTION also in other dialogs
     GUI/SimpleShapeDialog.cpp                     # filament_label() also in CodeEmbossDialog.cpp
+    GUI/ImageTraceDialog.cpp                      # file-local preview helpers with common names
     GUI/Gizmos/GLGizmoSVG.cpp                     # needs IMGUI_DEFINE_MATH_OPERATORS before the first imgui.h
     GUI/GLCanvas3D.cpp                            # needs IMGUI_DEFINE_MATH_OPERATORS before the first imgui.h
     GUI/ImGuiWrapper.cpp                          # needs IMGUI_DEFINE_MATH_OPERATORS before the first imgui.h

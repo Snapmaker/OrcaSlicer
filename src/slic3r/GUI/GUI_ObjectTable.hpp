@@ -522,6 +522,7 @@ public:
     ObjectGridRow* get_grid_row(int row) { return m_grid_data[row]; }
     void           construct_object_configs(ObjectGrid* object_grid);
     void update_value_to_config(ModelConfig* config, std::string& key, ConfigOption& new_value,  ConfigOption& ori_value);
+    void update_speed_value_to_config(ModelConfig* config, std::string& key, ConfigOptionFloat& new_value, ConfigOptionFloat& ori_value);
     void update_filament_to_config(ModelConfig* config, std::string& key, ConfigOption& new_value,  ConfigOption& ori_value, bool is_object);
     void update_volume_values_from_object(int row, int col);
     void update_value_to_object(Model* model, ObjectGridRow* grid_row, int col);

@@ -898,14 +898,13 @@ void TextCtrl::propagate_value()
 void TextCtrl::set_value(const boost::any& value, bool change_event/* = false*/) {
     m_disable_change_event = !change_event;
     if (m_opt.nullable) {
-        const wxString text_value = boost::any_cast<wxString>(value);
-        if (text_value != _(L("N/A")))
+        // Orca #14864: an empty any (mixed values across the selection) must not be any_cast.
+        const bool is_na_val = value.empty() || (boost::any_cast<wxString>(value) == _(L("N/A")));
+        if (!is_na_val)
             m_last_meaningful_value = value;
-
-        text_ctrl()->SetValue(text_value); // BBS
     }
-    else
-        text_ctrl()->SetValue(value.empty() ? "" : boost::any_cast<wxString>(value)); // BBS // BBS: null value
+
+    text_ctrl()->SetValue(value.empty() ? wxString() : boost::any_cast<wxString>(value)); // BBS // BBS: null value
     m_disable_change_event = false;
 
     if (!change_event) {
@@ -1042,15 +1041,20 @@ void CheckBox::set_value(const boost::any& value, bool change_event)
     m_disable_change_event = !change_event;
     if (m_opt.nullable) {
         const bool is_value_unsigned_char = value.type() == typeid(unsigned char);
-        m_is_na_val = is_value_unsigned_char &&
-                      boost::any_cast<unsigned char>(value) == ConfigOptionBoolsNullable::nil_value();
-        if (!m_is_na_val)
-            m_last_meaningful_value = is_value_unsigned_char ? value : static_cast<unsigned char>(boost::any_cast<bool>(value));
+        bool bool_value = false;
 
-        const auto bool_value = is_value_unsigned_char ?
-                                    boost::any_cast<unsigned char>(value) != 0 :
-                                    boost::any_cast<bool>(value);
-        dynamic_cast<::CheckBox*>(window)->SetValue(m_is_na_val ? false : bool_value); // BBS
+        // Orca #14864: an empty any (mixed values across the selection) is treated as N/A.
+        m_is_na_val = value.empty() || (is_value_unsigned_char &&
+                      boost::any_cast<unsigned char>(value) == ConfigOptionBoolsNullable::nil_value());
+
+        if (!m_is_na_val) {
+            bool_value = is_value_unsigned_char ?
+                            boost::any_cast<unsigned char>(value) != 0 :
+                            boost::any_cast<bool>(value);
+            m_last_meaningful_value = is_value_unsigned_char ? value : static_cast<unsigned char>(bool_value);
+        }
+
+        dynamic_cast<::CheckBox*>(window)->SetValue(bool_value); // BBS
     }
     else if (!value.empty()) // BBS: null value
         dynamic_cast<::CheckBox*>(window)->SetValue(boost::any_cast<bool>(value)); // BBS

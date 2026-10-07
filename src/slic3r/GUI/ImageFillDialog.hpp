@@ -70,6 +70,10 @@ public:
     // of this box - see this control's own tooltip in the .cpp for why.
     bool image_row_dither() const;
 
+    // Read an image file into the store (as the "Choose image..." button does), so the dialog can
+    // start with an image dropped onto the 3D scene. Returns the asset id, empty on failure.
+    static std::string add_image_file(const wxString &path, ImageAssetStore &assets);
+
 protected:
     void on_dpi_changed(const wxRect &suggested_rect) override {}
 

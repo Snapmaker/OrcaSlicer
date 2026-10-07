@@ -11,6 +11,8 @@
 #include "libslic3r/AABBTreeIndirect.hpp"
 #include "libslic3r/Arachne/SkeletalTrapezoidation.hpp"
 #include "libslic3r/Config.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/calib.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/GCodeWriter.hpp"
 #include "libslic3r/Polygon.hpp"
@@ -189,4 +191,36 @@ TEST_CASE("GCodeWriter::set_extruders accepts an empty extruder list", "[CoreGua
     CHECK_FALSE(writer.multiple_extruders);
     CHECK(writer.extruders().empty());
     CHECK(writer.extruder() == nullptr);
+}
+
+namespace {
+// The width-resolution getters are protected; expose them so the resolution can be asserted directly.
+struct PaPatternProbe : public CalibPressureAdvancePattern
+{
+    using CalibPressureAdvancePattern::CalibPressureAdvancePattern;
+    using CalibPressureAdvancePattern::line_width;
+    using CalibPressureAdvancePattern::line_width_first_layer;
+};
+} // anonymous namespace
+
+// Orca #14447: the PA pattern's first-layer line width was used as-is, so "0" (auto) gave a zero
+// width and a crash while generating the pattern.
+TEST_CASE("Zero calibration line width resolves to a positive default", "[CoreGuards][Calib]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({
+        { "line_width", "0" },
+        { "initial_layer_line_width", "0" },
+    });
+
+    Model model;
+    model.add_object("cube", "", make_cube(20, 20, 20))->add_instance();
+
+    Calib_Params params;
+    params.mode = CalibMode::Calib_PA_Pattern;
+
+    PaPatternProbe pattern(params, config, /* is_bbl_machine */ true, *model.objects.front(), Vec3d(0, 0, 0));
+
+    REQUIRE(pattern.line_width() > 0.);
+    REQUIRE(pattern.line_width_first_layer() > 0.);
 }

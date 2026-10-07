@@ -310,7 +310,10 @@ protected:
     {
         // TODO: FIXME: find out current filament/extruder?
         const double nozzle_diameter = m_config.opt_float("nozzle_diameter", 0);
-        return m_config.get_abs_value("initial_layer_line_width", nozzle_diameter);
+        const double width = m_config.get_abs_value("initial_layer_line_width", nozzle_diameter);
+        // 0 means "auto"; a zero width fed zero line spacings into the pattern (crash on a 0 first layer width).
+        if (width <= 0.) return Flow::auto_extrusion_width(frExternalPerimeter, nozzle_diameter);
+        return width;
     };
     double line_width() const
     {

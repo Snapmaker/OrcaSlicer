@@ -3449,7 +3449,10 @@ void PartPlate::on_filament_deleted(int filament_count, int filament_id)
 {
     if (m_config.has("filament_map")) {
         std::vector<int>& filament_maps = m_config.option<ConfigOptionInts>("filament_map")->values;
-        filament_maps.erase(filament_maps.begin() + filament_id);
+        // Orca #14055: the per-plate filament_map can be out of sync with the global filament
+        // count after a profile switch; erasing at/past end() is an out-of-bounds memmove.
+        if (filament_id >= 0 && filament_id < (int) filament_maps.size())
+            filament_maps.erase(filament_maps.begin() + filament_id);
     }
     update_first_layer_print_sequence_when_delete_filament(filament_id);
 }

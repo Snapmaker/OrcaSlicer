@@ -19,11 +19,13 @@
 #include <boost/nowide/fstream.hpp>
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <limits>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <thread>
 
 using namespace Slic3r;
 using namespace Slic3r::CostOverrides;
@@ -33,11 +35,57 @@ namespace fs = boost::filesystem;
 
 namespace {
 
-fs::path scratch_dir(const std::string &name)
+// A directory of its own for one test case, removed when it goes out of scope. The name is random,
+// so repeated or parallel runs never share one. Removal never throws: on Windows a file closed a
+// moment ago can still be held open (virus scanner, search indexer), so it is retried briefly and
+// then left behind; a leftover temp directory is not a test failure.
+class PriceScratchDir
 {
-    const fs::path dir = fs::temp_directory_path() / fs::unique_path("snorca_prices_" + name + "_%%%%-%%%%");
-    fs::create_directories(dir);
-    return dir;
+public:
+    explicit PriceScratchDir(const std::string &name)
+        : m_path(fs::temp_directory_path() / fs::unique_path("snorca_prices_" + name + "_%%%%-%%%%-%%%%"))
+    {
+        fs::create_directories(m_path);
+    }
+    ~PriceScratchDir()
+    {
+        if (m_temporary_dir_set)
+            set_temporary_dir(m_saved_temporary_dir);
+        for (int attempt = 0; attempt < 5; ++attempt) {
+            if (attempt > 0)
+                std::this_thread::sleep_for(std::chrono::milliseconds(50 << attempt));
+            boost::system::error_code ec;
+            fs::remove_all(m_path, ec);
+            if (!ec && !fs::exists(m_path, ec))
+                return;
+        }
+    }
+    PriceScratchDir(const PriceScratchDir &)            = delete;
+    PriceScratchDir &operator=(const PriceScratchDir &) = delete;
+
+    const fs::path &path() const { return m_path; }
+
+    // libslic3r's temporary_dir() points here until the end of the test case.
+    void use_as_temporary_dir()
+    {
+        if (!m_temporary_dir_set) {
+            m_saved_temporary_dir = temporary_dir();
+            m_temporary_dir_set   = true;
+        }
+        set_temporary_dir(m_path.string());
+    }
+
+private:
+    fs::path    m_path;
+    std::string m_saved_temporary_dir;
+    bool        m_temporary_dir_set = false;
+};
+
+// Where user presets "live" (only their path is used, nothing is written), removed at exit.
+const fs::path &user_preset_dir()
+{
+    static const PriceScratchDir dir("user");
+    return dir.path();
 }
 
 std::string read_text(const fs::path &path)
@@ -61,7 +109,8 @@ PresetBundle &shipped_bundle()
     if (bundle)
         return *bundle;
     const std::string saved_data_dir = data_dir();
-    set_data_dir(scratch_dir("datadir").string());
+    static const PriceScratchDir data("datadir");
+    set_data_dir(data.path().string());
     const std::string profiles = (fs::path(TEST_DATA_DIR) / ".." / ".." / "resources" / "profiles").string();
     library = std::make_unique<PresetBundle>();
     library->load_vendor_configs_from_json(profiles, PresetBundle::ORCA_FILAMENT_LIBRARY, PresetBundle::LoadSystem,
@@ -96,7 +145,7 @@ void add_user_preset(PresetCollection &filaments, const std::string &name, const
     DynamicPrintConfig config = parent.config;
     config.set_key_value("inherits", new ConfigOptionString(parent.name));
     config.option<ConfigOptionFloats>("filament_cost", true)->values = {price};
-    filaments.load_preset((scratch_dir("user") / (name + ".json")).string(), name, config, false);
+    filaments.load_preset((user_preset_dir() / (name + ".json")).string(), name, config, false);
 }
 
 // The per-slot keys of PresetBundle::full_fff_config() that apply() reads, plus one unrelated key.
@@ -367,8 +416,9 @@ TEST_CASE("apply() never writes past a short filament_cost", "[CostOverrides]")
 
 TEST_CASE("Price store: round trip, unknown fields kept, versioned", "[CostOverrides][store]")
 {
-    const fs::path dir  = scratch_dir("store");
-    const fs::path path = dir / "cost" / "filament_overrides.json";
+    PriceScratchDir scratch("store");
+    const fs::path  dir  = scratch.path();
+    const fs::path  path = dir / "cost" / "filament_overrides.json";
 
     Identity id;
     id.vendor = "Snapmaker";
@@ -418,13 +468,12 @@ TEST_CASE("Price store: round trip, unknown fields kept, versioned", "[CostOverr
     CHECK(newer.clear_preset("My PLA Silk @U1"));
     CHECK_FALSE(newer.clear_preset("My PLA Silk @U1"));
     CHECK(newer.entries().size() == 1);
-
-    fs::remove_all(dir);
 }
 
 TEST_CASE("Price store: missing or unreadable files", "[CostOverrides][store]")
 {
-    const fs::path dir = scratch_dir("store_bad");
+    PriceScratchDir scratch("store_bad");
+    const fs::path  dir = scratch.path();
 
     Store missing;
     CHECK(missing.load((dir / "nope.json").string()));
@@ -454,14 +503,13 @@ TEST_CASE("Price store: missing or unreadable files", "[CostOverrides][store]")
     CHECK(store.load(partial.string()));
     REQUIRE(store.entries().size() == 1);
     CHECK(store.entries().front().family == "A PETG");
-
-    fs::remove_all(dir);
 }
 
 TEST_CASE("Global store: test path, save, revision, unreadable file kept", "[CostOverrides][store]")
 {
-    const fs::path dir  = scratch_dir("global");
-    const fs::path path = dir / "filament_overrides.json";
+    PriceScratchDir scratch("global");
+    const fs::path  dir  = scratch.path();
+    const fs::path  path = dir / "filament_overrides.json";
     set_store_path(path.string());
     CHECK(store_path() == path.string());
 
@@ -483,7 +531,6 @@ TEST_CASE("Global store: test path, save, revision, unreadable file kept", "[Cos
 
     set_store_path("");
     CHECK(store_path() != path.string());
-    fs::remove_all(dir);
 }
 
 // ------------------------------------------------------------------------- sliced-plate 3MF
@@ -552,8 +599,9 @@ std::string store_plate(const fs::path &path, DynamicPrintConfig &cfg, bool stri
 
 TEST_CASE("Sliced-plate 3MF without filament prices: none in its settings", "[CostOverrides][3MF]")
 {
-    const fs::path dir = scratch_dir("3mf");
-    set_temporary_dir(dir.string());
+    PriceScratchDir scratch("3mf");
+    const fs::path  dir = scratch.path();
+    scratch.use_as_temporary_dir();
     const SaveStrategy sliced = SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary | SaveStrategy::WithGcode |
                                 SaveStrategy::SkipModel;
 
@@ -625,15 +673,15 @@ TEST_CASE("Sliced-plate 3MF without filament prices: none in its settings", "[Co
             store_plate(dir / "project.3mf", cfg, false, SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary));
         CHECK(proj["filament_cost"] == json::array({"24.99", "31.5"}));
     }
-    fs::remove_all(dir);
 }
 
 TEST_CASE("Project files keep preset prices while your prices apply to slicing", "[CostOverrides][3MF]")
 {
     // What the GUI does: the slice gets CostOverrides::apply() on its own copy of the config; the
     // project writer gets full_config_secure(), the presets' values.
-    const fs::path dir = scratch_dir("3mf_project");
-    set_temporary_dir(dir.string());
+    PriceScratchDir scratch("3mf_project");
+    const fs::path  dir = scratch.path();
+    scratch.use_as_temporary_dir();
     Store store;
     REQUIRE(store.set_family("Bambu Lab", "PLA", "Bambu PLA Basic", 11.));
 
@@ -647,7 +695,6 @@ TEST_CASE("Project files keep preset prices while your prices apply to slicing",
     const json proj = json::parse(
         store_plate(dir / "project.3mf", project, false, SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary));
     CHECK(proj["filament_cost"] == json::array({"24.99", "31.5"}));
-    fs::remove_all(dir);
 }
 
 TEST_CASE("strip_prices() removes filament_cost and its 'different from system' mention", "[CostOverrides]")
@@ -810,7 +857,7 @@ TEST_CASE("A user printer preset with a deliberate time cost = it differs from i
         DynamicPrintConfig config = printers.find_preset(parent_name, false)->config;
         config.set_key_value("inherits", new ConfigOptionString(parent_name));
         config.option<ConfigOptionFloat>("time_cost", true)->value = rate;
-        printers.load_preset((scratch_dir("user_printer") / (name + ".json")).string(), name, config, false);
+        printers.load_preset((user_preset_dir() / (name + ".json")).string(), name, config, false);
     };
     add_user("Rate test X1C same", parent_rate);
     add_user("Rate test X1C own", parent_rate + 2.);
@@ -870,8 +917,9 @@ TEST_CASE("apply() rewrites time_cost only when a machine rate of yours applies"
 
 TEST_CASE("Cost store: a version 1 file is read and rewritten as the current version", "[CostOverrides][store][machines]")
 {
-    const fs::path dir  = scratch_dir("migrate");
-    const fs::path path = dir / "filament_overrides.json";
+    PriceScratchDir scratch("migrate");
+    const fs::path  dir  = scratch.path();
+    const fs::path  path = dir / "filament_overrides.json";
     // What the first version of PR 1b wrote, plus fields from somewhere else.
     write_text(path, R"({"version":1,"note":"keep me","filament":[
         {"scope":"family","vendor":"Bambu Lab","type":"PLA","family":"Bambu PLA Basic","price_per_kg":23.5,"updated":1791300000,"density":1.26}]})");
@@ -922,13 +970,13 @@ TEST_CASE("Cost store: a version 1 file is read and rewritten as the current ver
     // A machine list that is not a list is not our file.
     write_text(path, R"({"version":2,"machine":5})");
     CHECK_FALSE(back.load(path.string()));
-    fs::remove_all(dir);
 }
 
 TEST_CASE("Project files keep the preset time cost while your rate applies to slicing", "[CostOverrides][3MF][machines]")
 {
-    const fs::path dir = scratch_dir("3mf_machine");
-    set_temporary_dir(dir.string());
+    PriceScratchDir scratch("3mf_machine");
+    const fs::path  dir = scratch.path();
+    scratch.use_as_temporary_dir();
     Store store;
     REQUIRE(store.set_default_rate(3.25));
 
@@ -952,5 +1000,4 @@ TEST_CASE("Project files keep the preset time cost while your rate applies to sl
                 CHECK(proj["time_cost"] == "0.5");
         }
     }
-    fs::remove_all(dir);
 }

@@ -1118,6 +1118,7 @@ bool UnsavedChangesDialog::save(PresetCollection* dependent_presets, bool show_s
         // for system/default/external presets we should take an edited name
         //BBS: add project embedded preset logic and refine is_external
         bool save_to_project = false;
+        ProjectPresetPrinters project_printers = ProjectPresetPrinters::Keep;
         if (preset.is_system || preset.is_default) {
         //if (preset.is_system || preset.is_default || preset.is_external) {
             SavePresetDialog save_dlg(this, preset.type);
@@ -1127,10 +1128,11 @@ bool UnsavedChangesDialog::save(PresetCollection* dependent_presets, bool show_s
             }
             name = save_dlg.get_name();
             save_to_project = save_dlg.get_save_to_project_selection(preset.type);
+            project_printers = save_dlg.get_project_printers_selection(preset.type);
         }
 
         //BBS: add project embedded preset relate logic
-        PresetData preset_data(name, preset.type, save_to_project);
+        PresetData preset_data(name, preset.type, save_to_project, project_printers);
         names_and_types.emplace_back(preset_data);
         //names_and_types.emplace_back(make_pair(name, preset.type));
     }
@@ -1169,6 +1171,7 @@ bool UnsavedChangesDialog::save(PresetCollection* dependent_presets, bool show_s
                 if (!name.empty())
                     nt.name = name;
                 nt.save_to_project = save_dlg.get_save_to_project_selection(nt.type);
+                nt.project_printers = save_dlg.get_project_printers_selection(nt.type);
             }
             //for (std::pair<std::string, Preset::Type>& nt : names_and_types) {
             //    const std::string& name = save_dlg.get_name(nt.second);

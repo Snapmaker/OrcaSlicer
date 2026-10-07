@@ -3,6 +3,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "MultiComMgr.hpp"
 #include "slic3r/GUI/FlashForge/FFConnectPrinter.hpp"
+#include "slic3r/GUI/FFUtils.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
 
 namespace Slic3r {
@@ -1220,8 +1221,7 @@ void DeviceObjectOpr::onConnectReady(ComConnectionReadyEvent &event)
             sendDeviceListUpdateEvent(serialNum, connectId);
             userObj = it->second;
             // Keep the address, so the next start can reconnect without a scan.
-            const unsigned short pid = data.lanDevInfo.pid != 0 ? data.lanDevInfo.pid
-                                       : (data.devDetail ? (unsigned short) data.devDetail->pid : (unsigned short) 0);
+            const unsigned short pid = GUI::FFUtils::getPid(data);
             // (Not for a printer the print-host settings own: they hold its address, and a saved
             // row here would outlive it.)
             if (AppConfig *config = GUI::wxGetApp().app_config; config && pid != 0 && data.lanDevInfo.ip[0] != '\0' && !is_settings_serial(serialNum))

@@ -75,6 +75,7 @@ add_executable(${_TEST_NAME}_tests
     bambu_setup_notice_tests.cpp
     saved_printers_tests.cpp
     ff_printer_sources_tests.cpp
+    ff_device_pid_tests.cpp
     emboss_font_search_tests.cpp
     printers_monitor_tests.cpp
     # Hidden GLFW window + forward-compatible 3.3 core context; skips itself where none can be made.

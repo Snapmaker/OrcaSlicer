@@ -1676,7 +1676,7 @@ wxBitmap pane_icon(wxWindow *win, const std::string &name, int size_dip)
 wxSize drawn_size(const wxBitmap &bmp)
 {
 #ifdef __WXGTK3__
-    return bmp.GetLogicalSize();
+    return bmp.GetScaledSize();
 #else
     return ScalableBitmap::GetBmpSize(bmp);
 #endif

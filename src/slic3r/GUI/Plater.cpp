@@ -18810,8 +18810,11 @@ void Plater::load_project(wxString const& filename2,
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": current loading other project, return directly");
         return;
     }
-    else
-        m_loading_project = true;
+
+    m_loading_project = true;
+    // Orca #14715: restore the flag on every early return (e.g. the 3MF action dialog was cancelled),
+    // otherwise no project could be opened again until restart.
+    ScopeGuard loading_project_sc([this]() { m_loading_project = false; });
     p->m_auto_gradient_project_choice_changed_during_load = false;
 
     m_only_gcode = false;
@@ -18912,7 +18915,6 @@ void Plater::load_project(wxString const& filename2,
     }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << __LINE__ << " load project done";
-    m_loading_project = false;
 }
 
 // BBS: save logic

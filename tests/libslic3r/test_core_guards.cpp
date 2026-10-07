@@ -9,6 +9,8 @@
 #include "libslic3r/MultiMaterialSegmentation.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Arachne/SkeletalTrapezoidation.hpp"
+#include "libslic3r/ExtrusionEntity.hpp"
+#include "libslic3r/Polygon.hpp"
 
 using namespace Slic3r;
 using namespace Slic3r::Arachne;
@@ -107,4 +109,18 @@ TEST_CASE("Multi-material segmentation resolves the outer-wall line width", "[Co
 
         REQUIRE(resolve_outer_wall_line_width(region_config, object_config, print_config) == Approx(c.expected).margin(1e-6));
     }
+}
+
+// Orca #13450: an empty ExtrusionLoop (reachable from the ZAA / ContourZ pass) crashed as_polyline()
+// through Polygon::split_at_first_point() on an empty polygon.
+TEST_CASE("Empty extrusion loop and polygon split cleanly", "[CoreGuards][ExtrusionLoop]")
+{
+    ExtrusionLoop loop;
+    CHECK(loop.as_polyline().empty());
+    Polylines polylines;
+    loop.collect_polylines(polylines);
+    CHECK(polylines.empty());
+
+    Polygon empty;
+    CHECK(empty.split_at_index(0).empty());
 }

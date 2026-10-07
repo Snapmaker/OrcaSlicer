@@ -11650,6 +11650,10 @@ void GLCanvas3D::_set_warning_notification_if_needed(EWarning warning)
 
 void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
 {
+    // Orca #14588: skip on shutdown. Plater's pImpl is already freed, so
+    // get_notification_manager() would use-after-free (GLCanvas3D dtor -> reset_volumes()).
+    if (wxGetApp().is_closing())
+        return;
     enum ErrorType{
         PLATER_WARNING,
         PLATER_ERROR,

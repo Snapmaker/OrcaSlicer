@@ -106,6 +106,10 @@ void main()
                 if (sample_z >= 1e19)
                     continue;
                 vec3  diff    = position(sample_uv, sample_z) - P;
+                // Pixel snapping may place a tap outside its integration slice.
+                // Samples below the receiver tangent are not hemisphere occluders.
+                if (dot(N, diff) <= max(footprint * 0.05, 1e-5))
+                    continue;
                 float dist    = length(diff);
                 float weight  = clamp(1.0 / 0.615 - dist / (r * 0.615), 0.0, 1.0);
                 horizon[side] = max(horizon[side], mix(low[side], dot(diff / max(dist, 1e-6), V), weight));

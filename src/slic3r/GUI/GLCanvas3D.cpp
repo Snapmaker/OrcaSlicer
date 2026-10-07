@@ -3207,7 +3207,7 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
                   << "\nfilter_variant=" << (m_ao_benchmark_filter_reuse ? "reuse" : "baseline")
                   << "\nbenchmark_scope=" << (m_ao_benchmark_pipeline ? "pipeline" : "fs_variant")
                   << "\nrequested_backend=" << (std::getenv("ORCA_AO_BACKEND") ? std::getenv("ORCA_AO_BACKEND") : "auto")
-                  << "\ncs_denoise_passes=" << (std::getenv("ORCA_AO_CS_DENOISE") ? std::getenv("ORCA_AO_CS_DENOISE") : "2")
+                  << "\ncs_denoise_passes=" << (std::getenv("ORCA_AO_CS_DENOISE") ? std::getenv("ORCA_AO_CS_DENOISE") : "quality_default")
                   << "\nview=" << camera.get_view_matrix().matrix() << "\nprojection=" << camera.get_projection_matrix().matrix();
         GLint samples = 0;
         glGetIntegerv(GL_SAMPLES, &samples);

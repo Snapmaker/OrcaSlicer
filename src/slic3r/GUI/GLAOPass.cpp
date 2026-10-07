@@ -244,7 +244,8 @@ std::array<int, 2> ao_samples(GLAOPass::Quality quality, int override_slices)
                                                   std::array<int, 2>{{override_slices == 3 ? 3 : 4, 8}};
 }
 
-// Development-only High candidate. Keep the upstream presets unless explicitly requested.
+// Static editor views have no temporal accumulation. High spends its GPU headroom on
+// more angular samples; lower presets retain the upstream sampling budget.
 std::array<int, 2> cs_ao_samples(GLAOPass::Quality quality, int override_slices)
 {
     if (quality == GLAOPass::Quality::Low)
@@ -254,7 +255,9 @@ std::array<int, 2> cs_ao_samples(GLAOPass::Quality quality, int override_slices)
     if (override_slices == 3 || override_slices == 6)
         return {{override_slices, 3}};
     const char* sampling = std::getenv("ORCA_AO_CS_SAMPLING");
-    return {{sampling && std::string(sampling) == "directions" ? 6 : 3, 3}};
+    // Preserve the explicit diagnostic baseline; an unset request uses static High.
+    const bool legacy = sampling && (std::string(sampling) == "default" || std::string(sampling) == "legacy");
+    return {{legacy ? 3 : 6, 3}};
 }
 
 // The pass uses its own VAO and texture units 0..4 (3: MSAA depth, 4: optional confidence).
@@ -775,33 +778,35 @@ bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shade
         if (frame.compute_shaders[i])
             compute_programs[i] = frame.compute_shaders[i]->get_id();
     GLAOCompute::Capabilities caps;
-    // Auto stays on the validated FS backend until application quality/performance acceptance.
-    if (request == GLAOCompute::Request::CS)
+    // Auto and explicit CS use the same context-local capability checks.
+    if (request != GLAOCompute::Request::FS)
         caps = m_compute.capabilities();
-    const bool programs_ready  = std::all_of(compute_programs.begin(), compute_programs.end(), [](unsigned int p) { return p != 0; });
-    const auto selection       = GLAOCompute::select(request, caps, programs_ready && m_compute.failure_reason().empty(), true, false,
-                                                     benchmark.active());
-    const bool use_edges = settings.fs_edge_filter && !selection.use_cs && settings.quality == Quality::High &&
-                           frame.edge_evaluate && frame.edge_denoise && !m_edge_filter_failed;
-    const bool edge_changed = use_edges != m_use_edge_filter;
-    m_use_edge_filter = use_edges;
-    m_fs_edge_passes = settings.fs_edge_passes == 3 ? 3 : 2;
+    const bool programs_ready = std::all_of(compute_programs.begin(), compute_programs.end(), [](unsigned int p) { return p != 0; });
+    const auto selection = GLAOCompute::select(request, caps, programs_ready && m_compute.failure_reason().empty(), benchmark.active());
+    const bool use_edges = settings.fs_edge_filter && !selection.use_cs && settings.quality == Quality::High && frame.edge_evaluate &&
+                           frame.edge_denoise && !m_edge_filter_failed;
+    const bool edge_changed   = use_edges != m_use_edge_filter;
+    m_use_edge_filter         = use_edges;
+    m_fs_edge_passes          = settings.fs_edge_passes == 3 ? 3 : 2;
     const bool use_confidence = frame.precomputed_confidence && frame.confidence_normal && frame.confidence_composite &&
                                 (!frame.sample_composite || frame.confidence_sample_composite) && !m_confidence_failed;
     const bool confidence_changed = use_confidence != m_use_confidence;
-    m_use_confidence = use_confidence;
-    const bool backend_changed = m_use_compute != selection.use_cs;
-    m_use_compute              = selection.use_cs;
-    m_backend_reason           = request == GLAOCompute::Request::Auto ? "Auto uses FS pending XeGTAO acceptance" : selection.reason;
-    if (!m_compute.failure_reason().empty() && request == GLAOCompute::Request::CS)
+    m_use_confidence              = use_confidence;
+    const bool backend_changed    = m_use_compute != selection.use_cs;
+    m_use_compute                 = selection.use_cs;
+    m_backend_reason              = selection.reason;
+    if (!m_compute.failure_reason().empty() && request != GLAOCompute::Request::FS)
         m_backend_reason = m_compute.failure_reason();
     if (!selection.benchmark_allowed)
         benchmark.finish("ABORTED: forced CS unavailable: " + m_backend_reason);
-    const char* denoise         = std::getenv("ORCA_AO_CS_DENOISE");
-    const int   denoise_passes  = denoise && std::string(denoise) == "1" ? 1 : denoise && std::string(denoise) == "3" ? 3 : 2;
-    const bool  denoise_changed = m_denoise_passes != denoise_passes;
+    const char* denoise        = std::getenv("ORCA_AO_CS_DENOISE");
+    int         denoise_passes = settings.quality == Quality::High ? 3 : 2;
+    if (denoise && denoise[0] >= '1' && denoise[0] <= '3' && denoise[1] == '\0')
+        denoise_passes = denoise[0] - '0';
+    const bool denoise_changed  = m_denoise_passes != denoise_passes;
     m_denoise_passes            = denoise_passes;
-    m_effective_samples         = m_use_compute ? cs_ao_samples(settings.quality, settings.cs_slices_override) : ao_samples(settings.quality, settings.fs_slices_override);
+    m_effective_samples         = m_use_compute ? cs_ao_samples(settings.quality, settings.cs_slices_override) :
+                                                  ao_samples(settings.quality, settings.fs_slices_override);
     int aw                      = m_use_compute || settings.quality == Quality::High ? w : (w + 1) / 2;
     int ah                      = m_use_compute || settings.quality == Quality::High ? h : (h + 1) / 2;
     m_shaders                   = shaders;
@@ -816,7 +821,7 @@ bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shade
     // A recursive retry would save those bindings and then delete their objects.
     if (m_use_compute && !m_compute.prepare(w, h, compute_programs, m_denoise_passes)) {
         m_backend_reason = m_compute.failure_reason();
-        benchmark.finish("ABORTED: forced CS unavailable: " + m_backend_reason);
+        benchmark.finish("ABORTED: CS initialization failed: " + m_backend_reason);
         m_use_compute       = false;
         m_effective_samples = ao_samples(settings.quality, settings.fs_slices_override);
         aw                  = settings.quality == Quality::High ? w : (w + 1) / 2;

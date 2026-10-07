@@ -300,8 +300,7 @@ bool GLAOCompute::valid_dispatch(const Capabilities& caps, int width, int height
            (width - 1) / 8 + 1 <= caps.max_groups[0] && (height - 1) / 8 + 1 <= caps.max_groups[1];
 }
 
-GLAOCompute::Selection GLAOCompute::select(
-    Request request, const Capabilities& caps, bool backend_ready, bool quality_ready, bool auto_enabled, bool benchmark)
+GLAOCompute::Selection GLAOCompute::select(Request request, const Capabilities& caps, bool backend_ready, bool benchmark)
 {
     Selection result;
     if (request == Request::FS)
@@ -310,10 +309,6 @@ GLAOCompute::Selection GLAOCompute::select(
         result.reason = caps.reason;
     else if (!backend_ready)
         result.reason = "CS backend not ready";
-    else if (!quality_ready)
-        result.reason = "CS quality preset not ready";
-    else if (request == Request::Auto && !auto_enabled)
-        result.reason = "CS automatic selection awaiting validation";
     else
         result.use_cs = true;
     result.benchmark_allowed = !(benchmark && request == Request::CS && !result.use_cs);

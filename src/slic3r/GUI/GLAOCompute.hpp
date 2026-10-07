@@ -8,7 +8,7 @@
 namespace Slic3r { namespace GUI {
 
 // Capability results belong to the current GL context, never to a renderer name.
-// The complete backend is opt-in until application quality/performance acceptance.
+// Auto prefers this backend when the active GL context and programs support it.
 class GLAOCompute
 {
 public:
@@ -53,9 +53,8 @@ public:
     static Request      parse_request(const char* value);
     static Capabilities query_capabilities();
     const Capabilities& capabilities();
-    // In rollout, Auto remains FS until both the backend and its quality preset pass validation.
-    static Selection select(
-        Request request, const Capabilities& capabilities, bool backend_ready, bool quality_ready, bool auto_enabled, bool benchmark);
+    // Capability/program readiness determines routing; GPU timings never select a backend.
+    static Selection select(Request request, const Capabilities& capabilities, bool backend_ready, bool benchmark);
     static bool valid_dispatch(const Capabilities& capabilities, int width, int height);
 
     // Explicitly mirrors only the bindings modified by CS passes. Construct after a successful GL 4.3 probe.
@@ -80,7 +79,7 @@ public:
     };
 
 private:
-    // Second intermediate is allocated only for the optional three-pass candidate.
+    // The second intermediate is allocated only for three-pass presets (including static High).
     std::array<unsigned int, 6> m_textures{}; // depth MIPs, raw, edges, first intermediate, normalized final, second intermediate
     std::array<unsigned int, 3> m_programs{};
     int                         m_width{}, m_height{}, m_pw{}, m_ph{};

@@ -1,7 +1,9 @@
 #pragma once
 
+#include <optional>
 #include <vector>
 
+#include "../Point.hpp"
 #include "../Polygon.hpp"
 
 namespace Slic3r {
@@ -50,5 +52,24 @@ WipeTowerFootprint estimate_wipe_tower_footprint(const ConfigBase               
                                                  const std::vector<unsigned int> &filament_ids,
                                                  double                           layer_height,
                                                  double                           max_object_height);
+
+// The tower's first-layer footprint, brim included, at plate position `pos` (its front left corner,
+// wipe_tower_x / wipe_tower_y), rotated by wipe_tower_rotation_angle: the polygon Print::validate()
+// tests against the bed exclusion area.
+Polygon placed_wipe_tower_footprint(const ConfigBase &config, const WipeTowerFootprint &footprint, const Vec2d &pos);
+
+// System placement of a tower that would sit on the bed exclusion area. A stored or default position
+// whose footprint misses `excluded` is left alone (nullopt), so G-code that slices today is unchanged.
+// Otherwise the first clear one of: `preferred` (the GUI's default corner) clamped
+// WIPE_TOWER_AUTO_MARGIN + brim inside the bed - the clamp of
+// PartPlateList::set_default_wipe_tower_pos_for_plate - then the bed's four corners at that margin.
+// nullopt when every candidate is blocked too, leaving validation to report it.
+// bed_size: plate width and depth; excluded: bed_exclude_area in plate coordinates.
+std::optional<Vec2d> wipe_tower_position_clear_of_exclusion(const ConfigBase         &config,
+                                                            const WipeTowerFootprint &footprint,
+                                                            const Polygons           &excluded,
+                                                            const Vec2d              &bed_size,
+                                                            const Vec2d              &preferred,
+                                                            const Vec2d              &current);
 
 } // namespace Slic3r

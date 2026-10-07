@@ -109,6 +109,7 @@
 
 #include "../Utils/PresetUpdater.hpp"
 #include "../Utils/AppUpdateCheck.hpp"
+#include "../Utils/StartupWizardLogic.hpp"
 #include "../Utils/PrintHost.hpp"
 #include "../Utils/Process.hpp"
 #include "../Utils/MacDarkMode.hpp"
@@ -3438,6 +3439,18 @@ bool GUI_App::on_init_inner()
             d->EndModal(wxID_ABORT);
     });
 
+#ifdef __APPLE__
+    // A quit request from the Dock, a logout or a restart ends with AppKit calling exit() right after this
+    // event, so OnExit() and ~GUI_App() never run. Stop the preset sync and unload the Bambu network module
+    // here as OnExit() does: its static destructors abort if its agent's threads are still running.
+    wxGetApp().Bind(wxEVT_END_SESSION, [this](wxCloseEvent &e) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "received wxEVT_END_SESSION";
+        stop_sync_user_preset();
+        Slic3r::NetworkAgent::unload_network_module();
+        e.Skip();
+    });
+#endif
+
     // Verify resources path
     const wxString resources_dir = from_u8(Slic3r::resources_dir());
     wxCHECK_MSG(wxDirExists(resources_dir), false,
@@ -5005,6 +5018,11 @@ void GUI_App::set_auto_toolbar_icon_scale(float scale) const
     long int_val = std::min(int(std::lround(scale / icon_sc * 100)), 100);
     std::string val = std::to_string(int_val);
 
+    // Logged only when the stored value changes (the caller asks every frame while the toolbar
+    // is capped at 100 %): "toolkit_size" is the 3D toolbar's auto-fit size in percent.
+    const std::string old_val = app_config->get("toolkit_size");
+    if (old_val != val)
+        BOOST_LOG_TRIVIAL(warning) << "3D toolbar auto size: toolkit_size " << (old_val.empty() ? std::string("(unset)") : old_val) << " -> " << val;
     app_config->set("toolkit_size", val);
 }
 
@@ -7875,7 +7893,7 @@ bool GUI_App::load_language(wxString language, bool initial)
 			language_info = wxLocale::GetLanguageInfo(wxLANGUAGE_ENGLISH_US);
     }
 
-	BOOST_LOG_TRIVIAL(trace) << boost::format("Switching wxLocales to %1%") % language_info->CanonicalName.ToUTF8().data();
+	BOOST_LOG_TRIVIAL(trace) << boost::format("Requested translation language %1%") % language_info->CanonicalName.ToUTF8().data();
 
     // Select language for locales. This language may be different from the language of the dictionary.
     //if (language_info == m_language_info_best || language_info == m_language_info_system) {
@@ -7895,22 +7913,55 @@ bool GUI_App::load_language(wxString language, bool initial)
 		BOOST_LOG_TRIVIAL(info) << "Using Czech dictionaries for Slovak language";
     }
 
+    // The language of the translation dictionary (language_info / language_dict) is kept apart from the
+    // OS locale that wxLocale is initialised with: a regional OS locale that is not installed (en_IL,
+    // pt_XX, ...) must not fail the start or silently replace the user's language.
+    const wxLanguageInfo *locale_language_info = language_info;
+
 #ifdef __linux__
     // If we can't find this locale , try to use different one for the language
     // instead of just reporting that it is impossible to switch.
-    if (! wxLocale::IsAvailable(language_info->Language) && m_language_info_system) {
-        std::string original_lang = into_u8(language_info->CanonicalName);
-        language_info = linux_get_existing_locale_language(language_info, m_language_info_system);
+    if (! wxLocale::IsAvailable(locale_language_info->Language) && m_language_info_system) {
+        std::string original_lang = into_u8(locale_language_info->CanonicalName);
+        locale_language_info = linux_get_existing_locale_language(locale_language_info, m_language_info_system);
         BOOST_LOG_TRIVIAL(info) << boost::format("Can't switch language to %1% (missing locales). Using %2% instead.")
-                                    % original_lang % language_info->CanonicalName.ToUTF8().data();
+                                    % original_lang % locale_language_info->CanonicalName.ToUTF8().data();
     }
 #endif
 
-    if (! wxLocale::IsAvailable(language_info->Language)&&initial) {
-        language_info = wxLocale::GetLanguageInfo(wxLANGUAGE_ENGLISH_UK);
-        app_config->set("language", language_info->CanonicalName.ToUTF8().data());
+    // Try base language without region (e.g., "en" from "en_IL") on all platforms
+    if (locale_language_info == nullptr || !wxLocale::IsAvailable(locale_language_info->Language)) {
+        const wxString requested_code = language_info->CanonicalName;
+        wxString base_lang = requested_code.BeforeFirst('_');
+        if (base_lang != requested_code) {
+            const wxLanguageInfo *base_info = wxLocale::FindLanguageInfo(base_lang);
+            if (base_info && wxLocale::IsAvailable(base_info->Language)) {
+                BOOST_LOG_TRIVIAL(info) << boost::format("Locale %1% not available. Falling back to base language %2%.")
+                    % requested_code.ToUTF8().data() % base_info->CanonicalName.ToUTF8().data();
+                locale_language_info = base_info;
+            }
+        }
     }
-    else if (initial) {
+
+    // Generic fallback chain for all platforms
+    if (locale_language_info == nullptr || !wxLocale::IsAvailable(locale_language_info->Language)) {
+        auto try_locale = [](const wxLanguageInfo* candidate) -> const wxLanguageInfo* {
+            return (candidate && wxLocale::IsAvailable(candidate->Language)) ? candidate : nullptr;
+        };
+        const wxLanguageInfo* fallback_locale_info =
+            try_locale(m_wxLocale ? wxLocale::GetLanguageInfo(wxLanguage(m_wxLocale->GetLanguage())) : nullptr);
+        if (!fallback_locale_info) fallback_locale_info = try_locale(m_language_info_system);
+        if (!fallback_locale_info) fallback_locale_info = try_locale(m_language_info_best);
+        if (!fallback_locale_info) fallback_locale_info = try_locale(wxLocale::GetLanguageInfo(wxLANGUAGE_ENGLISH_US));
+        if (!fallback_locale_info) fallback_locale_info = try_locale(wxLocale::GetLanguageInfo(wxLANGUAGE_ENGLISH_UK));
+        if (fallback_locale_info != nullptr) {
+            BOOST_LOG_TRIVIAL(info) << boost::format("Using fallback locale %1% while keeping translation dictionary %2%.")
+                                        % fallback_locale_info->CanonicalName.ToUTF8().data() % language_info->CanonicalName.ToUTF8().data();
+            locale_language_info = fallback_locale_info;
+        }
+    }
+
+    if (initial) {
         // bbs supported languages
         //TODO: use a global one with Preference
         //wxLanguage supported_languages[]{
@@ -7944,7 +7995,7 @@ bool GUI_App::load_language(wxString language, bool initial)
         //}
     }
 
-    if (! wxLocale::IsAvailable(language_info->Language)) {
+    if (locale_language_info == nullptr || ! wxLocale::IsAvailable(locale_language_info->Language)) {
     	// Loading the language dictionary failed.
         wxString message = "Switching EdgeSlicer to language " + language_info->CanonicalName + " failed.";
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -7952,7 +8003,7 @@ bool GUI_App::load_language(wxString language, bool initial)
         message += "\nYou may need to reconfigure the missing locales, likely by running the \"locale-gen\" and \"dpkg-reconfigure locales\" commands.\n";
 #endif
         if (initial)
-        	message + "\n\nApplication will close.";
+        	message += "\n\nApplication will close.";
         wxMessageBox(message, "EdgeSlicer - Switching language failed", wxOK | wxICON_ERROR);
         if (initial)
 			std::exit(EXIT_FAILURE);
@@ -7964,7 +8015,7 @@ bool GUI_App::load_language(wxString language, bool initial)
     //FIXME wxWidgets cause havoc if the current locale is deleted. We just forget it causing memory leaks for now.
     m_wxLocale.release();
     m_wxLocale = Slic3r::make_unique<wxLocale>();
-    m_wxLocale->Init(language_info->Language);
+    m_wxLocale->Init(locale_language_info->Language);
     // Override language at the active wxTranslations class (which is stored in the active m_wxLocale)
     // to load possibly different dictionary, for example, load Czech dictionary for Slovak language.
     wxTranslations::Get()->SetLanguage(language_dict);
@@ -8921,6 +8972,9 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
     long        pStyle    = wxCAPTION | wxCLOSE_BOX | wxSYSTEM_MENU;
     if (strFinish == "false" || strFinish.empty())
         pStyle = wxCAPTION | wxTAB_TRAVERSAL;
+    // The Printer Selection table (sidebar "Select/Remove printers") can be resized and maximised.
+    if (start_page == ConfigWizard::SP_PRINTERS)
+        pStyle |= wxRESIZE_BORDER | wxMAXIMIZE_BOX;
 
     GuideFrame wizard(this, pStyle);
     auto page = start_page == ConfigWizard::SP_WELCOME ? GuideFrame::BBL_WELCOME :
@@ -9192,28 +9246,30 @@ bool GUI_App::config_wizard_startup()
     auto isAgree = wxGetApp().app_config->get("app", PRIVACY_POLICY_FLAGS);
     user_update_privacy_notify(isAgree == "true");
     BOOST_LOG_TRIVIAL(warning) << "config_wizard_startup changed the privacy policy with: " << (isAgree);
-    
-        if (!m_app_conf_exists || preset_bundle->printers.only_default_printers()) {
-            if (m_hub_managed && RemoteAccess::get().hidden()) {
-                // Ultra: the wizard needs a person; a printer-less instance cannot serve the phone anyway.
-                RemoteAccess::get().raise_attention("this slicer has no printer configured yet", "manual");
-                return false;
-            }
-            BOOST_LOG_TRIVIAL(info) << "run wizard...";
-            run_wizard(ConfigWizard::RR_DATA_EMPTY);
-            BOOST_LOG_TRIVIAL(info) << "finished run wizard";
 
-            return true;
-        }
+    // An empty privacy flag alone no longer means "never set up": the wizard stopped writing it
+    // in 2.4.0.0, so every install set up since then re-ran the wizard at each launch (Windows and
+    // macOS). See Utils/StartupWizardLogic.hpp.
+    const bool setup_finished = StartupWizard::finish_flag_set(app_config->get("firstguide", "finish"));
+    const StartupWizard::Reason reason = StartupWizard::reason_to_run(
+        m_app_conf_exists, preset_bundle->printers.only_default_printers(), isAgree, setup_finished);
+    BOOST_LOG_TRIVIAL(warning) << "config_wizard_startup: config existed=" << m_app_conf_exists
+                               << ", firstguide/finish=" << app_config->get("firstguide", "finish")
+                               << ", privacy flag=\"" << isAgree << "\" -> wizard: " << StartupWizard::reason_name(reason);
+    if (reason == StartupWizard::Reason::None)
+        return false;
 
-    if (isAgree.empty())
-    {
-        if (m_hub_managed && RemoteAccess::get().hidden()) { RemoteAccess::get().raise_attention("first-run setup is waiting", "manual"); return false; }
-        run_wizard(ConfigWizard::RR_DATA_EMPTY); // Compatible with older versions
-        return true;
+    if (m_hub_managed && RemoteAccess::get().hidden()) {
+        // Ultra: the wizard needs a person; a printer-less instance cannot serve the phone anyway.
+        RemoteAccess::get().raise_attention(reason == StartupWizard::Reason::NeverFinished ? "first-run setup is waiting" :
+                                                                                             "this slicer has no printer configured yet",
+                                            "manual");
+        return false;
     }
-
-    return false;
+    BOOST_LOG_TRIVIAL(info) << "run wizard...";
+    run_wizard(ConfigWizard::RR_DATA_EMPTY);
+    BOOST_LOG_TRIVIAL(info) << "finished run wizard";
+    return true;
 }
 
 void GUI_App::check_updates(const bool verbose)

@@ -22,6 +22,9 @@
 #include <cstring>
 #include <iostream>
 #include <math.h>
+#include <csignal>
+#include <atomic>
+#include <new>
 
 #include "nlohmann/json.hpp"
 using namespace nlohmann;
@@ -1445,6 +1448,11 @@ int CLI::run(int argc, char **argv)
     bool no_thumbnails = false;
     if (auto* opt = m_config.option<ConfigOptionBool>("no_thumbnails"))
         no_thumbnails = opt->value;
+    // The GUI leaves filament prices out of G-code by default (Preferences); the CLI has no
+    // preferences and keeps writing them unless --no-filament-prices is given.
+    bool gcode_filament_prices = true;
+    if (auto* opt = m_config.option<ConfigOptionBool>("no_filament_prices"))
+        gcode_filament_prices = !opt->value;
     // Presets by name are turned into flat JSON files that join the --load-settings /
     // --load-filaments lists, so everything downstream stays as it was.
     std::vector<std::string> load_configs_all(load_configs.begin(), load_configs.end());
@@ -5715,6 +5723,32 @@ int CLI::run(int argc, char **argv)
                         plate->estimate_wipe_tower_polygon(m_print_config, index, wt_pos, wt_size);
                         if (wt_size(0) < EPSILON || wt_size(1) < EPSILON)
                             continue;
+                        // That clamp only knows the bed edges. A tower left on bed_exclude_area fails
+                        // validation ("Prime Tower is too close to exclusion area", -64; Qidi Q1 Pro:
+                        // the raw default y = 220 reaches the y 240-245 strip), where the GUI never puts
+                        // one: PartPlateList::set_default_wipe_tower_pos_for_plate starts new plates at its
+                        // default corner WIPE_TOWER_AUTO_MARGIN + brim inside the bed. Re-place such a
+                        // tower the same way; a tower already clear of the area is not touched.
+                        {
+                            PrintConfig exclusion_config;
+                            if (const auto *area = m_print_config.option<ConfigOptionPoints>("bed_exclude_area"))
+                                exclusion_config.bed_exclude_area.values = area->values;
+                            const Polygons excluded = get_bed_excluded_area(exclusion_config);
+                            int plate_width = 0, plate_depth = 0, plate_height = 0;
+                            partplate_list.get_plate_size(plate_width, plate_depth, plate_height);
+                            auto printer_structure_opt = m_print_config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
+                            const bool i3 = printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3;
+                            const Vec2d preferred = i3 ? Vec2d(double(I3_WIPE_TOWER_DEFAULT_X_POS), double(I3_WIPE_TOWER_DEFAULT_Y_POS)) :
+                                                         Vec2d(double(WIPE_TOWER_DEFAULT_X_POS), double(WIPE_TOWER_DEFAULT_Y_POS));
+                            const WipeTowerFootprint footprint = plate->estimate_wipe_tower_footprint(m_print_config);
+                            if (const std::optional<Vec2d> clear = wipe_tower_position_clear_of_exclusion(
+                                    m_print_config, footprint, excluded, Vec2d(double(plate_width), double(plate_depth)), preferred, Vec2d(wt_pos(0), wt_pos(1)))) {
+                                BOOST_LOG_TRIVIAL(info) << boost::format("plate %1%: wipe tower at {%2%, %3%} meets bed_exclude_area, moved to {%4%, %5%}")
+                                    % (index + 1) % wt_pos(0) % wt_pos(1) % clear->x() % clear->y();
+                                wt_pos(0) = clear->x();
+                                wt_pos(1) = clear->y();
+                            }
+                        }
                         ConfigOptionFloat wt_x_opt((float) wt_pos(0));
                         ConfigOptionFloat wt_y_opt((float) wt_pos(1));
                         m_print_config.option<ConfigOptionFloats>("wipe_tower_x", true)->set_at(&wt_x_opt, index, 0);
@@ -6095,6 +6129,7 @@ int CLI::run(int argc, char **argv)
                                     }
                                     BOOST_LOG_TRIVIAL(info) << "process finished, will export gcode temporily to " << outfile << std::endl;
                                     temp_time = (long long)Slic3r::Utils::get_current_time_utc();
+                                    print_fff->set_gcode_filament_prices(gcode_filament_prices);
                                     outfile = print_fff->export_gcode(outfile, gcode_result, nullptr);
                                     time_using_cache = time_using_cache + ((long long)Slic3r::Utils::get_current_time_utc() - temp_time);
                                     BOOST_LOG_TRIVIAL(info) << "export_gcode finished: time_using_cache update to " << time_using_cache << " secs.";
@@ -6447,9 +6482,9 @@ int CLI::run(int argc, char **argv)
                 colors_out[color_idx] = ColorRGBA(float(rgb_color[0]) / 255.f, float(rgb_color[1]) / 255.f, float(rgb_color[2]) / 255.f, float(rgb_color[3]) / 255.f);
             }
 
-            int gl_major, gl_minor, gl_verbos;
-            glfwGetVersion(&gl_major, &gl_minor, &gl_verbos);
-            BOOST_LOG_TRIVIAL(info) << boost::format("opengl version %1%.%2%.%3%")%gl_major %gl_minor %gl_verbos;
+            int glfw_major, glfw_minor, glfw_revision;
+            glfwGetVersion(&glfw_major, &glfw_minor, &glfw_revision);
+            BOOST_LOG_TRIVIAL(info) << boost::format("GLFW version %1%.%2%.%3%") % glfw_major % glfw_minor % glfw_revision;
 
             glfwSetErrorCallback(glfw_callback);
             int ret = glfwInit();
@@ -6459,8 +6494,11 @@ int CLI::run(int argc, char **argv)
             }
             else {
                 BOOST_LOG_TRIVIAL(info) << "glfwInit Success."<< std::endl;
-                glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, gl_major);
-                glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, gl_minor);
+                // Request the minimum OpenGL version we render with, independently of the GLFW library
+                // version (this used to pass GLFW's own version as the GL version; OrcaSlicer did the same
+                // fix). macOS gets a forward-compatible core profile below, as the GUI does.
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
                 glfwWindowHint(GLFW_RED_BITS, 8);
                 glfwWindowHint(GLFW_GREEN_BITS, 8);
                 glfwWindowHint(GLFW_BLUE_BITS, 8);
@@ -6480,6 +6518,16 @@ int CLI::run(int argc, char **argv)
 #endif
 
                 GLFWwindow* window = glfwCreateWindow(640, 480, "base_window", NULL, NULL);
+#ifndef __WXMAC__
+                if (window == NULL) {
+                    // Some drivers (e.g. older Mesa) only expose a 3.0 compatibility profile; take whatever they offer.
+                    BOOST_LOG_TRIVIAL(warning) << "Failed to create an OpenGL 3.3 compatibility context, retrying with the driver default" << std::endl;
+                    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 1);
+                    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+                    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_ANY_PROFILE);
+                    window = glfwCreateWindow(640, 480, "base_window", NULL, NULL);
+                }
+#endif
                 if (window == NULL)
                 {
                     BOOST_LOG_TRIVIAL(error) << "Failed to create GLFW window" << std::endl;
@@ -7292,6 +7340,9 @@ bool CLI::export_project(Model *model, std::string& path, PlateDataPtrs &partpla
     store_params.export_plate_idx = plate_to_export;
     if (minimum_save)
         store_params.strategy = store_params.strategy | SaveStrategy::SkipModel;
+    // --no-filament-prices leaves the prices out of the 3MF's settings as well as out of its G-code.
+    if (const ConfigOptionBool *opt = m_config.option<ConfigOptionBool>("no_filament_prices"); opt != nullptr && opt->value)
+        store_params.strip_filament_prices = true;
     BambuExport::Report bambu_report;
     if (const ConfigOptionBool *opt = m_config.option<ConfigOptionBool>("export_bambu_3mf"); opt != nullptr && opt->value) {
         store_params.bambu_compat = true;
@@ -7385,6 +7436,9 @@ std::string CLI::output_filepath(const ModelObject &object, unsigned int index, 
 
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
+// Guards against a failed allocation inside the dump re-entering the new-handler.
+static std::atomic<bool> g_dump_in_progress{false};
+
 extern "C" {
     __declspec(dllexport) int __stdcall Snapmaker_Orca_main(int argc, wchar_t **argv)
     {
@@ -7396,10 +7450,24 @@ extern "C" {
         for (size_t i = 0; i < argc; ++ i)
             argv_ptrs[i] = argv_narrow[i].data();
 
+        // Dump before unwinding, while the stack still names what asked for the memory. Throwing
+        // std::bad_alloc is standard-permitted here and is what reaches generic_exception_handle()
+        // (GUI: "running out of memory" dialog), or std::terminate -> abort -> the Sentry crash handler.
+        // The old null write crashed here with a stack that only named the handler.
         std::set_new_handler([]() {
-            int *a = nullptr;
-            *a     = 0;
-            });
+            if (!g_dump_in_progress.exchange(true)) {
+                try {
+                    // A null EXCEPTION_POINTERS walks the calling thread as it stands.
+                    CBaseException base(GetCurrentProcess(), GetCurrentProcessId(), NULL, nullptr);
+                    base.ShowCallstack();
+                } catch (...) {
+                    // A failed dump must not displace the std::bad_alloc owed to the caller.
+                }
+                // ObjParser recovers from std::bad_alloc, so let a later one dump again.
+                g_dump_in_progress = false;
+            }
+            throw std::bad_alloc();
+        });
         // Call the UTF8 main.
         return CLI().run(argc, argv_ptrs.data());
     }
@@ -7407,6 +7475,11 @@ extern "C" {
 #else /* _MSC_VER */
 int main(int argc, char **argv)
 {
+#ifndef _WIN32
+    // Ignore SIGPIPE so a write to a closed socket (e.g. a dropped printer network connection)
+    // returns EPIPE to the caller instead of terminating the whole process.
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
     // Before initSentry(): it reads the crash-report preference from the EdgeSlicer.conf that
     // --datadir points at.
     // A relaunch waits for the instance it replaces first (see common_func.hpp).

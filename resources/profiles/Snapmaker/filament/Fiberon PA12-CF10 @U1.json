@@ -1,0 +1,84 @@
+{
+    "type": "filament",
+    "name": "Fiberon PA12-CF10 @U1",
+    "inherits": "Generic PA-CF @U1 0.4 nozzle",
+    "from": "system",
+    "setting_id": "GFSPM04_01",
+    "filament_id": "PMPA01",
+    "instantiation": "true",
+    "nozzle_temperature": [
+        "280"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "280"
+    ],
+    "nozzle_temperature_range_low": [
+        "280"
+    ],
+    "eng_plate_temp": [
+        "50"
+    ],
+    "eng_plate_temp_initial_layer": [
+        "50"
+    ],
+    "hot_plate_temp": [
+        "50"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "50"
+    ],
+    "textured_plate_temp": [
+        "50"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "50"
+    ],
+    "graphic_effect_plate_temp": [
+        "50"
+    ],
+    "graphic_effect_plate_temp_initial_layer": [
+        "50"
+    ],
+    "fan_min_speed": [
+        "20"
+    ],
+    "fan_max_speed": [
+        "50"
+    ],
+    "overhang_fan_speed": [
+        "30"
+    ],
+    "overhang_fan_threshold": [
+        "95%"
+    ],
+    "full_fan_speed_layer": [
+        "0"
+    ],
+    "fan_cooling_layer_time": [
+        "31"
+    ],
+    "slow_down_layer_time": [
+        "8"
+    ],
+    "slow_down_min_speed": [
+        "10"
+    ],
+    "reduce_fan_stop_start_freq": [
+        "1"
+    ],
+    "filament_density": [
+        "1.06"
+    ],
+    "filament_flow_ratio": [
+        "0.87"
+    ],
+    "temperature_vitrification": [
+        "55"
+    ],
+    "filament_vendor": [
+        "Polymaker"
+    ],
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ]
+}

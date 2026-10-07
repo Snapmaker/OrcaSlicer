@@ -1,0 +1,78 @@
+{
+    "type": "filament",
+    "name": "Fiberon PETG-ESD @U1",
+    "inherits": "Generic PETG @U1 0.4 nozzle",
+    "from": "system",
+    "setting_id": "GFSPM04_08",
+    "filament_id": "PMPE02",
+    "instantiation": "true",
+    "nozzle_temperature": [
+        "280"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "280"
+    ],
+    "nozzle_temperature_range_low": [
+        "250"
+    ],
+    "nozzle_temperature_range_high": [
+        "290"
+    ],
+    "cool_plate_temp": [
+        "60"
+    ],
+    "cool_plate_temp_initial_layer": [
+        "60"
+    ],
+    "eng_plate_temp": [
+        "0"
+    ],
+    "eng_plate_temp_initial_layer": [
+        "0"
+    ],
+    "graphic_effect_plate_temp": [
+        "80"
+    ],
+    "graphic_effect_plate_temp_initial_layer": [
+        "80"
+    ],
+    "fan_min_speed": [
+        "10"
+    ],
+    "fan_max_speed": [
+        "20"
+    ],
+    "overhang_fan_speed": [
+        "100"
+    ],
+    "overhang_fan_threshold": [
+        "95%"
+    ],
+    "fan_cooling_layer_time": [
+        "31"
+    ],
+    "slow_down_layer_time": [
+        "8"
+    ],
+    "slow_down_min_speed": [
+        "10"
+    ],
+    "filament_density": [
+        "1.24"
+    ],
+    "filament_cost": [
+        "30"
+    ],
+    "filament_max_volumetric_speed": [
+        "10"
+    ],
+    "temperature_vitrification": [
+        "77"
+    ],
+    "filament_vendor": [
+        "Polymaker"
+    ],
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ]
+}

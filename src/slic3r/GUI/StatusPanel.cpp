@@ -2604,8 +2604,9 @@ void StatusPanel::update_misc_ctrl(MachineObject *obj)
     // update extruder icon
     update_extruder_status(obj);
 
-    bool is_suppt_aux_fun = obj->is_support_aux_fan;
-    bool is_suppt_cham_fun = obj->is_support_chamber_fan;
+    // An H2-series printer may list its aux / chamber fans only in device.airduct.
+    bool is_suppt_aux_fun = obj->has_aux_fan();
+    bool is_suppt_cham_fun = obj->has_chamber_fan();
 
     //update cham fan
     if (m_current_support_cham_fan != is_suppt_cham_fun) {
@@ -4321,8 +4322,8 @@ void StatusPanel::on_nozzle_fan_switch(wxCommandEvent &event)
     m_fan_control_popup = new FanControlPopup(this);
 
     if (obj) {
-        m_fan_control_popup->show_cham_fan(obj->is_support_chamber_fan);
-        m_fan_control_popup->show_aux_fan(obj->is_support_aux_fan);
+        m_fan_control_popup->show_cham_fan(obj->has_chamber_fan());
+        m_fan_control_popup->show_aux_fan(obj->has_aux_fan());
     }
 
     auto pos = m_switch_nozzle_fan->GetScreenPosition();

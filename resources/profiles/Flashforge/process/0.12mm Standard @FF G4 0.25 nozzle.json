@@ -10,7 +10,9 @@
     "enable_prime_tower": "1",
     "filter_out_gap_fill": "0.1",
     "compatible_printers": [
-        "Flashforge Guider4 0.25 nozzle"
+        "Flashforge Guider4 0.25 nozzle",
+        "Flashforge Creator 5 0.25 nozzle",
+        "Flashforge Creator 5 Pro 0.25 nozzle"
     ],
     "gap_fill_target": "topbottom",
     "initial_layer_infill_speed": "80",

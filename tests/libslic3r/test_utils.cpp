@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/Utils.hpp"
 #include <test_utils.hpp>
@@ -10,11 +11,14 @@
 
 #include <atomic>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <string>
 #include <system_error>
 #include <thread>
+#include <tuple>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -824,4 +828,213 @@ TEST_CASE("AppConfig save round-trips through the atomic helper", "[utils][atomi
     const std::string load_err = reader.load();
     REQUIRE(load_err.empty());
     REQUIRE(reader.get("atomic_roundtrip_key") == "atomic-value");
+}
+
+// Printer Selection dialog: a printer the user unticked came back, because save() unioned the
+// installed-models list on disk (still holding it) into what this instance had just set.
+TEST_CASE("merge_vendor_maps keeps removals and additions from either side", "[AppConfig]")
+{
+    using VM = AppConfig::VendorMap;
+    const VM base = {{"BBL", {{"Bambu Lab H2C", {"0.4"}}, {"Bambu Lab X1 Carbon", {"0.4", "0.6"}}}},
+                     {"Snapmaker", {{"Snapmaker U1", {"0.4"}}}}};
+
+    SECTION("nothing changed") {
+        CHECK(AppConfig::merge_vendor_maps(base, base, base) == base);
+    }
+    SECTION("this instance unticked a printer: the copy on disk does not bring it back") {
+        VM mine = base;
+        mine["BBL"].erase("Bambu Lab H2C");
+        CHECK(AppConfig::merge_vendor_maps(base, mine, base) == mine);
+    }
+    SECTION("this instance dropped one nozzle variant") {
+        VM mine = base;
+        mine["BBL"]["Bambu Lab X1 Carbon"].erase("0.6");
+        CHECK(AppConfig::merge_vendor_maps(base, mine, base) == mine);
+    }
+    SECTION("another instance unticked a printer: this stale copy does not bring it back") {
+        VM disk = base;
+        disk["Snapmaker"].erase("Snapmaker U1");
+        disk.erase("Snapmaker");
+        CHECK(AppConfig::merge_vendor_maps(base, base, disk) == disk);
+    }
+    SECTION("additions from both sides are kept, alongside a removal") {
+        VM mine = base;
+        mine["Elegoo"]["Elegoo Centauri Carbon"].insert("0.4");
+        mine["BBL"].erase("Bambu Lab H2C");
+        VM disk = base;
+        disk["BBL"]["Bambu Lab H2D"].insert("0.4");
+        const VM merged = AppConfig::merge_vendor_maps(base, mine, disk);
+        const VM expected = {{"BBL", {{"Bambu Lab H2D", {"0.4"}}, {"Bambu Lab X1 Carbon", {"0.4", "0.6"}}}},
+                             {"Elegoo", {{"Elegoo Centauri Carbon", {"0.4"}}}},
+                             {"Snapmaker", {{"Snapmaker U1", {"0.4"}}}}};
+        CHECK(merged == expected);
+    }
+    SECTION("no common base (first save): a plain union, as before") {
+        const VM mine = {{"Snapmaker", {{"Snapmaker U1", {"0.4"}}}}};
+        const VM disk = {{"BBL", {{"Bambu Lab H2C", {"0.4"}}}}};
+        const VM expected = {{"BBL", {{"Bambu Lab H2C", {"0.4"}}}}, {"Snapmaker", {{"Snapmaker U1", {"0.4"}}}}};
+        CHECK(AppConfig::merge_vendor_maps({}, mine, disk) == expected);
+    }
+}
+
+TEST_CASE("AppConfig save keeps unticked printers removed across instances", "[AppConfig]")
+{
+    ScopedTempDir dir;
+    struct ScopedDataDir
+    {
+        std::string prev;
+        explicit ScopedDataDir(const std::string &next) : prev(data_dir()) { set_data_dir(next); }
+        ~ScopedDataDir() { set_data_dir(prev); }
+    } data{dir.path.string()};
+    save_main_thread_id();
+
+    {
+        AppConfig seed;
+        seed.set_variant("BBL", "Bambu Lab H2C", "0.4", true);
+        seed.set_variant("BBL", "Bambu Lab X1 Carbon", "0.4", true);
+        seed.set_variant("Snapmaker", "Snapmaker U1", "0.4", true);
+        seed.set_variant("Snapmaker", "Snapmaker J1", "0.4", true);
+        seed.save();
+    }
+    auto on_disk = []() {
+        AppConfig reader;
+        REQUIRE(reader.load().empty());
+        return reader.vendors();
+    };
+
+    AppConfig gui; // the window the user works in
+    REQUIRE(gui.load().empty());
+    AppConfig hub; // a second instance sharing the file (e.g. kept alive for the phone)
+    REQUIRE(hub.load().empty());
+
+    // Untick H2C and confirm; the dialog replaces the whole map.
+    AppConfig::VendorMap selection = gui.vendors();
+    selection["BBL"].erase("Bambu Lab H2C");
+    gui.set_vendors(selection);
+    gui.save();
+    CHECK_FALSE(gui.get_variant("BBL", "Bambu Lab H2C", "0.4"));
+    {
+        const AppConfig::VendorMap d = on_disk();
+        CHECK((d.count("BBL") == 0 || d.at("BBL").count("Bambu Lab H2C") == 0));
+    }
+
+    // Untick J1 next: H2C must not come back (the reported symptom).
+    selection = gui.vendors();
+    selection["Snapmaker"].erase("Snapmaker J1");
+    gui.set_vendors(selection);
+    gui.save();
+    CHECK_FALSE(gui.get_variant("BBL", "Bambu Lab H2C", "0.4"));
+    CHECK_FALSE(gui.get_variant("Snapmaker", "Snapmaker J1", "0.4"));
+
+    // The other instance still holds the old list; its next save must not restore either,
+    // while a printer it adds itself is kept.
+    hub.set_variant("Elegoo", "Elegoo Centauri Carbon", "0.4", true);
+    hub.save();
+    CHECK_FALSE(hub.get_variant("BBL", "Bambu Lab H2C", "0.4"));
+    CHECK_FALSE(hub.get_variant("Snapmaker", "Snapmaker J1", "0.4"));
+
+    // And the first window keeps the other's addition when it saves again.
+    gui.set("unrelated_key", "1");
+    gui.save();
+    const AppConfig::VendorMap final_disk = on_disk();
+    const AppConfig::VendorMap expected = {{"BBL", {{"Bambu Lab X1 Carbon", {"0.4"}}}},
+                                           {"Elegoo", {{"Elegoo Centauri Carbon", {"0.4"}}}},
+                                           {"Snapmaker", {{"Snapmaker U1", {"0.4"}}}}};
+    CHECK(final_disk == expected);
+    CHECK(gui.vendors() == expected);
+}
+
+TEST_CASE("ascii_iequals compares ASCII letters regardless of case", "[Utils]")
+{
+    CHECK(ascii_iequals("set_velocity_limit", "SET_VELOCITY_LIMIT"));
+    CHECK(ascii_iequals("G28", "g28"));
+    CHECK(ascii_iequals("", ""));
+    CHECK_FALSE(ascii_iequals("G28", "G29"));
+    CHECK_FALSE(ascii_iequals("G2", "G28"));
+    CHECK_FALSE(ascii_iequals("G28", "G2"));
+    // Non-letters 0x20 apart are not equal.
+    CHECK_FALSE(ascii_iequals("[", "{"));
+    CHECK_FALSE(ascii_iequals("@", "`"));
+}
+
+TEST_CASE("atof_decimal_point parses what atof parses in the C locale", "[LocalesUtils]")
+{
+    const auto cases = {
+        std::pair<const char *, double>{"5", 5.},
+        {"  12.5", 12.5},
+        {"\t+3", 3.},
+        {"\r\n7", 7.},
+        {"-1.25", -1.25},
+        {"1e2", 100.},
+        {".5", 0.5},
+        {"12.5;comment", 12.5},
+        {"+-5", 0.},
+        {"1.5abc", 1.5},
+        {"-", 0.},
+        {"+", 0.},
+        {"-abc", 0.},
+        {"+ 5", 0.},
+    };
+    for (const auto &[text, value] : cases) {
+        DYNAMIC_SECTION("parse [" << text << "]") {
+            CHECK(std::abs(atof_decimal_point(text) - value) < 1e-12);
+        }
+    }
+}
+
+TEST_CASE("Floats print as printf prints them in the C locale", "[LocalesUtils]")
+{
+    const std::tuple<double, int, const char *> cases[] = {
+        {0.5,         -1, "0.5"},
+        {25. / 3.,    -1, "8.33333"},
+        {1500.5,      -1, "1500.5"},
+        {1e6,         -1, "1e+06"},
+        {-0.000123,   -1, "-0.000123"},
+        {25. / 3.,     3, "8.333"},
+        {2.,           0, "2"},
+        {1e21,         2, "1000000000000000000000.00"},
+    };
+    for (const auto &[value, precision, text] : cases) {
+        DYNAMIC_SECTION(text) {
+            CHECK(float_to_string_decimal_point(value, precision) == text);
+        }
+    }
+}
+
+TEST_CASE("Floats print with a decimal point in a locale whose decimal separator is a comma", "[LocalesUtils]")
+{
+    CNumericLocalesSetter outer;
+    const char *candidates[] = {"de_DE.UTF-8", "de_DE", "fr_FR.UTF-8", "fr_FR", "C"};
+    bool applied_comma = false;
+    for (const char *name : candidates) {
+        if (std::strcmp(name, "C") == 0)
+            continue;
+        if (std::setlocale(LC_NUMERIC, name) != nullptr) {
+            applied_comma = true;
+            break;
+        }
+    }
+    if (!applied_comma) {
+        WARN("no locale with a comma decimal separator is installed");
+        return;
+    }
+    CHECK(float_to_string_decimal_point(1500.5) == "1500.5");
+    CHECK(float_to_string_decimal_point(25. / 3., 3) == "8.333");
+}
+
+TEST_CASE("atof_decimal_point and string_to_double_decimal_point return 0 for text with no number", "[LocalesUtils]")
+{
+    // fast_float leaves the output untouched on failure; the result must not be indeterminate.
+    // Text with no leading number must give exactly what atof gives: 0 (e.g. an axis letter or a G4
+    // parameter that is not followed by a digit).
+    const char *no_number[] = {"", "abc", "G4 P1000", "-", "+", "-abc", "+-5", ";comment 5", "   "};
+    for (const char *text : no_number) {
+        DYNAMIC_SECTION("no number [" << text << "]") {
+            REQUIRE(atof_decimal_point(text) == 0.);
+            size_t pos = 12345;
+            REQUIRE(string_to_double_decimal_point(text, &pos) == 0.);
+            REQUIRE(pos == 0);
+            REQUIRE(string_to_double_decimal_point(std::string_view(text)) == 0.);
+        }
+    }
 }

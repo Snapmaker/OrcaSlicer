@@ -92,10 +92,8 @@ void TimelapsePosPicker::construct_printable_area_by_printer()
     m_plate_height = int(unscale_(bed_bbox.max.y()));
     m_plate_width  = int(unscale_(bed_bbox.max.x()));
 
-    Polygon bed_exclude_area;
-    for (size_t idx = 0; idx < config.bed_exclude_area.values.size(); ++idx)
-        bed_exclude_area.points.emplace_back(coord_t(scale_(config.bed_exclude_area.values[idx].x())),
-                                             coord_t(scale_(config.bed_exclude_area.values[idx].y())));
+    // Same reading of bed_exclude_area as validation and arrange (rectangles or one polygon).
+    const Polygons bed_exclude_area = get_bed_excluded_area(config);
 
     // Bambu Studio: the tower's bounding box (brim included) at the tower position, grown by half
     // the clearance radius.
@@ -116,7 +114,7 @@ void TimelapsePosPicker::construct_printable_area_by_printer()
     }
 
     for (size_t idx = 0; idx < extruder_count; ++idx) {
-        ExPolygons printable_area = diff_ex(diff(Polygons{m_bed_polygon}, Polygons{bed_exclude_area}), wipe_tower_area);
+        ExPolygons printable_area = diff_ex(diff(Polygons{m_bed_polygon}, bed_exclude_area), wipe_tower_area);
         if (idx < config.extruder_printable_area.size()) {
             Polygon extruder_printable_area;
             for (size_t j = 0; j < config.extruder_printable_area.values[idx].size(); ++j)

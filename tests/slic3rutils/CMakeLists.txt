@@ -54,11 +54,13 @@ add_executable(${_TEST_NAME}_tests
     blender_launcher_tests.cpp
     freecad_launcher_tests.cpp
     instance_routing_tests.cpp
+    startup_wizard_tests.cpp
     page_server_security_tests.cpp
     sentry_scrub_tests.cpp
     dual_nozzle_layout_tests.cpp
     nozzle_temp_rows_tests.cpp
     device_controls_tests.cpp
+    bambu_fans_tests.cpp
     printer_timelapse_tests.cpp
     chamber_lights_tests.cpp
     filament_commands_tests.cpp
@@ -74,6 +76,10 @@ add_executable(${_TEST_NAME}_tests
     saved_printers_tests.cpp
     ff_printer_sources_tests.cpp
     ff_device_pid_tests.cpp
+    emboss_font_search_tests.cpp
+    printers_monitor_tests.cpp
+    # Hidden GLFW window + forward-compatible 3.3 core context; skips itself where none can be made.
+    gl_core_profile_tests.cpp
     # The crash-report scrubber is plain C++ with no library of its own; the test compiles
     # the very file the app does.
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/sentry_wrapper/SentryScrub.cpp

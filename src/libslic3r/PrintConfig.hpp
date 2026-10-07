@@ -19,7 +19,9 @@
 #include "libslic3r.h"
 #include "Config.hpp"
 #include "Polygon.hpp"
+#include "BoundingBox.hpp"
 #include "PaintDepth.hpp"
+#include <algorithm>
 #include <boost/preprocessor/facilities/empty.hpp>
 #include <boost/preprocessor/punctuation/comma_if.hpp>
 #include <boost/preprocessor/seq/for_each.hpp>
@@ -903,6 +905,13 @@ class StaticPrintConfig;
 
 // Minimum object distance for arrangement, based on printer technology.
 double min_object_distance(const ConfigBase &cfg);
+
+// Whether any value is set, a nil value included.
+template<bool NULLABLE> bool any_enabled(const ConfigOptionBoolsTempl<NULLABLE> &option)
+{
+    return std::any_of(option.values.begin(), option.values.end(), [](unsigned char enabled) { return enabled != 0; });
+}
+
 // The clearance radius of print-by-object collision checks and arrange. Bambu Studio's
 // extruder_clearance_max_radius on a Bambu Lab printer (printer_model "Bambu Lab ..."), as Bambu
 // Studio uses it everywhere; extruder_clearance_radius on every other printer, whose profiles do not
@@ -1668,6 +1677,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloats,               machine_min_travel_rate))
     // M205 S... [mm/sec]
     ((ConfigOptionFloats,               machine_min_extruding_rate))
+    // Bed-slinger mass model (A2L): Y-axis drive force [N] and bed mass [g], 0 = not modelled.
+    ((ConfigOptionFloat,                machine_max_force_Y))
+    ((ConfigOptionFloat,                machine_bed_mass_Y))
 
     //resonance avoidance ported from qidi slicer
     ((ConfigOptionBool,                 resonance_avoidance))
@@ -2098,6 +2110,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
 
     ((ConfigOptionBools,               activate_chamber_temp_control))
     ((ConfigOptionInts ,               chamber_temperature))
+    ((ConfigOptionInts ,               chamber_minimal_temperature))
     
     // Orca: support adaptive bed mesh
     ((ConfigOptionFloat,               preferred_orientation))
@@ -2552,6 +2565,18 @@ std::vector<int> identity_filament_map(const ConfigBase &cfg, size_t filament_co
 Points get_bed_shape(const DynamicPrintConfig &cfg);
 Points get_bed_shape(const PrintConfig &cfg);
 Points get_bed_shape(const SLAPrinterConfig &cfg);
+// bed_exclude_area is one flat point list that vendors author two ways: a list of 4-point
+// rectangles (Bambu, Qidi, Anycubic Kobra 3 Max, Snapmaker, Elegoo) or one polygon (upstream
+// Orca's Kobra 3 ring, the option's tooltip). Every reader goes through these helpers so that
+// validation, arrange, the plate's "object inside" check and the timelapse picker agree; see
+// bed_exclude_area_is_rectangles() in PrintConfig.cpp for the rule.
+bool bed_exclude_area_is_rectangles(const Pointfs &points);
+// The excluded region as hole-free, counter-clockwise, scaled polygons (zero-area pieces dropped).
+Slic3r::Polygons bed_exclude_area_polygons(const Pointfs &points);
+// Unscaled boxes for the GUI, which works in boxes (PartPlate exclusion boxes, arrange's fixed
+// items). For a rectangle list this is exactly the old "one box per 4 points" list, zero-area
+// boxes included; for a polygon it is one box per hole-free piece.
+std::vector<BoundingBoxf> bed_exclude_area_boxes(const Pointfs &points);
 Slic3r::Polygons get_bed_excluded_area(const PrintConfig& cfg);
 Slic3r::Polygon get_bed_shape_with_excluded_area(const PrintConfig& cfg);
 bool has_skirt(const DynamicPrintConfig& cfg);

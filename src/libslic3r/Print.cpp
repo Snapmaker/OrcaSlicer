@@ -3,8 +3,10 @@
 #include "Print.hpp"
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include "BoundingBox.hpp"
 #include "Brim.hpp"
+#include "CostEstimate.hpp"
 #include "BrimFilament.hpp"
 #include "ClipperUtils.hpp"
 #include "Extruder.hpp"
@@ -650,6 +652,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "filament_diameter",
         "filament_density",
         "filament_cost",
+        // Only the cost statistics read it (machine time cost); not a slicing input.
+        "time_cost",
         "filament_notes",
         "outer_wall_acceleration",
         "inner_wall_acceleration",
@@ -712,6 +716,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "is_infill_first",
         // Orca
         "chamber_temperature",
+        "chamber_minimal_temperature",
         "thumbnails",
         "thumbnails_format",
         "seam_gap",
@@ -2705,6 +2710,15 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
             };
             for (const auto &width_role : s_width_roles)
                 for (const PrintRegion &region : object->all_regions()) {
+                    // The skin and skeleton widths size only Locked Zag's two bands (Fill.cpp reads them
+                    // for a sparse_infill_pattern of lockedzag and for nothing else). Their default is
+                    // 100% of the nozzle, which equals the layer height of every 0.2 nozzle / 0.20 mm
+                    // preset, so checking them on regions that never print them refused those presets
+                    // with "Too small line width" over a setting that has no effect on their G-code.
+                    const bool locked_zag_band = std::strcmp(width_role.first, "skin_infill_line_width") == 0 ||
+                                                 std::strcmp(width_role.first, "skeleton_infill_line_width") == 0;
+                    if (locked_zag_band && region.config().sparse_infill_pattern.value != ipLockedZag)
+                        continue;
                     const unsigned int filament_id     = region.extruder(width_role.second);
                     const double       nozzle_diameter = nozzle_dmr_of_filament0(unsigned(std::max<int>(int(filament_id), 1) - 1));
                     // A role width left at 0 falls back to the object's line_width, exactly as
@@ -6533,6 +6547,16 @@ void Print::set_gcode_file_invalidated()
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ <<  boost::format(": done");
 }
 
+bool Print::set_gcode_filament_prices(bool include)
+{
+    std::scoped_lock<std::mutex> lock(this->state_mutex());
+    if (m_gcode_filament_prices == include)
+        return false;
+    m_gcode_filament_prices = include;
+    // Only the export writes the prices: slicing results stay valid.
+    return this->invalidate_step(psGCodeExport);
+}
+
 //BBS: add gcode file preload logic
 void Print::export_gcode_from_previous_file(const std::string& file, GCodeProcessorResult* result, ThumbnailsGeneratorCallback thumbnail_cb)
 {
@@ -6545,6 +6569,22 @@ void Print::export_gcode_from_previous_file(const std::string& file, GCodeProces
         processor.process_file(file);
 
         *result = std::move(processor.extract_result());
+
+        // A G-code exported with the filament prices left out (or an older one without time_cost)
+        // still gets its cost: this Print holds the project's config the G-code was sliced with,
+        // so take the prices from there instead of showing 0.00 until the next reslice.
+        if (!result->has_filament_costs) {
+            const size_t n = std::max(result->extruders_count, m_config.filament_cost.values.size());
+            result->filament_costs.resize(n, 0.f);
+            for (size_t i = 0; i < n; ++i)
+                result->filament_costs[i] = static_cast<float>(m_config.filament_cost.get_at(i));
+            result->has_filament_costs = !m_config.filament_cost.values.empty();
+        }
+        if (!result->has_time_cost) {
+            result->time_cost    = m_config.time_cost.value;
+            result->has_time_cost = true;
+        }
+        m_print_statistics.total_cost = compute_cost(*result).total;
     } catch (std::exception & /* ex */) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ <<  boost::format(": found errors when process gcode file %1%") %file.c_str();
         throw Slic3r::RuntimeError(

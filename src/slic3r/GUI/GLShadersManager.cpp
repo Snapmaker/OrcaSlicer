@@ -44,7 +44,13 @@ std::pair<bool, std::string> GLShadersManager::init()
 
     bool valid = true;
 
-    const std::string prefix = GUI::wxGetApp().is_gl_version_greater_or_equal_to(3, 1) ? "140/" : "110/";
+#if SLIC3R_OPENGL_ES
+    const std::string prefix = "ES/";
+    // used to render wireframed triangles
+    valid &= append_shader("wireframe", { prefix + "wireframe.vs", prefix + "wireframe.fs" });
+#else
+    const std::string prefix = GUI::OpenGLManager::get_gl_info().is_version_greater_or_equal_to(3, 1) ? "140/" : "110/";
+#endif // SLIC3R_OPENGL_ES
     // imgui shader
     valid &= append_shader("imgui", { prefix + "imgui.vs", prefix + "imgui.fs" });
     // basic shader, used to render all what was previously rendered using the immediate mode
@@ -65,6 +71,14 @@ std::pair<bool, std::string> GLShadersManager::init()
     appendOptionalShader("selection_area_downsample", { prefix + "background.vs", prefix + "selection_area_downsample.fs" });
     // used to apply directional Gaussian blur to selection edge textures
     appendOptionalShader("selection_gaussian", { prefix + "background.vs", prefix + "selection_gaussian.fs" });
+#if SLIC3R_OPENGL_ES
+    // used to render dashed lines
+    valid &= append_shader("dashed_lines", { prefix + "dashed_lines.vs", prefix + "dashed_lines.fs" });
+#else
+    if (GUI::OpenGLManager::get_gl_info().is_core_profile())
+        // used to render thick and/or dashed lines
+        valid &= append_shader("dashed_thick_lines", { prefix + "dashed_thick_lines.vs", prefix + "dashed_thick_lines.fs", prefix + "dashed_thick_lines.gs" });
+#endif // SLIC3R_OPENGL_ES
     // used to render bed axes and model, selection hints, gcode sequential view marker model, preview shells, options in gcode preview
     valid &= append_shader("gouraud_light", { prefix + "gouraud_light.vs", prefix + "gouraud_light.fs" });
     //used to render thumbnail
@@ -72,7 +86,7 @@ std::pair<bool, std::string> GLShadersManager::init()
     // used to render printbed
     valid &= append_shader("printbed", { prefix + "printbed.vs", prefix + "printbed.fs" });
     // used to render options in gcode preview
-    if (GUI::wxGetApp().is_gl_version_greater_or_equal_to(3, 3)) {
+    if (GUI::OpenGLManager::get_gl_info().is_version_greater_or_equal_to(3, 3)) {
         valid &= append_shader("gouraud_light_instanced", { prefix + "gouraud_light_instanced.vs", prefix + "gouraud_light_instanced.fs" });
     }
 
@@ -82,6 +96,15 @@ std::pair<bool, std::string> GLShadersManager::init()
         , { "ENABLE_ENVIRONMENT_MAP"sv }
 #endif // ENABLE_ENVIRONMENT_MAP
         );
+    // gouraud.fs declares a sampler2D (curved_sheet_tex) AND a sampler3D (draw_field_tex). Both
+    // default to texture unit 0, and two samplers of different types on one unit make the program
+    // invalid at draw time (GL_INVALID_OPERATION). Windows drivers let it through; macOS drops
+    // every gouraud draw, so all objects, the wipe tower and the painter overlays vanished or
+    // looked see-through there. GLVolumeCollection::render only assigned the units while a curved
+    // or drawn cut was active, so park them on their own units once, right after linking, where
+    // no caller can miss it. 3 and 4 are the units the cut gizmo binds its textures to.
+    if (GLShaderProgram* gouraud = get_shader("gouraud"); gouraud != nullptr)
+        gouraud->set_sampler_units({ { "curved_sheet_tex", 3 }, { "draw_field_tex", 4 } });
     // used to render variable layers heights in 3d editor
     valid &= append_shader("variable_layer_height", { prefix + "variable_layer_height.vs", prefix + "variable_layer_height.fs" });
     // used to render highlight contour around selected triangles inside the multi-material gizmo
@@ -96,6 +119,20 @@ std::pair<bool, std::string> GLShadersManager::init()
         valid &= append_shader("mm_gouraud", { prefix + "mm_gouraud.vs", prefix + "mm_gouraud.fs" }, { "FLIP_TRIANGLE_NORMALS"sv });
     else
         valid &= append_shader("mm_gouraud", { prefix + "mm_gouraud.vs", prefix + "mm_gouraud.fs" });
+    // Fast shaded preview for the texture displacement gizmo (see libslic3r/TextureDisplacement.hpp).
+    valid &= append_shader("texture_displacement_shaded", { prefix + "texture_displacement_shaded.vs", prefix + "texture_displacement_shaded.fs" });
+    // UV-check overlay for the same gizmo: a procedural checker or a distortion heatmap over the
+    // painted patch, to sanity-check the unwrap.
+    valid &= append_shader("texture_displacement_uvcheck", { prefix + "texture_displacement_uvcheck.vs", prefix + "texture_displacement_uvcheck.fs" });
+
+    // Guard against the next shader that mixes sampler types: say so in the log on every
+    // platform, because only macOS turns it into a visible failure.
+    for (const std::unique_ptr<GLShaderProgram>& shader : m_shaders) {
+        const std::string conflicts = shader->sampler_unit_conflicts();
+        if (!conflicts.empty())
+            BOOST_LOG_TRIVIAL(error) << "Shader '" << shader->get_name()
+                                     << "' has samplers of different types on the same texture unit (draws fail on macOS): " << conflicts;
+    }
 
     return { valid, error };
 }

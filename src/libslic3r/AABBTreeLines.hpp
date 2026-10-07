@@ -351,7 +351,7 @@ namespace AABBTreeLines {
             return dist;
         }
 
-    	std::vector<size_t> all_lines_in_radius(const Vec<2, Scalar> &point, Floating radius)
+    	std::vector<size_t> all_lines_in_radius(const Vec<2, Scalar> &point, Floating radius) const
     	{
         	return AABBTreeLines::all_lines_in_radius(this->lines, this->tree, point.template cast<Floating>(), radius * radius);
     	}

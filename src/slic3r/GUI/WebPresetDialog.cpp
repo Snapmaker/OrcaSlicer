@@ -775,7 +775,7 @@ int WebPresetDialog::SaveProfile()
     // m_MainPtr->app_config->set_bool("stealth_mode", StealthMode);
 
     // finish
-    m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "finish", "1");
+    m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "finish", true);
 
     m_MainPtr->app_config->save();
 

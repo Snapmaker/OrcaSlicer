@@ -671,7 +671,8 @@ std::vector<std::map<NozzleVolumeType, int>> get_extruder_nozzle_stats(const std
 }
 
 // True when the printer's extruders carry more than one distinct extruder variant (dual-nozzle grouping
-// machine: H2D/H2C/X2D). Same-variant toolchangers (U1) and single-nozzle machines return false.
+// machine: H2D/H2C/X2D). Same-variant toolchangers (U1) and machines with more than two extruders return
+// false.
 bool DynamicPrintConfig::support_different_extruders(int& extruder_count)
 {
     extruder_count = 0;
@@ -692,7 +693,12 @@ bool DynamicPrintConfig::support_different_extruders(int& extruder_count)
                 variant_set.insert(variants_list.begin(), variants_list.end());
         }
     }
-    return (variant_set.size() > 1);
+    // Bambu's grouping machines have one or two extruders, and the filament->nozzle grouping engine
+    // (FilamentGroup, collect_unprintable_limits) is built for two. A larger toolchanger whose extruders
+    // merely list several possible variants (upstream Orca's Custom MyToolChanger: five extruders, each
+    // "Direct Drive Standard,Direct Drive High Flow,Direct Drive Extra High Flow") is not one: its
+    // filaments keep their own tools, like the Snapmaker U1's or the Flashforge Creator 5's.
+    return variant_set.size() > 1 && extruder_count <= 2;
 }
 
 static t_config_enum_values s_keys_map_PrinterStructure {
@@ -4968,6 +4974,29 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionFloats{ 0., 0. });
 
+    // Bed-slinger mass model (Bambu Studio, Bambu Lab A2L): the Y axis drives the bed and the part on
+    // it with a limited force, so its usable acceleration falls as the printed mass grows. Read by
+    // GCode::mass_load_limited_machine_acceleration, which hands the result to layer_change_gcode as
+    // curr_y_acceleration_limit (with curr_accumulated_mass and curr_layer_mass). 0 = not modelled:
+    // the limit is then just the machine's Y acceleration limit.
+    def = this->add("machine_max_force_Y", coFloat);
+    def->full_label = L("Maximum force of the Y axis");
+    def->category   = L("Machine limits");
+    def->tooltip    = L("The allowed maximum output force of Y axis");
+    def->sidetext   = "N"; // Newton
+    def->min        = 0;
+    def->mode       = comDevelop;
+    def->set_default_value(new ConfigOptionFloat(0));
+
+    def = this->add("machine_bed_mass_Y", coFloat);
+    def->full_label = L("Bed mass of the Y axis");
+    def->category   = L("Machine limits");
+    def->tooltip    = L("The machine bed mass load of Y axis");
+    def->sidetext   = "g"; // gram
+    def->min        = 0;
+    def->mode       = comDevelop;
+    def->set_default_value(new ConfigOptionFloat(0));
+
     // M204 P... [mm/sec^2]
     def = this->add("machine_max_acceleration_extruding", coFloats);
     def->full_label = L("Maximum acceleration for extruding");
@@ -5867,10 +5896,15 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("retraction_distances_when_cut",coFloats);
     def->label = L("Retraction distance when cut");
-    def->tooltip = L("Experimental feature: Retraction length before cutting off during filament change.");
+    def->tooltip = L("Experimental feature: Retraction length before cutting off during filament change. "
+                     "Set zero to disable the long retraction.");
+    def->sidetext = "mm";	// milimeters, don't need translation
     def->mode = comDevelop;
-    def->min = 10;
-    def->max = 18;
+    // Bambu's cutter takes 10-18 mm, but other vendors ship 0 (no cutter: Anycubic, Creality
+    // filament switchers) or more (Creality SPARKX i7 28, K2 30). Accept them rather than abort
+    // the slice; 0 means no cut retraction at all (see long_retraction_when_cut_active, GCode.cpp).
+    def->min = 0;
+    def->max = 100;
     def->set_default_value(new ConfigOptionFloats {18});
 
     // BBS: per-filament long retraction performed by the firmware when the active extruder changes
@@ -7574,6 +7608,21 @@ void PrintConfigDef::init_fff_params()
                     );
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->full_label = L("Chamber temperature");
+    def->min = 0;
+    def->max = max_temp;
+    def->set_default_value(new ConfigOptionInts{0});
+
+    def = this->add("chamber_minimal_temperature", coInts);
+    def->label = L("Minimal");
+    def->tooltip = L("This is the chamber temperature at which printing should start, while the chamber continues heating "
+                     "toward the \"Target\" chamber temperature. For example, set the Target to 60 and the Minimal to 50 to "
+                     "begin printing once the chamber reaches 50℃, without waiting for the full 60℃.\n\n"
+                     "It sets a G-code variable named chamber_minimal_temperature, which can be passed to your print start macro "
+                     "or a heat soak macro, like this: PRINT_START (other variables) CHAMBER_MIN_TEMP=[chamber_minimal_temperature].\n\n"
+                     "Unlike the \"Target\" chamber temperature, this option does not emit any M141/M191 commands; it only exposes "
+                     "the value to your custom G-code. It should not exceed the \"Target\" chamber temperature.");
+    def->sidetext = u8"℃" /* °C */;	// degrees Celsius, don't need translation
+    def->full_label = L("Chamber minimal temperature");
     def->min = 0;
     def->max = max_temp;
     def->set_default_value(new ConfigOptionInts{0});
@@ -10951,6 +11000,15 @@ CLIMiscConfigDef::CLIMiscConfigDef()
     def->cli_params = "option";
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("no_filament_prices", coBool);
+    def->label = L("Leave costs out of the G-code");
+    def->tooltip = L("Do not write the filament prices and the machine rate into the G-code (\"; filament cost\", "
+                     "\"; total filament cost\", and filament_cost and time_cost in the config block) or into the "
+                     "settings of an exported 3MF with G-code, like the GUI preference \"Include costs in exported "
+                     "G-code\" switched off. Without it the CLI writes them, as it always has.");
+    def->cli_params = "option";
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("no_thumbnails", coBool);
     def->label = L("Skip thumbnails");
     def->tooltip = L("Do not render plate thumbnails when exporting 3mf (no OpenGL context needed).");
@@ -11354,7 +11412,7 @@ static std::map<t_custom_gcode_key, t_config_option_keys> s_CustomGcodeSpecificP
     {"machine_start_gcode",         {}},
     {"machine_end_gcode",           {"layer_num", "layer_z", "max_layer_z", "filament_extruder_id"}},
     {"before_layer_change_gcode",   {"layer_num", "layer_z", "max_layer_z"}},
-    {"layer_change_gcode",          {"layer_num", "layer_z", "max_layer_z"}},
+    {"layer_change_gcode",          {"layer_num", "layer_z", "max_layer_z", "curr_y_acceleration_limit", "curr_accumulated_mass", "curr_layer_mass"}},
     {"timelapse_gcode",             {"layer_num", "layer_z", "max_layer_z"}},
     {"change_filament_gcode",       {"layer_num", "layer_z", "max_layer_z", "next_extruder", "previous_extruder", "fan_speed",
                                "first_flush_volume", "flush_length_1", "flush_length_2", "flush_length_3", "flush_length_4",
@@ -11397,6 +11455,11 @@ CustomGcodeSpecificConfigDef::CustomGcodeSpecificConfigDef()
     def = this->add("filament_extruder_id", coInt);
     def->label = L("Filament extruder ID");
     def->tooltip = L("The current extruder ID. The same as current_extruder.");
+
+// layer_change_gcode: Bambu Studio's bed-slinger mass model (GCode::process_layer)
+    new_def("curr_y_acceleration_limit", coFloat, "Current Y acceleration limit", "The Y acceleration (mm/s^2) the printed mass so far allows: machine_max_force_Y / (machine_bed_mass_Y + printed mass), at most the machine's Y acceleration limit. The machine's Y acceleration limit when those two are not set.");
+    new_def("curr_accumulated_mass", coFloat, "Accumulated mass", "Filament mass (g) printed before this layer change.");
+    new_def("curr_layer_mass", coFloat, "Layer mass", "Filament mass (g) printed since the previous layer change.");
 
 // change_filament_gcode
     new_def("previous_extruder", coInt, "Previous extruder", "Index of the extruder that is being unloaded. The index is zero based (first extruder has index 0).");
@@ -11481,19 +11544,163 @@ Points get_bed_shape(const PrintConfig &cfg)
 
 Points get_bed_shape(const SLAPrinterConfig &cfg) { return to_points(make_counter_clockwise(cfg.printable_area.values)); }
 
-Polygons get_bed_excluded_area(const PrintConfig& cfg)
-{
-    const Pointfs exclude_area_points = cfg.bed_exclude_area.values;
+// bed_exclude_area: one list of "XxY" points, historically read two different ways.
+//
+//  * As consecutive groups of 4 points, one rectangle each: Bambu's original model. PartPlate's
+//    exclusion boxes (the "object fully inside" check and arrange's fixed items), Model.cpp's
+//    speed table and Bambu Studio's clearance / brim checks all read it so, and Bambu Studio
+//    still does everywhere.
+//  * As one polygon: the option's tooltip, upstream Orca's get_bed_excluded_area (#9633, print
+//    validation and arrange's bed outline), the timelapse picker and the plate rendering.
+//
+// Vendor profiles are written for one or the other. A single 4-point rectangle (Bambu, Elegoo,
+// Snapmaker, FlyingBear, Qidi Q2 / X-Plus 5) reads the same both ways. Qidi Q1 Pro / X-Max 4 /
+// X-Plus 4 and Anycubic Kobra 3 Max list several rectangles and pad the list with repeated points
+// so that the groups of 4 stay aligned (the padding makes zero-width connectors when the list is
+// read as a polygon). Upstream Orca's Kobra 3 (#10914) is a 10-point ring - the bed outline, then
+// the inner outline the other way round - that only makes sense as one polygon: read as
+// rectangles its first 4 points are the whole bed, which excluded everything.
+//
+// The rule: when every complete group of 4 points is an axis-aligned rectangle, or a zero-area
+// group (all points on one vertical or horizontal line, the padding), the list is rectangles and
+// a trailing partial group is ignored, exactly as the box readers always did. Otherwise it is one
+// polygon, filled with the non-zero rule, so an outline plus a reversed inner outline is a ring.
+// A list of fewer than 3 points (the default is a single 0x0) excludes nothing.
 
-    Polygon exclude_poly;
-    for (int i = 0; i < exclude_area_points.size(); i++) {
-        auto pt = exclude_area_points[i];
-        exclude_poly.points.emplace_back(scale_(pt.x()), scale_(pt.y()));
+static bool exclude_group_is_rectangle(const Vec2d *p)
+{
+    constexpr double eps = EPSILON;
+    BoundingBoxf bb;
+    for (int i = 0; i < 4; ++i)
+        bb.merge(p[i]);
+    if (bb.max.x() - bb.min.x() < eps || bb.max.y() - bb.min.y() < eps)
+        return true; // zero-area padding
+    bool corner_used[4] = { false, false, false, false };
+    for (int i = 0; i < 4; ++i) {
+        const bool lo_x = std::abs(p[i].x() - bb.min.x()) < eps, hi_x = std::abs(p[i].x() - bb.max.x()) < eps;
+        const bool lo_y = std::abs(p[i].y() - bb.min.y()) < eps, hi_y = std::abs(p[i].y() - bb.max.y()) < eps;
+        if (!(lo_x || hi_x) || !(lo_y || hi_y))
+            return false;
+        corner_used[(hi_x ? 1 : 0) + (hi_y ? 2 : 0)] = true;
+    }
+    return corner_used[0] && corner_used[1] && corner_used[2] && corner_used[3];
+}
+
+bool bed_exclude_area_is_rectangles(const Pointfs &points)
+{
+    if (points.size() < 4)
+        return false;
+    for (size_t i = 0; i + 4 <= points.size(); i += 4)
+        if (!exclude_group_is_rectangle(&points[i]))
+            return false;
+    return true;
+}
+
+static BoundingBoxf exclude_group_box(const Pointfs &points, size_t first)
+{
+    BoundingBoxf bb;
+    for (size_t i = first; i < first + 4; ++i)
+        bb.merge(points[i]);
+    return bb;
+}
+
+Polygons bed_exclude_area_polygons(const Pointfs &points)
+{
+    Polygons out;
+    if (points.size() < 3)
+        return out;
+
+    if (bed_exclude_area_is_rectangles(points)) {
+        for (size_t i = 0; i + 4 <= points.size(); i += 4) {
+            const BoundingBoxf bb = exclude_group_box(points, i);
+            if (bb.max.x() - bb.min.x() < EPSILON || bb.max.y() - bb.min.y() < EPSILON)
+                continue;
+            const Point lo(scale_(bb.min.x()), scale_(bb.min.y())), hi(scale_(bb.max.x()), scale_(bb.max.y()));
+            out.emplace_back(Points{ lo, Point(hi.x(), lo.y()), hi, Point(lo.x(), hi.y()) });
+        }
+        return out;
     }
 
-    exclude_poly.make_counter_clockwise();
+    Polygon poly;
+    poly.points.reserve(points.size());
+    for (const Vec2d &pt : points)
+        poly.points.emplace_back(scale_(pt.x()), scale_(pt.y()));
+    // Non-zero fill: the orientation of the whole outline does not matter, a reversed inner
+    // outline is a hole, and zero-width connectors vanish.
+    for (ExPolygon &ex : union_ex(Polygons{ poly }, ClipperLib::pftNonZero)) {
+        if (ex.holes.empty()) {
+            out.emplace_back(std::move(ex.contour));
+            continue;
+        }
+        // Arrange's fixed items and the GUI's boxes cannot carry holes: cut a holed piece into
+        // horizontal slabs between consecutive vertex heights. No vertex lies strictly inside a
+        // slab, so the boundary edges crossing a slab are straight across it and, sorted along
+        // the slab's middle line, pair up into hole-free trapezoids (rectangles for an
+        // axis-aligned ring: the Kobra 3 ring becomes 4 strips). Computed directly rather than
+        // by clipping against the slab, which keeps the two sides of a hole joined by a
+        // zero-width bridge along the slab edge.
+        std::vector<coord_t> ys;
+        std::vector<Line>    edges;
+        std::vector<const Polygon *> rings{ &ex.contour };
+        for (const Polygon &hole : ex.holes)
+            rings.emplace_back(&hole);
+        for (const Polygon *ring : rings) {
+            for (size_t i = 0; i < ring->points.size(); ++i) {
+                const Point &a = ring->points[i], &b = ring->points[(i + 1) % ring->points.size()];
+                ys.emplace_back(a.y());
+                if (a.y() != b.y())
+                    edges.emplace_back(a, b);
+            }
+        }
+        sort_remove_duplicates(ys);
+        auto x_at = [](const Line &e, double y) {
+            return double(e.a.x()) + double(e.b.x() - e.a.x()) * (y - double(e.a.y())) / double(e.b.y() - e.a.y());
+        };
+        for (size_t k = 0; k + 1 < ys.size(); ++k) {
+            const double y0 = double(ys[k]), y1 = double(ys[k + 1]), ym = 0.5 * (y0 + y1);
+            std::vector<std::pair<double, const Line *>> crossings;
+            for (const Line &e : edges)
+                if (std::min(e.a.y(), e.b.y()) <= ys[k] && std::max(e.a.y(), e.b.y()) >= ys[k + 1])
+                    crossings.emplace_back(x_at(e, ym), &e);
+            std::sort(crossings.begin(), crossings.end(),
+                      [](const auto &l, const auto &r) { return l.first < r.first; });
+            for (size_t c = 0; c + 1 < crossings.size(); c += 2) {
+                const Line &l = *crossings[c].second, &r = *crossings[c + 1].second;
+                Polygon trapezoid(Points{ Point(coord_t(std::round(x_at(l, y0))), ys[k]), Point(coord_t(std::round(x_at(r, y0))), ys[k]),
+                                          Point(coord_t(std::round(x_at(r, y1))), ys[k + 1]), Point(coord_t(std::round(x_at(l, y1))), ys[k + 1]) });
+                trapezoid.remove_duplicate_points();
+                if (trapezoid.size() >= 3 && std::abs(trapezoid.area()) > 0.)
+                    out.emplace_back(std::move(trapezoid));
+            }
+        }
+    }
+    return out;
+}
 
-    return {exclude_poly};
+std::vector<BoundingBoxf> bed_exclude_area_boxes(const Pointfs &points)
+{
+    std::vector<BoundingBoxf> out;
+    if (points.size() < 3)
+        return out;
+    if (bed_exclude_area_is_rectangles(points)) {
+        // Unscaled and unfiltered, so a rectangle list gives exactly the boxes PartPlate always
+        // built (zero-area padding boxes included: arrange inflates them).
+        for (size_t i = 0; i + 4 <= points.size(); i += 4)
+            out.emplace_back(exclude_group_box(points, i));
+        return out;
+    }
+    for (const Polygon &piece : bed_exclude_area_polygons(points)) {
+        BoundingBoxf bb;
+        for (const Point &pt : piece.points)
+            bb.merge(Vec2d(unscale_(pt.x()), unscale_(pt.y())));
+        out.emplace_back(bb);
+    }
+    return out;
+}
+
+Polygons get_bed_excluded_area(const PrintConfig& cfg)
+{
+    return bed_exclude_area_polygons(cfg.bed_exclude_area.values);
 }
 
 Polygon get_bed_shape_with_excluded_area(const PrintConfig& cfg)
@@ -11563,8 +11770,9 @@ bool is_identical_multi_extruder_printer(const ConfigBase &cfg)
     // ...and all of the same kind. A machine with two different extruder variants is a grouping
     // machine (H2D/H2C/X2D): its filament->nozzle assignment is computed by ToolOrdering, and
     // this identity map must not pre-empt it. Mirrors
-    // DynamicPrintConfig::support_different_extruders(), which is that path's own gate.
-    if (const auto *variants = cfg.option<ConfigOptionStrings>("extruder_variant_list")) {
+    // DynamicPrintConfig::support_different_extruders(), which is that path's own gate - including
+    // its two-extruder limit: a larger toolchanger is never grouped, whatever variants it lists.
+    if (const auto *variants = cfg.option<ConfigOptionStrings>("extruder_variant_list"); variants != nullptr && nozzles->size() <= 2) {
         std::set<std::string> variant_set;
         const int             n = std::min<int>((int) nozzles->size(), (int) variants->values.size());
         for (int i = 0; i < n; ++i) {

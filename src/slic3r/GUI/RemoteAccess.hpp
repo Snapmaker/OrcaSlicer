@@ -4,6 +4,7 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -101,6 +102,16 @@ public:
     // progress of a slice started through the API.
     void note_slice_progress(int plate, int percent, const std::string& text);
     void note_slice_done(bool finished_all, bool ok, const std::string& error);
+
+    // ---- the desktop's own Printers tab (PrintersPanel.cpp) ----
+    // The same rows as GET /api/printers, the same pause / resume / stop and job state, called in
+    // process: the tab never goes through the loopback API or the hub. Worker threads only (they
+    // wait for the GUI thread). A GUI thread that is slow to answer one of these does not raise the
+    // hub's "needs attention" flag: nobody remote is waiting, and the tab simply tries again.
+    // Each returns { HTTP-style status, JSON body } exactly as the API route would.
+    std::pair<int, std::string> monitor_printers();
+    std::pair<int, std::string> monitor_control(const std::string& printer, const std::string& action, bool confirm);
+    std::pair<int, std::string> monitor_job(int id);
 
     // Send jobs (RemoteSend) report here from their worker thread.
     void update_job(int id, int percent, const std::string& text);

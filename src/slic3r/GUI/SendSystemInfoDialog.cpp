@@ -518,7 +518,7 @@ static std::string generate_system_info_json()
     opengl_node.put("Vendor", OpenGLManager::get_gl_info().get_vendor());
     opengl_node.put("Renderer", OpenGLManager::get_gl_info().get_renderer());
     // Generate list of OpenGL extensions:
-    std::string extensions_str = gl_get_string_safe(GL_EXTENSIONS, "");
+    std::string extensions_str = OpenGLManager::GLInfo::get_extensions_string();
     std::vector<std::string> extensions_list;
     boost::split(extensions_list, extensions_str, boost::is_any_of(" "), boost::token_compress_off);
     std::sort(extensions_list.begin(), extensions_list.end());

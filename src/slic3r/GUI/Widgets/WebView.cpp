@@ -11,6 +11,8 @@
 #include <wx/msw/webview_edge.h>
 #elif defined(__WXMAC__)
 #include <wx/osx/webview_webkit.h>
+#elif defined(__WXGTK__)
+#include <wx/gtk/webview_webkit.h>
 #endif
 #include <wx/uri.h>
 #if defined(__WIN32__) || defined(__WXMAC__)
@@ -30,7 +32,6 @@
 #elif defined __linux__
 #include <gtk/gtk.h>
 #define WEBKIT_API
-struct WebKitWebView;
 struct WebKitJavascriptResult;
 extern "C" {
 WEBKIT_API void
@@ -291,6 +292,22 @@ private:
     wxString m_queuedUrl;
 };
 
+#elif defined(__WXGTK__)
+
+class WebViewWebKit : public wxWebViewWebKit
+{
+public:
+    bool RunScript(const wxString &javascript, wxString *output = nullptr) const override
+    {
+        if (output)
+            return wxWebViewWebKit::RunScript(javascript, output);
+
+        // Bridge setup scripts can return native WebKit objects. There is no
+        // result to serialize when the caller only wants to execute a script.
+        return WebView::RunScript(const_cast<WebViewWebKit *>(this), javascript);
+    }
+};
+
 #endif
 
 class FakeWebView : public wxWebView
@@ -377,6 +394,8 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
     wxWebView* webView = new WebViewEdge;
 #elif defined(__WXOSX__)
     wxWebView *webView = new WebViewWebKit(url2);
+#elif defined(__WXGTK__)
+    wxWebView *webView = new WebViewWebKit;
 #else
     auto webView = wxWebView::New();
 #endif
@@ -491,6 +510,8 @@ void WebView::LoadUrl(wxWebView * webView, wxString const &url)
 
 bool WebView::RunScript(wxWebView *webView, wxString const &javascript)
 {
+    if (!webView || !webView->GetNativeBackend())
+        return false;
     if (Slic3r::GUI::wxGetApp().app_config->get("internal_developer_mode") == "true"
             && javascript.find("studio_userlogin") == wxString::npos)
         wxLogMessage("Running JavaScript:\n%s\n", javascript);
@@ -507,14 +528,19 @@ bool WebView::RunScript(wxWebView *webView, wxString const &javascript)
         return true;
 #else
         WebKitWebView *wkWebView = (WebKitWebView *) webView->GetNativeBackend();
+        // Discard native message-handler objects that WebKit cannot return
+        // to the UI process when the caller does not request a result.
+        const wxString script_without_result = javascript + "\n;void 0;";
         webkit_web_view_run_javascript(
-            wkWebView, javascript.utf8_str(), NULL,
+            wkWebView, script_without_result.utf8_str(), NULL,
             [](GObject *wkWebView, GAsyncResult *res, void *) {
                 GError * error = NULL;
                 auto result = webkit_web_view_run_javascript_finish((WebKitWebView*)wkWebView, res, &error);
-                if (!result)
-                    g_error_free (error);
-                else
+                if (error) {
+                    wxLogWarning("Error running JavaScript: %s", wxString::FromUTF8(error->message));
+                    g_error_free(error);
+                }
+                if (result)
                     webkit_javascript_result_unref (result);
         }, NULL);
         return true;

@@ -1661,9 +1661,13 @@ void TreeSupport::generate_toolpaths(const TreeSupportGroupContext *groups)
                         std::shared_ptr<Fill> filler_support =
                             std::shared_ptr<Fill>(Fill::new_from_type(base_fill_pattern));
                         filler_support->set_bounding_box(bbox_object);
+                        // support_spacing = pattern spacing + flow spacing is always > 0, so a zero
+                        // support_base_pattern_spacing no longer gives a zero line distance
+                        // (support_density = flow spacing / support_spacing; make_perimeter_and_infill
+                        // divides the spacing by it).
                         filler_support->spacing = support_base_on_bed
                             ? flow.spacing()
-                            : (object_config.support_base_pattern_spacing.value * support_density);
+                            : (support_spacing * support_density);
                         filler_support->angle = Geometry::deg2rad(object_config.support_angle.value);
 
                         Polygons loops = to_polygons(poly);

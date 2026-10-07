@@ -157,6 +157,8 @@ set(lisbslic3r_sources
     Barcode.hpp
     CodeEmboss.cpp
     CodeEmboss.hpp
+    ImageTrace.cpp
+    ImageTrace.hpp
     SimpleShape.cpp
     SimpleShape.hpp
     enum_bitmask.hpp
@@ -168,6 +170,10 @@ set(lisbslic3r_sources
     ExPolygonSerialize.hpp
     ExPolygonsIndex.cpp
     ExPolygonsIndex.hpp
+    CostEstimate.cpp
+    CostEstimate.hpp
+    CostOverrides.cpp
+    CostOverrides.hpp
     Extruder.cpp
     Extruder.hpp
     ExtrusionEntityCollection.cpp
@@ -351,6 +357,7 @@ set(lisbslic3r_sources
     GCodeWriter.cpp
     GCodeWriter.hpp
     Geometry/Bicubic.hpp
+    Geometry/ArcWelder.hpp
     Geometry/Circle.cpp
     Geometry/Circle.hpp
     Geometry/ConvexHull.cpp
@@ -488,6 +495,8 @@ set(lisbslic3r_sources
     PresetFlowVariant.hpp
     PrincipalComponents2D.cpp
     PrincipalComponents2D.hpp
+    PrinterModelSpecs.cpp
+    PrinterModelSpecs.hpp
     PrintApply.cpp
     PrintBase.cpp
     MemoryGuardPolicy.hpp
@@ -596,6 +605,32 @@ set(lisbslic3r_sources
     Tesselate.cpp
     Tesselate.hpp
     TextConfiguration.hpp
+    TextureDisplacement.cpp
+    TextureDisplacement.hpp
+    TextureDisplacementGuards.cpp
+    TextureDisplacementGuards.hpp
+    TextureBake/TextureBakeIndex.cpp
+    TextureBake/TextureBakeIndex.hpp
+    TextureBake/TextureBakeSubdivide.cpp
+    TextureBake/TextureBakeSubdivide.hpp
+    TextureBake/TextureBakeRegularize.cpp
+    TextureBake/TextureBakeRegularize.hpp
+    TextureBake/TextureBakeRelocate.cpp
+    TextureBake/TextureBakeRelocate.hpp
+    TextureBake/TextureBakeFlip.cpp
+    TextureBake/TextureBakeFlip.hpp
+    TextureBake/TextureBakeDebug.cpp
+    TextureBake/TextureBakeDebug.hpp
+    TextureBake/TextureBakeDisplace.cpp
+    TextureBake/TextureBakeDisplace.hpp
+    TextureBake/TextureBakeDecimate.cpp
+    TextureBake/TextureBakeDecimate.hpp
+    TextureBake/TextureBakeRepair.cpp
+    TextureBake/TextureBakeRepair.hpp
+    TextureBake/TextureBakePipeline.cpp
+    TextureBake/TextureBakePipeline.hpp
+    TextureBake/TextureBakeMesh.cpp
+    TextureBake/TextureBakeMesh.hpp
     Thread.cpp
     Thread.hpp
     Time.cpp
@@ -656,6 +691,7 @@ slic3r_unity_build(libslic3r SKIP
     FontFallback.cpp                # includes imstb_truetype.h without the implementation, keep away from Emboss.cpp
     InlineShapes.cpp                # file-local helpers (fnv1a64, append_utf8, fail) with common names
     CodeEmboss.cpp                  # file-local rectangle()/circle()/to_svg() helpers with common names
+    ImageTrace.cpp                  # using namespace image_trace_detail (to_svg(), luminance() ...)
     Format/GLTF.cpp                 # defines CGLTF_IMPLEMENTATION before its include
     FilamentGroup.cpp               # namespace-scope using namespace FilamentGroupUtils - FilamentInfo ambiguity
     Format/ZipperArchiveImport.cpp  # read_ini()/CONFIG_FNAME also in Format/SL1.cpp

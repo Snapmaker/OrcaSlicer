@@ -946,7 +946,11 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
         return;
 
     GLShaderProgram* sink_shader  = GUI::wxGetApp().get_shader("flat");
-    GLShaderProgram* edges_shader = GUI::wxGetApp().get_shader("flat");
+#if SLIC3R_OPENGL_ES
+    GLShaderProgram* edges_shader = GUI::wxGetApp().get_shader("dashed_lines");
+#else
+    GLShaderProgram* edges_shader = GUI::OpenGLManager::get_gl_info().is_core_profile() ? GUI::wxGetApp().get_shader("dashed_thick_lines") : GUI::wxGetApp().get_shader("flat");
+#endif // SLIC3R_OPENGL_ES
 
     if (type == ERenderType::Transparent) {
         glsafe(::glEnable(GL_BLEND));
@@ -1355,7 +1359,7 @@ void GLVolumeCollection::update_colors_by_extruder(const DynamicPrintConfig* con
     using ColorItem = std::pair<std::string, ColorRGBA>;
     std::vector<ColorItem> colors;
 
-    if (static_cast<PrinterTechnology>(config->opt_int("printer_technology")) == ptSLA) {
+    if (config->has("printer_technology") && static_cast<PrinterTechnology>(config->opt_int("printer_technology")) == ptSLA) {
         const std::string& txt_color = config->opt_string("material_colour").empty() ?
                                            print_config_def.get("material_colour")->get_default_value<ConfigOptionString>()->value :
                                            config->opt_string("material_colour");

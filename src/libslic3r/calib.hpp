@@ -33,10 +33,10 @@ struct Calib_Params
 {
     Calib_Params() : mode(CalibMode::Calib_None){};
     int extruder_id = 0;
-    double    start, end, step;
-    bool      print_numbers;
-    double freqStartX, freqEndX, freqStartY, freqEndY;
-    int test_model;
+    double    start = 0.0, end = 1.0, step = 0.1;
+    bool      print_numbers = false;
+    double freqStartX = 0.0, freqEndX = 1.0, freqStartY = 0.0, freqEndY = 1.0;
+    int test_model = 0;
     std::vector<double> accelerations;
     std::vector<double> speeds;
 
@@ -310,7 +310,10 @@ protected:
     {
         // TODO: FIXME: find out current filament/extruder?
         const double nozzle_diameter = m_config.opt_float("nozzle_diameter", 0);
-        return m_config.get_abs_value("initial_layer_line_width", nozzle_diameter);
+        const double width = m_config.get_abs_value("initial_layer_line_width", nozzle_diameter);
+        // 0 means "auto"; a zero width fed zero line spacings into the pattern (crash on a 0 first layer width).
+        if (width <= 0.) return Flow::auto_extrusion_width(frExternalPerimeter, nozzle_diameter);
+        return width;
     };
     double line_width() const
     {

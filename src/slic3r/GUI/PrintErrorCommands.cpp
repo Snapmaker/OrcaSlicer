@@ -748,4 +748,27 @@ bool build_dont_remind_next_time(const json& action_json, const std::string& seq
     return true;
 }
 
+std::string strip_trailing_error_code(const std::string& text, const std::string& code)
+{
+    auto normalise = [](const std::string& in) {
+        std::string out;
+        for (unsigned char ch : in)
+            if (ch != ' ') out.push_back(static_cast<char>(std::toupper(ch)));
+        return out;
+    };
+    const std::string want = normalise(code);
+    if (want.empty()) return text;
+
+    size_t end = text.size();
+    while (end > 0 && std::isspace(static_cast<unsigned char>(text[end - 1]))) --end;
+    if (end == 0 || text[end - 1] != ')') return text;
+    const size_t open = text.rfind('(', end - 1);
+    if (open == std::string::npos) return text;
+    if (normalise(text.substr(open + 1, end - open - 2)) != want) return text;
+
+    size_t keep = open;
+    while (keep > 0 && std::isspace(static_cast<unsigned char>(text[keep - 1]))) --keep;
+    return text.substr(0, keep);
+}
+
 }} // namespace Slic3r::GUI

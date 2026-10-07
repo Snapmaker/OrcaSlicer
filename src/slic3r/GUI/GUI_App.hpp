@@ -318,6 +318,11 @@ private:
 
     //BBS
     bool m_is_closing {false};
+public:
+    // True once shutdown() has run: Plater's pImpl may already be freed, so teardown code
+    // (GLCanvas3D/Selection destructors) must not reach back into the Plater.
+    bool is_closing() const { return m_is_closing; }
+private:
     // Ultra: this instance was started hidden (--hidden / SNORCA_HIDDEN / app_config
     // "start_hidden"). It has no window until the hub shows it, closing hides it again,
     // and only an explicit quit (tray, hub page, POST /api/quit, File > Quit) ends it.

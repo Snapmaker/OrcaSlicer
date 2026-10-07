@@ -18810,8 +18810,11 @@ void Plater::load_project(wxString const& filename2,
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": current loading other project, return directly");
         return;
     }
-    else
-        m_loading_project = true;
+
+    m_loading_project = true;
+    // Orca #14715: restore the flag on every early return (e.g. the 3MF action dialog was cancelled),
+    // otherwise no project could be opened again until restart.
+    ScopeGuard loading_project_sc([this]() { m_loading_project = false; });
     p->m_auto_gradient_project_choice_changed_during_load = false;
 
     m_only_gcode = false;
@@ -18912,7 +18915,6 @@ void Plater::load_project(wxString const& filename2,
     }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << __LINE__ << " load project done";
-    m_loading_project = false;
 }
 
 // BBS: save logic
@@ -19259,7 +19261,7 @@ bool Plater::up_to_date(bool saved, bool backup)
                                         !Slic3r::has_other_changes(backup));
 }
 
-void Plater::add_model(bool imperial_units, std::string fname)
+bool Plater::add_model(bool imperial_units, std::string fname)
 {
     wxArrayString input_files;
 
@@ -19267,7 +19269,7 @@ void Plater::add_model(bool imperial_units, std::string fname)
     if (fname.empty()) {
         wxGetApp().import_model(this, input_files);
         if (input_files.empty())
-            return;
+            return false;
 
         for (const auto& file : input_files)
             paths.emplace_back(into_path(file));
@@ -19311,7 +19313,8 @@ void Plater::add_model(bool imperial_units, std::string fname)
 
     auto strategy = LoadStrategy::LoadModel;
     if (imperial_units) strategy = strategy | LoadStrategy::ImperialUnits;
-    if (!load_files(paths, strategy, ask_multi).empty()) {
+    const bool loaded = !load_files(paths, strategy, ask_multi).empty();
+    if (loaded) {
 
         if (get_project_name() == _L("Untitled") && paths.size() > 0) {
             boost::filesystem::path full_path(paths[0].string());
@@ -19320,6 +19323,7 @@ void Plater::add_model(bool imperial_units, std::string fname)
 
         wxGetApp().mainframe->update_title();
     }
+    return loaded;
 }
 
 void Plater::calib_pa(const Calib_Params& params)
@@ -19603,7 +19607,8 @@ void Plater::cut_horizontal(size_t obj_idx, size_t instance_idx, double z, Model
 }
 
 void Plater::_calib_pa_tower(const Calib_Params& params) {
-    add_model(false, Slic3r::resources_dir() + "/calib/pressure_advance/tower_with_seam.stl");
+    if (!add_model(false, Slic3r::resources_dir() + "/calib/pressure_advance/tower_with_seam.stl"))
+        return;
 
     auto& print_config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
     auto printer_config = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
@@ -19868,7 +19873,8 @@ void Plater::calib_temp(const Calib_Params& params) {
     if (params.mode != CalibMode::Calib_Temp_Tower)
         return;
     
-    add_model(false, Slic3r::resources_dir() + "/calib/temperature_tower/temperature_tower.stl");
+    if (!add_model(false, Slic3r::resources_dir() + "/calib/temperature_tower/temperature_tower.stl"))
+        return;
     auto printer_config = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
     auto filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
     auto start_temp = lround(params.start);
@@ -19919,7 +19925,8 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
     if (params.mode != CalibMode::Calib_Vol_speed_Tower)
         return;
 
-    add_model(false, Slic3r::resources_dir() + "/calib/volumetric_speed/SpeedTestStructure.step");
+    if (!add_model(false, Slic3r::resources_dir() + "/calib/volumetric_speed/SpeedTestStructure.step"))
+        return;
 
     auto print_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
     auto filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
@@ -19996,7 +20003,8 @@ void Plater::calib_retraction(const Calib_Params& params)
     if (params.mode != CalibMode::Calib_Retraction_tower)
         return;
 
-    add_model(false, Slic3r::resources_dir() + "/calib/retraction/retraction_tower.stl");
+    if (!add_model(false, Slic3r::resources_dir() + "/calib/retraction/retraction_tower.stl"))
+        return;
 
     auto print_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
     auto filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
@@ -20041,7 +20049,8 @@ void Plater::calib_VFA(const Calib_Params& params)
     if (params.mode != CalibMode::Calib_VFA_Tower)
         return;
 
-    add_model(false, Slic3r::resources_dir() + "/calib/vfa/VFA.stl");
+    if (!add_model(false, Slic3r::resources_dir() + "/calib/vfa/VFA.stl"))
+        return;
     auto print_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
     auto filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
     auto printer_config  = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
@@ -20085,7 +20094,8 @@ void Plater::calib_input_shaping_freq(const Calib_Params& params)
     if (params.mode != CalibMode::Calib_Input_shaping_freq)
         return;
 
-    add_model(false, Slic3r::resources_dir() + (params.test_model < 1 ? "/calib/input_shaping/ringing_tower.stl" : "/calib/input_shaping/fast_tower_test.stl"));
+    if (!add_model(false, Slic3r::resources_dir() + (params.test_model < 1 ? "/calib/input_shaping/ringing_tower.stl" : "/calib/input_shaping/fast_tower_test.stl")))
+        return;
     auto print_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
     auto filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
     auto printer_config  = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
@@ -20133,7 +20143,8 @@ void Plater::calib_input_shaping_damp(const Calib_Params& params)
     if (params.mode != CalibMode::Calib_Input_shaping_damp)
         return;
 
-    add_model(false, Slic3r::resources_dir() + (params.test_model < 1 ? "/calib/input_shaping/ringing_tower.stl" : "/calib/input_shaping/fast_tower_test.stl"));
+    if (!add_model(false, Slic3r::resources_dir() + (params.test_model < 1 ? "/calib/input_shaping/ringing_tower.stl" : "/calib/input_shaping/fast_tower_test.stl")))
+        return;
     auto print_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
     auto filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
     auto printer_config  = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
@@ -20181,7 +20192,8 @@ void Plater::calib_junction_deviation(const Calib_Params& params)
     if (params.mode != CalibMode::Calib_Junction_Deviation)
         return;
 
-    add_model(false, Slic3r::resources_dir() + (params.test_model < 1 ? "/calib/input_shaping/ringing_tower.stl" : "/calib/input_shaping/fast_tower_test.stl"));
+    if (!add_model(false, Slic3r::resources_dir() + (params.test_model < 1 ? "/calib/input_shaping/ringing_tower.stl" : "/calib/input_shaping/fast_tower_test.stl")))
+        return;
     auto print_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
     auto filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
     auto printer_config  = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
@@ -25420,7 +25432,7 @@ const GLCanvas3D* Plater::canvas3D() const
 
 GLCanvas3D* Plater::get_view3D_canvas3D()
 {
-    return p->view3D->get_canvas3d();
+    return p ? p->view3D->get_canvas3d() : nullptr;
 }
 
 GLCanvas3D* Plater::get_preview_canvas3D()

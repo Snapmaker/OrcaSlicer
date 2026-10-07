@@ -971,8 +971,27 @@ bool GuideFrame::run()
 // only read (const access), never modified - keep it that way.
 int GuideFrame::GetFilamentInfo( std::string VendorDirectory, const json & pFilaList, std::string filepath, std::string &sVendor, std::string &sType)
 {
+    std::unordered_set<std::string> visiting;
+    return GetFilamentInfo(VendorDirectory, pFilaList, filepath, sVendor, sType, visiting);
+}
+
+int GuideFrame::GetFilamentInfo(const std::string& VendorDirectory, const json& pFilaList, const std::string& filepath,
+                                std::string& sVendor, std::string& sType, std::unordered_set<std::string>& visiting)
+{
     //GetStardardFilePath(filepath);
     BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << " GetFilamentInfo:VendorDirectory - " << VendorDirectory << ", Filepath - "<<filepath;
+
+    // Orca #15855: an `inherits` cycle between preset files would recurse forever (stack overflow).
+    // The scope entry is released on every exit path so sibling lookups of the same file still work.
+    if (!visiting.insert(filepath).second) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " inherits cycle at " << filepath;
+        return -1;
+    }
+    struct VisitingRelease {
+        std::unordered_set<std::string>& set;
+        const std::string&               path;
+        ~VisitingRelease() { set.erase(path); }
+    } visiting_release{visiting, filepath};
 
     try {
         std::string contents;
@@ -1019,7 +1038,7 @@ int GuideFrame::GetFilamentInfo( std::string VendorDirectory, const json & pFila
 
                 //boost::filesystem::path nf(strNewFile.c_str());
                 if (boost::filesystem::exists(inherits_path))
-                    return GetFilamentInfo(VendorDirectory,pFilaList, inherits_path.string(), sVendor, sType);
+                    return GetFilamentInfo(VendorDirectory,pFilaList, inherits_path.string(), sVendor, sType, visiting);
                 else {
                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " inherits File Not Exist: " << inherits_path;
                     return -1;

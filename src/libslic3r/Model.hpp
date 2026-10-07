@@ -856,6 +856,8 @@ private:
     // Constructor with ignored int parameter to assign an invalid ID, to be replaced
     // by an existing ID copied from elsewhere.
     explicit FacetsAnnotation(int) : ObjectWithTimestamp(-1) {}
+    // EdgeSlicer: an id from the secondary range (texture displacement masks, see ObjectBase::SecondaryId).
+    explicit FacetsAnnotation(SecondaryId tag) : ObjectWithTimestamp(tag) {}
     // Copy constructor copies the ID.
     explicit FacetsAnnotation(const FacetsAnnotation &rhs) = default;
     // Move constructor copies the ID.
@@ -984,14 +986,18 @@ public:
     // not ModelVolume's -- so an array of FacetsAnnotation ends up with its default/copy
     // constructors implicitly deleted regardless of the friend declaration. Use
     // texture_displacement_facet(slot) below for array-like indexed access.
-    FacetsAnnotation texture_displacement_facets_0;
-    FacetsAnnotation texture_displacement_facets_1;
-    FacetsAnnotation texture_displacement_facets_2;
-    FacetsAnnotation texture_displacement_facets_3;
-    FacetsAnnotation texture_displacement_facets_4;
-    FacetsAnnotation texture_displacement_facets_5;
-    FacetsAnnotation texture_displacement_facets_6;
-    FacetsAnnotation texture_displacement_facets_7;
+    //
+    // EdgeSlicer: their ids come from the secondary id range (ObjectBase::SecondaryId), so the eight
+    // masks per part do not shift the ids of later objects and instances - "; model label id" in the
+    // G-code is an instance id. set_new_unique_id() / assign_new_unique_ids_recursive() keep them there.
+    FacetsAnnotation texture_displacement_facets_0 { SecondaryId{} };
+    FacetsAnnotation texture_displacement_facets_1 { SecondaryId{} };
+    FacetsAnnotation texture_displacement_facets_2 { SecondaryId{} };
+    FacetsAnnotation texture_displacement_facets_3 { SecondaryId{} };
+    FacetsAnnotation texture_displacement_facets_4 { SecondaryId{} };
+    FacetsAnnotation texture_displacement_facets_5 { SecondaryId{} };
+    FacetsAnnotation texture_displacement_facets_6 { SecondaryId{} };
+    FacetsAnnotation texture_displacement_facets_7 { SecondaryId{} };
 
     FacetsAnnotation& texture_displacement_facet(int slot) {
         switch (slot) {
@@ -1185,7 +1191,7 @@ public:
         this->mmu_segmentation_facets.set_new_unique_id();
         this->fuzzy_skin_facets.set_new_unique_id();
         for (int i = 0; i < int(TEXTURE_DISPLACEMENT_MAX_LAYERS); ++i)
-            this->texture_displacement_facet(i).set_new_unique_id();
+            this->texture_displacement_facet(i).set_new_unique_secondary_id();
     }
 
     bool is_fdm_support_painted() const { return !this->supported_facets.empty(); }

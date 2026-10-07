@@ -171,6 +171,134 @@ bool load(const std::string &path, Model &model)
 } // namespace
 
 // ------------------------------------------------------------------------------------------------
+// Object ids: the masks must not shift "; model label id" (ModelInstance::id()), and must stay
+// distinct so the undo/redo stack (which keys FacetsAnnotation snapshots by ObjectID) works.
+// ------------------------------------------------------------------------------------------------
+
+TEST_CASE("Texture displacement masks take their ids from the secondary range", "[TextureDisplacementEdge]")
+{
+    Model        model;
+    ModelObject *object = model.add_object();
+    ModelVolume *v1     = object->add_volume(make_cube(10., 10., 10.));
+    ModelVolume *v2     = object->add_volume(make_cube(10., 10., 10.));
+
+    std::set<size_t> td_ids;
+    for (const ModelVolume *v : { v1, v2 })
+        for (int slot = 0; slot < int(TEXTURE_DISPLACEMENT_MAX_LAYERS); ++slot) {
+            const ObjectID id = v->texture_displacement_facet(slot).id();
+            CHECK(id.valid());
+            CHECK(id.id > SECONDARY_ID_BASE);
+            td_ids.insert(id.id);
+        }
+    CHECK(td_ids.size() == 2 * TEXTURE_DISPLACEMENT_MAX_LAYERS);
+
+    // The main counter advances only by the ids a part held before the port: the part, its config
+    // and the five upstream paint channels (support, seam, colour, fuzzy skin, exterior). A ninth
+    // ObjectBase member taken from the main counter would make this gap - and the label ids of every
+    // later instance - grow.
+    const std::vector<ObjectID> main_ids = { v1->id(), v1->config.id(), v1->supported_facets.id(), v1->seam_facets.id(),
+                                             v1->mmu_segmentation_facets.id(), v1->fuzzy_skin_facets.id(),
+                                             v1->exterior_facets.id() };
+    for (const ObjectID &id : main_ids)
+        CHECK(id.id < SECONDARY_ID_BASE);
+    CHECK(v2->id().id - v1->id().id == main_ids.size());
+
+    // New ids (copy / paste, undo-stack clones) stay in the secondary range and change.
+    const ObjectID before = v1->texture_displacement_facet(5).id();
+    v1->set_new_unique_id();
+    CHECK(v1->texture_displacement_facet(5).id() != before);
+    CHECK(v1->texture_displacement_facet(5).id().id > SECONDARY_ID_BASE);
+    CHECK(v1->id().id < SECONDARY_ID_BASE);
+}
+
+TEST_CASE("An instance's label id is the same with and without the port's masks", "[TextureDisplacementEdge]")
+{
+    // The instance id grows by the main-range ids of everything created before it. Two parts more
+    // shift it by exactly two parts' worth of main ids - not by 2 x (7 + 8).
+    auto instance_id_after = [](int parts) {
+        Model        model;
+        ModelObject *object = model.add_object();
+        for (int i = 0; i < parts; ++i)
+            object->add_volume(make_cube(10., 10., 10.));
+        const size_t first = object->id().id;
+        return object->add_instance()->id().id - first;
+    };
+    CHECK(instance_id_after(3) - instance_id_after(1) == 2 * 7);
+}
+
+TEST_CASE("Copies and clones keep texture layers and masks", "[TextureDisplacementEdge]")
+{
+    Model model;
+    build_textured_model(model);
+    const ModelVolume &src = *model.objects.front()->volumes.front();
+
+    SECTION("a Model copy (what an undo snapshot restores) keeps ids and content") {
+        Model              copy(model);
+        const ModelVolume &dst = *copy.objects.front()->volumes.front();
+        for (int slot = 0; slot < int(TEXTURE_DISPLACEMENT_MAX_LAYERS); ++slot) {
+            CHECK(dst.texture_displacement_facet(slot).id() == src.texture_displacement_facet(slot).id());
+            CHECK(dst.texture_displacement_facet(slot).equals(src.texture_displacement_facet(slot)));
+        }
+        REQUIRE(dst.texture_displacement_layers.size() == 2);
+        CHECK(dst.texture_displacement_layers[1].slot == 3);
+        CHECK(*dst.texture_displacement_layers[1].image_data == *src.texture_displacement_layers[1].image_data);
+        CHECK(dst.texture_displacement_options.color_despeckle == 4);
+    }
+
+    SECTION("a clone (copy / paste) gets new secondary ids and the same content") {
+        ModelObject       *clone = model.add_object(*model.objects.front());
+        const ModelVolume &dst   = *clone->volumes.front();
+        for (int slot = 0; slot < int(TEXTURE_DISPLACEMENT_MAX_LAYERS); ++slot) {
+            CHECK(dst.texture_displacement_facet(slot).id() != src.texture_displacement_facet(slot).id());
+            CHECK(dst.texture_displacement_facet(slot).id().id > SECONDARY_ID_BASE);
+            CHECK(dst.texture_displacement_facet(slot).equals(src.texture_displacement_facet(slot)));
+        }
+        CHECK(dst.texture_displacement_layers.size() == 2);
+        CHECK(dst.is_texture_displacement_painted());
+    }
+}
+
+TEST_CASE("The undo/redo payload of texture layers and options round-trips", "[TextureDisplacementEdge]")
+{
+    // ModelVolume::save()/load() hand exactly these two members to the Undo / Redo stack's cereal
+    // archive (the masks go through save_by_value like the other paint channels).
+    std::vector<TextureDisplacementLayer> layers = { make_layer(1), make_layer(6) };
+    layers[1].color_enabled     = true;
+    layers[1].projection_method = TextureProjectionMethod::Cylindrical;
+    layers[1].tile_enabled      = false;
+    layers[1].lscm_seam_edges   = { { 1, 2 }, { 3, 4 } };
+    TextureDisplacementOptions options;
+    options.smooth_enabled  = true;
+    options.color_mix_mode  = ColorMixMode::XYDither;
+    options.color_despeckle = 5;
+
+    std::stringstream stream;
+    {
+        cereal::BinaryOutputArchive ar(stream);
+        ar(layers, options);
+    }
+    std::vector<TextureDisplacementLayer> read_layers;
+    TextureDisplacementOptions            read_options;
+    {
+        cereal::BinaryInputArchive ar(stream);
+        ar(read_layers, read_options);
+    }
+    REQUIRE(read_layers.size() == 2);
+    CHECK(read_layers[0].slot == 1);
+    CHECK(read_layers[1].slot == 6);
+    CHECK(read_layers[1].color_enabled);
+    CHECK(read_layers[1].projection_method == TextureProjectionMethod::Cylindrical);
+    CHECK(!read_layers[1].tile_enabled);
+    CHECK(read_layers[1].lscm_seam_edges == layers[1].lscm_seam_edges);
+    CHECK(read_layers[1].depth_mm == Approx(0.6f));
+    REQUIRE(read_layers[1].image_data);
+    CHECK(*read_layers[1].image_data == *layers[1].image_data);
+    CHECK(read_options.smooth_enabled);
+    CHECK(read_options.color_mix_mode == ColorMixMode::XYDither);
+    CHECK(read_options.color_despeckle == 5);
+}
+
+// ------------------------------------------------------------------------------------------------
 // Guards
 // ------------------------------------------------------------------------------------------------
 

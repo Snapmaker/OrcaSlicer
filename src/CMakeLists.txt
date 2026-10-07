@@ -324,6 +324,12 @@ if (NOT WIN32 AND NOT APPLE)
 endif ()
 
 target_link_libraries(Snapmaker_Orca libslic3r cereal::cereal)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Keep the bundled static FreeType private to Orca. Exporting its symbols
+    # lets GTK/Cairo mix it with the system FreeType, including font-driver
+    # callbacks whose internal state is not compatible across versions.
+    target_link_options(Snapmaker_Orca PRIVATE "LINKER:--exclude-libs,libfreetype.a")
+endif ()
 # target_include_directories(OrcaSlicer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/slic3r)
 if (APPLE)
 #    add_compile_options(-stdlib=libc++)

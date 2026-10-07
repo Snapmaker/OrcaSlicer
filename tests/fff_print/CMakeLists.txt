@@ -10,6 +10,7 @@ add_executable(${_TEST_NAME}_tests
 	test_mass_limited_acceleration.cpp
 	test_cost_breakdown.cpp
 	test_gcodeprocessor.cpp
+	test_gcodeprocessor_times.cpp
 	test_gcodewriter.cpp
 	test_image_row_preview.cpp
 	test_image_row_walls.cpp

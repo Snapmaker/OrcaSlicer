@@ -12,6 +12,7 @@
 #include "libslic3r/Arachne/SkeletalTrapezoidation.hpp"
 #include "libslic3r/Config.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
+#include "libslic3r/GCodeWriter.hpp"
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/TriangleMeshSlicer.hpp"
@@ -175,4 +176,17 @@ TEST_CASE("ConfigOptionVector resize duplicates the first value across a realloc
     dst.apply_override(&src);
     REQUIRE(dst.values.size() == 500);
     CHECK(dst.values.back() == 3.0);
+}
+
+// Orca #12406: GCodeWriter::set_extruders() took max_element() of an empty id list (a calibration
+// pattern with nothing to print).
+TEST_CASE("GCodeWriter::set_extruders accepts an empty extruder list", "[CoreGuards][GCodeWriter]")
+{
+    GCodeWriter writer;
+    writer.set_extruders({ 0, 1 });
+    CHECK(writer.multiple_extruders);
+    REQUIRE_NOTHROW(writer.set_extruders({}));
+    CHECK_FALSE(writer.multiple_extruders);
+    CHECK(writer.extruders().empty());
+    CHECK(writer.extruder() == nullptr);
 }

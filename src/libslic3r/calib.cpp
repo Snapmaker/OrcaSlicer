@@ -10,15 +10,25 @@ namespace Slic3r {
 float CalibPressureAdvance::find_optimal_PA_speed(const DynamicPrintConfig &config, double line_width, double layer_height, int filament_idx)
 {
     const double general_suggested_min_speed   = 100.0;
-    const auto  *max_volumetric_speed_opt = config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    // Read defensively: CLI callers may hand us a config that lacks optional keys, so fall back to
+    // the option's default (and to 0 when there is none) instead of dereferencing a null option.
+    auto vector_option = [&config](const char *key) -> const ConfigOptionFloats * {
+        if (const auto *o = config.option<ConfigOptionFloats>(key))
+            return o;
+        const ConfigOptionDef *d = config.def() ? config.def()->get(key) : nullptr;
+        return d ? dynamic_cast<const ConfigOptionFloats *>(d->default_value.get()) : nullptr;
+    };
     const unsigned int filament_id = filament_idx < 0 ? 0u : unsigned(filament_idx);
-    double       filament_max_volumetric_speed = get_value_at(config, *max_volumetric_speed_opt,
-                                                               ConfigFlowDomain::Filament, filament_id);
-    const float  nozzle_diameter               = config.option<ConfigOptionFloats>("nozzle_diameter")->get_at(0);
+    const auto  *max_volumetric_speed_opt = vector_option("filament_max_volumetric_speed");
+    double       filament_max_volumetric_speed = (max_volumetric_speed_opt && !max_volumetric_speed_opt->values.empty()) ?
+        get_value_at(config, *max_volumetric_speed_opt, ConfigFlowDomain::Filament, filament_id) : 0.;
+    const auto  *nozzle_diameter_opt = vector_option("nozzle_diameter");
+    const float  nozzle_diameter               = (nozzle_diameter_opt && !nozzle_diameter_opt->values.empty()) ? float(nozzle_diameter_opt->get_at(0)) : 0.f;
     if (line_width <= 0.) line_width = Flow::auto_extrusion_width(frPerimeter, nozzle_diameter);
     Flow         pattern_line = Flow(line_width, layer_height, nozzle_diameter);
-    const double outer_wall_speed = get_value_at(config, *config.option<ConfigOptionFloats>("outer_wall_speed"),
-                                                 ConfigFlowDomain::Process, filament_idx >= 0 ? filament_idx : 0);
+    const auto  *outer_wall_speed_opt = vector_option("outer_wall_speed");
+    const double outer_wall_speed = (outer_wall_speed_opt && !outer_wall_speed_opt->values.empty()) ?
+        get_value_at(config, *outer_wall_speed_opt, ConfigFlowDomain::Process, filament_idx >= 0 ? filament_idx : 0) : 0.;
     auto         pa_speed     = std::min(std::max(general_suggested_min_speed, outer_wall_speed),
                                          filament_max_volumetric_speed / pattern_line.mm3_per_mm());
 

@@ -571,6 +571,8 @@ private:
 #endif
     unsigned int m_last_w, m_last_h;
     bool m_in_render;
+    // EDGE (core profile): set once this canvas has rendered a frame with no GL error; see report_frame_gl_errors().
+    bool m_gl_clean_frame_logged{ false };
     wxTimer m_timer;
     wxTimer m_timer_set_color;
     LayersEditing m_layers_editing;
@@ -975,6 +977,9 @@ public:
     bool is_dragging() const { return m_gizmos.is_dragging() || m_moving; }
 
     void render(bool only_init = false);
+    // EDGE (core profile): reads the GL error flag after a frame or thumbnail pass and logs it with the canvas
+    // and the open gizmo (OpenGLManager::report_gl_errors()).
+    void report_frame_gl_errors(const char* pass);
     bool is_rendering_enabled()
     {
         return m_enable_render;

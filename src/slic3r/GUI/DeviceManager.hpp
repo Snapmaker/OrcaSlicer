@@ -20,6 +20,7 @@
 #include "LanReconnectLadder.hpp"
 #include "AmsDrying.hpp"
 #include "PrintErrorCommands.hpp"
+#include "BambuFans.hpp"
 #include "libslic3r/calib.hpp"
 #include "libslic3r/Utils.hpp"
 #define USE_LOCAL_SOCKET_BIND 0
@@ -678,6 +679,11 @@ public:
     int     big_fan1_speed = 0;
     int     big_fan2_speed = 0;
     uint32_t fan_gear       = 0;
+    // The new-protocol device.airduct fans (H2 series), in percent; -1 per fan when not reported.
+    // When present they override the classic 0..255 values above (BambuFans.hpp).
+    GUI::BambuFans::AirductFans m_airduct_fans;
+    bool has_aux_fan() const { return is_support_aux_fan || m_airduct_fans.aux >= 0; }
+    bool has_chamber_fan() const { return is_support_chamber_fan || m_airduct_fans.chamber >= 0; }
 
     /* signals */
     std::string wifi_signal;

@@ -52,6 +52,14 @@ class ObjectBase
 public:
     using Timestamp = uint64_t;
 
+    // EdgeSlicer: tag for an id from a second, disjoint range (from 2^62 up) that does not advance the
+    // main counter. For sub-objects added on top of the upstream object graph - texture displacement's
+    // eight paint masks per part - so that adding them does not shift the id of everything created
+    // after them: the G-code's "; model label id" is ModelInstance::id(), and a model without texture
+    // displacement must slice to the same G-code as before. The undo/redo stack only needs ids to be
+    // distinct, which these are.
+    struct SecondaryId {};
+
     ObjectID     		id() const { return m_id; }
     // Return an optional timestamp of this object.
     // If the timestamp returned is non-zero, then the serialization framework will
@@ -68,11 +76,13 @@ protected:
     ObjectBase(int) : m_id(ObjectID(0)) {}
 
     ObjectBase(const ObjectID id) : m_id(id) {}
+    explicit ObjectBase(SecondaryId) : m_id(generate_new_secondary_id()) {}
 	// The class tree will have virtual tables and type information.
 	virtual ~ObjectBase() = default;
 
     // Use with caution!
     void        set_new_unique_id() { m_id = generate_new_id(); }
+    void        set_new_unique_secondary_id() { m_id = generate_new_secondary_id(); }
     void        set_invalid_id()    { m_id = 0; }
     // Use with caution!
     void        copy_id(const ObjectBase &rhs) { m_id = rhs.id(); }
@@ -85,6 +95,8 @@ private:
 
 	static inline ObjectID  generate_new_id() { return ObjectID(++ s_last_id); }
     static size_t           s_last_id;
+    static inline ObjectID  generate_new_secondary_id() { return ObjectID(++ s_last_secondary_id); }
+    static size_t           s_last_secondary_id;
 	
 	friend ObjectID wipe_tower_object_id();
 	friend ObjectID wipe_tower_instance_id();
@@ -104,6 +116,7 @@ protected:
     // Constructor with ignored int parameter to assign an invalid ID, to be replaced
     // by an existing ID copied from elsewhere.
     ObjectWithTimestamp(int) : ObjectBase(-1) {}
+    explicit ObjectWithTimestamp(SecondaryId tag) : ObjectBase(tag) {}
 	// The class tree will have virtual tables and type information.
 	virtual ~ObjectWithTimestamp() = default;
 

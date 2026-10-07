@@ -22,6 +22,7 @@
 #include <cstring>
 #include <iostream>
 #include <math.h>
+#include <csignal>
 
 #include "nlohmann/json.hpp"
 using namespace nlohmann;
@@ -7439,6 +7440,11 @@ extern "C" {
 #else /* _MSC_VER */
 int main(int argc, char **argv)
 {
+#ifndef _WIN32
+    // Ignore SIGPIPE so a write to a closed socket (e.g. a dropped printer network connection)
+    // returns EPIPE to the caller instead of terminating the whole process.
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
     // Before initSentry(): it reads the crash-report preference from the EdgeSlicer.conf that
     // --datadir points at.
     // A relaunch waits for the instance it replaces first (see common_func.hpp).

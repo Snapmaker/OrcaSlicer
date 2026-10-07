@@ -744,7 +744,7 @@ void GLModel::render(const std::pair<size_t, size_t>& range)
 #if !SLIC3R_OPENGL_ES
     if (OpenGLManager::get_gl_info().is_core_profile()) {
 #endif // !SLIC3R_OPENGL_ES
-        glsafe(::glBindVertexArray(0));
+        OpenGLManager::bind_default_vao();
 #if !SLIC3R_OPENGL_ES
     }
 #endif // !SLIC3R_OPENGL_ES
@@ -833,7 +833,7 @@ void GLModel::render_instanced(unsigned int instances_vbo, unsigned int instance
 #if !SLIC3R_OPENGL_ES
     if (OpenGLManager::get_gl_info().is_core_profile()) {
 #endif // !SLIC3R_OPENGL_ES
-        glsafe(::glBindVertexArray(0));
+        OpenGLManager::bind_default_vao();
 #if !SLIC3R_OPENGL_ES
     }
 #endif // !SLIC3R_OPENGL_ES
@@ -904,7 +904,7 @@ bool GLModel::send_to_gpu()
 #if !SLIC3R_OPENGL_ES
     if (OpenGLManager::get_gl_info().is_core_profile()) {
 #endif // !SLIC3R_OPENGL_ES
-        glsafe(::glBindVertexArray(0));
+        OpenGLManager::bind_default_vao();
 #if !SLIC3R_OPENGL_ES
     }
 #endif // !SLIC3R_OPENGL_ES

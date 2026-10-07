@@ -1662,6 +1662,9 @@ void TriangleSelectorPatch::render(int triangle_indices_idx, bool show_wireframe
         glsafe(::glDisableVertexAttribArray(barycentric_id));
 
     glsafe(::glBindBuffer(GL_ARRAY_BUFFER, 0));
+    // EDGE: hand the default VAO back (OpenGLManager::get_default_vao()); release_geometry() deleting
+    // a still-bound patch VAO would otherwise leave no VAO bound at all for the next draw.
+    OpenGLManager::bind_default_vao();
 }
 
 void TriangleSelectorPatch::release_geometry()
@@ -1747,6 +1750,7 @@ void TriangleSelectorPatch::finalize_triangle_indices()
 #endif // !SLIC3R_OPENGL_ES
         glsafe(::glGenVertexArrays(1, &this->m_vertices_VAO_id));
         glsafe(::glBindVertexArray(this->m_vertices_VAO_id));
+        OpenGLManager::bind_default_vao();
 #if !SLIC3R_OPENGL_ES
     }
 #endif // !SLIC3R_OPENGL_ES

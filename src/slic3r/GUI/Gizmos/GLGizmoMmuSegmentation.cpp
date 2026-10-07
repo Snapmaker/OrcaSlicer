@@ -1208,7 +1208,7 @@ void GLMmSegmentationGizmo3DScene::render(size_t triangle_indices_idx) const
 #if !SLIC3R_OPENGL_ES
     if (OpenGLManager::get_gl_info().is_core_profile()) {
 #endif // !SLIC3R_OPENGL_ES
-        glsafe(::glBindVertexArray(0));
+        OpenGLManager::bind_default_vao();
 #if !SLIC3R_OPENGL_ES
     }
 #endif // !SLIC3R_OPENGL_ES
@@ -1243,7 +1243,7 @@ void GLMmSegmentationGizmo3DScene::finalize_vertices()
 #if !SLIC3R_OPENGL_ES
         if (OpenGLManager::get_gl_info().is_core_profile()) {
 #endif // !SLIC3R_OPENGL_ES
-            glsafe(::glBindVertexArray(0));
+            OpenGLManager::bind_default_vao();
 #if !SLIC3R_OPENGL_ES
         }
 #endif // !SLIC3R_OPENGL_ES

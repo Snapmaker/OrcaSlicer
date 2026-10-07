@@ -49,7 +49,7 @@ std::pair<bool, std::string> GLShadersManager::init()
     // used to render wireframed triangles
     valid &= append_shader("wireframe", { prefix + "wireframe.vs", prefix + "wireframe.fs" });
 #else
-    const std::string prefix = GUI::wxGetApp().is_gl_version_greater_or_equal_to(3, 1) ? "140/" : "110/";
+    const std::string prefix = GUI::OpenGLManager::get_gl_info().is_version_greater_or_equal_to(3, 1) ? "140/" : "110/";
 #endif // SLIC3R_OPENGL_ES
     // imgui shader
     valid &= append_shader("imgui", { prefix + "imgui.vs", prefix + "imgui.fs" });
@@ -86,7 +86,7 @@ std::pair<bool, std::string> GLShadersManager::init()
     // used to render printbed
     valid &= append_shader("printbed", { prefix + "printbed.vs", prefix + "printbed.fs" });
     // used to render options in gcode preview
-    if (GUI::wxGetApp().is_gl_version_greater_or_equal_to(3, 3)) {
+    if (GUI::OpenGLManager::get_gl_info().is_version_greater_or_equal_to(3, 3)) {
         valid &= append_shader("gouraud_light_instanced", { prefix + "gouraud_light_instanced.vs", prefix + "gouraud_light_instanced.fs" });
     }
 

@@ -22,6 +22,9 @@
 #include <cstring>
 #include <iostream>
 #include <math.h>
+#include <csignal>
+#include <atomic>
+#include <new>
 
 #include "nlohmann/json.hpp"
 using namespace nlohmann;
@@ -1445,6 +1448,11 @@ int CLI::run(int argc, char **argv)
     bool no_thumbnails = false;
     if (auto* opt = m_config.option<ConfigOptionBool>("no_thumbnails"))
         no_thumbnails = opt->value;
+    // The GUI leaves filament prices out of G-code by default (Preferences); the CLI has no
+    // preferences and keeps writing them unless --no-filament-prices is given.
+    bool gcode_filament_prices = true;
+    if (auto* opt = m_config.option<ConfigOptionBool>("no_filament_prices"))
+        gcode_filament_prices = !opt->value;
     // Presets by name are turned into flat JSON files that join the --load-settings /
     // --load-filaments lists, so everything downstream stays as it was.
     std::vector<std::string> load_configs_all(load_configs.begin(), load_configs.end());
@@ -6121,6 +6129,7 @@ int CLI::run(int argc, char **argv)
                                     }
                                     BOOST_LOG_TRIVIAL(info) << "process finished, will export gcode temporily to " << outfile << std::endl;
                                     temp_time = (long long)Slic3r::Utils::get_current_time_utc();
+                                    print_fff->set_gcode_filament_prices(gcode_filament_prices);
                                     outfile = print_fff->export_gcode(outfile, gcode_result, nullptr);
                                     time_using_cache = time_using_cache + ((long long)Slic3r::Utils::get_current_time_utc() - temp_time);
                                     BOOST_LOG_TRIVIAL(info) << "export_gcode finished: time_using_cache update to " << time_using_cache << " secs.";
@@ -7411,6 +7420,9 @@ std::string CLI::output_filepath(const ModelObject &object, unsigned int index, 
 
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
+// Guards against a failed allocation inside the dump re-entering the new-handler.
+static std::atomic<bool> g_dump_in_progress{false};
+
 extern "C" {
     __declspec(dllexport) int __stdcall Snapmaker_Orca_main(int argc, wchar_t **argv)
     {
@@ -7422,10 +7434,24 @@ extern "C" {
         for (size_t i = 0; i < argc; ++ i)
             argv_ptrs[i] = argv_narrow[i].data();
 
+        // Dump before unwinding, while the stack still names what asked for the memory. Throwing
+        // std::bad_alloc is standard-permitted here and is what reaches generic_exception_handle()
+        // (GUI: "running out of memory" dialog), or std::terminate -> abort -> the Sentry crash handler.
+        // The old null write crashed here with a stack that only named the handler.
         std::set_new_handler([]() {
-            int *a = nullptr;
-            *a     = 0;
-            });
+            if (!g_dump_in_progress.exchange(true)) {
+                try {
+                    // A null EXCEPTION_POINTERS walks the calling thread as it stands.
+                    CBaseException base(GetCurrentProcess(), GetCurrentProcessId(), NULL, nullptr);
+                    base.ShowCallstack();
+                } catch (...) {
+                    // A failed dump must not displace the std::bad_alloc owed to the caller.
+                }
+                // ObjParser recovers from std::bad_alloc, so let a later one dump again.
+                g_dump_in_progress = false;
+            }
+            throw std::bad_alloc();
+        });
         // Call the UTF8 main.
         return CLI().run(argc, argv_ptrs.data());
     }
@@ -7433,6 +7459,11 @@ extern "C" {
 #else /* _MSC_VER */
 int main(int argc, char **argv)
 {
+#ifndef _WIN32
+    // Ignore SIGPIPE so a write to a closed socket (e.g. a dropped printer network connection)
+    // returns EPIPE to the caller instead of terminating the whole process.
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
     // Before initSentry(): it reads the crash-report preference from the EdgeSlicer.conf that
     // --datadir points at.
     // A relaunch waits for the instance it replaces first (see common_func.hpp).

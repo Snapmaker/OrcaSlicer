@@ -1355,7 +1355,7 @@ void GLVolumeCollection::update_colors_by_extruder(const DynamicPrintConfig* con
     using ColorItem = std::pair<std::string, ColorRGBA>;
     std::vector<ColorItem> colors;
 
-    if (static_cast<PrinterTechnology>(config->opt_int("printer_technology")) == ptSLA) {
+    if (config->has("printer_technology") && static_cast<PrinterTechnology>(config->opt_int("printer_technology")) == ptSLA) {
         const std::string& txt_color = config->opt_string("material_colour").empty() ?
                                            print_config_def.get("material_colour")->get_default_value<ConfigOptionString>()->value :
                                            config->opt_string("material_colour");

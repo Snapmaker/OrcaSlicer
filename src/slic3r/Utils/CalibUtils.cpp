@@ -1153,6 +1153,8 @@ bool CalibUtils::process_and_store_3mf(Model *model, const DynamicPrintConfig &f
     store_params.thumbnail_data = thumbnails;
 
 
+    // Both files go to the printer: no filament prices unless the preference asks for them.
+    store_params.strip_filament_prices = !wxGetApp().app_config->get_bool("gcode_include_filament_prices");
     store_params.strategy = SaveStrategy::Silence | SaveStrategy::WithGcode | SaveStrategy::SplitModel | SaveStrategy::SkipModel;
 
     bool success = Slic3r::store_bbs_3mf(store_params);

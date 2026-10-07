@@ -2672,6 +2672,9 @@ void ImGuiWrapper::init_font(bool compress)
     ImFontAtlas::GlyphRangesBuilder builder;
     builder.AddRanges(m_glyph_ranges);
     builder.AddRanges(ImGui::GetIO().Fonts->GetGlyphRangesDefault());
+    // Currency symbols (EUR, INR, KRW, RUB, ...) for the cost section's Preferences > Currency symbol.
+    static const ImWchar ranges_currency[] = { 0x20A0, 0x20BF, 0 };
+    builder.AddRanges(ranges_currency);
 #ifdef __APPLE__
     if (m_font_cjk)
         // Apple keyboard shortcuts are only contained in the CJK fonts.

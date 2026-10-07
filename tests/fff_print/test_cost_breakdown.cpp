@@ -95,7 +95,7 @@ std::string slice_plate(bool bbl, bool prices, GCodeProcessorResult *result = nu
 bool is_price_line(const std::string &line)
 {
     return line.rfind("; filament cost =", 0) == 0 || line.rfind("; total filament cost =", 0) == 0 ||
-           line.rfind("; filament_cost =", 0) == 0;
+           line.rfind("; filament_cost =", 0) == 0 || line.rfind("; time_cost =", 0) == 0;
 }
 
 // Drops what differs between two slices of the same plate in one process (header timestamp, object
@@ -140,7 +140,7 @@ std::string first_difference(const std::string &a, const std::string &b)
 
 } // namespace
 
-TEST_CASE("Filament prices preference: off drops only the price lines from the G-code", "[CostEstimate][GCode]")
+TEST_CASE("Costs preference: off drops only the price and rate lines from the G-code", "[CostEstimate][GCode]")
 {
     for (const bool bbl : { false, true }) {
         DYNAMIC_SECTION((bbl ? "Bambu Lab printer" : "other printer")) {
@@ -152,13 +152,14 @@ TEST_CASE("Filament prices preference: off drops only the price lines from the G
             CHECK(with.find("\n; filament cost = ") != std::string::npos);
             CHECK(with.find("\n; filament_cost = 25,31.5") != std::string::npos);
             CHECK((with.find("\n; total filament cost = ") != std::string::npos) == !bbl);
-            CHECK(count_price_lines(with) == (bbl ? 2u : 3u));
+            CHECK(with.find("\n; time_cost = 1.5") != std::string::npos);
+            CHECK(count_price_lines(with) == (bbl ? 3u : 4u));
 
-            // Off: none of them, everything else (time_cost included) unchanged.
+            // Off: none of them (the machine rate included), everything else unchanged.
             CHECK(count_price_lines(without) == 0u);
             CHECK(without.find("filament cost") == std::string::npos);
             CHECK(without.find("filament_cost") == std::string::npos);
-            CHECK(without.find("\n; time_cost = 1.5") != std::string::npos);
+            CHECK(without.find("time_cost") == std::string::npos);
             CHECK(without.find("\n; filament used [g] = ") != std::string::npos);
 
             const std::string a = normalized(with, true), b = normalized(without, true);

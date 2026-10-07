@@ -30,6 +30,7 @@ void fill_three_filaments(GCodeProcessorResult &r)
     r.filament_costs     = { 20.f, 30.f, 0.f };
     r.has_filament_costs = true;
     r.time_cost          = 1.5;
+    r.has_time_cost      = true;
     auto &ps = r.print_statistics;
     ps.modes[static_cast<size_t>(Mode::Normal)].time = 7200.f;   // 2 h
     ps.model_volumes_per_extruder      = { { 0, 10000. }, { 1, 2000. } };
@@ -234,6 +235,11 @@ TEST_CASE("Summing plates adds rounded plate totals and merges filament slots", 
         CHECK(mixed.machine_rate_varies);
         CHECK_THAT(mixed.machine, WithinRel(3.0 + 1.5, 1e-9));
     }
+    SECTION("one plate without a machine rate makes the sum's rate unknown") {
+        r2.has_time_cost = false;
+        CHECK_FALSE(sum_costs({ p1, compute_cost(r2) }).machine_rate_known);
+        CHECK(all.machine_rate_known);
+    }
     SECTION("one plate without prices makes the sum's material unknown") {
         r2.has_filament_costs = false;
         CHECK_FALSE(sum_costs({ p1, compute_cost(r2) }).prices_known);
@@ -279,5 +285,10 @@ TEST_CASE("GCodeProcessor reports missing filament prices instead of inventing t
     REQUIRE_NOTHROW(processor2.process_file(path2.string()));
     CHECK_FALSE(processor2.get_result().has_filament_costs);
     CHECK_THAT(processor2.get_result().time_cost, WithinAbs(0., 1e-12));
+    // The machine part is reported unknown, not as a rate of 0.
+    CHECK_FALSE(processor2.get_result().has_time_cost);
+    const CostBreakdown none = compute_cost(processor2.get_result());
+    CHECK_FALSE(none.machine_rate_known);
+    CHECK_THAT(none.machine, WithinAbs(0., 1e-12));
     boost::filesystem::remove(path2);
 }

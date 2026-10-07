@@ -1296,8 +1296,8 @@ public:
     void set_gcode_file_invalidated();
     void export_gcode_from_previous_file(const std::string& file, GCodeProcessorResult* result, ThumbnailsGeneratorCallback thumbnail_cb = nullptr);
 
-    // Whether the exported G-code carries the filament prices: the "; filament cost" and
-    // "; total filament cost" lines and filament_cost in the CONFIG_BLOCK. Everything else in the
+    // Whether the exported G-code carries the costs: the "; filament cost" and "; total filament cost"
+    // lines, and filament_cost and time_cost (the machine rate) in the CONFIG_BLOCK. Everything else in the
     // file is the same either way. A GUI preference ("gcode_include_filament_prices", default off,
     // applied by BackgroundSlicingProcess) and a CLI switch (--no-filament-prices); a Print built
     // any other way keeps today's G-code (on). Not a config key, so it never reaches presets,

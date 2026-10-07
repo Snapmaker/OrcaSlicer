@@ -616,7 +616,6 @@ void GCodeProcessorResult::reset() {
     filament_diameters = std::vector<float>(MIN_EXTRUDERS_COUNT, DEFAULT_FILAMENT_DIAMETER);
     filament_densities = std::vector<float>(MIN_EXTRUDERS_COUNT, DEFAULT_FILAMENT_DENSITY);
     custom_gcode_per_print_z = std::vector<CustomGCode::Item>();
-    spiral_vase_layers = std::vector<std::pair<float, std::pair<size_t, size_t>>>();
     time = 0;
 
     //BBS: add mutex for protection of gcode result
@@ -651,7 +650,6 @@ void GCodeProcessorResult::reset() {
     time_cost = 0.;
     has_time_cost = false;
     custom_gcode_per_print_z = std::vector<CustomGCode::Item>();
-    spiral_vase_layers = std::vector<std::pair<float, std::pair<size_t, size_t>>>();
     spiral_vase_mode = false;
     z_offset = 0.0f;
     bed_match_result = BedMatchResult(true);
@@ -1429,17 +1427,6 @@ void GCodeProcessor::finalize(bool post_process)
         std::vector<float>& first_layer_times = m_result.print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].layers_times;
         m_result.initial_layer_time = first_layer_times.size() > 0 ? std::max(float(0.0), first_layer_times[0] - prepare_time) : 0.f;
     }
-
-    //update times for results
-    for (size_t i = 0; i < m_result.moves.size(); i++) {
-        //field layer_duration contains the layer id for the move in which the layer_duration has to be set.
-        size_t layer_id = size_t(m_result.moves[i].layer_duration);
-        std::vector<float>& layer_times = m_result.print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].layers_times;
-        if (layer_times.size() > layer_id - 1 && layer_id > 0)
-            m_result.moves[i].layer_duration = layer_id == 1 ? std::max(0.f,layer_times[layer_id - 1] - prepare_time) : layer_times[layer_id - 1];
-        else
-            m_result.moves[i].layer_duration = 0;
-    }
     
 #if ENABLE_GCODE_VIEWER_DATA_CHECKING
     std::cout << "\n";
@@ -2200,18 +2187,6 @@ void GCodeProcessor::process_tags(const std::string_view comment, bool producers
     // layer change tag
     if (comment == reserved_tag(ETags::Layer_Change)) {
         ++m_layer_id;
-        if (m_detect_layer_based_on_tag) {
-            if (m_result.moves.empty() || m_result.spiral_vase_layers.empty())
-                // add a placeholder for layer height. the actual value will be set inside process_G1() method
-                m_result.spiral_vase_layers.push_back({ FLT_MAX, { 0, 0 } });
-            else {
-                const size_t move_id = m_result.moves.size() - 1 - m_seams_count;
-                if (!m_result.spiral_vase_layers.empty())
-                    m_result.spiral_vase_layers.back().second.second = move_id;
-                // add a placeholder for layer height. the actual value will be set inside process_G1() method
-                m_result.spiral_vase_layers.push_back({ FLT_MAX, { move_id, move_id } });
-            }
-        }
         return;
     }
 
@@ -3140,20 +3115,6 @@ void GCodeProcessor::process_G1(const std::array<std::optional<double>, 4>& axes
     else if (type == EMoveType::Extrude && m_extrusion_role == erExternalPerimeter) {
         m_seams_detector.activate(true);
         m_seams_detector.set_first_vertex(m_result.moves.back().position - m_extruder_offsets[m_extruder_id] - plate_offset);
-    }
-
-    if (m_detect_layer_based_on_tag && !m_result.spiral_vase_layers.empty()) {
-        if (delta_pos[Z] >= 0.0 && type == EMoveType::Extrude) {
-            const float current_z = static_cast<float>(m_end_position[Z]);
-            // replace layer height placeholder with correct value
-            if (m_result.spiral_vase_layers.back().first == FLT_MAX) {
-                m_result.spiral_vase_layers.back().first = current_z;
-            } else {
-                m_result.spiral_vase_layers.back().first = std::max(m_result.spiral_vase_layers.back().first, current_z);
-            }
-        }
-        if (!m_result.moves.empty())
-            m_result.spiral_vase_layers.back().second.second = m_result.moves.size() - 1 - m_seams_count;
     }
 
     // The blocks queued above time the move stored below, also when a seam vertex went in between.
@@ -5062,7 +5023,6 @@ void GCodeProcessor::store_move_vertex(EMoveType type, bool internal_only)
                                 has_z                                 ? get_axis_max_jerk(normal_mode, Z) :
                                                                         std::min(jerk_x, jerk_y);
     }
-    move.layer_duration = static_cast<float>(m_layer_id); // legacy viewer: set in finalize()
     move.layer_id       = std::max<unsigned int>(1, m_layer_id) - 1;
     move.internal_only  = internal_only;
     move.prepare_stage  = m_processing_start_custom_gcode;
@@ -5283,8 +5243,6 @@ void GCodeProcessor::calculate_time(GCodeProcessorResult& result, size_t keep_la
     // (OrcaSlicer #10735), and keep every stored move id on its move.
     unsigned int inserted_actual_speed_moves_count = 0;
     std::vector<GCodeProcessorResult::MoveVertex> new_moves;
-    // (original move id, moves inserted in front of it and of every earlier move)
-    std::vector<std::pair<unsigned int, unsigned int>> shifts;
     for (auto it = actual_speed_moves.begin(); it != actual_speed_moves.end(); ++it) {
         const unsigned int base_id = it->move_id + inserted_actual_speed_moves_count;
         if (it->position.has_value()) {
@@ -5309,7 +5267,6 @@ void GCodeProcessor::calculate_time(GCodeProcessorResult& result, size_t keep_la
                 result.moves.insert(result.moves.begin() + base_id, new_moves.begin(), new_moves.end());
                 m_options_z_corrector.on_moves_inserted(base_id, new_moves.size());
                 inserted_actual_speed_moves_count += static_cast<unsigned int>(new_moves.size());
-                shifts.push_back({ it->move_id, inserted_actual_speed_moves_count });
             }
             const size_t curr_id = it->move_id + inserted_actual_speed_moves_count;
             // update move actual speed
@@ -5324,25 +5281,13 @@ void GCodeProcessor::calculate_time(GCodeProcessorResult& result, size_t keep_la
         }
     }
 
-    if (shifts.empty())
+    if (inserted_actual_speed_moves_count == 0)
         return;
-
-    // new id of an original move id
-    auto shifted = [&shifts](size_t id) {
-        auto it = std::upper_bound(shifts.begin(), shifts.end(), id,
-            [](size_t value, const std::pair<unsigned int, unsigned int>& s) { return value < s.first; });
-        return (it == shifts.begin()) ? id : id + std::prev(it)->second;
-    };
 
     // synchronize blocks' move_ids with the moves after the actual speed insertion
     for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
         for (TimeBlock& block : m_time_processor.machines[i].blocks)
             block.move_id = static_cast<unsigned int>(block.move_id + inserted_actual_speed_moves_count);
-    }
-    // legacy viewer data keyed by move id
-    for (auto& layer : result.spiral_vase_layers) {
-        layer.second.first  = shifted(layer.second.first);
-        layer.second.second = shifted(layer.second.second);
     }
 }
 

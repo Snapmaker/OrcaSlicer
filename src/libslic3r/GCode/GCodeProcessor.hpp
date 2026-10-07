@@ -195,9 +195,6 @@ inline bool is_bbl_special_tool_command(int tool_number)
             // This move's own duration per time estimate mode (s), including any synchronising wait
             // (G4, M400 S, tool change, ...) the time machine booked on it. OrcaSlicer #10735.
             std::array<float, static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count)> time{ 0.0f, 0.0f };
-            // Legacy GCodeViewer only (removed with it in libvgcode stage 3): the raw layer counter while
-            // processing (0 = before the first layer change), replaced by the layer duration in finalize().
-            float layer_duration{ 0.0f };
             // 0-based layer index from the layer change tag (upstream semantics: max(1, layer counter) - 1).
             unsigned int layer_id{ 0 };
             // A vertex with no G-code line of its own: a segment of a G2/G3 arc, or (when enabled) an
@@ -212,13 +209,6 @@ inline bool is_bbl_special_tool_command(int tool_number)
 
             float volumetric_rate() const { return feedrate * mm3_per_mm; }
             float actual_volumetric_rate() const { return actual_feedrate * mm3_per_mm; }
-
-            // EDGE (libvgcode stage 1): G2/G3 now arrive as internal G1 vertices (PrusaSlicer discretisation,
-            // OrcaSlicer #10735), so no move carries BBS arc interpolation data any more. These stubs keep the
-            // legacy GCodeViewer's (dead) arc branches compiling until stage 3 replaces that viewer.
-            bool is_arc_move_with_interpolation_points() const { return false; }
-            bool is_arc_move() const { return false; }
-            static inline const std::vector<Vec3f> interpolation_points{};
         };
 
         struct SliceWarning {
@@ -274,8 +264,6 @@ inline bool is_bbl_special_tool_command(int tool_number)
         std::vector<int> filament_vitrification_temperature;
         PrintEstimatedStatistics print_statistics;
         std::vector<CustomGCode::Item> custom_gcode_per_print_z;
-        // Legacy GCodeViewer only (spiral vase layer ranges as move ids); libvgcode needs only spiral_vase_mode.
-        std::vector<std::pair<float, std::pair<size_t, size_t>>> spiral_vase_layers;
         bool spiral_vase_mode{ false };
         float z_offset{ 0.0f };
         //BBS
@@ -328,7 +316,6 @@ inline bool is_bbl_special_tool_command(int tool_number)
             filament_vitrification_temperature = std::forward<Other>(other).filament_vitrification_temperature;
             print_statistics = std::forward<Other>(other).print_statistics;
             custom_gcode_per_print_z = std::forward<Other>(other).custom_gcode_per_print_z;
-            spiral_vase_layers = std::forward<Other>(other).spiral_vase_layers;
             spiral_vase_mode = other.spiral_vase_mode;
             z_offset = other.z_offset;
             warnings = std::forward<Other>(other).warnings;

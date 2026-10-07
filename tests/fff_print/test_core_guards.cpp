@@ -1,6 +1,8 @@
 // Slicing-level regression tests for the crash / UB / hang guards ported from OrcaSlicer in batch 1A.
 #include <catch2/catch.hpp>
 
+#include <string>
+
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
@@ -90,4 +92,22 @@ TEST_CASE("Organic tree support survives zero XY distance and zero top Z gap", "
                                              { "support_object_xy_distance", "0" },
                                              { "support_top_z_distance", "0" },
                                              { "support_bottom_z_distance", "0" } }) > 0);
+}
+
+// Orca #10944: a zero (cooling) time gave an infinite feedrate and "G1 F-2147483648" in the G-code.
+TEST_CASE("Layer cooling slowdown never writes a negative or non-finite feedrate", "[CoreGuards][CoolingBuffer]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({
+        { "slow_down_for_layer_cooling", "1" },
+        { "slow_down_layer_time", "1000" },
+        { "slow_down_min_speed", "5" },
+        { "fan_cooling_layer_time", "1000" },
+    });
+    const std::string gcode = Test::slice({ TestMesh::cube_20x20x20 }, config);
+    REQUIRE_FALSE(gcode.empty());
+    CHECK(gcode.find(" F-") == std::string::npos);
+    CHECK(gcode.find(" Finf") == std::string::npos);
+    CHECK(gcode.find(" Fnan") == std::string::npos);
+    CHECK(gcode.find("F-2147483648") == std::string::npos);
 }

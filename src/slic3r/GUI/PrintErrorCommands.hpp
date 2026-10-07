@@ -321,6 +321,14 @@ bool accept_command_refusal(const nlohmann::json& print_block, SentCommandTracke
 std::vector<int> resolve_command_error_actions(const std::vector<int>& table_actions, bool print_action,
                                                bool& used_fallback);
 
+// The message HMSQuery::describe_error returns ends in " (0300 400C)" - the code, spelled the way
+// the Device page and the notifications show it. The error dialog shows the code on its own line
+// underneath (with a timestamp suffix, "[0300 400C 094706]"), so the sentence is shown without the
+// trailing "(code)" or the same code would appear twice. Only a trailing parenthesised group that
+// is the same code as `code` (spaces and case ignored) is removed; anything else, including text
+// that merely mentions a code, is returned unchanged.
+std::string strip_trailing_error_code(const std::string& text, const std::string& code);
+
 // ---- payload builders ----
 //
 // `err` is the error code as the printer names it in these commands. Bambu Studio passes

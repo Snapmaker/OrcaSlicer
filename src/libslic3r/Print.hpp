@@ -998,6 +998,7 @@ struct WipeTowerData
         number_of_toolchanges = -1;
         depth = 0.f;
         width = 0.f;
+        height = 0.f;
         local_z_reserve_boxes.clear();
         brim_width = 0.f;
         wipe_tower_mesh_data.reset();

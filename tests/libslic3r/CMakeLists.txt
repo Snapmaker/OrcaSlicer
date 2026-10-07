@@ -129,6 +129,7 @@ add_executable(${_TEST_NAME}_tests
     test_align_math.cpp
     # test_png_io.cpp
     test_indexed_triangle_set.cpp
+    test_texture_displacement.cpp
     ../libnest2d/printer_parts.cpp
 	)
 

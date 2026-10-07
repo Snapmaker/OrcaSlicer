@@ -2,20 +2,16 @@
 #define NOMINMAX
 #endif
 
-#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <memory>
 #include <vector>
 #include <cstdint>
 #include <cstddef>
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem/operations.hpp>
-#include <catch2/catch_test_macros.hpp>
 #include <ios>
 #include <iterator>
 #include <utility>
 #include "libslic3r/Point.hpp"
-#include <catch2/matchers/catch_matchers.hpp>
-#include <catch2/generators/catch_generators.hpp>
 #include <map>
 #include <math.h>
 #include "libslic3r/TextureBake/TextureBakeDisplace.hpp"
@@ -23,8 +19,7 @@
 #include <tuple>
 #include <Eigen/Geometry>
 #include "libslic3r/libslic3r.h"
-#include <catch2/catch_message.hpp>
-#include <catch2/catch_all.hpp>
+#include <catch2/catch.hpp> // EdgeSlicer: Catch2 v2 (upstream: v3 catch_all.hpp)
 
 #include <algorithm>
 #include <array>
@@ -1123,7 +1118,7 @@ TEST_CASE("TextureDisplacement: the step cutter turns a stepped field into walls
 {
     // Square posts 1.2 mm wide on a 2 mm pitch, as a binary field: a step everywhere along the post
     // edges, flat everywhere else. 1 mm triangles, so every post edge crosses several of them.
-    constexpr float RELIEF = 0.4f, SIZE = 6.f, STEP_W = 0.05f, GAP = 0.075f;
+    static constexpr float RELIEF = 0.4f, SIZE = 6.f, STEP_W = 0.05f, GAP = 0.075f; // static: MSVC C++17 lambda use (C3493)
     const auto      posts = [](float x, float y) {
         const float fx = std::fmod(std::fmod(x, 2.f) + 2.f, 2.f), fy = std::fmod(std::fmod(y, 2.f) + 2.f, 2.f);
         return (fx > 0.4f && fx < 1.6f && fy > 0.4f && fy < 1.6f) ? RELIEF : 0.f;
@@ -2158,7 +2153,7 @@ TEST_CASE("Texture displacement layers survive a JSON round trip", "[TextureDisp
     a.edge_smoothing_amount = 0.25f;
     a.auto_connect_islands = false;
     a.tile_enabled         = false;
-    a.tile_method          = TextureTileMethod::Mirror;
+    a.tile_method          = TextureTileMethod::MirroredRepeat; // EdgeSlicer: #16148 used a later upstream name
     a.projection_method    = TextureProjectionMethod::LSCM;
     a.blend_mode           = TextureBlendMode::Subtract;
     a.color_enabled        = true;

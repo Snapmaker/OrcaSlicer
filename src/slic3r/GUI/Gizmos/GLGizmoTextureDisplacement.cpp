@@ -5,7 +5,7 @@
 #include <boost/filesystem/operations.hpp>
 #include <boost/log/trivial.hpp>
 
-#include "ColorSpaceConvert.hpp"
+#include "slic3r/Utils/ColorSpaceConvert.hpp"
 #include "libslic3r/AABBTreeIndirect.hpp"
 #include "libslic3r/Color.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -17,11 +17,11 @@
 #include "slic3r/GUI/Camera.hpp"
 #include "slic3r/GUI/CameraUtils.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
+#include "slic3r/GUI/BitmapCache.hpp"
 #include "slic3r/GUI/GLToolbar.hpp" // GLToolbar::Default_Icons_Size, to match the toolbar's icon size
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
-#include "slic3r/GUI/GuiColor.hpp"
 #include "slic3r/GUI/ImGuiWrapper.hpp"
 #include "slic3r/GUI/MainFrame.hpp" // wxGetApp().mainframe, as the projector window's parent
 #include "slic3r/GUI/MsgDialog.hpp"
@@ -73,7 +73,7 @@
 #include <vector>
 #include <utility>
 #include <wx/gdicmn.h>
-#include <wx/busycursor.h>
+#include <wx/utils.h> // EdgeSlicer: wxBusyCursor (wx 3.2 has no wx/busycursor.h)
 #include <wx/string.h>
 #include <wx/filedlg.h>
 
@@ -1043,7 +1043,7 @@ void GLGizmoTextureDisplacement::render_preview_mesh()
         // per-triangle colour this needs.
         for (const PreviewColorRun &run : m_preview_color_runs) {
             m_preview_glmodel.set_color(run.color);
-            m_preview_glmodel.render(run.range, shader);
+            m_preview_glmodel.render(run.range); // EdgeSlicer: GLModel renders with the bound shader (`shader`)
         }
     }
     shader->stop_using();
@@ -4253,9 +4253,24 @@ const std::vector<GLGizmoTextureDisplacement::PaletteEntry> &GLGizmoTextureDispl
     return m_palette_cache;
 }
 
+// EdgeSlicer: upstream reads Plater::get_extruders_colors(). Ours is the free get_extruders_colors()
+// (3DScene.hpp), which appends the display colours of mixed (virtual) filaments. Texture colour does
+// its own mixing (Z bands / XY dither) and does not know our virtual filaments, so it matches against
+// the physical filaments only.
+static std::vector<ColorRGBA> physical_filament_colors()
+{
+    std::vector<ColorRGBA> out;
+    for (const std::string &color : wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, /* include_mixed */ false)) {
+        unsigned char rgba[4] = {};
+        BitmapCache::parse_color4(color, rgba);
+        out.push_back({ rgba[0] / 255.f, rgba[1] / 255.f, rgba[2] / 255.f, rgba[3] / 255.f });
+    }
+    return out;
+}
+
 std::vector<ColorRGBA> GLGizmoTextureDisplacement::filament_palette()
 {
-    std::vector<ColorRGBA> palette = wxGetApp().plater()->get_extruders_colors();
+    std::vector<ColorRGBA> palette = physical_filament_colors();
     // mmu_segmentation_facets encodes the filament in a 6-bit prefix code and stops at Extruder16.
     if (palette.size() > size_t(EnforcerBlockerType::ExtruderMax))
         palette.resize(size_t(EnforcerBlockerType::ExtruderMax));

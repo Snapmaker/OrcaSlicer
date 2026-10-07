@@ -26,6 +26,7 @@ public:
         bool m_detected{ false };
         int m_max_tex_size{ 0 };
         float m_max_anisotropy{ 0.0f };
+        bool m_core_profile{ false };
 
         std::string m_version;
         std::string m_glsl_version;
@@ -41,6 +42,10 @@ public:
         const std::string& get_renderer() const;
 
         bool is_mesa() const;
+        // True for a core-profile context (no wide lines, no fixed-function state). We ask for a
+        // compatibility profile (init_glcontext()), so this is only true where a driver refused it and
+        // handed us a core context instead. (Backported from OrcaSlicer for texture displacement.)
+        bool is_core_profile() const;
 
         int get_max_tex_size() const;
         float get_max_anisotropy() const;

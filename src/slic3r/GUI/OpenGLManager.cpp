@@ -71,6 +71,14 @@ bool OpenGLManager::GLInfo::is_mesa() const
     return boost::icontains(m_version, "mesa");
 }
 
+bool OpenGLManager::GLInfo::is_core_profile() const
+{
+    if (!m_detected)
+        detect();
+
+    return m_core_profile;
+}
+
 int OpenGLManager::GLInfo::get_max_tex_size() const
 {
     if (!m_detected)
@@ -94,6 +102,8 @@ float OpenGLManager::GLInfo::get_max_anisotropy() const
     return m_max_anisotropy;
 }
 
+static bool version_greater_or_equal_to(const std::string& version, unsigned int major, unsigned int minor);
+
 void OpenGLManager::GLInfo::detect() const
 {
     *const_cast<std::string*>(&m_version) = gl_get_string_safe(GL_VERSION, "N/A");
@@ -115,6 +125,12 @@ void OpenGLManager::GLInfo::detect() const
         float* max_anisotropy = const_cast<float*>(&m_max_anisotropy);
         glsafe(::glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, max_anisotropy));
     }
+
+    // A context without ARB_compatibility is a core profile - but only from 3.2 on; a legacy 2.x
+    // context (macOS fallback) does not advertise the extension either and is not core.
+    if (!GLAD_GL_ARB_compatibility && version_greater_or_equal_to(m_version, 3, 2))
+        *const_cast<bool*>(&m_core_profile) = true;
+
     *const_cast<bool*>(&m_detected) = true;
 }
 

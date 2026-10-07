@@ -2177,7 +2177,7 @@ indexed_triangle_set build_texture_displacement_v2(const indexed_triangle_set   
     const auto painted_dist2 = [&painted_closest](const Vec3f &p) { return painted_closest(p, nullptr, nullptr); };
     // Before displacement the queried centroids lie in the same surface as the pieces, so anything
     // beyond a hair is genuinely outside the paint.
-    constexpr float paint_tol = 0.05f;
+    static constexpr float paint_tol = 0.05f; // static: read inside a lambda without capture (MSVC C++17, C3493)
     const auto      painted_at = [&painted_dist2](const Vec3f &p) { return painted_dist2(p) < paint_tol * paint_tol; };
 
     // "Auto" resolution and budget (0 and -1) resolve here, from the texture and the model - the mesh

@@ -103,18 +103,12 @@ wxSize gl_drawable_size(const wxWindow *win, const wxSize &logical_size)
 // was last in its backbuffer, i.e. nothing.
 std::vector<int> gl_attrib_list()
 {
-    int antialiasing_samples = 4;
-    if (const AppConfig *app_config = wxGetApp().app_config; app_config != nullptr) {
-        const std::string value = app_config->get(SETTING_OPENGL_AA_SAMPLES);
-        if (value == "0" || value == "2" || value == "4" || value == "8" || value == "16")
-            antialiasing_samples = ::atoi(value.c_str());
-    }
+    // EdgeSlicer: our OpenGLManager::create_wxglcanvas() has no anti-aliasing setting - it always asks
+    // for 4x multisampling with an 8-bit stencil, and when multisampling is unsupported it drops BOTH
+    // the stencil and the samples (it terminates its list at WX_GL_STENCIL_SIZE). Mirror exactly that.
     // OpenGLManager's own auto-detection has already run by now (View3D is created before this
     // canvas), so this only reads its verdict rather than re-detecting.
-    if (!OpenGLManager::can_multisample())
-        antialiasing_samples = 0;
-
-    return {
+    std::vector<int> attribs = {
         WX_GL_RGBA,
         WX_GL_DOUBLEBUFFER,
         WX_GL_MIN_RED,        8,
@@ -122,11 +116,11 @@ std::vector<int> gl_attrib_list()
         WX_GL_MIN_BLUE,       8,
         WX_GL_MIN_ALPHA,      8,
         WX_GL_DEPTH_SIZE,     24,
-        WX_GL_STENCIL_SIZE,   8,
-        WX_GL_SAMPLE_BUFFERS, antialiasing_samples > 0 ? GL_TRUE : GL_FALSE,
-        WX_GL_SAMPLES,        antialiasing_samples,
-        0
     };
+    if (OpenGLManager::can_multisample())
+        attribs.insert(attribs.end(), { WX_GL_STENCIL_SIZE, 8, WX_GL_SAMPLE_BUFFERS, GL_TRUE, WX_GL_SAMPLES, 4 });
+    attribs.push_back(0);
+    return attribs;
 }
 
 // Wide lines are only *required* to be supported in a compatibility profile; a core-profile driver is

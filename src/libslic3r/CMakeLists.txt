@@ -488,6 +488,8 @@ set(lisbslic3r_sources
     PresetFlowVariant.hpp
     PrincipalComponents2D.cpp
     PrincipalComponents2D.hpp
+    PrinterModelSpecs.cpp
+    PrinterModelSpecs.hpp
     PrintApply.cpp
     PrintBase.cpp
     MemoryGuardPolicy.hpp

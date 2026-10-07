@@ -1,11 +1,11 @@
 {
-  "releaseTag": "v1.4.7",
+  "releaseTag": "v1.5.4",
   "sha256": {
-    "windows-x64": "a5b3c24bbf027101c5b7a85ac281b6d352872b3b248aeac6f79497a516c86a74",
-    "windows-arm64": "6ae3c36cdca935b5dc46169138d7e9a9907a37943937e7c9d7cd772d00c8d43d",
-    "macos-x64": "981205559bd4e97b9a72211ca56a429ed4acf618a36c83c647b97979ed16b01b",
-    "macos-arm64": "f9e086cca0b6340658826489a29588124395eea14260721190bad3201af942fc",
-    "linux-x64": "bb4653a20cd44ac03effdcf598c2712ec0c9423573ff89865f11142ccbfe2ffd",
-    "linux-arm64": "7f614ec5cad203ca7639e8d43dba98eb14cd9d9c8c56aabf8a45e7ca39bc03a3"
+    "windows-x64": "8cdf7a725122ec0d67f280c32a09f27227c7f6a11ea7f639d5e518a30aed60db",
+    "windows-arm64": "132de99d1a09252c5cec324b2fe8197d81f40bb2fa9c19388b72fa49afbbdf26",
+    "macos-x64": "7bfc97360b6cdcdc35da03ed554dd19c5db1c6b922b71b876ddfc6b2b7535ef5",
+    "macos-arm64": "413475c630aaedb724b3d9a86bc906e00f299efd8c34ef8c86525d78e10a3238",
+    "linux-x64": "86890d42728151b97d06ea1e093579bf65254cb313efe87b84754232f88051c4",
+    "linux-arm64": "e40783b2b4d09d9dd3eab4e485c8b311e6d55a045f242b2d86c5f8dc12c90bba"
   }
 }

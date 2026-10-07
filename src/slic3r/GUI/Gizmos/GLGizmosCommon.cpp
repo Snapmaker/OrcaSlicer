@@ -203,10 +203,13 @@ void InstancesHider::render_cut() const
         else
             clipper->set_limiting_plane(ClippingPlane::ClipsNothing());
 
-        glsafe(::glPushAttrib(GL_DEPTH_TEST));
+        // EDGE (core profile): glPushAttrib()/glPopAttrib() are gone from core profiles (and
+        // GL_DEPTH_TEST was never a valid attribute mask); save and restore the one flag by hand.
+        const GLboolean depth_test_was_enabled = ::glIsEnabled(GL_DEPTH_TEST);
         glsafe(::glDisable(GL_DEPTH_TEST));
         clipper->render_cut(mv->is_model_part() ? ColorRGBA(0.8f, 0.3f, 0.0f, 1.0f) : color_from_model_volume(*mv));
-        glsafe(::glPopAttrib());
+        if (depth_test_was_enabled)
+            glsafe(::glEnable(GL_DEPTH_TEST));
 
         ++clipper_id;
     }

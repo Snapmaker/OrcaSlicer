@@ -620,3 +620,24 @@ TEST_CASE("A refused command offers Stop / Resume Printing only when it was a pr
         REQUIRE_FALSE(used_fallback);
     }
 }
+
+TEST_CASE("strip_trailing_error_code drops only the duplicated trailing code", "[PrintErrorDialog]")
+{
+    // What describe_error produces, and what the dialog shows on its own line.
+    CHECK(strip_trailing_error_code("The task was canceled. (0300 400C)", "0300 400C") == "The task was canceled.");
+    // Spacing and case of either side do not matter.
+    CHECK(strip_trailing_error_code("Nozzle clogged. (0300 400c)  ", "0300400C") == "Nozzle clogged.");
+    // A 16-digit code grouped in fours.
+    CHECK(strip_trailing_error_code("Filament ran out. (0700 8000 0002 0001)", "0700 8000 0002 0001") == "Filament ran out.");
+    // A different code in the brackets is real content, not a duplicate.
+    CHECK(strip_trailing_error_code("See the guide (0300 400C)", "0500 4046") == "See the guide (0300 400C)");
+    // A parenthesis that is not a code is left alone.
+    CHECK(strip_trailing_error_code("Open the lid (and check)", "0300 400C") == "Open the lid (and check)");
+    // No trailing parenthesis, no code to compare, empty text: unchanged.
+    CHECK(strip_trailing_error_code("The task was canceled.", "0300 400C") == "The task was canceled.");
+    CHECK(strip_trailing_error_code("The task was canceled. (0300 400C)", "") == "The task was canceled. (0300 400C)");
+    CHECK(strip_trailing_error_code("", "0300 400C").empty());
+    // Only the last group is considered.
+    CHECK(strip_trailing_error_code("Part (A) failed (0300 400C)", "0300 400C") == "Part (A) failed");
+}
+

@@ -166,6 +166,8 @@ public:
     ~ScalableBitmap() {}
 
     wxSize  GetBmpSize() const;
+    // Size of any bitmap in the units this platform draws in (scaled size on macOS).
+    static wxSize GetBmpSize(const wxBitmap &bmp);
     int     GetBmpWidth() const;
     int     GetBmpHeight() const;
 

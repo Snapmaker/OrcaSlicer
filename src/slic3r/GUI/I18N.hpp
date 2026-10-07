@@ -12,6 +12,12 @@
 #define _CTX_utf8(s, ctx) Slic3r::GUI::I18N::translate_utf8((s), (ctx))
 #endif /* _ */
 
+// Upstream OrcaSlicer's names for the two above (used by ported code, e.g. texture displacement).
+#ifndef _L_CONTEXT
+#define _L_CONTEXT(s, ctx) 	 Slic3r::GUI::I18N::translate((s), (ctx))
+#define _u8L_CONTEXT(s, ctx) Slic3r::GUI::I18N::translate_utf8((s), (ctx))
+#endif /* _L_CONTEXT */
+
 #ifndef L
 // !!! If you needed to translate some wxString,
 // !!! please use _L(string)

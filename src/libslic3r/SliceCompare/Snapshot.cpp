@@ -268,6 +268,10 @@ Snapshot build_snapshot(const GCodeProcessorResult& result,
 
     const GCodeProcessorResult::MoveVertex* prev = nullptr;
     for (const auto& m : result.moves) {
+        // EDGE (libvgcode stage 3): actual-speed profile points split a move for the preview only;
+        // their extruder delta is interpolated, not a share of the move's.
+        if (m.actual_speed_point)
+            continue;
         if (m.feedrate > s.max_speed) s.max_speed = m.feedrate;
         if (m.type == EMoveType::Extrude && m.delta_extruder > 0.f && prev) {
             const int zkey = (int)std::lround(m.position.z() * 100.0);

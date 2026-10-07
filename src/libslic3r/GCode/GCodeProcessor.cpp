@@ -1238,6 +1238,7 @@ void GCodeProcessor::reset()
     m_mm3_per_mm = 0.0f;
     m_travel_dist = 0.0f;
     m_fan_speed = 0.0f;
+    m_pressure_advance = 0.0f;
     m_z_offset = 0.0f;
 
     m_extrusion_role = erNone;
@@ -1669,6 +1670,12 @@ void GCodeProcessor::process_gcode_line(const GCodeReader::GCodeLine& line, bool
             process_SET_VELOCITY_LIMIT(line);
             return;
         }
+        // EDGE (OrcaSlicer #11673): pressure advance, for the preview only
+        if (ascii_iequals(cmd, "SET_PRESSURE_ADVANCE"))
+        {
+            process_SET_PRESSURE_ADVANCE(line);
+            return;
+        }
     }
 
     if (cmd.length() > 1) {
@@ -1825,6 +1832,12 @@ void GCodeProcessor::process_gcode_line(const GCodeReader::GCodeLine& line, bool
                         default: break;
                         }
                         break;
+                    case '7':
+                        switch (cmd[3]) {
+                        case '2': { process_M572(line); break; } // EDGE (#11673): RepRapFirmware pressure advance
+                        default: break;
+                        }
+                        break;
                     default:
                         break;
                     }
@@ -1840,6 +1853,10 @@ void GCodeProcessor::process_gcode_line(const GCodeReader::GCodeLine& line, bool
                     default:
                         break;
                     }
+                    break;
+                case '9':
+                    if (cmd[2] == '0' && cmd[3] == '0')
+                        process_M900(line); // EDGE (#11673): Marlin / Bambu linear advance
                     break;
                 default:
                     break;
@@ -3584,6 +3601,50 @@ void GCodeProcessor::process_M106(const GCodeReader::GCodeLine& line)
     }
 }
 
+// EDGE (OrcaSlicer #11673): pressure advance, for the Pressure advance view only.
+void GCodeProcessor::process_M900(const GCodeReader::GCodeLine& line)
+{
+    float pa_value = m_pressure_advance;
+    line.has_value('K', pa_value);
+    m_pressure_advance = std::max(0.0f, pa_value);
+}
+
+void GCodeProcessor::process_M572(const GCodeReader::GCodeLine& line)
+{
+    float pa_value = m_pressure_advance;
+    line.has_value('S', pa_value);
+    m_pressure_advance = std::max(0.0f, pa_value);
+}
+
+void GCodeProcessor::process_SET_PRESSURE_ADVANCE(const GCodeReader::GCodeLine& line)
+{
+    // SET_PRESSURE_ADVANCE [EXTRUDER=...] ADVANCE=<value> [SMOOTH_TIME=...]
+    const std::string_view raw = line.raw();
+    size_t pos = 0;
+    while ((pos = raw.find('=', pos)) != std::string_view::npos) {
+        size_t key_end = pos;
+        while (key_end > 0 && raw[key_end - 1] == ' ')
+            --key_end;
+        size_t key_begin = key_end;
+        while (key_begin > 0 && raw[key_begin - 1] != ' ')
+            --key_begin;
+        ++pos;
+        if (!ascii_iequals(raw.substr(key_begin, key_end - key_begin), "ADVANCE"))
+            continue;
+        while (pos < raw.size() && raw[pos] == ' ')
+            ++pos;
+        size_t end = pos;
+        while (end < raw.size() && (std::isdigit(static_cast<unsigned char>(raw[end])) || raw[end] == '.'))
+            ++end;
+        if (end > pos) {
+            try {
+                m_pressure_advance = std::max(0.0f, std::stof(std::string(raw.substr(pos, end - pos))));
+            } catch (...) {}
+        }
+        return;
+    }
+}
+
 void GCodeProcessor::process_M107(const GCodeReader::GCodeLine& line)
 {
     m_fan_speed = 0.0f;
@@ -4979,6 +5040,28 @@ void GCodeProcessor::store_move_vertex(EMoveType type, bool internal_only)
     move.travel_dist    = m_travel_dist;
     move.fan_speed      = m_fan_speed;
     move.temperature    = m_extruder_temps[m_extruder_id];
+    {
+        // EDGE (OrcaSlicer #11673 / #13169): preview-only pressure advance, acceleration and jerk.
+        // The jerk is the plain axis limit; upstream's Marlin junction-deviation jerk waits for batch 2F.
+        constexpr auto normal_mode = PrintEstimatedStatistics::ETimeMode::Normal;
+        const bool  has_x  = std::abs(m_end_position[X] - m_start_position[X]) > 0.0;
+        const bool  has_y  = std::abs(m_end_position[Y] - m_start_position[Y]) > 0.0;
+        const bool  has_z  = std::abs(m_end_position[Z] - m_start_position[Z]) > 0.0;
+        const bool  has_e  = std::abs(m_end_position[E] - m_start_position[E]) > 0.0;
+        const float jerk_x = get_axis_max_jerk(normal_mode, X);
+        const float jerk_y = get_axis_max_jerk(normal_mode, Y);
+        move.pressure_advance = m_pressure_advance;
+        move.acceleration     = (type == EMoveType::Travel) ? get_travel_acceleration(normal_mode) :
+                                ((type == EMoveType::Retract || type == EMoveType::Unretract) ? get_retract_acceleration(normal_mode) :
+                                                                                               get_acceleration(normal_mode));
+        move.jerk             = (has_e && !has_x && !has_y && !has_z) ? get_axis_max_jerk(normal_mode, E) :
+                                (has_z && !has_x && !has_y)           ? get_axis_max_jerk(normal_mode, Z) :
+                                (has_x && has_y)                      ? std::min(jerk_x, jerk_y) :
+                                has_x                                 ? jerk_x :
+                                has_y                                 ? jerk_y :
+                                has_z                                 ? get_axis_max_jerk(normal_mode, Z) :
+                                                                        std::min(jerk_x, jerk_y);
+    }
     move.layer_duration = static_cast<float>(m_layer_id); // legacy viewer: set in finalize()
     move.layer_id       = std::max<unsigned int>(1, m_layer_id) - 1;
     move.internal_only  = internal_only;
@@ -5218,6 +5301,7 @@ void GCodeProcessor::calculate_time(GCodeProcessorResult& result, size_t keep_la
             new_move.fan_speed = *it->fan_speed;
             new_move.temperature = *it->temperature;
             new_move.internal_only = true;
+            new_move.actual_speed_point = true;
             new_moves.push_back(new_move);
         }
         else {

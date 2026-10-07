@@ -185,6 +185,13 @@ inline bool is_bbl_special_tool_command(int tool_number)
             float travel_dist{ 0.0f }; // mm
             float fan_speed{ 0.0f }; // percentage
             float temperature{ 0.0f }; // Celsius degrees
+            // EDGE (libvgcode stage 3, OrcaSlicer #11673 / #13169): preview-only values for the Pressure
+            // advance, Acceleration and Jerk views. The last M900 K / M572 S / SET_PRESSURE_ADVANCE
+            // ADVANCE= value, and the Normal-mode acceleration (mm/s^2) and axis jerk (mm/s) the time
+            // machine applies to this move. Nothing in the G-code output reads them.
+            float pressure_advance{ 0.0f };
+            float acceleration{ 0.0f };
+            float jerk{ 0.0f };
             // This move's own duration per time estimate mode (s), including any synchronising wait
             // (G4, M400 S, tool change, ...) the time machine booked on it. OrcaSlicer #10735.
             std::array<float, static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count)> time{ 0.0f, 0.0f };
@@ -199,6 +206,9 @@ inline bool is_bbl_special_tool_command(int tool_number)
             // Inside the machine start G-code (TimeBlock::Flags::prepare_stage); its travel time is kept
             // out of the per-move-type table, as the time machine did before.
             bool prepare_stage{ false };
+            // EDGE: an actual-speed profile point (internal_only, no time, its extruder delta interpolated
+            // for the preview). Not a piece of a G-code move: code that sums moves must skip it.
+            bool actual_speed_point{ false };
 
             float volumetric_rate() const { return feedrate * mm3_per_mm; }
             float actual_volumetric_rate() const { return actual_feedrate * mm3_per_mm; }
@@ -811,9 +821,9 @@ inline bool is_bbl_special_tool_command(int tool_number)
         double          m_x_offset{ 0 };
         double          m_y_offset{ 0 };
         // Insert the planner's acceleration / deceleration points as internal moves (for libvgcode's
-        // actual-speed view). Off until the libvgcode viewer (stage 3) consumes them: the legacy
-        // viewer would render them as extra segments. MoveVertex::actual_feedrate is filled either way.
-        bool m_actual_speed_moves_enabled{ false };
+        // Actual speed view; OrcaSlicer #10735 always does). On since libvgcode stage 3. The points are
+        // flagged MoveVertex::actual_speed_point; MoveVertex::actual_feedrate is filled either way.
+        bool m_actual_speed_moves_enabled{ true };
 
         unsigned int m_line_id;
         unsigned int m_last_line_id;
@@ -825,6 +835,7 @@ inline bool is_bbl_special_tool_command(int tool_number)
         float m_mm3_per_mm;
         float m_travel_dist; // mm
         float m_fan_speed; // percentage
+        float m_pressure_advance; // EDGE (OrcaSlicer #11673): preview only
         float m_z_offset; // mm
         ExtrusionRole m_extrusion_role;
         unsigned char m_extruder_id;
@@ -1073,6 +1084,10 @@ inline bool is_bbl_special_tool_command(int tool_number)
 
         // Set allowable instantaneous speed change
         void process_M566(const GCodeReader::GCodeLine& line);
+        // EDGE (OrcaSlicer #11673): pressure advance, for the preview only
+        void process_M572(const GCodeReader::GCodeLine& line);
+        void process_M900(const GCodeReader::GCodeLine& line);
+        void process_SET_PRESSURE_ADVANCE(const GCodeReader::GCodeLine& line);
 
         // Unload the current filament into the MK3 MMU2 unit at the end of print.
         void process_M702(const GCodeReader::GCodeLine& line);

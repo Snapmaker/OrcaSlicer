@@ -34,6 +34,13 @@ Message parse_message(const std::string& msg)
     if (msg == "printers_get") { m.kind = Message::Kind::Get; return m; }
     if (msg == "printers_groups_get") { m.kind = Message::Kind::Groups; return m; }
     if (msg == "printers_tasks") { m.kind = Message::Kind::Tasks; return m; }
+    if (starts_with(msg, "printers_thumb:")) {
+        const std::string id = msg.substr(15);
+        if (!valid_archive_id(id)) return m;
+        m.id   = id;
+        m.kind = Message::Kind::Thumb;
+        return m;
+    }
     if (starts_with(msg, "printers_job:")) {
         const std::string n = msg.substr(13);
         if (n.empty() || n.size() > 9 || !std::all_of(n.begin(), n.end(), [](unsigned char c) { return std::isdigit(c) != 0; }))
@@ -158,6 +165,102 @@ std::string not_here_reason(const Target& t)
     if (t.kind == "bambu")
         return "The Device tab shows Bambu Lab printers while a Bambu Lab printer preset is selected. Select one, then try again.";
     return "This printer has no web page to open.";
+}
+
+bool valid_archive_id(const std::string& id)
+{
+    if (id.empty() || id.size() > 128 || id[0] == '.') return false;
+    return std::all_of(id.begin(), id.end(), [](unsigned char c) { return std::isalnum(c) || c == '.' || c == '_' || c == '-'; });
+}
+
+static std::string lower(std::string s)
+{
+    for (char& c : s) c = (char) std::tolower((unsigned char) c);
+    return s;
+}
+
+std::string url_encode_segment(const std::string& s)
+{
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '-' || c == '.' || c == '_' || c == '~') out += (char) c;
+        else { out += '%'; out += hex[c >> 4]; out += hex[c & 15]; }
+    }
+    return out;
+}
+
+CoverIndex index_covers(const std::vector<std::pair<std::string, std::string>>& vendor_files)
+{
+    static const std::string suffix = "_cover.png";
+    CoverIndex out;
+    for (const auto& vf : vendor_files) {
+        const std::string& f = vf.second;
+        if (vf.first.empty() || f.size() <= suffix.size() || lower(f.substr(f.size() - suffix.size())) != suffix) continue;
+        const std::string model = lower(f.substr(0, f.size() - suffix.size()));
+        // The first vendor folder wins (several vendors ship the same generic names).
+        out.emplace(model, "/profiles/" + url_encode_segment(vf.first) + "/" + url_encode_segment(f));
+    }
+    return out;
+}
+
+std::string cover_for(const CoverIndex& index, const std::string& model_name)
+{
+    if (model_name.empty()) return "";
+    auto it = index.find(lower(model_name));
+    return it == index.end() ? std::string() : it->second;
+}
+
+std::string short_model_name(const std::string& kind, const std::string& model_name, const std::string& model_code)
+{
+    if (model_name.empty()) return model_code;
+    static const std::string bambu = "Bambu Lab ";
+    if (kind == "bambu" && model_name.size() > bambu.size() && model_name.compare(0, bambu.size(), bambu) == 0)
+        return model_name.substr(bambu.size());
+    return model_name;
+}
+
+std::string row_job(const json& row)
+{
+    if (!row.is_object()) return "";
+    std::string job;
+    if (row.contains("task") && row["task"].is_string()) job = row["task"].get<std::string>();
+    if (job.empty() && row.contains("subtask_name") && row["subtask_name"].is_string()) job = row["subtask_name"].get<std::string>();
+    return job;
+}
+
+std::map<std::string, std::string> pick_thumbnails(const std::vector<ArchiveEntry>& entries, const std::map<std::string, std::string>& jobs)
+{
+    std::map<std::string, std::pair<long long, std::string>> best;
+    for (const ArchiveEntry& e : entries) {
+        if (e.printer_id.empty() || !valid_archive_id(e.record_id)) continue;
+        const auto job = jobs.find(e.printer_id);
+        if (job == jobs.end() || job->second.empty()) continue;
+        if (e.sent_name != job->second && e.file != job->second) continue;
+        auto& b = best[e.printer_id];
+        if (b.second.empty() || e.time > b.first) b = { e.time, e.record_id };
+    }
+    std::map<std::string, std::string> out;
+    for (const auto& kv : best) out[kv.first] = kv.second.second;
+    return out;
+}
+
+void enrich_rows(json& printers, const CoverIndex& covers, const std::map<std::string, std::string>& thumbs)
+{
+    if (!printers.is_array()) return;
+    for (json& p : printers) {
+        if (!p.is_object()) continue;
+        const std::string kind = p.contains("kind") && p["kind"].is_string() ? p["kind"].get<std::string>() : std::string();
+        const std::string code = p.contains("model") && p["model"].is_string() ? p["model"].get<std::string>() : std::string();
+        std::string       name = p.contains("model_name") && p["model_name"].is_string() ? p["model_name"].get<std::string>() : std::string();
+        if (name.empty() && kind != "bambu") name = code; // a Bambu model code is not a name
+        p["model_short"] = short_model_name(kind, name, code);
+        const std::string pic = cover_for(covers, name);
+        if (!pic.empty()) p["picture"] = pic;
+        const std::string id = p.contains("id") && p["id"].is_string() ? p["id"].get<std::string>() : std::string();
+        auto t = thumbs.find(id);
+        if (t != thumbs.end()) p["thumb_id"] = t->second;
+    }
 }
 
 // ---- groups ----

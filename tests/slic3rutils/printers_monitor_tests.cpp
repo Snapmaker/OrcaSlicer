@@ -162,3 +162,61 @@ TEST_CASE("printers monitor: groups", "[PrintersMonitor]")
     CHECK(g[0]["all"] == true);
     CHECK(g[1]["id"] == "farm");
 }
+
+TEST_CASE("printers monitor: printer pictures and the model line", "[PrintersMonitor]")
+{
+    const CoverIndex idx = index_covers({ { "BBL", "Bambu Lab H2C_cover.png" },
+                                          { "BBL", "Bambu Lab H2C_bed.stl" },
+                                          { "Snapmaker", "Snapmaker U1_cover.png" },
+                                          { "Snapmaker", "Snapmaker A350 QS+B Kit_cover.png" },
+                                          { "Other", "Snapmaker U1_cover.png" } });
+    CHECK(idx.size() == 3);
+    CHECK(cover_for(idx, "Bambu Lab H2C") == "/profiles/BBL/Bambu%20Lab%20H2C_cover.png");
+    CHECK(cover_for(idx, "snapmaker u1") == "/profiles/Snapmaker/Snapmaker%20U1_cover.png"); // first vendor wins, any case
+    CHECK(cover_for(idx, "Snapmaker A350 QS+B Kit") == "/profiles/Snapmaker/Snapmaker%20A350%20QS%2BB%20Kit_cover.png");
+    CHECK(cover_for(idx, "Voron 2.4").empty());
+    CHECK(cover_for(idx, "").empty());
+
+    CHECK(short_model_name("bambu", "Bambu Lab H2C", "O1C2") == "H2C");
+    CHECK(short_model_name("bambu", "", "O1C2") == "O1C2"); // unknown code: the code
+    CHECK(short_model_name("snapmaker", "Snapmaker U1", "Snapmaker U1") == "Snapmaker U1");
+
+    json rows = json::parse(R"J([
+        {"id":"01P00A1","kind":"bambu","model":"O1C2","model_name":"Bambu Lab H2C","task":"Benchy"},
+        {"id":"01P00A2","kind":"bambu","model":"O9Z9"},
+        {"id":"sm:U1-1","kind":"snapmaker","model":"Snapmaker U1","task":"gear.gcode"}
+    ])J");
+    enrich_rows(rows, idx, { { "sm:U1-1", "20261007-gear" } });
+    CHECK(rows[0]["model_short"] == "H2C");
+    CHECK(rows[0]["picture"] == "/profiles/BBL/Bambu%20Lab%20H2C_cover.png");
+    CHECK_FALSE(rows[0].contains("thumb_id"));
+    CHECK(rows[1]["model_short"] == "O9Z9");
+    CHECK_FALSE(rows[1].contains("picture")); // a Bambu code is never looked up as a name
+    CHECK(rows[2]["picture"] == "/profiles/Snapmaker/Snapmaker%20U1_cover.png");
+    CHECK(rows[2]["thumb_id"] == "20261007-gear");
+}
+
+TEST_CASE("printers monitor: the running job's plate picture from the archive", "[PrintersMonitor]")
+{
+    const std::vector<ArchiveEntry> entries = {
+        { "01P00A1", "a-old", "Benchy", "benchy.gcode.3mf", 100 },
+        { "01P00A1", "a-new", "Benchy", "benchy.gcode.3mf", 200 },
+        { "01P00A1", "a-other", "Bracket", "bracket.3mf", 300 },     // newer, but not the running job
+        { "sm:U1-1", "u-1", "", "gear.gcode", 50 },                // matched by file name
+        { "ph:k1", "../etc", "x", "x", 1 },                        // not an archive id
+    };
+    const auto picks = pick_thumbnails(entries, { { "01P00A1", "Benchy" }, { "sm:U1-1", "gear.gcode" }, { "ph:k1", "x" }, { "idle", "" } });
+    CHECK(picks.size() == 2);
+    CHECK(picks.at("01P00A1") == "a-new");
+    CHECK(picks.at("sm:U1-1") == "u-1");
+    CHECK(pick_thumbnails(entries, {}).empty());
+
+    CHECK(row_job(json { { "task", "A" }, { "subtask_name", "B" } }) == "A");
+    CHECK(row_job(json { { "subtask_name", "B" } }) == "B");
+    CHECK(row_job(json::array()) == "");
+
+    CHECK(parse_message("printers_thumb:20261007-101500-benchy").kind == Message::Kind::Thumb);
+    CHECK(parse_message("printers_thumb:20261007-101500-benchy").id == "20261007-101500-benchy");
+    for (const char* bad : { "printers_thumb:", "printers_thumb:../x", "printers_thumb:.hidden", "printers_thumb:a/b", "printers_thumb:a b" })
+        CHECK(parse_message(bad).kind == Message::Kind::Invalid);
+}

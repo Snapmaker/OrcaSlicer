@@ -3,9 +3,14 @@
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 #include "RemoteAccess.hpp"
+#include "GcodeArchive.hpp"
 #include "slic3r/GUI/Widgets/WebView.hpp"
 #include "slic3r/Utils/HubHomeLogic.hpp"
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/Utils.hpp"
+
+#include <boost/filesystem.hpp>
+#include <wx/base64.h>
 
 #include <boost/log/trivial.hpp>
 #include <nlohmann/json.hpp>
@@ -15,6 +20,9 @@
 #include <wx/webview.h>
 
 #include <chrono>
+#include <fstream>
+#include <mutex>
+#include <sstream>
 #include <thread>
 
 namespace Slic3r {
@@ -52,6 +60,66 @@ public:
 static long long printers_now_ms()
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+// The vendor profiles' *_cover.png files, indexed once (they only change with an install).
+static const PMon::CoverIndex& printers_cover_index()
+{
+    static std::once_flag    once;
+    static PMon::CoverIndex  index;
+    std::call_once(once, []() {
+        namespace fs = boost::filesystem;
+        std::vector<std::pair<std::string, std::string>> files;
+        boost::system::error_code ec;
+        const fs::path root = fs::path(resources_dir()) / "profiles";
+        for (fs::directory_iterator v(root, ec), end; !ec && v != end; v.increment(ec)) {
+            boost::system::error_code ig;
+            if (!fs::is_directory(v->path(), ig)) continue;
+            for (fs::directory_iterator f(v->path(), ig), fend; !ig && f != fend; f.increment(ig))
+                files.emplace_back(v->path().filename().string(), f->path().filename().string());
+        }
+        index = PMon::index_covers(files);
+    });
+    return index;
+}
+
+// The archive's sidecars, re-read at most every 30 s (each poll would otherwise parse them all).
+static std::vector<PMon::ArchiveEntry> printers_archive_entries()
+{
+    static std::mutex                      mtx;
+    static long long                       read_at = 0;
+    static std::vector<PMon::ArchiveEntry> cached;
+    std::lock_guard<std::mutex> lock(mtx);
+    const long long now = printers_now_ms();
+    if (read_at == 0 || now - read_at > 30000) {
+        read_at = now;
+        cached.clear();
+        try {
+            for (const GcodeArchive::Record& r : GcodeArchive::list()) {
+                if (!r.has_thumbnail || !r.json.is_object() || !r.json.contains("printer") || !r.json["printer"].is_object()) continue;
+                PMon::ArchiveEntry e;
+                e.printer_id = r.json["printer"].value("id", std::string());
+                e.record_id  = r.id;
+                e.sent_name  = r.json.value("sent_name", std::string());
+                e.file       = r.file;
+                e.time       = r.time;
+                cached.push_back(std::move(e));
+            }
+        } catch (...) {}
+    }
+    return cached;
+}
+
+// The rows plus what the card shows besides them: the printer's picture and the job's plate picture.
+static void printers_enrich(json& payload)
+{
+    if (!payload.value("ok", false) || !payload.contains("printers")) return;
+    std::map<std::string, std::string> jobs;
+    for (const json& p : payload["printers"])
+        if (p.is_object() && p.contains("id") && p["id"].is_string()) jobs[p["id"].get<std::string>()] = PMon::row_job(p);
+    std::map<std::string, std::string> thumbs;
+    try { thumbs = PMon::pick_thumbnails(printers_archive_entries(), jobs); } catch (...) {}
+    PMon::enrich_rows(payload["printers"], printers_cover_index(), thumbs);
 }
 
 PrintersPanel::PrintersPanel(wxWindow* parent)
@@ -149,6 +217,7 @@ void PrintersPanel::OnScriptMessage(wxWebViewEvent& evt)
     case PMon::Message::Kind::Control: control(m); break;
     case PMon::Message::Kind::Job: job(m.job); break;
     case PMon::Message::Kind::Open: open_device(m.id); break;
+    case PMon::Message::Kind::Thumb: thumbnail(m.id); break;
     case PMon::Message::Kind::Tasks:
         if (wxGetApp().is_enable_multi_machine() && wxGetApp().mainframe)
             wxGetApp().mainframe->jump_to_multipage();
@@ -174,6 +243,7 @@ void PrintersPanel::get_printers()
         std::pair<int, std::string> res { 503, "" };
         try { res = RemoteAccess::get().monitor_printers(); } catch (...) {}
         auto payload = std::make_shared<json>(PMon::page_payload(res.first, res.second, printers_now_ms()));
+        try { printers_enrich(*payload); } catch (...) {}
         *reading = false;
         RemoteAccess::post_to_app([this, alive, payload]() {
             auto a = alive.lock();
@@ -181,6 +251,33 @@ void PrintersPanel::get_printers()
             if ((*payload)["ok"].get<bool>())
                 m_targets = PMon::targets_of((*payload)["printers"]);
             RunPageScript("__printers", *payload);
+        });
+    }).detach();
+}
+
+void PrintersPanel::thumbnail(const std::string& archive_id)
+{
+    std::weak_ptr<bool> alive = m_alive;
+    std::thread([this, alive, archive_id]() {
+        std::string data;
+        try {
+            const GcodeArchive::Record r = GcodeArchive::find(archive_id);
+            boost::system::error_code ec;
+            if (!r.id.empty() && r.has_thumbnail && boost::filesystem::is_regular_file(r.thumbnail_path, ec) &&
+                boost::filesystem::file_size(r.thumbnail_path, ec) <= 2u * 1024 * 1024) {
+                std::ifstream f(boost::filesystem::path(r.thumbnail_path).string(), std::ios::binary);
+                std::stringstream ss;
+                ss << f.rdbuf();
+                const std::string png = ss.str();
+                // A PNG and nothing else (the page puts it in an <img> as a data: URL).
+                if (png.size() > 8 && png.compare(0, 8, "\x89PNG\r\n\x1a\n") == 0)
+                    data = "data:image/png;base64," + std::string(wxBase64Encode(png.data(), png.size()).ToUTF8().data());
+            }
+        } catch (...) {}
+        const json reply = { { "id", archive_id }, { "data", data } };
+        RemoteAccess::post_to_app([this, alive, reply]() {
+            auto a = alive.lock();
+            if (a && *a) RunPageScript("__printerThumb", reply);
         });
     }).detach();
 }

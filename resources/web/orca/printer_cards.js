@@ -9,8 +9,12 @@
 //   PrinterCards.render(container, rows, {
 //       jobs:     { <id>: { phase: 'running'|'done'|'error', text, error } },  // a command per card
 //       onAction: function(row, action) {},   // 'pause' | 'resume' | 'stop' (stop is confirmed by the caller)
-//       onOpen:   function(row) {}            // "Open Device page"
+//       onOpen:   function(row) {}            // "Open Device page" (drawn only with showOpen: true)
+//       showOpen: false,
+//       thumbFor: function(row) { return src },  // the job's plate picture, '' = none
+//       isDismissed: function(key) {}, onDismiss: function(row, key) {}   // error dismissal
 //   })
+//   PrinterCards.errorKey(row)                    -> the key a dismissal is kept under ('' = no error)
 //   PrinterCards.sortRows(rows, 'status'|'name')  -> a sorted copy
 //   PrinterCards.stateOf(row)                     -> { key, word }  key: error|paused|printing|idle|offline
 //   PrinterCards.summary(rows)                    -> { printing, paused, error, idle, offline }
@@ -95,10 +99,33 @@
         return out;
     }
 
+    // Fans by their short names ("Part", "Aux", "Chamber"): they sit in one group labelled Fans.
+    var FAN_NAMES = { part: 'Part', aux: 'Aux', chamber: 'Chamber', cavity: 'Cavity' };
+    function fanName(f) {
+        if (FAN_NAMES[str(f.id)]) return FAN_NAMES[str(f.id)];
+        return (str(f.label) || str(f.id)).replace(/\s*(cooling\s*)?fan$/i, '').replace(/\s+cooling$/i, '') || str(f.id);
+    }
     function fans(p) {
         var fs = p.controls && Array.isArray(p.controls.fans) ? p.controls.fans : [];
         return fs.filter(function(f) { return f && isNum(f.percent); })
-                 .map(function(f) { return { label: str(f.label) || str(f.id), percent: Math.max(0, Math.min(100, Math.round(f.percent))) }; });
+                 .map(function(f) { return { label: fanName(f), percent: Math.max(0, Math.min(100, Math.round(f.percent))) }; });
+    }
+
+    // What a dismissal of the card's error is kept under: the printer and the error's own code, so
+    // a different error on the same printer shows again.
+    function errorKey(p) {
+        if (!p || !p.id) return '';
+        var code = '';
+        if (p.print_error && (p.print_error.code || p.print_error.message)) code = str(p.print_error.code) || str(p.print_error.message);
+        else if (p.hms && p.hms.count > 0 && (p.hms.code || p.hms.message)) code = 'hms:' + (str(p.hms.code) || str(p.hms.message));
+        return code ? str(p.id) + '|' + code : '';
+    }
+
+    // An outlined group with its name on the border (a fieldset, so it is a group to a screen reader).
+    function group(cls, legend) {
+        var g = el('fieldset', 'pgroup ' + cls);
+        g.appendChild(el('legend', '', legend));
+        return g;
     }
 
     // Filament slots: AMS trays (grouped per unit), external spools, Snapmaker toolheads.
@@ -159,10 +186,19 @@
         c.setAttribute('aria-label', name + ', ' + st.word);
 
         var head = el('div', 'phead');
+        if (p.picture && /^\/profiles\//.test(str(p.picture))) {
+            var ic = el('img', 'picon');
+            ic.src = str(p.picture);
+            ic.alt = ''; // decorative: the model is written next to it
+            ic.setAttribute('aria-hidden', 'true');
+            ic.addEventListener('error', function() { ic.remove(); });
+            head.appendChild(ic);
+        }
         var titles = el('div', 'ptitles');
         titles.appendChild(el('h3', 'pname', name));
         var sub = [];
-        if (p.model) sub.push(str(p.model));
+        var model = str(p.model_short) || str(p.model_name) || str(p.model);
+        if (model) sub.push(model);
         if (p.via === 'cloud') sub.push('cloud');
         else if (p.ip) sub.push(str(p.ip));
         if (sub.length) titles.appendChild(el('div', 'pmodel', sub.join(' · ')));
@@ -173,7 +209,18 @@
         // The job: name, progress, time left, layer.
         var printingish = st.key === 'printing' || st.key === 'paused' || (st.key === 'error' && p.printing);
         if (p.task || printingish) {
+            var jobrow = el('div', 'pjobrow');
+            var src = opts && opts.thumbFor ? opts.thumbFor(p) : '';
+            if (src) {
+                var th = el('img', 'pthumb');
+                th.src = src;
+                th.alt = 'Plate of ' + (str(p.task) || 'the current job');
+                th.referrerPolicy = 'no-referrer';
+                th.addEventListener('error', function() { th.remove(); });
+                jobrow.appendChild(th);
+            }
             var job = el('div', 'pjob');
+            jobrow.appendChild(job);
             if (p.task) { var t = el('div', 'ptask', str(p.task)); t.title = str(p.task); job.appendChild(t); }
             if (printingish && isNum(p.percent)) {
                 var pct = Math.max(0, Math.min(100, Math.round(p.percent)));
@@ -191,38 +238,45 @@
                 job.appendChild(el('div', 'pprog', parts.join(' · ')));
             }
             if (p.stage && str(p.stage) !== str(p.task)) job.appendChild(el('div', 'pstage', str(p.stage)));
-            c.appendChild(job);
+            c.appendChild(jobrow);
         }
 
         if (p.online !== false) {
             var ts = temps(p), fs = fans(p);
-            if (ts.length || fs.length) {
-                var chips = el('ul', 'pchips');
-                chips.setAttribute('aria-label', 'Temperatures and fans');
+            if (ts.length) {
+                var tg = group('ptemps', 'Temperatures');
+                var tl = el('ul', 'pitems');
                 ts.forEach(function(h) {
-                    var li = el('li', 'pchip');
+                    var li = el('li', 'pitem');
                     li.appendChild(el('span', 'k', h.label));
-                    li.appendChild(el('span', 'v', Math.round(h.temp) + '°' + (h.target > 0 ? ' / ' + Math.round(h.target) + '°' : '')));
-                    chips.appendChild(li);
+                    li.appendChild(el('span', 'v', Math.round(h.temp) + '\u00b0' + (h.target > 0 ? ' / ' + Math.round(h.target) + '\u00b0' : '')));
+                    tl.appendChild(li);
                 });
+                tg.appendChild(tl);
+                c.appendChild(tg);
+            }
+            if (fs.length) {
+                var fgp = group('pfans', 'Fans');
+                var fl = el('ul', 'pitems one');
                 fs.forEach(function(f) {
-                    var li = el('li', 'pchip fan');
-                    li.appendChild(el('span', 'k', f.label + ' fan'));
+                    var li = el('li', 'pitem');
+                    li.appendChild(el('span', 'k', f.label));
                     li.appendChild(el('span', 'v', f.percent + '%'));
-                    chips.appendChild(li);
+                    fl.appendChild(li);
                 });
-                c.appendChild(chips);
+                fgp.appendChild(fl);
+                c.appendChild(fgp);
             }
             var fg = filaments(p);
             if (fg.length) {
-                var fil = el('div', 'pfil');
+                var fil = group('pfil', 'Filament');
                 fg.forEach(function(g) {
                     var row = el('div', 'pfrow');
                     row.appendChild(el('span', 'pfname', g.name + (g.note ? ' · ' + g.note : '')));
                     var sws = el('ul', 'pswatches');
                     sws.setAttribute('aria-label', g.name);
                     g.slots.forEach(function(s) {
-                        var li = el('li', 'psw' + (s.present ? '' : ' empty'));
+                        var li = el('li', 'psw' + (s.present ? '' : ' vacant'));
                         var text = s.label + ': ' + (s.present ? (s.type || 'filament') + (s.color ? ' ' + s.color : '') + (s.remain !== null ? ', ' + s.remain + '% left' : '') : 'empty');
                         li.title = text;
                         li.setAttribute('aria-label', text);
@@ -242,7 +296,21 @@
 
         var err = errorText(p);
         if (!err && p.hms && p.hms.count > 0 && p.hms.message) err = str(p.hms.message);
-        if (err) c.appendChild(el('div', 'perr', err));
+        var ekey = errorKey(p);
+        if (err && !(ekey && opts && opts.isDismissed && opts.isDismissed(ekey))) {
+            var eb = el('div', 'perr');
+            eb.appendChild(el('span', 'perrt', err));
+            if (ekey && opts && opts.onDismiss) {
+                var x = el('button', 'perrx', '\u00d7');
+                x.type = 'button';
+                x.setAttribute('aria-label', 'Dismiss this error on ' + name);
+                x.title = 'Dismiss (it shows again if the printer reports a different error)';
+                x.setAttribute('data-fk', 'dismiss:' + p.id);
+                x.addEventListener('click', function() { opts.onDismiss(p, ekey); });
+                eb.appendChild(x);
+            }
+            c.appendChild(eb);
+        }
         if (p.login_required) c.appendChild(el('div', 'pnote', 'This printer asks for a login.'));
 
         // Pause / Resume / Stop, by the printer's own predicates; Open Device page.
@@ -263,10 +331,13 @@
                 acts.appendChild(b);
             });
         }
-        var open = button('Open Device page', 'alt', 'open:' + p.id, 'Open the Device page of ' + name);
-        open.addEventListener('click', function() { if (opts && opts.onOpen) opts.onOpen(p); });
-        acts.appendChild(open);
-        c.appendChild(acts);
+        // Hidden for now (owner, 2026-10-07); the bridge and MainFrame's per-vendor open stay in place.
+        if (opts && opts.showOpen) {
+            var open = button('Open Device page', 'alt', 'open:' + p.id, 'Open the Device page of ' + name);
+            open.addEventListener('click', function() { if (opts.onOpen) opts.onOpen(p); });
+            acts.appendChild(open);
+        }
+        if (acts.childNodes.length) c.appendChild(acts);
 
         if (js) {
             var line = el('div', 'pjobline' + (js.phase === 'error' ? ' err' : js.phase === 'done' ? ' ok' : ''), js.phase === 'error' ? js.error : js.text);
@@ -289,5 +360,5 @@
     }
 
     root.PrinterCards = { render: render, card: card, sortRows: sortRows, stateOf: stateOf, summary: summary,
-                          temps: temps, fans: fans, filaments: filaments, fmtTime: fmtTime, whyNot: whyNot };
+                          temps: temps, fans: fans, filaments: filaments, fmtTime: fmtTime, whyNot: whyNot, errorKey: errorKey };
 })(typeof window !== 'undefined' ? window : this);

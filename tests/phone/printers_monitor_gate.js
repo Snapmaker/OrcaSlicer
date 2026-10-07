@@ -6,10 +6,13 @@
 // __printerGroups, __printerControl, __printerJob) with mock rows in the RemoteAccess::api_printers
 // schema. A headless Edge / Chrome is driven over the DevTools protocol (Node 22's built-in
 // WebSocket). No slicer, no printer, no hub, and nothing touches the desktop: the "keyboard" is
-// Input.dispatchKeyEvent into the headless page.
+// Input.dispatchKeyEvent into the headless page. "Open Device page" is hidden for now (owner, 2026-10-07).
 //
 // It checks: the page loads with no uncaught exception; every row type renders (Bambu with AMS,
 // chamber and fans; Snapmaker U1 with toolheads; a Moonraker host; an error; an offline one); the
+// printer picture and friendly model name; the job's plate picture (fetched once over the channel);
+// temperatures, fans and filament each in one outlined group, fans on one line; every filament slot
+// the same size, empty or not; an error can be dismissed and comes back with a new code; the
 // status sort; the state counts; the buttons follow can_pause / can_resume / can_stop (a dimmed one
 // keeps its reason); Pause from the keyboard sends the right message, follows the job and keeps the
 // focus across redraws; Stop asks first (Escape / Keep printing send nothing) and then sends
@@ -40,7 +43,7 @@ function findBrowser() {
     return c.find(p => fs.existsSync(p));
 }
 
-let failures = 0, passed = 0;
+let failures = 0, passed = 0, coverHits = 0;
 function check(label, cond, extra) {
     if (cond) { passed++; console.log('ok   - ' + label); }
     else { failures++; console.error('FAIL - ' + label + (extra !== undefined ? '  (' + extra + ')' : '')); }
@@ -50,14 +53,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // ---- mock rows, in the api_printers schema (RemoteAccess.cpp, RemoteControl::describe_bambu,
 // SnapmakerLan::list_printers, RemoteControl::describe_hosts) ----------------------------------------
 const ROWS = [
-    { id: '01P00A111111111', kind: 'bambu', name: 'X1C Garage', model: 'BL-P001', online: true, connected: true,
+    { id: '01P00A111111111', kind: 'bambu', name: 'X1C Garage', model: 'O1C2', model_name: 'Bambu Lab H2C', model_short: 'H2C',
+      picture: '/profiles/BBL/Bambu%20Lab%20H2C_cover.png', thumb_id: '20261007-101500-benchy', online: true, connected: true,
       status: 'RUNNING', print_status: 'RUNNING', printing: true, percent: 42, left_time_s: 3780, layer: 12, total_layers: 200,
       task: 'Benchy_plate_1', stage: 'Printing', ip: '192.168.1.30', bed_temp: 55, bed_target: 55,
       nozzles: [{ temp: 219.6, target: 220 }], can_pause: true, can_resume: false, can_stop: true, print_error: null,
       hms: { count: 0 },
       controls: { heaters: [{ id: 'bed', label: 'Bed', temp: 55, target: 55, settable: true }, { id: 'nozzle0', label: 'Nozzle', temp: 219.6, target: 220, settable: true },
                             { id: 'chamber', label: 'Chamber', temp: 31, target: 0, settable: false }],
-                  fans: [{ id: 'part', label: 'Part', percent: 60 }, { id: 'aux', label: 'Aux', percent: 0 }] },
+                  fans: [{ id: 'part', label: 'Part cooling fan', percent: 60 }, { id: 'aux', label: 'Aux fan', percent: 0 }, { id: 'chamber', label: 'Chamber fan', percent: 30 }] },
       ams: [{ id: '0', side: '', humidity_pct: 22, trays: [
           { id: '0', exists: true, type: 'PLA', color: '#FF0000', remain: 80 }, { id: '1', exists: true, type: 'PETG', color: '#00AE42', remain: 5 },
           { id: '2', exists: false, type: '', color: '', remain: -1 }, { id: '3', exists: true, type: 'PLA Silk', color: '#F4EE2A', remain: 40 }] }],
@@ -82,7 +86,9 @@ const GROUPS = [{ id: 'all', name: 'All printers', all: true, printers: [] },
                 { id: 'multi-device', name: 'Multi-device', all: false, printers: ['01P00A111111111', 'sm:U1-0042'] }];
 
 // The stand-in slicer, injected before the page's own scripts run.
-const SHIM = `(function(){
+// A 1x1 PNG, for the plate picture and the printer picture.
+const PNG1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const SHIM = `(function(){ var PNG1 = '${PNG1}';
     window.__sent = []; window.__rows = ${JSON.stringify(ROWS)}; window.__groups = ${JSON.stringify(GROUPS)};
     window.__fail = null; var nextJob = 100;
     function later(f) { setTimeout(f, 30); }
@@ -93,6 +99,10 @@ const SHIM = `(function(){
             else window.__printers({ ok: true, printers: JSON.parse(JSON.stringify(window.__rows)), at: Date.now() });
         });
         else if (m === 'printers_groups_get') later(function() { window.__printerGroups(window.__groups); });
+        else if (m.indexOf('printers_thumb:') === 0) {
+            window.__thumbAsks = (window.__thumbAsks || 0) + 1;
+            later(function() { window.__printerThumb({ id: m.slice(15), data: 'data:image/png;base64,' + PNG1 }); });
+        }
         else if (m.indexOf('printers_control:') === 0) {
             var parts = m.split(':'), id = parts.slice(3).join(':'), job = nextJob++;
             later(function() { window.__printerControl({ id: id, action: parts[1], ok: true, job: job, dry_run: false }); });
@@ -109,6 +119,7 @@ const server = http.createServer((req, res) => {
     const send = (type, body, code) => { res.writeHead(code || 200, { 'Content-Type': type, 'Cache-Control': 'no-store' }); res.end(body); };
     if (u.pathname === '/web/orca/monitor.html') return send('text/html; charset=utf-8', fs.readFileSync(path.join(WEB, 'monitor.html')));
     if (u.pathname === '/web/orca/printer_cards.js') return send('application/javascript', fs.readFileSync(path.join(WEB, 'printer_cards.js')));
+    if (decodeURIComponent(u.pathname) === '/profiles/BBL/Bambu Lab H2C_cover.png') { coverHits++; return send('image/png', Buffer.from(PNG1, 'base64')); }
     send('text/plain', 'not found', 404);
 });
 
@@ -185,24 +196,38 @@ async function main() {
         const x1 = JSON.parse(await evalJs(`(function(c){ return JSON.stringify({
             pill: c.querySelector('.ppill').textContent, task: c.querySelector('.ptask').textContent,
             bar: c.querySelector('[role=progressbar]').getAttribute('aria-valuenow'), prog: c.querySelector('.pprog').textContent,
-            chips: [].map.call(c.querySelectorAll('.pchip'), x => x.textContent), sw: c.querySelectorAll('.psw').length,
-            empty: c.querySelectorAll('.psw.empty').length, low: c.querySelectorAll('.psw.low').length,
+            temps: [].map.call(c.querySelectorAll('.ptemps .pitem'), x => x.textContent), fans: [].map.call(c.querySelectorAll('.pfans .pitem'), x => x.textContent),
+            legends: [].map.call(c.querySelectorAll('fieldset.pgroup > legend'), x => x.textContent),
+            fanH: c.querySelector('.pfans .pitems').getBoundingClientRect().height,
+            sizes: [].map.call(c.querySelectorAll('.psw'), x => { const r = x.getBoundingClientRect(); return Math.round(r.width) + 'x' + Math.round(r.height); }),
+            model: c.querySelector('.pmodel').textContent, icon: (c.querySelector('img.picon') || {}).naturalWidth,
+            thumb: (c.querySelector('img.pthumb') || {}).src || '', open: !!c.querySelector('[data-fk^="open:"]'), sw: c.querySelectorAll('.psw').length,
+            empty: c.querySelectorAll('.psw.vacant').length, low: c.querySelectorAll('.psw.low').length,
             swLabel: c.querySelector('.psw').getAttribute('aria-label'), bg: getComputedStyle(c.querySelector('.psw')).backgroundColor }); })(${card('01P00A111111111')})`));
         check('Bambu: state, job, progress bar 42', x1.pill === 'Printing' && x1.task === 'Benchy_plate_1' && x1.bar === '42', JSON.stringify(x1));
         check('Bambu: time left and layer', x1.prog === '42% \u00b7 1h 3m left \u00b7 layer 12/200', x1.prog);
-        check('Bambu: bed, nozzle, chamber (sensor, no target) and fan chips', x1.chips.includes('Bed55\u00b0 / 55\u00b0') && x1.chips.includes('Nozzle220\u00b0 / 220\u00b0') &&
-              x1.chips.includes('Chamber31\u00b0') && x1.chips.includes('Part fan60%') && x1.chips.includes('Aux fan0%'), x1.chips.join('|'));
+        check('Bambu: temperatures in one group: bed, nozzle, chamber (sensor, no target)', JSON.stringify(x1.temps) === JSON.stringify(['Bed55\u00b0 / 55\u00b0', 'Nozzle220\u00b0 / 220\u00b0', 'Chamber31\u00b0']), x1.temps.join('|'));
+        check('Bambu: fans in one group, short names Part / Aux / Chamber', JSON.stringify(x1.fans) === JSON.stringify(['Part60%', 'Aux0%', 'Chamber30%']), x1.fans.join('|'));
+        check('Bambu: the fans fit one line', x1.fanH > 0 && x1.fanH < 24, x1.fanH);
+        check('Bambu: Temperatures, Fans and Filament are outlined groups', JSON.stringify(x1.legends) === JSON.stringify(['Temperatures', 'Fans', 'Filament']), x1.legends.join('|'));
+        check('Bambu: every filament slot is the same size, empty or not', x1.sizes.length === 5 && x1.sizes.every(z => z === x1.sizes[0]), x1.sizes.join(' '));
+        check('Bambu: the model line says H2C (not O1C2) with the address', x1.model === 'H2C \u00b7 192.168.1.30', x1.model);
+        check('Bambu: the printer picture from the vendor profile is shown', x1.icon === 1 && coverHits >= 1, x1.icon + ' / ' + coverHits);
+        check('Bambu: the job\'s plate picture, asked for once over the channel', x1.thumb.indexOf('data:image/png;base64,') === 0 && (await evalJs('window.__thumbAsks')) === 1, x1.thumb.slice(0, 40));
+        check('"Open Device page" is not shown', !x1.open);
         check('Bambu: 4 AMS slots + 1 external spool, the empty one dashed, the 5% one marked low', x1.sw === 5 && x1.empty === 1 && x1.low === 1, JSON.stringify(x1));
         check('Bambu: a swatch names slot, material, colour and what is left', x1.swLabel === 'AMS A slot 1: PLA #FF0000, 80% left' && x1.bg === 'rgb(255, 0, 0)', x1.swLabel + ' ' + x1.bg);
         const u1 = JSON.parse(await evalJs(`(function(c){ return JSON.stringify({ pill: c.querySelector('.ppill').textContent, sw: c.querySelectorAll('.psw').length,
-            empty: c.querySelectorAll('.psw.empty').length, prog: c.querySelector('.pprog').textContent, chips: c.querySelectorAll('.pchip').length }); })(${card('sm:U1-0042')})`));
+            empty: c.querySelectorAll('.psw.vacant').length, prog: c.querySelector('.pprog').textContent, chips: c.querySelectorAll('.ptemps .pitem').length,
+            model: c.querySelector('.pmodel').textContent }); })(${card('sm:U1-0042')})`));
         check('Snapmaker U1: paused, 4 toolheads (one empty), bed + 4 nozzles', u1.pill === 'Paused' && u1.sw === 4 && u1.empty === 1 && u1.chips === 5, JSON.stringify(u1));
+        check('Snapmaker U1: model line', u1.model === 'Snapmaker U1 \u00b7 192.168.1.20', u1.model);
         check('Snapmaker U1: progress while paused', u1.prog === '77% \u00b7 10m left \u00b7 layer 80/100', u1.prog);
-        const p1s = JSON.parse(await evalJs(`(function(c){ return JSON.stringify({ pill: c.querySelector('.ppill').textContent, err: (c.querySelector('.perr') || {}).textContent,
+        const p1s = JSON.parse(await evalJs(`(function(c){ return JSON.stringify({ pill: c.querySelector('.ppill').textContent, err: (c.querySelector('.perrt') || {}).textContent,
             name: c.querySelector('.pname').textContent, imgs: c.querySelectorAll('img').length, xss: !!window.__xss }); })(${card('01P00A222222222')})`));
         check('error card: state and the printer\'s own message', p1s.pill === 'Error' && p1s.err === 'The build plate is not placed.', JSON.stringify(p1s));
         check('printer-supplied text is text, never markup', p1s.imgs === 0 && !p1s.xss && p1s.name.indexOf('<img src=x') > 0, JSON.stringify(p1s));
-        const off = JSON.parse(await evalJs(`(function(c){ return JSON.stringify({ pill: c.querySelector('.ppill').textContent, chips: c.querySelectorAll('.pchip').length,
+        const off = JSON.parse(await evalJs(`(function(c){ return JSON.stringify({ pill: c.querySelector('.ppill').textContent, chips: c.querySelectorAll('.pitem').length,
             dis: [].map.call(c.querySelectorAll('.pacts button[aria-disabled=true]'), b => b.title) }); })(${card('01P00A333333333')})`));
         check('offline card: no live values, buttons dimmed with the reason', off.pill === 'Offline' && off.chips === 0 && off.dis.length === 3 && off.dis[0] === 'This printer is offline.', JSON.stringify(off));
         const host = JSON.parse(await evalJs(`(function(c){ return JSON.stringify({ pill: c.querySelector('.ppill').textContent,
@@ -243,10 +268,25 @@ async function main() {
         await sleep(150);
         check('Stop print sends printers_control:stop:1:<id> (confirmed)', (await evalJs('JSON.stringify(window.__sent)')).includes('printers_control:stop:1:sm:U1-0042'), await evalJs('JSON.stringify(window.__sent)'));
 
-        // ---- 5. Open Device page ----------------------------------------------------------------
-        await evalJs(`window.__sent = []; document.querySelector('[data-fk="open:ph:voron"]').click(); 1`);
-        await sleep(50);
-        check('Open Device page sends printers_open:<id>', (await evalJs('JSON.stringify(window.__sent)')) === JSON.stringify(['printers_open:ph:voron']));
+        // ---- 5. dismissing an error ------------------------------------------------------------
+        const errShown = () => evalJs(`!!${card('01P00A222222222')}.querySelector('.perr')`);
+        await evalJs(`document.querySelector('[data-fk="dismiss:01P00A222222222"]').focus(); 1`);
+        const xName = await evalJs(`document.activeElement.getAttribute('aria-label')`);
+        check('the error has a named dismiss button', /^Dismiss this error on P1S/.test(xName || ''), xName);
+        await key('Enter');
+        await sleep(100);
+        check('dismissed: the banner is gone and that is announced', !(await errShown()) && /Error dismissed/.test(await evalJs(`document.getElementById('announce').textContent`)));
+        check('the focus moved to a control of the same card', /^act:01P00A222222222:/.test(await evalJs(`document.activeElement.getAttribute('data-fk') || ''`)));
+        await evalJs(`document.getElementById('refresh').click(); 1`);
+        await sleep(200);
+        check('it stays dismissed across reads while the code is the same', !(await errShown()));
+        check('the dismissal is kept for the session', /0300400C/.test(await evalJs(`sessionStorage.getItem('edgeslicer_printers_dismissed') || ''`)));
+        await evalJs(`window.__rows[1].print_error = { code: '0300400D', message: 'Another error.', actions: [] }; document.getElementById('refresh').click(); 1`);
+        await sleep(200);
+        check('a different error code shows again', await errShown());
+        await evalJs(`window.__rows[1].print_error = { code: '0300400C', message: 'The build plate is not placed.', actions: [] }; 1`);
+
+        // ---- Open Device page: hidden, but the page still shows a refusal -------------------------
         await evalJs(`window.__printerOpen({ id: '01P00A111111111', ok: false, error: 'Select a Bambu Lab printer preset' }); 1`);
         check('a refused open is shown', /Bambu Lab printer preset/.test(await evalJs(`document.getElementById('banner').textContent`)));
         await evalJs(`window.__sent = []; document.getElementById('tasks').click(); 1`);
@@ -284,7 +324,7 @@ async function main() {
         const pairs = `(function(){
             function bgOf(n) { while (n) { var b = getComputedStyle(n).backgroundColor; if (b && b !== 'rgba(0, 0, 0, 0)' && b !== 'transparent') return b; n = n.parentElement; } return getComputedStyle(document.body).backgroundColor; }
             var out = [];
-            ['.ppill', '.pname', '.pmodel', '.ptask', '.pprog', '.pchip .k', '.pchip .v', '.pfname', '.perr', '.pbtn', '.pbtn.stop', '#counts li', '#updated', '.pjobline', '#banner', '.pstage']
+            ['.ppill', '.pname', '.pmodel', '.ptask', '.pprog', '.pitem .k', '.pitem .v', '.pgroup legend', '.pfname', '.perrt', '.perrx', '.pbtn', '.pbtn.stop', '#counts li', '#updated', '.pjobline', '#banner', '.pstage']
               .forEach(function(sel) { document.querySelectorAll(sel).forEach(function(n) {
                   if (!n.offsetParent && sel !== '#banner') return;
                   out.push({ sel: sel, fg: getComputedStyle(n).color, bg: bgOf(n), off: n.classList.contains('off') }); }); });

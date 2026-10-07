@@ -1088,6 +1088,16 @@ RemoteAccess::ApiResponse RemoteAccess::api_printers(int plate)
             p["id"]           = m->dev_id;
             p["name"]         = m->dev_name;
             p["model"]        = m->printer_type;
+            // The friendly name ("Bambu Lab H2C") next to the code ("O1C2"): what the Printers tab
+            // and the app show. A newer hardware revision ("O1C2-V2") resolves through its parent.
+            {
+                std::string display = DeviceManager::get_printer_display_name(m->printer_type);
+                if (display.empty() && !m->printer_type.empty()) {
+                    const std::string parent = DeviceManager::parse_printer_type(m->printer_type);
+                    if (!parent.empty()) display = DeviceManager::get_printer_display_name(parent);
+                }
+                if (!display.empty()) p["model_name"] = display;
+            }
             p["online"]       = m->is_online();
             p["connected"]    = m->is_connected();
             p["status"]       = m->print_status;
@@ -1110,6 +1120,12 @@ RemoteAccess::ApiResponse RemoteAccess::api_printers(int plate)
                 n["temp"]   = e.temp;
                 n["target"] = e.target_temp;
                 p["nozzles"].push_back(n);
+            }
+            // The cloud's picture of the running plate, when the cloud told us about this job (the
+            // Device tab shows the same one). LAN-only and SD-card jobs have none.
+            if (m->slice_info && m->is_in_printing() && !m->is_sdcard_printing()) {
+                const std::string& u = m->slice_info->thumbnail_url;
+                if (u.compare(0, 8, "https://") == 0 && u.size() < 4096) p["cover_url"] = u;
             }
             p["selected"] = (selected == m);
             RemoteSend::describe_bambu(m, p);    // kind, send capabilities, option defaults

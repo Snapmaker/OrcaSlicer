@@ -15,6 +15,7 @@
 
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -31,13 +32,15 @@ namespace PrintersMonitor {
 //   printers_job:<n>                          how control job n is doing, answered with __printerJob
 //   printers_open:<id>                        open that printer's Device page (or its web UI)
 //   printers_tasks                            the old multi-device task list (cloud send queue)
+//   printers_thumb:<archive id>               a G-code archive record's plate picture, answered
+//                                             with __printerThumb({ id, data: "data:image/png;..." })
 //
 // The id goes last because printer ids carry colons ("sm:<serial>", "ph:<id>").
 struct Message
 {
-    enum class Kind { Invalid, Get, Groups, Control, Job, Open, Tasks };
+    enum class Kind { Invalid, Get, Groups, Control, Job, Open, Tasks, Thumb };
     Kind        kind { Kind::Invalid };
-    std::string id;              // Control, Open
+    std::string id;              // Control, Open; Thumb: the archive record id
     std::string action;          // Control: pause | resume | stop
     bool        confirm { false };
     int         job { 0 };       // Job
@@ -85,6 +88,44 @@ enum class OpenWay {
 OpenWay open_way(const Target& t, bool bambu_monitor_shown, bool printer_view_shown);
 // What the page shows when open_way is NotHere.
 std::string not_here_reason(const Target& t);
+
+// A G-code archive record id (the sidecar's stem): 1..128 of [A-Za-z0-9._-], not starting with a dot.
+bool valid_archive_id(const std::string& id);
+
+// ---- what the card shows besides the row ---------------------------------------------------------
+//
+// Printer pictures: the vendor profiles' "<model>_cover.png" (resources/profiles/<Vendor>/), which
+// the page server serves from the installed resources as /profiles/<Vendor>/<file>. The index maps
+// the lower-cased model name to that URL path, each segment percent-encoded.
+using CoverIndex = std::map<std::string, std::string>;
+// vendor_files: (vendor folder, file name) pairs; only "*_cover.png" names are taken.
+CoverIndex index_covers(const std::vector<std::pair<std::string, std::string>>& vendor_files);
+// The picture for a model name ("Bambu Lab H2C", "Snapmaker U1", a preset's printer_model), or "".
+std::string cover_for(const CoverIndex& index, const std::string& model_name);
+// RFC 3986 unreserved characters stay, everything else becomes %XX.
+std::string url_encode_segment(const std::string& s);
+// What the model line says: a Bambu display name without its "Bambu Lab " prefix ("H2C"); any
+// other name as it is; the raw model code when no name is known.
+std::string short_model_name(const std::string& kind, const std::string& model_name, const std::string& model_code);
+
+// The current job's plate picture from the G-code archive: per printer, the newest record whose
+// sent name or file name is the job the printer reports (the hub's own rule, RemoteHub
+// printer_thumbnail_paths, minus its "newest record of any job" fallback: a card shows the
+// picture of the job it is running, or none).
+struct ArchiveEntry
+{
+    std::string printer_id, record_id, sent_name, file;
+    long long   time { 0 };
+};
+std::map<std::string, std::string> pick_thumbnails(const std::vector<ArchiveEntry>& entries,
+                                                   const std::map<std::string, std::string>& jobs);
+// The job name a row reports (task, else subtask_name), the field the hub matches on too.
+std::string row_job(const nlohmann::json& row);
+
+// Adds what the card needs to each row of a page payload: "model_short", "picture" (a cover URL
+// path) when there is one, and "thumb_id" (an archive record id) when the archive has the running
+// job's picture.
+void enrich_rows(nlohmann::json& printers, const CoverIndex& covers, const std::map<std::string, std::string>& thumbs);
 
 // ---- groups ------------------------------------------------------------------------------------
 struct Group

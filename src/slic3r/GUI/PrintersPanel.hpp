@@ -45,6 +45,7 @@ private:
     void control(const PrintersMonitor::Message& m);
     void job(int id);
     void open_device(const std::string& id);
+    void thumbnail(const std::string& archive_id);
 
     wxWebView* m_browser { nullptr };
     bool       m_shown { false };

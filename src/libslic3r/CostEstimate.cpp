@@ -41,7 +41,8 @@ CostBreakdown compute_cost(const GCodeProcessorResult &result)
 
     out.prices_known       = result.has_filament_costs;
     out.print_time_s       = ps.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
-    out.machine_rate_per_h = std::max(0., result.time_cost);
+    out.machine_rate_known = result.has_time_cost;
+    out.machine_rate_per_h = out.machine_rate_known ? std::max(0., result.time_cost) : 0.;
     out.machine            = out.machine_rate_per_h * (out.print_time_s / 3600.);
 
     std::set<size_t> slots;
@@ -103,6 +104,7 @@ CostBreakdown sum_costs(const std::vector<CostBreakdown> &plates)
     for (const CostBreakdown &plate : plates) {
         out.plates += plate.plates;
         out.prices_known = out.prices_known && plate.prices_known;
+        out.machine_rate_known = out.machine_rate_known && plate.machine_rate_known;
         for (const FilamentCostLine &line : plate.lines) {
             FilamentCostLine &dst = lines[line.slot];
             dst.slot = line.slot;

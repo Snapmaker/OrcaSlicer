@@ -2102,10 +2102,12 @@ wxWindow* PreferencesDialog::create_ultra_page()
         _L("While the Move tool is open, show only the plate you are working on. The other plates and their objects come back when the Move tool closes, and a plate you drag onto reappears when you release."), 50, "hide_other_plates_on_move");
 
     auto title_cost = create_item_title(_L("Cost"), page, _L("Cost"));
-    auto item_gcode_prices = create_item_checkbox(_L("Include filament prices in exported G-code"), page,
-        _L("Write the filament prices into G-code you export or send to a printer: the \"; filament cost\" and "
-           "\"; total filament cost\" lines and filament_cost in the settings block. Off by default, so a G-code you "
-           "share does not tell anyone what you pay for filament; the rest of the file is the same either way. "
+    // The key keeps its first name (gcode_include_filament_prices) so existing settings carry over.
+    auto item_gcode_prices = create_item_checkbox(_L("Include costs in exported G-code"), page,
+        _L("Write your costs into G-code you export or send to a printer, and into the settings of an exported "
+           "3MF with G-code: the filament prices (the \"; filament cost\" and \"; total filament cost\" lines, "
+           "filament_cost) and the machine rate (time_cost). Off by default, so a file you share does not tell "
+           "anyone what you pay for filament or charge per hour; the rest of the file is the same either way. "
            "With it off, the cost of a G-code opened on its own reads \"not in file\"; projects and sliced plates "
            "still show their cost here."), 50, "gcode_include_filament_prices");
     currency_symbol(); // the locale's symbol becomes the stored default the first time

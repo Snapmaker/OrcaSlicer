@@ -260,10 +260,10 @@ MachineResolved resolve_machine(const DynamicPrintConfig &config, const Store &s
 // The same resolution for display, without changing the config.
 std::vector<Resolved> resolve_slots(const DynamicPrintConfig &config, const Store &store, const PresetCollection *filaments);
 
-// Removes every filament price from a config about to be written into a sliced-plate 3MF that
-// leaves the prices out: filament_cost itself, and its mention in different_settings_to_system (so
-// that reopening the file takes the price from the system preset instead of marking the filament
-// modified with a default price).
+// Removes every cost from a config about to be written into a sliced-plate 3MF that leaves the
+// costs out: filament_cost and time_cost themselves, and their mention in
+// different_settings_to_system (so that reopening the file takes the value from the system preset
+// instead of marking the preset modified with a default value).
 void strip_prices(DynamicPrintConfig &config);
 
 } // namespace CostOverrides

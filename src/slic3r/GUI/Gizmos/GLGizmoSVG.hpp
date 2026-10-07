@@ -17,6 +17,7 @@
 #include "libslic3r/Emboss.hpp"
 #include "libslic3r/CodeEmboss.hpp"
 #include "libslic3r/SimpleShape.hpp"
+#include "libslic3r/ImageTrace.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/Model.hpp"
 
@@ -83,6 +84,16 @@ public:
     bool create_shape(ModelVolumeType volume_type, const std::optional<Vec2d> &mouse_pos = {});
 
     /// <summary>
+    /// Trace a PNG / JPG image into shapes (one SVG volume per colour level)
+    /// </summary>
+    /// <param name="volume_type">Object part / Negative volume / Modifier, INVALID means new object</param>
+    /// <param name="mouse_pos">Position on screen where to create volumes, when not set it is near the selection</param>
+    /// <param name="image_path">Image to trace (dropped file), empty = ask for the file.
+    /// A dropped image which is not over an object creates a new object.</param>
+    /// <returns>True on succesfull start creation otherwise False</returns>
+    bool create_image(ModelVolumeType volume_type, const std::optional<Vec2d> &mouse_pos = {}, const std::string &image_path = {});
+
+    /// <summary>
     /// Check whether volume is object containing only emboss volume
     /// </summary>
     /// <param name="volume">Pointer to volume</param>
@@ -146,8 +157,10 @@ private:
     void draw_code();
     void draw_simple_shape();
     void edit_simple_shape();
+    void draw_image_trace();
+    void edit_image_trace();
 
-    // Parts of QR code / barcode keep the same transformation and surface projection
+    // Parts of QR code / barcode and levels of a traced image keep the same transformation and surface projection
     void sync_code_parts();
     void edit_code();
     // Start job to recreate mesh of other code part than edited one
@@ -224,6 +237,8 @@ private:
 
     // Set when edited volume is part of QR code / barcode
     std::optional<CodeEmbossMeta> m_code;
+    // Set when edited volume is a level of a traced image (without the stored source image)
+    std::optional<ImageTraceMeta> m_trace;
     // Transformation and surface projection of edited volume, which is already copied to other parts
     Transform3d m_code_synced_tr = Transform3d::Identity();
     bool        m_code_synced_use_surface = false;

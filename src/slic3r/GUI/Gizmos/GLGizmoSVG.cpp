@@ -11,6 +11,7 @@
 #include "slic3r/GUI/CameraUtils.hpp"
 #include "slic3r/GUI/CodeEmbossDialog.hpp"
 #include "slic3r/GUI/SimpleShapeDialog.hpp"
+#include "slic3r/GUI/ImageTraceDialog.hpp"
 #include "slic3r/GUI/Jobs/EmbossJob.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
 
@@ -410,6 +411,91 @@ bool GLGizmoSVG::create_shape(ModelVolumeType volume_type, const std::optional<V
     CreateVolumeParts parts;
     parts.push_back({std::move(base), volume_type, dialog.options().extruder});
     return start_create_parts(m_parent, m_raycast_manager, target, std::move(parts), name);
+}
+
+namespace {
+// Emboss shape of one colour level of a traced image, SVG data are generated
+std::optional<EmbossShape> create_trace_part_shape(const ImageTraceLayer &layer, const std::string &group_id, int index, bool use_surface)
+{
+    EmbossShape shape;
+    shape.projection.depth       = layer.depth;
+    shape.projection.use_surface = use_surface;
+    EmbossShape::SvgFile svg;
+    // Generated SVG never contains the local path of the image, the optional copy of the image
+    // was allowed by the user in the dialog, so store it into .3mf without asking
+    svg.path_in_3mf = image_trace_path_in_3mf(group_id, index);
+    svg.file_data   = std::make_shared<std::string>(layer.svg);
+    shape.svg_file  = std::move(svg);
+    if (!ensure_shapes(shape))
+        return {};
+    return shape;
+}
+
+// Name of the parts of a traced image without the number of the colour level
+std::string trace_base_name(const std::string &name, int layers)
+{
+    if (layers <= 1)
+        return name;
+    size_t pos = name.rfind(" - ");
+    if (pos == std::string::npos || pos + 3 >= name.size())
+        return name;
+    for (size_t i = pos + 3; i < name.size(); ++i)
+        if (name[i] < '0' || name[i] > '9')
+            return name;
+    return name.substr(0, pos);
+}
+} // namespace
+
+bool GLGizmoSVG::create_image(ModelVolumeType volume_type, const std::optional<Vec2d> &mouse_pos, const std::string &image_path)
+{
+    CreateTarget target = capture_create_target(m_parent, volume_type, mouse_pos);
+    // Image dropped beside objects creates a new object under the mouse
+    if (!image_path.empty() && !target.is_new_object && mouse_pos.has_value() && !target.hovered_id.has_value()) {
+        target.is_new_object = true;
+        target.volume_type   = ModelVolumeType::MODEL_PART;
+        target.has_object    = false;
+    }
+    volume_type = target.volume_type;
+
+    wxString path = from_u8(image_path);
+    if (path.empty())
+        path = ImageTraceDialog::choose_image_file(nullptr);
+    if (path.empty())
+        return false;
+    TraceImage  image;
+    std::string source_png, name;
+    if (!ImageTraceDialog::load_image_file(nullptr, path, image, source_png, name))
+        return false;
+
+    ImageTraceDialogOptions options;
+    options.allow_use_surface = target.has_object;
+    options.use_surface       = true;
+    options.allow_filaments   = volume_type != ModelVolumeType::NEGATIVE_VOLUME;
+    ImageTraceDialog dialog(nullptr, image, source_png, name, ImageTraceDialog::load_from_config(), options);
+    if (dialog.ShowModal() != wxID_OK)
+        return false;
+
+    const ImageTraceResult &result      = dialog.result();
+    const std::string      &group_id    = dialog.params().group_id;
+    const std::vector<int> &extruders   = dialog.options().extruders;
+    bool                    use_surface = dialog.options().use_surface && target.has_object;
+    int                     count       = int(result.layers.size());
+    CreateVolumeParts       parts;
+    for (int i = 0; i < count; ++i) {
+        const ImageTraceLayer     &layer = result.layers[size_t(i)];
+        std::optional<EmbossShape> shape = create_trace_part_shape(layer, group_id, i, use_surface);
+        if (!shape.has_value())
+            continue;
+        auto cancel      = std::make_shared<std::atomic<bool>>(false);
+        auto base        = std::make_unique<DataBase>(image_trace_part_name(dialog.image_name(), i, count), cancel, std::move(*shape));
+        base->is_outside = volume_type == ModelVolumeType::MODEL_PART;
+        CreateVolumePart part{std::move(base), volume_type, size_t(i) < extruders.size() ? extruders[size_t(i)] : 0};
+        // every level is centered by its own bounding box, move it back to its place in the image
+        part.offset = layer.offset;
+        parts.push_back(std::move(part));
+    }
+    std::string object_name = dialog.image_name().empty() ? _u8L("Image") : dialog.image_name();
+    return start_create_parts(m_parent, m_raycast_manager, target, std::move(parts), object_name);
 }
 
 bool GLGizmoSVG::is_svg(const ModelVolume &volume) {
@@ -1360,6 +1446,7 @@ void GLGizmoSVG::set_volume_by_selection()
 
     // Job which update volume change its id, but it is still the same volume (undo/redo creates new volumes)
     std::optional<CodeEmbossMeta> prev_code   = m_code;
+    std::optional<ImageTraceMeta> prev_trace  = m_trace;
     const ModelVolume            *prev_volume = m_volume;
 
     // cancel previous job
@@ -1408,9 +1495,12 @@ void GLGizmoSVG::set_volume_by_selection()
 
     m_simple_shape = read_simple_shape_meta(*volume);
     m_code = read_code_emboss_meta(*volume);
+    m_trace = read_image_trace_meta(*volume);
     bool is_same_code_part = m_code.has_value() && prev_code.has_value() && volume == prev_volume &&
                              m_code->params.group_id == prev_code->params.group_id && m_code->role == prev_code->role;
-    if (m_code.has_value() && !is_same_code_part) {
+    bool is_same_trace_part = m_trace.has_value() && prev_trace.has_value() && volume == prev_volume &&
+                              m_trace->params.group_id == prev_trace->params.group_id && m_trace->layer == prev_trace->layer;
+    if ((m_code.has_value() && !is_same_code_part) || (m_trace.has_value() && !is_same_trace_part)) {
         m_code_synced_tr          = emboss_matrix(*volume);
         m_code_synced_use_surface = es.projection.use_surface;
         m_code_can_use_surface    = !create_volume_sources(*volume).empty();
@@ -1432,6 +1522,7 @@ void GLGizmoSVG::reset_volume()
     m_volume = nullptr;
     m_volume_id.id = 0;
     m_code.reset();
+    m_trace.reset();
     m_simple_shape.reset();
     m_volume_shape.shapes_with_ids.clear();
     m_filename_preview.clear();
@@ -1555,6 +1646,8 @@ void GLGizmoSVG::draw_window()
         draw_code();
     if (m_simple_shape.has_value())
         draw_simple_shape();
+    if (m_trace.has_value())
+        draw_image_trace();
 
     ImGui::Separator();
 
@@ -1702,6 +1795,7 @@ void GLGizmoSVG::draw_filename(){
     }
 
     std::string tooltip = "";
+    bool import_image = false;
     ImGuiComboFlags flags = ImGuiComboFlags_PopupAlignLeft | ImGuiComboFlags_NoPreview;
     ImGui::SameLine();
     ImGuiWrapper::push_combo_style(m_parent.get_scale());
@@ -1721,6 +1815,14 @@ void GLGizmoSVG::draw_filename(){
             }
         } else if (ImGui::IsItemHovered()) {
             tooltip = _u8L("Change to another .svg file");
+        }
+
+        draw(get_icon(m_icons, IconType::change_file, IconState::hovered));
+        ImGui::SameLine();
+        if (ImGui::Selectable((_L("Import image") + dots).ToUTF8().data())) {
+            import_image = true;
+        } else if (ImGui::IsItemHovered()) {
+            tooltip = _u8L("Trace a PNG or JPG image into new shapes on this object");
         }
 
         std::string forget_path = _u8L("Forget the file path");
@@ -1828,6 +1930,11 @@ void GLGizmoSVG::draw_filename(){
     ImGuiWrapper::pop_combo_style();
     if (!tooltip.empty())
         m_imgui->tooltip(tooltip, m_gui_cfg->max_tooltip_width);
+    if (import_image && m_volume != nullptr) {
+        // the dialog is modal, do not open it in the middle of the ImGui frame
+        ModelVolumeType type = m_volume->type();
+        wxGetApp().plater()->CallAfter([this, type]() { create_image(type); });
+    }
 
     if (file_changed) {
         float scale = get_scale_for_tolerance();
@@ -2032,7 +2139,7 @@ void GLGizmoSVG::draw_size()
 void GLGizmoSVG::draw_use_surface() 
 {
     bool can_use_surface = (m_volume->emboss_shape->projection.use_surface)? true : // already used surface must have option to uncheck
-        (m_code.has_value() ? m_code_can_use_surface : // other parts of code are not surface to project on
+        ((m_code.has_value() || m_trace.has_value()) ? m_code_can_use_surface : // other parts of code are not surface to project on
         !m_volume->is_the_only_one_part());
     m_imgui->disabled_begin(!can_use_surface);
     ScopeGuard sc([imgui = m_imgui]() { imgui->disabled_end(); });
@@ -2303,7 +2410,7 @@ bool GLGizmoSVG::start_code_part_update(ModelVolume &volume, EmbossShape &&shape
 
 void GLGizmoSVG::sync_code_parts()
 {
-    if (!m_code.has_value() || m_volume == nullptr || !m_volume->emboss_shape.has_value())
+    if ((!m_code.has_value() && !m_trace.has_value()) || m_volume == nullptr || !m_volume->emboss_shape.has_value())
         return;
     // wait until user finish the change
     if (m_surface_drag.has_value() || m_dragging || ImGui::IsMouseDown(ImGuiMouseButton_Left))
@@ -2325,12 +2432,27 @@ void GLGizmoSVG::sync_code_parts()
         cancel->store(true);
     m_code_job_cancels.clear();
 
-    for (ModelVolume *volume : get_code_volumes(*object, m_code->params.group_id)) {
+    // Levels of a traced image are centered by their own bounding box, they are moved by their
+    // offset inside of the image (code parts share one center, their offset is zero)
+    std::vector<std::pair<ModelVolume *, Vec2d>> group;
+    Vec2d                                        own_offset = Vec2d::Zero();
+    if (m_code.has_value()) {
+        for (ModelVolume *volume : get_code_volumes(*object, m_code->params.group_id))
+            group.emplace_back(volume, Vec2d::Zero());
+    } else {
+        own_offset = m_trace->offset;
+        for (ModelVolume *volume : get_image_trace_volumes(*object, m_trace->params.group_id)) {
+            std::optional<ImageTraceMeta> meta = read_image_trace_meta(*volume);
+            group.emplace_back(volume, meta.has_value() ? meta->offset : Vec2d::Zero());
+        }
+    }
+    Transform3d group_tr = tr * Eigen::Translation3d(-own_offset.x(), -own_offset.y(), 0.);
+    for (const auto &[volume, offset] : group) {
         if (volume == m_volume || !volume->emboss_shape.has_value())
             continue;
         EmbossShape &es = *volume->emboss_shape;
         Transform3d  fix = es.fix_3mf_tr.value_or(Transform3d::Identity());
-        volume->set_transformation(tr * fix);
+        volume->set_transformation(group_tr * Eigen::Translation3d(offset.x(), offset.y(), 0.) * fix);
 
         bool was_surface = es.projection.use_surface;
         // mark as already projected, so the job does not move volume onto surface again
@@ -2454,6 +2576,173 @@ void GLGizmoSVG::edit_code()
             m_volume_shape = shape;
             m_code         = read_code_emboss_meta(*volume);
             m_shape_bb     = get_extents(m_volume_shape.shapes_with_ids);
+            m_shape_warnings.clear();
+            wxGetApp().plater()->CallAfter([&texture = m_texture]() { delete_texture(texture); });
+            process(false);
+        } else {
+            start_code_part_update(*volume, std::move(shape));
+        }
+    }
+    plater->changed_object(*object);
+}
+
+void GLGizmoSVG::draw_image_trace()
+{
+    ImGui::Separator();
+    ImGui::AlignTextToFramePadding();
+    std::string text = _u8L("Traced image");
+    if (m_trace->layers > 1)
+        text += " (" + GUI::format(_u8L("colour %1% of %2%"), m_trace->layer + 1, m_trace->layers) + ")";
+    ImGuiWrapper::text(text);
+    if (ImGui::IsItemHovered() && m_trace->layers > 1)
+        m_imgui->tooltip(_u8L("Moving, rotating, scaling and surface projection of this part is applied to all colours of the image. "
+                              "Depth and filament are set per part."),
+                         m_gui_cfg->max_tooltip_width);
+    if (ImGui::Button((_L("Edit trace") + dots).ToUTF8().data()))
+        edit_image_trace();
+    else if (ImGui::IsItemHovered())
+        m_imgui->tooltip(_u8L("Change the colours, threshold, smoothing or size of the traced image."), m_gui_cfg->max_tooltip_width);
+}
+
+void GLGizmoSVG::edit_image_trace()
+{
+    if (!m_trace.has_value() || m_volume == nullptr)
+        return;
+    ModelObject *object = m_volume->get_object();
+    if (object == nullptr)
+        return;
+
+    const std::string            group_id = m_trace->params.group_id;
+    std::map<int, ModelVolume *> by_layer;
+    std::string                  source_png;
+    for (ModelVolume *v : get_image_trace_volumes(*object, group_id))
+        if (std::optional<ImageTraceMeta> meta = read_image_trace_meta(*v, true); meta.has_value()) {
+            if (by_layer.count(meta->layer) == 0 || v == m_volume)
+                by_layer[meta->layer] = v;
+            if (source_png.empty())
+                source_png = std::move(meta->source_png);
+        }
+    if (by_layer.empty())
+        by_layer[m_trace->layer] = m_volume;
+    ModelVolume    *first     = by_layer.begin()->second;
+    ModelVolumeType type      = first->type();
+    std::string     base_name = trace_base_name(first->name, m_trace->layers);
+
+    TraceImage image;
+    if (!source_png.empty() && !decode_trace_image(source_png, image))
+        image = TraceImage{};
+    if (image.empty()) {
+        source_png.clear();
+        MessageDialog question(nullptr,
+                               _L("The image of this trace is not stored in the project.") + "\n" +
+                                   _L("Choose the image file again to change the trace?"),
+                               _L("Edit trace"), wxYES_NO | wxICON_QUESTION);
+        if (question.ShowModal() != wxID_YES)
+            return;
+        wxString path = ImageTraceDialog::choose_image_file(nullptr);
+        if (path.empty())
+            return;
+        std::string name;
+        if (!ImageTraceDialog::load_image_file(nullptr, path, image, source_png, name))
+            return;
+    }
+
+    ImageTraceParams params = m_trace->params;
+    // depth of the first level could be changed by the gizmo
+    if (auto it = by_layer.find(0); it != by_layer.end() && it->second->emboss_shape.has_value())
+        params.depth = it->second->emboss_shape->projection.depth;
+    ImageTraceDialogOptions options;
+    options.is_edit         = true;
+    options.allow_filaments = type != ModelVolumeType::NEGATIVE_VOLUME;
+    for (const auto &[layer, v] : by_layer) {
+        if (options.extruders.size() <= size_t(layer))
+            options.extruders.resize(size_t(layer) + 1, 0);
+        options.extruders[size_t(layer)] = volume_extruder(*v);
+    }
+    ImageTraceDialog dialog(nullptr, image, source_png, base_name, params, options);
+    if (dialog.ShowModal() != wxID_OK)
+        return;
+    const ImageTraceResult &result    = dialog.result();
+    const std::vector<int> &extruders = dialog.options().extruders;
+
+    // volume could be removed meanwhile (dialog is modal but be carefull)
+    if (m_volume == nullptr || get_model_volume(m_volume_id, m_parent.get_selection().get_model()->objects) == nullptr)
+        return;
+
+    Plater *plater = wxGetApp().plater();
+    // TRN: This is the title of the action appearing in undo/redo stack.
+    Plater::TakeSnapshot snapshot(plater, _u8L("Edit image trace"), UndoRedo::SnapshotType::GizmoAction);
+
+    bool use_surface = m_volume->emboss_shape->projection.use_surface;
+    // transformation of the image center, every level is moved by its offset from it
+    Transform3d  group_tr      = emboss_matrix(*m_volume) * Eigen::Translation3d(-m_trace->offset.x(), -m_trace->offset.y(), 0.);
+    bool         list_changed  = false;
+    ModelVolume *keep_selected = m_volume;
+    int          count         = int(result.layers.size());
+    std::vector<std::pair<ModelVolume *, EmbossShape>> updates;
+    for (int i = 0; i < count; ++i) {
+        const ImageTraceLayer     &layer = result.layers[size_t(i)];
+        std::optional<EmbossShape> shape = create_trace_part_shape(layer, group_id, i, use_surface);
+        if (!shape.has_value())
+            continue;
+        auto         it     = by_layer.find(i);
+        ModelVolume *volume = it != by_layer.end() ? it->second : nullptr;
+        if (volume == nullptr) {
+            // new colour level - copy of the edited volume
+            volume       = object->add_volume(*m_volume, type);
+            list_changed = true;
+        }
+        volume->name = image_trace_part_name(dialog.image_name(), i, count);
+        if (options.allow_filaments)
+            volume->config.set_key_value("extruder", new ConfigOptionInt(size_t(i) < extruders.size() ? extruders[size_t(i)] : 0));
+        // write new svg immediately, so all levels are recognized by new metadata
+        volume->emboss_shape = *shape;
+        volume->emboss_shape->fix_3mf_tr.reset();
+        volume->set_transformation(group_tr * Eigen::Translation3d(layer.offset.x(), layer.offset.y(), 0.));
+        updates.emplace_back(volume, std::move(*shape));
+        if (it != by_layer.end())
+            by_layer.erase(it);
+    }
+    if (updates.empty())
+        return;
+
+    // remove levels which are not used any more (fewer colours)
+    for (const auto &[layer, volume] : by_layer) {
+        if (volume == keep_selected) {
+            // edited volume is removed, select the first level instead
+            keep_selected = updates.front().first;
+            reset_volume();
+        }
+        auto it = std::find(object->volumes.begin(), object->volumes.end(), volume);
+        if (it != object->volumes.end()) {
+            object->delete_volume(size_t(it - object->volumes.begin()));
+            list_changed = true;
+        }
+    }
+
+    // cancel previous updates of parts
+    for (const auto &cancel : m_code_job_cancels)
+        cancel->store(true);
+    m_code_job_cancels.clear();
+
+    if (list_changed) {
+        ObjectList            *obj_list   = wxGetApp().obj_list();
+        const ModelObjectPtrs &objects    = plater->model().objects;
+        int                    object_idx = int(std::find(objects.begin(), objects.end(), object) - objects.begin());
+        auto add_to_selection             = [keep_selected](const ModelVolume *v) { return v == keep_selected; };
+        wxDataViewItemArray sel           = obj_list->reorder_volumes_and_get_selection(object_idx, add_to_selection);
+        if (!sel.IsEmpty())
+            obj_list->select_item(sel.front());
+        obj_list->selection_changed();
+    }
+
+    for (auto &[volume, shape] : updates) {
+        if (volume == m_volume) {
+            m_volume_shape            = shape;
+            m_trace                   = read_image_trace_meta(*volume);
+            m_shape_bb                = get_extents(m_volume_shape.shapes_with_ids);
+            m_code_synced_tr          = emboss_matrix(*volume);
+            m_code_synced_use_surface = use_surface;
             m_shape_warnings.clear();
             wxGetApp().plater()->CallAfter([&texture = m_texture]() { delete_texture(texture); });
             process(false);

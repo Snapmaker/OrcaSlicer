@@ -5386,7 +5386,7 @@ void GLCanvas3D::on_mouse_wheel(wxMouseEvent& evt)
     if (m_gizmos.on_mouse_wheel(evt))
         return;
 
-    if (m_canvas_type == CanvasAssembleView && (evt.AltDown() || evt.CmdDown())) {
+    if (m_canvas_type == CanvasAssembleView && (evt.AltDown() || evt.CmdDown()) && m_gizmos.m_assemble_view_data != nullptr) {
         float rotation = (float)evt.GetWheelRotation() / (float)evt.GetWheelDelta();
         if (evt.AltDown()) {
             auto clp_dist = m_gizmos.m_assemble_view_data->model_objects_clipper()->get_position();
@@ -8497,7 +8497,7 @@ void GLCanvas3D::_update_select_plate_toolbar_stats_item(bool force_selected) {
     else
         m_sel_plate_toolbar.show_stats_item = false;
 
-    if (force_selected && m_sel_plate_toolbar.show_stats_item)
+    if (force_selected && m_sel_plate_toolbar.show_stats_item && m_sel_plate_toolbar.m_all_plates_stats_item)
         m_sel_plate_toolbar.m_all_plates_stats_item->selected = true;
 }
 
@@ -9372,7 +9372,7 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
                 }
                 },
                 partly_inside_enable);
-            if (m_canvas_type == CanvasAssembleView && m_gizmos.m_assemble_view_data->model_objects_clipper()->get_position() > 0) {
+            if (m_canvas_type == CanvasAssembleView && m_gizmos.m_assemble_view_data != nullptr && m_gizmos.m_assemble_view_data->model_objects_clipper()->get_position() > 0) {
                 const GLGizmosManager& gm = get_gizmos_manager();
                 shader->stop_using();
                 gm.render_painter_assemble_view();
@@ -10225,11 +10225,29 @@ void GLCanvas3D::_render_return_toolbar() const
     ImVec2 margin = ImVec2(10.0f, 5.0f);
 
     if (ImGui::ImageTextButton(real_size,_utf8(L("Return")).c_str(), m_return_toolbar.get_return_texture_id(), button_icon_size, uv0, uv1, -1, bg_col, tint_col, margin)) {
-        if (m_canvas != nullptr)
-            wxPostEvent(m_canvas, SimpleEvent(EVT_GLVIEWTOOLBAR_3D));
         const_cast<GLGizmosManager*>(&m_gizmos)->reset_all_states();
-        wxGetApp().plater()->get_view3D_canvas3D()->get_gizmos_manager().reset_all_states();
-        wxGetApp().plater()->get_view3D_canvas3D()->reload_scene(true);
+        // Orca #13091: switching the view from inside the assembly canvas' own render/ImGui callback
+        // tore the canvas down mid-frame. Defer the view switch + 3D reload to after the event returns.
+        if (m_canvas != nullptr && !wxGetApp().is_closing()) {
+            m_canvas->CallAfter([]() {
+                auto& app = wxGetApp();
+                if (app.is_closing())
+                    return;
+
+                auto* plater = app.plater();
+                if (plater == nullptr)
+                    return;
+
+                plater->select_view_3D("3D");
+
+                auto* view3d_canvas = plater->get_view3D_canvas3D();
+                if (view3d_canvas == nullptr)
+                    return;
+
+                view3d_canvas->get_gizmos_manager().reset_all_states();
+                view3d_canvas->reload_scene(true);
+            });
+        }
     }
     ImGui::PopStyleColor(5);
     ImGui::PopStyleVar(1);
@@ -10500,6 +10518,9 @@ void GLCanvas3D::_render_assemble_control()
         GLVolume::explosion_ratio = m_explosion_ratio = 1.0;
         return;
     }
+    // Orca #13413: the assemble view data is gone while the assembly view is being torn down
+    if (m_gizmos.m_assemble_view_data == nullptr)
+        return;
     if (m_gizmos.get_current_type() == GLGizmosManager::EType::MmSegmentation) {
         m_gizmos.m_assemble_view_data->model_objects_clipper()->set_position(0.0, true);
         return;
@@ -11650,6 +11671,10 @@ void GLCanvas3D::_set_warning_notification_if_needed(EWarning warning)
 
 void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
 {
+    // Orca #14588: skip on shutdown. Plater's pImpl is already freed, so
+    // get_notification_manager() would use-after-free (GLCanvas3D dtor -> reset_volumes()).
+    if (wxGetApp().is_closing())
+        return;
     enum ErrorType{
         PLATER_WARNING,
         PLATER_ERROR,

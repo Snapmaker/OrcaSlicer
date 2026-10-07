@@ -174,6 +174,7 @@ private:
     void        append_menu_item_add_svg(wxMenu *menu, ModelVolumeType type, bool is_submenu_item = true);    
     void        append_menu_item_add_code(wxMenu *menu, ModelVolumeType type);
     void        append_menu_item_add_shape(wxMenu *menu, ModelVolumeType type);
+    void        append_menu_item_add_image(wxMenu *menu, ModelVolumeType type);
     void        append_menu_items_add_volume(wxMenu* menu);
     wxMenuItem* append_menu_item_layers_editing(wxMenu* menu);
     wxMenuItem* append_menu_item_settings(wxMenu* menu);

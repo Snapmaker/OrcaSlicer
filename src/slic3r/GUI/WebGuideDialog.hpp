@@ -32,6 +32,7 @@
 
 #include <nlohmann/json.hpp>
 #include <atomic>
+#include <unordered_set>
 
 namespace Slic3r { namespace GUI {
 
@@ -79,6 +80,8 @@ public:
     int LoadProfileFamily(std::string strVendor, std::string strFilePath);
     int SaveProfile();
     int GetFilamentInfo( std::string VendorDirectory, const json & pFilaList, std::string filepath, std::string &sVendor, std::string &sType);
+    int GetFilamentInfo(const std::string& VendorDirectory, const json& pFilaList, const std::string& filepath,
+                        std::string& sVendor, std::string& sType, std::unordered_set<std::string>& visiting);
 
 
     bool apply_config(AppConfig *app_config, PresetBundle *preset_bundle, const PresetUpdater *updater, bool& apply_keeped_changes);

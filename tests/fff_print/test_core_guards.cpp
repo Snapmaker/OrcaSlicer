@@ -81,3 +81,13 @@ TEST_CASE("Tree Slim survives a zero support base pattern spacing", "[CoreGuards
 {
     CHECK(slice_overhang_with_tree_support({ { "support_style", "tree_slim" }, { "support_base_pattern_spacing", "0" } }) > 0);
 }
+
+// Orca #13936: organic tree support with both the XY distance and the top Z gap at zero divided by
+// a zero safe movement distance in increase_areas_one_layer().
+TEST_CASE("Organic tree support survives zero XY distance and zero top Z gap", "[CoreGuards][TreeSupport]")
+{
+    CHECK(slice_overhang_with_tree_support({ { "support_style", "organic" },
+                                             { "support_object_xy_distance", "0" },
+                                             { "support_top_z_distance", "0" },
+                                             { "support_bottom_z_distance", "0" } }) > 0);
+}

@@ -350,7 +350,7 @@ void PartPlate::set_spiral_vase_mode(bool spiral_mode, bool as_global)
 	}
 }
 
-bool PartPlate::valid_instance(int obj_id, int instance_id)
+bool PartPlate::valid_instance(int obj_id, int instance_id) const
 {
 	if ((obj_id >= 0) && (obj_id < m_model->objects.size()))
 	{
@@ -1906,6 +1906,9 @@ void PartPlate::set_pos_and_size(Vec3d& origin, int width, int depth, int height
 		for (std::set<std::pair<int, int>>::iterator it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); ++it) {
 			int obj_id = it->first;
 			int instance_id = it->second;
+			if (!valid_instance(obj_id, instance_id))
+				continue;
+
 			ModelObject* object = m_model->objects[obj_id];
 			ModelInstance* instance = object->instances[instance_id];
 
@@ -2395,7 +2398,7 @@ void PartPlate::duplicate_all_instance(unsigned int dup_count, bool need_skip, s
         int obj_id = it->first;
         int instance_id = it->second;
 
-        if ((obj_id >= 0) && (obj_id < m_model->objects.size()))
+        if (valid_instance(obj_id, instance_id))
         {
             ModelObject* object = m_model->objects[obj_id];
             ModelInstance* instance = object->instances[instance_id];
@@ -2428,7 +2431,7 @@ void PartPlate::duplicate_all_instance(unsigned int dup_count, bool need_skip, s
         int obj_id = it->first;
         int instance_id = it->second;
 
-        if ((obj_id >= 0) && (obj_id < m_model->objects.size()))
+        if (valid_instance(obj_id, instance_id))
         {
             ModelObject* object = m_model->objects[obj_id];
             ModelInstance* instance = object->instances[instance_id];
@@ -2546,8 +2549,8 @@ int PartPlate::printable_instance_size()
         int obj_id      = it->first;
         int instance_id = it->second;
 
-        if (obj_id >= m_model->objects.size())
-			continue;
+        if (!valid_instance(obj_id, instance_id))
+            continue;
 
         ModelObject *  object   = m_model->objects[obj_id];
         ModelInstance *instance = object->instances[instance_id];
@@ -2569,7 +2572,7 @@ bool PartPlate::has_printable_instances()
 		int obj_id = it->first;
 		int instance_id = it->second;
 
-		if (obj_id >= m_model->objects.size())
+		if (!valid_instance(obj_id, instance_id))
 			continue;
 
 		ModelObject* object = m_model->objects[obj_id];
@@ -2593,7 +2596,8 @@ bool PartPlate::is_all_instances_unprintable()
         int obj_id      = it->first;
         int instance_id = it->second;
 
-        if (obj_id >= m_model->objects.size()) continue;
+        if (!valid_instance(obj_id, instance_id))
+            continue;
 
         ModelObject *  object   = m_model->objects[obj_id];
         ModelInstance *instance = object->instances[instance_id];
@@ -4026,13 +4030,13 @@ int PartPlateList::create_plate(bool adjust_position)
 		return -1;
 	int cols = compute_colum_count(new_index + 1);
 	int old_cols = compute_colum_count(new_index);
+	// Orca #14850: rebuild plate membership before the grid reflow moves instances with their plates
+	if (adjust_position && old_cols != cols)
+		reload_all_objects();
 
 	origin = compute_origin(new_index, cols);
 	plate = new PartPlate(this, origin, m_plate_width, m_plate_depth, m_plate_height, m_plater, m_model, true, printer_technology);
 	assert(plate != NULL);
-	// Orca #14850: rebuild plate membership before the grid reflow moves instances with their plates
-	if (adjust_position && old_cols != cols)
-		reload_all_objects();
 
 	if (printer_technology == ptFFF)
 	{
@@ -4510,13 +4514,13 @@ int PartPlateList::move_plate_to_index(int old_index, int new_index)
 		return -1;
 	}
 
+	// Orca #14850: rebuild plate membership before the plates (and their instances) are moved
+	reload_all_objects();
+
 	if (old_index < new_index)
 	{
 		delta = 1;
 	}
-	// Orca #14850: rebuild plate membership before the plates (and their instances) are moved
-	reload_all_objects();
-
 	else
 	{
 		delta = -1;

@@ -12,6 +12,8 @@
 #include "libslic3r/Arachne/SkeletalTrapezoidation.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/Polygon.hpp"
+#include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/TriangleMeshSlicer.hpp"
 
 using namespace Slic3r;
 using namespace Slic3r::Arachne;
@@ -133,4 +135,19 @@ TEST_CASE("AABB tree bounding box wrapper centroid is the box centre", "[CoreGua
     const AABBTreeIndirect::BoundingBoxWrapper wrapper(0, bbox);
     // The wrapper inflates the box symmetrically, so the centre is unchanged.
     CHECK(wrapper.centroid() == Point(2000, 4000));
+}
+
+// Orca #11476: cut_mesh() leaked one heap Vec3f per vertex lying on the cutting plane. The leak is
+// not observable from a test; this pins that a cut still produces the two halves after the map moved
+// to values.
+TEST_CASE("cut_mesh splits a cube", "[CoreGuards][Cut]")
+{
+    const indexed_triangle_set cube = make_cube(10., 10., 10.).its;
+    for (float z : { 2.5f, 5.f }) {
+        indexed_triangle_set upper, lower;
+        cut_mesh(cube, z, &upper, &lower, true);
+        INFO("cut at z = " << z);
+        CHECK(its_volume(upper) == Approx(10. * 10. * (10. - z)).margin(1e-3));
+        CHECK(its_volume(lower) == Approx(10. * 10. * z).margin(1e-3));
+    }
 }

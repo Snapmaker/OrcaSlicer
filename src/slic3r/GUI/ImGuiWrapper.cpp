@@ -2999,6 +2999,8 @@ void ImGuiWrapper::render_draw_data(ImDrawData *draw_data)
     GLboolean last_enable_depth_test   = ::glIsEnabled(GL_DEPTH_TEST);
     GLboolean last_enable_stencil_test = ::glIsEnabled(GL_STENCIL_TEST);
     GLboolean last_enable_scissor_test = ::glIsEnabled(GL_SCISSOR_TEST);
+    // EDGE: GL_POLYGON_MODE is valid on both profiles; only GL_FRONT_AND_BACK may be set in a core one.
+    GLint last_polygon_mode[2] = { GL_FILL, GL_FILL }; glsafe(::glGetIntegerv(GL_POLYGON_MODE, last_polygon_mode));
 
     // set new GL state
     glsafe(::glActiveTexture(GL_TEXTURE0));
@@ -3009,6 +3011,7 @@ void ImGuiWrapper::render_draw_data(ImDrawData *draw_data)
     glsafe(::glDisable(GL_DEPTH_TEST));
     glsafe(::glDisable(GL_STENCIL_TEST));
     glsafe(::glEnable(GL_SCISSOR_TEST));
+    glsafe(::glPolygonMode(GL_FRONT_AND_BACK, GL_FILL));
 
     // Setup viewport, orthographic projection matrix
     // Our visible imgui space lies from draw_data->DisplayPos (top left) to draw_data->DisplayPos+data_data->DisplaySize (bottom right). DisplayPos is (0,0) for single viewport apps.
@@ -3134,6 +3137,7 @@ void ImGuiWrapper::render_draw_data(ImDrawData *draw_data)
     if (last_enable_depth_test) glsafe(::glEnable(GL_DEPTH_TEST)); else glsafe(::glDisable(GL_DEPTH_TEST));
     if (last_enable_stencil_test) glsafe(::glEnable(GL_STENCIL_TEST)); else glsafe(::glDisable(GL_STENCIL_TEST));
     if (last_enable_scissor_test) glsafe(::glEnable(GL_SCISSOR_TEST)); else glsafe(::glDisable(GL_SCISSOR_TEST));
+    glsafe(::glPolygonMode(GL_FRONT_AND_BACK, (GLenum)last_polygon_mode[0]));
     glsafe(::glViewport(last_viewport[0], last_viewport[1], (GLsizei)last_viewport[2], (GLsizei)last_viewport[3]));
     glsafe(::glScissor(last_scissor_box[0], last_scissor_box[1], (GLsizei)last_scissor_box[2], (GLsizei)last_scissor_box[3]));
 

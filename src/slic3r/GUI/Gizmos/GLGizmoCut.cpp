@@ -2193,9 +2193,9 @@ void GLGizmoCut3D::render_curved_snap_marker()
     shader->set_uniform("projection_matrix", camera.get_projection_matrix());
     shader->set_uniform("view_model_matrix",
                         camera.get_view_matrix() * translation_transform(m_plane_center) * m_rotation_m);
-    glsafe(::glLineWidth(2.f));
+    OpenGLManager::set_line_width(2.f);
     marker.render();
-    glsafe(::glLineWidth(1.f));
+    OpenGLManager::set_line_width(1.f);
     shader->stop_using();
 }
 

@@ -200,7 +200,7 @@ private:
     void render_extruder_only_areas(bool force_default_color);
     void render_extruder_only_labels(bool bottom);
     //void render_background_for_picking(const ColorRGBA render_color) const;
-    void render_grid(bool bottom);
+    void render_grid(bool bottom, const Transform3d& view_matrix, const Transform3d& projection_matrix);
     void render_height_limit(PartPlate::HeightLimitMode mode = HEIGHT_LIMIT_BOTH);
     // void render_label(GLCanvas3D& canvas) const;
     // void render_grabber(const ColorRGBA render_color, bool use_lighting) const;

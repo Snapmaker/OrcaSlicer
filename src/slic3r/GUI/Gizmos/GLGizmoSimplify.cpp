@@ -689,8 +689,8 @@ void GLGizmoSimplify::on_render()
         m_glmodel.set_color(color);
         contour_shader->stop_using();
     }
-
-    glsafe(::glPopAttrib());
+    // EDGE: no glPopAttrib() here any more - upstream #10735 dropped the matching glPushAttrib(),
+    // and a lone pop is a stack underflow (compatibility) or GL_INVALID_OPERATION (core).
 }
 
 

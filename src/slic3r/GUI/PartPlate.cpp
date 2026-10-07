@@ -959,13 +959,8 @@ void PartPlate::render_exclude_area(bool force_default_color) {
 	// draw exclude area
 	glsafe(::glDepthMask(GL_FALSE));
 
-	if (m_selected) {
-		glsafe(::glColor4fv(select_color.data()));
-	}
-	else {
-		glsafe(::glColor4fv(unselect_color.data()));
-	}
-
+	// EDGE (core profile): no glColor4fv() - fixed-function colour is gone from core profiles and the
+	// shader takes the colour from set_color() below anyway.
 	m_exclude_triangles.set_color(m_selected ? select_color : unselect_color);
     m_exclude_triangles.render();
 	glsafe(::glDepthMask(GL_TRUE));
@@ -984,7 +979,7 @@ void PartPlate::render_exclude_area(bool force_default_color) {
 	glsafe(::glDepthMask(GL_TRUE));
 }*/
 
-void PartPlate::render_grid(bool bottom) {
+void PartPlate::render_grid(bool bottom, const Transform3d& view_matrix, const Transform3d& projection_matrix) {
 	//glsafe(::glEnable(GL_MULTISAMPLE));
 	// draw grid
 
@@ -999,10 +994,10 @@ void PartPlate::render_grid(bool bottom) {
     glsafe(::glEnable(GL_BLEND));
     glsafe(::glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
 
-    const Camera& camera = wxGetApp().plater()->get_camera();
-    const std::array<int, 4>& viewport = camera.get_viewport();
-    const Transform3d& view_matrix = camera.get_view_matrix();
-    const Transform3d& projection_matrix = camera.get_projection_matrix();
+    // EDGE: the matrices render() was given (not the plater camera), and the viewport actually bound,
+    // so an off-screen pass (thumbnails, phone capture) draws the grid with its own camera.
+    std::array<GLint, 4> viewport = { 0, 0, 1, 1 };
+    glsafe(::glGetIntegerv(GL_VIEWPORT, viewport.data()));
 
     shader->set_uniform("view_model_matrix", view_matrix);
     shader->set_uniform("projection_matrix", projection_matrix);
@@ -1045,6 +1040,8 @@ void PartPlate::render_grid(bool bottom) {
 #endif // !SLIC3R_OPENGL_ES
         shader->set_uniform("viewport_size", Vec2d(double(viewport[2]), double(viewport[3])));
         shader->set_uniform("width", 0.25f);
+        // EDGE: uniforms keep their last value per program; the selection rectangle leaves dashes set.
+        shader->set_uniform("gap_size", 0.0f);
 #if !SLIC3R_OPENGL_ES
     } else {
         glsafe(::glLineWidth(2.0f * m_scale_factor));
@@ -1053,6 +1050,8 @@ void PartPlate::render_grid(bool bottom) {
 
     m_gridlines_bolder.set_color(color);
     m_gridlines_bolder.render();
+    // EDGE: render() used to disable blending after the grid; the grid now draws after that point.
+    glsafe(::glDisable(GL_BLEND));
 
     shader->stop_using();
 }
@@ -2975,7 +2974,7 @@ void PartPlate::render(const Transform3d& view_matrix, const Transform3d& projec
     }
 
     if (show_grid)
-        render_grid(bottom);
+        render_grid(bottom, view_matrix, projection_matrix);
 
     if (!bottom && m_selected && !force_background_color) {
         if (m_partplate_list)

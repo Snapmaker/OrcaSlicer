@@ -73,6 +73,7 @@
 #include <boost/log/trivial.hpp>
 #include <boost/algorithm/string/predicate.hpp>
 
+#include <cstring>
 #include <iostream>
 #include <float.h>
 #include <algorithm>
@@ -537,8 +538,9 @@ void GLCanvas3D::LayersEditing::init()
 {
     glsafe(::glGenTextures(1, (GLuint*)&m_z_texture_id));
     glsafe(::glBindTexture(GL_TEXTURE_2D, m_z_texture_id));
-    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP));
-    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP));
+    // GL_CLAMP is gone from core profiles (GL_INVALID_ENUM); upstream uses GL_CLAMP_TO_EDGE as well.
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
     glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
     glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST));
     glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 1));
@@ -1654,7 +1656,11 @@ bool GLCanvas3D::init()
     }
 
     GLint stencilBits = 0;
-    glsafe(::glGetIntegerv(GL_STENCIL_BITS, &stencilBits));
+    if (OpenGLManager::get_gl_info().is_core_profile())
+        // GL_STENCIL_BITS is gone from core profiles; ask the default framebuffer instead.
+        glsafe(::glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_STENCIL, GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &stencilBits));
+    else
+        glsafe(::glGetIntegerv(GL_STENCIL_BITS, &stencilBits));
     m_stencilFallbackAvailable = stencilBits > 0;
     if (stencilBits < 8)
     {
@@ -3634,10 +3640,43 @@ void GLCanvas3D::render(bool only_init)
         wxGetApp().imgui()->render();
     }
 
+    // EDGE (core profile): release builds do not check GL calls (glsafe is a no-op), so read the
+    // error flag once per frame and log what a frame left behind, with the canvas and the open
+    // gizmo, within OpenGLManager's per-session budget. The first clean frame of each canvas is
+    // logged too, so a user log shows the renderer came up without errors.
+    report_frame_gl_errors("frame");
+
     m_canvas->SwapBuffers();
     if (show_render_stats)
         m_frame_profiler->end_frame();
     m_render_stats.increment_fps_counter();
+}
+
+static const char* gl_canvas_type_name(GLCanvas3D::ECanvasType type)
+{
+    switch (type) {
+    case GLCanvas3D::ECanvasType::CanvasView3D:       return "Prepare (3D)";
+    case GLCanvas3D::ECanvasType::CanvasPreview:      return "Preview";
+    case GLCanvas3D::ECanvasType::CanvasAssembleView: return "Assemble";
+    default:                                          return "unknown canvas";
+    }
+}
+
+void GLCanvas3D::report_frame_gl_errors(const char* pass)
+{
+    const GLenum first_error = ::glGetError();
+    if (first_error == GL_NO_ERROR) {
+        if (!m_gl_clean_frame_logged && std::strcmp(pass, "frame") == 0) {
+            m_gl_clean_frame_logged = true;
+            BOOST_LOG_TRIVIAL(warning) << "OpenGL: first " << gl_canvas_type_name(m_canvas_type) << " frame rendered without GL errors ("
+                                       << (OpenGLManager::get_gl_info().is_core_profile() ? "core" : "compatibility/legacy") << " profile)";
+        }
+        return;
+    }
+    std::string where = std::string("in a ") + gl_canvas_type_name(m_canvas_type) + " " + pass;
+    if (const GLGizmoBase* gizmo = m_gizmos.get_current(); gizmo != nullptr)
+        where += " with gizmo " + gizmo->get_icon_filename();
+    OpenGLManager::report_gl_errors(where, first_error);
 }
 
 void GLCanvas3D::render_thumbnail(ThumbnailData &         thumbnail_data,
@@ -3698,6 +3737,8 @@ void GLCanvas3D::render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w,
         break;
     }
     }
+    // EDGE (core profile): thumbnails render off-screen, outside any frame; check them on their own.
+    report_frame_gl_errors(for_picking ? "thumbnail (picking)" : "thumbnail");
 }
 
 // New named-viewpoint overload (pure addition). Mirrors the overload above but threads a
@@ -3741,6 +3782,7 @@ void GLCanvas3D::render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w,
         break;
     }
     }
+    report_frame_gl_errors(for_picking ? "thumbnail (picking)" : "thumbnail");
 }
 
 void GLCanvas3D::render_calibration_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params)
@@ -10702,7 +10744,7 @@ void GLCanvas3D::_render_camera_target()
     static const float half_length = 5.0f;
 
     glsafe(::glDisable(GL_DEPTH_TEST));
-    glsafe(::glLineWidth(2.0f));
+    OpenGLManager::set_line_width(2.0f);
     const Vec3f& target = wxGetApp().plater()->get_camera().get_target().cast<float>();
     bool target_changed = !m_camera_target.target.isApprox(target.cast<double>());
     m_camera_target.target = target.cast<double>();

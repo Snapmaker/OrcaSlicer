@@ -2671,7 +2671,11 @@ void PresetCollection::save_current_preset(const std::string &new_name, bool det
             inherits = old_name;
         }
         // Orca: check if compatible_printers exists and is not empty, set it to the current printer if it is empty
-        if (nullptr != _current_printer && preset.is_system && m_type == Preset::TYPE_FILAMENT) {
+        // Ultra: not for a preset saved to the project. The pin keeps a user's library from offering a
+        // filament tuned on one printer for every printer; a project preset is in no library - it lives
+        // in this one project - and pinned it vanished from the project's filament lists on every other
+        // printer its parent profile covers. It keeps the parent's printer list (and condition) instead.
+        if (nullptr != _current_printer && preset.is_system && m_type == Preset::TYPE_FILAMENT && !save_to_project) {
             ConfigOptionStrings* compatible_printers = preset.config.option<ConfigOptionStrings>("compatible_printers");
             if (compatible_printers && compatible_printers->values.empty()) {
                 compatible_printers->values.push_back(_current_printer->name);

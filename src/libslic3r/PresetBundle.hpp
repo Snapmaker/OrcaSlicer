@@ -233,6 +233,10 @@ public:
     PresetsConfigSubstitutions load_project_embedded_presets(std::vector<Preset*> project_presets, ForwardCompatibilitySubstitutionRule substitution_rule);
     std::vector<Preset*> get_current_project_embedded_presets();
     void reset_project_embedded_presets();
+    // Ultra: the project presets in use (printer, process, filament slots) that `printer_name`
+    // cannot use, i.e. that switching to that printer would deselect and hide. Filament presets
+    // the loader made up for a slot that matched no preset ("<name>(<file>.3mf)") do not count.
+    std::vector<std::string> project_presets_lost_on_printer(const std::string &printer_name) const;
 
     //BBS: find printer model
     std::string get_texture_for_printer_model(std::string model_name);

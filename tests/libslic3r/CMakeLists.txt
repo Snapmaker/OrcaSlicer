@@ -93,6 +93,7 @@ add_executable(${_TEST_NAME}_tests
 	test_preset_load_determinism.cpp
 	test_profile_load_util.cpp
 	test_project_preset_switch.cpp
+	test_project_preset_roundtrip.cpp
 	test_mutable_polygon.cpp
 	test_mutable_priority_queue.cpp
 	test_gltf.cpp

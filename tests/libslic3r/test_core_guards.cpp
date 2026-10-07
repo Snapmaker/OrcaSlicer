@@ -1,6 +1,8 @@
 // Regression tests for the crash / UB guards ported from OrcaSlicer in batch 1A.
 #include <catch2/catch.hpp>
 
+#include <cmath>
+
 // MultiMaterialSegmentation.hpp declares boost::polygon traits for ColoredLine, so its
 // geometry/boost dependencies must be included first.
 #include <boost/polygon/polygon.hpp>
@@ -223,4 +225,17 @@ TEST_CASE("Zero calibration line width resolves to a positive default", "[CoreGu
 
     REQUIRE(pattern.line_width() > 0.);
     REQUIRE(pattern.line_width_first_layer() > 0.);
+}
+
+// Orca #14414: the CLI pressure-advance tower read optional options straight off the config and
+// dereferenced a null option when one was missing; get_abs_value(key, ratio) only asserted.
+TEST_CASE("PA speed lookup and get_abs_value tolerate a config without the options", "[CoreGuards][Calib]")
+{
+    DynamicPrintConfig empty;
+    float speed = 0.f;
+    REQUIRE_NOTHROW(speed = CalibPressureAdvance::find_optimal_PA_speed(empty, 0., 0.2, 0));
+    CHECK(std::isfinite(speed));
+    CHECK(speed >= 0.f);
+
+    REQUIRE_THROWS_AS(empty.get_abs_value("initial_layer_line_width", 0.4), ConfigurationError);
 }

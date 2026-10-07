@@ -16,6 +16,7 @@
 #include <miniz.h>
 
 // Print now includes tbb, and tbb includes Windows. This breaks compilation of wxWidgets if included before wx.
+#include "libslic3r/CostOverrides.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/Utils.hpp"
@@ -690,7 +691,27 @@ Print::ApplyStatus BackgroundSlicingProcess::apply(const Model &model, const Dyn
 	// TODO: add partplate config
 	DynamicPrintConfig new_config = config;
 	new_config.apply(*m_current_plate->config());
+	// Your own costs (Costs window): filament prices and the machine rate replace filament_cost and
+	// time_cost here and only here, so the slice, its G-code and the statistics agree while presets, projects and every
+	// other export keep the preset prices. A change re-runs only the G-code export. Not in the
+	// G-code viewer mode, whose G-code is a file that is never exported again.
+	if (m_print->technology() == ptFFF) {
+		const auto plater = GUI::wxGetApp().mainframe->m_plater;
+		if (!(plater && plater->only_gcode_mode()))
+			CostOverrides::apply(new_config, *CostOverrides::global(), &GUI::wxGetApp().preset_bundle->filaments,
+			                    &GUI::wxGetApp().preset_bundle->printers);
+	}
 	Print::ApplyStatus invalidated = m_print->apply(model, new_config);
+
+	// "Include filament prices in exported G-code" (Preferences, default off). Not a config key:
+	// a change re-runs only the G-code export. Left alone in the G-code viewer mode, whose G-code
+	// is a file that is never exported again.
+	if (m_print->technology() == ptFFF) {
+		const auto plater = GUI::wxGetApp().mainframe->m_plater;
+		if (!(plater && plater->only_gcode_mode()) &&
+			m_fff_print->set_gcode_filament_prices(GUI::wxGetApp().app_config->get_bool("gcode_include_filament_prices")))
+			invalidated = PrintBase::APPLY_STATUS_INVALIDATED;
+	}
 
 	// Orca: prevent resetting under gcode viewer mode
     if (invalidated != PrintBase::APPLY_STATUS_UNCHANGED) {

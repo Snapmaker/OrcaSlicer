@@ -700,7 +700,8 @@ void Selection::clear(bool notify_sidebar)
 #endif
 
     // #et_FIXME fake KillFocus from sidebar
-    if (notify_sidebar)
+    // Skip on shutdown: Plater's pImpl is already freed (Orca #14588), so plater()->canvas3D() would use-after-free.
+    if (notify_sidebar && !wxGetApp().is_closing())
         wxGetApp().plater()->canvas3D()->handle_sidebar_focus_event("", false);
 }
 
@@ -1915,6 +1916,10 @@ void Selection::notify_instance_update(int object_idx, int instance_idx)
         for (unsigned int i : m_list)
         {
             int obj_index = (*m_volumes)[i]->object_idx();
+            // Orca #14499: skip the wipe tower (synthetic id >= 1000) and any other volume that is
+            // not a ModelObject; the id is not an index into m_model->objects.
+            if (obj_index < 0 || obj_index >= int(m_model->objects.size()))
+                continue;
             //-1 means all the instance in this object
             if (instance_idx == -1)
             {
@@ -2805,9 +2810,14 @@ void Selection::render_bounding_box(const BoundingBoxf3& box, const Transform3d&
 
     glsafe(::glEnable(GL_DEPTH_TEST));
 
-    glsafe(::glLineWidth(2.0f * m_scale_factor));
+#if SLIC3R_OPENGL_ES
+    GLShaderProgram* shader = wxGetApp().get_shader("dashed_lines");
+#else
+    if (!OpenGLManager::get_gl_info().is_core_profile())
+        glsafe(::glLineWidth(2.0f * m_scale_factor));
 
-    GLShaderProgram* shader = wxGetApp().get_shader("flat");
+    GLShaderProgram* shader = OpenGLManager::get_gl_info().is_core_profile() ? wxGetApp().get_shader("dashed_thick_lines") : wxGetApp().get_shader("flat");
+#endif // SLIC3R_OPENGL_ES
     if (shader == nullptr)
         return;
 
@@ -2815,6 +2825,16 @@ void Selection::render_bounding_box(const BoundingBoxf3& box, const Transform3d&
     const Camera& camera = wxGetApp().plater()->get_camera();
     shader->set_uniform("view_model_matrix", camera.get_view_matrix() * trafo);
     shader->set_uniform("projection_matrix", camera.get_projection_matrix());
+#if !SLIC3R_OPENGL_ES
+    if (OpenGLManager::get_gl_info().is_core_profile()) {
+#endif // !SLIC3R_OPENGL_ES
+        const std::array<int, 4>& viewport = camera.get_viewport();
+        shader->set_uniform("viewport_size", Vec2d(double(viewport[2]), double(viewport[3])));
+        shader->set_uniform("width", 1.5f);
+        shader->set_uniform("gap_size", 0.0f);
+#if !SLIC3R_OPENGL_ES
+    }
+#endif // !SLIC3R_OPENGL_ES
     m_box.set_color(to_rgba(color));
     m_box.render();
     shader->stop_using();

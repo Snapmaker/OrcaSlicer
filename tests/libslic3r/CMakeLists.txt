@@ -9,6 +9,7 @@ add_executable(${_TEST_NAME}_tests
 	test_bambu_import_renames.cpp
 	test_bambu_nil_override.cpp
 	test_untrusted_input.cpp
+	test_zip_entry_path.cpp
 	test_custom_models.cpp
 	test_model_browser_rules.cpp
 	test_arrange_support_clearance.cpp
@@ -23,6 +24,7 @@ add_executable(${_TEST_NAME}_tests
 	test_paint_depth.cpp
 	test_paint_depth_clamp.cpp
 	test_paint_penetration.cpp
+	test_paint_remap.cpp
 	test_color_mix_solver.cpp
 	test_color_split.cpp
 	test_code_emboss.cpp
@@ -30,6 +32,7 @@ add_executable(${_TEST_NAME}_tests
 	test_inline_shapes.cpp
 	test_inline_text.cpp
 	test_simple_shape.cpp
+	test_image_trace.cpp
 	test_image_fill.cpp
 	test_image_row_transform.cpp
 	test_image_row_dialog.cpp
@@ -50,6 +53,7 @@ add_executable(${_TEST_NAME}_tests
 	test_cut_retraction_range.cpp
 	test_wipe_tower_no_sparse_gcode.cpp
 	test_gcodewriter_feedrate_guard.cpp
+	test_core_guards.cpp
 	# test_ec_retraction.cpp slices a real two-filament plate, so it needs the
 	# Slic3r::Test slicing helpers that otherwise only fff_print_tests links.
 	../fff_print/test_data.cpp
@@ -92,6 +96,7 @@ add_executable(${_TEST_NAME}_tests
 	test_filament_variant_autoenable.cpp
 	test_preset_load_determinism.cpp
 	test_profile_load_util.cpp
+	test_printer_model_specs.cpp
 	test_project_preset_switch.cpp
 	test_project_preset_roundtrip.cpp
 	test_mutable_polygon.cpp
@@ -124,9 +129,13 @@ add_executable(${_TEST_NAME}_tests
     test_toolordering_cyclic.cpp
     test_shortest_path.cpp
     test_gcode_import.cpp
+    test_cost_estimate.cpp
+    test_cost_overrides.cpp
     test_align_math.cpp
     # test_png_io.cpp
     test_indexed_triangle_set.cpp
+    test_texture_displacement.cpp
+    test_texture_displacement_edge.cpp
     ../libnest2d/printer_parts.cpp
 	)
 

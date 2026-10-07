@@ -353,6 +353,7 @@ set(lisbslic3r_sources
     GCodeWriter.cpp
     GCodeWriter.hpp
     Geometry/Bicubic.hpp
+    Geometry/ArcWelder.hpp
     Geometry/Circle.cpp
     Geometry/Circle.hpp
     Geometry/ConvexHull.cpp

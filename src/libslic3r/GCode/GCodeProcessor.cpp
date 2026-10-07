@@ -605,6 +605,9 @@ void GCodeProcessorResult::reset() {
     required_nozzle_HRC = std::vector<int>(MIN_EXTRUDERS_COUNT, DEFAULT_FILAMENT_HRC);
     filament_densities = std::vector<float>(MIN_EXTRUDERS_COUNT, DEFAULT_FILAMENT_DENSITY);
     filament_costs = std::vector<float>(MIN_EXTRUDERS_COUNT, DEFAULT_FILAMENT_COST);
+    has_filament_costs = false;
+    time_cost = 0.;
+    has_time_cost = false;
     custom_gcode_per_print_z = std::vector<CustomGCode::Item>();
     spiral_vase_layers = std::vector<std::pair<float, std::pair<size_t, size_t>>>();
     bed_match_result = BedMatchResult(true);
@@ -763,6 +766,9 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
         m_result.filament_vitrification_temperature[i] = static_cast<float>(config.temperature_vitrification.get_at(i));
         m_result.filament_costs[i]      = static_cast<float>(config.filament_cost.get_at(i));
     }
+    m_result.has_filament_costs = true;
+    m_result.time_cost          = config.time_cost.value;
+    m_result.has_time_cost      = true;
 
     if (m_flavor == gcfMarlinLegacy || m_flavor == gcfMarlinFirmware || m_flavor == gcfKlipper || m_flavor == gcfRepRapFirmware) {
         m_time_processor.machine_limits = reinterpret_cast<const MachineEnvelopeConfig&>(config);
@@ -917,16 +923,25 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     }
 
     //BBS
+    // An empty filament_cost means the G-code had none (process_file() clears the default before
+    // loading the CONFIG_BLOCK): exported with filament prices left out. No price is then known,
+    // and none is invented.
     const ConfigOptionFloats* filament_costs = config.option<ConfigOptionFloats>("filament_cost");
-    if (filament_costs != nullptr) {
+    m_result.has_filament_costs = filament_costs != nullptr && !filament_costs->values.empty();
+    if (m_result.has_filament_costs) {
         m_result.filament_costs.clear();
         m_result.filament_costs.resize(filament_costs->values.size());
         for (size_t i = 0; i < filament_costs->values.size(); ++i)
             m_result.filament_costs[i]=static_cast<float>(filament_costs->values[i]);
-    }
+    } else
+        std::fill(m_result.filament_costs.begin(), m_result.filament_costs.end(), 0.f);
     for (size_t i = m_result.filament_costs.size(); i < m_result.extruders_count; ++i) {
-        m_result.filament_costs.emplace_back(DEFAULT_FILAMENT_COST);
+        m_result.filament_costs.emplace_back(m_result.has_filament_costs ? DEFAULT_FILAMENT_COST : 0.f);
     }
+    // Likewise a negative time_cost: the G-code had no time_cost line.
+    const ConfigOptionFloat* time_cost = config.option<ConfigOptionFloat>("time_cost");
+    m_result.has_time_cost = time_cost != nullptr && time_cost->value >= 0.;
+    m_result.time_cost     = m_result.has_time_cost ? time_cost->value : 0.;
 
     //BBS
     const ConfigOptionInts* filament_vitrification_temperature = config.option<ConfigOptionInts>("temperature_vitrification");
@@ -1274,6 +1289,10 @@ void GCodeProcessor::process_file(const std::string& filename, std::function<voi
         if (m_producer == EProducer::Snapmaker_Orca || m_producer == EProducer::Slic3rPE || m_producer == EProducer::Slic3r) {
             DynamicPrintConfig config;
             config.apply(FullPrintConfig::defaults());
+            // Sentinels telling apply_config() whether the file carries prices at all (a G-code
+            // exported with filament prices left out has no filament_cost line).
+            config.option<ConfigOptionFloats>("filament_cost", true)->values.clear();
+            config.option<ConfigOptionFloat>("time_cost", true)->value = -1.;
             // Silently substitute unknown values by new ones for loading configurations from Snapmaker_Orca's own G-code.
             // Showing substitution log or errors may make sense, but we are not really reading many values from the G-code config,
             // thus a probability of incorrect substitution is low and the G-code viewer is a consumer-only anyways.

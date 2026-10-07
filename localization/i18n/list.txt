@@ -20,6 +20,14 @@ src/slic3r/GUI/Gizmos/GLGizmoText.cpp
 src/slic3r/GUI/Gizmos/GLGizmoText.hpp
 src/slic3r/GUI/Gizmos/GLGizmoEmboss.cpp
 src/slic3r/GUI/Gizmos/GLGizmoSVG.cpp
+src/slic3r/GUI/Gizmos/GLGizmoTextureDisplacement.cpp
+src/slic3r/GUI/UVEditorCanvas.cpp
+src/slic3r/GUI/TextureLibrary.cpp
+src/slic3r/GUI/TextureProjectorFrame.cpp
+src/slic3r/GUI/Jobs/TextureDisplacementBakeJob.cpp
+src/slic3r/GUI/Jobs/TextureDisplacementPrepareJob.cpp
+src/slic3r/GUI/Jobs/TextureDisplacementPreviewJob.cpp
+src/slic3r/GUI/Jobs/TextureDisplacementDebugJob.cpp
 src/slic3r/GUI/Gizmos/GLGizmoMeasure.cpp
 src/slic3r/GUI/GUI.cpp
 src/slic3r/GUI/GUI_App.cpp

@@ -35,6 +35,23 @@
 namespace Slic3r {
 using boost::polygon::voronoi_diagram;
 
+double resolve_outer_wall_line_width(const PrintRegionConfig &region_config, const PrintObjectConfig &object_config, const PrintConfig &print_config)
+{
+    // Same extruder PrintRegion::extruder(frExternalPerimeter) picks, mapped to the physical nozzle
+    // it is loaded into (a filament id of 0 resolves to the first nozzle).
+    const unsigned int filament = region_config.outer_wall_filament.value > 0 ? region_config.outer_wall_filament.value : region_config.wall_filament.value;
+    const double nozzle_diameter = print_config.nozzle_diameter.get_at(physical_extruder_for_filament(print_config, filament));
+    // Same fallback as PrintRegion::flow(): a zero outer wall width follows the object line width,
+    // and a zero line width means "auto". Without it a zero width fed zero spacings into the
+    // segmentation below.
+    ConfigOptionFloatOrPercent width = region_config.outer_wall_line_width;
+    if (width.value == 0)
+        width = object_config.line_width;
+    if (!width.percent && width.value <= 0.)
+        return Flow::auto_extrusion_width(frExternalPerimeter, float(nozzle_diameter));
+    return width.get_abs_value(nozzle_diameter);
+}
+
 static inline Point mk_point(const Voronoi::VD::vertex_type *point) { return {coord_t(point->x()), coord_t(point->y())}; }
 
 static inline Point mk_point(const Voronoi::Internal::point_type &point) { return {coord_t(point.x()), coord_t(point.y())}; }
@@ -1830,8 +1847,7 @@ static LayerColorStat compute_layer_color_stat(const ConstLayerPtrsAdaptor &laye
             // As this region may split existing regions, we collect statistics over all regions for color_idx == 0.
             color_idx == 0 || config.wall_filament == int(color_idx)) {
             //BBS: the extrusion line width is outer wall rather than inner wall
-            const double nozzle_diameter = print_object.print()->config().nozzle_diameter.get_at(0);
-            double outer_wall_line_width = config.get_abs_value("outer_wall_line_width", nozzle_diameter);
+            const double outer_wall_line_width = resolve_outer_wall_line_width(config, print_object.config(), print_object.print()->config());
             out.extrusion_width     = std::max<float>(out.extrusion_width, outer_wall_line_width);
             const bool  gapfill_off = ! (config.gap_infill_speed.values.front() > 0.f);
             float small_region_threshold = config.gap_infill_speed.values.front() > 0 ?

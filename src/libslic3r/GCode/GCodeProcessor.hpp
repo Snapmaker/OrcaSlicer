@@ -242,6 +242,13 @@ inline bool is_bbl_special_tool_command(int tool_number)
         std::vector<int>   required_nozzle_HRC;
         std::vector<float> filament_densities;
         std::vector<float> filament_costs;
+        // filament_costs are real prices: from the slicing config, or from a G-code whose CONFIG_BLOCK
+        // has filament_cost. False for a G-code exported without filament prices or by another slicer;
+        // filament_costs then hold no price (0) and the cost views say so instead of guessing.
+        bool has_filament_costs{ false };
+        // Printer preset time_cost (money per hour of print time), for the machine part of the cost.
+        double time_cost{ 0. };
+        bool has_time_cost{ false };
         std::vector<int> filament_vitrification_temperature;
         PrintEstimatedStatistics print_statistics;
         std::vector<CustomGCode::Item> custom_gcode_per_print_z;
@@ -290,6 +297,9 @@ inline bool is_bbl_special_tool_command(int tool_number)
             required_nozzle_HRC = std::forward<Other>(other).required_nozzle_HRC;
             filament_densities = std::forward<Other>(other).filament_densities;
             filament_costs = std::forward<Other>(other).filament_costs;
+            has_filament_costs = other.has_filament_costs;
+            time_cost = other.time_cost;
+            has_time_cost = other.has_time_cost;
             filament_vitrification_temperature = std::forward<Other>(other).filament_vitrification_temperature;
             print_statistics = std::forward<Other>(other).print_statistics;
             custom_gcode_per_print_z = std::forward<Other>(other).custom_gcode_per_print_z;

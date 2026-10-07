@@ -1256,6 +1256,11 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
             if (m_autosave_interval_textinput != nullptr) { m_autosave_interval_textinput->Enable(pbool); }
         }
 
+        // Filament prices in G-code: every plate's G-code is out of date. The next slice of each plate
+        // re-runs only its G-code export (BackgroundSlicingProcess::apply()).
+        if (param == "gcode_include_filament_prices" && wxGetApp().plater())
+            wxGetApp().plater()->post_slice_state_change_update();
+
         // Print-by-object advisory notices: take effect immediately rather than waiting for the
         // next plate switch / slice attempt to re-evaluate.
         if (param == "show_print_by_object_caution" && wxGetApp().plater()) {
@@ -2095,6 +2100,14 @@ wxWindow* PreferencesDialog::create_ultra_page()
     auto item_hide_other_plates = create_item_checkbox(_L("Hide other plates while moving"), page,
         _L("While the Move tool is open, show only the plate you are working on. The other plates and their objects come back when the Move tool closes, and a plate you drag onto reappears when you release."), 50, "hide_other_plates_on_move");
 
+    auto title_cost = create_item_title(_L("Cost"), page, _L("Cost"));
+    auto item_gcode_prices = create_item_checkbox(_L("Include filament prices in exported G-code"), page,
+        _L("Write the filament prices into G-code you export or send to a printer: the \"; filament cost\" and "
+           "\"; total filament cost\" lines and filament_cost in the settings block. Off by default, so a G-code you "
+           "share does not tell anyone what you pay for filament; the rest of the file is the same either way. "
+           "With it off, the cost of a G-code opened on its own reads \"not in file\"; projects and sliced plates "
+           "still show their cost here."), 50, "gcode_include_filament_prices");
+
     auto title_presets = create_item_title(_L("Presets"), page, _L("Presets"));
     auto item_prefer_last_print = create_item_checkbox(_L("Prefer Last Used Print Profile"), page,
         _L("When a project's print profile is not available, pick the profile you last used at the same layer height instead of the first compatible one."), 50, "prefer_last_print_profile");
@@ -2181,6 +2194,8 @@ wxWindow* PreferencesDialog::create_ultra_page()
     sizer_page->Add(item_auto_drop, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_bottom_z, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_hide_other_plates, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(title_cost, 0, wxTOP | wxEXPAND, FromDIP(20));
+    sizer_page->Add(item_gcode_prices, 0, wxTOP, FromDIP(3));
     sizer_page->Add(title_presets, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_prefer_last_print, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_auto_shadow, 0, wxTOP, FromDIP(3));

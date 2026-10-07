@@ -4030,6 +4030,9 @@ int PartPlateList::create_plate(bool adjust_position)
 	origin = compute_origin(new_index, cols);
 	plate = new PartPlate(this, origin, m_plate_width, m_plate_depth, m_plate_height, m_plater, m_model, true, printer_technology);
 	assert(plate != NULL);
+	// Orca #14850: rebuild plate membership before the grid reflow moves instances with their plates
+	if (adjust_position && old_cols != cols)
+		reload_all_objects();
 
 	if (printer_technology == ptFFF)
 	{
@@ -4511,6 +4514,9 @@ int PartPlateList::move_plate_to_index(int old_index, int new_index)
 	{
 		delta = 1;
 	}
+	// Orca #14850: rebuild plate membership before the plates (and their instances) are moved
+	reload_all_objects();
+
 	else
 	{
 		delta = -1;

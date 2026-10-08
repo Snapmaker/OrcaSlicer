@@ -314,3 +314,40 @@ TEST_CASE("Only one wall on top surfaces keeps the inner walls of narrow walls a
     CHECK(one_wall.perimeters < plain.perimeters);
     CHECK_THAT(one_wall.far_wall_inner_walls, Catch::Matchers::WithinAbs(plain.far_wall_inner_walls, 1.0));
 }
+
+// Orca #16177: a hole in an internal-bridge area is its own (CW) polygon. Filtering polygon-by-polygon
+// dropped the hole when it did not touch internal_unsupported_area, so the next layer saw unsupported
+// infill over the hole and stacked a second internal bridge. Filtering whole ExPolygons keeps the hole.
+TEST_CASE("Internal bridge areas keep holes so they are not re-bridged on the next layer", "[PrintObject][InternalBridge]")
+{
+    auto config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"sparse_infill_density", "15%"},
+                                   {"thick_internal_bridges", true},
+                                   {"top_shell_layers", 3},
+                                   {"bottom_shell_layers", 2},
+                                   {"top_shell_thickness", 0},
+                                   {"bottom_shell_thickness", 0},
+                                   {"layer_height", 0.2},
+                                   {"initial_layer_print_height", 0.2}});
+    Print print;
+    Model model;
+    init_print({TestMesh::cube_with_hole}, print, model, config, false);
+    print.process();
+    REQUIRE_FALSE(print.objects().empty());
+    const PrintObject &object = *print.objects().front();
+    REQUIRE(object.layer_count() > 2);
+
+    const double max_overlap = scaled<double>(1.) * scaled<double>(1.) * 1e-3;
+    for (size_t i = 0; i + 1 < object.layer_count(); ++i) {
+        Polygons this_bridge;
+        Polygons next_bridge;
+        for (const LayerRegion *region : object.get_layer(i)->regions())
+            polygons_append(this_bridge, to_polygons(region->fill_surfaces.filter_by_type(stInternalBridge)));
+        for (const LayerRegion *region : object.get_layer(i + 1)->regions())
+            polygons_append(next_bridge, to_polygons(region->fill_surfaces.filter_by_type(stInternalBridge)));
+        if (this_bridge.empty() || next_bridge.empty())
+            continue;
+        CAPTURE(i);
+        CHECK(area(intersection(this_bridge, next_bridge)) < max_overlap);
+    }
+}

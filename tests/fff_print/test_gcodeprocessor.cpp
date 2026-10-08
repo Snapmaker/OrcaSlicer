@@ -2,12 +2,19 @@
 
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "libslic3r/Print.hpp"
+#include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/TriangleMesh.hpp"
 
+#include "test_data.hpp"
+
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
 
 using namespace Slic3r;
+using namespace Slic3r::Test;
 
 // Bambu firmware uses the " FEATURE: " style reserved tags, everything else the Slic3r-compatible
 // "TYPE:" style, so which list applies depends on the printer kind passed in.
@@ -120,4 +127,52 @@ TEST_CASE("GCodeProcessorResult copy assignment keeps the source and carries the
     // The copy leaves the source intact.
     REQUIRE(src.moves.size() == 1);
     REQUIRE(src.filename == "export.gcode");
+}
+
+TEST_CASE("post-process lines_ends match newline offsets", "[GCodeProcessor]")
+{
+    auto make_config = [](bool by_time) {
+        DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+        config.set_num_extruders(2);
+        config.set_num_filaments(2);
+        config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75};
+        config.option<ConfigOptionFloats>("nozzle_diameter")->values   = {0.4, 0.4};
+        config.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#0000FF"};
+        config.option<ConfigOptionBool>("single_extruder_multi_material")->value = false;
+        config.option<ConfigOptionFloat>("preheat_time")->value = by_time ? 30. : 0.;
+        config.option<ConfigOptionBool>("gcode_comments")->value = true;
+        config.set_deserialize_strict({{"brim_type", "no_brim"},
+                                       {"skirt_loops", "0"},
+                                       {"layer_height", "0.2"},
+                                       {"initial_layer_print_height", "0.2"},
+                                       {"gcode_flavor", "marlin"}});
+        return config;
+    };
+
+    auto run_case = [](DynamicPrintConfig config, bool by_time) {
+        Print print;
+        Model model;
+        init_print({make_cube(40., 40., 20.), make_cube(40., 40., 20.)}, print, model, config, false);
+        REQUIRE(model.objects.size() == 2);
+        model.objects[0]->config.set("extruder", 1);
+        model.objects[1]->config.set("extruder", 2);
+        print.apply(model, config);
+        print.is_BBL_printer() = false;
+
+        GCodeProcessorResult result;
+        const std::string    exported = Test::gcode(print, result);
+        REQUIRE((exported.find("preheat T") != std::string::npos) == by_time);
+        REQUIRE(exported.size() > GCodeProcessor::Output_Block_Size);
+
+        std::vector<size_t> newline_ends;
+        for (size_t i = exported.find('\n'); i != std::string::npos; i = exported.find('\n', i + 1))
+            newline_ends.push_back(i + 1);
+        REQUIRE(result.lines_ends.size() == newline_ends.size());
+        const auto difference = std::mismatch(result.lines_ends.begin(), result.lines_ends.end(), newline_ends.begin());
+        INFO("first difference at line " << (difference.first - result.lines_ends.begin() + 1));
+        CHECK(difference.first == result.lines_ends.end());
+    };
+
+    SECTION("BySize") { run_case(make_config(false), false); }
+    SECTION("ByTime") { run_case(make_config(true), true); }
 }

@@ -48,6 +48,11 @@ struct SurfaceDrag
 
     //  hold screen coor offset of cursor from object center without SLA shift
     Vec2d mouse_offset_without_sla_shift;
+
+    // Set once the volume really moved. A press and release without a drag in between (now
+    // common, as the whole footprint of the edited text / SVG starts a drag) records no
+    // "Move over surface" undo step.
+    bool moved = false;
 };
 
 // Limit direction of up vector on model

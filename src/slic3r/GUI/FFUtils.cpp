@@ -57,15 +57,44 @@ unsigned short FFUtils::getPid(int curId)
     bool                  valid = false;
     const com_dev_data_t& data  = MultiComMgr::inst()->devData(curId, &valid);
     if (!valid) {
-        return -1;
+        return OTHER;
     }
-    unsigned short curr_pid = -1;
-    if (data.connectMode == COM_CONNECT_LAN) {
-        curr_pid            = data.lanDevInfo.pid;
-    } else if (data.connectMode == COM_CONNECT_WAN) {
-        curr_pid            = data.devDetail->pid;
+    return getPid(data);
+}
+
+unsigned short FFUtils::getPid(const com_dev_data_t &data)
+{
+    return resolvePid(data.connectMode == COM_CONNECT_LAN, data.lanDevInfo.pid, data.devDetail != nullptr,
+                      data.devDetail != nullptr ? data.devDetail->pid : 0);
+}
+
+unsigned short FFUtils::resolvePid(bool lan, unsigned short lanPid, bool hasDetail, int detailPid)
+{
+    if (hasDetail && detailPid > 0 && detailPid < OTHER)
+        return (unsigned short) detailPid;
+    if (lan && lanPid != 0 && lanPid != OTHER)
+        return lanPid;
+    return 0;
+}
+
+bool FFUtils::isKnownPid(unsigned short pid)
+{
+    return printer_preset_map.find(pid) != printer_preset_map.end();
+}
+
+FFTempLayout FFUtils::tempLayout(unsigned short pid, int nozzleCnt)
+{
+    switch (pid) {
+    case C5: return FFTempLayout::Nozzles4;
+    case C5P: return FFTempLayout::Nozzles4Chamber;
+    case GUIDER_3_ULTRA: return FFTempLayout::Guider3Ultra;
+    default: break;
     }
-    return curr_pid;
+    // A model this build does not know: four nozzles is the Creator 5 shape, anything else gets
+    // the single-nozzle rows. Either way every row the layout names exists, so the page can fill it.
+    if (!isKnownPid(pid) && nozzleCnt >= 4)
+        return FFTempLayout::Nozzles4;
+    return FFTempLayout::Generic;
 }
 
 bool FFUtils::isPrinterSupportAms(unsigned short pid)
@@ -583,19 +612,19 @@ std::unordered_map<std::string, FFPrinterSimpleData> FFUtils::getDevListForModel
     };
     for (auto id : idList) {
         auto data = MultiComMgr::inst()->devData(id, &valid);
-        if (valid) {
+        if (valid && data.devDetail != nullptr) {
             std::string dev_id, status;
             FFPrinterSimpleData mdata;
             mdata.comId = id;
             mdata.wan  = data.connectMode;
             if (COM_CONNECT_LAN == data.connectMode) {
                 dev_id     = data.lanDevInfo.serialNumber;
-                mdata.pid  = data.lanDevInfo.pid;
+                mdata.pid  = getPid(data);
                 mdata.name = wxString::FromUTF8(data.devDetail->name);
                 status     = data.devDetail->status;
             } else if (COM_CONNECT_WAN == data.connectMode) {
                 dev_id     = data.wanDevInfo.serialNumber;
-                mdata.pid  = data.devDetail->pid;
+                mdata.pid  = getPid(data);
                 mdata.name = wxString::FromUTF8(data.devDetail->name);
                 status     = data.wanDevInfo.status;
             }

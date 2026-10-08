@@ -212,6 +212,9 @@ private:
 
     // Keep data about dragging only during drag&drop
     std::optional<SurfaceDrag> m_surface_drag;
+    // The press that started m_surface_drag cancelled a job that was still making the volume.
+    // A release without any move then runs it again (a real move re-processes anyway).
+    bool m_surface_drag_cancelled_job = false;
 
     // For volume on scaled objects
     std::optional<float> m_scale_width;

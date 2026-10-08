@@ -547,16 +547,24 @@ bool GLGizmoEmboss::on_mouse_for_translate(const wxMouseEvent &mouse_event)
     
     const Camera &camera = wxGetApp().plater()->get_camera();
     bool was_dragging = m_surface_drag.has_value();
+    bool was_moved    = was_dragging && m_surface_drag->moved;
     bool res = on_mouse_surface_drag(mouse_event, camera, m_surface_drag, m_parent, m_raycast_manager, UP_LIMIT);
     bool is_dragging = m_surface_drag.has_value();
 
-    // End with surface dragging?
-    if (was_dragging && !is_dragging) 
-        volume_transformation_changed();
+    // End with surface dragging? A press and release that moved nothing changes nothing,
+    // except that a job the press cancelled has to run again.
+    if (was_dragging && !is_dragging) {
+        if (was_moved)
+            volume_transformation_changed();
+        else if (m_surface_drag_cancelled_job)
+            process(false);
+        m_surface_drag_cancelled_job = false;
+    }
     
     // Start with dragging
     else if (!was_dragging && is_dragging) {
         // Cancel job to prevent interuption of dragging (duplicit result)
+        m_surface_drag_cancelled_job = m_job_cancel != nullptr && !m_job_cancel->load();
         if (m_job_cancel != nullptr)
             m_job_cancel->store(true);
     }
@@ -584,8 +592,11 @@ bool GLGizmoEmboss::on_mouse_for_translate(const wxMouseEvent &mouse_event)
 
 void GLGizmoEmboss::on_mouse_change_selection(const wxMouseEvent &mouse_event)
 {
-    static bool was_dragging = true;  
-    if ((mouse_event.LeftUp() || mouse_event.RightUp()) && !was_dragging) {
+    static bool was_dragging = true;
+    // The left up may be the end of a drag that started on the gizmo floating window (e.g. selecting
+    // text in the input field). Such a release is not a click on the scene and must not close the gizmo.
+    // (The flag is only set for left up events, so right up behavior is unchanged.)
+    if ((mouse_event.LeftUp() || mouse_event.RightUp()) && !was_dragging && !m_parent.is_mouse_left_up_ignored()) {
         // is hovered volume closest hovered?
         int hovered_idx = m_parent.get_first_hover_volume_idx();
         if (hovered_idx < 0) 

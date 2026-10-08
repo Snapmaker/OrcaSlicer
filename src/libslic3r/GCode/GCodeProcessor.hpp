@@ -377,6 +377,9 @@ inline bool is_bbl_special_tool_command(int tool_number)
         static const float Wipe_Width;
         static const float Wipe_Height;
 
+        // Size of the blocks the post-processing passes write the G-code in
+        static constexpr size_t Output_Block_Size = 65536;
+
         static bool s_IsBBLPrinter;
 
 #if ENABLE_GCODE_VIEWER_DATA_CHECKING

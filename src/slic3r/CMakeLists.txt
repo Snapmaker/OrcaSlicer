@@ -715,6 +715,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/SavePresetDialog.hpp
     GUI/ScaleToVolumeDialog.cpp
     GUI/ScaleToVolumeDialog.hpp
+    GUI/EmbossPicking.cpp
+    GUI/EmbossPicking.hpp
     GUI/SceneRaycaster.cpp
     GUI/SceneRaycaster.hpp
     GUI/Search.cpp

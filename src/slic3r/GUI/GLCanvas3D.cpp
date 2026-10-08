@@ -40,6 +40,8 @@
 #include "DailyTips.hpp"
 #include "PlateFocusHide.hpp"
 #include "FrameProfiler.hpp"
+#include "CameraUtils.hpp"
+#include "EmbossPicking.hpp"
 
 #include "slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
@@ -3945,6 +3947,37 @@ void GLCanvas3D::mirror_selection(Axis axis)
     //wxGetApp().obj_manipul()->set_dirty();
 }
 
+// The ModelVolume behind a GLVolume, or nullptr (wipe towers, SLA supports and pads, stale indices).
+static const ModelVolume* picking_model_volume(const GLVolume& v, const Model* model)
+{
+    if (model == nullptr)
+        return nullptr;
+    const int object_idx = v.object_idx();
+    const int volume_idx = v.volume_idx();
+    if (object_idx < 0 || object_idx >= (int)model->objects.size() || volume_idx < 0)
+        return nullptr;
+    const ModelObject* object = model->objects[object_idx];
+    if (object == nullptr || volume_idx >= (int)object->volumes.size())
+        return nullptr;
+    return object->volumes[volume_idx];
+}
+
+static bool is_text_or_svg_volume(const ModelVolume& mv)
+{
+    return mv.is_text() || mv.emboss_shape.has_value();
+}
+
+// Depth tolerance [mm] for a text or SVG part (its emboss depth in world units), -1 for other volumes.
+static double emboss_prefer_tolerance(const GLVolume& v, const ModelVolume& mv)
+{
+    if (!is_text_or_svg_volume(mv))
+        return -1.;
+    double depth = mv.emboss_shape.has_value() ? mv.emboss_shape->projection.depth : 1.;
+    // The depth runs along the volume's local Z; follow any scale of the volume and its instance.
+    depth *= (v.world_matrix().linear() * Vec3d::UnitZ()).norm();
+    return EmbossPicking::prefer_tolerance_from_depth(depth);
+}
+
 // Reload the 3D scene of
 // 1) Model / ModelObjects / ModelInstances / ModelVolumes
 // 2) Print bed
@@ -4491,6 +4524,10 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
         assert(v->mesh_raycaster != nullptr);
         std::shared_ptr<SceneRaycasterItem> raycaster = add_raycaster_for_picking(SceneRaycaster::EType::Volume, i, *v->mesh_raycaster, v->world_matrix());
         raycaster->set_active(v->is_active);
+        // Text and SVG parts win near-ties against the rest of their own object (EmbossPicking.hpp).
+        const ModelVolume* mv = picking_model_volume(*v, m_model);
+        raycaster->set_pick_owner(v->object_idx(), v->instance_idx(),
+                                  mv != nullptr ? emboss_prefer_tolerance(*v, *mv) : -1.);
     }
 
     // refresh gizmo elements raycasters for picking
@@ -6125,7 +6162,9 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
                 deselect_all();
         }
         //BBS Select plate in this 3D canvas.
-        else if (evt.LeftUp() && !m_mouse.dragging && m_picking_enabled && !m_hover_plate_idxs.empty() && (m_canvas_type == CanvasView3D) && !is_layers_editing_enabled())
+        // The left up may come from an ImGui window (e.g. a drag started on the gizmo floating window and released over the bed),
+        // in which case it must not be treated as a click on the plate, otherwise the gizmo would be closed (see deselect_all below).
+        else if (evt.LeftUp() && !m_mouse.ignore_left_up && !m_mouse.dragging && m_picking_enabled && !m_hover_plate_idxs.empty() && (m_canvas_type == CanvasView3D) && !is_layers_editing_enabled())
         {
                 int hover_idx = m_hover_plate_idxs.front();
                 wxGetApp().plater()->select_plate_by_hover_id(hover_idx);
@@ -8812,6 +8851,92 @@ void GLCanvas3D::_refresh_if_shown_on_screen()
     }
 }
 
+void GLCanvas3D::_apply_emboss_footprint_hover(bool gizmo_element_hovered)
+{
+    using namespace EmbossPicking;
+
+    const GLGizmosManager::EType gizmo_type = m_gizmos.get_current_type();
+    if (gizmo_type != GLGizmosManager::EType::Emboss && gizmo_type != GLGizmosManager::EType::Svg)
+        return;
+    // The tool's own grabbers (the rotation ring) keep the hover.
+    if (gizmo_element_hovered)
+        return;
+    // Same rule as the hover itself: CTRL with a tool open hovers no volume.
+    if (wxGetKeyState(WXK_CONTROL))
+        return;
+
+    const Selection::IndicesList& selected = m_selection.get_volume_idxs();
+    if (selected.size() != 1)
+        return;
+    const int edited_idx = (int)*selected.begin();
+    if (edited_idx < 0 || edited_idx >= (int)m_volumes.volumes.size())
+        return;
+    const GLVolume* edited = m_volumes.volumes[edited_idx];
+    if (edited == nullptr || !edited->is_active || edited->disabled)
+        return;
+    const ModelVolume* edited_mv = picking_model_volume(*edited, m_model);
+    if (edited_mv == nullptr || !is_text_or_svg_volume(*edited_mv))
+        return;
+    // A lone text / SVG object moves with the ordinary object drag, which needs a press on the mesh
+    // itself; only a part on an object gets the surface drag that the footprint starts.
+    if (edited_mv->is_the_only_one_part())
+        return;
+
+    HoverOwner owner = HoverOwner::Nothing;
+    const int hovered_idx = get_first_hover_volume_idx();
+    if (hovered_idx == edited_idx)
+        owner = HoverOwner::EditedVolume;
+    else if (hovered_idx >= 0 && hovered_idx < (int)m_volumes.volumes.size()) {
+        const GLVolume*    hovered    = m_volumes.volumes[hovered_idx];
+        const ModelVolume* hovered_mv = picking_model_volume(*hovered, m_model);
+        if (hovered->object_idx() != edited->object_idx() || hovered->instance_idx() != edited->instance_idx())
+            owner = HoverOwner::OtherObject;
+        else if (hovered_mv != nullptr && is_text_or_svg_volume(*hovered_mv))
+            owner = HoverOwner::OtherTextOrSvg;
+        else
+            owner = HoverOwner::SameObjectPart;
+    }
+    if (owner == HoverOwner::EditedVolume || !footprint_takes_over(owner))
+        return;
+
+    // Screen footprint: the projected convex hull of the volume (its bounding box when it has no hull).
+    std::vector<Vec3d> vertices;
+    if (const TriangleMesh* hull = edited->convex_hull(); hull != nullptr && !hull->its.vertices.empty()) {
+        vertices.reserve(hull->its.vertices.size());
+        for (const Vec3f& vertex : hull->its.vertices)
+            vertices.emplace_back(vertex.cast<double>());
+    } else {
+        const BoundingBoxf3& bb = edited->bounding_box();
+        if (!bb.defined)
+            return;
+        for (int corner = 0; corner < 8; ++corner)
+            vertices.emplace_back((corner & 1) ? bb.max.x() : bb.min.x(),
+                                  (corner & 2) ? bb.max.y() : bb.min.y(),
+                                  (corner & 4) ? bb.max.z() : bb.min.z());
+    }
+
+    const Camera&     camera          = wxGetApp().plater()->get_camera();
+    const Transform3d world           = edited->world_matrix();
+    const Vec3d       camera_position = camera.get_position();
+    const Vec3d       camera_forward  = camera.get_dir_forward();
+    for (Vec3d& vertex : vertices) {
+        vertex = world * vertex;
+        // A vertex behind a perspective camera folds the projection over; leave such views alone.
+        if (camera.get_type() == Camera::EType::Perspective && (vertex - camera_position).dot(camera_forward) <= 0.)
+            return;
+    }
+    const Polygon footprint = Geometry::convex_hull(CameraUtils::project(camera, vertices));
+    const double  padding   = FOOTPRINT_PADDING_PX * get_canvas_size().get_scale_factor();
+    if (!footprint_contains(footprint, m_mouse.position, padding))
+        return;
+
+    m_hover_volume_idxs.assign(1, edited_idx);
+    if (!m_hover_plate_idxs.empty()) {
+        m_hover_plate_idxs.clear();
+        wxGetApp().plater()->get_partplate_list().reset_hover_id();
+    }
+}
+
 void GLCanvas3D::_picking_pass()
 {
     if (!m_picking_enabled || m_mouse.dragging || m_mouse.position == Vec2d(DBL_MAX, DBL_MAX) || m_gizmos.is_dragging()) {
@@ -8883,6 +9008,9 @@ void GLCanvas3D::_picking_pass()
     }
     else
         m_gizmos.set_hover_id(-1);
+
+    _apply_emboss_footprint_hover(hit.is_valid() &&
+        (hit.type == SceneRaycaster::EType::Gizmo || hit.type == SceneRaycaster::EType::FallbackGizmo));
 
     _update_volumes_hover_state();
 

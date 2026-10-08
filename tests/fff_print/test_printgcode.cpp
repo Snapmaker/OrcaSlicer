@@ -1220,9 +1220,12 @@ TEST_CASE("resolved per-filament flow values match the per-path lookups",
         const auto &pa    = *config.option<ConfigOptionBools>("enable_pressure_advance");
         const size_t n    = flow_variant_filament_count(config);
         REQUIRE(cache.flow_ratio.size() == n);
+        REQUIRE(cache.process_config_idx.size() == n);
         REQUIRE(cache.variants_active == filament_flow_variants_active(config));
         for (unsigned int id = 0; id <= n; ++id) {
             INFO("filament id " << id);
+            // The slot GCode::process_flow_value used to compute per option read.
+            CHECK(cache.process_config_idx_for(config, id) == get_config_idx(config, ConfigFlowDomain::Process, id));
             // The expressions _extrude used before the cache.
             const double old_ratio = filament_flow_variants_active(config) ?
                                          get_value_at(config, ratio, ConfigFlowDomain::Filament, id) :
@@ -1237,6 +1240,7 @@ TEST_CASE("resolved per-filament flow values match the per-path lookups",
         // Default-constructed (before apply_print_config): every id falls back.
         const ResolvedFilamentFlow empty;
         for (unsigned int id = 0; id <= n; ++id) {
+            CHECK(empty.process_config_idx_for(config, id) == cache.process_config_idx_for(config, id));
             CHECK(empty.flow_ratio_for(config, id) == cache.flow_ratio_for(config, id));
             CHECK(empty.max_volumetric_speed_for(config, id) == cache.max_volumetric_speed_for(config, id));
             CHECK(empty.enable_pressure_advance_for(config, id) == cache.enable_pressure_advance_for(config, id));
@@ -1275,6 +1279,18 @@ TEST_CASE("resolved per-filament flow values match the per-path lookups",
         DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
         config.set_num_filaments(3);
         check(config);
+    }
+    SECTION("process flow variants resolve to the High-Flow slot per filament")
+    {
+        DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+        config.set_num_filaments(2);
+        config.option<ConfigOptionStrings>("process_flow_support", true)->values = {FLOW_MODE_STANDARD, FLOW_MODE_HIGH_FLOW};
+        config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {int(fvtHighFlow), int(fvtStandard)};
+        check(config);
+        const ResolvedFilamentFlow cache = ResolvedFilamentFlow::resolve(config);
+        REQUIRE(cache.process_config_idx.size() == 2);
+        CHECK(cache.process_config_idx[0] == 1);
+        CHECK(cache.process_config_idx[1] == 0);
     }
 }
 

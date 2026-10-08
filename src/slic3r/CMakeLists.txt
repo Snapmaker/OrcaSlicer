@@ -50,6 +50,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/BitmapComboBox.hpp
     GUI/BonjourDialog.cpp
     GUI/BonjourDialog.hpp
+    GUI/BufferTexture.cpp
+    GUI/BufferTexture.hpp
     GUI/calib_dlg.cpp
     GUI/calib_dlg.hpp
     GUI/Calibration.cpp
@@ -199,8 +201,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/GLShader.hpp
     GUI/GLShadersManager.cpp
     GUI/GLShadersManager.hpp
+    GUI/GLSubTextureBindRenderer.cpp
+    GUI/GLSubTextureBindRenderer.hpp
     GUI/GLTexture.cpp
     GUI/GLTexture.hpp
+    GUI/GLToolbarBackgroundTextureCache.cpp
+    GUI/GLToolbarBackgroundTextureCache.hpp
     GUI/GLToolbar.cpp
     GUI/GLToolbar.hpp
     GUI/GUI_App.cpp
@@ -368,6 +374,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/ParamsPanel.hpp
     GUI/PartPlate.cpp
     GUI/PartPlate.hpp
+    GUI/PathData.cpp
+    GUI/PathData.hpp
+    GUI/PathRenderer.cpp
+    GUI/PathRenderer.hpp
     GUI/PhysicalPrinterDialog.cpp
     GUI/PhysicalPrinterDialog.hpp
     GUI/Plater.cpp

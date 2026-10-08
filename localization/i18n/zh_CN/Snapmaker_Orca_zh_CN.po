@@ -6250,13 +6250,6 @@ msgstr "打印机是否就绪？打印平台是否在正确的位置、有没有
 msgid "Upload and Print"
 msgstr "上传并打印"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"逐件打印：\n"
-"建议使用自动摆盘避免打印时发生碰撞。"
-
 msgid "Send G-code"
 msgstr "发送 G 代码"
 

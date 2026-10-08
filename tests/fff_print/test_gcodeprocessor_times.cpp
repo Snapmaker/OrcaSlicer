@@ -179,12 +179,10 @@ TEST_CASE("Layer, role and move-type tables are recomputed from the per-move tim
         CHECK(r.initial_layer_time == Approx(std::max(0.f, mode.layers_times[0] - custom)));
     }
 
-    SECTION("legacy viewer layer duration per move")
+    SECTION("the last move belongs to the second layer (libvgcode's per-layer times key on layer_id)")
     {
-        // layer_duration of an extrusion of the second layer is that layer's time
         const Move &last = r.moves.back();
-        REQUIRE(last.layer_id == 1);
-        CHECK(last.layer_duration == Approx(mode.layers_times[1]));
+        CHECK(last.layer_id == 1);
     }
 }
 

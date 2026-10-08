@@ -110,8 +110,10 @@ class Preview : public wxPanel
     //BBS: add only gcode mode
     bool m_only_gcode { false };
     bool m_reload_paint_after_background_process_apply{false};
-    // Set by Plater::reslice() memory dialog. When true, load_print_as_fff
-    // passes skip_toolpaths=true to skip load_toolpaths GPU vertex buffers.
+    // Set when the slicing memory guard fired for this slice (Plater::reslice(), #642). load_print_as_fff
+    // then checks whether the libvgcode toolpaths fit in the memory available now (preview_toolpaths_fit);
+    // only when they do not does the preview fall back to the per-layer summary (skip_toolpaths), and it
+    // says so in a notification and in the legend.
     bool m_skip_toolpath_preview { false };
 
 public:

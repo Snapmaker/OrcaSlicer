@@ -471,8 +471,9 @@ std::string OozePrevention::pre_toolchange(GCode& gcodegen, double print_z)
     //
     // This is restricted to "true" multi-tool setups where filament id == physical
     // extruder id (classic multi-extruder / IDEX / toolchanger machines with
-    // ooze_prevention enabled - m_ooze_prevention.enable already requires
-    // !single_extruder_multi_material, so SEMM/AMS/MMU never reach here):
+    // ooze_prevention enabled). SEMM/AMS/MMU never reach here: init_ooze_prevention()
+    // only sets m_ooze_prevention.enable when single_extruder_multi_material is off, so
+    // (like upstream bcbb8746) there is no separate SEMM check below.
     //  - Bambu (H2/H2C/H2D) printers are excluded outright: they map filaments to
     //    physical nozzles through a separate grouping/virtual-filament layer
     //    (MultiNozzleUtils::LayeredNozzleGroupResult, MixedFilamentManager) where
@@ -489,15 +490,16 @@ std::string OozePrevention::pre_toolchange(GCode& gcodegen, double print_z)
     //    risk cutting power to a tool another object still needs, always keep by-object
     //    prints on the existing standby/idle-temperature behavior.
     bool is_last_use = false;
-    if (gcodegen.m_curr_print != nullptr && !gcodegen.config().single_extruder_multi_material.value &&
-        !gcodegen.is_BBL_Printer() &&
+    if (gcodegen.m_curr_print != nullptr && !gcodegen.is_BBL_Printer() &&
         gcodegen.config().print_sequence == PrintSequence::ByLayer &&
         !gcodegen.m_curr_print->tool_ordering().empty()) {
         is_last_use = gcodegen.m_curr_print->tool_ordering().is_last_extrusion_layer(print_z, extruder_id);
     }
 
-    // Upstream Orca #15849 (c93acbd2): do not pop_back() on an empty set_temperature() result
-    // (some flavors return "" for a wait, and a missing newline must not be assumed).
+    // From upstream c93acbd2 (bcbb8746 went back to a bare pop_back()): never pop_back() on an
+    // empty set_temperature() result and never assume the trailing newline. With wait == false
+    // the writer always returns "M104 ...\n" (or G10 on RRF), so the output is the same as
+    // upstream's; the guard only keeps a future empty return from being undefined behaviour.
     auto append_cooldown = [&gcode](std::string temp_cmd) {
         if (temp_cmd.empty())
             return;

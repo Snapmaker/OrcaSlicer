@@ -7,6 +7,14 @@
 #include "../PrintConfig.hpp"
 
 namespace Slic3r {
+
+inline int number_of_support_interface_bottom_layers(const PrintObjectConfig& object_config)
+{
+    return object_config.support_interface_bottom_layers.value < 0 ?
+        object_config.support_interface_top_layers.value :
+        object_config.support_interface_bottom_layers.value;
+}
+
 struct SupportParameters {
     SupportParameters() = delete;
     // Ultra (support groups, plan 2026-09-02 Stage 3 3.3): the parameters are derived from a
@@ -31,8 +39,7 @@ struct SupportParameters {
 
 	    {
 	        this->num_top_interface_layers    = std::max(0, object_config.support_interface_top_layers.value);
-	        this->num_bottom_interface_layers = object_config.support_interface_bottom_layers < 0 ? 
-	            num_top_interface_layers : object_config.support_interface_bottom_layers;
+	        this->num_bottom_interface_layers = number_of_support_interface_bottom_layers(object_config);
 	        this->has_top_contacts              = num_top_interface_layers    > 0;
 	        this->has_bottom_contacts           = num_bottom_interface_layers > 0;
 	        if (this->soluble_interface_non_soluble_base) {

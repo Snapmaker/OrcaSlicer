@@ -1157,12 +1157,17 @@ void TreeSupport::create_tree_support_layers()
 
         // Layers between the raft contacts and bottom of the object.
         double dist_to_go = m_slicing_params.object_print_z_min - raft_print_z;
-        auto nsteps = int(ceil(dist_to_go / m_slicing_params.max_suport_layer_height));
-        double height = dist_to_go / nsteps;
-        for (int i = 0; i < nsteps; ++i) {
-            raft_print_z += height;
-            raft_slice_z = raft_print_z - height / 2;
-            m_object->add_tree_support_layer(layer_id++, height, raft_print_z, raft_slice_z);
+        // ORCA: Guard tiny residual raft-to-object gaps so the EPSILON-biased ceil()
+        // below cannot turn them into zero steps after floating-point accumulation.
+        if (dist_to_go > EPSILON) {
+            // ORCA: Bias by EPSILON so near-equal gaps do not get an extra split from FP noise.
+            auto nsteps = int(ceil((dist_to_go - EPSILON) / m_slicing_params.max_suport_layer_height));
+            double height = dist_to_go / nsteps;
+            for (int i = 0; i < nsteps; ++i) {
+                raft_print_z += height;
+                raft_slice_z = raft_print_z - height / 2;
+                m_object->add_tree_support_layer(layer_id++, height, raft_print_z, raft_slice_z);
+            }
         }
         m_raft_layers = layer_id;
     }
@@ -1671,27 +1676,78 @@ void TreeSupport::generate_toolpaths(const TreeSupportGroupContext *groups)
                         filler_support->angle = Geometry::deg2rad(object_config.support_angle.value);
 
                         Polygons loops = to_polygons(poly);
+                        //ORCA: Group base per area as no_sort to keep outline->fill together.
+                        std::unique_ptr<ExtrusionEntityCollection> base_eec = std::make_unique<ExtrusionEntityCollection>();
+                        base_eec->no_sort = true;
+                        ExtrusionEntitiesPtr &base_dst = base_eec->entities;
                         if (layer_id == 0) {
                             float density = float(m_object_config->raft_first_layer_density.value * 0.01);
-                            fill_expolygons_with_sheath_generate_paths(ts_layer->support_fills.entities, loops, filler_support.get(), density, erSupportMaterial, flow,
+                            fill_expolygons_with_sheath_generate_paths(base_dst, loops, filler_support.get(), density, erSupportMaterial, flow,
                                                                        m_support_params, true, false);
                         }
                         else {
+                            //ORCA: Force base walls before infill to keep outline->fill order.
                             if (need_infill && m_support_params.base_fill_pattern != ipLightning) {
                                 // allow infill-only mode if support is thick enough (so min_wall_count is 0);
                                 // otherwise must draw 1 wall
                                 // Don't need extra walls if we have infill. Extra walls may overlap with the infills.
                                 size_t min_wall_count = offset(poly, -scale_(support_spacing * 1.5)).empty() ? 1 : 0;
-                                make_perimeter_and_infill(ts_layer->support_fills.entities, poly, std::max(min_wall_count, wall_count), flow,
-                                    erSupportMaterial, filler_support.get(), support_density);
+                                make_perimeter_and_infill(base_dst, poly, std::max(min_wall_count, wall_count), flow,
+                                    erSupportMaterial, filler_support.get(), support_density, false);
                             }
                             else {
                                 SupportParameters support_params = m_support_params;
                                 if (area_group.need_extra_wall && object_config.tree_support_wall_count.value == 0)
                                     support_params.tree_branch_diameter_double_wall_area_scaled = 0.1;
-                                tree_supports_generate_paths(ts_layer->support_fills.entities, loops, flow, support_params);
+                                tree_supports_generate_paths(base_dst, loops, flow, support_params);
                             }
                         }
+
+                        //ORCA: Emit lightning infill per base area to avoid interleaving across islands.
+                        if (m_support_params.base_fill_pattern == ipLightning) {
+                            double print_z = ts_layer->print_z;
+                            auto lightning_layer_mapping = printZ_to_lightninglayer.find(print_z);
+                            if (lightning_layer_mapping != printZ_to_lightninglayer.end()) {
+                                //TODO:
+                                //1.the second parameter of convertToLines seems to decide how long the lightning should be trimmed from its root, so that the root wont overlap/detach the support contour.
+                                // whether current value works correctly remained to be tested
+                                //2.related to previous one, that lightning roots need to be trimed more when support has multiple walls
+                                //3.function connect_infill() and variable 'params' helps create connection pattern along contours between two lightning roots,
+                                // strengthen lightnings while it may make support harder. decide to enable it or not. if yes, proper values for params are remained to be tested
+                                auto &lightning_layer = generator->getTreesForLayer(lightning_layer_mapping->second);
+                                ExPolygons areas;
+                                areas.emplace_back(poly);
+                                areas = offset_ex(areas, -flow.scaled_spacing());
+                                for (auto &area : areas) {
+                                    Polylines polylines = lightning_layer.convertToLines(to_polygons(area), 0);
+                                    for (auto itr = polylines.begin(); itr != polylines.end();) {
+                                        if (itr->length() < scale_(1.0))
+                                            itr = polylines.erase(itr);
+                                        else
+                                            itr++;
+                                    }
+                                    Polylines opt_polylines;
+                                    //this wont create connection patterns along contours
+                                    append(opt_polylines, chain_polylines(std::move(polylines)));
+                                    extrusion_entities_append_paths(base_dst, opt_polylines, erSupportMaterial,
+                                        float(flow.mm3_per_mm()), float(flow.width()), float(flow.height()));
+#ifdef SUPPORT_TREE_DEBUG_TO_SVG
+                                    std::string name = debug_out_path("trees_polyline_%.2f.svg", ts_layer->print_z);
+                                    BoundingBox bbox = get_extents(ts_layer->base_areas);
+                                    SVG svg(name, bbox);
+                                    if (svg.is_opened()) {
+                                        svg.draw(ts_layer->base_areas, "blue");
+                                        svg.draw(generator->Overhangs()[lightning_layer_mapping->second], "red");
+                                        for (auto &line : opt_polylines) svg.draw(line, "yellow");
+                                    }
+#endif
+                                }
+                            }
+                        }
+
+                        //ORCA: Keep per-area base paths grouped for outline->fill preservation.
+                        if (!base_eec->empty())
+                            ts_layer->support_fills.entities.push_back(base_eec.release());
                     }
                 }
                 // Ultra (support groups, Stage 5 / plan Stage 4b "per-group interface ... ironing"):
@@ -1757,60 +1813,6 @@ void TreeSupport::generate_toolpaths(const TreeSupportGroupContext *groups)
                         iron_piece(std::move(exposed), m_support_params, ts_layer->support_fills.entities);
                     }
                 }
-                if (m_support_params.base_fill_pattern == ipLightning)
-                {
-                    double print_z = ts_layer->print_z;
-                    if (printZ_to_lightninglayer.find(print_z) == printZ_to_lightninglayer.end())
-                        continue;
-                    //TODO:
-                    //1.the second parameter of convertToLines seems to decide how long the lightning should be trimmed from its root, so that the root wont overlap/detach the support contour.
-                    // whether current value works correctly remained to be tested
-                    //2.related to previous one, that lightning roots need to be trimed more when support has multiple walls
-                    //3.function connect_infill() and variable 'params' helps create connection pattern along contours between two lightning roots,
-                    // strengthen lightnings while it may make support harder. decide to enable it or not. if yes, proper values for params are remained to be tested
-                    auto& lightning_layer = generator->getTreesForLayer(printZ_to_lightninglayer[print_z]);
-
-                    Flow       flow  = (layer_id == 0 && m_raft_layers == 0) ? m_object->print()->brim_flow() :support_flow;
-                    ExPolygons areas = offset_ex(ts_layer->base_areas, -flow.scaled_spacing());
-
-                    for (auto& area : areas)
-                    {
-                        Polylines polylines = lightning_layer.convertToLines(to_polygons(area), 0);
-                        for (auto itr = polylines.begin(); itr != polylines.end();)
-                        {
-                            if (itr->length() < scale_(1.0))
-                                itr = polylines.erase(itr);
-                            else
-                                itr++;
-                        }
-                        Polylines opt_polylines;
-#if 1
-                        //this wont create connection patterns along contours
-                        append(opt_polylines, chain_polylines(std::move(polylines)));
-#else
-                        //this will create connection patterns along contours
-                        FillParams params;
-                        params.anchor_length = float(Fill::infill_anchor * 0.01 * flow.spacing());
-                        params.anchor_length_max = Fill::infill_anchor_max;
-                        params.anchor_length = std::min(params.anchor_length, params.anchor_length_max);
-                        Fill::connect_infill(std::move(polylines), area, opt_polylines, flow.spacing(), params);
-#endif
-                        extrusion_entities_append_paths(ts_layer->support_fills.entities, opt_polylines, erSupportMaterial,
-                            float(flow.mm3_per_mm()), float(flow.width()), float(flow.height()));
-
-#ifdef SUPPORT_TREE_DEBUG_TO_SVG
-                        std::string name = debug_out_path("trees_polyline_%.2f.svg", ts_layer->print_z);
-                        BoundingBox bbox = get_extents(ts_layer->base_areas);
-                        SVG svg(name, bbox);
-                        if (svg.is_opened()) {
-                            svg.draw(ts_layer->base_areas, "blue");
-                            svg.draw(generator->Overhangs()[printZ_to_lightninglayer[print_z]], "red");
-                            for (auto &line : opt_polylines) svg.draw(line, "yellow");
-                        }
-#endif
-                    }
-                }
-
                 // sort extrusions to reduce travel, also make sure walls go before infills
                 if (ts_layer->support_fills.no_sort == false) {
                     chain_and_reorder_extrusion_entities(ts_layer->support_fills.entities);
@@ -2160,8 +2162,8 @@ void TreeSupport::draw_circles()
 
     // generate areas
     const coordf_t layer_height = config.layer_height.value;
-    const size_t   top_interface_layers = config.support_interface_top_layers.value;
-    const size_t   bottom_interface_layers = config.support_interface_bottom_layers.value < 0 ? top_interface_layers : config.support_interface_bottom_layers.value;
+    const size_t top_interface_layers = m_support_params.num_top_interface_layers;
+    const size_t bottom_interface_layers = number_of_support_interface_bottom_layers(config);
     const double nozzle_diameter = m_object->print()->config().nozzle_diameter.get_at(0);
     const coordf_t line_width = config.get_abs_value("support_line_width", nozzle_diameter);
     const coordf_t line_width_scaled           = scale_(line_width);
@@ -2378,6 +2380,15 @@ void TreeSupport::draw_circles()
                         floor_areas = std::move(diff_ex(floor_areas, bottom_gap_area));
                     }
                 }
+                // Orca: Final tree base polygons may be too close above model surfaces.
+                // Enforce bottom Z clearance for non-contact support layers as well.
+                if (!ts_layer->base_areas.empty()) {
+                    const Polygons trimming = get_trim_support_regions(
+                        *m_object, ts_layer, 0., m_slicing_params.gap_object_support, 0);
+                    if (!trimming.empty())
+                        ts_layer->base_areas = diff_ex(ts_layer->base_areas, trimming);
+                }
+
                 auto &area_groups = ts_layer->area_groups;
                 for (auto& expoly : ts_layer->base_areas) {
                     //if (area(expoly) < SQ(scale_(1))) continue;
@@ -2672,8 +2683,7 @@ void TreeSupport::drop_nodes()
     const size_t tip_layers = base_radius / layer_height; //The number of layers to be shrinking the circle to create a tip. This produces a 45 degree angle.
     const coordf_t radius_sample_resolution = m_ts_data->m_radius_sample_resolution;
     const bool support_on_buildplate_only = config.support_on_build_plate_only.value;
-    const size_t top_interface_layers = config.support_interface_top_layers.value;
-    const size_t bottom_interface_layers = config.support_interface_bottom_layers.value < 0 ? top_interface_layers : config.support_interface_bottom_layers.value;
+    const size_t bottom_interface_layers = number_of_support_interface_bottom_layers(config);
     SupportNode::diameter_angle_scale_factor = diameter_angle_scale_factor;
     float        DO_NOT_MOVER_UNDER_MM       = is_slim ? 0 : 5;                     // do not move contact points under 5mm
 
@@ -3371,6 +3381,7 @@ std::vector<LayerHeightData> TreeSupport::plan_layer_heights()
         obj_layer_zs.reserve(m_object->layer_count());
         for (const Layer *l : m_object->layers()) obj_layer_zs.emplace_back((float) l->print_z);
         z_heights[m_object->get_layer(0)->print_z] = m_object->get_layer(0)->height;
+        const coordf_t min_print_z = m_object->get_layer(0)->print_z;
         // Collect top contact layers
         for (int layer_nr = 1; layer_nr < contact_nodes.size(); layer_nr++) {
             if (!contact_nodes[layer_nr].empty()) {
@@ -3378,7 +3389,7 @@ std::vector<LayerHeightData> TreeSupport::plan_layer_heights()
                 coordf_t height = contact_nodes[layer_nr].front()->height;
                 // insertion will fail if there is already a key of print_z, so no need to check
                 bounds.insert({print_z, height});
-                bounds.insert({print_z - height, 0}); // the bottom_z of the layer
+                bounds.insert({std::max(min_print_z, print_z - height), 0}); // the bottom_z of the layer
             }
         }
 

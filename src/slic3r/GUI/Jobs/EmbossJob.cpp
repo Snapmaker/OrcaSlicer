@@ -1245,8 +1245,10 @@ TriangleMesh try_create_mesh(DataBase &input, const Fnc& was_canceled)
     double depth = input.shape.projection.depth / scale;    
     auto projectZ = std::make_unique<ProjectZ>(depth);    
     float offset = input.is_outside ? -SAFE_SURFACE_OFFSET : (SAFE_SURFACE_OFFSET - input.shape.projection.depth);
-    if (input.from_surface.has_value())
-        offset += *input.from_surface;
+    // EdgeSlicer: no "from surface" offset here. For a flat shape that distance is where the volume is
+    // (the "From surface" slider, the 3D handles and a new volume all move the volume itself, and the
+    // tool measures it back from the volume when it opens), so offsetting the mesh as well put the
+    // text twice as far after every edit. Only the per glyph placement above offsets the mesh.
     Transform3d tr = Eigen::Translation<double, 3>(0., 0.,static_cast<double>(offset)) * Eigen::Scaling(scale);
     ProjectTransform project(std::move(projectZ), tr);
     if (was_canceled()) return {};

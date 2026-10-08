@@ -190,6 +190,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Gizmos/EmbossFaceList.hpp
     GUI/Gizmos/EmbossInsert.cpp
     GUI/Gizmos/EmbossInsert.hpp
+    GUI/Gizmos/EmbossTransformHandles.cpp
+    GUI/Gizmos/EmbossTransformHandles.hpp
     #GUI/Gizmos/GLGizmoFaceDetector.cpp
     #GUI/Gizmos/GLGizmoFaceDetector.hpp
     GUI/Gizmos/GLGizmoFdmSupports.cpp
@@ -717,6 +719,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/ScaleToVolumeDialog.hpp
     GUI/EmbossPicking.cpp
     GUI/EmbossPicking.hpp
+    GUI/EmbossFreeTransform.cpp
+    GUI/EmbossFreeTransform.hpp
     GUI/SceneRaycaster.cpp
     GUI/SceneRaycaster.hpp
     GUI/Search.cpp

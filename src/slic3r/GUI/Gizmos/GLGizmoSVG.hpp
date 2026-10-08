@@ -5,6 +5,7 @@
 // which overrides our localization "L" macro.
 #include "GLGizmoBase.hpp"
 #include "GLGizmoRotate.hpp"
+#include "EmbossTransformHandles.hpp"
 #include "slic3r/GUI/SurfaceDrag.hpp"
 #include "slic3r/GUI/GLTexture.hpp"
 #include "slic3r/Utils/RaycastManager.hpp"
@@ -118,7 +119,11 @@ protected:
     bool on_is_selectable() const override { return false; }
     void on_set_state() override;    
     void data_changed(bool is_serializing) override; // selection changed
-    void on_set_hover_id() override{ m_rotate_gizmo.set_hover_id(m_hover_id); }
+    void on_set_hover_id() override
+    {
+        m_rotate_gizmo.set_hover_id(m_hover_id == 0 ? 0 : -1);
+        m_handles.set_host_hover_id(m_hover_id);
+    }
     void on_enable_grabber(unsigned int id) override { m_rotate_gizmo.enable_grabber(); }
     void on_disable_grabber(unsigned int id) override { m_rotate_gizmo.disable_grabber(); }
     void on_start_dragging() override;
@@ -136,6 +141,7 @@ protected:
     std::string get_gizmo_entering_text() const override;
     std::string get_gizmo_leaving_text() const override;
     std::string get_action_snapshot_name() const override;
+    std::string get_tooltip() const override { return m_handles.get_tooltip(); }
 private:
     void set_volume_by_selection();
     void reset_volume();
@@ -171,6 +177,12 @@ private:
     bool on_mouse_for_translate(const wxMouseEvent &mouse_event);
 
     void volume_transformation_changed();
+
+    // EdgeSlicer: free 3D move / rotate handles (hover ids 1-5, the ring is 0)
+    void update_handles_visibility();
+    void on_handles_drag_finished(const EmbossTransformHandles::Result &result);
+    EmbossFreeTransform::Projection current_projection() const;
+    void draw_placement();
     
     struct GuiCfg;
     std::unique_ptr<const GuiCfg> m_gui_cfg;
@@ -215,6 +227,16 @@ private:
     // The press that started m_surface_drag cancelled a job that was still making the volume.
     // A release without any move then runs it again (a real move re-processes anyway).
     bool m_surface_drag_cancelled_job = false;
+
+    // EdgeSlicer: free 3D move / rotate handles
+    EmbossTransformHandles m_handles;
+    // A job the press on a handle cancelled; it runs again when the drag changes nothing
+    bool m_handles_cancelled_job = false;
+    // Projection of m_volume before a handle freed it from the surface; the next surface drag puts it back
+    std::optional<EmbossFreeTransform::Projection> m_detached_projection;
+    // Placement line of the tool window, measured again when the part moved
+    std::optional<EmbossFreeTransform::SurfaceProbe> m_placement_probe;
+    std::optional<Transform3d> m_placement_key;
 
     // For volume on scaled objects
     std::optional<float> m_scale_width;

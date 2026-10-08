@@ -51,6 +51,7 @@ GLGizmoSVG::GLGizmoSVG(GLCanvas3D &parent)
     : GLGizmoBase(parent, M_ICON_FILENAME, -3)
     , m_gui_cfg(nullptr)
     , m_rotate_gizmo(parent, GLGizmoRotate::Axis::Z) // grab id = 2 (Z axis)
+    , m_handles(parent)
 {
     m_rotate_gizmo.set_group_id(0);
     m_rotate_gizmo.set_force_local_coordinate(true);
@@ -66,6 +67,15 @@ const std::string rotation_snapshot_name = L("SVG rotate");
 // TRN - Title in Undo/Redo stack after move with SVG along emboss axe - From surface
 const std::string move_snapshot_name = L("SVG move");
 // NOTE: Translation is made in "m_parent.do_translate()"
+
+// TRN - Title in Undo/Redo stack after the SVG was moved by the arrows of the SVG tool
+const std::string move_3d_snapshot_name = L("SVG 3D move");
+// TRN - Title in Undo/Redo stack after the SVG was turned by the rings of the SVG tool
+const std::string rotate_3d_snapshot_name = L("SVG 3D rotate");
+// TRN - Title in Undo/Redo stack after a traced image was moved by the arrows of the SVG tool
+const std::string image_move_3d_snapshot_name = L("Image 3D move");
+// TRN - Title in Undo/Redo stack after a traced image was turned by the rings of the SVG tool
+const std::string image_rotate_3d_snapshot_name = L("Image 3D rotate");
 
 // Variable keep limits for variables
 const struct Limits
@@ -519,7 +529,8 @@ bool GLGizmoSVG::on_mouse_for_rotation(const wxMouseEvent &mouse_event)
     bool used = use_grabbers(mouse_event);
     if (!m_dragging) return used;
 
-    if (mouse_event.Dragging())
+    // the 3D handles transform the part themselves (on_dragging)
+    if (mouse_event.Dragging() && !EmbossTransformHandles::is_handle(m_hover_id))
         dragging_rotate_gizmo(m_rotate_gizmo.get_angle(), m_angle, m_rotate_start_angle, m_parent.get_selection());
     
     return used;
@@ -547,8 +558,16 @@ bool GLGizmoSVG::on_mouse_for_translate(const wxMouseEvent &mouse_event)
         m_surface_drag_cancelled_job = false;
     }
     else if (was_dragging && !is_dragging) {
+        // The drag placed the part on the surface again: give back the projection a 3D handle took.
+        std::optional<EmbossFreeTransform::Projection> back =
+            EmbossFreeTransform::reattach(current_projection(), m_detached_projection);
+        if (back.has_value())
+            m_volume_shape.projection.use_surface = back->use_surface;
+        m_detached_projection.reset();
+        m_placement_key.reset();
+
         // Update surface by new position
-        if (m_volume->emboss_shape->projection.use_surface)
+        if (back.has_value() || m_volume->emboss_shape->projection.use_surface)
             process();
 
         // TODO: Remove it when it will be stable
@@ -631,6 +650,7 @@ std::string GLGizmoSVG::get_action_snapshot_name() const { return _u8L("SVG acti
 bool GLGizmoSVG::on_init()
 {
     m_rotate_gizmo.init();
+    m_handles.init();
     ColorRGBA gray_color(.6f, .6f, .6f, .3f);
     m_rotate_gizmo.set_highlight_color(gray_color);
     // Set rotation gizmo upwardrotate
@@ -651,18 +671,25 @@ void GLGizmoSVG::on_render() {
     bool is_parent_dragging = m_parent.is_mouse_dragging();
     // Do NOT render rotation grabbers when dragging object
     bool is_rotate_by_grabbers = m_dragging;
-    if (is_rotate_by_grabbers || 
+    if (is_rotate_by_grabbers ||
         (!is_surface_dragging && !is_parent_dragging)) {
         glsafe(::glClear(GL_DEPTH_BUFFER_BIT));
-        m_rotate_gizmo.render();
+        // while one of them is dragged, only that one is drawn
+        const bool is_handle_dragging = m_handles.is_handle_dragging();
+        if (!is_handle_dragging)
+            m_rotate_gizmo.render();
+        if (!m_dragging || is_handle_dragging)
+            m_handles.render();
     }
 }
 
 void GLGizmoSVG::on_register_raycasters_for_picking(){
     m_rotate_gizmo.register_raycasters_for_picking();
+    m_handles.on_host_register();
 }
 void GLGizmoSVG::on_unregister_raycasters_for_picking(){
     m_rotate_gizmo.unregister_raycasters_for_picking();
+    m_handles.on_host_unregister();
 }
 
 namespace{
@@ -798,10 +825,12 @@ void GLGizmoSVG::on_set_state()
     m_parent.set_raycaster_gizmos_on_top(GLGizmoBase::m_state == GLGizmoBase::On);
 
     m_rotate_gizmo.set_state(GLGizmoBase::m_state);
+    m_handles.set_state(GLGizmoBase::m_state);
 
     // Closing gizmo. e.g. selecting another one
     if (GLGizmoBase::m_state == GLGizmoBase::Off) {
         reset_volume();
+        m_detached_projection.reset();
     } else if (GLGizmoBase::m_state == GLGizmoBase::On) {
         // Try(when exist) set text configuration by volume 
         set_volume_by_selection();
@@ -814,9 +843,26 @@ void GLGizmoSVG::data_changed(bool is_serializing) {
         close();
 }
 
-void GLGizmoSVG::on_start_dragging() { m_rotate_gizmo.start_dragging(); }
+void GLGizmoSVG::on_start_dragging()
+{
+    if (EmbossTransformHandles::is_handle(m_hover_id)) {
+        if (m_handles.start_drag(m_hover_id)) {
+            // Cancel a running update, it would overwrite the dragged part (as the surface drag does)
+            m_handles_cancelled_job = m_job_cancel != nullptr && !m_job_cancel->load();
+            if (m_job_cancel != nullptr)
+                m_job_cancel->store(true);
+        }
+        return;
+    }
+    m_rotate_gizmo.start_dragging();
+}
 void GLGizmoSVG::on_stop_dragging()
 {
+    if (EmbossTransformHandles::is_handle(m_hover_id) || m_handles.is_handle_dragging()) {
+        if (std::optional<EmbossTransformHandles::Result> result = m_handles.stop_drag(); result.has_value())
+            on_handles_drag_finished(*result);
+        return;
+    }
     m_rotate_gizmo.stop_dragging();
 
     // TODO: when start second rotatiton previous rotation rotate draggers
@@ -836,7 +882,109 @@ void GLGizmoSVG::on_stop_dragging()
         m_volume->emboss_shape->projection.use_surface)
         process();
 }
-void GLGizmoSVG::on_dragging(const UpdateData &data) { m_rotate_gizmo.dragging(data); }
+void GLGizmoSVG::on_dragging(const UpdateData &data)
+{
+    if (EmbossTransformHandles::is_handle(m_hover_id))
+        m_handles.drag(data);
+    else
+        m_rotate_gizmo.dragging(data);
+}
+
+EmbossFreeTransform::Projection GLGizmoSVG::current_projection() const
+{
+    EmbossFreeTransform::Projection res;
+    res.use_surface = m_volume_shape.projection.use_surface;
+    return res;
+}
+
+void GLGizmoSVG::update_handles_visibility()
+{
+    // The handles move a part of an object; an SVG object moves with the Move and Rotate tools.
+    const Selection &selection = m_parent.get_selection();
+    const bool visible = m_handles.is_enabled() && m_volume != nullptr && !m_volume->is_the_only_one_part() &&
+                         selection.volumes_count() == 1 && selection.get_mode() == Selection::Volume;
+    m_handles.set_visible(visible);
+    // Together with the handles the in-plane ring is the blue Z ring of the three.
+    m_rotate_gizmo.set_highlight_color(visible ? AXES_COLOR[2] : ColorRGBA(.6f, .6f, .6f, .3f));
+}
+
+void GLGizmoSVG::on_handles_drag_finished(const EmbossTransformHandles::Result &result)
+{
+    using namespace EmbossFreeTransform;
+    const bool cancelled_job = m_handles_cancelled_job;
+    m_handles_cancelled_job  = false;
+    m_placement_key.reset();
+    if (m_volume == nullptr || !m_volume->emboss_shape.has_value())
+        return;
+
+    const Kind kind = result.rotation ? classify_rotation(result.axis, result.normal, result.angle) :
+                                        classify_move(result.displacement, result.normal);
+    if (kind == Kind::None) {
+        // a press and release without a move: no undo step (the handles put the part back exactly)
+        if (cancelled_job)
+            process(false);
+        return;
+    }
+
+    // One undo step for the whole change: the snapshot holds the state before the drag, the
+    // emboss update below is not given one of its own. The other colours of a traced image and
+    // the other parts of a code follow this part (sync_code_parts) once the drag is over.
+    const bool is_image = m_trace.has_value();
+    if (result.rotation)
+        m_parent.do_rotate(is_image ? image_rotate_3d_snapshot_name : rotate_3d_snapshot_name);
+    else
+        m_parent.do_move(is_image ? image_move_3d_snapshot_name : move_3d_snapshot_name);
+
+    const Projection before = current_projection();
+    const Outcome    out    = outcome(before, kind);
+    if (out.detach) {
+        if (!m_detached_projection.has_value())
+            m_detached_projection = before;
+        m_volume_shape.projection.use_surface = detached(before).use_surface;
+    }
+
+    const Selection &selection = m_parent.get_selection();
+    m_angle = calc_angle(selection);
+    if (out.measure_distance)
+        if (const GLVolume *gl_volume = get_selected_gl_volume(selection); gl_volume != nullptr)
+            m_distance = calc_distance(*gl_volume, m_raycast_manager, m_parent);
+
+    if (out.reprocess || cancelled_job)
+        process(false);
+    else
+        wxGetApp().plater()->changed_object(*m_volume->get_object());
+
+    calculate_scale();
+}
+
+void GLGizmoSVG::draw_placement()
+{
+    using namespace EmbossFreeTransform;
+    const Selection &selection = m_parent.get_selection();
+    const GLVolume  *gl_volume = get_selected_gl_volume(selection);
+    if (m_volume == nullptr || gl_volume == nullptr)
+        return;
+
+    const bool       is_object  = m_volume->is_the_only_one_part();
+    const Projection projection = current_projection();
+    if (is_object || projection.follows_surface()) {
+        m_placement_key.reset();
+        m_placement_probe.reset();
+    } else if (!m_surface_drag.has_value() && !m_dragging) {
+        // measure again once the part moved (not while it is dragged)
+        const Transform3d &key = gl_volume->world_matrix();
+        if (!m_placement_key.has_value() || (m_placement_key->matrix() - key.matrix()).cwiseAbs().maxCoeff() > 1e-9) {
+            m_placement_key   = key;
+            m_placement_probe = probe_surface(*gl_volume, m_raycast_manager, m_parent);
+        }
+    }
+
+    const double    max_distance = std::max(2. * double(m_volume_shape.projection.depth), std::sqrt(10.));
+    const Placement placement    = classify_placement(is_object, projection, m_placement_probe, max_distance);
+    const double    distance     = m_placement_probe.has_value() ? m_placement_probe->distance : 0.;
+    if (m_handles.draw_options(*m_imgui, placement, distance, m_detached_projection.has_value(), m_gui_cfg->max_tooltip_width))
+        update_handles_visibility();
+}
 
 #include "slic3r/GUI/BitmapCache.hpp"
 #include "nanosvg/nanosvgrast.h"
@@ -1490,6 +1638,12 @@ void GLGizmoSVG::set_volume_by_selection()
 
     reset_volume(); // clear cached data
 
+    // a projection remembered by the 3D handles belongs to the part it was taken from (an update of
+    // the part gives it a new id, not a new pointer)
+    if (volume != prev_volume)
+        m_detached_projection.reset();
+    m_placement_key.reset();
+
     m_volume = volume;
     m_volume_id = volume->id();
     m_volume_shape = es; // copy
@@ -1513,6 +1667,8 @@ void GLGizmoSVG::set_volume_by_selection()
         m_code_synced_use_surface = es.projection.use_surface;
         m_code_can_use_surface    = !create_volume_sources(*volume).empty();
     }
+
+    update_handles_visibility();
 }
 namespace {
 void delete_texture(Texture& texture){
@@ -1529,6 +1685,9 @@ void GLGizmoSVG::reset_volume()
 
     m_volume = nullptr;
     m_volume_id.id = 0;
+    m_handles.set_visible(false);
+    m_placement_key.reset();
+    m_placement_probe.reset();
     m_code.reset();
     m_trace.reset();
     m_simple_shape.reset();
@@ -1669,7 +1828,13 @@ void GLGizmoSVG::draw_window()
     draw_mirroring();
     draw_face_the_camera();
 
-    ImGui::Unindent(m_gui_cfg->icon_width);  
+    ImGui::Unindent(m_gui_cfg->icon_width);
+
+    // Placement on the surface and the 3D move / rotate handles (parts only)
+    if (!m_volume->is_the_only_one_part()) {
+        ImGui::Separator();
+        draw_placement();
+    }
 
     if (!m_volume->is_the_only_one_part()) {
         ImGui::Separator();
@@ -2156,8 +2321,12 @@ void GLGizmoSVG::draw_use_surface()
     ImGuiWrapper::text(m_gui_cfg->translations.use_surface);
     ImGui::SameLine(m_gui_cfg->input_offset);
 
-    if (m_imgui->bbl_checkbox("##useSurface", m_volume_shape.projection.use_surface))
+    if (m_imgui->bbl_checkbox("##useSurface", m_volume_shape.projection.use_surface)) {
+        // the user decides now, a later surface drag does not change it back
+        m_detached_projection.reset();
+        m_placement_key.reset();
         process();
+    }
 }
 
 void GLGizmoSVG::draw_distance()

@@ -200,3 +200,126 @@ TEST_CASE("a child filament with more flow variants than its parent keeps both c
     compose_filament_flow_variant_segment(composed, *child->config.option<ConfigOptionInts>("nozzle_temperature"), 1, 2);
     CHECK(composed.values == std::vector<int>{0, 205, 235});
 }
+
+namespace {
+
+std::string stride2_limits(const std::string &value, size_t count)
+{
+    std::string out = "[";
+    for (size_t i = 0; i < count; ++i)
+        out += (i ? ", \"" : "\"") + value + "\"";
+    return out + "]";
+}
+
+} // namespace
+
+// Orca #14106: a user printer preset on a 4-nozzle non-Bambu base whose stride-2 machine limits had
+// been length-extended to nozzles*2 while the base carried no printer_extruder_variant. Upstream's
+// set_only_diff threw "invalid diff_index size" and the loader deleted the file. Here the preset must
+// load, keep its own limits, and never be quarantined.
+TEST_CASE("a user printer preset whose machine limits are longer than its parent's loads intact", "[PresetVariantLoad]")
+{
+    PresetBundle bundle;
+    DynamicPrintConfig parent = bundle.printers.default_preset().config;
+    parent.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.4, 0.4, 0.4, 0.4}));
+    parent.set_key_value("machine_max_acceleration_x",
+                         new ConfigOptionFloats({25000, 25000, 25000, 25000, 25000, 25000, 25000, 25000}));
+    parent.set_key_value("printer_extruder_variant", new ConfigOptionStrings());
+    add_system_parent(bundle.printers, "Parent 4N", parent);
+
+    ScratchTree tree("limits");
+    const fs::path file = tree.write("machine/Child 4N.json", std::string("{\n") +
+        "  \"type\": \"machine\",\n"
+        "  \"name\": \"Child 4N\",\n"
+        "  \"from\": \"User\",\n"
+        "  \"version\": \"2.0.0.0\",\n"
+        "  \"inherits\": \"Parent 4N\",\n"
+        "  \"printer_extruder_id\": [\"1\", \"2\", \"3\", \"4\"],\n"
+        "  \"printer_extruder_variant\": " + stride2_limits("Direct Drive Standard", 4) + ",\n"
+        "  \"machine_max_acceleration_x\": " + stride2_limits("8000", 8) + ",\n"
+        "  \"machine_max_acceleration_y\": " + stride2_limits("7000", 3) + "\n"
+        "}\n");
+
+    PresetQuarantine::take();
+    load_user_dir(bundle.printers, tree, "machine");
+
+    // Never destroyed, never moved aside.
+    CHECK(fs::exists(file));
+    CHECK(PresetQuarantine::peek().empty());
+    PresetQuarantine::take();
+
+    const Preset *child = bundle.printers.find_preset("Child 4N", false);
+    REQUIRE(child != nullptr);
+    CHECK(values_of<double>(*child, "machine_max_acceleration_x") == std::vector<double>(8, 8000.));
+    // An odd-length override (neither nozzles nor nozzles*2) is kept as written, too.
+    CHECK(values_of<double>(*child, "machine_max_acceleration_y") == std::vector<double>(3, 7000.));
+    CHECK(values_of<int>(*child, "printer_extruder_id") == std::vector<int>{1, 2, 3, 4});
+}
+
+// The other direction: a user preset saved when its printer had fewer extruders (or fewer variants)
+// than the parent has now. It loads with its own shorter vectors, compares against the parent per
+// slot without reading past either end, and a dirty "key#i" slot transfers onto a longer config.
+TEST_CASE("a user printer preset with shorter vectors than its parent loads, diffs and transfers", "[PresetVariantLoad]")
+{
+    PresetBundle bundle;
+    DynamicPrintConfig parent = bundle.printers.default_preset().config;
+    parent.set_key_value("single_extruder_multi_material", new ConfigOptionBool(true));
+    parent.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.4, 0.4}));
+    parent.set_key_value("retraction_length", new ConfigOptionFloats({0.8, 0.8}));
+    parent.set_key_value("machine_max_acceleration_x", new ConfigOptionFloats({20000, 20000, 20000, 20000}));
+    add_system_parent(bundle.printers, "Parent 2N", parent);
+
+    ScratchTree tree("shorter");
+    const fs::path file = tree.write("machine/Old Child.json", std::string("{\n") +
+        "  \"type\": \"machine\",\n"
+        "  \"name\": \"Old Child\",\n"
+        "  \"from\": \"User\",\n"
+        "  \"version\": \"1.9.0.0\",\n"
+        "  \"inherits\": \"Parent 2N\",\n"
+        "  \"retraction_length\": [\"1.5\"],\n"
+        "  \"machine_max_acceleration_x\": [\"9000\", \"9000\"]\n"
+        "}\n");
+
+    PresetQuarantine::take();
+    load_user_dir(bundle.printers, tree, "machine");
+    CHECK(fs::exists(file));
+    CHECK(PresetQuarantine::peek().empty());
+    PresetQuarantine::take();
+
+    // Look both up again: loading sorts the collection, so references taken before it are stale.
+    const Preset *child = bundle.printers.find_preset("Old Child", false);
+    REQUIRE(child != nullptr);
+    const Preset *parent_found = bundle.printers.find_preset("Parent 2N", false);
+    REQUIRE(parent_found != nullptr);
+    const Preset &parent_preset = *parent_found;
+    CHECK(values_of<double>(*child, "retraction_length") == std::vector<double>{1.5});
+    CHECK(values_of<double>(*child, "machine_max_acceleration_x") == std::vector<double>{9000., 9000.});
+
+    // Deep (per-slot) compare in both directions: no throw, no read past the shorter vector.
+    std::vector<std::string> dirty;
+    REQUIRE_NOTHROW(dirty = PresetCollection::dirty_options(child, &parent_preset, /*deep_compare=*/true));
+    CHECK(std::find(dirty.begin(), dirty.end(), "retraction_length#0") != dirty.end());
+    CHECK(std::find(dirty.begin(), dirty.end(), "machine_max_acceleration_x#1") != dirty.end());
+    REQUIRE_NOTHROW(PresetCollection::dirty_options(&parent_preset, child, /*deep_compare=*/true));
+
+    // Transferring those slots onto the longer parent writes only the named slots.
+    DynamicPrintConfig transferred = parent_preset.config;
+    REQUIRE_NOTHROW(transferred.apply_only(child->config, dirty));
+    CHECK(transferred.option<ConfigOptionFloats>("retraction_length")->values == std::vector<double>{1.5, 0.8});
+    CHECK(transferred.option<ConfigOptionFloats>("machine_max_acceleration_x")->values ==
+          std::vector<double>{9000., 9000., 20000., 20000.});
+
+    // Save as a difference to the parent and load again: the short vectors survive.
+    Preset resaved = *child;
+    resaved.file   = (tree.root / "machine2" / "Old Child.json").string();
+    DynamicPrintConfig parent_config = parent_preset.config;
+    REQUIRE(resaved.save(&parent_config));
+
+    PresetBundle reloaded;
+    add_system_parent(reloaded.printers, "Parent 2N", parent);
+    load_user_dir(reloaded.printers, tree, "machine2");
+    const Preset *again = reloaded.printers.find_preset("Old Child", false);
+    REQUIRE(again != nullptr);
+    CHECK(values_of<double>(*again, "retraction_length") == std::vector<double>{1.5});
+    CHECK(values_of<double>(*again, "machine_max_acceleration_x") == std::vector<double>{9000., 9000.});
+}

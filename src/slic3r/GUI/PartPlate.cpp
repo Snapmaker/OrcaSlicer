@@ -2035,6 +2035,12 @@ void PartPlate::generate_plate_name_texture()
 	auto canvas = (m_partplate_list != nullptr && m_partplate_list->m_plater != nullptr) ? m_partplate_list->m_plater->get_view3D_canvas3D() : nullptr;
 	if (canvas == nullptr)
 		return;
+	// EDGE: set_shape() runs before the 3D canvas has initialised OpenGL (the bed is set while the main
+	// window is built); the texture cannot be made yet and render_plate_name_texture() makes it on the
+	// first frame. Without this the "failed" error was logged at every start and the icon geometry was
+	// built from a 0 x 0 texture (a 0/0 aspect ratio).
+	if (glGenTextures == nullptr)
+		return;
 
     m_plate_name_icon.reset();
 

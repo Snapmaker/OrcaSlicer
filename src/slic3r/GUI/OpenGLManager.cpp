@@ -306,6 +306,10 @@ OpenGLManager* OpenGLManager::s_active = nullptr;
 // context where a core one was expected, shows up here first (owner logs, macOS in particular).
 // Uses the raw GL calls and drains glGetError afterwards: some of these queries are invalid on
 // one profile or the other, and a debug-build glsafe() must not assert on a diagnostic.
+// EDGE: what init_glcontext() asked for, so the start-up log can put it next to the version granted
+// (macOS creates a 4.1 core context for a 4.6 request; the request alone said "4.6").
+static std::string s_context_request;
+
 static void log_gl_context_details()
 {
     GLint major = 0, minor = 0;
@@ -350,7 +354,8 @@ static void log_gl_context_details()
     // Logged at warning level on purpose: the default log_severity_level is "warning", and these
     // two lines are what a user's log has to carry for a rendering report to be diagnosable.
     BOOST_LOG_TRIVIAL(warning) << "OpenGL context: version " << OpenGLManager::get_gl_info().get_version()
-                            << " (" << major << "." << minor << "), profile " << profile
+                            << " (granted " << major << "." << minor
+                            << (s_context_request.empty() ? std::string() : ", requested " + s_context_request) << "), profile " << profile
                             << ", GLSL " << OpenGLManager::get_gl_info().get_glsl_version()
                             << ", renderer " << OpenGLManager::get_gl_info().get_renderer()
                             << ", vendor " << OpenGLManager::get_gl_info().get_vendor();
@@ -543,7 +548,9 @@ wxGLContext* OpenGLManager::init_glcontext(wxGLCanvas& canvas)
             attrs.EndList();
             m_context = new wxGLContext(&canvas, nullptr, &attrs);
             if (m_context->IsOK()) {
-                BOOST_LOG_TRIVIAL(warning) << "init_glcontext: context granted for the request " << what;
+                // The context is not current yet: the version granted is logged at start-up ("OpenGL context:").
+                BOOST_LOG_TRIVIAL(warning) << "init_glcontext: context created for the request " << what;
+                s_context_request = what;
                 return true;
             }
             delete m_context;
@@ -568,6 +575,7 @@ wxGLContext* OpenGLManager::init_glcontext(wxGLCanvas& canvas)
         if (m_context == nullptr) {
             BOOST_LOG_TRIVIAL(warning) << "init_glcontext: falling back to the platform default context";
             m_context = new wxGLContext(&canvas);
+            s_context_request = "platform default context";
         }
         BOOST_LOG_TRIVIAL(warning) << "init_glcontext: profile request '" << requested << "' (from " << source
                                    << "); the GL context lines at OpenGL start-up show what was granted";

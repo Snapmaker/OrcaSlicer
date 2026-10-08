@@ -461,7 +461,8 @@ TEST_CASE("Cost store: a version 2 file is migrated to version 3 with no fees an
     REQUIRE(only_pricing.set_pricing(mine));
     CHECK(only_pricing.empty());
 
-    fs::remove_all(dir);
+    boost::system::error_code ec;   // a file still held open (backup folder, scanner) is not a test failure
+    fs::remove_all(dir, ec);
 }
 
 TEST_CASE("Pricing is not a print setting", "[CostPricing]")
@@ -558,7 +559,8 @@ TEST_CASE("Project pricing round-trips through the project 3MF and stays out of 
         CHECK(xml.find("edgeslicer_pricing") != std::string::npos);
     }
 
-    fs::remove_all(dir);
+    boost::system::error_code ec;   // a file still held open (backup folder, scanner) is not a test failure
+    fs::remove_all(dir, ec);
 }
 
 TEST_CASE("Model copies carry the project pricing", "[CostPricing]")

@@ -1,0 +1,28 @@
+# AI harness review job - runs on the local project runner (tag: ai-review).
+# Requires masked CI/CD variables:
+#   AI_REVIEW_GITLAB_TOKEN  - project access token with api scope (Reporter+)
+#   AI_REVIEW_LLM_API_KEY   - OpenAI-compatible LLM API key
+ai_review:
+  tags: [ai-review]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  resource_group: "ai-review-mr-$CI_MERGE_REQUEST_IID"
+  allow_failure: true
+  timeout: 15m
+  variables:
+    GIT_STRATEGY: none
+    GITLAB_HOST: "gitlab.s.com"
+    AI_REVIEW_LLM_BASE_URL: "https://api.deepseek.com"
+    AI_REVIEW_MODEL: "deepseek-v4-pro"
+    AI_REVIEW_LLM_EFFORT: "low"
+    AI_REVIEW_PROJECT_STANDARDS: "projects/snapmaker-orca"
+    DG_REF: "project/snapmaker-orca"
+    # per-user Python on the runner box; absolute path is the only form the
+    # service account can execute (py launcher cannot see per-user installs)
+    PYEXE: "C:/Users/snapmaker/AppData/Local/Programs/Python/Python311/python.exe"
+  script:
+    - '& $env:PYEXE -m pip install --quiet pyyaml==6.0.3'
+    - if (Test-Path dg) { Remove-Item -Recurse -Force dg }
+    - git clone --depth 1 --branch $env:DG_REF https://github.com/zhangzhend0ng/dev-guidelines dg
+    - '& $env:PYEXE dg/scripts/ai_review_gitlab.py'
+# re-trigger: dg branch tip 3162175 carries the sticky-note pagination fix

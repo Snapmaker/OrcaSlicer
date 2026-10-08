@@ -2,8 +2,11 @@
 
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Extruder.hpp"
+// ToolOrdering.hpp must come after Print.hpp (it relies on Print.hpp's forward declarations,
+// e.g. ExtrusionEntity), so it is not included on its own here; test_data.hpp pulls in Print.hpp.
 #include "libslic3r/GCode/WipeTower2.hpp"
 #include "libslic3r/GCodeReader.hpp"
+#include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/PresetFlowVariant.hpp"
 
@@ -1452,4 +1455,398 @@ TEST_CASE("G4 dwell counts towards the layer time", "[PrintGCode][CoolingBuffer]
         REQUIRE(bare.find("G4 ; Stop Pause") != std::string::npos);
         CHECK(cooling_comparable(bare, drop) == cooling_comparable(none, drop));
     }
+}
+
+// Orca #15849 / Edge #113: OozePrevention::pre_toolchange turns a tool fully off
+// (M104 S0 ;cooldown) only after that tool's last extrusion anywhere in the print.
+namespace {
+
+DynamicPrintConfig two_tool_ooze_config()
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    // Print::apply()/region_config_from_model_volume() derives num_extruders from
+    // filament_diameter.size(), which set_num_filaments() resizes. set_num_extruders()
+    // resizes nozzle_diameter. Both are needed or a per-object wall_filament of 2 is
+    // clamped back to extruder 1.
+    config.set_num_extruders(2);
+    config.set_num_filaments(2);
+    config.set_deserialize_strict({
+        {"nozzle_diameter",                "0.4,0.4"},
+        {"filament_diameter",              "1.75,1.75"},
+        {"single_extruder_multi_material", "0"},
+        {"ooze_prevention",                "1"},
+        {"standby_temperature_delta",      "-5"},
+        {"layer_height",                   "0.2"},
+        {"initial_layer_print_height",     "0.2"},
+        {"gcode_comments",                 "1"},
+        {"machine_start_gcode",            ""},
+        {"machine_end_gcode",              ""},
+        {"before_layer_change_gcode",      ""},
+        {"layer_change_gcode",             ""},
+        {"top_shell_layers",               "1"},
+        {"bottom_shell_layers",            "1"},
+        {"sparse_infill_density",          "5%"},
+        {"skirt_loops",                    "0"},
+        {"enable_prime_tower",             "0"},
+        {"wipe_tower_x",                   "0"},
+        {"wipe_tower_y",                   "0"},
+    });
+    return config;
+}
+
+void set_object_extruder(ModelObject &object, int extruder_1based)
+{
+    object.config.set_key_value("wall_filament", new ConfigOptionInt(extruder_1based));
+    object.config.set_key_value("sparse_infill_filament", new ConfigOptionInt(extruder_1based));
+    object.config.set_key_value("solid_infill_filament", new ConfigOptionInt(extruder_1based));
+}
+
+ModelObject *add_scaled_cube(Model &model, Print &print, const std::string &name, Vec3f scale, Vec3d offset, int extruder_1based, bool on_bed)
+{
+    ModelObject *object = model.add_object();
+    object->name        = name;
+    TriangleMesh mesh   = Slic3r::Test::mesh(TestMesh::cube_20x20x20);
+    mesh.scale(scale);
+    object->add_volume(std::move(mesh));
+    object->add_instance()->set_offset(offset);
+    if (on_bed)
+        object->ensure_on_bed();
+    print.auto_assign_extruders(object);
+    set_object_extruder(*object, extruder_1based);
+    return object;
+}
+
+struct CooldownHit
+{
+    int    s   = 0;
+    int    t   = 0;
+    size_t pos = 0;
+};
+
+std::vector<CooldownHit> parse_cooldowns(const std::string &gcode)
+{
+    std::regex cooldown_re(R"(M104 S(\d+) T(\d+)[^\n]*;cooldown)");
+    std::vector<CooldownHit> hits;
+    for (auto it = std::sregex_iterator(gcode.begin(), gcode.end(), cooldown_re); it != std::sregex_iterator(); ++it) {
+        hits.push_back({std::stoi((*it)[1].str()), std::stoi((*it)[2].str()), size_t(it->position())});
+    }
+    return hits;
+}
+
+size_t first_s0_pos(const std::vector<CooldownHit> &hits, int tool)
+{
+    for (const CooldownHit &hit : hits)
+        if (hit.s == 0 && hit.t == tool)
+            return hit.pos;
+    return std::string::npos;
+}
+
+bool tool_got_s0(const std::vector<CooldownHit> &hits, int tool)
+{
+    return first_s0_pos(hits, tool) != std::string::npos;
+}
+
+} // namespace
+
+TEST_CASE("OozePrevention: tool that finishes early gets S0 exactly once, after its last use", "[OozePrevention][ToolOrdering]")
+{
+    // Object 0 (extruder 1) is short. Object 1 (extruder 2) is full height.
+    // T0 must go to S0 once the short object is done; T1 must never see S0.
+    Print              print;
+    Model              model;
+    DynamicPrintConfig config = two_tool_ooze_config();
+    add_scaled_cube(model, print, "short", Vec3f(1.f, 1.f, 0.2f), Vec3d(0., 0., 0.), 1, true);
+    add_scaled_cube(model, print, "tall", Vec3f(1.f, 1.f, 1.f), Vec3d(40., 0., 0.), 2, true);
+
+    print.apply(model, config);
+    print.validate();
+    print.set_status_silent();
+    const std::string gcode = Test::gcode(print);
+
+    const auto hits = parse_cooldowns(gcode);
+    REQUIRE_FALSE(hits.empty());
+    CHECK(tool_got_s0(hits, 0));
+    CHECK_FALSE(tool_got_s0(hits, 1));
+
+    const size_t first_t0_s0 = first_s0_pos(hits, 0);
+    REQUIRE(first_t0_s0 != std::string::npos);
+    CHECK(gcode.find("T0 ; change extruder", first_t0_s0) == std::string::npos);
+}
+
+TEST_CASE("OozePrevention: unused extruder turns off after its final layer on a multi-object print with different layer heights",
+          "[OozePrevention][ToolOrdering]")
+{
+    // Orca #15849 (bcbb8746) "Unused extruder turns off after its final layer on multi-object print",
+    // rewritten for Catch2 v2 and Edge's test helpers.
+    // Object 1: tall cube (10 mm) printed with extruder 1 (T0) at 0.20 mm layers.
+    // Object 2: short cube (4 mm) printed with extruder 2 (T1) at 0.15 mm layers.
+    // The merged print-wide layer list interleaves both objects' Z values, so a layer-index
+    // lookup and a print_z lookup disagree here; only the print_z one is right.
+    Print              print;
+    Model              model;
+    DynamicPrintConfig config = two_tool_ooze_config();
+    config.set_deserialize_strict({
+        {"standby_temperature_delta", "-40"},
+        {"nozzle_temperature",        "240,240"},
+    });
+    ModelObject *tall  = add_scaled_cube(model, print, "tall-t0", Vec3f(1.f, 1.f, 0.5f), Vec3d(0., 0., 0.), 1, true);
+    ModelObject *short_ = add_scaled_cube(model, print, "short-t1", Vec3f(1.f, 1.f, 0.2f), Vec3d(40., 0., 0.), 2, true);
+    tall->config.set_key_value("layer_height", new ConfigOptionFloat(0.20));
+    short_->config.set_key_value("layer_height", new ConfigOptionFloat(0.15));
+
+    print.apply(model, config);
+    print.validate();
+    print.set_status_silent();
+    const std::string gcode = Test::gcode(print);
+
+    int t0_s0_cooldowns = 0;
+    int t1_s0_cooldowns = 0;
+    {
+        std::istringstream stream(gcode);
+        for (std::string line; std::getline(stream, line);) {
+            if (line.find(";cooldown") == std::string::npos)
+                continue;
+            if (line.find("M104 S0 T1") != std::string::npos)
+                ++t1_s0_cooldowns;
+            if (line.find("M104 S0 T0") != std::string::npos)
+                ++t0_s0_cooldowns;
+        }
+    }
+    // T1 finishes at 4 mm and must get the S0 cooldown exactly once when it is parked.
+    CHECK(t1_s0_cooldowns == 1);
+    // T0 prints all the way to 10 mm, so pre_toolchange must never turn it off.
+    CHECK(t0_s0_cooldowns == 0);
+
+    // The S0 belongs to T1's top layer (or the first toolchange after it), not earlier, and T1
+    // is never selected again afterwards.
+    const size_t t1_s0_pos = first_s0_pos(parse_cooldowns(gcode), 1);
+    REQUIRE(t1_s0_pos != std::string::npos);
+    CHECK(gcode.find("T1 ; change extruder", t1_s0_pos) == std::string::npos);
+    const size_t z_tag = gcode.rfind("\n;Z:", t1_s0_pos);
+    REQUIRE(z_tag != std::string::npos);
+    const double z_at_s0 = std::stod(gcode.substr(z_tag + 4, 16));
+    CHECK(z_at_s0 > 3.7);
+    CHECK(z_at_s0 < 4.3);
+}
+
+TEST_CASE("OozePrevention: two objects with different effective layer counts on the same extruder never get a premature S0",
+          "[OozePrevention][ToolOrdering]")
+{
+    Print              print;
+    Model              model;
+    DynamicPrintConfig config = two_tool_ooze_config();
+
+    add_scaled_cube(model, print, "tall", Vec3f(1.f, 1.f, 1.f), Vec3d(0., 0., 0.), 1, true);
+    ModelObject *shortobj = add_scaled_cube(model, print, "short", Vec3f(1.f, 1.f, 0.2f), Vec3d(40., 0., 0.), 1, true);
+    // Different layer height so object-local Layer::id() diverges from the print-wide index.
+    shortobj->config.set_key_value("layer_height", new ConfigOptionFloat(0.1));
+
+    print.apply(model, config);
+    print.validate();
+    print.set_status_silent();
+    const std::string gcode = Test::gcode(print);
+    REQUIRE(gcode.find("M104 S0") == std::string::npos);
+}
+
+TEST_CASE("OozePrevention: a support-only extruder used on later layers never gets a premature S0", "[OozePrevention][ToolOrdering]")
+{
+    Print              print;
+    Model              model;
+    DynamicPrintConfig config = two_tool_ooze_config();
+    config.set_deserialize_strict({
+        {"enable_support",             "1"},
+        {"support_filament",           "2"},
+        {"support_interface_filament", "2"},
+        {"support_type",               "normal(auto)"},
+        {"support_threshold_angle",    "40"},
+    });
+
+    ModelObject *object = model.add_object();
+    object->name        = "overhang";
+    object->add_volume(Test::mesh(TestMesh::overhang));
+    object->add_instance();
+    object->ensure_on_bed();
+    print.auto_assign_extruders(object);
+    set_object_extruder(*object, 1);
+
+    print.apply(model, config);
+    print.validate();
+    print.set_status_silent();
+    const std::string gcode = Test::gcode(print);
+
+    const size_t first_t1_s0 = first_s0_pos(parse_cooldowns(gcode), 1);
+    if (first_t1_s0 != std::string::npos) {
+        CHECK(gcode.find("; support material", first_t1_s0) == std::string::npos);
+        CHECK(gcode.find("T1 ; change extruder", first_t1_s0) == std::string::npos);
+    }
+}
+
+TEST_CASE("OozePrevention: by-object (sequential) printing never emits S0", "[OozePrevention][ToolOrdering][ByObject]")
+{
+    Print              print;
+    Model              model;
+    DynamicPrintConfig config = two_tool_ooze_config();
+    config.set_deserialize_strict({{"print_sequence", "by object"}});
+    add_scaled_cube(model, print, "seq", Vec3f(1.f, 1.f, 1.f), Vec3d(0., 0., 0.), 1, true);
+
+    print.apply(model, config);
+    print.validate();
+    print.set_status_silent();
+    REQUIRE(Test::gcode(print).find("M104 S0") == std::string::npos);
+}
+
+TEST_CASE("OozePrevention: SEMM and Bambu (BBL) setups are unaffected", "[OozePrevention][ToolOrdering]")
+{
+    SECTION("single_extruder_multi_material: no change, ooze prevention path never engages S0") {
+        Print              print;
+        Model              model;
+        DynamicPrintConfig config = two_tool_ooze_config();
+        config.set_deserialize_strict({{"single_extruder_multi_material", "1"}});
+        add_scaled_cube(model, print, "semm", Vec3f(1.f, 1.f, 1.f), Vec3d(0., 0., 0.), 1, true);
+
+        print.apply(model, config);
+        print.validate();
+        print.set_status_silent();
+        REQUIRE(Test::gcode(print).find("M104 S0") == std::string::npos);
+    }
+
+    SECTION("Bambu (is_BBL_printer): no change from this feature, S0 never emitted by OozePrevention") {
+        Print              print;
+        Model              model;
+        DynamicPrintConfig config = two_tool_ooze_config();
+        add_scaled_cube(model, print, "tall", Vec3f(1.f, 1.f, 1.f), Vec3d(0., 0., 0.), 1, true);
+        add_scaled_cube(model, print, "short", Vec3f(1.f, 1.f, 0.2f), Vec3d(40., 0., 0.), 2, true);
+
+        print.apply(model, config);
+        print.validate();
+        print.set_status_silent();
+        print.is_BBL_printer() = true;
+        REQUIRE(Test::gcode(print).find("M104 S0") == std::string::npos);
+    }
+}
+
+TEST_CASE("OozePrevention: a tool reused after a gap gets standby first and S0 only after its final use", "[OozePrevention][ToolOrdering]")
+{
+    // One 20 mm cube printed by T1, with a layer range 6..14 mm switched to T0. T1 is idle
+    // while T0 prints the middle and is used again on top. (The earlier version floated a
+    // second T1 cube at z = 16, which Print rejects as empty layers, so it never ran.)
+    // The toolchange away from T1 at ~6 mm must be standby, never S0, and T1 is the last
+    // tool so it never gets S0 at all. T0's only S0 comes at ~14 mm, after its final layer.
+    Print              print;
+    Model              model;
+    DynamicPrintConfig config = two_tool_ooze_config();
+    ModelObject       *object = add_scaled_cube(model, print, "gap-t1", Vec3f(1.f, 1.f, 1.f), Vec3d(0., 0., 0.), 2, true);
+    DynamicPrintConfig middle;
+    // A layer range must carry layer_height: layer_height_profile_from_ranges() reads it unchecked.
+    middle.set_key_value("layer_height", new ConfigOptionFloat(0.2));
+    middle.set_key_value("wall_filament", new ConfigOptionInt(1));
+    middle.set_key_value("sparse_infill_filament", new ConfigOptionInt(1));
+    middle.set_key_value("solid_infill_filament", new ConfigOptionInt(1));
+    object->layer_config_ranges[{6., 14.}].assign_config(middle);
+
+    print.apply(model, config);
+    print.validate();
+    print.set_status_silent();
+    const std::string gcode = Test::gcode(print);
+
+    const auto hits = parse_cooldowns(gcode);
+    REQUIRE_FALSE(hits.empty());
+
+    bool saw_t1_standby = false;
+    for (const CooldownHit &hit : hits)
+        if (hit.t == 1 && hit.s > 0)
+            saw_t1_standby = true;
+    CHECK(saw_t1_standby);
+    CHECK_FALSE(tool_got_s0(hits, 1));
+
+    int t0_s0 = 0;
+    for (const CooldownHit &hit : hits)
+        if (hit.t == 0 && hit.s == 0)
+            ++t0_s0;
+    CHECK(t0_s0 == 1);
+    const size_t t0_s0_pos = first_s0_pos(hits, 0);
+    REQUIRE(t0_s0_pos != std::string::npos);
+    CHECK(gcode.find("T0 ; change extruder", t0_s0_pos) == std::string::npos);
+    const size_t z_tag = gcode.rfind("\n;Z:", t0_s0_pos);
+    REQUIRE(z_tag != std::string::npos);
+    CHECK(std::stod(gcode.substr(z_tag + 4, 16)) > 13.5);
+}
+
+TEST_CASE("OozePrevention: mixed filament keeps physical tool 2 heated until its resolved last use", "[OozePrevention][ToolOrdering][MixedFilament]")
+{
+    // Short object uses physical filament 1. Tall object uses a mixed row whose
+    // components are physical 1 and 2, so tool 2 appears later only through
+    // MixedFilamentManager resolution. LayerTools::extruders must hold those
+    // physical ids — never a virtual mixed id, and never filament_is_mixed.
+    Print              print;
+    Model              model;
+    DynamicPrintConfig config = two_tool_ooze_config();
+    config.option<ConfigOptionStrings>("filament_colour")->values = {"#FF0000", "#00FF00"};
+
+    MixedFilamentManager mixed_mgr;
+    mixed_mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00"});
+    mixed_mgr.mixed_filaments().front().manual_pattern = MixedFilamentManager::normalize_manual_pattern("12");
+    const size_t       n_physical = 2;
+    const unsigned int virtual_id = mixed_mgr.filament_id_from_mixed_index(0, n_physical);
+    REQUIRE(mixed_mgr.total_filaments(n_physical) == n_physical + mixed_mgr.enabled_count());
+    REQUIRE(virtual_id > n_physical);
+    config.set("mixed_filament_definitions", mixed_mgr.serialize_custom_entries());
+
+    add_scaled_cube(model, print, "short-t0", Vec3f(1.f, 1.f, 0.2f), Vec3d(0., 0., 0.), 1, true);
+    add_scaled_cube(model, print, "tall-mixed", Vec3f(1.f, 1.f, 1.f), Vec3d(40., 0., 0.), int(virtual_id), true);
+
+    print.apply(model, config);
+    print.validate();
+    print.set_status_silent();
+    const std::string gcode = Test::gcode(print);
+
+    REQUIRE(print.mixed_filament_manager().total_filaments(n_physical) == mixed_mgr.total_filaments(n_physical));
+
+    bool saw_physical_t1          = false;
+    bool saw_unresolved_virtual   = false;
+    for (const LayerTools &lt : print.tool_ordering()) {
+        for (unsigned int ext : lt.extruders) {
+            if (ext == 1)
+                saw_physical_t1 = true;
+            if (ext >= n_physical)
+                saw_unresolved_virtual = true;
+        }
+    }
+    CHECK(saw_physical_t1);
+    CHECK_FALSE(saw_unresolved_virtual);
+
+    const auto   hits      = parse_cooldowns(gcode);
+    const size_t t1_s0_pos = first_s0_pos(hits, 1);
+    if (t1_s0_pos != std::string::npos)
+        CHECK(gcode.find("T1 ; change extruder", t1_s0_pos) == std::string::npos);
+}
+
+TEST_CASE("OozePrevention: wipe tower on keeps the same S0 placement", "[OozePrevention][ToolOrdering][WipeTower]")
+{
+    Print              print;
+    Model              model;
+    DynamicPrintConfig config = two_tool_ooze_config();
+    config.set_deserialize_strict({
+        {"enable_prime_tower", "1"},
+        {"wipe_tower_x",       "70"},
+        {"wipe_tower_y",       "70"},
+        {"prime_tower_width",  "35"},
+        {"brim_type",          "no_brim"},
+    });
+    add_scaled_cube(model, print, "short", Vec3f(1.f, 1.f, 0.2f), Vec3d(0., 0., 0.), 1, true);
+    add_scaled_cube(model, print, "tall", Vec3f(1.f, 1.f, 1.f), Vec3d(40., 0., 0.), 2, true);
+
+    print.apply(model, config);
+    print.validate();
+    print.set_status_silent();
+    REQUIRE(print.has_wipe_tower());
+    const std::string gcode = Test::gcode(print);
+
+    const auto hits = parse_cooldowns(gcode);
+    REQUIRE_FALSE(hits.empty());
+    CHECK(tool_got_s0(hits, 0));
+    CHECK_FALSE(tool_got_s0(hits, 1));
+    const size_t first_t0_s0 = first_s0_pos(hits, 0);
+    REQUIRE(first_t0_s0 != std::string::npos);
+    CHECK(gcode.find("T0 ; change extruder", first_t0_s0) == std::string::npos);
 }

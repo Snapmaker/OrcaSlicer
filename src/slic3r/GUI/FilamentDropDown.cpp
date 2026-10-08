@@ -487,7 +487,7 @@ void FilamentDropDown::render(wxDC &dc)
     const wxSize size = GetSize();
     render_background(dc, size, states);
 
-    const int selected_item = selectedItem();
+    const int selected_item = drawn_row_for_item(items, group, selection);
     const int hover_index   = hoverIndex();
     wxRect    content        = {{0, offset.y}, rowSize};
     SelectionRenderContext selection_context{size, states, selected_item, hover_index, content};

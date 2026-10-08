@@ -460,27 +460,73 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
     return ok;
 }
 
-std::string OozePrevention::pre_toolchange(GCode& gcodegen)
+std::string OozePrevention::pre_toolchange(GCode& gcodegen, double print_z)
 {
     std::string gcode;
 
     unsigned int extruder_id        = gcodegen.writer().extruder()->id();
+
+    // Check if this tool will ever be used again in this print, so we can turn its heater
+    // fully off (S0) instead of parking it at standby/idle temperature.
+    //
+    // This is restricted to "true" multi-tool setups where filament id == physical
+    // extruder id (classic multi-extruder / IDEX / toolchanger machines with
+    // ooze_prevention enabled). SEMM/AMS/MMU never reach here: init_ooze_prevention()
+    // only sets m_ooze_prevention.enable when single_extruder_multi_material is off, so
+    // (like upstream bcbb8746) there is no separate SEMM check below.
+    //  - Bambu (H2/H2C/H2D) printers are excluded outright: they map filaments to
+    //    physical nozzles through a separate grouping/virtual-filament layer
+    //    (MultiNozzleUtils::LayeredNozzleGroupResult, MixedFilamentManager) where
+    //    writer().extruder()->id() is a filament id that does not equal the physical
+    //    extruder/nozzle id, and their idle-cool behavior is already handled by
+    //    GCode/PreCoolingInjector. Leave their G-code untouched here.
+    //  - PrintSequence::ByObject is excluded: Print::process() explicitly skips
+    //    building the print-wide m_tool_ordering for a by-object plate (see
+    //    Print::process(), psWipeTower step), and GCode::_do_export builds a fresh,
+    //    per-object-only ToolOrdering local variable for that mode instead of storing
+    //    it on the Print. So m_curr_print->tool_ordering() here is either empty or, if
+    //    a wipe tower forced it to be populated for a single-object plate, is not
+    //    guaranteed to describe every object's usage of this extruder. Rather than
+    //    risk cutting power to a tool another object still needs, always keep by-object
+    //    prints on the existing standby/idle-temperature behavior.
+    bool is_last_use = false;
+    if (gcodegen.m_curr_print != nullptr && !gcodegen.is_BBL_Printer() &&
+        gcodegen.config().print_sequence == PrintSequence::ByLayer &&
+        !gcodegen.m_curr_print->tool_ordering().empty()) {
+        is_last_use = gcodegen.m_curr_print->tool_ordering().is_last_extrusion_layer(print_z, extruder_id);
+    }
+
+    // From upstream c93acbd2 (bcbb8746 went back to a bare pop_back()): never pop_back() on an
+    // empty set_temperature() result and never assume the trailing newline. With wait == false
+    // the writer always returns "M104 ...\n" (or G10 on RRF), so the output is the same as
+    // upstream's; the guard only keeps a future empty return from being undefined behaviour.
+    auto append_cooldown = [&gcode](std::string temp_cmd) {
+        if (temp_cmd.empty())
+            return;
+        if (temp_cmd.back() == '\n')
+            temp_cmd.pop_back();
+        temp_cmd += " ;cooldown\n"; // marker for GCodeProcessor so it can suppress the commands when needed
+        gcode += temp_cmd;
+    };
+
+    if (is_last_use) {
+        // Toolhead has finished its last layer -> turn off heater completely (0 °C)
+        append_cooldown(gcodegen.writer().set_temperature(0, false, extruder_id));
+        return gcode;
+    }
+
     const auto&  filament_idle_temp = gcodegen.config().idle_temperature;
     if (filament_idle_temp.get_at(extruder_id) == 0) {
         // There is no idle temperature defined in filament settings.
         // Use the delta value from print config.
         if (gcodegen.config().standby_temperature_delta.value != 0) {
             // we assume that heating is always slower than cooling, so no need to block
-            gcode += gcodegen.writer().set_temperature(this->_get_temp(gcodegen) + gcodegen.config().standby_temperature_delta.value, false,
-                                                       extruder_id);
-            gcode.pop_back();
-            gcode += " ;cooldown\n"; // this is a marker for GCodeProcessor, so it can supress the commands when needed
+            append_cooldown(gcodegen.writer().set_temperature(this->_get_temp(gcodegen) + gcodegen.config().standby_temperature_delta.value,
+                                                              false, extruder_id));
         }
     } else {
         // Use the value from filament settings. That one is absolute, not delta.
-        gcode += gcodegen.writer().set_temperature(filament_idle_temp.get_at(extruder_id), false, extruder_id);
-        gcode.pop_back();
-        gcode += " ;cooldown\n"; // this is a marker for GCodeProcessor, so it can supress the commands when needed
+        append_cooldown(gcodegen.writer().set_temperature(filament_idle_temp.get_at(extruder_id), false, extruder_id));
     }
 
     return gcode;
@@ -11224,7 +11270,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
     // If ooze prevention is enabled, park current extruder in the nearest
     // standby point and set it to the standby temperature.
     if (m_ooze_prevention.enable && m_writer.extruder() != nullptr)
-        gcode += m_ooze_prevention.pre_toolchange(*this);
+        gcode += m_ooze_prevention.pre_toolchange(*this, print_z);
 
     // BBS
     float new_retract_length            = m_config.retraction_length.get_at(extruder_id);

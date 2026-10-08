@@ -51,7 +51,11 @@ public:
     bool enable;
 
     OozePrevention() : enable(false) {}
-    std::string pre_toolchange(GCode &gcodegen);
+    // print_z is the print-wide Z of the layer currently being processed (as passed to
+    // GCode::set_extruder), used to look the extruder up in ToolOrdering::tools_for_layer()
+    // so the "last use" check stays print-wide-index-correct regardless of which object or
+    // support layer we are on.
+    std::string pre_toolchange(GCode &gcodegen, double print_z);
     std::string post_toolchange(GCode &gcodegen);
 
 private:
@@ -826,6 +830,7 @@ private:
         size_t                                                  num_objects,
         size_t                                                  num_islands);
 
+    friend class OozePrevention;
     friend class Wipe;
     friend class WipeTowerIntegration;
     friend class PressureEqualizer;

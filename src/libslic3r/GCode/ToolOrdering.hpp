@@ -250,6 +250,17 @@ public:
     // map (manual mode) for the given per-layer filament lists. See GCode::_do_export.
     static MultiNozzleUtils::LayeredNozzleGroupResult group_by_plate_map(Print *print, const std::vector<std::vector<unsigned int>> &layer_filaments);
 
+    // True when this extruder (as it appears in LayerTools::extruders - this already
+    // covers support / support-interface extruders and anything the wipe tower touches
+    // for that layer, since those are folded into LayerTools::extruders by
+    // collect_extruders()) has no later extrusion layer than the one at print_z.
+    // print_z is compared (with EPSILON) against the print_z of the extruder's last
+    // LayerTools entry, so it does not matter which object / support layer produced it.
+    // An extruder missing from m_last_layer_per_extruder is conservatively treated as
+    // NOT finished (kept heated) - it never printed anything we know about, so we must
+    // not assume it is safe to shut off.
+    bool                is_last_extrusion_layer(coordf_t print_z, unsigned int extruder_id) const;
+
 private:
     void				initialize_layers(std::vector<coordf_t> &zs);
     void 				collect_extruders(const PrintObject &object, const std::vector<std::pair<double, unsigned int>> &per_layer_extruder_switches);
@@ -307,6 +318,8 @@ private:
     unsigned int               m_last_printing_extruder  = (unsigned int)-1;
     // All extruders, which extrude some material over m_layer_tools.
     std::vector<unsigned int>  m_all_printing_extruders;
+    // Map: extruder_id -> print_z of the last layer it is used on
+    std::map<unsigned int, coordf_t> m_last_layer_per_extruder;
     std::unordered_map<uint32_t, std::vector<uint8_t>> m_tool_order_cache;
     const DynamicPrintConfig*  m_print_full_config = nullptr;
     const PrintConfig*         m_print_config_ptr = nullptr;

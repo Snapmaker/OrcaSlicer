@@ -1,10 +1,13 @@
 #include <catch2/catch.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <map>
 #include <numeric>
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "libslic3r/AABBTreeLines.hpp"
 #include "libslic3r/ClipperUtils.hpp"
@@ -950,4 +953,189 @@ TEST_CASE("Support ironing spacing of 0 is clamped", "[Fill][Ironing]")
     REQUIRE(minimum.first > 0);
     CHECK(clamped.first == minimum.first);
     CHECK(clamped.second == Approx(minimum.second));
+}
+
+// Length-weighted dominant direction of the layer's role_wanted extrusions, whole degrees
+// [0, 180), or -1 if it has none. Needs a line pattern such as monotonic or rectilinear.
+template<typename RolePred> static int dominant_fill_angle(const Layer &layer, RolePred role_wanted)
+{
+    std::map<int, double> weight_per_degree;
+
+    auto account = [&weight_per_degree, &role_wanted](const ExtrusionPath &path) {
+        if (!role_wanted(path.role()))
+            return;
+        const Points &pts = path.polyline.points;
+        for (size_t i = 1; i < pts.size(); ++i) {
+            const double dx = double(pts[i].x() - pts[i - 1].x());
+            const double dy = double(pts[i].y() - pts[i - 1].y());
+            const double len = std::hypot(dx, dy);
+            if (len <= 0.)
+                continue;
+            int deg = int(std::lround(Geometry::rad2deg(std::atan2(dy, dx)))) % 180;
+            if (deg < 0)
+                deg += 180;
+            weight_per_degree[deg] += len;
+        }
+    };
+
+    for (const LayerRegion *region : layer.regions())
+        for (const ExtrusionEntity *entity : region->fills.flatten().entities) {
+            if (auto *path = dynamic_cast<const ExtrusionPath *>(entity))
+                account(*path);
+            else if (auto *multi = dynamic_cast<const ExtrusionMultiPath *>(entity))
+                for (const ExtrusionPath &p : multi->paths)
+                    account(p);
+            else if (auto *loop = dynamic_cast<const ExtrusionLoop *>(entity))
+                for (const ExtrusionPath &p : loop->paths)
+                    account(p);
+        }
+
+    if (weight_per_degree.empty())
+        return -1;
+    return std::max_element(weight_per_degree.begin(), weight_per_degree.end(),
+                            [](const auto &a, const auto &b) { return a.second < b.second; })->first;
+}
+
+template<typename RolePred> static std::vector<int> angles_per_layer(const Print &print, RolePred role_wanted)
+{
+    std::vector<int> angles;
+    for (const Layer *layer : print.objects().front()->layers())
+        angles.push_back(dominant_fill_angle(*layer, role_wanted));
+    return angles;
+}
+
+static bool solid_role(ExtrusionRole role) { return is_solid_infill(role) && role != erIroning; }
+static bool sparse_role(ExtrusionRole role) { return role == erInternalInfill; }
+
+TEST_CASE("Infill rotation template is unaffected by a raft", "[Fill][Regression]")
+{
+    // More angles than raft layers, so a raft cannot alias back to the same angle.
+    const std::string template_string = GENERATE("+45", "0,25,50,75,100,125,150");
+    const int raft_layers = GENERATE(1, 3);
+    CAPTURE(template_string, raft_layers);
+
+    auto angles_for = [&template_string](int rafts) {
+        Print print;
+        // 100% density makes every layer solid, so the template shows on all 100, not just shells.
+        Slic3r::Test::init_and_process_print({Slic3r::make_cube(20, 20, 20)}, print,
+                                            {{"solid_infill_rotate_template", template_string},
+                                             {"sparse_infill_density", "100%"},
+                                             {"internal_solid_infill_pattern", "monotonic"},
+                                             {"layer_height", 0.2},
+                                             {"raft_layers", rafts}});
+        return angles_per_layer(print, solid_role);
+    };
+
+    const std::vector<int> without_raft = angles_for(0);
+    const std::vector<int> with_raft    = angles_for(raft_layers);
+
+    REQUIRE(without_raft.size() == 100);
+    REQUIRE(with_raft.size() == without_raft.size());
+    REQUIRE(std::count(without_raft.begin(), without_raft.end(), -1) == 0);
+    CHECK(with_raft == without_raft);
+}
+
+TEST_CASE("Sparse infill rotation template turns the infill layer by layer", "[Fill]")
+{
+    const std::vector<int> expected_cycle = {0, 25, 50, 75, 100, 125, 150};
+
+    Print print;
+    // No shells, so every layer is sparse infill rather than solid.
+    Slic3r::Test::init_and_process_print({Slic3r::make_cube(10, 10, 10)}, print,
+                                        {{"sparse_infill_rotate_template", "0,25,50,75,100,125,150"},
+                                         {"sparse_infill_density", "40%"},
+                                         {"sparse_infill_pattern", "rectilinear"},
+                                         {"top_shell_layers", 0},
+                                         {"bottom_shell_layers", 0},
+                                         {"layer_height", 0.2}});
+
+    const std::vector<int> angles = angles_per_layer(print, sparse_role);
+    REQUIRE(angles.size() == 50);
+    REQUIRE(std::count(angles.begin(), angles.end(), -1) == 0);
+
+    std::vector<int> expected;
+    for (size_t i = 0; i < angles.size(); ++i)
+        expected.push_back(expected_cycle[i % expected_cycle.size()]);
+    CHECK(angles == expected);
+}
+
+TEST_CASE("Infill rotation template layer count modifier holds each angle for N layers", "[Fill]")
+{
+    Print print;
+    // "+45#2" turns 45 degrees every 2 layers, so equal angles come in pairs.
+    Slic3r::Test::init_and_process_print({Slic3r::make_cube(10, 10, 10)}, print,
+                                        {{"solid_infill_rotate_template", "+45#2"},
+                                         {"sparse_infill_density", "100%"},
+                                         {"internal_solid_infill_pattern", "monotonic"},
+                                         {"layer_height", 0.2}});
+
+    const std::vector<int> angles = angles_per_layer(print, solid_role);
+    REQUIRE(angles.size() == 50);
+    REQUIRE(std::count(angles.begin(), angles.end(), -1) == 0);
+
+    std::vector<int> run_lengths;
+    for (size_t i = 0; i < angles.size();) {
+        size_t j = i;
+        while (j < angles.size() && angles[j] == angles[i])
+            ++j;
+        run_lengths.push_back(int(j - i));
+        i = j;
+    }
+    // The first and last runs can be clipped by the start and end of the object.
+    REQUIRE(run_lengths.size() > 3);
+    const std::vector<int> interior(run_lengths.begin() + 1, run_lengths.end() - 1);
+    CHECK(std::count(interior.begin(), interior.end(), 2) == int(interior.size()));
+}
+
+TEST_CASE("Z anti-aliasing keeps the infill rotation template's step", "[Fill]")
+{
+    Print print;
+    Slic3r::Test::init_and_process_print({Slic3r::make_cube(10, 10, 10)}, print,
+                                        {{"solid_infill_rotate_template", "+45"},
+                                         {"sparse_infill_density", "100%"},
+                                         {"internal_solid_infill_pattern", "monotonic"},
+                                         {"zaa_enabled", 1},
+                                         {"zaa_min_z", 0.05},
+                                         {"layer_height", 0.2}});
+
+    // Z contouring varies the layer heights, so the layer count is not 10mm / 0.2mm here.
+    const std::vector<int> angles = angles_per_layer(print, solid_role);
+    REQUIRE(angles.size() > 10);
+    REQUIRE(std::count(angles.begin(), angles.end(), -1) == 0);
+
+    // Z contouring may change when the template advances, but each step must still be 45 degrees.
+    int steps = 0;
+    for (size_t i = 1; i < angles.size(); ++i) {
+        const int delta = ((angles[i] - angles[i - 1]) % 180 + 180) % 180;
+        CAPTURE(i, angles[i - 1], angles[i]);
+        // Split rather than "delta == 0 || delta == 45" so Catch2 can show the operands.
+        REQUIRE(delta % 45 == 0);
+        REQUIRE(delta <= 45);
+        steps += delta == 45;
+    }
+    CHECK(steps > 0);
+}
+
+TEST_CASE("Solid infill direction offsets every layer when no template is set", "[Fill]")
+{
+    auto angles_for = [](int direction) {
+        Print print;
+        Slic3r::Test::init_and_process_print({Slic3r::make_cube(10, 10, 10)}, print,
+                                            {{"solid_infill_direction", direction},
+                                             {"sparse_infill_density", "100%"},
+                                             {"internal_solid_infill_pattern", "monotonic"},
+                                             {"layer_height", 0.2}});
+        return angles_per_layer(print, solid_role);
+    };
+
+    const std::vector<int> at_0  = angles_for(0);
+    const std::vector<int> at_30 = angles_for(30);
+    REQUIRE(at_0.size() == at_30.size());
+    REQUIRE(std::count(at_0.begin(), at_0.end(), -1) == 0);
+
+    for (size_t i = 0; i < at_0.size(); ++i) {
+        const int delta = ((at_30[i] - at_0[i]) % 180 + 180) % 180;
+        CAPTURE(i, at_0[i], at_30[i]);
+        CHECK(delta == 30);
+    }
 }

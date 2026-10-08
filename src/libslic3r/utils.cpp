@@ -1940,7 +1940,7 @@ size_t get_available_physical_memory()
 		return 0;
 	// Free + inactive + purgeable, not free pages alone (see macos_available_bytes()).
 	return static_cast<size_t>(macos_available_bytes(page_size, vm_stats.free_count, vm_stats.inactive_count,
-	                                                 vm_stats.purgeable_count, get_physical_memory()));
+	                                                 vm_stats.purgeable_count, total_physical_memory()));
 #else
 	return 0;
 #endif

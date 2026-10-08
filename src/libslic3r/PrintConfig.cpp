@@ -1405,12 +1405,15 @@ void PrintConfigDef::init_fff_params()
     def = this->add("bridge_density", coPercent);
     def->label = L("External bridge density");
     def->category = L("Strength");
-    def->tooltip = L("Controls the density (spacing) of external bridge lines. 100% means solid bridge. Default is 100%.\n\n"
+    def->tooltip = L("Controls the density (spacing) of external bridge lines. Default is 100%.\n\n"
                      "Lower density external bridges can help improve reliability as there is more space for air to circulate "
-                     "around the extruded bridge, improving its cooling speed.");
+                     "around the extruded bridge, improving its cooling speed. Minimum is 10%.\n\n"
+                     "Higher densities can produce smoother bridge surfaces, as overlapping lines provide "
+                     "additional support during printing. Maximum is 120%. \n"
+                     "Note: Bridge density that is too high can cause warping or overextrusion.");
     def->sidetext = "%";
     def->min = 10;
-    def->max = 100;
+    def->max = 120;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionPercent(100));
 
@@ -2681,7 +2684,8 @@ void PrintConfigDef::init_fff_params()
         "\nBe sure to allow enough space between objects, as this compensation is done after the checks.");
     def->sidetext = "%";
     def->ratio_over = "";
-    def->min = 10;
+    def->min = 50;
+    def->max = 150;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionPercents{ 100 });
     
@@ -2692,7 +2696,8 @@ void PrintConfigDef::init_fff_params()
         " The part will be scaled in Z to compensate.");
     def->sidetext = "%";
     def->ratio_over = "";
-    def->min = 10;
+    def->min = 50;
+    def->max = 150;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionPercents{ 100 });
 
@@ -11728,8 +11733,32 @@ bool has_skirt(const DynamicPrintConfig& cfg)
         || (opt_draft_shield && opt_draft_shield->getInt() != dsDisabled);
 }
 float get_real_skirt_dist(const DynamicPrintConfig& cfg) {
-    return has_skirt(cfg) ? cfg.opt_float("skirt_distance") : 0;
+    if (!has_skirt(cfg)) return 0.f;
+
+    float dist = cfg.opt_float("skirt_distance");
+
+    int loops = cfg.opt_int("skirt_loops");
+    auto opt_draft_shield = cfg.option("draft_shield");
+    if (opt_draft_shield && opt_draft_shield->getInt() != dsDisabled && loops == 0) {
+        loops = 1;
+    }
+
+    float width = cfg.opt_float("initial_layer_line_width");
+    if (width <= 0.f) {
+        width = cfg.opt_float("line_width");
+    }
+    if (width <= 0.f) {
+        auto* nd = cfg.opt<ConfigOptionFloats>("nozzle_diameter");
+        if (nd && !nd->values.empty()) {
+            width = *std::max_element(nd->values.begin(), nd->values.end());
+        } else {
+            width = 0.4f;
+        }
+    }
+
+    return dist + loops * width;
 }
+
 static bool is_XL_printer(const std::string& printer_notes)
 {
     return boost::algorithm::contains(printer_notes, "PRINTER_VENDOR_PRUSA3D")

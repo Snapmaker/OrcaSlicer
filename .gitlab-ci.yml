@@ -18,7 +18,8 @@ ai_review:
     AI_REVIEW_PROJECT_STANDARDS: "projects/snapmaker-orca"
     DG_REF: "project/snapmaker-orca"
   script:
-    - pip install --quiet pyyaml
+    - $py = "C:\Users\snapmaker\AppData\Local\Programs\Python\Python311\python.exe"
+    - & $py -m pip install --quiet pyyaml
     - if (Test-Path dg) { Remove-Item -Recurse -Force dg }
     - git clone --depth 1 --branch $env:DG_REF https://github.com/zhangzhend0ng/dev-guidelines dg
-    - python dg/scripts/ai_review_gitlab.py
+    - & $py dg/scripts/ai_review_gitlab.py

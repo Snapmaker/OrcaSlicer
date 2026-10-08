@@ -531,15 +531,15 @@ wxWindow *CostsDialog::build_page(wxWindow *parent, Table &table)
     table.list->AppendTextColumn(_L("Vendor"), wxDATAVIEW_CELL_INERT, 13 * em, wxALIGN_LEFT, sortable);
     if (table.machines) {
         table.list->AppendTextColumn(_L("Model"), wxDATAVIEW_CELL_INERT, 34 * em, wxALIGN_LEFT, sortable);
-        table.list->AppendTextColumn(_L("Preset time cost"), wxDATAVIEW_CELL_INERT, 13 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
-        table.list->AppendTextColumn(_L("Your rate"), wxDATAVIEW_CELL_EDITABLE, 10 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
-        table.list->AppendTextColumn(_L("Applied rate"), wxDATAVIEW_CELL_INERT, 12 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
+        table.list->AppendTextColumn(_L("Preset Time Cost"), wxDATAVIEW_CELL_INERT, 13 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
+        table.list->AppendTextColumn(_L("Your Rate"), wxDATAVIEW_CELL_EDITABLE, 10 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
+        table.list->AppendTextColumn(_L("Applied Rate"), wxDATAVIEW_CELL_INERT, 12 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
     } else {
         table.list->AppendTextColumn(_L("Filament"), wxDATAVIEW_CELL_INERT, 26 * em, wxALIGN_LEFT, sortable);
         table.list->AppendTextColumn(_L("Type"), wxDATAVIEW_CELL_INERT, 8 * em, wxALIGN_LEFT, sortable);
-        table.list->AppendTextColumn(_L("Preset price"), wxDATAVIEW_CELL_INERT, 12 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
-        table.list->AppendTextColumn(_L("Your price"), wxDATAVIEW_CELL_EDITABLE, 10 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
-        table.list->AppendTextColumn(_L("Applied price"), wxDATAVIEW_CELL_INERT, 12 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
+        table.list->AppendTextColumn(_L("Preset Price"), wxDATAVIEW_CELL_INERT, 12 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
+        table.list->AppendTextColumn(_L("Your Price"), wxDATAVIEW_CELL_EDITABLE, 10 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
+        table.list->AppendTextColumn(_L("Applied Price"), wxDATAVIEW_CELL_INERT, 12 * em, wxALIGN_RIGHT, wxDATAVIEW_COL_RESIZABLE);
     }
     top->Add(table.list, 1, wxEXPAND);
 
@@ -1127,6 +1127,18 @@ static void set_pricing_number(PricingSettings &s, PricingField field, double va
     }
 }
 
+// At least as wide as its label in its own font, plus the Choice padding, at any DPI / theme.
+static void fit_button_to_label(::Button *button)
+{
+    const wxSize text  = button->GetTextExtent(button->GetLabel());
+    const int    width = text.x + button->FromDIP(2 * 12 + 16);
+    const wxSize min   = button->GetMinSize();
+    if (min.x < width) {
+        button->SetMinSize(wxSize(width, min.y));
+        button->SetSize(wxSize(width, std::max(min.y, button->GetSize().y)));
+    }
+}
+
 wxWindow *CostsDialog::build_project_page(wxWindow *parent)
 {
     const int em    = GetTextExtent("m").x;
@@ -1138,7 +1150,7 @@ wxWindow *CostsDialog::build_project_page(wxWindow *parent)
     const PricingSettings defaults = m_store.pricing();
     m_project_values               = project.resolve(defaults);
 
-    // Description | Use Default | Default Cost | This project | Applied Cost
+    // Description | Use Default | Default Cost | This Project | Applied Cost
     auto *grid = new wxFlexGridSizer(5, FromDIP(6), FromDIP(12));
     grid->AddGrowableCol(3);
     auto bold = [panel](const wxString &text) {
@@ -1149,7 +1161,7 @@ wxWindow *CostsDialog::build_project_page(wxWindow *parent)
     grid->Add(bold(_L("Description")));
     grid->Add(bold(_L("Use Default")));
     grid->Add(bold(_L("Default Cost")));
-    grid->Add(bold(_L("This project")));
+    grid->Add(bold(_L("This Project")));
     grid->Add(bold(_L("Applied Cost")));
 
     m_pricing_rows.clear();
@@ -1197,14 +1209,18 @@ wxWindow *CostsDialog::build_project_page(wxWindow *parent)
         grid->Add(row.applied_text, 0, wxALIGN_CENTER_VERTICAL);
         m_pricing_rows.push_back(row);
     }
-    top->Add(grid, 0, wxEXPAND);
 
-    auto *btns = new wxBoxSizer(wxHORIZONTAL);
-    auto *save = new ::Button(panel, _L("Save as my defaults"));
-    save->SetStyle(ButtonStyle::Regular, ButtonType::Choice);
+    // "Save New Defaults" under the This Project column, on its left edge: a last grid row.
+    // The primary (accent) style, so it reads in light and dark mode alike.
+    auto *save = new ::Button(panel, _L("Save New Defaults"));
+    save->SetStyle(ButtonStyle::Confirm, ButtonType::Choice);
+    fit_button_to_label(save);
     save->SetToolTip(_L("Make the Applied Cost values your defaults, for every project that does not set its own."));
-    btns->Add(save, 0, wxALIGN_CENTER_VERTICAL);
-    top->Add(btns, 0, wxEXPAND | wxTOP, FromDIP(12));
+    for (int col = 0; col < 3; ++col)
+        grid->AddSpacer(0);
+    grid->Add(save, 0, wxALIGN_LEFT | wxTOP, FromDIP(6));
+    grid->AddSpacer(0);
+    top->Add(grid, 0, wxEXPAND);
     if (plater == nullptr)
         panel->Disable();
     panel->SetSizer(top);
@@ -1258,6 +1274,8 @@ void CostsDialog::update_pricing_row(const PricingRow &row)
     const bool own = !row.use_default_on;
     row.use_default->SetValue(row.use_default_on);
     row.use_default->SetStyle(row.use_default_on ? ButtonStyle::Confirm : ButtonStyle::Regular, ButtonType::Choice);
+    // SetStyle() puts the Choice minimum size back; the label must never be cut ("Use Defaul").
+    fit_button_to_label(row.use_default);
     row.use_default->Refresh();
     if (!own)
         show_pricing_value(row, m_store.pricing());

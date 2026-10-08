@@ -1572,6 +1572,62 @@ TEST_CASE("OozePrevention: tool that finishes early gets S0 exactly once, after 
     CHECK(gcode.find("T0 ; change extruder", first_t0_s0) == std::string::npos);
 }
 
+TEST_CASE("OozePrevention: unused extruder turns off after its final layer on a multi-object print with different layer heights",
+          "[OozePrevention][ToolOrdering]")
+{
+    // Orca #15849 (bcbb8746) "Unused extruder turns off after its final layer on multi-object print",
+    // rewritten for Catch2 v2 and Edge's test helpers.
+    // Object 1: tall cube (10 mm) printed with extruder 1 (T0) at 0.20 mm layers.
+    // Object 2: short cube (4 mm) printed with extruder 2 (T1) at 0.15 mm layers.
+    // The merged print-wide layer list interleaves both objects' Z values, so a layer-index
+    // lookup and a print_z lookup disagree here; only the print_z one is right.
+    Print              print;
+    Model              model;
+    DynamicPrintConfig config = two_tool_ooze_config();
+    config.set_deserialize_strict({
+        {"standby_temperature_delta", "-40"},
+        {"nozzle_temperature",        "240,240"},
+    });
+    ModelObject *tall  = add_scaled_cube(model, print, "tall-t0", Vec3f(1.f, 1.f, 0.5f), Vec3d(0., 0., 0.), 1, true);
+    ModelObject *short_ = add_scaled_cube(model, print, "short-t1", Vec3f(1.f, 1.f, 0.2f), Vec3d(40., 0., 0.), 2, true);
+    tall->config.set_key_value("layer_height", new ConfigOptionFloat(0.20));
+    short_->config.set_key_value("layer_height", new ConfigOptionFloat(0.15));
+
+    print.apply(model, config);
+    print.validate();
+    print.set_status_silent();
+    const std::string gcode = Test::gcode(print);
+
+    int t0_s0_cooldowns = 0;
+    int t1_s0_cooldowns = 0;
+    {
+        std::istringstream stream(gcode);
+        for (std::string line; std::getline(stream, line);) {
+            if (line.find(";cooldown") == std::string::npos)
+                continue;
+            if (line.find("M104 S0 T1") != std::string::npos)
+                ++t1_s0_cooldowns;
+            if (line.find("M104 S0 T0") != std::string::npos)
+                ++t0_s0_cooldowns;
+        }
+    }
+    // T1 finishes at 4 mm and must get the S0 cooldown exactly once when it is parked.
+    CHECK(t1_s0_cooldowns == 1);
+    // T0 prints all the way to 10 mm, so pre_toolchange must never turn it off.
+    CHECK(t0_s0_cooldowns == 0);
+
+    // The S0 belongs to T1's top layer (or the first toolchange after it), not earlier, and T1
+    // is never selected again afterwards.
+    const size_t t1_s0_pos = first_s0_pos(parse_cooldowns(gcode), 1);
+    REQUIRE(t1_s0_pos != std::string::npos);
+    CHECK(gcode.find("T1 ; change extruder", t1_s0_pos) == std::string::npos);
+    const size_t z_tag = gcode.rfind("\n;Z:", t1_s0_pos);
+    REQUIRE(z_tag != std::string::npos);
+    const double z_at_s0 = std::stod(gcode.substr(z_tag + 4, 16));
+    CHECK(z_at_s0 > 3.7);
+    CHECK(z_at_s0 < 4.3);
+}
+
 TEST_CASE("OozePrevention: two objects with different effective layer counts on the same extruder never get a premature S0",
           "[OozePrevention][ToolOrdering]")
 {

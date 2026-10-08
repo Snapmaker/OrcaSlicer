@@ -17,8 +17,11 @@ ai_review:
     AI_REVIEW_LLM_EFFORT: "low"
     AI_REVIEW_PROJECT_STANDARDS: "projects/snapmaker-orca"
     DG_REF: "project/snapmaker-orca"
+    # per-user Python on the runner box; absolute path is the only form the
+    # service account can execute (py launcher cannot see per-user installs)
+    PYEXE: "C:/Users/snapmaker/AppData/Local/Programs/Python/Python311/python.exe"
   script:
-    - py -3.11 -m pip install --quiet pyyaml==6.0.3
+    - '& $env:PYEXE -m pip install --quiet pyyaml==6.0.3'
     - if (Test-Path dg) { Remove-Item -Recurse -Force dg }
     - git clone --depth 1 --branch $env:DG_REF https://github.com/zhangzhend0ng/dev-guidelines dg
-    - py -3.11 dg/scripts/ai_review_gitlab.py
+    - '& $env:PYEXE dg/scripts/ai_review_gitlab.py'

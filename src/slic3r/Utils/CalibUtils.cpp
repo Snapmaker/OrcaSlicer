@@ -631,9 +631,11 @@ void CalibUtils::calib_pa_pattern(const CalibInfo &calib_info, Model& model)
     full_config.apply(filament_config);
     full_config.apply(printer_config);
 
+    const auto& config_pattern = SuggestedConfigCalibPAPattern();
+
     float nozzle_diameter = printer_config.option<ConfigOptionFloats>("nozzle_diameter")->get_at(0);
 
-    for (const auto& opt : SuggestedConfigCalibPAPattern().float_pairs) {
+    for (const auto& opt : config_pattern.float_pairs) {
         print_config.set_key_value(opt.first, new ConfigOptionFloat(opt.second));
     }
 
@@ -641,16 +643,16 @@ void CalibUtils::calib_pa_pattern(const CalibInfo &calib_info, Model& model)
             full_config, print_config.get_abs_value("line_width"),
             print_config.get_abs_value("layer_height"), 0) });
     
-    for (const auto& opt : SuggestedConfigCalibPAPattern().nozzle_ratio_pairs) {
+    for (const auto& opt : config_pattern.nozzle_ratio_pairs) {
         print_config.set_key_value(opt.first, new ConfigOptionFloatOrPercent(nozzle_diameter * opt.second / 100, false));
     }
 
-    for (const auto& opt : SuggestedConfigCalibPAPattern().int_pairs) {
+    for (const auto& opt : config_pattern.int_pairs) {
         print_config.set_key_value(opt.first, new ConfigOptionInt(opt.second));
     }
 
-    print_config.set_key_value(SuggestedConfigCalibPAPattern().brim_pair.first,
-        new ConfigOptionEnum<BrimType>(SuggestedConfigCalibPAPattern().brim_pair.second));
+    print_config.set_key_value(config_pattern.brim_pair.first,
+        new ConfigOptionEnum<BrimType>(config_pattern.brim_pair.second));
 
     //DynamicPrintConfig full_config;
     full_config.apply(FullPrintConfig::defaults());

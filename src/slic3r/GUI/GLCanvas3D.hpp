@@ -57,6 +57,8 @@ namespace CustomGCode { struct Item; }
 namespace GUI {
 
 class Bed3D;
+class GLSubTextureBindRenderer;
+class GLToolbarBackgroundTextureCache;
 class PartPlateList;
 
 #if ENABLE_RETINA_GL
@@ -384,7 +386,8 @@ class GLCanvas3D
         ObjectClashed,
         GCodeConflict,
         ToolHeightOutside,
-        SpiralLiftNearBoundary  // Snapmaker: 螺旋抬升靠近边界警告
+        SpiralLiftNearBoundary,
+        MixUsePLAAndPETG
     };
 
     class RenderStats
@@ -570,6 +573,8 @@ private:
     mutable IMToolbar m_sel_plate_toolbar;
     mutable GLToolbar m_assemble_view_toolbar;
     mutable IMReturnToolbar m_return_toolbar;
+    std::unique_ptr<GLToolbarBackgroundTextureCache> m_toolbarBackgroundTextureCache;
+    std::unique_ptr<GLSubTextureBindRenderer> m_subTextureBindRenderer;
     mutable float m_paint_toolbar_width;
 
     //BBS: add canvas type for assemble view usage
@@ -885,6 +890,7 @@ public:
     void _update_select_plate_toolbar_stats_item(bool force_selected = false);
     void reset_select_plate_toolbar_selection();
     void enable_select_plate_toolbar(bool enable);
+    void invalidate_select_plate_toolbar();
     void enable_assemble_view_toolbar(bool enable);
     void enable_return_toolbar(bool enable);
     void enable_separator_toolbar(bool enable);
@@ -1207,6 +1213,9 @@ public:
 private:
     bool _is_shown_on_screen() const;
 
+    const GLTexture* _get_shared_toolbar_background_texture();
+    bool _init_toolbar_background(GLToolbar& toolbar, const BackgroundTexture::Metadata& background_data);
+
     /** @brief Selects and prepares the selection highlight path for the current frame. */
     ESelectionHighlightMode ResolveSelectionHighlightMode();
 
@@ -1302,6 +1311,7 @@ private:
     void _render_volumes_for_picking(const Camera& camera) const;
     void _render_current_gizmo() const;
     void _render_gizmos_overlay();
+    void _render_prepare_top_toolbars();
     void _render_main_toolbar();
     void _render_imgui_select_plate_toolbar();
     void _render_assemble_view_toolbar() const;
@@ -1363,6 +1373,9 @@ private:
 
     // generates a warning notification containing the given message
     void _set_warning_notification(EWarning warning, bool state);
+
+    // per-frame PLA/PETG mix check without the full_config() merge (see render())
+    void _update_pla_petg_mix_warning();
 
     bool _is_any_volume_outside() const;
     // Snapmaker: 检查是否有任何 volume 靠近边界（螺旋抬升风险）

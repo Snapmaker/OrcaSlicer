@@ -2,18 +2,15 @@
 #include "ProjectSchemaVersion.hpp"
 #include "ClipperUtils.hpp"
 #include "Config.hpp"
-#include "I18N.hpp"
 #include "format.hpp"
+#include "I18N.hpp"
 
 #include "GCode/Thumbnails.hpp"
 #include <set>
-#include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/format.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/log/trivial.hpp>
-#include <boost/thread.hpp>
-#include <float.h>
 
 namespace {
 std::set<std::string> SplitStringAndRemoveDuplicateElement(const std::string &str, const std::string &separator)
@@ -983,6 +980,15 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(0.));
 
+    // Migrated from BambuStudio c782fbb8; same default/clamp policy as the top key.
+    def = this->add("bottom_color_penetration_layers", coInt);
+    def->label = L("Bottom paint penetration layers");
+    def->category = L("Strength");
+    def->sidetext = L("layers");
+    def->tooltip = L("This is the number of layers of bottom paint penetration.");
+    def->min = 0;
+    def->set_default_value(new ConfigOptionInt(3));
+
     def = this->add("gap_fill_target", coEnum);
     def->label = L("Apply gap fill");
     def->category = L("Strength");
@@ -1082,12 +1088,15 @@ void PrintConfigDef::init_fff_params()
     def = this->add("bridge_density", coPercent);
     def->label = L("External bridge density");
     def->category = L("Strength");
-    def->tooltip = L("Controls the density (spacing) of external bridge lines. 100% means solid bridge. Default is 100%.\n\n"
+    def->tooltip = L("Controls the density (spacing) of external bridge lines. Default is 100%.\n\n"
                      "Lower density external bridges can help improve reliability as there is more space for air to circulate "
-                     "around the extruded bridge, improving its cooling speed.");
+                     "around the extruded bridge, improving its cooling speed. Minimum is 10%.\n\n"
+                     "Higher densities can produce smoother bridge surfaces, as overlapping lines provide "
+                     "additional support during printing. Maximum is 120%. \n"
+                     "Note: Bridge density that is too high can cause warping or overextrusion.");
     def->sidetext = "%";
     def->min = 10;
-    def->max = 100;
+    def->max = 120;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionPercent(100));
 
@@ -1639,7 +1648,7 @@ void PrintConfigDef::init_fff_params()
     def->sidetext = "mm";	// milimeters, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(10));
+    def->set_default_value(new ConfigOptionFloat(0));
 
     def = this->add("machine_end_gcode", coString);
     def->label = L("End G-code");
@@ -2290,6 +2299,30 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 0. });
 
+    def = this->add("filament_tower_interface_pre_extrusion_dist", coFloats);
+    def->label = L("Interface layer pre-extrusion distance");
+    def->tooltip = L("Pre-extrusion distance for prime tower interface layer (where different materials meet).");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionFloats { 10. });
+
+    def = this->add("filament_tower_interface_pre_extrusion_length", coFloats);
+    def->label = L("Interface layer pre-extrusion length");
+    def->tooltip = L("Pre-extrusion length for prime tower interface layer (where different materials meet).");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionFloats { 0. });
+
+    def = this->add("filament_tower_interface_print_temp", coInts);
+    def->label = L("Interface layer print temperature");
+    def->tooltip = L("Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature.");
+    def->sidetext = L("°C");
+    def->min = -1;
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionInts { -1 });
+
     def = this->add("filament_cooling_initial_speed", coFloats);
     def->label = L("Speed of the first cooling move");
     def->tooltip = L("Cooling moves are gradually accelerating beginning at this speed.");
@@ -2723,6 +2756,15 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 300. });
 
+    def = this->add("first_layer_travel_acceleration", coFloatOrPercent);
+    def->label = L("First layer travel");
+    def->tooltip = L("Acceleration of travel moves on the first layer. If expressed as a percentage it will be calculated based on the travel acceleration. A value of 0 means the printer will use its firmware default.");
+    def->sidetext = L("mm/s² or %");
+    def->ratio_over = "travel_acceleration";
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloatOrPercent {100., true});
+
     def = this->add("accel_to_decel_enable", coBools);
     def->label = L("Enable accel_to_decel");
     def->tooltip = L("Klipper's max_accel_to_decel will be adjusted automatically.");
@@ -2801,6 +2843,15 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 12. });
+
+    def = this->add("first_layer_travel_jerk", coFloatOrPercent);
+    def->label = L("First layer travel");
+    def->tooltip = L("Jerk of travel moves on the first layer. If expressed as a percentage it will be calculated based on the travel jerk. A value of 0 means the printer will use its firmware default.");
+    def->sidetext = L("mm/s or %");
+    def->ratio_over = "travel_jerk";
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloatOrPercent {100., true});
 
     def = this->add("initial_layer_line_width", coFloatOrPercent);
     def->label = L("Initial layer");
@@ -4535,12 +4586,11 @@ void PrintConfigDef::init_fff_params()
     def = this->add("raft_first_layer_expansion", coFloat);
     def->label = L("Initial layer expansion");
     def->category = L("Support");
-    def->tooltip = L("Expand the first raft or support layer to improve bed plate adhesion.");
+    def->tooltip = L("Expand the first raft or support layer to improve bed plate adhesion, -1 means auto");
     def->sidetext = "mm";	// milimeters, don't need translation
-    def->min = 0;
+    def->min = -1;
     def->mode = comAdvanced;
-    //BBS: change from 3.0 to 2.0
-    def->set_default_value(new ConfigOptionFloat(2.0));
+    def->set_default_value(new ConfigOptionFloat(-1));
 
     def = this->add("raft_layers", coInt);
     def->label = L("Raft layers");
@@ -5240,7 +5290,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("If enabled, the wipe tower will not be printed on layers with no tool changes. "
                     "On layers with a tool change, extruder will travel downward to print the wipe tower. "
                     "User is responsible for ensuring there is no collision with the print.");
-    def->mode = comAdvanced;
+    def->mode = comDevelop;
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("single_extruder_multi_material_priming", coBool);
@@ -5492,6 +5542,24 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.5));
 
+    def = this->add("support_interface_min_area", coFloat);
+    def->gui_type = ConfigOptionDef::GUIType::f_enum_open;
+    def->label    = L("Minimum Support Contact Area");
+    def->category = L("Support");
+    def->tooltip  = L("Lower values generate more support contact surfaces.");
+    def->sidetext = "mm²";	// square milimeters, don't need translation
+    def->min      = 0;
+    def->enum_values.push_back("0");
+    def->enum_values.push_back("0.25");
+    def->enum_values.push_back("0.64");
+    def->enum_values.push_back("1");
+    def->enum_labels.push_back("0");
+    def->enum_labels.push_back("0.25");
+    def->enum_labels.push_back("0.64");
+    def->enum_labels.push_back("1");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.25));
+
     //BBS
     def = this->add("support_bottom_interface_spacing", coFloat);
     def->label = L("Bottom interface spacing");
@@ -5514,7 +5582,12 @@ void PrintConfigDef::init_fff_params()
     def = this->add("support_base_pattern", coEnum);
     def->label = L("Base pattern");
     def->category = L("Support");
-    def->tooltip = L("Line pattern of support.");
+    def->tooltip  = L("Line pattern of support.\n\n"
+                        "The Default option for Tree supports is Hollow, which means no base pattern. "
+                        "For other support types, the Default option is the Rectilinear pattern.\n\n"
+                        "NOTE: For Organic supports, the two walls are supported only with the Hollow/Default base pattern. "
+                        "The Lightning base pattern is supported only by Tree Slim/Strong/Hybrid supports. "
+                        "For the other support types, the Rectilinear will be used instead of Lightning.");
     def->enum_keys_map = &ConfigOptionEnum<SupportMaterialPattern>::get_enum_values();
     def->enum_values.push_back("default");
     def->enum_values.push_back("rectilinear");
@@ -5618,7 +5691,7 @@ void PrintConfigDef::init_fff_params()
     def->category = L("Support");
     def->tooltip = L("Support will be generated for overhangs whose slope angle is below the threshold.");
     def->sidetext = "°";	// degrees, don't need translation
-    def->min = 0;
+    def->min = 1;
     def->max = 90;
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionInt(30));
@@ -5655,6 +5728,43 @@ void PrintConfigDef::init_fff_params()
     def->max = 60;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(40.));
+
+    // Snapmaker: Support transition layer parameters
+    def = this->add("tree_support_transition_layers", coInt);
+    def->label = L("Tree support transition layers");
+    def->category = L("Support");
+    def->tooltip = L("Number of transition layers between tree support interface and support body. 0 disables transition layers. Bambu Studio uses 1 layer by default; Snapmaker recommends 2 layers for better adhesion with high-shrinkage materials like ABS/PC/PA.");
+    def->sidetext = L("layers");
+    def->min = 0;
+    def->max = 3;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(2));
+
+    def = this->add("support_transition_perimeter", coBool);
+    def->label = L("Support transition perimeter");
+    def->category = L("Support");
+    def->tooltip = L("Generate a perimeter loop before transition layer infill for better surface connection. Recommended to keep enabled.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("support_transition_speed", coFloats);
+    def->label = L("Support transition speed");
+    def->category = L("Speed");
+    def->tooltip = L("Independent printing speed for support transition layers. Lower speed improves layer adhesion. Different from bridge_speed which is for bridging over gaps.");
+    def->sidetext = L("mm/s");
+    def->min = 1;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloats { 50. });
+
+    def = this->add("support_transition_flow_ratio", coFloatOrPercent);
+    def->label = L("Support transition flow ratio");
+    def->category = L("Support");
+    def->tooltip = L("Flow ratio for support transition layers relative to normal support flow. Slightly lower than interface flow for a more natural transition. 0.85 = 85% of normal support flow.");
+    def->sidetext = L("%");
+    def->min = 0.1;
+    def->max = 2.0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloatOrPercent(1.0, false));
 
     def = this->add("tree_support_angle_slow", coFloat);
     def->label = L("Preferred Branch Angle");
@@ -5953,6 +6063,16 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(0.6));
 
+    // Same default as BambuStudio c782fbb8; must stay <= top_shell_layers default (4); engine clamps 0 to act as 1.
+    def = this->add("top_color_penetration_layers", coInt);
+    def->label = L("Top paint penetration layers");
+    def->category = L("Strength");
+    def->sidetext = L("layers");
+    def->tooltip = L("This is  the number of layers of top paint penetration.");
+    def->min = 0;
+    def->set_default_value(new ConfigOptionInt(4));
+
+
     def = this->add("top_surface_density", coPercent);
     def->label = L("Top surface density");
     def->category = L("Strength");
@@ -6018,6 +6138,18 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("The wiping tower can be used to clean up the residue on the nozzle and stabilize the chamber pressure inside the nozzle, "
                     "in order to avoid appearance defects when printing objects.");
     def->mode = comSimple;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("enable_tower_interface_features", coBool);
+    def->label = L("Enable tower interface features");
+    def->tooltip = L("Enable optimized prime tower interface behavior when different materials meet.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("enable_tower_interface_cooldown_during_tower", coBool);
+    def->label = L("Cool down from interface boost during prime tower");
+    def->tooltip = L("When interface-layer temperature boost is active, set the nozzle back to print temperature at the start of the prime tower so it cools down during the tower.");
+    def->mode = comDevelop;
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("flush_volumes_vector", coFloats);
@@ -6123,8 +6255,8 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloat(30.0));
     
     def = this->add("wipe_tower_max_purge_speed", coFloat);
-    def->label = L("Maximum wipe tower print speed of out wall");
-    def->tooltip = L("Maximum wipe tower print speed of out wall.");
+    def->label = L("Max speed");
+    def->tooltip = L("The maximum printing speed on the prime tower excluding ramming.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->mode = comAdvanced;
     def->min = 10;
@@ -6186,6 +6318,12 @@ void PrintConfigDef::init_fff_params()
                      "leaving the filament blob on the gap edge instead of on the outer wall surface.");
     def->mode    = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("prime_tower_enable_framework", coBool);
+    def->label = L("Internal ribs");
+    def->tooltip = L("Enable internal ribs to increase the stability of the prime tower.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("wiping_volumes_extruders", coFloats);
     def->label = L("Purging volumes - load/unload volumes");
@@ -6271,6 +6409,13 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionFloats{4.});
+
+    def = this->add("filament_adhesiveness_category", coInts);
+    def->label = L("Adhesiveness Category");
+    def->tooltip = L("Filament category");
+    def->min = 0;
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionInts{ 100 });
 
     def = this->add("xy_hole_compensation", coFloat);
     def->label = L("X-Y hole compensation");
@@ -7470,7 +7615,8 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         opt_key = "prime_tower_width";
     } else if (opt_key == "wiping_volume") {
         opt_key = "prime_volume";
-    } else if (opt_key == "wipe_tower_brim_width") {
+    }
+    else if (opt_key == "wipe_tower_brim_width") {
         opt_key = "prime_tower_brim_width";
     } else if (opt_key == "tool_change_gcode") {
         opt_key = "change_filament_gcode";
@@ -7604,7 +7750,7 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         "max_volumetric_speed", "max_print_speed",
         "support_closing_radius",
         "remove_freq_sweep", "remove_bed_leveling", "remove_extrusion_calibration",
-        "support_transition_line_width", "support_transition_speed", "bed_temperature", "bed_temperature_initial_layer",
+        "support_transition_line_width", "bed_temperature", "bed_temperature_initial_layer",
         "can_switch_nozzle_type", "can_add_auxiliary_fan", "extra_flush_volume", "spaghetti_detector", "adaptive_layer_height",
         "z_hop_type", "z_lift_type", "bed_temperature_difference","long_retraction_when_cut",
         "retraction_distance_when_cut",
@@ -8098,6 +8244,13 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
     }
     if (cfg.bottom_shell_layers < 0) {
         error_message.emplace("bottom_shell_layers", L("invalid value ") + std::to_string(cfg.bottom_shell_layers));
+    }
+    // Negative penetration wraps to SIZE_MAX in the MMU loop; reject like the shell keys.
+    if (cfg.top_color_penetration_layers < 0) {
+        error_message.emplace("top_color_penetration_layers", L("invalid value ") + std::to_string(cfg.top_color_penetration_layers));
+    }
+    if (cfg.bottom_color_penetration_layers < 0) {
+        error_message.emplace("bottom_color_penetration_layers", L("invalid value ") + std::to_string(cfg.bottom_color_penetration_layers));
     }
 
     if (cfg.use_firmware_retraction.value &&

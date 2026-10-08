@@ -2,6 +2,8 @@
     "type": "process",
     "name": "fdm_process_U1",
     "from": "system",
+    "bottom_color_penetration_layers": "3",
+    "top_color_penetration_layers": "4",
     "instantiation": "false",
     "adaptive_layer_height": "0",
     "reduce_crossing_wall": "0",

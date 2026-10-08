@@ -4,6 +4,8 @@
 #include <vector>
 #include <set>
 #include <array>
+#include <map>
+#include <string>
 #include <thread>
 #include <mutex>
 
@@ -51,10 +53,8 @@ inline int compute_colum_count(int count)
 
 
 extern const float WIPE_TOWER_DEFAULT_X_POS;
-extern const float WIPE_TOWER_DEFAULT_Y_POS;  // Max y
 
 extern const float I3_WIPE_TOWER_DEFAULT_X_POS;
-extern const float I3_WIPE_TOWER_DEFAULT_Y_POS; // Max y
 
 
 
@@ -73,6 +73,62 @@ struct Camera;
 class PartPlateList;
 
 using GCodeResult = GCodeProcessorResult;
+
+class PartPlateIconAtlas
+{
+public:
+    enum class IconType : unsigned char
+    {
+        Close,
+        CloseHovered,
+        MoveFront,
+        MoveFrontHovered,
+        Arrange,
+        ArrangeHovered,
+        Orient,
+        OrientHovered,
+        Locked,
+        LockedHovered,
+        Unlocked,
+        UnlockedHovered,
+        PlateSettings,
+        PlateSettingsChanged,
+        PlateSettingsHovered,
+        PlateSettingsChangedHovered,
+        PlateNameEdit,
+        PlateNameEditHovered
+    };
+
+    struct Region
+    {
+        float u0{ 0.0f };
+        float v0{ 0.0f };
+        float u1{ 0.0f };
+        float v1{ 0.0f };
+    };
+
+    bool Init(bool darkMode, int iconSize);
+    void Reset();
+    bool IsValid() const;
+    unsigned int GetTextureId() const;
+    unsigned int GetVersion() const;
+    bool GetRegion(IconType type, Region& region) const;
+
+private:
+    struct Source
+    {
+        IconType type{ IconType::Close };
+        std::string filename;
+    };
+
+    bool BuildSources(bool darkMode, std::vector<Source>& sources) const;
+    bool BuildTexture(const std::vector<Source>& sources, int iconSize);
+
+private:
+    GLTexture _texture;
+    std::map<IconType, Region> _regions;
+    unsigned int _version{ 0 };
+};
 
 class PartPlate : public ObjectBase
 {
@@ -142,6 +198,7 @@ private:
     PickingModel m_plate_name_edit_icon;
     PickingModel m_move_front_icon;
     GLModel m_plate_idx_icon;
+    GLModel _rightIconBatchModel;
     GLTexture m_texture;
 
     float m_scale_factor{ 1.0f };
@@ -160,6 +217,18 @@ private:
     GLTexture m_name_texture;
     wxCoord m_name_texture_width;
     wxCoord m_name_texture_height;
+
+    struct RightIconBatchKey
+    {
+        int hoverId{ -1 };
+        bool locked{ false };
+        bool hasPlateSettings{ false };
+        bool renderPlateSettings{ false };
+        unsigned int atlasVersion{ 0 };
+    };
+
+    RightIconBatchKey _rightIconBatchKey;
+    bool _rightIconBatchKeyValid{ false };
 
     void init();
     bool valid_instance(int obj_id, int instance_id);
@@ -189,6 +258,16 @@ private:
     // void render_left_arrow(const ColorRGBA render_color, bool use_lighting) const;
     // void render_right_arrow(const ColorRGBA render_color, bool use_lighting) const;
     void render_icon_texture(GLModel &buffer, GLTexture &texture);
+    void InvalidateRightIconBatch();
+    RightIconBatchKey BuildRightIconBatchKey(int hoverId, bool hasPlateSettings) const;
+    bool IsSameRightIconBatchKey(const RightIconBatchKey& key) const;
+    bool AppendRightIconBatchModel(GLModel::Geometry& geometry, const GLModel& model,
+                                   const PartPlateIconAtlas::Region& region) const;
+    bool AppendRightIconBatchIcon(GLModel::Geometry& geometry, const GLModel& model,
+                                  PartPlateIconAtlas::IconType iconType) const;
+    bool RebuildRightIconBatchModel(const RightIconBatchKey& key);
+    bool RenderRightIconBatch(const RightIconBatchKey& key);
+    void ShowRightIconTooltip(int hoverId);
     void show_tooltip(const std::string tooltip);
     void render_icons(bool bottom, bool only_name = false, int hover_id = -1);
     void render_only_numbers(bool bottom);
@@ -303,7 +382,7 @@ public:
     BoundingBoxf3 get_objects_bounding_box();
 
     Vec3d get_origin() { return m_origin; }
-    Vec3d estimate_wipe_tower_size(const DynamicPrintConfig & config, const double w, const double d, int plate_extruder_size = 0, bool use_global_objects = false) const;
+    Vec3d estimate_wipe_tower_size(const DynamicPrintConfig & config, const double width, const double wipe_volume, int plate_extruder_size = 0, bool use_global_objects = false) const;
     arrangement::ArrangePolygon estimate_wipe_tower_polygon(const DynamicPrintConfig & config, int plate_index, int plate_extruder_size = 0, bool use_global_objects = false) const;
     std::vector<int> get_extruders(bool conside_custom_gcode = false) const;
     std::vector<int> get_extruders_under_cli(bool conside_custom_gcode, DynamicPrintConfig& full_config) const;
@@ -574,6 +653,7 @@ class PartPlateList : public ObjectBase
     GLTexture m_plate_name_edit_texture;
     GLTexture m_plate_name_edit_hovered_texture;
     GLTexture m_idx_textures[MAX_PLATE_COUNT];
+    PartPlateIconAtlas m_iconAtlas;
     // set render option
     bool render_bedtype_logo = true;
     bool render_plate_settings = true;
@@ -582,6 +662,8 @@ class PartPlateList : public ObjectBase
     bool m_is_dark = false;
 
     int m_filament_count = 1;
+
+    bool m_filament_group_dirty = false;
 
     void init();
     //compute the origin for printable plate with index i
@@ -709,6 +791,9 @@ public:
     int get_curr_plate_index() const { return m_current_plate; }
     PartPlate* get_curr_plate() { return m_plate_list[m_current_plate]; }
     const PartPlate* get_curr_plate() const { return m_plate_list[m_current_plate]; }
+
+    bool is_filament_group_dirty() const { return m_filament_group_dirty; }
+    void set_filament_group_dirty(bool dirty) { m_filament_group_dirty = dirty; }
 
     std::vector<PartPlate*>& get_plate_list() { return m_plate_list; };
 

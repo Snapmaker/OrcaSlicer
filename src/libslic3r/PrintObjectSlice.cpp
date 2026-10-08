@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <unordered_map>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -297,11 +298,15 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                     float z                          = zs[z_idx];
                     int   idx_first_printable_region = -1;
                     bool  complex                    = false;
+                    std::vector<int> printable_region_ids;
                     for (int idx_region = 0; idx_region < int(layer_range.volume_regions.size()); ++ idx_region) {
                         const PrintObjectRegions::VolumeRegion &region = layer_range.volume_regions[idx_region];
                         if (region.bbox->min().z() <= z && region.bbox->max().z() >= z) {
-                            if (idx_first_printable_region == -1 && region.model_volume->is_model_part())
+                            if (region.model_volume->is_model_part())
+                                printable_region_ids.push_back(idx_region);
+                            if (idx_first_printable_region == -1 && region.model_volume->is_model_part()) {
                                 idx_first_printable_region = idx_region;
+                            }
                             else if (idx_first_printable_region != -1) {
                                 // Test for overlap with some other region.
                                 for (int idx_region2 = idx_first_printable_region; idx_region2 < idx_region; ++ idx_region2) {
@@ -317,8 +322,10 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                     if (complex)
                         zs_complex.push_back({ z_idx, z });
                     else if (idx_first_printable_region >= 0) {
-                        const PrintObjectRegions::VolumeRegion &region = layer_range.volume_regions[idx_first_printable_region];
-                        slices_by_region[region.region->print_object_region_id()][z_idx] = std::move(volume_slices_find_by_id(volume_slices, region.model_volume->id()).slices[z_idx]);
+                        for (int printable_region_id : printable_region_ids) {
+                            const PrintObjectRegions::VolumeRegion &region = layer_range.volume_regions[printable_region_id];
+                            append(slices_by_region[region.region->print_object_region_id()][z_idx], std::move(volume_slices_find_by_id(volume_slices, region.model_volume->id()).slices[z_idx]));
+                        }
                     }
                 }
             }
@@ -419,24 +426,46 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                                     temp_slices[idx_region + 1].expolygons = std::move(source);
                             } else if ((region.model_volume->is_model_part() && clip_multipart_objects) || region.model_volume->is_negative_volume()) {
                                 // Clip every non-zero region preceding it.
+                                // Pre-pass: accumulate per-layer XY area per print_object_region_id
+                                std::unordered_map<int, double> region_area_map;
+                                for (int i = 0; i < int(temp_slices.size()); ++i) {
+                                    const RegionSlice &ts = temp_slices[i];
+                                    if (ts.region_id >= 0 && !ts.expolygons.empty())
+                                        region_area_map[ts.region_id] += area(ts.expolygons);
+                                }
                                 for (int idx_region2 = 0; idx_region2 < idx_region; ++ idx_region2)
                                     if (! temp_slices[idx_region2].expolygons.empty()) {
                                         // Skip trim_overlap for now, because it slow down the performace so much for some special cases
-#if 1
-                                        if (const PrintObjectRegions::VolumeRegion& region2 = layer_range.volume_regions[idx_region2];
-                                            !region2.model_volume->is_negative_volume() && overlap_in_xy(*region.bbox, *region2.bbox))
-                                            temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
-#else
                                         const PrintObjectRegions::VolumeRegion& region2 = layer_range.volume_regions[idx_region2];
-                                        if (!region2.model_volume->is_negative_volume() && overlap_in_xy(*region.bbox, *region2.bbox))
-                                            //BBS: handle negative_volume seperately, always minus the negative volume and don't need to trim overlap
-                                            if (!region.model_volume->is_negative_volume())
-                                                trim_overlap(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
-                                            else
+                                        if (!region2.model_volume->is_negative_volume() && overlap_in_xy(*region.bbox, *region2.bbox)) {
+                                            if (region.model_volume->is_negative_volume()) {
+                                                // Negative volume: always subtract with diff_ex
                                                 temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
-#endif
+                                            } else if (region.region && region2.region && region.region->print_object_region_id() != region2.region->print_object_region_id()) {
+                                                // Different print regions: smaller per-layer XY area carves larger
+                                                int pid_current = region.region->print_object_region_id();
+                                                int pid_other   = region2.region->print_object_region_id();
+                                                double area_current = region_area_map[pid_current];
+                                                double area_other   = region_area_map[pid_other];
+                                                // Hysteresis guard: only switch carving direction if area ratio is significant
+                                                bool smaller_carves = false;
+                                                if (std::max(area_current, area_other) / std::min(area_current, area_other) < 1.5)
+                                                    smaller_carves = (pid_current <= pid_other);
+                                                else
+                                                    smaller_carves = (area_current <= area_other);
+                                                if (smaller_carves)
+                                                    temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
+                                                else
+                                                    temp_slices[idx_region].expolygons = diff_ex(temp_slices[idx_region].expolygons, temp_slices[idx_region2].expolygons);
+                                            } else {
+                                                // Default path (same region, no region ptrs): simple diff_ex
+                                                // Preserves Bambu's #if 1 performance-safe behavior
+                                                temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
+                                            }
+                                        }
                                     }
                             }
+
                         }
                     // Sort by region_id, push empty slices to the end.
                     std::sort(temp_slices.begin(), temp_slices.end());
@@ -664,7 +693,6 @@ void reGroupingLayerPolygons(std::vector<groupedVolumeSlices>& gvss, ExPolygons 
     }
 }
 
-/*
 std::string fix_slicing_errors(PrintObject* object, LayerPtrs &layers, const std::function<void()> &throw_if_canceled, int &firstLayerReplacedBy)
 {
     std::string error_msg;//BBS
@@ -716,7 +744,6 @@ std::string fix_slicing_errors(PrintObject* object, LayerPtrs &layers, const std
                     continue;
                 assert(layer->slicing_errors);
                 // Try to repair the layer surfaces by merging all contours and all holes from neighbor layers.
-                // BOOST_LOG_TRIVIAL(trace) << "Attempting to repair layer" << idx_layer;
                 for (size_t region_id = 0; region_id < layer->region_count(); ++ region_id) {
                     LayerRegion *layerm = layer->get_region(region_id);
                     // Find the first valid layer below / above the current layer.
@@ -786,7 +813,6 @@ std::string fix_slicing_errors(PrintObject* object, LayerPtrs &layers, const std
 
     return error_msg;
 }
-*/
 
 void groupingVolumesForBrim(PrintObject* object, LayerPtrs& layers, int firstLayerReplacedBy)
 {
@@ -829,7 +855,7 @@ void PrintObject::slice()
     m_print->throw_if_canceled();
     int firstLayerReplacedBy = 0;
 
-#if 0
+#if 1
     // Fix the model.
     //FIXME is this the right place to do? It is done repeateadly at the UI and now here at the backend.
     std::string warning = fix_slicing_errors(this, m_layers, [this](){ m_print->throw_if_canceled(); }, firstLayerReplacedBy);
@@ -841,7 +867,6 @@ void PrintObject::slice()
     //    this->active_step_add_warning(PrintStateBase::WarningLevel::CRITICAL, warning, PrintStateBase::SlicingReplaceInitEmptyLayers);
     //}
 #endif
-
     // Detect and process holes that should be converted to polyholes
     this->_transform_hole_to_polyholes();
 
@@ -3304,6 +3329,8 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
         total_mixed_state_layers += mixed_state_count;
         if (!mixed_masks.empty())
             mixed_masks = union_ex(mixed_masks);
+        if (layer_id == 0)
+            interval.has_mixed_paint = false;
         if (interval.has_mixed_paint)
             ++mixed_intervals;
 

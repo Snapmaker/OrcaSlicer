@@ -1,4 +1,5 @@
 #include "MixedFilament.hpp"
+#include "LocalesUtils.hpp"
 #include "filament_mixer.h"
 #include "libslic3r.h"
 
@@ -13,9 +14,13 @@
 #include <cstdlib>
 #include <sstream>
 #include <iomanip>
+#include <locale>
 #include <numeric>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
+
+#include <fast_float/fast_float.h>
 
 namespace Slic3r {
 
@@ -239,9 +244,7 @@ float MixedFilamentManager::canonical_signed_bias_value(float component_a_surfac
 
 std::string MixedFilamentManager::format_surface_offset_token(float value)
 {
-    std::ostringstream ss;
-    ss << std::fixed << std::setprecision(4) << clamp_surface_offset(value);
-    std::string out = ss.str();
+    std::string out = float_to_string_decimal_point(clamp_surface_offset(value), 4);
     while (!out.empty() && out.back() == '0')
         out.pop_back();
     if (!out.empty() && out.back() == '.')
@@ -431,20 +434,22 @@ static bool parse_row_definition(const std::string &row,
         }
     };
 
-    auto parse_float_token = [&trim_copy](const std::string &tok, float &out) {
+    auto parse_float_token = [&trim_copy](const std::string& tok, float& out) {
         const std::string t = trim_copy(tok);
         if (t.empty())
             return false;
-        try {
-            size_t consumed = 0;
-            const float v = std::stof(t, &consumed);
-            if (consumed != t.size())
+        const char* first = t.data();
+        const char* last  = first + t.size();
+        if (*first == '+') {
+            if (++first == last || *first == '-' || *first == '+')
                 return false;
-            out = v;
-            return true;
-        } catch (...) {
-            return false;
         }
+        float      value  = 0.f;
+        const auto result = fast_float::from_chars(first, last, value);
+        if (result.ec != std::errc() || result.ptr != last || !std::isfinite(value))
+            return false;
+        out = value;
+        return true;
     };
 
     std::vector<std::string> tokens;
@@ -2323,6 +2328,7 @@ std::vector<int> fill_continuous_layer_range(const std::vector<int> &sorted_laye
 std::string MixedFilamentManager::serialize_custom_entries()
 {
     std::ostringstream ss;
+    ss.imbue(std::locale::classic());
     bool first = true;
     for (MixedFilament &mf : m_mixed) {
         if (!first)
@@ -2349,12 +2355,9 @@ std::string MixedFilamentManager::serialize_custom_entries()
            << 'u' << mf.stable_id;
         if (mf.ui_mode >= 0)
             ss << ",cm" << mf.ui_mode;
-        if (mf.gradient_enabled) {
-            char buf[64];
-            std::snprintf(buf, sizeof(buf), "%.4f/%.4f",
-                          double(mf.gradient_start), double(mf.gradient_end));
-            ss << ",r1/" << buf;
-        }
+        if (mf.gradient_enabled)
+            ss << ",r1/" << float_to_string_decimal_point(mf.gradient_start, 4) << '/'
+               << float_to_string_decimal_point(mf.gradient_end, 4);
         const std::string normalized_pattern = normalize_manual_pattern(mf.manual_pattern);
         if (!normalized_pattern.empty())
             ss << ',' << normalized_pattern;

@@ -233,6 +233,27 @@ BackgroundTexture::Metadata::Metadata()
 {
 }
 
+GLToolbarRenderLayout::GLToolbarRenderLayout()
+    : horizontal(true)
+    , item_type(GLToolbarItem::Action)
+    , left(0.0f)
+    , right(0.0f)
+    , top(0.0f)
+    , bottom(0.0f)
+    , icon_left(0.0f)
+    , icon_top(0.0f)
+    , border_w(0.0f)
+    , border_h(0.0f)
+    , icons_size_x(0.0f)
+    , icons_size_y(0.0f)
+    , separator_stride(0.0f)
+    , icon_stride(0.0f)
+    , inv_cnv_w(0.0f)
+    , inv_cnv_h(0.0f)
+    , icon_size(0.0f)
+{
+}
+
 const float GLToolbar::Default_Icons_Size = 40.0f;
 
 GLToolbar::Layout::Layout()
@@ -257,6 +278,7 @@ GLToolbar::GLToolbar(GLToolbar::EType type, const std::string& name)
     , m_name(name)
     , m_enabled(false)
     , m_icons_texture_dirty(true)
+    , m_shared_background_texture(nullptr)
     , m_pressed_toggable_id(-1)
 {
 }
@@ -271,6 +293,8 @@ GLToolbar::~GLToolbar()
 
 bool GLToolbar::init(const BackgroundTexture::Metadata& background_texture)
 {
+    m_shared_background_texture = nullptr;
+
     std::string path = resources_dir() + "/images/";
     bool res = false;
 
@@ -281,6 +305,17 @@ bool GLToolbar::init(const BackgroundTexture::Metadata& background_texture)
         m_background_texture.metadata = background_texture;
 
     return res;
+}
+
+bool GLToolbar::init_shared_background(const BackgroundTexture::Metadata& background_texture, const GLTexture* shared_texture)
+{
+    if (shared_texture == nullptr || shared_texture->get_id() == 0)
+        return false;
+
+    m_background_texture.texture.reset();
+    m_background_texture.metadata = background_texture;
+    m_shared_background_texture = shared_texture;
+    return true;
 }
 
 bool GLToolbar::init_arrow(const std::string& filename)
@@ -535,17 +570,159 @@ bool GLToolbar::update_items_state()
 
 void GLToolbar::render(const GLCanvas3D& parent,GLToolbarItem::EType type)
 {
-    if (!m_enabled || m_items.empty())
+    GLToolbarRenderLayout render_layout;
+    if (!prepare_render_layout(parent, type, render_layout))
         return;
+
+    render_prepared_background(render_layout);
+    render_prepared_icons(parent, render_layout);
+}
+
+bool GLToolbar::prepare_render_layout(const GLCanvas3D& parent, GLToolbarItem::EType type, GLToolbarRenderLayout& render_layout)
+{
+    if (!m_enabled || m_items.empty())
+        return false;
 
     if (m_icons_texture_dirty)
         generate_icons_texture();
 
-    switch (m_layout.type)
-    {
-    default:
-    case Layout::Horizontal: { render_horizontal(parent,type); break; }
-    case Layout::Vertical:   { render_vertical(parent); break; }
+    const Size cnv_size = parent.get_canvas_size();
+    const float cnv_w = static_cast<float>(cnv_size.get_width());
+    const float cnv_h = static_cast<float>(cnv_size.get_height());
+    if (cnv_w == 0.0f || cnv_h == 0.0f)
+        return false;
+
+    render_layout = GLToolbarRenderLayout();
+    render_layout.item_type = type;
+    render_layout.inv_cnv_w = 1.0f / cnv_w;
+    render_layout.inv_cnv_h = 1.0f / cnv_h;
+    render_layout.icons_size_x = 2.0f * m_layout.icons_size * m_layout.scale * render_layout.inv_cnv_w;
+    render_layout.icons_size_y = 2.0f * m_layout.icons_size * m_layout.scale * render_layout.inv_cnv_h;
+    render_layout.border_w = 2.0f * m_layout.border * m_layout.scale * render_layout.inv_cnv_w;
+    render_layout.border_h = 2.0f * m_layout.border * m_layout.scale * render_layout.inv_cnv_h;
+    render_layout.icon_size = m_layout.icons_size * m_layout.scale;
+
+    const float width = 2.0f * get_width() * render_layout.inv_cnv_w;
+    const float height = 2.0f * get_height() * render_layout.inv_cnv_h;
+
+    render_layout.left = 2.0f * m_layout.left * render_layout.inv_cnv_w;
+    render_layout.top = 2.0f * m_layout.top * render_layout.inv_cnv_h;
+    render_layout.right = render_layout.left + width;
+    render_layout.bottom = render_layout.top - height;
+
+    if (m_layout.type == Layout::Vertical) {
+        const float separator_size = 2.0f * m_layout.separator_size * m_layout.scale * render_layout.inv_cnv_h;
+        const float gap_size = 2.0f * m_layout.gap_size * m_layout.scale * render_layout.inv_cnv_h;
+        render_layout.horizontal = false;
+        render_layout.separator_stride = separator_size + gap_size;
+        render_layout.icon_stride = render_layout.icons_size_y + gap_size;
+    }
+    else {
+        const float separator_size = 2.0f * m_layout.separator_size * m_layout.scale * render_layout.inv_cnv_w;
+        const float gap_size = 2.0f * m_layout.gap_size * m_layout.scale * render_layout.inv_cnv_w;
+        render_layout.horizontal = true;
+        render_layout.separator_stride = separator_size + gap_size;
+        render_layout.icon_stride = render_layout.icons_size_x + gap_size;
+        if (type == GLToolbarItem::SeparatorLine)
+            render_layout.right = render_layout.left + width * 0.5f;
+    }
+
+    render_layout.icon_left = render_layout.left + render_layout.border_w;
+    render_layout.icon_top = render_layout.top - render_layout.border_h;
+    return true;
+}
+
+void GLToolbar::render_prepared_background(const GLToolbarRenderLayout& render_layout) const
+{
+    render_background(render_layout.left, render_layout.top, render_layout.right, render_layout.bottom,
+        render_layout.border_w, render_layout.border_h);
+}
+
+void GLToolbar::render_prepared_icons(const GLCanvas3D& parent, const GLToolbarRenderLayout& render_layout) const
+{
+    (void)parent;
+
+    float left = render_layout.icon_left;
+    float top = render_layout.icon_top;
+
+    if (render_layout.horizontal) {
+        for (const GLToolbarItem* item : m_items) {
+            if (!item->is_visible())
+                continue;
+
+            if (item->is_separator()) {
+                left += render_layout.separator_stride;
+                continue;
+            }
+
+            item->render_left_pos = left;
+            if (!item->is_action_with_text_image()) {
+                const unsigned int tex_id = m_icons_texture.get_id();
+                const int tex_width = m_icons_texture.get_width();
+                const int tex_height = m_icons_texture.get_height();
+                if ((tex_id == 0) || (tex_width <= 0) || (tex_height <= 0))
+                    return;
+                item->render(tex_id, left, left + render_layout.icons_size_x, top - render_layout.icons_size_y, top,
+                    static_cast<unsigned int>(tex_width), static_cast<unsigned int>(tex_height),
+                    static_cast<unsigned int>(render_layout.icon_size));
+            }
+
+            if (item->is_action_with_text()) {
+                const float scaled_text_size = item->get_extra_size_ratio() * render_layout.icons_size_x;
+                item->render_text(left + render_layout.icons_size_x, left + render_layout.icons_size_x + scaled_text_size,
+                    top - render_layout.icons_size_y, top);
+                left += scaled_text_size;
+            }
+
+            left += render_layout.icon_stride;
+        }
+        return;
+    }
+
+    for (const GLToolbarItem* item : m_items) {
+        if (!item->is_visible())
+            continue;
+
+        if (item->is_separator()) {
+            top -= render_layout.separator_stride;
+            continue;
+        }
+
+        if (item->is_action_with_text_image()) {
+            const float scaled_text_size = m_layout.text_size * m_layout.scale * render_layout.inv_cnv_w;
+            const float scaled_text_border = 2.5f * m_layout.scale * render_layout.inv_cnv_h;
+            const float scaled_text_height = render_layout.icons_size_y / 2.0f;
+            item->render_text(left, left + scaled_text_size, top - scaled_text_border - scaled_text_height, top - scaled_text_border);
+
+            const float image_left = left + scaled_text_size;
+            const unsigned int tex_id = item->m_data.image_texture.get_id();
+            const int tex_width = item->m_data.image_texture.get_width();
+            const int tex_height = item->m_data.image_texture.get_height();
+            if ((tex_id == 0) || (tex_width <= 0) || (tex_height <= 0))
+                return;
+            item->render_image(tex_id, image_left, image_left + render_layout.icons_size_x, top - render_layout.icons_size_y, top,
+                static_cast<unsigned int>(tex_width), static_cast<unsigned int>(tex_height),
+                static_cast<unsigned int>(render_layout.icon_size));
+        }
+        else {
+            const unsigned int tex_id = m_icons_texture.get_id();
+            const int tex_width = m_icons_texture.get_width();
+            const int tex_height = m_icons_texture.get_height();
+            if ((tex_id == 0) || (tex_width <= 0) || (tex_height <= 0))
+                return;
+            item->render(tex_id, left, left + render_layout.icons_size_x, top - render_layout.icons_size_y, top,
+                static_cast<unsigned int>(tex_width), static_cast<unsigned int>(tex_height),
+                static_cast<unsigned int>(render_layout.icon_size));
+        }
+
+        if (item->is_action_with_text()) {
+            const float scaled_text_width = item->get_extra_size_ratio() * render_layout.icons_size_x;
+            const float scaled_text_height = render_layout.icons_size_y;
+            item->render_text(left + render_layout.icons_size_x, left + render_layout.icons_size_x + scaled_text_width,
+                top - scaled_text_height, top);
+        }
+
+        top -= render_layout.icon_stride;
     }
 }
 
@@ -1214,12 +1391,30 @@ int GLToolbar::contains_mouse_vertical(const Vec2d& mouse_pos, const GLCanvas3D&
     return -1;
 }
 
+const GLTexture* GLToolbar::get_background_texture() const
+{
+    if (m_shared_background_texture != nullptr && m_shared_background_texture->get_id() != 0)
+        return m_shared_background_texture;
+
+    return &m_background_texture.texture;
+}
+
 void GLToolbar::render_background(float left, float top, float right, float bottom, float border_w, float border_h) const
 {
-    const unsigned int tex_id = m_background_texture.texture.get_id();
-    const float tex_width = (float)m_background_texture.texture.get_width();
-    const float tex_height = (float)m_background_texture.texture.get_height();
+    const GLTexture* background_texture = get_background_texture();
+    if (background_texture == nullptr)
+        return;
+
+    const unsigned int tex_id = background_texture->get_id();
+    const float tex_width = static_cast<float>(background_texture->get_width());
+    const float tex_height = static_cast<float>(background_texture->get_height());
     if (tex_id != 0 && tex_width > 0.0f && tex_height > 0.0f) {
+        if (m_background_texture.metadata.left == 0 && m_background_texture.metadata.right == 0 &&
+            m_background_texture.metadata.top == 0 && m_background_texture.metadata.bottom == 0) {
+            GLTexture::render_texture(tex_id, left, right, bottom, top);
+            return;
+        }
+
         const float inv_tex_width  = 1.0f / tex_width;
         const float inv_tex_height = 1.0f / tex_height;
 

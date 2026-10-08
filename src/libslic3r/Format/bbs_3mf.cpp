@@ -111,6 +111,8 @@ const unsigned int VERSION_BBS_3MF = 1;
 const unsigned int VERSION_BBS_3MF_COMPATIBLE = 2;
 const char* BBS_3MF_VERSION1 = "bamboo_slicer:Version3mf"; // definition of the metadata name saved into .model file
 const char* BBS_3MF_VERSION = "BambuStudio:3mfVersion"; //compatible with prusa currently
+// New version key written on save; the two keys above remain load-only legacy aliases
+const char* SNAPMAKER_3MF_VERSION = "Snapmaker_Orca:3mfVersion";
 // Painting gizmos data version numbers
 // 0 : initial version of fdm, seam, mm
 const unsigned int FDM_SUPPORTS_PAINTING_VERSION = 0;
@@ -156,6 +158,11 @@ const std::string THUMBNAIL_EXTENSION = ".png";
 const std::string CALIBRATION_INFO_EXTENSION = ".json";
 const std::string CONTENT_TYPES_FILE = "[Content_Types].xml";
 const std::string RELATIONSHIPS_FILE = "_rels/.rels";
+// Relationship type URIs are OPC identifiers only: never resolved, never fetched, the
+// schemas.snapmaker.com domain does not need to exist. Readers match them by string.
+const std::string SNAPMAKER_REL_COVER_THUMBNAIL_MIDDLE = "http://schemas.snapmaker.com/package/2026/cover-thumbnail-middle";
+const std::string SNAPMAKER_REL_COVER_THUMBNAIL_SMALL  = "http://schemas.snapmaker.com/package/2026/cover-thumbnail-small";
+const std::string SNAPMAKER_REL_GCODE                  = "http://schemas.snapmaker.com/package/2026/gcode";
 const std::string THUMBNAIL_FILE = "Metadata/plate_1.png";
 const std::string THUMBNAIL_FOR_PRINTER_FILE = "Metadata/bbl_thumbnail.png";
 const std::string PRINTER_THUMBNAIL_SMALL_FILE = "/Auxiliaries/.thumbnails/thumbnail_small.png";
@@ -169,6 +176,13 @@ const std::string BBS_MODEL_CONFIG_FILE = "Metadata/model_settings.config";
 const std::string BBS_MODEL_CONFIG_RELS_FILE = "Metadata/_rels/model_settings.config.rels";
 const std::string SLICE_INFO_CONFIG_FILE = "Metadata/slice_info.config";
 const std::string BBS_LAYER_HEIGHTS_PROFILE_FILE = "Metadata/layer_heights_profile.txt";
+// Format versions of BBS_LAYER_HEIGHTS_PROFILE_FILE entries ("object_id=N|..."):
+// version 1 (implicit, no header line) - legacy: N is a 1 based index into Model::objects.
+// version 2 - N is the id of the 3MF <object> storing the ModelObject, i.e. the id referenced by
+//             the matching <build><item objectid="N"/>. Stable across multi volume objects,
+//             plate filtering and build item reordering.
+const std::string LAYER_HEIGHTS_PROFILE_FORMAT_VERSION_KEY = "layer_heights_profile_format_version";
+const int LAYER_HEIGHTS_PROFILE_FORMAT_VERSION_OBJECT_IDS = 2;
 const std::string LAYER_CONFIG_RANGES_FILE = "Metadata/layer_config_ranges.xml";
 const std::string BRIM_EAR_POINTS_FILE = "Metadata/brim_ear_points.txt";
 /*const std::string SLA_SUPPORT_POINTS_FILE = "Metadata/Slic3r_PE_sla_support_points.txt";
@@ -335,6 +349,9 @@ static constexpr const char* SOURCE_OFFSET_Y_KEY = "source_offset_y";
 static constexpr const char* SOURCE_OFFSET_Z_KEY = "source_offset_z";
 static constexpr const char* SOURCE_IN_INCHES    = "source_in_inches";
 static constexpr const char* SOURCE_IN_METERS    = "source_in_meters";
+// Merge group id of a volume cloned by "Assemble"; consumed by "Split to objects"
+// to restore non-solid volumes (e.g. negative volumes) to the object they belonged to.
+static constexpr const char* MERGED_GROUP_ID_KEY = "merged_group_id";
 
 static constexpr const char* MESH_SHARED_KEY = "mesh_shared";
 
@@ -1070,6 +1087,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         IdToMetadataMap m_objects_metadata;
         IdToCutObjectInfoMap       m_cut_object_infos;
         IdToLayerHeightsProfileMap m_layer_heights_profiles;
+        // True when BBS_LAYER_HEIGHTS_PROFILE_FILE declares format version >= 2, i.e. the entries
+        // are keyed by 3MF object ids instead of 1 based Model::objects indexes.
+        bool m_layer_heights_profiles_keyed_by_object_id{false};
         IdToLayerConfigRangesMap m_layer_config_ranges;
         IdToBrimPointsMap m_brim_ear_points;
         /*IdToSlaSupportPointsMap m_sla_support_points;
@@ -1339,6 +1359,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         m_curr_config.volume_id = -1;
         m_objects_metadata.clear();
         m_layer_heights_profiles.clear();
+        m_layer_heights_profiles_keyed_by_object_id = false;
         m_layer_config_ranges.clear();
         m_brim_ear_points.clear();
         //m_sla_support_points.clear();
@@ -2007,8 +2028,13 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 return false;
             }*/
 
-            // m_layer_heights_profiles are indexed by a 1 based model object index.
-            IdToLayerHeightsProfileMap::iterator obj_layer_heights_profile = m_layer_heights_profiles.find(object.second + 1);
+            // Layer height profiles are keyed either by the 3MF object id of the ModelObject (files
+            // declaring layer_heights_profile format version >= 2) or, for legacy files, by a 1 based
+            // model object index. The mode comes from the file header only: mixing both lookups per
+            // object would misbind legacy entries whenever another object's 3MF id collides with a
+            // 1 based index.
+            IdToLayerHeightsProfileMap::iterator obj_layer_heights_profile = m_layer_heights_profiles.find(
+                m_layer_heights_profiles_keyed_by_object_id ? object.first.second : object.second + 1);
             if (obj_layer_heights_profile != m_layer_heights_profiles.end())
                 model_object->layer_height_profile.set(std::move(obj_layer_heights_profile->second));
 
@@ -2737,7 +2763,19 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             std::vector<std::string> objects;
             boost::split(objects, buffer, boost::is_any_of("\n"), boost::token_compress_off);
 
-            for (const std::string& object : objects)             {
+            // Newer files carry a format version header line ("layer_heights_profile_format_version=N")
+            // telling whether the object_id keys below are 3MF object ids (>= 2) or legacy 1 based
+            // Model::objects indexes. Legacy files start with an "object_id=" entry right away.
+            if (!objects.empty() && boost::algorithm::starts_with(objects.front(), LAYER_HEIGHTS_PROFILE_FORMAT_VERSION_KEY + "=")) {
+                std::vector<std::string> header_data;
+                boost::split(header_data, objects.front(), boost::is_any_of("="), boost::token_compress_off);
+                int format_version = (header_data.size() == 2) ? std::atoi(header_data[1].c_str()) : 0;
+                m_layer_heights_profiles_keyed_by_object_id = (format_version >= LAYER_HEIGHTS_PROFILE_FORMAT_VERSION_OBJECT_IDS);
+                objects.erase(objects.begin());
+                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", layer heights profile format version %1%, keyed by 3mf object id: %2%\n")%format_version %m_layer_heights_profiles_keyed_by_object_id;
+            }
+
+            for (const std::string& object : objects) {
                 std::vector<std::string> object_data;
                 boost::split(object_data, object, boost::is_any_of("|"), boost::token_compress_off);
                 if (object_data.size() != 2) {
@@ -3777,7 +3815,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
     bool _BBS_3MF_Importer::_handle_end_metadata()
     {
-        if ((m_curr_metadata_name == BBS_3MF_VERSION)||(m_curr_metadata_name == BBS_3MF_VERSION1)) {
+        if ((m_curr_metadata_name == SNAPMAKER_3MF_VERSION)||(m_curr_metadata_name == BBS_3MF_VERSION)||(m_curr_metadata_name == BBS_3MF_VERSION1)) {
             //m_is_bbl_3mf = true;
             m_version = (unsigned int)atoi(m_curr_characters.c_str());
             /*if (m_check_version && (m_version > VERSION_BBS_3MF_COMPATIBLE)) {
@@ -4629,9 +4667,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         } else if (boost::starts_with(type, "http://schemas.openxmlformats.org/") && boost::ends_with(type, "thumbnail")) {
             if (boost::algorithm::ends_with(path, ".png"))
                 m_thumbnail_path = path;
-        } else if (boost::starts_with(type, "http://schemas.bambulab.com/") && boost::ends_with(type, "cover-thumbnail-middle")) {
+        } else if ((boost::starts_with(type, "http://schemas.bambulab.com/") || boost::starts_with(type, "http://schemas.snapmaker.com/")) && boost::ends_with(type, "cover-thumbnail-middle")) {
             m_thumbnail_middle = path;
-        } else if (boost::starts_with(type, "http://schemas.bambulab.com/") && boost::ends_with(type, "cover-thumbnail-small")) {
+        } else if ((boost::starts_with(type, "http://schemas.bambulab.com/") || boost::starts_with(type, "http://schemas.snapmaker.com/")) && boost::ends_with(type, "cover-thumbnail-small")) {
             m_thumbnail_small = path;
         }
         return true;
@@ -4883,6 +4921,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     volume->source.is_converted_from_inches = metadata.value == "1";
                 else if (metadata.key == SOURCE_IN_METERS)
                     volume->source.is_converted_from_meters = metadata.value == "1";
+                else if (metadata.key == MERGED_GROUP_ID_KEY)
+                    volume->set_merged_group_id(ObjectID((size_t) ::atoi(metadata.value.c_str())));
                 else if ((metadata.key == MATRIX_KEY) || (metadata.key == MESH_SHARED_KEY))
                     continue;
                 else
@@ -5033,6 +5073,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     volume->source.is_converted_from_inches = metadata.value == "1";
                 else if (metadata.key == SOURCE_IN_METERS)
                     volume->source.is_converted_from_meters = metadata.value == "1";
+                else if (metadata.key == MERGED_GROUP_ID_KEY)
+                    volume->set_merged_group_id(ObjectID((size_t) ::atoi(metadata.value.c_str())));
                 else
                     volume->config.set_deserialize(metadata.key, metadata.value, config_substitutions);
             }
@@ -5377,7 +5419,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
     bool _BBS_3MF_Importer::ObjectImporter::_handle_object_end_metadata()
     {
-        if ((obj_curr_metadata_name == BBS_3MF_VERSION)||(obj_curr_metadata_name == BBS_3MF_VERSION1)) {
+        if ((obj_curr_metadata_name == SNAPMAKER_3MF_VERSION)||(obj_curr_metadata_name == BBS_3MF_VERSION)||(obj_curr_metadata_name == BBS_3MF_VERSION1)) {
             is_bbl_3mf = true;
         }
         return true;
@@ -5661,7 +5703,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         //BBS: change volume to seperate objects
         bool _add_mesh_to_object_stream(std::function<bool(std::string &, bool)> const &flush, ObjectData const &object_data) const;
         bool _add_build_to_model_stream(std::stringstream& stream, const BuildItemsList& build_items) const;
-        bool _add_layer_height_profile_file_to_archive(mz_zip_archive& archive, Model& model);
+        bool _add_layer_height_profile_file_to_archive(mz_zip_archive& archive, Model& model, const ObjectToObjectDataMap& objects_data);
         bool _add_layer_config_ranges_file_to_archive(mz_zip_archive& archive, Model& model);
         bool _add_brim_ear_points_file_to_archive(mz_zip_archive& archive, Model& model);
         bool _add_sla_support_points_file_to_archive(mz_zip_archive& archive, Model& model);
@@ -6048,10 +6090,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         {
             if (!_add_model_file_to_archive(filename, archive, model, objects_data, proFn, project)) { return false; }
 
-            // Adds layer height profile file ("Metadata/Slic3r_PE_layer_heights_profile.txt").
-            // All layer height profiles of all ModelObjects are stored here, indexed by 1 based index of the ModelObject in Model.
-            // The index differes from the index of an object ID of an object instance of a 3MF file!
-            if (!_add_layer_height_profile_file_to_archive(archive, model)) {
+            // Adds layer height profile file ("Metadata/layer_heights_profile.txt").
+            // All layer height profiles of all ModelObjects are stored here, keyed by the 3MF object
+            // id of the ModelObject (the id referenced by its <build> item), see the format version
+            // header written by _add_layer_height_profile_file_to_archive().
+            if (!_add_layer_height_profile_file_to_archive(archive, model, objects_data)) {
                 close_zip_writer(&archive);
                 return false;
             }
@@ -6418,18 +6461,18 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
                 if (data._3mf_printer_thumbnail_middle.empty()) {
                     stream << " <Relationship Target=\"/Metadata/plate_1.png"
-                           << "\" Id=\"rel-4\" Type=\"http://schemas.bambulab.com/package/2021/cover-thumbnail-middle\"/>\n";
+                           << "\" Id=\"rel-4\" Type=\"" << SNAPMAKER_REL_COVER_THUMBNAIL_MIDDLE << "\"/>\n";
                 } else {
                     stream << " <Relationship Target=\"/" << xml_escape(data._3mf_printer_thumbnail_middle)
-                           << "\" Id=\"rel-4\" Type=\"http://schemas.bambulab.com/package/2021/cover-thumbnail-middle\"/>\n";
+                           << "\" Id=\"rel-4\" Type=\"" << SNAPMAKER_REL_COVER_THUMBNAIL_MIDDLE << "\"/>\n";
                 }
 
                 if (data._3mf_printer_thumbnail_small.empty()) {
                     stream << "<Relationship Target=\"/Metadata/plate_1_small.png"
-                           << "\" Id=\"rel-5\" Type=\"http://schemas.bambulab.com/package/2021/cover-thumbnail-small\"/>\n";
+                           << "\" Id=\"rel-5\" Type=\"" << SNAPMAKER_REL_COVER_THUMBNAIL_SMALL << "\"/>\n";
                 } else {
                     stream << " <Relationship Target=\"/" << xml_escape(data._3mf_printer_thumbnail_small)
-                           << "\" Id=\"rel-5\" Type=\"http://schemas.bambulab.com/package/2021/cover-thumbnail-small\"/>\n";
+                           << "\" Id=\"rel-5\" Type=\"" << SNAPMAKER_REL_COVER_THUMBNAIL_SMALL << "\"/>\n";
                 }
             }
             else {
@@ -6440,11 +6483,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
                 thumbnail_file_str = (boost::format("Metadata/plate_%1%.png") % (export_plate_idx + 1)).str();
                 stream << " <Relationship Target=\"/" << xml_escape(thumbnail_file_str)
-                   << "\" Id=\"rel-4\" Type=\"http://schemas.bambulab.com/package/2021/cover-thumbnail-middle\"/>\n";
+                   << "\" Id=\"rel-4\" Type=\"" << SNAPMAKER_REL_COVER_THUMBNAIL_MIDDLE << "\"/>\n";
 
                 thumbnail_file_str = (boost::format("Metadata/plate_%1%_small.png") % (export_plate_idx + 1)).str();
                 stream << " <Relationship Target=\"/" << xml_escape(thumbnail_file_str)
-                   << "\" Id=\"rel-5\" Type=\"http://schemas.bambulab.com/package/2021/cover-thumbnail-small\"/>\n";
+                   << "\" Id=\"rel-5\" Type=\"" << SNAPMAKER_REL_COVER_THUMBNAIL_SMALL << "\"/>\n";
             }
         }
         else if (targets.empty()) {
@@ -6524,7 +6567,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             std::stringstream stream;
             reset_stream(stream);
             stream << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-            stream << "<" << MODEL_TAG << " unit=\"millimeter\" xml:lang=\"en-US\" xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\" xmlns:BambuStudio=\"http://schemas.bambulab.com/package/2021\"";
+            // xmlns:BambuStudio dropped: no QName in the output uses that prefix (xmlns:p below is Microsoft's, keep)
+            stream << "<" << MODEL_TAG << " unit=\"millimeter\" xml:lang=\"en-US\" xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\"";
             if (m_production_ext)
                 stream << " xmlns:p=\"http://schemas.microsoft.com/3dmanufacturing/production/2015/06\" requiredextensions=\"p\"";
             stream << ">\n";
@@ -6569,6 +6613,17 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     metadata_item_map = model.model_info.get()->metadata_items;
                 }
 
+                // strip Bambu-branded keys loaded via the catch-all loader so they don't
+                // round-trip into new files. Local map copy only - GUI still reads
+                // metadata_items in memory.
+                for (auto it = metadata_item_map.begin(); it != metadata_item_map.end(); ) {
+                    if (boost::starts_with(it->first, "BambuStudio:") ||
+                        boost::starts_with(it->first, "bamboo_slicer:"))
+                        it = metadata_item_map.erase(it);
+                    else
+                        ++it;
+                }
+
                 metadata_item_map[BBL_MODEL_NAME_TAG]           = xml_escape(name);
                 metadata_item_map[BBL_ORIGIN_TAG]               = xml_escape(origin);
                 metadata_item_map[BBL_DESIGNER_TAG]             = xml_escape(user_name);
@@ -6590,7 +6645,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 // Write Snapmaker_Orca tag instead of BambuStudio, so other slicers don't treat the 3mf as a Bambu project
                 metadata_item_map[BBL_APPLICATION_TAG] = (boost::format("%1%-%2%") % "Snapmaker_Orca" % Snapmaker_VERSION).str();
             }
-            metadata_item_map[BBS_3MF_VERSION] = std::to_string(VERSION_BBS_3MF);
+            // Written for sub model files too: ObjectImporter::_handle_object_end_metadata
+            // recognizes the bbl format (and restores uuid suffixes) by this key.
+            metadata_item_map[SNAPMAKER_3MF_VERSION] = std::to_string(VERSION_BBS_3MF);
 
             if (!model.mk_name.empty()) {
                 metadata_item_map[BBL_MAKERLAB_TAG] = xml_escape(model.mk_name);
@@ -7226,7 +7283,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         return true;
     }
 
-    bool _BBS_3MF_Exporter::_add_layer_height_profile_file_to_archive(mz_zip_archive& archive, Model& model)
+    bool _BBS_3MF_Exporter::_add_layer_height_profile_file_to_archive(mz_zip_archive& archive, Model& model, const ObjectToObjectDataMap& objects_data)
     {
         assert(is_decimal_separator_point());
         std::string out = "";
@@ -7237,7 +7294,13 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             ++count;
             const std::vector<double>& layer_height_profile = object->layer_height_profile.get();
             if (layer_height_profile.size() >= 4 && layer_height_profile.size() % 2 == 0) {
-                snprintf(buffer, 1024, "object_id=%d|", count);
+                // Key the entry by the real 3MF object id of this ModelObject (the id its <build>
+                // item references), not by its 1 based index in Model::objects: the two diverge as
+                // soon as an earlier object holds more than one volume, a plate is exported or the
+                // build items are reordered. The id map is filled by _add_model_file_to_archive().
+                auto object_data = objects_data.find(object);
+                int object_id = object_data != objects_data.end() ? object_data->second.object_id : count;
+                snprintf(buffer, 1024, "object_id=%d|", object_id);
                 out += buffer;
 
                 // Store the layer height profile as a single semicolon separated list.
@@ -7251,6 +7314,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         }
 
         if (!out.empty()) {
+            // Prepend the format version header: the object_id keys below are 3MF object ids
+            // (the ids referenced by the <build> items), not 1 based Model::objects indexes.
+            out = LAYER_HEIGHTS_PROFILE_FORMAT_VERSION_KEY + "=" + std::to_string(LAYER_HEIGHTS_PROFILE_FORMAT_VERSION_OBJECT_IDS) + "\n" + out;
             if (!mz_zip_writer_add_mem(&archive, BBS_LAYER_HEIGHTS_PROFILE_FILE.c_str(), (const void*)out.data(), out.length(), MZ_DEFAULT_COMPRESSION)) {
                 add_error("Unable to add layer heights profile file to archive");
                 BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << boost::format("Unable to add layer heights profile file to archive\n");
@@ -7608,6 +7674,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                                     stream << prefix << SOURCE_IN_METERS << "\" " << VALUE_ATTR << "=\"1\"/>\n";
                             }
 
+                            // stores the merge group id (set by "Assemble", consumed by "Split to objects")
+                            if (volume->merged_group_id().valid())
+                                stream << "      <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << MERGED_GROUP_ID_KEY
+                                       << "\" " << VALUE_ATTR << "=\"" << volume->merged_group_id().id << "\"/>\n";
+
                             // stores volume's config data
                             for (const std::string& key : volume->config.keys()) {
                                 stream << "      <" << METADATA_TAG << " "<< KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\"" << volume->config.opt_serialize(key) << "\"/>\n";
@@ -7788,7 +7859,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
         // write model rels
         if (save_gcode)
-            _add_relationships_file_to_archive(archive, BBS_MODEL_CONFIG_RELS_FILE, gcode_paths, {"http://schemas.bambulab.com/package/2021/gcode"}, Slic3r::PackingTemporaryData(), export_plate_idx);
+            _add_relationships_file_to_archive(archive, BBS_MODEL_CONFIG_RELS_FILE, gcode_paths, {SNAPMAKER_REL_GCODE}, Slic3r::PackingTemporaryData(), export_plate_idx);
 
         if (!m_skip_model) {
         //BBS: store assemble related info
@@ -7847,8 +7918,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
         // save slice header for debug
         stream << "  <" << SLICE_HEADER_TAG << ">\n";
-        stream << "    <" << SLICE_HEADER_ITEM_TAG << " " << KEY_ATTR << "=\"" << "X-BBL-Client-Type"    << "\" " << VALUE_ATTR << "=\"" << "slicer" << "\"/>\n";
-        stream << "    <" << SLICE_HEADER_ITEM_TAG << " " << KEY_ATTR << "=\"" << "X-BBL-Client-Version" << "\" " << VALUE_ATTR << "=\"" << convert_to_full_version(Snapmaker_VERSION) << "\"/>\n";
+        stream << "    <" << SLICE_HEADER_ITEM_TAG << " " << KEY_ATTR << "=\"" << "X-SM-Client-Type"    << "\" " << VALUE_ATTR << "=\"" << "slicer" << "\"/>\n";
+        stream << "    <" << SLICE_HEADER_ITEM_TAG << " " << KEY_ATTR << "=\"" << "X-SM-Client-Version" << "\" " << VALUE_ATTR << "=\"" << convert_to_full_version(Snapmaker_VERSION) << "\"/>\n";
         stream << "  </" << SLICE_HEADER_TAG << ">\n";
 
         for (unsigned int i = 0; i < (unsigned int)plate_data_list.size(); ++i)

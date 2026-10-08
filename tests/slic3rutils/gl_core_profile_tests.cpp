@@ -9,6 +9,9 @@
 //   * the dashed_thick_lines geometry shader that replaces wide and stippled lines.
 // Each step must leave the GL error flag clean. Where no GL context can be made (a headless CI box
 // without a display) the test says so and passes.
+// libvgcode stage 3 adds a fourth draw: a small G-code (processor -> LibVGCodeWrapper -> libvgcode)
+// rendered top-down off screen, then libvgcode shut down, after which the app's GL must still work
+// (libvgcode shares the GLAD loader and must not unload it).
 
 #include <catch2/catch.hpp>
 
@@ -20,6 +23,14 @@
 #include "slic3r/GUI/OpenGLManager.hpp"
 #include "slic3r/GUI/GLModel.hpp"
 #include "slic3r/GUI/GLShader.hpp"
+#include "slic3r/GUI/LibVGCode/LibVGCodeWrapper.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "libslic3r/Geometry.hpp"
+#include "libslic3r/TriangleMesh.hpp"
+
+#include <boost/filesystem.hpp>
+#include <boost/nowide/fstream.hpp>
+#include <sstream>
 
 #include <array>
 #include <memory>
@@ -259,6 +270,173 @@ TEST_CASE("OpenGL core profile: start-up, shaders, GLModel, plain VBO and dashed
         CHECK(int(px[2]) > 128);
         const auto far_px = OffscreenTarget::pixel(size / 2, 2);
         CHECK(int(far_px[2]) == 0);
+        model.reset();
+    }
+
+    SECTION("a plate thumbnail's off-screen render: framebuffer set-up and the thumbnail shader")
+    {
+        // The same set-up as GLCanvas3D::render_thumbnail_framebuffer() (non-multisampled path): RGBA8
+        // texture + sized GL_DEPTH_COMPONENT24 renderbuffer (macOS core rejects the unsized
+        // GL_DEPTH_COMPONENT these used: GL_INVALID_ENUM in every thumbnail), then a lit model.
+        const int w = 64, h = 64;
+        GLuint fbo = 0, tex = 0, depth = 0;
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        glGenRenderbuffers(1, &depth);
+        glBindRenderbuffer(GL_RENDERBUFFER, depth);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth);
+        const GLenum draw_bufs[] = { GL_COLOR_ATTACHMENT0 };
+        glDrawBuffers(1, draw_bufs);
+        CHECK(drain_gl_errors() == GL_NO_ERROR);
+        REQUIRE(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+        glViewport(0, 0, w, h);
+
+        GLShaderProgram* thumbnail = manager->get_shader("thumbnail");
+        REQUIRE(thumbnail != nullptr);
+        GLModel model;
+        model.init_from(its_make_cube(1.0, 1.0, 1.0));
+        model.set_color(ColorRGBA(1.f, 0.5f, 0.f, 1.f));
+        glClearColor(0.f, 0.f, 0.f, 0.f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST);
+        thumbnail->start_using();
+        thumbnail->set_uniform("emission_factor", 0.1f);
+        thumbnail->set_uniform("ban_light", false);
+        const Transform3d world = Geometry::translation_transform(Vec3d(-0.5, -0.5, -0.5));
+        const Transform3d view  = Geometry::rotation_transform(Vec3d(0.6, 0.0, 0.7));
+        thumbnail->set_uniform("volume_world_matrix", world);
+        thumbnail->set_uniform("view_model_matrix", view * world);
+        Transform3d projection = Transform3d::Identity();
+        projection.matrix()(2, 2) = -0.5; // keep the unit cube inside the clip volume
+        thumbnail->set_uniform("projection_matrix", projection);
+        const Matrix3d view_normal_matrix = view.matrix().block(0, 0, 3, 3) * world.matrix().block(0, 0, 3, 3).inverse().transpose();
+        thumbnail->set_uniform("view_normal_matrix", view_normal_matrix);
+        model.render();
+        thumbnail->stop_using();
+        glDisable(GL_DEPTH_TEST);
+        CHECK(drain_gl_errors() == GL_NO_ERROR);
+        std::vector<unsigned char> pixels(size_t(4 * w * h), 0);
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        CHECK(drain_gl_errors() == GL_NO_ERROR);
+        // The cube covers the middle of the image, lit and opaque.
+        const unsigned char* centre = pixels.data() + 4 * ((h / 2) * w + w / 2);
+        CHECK(int(centre[3]) > 0);
+        CHECK(int(centre[0]) > 0);
+        model.reset();
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glDeleteRenderbuffers(1, &depth);
+        glDeleteTextures(1, &tex);
+        glDeleteFramebuffers(1, &fbo);
+        CHECK(drain_gl_errors() == GL_NO_ERROR);
+    }
+
+    SECTION("libvgcode renders a small G-code scene, then shuts down without unloading the shared GL loader")
+    {
+        // A square perimeter on two layers, processed by EdgeSlicer's GCodeProcessor.
+        std::ostringstream o;
+        const char nl = '\n';
+        o << "; generated by OrcaSlicer 2.4.2 on 2026-01-01 at 00:00:00 UTC" << nl << "G28" << nl << "G90" << nl << "M83" << nl << "G92 E0" << nl;
+        for (int layer = 1; layer <= 2; ++layer) {
+            o << "; CHANGE_LAYER" << nl << "; Z_HEIGHT: " << 0.2 * layer << nl << "; LAYER_HEIGHT: 0.2" << nl
+              << "G1 Z" << 0.2 * layer << " F600" << nl << "G1 X10 Y10 F6000" << nl;
+            o << "; FEATURE: Outer wall" << nl << "; LINE_WIDTH: 2" << nl << "G1 X60 Y10 E2 F1800" << nl << "G1 X60 Y60 E2" << nl
+              << "G1 X10 Y60 E2" << nl << "G1 X10 Y10 E2" << nl;
+        }
+        // An OrcaSlicer-produced G-code must carry its config block.
+        // (The processor refuses a block with suspiciously few values, so pad it.)
+        o << "; CONFIG_BLOCK_START" << nl << "; filament_diameter = 1.75" << nl << "; filament_density = 1.24" << nl;
+        for (int i = 0; i < 80; ++i)
+            o << "; layer_height = 0.2" << nl;
+        o << "; CONFIG_BLOCK_END" << nl;
+        const bool was_bbl = GCodeProcessor::s_IsBBLPrinter;
+        GCodeProcessor::s_IsBBLPrinter = true;
+        const boost::filesystem::path path = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("edge_vgcode_gl_%%%%%%%%.gcode");
+        {
+            boost::nowide::ofstream out(path.string());
+            out << o.str();
+        }
+        GCodeProcessor processor;
+        processor.process_file(path.string());
+        boost::filesystem::remove(path);
+        GCodeProcessor::s_IsBBLPrinter = was_bbl;
+        const GCodeProcessorResult& result = processor.get_result();
+        REQUIRE(result.moves.size() > 8);
+
+        const int     big = 256;
+        OffscreenTarget scene(big);
+        REQUIRE(scene.complete());
+        {
+            libvgcode::Viewer viewer;
+            REQUIRE_NOTHROW(viewer.init(reinterpret_cast<const char*>(glGetString(GL_VERSION))));
+            libvgcode::GCodeInputData data = libvgcode::convert(result, { "#FF8000" }, {}, viewer);
+            viewer.load(std::move(data));
+            CHECK(viewer.get_layers_zs().size() == 2);
+            CHECK(drain_gl_errors() == GL_NO_ERROR);
+            viewer.set_view_type(libvgcode::EViewType::FeatureType);
+
+            // Top-down orthographic camera over X/Y 0..70 mm.
+            Matrix4f view = Matrix4f::Identity();
+            view(2, 3) = -100.f;
+            const float l = 0.f, r = 70.f, b = 0.f, t = 70.f, n = 1.f, f = 200.f;
+            Matrix4f proj = Matrix4f::Zero();
+            proj(0, 0) = 2.f / (r - l);
+            proj(1, 1) = 2.f / (t - b);
+            proj(2, 2) = -2.f / (f - n);
+            proj(0, 3) = -(r + l) / (r - l);
+            proj(1, 3) = -(t + b) / (t - b);
+            proj(2, 3) = -(f + n) / (f - n);
+            proj(3, 3) = 1.f;
+
+            scene.clear();
+            glEnable(GL_DEPTH_TEST);
+            viewer.render(libvgcode::convert(view), libvgcode::convert(proj));
+            glDisable(GL_DEPTH_TEST);
+            CHECK(drain_gl_errors() == GL_NO_ERROR);
+            // libvgcode restores the VAO it found bound (the app's default VAO).
+            CHECK(bound_vao() == GLint(OpenGLManager::get_default_vao()));
+
+            // The wall along y = 10 mm (pixel row 10/70 * 256 ~ 37) is lit; the middle of the square is not.
+            int lit = 0;
+            for (int y = 30; y <= 44; ++y) {
+                const auto px = OffscreenTarget::pixel(big / 2, y);
+                if (int(px[0]) + int(px[1]) + int(px[2]) > 60)
+                    ++lit;
+            }
+            CHECK(lit > 0);
+            const auto centre = OffscreenTarget::pixel(big / 2, big / 2);
+            CHECK(int(centre[0]) + int(centre[1]) + int(centre[2]) == 0);
+
+            viewer.shutdown();
+        }
+        CHECK(drain_gl_errors() == GL_NO_ERROR);
+
+        // GL entry points still loaded after libvgcode's shutdown: the app keeps drawing.
+        REQUIRE(glGetString != nullptr);
+        CHECK(glGetString(GL_VERSION) != nullptr);
+        GLModel::Geometry g;
+        g.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3 };
+        g.add_vertex(Vec3f(-1.f, -1.f, 0.f));
+        g.add_vertex(Vec3f(3.f, -1.f, 0.f));
+        g.add_vertex(Vec3f(-1.f, 3.f, 0.f));
+        g.add_triangle(0, 1, 2);
+        GLModel model;
+        model.init_from(std::move(g));
+        model.set_color(ColorRGBA(1.f, 1.f, 1.f, 1.f));
+        scene.clear();
+        flat->start_using();
+        flat->set_uniform("view_model_matrix", Transform3d::Identity());
+        flat->set_uniform("projection_matrix", Transform3d::Identity());
+        model.render();
+        flat->stop_using();
+        CHECK(drain_gl_errors() == GL_NO_ERROR);
+        CHECK(int(OffscreenTarget::pixel(big / 2, big / 2)[0]) == 255);
         model.reset();
     }
 

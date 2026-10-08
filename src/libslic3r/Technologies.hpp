@@ -62,5 +62,10 @@
 // Enable picking using raytracing
 #define ENABLE_RAYCAST_PICKING_DEBUG 0
 
+// Enable imgui debug dialog for new gcode viewer (using libvgcode, OrcaSlicer #10735)
+#define ENABLE_NEW_GCODE_VIEWER_DEBUG 0
+// Enable extension of tool position imgui dialog to show actual speed profile
+#define ENABLE_ACTUAL_SPEED_DEBUG 1
+
 
 #endif // _prusaslicer_technologies_h_

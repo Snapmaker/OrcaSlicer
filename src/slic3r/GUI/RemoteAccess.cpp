@@ -871,7 +871,8 @@ RemoteAccess::ApiResponse RemoteAccess::api_plate_preview_png(int plate, const s
         const int          last  = (int) zs.size() - 1;
         const unsigned int top   = (unsigned int) std::max(0, std::min(last, layer < 0 ? last : layer));
         const std::array<unsigned int, 2> range = { 0u, top };
-        if (v.get_layers_z_range() != range) {
+        const libvgcode::Interval&        shown = v.get_layers_z_range();
+        if (shown[0] != range[0] || shown[1] != range[1]) {
             IMSlider* slider = v.get_layers_slider();
             slider->SetSelectionSpan(0, (int) top);
             slider->set_as_dirty(false);

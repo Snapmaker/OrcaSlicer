@@ -19,5 +19,4 @@ ai_review:
   script:
     - pip install --quiet pyyaml
     - git clone --depth 1 --branch $env:DG_REF https://github.com/zhangzhend0ng/dev-guidelines dg
-    - if ($env:DG_REF) { git -C dg checkout $env:DG_REF }
     - python dg/scripts/ai_review_gitlab.py

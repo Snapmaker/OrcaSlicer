@@ -2,7 +2,8 @@
 
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Extruder.hpp"
-#include "libslic3r/GCode/ToolOrdering.hpp"
+// ToolOrdering.hpp must come after Print.hpp (it relies on Print.hpp's forward declarations,
+// e.g. ExtrusionEntity), so it is not included on its own here; test_data.hpp pulls in Print.hpp.
 #include "libslic3r/GCode/WipeTower2.hpp"
 #include "libslic3r/GCodeReader.hpp"
 #include "libslic3r/MixedFilament.hpp"

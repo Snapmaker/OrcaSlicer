@@ -16,6 +16,8 @@ add_executable(${_TEST_NAME}_tests
 	test_appconfig_trailing_newline.cpp
 	test_memory_guard_policy.cpp
 	test_aabbindirect.cpp
+	test_arachne_walls.cpp
+	test_skirt_distance.cpp
 	test_ams_lookup.cpp
 	test_assembly_face_pick.cpp
 	test_assembly_exact_footprint.cpp

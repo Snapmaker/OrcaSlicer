@@ -35,6 +35,18 @@ struct FFPrinterPreset
 		: bmp_file_name(bmp_file_name), name(name), model_id(model_id) {}
 };
 
+// How the device page lays out the temperature controls. Every model the device page knows maps
+// to one of these; a model it does not know gets Generic (or Nozzles4 when it reports four
+// nozzles), shown read-only so no temperature limit is guessed for it.
+enum class FFTempLayout {
+    Generic,         // top = nozzle, bottom = bed, mid = chamber (Adventurer 5M family, AD5X, Guider 4)
+    Guider3Ultra,    // top = right nozzle, bottom = left nozzle, mid = bed
+    Nozzles4,        // t1..t4 = nozzles, mid = bed (Creator 5)
+    Nozzles4Chamber, // t1..t4 = nozzles, bottom = bed, mid = chamber (Creator 5 Pro)
+};
+
+struct com_dev_data_t;
+
 struct FFPrinterSimpleData
 {
     wxString name;
@@ -54,7 +66,20 @@ public:
 
 	static std::string getPrinterModelId(unsigned short pid);
 
+	// The product id of a connection; 0 when it is not known yet, OTHER for an unknown connection.
 	static unsigned short getPid(int curId);
+	static unsigned short getPid(const com_dev_data_t &data);
+	// The rule behind getPid. The printer's own detail (devDetail->pid) wins when it has one: it
+	// is what the printer reports about itself. Before the first detail, the id the connection
+	// was started with (lanDevInfo.pid: a LAN scan, or the saved printer) stands in. A printer
+	// added by address / serial / check code, or taken from the Printers list, starts with 0
+	// there, so reading lanDevInfo.pid alone left the device page on "unknown model" for a
+	// Creator 5 that had already said what it is (EDGESLICER-6).
+	static unsigned short resolvePid(bool lan, unsigned short lanPid, bool hasDetail, int detailPid);
+	static bool isKnownPid(unsigned short pid);
+	// The temperature layout for a model; nozzleCnt (from the printer's detail, 0 when unknown)
+	// only matters for a model this build does not know.
+	static FFTempLayout tempLayout(unsigned short pid, int nozzleCnt);
 
 	static bool isPrinterSupportAms(unsigned short pid);
     static bool isPrinterSupportCoolingFan(unsigned short pid);

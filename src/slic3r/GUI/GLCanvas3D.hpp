@@ -1175,6 +1175,10 @@ public:
 
     void set_mouse_as_dragging() { m_mouse.dragging = true; }
     bool is_mouse_dragging() const { return m_mouse.dragging; }
+    // True when the current left up event comes from an ImGui window and was not processed by it
+    // (e.g. a drag that started on a gizmo floating window and was released over the 3D scene).
+    // Such a release is the end of an ImGui interaction, not a click on the scene.
+    bool is_mouse_left_up_ignored() const { return m_mouse.ignore_left_up; }
 
     double get_size_proportional_to_max_bed_size(double factor) const;
 
@@ -1371,6 +1375,9 @@ private:
     void _refresh_if_shown_on_screen();
 
     void _picking_pass();
+    // While the Text or SVG tool edits a volume, its padded on-screen footprint hovers that volume
+    // (gaps between the glyphs included), so a press there drags it instead of the object behind.
+    void _apply_emboss_footprint_hover(bool gizmo_element_hovered);
     void _rectangular_selection_picking_pass();
     void _render_background();
     void _render_bed(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool show_axes);

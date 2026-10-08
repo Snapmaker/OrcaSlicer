@@ -22,6 +22,7 @@
 #include "ImageFill.hpp"
 #include "FlexiJoint.hpp"
 #include "CutRecipe.hpp"
+#include "CostPricing.hpp"
 #include "BRep/CadBody.hpp"
 #include "TextureDisplacement.hpp"
 
@@ -1762,6 +1763,9 @@ public:
     std::shared_ptr<ModelDesignInfo> design_info = nullptr;
     std::shared_ptr<ModelInfo> model_info = nullptr;
     std::shared_ptr<ModelProfileInfo> profile_info = nullptr;
+    // Fees and markup of this project (Costs > Project), over your defaults. Display only: not a
+    // print setting, never in G-code; saved as 3MF model metadata "edgeslicer_pricing" (CostPricing.hpp).
+    ProjectPricing pricing;
 
     // Image Fill (Phase 2): the content-hashed image store. A PLAIN VALUE MEMBER, not an
     // ObjectBase and not a pointer to one, so it consumes no global object id and cannot shift

@@ -98,6 +98,7 @@ add_executable(${_TEST_NAME}_tests
 	test_profile_load_util.cpp
 	test_printer_model_specs.cpp
 	test_project_preset_switch.cpp
+	test_project_preset_roundtrip.cpp
 	test_mutable_polygon.cpp
 	test_mutable_priority_queue.cpp
 	test_gltf.cpp
@@ -130,6 +131,7 @@ add_executable(${_TEST_NAME}_tests
     test_gcode_import.cpp
     test_cost_estimate.cpp
     test_cost_overrides.cpp
+    test_cost_pricing.cpp
     test_align_math.cpp
     # test_png_io.cpp
     test_indexed_triangle_set.cpp

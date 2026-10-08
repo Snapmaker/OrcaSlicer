@@ -52,15 +52,34 @@ double old_total_cost(const GCodeProcessorResult &r)
     return total + r.time_cost * (r.print_statistics.modes[static_cast<size_t>(Mode::Normal)].time / 3600.0);
 }
 
-boost::filesystem::path write_temp_gcode(const std::string &name, const std::string &contents)
+// A G-code file in a directory of its own (random name, so repeated or parallel runs never share
+// one), removed when it goes out of scope. Removal never throws: a file Windows still holds open
+// for a moment (virus scanner, indexer) is left behind rather than failing the test.
+class TempGcode
 {
-    const boost::filesystem::path dir = boost::filesystem::temp_directory_path() / "edgeslicer_tests";
-    boost::filesystem::create_directories(dir);
-    const boost::filesystem::path path = dir / name;
-    boost::nowide::ofstream ofs(path.string());
-    ofs << contents;
-    return path;
-}
+public:
+    TempGcode(const std::string &name, const std::string &contents)
+        : m_dir(boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("edgeslicer_tests_%%%%-%%%%-%%%%"))
+    {
+        boost::filesystem::create_directories(m_dir);
+        m_path = m_dir / name;
+        boost::nowide::ofstream ofs(m_path.string());
+        ofs << contents;
+    }
+    ~TempGcode()
+    {
+        boost::system::error_code ec;
+        boost::filesystem::remove_all(m_dir, ec);
+    }
+    TempGcode(const TempGcode &)            = delete;
+    TempGcode &operator=(const TempGcode &) = delete;
+
+    std::string path() const { return m_path.string(); }
+
+private:
+    boost::filesystem::path m_dir;
+    boost::filesystem::path m_path;
+};
 
 // A G-code as EdgeSlicer writes it for a non-Bambu printer: config block at the end. The loader
 // wants at least 80 key / value pairs in the block.
@@ -248,10 +267,10 @@ TEST_CASE("Summing plates adds rounded plate totals and merges filament slots", 
 
 TEST_CASE("GCodeProcessor reads time_cost and filament_cost from a G-code config block", "[CostEstimate][GCodeProcessor][GCodeImport]")
 {
-    const auto path = write_temp_gcode("cost_with_prices.gcode",
-                                       gcode_with_config("; filament_cost = 25\n; time_cost = 2.5\n"));
+    const TempGcode gcode("cost_with_prices.gcode",
+                          gcode_with_config("; filament_cost = 25\n; time_cost = 2.5\n"));
     GCodeProcessor processor;
-    REQUIRE_NOTHROW(processor.process_file(path.string()));
+    REQUIRE_NOTHROW(processor.process_file(gcode.path()));
     const GCodeProcessorResult &r = processor.get_result();
     CHECK(r.has_filament_costs);
     REQUIRE_FALSE(r.filament_costs.empty());
@@ -260,15 +279,14 @@ TEST_CASE("GCodeProcessor reads time_cost and filament_cost from a G-code config
     const CostBreakdown c = compute_cost(r);
     CHECK(c.prices_known);
     CHECK(c.material > 0.);
-    boost::filesystem::remove(path);
 }
 
 TEST_CASE("GCodeProcessor reports missing filament prices instead of inventing them", "[CostEstimate][GCodeProcessor][GCodeImport]")
 {
     // Exported with filament prices left out: no filament_cost key, time_cost still there.
-    const auto path = write_temp_gcode("cost_without_prices.gcode", gcode_with_config("; time_cost = 2\n"));
+    const TempGcode gcode("cost_without_prices.gcode", gcode_with_config("; time_cost = 2\n"));
     GCodeProcessor processor;
-    REQUIRE_NOTHROW(processor.process_file(path.string()));
+    REQUIRE_NOTHROW(processor.process_file(gcode.path()));
     const GCodeProcessorResult &r = processor.get_result();
     CHECK_FALSE(r.has_filament_costs);
     for (float price : r.filament_costs)
@@ -277,12 +295,11 @@ TEST_CASE("GCodeProcessor reports missing filament prices instead of inventing t
     const CostBreakdown c = compute_cost(r);
     CHECK_FALSE(c.prices_known);
     CHECK_THAT(c.material, WithinAbs(0., 1e-12));
-    boost::filesystem::remove(path);
 
     // Neither key (an older or foreign file): no machine rate either.
-    const auto path2 = write_temp_gcode("cost_without_any.gcode", gcode_with_config(""));
+    const TempGcode gcode2("cost_without_any.gcode", gcode_with_config(""));
     GCodeProcessor processor2;
-    REQUIRE_NOTHROW(processor2.process_file(path2.string()));
+    REQUIRE_NOTHROW(processor2.process_file(gcode2.path()));
     CHECK_FALSE(processor2.get_result().has_filament_costs);
     CHECK_THAT(processor2.get_result().time_cost, WithinAbs(0., 1e-12));
     // The machine part is reported unknown, not as a rate of 0.
@@ -290,5 +307,4 @@ TEST_CASE("GCodeProcessor reports missing filament prices instead of inventing t
     const CostBreakdown none = compute_cost(processor2.get_result());
     CHECK_FALSE(none.machine_rate_known);
     CHECK_THAT(none.machine, WithinAbs(0., 1e-12));
-    boost::filesystem::remove(path2);
 }

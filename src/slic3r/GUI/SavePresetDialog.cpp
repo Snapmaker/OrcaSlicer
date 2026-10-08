@@ -9,6 +9,7 @@
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/wupdlock.h>
+#include <wx/checkbox.h>
 
 #include "libslic3r/PresetBundle.hpp"
 
@@ -111,8 +112,22 @@ SavePresetDialog::Item::Item(Preset::Type type, const std::string &suffix, wxBox
 
     sizer->Add(m_radio_group, 0, wxEXPAND | wxTOP | wxLEFT, BORDER_W);
 
+    // Ultra: a project preset normally lists only for the printers its parent profile covers, and a
+    // printer switch replaces it. Ticked, it is listed for every printer and stays selected.
+    if (m_type == Preset::TYPE_PRINT || m_type == Preset::TYPE_FILAMENT) {
+        m_every_printer = new wxCheckBox(m_parent, wxID_ANY, _L("Use for every printer"));
+        m_every_printer->SetToolTip(_L("Only for a preset inside the project: list it for every printer, and keep it "
+                                       "selected when you switch printers. Otherwise it is offered only for the printers "
+                                       "its parent preset is made for."));
+        const Preset &edited = m_presets->get_edited_preset();
+        m_every_printer->SetValue(edited.is_project_embedded && Preset::fits_every_printer(edited.config));
+        sizer->Add(m_every_printer, 0, wxEXPAND | wxTOP | wxLEFT, BORDER_W);
+    }
+
     m_radio_group->Bind(wxEVT_COMMAND_RADIOBOX_SELECTED, [this](wxCommandEvent &e) {
         m_save_to_project = m_radio_group->GetSelection() == 1;
+        if (m_every_printer)
+            m_every_printer->Enable(m_save_to_project);
     });
 
     bool is_project_embedded = m_presets->get_edited_preset().is_project_embedded;
@@ -201,6 +216,8 @@ void SavePresetDialog::Item::update()
         m_radio_group->Enable();
         m_radio_group->SetSelection(m_save_to_project ? 1 : 0);
     }
+    if (m_every_printer)
+        m_every_printer->Enable(m_save_to_project);
 
     m_valid_label->SetLabel(info_line);
     m_valid_label->Show(!info_line.IsEmpty());
@@ -330,6 +347,20 @@ bool SavePresetDialog::get_save_to_project_selection(Preset::Type type)
     for (const Item *item : m_items)
         if (item->type() == type) return item->save_to_project();
     return false;
+}
+
+ProjectPresetPrinters SavePresetDialog::Item::project_printers() const
+{
+    if (!m_save_to_project || m_every_printer == nullptr)
+        return ProjectPresetPrinters::Keep;
+    return m_every_printer->GetValue() ? ProjectPresetPrinters::EveryPrinter : ProjectPresetPrinters::FollowParent;
+}
+
+ProjectPresetPrinters SavePresetDialog::get_project_printers_selection(Preset::Type type)
+{
+    for (const Item *item : m_items)
+        if (item->type() == type) return item->project_printers();
+    return ProjectPresetPrinters::Keep;
 }
 
 bool SavePresetDialog::enable_ok_btn() const

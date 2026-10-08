@@ -307,6 +307,9 @@ public:
     }
     const std::string&  compatible_printers_condition() const { return const_cast<Preset*>(this)->compatible_printers_condition(); }
 
+    // Ultra: no printer list and no printer condition, i.e. listed for every printer.
+    static bool         fits_every_printer(const DynamicPrintConfig &cfg);
+
     // Return a printer technology, return ptFFF if the printer technology is not set.
     static PrinterTechnology printer_technology(const DynamicPrintConfig &cfg) {
         auto *opt = cfg.option<ConfigOptionEnum<PrinterTechnology>>("printer_technology");
@@ -402,6 +405,18 @@ double filament_preset_nozzle_diameter(const Preset &filament_preset, const Pres
 bool filament_preset_fits_slot(const Preset &filament_preset, const PresetCollection &printers, unsigned int filament_id);
 
 
+
+// Ultra: which printers a preset saved to the project is listed for. Chosen in the Save Preset
+// dialog ("Use for every printer", next to "Preset Inside Project"); stored in the 3MF as the
+// preset's own compatible_printers / compatible_printers_condition, so no format change.
+enum class ProjectPresetPrinters {
+    // Leave the preset's printer list as it is (no choice was offered, e.g. saving without the dialog).
+    Keep,
+    // The printers its parent profile covers - the upstream rule.
+    FollowParent,
+    // Every printer: no list, no condition. It stays listed and selected across printer switches.
+    EveryPrinter,
+};
 
 enum class PresetSelectCompatibleType {
 	// Never select a compatible preset if the newly selected profile is not compatible.
@@ -558,7 +573,11 @@ public:
     // a new preset is stored into the list of presets.
     // All presets are marked as not modified and the new preset is activated.
     //BBS: add project embedded preset logic
-    void            save_current_preset(const std::string &new_name, bool detach = false, bool save_to_project = false, Preset* _curr_preset = nullptr, const Preset* _current_printer = nullptr);
+    void            save_current_preset(const std::string &new_name, bool detach = false, bool save_to_project = false, Preset* _curr_preset = nullptr, const Preset* _current_printer = nullptr,
+                                        ProjectPresetPrinters project_printers = ProjectPresetPrinters::Keep);
+    // Ultra: set the printers a project preset is listed for (see ProjectPresetPrinters). No-op for
+    // printer presets and for presets that are not project presets.
+    void            set_project_preset_printers(Preset &preset, ProjectPresetPrinters project_printers);
 
     // Delete the current preset, activate the first visible preset.
     // returns true if the preset was deleted successfully.

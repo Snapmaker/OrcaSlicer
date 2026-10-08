@@ -306,9 +306,12 @@ public:
         std::string name;
         Preset::Type type;
         bool save_to_project;
+        // Ultra: "Use for every printer" from the Save Preset dialog; Keep when no dialog was shown.
+        ProjectPresetPrinters project_printers {ProjectPresetPrinters::Keep};
 
-        PresetData(std::string preset_name, Preset::Type preset_type, bool save_project)
-            :name(preset_name), type(preset_type), save_to_project(save_project)
+        PresetData(std::string preset_name, Preset::Type preset_type, bool save_project,
+                   ProjectPresetPrinters printers = ProjectPresetPrinters::Keep)
+            :name(preset_name), type(preset_type), save_to_project(save_project), project_printers(printers)
         {
         }
     };
@@ -354,6 +357,7 @@ public:
     //BBS: add project embedded preset relate logic
     const std::vector<UnsavedChangesDialog::PresetData>& get_names_and_types() { return names_and_types; }
     bool get_save_to_project_option() { return names_and_types[0].save_to_project; }
+    ProjectPresetPrinters get_project_printers_option() { return names_and_types[0].project_printers; }
     //const std::vector<std::pair<std::string, Preset::Type>>& get_names_and_types() { return names_and_types; }
     // short version of the previous function, for the case, when just one preset is modified
     std::string get_preset_name() { return names_and_types[0].name; }

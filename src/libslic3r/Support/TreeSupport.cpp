@@ -2380,6 +2380,15 @@ void TreeSupport::draw_circles()
                         floor_areas = std::move(diff_ex(floor_areas, bottom_gap_area));
                     }
                 }
+                // Orca: Final tree base polygons may be too close above model surfaces.
+                // Enforce bottom Z clearance for non-contact support layers as well.
+                if (!ts_layer->base_areas.empty()) {
+                    const Polygons trimming = get_trim_support_regions(
+                        *m_object, ts_layer, 0., m_slicing_params.gap_object_support, 0);
+                    if (!trimming.empty())
+                        ts_layer->base_areas = diff_ex(ts_layer->base_areas, trimming);
+                }
+
                 auto &area_groups = ts_layer->area_groups;
                 for (auto& expoly : ts_layer->base_areas) {
                     //if (area(expoly) < SQ(scale_(1))) continue;

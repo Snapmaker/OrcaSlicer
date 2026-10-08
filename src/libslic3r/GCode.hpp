@@ -795,8 +795,9 @@ private:
     template<typename VectorOption>
     auto process_flow_value(const VectorOption &opt) const -> decltype(opt.get_at(0))
     {
-        return get_value_at(m_config, opt, ConfigFlowDomain::Process,
-                            m_writer.extruder() != nullptr ? m_writer.extruder()->id() : 0);
+        // The slot is resolved once per export (m_filament_flow.process_config_idx); the same
+        // slot get_value_at(m_config, opt, ConfigFlowDomain::Process, id) picks.
+        return opt.get_at(m_filament_flow.process_config_idx_for(m_config, m_writer.extruder() != nullptr ? m_writer.extruder()->id() : 0));
     }
 
     void print_machine_envelope(GCodeOutputStream &file, Print &print);

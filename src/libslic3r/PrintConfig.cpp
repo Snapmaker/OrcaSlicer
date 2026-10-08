@@ -9420,6 +9420,12 @@ ResolvedFilamentFlow ResolvedFilamentFlow::resolve(const ConfigBase &config)
 {
     ResolvedFilamentFlow out;
     out.variants_active = filament_flow_variants_active(config);
+    {
+        const size_t count = flow_variant_filament_count(config);
+        out.process_config_idx.reserve(count);
+        for (size_t i = 0; i < count; ++i)
+            out.process_config_idx.push_back(get_config_idx(config, ConfigFlowDomain::Process, static_cast<unsigned int>(i)));
+    }
     const auto *ratio   = config.option<ConfigOptionFloats>("filament_flow_ratio");
     const auto *mvs     = config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
     const auto *pa      = config.option<ConfigOptionBools>("enable_pressure_advance");

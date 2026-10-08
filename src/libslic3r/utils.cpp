@@ -1,5 +1,8 @@
 #include "Utils.hpp"
 #include "I18N.hpp"
+#include "MemoryGuardPolicy.hpp"
+
+#include <sstream>
 
 #include <atomic>
 #include <cerrno>
@@ -1912,17 +1915,15 @@ size_t get_available_physical_memory()
     if (commit_avail == 0) return phys_avail;
     return phys_avail < commit_avail ? phys_avail : commit_avail;
 #elif defined(__linux__)
-	// Prefer /proc/meminfo MemAvailable (accounts for reclaimable cache).
+	// MemAvailable (accounts for reclaimable cache), or its pre-3.14 approximation; see
+	// meminfo_available_bytes() in MemoryGuardPolicy.hpp.
 	std::ifstream f("/proc/meminfo");
 	if (f) {
-		std::string line;
-		while (std::getline(f, line)) {
-			if (line.rfind("MemAvailable:", 0) == 0) {
-				size_t kb = 0;
-				if (sscanf(line.c_str() + 13, "%zu", &kb) == 1)
-					return kb * 1024;
-			}
-		}
+		std::stringstream ss;
+		ss << f.rdbuf();
+		const std::string text = ss.str();
+		if (const uint64_t bytes = meminfo_available_bytes(text); bytes > 0)
+			return static_cast<size_t>(bytes);
 	}
 	// Fallback: _SC_AVPHYS_PAGES
 	long avail_pages = sysconf(_SC_AVPHYS_PAGES);
@@ -1937,7 +1938,9 @@ size_t get_available_physical_memory()
 	mach_msg_type_number_t count = sizeof(vm_stats) / sizeof(natural_t);
 	if (host_statistics64(host_port, HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vm_stats), &count) != KERN_SUCCESS)
 		return 0;
-	return static_cast<size_t>(vm_stats.free_count) * static_cast<size_t>(page_size);
+	// Free + inactive + purgeable, not free pages alone (see macos_available_bytes()).
+	return static_cast<size_t>(macos_available_bytes(page_size, vm_stats.free_count, vm_stats.inactive_count,
+	                                                 vm_stats.purgeable_count, get_physical_memory()));
 #else
 	return 0;
 #endif
@@ -1947,6 +1950,29 @@ std::string get_available_memory_description()
 {
     const size_t avail = get_available_physical_memory();
     std::string  out   = "available " + std::to_string(avail / (1024 * 1024)) + " MB";
+#ifdef __APPLE__
+    {
+        std::string            details;
+        vm_size_t              page_size = 0;
+        mach_port_t            host_port = mach_host_self();
+        vm_statistics64_data_t vm_stats;
+        mach_msg_type_number_t count = sizeof(vm_stats) / sizeof(natural_t);
+        if (host_page_size(host_port, &page_size) == KERN_SUCCESS &&
+            host_statistics64(host_port, HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vm_stats), &count) == KERN_SUCCESS) {
+            const auto mb = [page_size](uint64_t pages) { return std::to_string(pages * uint64_t(page_size) / (1024 * 1024)); };
+            details = "free " + mb(vm_stats.free_count) + " MB incl. speculative " + mb(vm_stats.speculative_count) + " MB, inactive " +
+                      mb(vm_stats.inactive_count) + " MB, purgeable " + mb(vm_stats.purgeable_count) + " MB, compressed " +
+                      mb(vm_stats.compressor_page_count) + " MB";
+        }
+        // The kernel's own verdict: 1 normal, 2 warning, 4 critical.
+        int    level = 0;
+        size_t len   = sizeof(level);
+        if (sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &len, nullptr, 0) == 0)
+            details += (details.empty() ? "" : ", ") + std::string("pressure level ") + std::to_string(level);
+        if (!details.empty())
+            out += " (" + details + ")";
+    }
+#endif
 #ifdef _WIN32
     size_t phys_avail = 0, commit_avail = 0;
     get_windows_available_memory(phys_avail, commit_avail);

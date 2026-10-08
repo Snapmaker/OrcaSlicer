@@ -30,6 +30,8 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "NotificationManager.hpp"
+#include "libslic3r/MemoryGuardPolicy.hpp"
+#include "libslic3r/Utils.hpp"
 
 #ifdef _WIN32
 #include "BitmapComboBox.hpp"
@@ -730,7 +732,24 @@ void Preview::load_print_as_fff(bool keep_z_range, bool only_gcode)
             //BBS: add more log
             BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": will load gcode_preview from result, moves count %1%") % m_gcode_result->moves.size();
             //BBS: add only gcode mode
-            m_canvas->load_gcode_preview(*m_gcode_result, tool_colors, color_print_colors, only_gcode, m_skip_toolpath_preview);
+            // The memory guard fired while slicing (#642). libvgcode needs ~40 B per vertex on the GPU, so
+            // the toolpaths still load unless they would not fit in what is available now; the summary
+            // (layers, times, statistics, no toolpaths) is the last resort.
+            bool skip_toolpaths = false;
+            if (m_skip_toolpath_preview) {
+                const size_t moves = m_gcode_result->moves.size();
+                skip_toolpaths     = !preview_toolpaths_fit(moves, get_available_physical_memory());
+                BOOST_LOG_TRIVIAL(warning) << "Preview after the memory guard fired: " << moves << " moves need about "
+                                           << preview_bytes_estimate(moves) / (1024 * 1024) << " MB, " << get_available_memory_description()
+                                           << (skip_toolpaths ? ": loading the per-layer summary only" : ": loading the toolpaths");
+            }
+            m_canvas->load_gcode_preview(*m_gcode_result, tool_colors, color_print_colors, only_gcode, skip_toolpaths);
+            if (skip_toolpaths) {
+                if (NotificationManager* nm = wxGetApp().plater()->get_notification_manager(); nm != nullptr)
+                    nm->push_notification(NotificationType::CustomNotification, NotificationManager::NotificationLevel::WarningNotificationLevel,
+                        _u8L("Memory is low: the preview shows layers, times and statistics but no toolpaths. "
+                             "Close other applications and slice again to see the toolpaths."));
+            }
             //BBS show sliders
             show_moves_sliders();
 

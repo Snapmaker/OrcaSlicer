@@ -23151,8 +23151,8 @@ bool Plater::reslice()
                         BOOST_LOG_TRIVIAL(info) << "Memory guard: warning switched off from the dialog (Preferences > General turns it back on)";
                     }
                     if (result) {
-                        // Skip toolpath preview to reduce memory usage on
-                        // the subsequent load_toolpaths / load_shells phase.
+                        // The preview checks, when it loads, whether the libvgcode toolpaths fit in the
+                        // memory left (Preview::load_print_as_fff); only if not does it show the summary.
                         this->p->preview->set_skip_toolpath_preview(true);
                     } else {
                         // User chose to cancel: aggressively free the partial

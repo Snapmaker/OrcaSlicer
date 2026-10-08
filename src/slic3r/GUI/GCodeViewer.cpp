@@ -3608,6 +3608,13 @@ void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canv
     }
 
 
+    // EDGE (#642): the memory guard's summary load draws nothing; never leave that silent.
+    if (m_no_render_path) {
+        ImGui::Dummy({ window_padding, window_padding });
+        ImGui::SameLine();
+        imgui.text_colored(ImGuiWrapper::COL_ORANGE_LIGHT, _u8L("Memory is low: toolpaths not loaded"));
+    }
+
     // extrusion paths section -> title
     ImGui::Dummy({ window_padding, window_padding });
     ImGui::SameLine();

@@ -10,6 +10,7 @@ ai_review:
   allow_failure: true
   timeout: 15m
   variables:
+    GIT_STRATEGY: none
     GITLAB_HOST: "gitlab.s.com"
     AI_REVIEW_LLM_BASE_URL: "https://api.deepseek.com"
     AI_REVIEW_MODEL: "deepseek-v4-pro"

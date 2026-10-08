@@ -1587,7 +1587,7 @@ void TreeSupport::generate_toolpaths(const TreeSupportGroupContext *groups)
                     if (area_group.type != SupportLayer::BaseType) {
                         // interface
                         if (layer_id == 0) {
-                            Flow flow = m_raft_layers == 0 ? m_object->print()->brim_flow() : support_flow;
+                            Flow flow = m_raft_layers == 0 ? m_support_params.first_layer_flow : support_flow;
                             make_perimeter_and_inner_brim(ts_layer->support_fills.entities, poly, wall_count, flow,
                                                           area_group.type == SupportLayer::RoofType ? erSupportMaterialInterface : erSupportMaterial);
                             polys = std::move(offset_ex(poly, -flow.scaled_spacing()));
@@ -1643,7 +1643,7 @@ void TreeSupport::generate_toolpaths(const TreeSupportGroupContext *groups)
                     }
                     else {
                         // base_areas
-                        Flow flow               = (layer_id == 0 && m_raft_layers == 0) ? m_object->print()->brim_flow() : support_flow;
+                        Flow flow               = (layer_id == 0 && m_raft_layers == 0) ? m_support_params.first_layer_flow : support_flow;
                         bool need_infill = with_infill;
                         if(m_object_config->support_base_pattern==smpDefault)
                             need_infill &= area_group.need_infill;

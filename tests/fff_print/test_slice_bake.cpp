@@ -1179,8 +1179,16 @@ TEST_CASE("slice bake: the slice contour bakes a rounder cylinder than the extru
          << " tris / " << ext_fine_rep.points_added << " added");
     CHECK(ext_fine_rep.points_added > ext_coarse_rep.points_added);
     CHECK(ext_fine_rep.triangles > ext_coarse_rep.triangles);
-    // And densifying moves it towards the circle, which is what the tolerance MEANS.
-    CHECK(radial_error(ext_fine_mesh, z_mid, r) <= radial_error(ext_coarse_mesh, z_mid, r));
+    // Densifying puts the new points ON the chord it splits, so it never moves a vertex onto the
+    // circle: what it guarantees is that the flat between two points is short enough to stay inside
+    // the tolerance. Measured by vertices that is only a bound - no vertex is further from the true
+    // circle than the path's own `resolution` (0.1 mm here) - not an improvement on the coarse mesh.
+    // (This used to read "fine <= coarse". That held only because the slice contour then carried the
+    // off-circle points that a slicing plane makes where it crosses the diagonal of a planar quad, so
+    // the coarse path started from a worse error; since Orca #15366 those points are no longer in
+    // the contour and the coarse path's vertices lie on the circle.)
+    CHECK(radial_error(ext_fine_mesh, z_mid, r) <= 0.1);
+    CHECK(radial_error(ext_coarse_mesh, z_mid, r) <= 0.1);
 
     // The estimator the dialog shows moves the same way, which is what makes the live figure worth
     // showing at all.

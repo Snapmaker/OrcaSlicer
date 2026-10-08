@@ -73,9 +73,10 @@ private:
 
 private:
     static const wxMediaState MEDIASTATE_IDLE = (wxMediaState) 3;
-    static const wxMediaState MEDIASTATE_INITIALIZING = (wxMediaState) 4;
-    static const wxMediaState MEDIASTATE_LOADING = (wxMediaState) 5;
-    static const wxMediaState MEDIASTATE_BUFFERING = (wxMediaState) 6;
+    // inline const: 4-6 are outside wxMediaState's range, which clang 21 rejects in a constant expression
+    static inline const wxMediaState MEDIASTATE_INITIALIZING = static_cast<wxMediaState>(4);
+    static inline const wxMediaState MEDIASTATE_LOADING = static_cast<wxMediaState>(5);
+    static inline const wxMediaState MEDIASTATE_BUFFERING = static_cast<wxMediaState>(6);
 
     wxMediaCtrl2 * m_media_ctrl;
     wxMediaState m_last_state = MEDIASTATE_IDLE;

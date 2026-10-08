@@ -349,8 +349,9 @@ std::pair<double, double> adaptive_fill_line_spacing(const PrintObject &print_ob
             } else
                 return 0.;
         };
-        adaptive_line_spacing = to_line_spacing(adaptive_cnt, adaptive_fill_density, adaptive_infill_extrusion_width);
-        support_line_spacing  = to_line_spacing(support_cnt, support_fill_density, support_infill_extrusion_width);
+        const int n_multiline = print_object.printing_region(0).config().fill_multiline.value;
+        adaptive_line_spacing = to_line_spacing(adaptive_cnt, adaptive_fill_density, adaptive_infill_extrusion_width) * n_multiline;
+        support_line_spacing  = to_line_spacing(support_cnt, support_fill_density, support_infill_extrusion_width) * n_multiline;
     }
 
     return std::make_pair(adaptive_line_spacing, support_line_spacing);
@@ -1441,6 +1442,17 @@ static std::vector<CubeProperties> make_cubes_properties(double max_cube_edge_le
         cubes_properties.emplace_back(props);
         if (edge_length > max_cube_edge_length)
             break;
+    }
+    // Orca: Ensure at least 2 levels so build_octree() will insert triangles.
+    // Fixes scenario where adaptive fill is disconnected from walls on low densities
+    if (cubes_properties.size() == 1) {
+        CubeProperties p = cubes_properties.back();
+        p.edge_length      *= 2.0;
+        p.height           = p.edge_length * sqrt(3);
+        p.diagonal_length  = p.edge_length * sqrt(2);
+        p.line_z_distance  = p.edge_length / sqrt(3);
+        p.line_xy_distance = p.edge_length / sqrt(6);
+        cubes_properties.push_back(p);
     }
     return cubes_properties;
 }

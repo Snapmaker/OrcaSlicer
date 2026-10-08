@@ -1706,6 +1706,12 @@ void Fill::connect_infill(Polylines &&infill_ordered, const std::vector<const Po
             size_t                    polyline_idx1  = get_and_update_merged_with(((cp1 - graph.map_infill_end_point_to_boundary.data()) / 2));
             size_t                    polyline_idx2  = get_and_update_merged_with(((cp2 - graph.map_infill_end_point_to_boundary.data()) / 2));
             const Points             &contour        = graph.boundary[cp1->contour_idx];
+
+            // Orca: If multiline infill is requested, skip connections that are too short.
+            if (params.multiline > 1 && arc.arc_length < scale_(spacing) * params.multiline) {
+                continue;
+            }
+
             const std::vector<double> &contour_params = graph.boundary_params[cp1->contour_idx];
             if (polyline_idx1 != polyline_idx2) {
                 Polyline &polyline1 = infill_ordered[polyline_idx1];
@@ -2452,9 +2458,11 @@ void Fill::connect_base_support(Polylines &&infill_ordered, const std::vector<co
 #endif // INFILL_DEBUG_OUTPUT
 
     const std::vector<SupportArcCost> arches = evaluate_support_arches(infill_ordered, graph, spacing, params);
-    static const double cost_low      = line_spacing * 1.3;
-    static const double cost_high     = line_spacing * 2.;
-    static const double cost_veryhigh = line_spacing * 3.;
+    // Must not be static: line_spacing varies per call (base vs interface fills differ),
+    // and a static here would fix these to whichever call ran first, order depending on thread count.
+    const double cost_low      = line_spacing * 1.3;
+    const double cost_high     = line_spacing * 2.;
+    const double cost_veryhigh = line_spacing * 3.;
 
     {
         std::vector<const SupportArcCost*> selected;

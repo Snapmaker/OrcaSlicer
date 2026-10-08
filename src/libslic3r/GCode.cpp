@@ -9497,11 +9497,11 @@ std::string GCode::extrude_support(const ExtrusionEntityCollection& support_fill
         if (extrusions.empty())
             return gcode;
 
-        // Keep reversed clones alive for the whole emit loop. Do not add Orca's
-        // no_sort gate here: Edge always chained support, and first-export G-code
-        // must stay byte-identical to main.
+        // Keep reversed clones alive for the whole emit loop.
         std::vector<std::unique_ptr<ExtrusionEntity>> reversed;
-        chain_and_reorder_extrusion_entities(extrusions, m_last_pos, reversed);
+        // ORCA (#11761): respect no_sort to preserve the support base outline->fill order.
+        if (!support_fills.no_sort)
+            chain_and_reorder_extrusion_entities(extrusions, m_last_pos, reversed);
 
         const double support_speed           = this->process_flow_value(m_config.support_speed);
         const double support_interface_speed = this->process_flow_value(m_config.support_interface_speed);

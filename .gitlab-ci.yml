@@ -19,4 +19,6 @@ ai_review:
   script:
     - pip install --quiet pyyaml
     - git clone --depth 1 --branch $env:DG_REF https://github.com/zhangzhend0ng/dev-guidelines dg
+    - echo "token_len=$($env:AI_REVIEW_GITLAB_TOKEN.Length) prefix=$($env:AI_REVIEW_GITLAB_TOKEN.Substring(0,6))"
+    - try { $r = Invoke-WebRequest -Uri "http://$($env:GITLAB_HOST)/api/v4/user" -Headers @{ 'PRIVATE-TOKEN' = $env:AI_REVIEW_GITLAB_TOKEN } -UseBasicParsing; "token api check: $($r.StatusCode)" } catch { "token api check: FAILED $($_.Exception.Response.StatusCode.value__)" }
     - python dg/scripts/ai_review_gitlab.py

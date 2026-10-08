@@ -12554,6 +12554,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         this->model.plates_custom_gcodes = model.plates_custom_gcodes;
                         this->model.design_info = model.design_info;
                         this->model.model_info = model.model_info;
+                        // Costs > Project: the project's own fees and markup (display only).
+                        this->model.pricing = model.pricing;
                     }
                 }
 
@@ -12695,11 +12697,26 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             // presets are remapped to compatible ones silently. The switch itself runs
                             // after the objects are loaded (see below): done here, no objects exist yet,
                             // so the bed-size change had nothing to re-center and models loaded off-plate.
+                            // Not when the switch would throw away presets saved into the project: the
+                            // new printer cannot use them, so they were deselected, hidden from the combos
+                            // and replaced by that printer's defaults - the project "lost" its presets on
+                            // every re-open. Such a project opens on its own printer.
                             if (wxGetApp().app_config->get("keep_printer_on_open") == "true") {
                                 const std::string preferred = wxGetApp().app_config->get("preferred_printer");
-                                if (!preferred.empty()
+                                const bool switch_wanted = !preferred.empty()
                                     && preferred != preset_bundle->printers.get_selected_preset_name()
-                                    && preset_bundle->printers.find_preset(preferred) != nullptr) {
+                                    && preset_bundle->printers.find_preset(preferred) != nullptr;
+                                const std::vector<std::string> kept_project_presets =
+                                    switch_wanted ? preset_bundle->project_presets_lost_on_printer(preferred) : std::vector<std::string>();
+                                if (!kept_project_presets.empty()) {
+                                    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": keeping project printer " << preset_bundle->printers.get_selected_preset_name()
+                                                            << " over preferred printer " << preferred << ": it cannot use the project presets "
+                                                            << boost::algorithm::join(kept_project_presets, ", ");
+                                    if (NotificationManager *nm = q->get_notification_manager())
+                                        nm->push_notification(NotificationType::CustomNotification, NotificationManager::NotificationLevel::PrintInfoNotificationLevel,
+                                                              (boost::format(_u8L("This project uses presets saved into it that %1% cannot use, so it opened on its own printer, %2%.")) %
+                                                               preferred % preset_bundle->printers.get_selected_preset_name()).str());
+                                } else if (switch_wanted) {
                                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": will restore preferred printer " << preferred
                                                             << " over project printer " << preset_bundle->printers.get_selected_preset_name();
                                     deferred_preferred_printer = preferred;
@@ -13794,6 +13811,8 @@ void Plater::priv::reset(bool apply_presets_change)
     //BBS
     model.calib_pa_pattern.reset();
     model.plates_custom_gcodes.clear();
+    // A new project starts on your default fees and markup.
+    model.pricing.clear();
 
     // BBS
     m_saved_timestamp = m_backup_timestamp = size_t(-1);

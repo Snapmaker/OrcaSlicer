@@ -16,6 +16,7 @@ class wxString;
 class wxStaticText;
 class wxComboBox;
 class wxStaticBitmap;
+class wxCheckBox;
 
 #define SAVE_PRESET_DIALOG_DEF_COLOUR wxColour(255, 255, 255)
 #define SAVE_PRESET_DIALOG_INPUT_SIZE wxSize(FromDIP(360), FromDIP(24))
@@ -55,6 +56,8 @@ class SavePresetDialog : public DPIDialog
         std::string     preset_name()   const { return m_preset_name; }
         //BBS: add project embedded preset relate logic
         bool save_to_project() const { return m_save_to_project; }
+        // Ultra: "Use for every printer", offered for process and filament presets saved to the project.
+        ProjectPresetPrinters project_printers() const;
 
         Preset::Type    m_type;
         ValidationType  m_valid_type;
@@ -71,6 +74,7 @@ class SavePresetDialog : public DPIDialog
         //BBS: add project embedded preset relate logic
         bool                m_save_to_project {false};
         RadioGroup*         m_radio_group; // ORCA
+        wxCheckBox*         m_every_printer {nullptr};
 
         void update();
     };
@@ -103,6 +107,7 @@ public:
     void layout();
     //BBS: add project embedded preset relate logic
     bool get_save_to_project_selection(Preset::Type type);
+    ProjectPresetPrinters get_project_printers_selection(Preset::Type type);
 
 protected:
     void on_dpi_changed(const wxRect& suggested_rect) override;

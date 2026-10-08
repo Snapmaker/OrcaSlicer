@@ -174,6 +174,8 @@ set(lisbslic3r_sources
     CostEstimate.hpp
     CostOverrides.cpp
     CostOverrides.hpp
+    CostPricing.cpp
+    CostPricing.hpp
     Extruder.cpp
     Extruder.hpp
     ExtrusionEntityCollection.cpp

@@ -1115,19 +1115,20 @@ void SingleDeviceState::setCurId(int curId)
     //query device data by id
     bool  valid = false;
     const com_dev_data_t &data  = MultiComMgr::inst()->devData(m_cur_id, &valid);
-    if (!valid) {
+    // A connection that has not answered yet has no detail or product block to show.
+    if (!valid || data.devDetail == nullptr || data.devProduct == nullptr) {
         setPageOffline();
         return;
     }
-    unsigned short curr_pid = 0;
+    // One product id for the whole page (the temperature panel and the per-model controls below
+    // read the same one): see FFUtils::resolvePid.
+    const unsigned short curr_pid = FFUtils::getPid(data);
     if (data.connectMode == COM_CONNECT_LAN) {
         m_cur_serial_number = data.lanDevInfo.serialNumber;
-        curr_pid            = data.lanDevInfo.pid;
         m_fileListbutton->SetMinSize((wxSize(FromDIP(680 + 5), FromDIP(69))));
         m_timeLapseVideoBtn->Show(false);
     } else if (data.connectMode == COM_CONNECT_WAN) {
         m_cur_serial_number = data.wanDevInfo.serialNumber;
-        curr_pid            = data.devDetail->pid;
         m_fileListbutton->SetMinSize((wxSize(FromDIP(680 / 2), FromDIP(69))));
         m_timeLapseVideoBtn->Show(data.devDetail->camera == 1);
     }
@@ -1165,8 +1166,8 @@ void SingleDeviceState::setCurId(int curId)
         m_filter_button->SetIcon(isPrinterSupportDeviceFilter ? "device_filter" : "device_filter_offline");
     }
 
-    changeMachineType(data.devDetail->pid);
-    m_idle_tempMixDevice->changeMachineType(data.devDetail->pid);
+    changeMachineType(curr_pid);
+    m_idle_tempMixDevice->changeMachineType(curr_pid);
     reInitPage();
     onDevStateChanged(data.devDetail->status, data);
     fillValue(data);

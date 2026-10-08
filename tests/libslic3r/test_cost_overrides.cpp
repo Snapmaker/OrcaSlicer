@@ -446,7 +446,7 @@ TEST_CASE("Price store: round trip, unknown fields kept, versioned", "[CostOverr
     // A later version's fields, at the top and in an entry, survive a rewrite by this one.
     json j = json::parse(read_text(path));
     CHECK(j["version"] == Store::VERSION);
-    j["version"]                   = 3;
+    j["version"]                   = Store::VERSION + 1;
     j["currency_note"]             = "set by a newer EdgeSlicer";
     j["filament"][0]["density"]    = 1.31;
     j["filament"][0]["spool_mass"] = {{"g", 250}};
@@ -457,7 +457,7 @@ TEST_CASE("Price store: round trip, unknown fields kept, versioned", "[CostOverr
     REQUIRE(newer.set_family("Polymaker", "PLA", "Polymaker PLA", 29.));
     REQUIRE(newer.save(path.string()));
     const json k = json::parse(read_text(path));
-    CHECK(k["version"] == 3);
+    CHECK(k["version"] == Store::VERSION + 1);
     CHECK(k["currency_note"] == "set by a newer EdgeSlicer");
     CHECK(k["filament"][0]["density"] == 1.31);
     CHECK(k["filament"][0]["spool_mass"]["g"] == 250);
@@ -915,7 +915,7 @@ TEST_CASE("apply() rewrites time_cost only when a machine rate of yours applies"
     CHECK_THAT(time_cost_of(other), WithinAbs(0.9, 1e-12));
 }
 
-TEST_CASE("Cost store: a version 1 file is read and rewritten as version 2", "[CostOverrides][store][machines]")
+TEST_CASE("Cost store: a version 1 file is read and rewritten as the current version", "[CostOverrides][store][machines]")
 {
     PriceScratchDir scratch("migrate");
     const fs::path  dir  = scratch.path();
@@ -939,7 +939,7 @@ TEST_CASE("Cost store: a version 1 file is read and rewritten as version 2", "[C
     REQUIRE(store.save(path.string()));
 
     json j = json::parse(read_text(path));
-    CHECK(j["version"] == 2);
+    CHECK(j["version"] == Store::VERSION);
     CHECK(j["note"] == "keep me");
     CHECK(j["filament"][0]["density"] == 1.26);
     CHECK(j["filament"][0]["price_per_kg"] == 23.5);

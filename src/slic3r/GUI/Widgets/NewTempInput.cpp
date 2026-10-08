@@ -7,6 +7,7 @@
 #include "../GUI_App.hpp"
 #include "slic3r/GUI/FFUtils.hpp"
 #include "slic3r/GUI/FlashForge/MultiComMgr.hpp"
+#include <boost/log/trivial.hpp>
 
 namespace Slic3r {
 namespace GUI {
@@ -1777,83 +1778,94 @@ NewTempInputPanel::NewTempInputPanel(wxWindow* parent) :
     Layout();
 }
 
+NewTempInput* NewTempInputPanel::tempInput(const char* key) const
+{
+    auto it = m_tempInputs.find(key);
+    return it == m_tempInputs.end() ? nullptr : it->second;
+}
+
+void NewTempInputPanel::setTemps(const char* key, double curr, double target)
+{
+    // A row the current layout does not have is skipped: reading a missing row through
+    // operator[] inserted a null and crashed the device page (EDGESLICER-6).
+    if (NewTempInput* input = tempInput(key)) {
+        input->SetCurrTemp(curr, true);
+        input->SetTagTemp(target, true);
+    }
+}
+
 void NewTempInputPanel::UpdateTempatrue(const com_dev_data_t& data)
 {
-    if (m_cur_id == -1) {
+    if (m_cur_id == -1 || data.devDetail == nullptr) {
         for (auto temp : m_tempInputs) {
             temp.second->SetCurrTemp(INT_MAX);
         }
         return;
     }
 
-    auto pid = FFUtils::getPid(m_cur_id);
-    if (pid == C5) {
-        std::vector<double> nozzlesTemp;
-        std::vector<double> nozzlesTagTemp;
-        for (int i = 0; i < data.devDetail->nozzleCnt; i++) {
-            nozzlesTemp.push_back(data.devDetail->nozzleTemps[i]);
-            nozzlesTagTemp.push_back(data.devDetail->nozzleTargetTemps[i]);
-        }
-        if (nozzlesTemp.size() < 4) {
+    // The panel was built before the printer said what it is (or it said something else since):
+    // build it again for what it is now, so the rows below are the ones this layout has.
+    const unsigned short pid = FFUtils::getPid(data);
+    if (pid != m_layout_pid || FFUtils::tempLayout(pid, data.devDetail->nozzleCnt) != m_layout) {
+        buildTempLayout(m_cur_id, pid, data.devDetail->nozzleCnt);
+    }
+
+    const fnet_dev_detail_t& detail = *data.devDetail;
+    switch (m_layout) {
+    case FFTempLayout::Nozzles4:
+    case FFTempLayout::Nozzles4Chamber: {
+        if (detail.nozzleCnt < 4 || detail.nozzleTemps == nullptr || detail.nozzleTargetTemps == nullptr) {
             return;
         }
-        m_tempInputs["t1"]->SetCurrTemp(nozzlesTemp[0], true);
-        m_tempInputs["t1"]->SetTagTemp(nozzlesTagTemp[0], true);
-        m_tempInputs["t2"]->SetCurrTemp(nozzlesTemp[1], true);
-        m_tempInputs["t2"]->SetTagTemp(nozzlesTagTemp[1], true);
-        m_tempInputs["t3"]->SetCurrTemp(nozzlesTemp[2], true);
-        m_tempInputs["t3"]->SetTagTemp(nozzlesTagTemp[2], true);
-        m_tempInputs["t4"]->SetCurrTemp(nozzlesTemp[3], true);
-        m_tempInputs["t4"]->SetTagTemp(nozzlesTagTemp[3], true);
-        m_tempInputs["mid"]->SetCurrTemp(data.devDetail->platTemp, true);
-        m_tempInputs["mid"]->SetTagTemp(data.devDetail->platTargetTemp, true);
-    } 
-    else if (pid == C5P) {
-        std::vector<double> nozzlesTemp;
-        std::vector<double> nozzlesTagTemp;
-        for (int i = 0; i < data.devDetail->nozzleCnt; i++) {
-            nozzlesTemp.push_back(data.devDetail->nozzleTemps[i]);
-            nozzlesTagTemp.push_back(data.devDetail->nozzleTargetTemps[i]);
+        setTemps("t1", detail.nozzleTemps[0], detail.nozzleTargetTemps[0]);
+        setTemps("t2", detail.nozzleTemps[1], detail.nozzleTargetTemps[1]);
+        setTemps("t3", detail.nozzleTemps[2], detail.nozzleTargetTemps[2]);
+        setTemps("t4", detail.nozzleTemps[3], detail.nozzleTargetTemps[3]);
+        if (m_layout == FFTempLayout::Nozzles4) {
+            setTemps("mid", detail.platTemp, detail.platTargetTemp);
+        } else {
+            setTemps("bottom", detail.platTemp, detail.platTargetTemp);
+            setTemps("mid", detail.chamberTemp, detail.chamberTargetTemp);
         }
-        if (nozzlesTemp.size() < 4) {
-            return;
-        }
-        m_tempInputs["t1"]->SetCurrTemp(nozzlesTemp[0], true);
-        m_tempInputs["t1"]->SetTagTemp(nozzlesTagTemp[0], true);
-        m_tempInputs["t2"]->SetCurrTemp(nozzlesTemp[1], true);
-        m_tempInputs["t2"]->SetTagTemp(nozzlesTagTemp[1], true);
-        m_tempInputs["t3"]->SetCurrTemp(nozzlesTemp[2], true);
-        m_tempInputs["t3"]->SetTagTemp(nozzlesTagTemp[2], true);
-        m_tempInputs["t4"]->SetCurrTemp(nozzlesTemp[3], true);
-        m_tempInputs["t4"]->SetTagTemp(nozzlesTagTemp[3], true);
-        m_tempInputs["bottom"]->SetCurrTemp(data.devDetail->platTemp, true);
-        m_tempInputs["bottom"]->SetTagTemp(data.devDetail->platTargetTemp, true);
-        m_tempInputs["mid"]->SetCurrTemp(data.devDetail->chamberTemp, true);
-        m_tempInputs["mid"]->SetTagTemp(data.devDetail->chamberTargetTemp, true);
+        break;
     }
-    else if (pid == GUIDER_3_ULTRA) {
-        m_tempInputs["top"]->SetCurrTemp(data.devDetail->rightTemp, true);
-        m_tempInputs["top"]->SetTagTemp(data.devDetail->rightTargetTemp, true);
-        m_tempInputs["bottom"]->SetCurrTemp(data.devDetail->leftTemp, true);
-        m_tempInputs["bottom"]->SetTagTemp(data.devDetail->leftTargetTemp, true);
-        m_tempInputs["mid"]->SetCurrTemp(data.devDetail->platTemp, true);
-        m_tempInputs["mid"]->SetTagTemp(data.devDetail->platTargetTemp, true);
-    }
-    else {
-        m_tempInputs["top"]->SetCurrTemp(data.devDetail->rightTemp, true);
-        m_tempInputs["top"]->SetTagTemp(data.devDetail->rightTargetTemp, true);
-        m_tempInputs["bottom"]->SetCurrTemp(data.devDetail->platTemp, true);
-        m_tempInputs["bottom"]->SetTagTemp(data.devDetail->platTargetTemp, true);
-        m_tempInputs["mid"]->SetCurrTemp(data.devDetail->chamberTemp, true);
-        m_tempInputs["mid"]->SetTagTemp(data.devDetail->chamberTargetTemp, true);
+    case FFTempLayout::Guider3Ultra:
+        setTemps("top", detail.rightTemp, detail.rightTargetTemp);
+        setTemps("bottom", detail.leftTemp, detail.leftTargetTemp);
+        setTemps("mid", detail.platTemp, detail.platTargetTemp);
+        break;
+    case FFTempLayout::Generic:
+    default:
+        setTemps("top", detail.rightTemp, detail.rightTargetTemp);
+        setTemps("bottom", detail.platTemp, detail.platTargetTemp);
+        setTemps("mid", detail.chamberTemp, detail.chamberTargetTemp);
+        break;
     }
 }
 
 void NewTempInputPanel::ReInitTempature(int curId)
 {
+    unsigned short pid       = 0;
+    int            nozzleCnt = 0;
+    if (curId != -1) {
+        bool                  valid = false;
+        const com_dev_data_t& data  = MultiComMgr::inst()->devData(curId, &valid);
+        if (valid) {
+            pid       = FFUtils::getPid(data);
+            nozzleCnt = data.devDetail != nullptr ? data.devDetail->nozzleCnt : 0;
+        }
+    }
+    buildTempLayout(curId, pid, nozzleCnt);
+}
+
+void NewTempInputPanel::buildTempLayout(int curId, unsigned short pid, int nozzleCnt)
+{
     m_tempInputs.clear();
     m_tempSizer->Clear(true);
     m_cur_id = curId;
+    m_layout = FFTempLayout::Generic;
+    m_layout_pid = 0;
+    m_layout_known = false;
 
     StateColor tempinput_text_colour(std::make_pair(wxColour(51, 51, 51), (int)StateColor::Disabled),
         std::make_pair(wxColour(48, 58, 60), (int)StateColor::Normal));
@@ -1898,31 +1910,33 @@ void NewTempInputPanel::ReInitTempature(int curId)
         Layout();
 		return;
     }
-    
-    auto pid = FFUtils::getPid(curId);
-    switch(pid) {
-    case C5: {
+
+    m_layout_pid   = pid;
+    m_layout       = FFUtils::tempLayout(pid, nozzleCnt);
+    // A model this build does not know gets its temperatures shown, but no target is sent to it:
+    // its limits are not known here.
+    m_layout_known = FFUtils::isKnownPid(pid);
+    if (!m_layout_known) {
+        BOOST_LOG_TRIVIAL(warning) << "[FlashForge] device page: unknown product id 0x" << std::hex << pid << std::dec
+                                   << " (" << nozzleCnt << " nozzles); temperatures shown read-only";
+    }
+
+    auto make_nozzle = [&](int index) {
+        auto t = new NewTempInput(main_panel);
+        t->SetNozzleIndex(index);
+        t->SetMinTemp(0);
+        t->SetMaxTemp(320);
+        m_tempInputs["t" + std::to_string(index)] = t;
+        return t;
+    };
+
+    switch (m_layout) {
+    case FFTempLayout::Nozzles4: {
         auto       u1_panel_up_sizer = new wxGridSizer(2, 2, FromDIP(19), FromDIP(26));
-        auto t1_temp = new NewTempInput(main_panel);
-        t1_temp->SetNozzleIndex(1);
-        t1_temp->SetMinTemp(0);
-        t1_temp->SetMaxTemp(320);
-        m_tempInputs["t1"] = t1_temp;
-        auto t2_temp = new NewTempInput(main_panel);
-        t2_temp->SetNozzleIndex(2);
-        t2_temp->SetMinTemp(0);
-        t2_temp->SetMaxTemp(320);
-        m_tempInputs["t2"] = t2_temp;
-        auto t3_temp = new NewTempInput(main_panel);
-        t3_temp->SetNozzleIndex(3);
-        t3_temp->SetMinTemp(0);
-        t3_temp->SetMaxTemp(320);
-        m_tempInputs["t3"] = t3_temp;
-        auto t4_temp = new NewTempInput(main_panel);
-        t4_temp->SetNozzleIndex(4);
-        t4_temp->SetMinTemp(0);
-        t4_temp->SetMaxTemp(320);
-        m_tempInputs["t4"] = t4_temp;
+        auto t1_temp = make_nozzle(1);
+        auto t2_temp = make_nozzle(2);
+        auto t3_temp = make_nozzle(3);
+        auto t4_temp = make_nozzle(4);
         auto mid_temp = new NewTempInput(main_panel, wxString("device_bottom_temperature"));
         mid_temp->SetMinTemp(0);
         mid_temp->SetMaxTemp(65);
@@ -1939,28 +1953,12 @@ void NewTempInputPanel::ReInitTempature(int curId)
         main_panel_sizer->AddSpacer(FromDIP(58));
         break;
     }
-    case C5P: {
+    case FFTempLayout::Nozzles4Chamber: {
         auto u1_panel_up_sizer = new wxGridSizer(3, 2, FromDIP(19), FromDIP(26));
-        auto t1_temp           = new NewTempInput(main_panel);
-        t1_temp->SetNozzleIndex(1);
-        t1_temp->SetMinTemp(0);
-        t1_temp->SetMaxTemp(320);
-        m_tempInputs["t1"] = t1_temp;
-        auto t2_temp       = new NewTempInput(main_panel);
-        t2_temp->SetNozzleIndex(2);
-        t2_temp->SetMinTemp(0);
-        t2_temp->SetMaxTemp(320);
-        m_tempInputs["t2"] = t2_temp;
-        auto t3_temp       = new NewTempInput(main_panel);
-        t3_temp->SetNozzleIndex(3);
-        t3_temp->SetMinTemp(0);
-        t3_temp->SetMaxTemp(320);
-        m_tempInputs["t3"] = t3_temp;
-        auto t4_temp       = new NewTempInput(main_panel);
-        t4_temp->SetNozzleIndex(4);
-        t4_temp->SetMinTemp(0);
-        t4_temp->SetMaxTemp(320);
-        m_tempInputs["t4"] = t4_temp;
+        auto t1_temp = make_nozzle(1);
+        auto t2_temp = make_nozzle(2);
+        auto t3_temp = make_nozzle(3);
+        auto t4_temp = make_nozzle(4);
         auto bottom_temp      = new NewTempInput(main_panel, wxString("device_bottom_temperature"));
         bottom_temp->SetMinTemp(0);
         bottom_temp->SetMaxTemp(120);
@@ -1981,13 +1979,9 @@ void NewTempInputPanel::ReInitTempature(int curId)
         main_panel_sizer->AddSpacer(FromDIP(58));
         break;
     }
-    case ADVENTURER_5M:
-    case ADVENTURER_5M_PRO:
-    case GUIDER_4:
-    case GUIDER_4_PRO:
-    case AD5X:
-    case ADVENTURER_A5:
-    case GUIDER_3_ULTRA: {
+    case FFTempLayout::Guider3Ultra:
+    case FFTempLayout::Generic:
+    default: {
         auto top_temp = new NewTempInput(main_panel, wxString("device_top_temperature"));
         m_tempInputs["top"] = top_temp;
         auto bottom_temp = new NewTempInput(main_panel, wxString("device_bottom_temperature"));
@@ -2043,6 +2037,14 @@ void NewTempInputPanel::ReInitTempature(int curId)
     }
     }
 
+    if (!m_layout_known) {
+        for (auto temp : m_tempInputs) {
+            temp.second->SetMinTemp(0);
+            temp.second->SetMaxTemp(500);
+            temp.second->SetReadOnly(true);
+        }
+    }
+
     main_panel->SetSizer(main_panel_sizer);
     main_panel_sizer->Fit(main_panel);
     main_panel->Layout();
@@ -2076,22 +2078,24 @@ void NewTempInputPanel::SwitchTargetTemp(bool flag)
 
 void NewTempInputPanel::lostTempModify()
 {
-    if (m_cur_id == -1) {
+    if (m_cur_id == -1 || !m_layout_known) {
         return;
     }
-    auto pid = FFUtils::getPid(m_cur_id);
-    switch (pid) {
-    case ADVENTURER_5M:
-    case ADVENTURER_5M_PRO:
-    case GUIDER_4:
-    case GUIDER_4_PRO:
-    case AD5X:
-    case ADVENTURER_A5:
-    case GUIDER_3_ULTRA: {
-        double top_tag_temp = m_tempInputs["top"]->GetTagTemp();
-        double bottom_tag_temp = m_tempInputs["bottom"]->GetTagTemp();
-        double mid_tag_temp = m_tempInputs["mid"]->GetTagTemp();
-        if (pid == GUIDER_3_ULTRA) {
+    // The command follows the layout the panel was built with, so every row it reads exists.
+    auto tag = [this](const char* key, double& out) {
+        NewTempInput* input = tempInput(key);
+        if (input == nullptr)
+            return false;
+        out = input->GetTagTemp();
+        return true;
+    };
+    switch (m_layout) {
+    case FFTempLayout::Generic:
+    case FFTempLayout::Guider3Ultra: {
+        double top_tag_temp, bottom_tag_temp, mid_tag_temp;
+        if (!tag("top", top_tag_temp) || !tag("bottom", bottom_tag_temp) || !tag("mid", mid_tag_temp))
+            return;
+        if (m_layout == FFTempLayout::Guider3Ultra) {
             ComTempCtrl* tempCtrl = new ComTempCtrl(mid_tag_temp, top_tag_temp, bottom_tag_temp, 0);
             MultiComMgr::inst()->putCommand(m_cur_id, tempCtrl);
         }
@@ -2101,25 +2105,22 @@ void NewTempInputPanel::lostTempModify()
         }
         break;
     }
-    case C5: {
-        double              t1_tag_temp  = m_tempInputs["t1"]->GetTagTemp();
-        double              t2_tag_temp  = m_tempInputs["t2"]->GetTagTemp();
-        double              t3_tag_temp  = m_tempInputs["t3"]->GetTagTemp();
-        double              t4_tag_temp  = m_tempInputs["t4"]->GetTagTemp();
-        double              mid_tag_temp = m_tempInputs["mid"]->GetTagTemp();
+    case FFTempLayout::Nozzles4: {
+        double t1_tag_temp, t2_tag_temp, t3_tag_temp, t4_tag_temp, mid_tag_temp;
+        if (!tag("t1", t1_tag_temp) || !tag("t2", t2_tag_temp) || !tag("t3", t3_tag_temp) || !tag("t4", t4_tag_temp) ||
+            !tag("mid", mid_tag_temp))
+            return;
         std::vector<double> nozzlesTemp  = {t1_tag_temp, t2_tag_temp, t3_tag_temp, t4_tag_temp};
         ComTempCtrl*        tempCtrl     = new ComTempCtrl(mid_tag_temp, 0, 0, 0);
         tempCtrl->addNozzlesTemp(nozzlesTemp);
         MultiComMgr::inst()->putCommand(m_cur_id, tempCtrl);
         break;
     }
-    case C5P: {
-        double t1_tag_temp = m_tempInputs["t1"]->GetTagTemp();
-        double t2_tag_temp = m_tempInputs["t2"]->GetTagTemp();
-        double t3_tag_temp = m_tempInputs["t3"]->GetTagTemp();
-        double t4_tag_temp = m_tempInputs["t4"]->GetTagTemp();
-        double              mid_tag_temp = m_tempInputs["mid"]->GetTagTemp();
-        double              bottom_tag_temp = m_tempInputs["bottom"]->GetTagTemp();
+    case FFTempLayout::Nozzles4Chamber: {
+        double t1_tag_temp, t2_tag_temp, t3_tag_temp, t4_tag_temp, mid_tag_temp, bottom_tag_temp;
+        if (!tag("t1", t1_tag_temp) || !tag("t2", t2_tag_temp) || !tag("t3", t3_tag_temp) || !tag("t4", t4_tag_temp) ||
+            !tag("mid", mid_tag_temp) || !tag("bottom", bottom_tag_temp))
+            return;
         std::vector<double> nozzlesTemp = { t1_tag_temp, t2_tag_temp, t3_tag_temp, t4_tag_temp };
         ComTempCtrl* tempCtrl = new ComTempCtrl(bottom_tag_temp, 0, 0, mid_tag_temp);
         tempCtrl->addNozzlesTemp(nozzlesTemp);

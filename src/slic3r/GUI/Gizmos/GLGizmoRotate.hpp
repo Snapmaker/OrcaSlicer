@@ -81,6 +81,12 @@ public:
 
     void set_highlight_color(const ColorRGBA &color);
 
+    // EdgeSlicer: 3D handles of the Text / SVG tools. World direction the angle of this ring turns
+    // around (the angle grows counter-clockwise looking against it) and the centre of the ring, as
+    // set up by the last start_dragging() or render().
+    Vec3d get_world_axis() const;
+    const Vec3d &get_center() const { return m_center; }
+
     /// <summary>
     /// Postpone to Grabber for move
     /// Detect move of object by dragging

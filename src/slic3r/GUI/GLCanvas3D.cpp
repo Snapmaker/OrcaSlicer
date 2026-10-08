@@ -7932,16 +7932,20 @@ void GLCanvas3D::render_thumbnail_framebuffer(ThumbnailData& thumbnail_data, uns
     if (multisample)
         glsafe(::glRenderbufferStorageMultisample(GL_RENDERBUFFER, num_samples, GL_DEPTH_COMPONENT24, w, h));
     else
-        glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, w, h));
+        glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h));
 
     glsafe(::glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, render_depth));
 
     GLenum drawBufs[] = { GL_COLOR_ATTACHMENT0 };
     glsafe(::glDrawBuffers(1, drawBufs));
+    // EDGE (core profile): name the stage of a thumbnail GL error (the frame report only says "thumbnail").
+    // The depth buffer used to be an unsized GL_DEPTH_COMPONENT renderbuffer, which macOS core rejects.
+    OpenGLManager::report_gl_errors("in a thumbnail's framebuffer set-up");
 
     if (::glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
         render_thumbnail_internal(thumbnail_data, thumbnail_params, partplate_list, model_objects, volumes, extruder_colors, shader,
                                   camera_type, use_top_view, for_picking,ban_light, view);
+        OpenGLManager::report_gl_errors("in a thumbnail's draw");
 
         if (multisample) {
             GLuint resolve_fbo;
@@ -8040,7 +8044,7 @@ void GLCanvas3D::render_thumbnail_framebuffer_ext(ThumbnailData& thumbnail_data,
     if (multisample)
         glsafe(::glRenderbufferStorageMultisample(GL_RENDERBUFFER, num_samples, GL_DEPTH_COMPONENT24, w, h));
     else
-        glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, w, h));
+        glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h));
 
     glsafe(::glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, render_depth));
 
@@ -8141,7 +8145,7 @@ void GLCanvas3D::render_gcode_preview_image(ThumbnailData& data, unsigned int w,
     if (multisample)
         glsafe(::glRenderbufferStorageMultisample(GL_RENDERBUFFER, num_samples, GL_DEPTH_COMPONENT24, w, h));
     else
-        glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, w, h));
+        glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h));
     glsafe(::glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, render_depth));
     const GLenum draw_bufs[] = { GL_COLOR_ATTACHMENT0 };
     glsafe(::glDrawBuffers(1, draw_bufs));
@@ -8994,14 +8998,14 @@ void GLCanvas3D::_rectangular_selection_picking_pass()
                 glsafe(::glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, render_tex, 0));
                 glsafe(::glGenRenderbuffers(1, &render_depth));
                 glsafe(::glBindRenderbuffer(GL_RENDERBUFFER, render_depth));
-                glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, width, height));
+                glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height));
                 glsafe(::glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, render_depth));
             }
             else {
                 glsafe(::glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, render_tex, 0));
                 glsafe(::glGenRenderbuffers(1, &render_depth));
                 glsafe(::glBindRenderbuffer(GL_RENDERBUFFER, render_depth));
-                glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, width, height));
+                glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height));
                 glsafe(::glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, render_depth));
             }
             const GLenum drawBufs[] = { GL_COLOR_ATTACHMENT0 };

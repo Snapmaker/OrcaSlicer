@@ -25,6 +25,8 @@
 #include "slic3r/GUI/GLShader.hpp"
 #include "slic3r/GUI/LibVGCode/LibVGCodeWrapper.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "libslic3r/Geometry.hpp"
+#include "libslic3r/TriangleMesh.hpp"
 
 #include <boost/filesystem.hpp>
 #include <boost/nowide/fstream.hpp>
@@ -269,6 +271,70 @@ TEST_CASE("OpenGL core profile: start-up, shaders, GLModel, plain VBO and dashed
         const auto far_px = OffscreenTarget::pixel(size / 2, 2);
         CHECK(int(far_px[2]) == 0);
         model.reset();
+    }
+
+    SECTION("a plate thumbnail's off-screen render: framebuffer set-up and the thumbnail shader")
+    {
+        // The same set-up as GLCanvas3D::render_thumbnail_framebuffer() (non-multisampled path): RGBA8
+        // texture + sized GL_DEPTH_COMPONENT24 renderbuffer (macOS core rejects the unsized
+        // GL_DEPTH_COMPONENT these used: GL_INVALID_ENUM in every thumbnail), then a lit model.
+        const int w = 64, h = 64;
+        GLuint fbo = 0, tex = 0, depth = 0;
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        glGenRenderbuffers(1, &depth);
+        glBindRenderbuffer(GL_RENDERBUFFER, depth);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth);
+        const GLenum draw_bufs[] = { GL_COLOR_ATTACHMENT0 };
+        glDrawBuffers(1, draw_bufs);
+        CHECK(drain_gl_errors() == GL_NO_ERROR);
+        REQUIRE(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+        glViewport(0, 0, w, h);
+
+        GLShaderProgram* thumbnail = manager->get_shader("thumbnail");
+        REQUIRE(thumbnail != nullptr);
+        GLModel model;
+        model.init_from(its_make_cube(1.0, 1.0, 1.0));
+        model.set_color(ColorRGBA(1.f, 0.5f, 0.f, 1.f));
+        glClearColor(0.f, 0.f, 0.f, 0.f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST);
+        thumbnail->start_using();
+        thumbnail->set_uniform("emission_factor", 0.1f);
+        thumbnail->set_uniform("ban_light", false);
+        const Transform3d world = Geometry::translation_transform(Vec3d(-0.5, -0.5, -0.5));
+        const Transform3d view  = Geometry::rotation_transform(Vec3d(0.6, 0.0, 0.7));
+        thumbnail->set_uniform("volume_world_matrix", world);
+        thumbnail->set_uniform("view_model_matrix", view * world);
+        Transform3d projection = Transform3d::Identity();
+        projection.matrix()(2, 2) = -0.5; // keep the unit cube inside the clip volume
+        thumbnail->set_uniform("projection_matrix", projection);
+        const Matrix3d view_normal_matrix = view.matrix().block(0, 0, 3, 3) * world.matrix().block(0, 0, 3, 3).inverse().transpose();
+        thumbnail->set_uniform("view_normal_matrix", view_normal_matrix);
+        model.render();
+        thumbnail->stop_using();
+        glDisable(GL_DEPTH_TEST);
+        CHECK(drain_gl_errors() == GL_NO_ERROR);
+        std::vector<unsigned char> pixels(size_t(4 * w * h), 0);
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        CHECK(drain_gl_errors() == GL_NO_ERROR);
+        // The cube covers the middle of the image, lit and opaque.
+        const unsigned char* centre = pixels.data() + 4 * ((h / 2) * w + w / 2);
+        CHECK(int(centre[3]) > 0);
+        CHECK(int(centre[0]) > 0);
+        model.reset();
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glDeleteRenderbuffers(1, &depth);
+        glDeleteTextures(1, &tex);
+        glDeleteFramebuffers(1, &fbo);
+        CHECK(drain_gl_errors() == GL_NO_ERROR);
     }
 
     SECTION("libvgcode renders a small G-code scene, then shuts down without unloading the shared GL loader")

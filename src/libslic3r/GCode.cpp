@@ -9935,7 +9935,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, const std::string& path_d
     }
     // Override skirt speed if set
     if (path.role() == erSkirt) {
-        const double skirt_speed = m_config.get_abs_value("skirt_speed");
+        const double skirt_speed = m_config.skirt_speed.value; // a plain float option: same value get_abs_value("skirt_speed") returned
         if (skirt_speed > 0.0) {
             speed_setting = "skirt_speed";
             speed = skirt_speed;

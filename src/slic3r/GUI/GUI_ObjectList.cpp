@@ -750,6 +750,10 @@ void ObjectList::update_filament_values_for_items(const size_t filaments_count)
                 if (!object->volumes[id]->config.has("extruder") ||
                     size_t(object->volumes[id]->config.extruder()) > filaments_count) {
                     extruder = wxString::Format("%d", object->config.extruder());
+                    // Orca #14103: clear the stale per-part assignment so the part really follows its
+                    // object; before, only the list showed the object's filament and the out-of-range
+                    // index stayed in the config. filaments_count includes mixed filaments.
+                    object->volumes[id]->config.erase("extruder");
                 }
                 else {
                     extruder = wxString::Format("%d", object->volumes[id]->config.extruder());

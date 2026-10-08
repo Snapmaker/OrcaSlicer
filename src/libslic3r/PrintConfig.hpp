@@ -622,9 +622,14 @@ inline bool filament_flow_variants_active(const ConfigBase &config)
 // option lookups and get_config_idx on every path. The *_for accessors return the
 // same value the uncached expression gives, falling back to it for an id outside
 // the resolved range, so the G-code is identical either way.
+// process_config_idx is the slot get_config_idx(config, Process, id) picks, which
+// GCode::process_flow_value used to recompute (two string-keyed option lookups and a
+// variant-name search) for every option it read, a few dozen times per extrusion path
+// (the config-lookup caching of Orca #16028, adapted to the flow-variant lookup).
 struct ResolvedFilamentFlow
 {
     bool                       variants_active{false};
+    std::vector<size_t>        process_config_idx;
     std::vector<double>        flow_ratio;
     std::vector<double>        max_volumetric_speed;
     std::vector<unsigned char> enable_pressure_advance;
@@ -637,6 +642,11 @@ struct ResolvedFilamentFlow
     static double uncached_max_volumetric_speed(const ConfigBase &config, unsigned int filament_id);
     static bool   uncached_enable_pressure_advance(const ConfigBase &config, unsigned int filament_id);
 
+    size_t process_config_idx_for(const ConfigBase &config, unsigned int filament_id) const
+    {
+        return filament_id < process_config_idx.size() ? process_config_idx[filament_id] :
+                                                         get_config_idx(config, ConfigFlowDomain::Process, filament_id);
+    }
     double flow_ratio_for(const ConfigBase &config, unsigned int filament_id) const
     {
         return filament_id < flow_ratio.size() ? flow_ratio[filament_id] : uncached_flow_ratio(config, filament_id);

@@ -261,6 +261,9 @@ private:
 
     // Keep data about dragging only during drag&drop
     std::optional<SurfaceDrag> m_surface_drag;
+    // The press that started m_surface_drag cancelled a job that was still making the volume.
+    // A release without any move then runs it again (a real move re-processes anyway).
+    bool m_surface_drag_cancelled_job = false;
 
     // Keep old scene triangle data in AABB trees, 
     // all the time it need actualize before use.

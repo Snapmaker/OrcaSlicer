@@ -14,6 +14,7 @@
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Format/GLTF.hpp"
 #include "libslic3r/ObjColorMatch.hpp"
+#include "libslic3r/PNGReadWrite.hpp"
 #include "libslic3r/Utils.hpp"
 
 #include <boost/filesystem.hpp>
@@ -21,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -28,6 +30,7 @@
 #include <fstream>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace Slic3r;
@@ -173,6 +176,65 @@ TEST_CASE("Image Fill: the asset hash is stable and the store is content address
         CHECK(int(px->rgb[6]) == 0);   CHECK(int(px->rgb[7]) == 0);   CHECK(int(px->rgb[8]) == 255);
         CHECK(int(px->rgb[9]) == 255); CHECK(int(px->rgb[10]) == 255); CHECK(int(px->rgb[11]) == 255);
     }
+}
+
+// Regression (2026-10-07): libslic3r_tests crashed once with SIGSEGV in [ImageRow]'s
+// multi-volume transform case. ImageAssetStore::pixels() decodes lazily and used to set
+// `decoded = true` BEFORE it had filled width/height/rgb, so a second TBB fill thread asking for
+// the same asset in that window got back a half-built ImageAsset - width/height set, rgb still
+// empty or being resized - and image_fill_sample_pixel() read past the buffer. A Print owns a
+// fresh copy of the model's store, so the first decode always happens inside make_fills()'s
+// parallel loop, where two layers' top surfaces (or two regions' surfaces) can race for it.
+// This hammers one fresh store from many threads at once, many times, and checks every caller
+// got a complete image.
+TEST_CASE("Image Fill: concurrent first decode of one asset hands every thread a complete image", "[imagefill]")
+{
+    // Big enough that the decode takes real time, so the race window is wide.
+    const size_t w = 512, h = 512;
+    std::vector<uint8_t> rgb(w * h * 3);
+    for (size_t i = 0; i < rgb.size(); ++i)
+        rgb[i] = uint8_t((i * 2654435761u) >> 24);
+    const boost::filesystem::path tmp = boost::filesystem::temp_directory_path() /
+                                        boost::filesystem::unique_path("image_fill_race_%%%%-%%%%-%%%%.png");
+    REQUIRE(png::write_rgb_to_file(tmp.string(), w, h, rgb));
+    std::vector<uint8_t> bytes;
+    {
+        boost::nowide::ifstream in(tmp.string(), std::ios::binary);
+        REQUIRE(in.good());
+        bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    boost::system::error_code ec;
+    boost::filesystem::remove(tmp, ec);
+    REQUIRE(!bytes.empty());
+
+    const unsigned n_threads = std::max(8u, std::thread::hardware_concurrency());
+    std::atomic<int> incomplete{0};
+    for (int round = 0; round < 40; ++round) {
+        ImageAssetStore   store;
+        const std::string sha = store.add(bytes);
+        std::atomic<unsigned> ready{0};
+        std::atomic<bool>     go{false};
+        std::vector<std::thread> threads;
+        for (unsigned t = 0; t < n_threads; ++t)
+            threads.emplace_back([&]() {
+                ++ready;
+                while (!go.load()) {}
+                const ImageAsset *px = store.pixels(sha);
+                // Checked before sampling, so the unfixed code fails this test instead of crashing it.
+                if (px == nullptr || px->width != w || px->height != h || px->rgb.size() != w * h * 3) {
+                    ++incomplete;
+                    return;
+                }
+                const std::array<float, 3> c = image_fill_sample_pixel(*px, 0.999f, 0.001f);
+                if (c[0] != px->rgb[(w * h - 1) * 3] / 255.f)
+                    ++incomplete;
+            });
+        while (ready.load() < n_threads) {}
+        go = true;
+        for (std::thread &th : threads)
+            th.join();
+    }
+    CHECK(incomplete.load() == 0);
 }
 
 // =============================================================================================

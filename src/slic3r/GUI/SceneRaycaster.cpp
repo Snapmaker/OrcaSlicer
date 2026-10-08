@@ -1,5 +1,6 @@
 #include "libslic3r/libslic3r.h"
 #include "SceneRaycaster.hpp"
+#include "EmbossPicking.hpp"
 
 #include "Camera.hpp"
 #include "GUI_App.hpp"
@@ -151,7 +152,15 @@ SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos, const Came
 
     HitResult ret;
 
-    auto test_raycasters = [this, is_closest, clipping_plane, &volume_keeper](EType type, const Vec2d& mouse_pos, const Camera& camera, HitResult& ret) {
+    // Every front-facing volume hit, for the text / SVG preference applied after the search.
+    struct VolumeHitRecord
+    {
+        HitResult hit;
+        const SceneRaycasterItem* item;
+    };
+    std::vector<VolumeHitRecord> volume_hits;
+
+    auto test_raycasters = [this, is_closest, clipping_plane, &volume_keeper, &volume_hits](EType type, const Vec2d& mouse_pos, const Camera& camera, HitResult& ret) {
         const ClippingPlane* clip_plane = (clipping_plane != nullptr && type == EType::Volume) ? clipping_plane : nullptr;
         const std::vector<std::shared_ptr<SceneRaycasterItem>>* raycasters = get_raycasters(type);
         const Vec3f camera_forward = camera.get_dir_forward().cast<float>();
@@ -166,6 +175,8 @@ SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos, const Came
                 current_hit.position = (trafo * current_hit.position.cast<double>()).cast<float>();
                 current_hit.normal = (trafo.matrix().block(0, 0, 3, 3).inverse().transpose() * current_hit.normal.cast<double>()).normalized().cast<float>();
                 if (item->use_back_faces() || current_hit.normal.dot(camera_forward) < 0.0f) {
+                    if (type == EType::Volume)
+                        volume_hits.push_back({ current_hit, item.get() });
                     if (is_closest(camera, current_hit.position)) {
                         if (volume_keeper.is_active()) {
                             if (volume_keeper.check_hit_result(current_hit))
@@ -190,6 +201,31 @@ SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos, const Came
             test_raycasters(EType::Bed, mouse_pos, camera, ret);
         if (!m_volumes.empty())
             test_raycasters(EType::Volume, mouse_pos, camera, ret);
+    }
+
+    // A text or SVG part sunk a little into its own object (flat text on a curved face, "use
+    // surface" text, a thin relief) loses the plain closest-hit test to the object around it, so
+    // the click would grab the object behind the text. Prefer the part when it lies within its
+    // tolerance behind the closest hit of the same object instance (see EmbossPicking.hpp).
+    if (ret.is_valid() && ret.type == EType::Volume && volume_hits.size() > 1) {
+        const Vec3d camera_position = camera.get_position();
+        const Vec3d camera_forward  = camera.get_dir_forward();
+        std::vector<EmbossPicking::VolumeHit> hits;
+        hits.reserve(volume_hits.size());
+        size_t closest = size_t(-1);
+        for (size_t i = 0; i < volume_hits.size(); ++i) {
+            const VolumeHitRecord& record = volume_hits[i];
+            hits.push_back({ (record.hit.position.cast<double>() - camera_position).dot(camera_forward),
+                             record.item->get_object_id(), record.item->get_instance_id(),
+                             record.item->get_prefer_tolerance() });
+            if (record.hit.raycaster_id == ret.raycaster_id && record.hit.position == ret.position)
+                closest = i;
+        }
+        if (closest != size_t(-1)) {
+            const size_t chosen = EmbossPicking::prefer_text_or_svg(hits, closest);
+            if (chosen != closest)
+                ret = volume_hits[chosen].hit;
+        }
     }
 
     if (ret.is_valid())

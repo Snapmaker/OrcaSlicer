@@ -19,6 +19,12 @@ class SceneRaycasterItem
     bool m_use_back_faces{ false };
     const MeshRaycaster* m_raycaster;
     Transform3d m_trafo;
+    // Volume raycasters only: the model object / instance the volume belongs to, and for text and
+    // SVG parts the depth tolerance [mm] within which they win over the rest of their own object
+    // (see EmbossPicking.hpp). A negative tolerance marks an ordinary volume.
+    int m_object_id{ -1 };
+    int m_instance_id{ -1 };
+    double m_prefer_tolerance{ -1. };
 
 public:
     SceneRaycasterItem(int id, const MeshRaycaster& raycaster)
@@ -35,6 +41,15 @@ public:
     const MeshRaycaster* get_raycaster() const { return m_raycaster; }
     const Transform3d& get_transform() const { return m_trafo; }
     void set_transform(const Transform3d& trafo) { m_trafo = trafo; }
+
+    void set_pick_owner(int object_id, int instance_id, double prefer_tolerance) {
+        m_object_id = object_id;
+        m_instance_id = instance_id;
+        m_prefer_tolerance = prefer_tolerance;
+    }
+    int get_object_id() const { return m_object_id; }
+    int get_instance_id() const { return m_instance_id; }
+    double get_prefer_tolerance() const { return m_prefer_tolerance; }
 };
 
 class SceneRaycaster

@@ -535,11 +535,18 @@ bool GLGizmoSVG::on_mouse_for_translate(const wxMouseEvent &mouse_event)
     const Camera &camera = wxGetApp().plater()->get_camera();
 
     bool was_dragging = m_surface_drag.has_value();
+    bool was_moved    = was_dragging && m_surface_drag->moved;
     bool res = on_mouse_surface_drag(mouse_event, camera, m_surface_drag, m_parent, m_raycast_manager, up_limit);
     bool is_dragging  = m_surface_drag.has_value();
 
-    // End with surface dragging?
-    if (was_dragging && !is_dragging) {
+    // End with surface dragging? A press and release that moved nothing changes nothing,
+    // except that a job the press cancelled has to run again.
+    if (was_dragging && !is_dragging && !was_moved) {
+        if (m_surface_drag_cancelled_job)
+            process(false);
+        m_surface_drag_cancelled_job = false;
+    }
+    else if (was_dragging && !is_dragging) {
         // Update surface by new position
         if (m_volume->emboss_shape->projection.use_surface)
             process();
@@ -556,6 +563,7 @@ bool GLGizmoSVG::on_mouse_for_translate(const wxMouseEvent &mouse_event)
     // Start with dragging
     else if (!was_dragging && is_dragging) {
         // Cancel job to prevent interuption of dragging (duplicit result)
+        m_surface_drag_cancelled_job = m_job_cancel != nullptr && !m_job_cancel->load();
         if (m_job_cancel != nullptr)
             m_job_cancel->store(true);
     }

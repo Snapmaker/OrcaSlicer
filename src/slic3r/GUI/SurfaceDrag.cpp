@@ -90,9 +90,11 @@ bool on_mouse_surface_drag(const wxMouseEvent         &mouse_event,
     // Fix when leave window during dragging
     // Fix when click right button
     if (surface_drag.has_value() && !mouse_event.Dragging()) {
-        // write transformation from UI into model
-        canvas.do_move(L("Move over surface"));
-        wxGetApp().obj_manipul()->set_dirty();
+        // write transformation from UI into model (a plain click moved nothing)
+        if (surface_drag->moved) {
+            canvas.do_move(L("Move over surface"));
+            wxGetApp().obj_manipul()->set_dirty();
+        }
 
         // allow moving with object again
         canvas.enable_moving(true);
@@ -681,6 +683,7 @@ bool dragging(const Vec2d                 &mouse_pos,
             continue;
         vol->set_volume_transformation(volume_new);
     }
+    surface_drag.moved = true;
 
     canvas.set_as_dirty();
     // Show current position in manipulation panel

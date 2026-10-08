@@ -66,6 +66,7 @@ add_executable(${_TEST_NAME}_tests
     filament_commands_tests.cpp
     ams_dual_layout_tests.cpp
     gizmo_selection_object_tests.cpp
+    emboss_picking_tests.cpp
     dark_mode_background_tests.cpp
     # After the other wx-window tests: it starts a plain wxApp when none is up, and the tests
     # that run before it (hms_lookup_tests) call wxGetApp() whenever an app exists.

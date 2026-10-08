@@ -2373,6 +2373,31 @@ void TreeSupport::draw_circles()
                         floor_areas = std::move(diff_ex(floor_areas, bottom_gap_area));
                     }
                 }
+                // Orca: Hybrid tree first-layer expansion belongs only to the normal-support
+                // part. area_poly is collected from ePolygon nodes above, which are the normal
+                // support nodes in Hybrid mode. Apply the expansion before area_groups and
+                // lslices are built so toolpaths and brim avoidance use the same footprint.
+                if (layer_nr == 0 && m_raft_layers == 0 && m_support_params.support_style == smsTreeHybrid &&
+                    m_object_config->raft_first_layer_expansion.value > 0.f) {
+                    ExPolygons expanded_base_areas;
+                    const float inflate_factor_1st_layer = float(scale_(m_object_config->raft_first_layer_expansion.value));
+                    Polygons trimming = offset(m_object->layers().front()->lslices, float(scale_(m_support_params.gap_xy_first_layer)),
+                                               SUPPORT_SURFACES_OFFSET_PARAMETERS);
+                    // Orca: Match normal support expansion: grow in steps and re-trim against the object each time.
+                    const int nsteps = std::max(5, int(ceil(inflate_factor_1st_layer / m_support_params.first_layer_flow.scaled_width())));
+                    const float step = inflate_factor_1st_layer / nsteps;
+                    for (const ExPolygon &expoly : ts_layer->base_areas) {
+                        if (overlaps({ expoly }, area_poly)) { // normal support in Hybrid mode
+                            Polygons expanded = to_polygons(expoly);
+                            for (int i = 0; i < nsteps; ++i)
+                                expanded = diff(expand(expanded, step), trimming);
+                            append(expanded_base_areas, union_ex(expanded));
+                        } else
+                            expanded_base_areas.emplace_back(expoly);
+                    }
+                    ts_layer->base_areas = std::move(expanded_base_areas);
+                }
+
                 // Orca: Final tree base polygons may be too close above model surfaces.
                 // Enforce bottom Z clearance for non-contact support layers as well.
                 if (!ts_layer->base_areas.empty()) {

@@ -461,6 +461,16 @@ void RemoteAccess::reopen_gui_gate()
 
 bool RemoteAccess::gui_closing() { return gui_gate().closed(); }
 
+// Set on a Printers-tab worker thread (RemoteAccess::monitor_*): its requests are the desktop's
+// own polling, so a GUI thread that is slow to answer one is not a reason to flag the instance.
+static thread_local bool t_quiet_requests = false;
+struct QuietRequests
+{
+    bool was;
+    QuietRequests() : was(t_quiet_requests) { t_quiet_requests = true; }
+    ~QuietRequests() { t_quiet_requests = was; }
+};
+
 static bool run_on_main(std::function<void()> fn, int timeout_ms = 15000, const char* what = "a request")
 {
     const MainCallResult r = RemoteAccess::call_on_main([fn]() {
@@ -475,6 +485,10 @@ static bool run_on_main(std::function<void()> fn, int timeout_ms = 15000, const 
         // Not a stall: the window is going away and the request is answered 503 (crash c2a7d4de:
         // this used to run anyway, against a Plater that had already been freed).
         BOOST_LOG_TRIVIAL(info) << "RemoteAccess: " << what << " was not run: the slicer is closing";
+        return false;
+    }
+    if (t_quiet_requests) {
+        BOOST_LOG_TRIVIAL(info) << "RemoteAccess: the Printers tab's " << what << " did not finish within " << timeout_ms / 1000 << " s";
         return false;
     }
     RemoteAccess::get().raise_attention(std::string(what) + " did not finish on the PC within " + std::to_string(timeout_ms / 1000) + " s", "timeout");
@@ -1074,6 +1088,16 @@ RemoteAccess::ApiResponse RemoteAccess::api_printers(int plate)
             p["id"]           = m->dev_id;
             p["name"]         = m->dev_name;
             p["model"]        = m->printer_type;
+            // The friendly name ("Bambu Lab H2C") next to the code ("O1C2"): what the Printers tab
+            // and the app show. A newer hardware revision ("O1C2-V2") resolves through its parent.
+            {
+                std::string display = DeviceManager::get_printer_display_name(m->printer_type);
+                if (display.empty() && !m->printer_type.empty()) {
+                    const std::string parent = DeviceManager::parse_printer_type(m->printer_type);
+                    if (!parent.empty()) display = DeviceManager::get_printer_display_name(parent);
+                }
+                if (!display.empty()) p["model_name"] = display;
+            }
             p["online"]       = m->is_online();
             p["connected"]    = m->is_connected();
             p["status"]       = m->print_status;
@@ -1096,6 +1120,12 @@ RemoteAccess::ApiResponse RemoteAccess::api_printers(int plate)
                 n["temp"]   = e.temp;
                 n["target"] = e.target_temp;
                 p["nozzles"].push_back(n);
+            }
+            // The cloud's picture of the running plate, when the cloud told us about this job (the
+            // Device tab shows the same one). LAN-only and SD-card jobs have none.
+            if (m->slice_info && m->is_in_printing() && !m->is_sdcard_printing()) {
+                const std::string& u = m->slice_info->thumbnail_url;
+                if (u.compare(0, 8, "https://") == 0 && u.size() < 4096) p["cover_url"] = u;
             }
             p["selected"] = (selected == m);
             RemoteSend::describe_bambu(m, p);    // kind, send capabilities, option defaults
@@ -1196,6 +1226,30 @@ RemoteAccess::ApiResponse RemoteAccess::api_jobs(int id)
     r.status = 404;
     r.body   = json_error("no such job");
     return r;
+}
+
+std::pair<int, std::string> RemoteAccess::monitor_printers()
+{
+    QuietRequests quiet;
+    const ApiResponse r = api_printers(-1);
+    return { r.status, r.body };
+}
+
+std::pair<int, std::string> RemoteAccess::monitor_control(const std::string& printer, const std::string& action, bool confirm)
+{
+    // Only the tab's three verbs; the id is checked again (and looked up) by RemoteControl::prepare.
+    if (action != "pause" && action != "resume" && action != "stop")
+        return { 400, json_error("unknown action") };
+    QuietRequests quiet;
+    const ApiResponse r = api_printer_control(printer, "action=" + action + (confirm ? "&confirm=1" : ""));
+    return { r.status, r.body };
+}
+
+std::pair<int, std::string> RemoteAccess::monitor_job(int id)
+{
+    if (id <= 0) return { 404, json_error("no such job") };
+    const ApiResponse r = api_jobs(id);
+    return { r.status, r.body };
 }
 
 // ------------------------------------------------------- the G-code archive ----

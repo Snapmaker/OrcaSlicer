@@ -78,6 +78,7 @@ public:
 
     // Decode on demand. Returns nullptr when the asset is missing or is not a PNG this build
     // can decode (PNGReadWrite handles 8-bit RGB/RGBA only - see the spec's "not done" list).
+    // Safe to call from several threads at once; the returned asset is complete and immutable.
     const ImageAsset *pixels(const std::string &sha256) const;
 
     const std::map<std::string, ImageAsset> &assets() const { return m_assets; }

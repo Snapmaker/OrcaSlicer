@@ -6,6 +6,7 @@
 #include "libslic3r.h"
 #include "I18N.hpp"
 #include "GCode.hpp"
+#include "CostEstimate.hpp"
 #include "LocalZOrderOptimizer.hpp"
 #include "Exception.hpp"
 #include "ExtrusionEntity.hpp"
@@ -2088,7 +2089,6 @@ static void update_print_estimated_stats(const GCodeProcessor&        processor,
     double total_extruded_volume = 0.0;
     double total_used_filament   = 0.0;
     double total_weight          = 0.0;
-    double total_cost            = 0.0;
 
     for (auto volume : result.print_statistics.total_volumes_per_extruder) {
         total_extruded_volume += volume.second;
@@ -2103,15 +2103,14 @@ static void update_print_estimated_stats(const GCodeProcessor&        processor,
         double weight = volume.second * extruder->filament_density() * 0.001;
         total_used_filament += volume.second / s;
         total_weight += weight;
-        total_cost += weight * extruder->filament_cost() * 0.001;
     }
-
-    total_cost += config.time_cost.getFloat() * (normal_print_time / 3600.0);
 
     print_statistics.total_extruded_volume = total_extruded_volume;
     print_statistics.total_used_filament   = total_used_filament;
     print_statistics.total_weight          = total_weight;
-    print_statistics.total_cost            = total_cost;
+    // Filament (every extrusion, flush and tower included) plus time_cost per hour of the Normal-mode
+    // time: the same breakdown the viewer shows, so the two cannot disagree.
+    print_statistics.total_cost            = compute_cost(result).total;
 
     print_statistics.filament_stats = result.print_statistics.model_volumes_per_extruder;
 }
@@ -2497,10 +2496,13 @@ static void init_ooze_prevention(const Print& print, OozePrevention& ooze_preven
 }
 
 // Fill in print_statistics and return formatted string containing filament statistics to be inserted into G-code comment section.
+// with_cost false leaves the "; filament cost" line out (filament prices not wanted in the G-code);
+// the statistics are filled the same either way.
 static std::string update_print_stats_and_format_filament_stats(const bool                   has_wipe_tower,
                                                                 const WipeTowerData&         wipe_tower_data,
                                                                 const std::vector<Extruder>& extruders,
-                                                                PrintStatistics&             print_statistics)
+                                                                PrintStatistics&             print_statistics,
+                                                                const bool                   with_cost = true)
 {
     std::string filament_stats_string_out;
 
@@ -2553,7 +2555,7 @@ static std::string update_print_stats_and_format_filament_stats(const bool      
         filament_stats_string_out += "\n" + out_filament_used_cm3.first;
         if (out_filament_used_g.second)
             filament_stats_string_out += "\n" + out_filament_used_g.first;
-        if (out_filament_cost.second)
+        if (out_filament_cost.second && with_cost)
             filament_stats_string_out += "\n" + out_filament_cost.first;
         filament_stats_string_out += "\n";
     }
@@ -4099,7 +4101,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         // Const inputs
         has_wipe_tower, print.wipe_tower_data(), m_writer.extruders(),
         // Modifies
-        print.m_print_statistics));
+        print.m_print_statistics, print.gcode_filament_prices()));
     print.m_print_statistics.initial_tool = initial_extruder_id;
     if (!is_bbl_printers) {
         // CONFIG_BLOCK first, time estimate after: some firmwares only scan the last N lines for
@@ -4126,7 +4128,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         file.write("; CONFIG_BLOCK_END\n\n");
 
         file.write_format("; total filament used [g] = %.2lf\n", print.m_print_statistics.total_weight);
-        file.write_format("; total filament cost = %.2lf\n", print.m_print_statistics.total_cost);
+        if (print.gcode_filament_prices())
+            file.write_format("; total filament cost = %.2lf\n", print.m_print_statistics.total_cost);
         if (print.m_print_statistics.total_toolchanges > 0)
             file.write_format("; total filament change = %i\n", print.m_print_statistics.total_toolchanges);
         file.write_format("; total layers count = %i\n", m_layer_count);
@@ -8895,8 +8898,14 @@ void GCode::append_full_config(const Print& print, std::string& str)
     // Likewise the bed-slinger mass model keys: only for a printer that models it (the A2L sets both).
     static const std::set<std::string_view> mass_model_keys({"machine_max_force_Y"sv, "machine_bed_mass_Y"sv});
     const bool dump_mass_model_keys = print.config().machine_max_force_Y.value > 0. || print.config().machine_bed_mass_Y.value > 0.;
+    // Filament prices and the machine rate (time_cost) only when wanted (Print::set_gcode_filament_prices());
+    // nothing reads them back but our own cost views, which fall back to the project's values or say
+    // "not in file".
+    const bool dump_filament_prices = print.gcode_filament_prices();
     std::ostringstream                      ss;
     for (const std::string& key : cfg.keys()) {
+        if (!dump_filament_prices && (key == "filament_cost" || key == "time_cost"))
+            continue;
         if (!dump_pre_heating_keys && pre_heating_keys.find(key) != pre_heating_keys.end())
             continue;
         if (!dump_mass_model_keys && mass_model_keys.find(key) != mass_model_keys.end())

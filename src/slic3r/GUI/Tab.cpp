@@ -68,6 +68,7 @@
 #include "Widgets/Button.hpp"
 #include "Widgets/SegmentedToggle.hpp"
 #include "FlowVariantEdit.hpp"
+#include "CostsDialog.hpp"
 #include "libslic3r/PresetFlowVariant.hpp"
 #include "FlowTypeHelper.hpp"
 #include <wx/textdlg.h>
@@ -3815,8 +3816,13 @@ static std::vector<std::string> intersect(std::vector<std::string> const& l, std
 
 static std::vector<std::string> concat(std::vector<std::string> const& l, std::vector<std::string> const& r)
 {
+    // std::set_union requires both inputs sorted; the callers pass unsorted option lists (UB otherwise).
     std::vector<std::string> t;
-    std::set_union(l.begin(), l.end(), r.begin(), r.end(), std::back_inserter(t));
+    std::vector<std::string> l_sorted = l;
+    std::vector<std::string> r_sorted = r;
+    std::sort(l_sorted.begin(), l_sorted.end());
+    std::sort(r_sorted.begin(), r_sorted.end());
+    std::set_union(l_sorted.begin(), l_sorted.end(), r_sorted.begin(), r_sorted.end(), std::back_inserter(t));
     return t;
 }
 
@@ -4714,6 +4720,13 @@ void TabFilament::build()
         optgroup->append_single_option_line("filament_shrink");
         optgroup->append_single_option_line("filament_shrinkage_compensation_z");
         optgroup->append_single_option_line("filament_cost");
+        {
+            // Your own price (Filament prices window) shadows this preset's Price when set: say so here.
+            Line price_note_line = Line{ "", "" };
+            price_note_line.full_width = 1;
+            price_note_line.widget = [this](wxWindow* parent) { return price_note_create_widget(parent); };
+            optgroup->append_line(price_note_line);
+        }
         optgroup->append_single_option_line("filament_z_offset");
         //BBS
         optgroup->append_single_option_line("temperature_vitrification");
@@ -5051,6 +5064,48 @@ void TabFilament::reload_config()
     this->compatible_widget_reload(m_compatible_printers);
     this->compatible_widget_reload(m_compatible_prints);
     Tab::reload_config();
+    update_price_note();
+}
+
+wxSizer* TabFilament::price_note_create_widget(wxWindow* parent)
+{
+    const int em = em_unit(parent);
+    auto* vsizer = new wxBoxSizer(wxVERTICAL);
+    m_price_note = new wxStaticText(parent, wxID_ANY, wxEmptyString);
+    m_price_note->SetFont(wxGetApp().normal_font());
+    vsizer->Add(m_price_note, 0, wxEXPAND);
+
+    auto* hsizer = new wxBoxSizer(wxHORIZONTAL);
+    auto add_button = [parent, hsizer, em](const wxString& label, const wxString& tip, std::function<void()> on_click) {
+        auto* btn = new Button(parent, label);
+        btn->SetStyle(ButtonStyle::Regular, ButtonType::Compact);
+        btn->SetToolTip(tip);
+        btn->Bind(wxEVT_BUTTON, [on_click](wxCommandEvent&) { on_click(); });
+        hsizer->Add(btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT | wxTOP, em / 2);
+    };
+    add_button(_L("Set my price") + dots,
+               _L("Your own price per kilogram for this filament on every printer and nozzle (or for this preset only). "
+                  "Kept on this computer, never in the preset or in project files."),
+               [this, parent]() { edit_filament_price(parent, *m_presets); });
+    add_button(_L("Costs") + dots, _L("Your filament prices and machine rates, in one window"),
+               [parent]() { show_costs_dialog(parent, CostsDialog::Page::Filaments); });
+    vsizer->Add(hsizer, 0);
+    update_price_note();
+    return vsizer;
+}
+
+void TabFilament::update_price_note()
+{
+    if (m_price_note == nullptr || m_presets == nullptr)
+        return;
+    const wxString text = filament_price_note(edited_filament_price(*m_presets));
+    if (m_price_note->GetLabel() == text)
+        return;
+    m_price_note->SetLabel(text);
+    m_price_note->SetToolTip(text);
+    m_price_note->Wrap(em_unit(m_price_note) * 45);
+    if (wxWindow* parent = m_price_note->GetParent())
+        parent->Layout();
 }
 
 //void TabFilament::update_volumetric_flow_preset_hints()
@@ -5223,6 +5278,7 @@ void TabFilament::update()
     m_update_cnt++;
 
     update_description_lines();
+    update_price_note();
     //BBS: GUI refactor
     //Layout();
     m_parent->Layout();
@@ -5241,6 +5297,7 @@ void TabFilament::clear_pages()
 
     m_volumetric_speed_description_line = nullptr;
 	m_cooling_description_line = nullptr;
+    m_price_note = nullptr;
 
     //BBS: GUI refactor
     m_overrides_options.clear();
@@ -5366,6 +5423,13 @@ void TabPrinter::build_fff()
         optgroup->append_single_option_line("use_firmware_retraction");
         // optgroup->append_single_option_line("spaghetti_detector");
         optgroup->append_single_option_line("time_cost");
+        {
+            // Your own machine rate (Costs window) shadows this preset's Time cost when set: say so here.
+            Line rate_note_line = Line{ "", "" };
+            rate_note_line.full_width = 1;
+            rate_note_line.widget = [this](wxWindow* parent) { return rate_note_create_widget(parent); };
+            optgroup->append_line(rate_note_line);
+        }
 
         optgroup  = page->new_optgroup(L("Cooling Fan"), "param_cooling_fan");
         Line line = Line{ L("Fan speed-up time"), optgroup->get_option("fan_speedup_time").opt.tooltip };
@@ -6137,6 +6201,7 @@ void TabPrinter::reload_config()
 {
     refresh_flow_variant_view();
     Tab::reload_config();
+    update_rate_note();
 
     // "extruders_count" doesn't update from the update_config(),
     // so update it implicitly
@@ -6158,6 +6223,48 @@ void TabPrinter::clear_pages()
 {
     Tab::clear_pages();
     m_reset_to_filament_color = nullptr;
+    m_rate_note = nullptr;
+}
+
+wxSizer* TabPrinter::rate_note_create_widget(wxWindow* parent)
+{
+    const int em = em_unit(parent);
+    auto* vsizer = new wxBoxSizer(wxVERTICAL);
+    m_rate_note = new wxStaticText(parent, wxID_ANY, wxEmptyString);
+    m_rate_note->SetFont(wxGetApp().normal_font());
+    vsizer->Add(m_rate_note, 0, wxEXPAND);
+
+    auto* hsizer = new wxBoxSizer(wxHORIZONTAL);
+    auto add_button = [parent, hsizer, em](const wxString& label, const wxString& tip, std::function<void()> on_click) {
+        auto* btn = new Button(parent, label);
+        btn->SetStyle(ButtonStyle::Regular, ButtonType::Compact);
+        btn->SetToolTip(tip);
+        btn->Bind(wxEVT_BUTTON, [on_click](wxCommandEvent&) { on_click(); });
+        hsizer->Add(btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT | wxTOP, em / 2);
+    };
+    add_button(_L("Set my rate") + dots,
+               _L("Your own cost per hour of printing for every nozzle variant of this printer model (or for this preset only). "
+                  "Kept on this computer, never in the preset or in project files."),
+               [this, parent]() { edit_machine_rate(parent, *m_presets); });
+    add_button(_L("Costs") + dots, _L("Your filament prices and machine rates, in one window"),
+               [parent]() { show_costs_dialog(parent, CostsDialog::Page::Machines); });
+    vsizer->Add(hsizer, 0);
+    update_rate_note();
+    return vsizer;
+}
+
+void TabPrinter::update_rate_note()
+{
+    if (m_rate_note == nullptr || m_presets == nullptr || m_presets->get_edited_preset().printer_technology() != ptFFF)
+        return;
+    const wxString text = machine_rate_note(edited_machine_rate(*m_presets));
+    if (m_rate_note->GetLabel() == text)
+        return;
+    m_rate_note->SetLabel(text);
+    m_rate_note->SetToolTip(text);
+    m_rate_note->Wrap(em_unit(m_rate_note) * 45);
+    if (wxWindow* parent = m_rate_note->GetParent())
+        parent->Layout();
 }
 
 void TabPrinter::toggle_options()
@@ -6312,6 +6419,7 @@ void TabPrinter::update()
     m_update_cnt--;
 
     update_description_lines();
+    update_rate_note();
     //BBS: GUI refactor
     //Layout();
     m_parent->Layout();
@@ -7012,19 +7120,20 @@ bool Tab::may_discard_current_dirty_preset(PresetCollection* presets /*= nullptr
         const std::string& name = dlg.get_preset_name();
         //BBS: add project embedded preset relate logic
         bool save_to_project = dlg.get_save_to_project_option();
+        const ProjectPresetPrinters project_printers = dlg.get_project_printers_option();
 
         if (m_type == presets->type()) // save changes for the current preset from this tab
         {
             // revert unselected options to the old values
             presets->get_edited_preset().config.apply_only(presets->get_selected_preset().config, unselected_options);
             //BBS: add project embedded preset relate logic
-            save_preset(name, false, save_to_project);
+            save_preset(name, false, save_to_project, false, "", project_printers);
             //save_preset(name);
         }
         else
         {
             //BBS: add project embedded preset relate logic
-            m_preset_bundle->save_changes_for_preset(name, presets->type(), unselected_options, save_to_project);
+            m_preset_bundle->save_changes_for_preset(name, presets->type(), unselected_options, save_to_project, project_printers);
             //m_preset_bundle->save_changes_for_preset(name, presets->type(), unselected_options);
 
             // If filament preset is saved for multi-material printer preset,
@@ -7378,7 +7487,8 @@ void Tab::transfer_options(const std::string &name_from, const std::string &name
 // Wizard calls save_preset with a name "My Settings", otherwise no name is provided and this method
 // opens a Slic3r::GUI::SavePresetDialog dialog.
 //BBS: add project embedded preset relate logic
-void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_project, bool from_input, std::string input_name )
+void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_project, bool from_input, std::string input_name,
+                      ProjectPresetPrinters project_printers)
 {
     // since buttons(and choices too) don't get focus on Mac, we set focus manually
     // to the treectrl so that the EVT_* events are fired for the input field having
@@ -7410,6 +7520,7 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
         name = dlg.get_name();
         //BBS: add project embedded preset relate logic
         save_to_project = dlg.get_save_to_project_selection(m_type);
+        project_printers = dlg.get_project_printers_selection(m_type);
     }
 
     //BBS record current preset name
@@ -7426,7 +7537,7 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
         _current_printer = const_cast<Preset*>(&wxGetApp().preset_bundle->printers.get_selected_preset_base());
     }
     // Save the preset into Slic3r::data_dir / presets / section_name / preset_name.json
-    m_presets->save_current_preset(name, detach, save_to_project, nullptr, _current_printer);
+    m_presets->save_current_preset(name, detach, save_to_project, nullptr, _current_printer, project_printers);
 
     //BBS create new settings
     new_preset = m_presets->find_preset(name, false, true);
@@ -7792,10 +7903,10 @@ wxSizer* Tab::compatible_widget_create(wxWindow* parent, PresetDependencies &dep
         // Collect and set indices of depending_presets marked as compatible.
         wxArrayInt selections;
         auto *compatible_printers = dynamic_cast<const ConfigOptionStrings*>(m_config->option(deps.key_list));
-        if (compatible_printers != nullptr || !compatible_printers->values.empty())
+        if (compatible_printers != nullptr && !compatible_printers->values.empty())
             for (auto preset_name : compatible_printers->values)
                 for (size_t idx = 0; idx < presets.GetCount(); ++idx)
-                    if (presets[idx] == preset_name) {
+                    if (presets[idx] == from_u8(preset_name)) {
                         selections.Add(idx);
                         break;
                     }

@@ -26,6 +26,7 @@ public:
         bool m_detected{ false };
         int m_max_tex_size{ 0 };
         float m_max_anisotropy{ 0.0f };
+        bool m_core_profile{ false };
 
         std::string m_version;
         std::string m_glsl_version;
@@ -41,6 +42,12 @@ public:
         const std::string& get_renderer() const;
 
         bool is_mesa() const;
+        // True for a core-profile context (no wide lines, no fixed-function state, a VAO must be
+        // bound to draw). init_glcontext() asks for the highest forward-compatible core profile first
+        // (OrcaSlicer #10735), so this is the normal case now: macOS 4.1, Windows/Linux 4.x. It is
+        // false only where core was refused and we fell back to a compatibility or default context.
+        // Also false until init_gl() has detected the context (it never queries GL by itself).
+        bool is_core_profile() const;
 
         int get_max_tex_size() const;
         float get_max_anisotropy() const;
@@ -51,6 +58,10 @@ public:
         // If formatted for github, plaintext with OpenGL extensions enclosed into <details>.
         // Otherwise HTML formatted for the system info dialog.
         std::string to_string(bool for_github) const;
+
+        // Space-separated extension list on either profile (glGetString(GL_EXTENSIONS) is gone
+        // from core profiles; there it is assembled from glGetStringi()).
+        static std::string get_extensions_string();
 
     private:
         void detect() const;
@@ -88,13 +99,33 @@ private:
     static EMultisampleState s_multisample;
     static EFramebufferType s_framebuffers_type;
     static OpenGLManager* s_active;
+    // EDGE: see get_default_vao().
+    static unsigned int s_default_vao;
 
 public:
     OpenGLManager() = default;
     ~OpenGLManager();
 
     bool init_gl(bool popup_error = true);
+    // Creates the one GL context every canvas shares. Profile order (EDGE, after OrcaSlicer #10735):
+    // the highest forward-compatible core profile 4.6..3.2, then a compatibility profile, then the
+    // platform default. EDGESLICER_OPENGL_PROFILE=core|compatibility|default (environment) or
+    // "opengl_profile" in the app config picks one by hand; the environment wins.
     wxGLContext* init_glcontext(wxGLCanvas& canvas);
+
+    // EDGE (core profile): no draw or vertex-attribute call is valid without a bound vertex array
+    // object. One VAO is created with the context and stays bound; code with its own VAO (GLModel,
+    // ImGui, the painter gizmos) binds this one back when it is done, so the remaining plain VBO
+    // draws (legacy G-code viewer, 3DBed, ...) keep working. 0 in a compatibility context.
+    static unsigned int get_default_vao() { return s_default_vao; }
+    static void bind_default_vao();
+    // glLineWidth() above 1 is GL_INVALID_VALUE in a forward-compatible core context (macOS, and
+    // what we ask for everywhere). Sets it only where it is valid; core-profile lines are 1 px.
+    static void set_line_width(float width);
+    // Drains glGetError() and logs what it found as "OpenGL error(s) <where>: ...", within a small
+    // per-session budget so a broken frame cannot flood the log. first_error: one the caller already
+    // read with glGetError() (0 = none). Returns the number of errors.
+    static int report_gl_errors(const std::string& where, unsigned int first_error = 0);
 
     GLShaderProgram* get_shader(const std::string& shader_name) { return m_shaders_manager.get_shader(shader_name); }
     GLShaderProgram* get_current_shader() { return m_shaders_manager.get_current_shader(); }

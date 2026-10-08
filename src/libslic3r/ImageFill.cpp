@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <sstream>
 #include <unordered_map>
 
@@ -73,6 +74,15 @@ const ImageAsset *ImageAssetStore::pixels(const std::string &sha256) const
     const ImageAsset *a = this->find(sha256);
     if (a == nullptr)
         return nullptr;
+    // Called from make_fills()'s TBB loop (and the wall/ironing image-row paths), so several
+    // threads can ask for the same undecoded asset at once - a Print owns a fresh copy of the
+    // model's store, so its first decode always lands there. The whole check-and-decode runs
+    // under one lock: `decoded` used to be set before width/height/rgb were filled, and a second
+    // thread in that window got a half-built asset and read past `rgb` (the 2026-10-07 SIGSEGV
+    // in test_image_row_transform.cpp's multi-volume case). Once published under the lock the
+    // fields are never written again, so callers read them afterwards without it.
+    static std::mutex decode_mutex;
+    std::lock_guard<std::mutex> lock(decode_mutex);
     if (a->decoded)
         return a->decode_failed ? nullptr : a;
     a->decoded = true;

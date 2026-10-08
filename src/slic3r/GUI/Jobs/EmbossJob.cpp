@@ -10,6 +10,7 @@
 #include <libslic3r/BuildVolume.hpp> // create object
 #include <libslic3r/SLA/ReprojectPointsOnMesh.hpp>
 #include <libslic3r/CodeEmboss.hpp> // parts of code are not projected onto each other
+#include <libslic3r/ImageTrace.hpp> // nor levels of a traced image
 #include <libslic3r/EmbossBend.hpp>
 #include <libslic3r/ClipperUtils.hpp> // union_ex
 #include <libslic3r/EmbossBendSurface.hpp> // curved text letter by letter on the surface
@@ -570,7 +571,7 @@ void CreateVolumesJob::process(Ctl &ctl)
 
         TriangleMesh mesh;
         if (use_surface) {
-            SurfaceVolumeData surface{*m_input.trmat, m_input.sources};
+            SurfaceVolumeData surface{*m_input.trmat * Eigen::Translation3d(part.offset.x(), part.offset.y(), 0.), m_input.sources};
             try {
                 mesh = cut_surface(base, surface, was_canceled);
             } catch (const JobException &) {
@@ -659,7 +660,7 @@ void CreateVolumesJob::add_to_object(ModelObject &object, size_t object_idx)
         volume->calculate_convex_hull();
         volume->config.set_key_value("extruder", new ConfigOptionInt(part.extruder));
         volume->source.is_from_builtin_objects = true; // do not allow model reload from disk
-        volume->set_transformation(volume_trmat);
+        volume->set_transformation(volume_trmat * Eigen::Translation3d(part.offset.x(), part.offset.y(), 0.));
         part.base->write(*volume);
         has_model_part |= part.volume_type == ModelVolumeType::MODEL_PART;
         created.push_back(volume);
@@ -706,6 +707,8 @@ void CreateVolumesJob::create_object()
         ModelVolume    *volume = new_object->add_volume(std::move(m_results[i]), type, false);
         volume->calculate_convex_hull();
         volume->config.set_key_value("extruder", new ConfigOptionInt(part.extruder));
+        if (!part.offset.isZero())
+            volume->set_transformation(Transform3d(Eigen::Translation3d(part.offset.x(), part.offset.y(), 0.)));
         part.base->write(*volume);
         if (first == nullptr)
             first = volume;
@@ -804,6 +807,10 @@ SurfaceVolumeData::ModelSources create_volume_sources(const ModelVolume &text_vo
     // Parts of one code (QR, barcode) lay side by side, they must not be projected onto each other
     if (std::optional<CodeEmbossMeta> meta = read_code_emboss_meta(text_volume); meta.has_value())
         for (const ModelVolume *v : get_code_volumes(*object, meta->params.group_id))
+            skip.push_back(v->id().id);
+    // Levels of a traced image as well
+    if (std::optional<ImageTraceMeta> meta = read_image_trace_meta(text_volume); meta.has_value())
+        for (const ModelVolume *v : get_image_trace_volumes(*object, meta->params.group_id))
             skip.push_back(v->id().id);
     return ::create_sources(volumes, skip);
 }
@@ -1238,8 +1245,10 @@ TriangleMesh try_create_mesh(DataBase &input, const Fnc& was_canceled)
     double depth = input.shape.projection.depth / scale;    
     auto projectZ = std::make_unique<ProjectZ>(depth);    
     float offset = input.is_outside ? -SAFE_SURFACE_OFFSET : (SAFE_SURFACE_OFFSET - input.shape.projection.depth);
-    if (input.from_surface.has_value())
-        offset += *input.from_surface;
+    // EdgeSlicer: no "from surface" offset here. For a flat shape that distance is where the volume is
+    // (the "From surface" slider, the 3D handles and a new volume all move the volume itself, and the
+    // tool measures it back from the volume when it opens), so offsetting the mesh as well put the
+    // text twice as far after every edit. Only the per glyph placement above offsets the mesh.
     Transform3d tr = Eigen::Translation<double, 3>(0., 0.,static_cast<double>(offset)) * Eigen::Scaling(scale);
     ProjectTransform project(std::move(projectZ), tr);
     if (was_canceled()) return {};

@@ -371,7 +371,8 @@ public:
 	void		compare_preset();
 	void		transfer_options(const std::string&name_from, const std::string&name_to, std::vector<std::string> options);
 	//BBS: add project embedded preset relate logic
-	void        save_preset(std::string name = std::string(), bool detach = false, bool save_to_project = false, bool from_input = false, std::string input_name = "");
+	void        save_preset(std::string name = std::string(), bool detach = false, bool save_to_project = false, bool from_input = false, std::string input_name = "",
+	                        ProjectPresetPrinters project_printers = ProjectPresetPrinters::Keep);
 	//void		save_preset(std::string name = std::string(), bool detach = false);
 
 	void		delete_preset();
@@ -648,6 +649,10 @@ private:
 
     std::map<std::string, ::CheckBox*> m_overrides_options;
 
+    // Under Price: which price slicing uses (yours from Filament prices, or the preset's) and why.
+    wxStaticText*   m_price_note {nullptr};
+    wxSizer*        price_note_create_widget(wxWindow* parent);
+
 public:
 	//BBS: GUI refactor
 	TabFilament(ParamsPanel* parent) :
@@ -660,6 +665,8 @@ public:
 	void		toggle_options() override;
 	void		update() override;
 	void		clear_pages() override;
+    // Refreshes the line under Price (also called when your filament prices change).
+    void        update_price_note();
 	bool 		supports_printer_technology(const PrinterTechnology tech) const override { return tech == ptFFF; }
 
     const std::string&	get_custom_gcode(const t_config_option_key& opt_key) override;
@@ -680,6 +687,9 @@ private:
     std::vector<PageShp>			m_pages_sla;
 
     wxBoxSizer*         m_presets_sizer                 {nullptr};
+    // Under Time cost: which machine rate slicing uses (yours from Costs, or the preset's) and why.
+    wxStaticText*       m_rate_note                     {nullptr};
+    wxSizer*            rate_note_create_widget(wxWindow* parent);
 public:
 	ScalableButton*	m_reset_to_filament_color = nullptr;
 
@@ -702,6 +712,8 @@ public:
 	void		reload_config() override;
 	void		activate_selected_page(std::function<void()> throw_if_canceled) override;
 	void		clear_pages() override;
+    // Refreshes the line under Time cost (also called when your costs change).
+    void        update_rate_note();
 	void		toggle_options() override;
     void		update() override;
     void		update_fff();

@@ -71,6 +71,9 @@ inline bool is_bbl_special_tool_command(int tool_number)
             float time;
             float prepare_time;
             std::vector<std::pair<CustomGCode::Type, std::pair<float, float>>> custom_gcode_times;
+            // EDGE (libvgcode stage 1): the time machine no longer accumulates these tables (OrcaSlicer #10735
+            // removed them). GCodeProcessor::finalize() recomputes them from the per-move times
+            // (MoveVertex::time) with the old semantics, for the legend, the layer slider and slice_info.
             std::vector<std::pair<EMoveType, float>> moves_times;
             std::vector<std::pair<ExtrusionRole, float>> roles_times;
             std::vector<float> layers_times;
@@ -174,29 +177,38 @@ inline bool is_bbl_special_tool_command(int tool_number)
             Vec3f position{ Vec3f::Zero() }; // mm
             float delta_extruder{ 0.0f }; // mm
             float feedrate{ 0.0f }; // mm/s
+            // Planner (actual) speed at the end of this move, from the Normal time machine. OrcaSlicer #10735.
+            float actual_feedrate{ 0.0f }; // mm/s
             float width{ 0.0f }; // mm
             float height{ 0.0f }; // mm
             float mm3_per_mm{ 0.0f };
             float travel_dist{ 0.0f }; // mm
             float fan_speed{ 0.0f }; // percentage
             float temperature{ 0.0f }; // Celsius degrees
-            float time{ 0.0f }; // s
-            float layer_duration{ 0.0f }; // s (layer id before finalize)
-
-
-            //BBS: arc move related data
-            EMovePathType move_path_type{ EMovePathType::Noop_move };
-            Vec3f arc_center_position{ Vec3f::Zero() };      // mm
-            std::vector<Vec3f> interpolation_points;     // interpolation points of arc for drawing
+            // This move's own duration per time estimate mode (s), including any synchronising wait
+            // (G4, M400 S, tool change, ...) the time machine booked on it. OrcaSlicer #10735.
+            std::array<float, static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count)> time{ 0.0f, 0.0f };
+            // Legacy GCodeViewer only (removed with it in libvgcode stage 3): the raw layer counter while
+            // processing (0 = before the first layer change), replaced by the layer duration in finalize().
+            float layer_duration{ 0.0f };
+            // 0-based layer index from the layer change tag (upstream semantics: max(1, layer counter) - 1).
+            unsigned int layer_id{ 0 };
+            // A vertex with no G-code line of its own: a segment of a G2/G3 arc, or (when enabled) an
+            // actual-speed profile point. OrcaSlicer #10735.
+            bool internal_only{ false };
+            // Inside the machine start G-code (TimeBlock::Flags::prepare_stage); its travel time is kept
+            // out of the per-move-type table, as the time machine did before.
+            bool prepare_stage{ false };
 
             float volumetric_rate() const { return feedrate * mm3_per_mm; }
-            //BBS: new function to support arc move
-            bool is_arc_move_with_interpolation_points() const {
-                return (move_path_type == EMovePathType::Arc_move_ccw || move_path_type == EMovePathType::Arc_move_cw) && interpolation_points.size();
-            }
-            bool is_arc_move() const {
-                return move_path_type == EMovePathType::Arc_move_ccw || move_path_type == EMovePathType::Arc_move_cw;
-            }
+            float actual_volumetric_rate() const { return actual_feedrate * mm3_per_mm; }
+
+            // EDGE (libvgcode stage 1): G2/G3 now arrive as internal G1 vertices (PrusaSlicer discretisation,
+            // OrcaSlicer #10735), so no move carries BBS arc interpolation data any more. These stubs keep the
+            // legacy GCodeViewer's (dead) arc branches compiling until stage 3 replaces that viewer.
+            bool is_arc_move_with_interpolation_points() const { return false; }
+            bool is_arc_move() const { return false; }
+            static inline const std::vector<Vec3f> interpolation_points{};
         };
 
         struct SliceWarning {
@@ -242,10 +254,20 @@ inline bool is_bbl_special_tool_command(int tool_number)
         std::vector<int>   required_nozzle_HRC;
         std::vector<float> filament_densities;
         std::vector<float> filament_costs;
+        // filament_costs are real prices: from the slicing config, or from a G-code whose CONFIG_BLOCK
+        // has filament_cost. False for a G-code exported without filament prices or by another slicer;
+        // filament_costs then hold no price (0) and the cost views say so instead of guessing.
+        bool has_filament_costs{ false };
+        // Printer preset time_cost (money per hour of print time), for the machine part of the cost.
+        double time_cost{ 0. };
+        bool has_time_cost{ false };
         std::vector<int> filament_vitrification_temperature;
         PrintEstimatedStatistics print_statistics;
         std::vector<CustomGCode::Item> custom_gcode_per_print_z;
+        // Legacy GCodeViewer only (spiral vase layer ranges as move ids); libvgcode needs only spiral_vase_mode.
         std::vector<std::pair<float, std::pair<size_t, size_t>>> spiral_vase_layers;
+        bool spiral_vase_mode{ false };
+        float z_offset{ 0.0f };
         //BBS
         std::vector<SliceWarning> warnings;
         int nozzle_hrc;
@@ -290,10 +312,15 @@ inline bool is_bbl_special_tool_command(int tool_number)
             required_nozzle_HRC = std::forward<Other>(other).required_nozzle_HRC;
             filament_densities = std::forward<Other>(other).filament_densities;
             filament_costs = std::forward<Other>(other).filament_costs;
+            has_filament_costs = other.has_filament_costs;
+            time_cost = other.time_cost;
+            has_time_cost = other.has_time_cost;
             filament_vitrification_temperature = std::forward<Other>(other).filament_vitrification_temperature;
             print_statistics = std::forward<Other>(other).print_statistics;
             custom_gcode_per_print_z = std::forward<Other>(other).custom_gcode_per_print_z;
             spiral_vase_layers = std::forward<Other>(other).spiral_vase_layers;
+            spiral_vase_mode = other.spiral_vase_mode;
+            z_offset = other.z_offset;
             warnings = std::forward<Other>(other).warnings;
             nozzle_hrc = std::forward<Other>(other).nozzle_hrc;
             nozzle_type = std::forward<Other>(other).nozzle_type;
@@ -350,6 +377,9 @@ inline bool is_bbl_special_tool_command(int tool_number)
         static const float Wipe_Width;
         static const float Wipe_Height;
 
+        // Size of the blocks the post-processing passes write the G-code in
+        static constexpr size_t Output_Block_Size = 65536;
+
         static bool s_IsBBLPrinter;
 
 #if ENABLE_GCODE_VIEWER_DATA_CHECKING
@@ -404,9 +434,12 @@ inline bool is_bbl_special_tool_command(int tool_number)
             float cruise_feedrate{ 0.0f }; // mm/sec
 
             float acceleration_time(float entry_feedrate, float acceleration) const;
-            float cruise_time() const;
+            float cruise_time() const { return (cruise_feedrate != 0.0f) ? cruise_distance() / cruise_feedrate : 0.0f; }
             float deceleration_time(float distance, float acceleration) const;
-            float cruise_distance() const;
+            float acceleration_distance() const { return accelerate_until; }
+            float cruise_distance() const { return decelerate_after - accelerate_until; }
+            float deceleration_distance(float distance) const { return distance - decelerate_after; }
+            bool is_cruise_only(float distance) const { return std::abs(cruise_distance() - distance) < EPSILON; }
         };
 
         struct TimeBlock
@@ -420,6 +453,8 @@ inline bool is_bbl_special_tool_command(int tool_number)
 
             EMoveType move_type{ EMoveType::Noop };
             ExtrusionRole role{ erNone };
+            // Index into GCodeProcessorResult::moves of the move this block times.
+            unsigned int move_id{ 0 };
             unsigned int g1_line_id{ 0 };
             unsigned int remaining_internal_g1_lines{ 0 };
             unsigned int layer_id{ 0 };
@@ -434,7 +469,10 @@ inline bool is_bbl_special_tool_command(int tool_number)
             // Calculates this block's trapezoid
             void calculate_trapezoid();
 
-            float time() const;
+            float time() const {
+                return trapezoid.acceleration_time(feedrate_profile.entry, acceleration) +
+                       trapezoid.cruise_time() + trapezoid.deceleration_time(distance, acceleration);
+            }
         };
 
 
@@ -474,6 +512,22 @@ inline bool is_bbl_special_tool_command(int tool_number)
                 float elapsed_time;
             };
 
+            // A point of the planner's speed profile (end of acceleration / start of deceleration) inside
+            // a move, or (position unset) the move's own end speed. OrcaSlicer #10735.
+            struct ActualSpeedMove
+            {
+                unsigned int move_id{ 0 };
+                std::optional<Vec3f> position;
+                float actual_feedrate{ 0.0f };
+                std::optional<float> delta_extruder;
+                std::optional<float> feedrate;
+                std::optional<float> width;
+                std::optional<float> height;
+                std::optional<float> mm3_per_mm;
+                std::optional<float> fan_speed;
+                std::optional<float> temperature;
+            };
+
             bool enabled;
             float acceleration; // mm/s^2
             // hard limit for the acceleration, to which the firmware will clamp.
@@ -485,7 +539,9 @@ inline bool is_bbl_special_tool_command(int tool_number)
             // hard limit for the travel acceleration, to which the firmware will clamp.
             float max_travel_acceleration; // mm/s^2
             float extrude_factor_override_percentage;
-            float time; // s
+            // We accumulate total print time in doubles to reduce the loss of precision
+            // while adding big floating numbers with small float numbers.
+            double time; // s
             struct StopTime
             {
                 unsigned int g1_line_id;
@@ -499,17 +555,17 @@ inline bool is_bbl_special_tool_command(int tool_number)
             CustomGCodeTime gcode_time;
             std::vector<TimeBlock> blocks;
             std::vector<G1LinesCacheItem> g1_times_cache;
-            std::array<float, static_cast<size_t>(EMoveType::Count)> moves_time;
-            std::array<float, static_cast<size_t>(ExtrusionRole::erCount)> roles_time;
-            std::vector<float> layers_time;
+            std::vector<ActualSpeedMove> actual_speed_moves;
             //BBS: prepare stage time before print model, including start gcode time and mostly same with start gcode time
             float prepare_time;
 
             void reset();
 
-            // Simulates firmware st_synchronize() call
-            void simulate_st_synchronize(float additional_time = 0.0f);
-            void calculate_time(size_t keep_last_n_blocks = 0, float additional_time = 0.0f);
+            // Plans the queued blocks, writes each processed block's time onto its move
+            // (result.moves[block.move_id].time[mode]) and, for the Normal machine, collects the actual
+            // speed profile. keep_last_n_blocks stay queued.
+            void calculate_time(GCodeProcessorResult& result, PrintEstimatedStatistics::ETimeMode mode, bool collect_actual_speed_points,
+                                size_t keep_last_n_blocks = 0, float additional_time = 0.0f);
         };
 
         struct TimeProcessor
@@ -625,9 +681,11 @@ inline bool is_bbl_special_tool_command(int tool_number)
                 m_custom_gcode_per_print_z_id = m_result.custom_gcode_per_print_z.size() - 1;
             }
 
-            void update(float height) {
+            // Returns the index the marker move was taken from: every move after it shifted down by one
+            // and the marker is now the last move.
+            std::optional<size_t> update(float height) {
                 if (!m_move_id.has_value() || !m_custom_gcode_per_print_z_id.has_value())
-                    return;
+                    return std::nullopt;
 
                 const Vec3f position = m_result.moves.back().position;
 
@@ -636,7 +694,15 @@ inline bool is_bbl_special_tool_command(int tool_number)
                 move.height = height;
                 m_result.moves.erase(m_result.moves.begin() + *m_move_id);
                 m_result.custom_gcode_per_print_z[*m_custom_gcode_per_print_z_id].print_z = position.z();
+                const size_t moved_from = *m_move_id;
                 reset();
+                return moved_from;
+            }
+
+            // Moves were inserted at index pos (actual-speed points): keep the stored id on its move.
+            void on_moves_inserted(size_t pos, size_t count) {
+                if (m_move_id.has_value() && *m_move_id >= pos)
+                    *m_move_id += count;
             }
 
             void reset() {
@@ -747,10 +813,10 @@ inline bool is_bbl_special_tool_command(int tool_number)
         //BBS: x, y offset for gcode generated
         double          m_x_offset{ 0 };
         double          m_y_offset{ 0 };
-        //BBS: arc move related data
-        EMovePathType m_move_path_type{ EMovePathType::Noop_move };
-        Vec3f m_arc_center{ Vec3f::Zero() };    // mm
-        std::vector<Vec3f> m_interpolation_points;
+        // Insert the planner's acceleration / deceleration points as internal moves (for libvgcode's
+        // actual-speed view). Off until the libvgcode viewer (stage 3) consumes them: the legacy
+        // viewer would render them as extra segments. MoveVertex::actual_feedrate is filled either way.
+        bool m_actual_speed_moves_enabled{ false };
 
         unsigned int m_line_id;
         unsigned int m_last_line_id;
@@ -859,9 +925,14 @@ inline bool is_bbl_special_tool_command(int tool_number)
         std::string get_time_dhm(PrintEstimatedStatistics::ETimeMode mode) const;
         std::vector<std::pair<CustomGCode::Type, std::pair<float, float>>> get_custom_gcode_times(PrintEstimatedStatistics::ETimeMode mode, bool include_remaining) const;
 
-        std::vector<std::pair<EMoveType, float>> get_moves_time(PrintEstimatedStatistics::ETimeMode mode) const;
-        std::vector<std::pair<ExtrusionRole, float>> get_roles_time(PrintEstimatedStatistics::ETimeMode mode) const;
-        std::vector<float> get_layers_time(PrintEstimatedStatistics::ETimeMode mode) const;
+        // Recomputes the per-move-type / per-role / per-layer time tables of one mode from the moves'
+        // own times, with the semantics the time machine used to accumulate them (travel in the start
+        // G-code kept out of the move-type table; travel time counted as erNone unless erCustom).
+        static void fill_time_tables(const std::vector<GCodeProcessorResult::MoveVertex>& moves, PrintEstimatedStatistics::ETimeMode mode,
+                                     PrintEstimatedStatistics::Mode& out);
+
+        void enable_actual_speed_moves(bool enable) { m_actual_speed_moves_enabled = enable; }
+        bool actual_speed_moves_enabled() const { return m_actual_speed_moves_enabled; }
 
         //BBS: set offset for gcode writer
         void set_xy_offset(double x, double y) { m_x_offset = x; m_y_offset = y; }
@@ -891,7 +962,15 @@ inline bool is_bbl_special_tool_command(int tool_number)
         // Move
         void process_G0(const GCodeReader::GCodeLine& line);
         void process_G1(const GCodeReader::GCodeLine& line, const std::optional<unsigned int>& remaining_internal_g1_lines = std::nullopt);
-        void process_G2_G3(const GCodeReader::GCodeLine& line);
+        enum class G1DiscretizationOrigin {
+            G1,
+            G2G3,
+        };
+        void process_G1(const std::array<std::optional<double>, 4>& axes, const std::optional<double>& feedrate,
+                        G1DiscretizationOrigin origin, const std::optional<unsigned int>& remaining_internal_g1_lines);
+
+        // Arc move, discretised into internal G1 moves (PrusaSlicer, OrcaSlicer #10735)
+        void process_G2_G3(const GCodeReader::GCodeLine& line, bool clockwise);
 
         // BBS: handle delay command
         void process_G4(const GCodeReader::GCodeLine& line);
@@ -1014,8 +1093,7 @@ inline bool is_bbl_special_tool_command(int tool_number)
         // line ids, each entry is written right after its line.
         std::map<unsigned int, std::vector<std::string>> plan_pre_cooling(const PreCooling::Plan &plan) const;
 
-        //BBS: different path_type is only used for arc move
-        void store_move_vertex(EMoveType type, EMovePathType path_type = EMovePathType::Noop_move);
+        void store_move_vertex(EMoveType type, bool internal_only = false);
 
         void set_extrusion_role(ExtrusionRole role);
 
@@ -1036,6 +1114,10 @@ inline bool is_bbl_special_tool_command(int tool_number)
         int   get_filament_vitrification_temperature(size_t extrude_id);
         void process_custom_gcode_time(CustomGCode::Type code);
         void process_filaments(CustomGCode::Type code);
+
+        // Runs every enabled time machine over its queued blocks (see TimeMachine::calculate_time()) and
+        // inserts the collected actual-speed points into the move list.
+        void calculate_time(GCodeProcessorResult& result, size_t keep_last_n_blocks = 0, float additional_time = 0.0f);
 
         // Simulates firmware st_synchronize() call
         void simulate_st_synchronize(float additional_time = 0.0f);

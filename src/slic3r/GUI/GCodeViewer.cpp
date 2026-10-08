@@ -25,11 +25,14 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Layer.hpp"
 #include "Widgets/ProgressDialog.hpp"
+#include "CostsDialog.hpp"
+#include "libslic3r/CostOverrides.hpp"
 
 #include <imgui/imgui_internal.h>
 
 #include <glad/gl.h>
 #include <boost/log/trivial.hpp>
+#include <boost/format.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/nowide/cstdio.hpp>
 #include <boost/nowide/fstream.hpp>
@@ -55,6 +58,33 @@ namespace GUI {
 //        _u8L("Tool"),
 //        _u8L("Filament")
 //    };
+
+// ------------------------------------------------- Costs > Project (display only) ----
+
+// Your default fees and markup, with this project's own values over them.
+static PricingSettings project_pricing()
+{
+    const Plater         *plater   = wxGetApp().plater();
+    const PricingSettings defaults = CostOverrides::global()->pricing();
+    return plater != nullptr ? plater->model().pricing.resolve(defaults) : defaults;
+}
+
+// Printable objects and their model parts on a plate (none for a G-code opened on its own).
+static PlateCounts counts_of_plate(PartPlate *plate)
+{
+    Plater *plater = wxGetApp().plater();
+    if (plate == nullptr || plater == nullptr || plater->only_gcode_mode())
+        return {};
+    return count_plate_items(plater->model(), [plate](int obj, int inst) { return plate->contain_instance(obj, inst); });
+}
+
+// The plate in the preview, priced.
+static PricedCost price_current_plate(const CostBreakdown &cost)
+{
+    Plater *plater = wxGetApp().plater();
+    return price_plate(cost, plater != nullptr ? counts_of_plate(plater->get_partplate_list().get_curr_plate()) : PlateCounts(),
+                       project_pricing());
+}
 
 static std::string get_view_type_string(GCodeViewer::EViewType view_type)
 {
@@ -1150,6 +1180,19 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
     }
 
     m_print_statistics = gcode_result.print_statistics;
+    m_cost_breakdown   = compute_cost(gcode_result);
+    // Which filament slots and which machine rate slice with a value of yours (Costs), so the
+    // breakdown can say so. Not for a G-code opened on its own: nothing of yours was applied to it.
+    m_cost_your_price.clear();
+    m_cost_your_rate = -1.;
+    if (PresetBundle *bundle = wxGetApp().preset_bundle; bundle != nullptr && !(wxGetApp().plater() && wxGetApp().plater()->only_gcode_mode())) {
+        const DynamicPrintConfig full = bundle->full_config();
+        for (const CostOverrides::Resolved &slot : CostOverrides::resolve_slots(full, *CostOverrides::global(), &bundle->filaments))
+            m_cost_your_price.push_back(slot.yours() ? slot.price : -1.);
+        if (const CostOverrides::MachineResolved machine = CostOverrides::resolve_machine(full, *CostOverrides::global(), &bundle->printers);
+            machine.yours())
+            m_cost_your_rate = machine.rate;
+    }
 
     if (m_time_estimate_mode != PrintEstimatedStatistics::ETimeMode::Normal) {
         const float time = m_print_statistics.modes[static_cast<size_t>(m_time_estimate_mode)].time;
@@ -1342,6 +1385,9 @@ void GCodeViewer::reset()
     m_extruder_ids = std::vector<unsigned char>();
     m_filament_diameters = std::vector<float>();
     m_filament_densities = std::vector<float>();
+    m_cost_breakdown = CostBreakdown();
+    m_cost_your_price.clear();
+    m_cost_your_rate = -1.;
     m_extrusions.reset_ranges();
     //BBS: always load shell at preview
     //m_shells.volumes.clear();
@@ -4006,7 +4052,7 @@ void GCodeViewer::render_toolpaths()
                 switch (buffer.render_primitive_type)
                 {
                 case TBuffer::ERenderPrimitiveType::Line: {
-                    glsafe(::glLineWidth(static_cast<GLfloat>(line_width(zoom))));
+                    OpenGLManager::set_line_width(static_cast<GLfloat>(line_width(zoom)));
                     render_as_lines(it_path, buffer.render_paths.end(), *shader, uniform_color);
                     break;
                 }
@@ -4173,7 +4219,10 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
     std::vector<double> support_used_filaments_m_all_plates;
     std::vector<double> support_used_filaments_g_all_plates;
     float total_time_all_plates = 0.0f;
-    float total_cost_all_plates = 0.0f;
+    // Each plate's cost from its own result, so plates restored from a 3MF count too (their
+    // Print statistics have no cost until they are resliced).
+    std::vector<CostBreakdown> plate_costs;
+    std::vector<PricedCost>    plate_priced;
     bool show_detailed_statistics_page = false;
     struct ColumnData {
         enum {
@@ -4280,11 +4329,9 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
             }
             const PrintEstimatedStatistics::Mode& plate_time_mode = plate_print_statistics.modes[static_cast<size_t>(m_time_estimate_mode)];
             total_time_all_plates += plate_time_mode.time;
-            
-            Print     *print;
-            plate->get_print((PrintBase **) &print, nullptr, nullptr);
-            if (print != nullptr)
-                total_cost_all_plates += print->print_statistics().total_cost;
+            plate_costs.emplace_back(compute_cost(*plate->get_slice_result()));
+            // Fees count what is on this plate; markup and fees are the project's (display only).
+            plate_priced.emplace_back(price_plate(plate_costs.back(), counts_of_plate(plate), project_pricing()));
         }
        
         for (auto it = model_volume_of_extruders_all_plates.begin(); it != model_volume_of_extruders_all_plates.end(); it++)
@@ -4428,18 +4475,165 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
         ImGui::SameLine();
         imgui.text(short_time(get_time_dhms(total_time_all_plates)));
 
-        ImGui::Dummy({ window_padding, window_padding });
-        ImGui::SameLine();
-        imgui.text(_u8L("Total cost") + ":");
-        ImGui::SameLine();
-        char buf[64];
-        ::sprintf(buf, "%.2f", total_cost_all_plates);
-        imgui.text(buf);
+        render_cost_section(sum_costs(plate_costs), sum_priced(plate_priced), _u8L("Total cost"), 0.f, window_padding,
+                            m_all_plates_cost_expanded, "cost_all_plates");
     }
     ImGui::End();
     ImGui::PopStyleColor(6);
     ImGui::PopStyleVar(3);
     return;
+}
+
+void GCodeViewer::render_cost_section(const CostBreakdown &cost, const PricedCost &priced, const std::string &label, float value_x,
+                                      float window_padding, bool &expanded, const char *imgui_id) const
+{
+    ImGuiWrapper &imgui = *wxGetApp().imgui();
+    // Currency symbol of the Cost preferences: a label, never a conversion.
+    const std::string symbol = currency_symbol();
+    auto money = [&symbol](double value) {
+        char buf[64];
+        ::sprintf(buf, "%.2f", round_money(value));
+        return symbol + buf;
+    };
+    auto number = [](double value) {
+        char buf[64];
+        ::sprintf(buf, "%.2f", value);
+        std::string s = buf;
+        // "2.50" -> "2.5", "3.00" -> "3".
+        while (!s.empty() && s.back() == '0') s.pop_back();
+        if (!s.empty() && s.back() == '.') s.pop_back();
+        return s;
+    };
+    auto start_row = [window_padding](float indent) {
+        ImGui::Dummy({ window_padding, window_padding });
+        ImGui::SameLine();
+        if (indent > 0.f) {
+            ImGui::Dummy({ indent, 0.f });
+            ImGui::SameLine();
+        }
+    };
+    const bool fees    = priced.fees > 0.;
+    const bool selling = priced.has_markup() && cost.prices_known;
+
+    ImGui::PushID(imgui_id);
+
+    // Summary line: "Cost: 3.42   Selling price: 6.84 [+]".
+    std::string value;
+    if (cost.prices_known) {
+        value = money(priced.total_cost);
+        if (selling)
+            value += "   " + _u8L("Selling price") + ": " + money(priced.selling_price);
+    } else if (priced.machine + priced.fees > 0.)
+        value = money(priced.machine + priced.fees) + " " + (fees ? _u8L("(machine time and fees only)") : _u8L("(machine time only)"));
+    else
+        value = _u8L("not in file");
+    start_row(0.f);
+    imgui.text(label + ":");
+    if (value_x > 0.f)
+        ImGui::SameLine(value_x);
+    else
+        ImGui::SameLine();
+    imgui.text(value);
+    ImGui::SameLine();
+    imgui.text(expanded ? "[-]" : "[+]");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        imgui.tooltip((expanded ? _u8L("Hide the cost breakdown") : _u8L("Show the cost breakdown")).c_str(), ImGui::GetFontSize() * 20.f);
+    }
+    if (ImGui::IsItemClicked())
+        expanded = !expanded;
+
+    if (expanded) {
+        const float indent  = ImGui::GetFontSize();
+
+        // Filament, one row per slot, with its model / support / flush / tower split below.
+        if (!cost.prices_known) {
+            start_row(indent);
+            imgui.text(_u8L("Filament: prices not in this G-code"));
+        } else if (!cost.any_price_set()) {
+            start_row(indent);
+            imgui.text(_u8L("Filament: no price set (Filament settings > Price)"));
+        } else {
+            for (const FilamentCostLine &line : cost.lines) {
+                start_row(indent);
+                std::string row = (boost::format(_u8L("Filament %1%")) % (line.slot + 1)).str() + ": " + money(line.total_cost);
+                // "your price": the slot sliced with a price of yours from Filament prices.
+                const bool yours = line.slot < m_cost_your_price.size() && m_cost_your_price[line.slot] >= 0. &&
+                                   std::abs(m_cost_your_price[line.slot] - line.price_per_kg) < 1e-6;
+                if (line.price_per_kg > 0. || yours) {
+                    row += "  (" + money(line.price_per_kg) + "/kg" + (yours ? ", " + _u8L("your price") : std::string()) + ")";
+                } else
+                    row += "  (" + _u8L("no price") + ")";
+                imgui.text(row);
+
+                std::vector<std::string> parts;
+                if (line.model_g > 0.)   parts.emplace_back(_u8L("Model") + " " + money(line.model_cost));
+                if (line.support_g > 0.) parts.emplace_back(_u8L("Support") + " " + money(line.support_cost));
+                if (line.flush_g > 0.)   parts.emplace_back(_u8L("Flushed") + " " + money(line.flush_cost));
+                if (line.tower_g > 0.)   parts.emplace_back(_u8L("Tower") + " " + money(line.tower_cost));
+                if (parts.size() > 1 && line.price_per_kg > 0.) {
+                    start_row(2.f * indent);
+                    std::string split;
+                    for (const std::string &part : parts)
+                        split += (split.empty() ? "" : ", ") + part;
+                    imgui.text(split);
+                }
+            }
+        }
+
+        // Machine time.
+        start_row(indent);
+        if (cost.display_machine > 0.) {
+            std::string row = _u8L("Machine time") + ": " + money(cost.machine) + "  (" + short_time(get_time_dhms(float(cost.print_time_s)));
+            if (cost.machine_rate_per_h > 0. && !cost.machine_rate_varies) {
+                row += " x " + money(cost.machine_rate_per_h) + "/h";
+                // The rate of yours from Costs (model, preset or default) it sliced with.
+                if (m_cost_your_rate >= 0. && std::abs(m_cost_your_rate - cost.machine_rate_per_h) < 1e-6)
+                    row += ", " + _u8L("your rate");
+            }
+            imgui.text(row + ")");
+        } else if (!cost.machine_rate_known)
+            imgui.text(_u8L("Machine time: machine rate not in file"));
+        else
+            imgui.text(_u8L("Machine time: not priced (Printer settings > Advanced > Time cost)"));
+
+        // The fees of Costs > Project that come to something.
+        const PricingSettings &s      = priced.settings;
+        const size_t           plates = priced.plates;
+        auto fee_row = [&](double amount, const std::string &text) {
+            if (amount <= 0.)
+                return;
+            start_row(indent);
+            imgui.text(text + ": " + money(amount));
+        };
+        auto per_plate = [&](double unit) {
+            return plates > 1 ? "  (" + std::to_string(plates) + " " + _u8L("plates") + " x " + money(unit) + ")" : std::string();
+        };
+        fee_row(priced.assembly, _u8L("Assembly") + "  (" + number(priced.assembly_hours) + " h x " + money(s.assembly_rate_per_h) + "/h)");
+        fee_row(priced.object_fees, _u8L("Object fee") + "  (" + std::to_string(priced.objects) + " x " + money(s.fee_per_object) + ")");
+        fee_row(priced.part_fees, _u8L("Part fee") + "  (" + std::to_string(priced.parts) + " x " + money(s.fee_per_part) + ")");
+        fee_row(priced.setup_fees, _u8L("Setup fee") + per_plate(s.fee_per_plate));
+        fee_row(priced.packaging, _u8L("Packaging") + per_plate(s.packaging_per_plate));
+
+        if (cost.prices_known) {
+            start_row(indent);
+            imgui.text(_u8L("Total cost") + ": " + money(priced.total_cost));
+        }
+        if (selling) {
+            std::string what;
+            if (s.markup_type == MarkupType::Flat)
+                what = plates > 1 ? (boost::format(_u8L("%1% per plate")) % money(s.markup_value)).str() : _u8L("flat");
+            else if (s.markup_basis == MarkupBasis::Material)
+                what = (boost::format(_u8L("%1%%% of material")) % number(s.markup_value)).str();
+            else
+                what = (boost::format(_u8L("%1%%% of total cost")) % number(s.markup_value)).str();
+            start_row(indent);
+            imgui.text(_u8L("Markup") + "  (" + what + "): " + money(priced.markup));
+            start_row(indent);
+            imgui.bold_text(_u8L("Selling price") + ": " + money(priced.selling_price));
+        }
+    }
+    ImGui::PopID();
 }
 
 void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canvas_height, int right_margin)
@@ -5256,12 +5450,8 @@ void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canv
         imgui.text(buf);
 
         //BBS display cost
-        ImGui::Dummy({ window_padding, window_padding });
-        ImGui::SameLine();
-        imgui.text(_u8L("Cost")+":");
-        ImGui::SameLine();
-        ::sprintf(buf, "%.2f", ps.total_cost);
-        imgui.text(buf);
+        render_cost_section(m_cost_breakdown, price_current_plate(m_cost_breakdown), _u8L("Cost"), 0.f, window_padding, m_cost_expanded,
+                            "cost_color_print");
 
         break;
     }
@@ -5749,12 +5939,8 @@ void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canv
         ::sprintf(buf, imperial_units ? "  %.2f oz" : "  %.2f g", (ps.total_weight - exlude_g) / unit_conver);
         imgui.text(buf);
         //BBS: display cost of filaments
-        ImGui::Dummy({ window_padding, window_padding });
-        ImGui::SameLine();
-        imgui.text(cost_str + ":");
-        ImGui::SameLine(max_len);
-        ::sprintf(buf, "%.2f", ps.total_cost);
-        imgui.text(buf);
+        render_cost_section(m_cost_breakdown, price_current_plate(m_cost_breakdown), cost_str, max_len, window_padding, m_cost_expanded,
+                            "cost_feature_type");
     }
      auto role_time = [time_mode](ExtrusionRole role) {
         auto it = std::find_if(time_mode.roles_times.begin(), time_mode.roles_times.end(), [role](const std::pair<ExtrusionRole, float>& item) { return role == item.first; });

@@ -682,6 +682,7 @@ wxMenu* MenuFactory::append_submenu_add_generic(wxMenu* menu, ModelVolumeType ty
 
     append_menu_item_add_text(sub_menu, type);
     append_menu_item_add_svg(sub_menu, type);
+    append_menu_item_add_image(sub_menu, type);
     append_menu_item_add_code(sub_menu, type);
     append_menu_item_add_shape(sub_menu, type);
 
@@ -870,6 +871,25 @@ void MenuFactory::append_menu_item_add_shape(wxMenu *menu, ModelVolumeType type)
         svg->create_shape(type, canvas->get_popup_menu_position());
     };
     append_menu_item(menu, wxID_ANY, _L("Shape") + dots, _L("Emboss a circle, square, star or other simple shape"), add_shape,
+                     "menu_obj_svg", menu);
+}
+
+void MenuFactory::append_menu_item_add_image(wxMenu *menu, ModelVolumeType type)
+{
+    if (type != ModelVolumeType::MODEL_PART && type != ModelVolumeType::NEGATIVE_VOLUME &&
+        type != ModelVolumeType::PARAMETER_MODIFIER && type != ModelVolumeType::INVALID)
+        return;
+    auto add_image = [type](const wxCommandEvent & /*unnamed*/) {
+        const GLCanvas3D *canvas = plater()->canvas3D();
+        auto *svg = dynamic_cast<GLGizmoSVG *>(canvas->get_gizmos_manager().get_gizmo(GLGizmosManager::Svg));
+        assert(svg != nullptr);
+        if (svg == nullptr)
+            return;
+        // INVALID .. no selected object, image is created as new object
+        svg->create_image(type, canvas->get_popup_menu_position());
+    };
+    append_menu_item(menu, wxID_ANY, _L("Image") + dots,
+                     _L("Trace a PNG or JPG image into shapes, one part per colour, embossed like an SVG"), add_image,
                      "menu_obj_svg", menu);
 }
 

@@ -703,6 +703,43 @@ std::vector<Preset*> PresetBundle::get_current_project_embedded_presets()
     return project_presets;
 }
 
+// Ultra: "Keep my printer" (keep_printer_on_open) switches a project that was saved for another
+// printer over to the user's printer, and the switch deselects every process / filament preset
+// the new printer cannot use. For a project preset that means it is gone from the combos -
+// project presets follow their parent profile's printer list - and the values the user saved
+// into the project are replaced by the new printer's defaults. This lists what would be lost.
+std::vector<std::string> PresetBundle::project_presets_lost_on_printer(const std::string &printer_name) const
+{
+    std::vector<std::string> lost;
+    const Preset *target = this->printers.find_preset(printer_name, false);
+    if (target == nullptr)
+        return lost;
+    // Presets load_external_preset() made up while reading a project, for a slot whose values
+    // matched no preset: "<name>(<file>.3mf)". They stand for "whatever the file had", which is
+    // exactly what Keep my printer is meant to replace, not for something the user saved.
+    auto made_up = [](const std::string &name) { return boost::algorithm::iends_with(name, ".3mf)"); };
+    auto add = [&lost](const std::string &name) {
+        if (std::find(lost.begin(), lost.end(), name) == lost.end())
+            lost.push_back(name);
+    };
+
+    const Preset &printer = this->printers.get_selected_preset();
+    if (printer.is_project_embedded && printer.name != target->name && !made_up(printer.name))
+        add(printer.name);
+
+    const PresetWithVendorProfile target_with_vendor = this->printers.get_preset_with_vendor_profile(*target);
+    auto check = [&](const PresetCollection &presets, const Preset *preset) {
+        if (preset == nullptr || !preset->is_project_embedded || made_up(preset->name))
+            return;
+        if (!is_compatible_with_printer(presets.get_preset_with_vendor_profile(*preset), target_with_vendor))
+            add(preset->name);
+    };
+    check(this->prints, &this->prints.get_selected_preset());
+    for (const std::string &name : this->filament_presets)
+        check(this->filaments, this->filaments.find_preset(name, false));
+    return lost;
+}
+
 //BBS: reset project embedded presets
 void PresetBundle::reset_project_embedded_presets()
 {
@@ -1913,7 +1950,8 @@ const int PresetBundle::get_required_hrc_by_filament_type(const std::string& fil
 
 //BBS: add project embedded preset logic
 void PresetBundle::save_changes_for_preset(const std::string& new_name, Preset::Type type,
-                                           const std::vector<std::string>& unselected_options, bool save_to_project)
+                                           const std::vector<std::string>& unselected_options, bool save_to_project,
+                                           ProjectPresetPrinters project_printers)
 {
     PresetCollection& presets = type == Preset::TYPE_PRINT          ? prints :
                                 type == Preset::TYPE_SLA_PRINT      ? sla_prints :
@@ -1929,7 +1967,7 @@ void PresetBundle::save_changes_for_preset(const std::string& new_name, Preset::
     // Save the preset into Slic3r::data_dir / presets / section_name / preset_name.ini
     //BBS: add project embedded preset logic
     //presets.save_current_preset(new_name);
-    presets.save_current_preset(new_name, false, save_to_project);
+    presets.save_current_preset(new_name, false, save_to_project, nullptr, nullptr, project_printers);
     // Mark the print & filament enabled if they are compatible with the currently selected preset.
     // If saving the preset changes compatibility with other presets, keep the now incompatible dependent presets selected, however with a "red flag" icon showing that they are no more compatible.
     update_compatible(PresetSelectCompatibleType::Never);

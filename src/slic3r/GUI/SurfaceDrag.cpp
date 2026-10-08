@@ -90,9 +90,11 @@ bool on_mouse_surface_drag(const wxMouseEvent         &mouse_event,
     // Fix when leave window during dragging
     // Fix when click right button
     if (surface_drag.has_value() && !mouse_event.Dragging()) {
-        // write transformation from UI into model
-        canvas.do_move(L("Move over surface"));
-        wxGetApp().obj_manipul()->set_dirty();
+        // write transformation from UI into model (a plain click moved nothing)
+        if (surface_drag->moved) {
+            canvas.do_move(L("Move over surface"));
+            wxGetApp().obj_manipul()->set_dirty();
+        }
 
         // allow moving with object again
         canvas.enable_moving(true);
@@ -237,6 +239,42 @@ std::optional<float> calc_distance(const GLVolume &gl_volume, const RaycastManag
 
     // distiguish sign
     return sign * static_cast<float>(sqrt(distance_sq));
+}
+
+std::optional<EmbossFreeTransform::SurfaceProbe> probe_surface(const GLVolume &gl_volume, RaycastManager &raycaster, GLCanvas3D &canvas)
+{
+    const ModelObject *object = get_model_object(gl_volume, canvas.get_model()->objects);
+    if (object == nullptr)
+        return {};
+    const ModelInstance *instance = get_model_instance(gl_volume, *object);
+    const ModelVolume   *volume   = get_model_volume(gl_volume, *object);
+    if (instance == nullptr || volume == nullptr || volume->is_the_only_one_part() || !volume->emboss_shape.has_value())
+        return {};
+
+    RaycastManager::AllowVolumes condition = create_condition(object->volumes, volume->id());
+    RaycastManager::Meshes       meshes    = create_meshes(canvas, condition);
+    raycaster.actualize(*instance, &condition, &meshes);
+
+    Transform3d w = gl_volume.world_matrix();
+    if (const std::optional<Transform3d> &fix = volume->emboss_shape->fix_3mf_tr; fix.has_value())
+        w = w * fix->inverse();
+    const Vec3d p      = w.translation();
+    const Vec3d normal = get_z_base(w).normalized();
+    const Vec3d dir    = -normal;
+    const std::optional<RaycastManager::Hit> hit = raycaster.closest_hit(p, dir, &condition);
+    if (!hit.has_value())
+        return {};
+
+    const Transform3d &tr          = raycaster.get_transformation(hit->tr_key);
+    const Vec3d        hit_world   = tr * hit->position;
+    const Vec3d        hit_normal  = (tr.linear().inverse().transpose() * hit->normal).normalized();
+    const Vec3d        p_to_hit    = hit_world - p;
+    // same sign as calc_distance(): positive when the surface lies behind the part (part above it)
+    const double       sign        = p_to_hit.dot(dir) > 0. ? 1. : -1.;
+    EmbossFreeTransform::SurfaceProbe res;
+    res.distance  = sign * p_to_hit.norm();
+    res.cos_angle = normal.dot(hit_normal);
+    return res;
 }
 
 std::optional<float> calc_angle(const Selection &selection)
@@ -681,6 +719,7 @@ bool dragging(const Vec2d                 &mouse_pos,
             continue;
         vol->set_volume_transformation(volume_new);
     }
+    surface_drag.moved = true;
 
     canvas.set_as_dirty();
     // Show current position in manipulation panel

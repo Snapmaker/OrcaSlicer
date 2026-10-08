@@ -1661,9 +1661,13 @@ void TreeSupport::generate_toolpaths(const TreeSupportGroupContext *groups)
                         std::shared_ptr<Fill> filler_support =
                             std::shared_ptr<Fill>(Fill::new_from_type(base_fill_pattern));
                         filler_support->set_bounding_box(bbox_object);
+                        // support_spacing = pattern spacing + flow spacing is always > 0, so a zero
+                        // support_base_pattern_spacing no longer gives a zero line distance
+                        // (support_density = flow spacing / support_spacing; make_perimeter_and_infill
+                        // divides the spacing by it).
                         filler_support->spacing = support_base_on_bed
                             ? flow.spacing()
-                            : (object_config.support_base_pattern_spacing.value * support_density);
+                            : (support_spacing * support_density);
                         filler_support->angle = Geometry::deg2rad(object_config.support_angle.value);
 
                         Polygons loops = to_polygons(poly);
@@ -2053,7 +2057,7 @@ Polygons TreeSupport::get_trim_support_regions(
     static const double no_overlap_xy_gap = 0.2f;
     double gap_xy_scaled = scale_(gap_xy);
     SupportLayer& support_layer = *support_layer_ptr;
-    auto m_print_config = object.print()->config();
+    const PrintConfig &print_config = object.print()->config();
 
     size_t idx_object_layer_overlapping = size_t(-1);
 
@@ -2100,7 +2104,7 @@ Polygons TreeSupport::get_trim_support_regions(
             const Layer& object_layer = *object.layers()[i];
             bool some_region_overlaps = false;
             for (LayerRegion* region : object_layer.regions()) {
-                coordf_t bridging_height = region->region().bridging_height_avg(m_print_config);
+                coordf_t bridging_height = region->region().bridging_height_avg(print_config);
                 if (object_layer.print_z - bridging_height > support_layer.print_z + gap_extra_above - EPSILON)
                     break;
                 some_region_overlaps = true;

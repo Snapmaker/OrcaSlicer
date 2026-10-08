@@ -40,6 +40,8 @@
 #include "DailyTips.hpp"
 #include "PlateFocusHide.hpp"
 #include "FrameProfiler.hpp"
+#include "CameraUtils.hpp"
+#include "EmbossPicking.hpp"
 
 #include "slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
@@ -73,6 +75,7 @@
 #include <boost/log/trivial.hpp>
 #include <boost/algorithm/string/predicate.hpp>
 
+#include <cstring>
 #include <iostream>
 #include <float.h>
 #include <algorithm>
@@ -537,8 +540,9 @@ void GLCanvas3D::LayersEditing::init()
 {
     glsafe(::glGenTextures(1, (GLuint*)&m_z_texture_id));
     glsafe(::glBindTexture(GL_TEXTURE_2D, m_z_texture_id));
-    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP));
-    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP));
+    // GL_CLAMP is gone from core profiles (GL_INVALID_ENUM); upstream uses GL_CLAMP_TO_EDGE as well.
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
     glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
     glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST));
     glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 1));
@@ -1654,7 +1658,11 @@ bool GLCanvas3D::init()
     }
 
     GLint stencilBits = 0;
-    glsafe(::glGetIntegerv(GL_STENCIL_BITS, &stencilBits));
+    if (OpenGLManager::get_gl_info().is_core_profile())
+        // GL_STENCIL_BITS is gone from core profiles; ask the default framebuffer instead.
+        glsafe(::glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_STENCIL, GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &stencilBits));
+    else
+        glsafe(::glGetIntegerv(GL_STENCIL_BITS, &stencilBits));
     m_stencilFallbackAvailable = stencilBits > 0;
     if (stencilBits < 8)
     {
@@ -3634,10 +3642,43 @@ void GLCanvas3D::render(bool only_init)
         wxGetApp().imgui()->render();
     }
 
+    // EDGE (core profile): release builds do not check GL calls (glsafe is a no-op), so read the
+    // error flag once per frame and log what a frame left behind, with the canvas and the open
+    // gizmo, within OpenGLManager's per-session budget. The first clean frame of each canvas is
+    // logged too, so a user log shows the renderer came up without errors.
+    report_frame_gl_errors("frame");
+
     m_canvas->SwapBuffers();
     if (show_render_stats)
         m_frame_profiler->end_frame();
     m_render_stats.increment_fps_counter();
+}
+
+static const char* gl_canvas_type_name(GLCanvas3D::ECanvasType type)
+{
+    switch (type) {
+    case GLCanvas3D::ECanvasType::CanvasView3D:       return "Prepare (3D)";
+    case GLCanvas3D::ECanvasType::CanvasPreview:      return "Preview";
+    case GLCanvas3D::ECanvasType::CanvasAssembleView: return "Assemble";
+    default:                                          return "unknown canvas";
+    }
+}
+
+void GLCanvas3D::report_frame_gl_errors(const char* pass)
+{
+    const GLenum first_error = ::glGetError();
+    if (first_error == GL_NO_ERROR) {
+        if (!m_gl_clean_frame_logged && std::strcmp(pass, "frame") == 0) {
+            m_gl_clean_frame_logged = true;
+            BOOST_LOG_TRIVIAL(warning) << "OpenGL: first " << gl_canvas_type_name(m_canvas_type) << " frame rendered without GL errors ("
+                                       << (OpenGLManager::get_gl_info().is_core_profile() ? "core" : "compatibility/legacy") << " profile)";
+        }
+        return;
+    }
+    std::string where = std::string("in a ") + gl_canvas_type_name(m_canvas_type) + " " + pass;
+    if (const GLGizmoBase* gizmo = m_gizmos.get_current(); gizmo != nullptr)
+        where += " with gizmo " + gizmo->get_icon_filename();
+    OpenGLManager::report_gl_errors(where, first_error);
 }
 
 void GLCanvas3D::render_thumbnail(ThumbnailData &         thumbnail_data,
@@ -3698,6 +3739,8 @@ void GLCanvas3D::render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w,
         break;
     }
     }
+    // EDGE (core profile): thumbnails render off-screen, outside any frame; check them on their own.
+    report_frame_gl_errors(for_picking ? "thumbnail (picking)" : "thumbnail");
 }
 
 // New named-viewpoint overload (pure addition). Mirrors the overload above but threads a
@@ -3741,6 +3784,7 @@ void GLCanvas3D::render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w,
         break;
     }
     }
+    report_frame_gl_errors(for_picking ? "thumbnail (picking)" : "thumbnail");
 }
 
 void GLCanvas3D::render_calibration_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params)
@@ -3901,6 +3945,37 @@ void GLCanvas3D::mirror_selection(Axis axis)
     do_mirror(L("Mirror Object"));
     // BBS
     //wxGetApp().obj_manipul()->set_dirty();
+}
+
+// The ModelVolume behind a GLVolume, or nullptr (wipe towers, SLA supports and pads, stale indices).
+static const ModelVolume* picking_model_volume(const GLVolume& v, const Model* model)
+{
+    if (model == nullptr)
+        return nullptr;
+    const int object_idx = v.object_idx();
+    const int volume_idx = v.volume_idx();
+    if (object_idx < 0 || object_idx >= (int)model->objects.size() || volume_idx < 0)
+        return nullptr;
+    const ModelObject* object = model->objects[object_idx];
+    if (object == nullptr || volume_idx >= (int)object->volumes.size())
+        return nullptr;
+    return object->volumes[volume_idx];
+}
+
+static bool is_text_or_svg_volume(const ModelVolume& mv)
+{
+    return mv.is_text() || mv.emboss_shape.has_value();
+}
+
+// Depth tolerance [mm] for a text or SVG part (its emboss depth in world units), -1 for other volumes.
+static double emboss_prefer_tolerance(const GLVolume& v, const ModelVolume& mv)
+{
+    if (!is_text_or_svg_volume(mv))
+        return -1.;
+    double depth = mv.emboss_shape.has_value() ? mv.emboss_shape->projection.depth : 1.;
+    // The depth runs along the volume's local Z; follow any scale of the volume and its instance.
+    depth *= (v.world_matrix().linear() * Vec3d::UnitZ()).norm();
+    return EmbossPicking::prefer_tolerance_from_depth(depth);
 }
 
 // Reload the 3D scene of
@@ -4449,6 +4524,10 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
         assert(v->mesh_raycaster != nullptr);
         std::shared_ptr<SceneRaycasterItem> raycaster = add_raycaster_for_picking(SceneRaycaster::EType::Volume, i, *v->mesh_raycaster, v->world_matrix());
         raycaster->set_active(v->is_active);
+        // Text and SVG parts win near-ties against the rest of their own object (EmbossPicking.hpp).
+        const ModelVolume* mv = picking_model_volume(*v, m_model);
+        raycaster->set_pick_owner(v->object_idx(), v->instance_idx(),
+                                  mv != nullptr ? emboss_prefer_tolerance(*v, *mv) : -1.);
     }
 
     // refresh gizmo elements raycasters for picking
@@ -5386,7 +5465,7 @@ void GLCanvas3D::on_mouse_wheel(wxMouseEvent& evt)
     if (m_gizmos.on_mouse_wheel(evt))
         return;
 
-    if (m_canvas_type == CanvasAssembleView && (evt.AltDown() || evt.CmdDown())) {
+    if (m_canvas_type == CanvasAssembleView && (evt.AltDown() || evt.CmdDown()) && m_gizmos.m_assemble_view_data != nullptr) {
         float rotation = (float)evt.GetWheelRotation() / (float)evt.GetWheelDelta();
         if (evt.AltDown()) {
             auto clp_dist = m_gizmos.m_assemble_view_data->model_objects_clipper()->get_position();
@@ -6083,7 +6162,9 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
                 deselect_all();
         }
         //BBS Select plate in this 3D canvas.
-        else if (evt.LeftUp() && !m_mouse.dragging && m_picking_enabled && !m_hover_plate_idxs.empty() && (m_canvas_type == CanvasView3D) && !is_layers_editing_enabled())
+        // The left up may come from an ImGui window (e.g. a drag started on the gizmo floating window and released over the bed),
+        // in which case it must not be treated as a click on the plate, otherwise the gizmo would be closed (see deselect_all below).
+        else if (evt.LeftUp() && !m_mouse.ignore_left_up && !m_mouse.dragging && m_picking_enabled && !m_hover_plate_idxs.empty() && (m_canvas_type == CanvasView3D) && !is_layers_editing_enabled())
         {
                 int hover_idx = m_hover_plate_idxs.front();
                 wxGetApp().plater()->select_plate_by_hover_id(hover_idx);
@@ -8497,7 +8578,7 @@ void GLCanvas3D::_update_select_plate_toolbar_stats_item(bool force_selected) {
     else
         m_sel_plate_toolbar.show_stats_item = false;
 
-    if (force_selected && m_sel_plate_toolbar.show_stats_item)
+    if (force_selected && m_sel_plate_toolbar.show_stats_item && m_sel_plate_toolbar.m_all_plates_stats_item)
         m_sel_plate_toolbar.m_all_plates_stats_item->selected = true;
 }
 
@@ -8770,6 +8851,92 @@ void GLCanvas3D::_refresh_if_shown_on_screen()
     }
 }
 
+void GLCanvas3D::_apply_emboss_footprint_hover(bool gizmo_element_hovered)
+{
+    using namespace EmbossPicking;
+
+    const GLGizmosManager::EType gizmo_type = m_gizmos.get_current_type();
+    if (gizmo_type != GLGizmosManager::EType::Emboss && gizmo_type != GLGizmosManager::EType::Svg)
+        return;
+    // The tool's own grabbers (the rotation ring) keep the hover.
+    if (gizmo_element_hovered)
+        return;
+    // Same rule as the hover itself: CTRL with a tool open hovers no volume.
+    if (wxGetKeyState(WXK_CONTROL))
+        return;
+
+    const Selection::IndicesList& selected = m_selection.get_volume_idxs();
+    if (selected.size() != 1)
+        return;
+    const int edited_idx = (int)*selected.begin();
+    if (edited_idx < 0 || edited_idx >= (int)m_volumes.volumes.size())
+        return;
+    const GLVolume* edited = m_volumes.volumes[edited_idx];
+    if (edited == nullptr || !edited->is_active || edited->disabled)
+        return;
+    const ModelVolume* edited_mv = picking_model_volume(*edited, m_model);
+    if (edited_mv == nullptr || !is_text_or_svg_volume(*edited_mv))
+        return;
+    // A lone text / SVG object moves with the ordinary object drag, which needs a press on the mesh
+    // itself; only a part on an object gets the surface drag that the footprint starts.
+    if (edited_mv->is_the_only_one_part())
+        return;
+
+    HoverOwner owner = HoverOwner::Nothing;
+    const int hovered_idx = get_first_hover_volume_idx();
+    if (hovered_idx == edited_idx)
+        owner = HoverOwner::EditedVolume;
+    else if (hovered_idx >= 0 && hovered_idx < (int)m_volumes.volumes.size()) {
+        const GLVolume*    hovered    = m_volumes.volumes[hovered_idx];
+        const ModelVolume* hovered_mv = picking_model_volume(*hovered, m_model);
+        if (hovered->object_idx() != edited->object_idx() || hovered->instance_idx() != edited->instance_idx())
+            owner = HoverOwner::OtherObject;
+        else if (hovered_mv != nullptr && is_text_or_svg_volume(*hovered_mv))
+            owner = HoverOwner::OtherTextOrSvg;
+        else
+            owner = HoverOwner::SameObjectPart;
+    }
+    if (owner == HoverOwner::EditedVolume || !footprint_takes_over(owner))
+        return;
+
+    // Screen footprint: the projected convex hull of the volume (its bounding box when it has no hull).
+    std::vector<Vec3d> vertices;
+    if (const TriangleMesh* hull = edited->convex_hull(); hull != nullptr && !hull->its.vertices.empty()) {
+        vertices.reserve(hull->its.vertices.size());
+        for (const Vec3f& vertex : hull->its.vertices)
+            vertices.emplace_back(vertex.cast<double>());
+    } else {
+        const BoundingBoxf3& bb = edited->bounding_box();
+        if (!bb.defined)
+            return;
+        for (int corner = 0; corner < 8; ++corner)
+            vertices.emplace_back((corner & 1) ? bb.max.x() : bb.min.x(),
+                                  (corner & 2) ? bb.max.y() : bb.min.y(),
+                                  (corner & 4) ? bb.max.z() : bb.min.z());
+    }
+
+    const Camera&     camera          = wxGetApp().plater()->get_camera();
+    const Transform3d world           = edited->world_matrix();
+    const Vec3d       camera_position = camera.get_position();
+    const Vec3d       camera_forward  = camera.get_dir_forward();
+    for (Vec3d& vertex : vertices) {
+        vertex = world * vertex;
+        // A vertex behind a perspective camera folds the projection over; leave such views alone.
+        if (camera.get_type() == Camera::EType::Perspective && (vertex - camera_position).dot(camera_forward) <= 0.)
+            return;
+    }
+    const Polygon footprint = Geometry::convex_hull(CameraUtils::project(camera, vertices));
+    const double  padding   = FOOTPRINT_PADDING_PX * get_canvas_size().get_scale_factor();
+    if (!footprint_contains(footprint, m_mouse.position, padding))
+        return;
+
+    m_hover_volume_idxs.assign(1, edited_idx);
+    if (!m_hover_plate_idxs.empty()) {
+        m_hover_plate_idxs.clear();
+        wxGetApp().plater()->get_partplate_list().reset_hover_id();
+    }
+}
+
 void GLCanvas3D::_picking_pass()
 {
     if (!m_picking_enabled || m_mouse.dragging || m_mouse.position == Vec2d(DBL_MAX, DBL_MAX) || m_gizmos.is_dragging()) {
@@ -8841,6 +9008,9 @@ void GLCanvas3D::_picking_pass()
     }
     else
         m_gizmos.set_hover_id(-1);
+
+    _apply_emboss_footprint_hover(hit.is_valid() &&
+        (hit.type == SceneRaycaster::EType::Gizmo || hit.type == SceneRaycaster::EType::FallbackGizmo));
 
     _update_volumes_hover_state();
 
@@ -9372,7 +9542,7 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
                 }
                 },
                 partly_inside_enable);
-            if (m_canvas_type == CanvasAssembleView && m_gizmos.m_assemble_view_data->model_objects_clipper()->get_position() > 0) {
+            if (m_canvas_type == CanvasAssembleView && m_gizmos.m_assemble_view_data != nullptr && m_gizmos.m_assemble_view_data->model_objects_clipper()->get_position() > 0) {
                 const GLGizmosManager& gm = get_gizmos_manager();
                 shader->stop_using();
                 gm.render_painter_assemble_view();
@@ -10225,11 +10395,29 @@ void GLCanvas3D::_render_return_toolbar() const
     ImVec2 margin = ImVec2(10.0f, 5.0f);
 
     if (ImGui::ImageTextButton(real_size,_utf8(L("Return")).c_str(), m_return_toolbar.get_return_texture_id(), button_icon_size, uv0, uv1, -1, bg_col, tint_col, margin)) {
-        if (m_canvas != nullptr)
-            wxPostEvent(m_canvas, SimpleEvent(EVT_GLVIEWTOOLBAR_3D));
         const_cast<GLGizmosManager*>(&m_gizmos)->reset_all_states();
-        wxGetApp().plater()->get_view3D_canvas3D()->get_gizmos_manager().reset_all_states();
-        wxGetApp().plater()->get_view3D_canvas3D()->reload_scene(true);
+        // Orca #13091: switching the view from inside the assembly canvas' own render/ImGui callback
+        // tore the canvas down mid-frame. Defer the view switch + 3D reload to after the event returns.
+        if (m_canvas != nullptr && !wxGetApp().is_closing()) {
+            m_canvas->CallAfter([]() {
+                auto& app = wxGetApp();
+                if (app.is_closing())
+                    return;
+
+                auto* plater = app.plater();
+                if (plater == nullptr)
+                    return;
+
+                plater->select_view_3D("3D");
+
+                auto* view3d_canvas = plater->get_view3D_canvas3D();
+                if (view3d_canvas == nullptr)
+                    return;
+
+                view3d_canvas->get_gizmos_manager().reset_all_states();
+                view3d_canvas->reload_scene(true);
+            });
+        }
     }
     ImGui::PopStyleColor(5);
     ImGui::PopStyleVar(1);
@@ -10500,6 +10688,9 @@ void GLCanvas3D::_render_assemble_control()
         GLVolume::explosion_ratio = m_explosion_ratio = 1.0;
         return;
     }
+    // Orca #13413: the assemble view data is gone while the assembly view is being torn down
+    if (m_gizmos.m_assemble_view_data == nullptr)
+        return;
     if (m_gizmos.get_current_type() == GLGizmosManager::EType::MmSegmentation) {
         m_gizmos.m_assemble_view_data->model_objects_clipper()->set_position(0.0, true);
         return;
@@ -10681,7 +10872,7 @@ void GLCanvas3D::_render_camera_target()
     static const float half_length = 5.0f;
 
     glsafe(::glDisable(GL_DEPTH_TEST));
-    glsafe(::glLineWidth(2.0f));
+    OpenGLManager::set_line_width(2.0f);
     const Vec3f& target = wxGetApp().plater()->get_camera().get_target().cast<float>();
     bool target_changed = !m_camera_target.target.isApprox(target.cast<double>());
     m_camera_target.target = target.cast<double>();
@@ -11650,6 +11841,10 @@ void GLCanvas3D::_set_warning_notification_if_needed(EWarning warning)
 
 void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
 {
+    // Orca #14588: skip on shutdown. Plater's pImpl is already freed, so
+    // get_notification_manager() would use-after-free (GLCanvas3D dtor -> reset_volumes()).
+    if (wxGetApp().is_closing())
+        return;
     enum ErrorType{
         PLATER_WARNING,
         PLATER_ERROR,

@@ -13,6 +13,9 @@ bool open_zip_reader(mz_zip_archive *zip, const std::string &fname_utf8);
 bool open_zip_writer(mz_zip_archive *zip, const std::string &fname_utf8);
 bool close_zip_reader(mz_zip_archive *zip);
 bool close_zip_writer(mz_zip_archive *zip);
+// Entry name as UTF-8: the UTF-8 flagged name, else the Info-ZIP Unicode Path extra field, else the
+// legacy name decoded with the system code page.
+std::string decode_archive_entry_path(mz_zip_archive *zip, const mz_zip_archive_file_stat &stat);
 
 // Unix symlink bit in the zip central-directory external attributes (high 16 bits).
 bool zip_entry_is_symlink(const mz_zip_archive_file_stat &stat);

@@ -88,6 +88,11 @@ const std::string rotation_snapshot_name = L("Text rotate");
 const std::string move_snapshot_name = L("Text move");
 // NOTE: Translation is made in "m_parent.do_translate()"
 
+// TRN - Title in Undo/Redo stack after the text was moved by the arrows of the Text tool
+const std::string move_3d_snapshot_name = L("Text 3D move");
+// TRN - Title in Undo/Redo stack after the text was turned by the rings of the Text tool
+const std::string rotate_3d_snapshot_name = L("Text 3D rotate");
+
 template<typename T> struct Limit {
     // Limitation for view slider range in GUI
     MinMax<T> gui;
@@ -330,6 +335,7 @@ GLGizmoEmboss::GLGizmoEmboss(GLCanvas3D &parent, const std::string &icon_filenam
     , m_style_manager(m_imgui->get_glyph_ranges(), create_default_styles)
     , m_face_names(std::make_unique<Facenames>())
     , m_rotate_gizmo(parent, GLGizmoRotate::Axis::Z) // grab id = 2 (Z axis)
+    , m_handles(parent)
 {
     m_rotate_gizmo.set_group_id(0);
     m_rotate_gizmo.set_force_local_coordinate(true);
@@ -527,7 +533,8 @@ bool GLGizmoEmboss::on_mouse_for_rotation(const wxMouseEvent &mouse_event)
     bool used = use_grabbers(mouse_event);
     if (!m_dragging) return used;
 
-    if (mouse_event.Dragging()) {
+    // the 3D handles transform the part themselves (on_dragging)
+    if (mouse_event.Dragging() && !EmbossTransformHandles::is_handle(m_hover_id)) {
         // check that style is activ
         assert(m_style_manager.is_active_font());
         if (!m_style_manager.is_active_font())
@@ -547,16 +554,31 @@ bool GLGizmoEmboss::on_mouse_for_translate(const wxMouseEvent &mouse_event)
     
     const Camera &camera = wxGetApp().plater()->get_camera();
     bool was_dragging = m_surface_drag.has_value();
+    bool was_moved    = was_dragging && m_surface_drag->moved;
     bool res = on_mouse_surface_drag(mouse_event, camera, m_surface_drag, m_parent, m_raycast_manager, UP_LIMIT);
     bool is_dragging = m_surface_drag.has_value();
 
-    // End with surface dragging?
-    if (was_dragging && !is_dragging) 
-        volume_transformation_changed();
+    // End with surface dragging? A press and release that moved nothing changes nothing,
+    // except that a job the press cancelled has to run again.
+    if (was_dragging && !is_dragging) {
+        if (was_moved) {
+            // The drag placed the part on the surface again: give back the projection a 3D handle took.
+            if (std::optional<EmbossFreeTransform::Projection> back =
+                    EmbossFreeTransform::reattach(current_projection(), m_detached_projection);
+                back.has_value())
+                set_projection(*back);
+            m_detached_projection.reset();
+            volume_transformation_changed();
+        }
+        else if (m_surface_drag_cancelled_job)
+            process(false);
+        m_surface_drag_cancelled_job = false;
+    }
     
     // Start with dragging
     else if (!was_dragging && is_dragging) {
         // Cancel job to prevent interuption of dragging (duplicit result)
+        m_surface_drag_cancelled_job = m_job_cancel != nullptr && !m_job_cancel->load();
         if (m_job_cancel != nullptr)
             m_job_cancel->store(true);
     }
@@ -584,8 +606,11 @@ bool GLGizmoEmboss::on_mouse_for_translate(const wxMouseEvent &mouse_event)
 
 void GLGizmoEmboss::on_mouse_change_selection(const wxMouseEvent &mouse_event)
 {
-    static bool was_dragging = true;  
-    if ((mouse_event.LeftUp() || mouse_event.RightUp()) && !was_dragging) {
+    static bool was_dragging = true;
+    // The left up may be the end of a drag that started on the gizmo floating window (e.g. selecting
+    // text in the input field). Such a release is not a click on the scene and must not close the gizmo.
+    // (The flag is only set for left up events, so right up behavior is unchanged.)
+    if ((mouse_event.LeftUp() || mouse_event.RightUp()) && !was_dragging && !m_parent.is_mouse_left_up_ignored()) {
         // is hovered volume closest hovered?
         int hovered_idx = m_parent.get_first_hover_volume_idx();
         if (hovered_idx < 0) 
@@ -738,6 +763,7 @@ std::string GLGizmoEmboss::get_action_snapshot_name() const { return _u8L("Embos
 bool GLGizmoEmboss::on_init()
 {
     m_rotate_gizmo.init();
+    m_handles.init();
     ColorRGBA gray_color(.6f, .6f, .6f, .3f);
     m_rotate_gizmo.set_highlight_color(gray_color);
 
@@ -785,18 +811,25 @@ void GLGizmoEmboss::on_render() {
     bool is_parent_dragging = m_parent.is_mouse_dragging();
     // Do NOT render rotation grabbers when dragging object
     bool is_rotate_by_grabbers = m_dragging;
-    if (is_rotate_by_grabbers || 
+    if (is_rotate_by_grabbers ||
         (!is_surface_dragging && !is_parent_dragging)) {
         glsafe(::glClear(GL_DEPTH_BUFFER_BIT));
-        m_rotate_gizmo.render();
+        // while one of them is dragged, only that one is drawn
+        const bool is_handle_dragging = m_handles.is_handle_dragging();
+        if (!is_handle_dragging)
+            m_rotate_gizmo.render();
+        if (!m_dragging || is_handle_dragging)
+            m_handles.render();
     }
 }
 
 void GLGizmoEmboss::on_register_raycasters_for_picking(){
     m_rotate_gizmo.register_raycasters_for_picking();
+    m_handles.on_host_register();
 }
 void GLGizmoEmboss::on_unregister_raycasters_for_picking(){
     m_rotate_gizmo.unregister_raycasters_for_picking();
+    m_handles.on_host_unregister();
 }
 
 #ifdef SHOW_FINE_POSITION
@@ -956,6 +989,7 @@ void GLGizmoEmboss::on_set_state()
     m_parent.set_raycaster_gizmos_on_top(m_state == GLGizmoBase::On);
 
     m_rotate_gizmo.set_state(m_state);
+    m_handles.set_state(m_state);
 
     // Closing gizmo. e.g. selecting another one
     if (m_state == GLGizmoBase::Off) {
@@ -983,9 +1017,26 @@ void GLGizmoEmboss::data_changed(bool is_serializing) {
         close();
 }
 
-void GLGizmoEmboss::on_start_dragging() { m_rotate_gizmo.start_dragging(); }
+void GLGizmoEmboss::on_start_dragging()
+{
+    if (EmbossTransformHandles::is_handle(m_hover_id)) {
+        if (m_handles.start_drag(m_hover_id)) {
+            // Cancel a running update, it would overwrite the dragged part (as the surface drag does)
+            m_handles_cancelled_job = m_job_cancel != nullptr && !m_job_cancel->load();
+            if (m_job_cancel != nullptr)
+                m_job_cancel->store(true);
+        }
+        return;
+    }
+    m_rotate_gizmo.start_dragging();
+}
 void GLGizmoEmboss::on_stop_dragging()
 {
+    if (EmbossTransformHandles::is_handle(m_hover_id) || m_handles.is_handle_dragging()) {
+        if (std::optional<EmbossTransformHandles::Result> result = m_handles.stop_drag(); result.has_value())
+            on_handles_drag_finished(*result);
+        return;
+    }
     m_rotate_gizmo.stop_dragging();
 
     // This is fast fix for second try to rotate
@@ -997,7 +1048,128 @@ void GLGizmoEmboss::on_stop_dragging()
     m_rotate_start_angle.reset();
     volume_transformation_changed();
 }
-void GLGizmoEmboss::on_dragging(const UpdateData &data) { m_rotate_gizmo.dragging(data); }
+void GLGizmoEmboss::on_dragging(const UpdateData &data)
+{
+    if (EmbossTransformHandles::is_handle(m_hover_id))
+        m_handles.drag(data);
+    else
+        m_rotate_gizmo.dragging(data);
+}
+
+EmbossFreeTransform::Projection GLGizmoEmboss::current_projection() const
+{
+    const StyleManager::Style &style = m_style_manager.get_style();
+    EmbossFreeTransform::Projection res;
+    res.use_surface = style.projection.use_surface;
+    res.per_glyph   = style.prop.per_glyph;
+    res.curved      = style.projection.bend.mode != EmbossBend::Mode::off;
+    return res;
+}
+
+void GLGizmoEmboss::set_projection(const EmbossFreeTransform::Projection &projection)
+{
+    StyleManager::Style &style   = m_style_manager.get_style();
+    style.projection.use_surface = projection.use_surface;
+    style.prop.per_glyph         = projection.per_glyph;
+    // as the "Use surface" checkbox: the surface takes the place of the distance
+    if (projection.use_surface)
+        style.distance.reset();
+    if (!projection.per_glyph)
+        m_text_lines.reset();
+    m_placement_key.reset();
+}
+
+void GLGizmoEmboss::update_handles_visibility()
+{
+    // The handles move a part of an object; a text object moves with the Move and Rotate tools.
+    const Selection &selection = m_parent.get_selection();
+    const bool visible = m_handles.is_enabled() && m_volume != nullptr && !m_volume->is_the_only_one_part() &&
+                         selection.volumes_count() == 1 && selection.get_mode() == Selection::Volume;
+    m_handles.set_visible(visible);
+    // Together with the handles the in-plane ring is the blue Z ring of the three.
+    m_rotate_gizmo.set_highlight_color(visible ? AXES_COLOR[2] : ColorRGBA(.6f, .6f, .6f, .3f));
+}
+
+void GLGizmoEmboss::on_handles_drag_finished(const EmbossTransformHandles::Result &result)
+{
+    using namespace EmbossFreeTransform;
+    const bool cancelled_job = m_handles_cancelled_job;
+    m_handles_cancelled_job  = false;
+    m_placement_key.reset();
+    if (m_volume == nullptr || !m_volume->text_configuration.has_value() || !m_volume->emboss_shape.has_value() ||
+        !m_style_manager.is_active_font())
+        return;
+
+    const Kind kind = result.rotation ? classify_rotation(result.axis, result.normal, result.angle) :
+                                        classify_move(result.displacement, result.normal);
+    if (kind == Kind::None) {
+        // a press and release without a move: no undo step (the handles put the part back exactly)
+        if (cancelled_job)
+            process(false);
+        return;
+    }
+
+    // One undo step for the whole change: the snapshot holds the state before the drag, the
+    // emboss update below is not given one of its own.
+    if (result.rotation)
+        m_parent.do_rotate(rotate_3d_snapshot_name);
+    else
+        m_parent.do_move(move_3d_snapshot_name);
+
+    const Projection before = current_projection();
+    const Outcome    out    = outcome(before, kind);
+    if (out.detach) {
+        if (!m_detached_projection.has_value())
+            m_detached_projection = before;
+        set_projection(detached(before));
+    }
+
+    const Selection     &selection = m_parent.get_selection();
+    StyleManager::Style &style     = m_style_manager.get_style();
+    style.angle = calc_angle(selection);
+    if (out.measure_distance)
+        if (const GLVolume *gl_volume = get_selected_gl_volume(selection); gl_volume != nullptr)
+            style.distance = calc_distance(*gl_volume, m_raycast_manager, m_parent);
+
+    if (style.prop.per_glyph)
+        init_text_lines(m_text_lines, selection, m_style_manager, m_text_lines.get_lines().size());
+
+    if (out.reprocess || cancelled_job)
+        process(false);
+    else
+        wxGetApp().plater()->changed_object(*m_volume->get_object());
+
+    calculate_scale();
+}
+
+void GLGizmoEmboss::draw_placement()
+{
+    using namespace EmbossFreeTransform;
+    const Selection &selection = m_parent.get_selection();
+    const GLVolume  *gl_volume = get_selected_gl_volume(selection);
+    if (m_volume == nullptr || gl_volume == nullptr)
+        return;
+
+    const bool       is_object  = m_volume->is_the_only_one_part();
+    const Projection projection = current_projection();
+    if (is_object || projection.follows_surface()) {
+        m_placement_key.reset();
+        m_placement_probe.reset();
+    } else if (!m_surface_drag.has_value() && !m_dragging) {
+        // measure again once the part moved (not while it is dragged)
+        const Transform3d &key = gl_volume->world_matrix();
+        if (!m_placement_key.has_value() || (m_placement_key->matrix() - key.matrix()).cwiseAbs().maxCoeff() > 1e-9) {
+            m_placement_key   = key;
+            m_placement_probe = probe_surface(*gl_volume, m_raycast_manager, m_parent);
+        }
+    }
+
+    const double    max_distance = std::max(2. * double(m_style_manager.get_style().projection.depth), std::sqrt(10.));
+    const Placement placement    = classify_placement(is_object, projection, m_placement_probe, max_distance);
+    const double    distance     = m_placement_probe.has_value() ? m_placement_probe->distance : 0.;
+    if (m_handles.draw_options(*m_imgui, placement, distance, m_detached_projection.has_value(), m_gui_cfg->max_tooltip_width))
+        update_handles_visibility();
+}
 
 EmbossStyles GLGizmoEmboss::create_default_styles()
 {
@@ -1268,6 +1440,11 @@ void GLGizmoEmboss::set_volume_by_selection()
     m_bend_surface_preview.reset(); // a running job keeps writing into its own copy
     m_bend_letter_drawn.reset();
 
+    // a projection remembered by the 3D handles belongs to the part it was taken from
+    if (m_volume != volume)
+        m_detached_projection.reset();
+    m_placement_key.reset();
+
     m_text   = tc.text;
     // Inline shapes: an update of the same volume (it gets a new id) writes back only the entries the text
     // uses; keep the whole table of this editing session then, so the text box's undo finds them.
@@ -1305,7 +1482,9 @@ void GLGizmoEmboss::set_volume_by_selection()
         m_style_manager.get_style().angle = calc_angle(selection);
 
     // calculate scale for height and depth inside of scaled object instance
-    calculate_scale();    
+    calculate_scale();
+
+    update_handles_visibility();
 }
 
 void GLGizmoEmboss::reset_volume()
@@ -1315,6 +1494,10 @@ void GLGizmoEmboss::reset_volume()
 
     m_volume = nullptr;
     m_volume_id.id = 0;
+    m_handles.set_visible(false);
+    m_detached_projection.reset();
+    m_placement_key.reset();
+    m_placement_probe.reset();
     m_bend_preview_pending = false;
     m_bend_surface_key.reset();
     m_bend_surface_preview.reset();
@@ -1471,6 +1654,12 @@ void GLGizmoEmboss::draw_window()
     }
     if (!is_curve_open || m_is_unknown_font)
         m_bend_result.reset(); // hide the arc overlay
+
+    // Placement on the surface and the 3D move / rotate handles (parts only)
+    if (!m_volume->is_the_only_one_part()) {
+        ImGui::Separator();
+        draw_placement();
+    }
 
     ImGui::Separator();
 
@@ -2864,6 +3053,9 @@ void GLGizmoEmboss::draw_advanced()
     bool &use_surface = current_style.projection.use_surface;
     if (rev_checkbox(tr.use_surface, use_surface, def_use_surface,
                      _u8L("Revert using of model surface."))) {
+        // the user decides now, a later surface drag does not change it back
+        m_detached_projection.reset();
+        m_placement_key.reset();
         if (use_surface)
             // when using surface distance is not used
             current_style.distance.reset();
@@ -2883,6 +3075,8 @@ void GLGizmoEmboss::draw_advanced()
     const bool *def_per_glyph = stored_style ? &stored_style->prop.per_glyph : nullptr;
     if (rev_checkbox(tr.per_glyph, per_glyph, def_per_glyph,
         _u8L("Revert Transformation per glyph."))) {
+        m_detached_projection.reset();
+        m_placement_key.reset();
         if (per_glyph && !m_text_lines.is_init())
             reinit_text_lines();
         process();

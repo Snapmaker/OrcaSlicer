@@ -3,6 +3,8 @@
 
 #include <memory>
 #include <exception>
+#include <optional>
+#include <vector>
 
 #include <libslic3r/TriangleMesh.hpp>
 #include <Eigen/Geometry>
@@ -70,6 +72,16 @@ TriangleMesh merge(std::vector<TriangleMesh> meshes);
 
 bool does_bound_a_volume(const CGALMesh &mesh);
 bool empty(const CGALMesh &mesh);
+
+// Real UV unwrap of an open mesh patch via CGAL's LSCM (Least Squares Conformal Maps) surface
+// parameterization. Returns one UV coordinate per input vertex (same indexing as `mesh.vertices`),
+// or nullopt if `mesh` isn't a single topological disk.
+std::optional<std::vector<Vec2f>> parameterize_lscm(const indexed_triangle_set &mesh);
+
+// Isotropic remeshing (CGAL) - see upstream OrcaSlicer PR #14662 for the full rationale.
+indexed_triangle_set remesh_isotropic(const indexed_triangle_set &mesh, double target_edge_length,
+                                      unsigned n_iterations = 3, double sharp_angle_deg = 40.0,
+                                      unsigned n_relaxation_steps = 1);
 }
 
 namespace mcut {

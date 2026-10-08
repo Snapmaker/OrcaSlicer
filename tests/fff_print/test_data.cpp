@@ -2,12 +2,16 @@
 
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/GCodeReader.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Format/OBJ.hpp"
 #include "libslic3r/Format/STL.hpp"
 
 #include <cstdlib>
+#include <fstream>
+#include <ios>
+#include <iterator>
 #include <string>
 
 #include <boost/nowide/cstdio.hpp>
@@ -324,6 +328,18 @@ std::string gcode(Print & print)
     print.process();
     print.export_gcode(temp.string(), nullptr, nullptr);
     std::ifstream t(temp.string());
+	std::string str((std::istreambuf_iterator<char>(t)), std::istreambuf_iterator<char>());
+	boost::nowide::remove(temp.string().c_str());
+	return str;
+}
+
+std::string gcode(Print & print, GCodeProcessorResult& result)
+{
+	boost::filesystem::path temp = scratch_path();
+    print.set_status_silent();
+    print.process();
+    print.export_gcode(temp.string(), &result, nullptr);
+    std::ifstream t(temp.string(), std::ios::binary);
 	std::string str((std::istreambuf_iterator<char>(t)), std::istreambuf_iterator<char>());
 	boost::nowide::remove(temp.string().c_str());
 	return str;

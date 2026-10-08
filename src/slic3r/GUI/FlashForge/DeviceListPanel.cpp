@@ -1553,8 +1553,7 @@ bool DeviceListPanel::getDeviceInfo(DeviceInfoItemPanel::DeviceInfo& info, int c
                 info.progress = 0;
             }
             // A printer typed in or taken from the settings has no product id until it answers.
-            info.pid = data.lanDevInfo.pid != 0 ? data.lanDevInfo.pid
-                       : (data.devDetail ? (unsigned short) data.devDetail->pid : (unsigned short) 0);
+            info.pid = FFUtils::getPid(data);
         } else if (COM_CONNECT_WAN == data.connectMode && valid && data.devDetail) {
             std::string dev_id = data.wanDevInfo.serialNumber;
             info.lanFlag = false;

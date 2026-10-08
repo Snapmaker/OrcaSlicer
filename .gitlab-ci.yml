@@ -25,3 +25,4 @@ ai_review:
     - if (Test-Path dg) { Remove-Item -Recurse -Force dg }
     - git clone --depth 1 --branch $env:DG_REF https://github.com/zhangzhend0ng/dev-guidelines dg
     - '& $env:PYEXE dg/scripts/ai_review_gitlab.py'
+# re-trigger: dg branch tip 3162175 carries the sticky-note pagination fix

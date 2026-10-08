@@ -463,6 +463,16 @@ Transform3d GLGizmoRotate::local_transform(const Selection& selection) const
     return m_orient_matrix * ret;
 }
 
+Vec3d GLGizmoRotate::get_world_axis() const
+{
+    // The ring lies in the XY plane of local_transform() and its angle runs from that X towards that
+    // Y (see mouse_position_in_local_plane()), also for a mirrored orientation.
+    const Matrix3d m    = local_transform(m_parent.get_selection()).linear();
+    const Vec3d    axis = (m * Vec3d::UnitX()).cross(m * Vec3d::UnitY());
+    const double   len  = axis.norm();
+    return len > 0. ? Vec3d(axis / len) : Vec3d(Vec3d::UnitZ());
+}
+
 Vec3d GLGizmoRotate::mouse_position_in_local_plane(const Linef3& mouse_ray) const
 {
     const double half_pi = 0.5 * double(PI);

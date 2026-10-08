@@ -4,6 +4,7 @@
 #include <optional>
 #include "libslic3r/Point.hpp" // Vec2d, Transform3d
 #include "slic3r/Utils/RaycastManager.hpp"
+#include "slic3r/GUI/EmbossFreeTransform.hpp"
 #include "wx/event.h" // wxMouseEvent
 #include <functional>
 
@@ -94,8 +95,17 @@ std::optional<Vec3d> calc_surface_offset(const Selection &selection, RaycastMana
 /// <param name="canvas">Contain model</param>
 /// <returns>Calculated distance from surface</returns>
 std::optional<float> calc_distance(const GLVolume &gl_volume, RaycastManager &raycaster, GLCanvas3D &canvas);
-std::optional<float> calc_distance(const GLVolume &gl_volume, const RaycastManager &raycaster, 
+std::optional<float> calc_distance(const GLVolume &gl_volume, const RaycastManager &raycaster,
     const RaycastManager::ISkip *condition, const std::optional<Slic3r::Transform3d>& fix);
+
+/// <summary>
+/// EdgeSlicer (3D handles of the Text / SVG tools): how an emboss part sits against the rest of its
+/// object. A ray from the part's origin along its emboss direction (both ways) to the other parts:
+/// signed distance (> 0 the part lies above the surface) and the cosine between the part's emboss
+/// direction and the surface normal at the hit. Nothing for a part that is the whole object or
+/// when no other part is hit.
+/// </summary>
+std::optional<EmbossFreeTransform::SurfaceProbe> probe_surface(const GLVolume &gl_volume, RaycastManager &raycaster, GLCanvas3D &canvas);
 
 /// <summary>
 /// Calculate up vector angle

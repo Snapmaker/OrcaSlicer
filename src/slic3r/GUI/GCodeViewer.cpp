@@ -2855,6 +2855,10 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
             all_extruder_ids.insert(it->first);
         for (auto it = support_volume_of_extruders_all_plates.begin(); it != support_volume_of_extruders_all_plates.end(); it++)
             all_extruder_ids.insert(it->first);
+        // Orca #14103: a plate's statistics can still name filaments the current printer no longer has
+        // (sliced before a switch to fewer filaments); the rows below index filament_colors with them.
+        for (auto it = all_extruder_ids.begin(); it != all_extruder_ids.end();)
+            it = (*it < 0 || size_t(*it) >= filament_colors.size()) ? all_extruder_ids.erase(it) : std::next(it);
 
         for (auto it = all_extruder_ids.begin(); it != all_extruder_ids.end(); it++) {
             int extruder_id = *it;

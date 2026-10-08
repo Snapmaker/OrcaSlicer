@@ -2838,6 +2838,13 @@ void ModelVolume::update_extruder_count(size_t extruder_count)
             break;
         }
     }
+    // Orca #14103 (from BambuStudio STUDIO-15763): drop a per-part filament assignment that no longer
+    // exists after the filament count shrank (a switch to a printer with fewer filaments), so the part
+    // follows its object again and nothing downstream indexes per-filament vectors past their end.
+    // The caller (Plater::on_filaments_change) passes the total including mixed filaments, so a part
+    // on a mixed filament that still exists keeps it.
+    if (const ConfigOption *opt = this->config.option("extruder"); opt != nullptr && opt->getInt() > int(extruder_count))
+        this->config.erase("extruder");
 }
 
 void ModelVolume::update_extruder_count_when_delete_filament(size_t extruder_count, size_t filament_id, int replace_filament_id)

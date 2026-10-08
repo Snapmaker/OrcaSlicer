@@ -12,7 +12,9 @@
 
 #include <unordered_map>
 
-namespace Slic3r { namespace Test {
+namespace Slic3r {
+struct GCodeProcessorResult;
+namespace Test {
 
 constexpr double MM_PER_MIN = 60.0;
 
@@ -84,6 +86,9 @@ const boost::filesystem::path& scratch_dir();
 boost::filesystem::path scratch_path(const std::string &extension = ".gcode");
 
 std::string gcode(Print& print);
+// Process `print` and return its exported G-code, filling `result` (opens the file in binary
+// mode so lines_ends offsets match on Windows).
+std::string gcode(Print& print, GCodeProcessorResult& result);
 
 std::string slice(std::initializer_list<TestMesh> meshes, const DynamicPrintConfig &config, bool comments = false);
 std::string slice(std::initializer_list<TriangleMesh> meshes, const DynamicPrintConfig &config, bool comments = false);

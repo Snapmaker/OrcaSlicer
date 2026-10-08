@@ -4,6 +4,7 @@
 #include "3DScene.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/CostEstimate.hpp"
+#include "libslic3r/CostPricing.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "IMSlider.hpp"
 #include "GLModel.hpp"
@@ -917,9 +918,11 @@ private:
     void render_legend(float &legend_height, int canvas_width, int canvas_height, int right_margin);
     // The one "Cost" section of every statistics view (current plate, Feature type summary, all
     // plates): the total on one line, a click on [+] unfolds filament per slot (model / support /
-    // flush / tower), machine time and the total. value_x 0 puts the value right after the label.
-    void render_cost_section(const CostBreakdown &cost, const std::string &label, float value_x, float window_padding,
-                             bool &expanded, const char *imgui_id) const;
+    // flush / tower), machine time, the fees of Costs > Project, the total cost, the markup and the
+    // selling price. value_x 0 puts the value right after the label. `priced` is `cost` with the
+    // fees and markup (CostPricing.hpp), display only.
+    void render_cost_section(const CostBreakdown &cost, const PricedCost &priced, const std::string &label, float value_x,
+                             float window_padding, bool &expanded, const char *imgui_id) const;
     void render_slider(int canvas_width, int canvas_height);
 
 #if ENABLE_GCODE_VIEWER_STATISTICS

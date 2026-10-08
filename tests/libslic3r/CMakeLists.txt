@@ -95,6 +95,7 @@ add_executable(${_TEST_NAME}_tests
 	test_print_settings_carry.cpp
 	test_filament_variant_autoenable.cpp
 	test_preset_load_determinism.cpp
+	test_preset_variant_load.cpp
 	test_profile_load_util.cpp
 	test_printer_model_specs.cpp
 	test_project_preset_switch.cpp

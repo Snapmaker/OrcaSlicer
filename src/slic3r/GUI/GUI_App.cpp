@@ -1155,7 +1155,6 @@ void GUI_App::post_init()
             std::string network_ver = Slic3r::NetworkAgent::get_version();
             bool        sys_preset  = app_config->get("sync_system_preset") == "true";
             this->preset_updater->sync(http_url, language, network_ver, sys_preset ? preset_bundle : nullptr);
-            this->preset_updater->sync_web_async(true);
             this->request_version_from_config(false, false);
 
         });
@@ -5043,8 +5042,9 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
     allow_http_auth = true;
 #endif
     bool with_auth = false;
-    if (sm_get_userinfo()->is_user_login()) {
-        std::string auth_token = sm_get_userinfo()->get_user_token();
+    const Gateway::AccountSnapshot& account = m_gateway_account;
+    if (account.is_login) {
+        const std::string& auth_token = account.token;
         if (!auth_token.empty()) {
             if (url.rfind("https://", 0) == 0 || allow_http_auth) {
                 http.header("Authorization", auth_token);

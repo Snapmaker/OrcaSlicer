@@ -1727,15 +1727,22 @@ TEST_CASE("OozePrevention: SEMM and Bambu (BBL) setups are unaffected", "[OozePr
 
 TEST_CASE("OozePrevention: a tool reused after a gap gets standby first and S0 only after its final use", "[OozePrevention][ToolOrdering]")
 {
-    // T1 prints a short cube on the bed, then is idle while T0 prints the middle of a tall
-    // cube, then T1 prints another short cube parked at z=16..20. The first toolchange
-    // away from T1 must be standby (not S0); S0 is allowed only after the late cube.
+    // One 20 mm cube printed by T1, with a layer range 6..14 mm switched to T0. T1 is idle
+    // while T0 prints the middle and is used again on top. (The earlier version floated a
+    // second T1 cube at z = 16, which Print rejects as empty layers, so it never ran.)
+    // The toolchange away from T1 at ~6 mm must be standby, never S0, and T1 is the last
+    // tool so it never gets S0 at all. T0's only S0 comes at ~14 mm, after its final layer.
     Print              print;
     Model              model;
     DynamicPrintConfig config = two_tool_ooze_config();
-    add_scaled_cube(model, print, "early-t1", Vec3f(1.f, 1.f, 0.2f), Vec3d(0., 0., 0.), 2, true);
-    add_scaled_cube(model, print, "tall-t0", Vec3f(1.f, 1.f, 1.f), Vec3d(40., 0., 0.), 1, true);
-    add_scaled_cube(model, print, "late-t1", Vec3f(1.f, 1.f, 0.2f), Vec3d(80., 0., 16.), 2, false);
+    ModelObject       *object = add_scaled_cube(model, print, "gap-t1", Vec3f(1.f, 1.f, 1.f), Vec3d(0., 0., 0.), 2, true);
+    DynamicPrintConfig middle;
+    // A layer range must carry layer_height: layer_height_profile_from_ranges() reads it unchecked.
+    middle.set_key_value("layer_height", new ConfigOptionFloat(0.2));
+    middle.set_key_value("wall_filament", new ConfigOptionInt(1));
+    middle.set_key_value("sparse_infill_filament", new ConfigOptionInt(1));
+    middle.set_key_value("solid_infill_filament", new ConfigOptionInt(1));
+    object->layer_config_ranges[{6., 14.}].assign_config(middle);
 
     print.apply(model, config);
     print.validate();
@@ -1745,20 +1752,24 @@ TEST_CASE("OozePrevention: a tool reused after a gap gets standby first and S0 o
     const auto hits = parse_cooldowns(gcode);
     REQUIRE_FALSE(hits.empty());
 
-    bool saw_t1_standby_before_s0 = false;
-    size_t t1_s0_pos              = std::string::npos;
-    for (const CooldownHit &hit : hits) {
-        if (hit.t != 1)
-            continue;
-        if (hit.s == 0) {
-            t1_s0_pos = hit.pos;
-            break;
-        }
-        saw_t1_standby_before_s0 = true;
-    }
-    CHECK(saw_t1_standby_before_s0);
-    if (t1_s0_pos != std::string::npos)
-        CHECK(gcode.find("T1 ; change extruder", t1_s0_pos) == std::string::npos);
+    bool saw_t1_standby = false;
+    for (const CooldownHit &hit : hits)
+        if (hit.t == 1 && hit.s > 0)
+            saw_t1_standby = true;
+    CHECK(saw_t1_standby);
+    CHECK_FALSE(tool_got_s0(hits, 1));
+
+    int t0_s0 = 0;
+    for (const CooldownHit &hit : hits)
+        if (hit.t == 0 && hit.s == 0)
+            ++t0_s0;
+    CHECK(t0_s0 == 1);
+    const size_t t0_s0_pos = first_s0_pos(hits, 0);
+    REQUIRE(t0_s0_pos != std::string::npos);
+    CHECK(gcode.find("T0 ; change extruder", t0_s0_pos) == std::string::npos);
+    const size_t z_tag = gcode.rfind("\n;Z:", t0_s0_pos);
+    REQUIRE(z_tag != std::string::npos);
+    CHECK(std::stod(gcode.substr(z_tag + 4, 16)) > 13.5);
 }
 
 TEST_CASE("OozePrevention: mixed filament keeps physical tool 2 heated until its resolved last use", "[OozePrevention][ToolOrdering][MixedFilament]")

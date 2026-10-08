@@ -11218,6 +11218,12 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
     this->dual_nozzle_watcher = std::make_unique<DualNozzle::Watcher>(this->q);
     this->q->Bind(wxEVT_TIMER, [this](wxTimerEvent &evt)
     {
+        // At startup this timer can fire from a nested event loop (the macOS splash screen and WebView
+        // creation yield) before MainFrame is assigned to the app; try again once start-up is done.
+        if (wxGetApp().mainframe == nullptr) {
+            this->background_process_timer.StartOnce(100);
+            return;
+        }
         if (!this->suppressed_backround_processing_update)
             this->update_restart_background_process(false, false);
     });

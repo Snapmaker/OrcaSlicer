@@ -1822,13 +1822,6 @@ void TreeSupport::generate_toolpaths(const TreeSupportGroupContext *groups)
     );
 }
 
-void deleteDirectoryContents(const std::filesystem::path& dir)
-{
-    for (const auto& entry : std::filesystem::directory_iterator(dir))
-        std::filesystem::remove_all(entry.path());
-}
-
-
 void TreeSupport::move_bounds_to_contact_nodes(std::vector<TreeSupport3D::SupportElements> &move_bounds,
                                   PrintObject                             &print_object,
                                   const TreeSupport3D::TreeSupportSettings    &config)
@@ -3662,7 +3655,14 @@ void TreeSupport::generate_contact_points()
                     }
 
                     // add supports along contours
-                    libnest2d::placers::EdgeCache<ExPolygon> edge_cache(overhang);
+                    ExPolygon closed_overhang = overhang; // make a copy to add closing point for edge cache
+                    if (closed_overhang.contour.points.size() > 1)
+                        closed_overhang.contour.points.emplace_back(closed_overhang.contour.points.front());
+                    for (Polygon &hole : closed_overhang.holes)
+                        if (hole.points.size() > 1)
+                            hole.points.emplace_back(hole.points.front());
+
+                    libnest2d::placers::EdgeCache<ExPolygon> edge_cache(closed_overhang);
                     for (size_t i = 0; i < edge_cache.holeCount() + 1; i++) {
                         double step     = point_spread / (i == 0 ? edge_cache.circumference() : edge_cache.circumference(i - 1));
                         double distance = 0;

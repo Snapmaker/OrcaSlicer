@@ -254,9 +254,8 @@ public:
     // covers support / support-interface extruders and anything the wipe tower touches
     // for that layer, since those are folded into LayerTools::extruders by
     // collect_extruders()) has no later extrusion layer than the one at print_z.
-    // print_z is matched against m_layer_tools the same way tools_for_layer() does, so
-    // callers stay consistent with the print-wide layer index regardless of which
-    // object / support layer produced print_z.
+    // print_z is compared (with EPSILON) against the print_z of the extruder's last
+    // LayerTools entry, so it does not matter which object / support layer produced it.
     // An extruder missing from m_last_layer_per_extruder is conservatively treated as
     // NOT finished (kept heated) - it never printed anything we know about, so we must
     // not assume it is safe to shut off.
@@ -319,8 +318,8 @@ private:
     unsigned int               m_last_printing_extruder  = (unsigned int)-1;
     // All extruders, which extrude some material over m_layer_tools.
     std::vector<unsigned int>  m_all_printing_extruders;
-    // Map: extruder_id -> index of the last layer it is used on
-    std::map<unsigned int, size_t> m_last_layer_per_extruder;
+    // Map: extruder_id -> print_z of the last layer it is used on
+    std::map<unsigned int, coordf_t> m_last_layer_per_extruder;
     std::unordered_map<uint32_t, std::vector<uint8_t>> m_tool_order_cache;
     const DynamicPrintConfig*  m_print_full_config = nullptr;
     const PrintConfig*         m_print_config_ptr = nullptr;

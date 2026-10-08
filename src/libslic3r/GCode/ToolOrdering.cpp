@@ -1406,10 +1406,12 @@ void ToolOrdering::collect_extruder_statistics(bool prime_multi_material)
         sort_remove_duplicates(m_all_printing_extruders);
     }
 
+    // Orca #15849 (bcbb8746): record the print_z of each extruder's last LayerTools entry.
+    // m_layer_tools is sorted by print_z, so the last assignment wins.
     m_last_layer_per_extruder.clear();
-    for (size_t layer_idx = 0; layer_idx < m_layer_tools.size(); ++layer_idx) {
-        for (unsigned int ext : m_layer_tools[layer_idx].extruders) {
-            m_last_layer_per_extruder[ext] = layer_idx;
+    for (const LayerTools &lt : m_layer_tools) {
+        for (unsigned int ext : lt.extruders) {
+            m_last_layer_per_extruder[ext] = lt.print_z;
         }
     }
 
@@ -2657,24 +2659,18 @@ unsigned int ToolOrdering::resolve_mixed(unsigned int filament_id_1based,
 
 bool ToolOrdering::is_last_extrusion_layer(coordf_t print_z, unsigned int extruder_id) const
 {
-    if (m_layer_tools.empty())
-        // Unknown state: never claim a tool is finished when we have nothing to check against.
-        return false;
-
-    // Resolve print_z to the same LayerTools entry (and therefore the same print-wide
-    // m_layer_tools index) that tools_for_layer() would return, so this stays consistent
-    // regardless of which object's/support's layer produced print_z (multiple objects,
-    // differing layer heights, rafts, ...).
-    const LayerTools &lt = this->tools_for_layer(print_z);
-    size_t cur_layer_idx = size_t(&lt - &m_layer_tools.front());
-
+    // Compare print-wide Z directly (Orca #15849 bcbb8746) instead of resolving print_z to a
+    // LayerTools index: print_z may come from any object's or support's layer (multiple objects,
+    // differing layer heights, rafts) or from a Local-Z sub-layer pass that has no LayerTools
+    // entry of its own. A sub-layer Z below the extruder's last print_z reads as "not finished",
+    // which keeps the tool at standby (the safe side).
     auto it = m_last_layer_per_extruder.find(extruder_id);
     if (it == m_last_layer_per_extruder.end())
-        // This extruder never appears in any LayerTools - we do not know its last use,
-        // so conservatively treat it as still needed (keep it heated) rather than assume
-        // it is finished.
+        // Edge keeps this stricter than upstream (which returns true): an extruder that never
+        // appears in any LayerTools has no known last use, so treat it as still needed (keep
+        // it heated) rather than assume it is finished.
         return false;
-    return cur_layer_idx >= it->second;
+    return print_z >= it->second - EPSILON;
 }
 
 } // namespace Slic3r

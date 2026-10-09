@@ -104,6 +104,7 @@ wxString normalize_color_match_hex(const wxString &value);
 bool     try_parse_color_match_hex(const wxString &value, wxColour &color_out);
 
 std::vector<int> normalize_color_match_weights(const std::vector<int> &weights, size_t count);
+std::vector<int> clamp_color_match_weights_to_minimum(const std::vector<int> &weights, int min_component_percent);
 std::vector<int> expand_color_match_recipe_weights(const MixedColorMatchRecipeResult &recipe, size_t num_physical);
 std::string      summarize_color_match_recipe(const MixedColorMatchRecipeResult &recipe);
 wxBitmap         make_color_match_swatch_bitmap(const wxColour &color, const wxSize &size);

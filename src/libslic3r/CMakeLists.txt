@@ -452,6 +452,8 @@ set(lisbslic3r_sources
     Timer.hpp
     TriangleMesh.cpp
     TriangleMesh.hpp
+    TriangleMeshDeal.hpp
+    TriangleMeshDeal.cpp
     TriangleMeshSlicer.cpp
     TriangleMeshSlicer.hpp
     TriangleSelector.cpp

@@ -427,9 +427,6 @@ Wipe::RetractionValues Wipe::calculateWipeRetractionLengths(GCode& gcodegen, boo
     if (retractionDuringWipe - retraction_length_remaining > EPSILON)
         return {retractionBeforeWipe, retraction_length_remaining};
 
-    // We will always proceed with incrementing the retraction amount before wiping with the difference
-    // and return the maximum allowed wipe amount to be retracted during the wipe move
-    retractionBeforeWipe += retraction_length_remaining - retractionDuringWipe;
     return {retractionBeforeWipe, retractionDuringWipe};
 }
 
@@ -8982,7 +8979,9 @@ std::string GCode::retract(bool toolchange, bool is_last_retraction, LiftType li
         return gcode;
 
     // wipe (if it's enabled for this extruder and we have a stored wipe path and no-zero wipe distance)
+    bool wipe_performed = false;
     if (EXTRUDER_CONFIG(wipe) && m_wipe.has_path() && scale_(EXTRUDER_CONFIG(wipe_distance)) > SCALED_EPSILON) {
+        wipe_performed = true;
         Wipe::RetractionValues wipeRetractions = m_wipe.calculateWipeRetractionLengths(*this, toolchange);
         gcode += toolchange ? m_writer.retract_for_toolchange(true, wipeRetractions.retractLengthBeforeWipe) :
                               m_writer.retract(true, wipeRetractions.retractLengthBeforeWipe);
@@ -8994,8 +8993,9 @@ std::string GCode::retract(bool toolchange, bool is_last_retraction, LiftType li
         methods even if we performed wipe, since this will ensure the entire retraction
         length is honored in case wipe path was too short.  */
 
-    if ((!this->on_first_layer() || this->config().bottom_surface_pattern != InfillPattern::ipHilbertCurve) &&
-        (role != erTopSolidInfill || this->config().top_surface_pattern != InfillPattern::ipHilbertCurve)) {
+    if (wipe_performed ||
+        ((!this->on_first_layer() || this->config().bottom_surface_pattern != InfillPattern::ipHilbertCurve) &&
+        (role != erTopSolidInfill || this->config().top_surface_pattern != InfillPattern::ipHilbertCurve))) {
         gcode += toolchange ? m_writer.retract_for_toolchange() : m_writer.retract();
     }
 

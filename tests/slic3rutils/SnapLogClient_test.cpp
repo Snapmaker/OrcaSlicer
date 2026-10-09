@@ -691,6 +691,17 @@ TEST_CASE("log(): empty user_token drops events (login gate)", "[snaplog][pipeli
     fc.shutdown();
 }
 
+TEST_CASE("log(): forced event bypasses empty user_token", "[snaplog][pipeline]")
+{
+    FakeClient fc;
+    fc.init();
+    SnapLogClient::instance().set_user_token("");
+    SnapLogClient::instance().log(SnapLogLevel::Info, "forced", SnapLogExt{{"eventName", "forced"}}, SnapLogPolicy::Realtime, __FUNCTION__,
+                                  __LINE__, true);
+    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 1);
+    fc.shutdown();
+}
+
 // ---------------------------------------------------------------------------
 // Task 10: build_realtime_request — auth selection (Bearer vs HMAC public)
 // ---------------------------------------------------------------------------

@@ -85,9 +85,7 @@
   "overhang_fan_threshold": [
     "10%"
   ],
-  "pressure_advance": [
-    "0.04"
-  ],
+  "pressure_advance": ["0.04", "0.05"],
   "slow_down_min_speed": [
     "10"
   ],
@@ -112,9 +110,7 @@
   "enable_pressure_advance": [
     "1"
   ],
-  "filament_flow_support": [
-    "standard"
-  ],
+  "filament_flow_support": ["standard", "high_flow"],
   "filament_max_volumetric_speed": [
     "10"
   ],

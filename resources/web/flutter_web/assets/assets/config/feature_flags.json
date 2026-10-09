@@ -6,7 +6,7 @@
       "rules": [
         {
           "platform": "all",
-          "region": "us",
+          "region": "all",
           "enabled": false
         }
       ]

@@ -127,8 +127,12 @@ std::string make_etag(std::time_t mtime, std::uintmax_t size)
 bool is_not_modified(const std::string& if_modified_since, const std::string& if_none_match,
                      const std::string& etag, std::time_t mtime)
 {
-    if (!if_none_match.empty())
-        return if_none_match == etag || if_none_match == "*";
+    if (!if_none_match.empty()) {
+        // Do not treat If-None-Match: * as 304. A 304 has an empty body; if the
+        // client has no usable cache entry, the shell stays blank. Match the
+        // concrete ETag only.
+        return if_none_match == etag;
+    }
 
     if (!if_modified_since.empty()) {
         const std::time_t since = parse_http_date(if_modified_since);
@@ -305,7 +309,9 @@ void session::read_first_line()
 {
     auto self(shared_from_this());
 
-    async_read_until(socket, buff, '\r', [this, self](const boost::beast::error_code& e, std::size_t s) {
+    // Wait for the full CRLF. Completing on '\r' alone can fire before LF arrives.
+    // Use a string delimiter; the multichar literal '\r\n' is an int, not "\r\n".
+    async_read_until(socket, buff, std::string("\r\n"), [this, self](const boost::beast::error_code& e, std::size_t s) {
         if (!e) {
             std::string  line, ignore;
             std::istream stream{&buff};
@@ -348,7 +354,7 @@ void session::read_next_line()
         return; // 提前返回，避免后续逻辑
     }
 
-    async_read_until(socket, buff, '\r', [this, self](const boost::beast::error_code& e, std::size_t s) {
+    async_read_until(socket, buff, std::string("\r\n"), [this, self](const boost::beast::error_code& e, std::size_t s) {
         if (!e) {
             std::string  line, ignore;
             std::istream stream{&buff};

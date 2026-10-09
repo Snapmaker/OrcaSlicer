@@ -100,7 +100,7 @@ jobs:
 
 #   Mac
       - name: Install tools mac
-        if: inputs.os == 'macos-26'
+        if: inputs.os == 'macos-15'
         run: |
           sudo xcode-select -s /Applications/Xcode.app
           xcodebuild -version
@@ -110,7 +110,7 @@ jobs:
           mkdir -p ${{ github.workspace }}/deps/build
 
       - name: Free disk space
-        if: inputs.os == 'macos-26'
+        if: inputs.os == 'macos-15'
         run: |
           df -h
           XCODE_DEV="$(xcode-select -p)"
@@ -130,14 +130,14 @@ jobs:
           df -h
 
       - name: Build slicer mac
-        if: inputs.os == 'macos-26'
+        if: inputs.os == 'macos-15'
         working-directory: ${{ github.workspace }}
         run: |
           ./build_release_macos.sh -s -n -x -a universal -t 10.15 -1
 
  # Thanks to RaySajuuk, it's working now
       - name: Sign app and notary
-        if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release_') || github.ref == 'refs/heads/2.3.0-final') && inputs.os == 'macos-26'
+        if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release_') || github.ref == 'refs/heads/2.3.0-final') && inputs.os == 'macos-15'
         working-directory: ${{ github.workspace }}
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
@@ -190,7 +190,7 @@ jobs:
           fi
 
       - name: Create DMG without notary
-        if: github.ref != 'refs/heads/main' && inputs.os == 'macos-26' && github.ref != 'refs/heads/2.3.0-final' && !startsWith(github.ref, 'refs/heads/release_')
+        if: github.ref != 'refs/heads/main' && inputs.os == 'macos-15' && github.ref != 'refs/heads/2.3.0-final' && !startsWith(github.ref, 'refs/heads/release_')
         working-directory: ${{ github.workspace }}
         run: |
           mkdir -p ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg
@@ -209,14 +209,14 @@ jobs:
           fi
 
       - name: Upload artifacts mac
-        if: inputs.os == 'macos-26'
+        if: inputs.os == 'macos-15'
         uses: actions/upload-artifact@v4
         with:
           name: Snapmaker_Orca_Mac_universal_${{ env.ver }}
           path: ${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
 
       - name: Upload Snapmaker_Orca_profile_validator DMG mac
-        if: inputs.os == 'macos-26'
+        if: inputs.os == 'macos-15'
         uses: actions/upload-artifact@v4
         with:
           name: Snapmaker_Orca_profile_validator_Mac_universal_DMG_${{ env.ver }}
@@ -224,7 +224,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload dSYM artifacts mac
-        if: inputs.os == 'macos-26'
+        if: inputs.os == 'macos-15'
         uses: actions/upload-artifact@v4
         with:
           name: dSYM_Mac_${{ env.ver }}
@@ -232,7 +232,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Deploy Mac release
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.3.0-final') && inputs.os == 'macos-26'
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.3.0-final') && inputs.os == 'macos-15'
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}
@@ -243,7 +243,7 @@ jobs:
           max_releases: 1 # optional, if there are more releases than this matching the asset_name, the oldest ones are going to be deleted
 
       - name: Check if profile validator DMG exists
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.3.0-final') && inputs.os == 'macos-26'
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.3.0-final') && inputs.os == 'macos-15'
         id: check_dmg
         working-directory: ${{ github.workspace }}
         run: |
@@ -257,7 +257,7 @@ jobs:
         shell: bash
 
       - name: Deploy Mac Snapmaker_Orca_profile_validator DMG release
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.3.0-final') && inputs.os == 'macos-26' && steps.check_dmg.outputs.exists == 'true'
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.3.0-final') && inputs.os == 'macos-15' && steps.check_dmg.outputs.exists == 'true'
         uses: WebFreak001/deploy-nightly@v3.2.0
         with:
           upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}

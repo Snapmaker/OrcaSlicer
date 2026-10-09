@@ -33,7 +33,7 @@ addEventListener("message", eventListener);
 if (!window._flutter) {
   window._flutter = {};
 }
-_flutter.buildConfig = {"engineRevision":"3452d735bd38224ef2db85ca763d862d6326b17f","builds":[{"compileTarget":"dart2js","renderer":"canvaskit","mainJsPath":"main.7dd6dd7e867daaae.js"},{}]};
+_flutter.buildConfig = {"engineRevision":"42d3d75a56efe1a2e9902f52dc8006099c45d937","builds":[{"compileTarget":"dart2js","renderer":"canvaskit","mainJsPath":"main.8c1e336f107a452a.js"},{}]};
 
 
 // =============================================================================
@@ -71,7 +71,7 @@ _flutter.buildConfig = {"engineRevision":"3452d735bd38224ef2db85ca763d862d6326b1
   var startTime = performance.now();
 
   function logProgress(step) {
-    console.log('[Orca Web] +' + Math.round(performance.now() - startTime) + 'ms ' + step);
+    // console.log('[Orca Web] +' + Math.round(performance.now() - startTime) + 'ms ' + step);
   }
 
   // Forward a log line to the native container's file log via the WCP postMessage

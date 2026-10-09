@@ -1246,37 +1246,14 @@ wxWindow* PreferencesDialog::create_general_page()
     const std::vector<std::string> ao_values = {"off", "auto", "low", "medium", "high"};
     auto ao_it = std::find(ao_values.begin(), ao_values.end(), app_config->get("render_ao_quality"));
     auto [ao_sizer, ao_combo] = create_item_combobox_base(_L("Ambient occlusion"), page,
-        _L("Adds contact shading in the Prepare view. Auto uses Medium quality. Specialized editing modes use the original rendering."),
+        _L("Adds contact shading in the Prepare view. Auto uses Medium quality. Strength is fixed at 50%. "
+           "Specialized editing modes use the original rendering."),
         "render_ao_quality", {_L("Off"), _L("Auto"), _L("Low"), _L("Medium"), _L("High")},
         ao_it == ao_values.end() ? 0 : static_cast<unsigned int>(ao_it - ao_values.begin()));
     ao_combo->GetDropDown().Bind(wxEVT_COMBOBOX, [this, ao_values](wxCommandEvent& e) {
         const int index = e.GetSelection();
         if (index >= 0 && index < static_cast<int>(ao_values.size())) {
             app_config->set("render_ao_quality", ao_values[index]);
-            app_config->save();
-            if (auto* canvas = wxGetApp().plater()->get_current_canvas3D()) canvas->set_as_dirty();
-        }
-        e.Skip();
-    });
-    std::vector<std::string> ao_strength_values = {"0", "0.25", "0.5", "0.6", "0.75", "1"};
-    std::vector<wxString> ao_strength_labels = {"0%", "25%", "50%", "60%", "75%", "100%"};
-    const float ao_strength = GLAOPass::resolve_strength(app_config->get("render_ao_strength"));
-    const auto ao_strength_it = std::find_if(ao_strength_values.begin(), ao_strength_values.end(), [ao_strength](const std::string& value) {
-        return GLAOPass::resolve_strength(value) == ao_strength;
-    });
-    const auto ao_strength_index = static_cast<unsigned int>(ao_strength_it - ao_strength_values.begin());
-    if (ao_strength_it == ao_strength_values.end()) {
-        // Preserve valid custom values imported from a config instead of displaying a different preset.
-        ao_strength_values.push_back(app_config->get("render_ao_strength"));
-        ao_strength_labels.push_back(wxString::Format("%.1f%%", 100.0f * ao_strength));
-    }
-    auto [ao_strength_sizer, ao_strength_combo] = create_item_combobox_base(_L("Ambient occlusion strength"), page,
-        _L("Controls contact shading strength independently of quality. 60% is the default. 0% preserves the original colors."),
-        "render_ao_strength", ao_strength_labels, ao_strength_index);
-    ao_strength_combo->GetDropDown().Bind(wxEVT_COMBOBOX, [this, ao_strength_values](wxCommandEvent& e) {
-        const int index = e.GetSelection();
-        if (index >= 0 && index < static_cast<int>(ao_strength_values.size())) {
-            app_config->set("render_ao_strength", ao_strength_values[index]);
             app_config->save();
             if (auto* canvas = wxGetApp().plater()->get_current_canvas3D()) canvas->set_as_dirty();
         }
@@ -1427,7 +1404,6 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(item_default_page, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_camera_navigation_style, 0, wxTOP, FromDIP(3));
     sizer_page->Add(ao_sizer, 0, wxTOP, FromDIP(3));
-    sizer_page->Add(ao_strength_sizer, 0, wxTOP, FromDIP(3));
     sizer_page->Add(ao_status, 0, wxLEFT | wxTOP, FromDIP(3));
     sizer_page->Add(item_single_instance, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_mouse_zoom_settings, 0, wxTOP, FromDIP(3));

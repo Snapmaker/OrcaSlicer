@@ -774,12 +774,14 @@ void GLAOPass::release()
     m_sample_active = m_sample_failed = false;
 }
 
-bool GLAOPass::validate_fs_shaders()
+bool GLAOPass::validate_fs_shaders(bool needs_upsample)
 {
-    // Validate fallback dependencies only when FS is actually selected. Missing
-    // optional FS programs must not disable an otherwise usable compute backend.
-    if (!m_shaders[1] || !m_shaders[2] || !m_shaders[3])
-        return fail("FS AO evaluation, filter or upsample shader is unavailable");
+    // High's edge path supplies its own evaluation and filter programs. Geometry
+    // dependencies are checked again if that path fails and needs to fall back.
+    if (!m_use_edge_filter && (!m_shaders[1] || !m_shaders[2]))
+        return fail("FS AO geometry evaluation or filter shader is unavailable");
+    if (needs_upsample && !m_shaders[3])
+        return fail("FS AO upsample shader is unavailable");
     return true;
 }
 
@@ -842,7 +844,7 @@ bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shade
     int aw                      = m_use_compute || settings.quality == Quality::High ? w : (w + 1) / 2;
     int ah                      = m_use_compute || settings.quality == Quality::High ? h : (h + 1) / 2;
     m_shaders                   = shaders;
-    if (!m_use_compute && !validate_fs_shaders())
+    if (!m_use_compute && !validate_fs_shaders(aw != w || ah != h))
         return false;
     m_quality = settings.quality;
     m_cs_low_reference = frame.cs_low_reference;
@@ -865,11 +867,11 @@ bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shade
         m_backend_reason = m_compute.failure_reason();
         benchmark.finish("ABORTED: CS initialization failed: " + m_backend_reason);
         m_use_compute       = false;
-        if (!validate_fs_shaders())
-            return false;
         m_effective_samples = ao_samples(settings.quality, settings.fs_slices_override);
         aw                  = settings.quality == Quality::High ? w : (w + 1) / 2;
         ah                  = settings.quality == Quality::High ? h : (h + 1) / 2;
+        if (!validate_fs_shaders(aw != w || ah != h))
+            return false;
         BOOST_LOG_TRIVIAL(warning) << "XeGTAO falling back to FS: " << m_backend_reason;
     }
     m_width     = w;
@@ -962,6 +964,8 @@ bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shade
             m_use_edge_filter = false;
             m_edge_filter_failed = true;
             benchmark.finish("ABORTED: FS edge filter allocation failed");
+            if (!validate_fs_shaders(aw != w || ah != h))
+                return false;
             BOOST_LOG_TRIVIAL(warning) << "FS edge filter unavailable; retaining geometry filter";
         }
     }
@@ -1439,7 +1443,7 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
             }
             m_compute.disable(m_backend_reason);
             m_use_compute       = false;
-            if (!validate_fs_shaders()) {
+            if (!validate_fs_shaders(m_ao_width != m_width || m_ao_height != m_height)) {
                 m_recording = false;
                 return false;
             }

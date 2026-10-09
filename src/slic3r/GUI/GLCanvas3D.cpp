@@ -3201,7 +3201,7 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
         signature.imbue(std::locale::classic());
         signature << std::setprecision(17) << "viewport=" << cnv_size.get_width() << 'x' << cnv_size.get_height()
                   << "\nui_quality=" << wxGetApp().app_config->get("render_ao_quality")
-                  << "\nstrength=" << wxGetApp().app_config->get("render_ao_strength")
+                  << "\nstrength=" << GLAOPass::DEFAULT_STRENGTH
                   << "\ndebug=" << wxGetApp().app_config->get("render_ao_debug")
                   << "\nevaluation_variant=" << (m_ao_benchmark_reuse ? "reuse" : "baseline")
                   << "\nfilter_variant=" << (m_ao_benchmark_filter_reuse ? "reuse" : "baseline")

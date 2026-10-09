@@ -20,6 +20,7 @@ public:
     GLAOPass(const GLAOPass&)            = delete;
     GLAOPass& operator=(const GLAOPass&) = delete;
     enum class Quality { Off, Low, Medium, High };
+    static constexpr float DEFAULT_STRENGTH = 0.5f;
     struct Frame
     {
         Matrix4d           projection;
@@ -52,7 +53,7 @@ public:
         Quality quality{Quality::Off};
         float   radius{2.5f}, thickness{1.0f}, intensity{1.0f};
         // Blend strength is independent of the AO exponent and sampling quality.
-        float strength{0.6f};
+        float strength{DEFAULT_STRENGTH};
         // 0: normal composite, 1: depth, 2: normals, 3: AO, 4: composite confidence.
         int debug_view{0};
         int cs_slices_override{0}; // Unified comparison: 3 or 6, zero uses environment/default.
@@ -97,7 +98,7 @@ public:
 
 private:
     bool fail(const std::string& reason);
-    bool validate_fs_shaders();
+    bool validate_fs_shaders(bool needs_upsample);
     GLAOCompute        m_compute;
     bool               m_use_compute{false};
     bool m_use_edge_filter{false}, m_edge_filter_failed{false};

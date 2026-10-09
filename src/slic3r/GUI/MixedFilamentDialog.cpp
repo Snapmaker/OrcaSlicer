@@ -805,6 +805,7 @@ void MixedFilamentDialog::build_ui()
                 m_match_min_pct = new_min;
                 if (visibility_changed)
                     rebuild_swatch_sizer();
+                clamp_match_ratio_to_minimum();
                 if (m_match_panel)
                     m_match_panel->set_min_component_percent(new_min);
             });
@@ -1600,6 +1601,34 @@ void MixedFilamentDialog::rebuild_match_legend()
     m_match_legend_panel->Layout();
 }
 
+void MixedFilamentDialog::clamp_match_ratio_to_minimum()
+{
+    if (m_match_tri_indices.empty())
+        return;
+
+    if (m_match_tri_indices.size() >= 3) {
+        const std::vector<int> constrained = clamp_color_match_weights_to_minimum(
+            {int(m_match_tri_wx * 100.0 + 0.5), int(m_match_tri_wy * 100.0 + 0.5), int(m_match_tri_wz * 100.0 + 0.5)}, m_match_min_pct);
+        if (constrained.size() < 3)
+            return;
+        m_match_tri_wx = double(constrained[0]) / 100.0;
+        m_match_tri_wy = double(constrained[1]) / 100.0;
+        m_match_tri_wz = double(constrained[2]) / 100.0;
+        m_match_tri_weights = {m_match_tri_wx, m_match_tri_wy, m_match_tri_wz};
+    } else if (m_match_gradient_selector) {
+        const int value = m_match_gradient_selector->value();
+        m_match_tri_wx = double(100 - value) / 100.0;
+        m_match_tri_wy = double(value) / 100.0;
+        m_match_tri_weights = {m_match_tri_wx, m_match_tri_wy};
+    } else
+        return;
+
+    update_match_legend_labels();
+    if (m_match_tri_picker) m_match_tri_picker->Refresh();
+    if (m_match_strip_panel) m_match_strip_panel->Refresh();
+    if (m_match_blend_panel) m_match_blend_panel->Refresh();
+}
+
 void MixedFilamentDialog::update_match_legend_labels()
 {
     if (m_match_legend_labels.empty() || m_match_tri_indices.empty()) return;
@@ -2008,15 +2037,16 @@ void MixedFilamentDialog::build_match_tri_picker(wxWindow* parent)
         if (!m_match_tri_dragging) return;
         TriPt clamped = tri_clamp_pt(p, v0, v1, v2);
         tri_bary(clamped, v0, v1, v2, m_match_tri_wx, m_match_tri_wy, m_match_tri_wz);
-        // Use dynamic min_component_percent (0-50%) instead of hard-coded 10%
         {
-            const double min_w = std::max(0.0, m_match_min_pct / 100.0);
-            const double max_w = 1.0 - 2.0 * min_w;  // each weight ≤ 100% - 2x min (leaves room for 2 others)
-            m_match_tri_wx = std::clamp(m_match_tri_wx, min_w, max_w);
-            m_match_tri_wy = std::clamp(m_match_tri_wy, min_w, max_w);
-            m_match_tri_wz = std::clamp(m_match_tri_wz, min_w, max_w);
-            double sum = m_match_tri_wx + m_match_tri_wy + m_match_tri_wz;
-            if (sum > 0) { m_match_tri_wx /= sum; m_match_tri_wy /= sum; m_match_tri_wz /= sum; }
+            const std::vector<int> constrained = clamp_color_match_weights_to_minimum(
+                {int(m_match_tri_wx * 100.0 + 0.5), int(m_match_tri_wy * 100.0 + 0.5), int(m_match_tri_wz * 100.0 + 0.5)},
+                m_match_min_pct);
+            if (constrained.size() >= 3) {
+                m_match_tri_wx = double(constrained[0]) / 100.0;
+                m_match_tri_wy = double(constrained[1]) / 100.0;
+                m_match_tri_wz = double(constrained[2]) / 100.0;
+                m_match_tri_weights = {m_match_tri_wx, m_match_tri_wy, m_match_tri_wz};
+            }
         }
         update_match_legend_labels();
         if (m_match_strip_panel) m_match_strip_panel->Refresh();

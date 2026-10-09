@@ -2,6 +2,9 @@
 # Requires masked CI/CD variables:
 #   AI_REVIEW_GITLAB_TOKEN  - project access token with api scope (Reporter+)
 #   AI_REVIEW_LLM_API_KEY   - OpenAI-compatible LLM API key
+# dev-guidelines source: internal repo snapmaker_orca/dev-guidelines (the public
+# GitHub copy is generic-only). Clone uses the one-shot CI_JOB_TOKEN (this
+# project is on that repo's job-token allowlist).
 ai_review:
   tags: [ai-review]
   rules:
@@ -23,6 +26,5 @@ ai_review:
   script:
     - '& $env:PYEXE -m pip install --quiet pyyaml==6.0.3'
     - if (Test-Path dg) { Remove-Item -Recurse -Force dg }
-    - git clone --depth 1 --branch $env:DG_REF https://github.com/zhangzhend0ng/dev-guidelines dg
+    - git clone --depth 1 --branch $env:DG_REF "http://gitlab-ci-token:$($env:CI_JOB_TOKEN)@gitlab.s.com/snapmaker_orca/dev-guidelines.git" dg
     - '& $env:PYEXE dg/scripts/ai_review_gitlab.py'
-# re-trigger: dg branch tip 3162175 carries the sticky-note pagination fix

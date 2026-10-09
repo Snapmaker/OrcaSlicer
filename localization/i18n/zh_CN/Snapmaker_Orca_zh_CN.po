@@ -1639,6 +1639,9 @@ msgstr "无法启动URL下载。目标文件夹没有设置。请在配置向导
 msgid "Import File"
 msgstr "导入文件"
 
+msgid "Import model"
+msgstr "导入模型"
+
 msgid "Choose files"
 msgstr "选择文件"
 
@@ -5939,6 +5942,10 @@ msgstr "记住我的选择。"
 #, boost-format
 msgid "Failed loading file \"%1%\". An invalid configuration was found."
 msgstr "加载文件“%1%”失败。发现无效配置。"
+
+#, boost-format
+msgid "Failed loading file \"%1%\". Not enough memory."
+msgstr "加载文件“%1%”失败。内存不足。"
 
 msgid "Objects with zero volume removed"
 msgstr "体积为零的对象已被移除"
@@ -14082,6 +14089,14 @@ msgstr "导入预设"
 
 msgid "Create Type"
 msgstr "创建类型"
+
+#, boost-format
+msgid "The model is too large to import: it requires an estimated %1% MiB of memory, and at least twice that must be free (only %2% MiB is available)."
+msgstr "模型过大，无法导入：预计需要 %1% MiB 内存，安全导入需至少两倍于此的可用内存（当前仅 %2% MiB 可用）。"
+
+#, boost-format
+msgid "Importing model \"%1%\" requires an estimated %2% MiB of memory, and at least twice that must be free to import safely. Only %3% MiB is available. Importing may take a long time or fail. Continue?"
+msgstr "导入模型“%1%”预计需要 %2% MiB 内存，安全导入需至少两倍于此的可用内存，当前仅 %3% MiB 可用。继续导入可能耗时较长或失败。是否继续？"
 
 msgid "The model was not found, please reselect vendor."
 msgstr "该模型未找到，请重新选择供应商。"

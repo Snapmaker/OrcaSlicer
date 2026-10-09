@@ -774,15 +774,23 @@ void GLAOPass::release()
     m_sample_active = m_sample_failed = false;
 }
 
+bool GLAOPass::validate_fs_shaders()
+{
+    // Validate fallback dependencies only when FS is actually selected. Missing
+    // optional FS programs must not disable an otherwise usable compute backend.
+    if (!m_shaders[1] || !m_shaders[2] || !m_shaders[3])
+        return fail("FS AO evaluation, filter or upsample shader is unavailable");
+    return true;
+}
+
 bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shaders& shaders)
 {
     if (settings.quality == Quality::Off || !m_failure.empty())
         return false;
     if (!GLEW_VERSION_3_1)
         return fail("OpenGL 3.1 is required");
-    for (auto* shader : shaders)
-        if (!shader)
-            return fail("a required AO shader is unavailable");
+    if (!shaders[0] || !shaders[4])
+        return fail("a required common AO shader is unavailable");
     const int w = frame.viewport[2], h = frame.viewport[3];
     if (w <= 0 || h <= 0)
         return false;
@@ -834,6 +842,8 @@ bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shade
     int aw                      = m_use_compute || settings.quality == Quality::High ? w : (w + 1) / 2;
     int ah                      = m_use_compute || settings.quality == Quality::High ? h : (h + 1) / 2;
     m_shaders                   = shaders;
+    if (!m_use_compute && !validate_fs_shaders())
+        return false;
     m_quality = settings.quality;
     m_cs_low_reference = frame.cs_low_reference;
     m_composite_reference = frame.composite_reference;
@@ -855,6 +865,8 @@ bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shade
         m_backend_reason = m_compute.failure_reason();
         benchmark.finish("ABORTED: CS initialization failed: " + m_backend_reason);
         m_use_compute       = false;
+        if (!validate_fs_shaders())
+            return false;
         m_effective_samples = ao_samples(settings.quality, settings.fs_slices_override);
         aw                  = settings.quality == Quality::High ? w : (w + 1) / 2;
         ah                  = settings.quality == Quality::High ? h : (h + 1) / 2;
@@ -1427,6 +1439,10 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
             }
             m_compute.disable(m_backend_reason);
             m_use_compute       = false;
+            if (!validate_fs_shaders()) {
+                m_recording = false;
+                return false;
+            }
             m_effective_samples = ao_samples(settings.quality, settings.fs_slices_override);
             if (!capture_path.empty())
                 capture_ok &= capture_ao_parameters(capture_path / "capture-info.txt", frame, settings, m_ao_width, m_ao_height, m_samples,

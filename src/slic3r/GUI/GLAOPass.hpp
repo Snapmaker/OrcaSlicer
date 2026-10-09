@@ -97,6 +97,7 @@ public:
 
 private:
     bool fail(const std::string& reason);
+    bool validate_fs_shaders();
     GLAOCompute        m_compute;
     bool               m_use_compute{false};
     bool m_use_edge_filter{false}, m_edge_filter_failed{false};

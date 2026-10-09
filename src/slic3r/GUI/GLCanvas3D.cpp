@@ -3475,8 +3475,13 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
             imgui.text("AO unavailable: " + m_ao_pass.failure_reason());
         else if (ao_rendered && m_ao_pass.has_gpu_sample()) {
             static const char* labels[] = {"AO depth copy", "AO bed receivers", "AO normals", "GTAO", "AO filter", "AO upsample", "AO composite", "AO total"};
-            for (size_t i = 0; i < m_ao_pass.gpu_ms().size(); ++i)
-                imgui.text(std::string(labels[i]) + ": " + std::to_string(m_ao_pass.gpu_ms()[i]) + " ms");
+            for (size_t i = 0; i < m_ao_pass.gpu_ms().size(); ++i) {
+                // The compact timer's CS interval includes both prefilter and
+                // evaluation. The benchmark CSV records these stages separately.
+                const char* label = i == 3 && std::string(m_ao_pass.backend()) == "cs" ?
+                                        "AO depth prefilter + GTAO" : labels[i];
+                imgui.text(std::string(label) + ": " + std::to_string(m_ao_pass.gpu_ms()[i]) + " ms");
+            }
         }
         else if (ao_rendered)
             imgui.text(m_ao_pass.has_gpu_timing() ? "AO: waiting for GPU timing" : "AO: GPU timing unavailable");

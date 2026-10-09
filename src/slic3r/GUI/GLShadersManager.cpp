@@ -6,6 +6,7 @@
 
 #include <cassert>
 #include <algorithm>
+#include <cstdlib>
 #include <string_view>
 using namespace std::literals;
 
@@ -118,25 +119,51 @@ std::pair<bool, std::string> GLShadersManager::init()
     else
         valid &= append_shader("mm_gouraud", { prefix + "mm_gouraud.vs", prefix + "mm_gouraud.fs" });
 
+    // Diagnostic variants are selected at launch, including automated comparisons.
+    // Keep their files available without compiling every experiment in normal sessions.
+    const auto ao_option = [](const char* key) -> std::string_view {
+        const char* value = std::getenv(key);
+        return value ? std::string_view(value) : std::string_view();
+    };
+    const auto ao_comparison = ao_option("ORCA_AO_COMPARISON_MODE");
+    const auto ao_composite = ao_option("ORCA_AO_COMPOSITE");
+    const bool ao_split = ao_composite == "split" || ao_comparison == "split";
+    const bool ao_confidence = ao_composite == "confidence" || ao_comparison == "confidence";
+    const bool ao_reference = ao_composite == "reference" || ao_comparison == "composite";
+    const bool ao_fast_reconstruction = ao_option("ORCA_AO_FS_RECONSTRUCTION") == "fast" || ao_comparison == "fseval";
+    const bool ao_legacy_low = ao_option("ORCA_AO_CS_LOW") == "legacy" || ao_comparison == "cslow";
+
     if (GUI::wxGetApp().is_gl_version_greater_or_equal_to(3, 1)) {
         // Keep runtime handles stable; filenames describe each stage's role.
         appendOptionalShader("ao_normal", {"140/ao_fullscreen_triangle.vs", "140/ao_reconstruct_view_normals.fs"});
-        appendOptionalShader("ao_normal_confidence", {"140/ao_fullscreen_triangle.vs", "140/ao_reconstruct_view_normals.fs"}, {"AO_CONFIDENCE_OUTPUT"});
+        if (ao_confidence)
+            appendOptionalShader("ao_normal_confidence", {"140/ao_fullscreen_triangle.vs", "140/ao_reconstruct_view_normals.fs"}, {"AO_CONFIDENCE_OUTPUT"});
         appendOptionalShader("gtao", {"140/ao_fullscreen_triangle.vs", "140/gtao_evaluate_reference.fs"});
         appendOptionalShader("ao_filter", {"140/ao_fullscreen_triangle.vs", "140/ao_denoise_geometry_reference.fs"});
         appendOptionalShader("ao_upsample", {"140/ao_fullscreen_triangle.vs", "140/ao_upsample_bilateral.fs"});
         appendOptionalShader("ao_composite", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility.fs"});
-        appendOptionalShader("ao_composite_confidence", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility.fs"}, {"AO_PRECOMPUTED_CONFIDENCE"});
-        appendOptionalShader("ao_composite_reference", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_reference.fs"});
+        if (ao_confidence)
+            appendOptionalShader("ao_composite_confidence", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility.fs"}, {"AO_PRECOMPUTED_CONFIDENCE"});
+        if (ao_reference)
+            appendOptionalShader("ao_composite_reference", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_reference.fs"});
         appendOptionalShader("gtao_reuse", {"140/ao_fullscreen_triangle.vs", "140/gtao_evaluate.fs"});
         appendOptionalShader("ao_filter_reuse", {"140/ao_fullscreen_triangle.vs", "140/ao_denoise_geometry.fs"});
         appendOptionalShader("gtao_edges", {"140/ao_fullscreen_triangle.vs", "140/gtao_evaluate.fs"}, {"AO_EDGE_OUTPUT"});
+        if (ao_fast_reconstruction)
+            appendOptionalShader("gtao_edges_xy", {"140/ao_fullscreen_triangle.vs", "140/gtao_evaluate.fs"}, {"AO_EDGE_OUTPUT", "AO_SEPARABLE_XY"});
         appendOptionalShader("ao_denoise_connectivity", {"140/ao_fullscreen_triangle.vs", "140/ao_denoise_connectivity.fs"});
         appendOptionalShader("ao_depth", {"140/ao_receiver_depth.vs", "140/ao_receiver_depth.fs"});
         if (GUI::wxGetApp().is_gl_version_greater_or_equal_to(4, 0)) {
             appendOptionalShader("ao_composite_msaa", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_msaa.fs"});
-            appendOptionalShader("ao_composite_msaa_confidence", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_msaa.fs"}, {"AO_PRECOMPUTED_CONFIDENCE"});
-            appendOptionalShader("ao_composite_msaa_reference", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_msaa_reference.fs"});
+            if (ao_confidence)
+                appendOptionalShader("ao_composite_msaa_confidence", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_msaa.fs"}, {"AO_PRECOMPUTED_CONFIDENCE"});
+            if (ao_split) {
+                appendOptionalShader("ao_msaa_classify", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_msaa.fs"}, {"AO_CLASSIFY_SURFACE"});
+                appendOptionalShader("ao_msaa_fast", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_msaa.fs"}, {"AO_COMPOSITE_FAST"});
+                appendOptionalShader("ao_msaa_edges", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_msaa.fs"}, {"AO_COMPOSITE_EDGES"});
+            }
+            if (ao_reference)
+                appendOptionalShader("ao_composite_msaa_reference", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_msaa_reference.fs"});
         }
     }
     if (GUI::wxGetApp().is_gl_version_greater_or_equal_to(4, 3)) {
@@ -147,6 +174,8 @@ std::pair<bool, std::string> GLShadersManager::init()
             GLShaderProgram::ShaderFilenames files{};
             files[static_cast<size_t>(GLShaderProgram::EShaderType::Compute)] = "430/" + stage.second + ".cs";
             appendOptionalShader(stage.first, files);
+            if (stage.first == "xegtao_main" && ao_legacy_low)
+                appendOptionalShader("xegtao_main_legacy_low", files, {"AO_LEGACY_LOW"});
         }
     }
     return {valid, error};

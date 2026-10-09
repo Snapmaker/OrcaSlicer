@@ -91,9 +91,71 @@ ivec2 match_surface(ivec2 p, vec3 sample_p, out int status)
     return p;
 }
 
+// A negative factor marks a pixel requiring the original per-sample path.
+#if defined(AO_CLASSIFY_SURFACE) || defined(AO_COMPOSITE_FAST) || defined(AO_COMPOSITE_EDGES)
+uniform sampler2D composite_factor_texture;
+#endif
+#ifdef AO_CLASSIFY_SURFACE
+uniform int sample_count;
+uniform vec2 sample_positions[8];
+void main()
+{
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    float center_depth = depth_at(p);
+    vec3 P = center_depth < 1.0 ? position_from_depth(p, center_depth) : vec3(0);
+    vec3 N = center_depth < 1.0 ? normal_at(p) : vec3(0);
+    bool all_background = true;
+    bool all_direct = center_depth < 1.0;
+    for (int i = 0; i < 8; ++i) {
+        if (i >= sample_count) break;
+        float d = texelFetch(sample_depth_texture, p, i).r;
+        if (d >= 1.0) { all_direct = false; continue; }
+        all_background = false;
+        if (!all_direct) continue;
+        vec2 uv = (vec2(p) + sample_positions[i]) / vec2(full_size);
+        vec4 h = inv_projection * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1);
+        vec3 sample_p = h.xyz / h.w;
+        float error = abs(dot(sample_p - P, N));
+        // Require margin below the direct-match threshold; ambiguous pixels use the old path.
+        if (error > footprint(sample_p) * 0.49) all_direct = false;
+    }
+    if (all_background) { out_color = vec4(1); return; }
+    if (!all_direct) { out_color = vec4(-1); return; }
+    float visibility = clamp(texelFetch(ao_texture, p, 0).r, 0.0, 1.0);
+    if (visibility >= 1.0 || ao_strength <= 0.0) { out_color = vec4(1); return; }
+    float ao = intensity == 1.0 ? visibility : pow(visibility, intensity);
+    float z = view_z(p, center_depth);
+    float pixel_size = footprint(vec3(0, 0, z));
+    float gap_start = max(radius, pixel_size * 4.0);
+    float gap_end = max(radius * 2.0, pixel_size * 8.0);
+    float confidence = 1.0;
+    for (int i = 0; i < 4; ++i) {
+        ivec2 o = i == 0 ? ivec2(1, 0) : i == 1 ? ivec2(-1, 0) : i == 2 ? ivec2(0, 1) : ivec2(0, -1);
+        ivec2 q = p + o;
+        if (!inside(q)) continue;
+        float d = depth_at(q);
+        if (d >= 1.0) confidence = 0.0;
+        else confidence = min(confidence, 1.0 - smoothstep(gap_start, gap_end, abs(view_z(q, d) - z)));
+        if (confidence == 0.0) break;
+    }
+    out_color = vec4(mix(1.0, ao, confidence * clamp(ao_strength, 0.0, 1.0)));
+}
+#elif defined(AO_COMPOSITE_FAST)
+void main()
+{
+    ivec2 p = ivec2(gl_FragCoord.xy) - viewport_origin;
+    float factor = texelFetch(composite_factor_texture, p, 0).r;
+    if (factor < 0.0) discard;
+    out_color = vec4(vec3(factor), 1);
+}
+#else
 void main()
 {
     ivec2 p               = ivec2(gl_FragCoord.xy) - viewport_origin;
+#ifdef AO_COMPOSITE_EDGES
+    // Diagnostic exports always execute the original per-sample equations.
+    if (!capture_sample && debug_view == 0 && texelFetch(composite_factor_texture, p, 0).r >= 0.0) discard;
+#endif
     int   sample_index    = capture_sample ? capture_sample_index : gl_SampleID;
     vec2  sample_position = capture_sample ? capture_sample_position : gl_SamplePosition;
     float sample_depth    = texelFetch(sample_depth_texture, p, sample_index).r;
@@ -177,3 +239,5 @@ void main()
     }
     out_color = vec4(vec3(factor), 1);
 }
+
+#endif

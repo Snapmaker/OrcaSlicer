@@ -81,6 +81,15 @@ void main()
     float r = max(radius * 1.457, 1e-6), screen_radius = r / footprint;
     vec2  noise      = fract(0.5 + float(hilbert(uvec2(p))) * vec2(0.75487766624669276005, 0.56984029099805326591));
     float visibility = clamp((10.0 - screen_radius) / 100.0, 0.0, 1.0) * 0.5;
+    // One angular slice has direction-dependent unoccluded energy. Normalize
+    // against the SAME slice before the response curve so an unoccluded sloped
+    // surface stays white. Multi-slice presets keep their existing estimator.
+#ifdef AO_LEGACY_LOW
+    bool normalize_low = false;
+#else
+    bool normalize_low = slices == 1;
+#endif
+    float unoccluded_visibility = visibility;
     for (int slice = 0; slice < slices; ++slice) {
         float phi       = (float(slice) + noise.x) / float(slices) * PI;
         vec2  direction = vec2(cos(phi), sin(phi));
@@ -102,7 +111,9 @@ void main()
                 vec2 sample_uv = uv + offset * (side == 0 ? 1.0 : -1.0);
                 if (any(lessThan(sample_uv, vec2(0))) || any(greaterThanEqual(sample_uv, vec2(1))))
                     continue;
-                float sample_z = textureLod(linear_depth, sample_uv * vec2(full_size) / vec2(textureSize(linear_depth, 0)), lod).r;
+                // Low has only four taps. A filtered MIP depth on a sloped plane
+                // is not necessarily the depth at this exact UV, creating false occluders.
+                float sample_z = textureLod(linear_depth, sample_uv * vec2(full_size) / vec2(textureSize(linear_depth, 0)), normalize_low ? 0.0 : lod).r;
                 if (sample_z >= 1e19)
                     continue;
                 vec3  diff    = position(sample_uv, sample_z) - P;
@@ -118,7 +129,11 @@ void main()
         len      = mix(len, 1.0, 0.05);
         float h0 = -fast_acos(horizon.y), h1 = fast_acos(horizon.x);
         visibility += len * ((cosN + 2.0 * h0 * sin(n) - cos(2.0 * h0 - n)) + (cosN + 2.0 * h1 * sin(n) - cos(2.0 * h1 - n))) * 0.25;
+        if (normalize_low) {
+            float b0 = -fast_acos(low.y), b1 = fast_acos(low.x);
+            unoccluded_visibility += len * ((cosN + 2.0 * b0 * sin(n) - cos(2.0 * b0 - n)) + (cosN + 2.0 * b1 * sin(n) - cos(2.0 * b1 - n))) * 0.25;
+        }
     }
-    visibility = max(0.03, pow(max(visibility / float(slices), 0.0), 2.2));
+    visibility = max(0.03, pow(max(visibility / (normalize_low ? max(unoccluded_visibility, 1e-6) : float(slices)), 0.0), 2.2));
     imageStore(raw_ao, p, uvec4(uint(clamp(visibility / 1.5, 0.0, 1.0) * 255.0 + 0.5)));
 }

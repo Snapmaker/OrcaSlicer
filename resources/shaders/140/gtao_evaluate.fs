@@ -28,8 +28,17 @@ bool inside(ivec2 p) { return all(greaterThanEqual(p, ivec2(0))) && all(lessThan
 float depth_at(ivec2 p) { return texelFetch(depth_texture, clamp(p, ivec2(0), full_size-1), 0).r; }
 vec3 position_from_depth(ivec2 p, float depth) {
     vec2 uv = (vec2(p)+0.5)/vec2(full_size);
+#ifdef AO_SEPARABLE_XY
+    // Host selects this variant only for symmetric, separable projections.
+    // Keep Z/W on the original path: simplifying them changed threshold decisions.
+    vec3 ndc = vec3(uv*2.0-1.0, depth*2.0-1.0);
+    vec4 v = inv_projection * vec4(ndc, 1.0);
+    vec2 xy = vec2(inv_projection[0][0], inv_projection[1][1]) * ndc.xy + inv_projection[3].xy;
+    return vec3(xy, v.z)/v.w;
+#else
     vec4 v = inv_projection * vec4(uv*2.0-1.0, depth*2.0-1.0, 1.0);
     return v.xyz/v.w;
+#endif
 }
 #ifdef AO_EDGE_OUTPUT
 float edge_depth(ivec2 p) { return -position_from_depth(p,depth_at(p)).z; }

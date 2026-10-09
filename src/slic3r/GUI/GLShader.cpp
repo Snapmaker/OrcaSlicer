@@ -182,7 +182,7 @@ bool GLShaderProgram::init_from_texts(const std::string& name, const ShaderSourc
     if (shader_ids[static_cast<size_t>(EShaderType::Vertex)] > 0)
         bind_default_attrib_locations(m_id);
 
-    if (name == "gtao_edges") {
+    if (name == "gtao_edges" || name == "gtao_edges_xy") {
         glsafe(::glBindFragDataLocation(m_id, 0, "out_color"));
         glsafe(::glBindFragDataLocation(m_id, 1, "out_edges"));
     }

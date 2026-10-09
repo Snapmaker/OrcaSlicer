@@ -673,7 +673,12 @@ private:
     bool m_ao_comparison_sampling{false};
     bool m_ao_comparison_composite{false};
     bool m_ao_comparison_confidence{false};
-    bool m_ao_comparison_backends{false}; // Compare CS/FS instead of CS sampling variants.
+    bool m_ao_comparison_split{false};
+    bool m_ao_comparison_pixel{false}, m_ao_comparison_pixel_fs{false};
+    bool m_ao_comparison_reconstruction{false};
+    bool m_ao_comparison_backends{false};
+    bool m_ao_comparison_low{false};
+    bool m_ao_comparison_qualities{false}; // One CS/FS pair for each quality preset.
     int m_ao_comparison_run{0}; // Three alternating default/directions pairs.
     std::string m_ao_comparison_root, m_ao_comparison_signature, m_ao_comparison_capture;
     void finish_ao_comparison(const std::string& reason);

@@ -30,6 +30,7 @@ public:
     void forget_context();
     void disable(const std::string& reason);
     const std::string&           failure_reason() const { return m_failure; }
+    unsigned int evaluation_program() const { return m_programs[1]; }
     unsigned int                 output() const { return m_textures[4]; }
     unsigned int                 depth_mips() const { return m_textures[0]; }
     int                          padded_width() const { return m_pw; }

@@ -26,7 +26,7 @@ public:
 
 private:
     // IDs 0..15 retain the original intervals. Extra marks execute before frame-end (15).
-    static constexpr int QUERY_COUNT = 27;
+    static constexpr int QUERY_COUNT = 31;
     static constexpr int FRAME_END = 15;
     struct Slot {
         std::array<unsigned int, QUERY_COUNT> queries{};

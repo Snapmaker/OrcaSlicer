@@ -3200,7 +3200,7 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
         std::ostringstream signature;
         signature.imbue(std::locale::classic());
         signature << std::setprecision(17) << "viewport=" << cnv_size.get_width() << 'x' << cnv_size.get_height()
-                  << "\nquality=" << wxGetApp().app_config->get("render_ao_quality")
+                  << "\nui_quality=" << wxGetApp().app_config->get("render_ao_quality")
                   << "\nstrength=" << wxGetApp().app_config->get("render_ao_strength")
                   << "\ndebug=" << wxGetApp().app_config->get("render_ao_debug")
                   << "\nevaluation_variant=" << (m_ao_benchmark_reuse ? "reuse" : "baseline")
@@ -3225,6 +3225,9 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
                 finish_ao_comparison("ABORTED: comparison view or settings changed");
             }
         }
+        const char* quality_names[] = {"low", "medium", "high"};
+        signature << "\nquality=" << (m_ao_comparison_stage && m_ao_comparison_low ? "low" : m_ao_comparison_stage && m_ao_comparison_qualities ?
+                                          quality_names[m_ao_comparison_run / 2] : wxGetApp().app_config->get("render_ao_quality"));
         m_ao_pass.benchmark.begin(signature.str());
         fullSceneRefresh = true;
     }
@@ -5102,7 +5105,13 @@ void GLCanvas3D::on_key(wxKeyEvent& evt)
                 std::error_code error;
                 if (std::filesystem::create_directories(m_ao_comparison_root, error) && !error) {
                     const char* mode = std::getenv("ORCA_AO_COMPARISON_MODE");
-                    m_ao_comparison_backends = mode && std::string(mode) == "backends";
+                    m_ao_comparison_low = mode && std::string(mode) == "cslow";
+                    m_ao_comparison_qualities = mode && std::string(mode) == "qualities";
+                    m_ao_comparison_backends = m_ao_comparison_qualities || (mode && std::string(mode) == "backends");
+                    m_ao_comparison_reconstruction = mode && std::string(mode) == "fseval";
+                    m_ao_comparison_pixel_fs = mode && std::string(mode) == "pixelfs";
+                    m_ao_comparison_pixel = m_ao_comparison_pixel_fs || (mode && std::string(mode) == "pixel");
+                    m_ao_comparison_split = mode && std::string(mode) == "split";
                     m_ao_comparison_confidence = mode && std::string(mode) == "confidence";
                     m_ao_comparison_composite = mode && std::string(mode) == "composite";
                     m_ao_comparison_sampling = mode && std::string(mode) == "fssampling";
@@ -5114,8 +5123,8 @@ void GLCanvas3D::on_key(wxKeyEvent& evt)
                     m_ao_benchmark_pipeline = m_ao_benchmark_reuse = m_ao_benchmark_filter_reuse = true;
                     m_ao_pass.request_capture("");
                     std::ofstream status(std::filesystem::path(m_ao_comparison_root) / "status.txt");
-                    status << "RUNNING: three alternating " << (m_ao_comparison_confidence ? "CS direct/precomputed confidence" : m_ao_comparison_composite ? "CS reference/optimized composite" : m_ao_comparison_sampling ? "FS 4x8/3x8 with three denoise passes" : m_ao_comparison_denoise ? "FS connectivity 2/3 passes" : m_ao_comparison_filter ? "FS geometry/connectivity" : m_ao_comparison_backends ? "CS/FS" : "default/directions")
-                           << " pairs; 30 warmup + 180 measured per run.\n"
+                    status << (m_ao_comparison_qualities ? "RUNNING: six quality configurations; " : "RUNNING: three alternating ") << (m_ao_comparison_low ? "CS Low legacy/normalized unoccluded slice" : m_ao_comparison_qualities ? "CS/FS Low, Medium, High" : m_ao_comparison_reconstruction ? "FS matrix/separable XY reconstruction" : m_ao_comparison_pixel ? (m_ao_comparison_pixel_fs ? "FS sample/pixel composite" : "CS sample/pixel composite") : m_ao_comparison_split ? "CS direct/split MSAA composite" : m_ao_comparison_confidence ? "CS direct/precomputed confidence" : m_ao_comparison_composite ? "CS reference/optimized composite" : m_ao_comparison_sampling ? "FS 4x8/3x8 with three denoise passes" : m_ao_comparison_denoise ? "FS connectivity 2/3 passes" : m_ao_comparison_filter ? "FS geometry/connectivity" : m_ao_comparison_backends ? "CS/FS" : "default/directions")
+                           << "; 30 warmup + 180 measured per run.\n"
                            << "Images captured after timing. Do not change view, settings or scene.\n";
                     status.close();
                     if (status) next_ao_comparison_run();

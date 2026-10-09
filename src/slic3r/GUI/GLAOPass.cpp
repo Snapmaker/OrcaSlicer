@@ -58,7 +58,7 @@ void AOBenchmark::begin(const std::string& signature)
     if (m_signature.empty()) {
         m_signature = signature;
         std::ofstream metadata(std::filesystem::path(m_directory) / "metadata.txt");
-        metadata << "benchmark_schema=7\n"
+        metadata << "benchmark_schema=9\n"
                  << signature << "\nGPU: " << reinterpret_cast<const char*>(glGetString(GL_RENDERER))
                  << "\nVendor: " << reinterpret_cast<const char*>(glGetString(GL_VENDOR))
                  << "\nGL: " << reinterpret_cast<const char*>(glGetString(GL_VERSION))
@@ -161,7 +161,7 @@ void AOBenchmark::finish(const std::string& reason)
            "before_main_ms,after_main_ms"
         << ",elapsed_ms,cpu_ao_submit_ms,cpu_gtao_submit_ms,cpu_filter_first_submit_ms,cpu_filter_refine_submit_ms,cpu_depth_copy_submit_"
            "ms,cpu_normals_submit_ms"
-        << ",cs_depth_prefilter_ms,cs_evaluate_ms,cs_denoise_first_ms,cs_denoise_second_ms,cs_denoise_third_ms,depth_resolve_ms,sample_depth_copy_ms,fs_denoise_second_ms,fs_denoise_third_ms\n";
+        << ",cs_depth_prefilter_ms,cs_evaluate_ms,cs_denoise_first_ms,cs_denoise_second_ms,cs_denoise_third_ms,depth_resolve_ms,sample_depth_copy_ms,fs_denoise_second_ms,fs_denoise_third_ms,composite_classify_ms,composite_fast_ms,composite_edges_ms,receiver_first_ms,receiver_sample_ms\n";
     for (const auto& row : m_rows) {
         csv << row.frame << ',' << (row.frame < 30 ? 1 : 0) << ',' << std::setprecision(9) << row.cpu_ms;
         auto interval = [&](int a, int b) {
@@ -206,9 +206,14 @@ void AOBenchmark::finish(const std::string& reason)
         interval(22, 23);
         interval(23, 24);
         interval(2, 25);
-        interval(25, 3);
+        interval(25, 29); // Empty when no sample-depth copy was executed.
         interval(16, (row.mask & (1u << 26)) ? 26 : 17);
         interval(26, 17);
+        interval(8, 27);
+        interval(27, 28);
+        interval(28, 9);
+        interval(3, 30);
+        if (row.mask & (1u << 29)) interval(30, 4); else csv << ',';
         csv << '\n';
     }
     csv.close();
@@ -265,7 +270,7 @@ struct AOState
 {
     GLint     read_fbo{}, draw_fbo{}, viewport[4]{}, program{}, vao{}, array_buffer{}, active{}, textures[5]{}, sample_texture{};
     GLint     depth_func{}, blend_src[2]{}, blend_dst[2]{}, blend_eq[2]{}, polygon_mode[2]{};
-    GLboolean depth_mask{}, color_mask[4]{}, multisample{}, sample_mask{};
+    GLboolean depth_mask{}, color_mask[4]{}, multisample{}, sample_mask{}, sample_shading{};
     const std::array<GLenum, 10> caps{{GL_DEPTH_TEST, GL_BLEND, GL_STENCIL_TEST, GL_CULL_FACE, GL_SCISSOR_TEST, GL_SAMPLE_ALPHA_TO_COVERAGE,
                                        GL_SAMPLE_COVERAGE, GL_COLOR_LOGIC_OP, GL_POLYGON_OFFSET_FILL, GL_RASTERIZER_DISCARD}};
     std::array<GLboolean, 10>    enabled{};
@@ -291,8 +296,10 @@ struct AOState
         glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_mask);
         glGetBooleanv(GL_COLOR_WRITEMASK, color_mask);
         multisample = glIsEnabled(GL_MULTISAMPLE);
-        if (GLEW_VERSION_4_0)
+        if (GLEW_VERSION_4_0) {
             sample_mask = glIsEnabled(GL_SAMPLE_MASK);
+            sample_shading = glIsEnabled(GL_SAMPLE_SHADING);
+        }
         glGetIntegerv(GL_BLEND_SRC_RGB, &blend_src[0]);
         glGetIntegerv(GL_BLEND_SRC_ALPHA, &blend_src[1]);
         glGetIntegerv(GL_BLEND_DST_RGB, &blend_dst[0]);
@@ -306,8 +313,10 @@ struct AOState
     {
         for (GLenum cap : caps)
             glDisable(cap);
-        if (GLEW_VERSION_4_0)
+        if (GLEW_VERSION_4_0) {
             glDisable(GL_SAMPLE_MASK);
+            glDisable(GL_SAMPLE_SHADING);
+        }
         glDepthMask(GL_FALSE);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
@@ -344,6 +353,7 @@ struct AOState
         else
             glDisable(GL_MULTISAMPLE);
         if (GLEW_VERSION_4_0) {
+            if (sample_shading) glEnable(GL_SAMPLE_SHADING); else glDisable(GL_SAMPLE_SHADING);
             if (sample_mask)
                 glEnable(GL_SAMPLE_MASK);
             else
@@ -694,9 +704,9 @@ GLAOPass::Quality GLAOPass::resolve_quality(const std::string& value, const std:
     for (const char* software : {"llvmpipe", "softpipe", "swiftshader", "gdi generic", "software"})
         if (name.find(software) != std::string::npos)
             return Quality::Off;
-    if (value == "low" || value == "auto")
+    if (value == "low")
         return Quality::Low;
-    if (value == "medium")
+    if (value == "medium" || value == "auto")
         return Quality::Medium;
     if (value == "high")
         return Quality::High;
@@ -733,6 +743,10 @@ void GLAOPass::release()
     m_scene_fbo     = {};
     m_scene_rbo     = {};
     m_scene_samples = 0;
+    glDeleteTextures(1, &m_split_texture);
+    glDeleteFramebuffers(1, &m_split_fbo);
+    m_split_texture = m_split_fbo = 0;
+    m_split_position_samples = 0;
     glDeleteTextures(1, &m_confidence_texture);
     m_confidence_texture = 0;
     glDeleteTextures(1, &m_edge_texture);
@@ -787,8 +801,18 @@ bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shade
                            frame.edge_denoise && !m_edge_filter_failed;
     const bool edge_changed   = use_edges != m_use_edge_filter;
     m_use_edge_filter         = use_edges;
+    // Nonzero projection offsets changed a few horizon decisions in replay; keep
+    // those and generalized projection matrices on the original reconstruction.
+    const auto& inverse = frame.inverse_projection;
+    m_fast_reconstruction = frame.fast_reconstruction && frame.edge_evaluate_xy && use_edges &&
+                            inverse(0, 1) == 0.0 && inverse(0, 2) == 0.0 && inverse(0, 3) == 0.0 &&
+                            inverse(1, 0) == 0.0 && inverse(1, 2) == 0.0 && inverse(1, 3) == 0.0 &&
+                            inverse(2, 0) == 0.0 && inverse(2, 1) == 0.0 && inverse(3, 0) == 0.0 && inverse(3, 1) == 0.0;
     m_fs_edge_passes          = settings.fs_edge_passes == 3 ? 3 : 2;
-    const bool use_confidence = frame.precomputed_confidence && frame.confidence_normal && frame.confidence_composite &&
+    const bool split_ready = !frame.pixel_composite && frame.split_composite && frame.split_classify && frame.split_fast && frame.split_edges && !m_split_failed;
+    const bool split_changed = split_ready != m_split_ready;
+    m_split_ready = split_ready;
+    const bool use_confidence = !frame.pixel_composite && !frame.split_composite && frame.precomputed_confidence && frame.confidence_normal && frame.confidence_composite &&
                                 (!frame.sample_composite || frame.confidence_sample_composite) && !m_confidence_failed;
     const bool confidence_changed = use_confidence != m_use_confidence;
     m_use_confidence              = use_confidence;
@@ -810,9 +834,17 @@ bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shade
     int aw                      = m_use_compute || settings.quality == Quality::High ? w : (w + 1) / 2;
     int ah                      = m_use_compute || settings.quality == Quality::High ? h : (h + 1) / 2;
     m_shaders                   = shaders;
+    m_quality = settings.quality;
+    m_cs_low_reference = frame.cs_low_reference;
     m_composite_reference = frame.composite_reference;
-    if (!backend_changed && !edge_changed && !confidence_changed && !(m_use_compute && denoise_changed) && m_width == w && m_height == h && m_ao_width == aw && m_ao_height == ah)
-        return true;
+    if (!backend_changed && !edge_changed && !confidence_changed && !split_changed && !(m_use_compute && denoise_changed) &&
+        m_width == w && m_height == h && m_ao_width == aw && m_ao_height == ah) {
+        // Matching resources do not imply matching shader programs. Refresh the
+        // compute bindings even when no texture allocation is needed (e.g. Low A/B).
+        if (!m_use_compute || m_compute.prepare(w, h, compute_programs, m_denoise_passes))
+            return true;
+        // A failed refresh follows the normal state-safe FS fallback below.
+    }
     AOState state;
     if (consume_errors())
         BOOST_LOG_TRIVIAL(warning) << "GL error before AO resource preparation";
@@ -853,6 +885,28 @@ bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shade
         if (!complete || error) {
             release();
             return fail("AO texture allocation or framebuffer validation failed");
+        }
+    }
+    if (m_split_ready) {
+        glGenTextures(1, &m_split_texture);
+        glBindTexture(GL_TEXTURE_2D, m_split_texture);
+        texture_parameters();
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, w, h, 0, GL_RED, GL_FLOAT, nullptr);
+        glGenFramebuffers(1, &m_split_fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, m_split_fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_split_texture, 0);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        const bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        const bool error = consume_errors();
+        if (!complete || error) {
+            glDeleteTextures(1, &m_split_texture);
+            glDeleteFramebuffers(1, &m_split_fbo);
+            m_split_texture = m_split_fbo = 0;
+            m_split_ready = false;
+            m_split_failed = true;
+            benchmark.finish("ABORTED: split composite allocation failed");
+            BOOST_LOG_TRIVIAL(warning) << "AO split composite unavailable; using per-sample composite";
         }
     }
     if (m_use_confidence) {
@@ -908,6 +962,12 @@ bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shade
 
 void GLAOPass::forget_context()
 {
+    m_split_texture = m_split_fbo = 0;
+    m_quality = Quality::Off;
+    m_pixel_active = false;
+    m_fast_reconstruction = false;
+    m_split_ready = m_split_active = m_split_failed = false;
+    m_split_position_samples = 0;
     m_confidence_texture = 0;
     m_use_confidence = m_confidence_failed = false;
     m_edge_texture = 0;
@@ -1137,16 +1197,22 @@ bool GLAOPass::capture_sample_depth(const Frame& frame)
     return true;
 }
 
+GLShaderProgram* GLAOPass::sample_composite_shader(const Frame& frame) const
+{
+    return m_split_active ? frame.split_edges : m_use_confidence ? frame.confidence_sample_composite : frame.sample_composite;
+}
+
 void GLAOPass::draw(int index, unsigned int target, int w, int h, const Frame& frame, const Settings& settings)
 {
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, target);
     glViewport(0, 0, w, h);
     glBindVertexArray(m_vao);
-    auto& shader = *(index == 4 && m_sample_active && (settings.debug_view == 0 || settings.debug_view == 5 || settings.debug_view == 6) ?
-                         (m_use_confidence ? frame.confidence_sample_composite : frame.sample_composite) :
+    auto& shader = *(index == 5 ? frame.split_classify : index == 6 ? frame.split_fast :
+                      index == 4 && m_sample_active && (settings.debug_view == 0 || settings.debug_view == 5 || settings.debug_view == 6) ?
+                         sample_composite_shader(frame) :
                          m_use_confidence && index == 0 ? frame.confidence_normal :
                          m_use_confidence && index == 4 ? frame.confidence_composite :
-                         m_use_edge_filter && index == 1 ? frame.edge_evaluate :
+                         m_use_edge_filter && index == 1 ? (m_fast_reconstruction ? frame.edge_evaluate_xy : frame.edge_evaluate) :
                          m_use_edge_filter && index == 2 ? frame.edge_denoise : m_shaders[index]);
     shader.start_using();
     shader.set_uniform("depth_texture", 0);
@@ -1155,6 +1221,7 @@ void GLAOPass::draw(int index, unsigned int target, int w, int h, const Frame& f
     shader.set_uniform("sample_depth_texture", 3);
     shader.set_uniform("edge_texture", 3);
     shader.set_uniform("confidence_texture", 4);
+    shader.set_uniform("composite_factor_texture", 4);
     shader.set_uniform("capture_sample", settings.debug_view == 5 || settings.debug_view == 6);
     shader.set_uniform("inv_projection", frame.inverse_projection);
     shader.set_uniform("projection", frame.projection);
@@ -1170,11 +1237,11 @@ void GLAOPass::draw(int index, unsigned int target, int w, int h, const Frame& f
     shader.set_uniform("step_count", samples[1]);
     shader.set_uniform("high_sampling_noise", settings.quality == Quality::High);
     shader.set_uniform("debug_view", settings.debug_view);
-    if (index == 4)
+    if (index == 4 || index == 6)
         glViewport(frame.viewport[0], frame.viewport[1], w, h);
-    if (index == 4 && m_sample_active && settings.debug_view == 0)
+    if ((index == 4 || index == 6) && (m_sample_active || (m_pixel_active && m_samples > 1)) && settings.debug_view == 0)
         glEnable(GL_MULTISAMPLE);
-    shader.set_uniform("viewport_origin", std::array<int, 2>{{index == 4 ? frame.viewport[0] : 0, index == 4 ? frame.viewport[1] : 0}});
+    shader.set_uniform("viewport_origin", std::array<int, 2>{{(index == 4 || index == 6) ? frame.viewport[0] : 0, (index == 4 || index == 6) ? frame.viewport[1] : 0}});
     glDrawArrays(GL_TRIANGLES, 0, 3);
 }
 
@@ -1183,8 +1250,8 @@ void GLAOPass::begin_timing()
     std::ostringstream description;
     description << "actual_backend=" << backend() << "\nfallback_reason=" << m_backend_reason << "\nao_size=" << m_ao_width << 'x'
                 << m_ao_height << "\ncs_denoise_actual=" << (m_use_compute ? m_denoise_passes : 0)
-                << "\ncomposite_variant=" << (m_use_confidence ? "confidence_precomputed" : m_composite_reference ? "reference" : "optimized") << "\nfs_filter=" << (m_use_compute ? "not_applicable" : m_use_edge_filter ? (m_fs_edge_passes == 3 ? "connectivity_3pass" : "connectivity_2pass") : "geometry") << "\nactual_slices=" << m_effective_samples[0] << "\nactual_steps=" << m_effective_samples[1]
-                << "\ncs_implementation=xegtao_glsl_v1\ncs_upstream=" << GLAOCompute::upstream;
+                << "\ncomposite_variant=" << (m_pixel_active ? "pixel" : m_split_active ? "split_msaa" : m_use_confidence ? "confidence_precomputed" : m_composite_reference ? "reference" : "optimized") << "\ncs_low_normalization=" << (m_use_compute && m_quality == Quality::Low ? (m_cs_low_reference ? "legacy" : "unoccluded_slice") : "not_applicable") << "\nfs_reconstruction=" << (m_use_compute ? "not_applicable" : fast_reconstruction_active() ? "separable_xy" : "matrix") << "\nfs_filter=" << (m_use_compute ? "not_applicable" : m_use_edge_filter ? (m_fs_edge_passes == 3 ? "connectivity_3pass" : "connectivity_2pass") : "geometry") << "\nactual_slices=" << m_effective_samples[0] << "\nactual_steps=" << m_effective_samples[1]
+                << "\ncs_evaluate_program=" << (m_use_compute ? m_compute.evaluation_program() : 0) << "\ncs_implementation=xegtao_glsl_v1\ncs_upstream=" << GLAOCompute::upstream;
     benchmark.pipeline(description.str());
     benchmark.mark(2);
     m_recording = false;
@@ -1237,13 +1304,26 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
     if (consume_errors())
         BOOST_LOG_TRIVIAL(warning) << "GL error before AO depth capture";
     state.fullscreen();
+    // Set the requested variant before recording per-run metadata. Unsupported
+    // sample layouts abort the benchmark immediately after the depth copy below.
+    m_pixel_active = frame.pixel_composite && settings.debug_view == 0;
+    m_split_active = m_split_ready && settings.debug_view == 0;
     begin_timing();
     if (!capture_depth(frame)) {
         m_recording = false;
         return false;
     }
     benchmark.mark(25); // Split resolved depth from the MSAA sample-depth copy.
-    m_sample_active = capture_sample_depth(frame);
+    m_sample_active = !m_pixel_active && capture_sample_depth(frame);
+    if (m_sample_active)
+        benchmark.mark(29);
+    // Color sample capture is independent of whether AO uses a copied sample-depth texture.
+    const int color_sample_count = frame.source != 0 && frame.source == frame.target && m_samples > 1 ? m_samples : 0;
+    if (frame.require_msaa_comparison && (color_sample_count <= 1 || settings.debug_view != 0) && benchmark.active())
+        benchmark.finish("ABORTED: pixel/MSAA comparison requires an MSAA scene and normal display");
+    m_split_active = m_split_ready && m_sample_active && m_sample_count > 1 && m_sample_count <= 8 && settings.debug_view == 0;
+    if (frame.split_composite && !m_split_active && benchmark.active())
+        benchmark.finish("ABORTED: split composite requires its programs and 2..8 MSAA samples");
     std::filesystem::path capture_path;
     std::vector<float>    capture_before, capture_after;
     bool                  capture_ok = true;
@@ -1278,6 +1358,7 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     glBindVertexArray(m_vao);
     receiver_draw();
+    benchmark.mark(30);
     if (m_sample_active) {
         glBindFramebuffer(GL_FRAMEBUFFER, m_sample_fbo);
         glEnable(GL_MULTISAMPLE);
@@ -1419,8 +1500,9 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
     if (!capture_path.empty()) {
         std::ofstream metadata(capture_path / "backend-info.txt");
         metadata << "actual_backend=" << backend() << "\nfallback_reason=" << m_backend_reason << "\nupstream=" << GLAOCompute::upstream
-                 << "\ndenoise_passes=" << (m_use_compute ? m_denoise_passes : 0) << "\nactual_slices=" << m_effective_samples[0]
-                 << "\nactual_steps=" << m_effective_samples[1] << "\ncomposite_variant=" << (m_use_confidence ? "confidence_precomputed" : m_composite_reference ? "reference" : "optimized") << "\nfs_filter=" << (m_use_compute ? "not_applicable" : m_use_edge_filter ? (m_fs_edge_passes == 3 ? "connectivity_3pass" : "connectivity_2pass") : "geometry") << '\n';
+                 << "\ncs_evaluate_program=" << (m_use_compute ? m_compute.evaluation_program() : 0) << "\nsample_capture_version=3\nsample_surface_diagnostics=" << (m_sample_active ? "available" : "not_applicable")
+                 << "\ncolor_sample_count=" << color_sample_count << "\ndenoise_passes=" << (m_use_compute ? m_denoise_passes : 0) << "\nactual_slices=" << m_effective_samples[0]
+                 << "\nactual_steps=" << m_effective_samples[1] << "\ncomposite_variant=" << (m_pixel_active ? "pixel" : m_split_active ? "split_msaa" : m_use_confidence ? "confidence_precomputed" : m_composite_reference ? "reference" : "optimized") << "\ncs_low_normalization=" << (m_use_compute && m_quality == Quality::Low ? (m_cs_low_reference ? "legacy" : "unoccluded_slice") : "not_applicable") << "\nfs_reconstruction=" << (m_use_compute ? "not_applicable" : fast_reconstruction_active() ? "separable_xy" : "matrix") << "\nfs_filter=" << (m_use_compute ? "not_applicable" : m_use_edge_filter ? (m_fs_edge_passes == 3 ? "connectivity_3pass" : "connectivity_2pass") : "geometry") << '\n';
         capture_ok &= bool(metadata);
     }
     if (!capture_path.empty())
@@ -1433,6 +1515,10 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, m_texture[3]);
     }
+    if (!capture_path.empty()) {
+        const unsigned int final_texture = m_ao_width != m_width || m_ao_height != m_height ? m_texture[3] : filtered_texture;
+        capture_ok &= capture_ao_texture(capture_path / "ao-final-full.bmp", final_texture, m_width, m_height);
+    }
     mark_time(6);
     if (consume_errors()) {
         m_recording = false;
@@ -1440,18 +1526,44 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
     }
     if (!capture_path.empty())
         capture_ok &= capture_ao_color(capture_path / "color-before-ao.bmp", frame.target, frame.viewport);
-    if (!capture_path.empty() && m_sample_active)
-        capture_ok &= capture_ao_sample_colors(capture_path, "before", frame.target, frame.viewport, m_sample_count, m_vao);
+    if (!capture_path.empty() && color_sample_count > 1)
+        capture_ok &= capture_ao_sample_colors(capture_path, "before", frame.target, frame.viewport, color_sample_count, m_vao);
+    if (m_split_active) {
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        auto* classify = frame.split_classify;
+        classify->start_using();
+        classify->set_uniform("sample_count", m_sample_count);
+        if (m_split_position_samples != m_sample_count || m_split_position_target != frame.target) {
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, frame.target);
+            for (int sample = 0; sample < m_sample_count; ++sample)
+                glGetMultisamplefv(GL_SAMPLE_POSITION, sample, m_split_positions[sample].data());
+            m_split_position_samples = m_sample_count;
+            m_split_position_target = frame.target;
+        }
+        for (int sample = 0; sample < m_sample_count; ++sample)
+            classify->set_uniform(("sample_positions[" + std::to_string(sample) + "]").c_str(), m_split_positions[sample]);
+        glDisable(GL_BLEND);
+        draw(5, m_split_fbo, m_width, m_height, frame, settings);
+        benchmark.mark(27);
+        glBindTexture(GL_TEXTURE_2D, m_split_texture);
+    }
     glEnable(GL_BLEND);
     glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
     glBlendFuncSeparate(settings.debug_view == 0 ? GL_DST_COLOR : GL_ONE, GL_ZERO, GL_ZERO, GL_ONE);
+    if (m_split_active) {
+        draw(6, frame.target, m_width, m_height, frame, settings);
+        benchmark.mark(28);
+    }
     draw(4, frame.target, m_width, m_height, frame, settings);
     mark_time(7);
     end_timing();
     if (!capture_path.empty()) {
         capture_ok &= capture_ao_color(capture_path / "color-after-ao.bmp", frame.target, frame.viewport);
-        if (m_sample_active)
-            capture_ok &= capture_ao_sample_colors(capture_path, "after", frame.target, frame.viewport, m_sample_count, m_vao);
+        if (m_split_active)
+            capture_ok &= capture_ao_texture(capture_path / "composite-fast-factor.bmp", m_split_texture, m_width, m_height);
+        if (color_sample_count > 1)
+            capture_ok &= capture_ao_sample_colors(capture_path, "after", frame.target, frame.viewport, color_sample_count, m_vao);
         AOState capture_state;
         capture_state.fullscreen();
         GLuint fbo = 0, rbo = 0;
@@ -1519,9 +1631,10 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
                     glBindFramebuffer(GL_FRAMEBUFFER, frame.target);
                     glGetMultisamplefv(GL_SAMPLE_POSITION, sample, position.data());
                     target_positions << sample << ' ' << position[0] << ' ' << position[1] << '\n';
-                    frame.sample_composite->start_using();
-                    frame.sample_composite->set_uniform("capture_sample_index", sample);
-                    frame.sample_composite->set_uniform("capture_sample_position", position);
+                    auto* sample_shader = sample_composite_shader(frame);
+                    sample_shader->start_using();
+                    sample_shader->set_uniform("capture_sample_index", sample);
+                    sample_shader->set_uniform("capture_sample_position", position);
                     sample_settings.debug_view = 5;
                     draw(4, fbo, m_width, m_height, sample_frame, sample_settings);
                     glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
@@ -1552,7 +1665,7 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
                     capture_ok &= bool(factor_file);
                 }
                 capture_ok &= bool(positions) && bool(target_positions);
-                frame.sample_composite->set_uniform("capture_sample", false);
+                sample_composite_shader(frame)->set_uniform("capture_sample", false);
             } else
                 capture_ok = false;
         }

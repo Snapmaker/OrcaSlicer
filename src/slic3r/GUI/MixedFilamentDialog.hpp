@@ -167,7 +167,8 @@ private:
     void update_legend_text();
     void rebuild_match_legend();
     void clamp_match_ratio_to_minimum();
-    void update_match_legend_labels();    void rebuild_cycle_legend();
+    void update_match_legend_labels();
+    void rebuild_cycle_legend();
     void validate_cycle_pattern();
     void update_ratio_or_tri_visibility();
     // Combo box helpers

@@ -122,11 +122,27 @@ std::vector<int> clamp_color_match_weights_to_minimum(const std::vector<int> &we
 
     // Barycentric coordinates are negative when the mouse is outside the
     // triangle. Apply the lower bound before normalization, as the original
-    // triangle drag logic did. Otherwise negative coordinates are discarded and
-    // an outside drag degenerates to a pure color (100/0/0), bypassing the
-    // minimum-ratio constraint.
-    for (size_t idx = 0; idx < weights.size(); ++idx)
-        constrained[idx] = std::max(weights[idx], minimum);
+    // triangle drag logic did. Exact zeros remain excluded so repeated calls do
+    // not resurrect a component that participant reduction has already removed.
+    size_t supplied_participants = 0;
+    for (size_t idx = 0; idx < weights.size(); ++idx) {
+        if (weights[idx] < 0) {
+            constrained[idx] = minimum;
+            ++supplied_participants;
+        } else if (weights[idx] > 0) {
+            constrained[idx] = std::max(weights[idx], minimum);
+            ++supplied_participants;
+        }
+    }
+
+    // A valid mix needs at least two participating colors. Preserve the legacy
+    // vertex behavior by lifting every zero when the supplied input contains
+    // fewer than two participants (100/0/0 becomes 70/15/15 at a 15% minimum).
+    if (minimum > 0 && supplied_participants < 2) {
+        for (size_t idx = 0; idx < weights.size(); ++idx)
+            if (weights[idx] == 0)
+                constrained[idx] = minimum;
+    }
 
     constrained = normalize_color_match_weights(constrained, constrained.size());
     if (minimum <= 0)
@@ -189,7 +205,9 @@ std::vector<int> clamp_color_match_weights_to_minimum(const std::vector<int> &we
     }
 
     return constrained;
-}std::vector<int> expand_color_match_recipe_weights(const MixedColorMatchRecipeResult& recipe, size_t num_physical)
+}
+
+std::vector<int> expand_color_match_recipe_weights(const MixedColorMatchRecipeResult& recipe, size_t num_physical)
 {
     std::vector<int> weights(num_physical, 0);
     if (!recipe.valid || num_physical == 0)

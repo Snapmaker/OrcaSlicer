@@ -12,12 +12,15 @@
 #include "libslic3r/TriangleSelector.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <clocale>
 #include <cstdio>
 #include <cstdint>
 #include <locale>
+#include <numeric>
 #include <set>
 #include <sstream>
+#include <utility>
 #include <unordered_map>
 #include <vector>
 
@@ -72,6 +75,132 @@ static std::vector<std::string> split_rows(const std::string &serialized)
             rows.push_back(row);
     }
     return rows;
+}
+
+// Mirrors normalize_color_match_weights and
+// clamp_color_match_weights_to_minimum from MixedColorMatchHelpers.cpp. The GUI
+// translation unit cannot be linked into the headless libslic3r test executable;
+// keep these implementations byte-faithful to production so a ratio regression
+// still surfaces here.
+static std::vector<int> normalize_color_match_weights_mirror(const std::vector<int> &weights)
+{
+    std::vector<int> out(weights.size(), 0);
+    if (out.empty())
+        return out;
+
+    int sum = 0;
+    for (size_t idx = 0; idx < out.size(); ++idx) {
+        out[idx] = std::max(0, weights[idx]);
+        sum += out[idx];
+    }
+    if (sum <= 0) {
+        out.assign(out.size(), 0);
+        out[0] = 100;
+        return out;
+    }
+
+    std::vector<double> remainders(out.size(), 0.0);
+    int assigned = 0;
+    for (size_t idx = 0; idx < out.size(); ++idx) {
+        const double exact = 100.0 * double(out[idx]) / double(sum);
+        out[idx] = int(std::floor(exact));
+        remainders[idx] = exact - double(out[idx]);
+        assigned += out[idx];
+    }
+
+    for (int missing = 100 - assigned; missing > 0; --missing) {
+        size_t best_idx = 0;
+        double best_remainder = -1.0;
+        for (size_t idx = 0; idx < remainders.size(); ++idx) {
+            if (remainders[idx] > best_remainder) {
+                best_remainder = remainders[idx];
+                best_idx = idx;
+            }
+        }
+        ++out[best_idx];
+        remainders[best_idx] = 0.0;
+    }
+    return out;
+}
+
+static std::vector<int> clamp_color_match_weights_mirror(const std::vector<int> &weights, int min_component_percent)
+{
+    const int minimum = std::clamp(min_component_percent, 0, 50);
+    std::vector<int> constrained(weights.size(), 0);
+    if (constrained.empty())
+        return constrained;
+
+    size_t supplied_participants = 0;
+    for (size_t idx = 0; idx < weights.size(); ++idx) {
+        if (weights[idx] < 0) {
+            constrained[idx] = minimum;
+            ++supplied_participants;
+        } else if (weights[idx] > 0) {
+            constrained[idx] = std::max(weights[idx], minimum);
+            ++supplied_participants;
+        }
+    }
+    if (minimum > 0 && supplied_participants < 2) {
+        for (size_t idx = 0; idx < weights.size(); ++idx)
+            if (weights[idx] == 0)
+                constrained[idx] = minimum;
+    }
+
+    constrained = normalize_color_match_weights_mirror(constrained);
+    if (minimum <= 0)
+        return constrained;
+
+    std::vector<size_t> active(constrained.size(), 0);
+    for (size_t idx = 0; idx < active.size(); ++idx)
+        active[idx] = idx;
+    std::sort(active.begin(), active.end(), [&constrained](size_t lhs, size_t rhs) {
+        if (constrained[lhs] != constrained[rhs])
+            return constrained[lhs] > constrained[rhs];
+        return lhs < rhs;
+    });
+    const size_t max_active = std::min<size_t>(active.size(), size_t(100 / minimum));
+    if (max_active < 2)
+        return constrained;
+    active.resize(max_active);
+
+    std::vector<unsigned char> participating(constrained.size(), 0);
+    int excess_total = 0;
+    for (const size_t idx : active) {
+        participating[idx] = 1;
+        excess_total += std::max(0, constrained[idx] - minimum);
+    }
+
+    std::vector<double> exact(constrained.size(), 0.0);
+    std::vector<double> remainders(constrained.size(), 0.0);
+    const int budget = 100 - int(max_active) * minimum;
+    int assigned = 0;
+    for (size_t idx = 0; idx < constrained.size(); ++idx) {
+        if (!participating[idx]) {
+            constrained[idx] = 0;
+            continue;
+        }
+        const int excess = std::max(0, constrained[idx] - minimum);
+        exact[idx] = double(minimum) + (excess_total > 0 ? double(budget) * double(excess) / double(excess_total) : 0.0);
+        constrained[idx] = int(std::floor(exact[idx]));
+        remainders[idx] = exact[idx] - double(constrained[idx]);
+        assigned += constrained[idx];
+    }
+
+    for (int missing = 100 - assigned; missing > 0; --missing) {
+        size_t best_idx = size_t(-1);
+        double best_remainder = -1.0;
+        for (const size_t idx : active) {
+            if (remainders[idx] > best_remainder) {
+                best_remainder = remainders[idx];
+                best_idx = idx;
+            }
+        }
+        if (best_idx == size_t(-1))
+            break;
+        ++constrained[best_idx];
+        remainders[best_idx] = 0.0;
+    }
+    return constrained;
 }
 
 static std::string join_rows(const std::vector<std::string> &rows)
@@ -173,6 +302,54 @@ static const int _auto_generate_enabler = []() {
 }();
 
 } // namespace
+
+TEST_CASE("Mixed color match weights enforce the configured minimum", "[MixedFilament][ColorMatch]")
+{
+    using Weights = std::vector<int>;
+
+    SECTION("Clamps outside-triangle barycentric weights")
+    {
+        CHECK(clamp_color_match_weights_mirror({120, -10, -10}, 15) == Weights{70, 15, 15});
+        CHECK(clamp_color_match_weights_mirror({60, 60, -20}, 15) == Weights{43, 42, 15});
+        CHECK(clamp_color_match_weights_mirror({100, 0, 0}, 15) == Weights{70, 15, 15});
+    }
+
+    SECTION("Keeps only enough participants when the minimum is high")
+    {
+        const Weights constrained = clamp_color_match_weights_mirror({-20, 43, 77}, 35);
+        CHECK(constrained == Weights{0, 35, 65});
+        CHECK(clamp_color_match_weights_mirror(constrained, 35) == constrained);
+    }
+
+    SECTION("Supports two-color and four-color inputs")
+    {
+        CHECK(clamp_color_match_weights_mirror({120, -20}, 15) == Weights{85, 15});
+        const Weights four_colors = clamp_color_match_weights_mirror({10, 20, 30, 40}, 15);
+        CHECK(std::accumulate(four_colors.begin(), four_colors.end(), 0) == 100);
+        for (const int weight : four_colors)
+            CHECK((weight == 0 || weight >= 15));
+
+        const Weights four_colors_at_high_minimum = clamp_color_match_weights_mirror({10, 20, 30, 40}, 40);
+        CHECK(four_colors_at_high_minimum == Weights{60, 40, 0, 0});
+    }
+
+    SECTION("Clamping is idempotent and preserves excluded colors")
+    {
+        const std::vector<std::pair<Weights, int>> cases = {
+            {{120, -10, -10}, 15},
+            {{60, 60, -20}, 15},
+            {{100, 0, 0}, 15},
+            {{50, 50, 0}, 15},
+            {{-20, 43, 77}, 35},
+            {{10, 20, 30, 40}, 15},
+            {{10, 20, 30, 40}, 40},
+        };
+        for (const auto &[input, minimum] : cases) {
+            const Weights once = clamp_color_match_weights_mirror(input, minimum);
+            CHECK(clamp_color_match_weights_mirror(once, minimum) == once);
+        }
+    }
+}
 
 TEST_CASE("Mixed filament remap follows stable row ids when same-pair rows reorder", "[MixedFilament]")
 {

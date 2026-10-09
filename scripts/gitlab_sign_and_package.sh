@@ -1,24 +1,51 @@
 #!/bin/bash
 
 # Sign, package, and notarize the macOS app (GitLab / Jenkins path).
-# Usage: ./scripts/gitlab_sign_and_package.sh [arm64|x86_64] [app_path]
+# Usage: ./scripts/gitlab_sign_and_package.sh [-v LABEL] [arm64|x86_64] [app_path]
+# Product version comes from version.inc. -v is only an artifact-name suffix.
+#   arm64  → Snapmaker_Orca_Mac_arm_V2.4.0[_LABEL].dmg
+#   x86_64 → Snapmaker_Orca_Mac_intel_V2.4.0[_LABEL].dmg
 
 set -e
 
-# Detect architecture
-ARCH="${1:-$(uname -m)}"
+# -v matches gitlab_pack_linux.sh: Jenkins label, not the product version.
+ARTIFACT_LABEL="${ARTIFACT_LABEL:-}"
+POSITIONAL=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -v|--version)
+            # Label is optional. -v with no following name keeps the default filename.
+            if [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then
+                ARTIFACT_LABEL="$2"
+                shift 2
+            else
+                echo "No artifact label after -v; DMG name will not include a suffix"
+                shift
+            fi
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
 
-# Normalize architecture name
+ARCH="${POSITIONAL[0]:-$(uname -m)}"
+APP_PATH_ARG="${POSITIONAL[1]:-}"
+
+# Normalize architecture name. BUILD_DIR stays arm64 / x86_64.
 case "$ARCH" in
     arm64|aarch64)
         ARCH="arm64"
+        PLATFORM="arm"
         ;;
-    x86_64|x86-64|amd64)
+    x86_64|x86-64|amd64|intel)
         ARCH="x86_64"
+        PLATFORM="intel"
         ;;
     *)
         echo "Error: unsupported architecture $ARCH"
-        echo "Usage: $0 [arm64|x86_64] [app_path]"
+        echo "Usage: $0 [-v LABEL] [arm64|x86_64] [app_path]"
         exit 1
         ;;
 esac
@@ -28,7 +55,19 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$PROJECT_DIR/gitlab_build/$ARCH"
 APP_NAME="Snapmaker_Orca"
 APP_NAME_EX="Snapmaker Orca"
-DMG_NAME="Snapmaker_Orca_${ARCH}.dmg"
+
+VERSION_INC="$PROJECT_DIR/version.inc"
+PRODUCT_VERSION="$(grep 'set(Snapmaker_VERSION' "$VERSION_INC" | head -1 | cut -d '"' -f2 || true)"
+if [ -z "$PRODUCT_VERSION" ]; then
+    echo "Error: Snapmaker_VERSION not found in $VERSION_INC"
+    exit 1
+fi
+
+NAME_SUFFIX=""
+if [ -n "$ARTIFACT_LABEL" ]; then
+    NAME_SUFFIX="_${ARTIFACT_LABEL}"
+fi
+DMG_NAME="Snapmaker_Orca_Mac_${PLATFORM}_V${PRODUCT_VERSION}${NAME_SUFFIX}.dmg"
 
 ENTITLEMENTS="$PROJECT_DIR/scripts/disable_validation.entitlements"
 
@@ -62,7 +101,12 @@ fi
 echo "=========================================="
 echo "macOS sign, package, and notarize"
 echo "=========================================="
-echo "Arch: $ARCH"
+echo "Arch: $ARCH ($PLATFORM)"
+echo "Version: $PRODUCT_VERSION (version.inc)"
+if [ -n "$ARTIFACT_LABEL" ]; then
+    echo "Artifact label: $ARTIFACT_LABEL"
+fi
+echo "DMG name: $DMG_NAME"
 echo "Certificate: ${CERTIFICATE_ID:-not set, using ad-hoc signing}"
 echo "TEAM_ID: ${NOTARY_TEAM_ID:-not set}"
 echo "Signing: $SIGN_MODE"
@@ -83,9 +127,9 @@ codesign_item() {
 # Locate the app
 # ============================================
 
-# App path provided as the second argument
-if [ -n "$2" ]; then
-    SOURCE_APP="$2"
+# App path provided as the positional argument after architecture
+if [ -n "$APP_PATH_ARG" ]; then
+    SOURCE_APP="$APP_PATH_ARG"
     if [ ! -d "$SOURCE_APP" ]; then
         echo "Error: app not found: $SOURCE_APP"
         exit 1

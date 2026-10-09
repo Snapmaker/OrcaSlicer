@@ -4156,6 +4156,10 @@ void Sidebar::on_filaments_change(size_t num_filaments)
         // definitions changed. Refresh mixed panel even without count changes.
         const bool sync_manager = !p->m_skip_mixed_filament_sync_once;
         p->m_skip_mixed_filament_sync_once = false;
+        // Imports and project loads can replace every filament colour without changing the count,
+        // so redraw the existing swatches from the project config.
+        for (PlaterPresetComboBox* choice : choices)
+            choice->update();
         update_ui_from_settings();
         update_dynamic_filament_list();
         update_mixed_filament_panel(sync_manager);
@@ -4181,6 +4185,10 @@ void Sidebar::on_filaments_change(size_t num_filaments)
         choices[0]->GetDropDown().Invalidate();
 
     wxWindowUpdateLocker noUpdates_scrolled_panel(this);
+
+    // Existing combos keep their slot but may have a new colour (e.g. after a 3MF import).
+    for (size_t idx = 0; idx < std::min(choices.size(), num_filaments); ++idx)
+        choices[idx]->update();
 
     size_t i = choices.size();
     while (i < num_filaments)
@@ -11814,6 +11822,16 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     "mixed_filament_surface_indentation"
                                 };
                                 preset_bundle->project_config.apply_only(config_loaded, imported_project_option_keys, true);
+                                // 3MFs from other slicers carry filament_colour but no filament_multi_colors /
+                                // filament_colour_mode, so apply_only() leaves the previous project's values in place.
+                                // The filament panel draws filament_multi_colors first while the 3D view uses
+                                // filament_colour, so rebuild both from the imported colours to keep them in step.
+                                if (!imported_filament_colors.empty() && !config_loaded.has("filament_multi_colors")) {
+                                    preset_bundle->project_config.option<ConfigOptionStrings>("filament_multi_colors", true)->values =
+                                        imported_filament_colors;
+                                    preset_bundle->project_config.option<ConfigOptionInts>("filament_colour_mode", true)->values =
+                                        std::vector<int>(imported_filament_colors.size(), FilamentColorModeToConfig(FilamentColorMode::Segment));
+                                }
                                 if (current_num_filaments != desired_physical_filaments) {
                                     q->confirm_auto_generated_gradients(desired_physical_filaments);
                                     preset_bundle->set_num_filaments(unsigned(desired_physical_filaments));

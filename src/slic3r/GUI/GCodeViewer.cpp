@@ -3453,6 +3453,19 @@ void GCodeViewer::load_shells(const Print& print, bool initialized, bool force_p
 // current layer window.
 void GCodeViewer::refresh_render_paths_gpu(bool keep_sequential_current_first, bool keep_sequential_current_last) const
 {
+    // forward the current visibility inputs BEFORE anything below reads the
+    // stack: the legend checkboxes, the view-type presets and the filament
+    // toggles mutate m_extrusions.role_visibility_flags /
+    // m_tools.m_tool_visibles / m_view_type directly and call
+    // refresh_render_paths() immediately, while render_toolpaths() only
+    // forwards them on the next frame -- without this the step rebuild and
+    // the slider endpoints would run with the PREVIOUS visibility state
+    // (one event behind; the legacy pipeline reads the current flags
+    // synchronously)
+    _pathStack->SetRoleVisibilityFlags(m_extrusions.role_visibility_flags);
+    _pathStack->SetFilamentVisible(m_tools.m_tool_visibles);
+    _pathStack->SetViewType(static_cast<unsigned int>(m_view_type));
+
     _pathStack->SetLayerWindow(m_layers_z_range[0], m_layers_z_range[1]);
 
     // keep m_no_render_path in sync with the visibility tables, like legacy
@@ -3477,7 +3490,6 @@ void GCodeViewer::refresh_render_paths_gpu(bool keep_sequential_current_first, b
     uint32_t firstSid = 0;
     uint32_t lastSid = 0;
     {
-        _pathStack->SetViewType(static_cast<unsigned int>(m_view_type));
         const std::pair<uint32_t, uint32_t> endpoints = _pathStack->ComputeSliderEndpoints(window.second);
         if (endpoints.second >= endpoints.first) {
             firstSid = endpoints.first;
@@ -3500,6 +3512,13 @@ void GCodeViewer::refresh_render_paths_gpu(bool keep_sequential_current_first, b
         sequentialView.current.last = sequentialView.endpoints.last;
     sequentialView.current.last = std::min(sequentialView.current.last, sequentialView.endpoints.last);
     sequentialView.last_current = sequentialView.current;
+
+    // re-sync the playback window: the renderer always clips the top
+    // layer's draw to the move window (PathRenderer::RenderLayers), so it
+    // must reflect the position THIS refresh established -- not a stale one
+    // left by an earlier slider drag, which would truncate the re-enabled
+    // trailing moves of the top layer after a visibility toggle
+    _pathStack->SetMoveWindow(0, sequentialView.current.last);
 
     // print head marker: world position of the move at the play position
     const uint32_t moveIndex = _pathStack->MoveIndexOfSid(sequentialView.current.last);

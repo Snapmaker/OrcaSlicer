@@ -4,6 +4,13 @@ if (NOT SLIC3R_GUI)
     return()
 endif()
 
+add_executable(printer_metadata_validation_tests PrinterMetadataValidation_test.cpp)
+target_include_directories(printer_metadata_validation_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(printer_metadata_validation_tests PRIVATE
+    TEST_RESOURCES_DIR="${PROJECT_SOURCE_DIR}/resources")
+target_link_libraries(printer_metadata_validation_tests PRIVATE Catch2::Catch2WithMain Boost::filesystem)
+catch_discover_tests(printer_metadata_validation_tests TEST_PREFIX "printer_metadata: ")
+
 get_filename_component(_TEST_NAME ${CMAKE_CURRENT_LIST_DIR} NAME)
 add_executable(${_TEST_NAME}_tests
     ${_TEST_NAME}_tests_main.cpp

@@ -458,9 +458,9 @@ pack_appimage() {
 #!/bin/bash
 DIR=\$(readlink -f "\$0" | xargs dirname)
 export LD_LIBRARY_PATH="\$DIR/bin:\$LD_LIBRARY_PATH"
-export LC_ALL=C
+. "\$DIR/resources/linux-launch-env.sh"
 
-if [ "\$XDG_SESSION_TYPE" = "wayland" ] && [ "\$ZINK_DISABLE_OVERRIDE" != "1" ]; then
+if [ "\$XDG_SESSION_TYPE" = "wayland" ] && [ "\$ZINK_DISABLE_OVERRIDE" != "1" ] && [ "\$ORCA_LINUX_RENDER_COMPAT" != "1" ]; then
     if command -v glxinfo >/dev/null 2>&1; then
         RENDERER=\$(glxinfo | grep "OpenGL renderer string:" | sed 's/.*: //')
         if echo "\$RENDERER" | grep -qi "NVIDIA"; then

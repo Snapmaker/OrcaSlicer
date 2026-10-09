@@ -2193,6 +2193,27 @@ void MainFrame::update_side_button_style()
 
 void MainFrame::update_slice_print_status(SlicePrintEventType event, bool can_slice, bool can_print)
 {
+    // Stale callbacks may still reach this after the frame was torn down by
+    // recreate_GUI / shutdown; skip the UI update and log loudly in that
+    // state. The leading checks do not dereference this — see the
+    // stale-pointer audit (#979) for the remaining post-free window.
+    if (wxGetApp().mainframe != this || wxGetApp().is_recreating_gui()
+        || m_shutting_down || IsBeingDeleted()) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " PROBE-ABNORMAL"
+            << " event=" << static_cast<int>(event)
+            << " can_slice=" << can_slice
+            << " can_print=" << can_print
+            << " stale_this=" << (wxGetApp().mainframe != this)
+            << " recreating_gui=" << wxGetApp().is_recreating_gui()
+            << " being_deleted=" << IsBeingDeleted()
+            << " shutting_down=" << m_shutting_down;
+        sentryReportLog(SENTRY_LOG_WARNING,
+            std::string(__FUNCTION__) + " PROBE-ABNORMAL event="
+                + std::to_string(static_cast<int>(event)),
+            "MainFrame");
+        return;
+    }
+
     bool enable_print = true, enable_slice = true;
 
     if (event == eEventPlateUpdate)

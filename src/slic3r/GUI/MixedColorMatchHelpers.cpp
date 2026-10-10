@@ -117,6 +117,7 @@ std::vector<int> clamp_color_match_weights_to_minimum(const std::vector<int> &we
 {
     const int minimum = std::clamp(min_component_percent, 0, 50);
     std::vector<int> constrained(weights.size(), 0);
+    std::vector<unsigned char> supplied(weights.size(), 0);
     if (constrained.empty())
         return constrained;
 
@@ -128,9 +129,11 @@ std::vector<int> clamp_color_match_weights_to_minimum(const std::vector<int> &we
     for (size_t idx = 0; idx < weights.size(); ++idx) {
         if (weights[idx] < 0) {
             constrained[idx] = minimum;
+            supplied[idx] = 1;
             ++supplied_participants;
         } else if (weights[idx] > 0) {
             constrained[idx] = std::max(weights[idx], minimum);
+            supplied[idx] = 1;
             ++supplied_participants;
         }
     }
@@ -140,8 +143,10 @@ std::vector<int> clamp_color_match_weights_to_minimum(const std::vector<int> &we
     // fewer than two participants (100/0/0 becomes 70/15/15 at a 15% minimum).
     if (minimum > 0 && supplied_participants < 2) {
         for (size_t idx = 0; idx < weights.size(); ++idx)
-            if (weights[idx] == 0)
+            if (weights[idx] == 0) {
                 constrained[idx] = minimum;
+                supplied[idx] = 1;
+            }
     }
 
     constrained = normalize_color_match_weights(constrained, constrained.size());
@@ -151,9 +156,11 @@ std::vector<int> clamp_color_match_weights_to_minimum(const std::vector<int> &we
     // If the selected minimum cannot support all supplied colors (for example,
     // three colors with a minimum above 33%), retain only the strongest colors
     // and constrain those participating colors to a valid ratio.
-    std::vector<size_t> active(constrained.size(), 0);
-    for (size_t idx = 0; idx < active.size(); ++idx)
-        active[idx] = idx;
+    std::vector<size_t> active;
+    active.reserve(constrained.size());
+    for (size_t idx = 0; idx < constrained.size(); ++idx)
+        if (supplied[idx])
+            active.emplace_back(idx);
     std::sort(active.begin(), active.end(), [&constrained](size_t lhs, size_t rhs) {
         if (constrained[lhs] != constrained[rhs])
             return constrained[lhs] > constrained[rhs];

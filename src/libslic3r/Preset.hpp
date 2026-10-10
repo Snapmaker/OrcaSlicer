@@ -664,6 +664,8 @@ public:
     // All presets are marked as not modified and the new preset is activated.
     //BBS: add project embedded preset logic
     void            save_current_preset(const std::string &new_name, bool detach = false, bool save_to_project = false, Preset* _curr_preset = nullptr);
+    // Saved to disk, not selected; nullptr on failure.
+    Preset*         add_user_preset(const std::string &name, const std::string &parent_name, DynamicPrintConfig config);
     // Insert a standalone user preset holding the full resolved config (no inheritance,
     // no vendor links): the libslic3r equivalent of "Detach from parent". Takes a
     // resolved config, clears parent/vendor/alias metadata, stamps filament_settings_id.

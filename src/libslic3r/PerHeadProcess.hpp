@@ -62,7 +62,7 @@ struct Source
     std::string              class_used;          // ClassLadder: the class the ladder landed on ("Standard")
     std::vector<std::string> composed_keys;       // keys taken from `preset` (empty unless derived)
     std::vector<std::string> kept_keys;           // composed keys kept at the selected preset's value (user edits)
-    std::vector<std::string> overridden_keys;     // keys set for this tool head on the Speed page (head_override_keys)
+    std::vector<std::string> overridden_keys;     // keys set for this tool head that print (head_keys_in_use)
     std::vector<int>         fallback_variants;   // volume types (NozzleVolumeType) whose column came from the selected preset
     std::string              chosen;              // the project's choice for this head, "" when none (kept whatever its state)
     ChosenState              chosen_state { ChosenState::None };
@@ -199,6 +199,20 @@ void clear_all_heads(DynamicPrintConfig &config);
 // The tool heads (0-based) whose marker names `key`.
 std::vector<size_t> heads_marked_for(const DynamicPrintConfig &config, const std::string &key);
 
+// Process key, per tool head: nozzle size in microns its values were set for, "" unknown.
+extern const char *const nozzle_key;
+// Unknown: no recorded size, printed. Inactive: set for another nozzle size, not printed.
+enum class HeadValues { None, InUse, Unknown, Inactive };
+HeadValues head_values(const DynamicPrintConfig &process, const DynamicPrintConfig &printer, size_t head);
+// Recorded size in mm, 0 when none.
+double made_for(const DynamicPrintConfig &process, size_t head);
+// head_override_keys unless Inactive.
+std::vector<std::string> head_keys_in_use(const DynamicPrintConfig &process, const DynamicPrintConfig &printer, size_t head);
+// Records the head's current nozzle size for its values.
+void stamp_head(DynamicPrintConfig &process, const DynamicPrintConfig &printer, size_t head);
+// For a slicing copy, never a preset.
+bool drop_inactive(DynamicPrintConfig &config, const DynamicPrintConfig &printer, std::vector<size_t> *dropped = nullptr);
+
 // Load normaliser for projects and user presets, restoring I1-I5: widens short value keys, rebuilds short ids
 // from wide_layout(parent, printer) or cuts the key, adds missing shared columns from the parent, keeps only
 // head_editable_keys() in the marker, narrows or widens by the marker. `parent` and `printer` may be null.
@@ -221,7 +235,9 @@ bool reads_high_flow(const Source &source, NozzleVolumeType flow, const DynamicP
 // Copies indexed process rows ("key#N" = column N of `source`) into `target` when either is wide, widening a
 // narrow target first: marked head columns go to the same (id, variant) with their marker, unmarked ones are
 // skipped, shared or narrow ones go to the target's shared column of their flow. Narrows an unmarked result.
-void transfer_columns(DynamicPrintConfig &target, const DynamicPrintConfig &source, const std::vector<std::string> &indexed_options, const DynamicPrintConfig &printer);
+// `replaced`: (head, mm) of target values set for another nozzle size.
+void transfer_columns(DynamicPrintConfig &target, const DynamicPrintConfig &source, const std::vector<std::string> &indexed_options, const DynamicPrintConfig &printer,
+                      std::vector<std::pair<size_t, double>> *replaced = nullptr);
 
 // Which step of the rule chose, and the class it landed on (ClassLadder).
 struct RuleTrace
@@ -305,6 +321,17 @@ struct Candidate
 // head's machine preset (any visibility), then fitting user and project presets (no bundle presets),
 // each group in collection order. Empty without a machine preset or on a printer the rule is off for.
 std::vector<Candidate> picker_candidates(const PresetBundle &bundle, size_t head);
+
+// A tool head's values as a user preset; empty `parent`: not possible.
+struct ExtruderPreset
+{
+    std::string              parent;
+    DynamicPrintConfig       config;
+    std::vector<std::string> moved;
+    double                   size { 0. };      // mm
+    bool                     choose { false }; // `size` is the head's current nozzle size
+};
+ExtruderPreset extruder_preset(const PresetBundle &bundle, size_t head);
 
 // The column of a derived head's source the composer reads for `flow`: source_column, else a chosen
 // preset's Standard shared column; -1 when the selected preset's column serves or the head is not derived.

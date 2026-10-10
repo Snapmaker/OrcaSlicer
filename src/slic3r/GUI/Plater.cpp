@@ -11790,7 +11790,16 @@ void Sidebar::apply_nozzle_diameter(size_t i, const wxString &diameter_label)
     // Snapmaker Orca: the values set for this tool head on the Speed page stay with the head when
     // its nozzle changes (libslic3r/PerHeadProcess.hpp); the notice says so.
     std::string kept_widths;
-    if (const std::vector<std::string> kept = PerHeadProcess::head_override_keys(wxGetApp().preset_bundle->prints.get_edited_preset().config, i); !kept.empty()) {
+    const PerHeadProcess::HeadValues head_state = PerHeadProcess::head_values(wxGetApp().preset_bundle->prints.get_edited_preset().config,
+                                                                             wxGetApp().preset_bundle->printers.get_edited_preset().config, i);
+    if (head_state == PerHeadProcess::HeadValues::Inactive) {
+        const DynamicPrintConfig &process = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+        notice += "\n";
+        // TRN %1% the extruder, %2% "3 values set for 0.2 mm, not used"
+        notice += GUI::format(_u8L("Extruder %1%: %2%."), i + 1,
+                              into_u8(HighFlowNotices::inactive_values_label(PerHeadProcess::head_override_keys(process, i).size(), PerHeadProcess::made_for(process, i))));
+    } else if (const std::vector<std::string> kept = PerHeadProcess::head_override_keys(wxGetApp().preset_bundle->prints.get_edited_preset().config, i);
+               head_state == PerHeadProcess::HeadValues::Unknown && !kept.empty()) {
         notice += "\n";
         // TRN %1% the tool head, %2% the number of values set for it on the Speed and Quality pages of the process settings
         notice += GUI::format(_u8L("Extruder %1% keeps %2% values set for it (Speed and Quality pages)."), i + 1, kept.size());
@@ -12284,7 +12293,8 @@ void Sidebar::update_nozzle_process_hints()
         const DynamicPrintConfig *config  = process;
         int                       column  = PerHeadProcess::shared_column(*process, nvtStandard);
         const std::vector<int>    columns = PerHeadProcess::head_columns(*process, head);
-        if (!columns.empty() && PerHeadProcess::is_marked(*process, size_t(columns.front()), "line_width"))
+        if (!columns.empty() && PerHeadProcess::is_marked(*process, size_t(columns.front()), "line_width") &&
+            PerHeadProcess::head_values(*process, *printer, head) != PerHeadProcess::HeadValues::Inactive)
             column = columns.front();
         else if (source != nullptr && source->derived) {
             const Preset *from  = nullptr;
@@ -12309,7 +12319,7 @@ void Sidebar::update_nozzle_process_hints()
         const std::string              chosen = i < sources.size() ? sources[i].chosen : std::string();
         const bool                     same_as_selected = i < sources.size() && sources[i].chosen_state == PerHeadProcess::ChosenState::SameAsSelected;
         const bool                     flow_chosen      = i < sources.size() && sources[i].flow_chosen;
-        const std::vector<std::string> set_keys = process == nullptr ? std::vector<std::string>() : PerHeadProcess::head_override_keys(*process, i);
+        const std::vector<std::string> set_keys = process == nullptr || printer == nullptr ? std::vector<std::string>() : PerHeadProcess::head_keys_in_use(*process, *printer, i);
         // Shown for a tool head that prints with another preset's speeds, has values set for it,
         // carries a chosen preset (applied or not) or prints the Standard speeds of its High Flow
         // nozzle by choice.

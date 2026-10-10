@@ -9416,6 +9416,7 @@ void GCode::append_full_config(const Print& print, std::string& str)
         // loaded presets, never consumed by slicing or firmware. Keep it out of the G-code config block so
         // the config key stays inert to g-code (byte-identical output).
         "filament_extruder_compatibility"sv,
+        "print_extruder_value_nozzle"sv,
         // The fast-purge / prime-volume-mode keys are new static-member registrations. Excluding them from
         // the config block keeps registration byte-identical for the shipping fleet (default
         // prime_volume_mode==Default leaves the slicing body unchanged; only the config-dump would otherwise

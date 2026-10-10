@@ -1340,6 +1340,7 @@ static std::vector<std::string> s_Preset_print_options{
     "print_extruder_id",
     "print_extruder_variant",
     "print_extruder_override", // Snapmaker Orca: the marker of the values set per tool head (libslic3r/PerHeadProcess.hpp)
+    "print_extruder_value_nozzle",
     "independent_support_layer_height", "support_layer_height_step",
     "support_angle",
     "support_interface_top_layers",
@@ -3458,6 +3459,38 @@ std::string PresetCollection::add_detached_preset(const std::string &name_base, 
     unlock();
 
     return final_name;
+}
+
+Preset *PresetCollection::add_user_preset(const std::string &name, const std::string &parent_name, DynamicPrintConfig config)
+{
+    lock();
+    const auto it     = this->find_preset_internal(name);
+    const auto parent = this->find_preset_internal(parent_name);
+    if (name.empty() || (it != m_presets.end() && it->name == name) || parent == m_presets.end() || parent->name != parent_name) {
+        unlock();
+        return nullptr;
+    }
+    const std::string base_id = parent->setting_id;
+    Preset            stored(m_type, name);
+    stored.config = std::move(config);
+    if (m_presets.begin() + m_idx_selected >= it)
+        ++m_idx_selected;
+    Preset &preset = *m_presets.insert(it, stored);
+    preset.inherits()  = parent_name;
+    preset.base_id     = base_id;
+    preset.version     = Semver::parse(SoftFever_VERSION).value_or(Semver());
+    preset.is_default  = false;
+    preset.is_system   = false;
+    preset.is_external = false;
+    preset.is_visible  = true;
+    preset.loaded      = true;
+    preset.file        = this->path_for_preset(preset);
+    if (m_type == Preset::TYPE_PRINT)
+        preset.config.option<ConfigOptionString>("print_settings_id", true)->value = name;
+    unlock();
+    if (Preset *saved_parent = this->find_preset(parent_name, false, true); saved_parent != nullptr)
+        preset.save(&saved_parent->config);
+    return &preset;
 }
 
 bool PresetCollection::delete_current_preset()

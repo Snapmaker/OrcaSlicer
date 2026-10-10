@@ -409,16 +409,20 @@ int shown_volume_type(const DynamicPrintConfig &printer_config, size_t head, int
     return offered.front();
 }
 
+std::string nozzle_size_label(double size)
+{
+    std::string label = float_to_string_decimal_point(size, 2);
+    while (label.find('.') != std::string::npos && (label.back() == '0' || label.back() == '.'))
+        label.pop_back();
+    return label;
+}
+
 std::string head_nozzle_size_label(const DynamicPrintConfig &printer_config, size_t head)
 {
     const auto *diameters = printer_config.option<ConfigOptionFloats>("nozzle_diameter");
     if (diameters == nullptr || head >= diameters->values.size() || diameters->values[head] <= 0.)
         return {};
-    // "0.6", as the sidebar and "printer_variant" spell it: two decimals, trailing zeros dropped.
-    std::string label = float_to_string_decimal_point(diameters->values[head], 2);
-    while (label.find('.') != std::string::npos && (label.back() == '0' || label.back() == '.'))
-        label.pop_back();
-    return label;
+    return nozzle_size_label(diameters->values[head]);
 }
 
 SelectorFit head_selector_fit(const std::vector<int> &long_widths, const std::vector<int> &short_widths, int available)
@@ -582,6 +586,13 @@ wxString preferred_height_sentence(double height)
 wxString values_set_label(size_t count)
 {
     return format_wxstr(_L_PLURAL("%1% value set", "%1% values set", unsigned(count)), count);
+}
+
+wxString inactive_values_label(size_t count, double nozzle)
+{
+    // TRN %1% the number of values, %2% a nozzle size
+    return format_wxstr(_L_PLURAL("%1% value set for %2% mm, not used", "%1% values set for %2% mm, not used", unsigned(count)), count,
+                        from_u8(nozzle_size_label(nozzle)));
 }
 
 wxString shared_settings_sentence()

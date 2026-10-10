@@ -1688,6 +1688,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     // Snapmaker Orca: the flow type whose speeds column each tool head prints when that is not its
     // nozzle's own ("Standard" on a High Flow nozzle), empty otherwise (PerHeadProcess::flow_key).
     ((ConfigOptionStrings,             extruder_process_flow))
+    ((ConfigOptionStrings,             print_extruder_value_nozzle))
     ((ConfigOptionInts,                filament_volume_map))
     ((ConfigOptionInts,                filament_nozzle_map))
     ((ConfigOptionInts,                filament_map_2)) //used for multi nozzle, map filament to the index identified by extruder+nozzle_volume_type

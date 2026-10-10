@@ -548,9 +548,9 @@ public:
     DynamicPrintConfig          full_config(bool apply_extruder = true, std::optional<std::vector<int>>filament_maps = std::nullopt, std::optional<std::vector<int>> filament_volume_maps = std::nullopt) const;
     // full_config() with the some "useless" config removed.
     DynamicPrintConfig          full_config_secure(std::optional<std::vector<int>>filament_maps = std::nullopt) const;
-    // Snapmaker Orca: the config every GUI Print::apply site uses; equals full_config(apply_extruder, maps...)
-    // unless PerHeadProcess::active and a head prints with another process preset, then the process columns
-    // are composed per head on the unexpanded config. `sources` receives what each head prints with.
+    // Snapmaker Orca: the config every GUI Print::apply site uses: full_config(apply_extruder, maps...) without the
+    // values set for another nozzle size. When PerHeadProcess::active and a head prints with another process preset,
+    // the process columns are composed per head on the unexpanded config. `sources` receives what each head prints with.
     DynamicPrintConfig          full_config_for_print(bool apply_extruder = true, std::optional<std::vector<int>> filament_maps = std::nullopt,
                                                       std::optional<std::vector<int>> filament_volume_maps = std::nullopt,
                                                       std::vector<PerHeadProcess::Source> *sources = nullptr) const;
@@ -1059,7 +1059,7 @@ private:
     /*ConfigSubstitutions         load_config_file_config_bundle(
         const std::string &path, const boost::property_tree::ptree &tree, ForwardCompatibilitySubstitutionRule compatibility_rule);*/
 
-    DynamicPrintConfig          full_fff_config(bool apply_extruder, std::optional<std::vector<int>> filament_maps=std::nullopt, std::optional<std::vector<int>> filament_volume_maps=std::nullopt) const;
+    DynamicPrintConfig          full_fff_config(bool apply_extruder, std::optional<std::vector<int>> filament_maps=std::nullopt, std::optional<std::vector<int>> filament_volume_maps=std::nullopt, bool for_print = false) const;
     DynamicPrintConfig          full_sla_config() const;
 
     // Orca: used for validation only

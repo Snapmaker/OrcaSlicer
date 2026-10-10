@@ -2409,3 +2409,426 @@ TEST_CASE("On an all-0.4 plate a High Flow tool head under a preset without High
         CHECK(all_near(widths.at(tool).at("Sparse infill"), 0.45));
     }
 }
+
+namespace {
+
+// Classic walls print the configured width exactly.
+DynamicPrintConfig nozzle_bound_config()
+{
+    DynamicPrintConfig config = four_head_config();
+    config.set_key_value("nozzle_diameter",  new ConfigOptionFloats({0.4, 0.6, 0.4, 0.4}));
+    config.set_key_value("wall_generator",   new ConfigOptionEnum<PerimeterGeneratorType>(PerimeterGeneratorType::Classic));
+    config.set_key_value("detect_thin_wall", new ConfigOptionBool(false));
+    config.set_key_value("gap_fill_target",  new ConfigOptionEnum<GapFillTarget>(gftNowhere));
+    config.set_key_value("wall_loops",       new ConfigOptionInt(2));
+    wide_single_flow(config);
+    for (size_t column = 0; column <= HEADS; ++column) {
+        set_wide_column(config, "outer_wall_speed", column, 200.);
+        set_wide_column(config, "inner_wall_speed", column, 200.);
+        set_wide_column_text(config, "outer_wall_line_width", column, "105%");
+    }
+    return config;
+}
+
+void set_head_2_outer_wall(DynamicPrintConfig &config)
+{
+    set_wide_column(config, "outer_wall_speed", 2, 30.);
+    PerHeadProcess::set_head_value(config, 1, "outer_wall_speed", 2);
+    set_wide_column_text(config, "outer_wall_line_width", 2, "0.25");
+    PerHeadProcess::set_head_value(config, 1, "outer_wall_line_width", 2);
+    REQUIRE(PerHeadProcess::head_override_keys(config, 1) == std::vector<std::string>{"outer_wall_line_width", "outer_wall_speed"});
+}
+
+std::string first_difference(const std::string &a, const std::string &b)
+{
+    std::istringstream in_a(a), in_b(b);
+    std::string        line_a, line_b;
+    for (size_t number = 1;; ++number) {
+        const bool more_a = bool(std::getline(in_a, line_a));
+        const bool more_b = bool(std::getline(in_b, line_b));
+        if (!more_a && !more_b)
+            return "none";
+        if (more_a != more_b || line_a != line_b)
+            return "line " + std::to_string(number) + ": \"" + (more_a ? line_a : "<end>") + "\" / \"" + (more_b ? line_b : "<end>") + "\"";
+    }
+}
+
+void check_executes_as(const std::string &gcode, const std::string &reference)
+{
+    const std::string expected = executable_block(reference);
+    const std::string sliced   = executable_block(gcode);
+    INFO("first difference: " << first_difference(expected, sliced) << "; reference: " << gcode_digest(reference) << "; sliced: " << gcode_digest(gcode));
+    const bool identical = expected == sliced;
+    CHECK(identical);
+}
+
+std::string config_block(const std::string &gcode)
+{
+    const size_t begin = gcode.find("; CONFIG_BLOCK_START");
+    const size_t end   = gcode.find("; CONFIG_BLOCK_END");
+    REQUIRE(begin != std::string::npos);
+    REQUIRE(end != std::string::npos);
+    return gcode.substr(begin, end - begin);
+}
+
+std::optional<std::string> config_block_value(const std::string &gcode, const std::string &key)
+{
+    std::istringstream in(config_block(gcode));
+    const std::string  prefix = "; " + key + " = ";
+    std::string        line;
+    while (std::getline(in, line))
+        if (line.rfind(prefix, 0) == 0)
+            return line.substr(prefix.size());
+    return std::nullopt;
+}
+
+std::set<int> outer_wall_feedrates(const std::string &gcode, int tool)
+{
+    const auto rates = feature_feedrates(gcode);
+    if (rates.count(tool) != 1 || rates.at(tool).count("Outer wall") != 1)
+        FAIL("no outer wall above the first layer for tool " << tool << ": " << gcode_digest(gcode) << "; G-code kept at " << keep_gcode("nozzle_bound", gcode));
+    return rates.at(tool).at("Outer wall");
+}
+
+std::set<int> outer_wall_width_warnings(const Print &print)
+{
+    std::vector<StringObjectException> warnings;
+    const StringObjectException        err = print.validate(&warnings);
+    INFO(err.string << " (" << err.opt_key << ", tool head " << err.tool_head << ")");
+    CHECK(err.string.empty());
+    std::set<int> warned;
+    for (const StringObjectException &w : warnings)
+        if (w.opt_key == "outer_wall_line_width")
+            warned.insert(w.tool_head);
+    return warned;
+}
+
+} // namespace
+
+TEST_CASE("Values set for a tool head reach its G-code on the nozzle size they were set for and on no other", "[PerHeadProcess][NozzleBound]")
+{
+    const DynamicPrintConfig without = nozzle_bound_config();
+    DynamicPrintConfig       config  = without;
+    set_head_2_outer_wall(config);
+
+    const std::string reference        = two_head_gcode(without);
+    const auto        reference_rates  = feature_feedrates(reference);
+    const auto        reference_widths = feature_widths(reference, 2);
+    REQUIRE(reference_rates.count(1) == 1);
+    REQUIRE(reference_rates.at(1).count("Outer wall") == 1);
+    REQUIRE(reference_rates.at(1).at("Outer wall") == std::set<int>{200 * 60});
+    REQUIRE(reference_widths.at(1).count("Outer wall") == 1);
+    // 105 % of the 0.6 mm nozzle.
+    REQUIRE(all_near(reference_widths.at(1).at("Outer wall"), 0.63));
+
+    SECTION("set for 0.2 mm on a head that carries 0.6 mm: dropped, the G-code of the table without the values") {
+        config.set_key_value(PerHeadProcess::nozzle_key, new ConfigOptionStrings({"", "200"}));
+        REQUIRE(PerHeadProcess::head_values(config, config, 1) == PerHeadProcess::HeadValues::Inactive);
+        std::vector<size_t> dropped;
+        REQUIRE(PerHeadProcess::drop_inactive(config, config, &dropped));
+        CHECK(dropped == std::vector<size_t>{1});
+        CHECK(PerHeadProcess::head_override_keys(config, 1).empty());
+
+        check_executes_as(two_head_gcode(config), reference);
+    }
+
+    SECTION("dropped next to the values tool head 1 holds for the 0.4 mm it carries: those keep printing") {
+        DynamicPrintConfig with_head_1 = without;
+        set_wide_column(with_head_1, "outer_wall_speed", 1, 60.);
+        PerHeadProcess::set_head_value(with_head_1, 0, "outer_wall_speed", 1);
+        set_wide_column(config, "outer_wall_speed", 1, 60.);
+        PerHeadProcess::set_head_value(config, 0, "outer_wall_speed", 1);
+        config.set_key_value(PerHeadProcess::nozzle_key, new ConfigOptionStrings({"400", "200"}));
+        std::vector<size_t> dropped;
+        REQUIRE(PerHeadProcess::drop_inactive(config, config, &dropped));
+        CHECK(dropped == std::vector<size_t>{1});
+        CHECK(PerHeadProcess::head_values(config, config, 0) == PerHeadProcess::HeadValues::InUse);
+        CHECK(PerHeadProcess::head_override_keys(config, 0) == std::vector<std::string>{"outer_wall_speed"});
+
+        const std::string gcode = two_head_gcode(config);
+        const auto        rates = feature_feedrates(gcode);
+        REQUIRE(rates.count(0) == 1);
+        REQUIRE(rates.count(1) == 1);
+        CHECK(rates.at(0).at("Outer wall") == std::set<int>{60 * 60});
+        CHECK(rates.at(1).at("Outer wall") == std::set<int>{200 * 60});
+        check_executes_as(gcode, two_head_gcode(with_head_1));
+    }
+
+    SECTION("set for the 0.6 mm the head carries, or with no size recorded: printed") {
+        const bool recorded = GENERATE(true, false);
+        CAPTURE(recorded);
+        if (recorded) {
+            PerHeadProcess::stamp_head(config, config, 1);
+            REQUIRE(config.option<ConfigOptionStrings>(PerHeadProcess::nozzle_key)->values == std::vector<std::string>{"", "600"});
+        }
+        REQUIRE(PerHeadProcess::head_values(config, config, 1) == (recorded ? PerHeadProcess::HeadValues::InUse : PerHeadProcess::HeadValues::Unknown));
+        CHECK_FALSE(PerHeadProcess::drop_inactive(config, config));
+
+        const std::string gcode  = two_head_gcode(config);
+        const auto        rates  = feature_feedrates(gcode);
+        const auto        widths = feature_widths(gcode, 2);
+        REQUIRE(rates.count(1) == 1);
+        REQUIRE(rates.at(1).count("Outer wall") == 1);
+        REQUIRE(widths.at(1).count("Outer wall") == 1);
+        INFO("tool 1 outer wall: " << joined(rates.at(1).at("Outer wall")) << " at " << joined(widths.at(1).at("Outer wall")));
+        CHECK(rates.at(1).at("Outer wall") == std::set<int>{30 * 60});
+        CHECK(all_near(widths.at(1).at("Outer wall"), 0.25));
+        REQUIRE(rates.count(0) == 1);
+        CHECK(rates.at(0) == reference_rates.at(0));
+        CHECK(widths.at(0) == reference_widths.at(0));
+    }
+}
+
+TEST_CASE("On a plate of four nozzle sizes values set for the 0.6 mm tool head while it carried 0.2 mm stay in the preset and out of its G-code", "[PerHeadProcess][NozzleBound][Profiles]")
+{
+    const auto plate = [](const char *recorded) {
+        return owner_plate_slice([recorded](PresetBundle &bundle) {
+            DynamicPrintConfig &process = bundle.prints.get_edited_preset().config;
+            PerHeadProcess::widen(process, bundle.printers.get_edited_preset().config);
+            const std::vector<int> columns = PerHeadProcess::head_columns(process, 2);
+            REQUIRE_FALSE(columns.empty());
+            set_wide_column(process, "outer_wall_speed", size_t(columns.front()), 40.);
+            PerHeadProcess::set_head_value(process, 2, "outer_wall_speed", columns.front());
+            set_head_width(bundle, 2, "sparse_infill_line_width", "0.25");
+            process.set_key_value(PerHeadProcess::nozzle_key, new ConfigOptionStrings({"", "", recorded}));
+        });
+    };
+    const std::vector<std::string> keys = {"outer_wall_speed", "sparse_infill_line_width"};
+
+    const std::unique_ptr<OwnerPlateSlice> reference = owner_plate_slice();
+    REQUIRE(reference->sources.size() == HEADS);
+    REQUIRE(reference->sources[2].preset != nullptr);
+    const std::set<int> reference_rate = {preset_feedrate(*reference->sources[2].preset, "outer_wall_speed", nvtStandard)};
+    REQUIRE(reference_rate != std::set<int>{40 * 60});
+    REQUIRE(outer_wall_feedrates(reference->gcode, 2) == reference_rate);
+    {
+        const auto widths = feature_widths(reference->gcode, 2);
+        REQUIRE(widths.at(2).count("Sparse infill") == 1);
+        // Sparse infill width of the 0.6 mm preset.
+        REQUIRE(all_near(widths.at(2).at("Sparse infill"), 0.62));
+    }
+
+    SECTION("recorded for 0.2 mm: the preset and the full config keep them, the G-code is the plate's without them") {
+        const std::unique_ptr<OwnerPlateSlice> slice   = plate("200");
+        const DynamicPrintConfig              &process = slice->bundle.prints.get_edited_preset().config;
+        CHECK(PerHeadProcess::head_values(process, slice->bundle.printers.get_edited_preset().config, 2) == PerHeadProcess::HeadValues::Inactive);
+        CHECK(PerHeadProcess::head_override_keys(process, 2) == keys);
+        CHECK_THAT(PerHeadProcess::made_for(process, 2), Catch::Matchers::WithinAbs(0.2, 1e-9));
+        for (const bool apply_extruder : {false, true}) {
+            CAPTURE(apply_extruder);
+            const DynamicPrintConfig full = slice->bundle.full_config(apply_extruder);
+            CHECK(PerHeadProcess::head_override_keys(full, 2) == keys);
+            REQUIRE(full.option<ConfigOptionStrings>(PerHeadProcess::nozzle_key) != nullptr);
+            CHECK(full.option<ConfigOptionStrings>(PerHeadProcess::nozzle_key)->values == std::vector<std::string>{"", "", "200"});
+        }
+
+        REQUIRE(slice->sources.size() == HEADS);
+        CHECK(slice->sources[2].overridden_keys.empty());
+        check_executes_as(slice->gcode, reference->gcode);
+        CHECK_FALSE(config_block_value(slice->gcode, PerHeadProcess::nozzle_key).has_value());
+    }
+
+    SECTION("recorded for the 0.6 mm the head carries: printed on that tool head") {
+        const std::unique_ptr<OwnerPlateSlice> slice = plate("600");
+        REQUIRE(slice->sources.size() == HEADS);
+        CHECK(slice->sources[2].overridden_keys == keys);
+        CHECK(outer_wall_feedrates(slice->gcode, 2) == std::set<int>{40 * 60});
+        const auto widths = feature_widths(slice->gcode, 2);
+        REQUIRE(widths.at(2).count("Sparse infill") == 1);
+        INFO("tool 2 sparse infill: " << joined(widths.at(2).at("Sparse infill")));
+        CHECK(all_near(widths.at(2).at("Sparse infill"), 0.25));
+        CHECK(config_block_value(slice->gcode, PerHeadProcess::override_key).has_value());
+        CHECK_FALSE(config_block_value(slice->gcode, PerHeadProcess::nozzle_key).has_value());
+    }
+}
+
+TEST_CASE("On a plate of four nozzle sizes values set for a nozzle size the tool head does not carry leave the sources and the G-code as without them", "[PerHeadProcess][NozzleBound][Profiles]")
+{
+    const size_t head = GENERATE(size_t(0), size_t(1), size_t(2), size_t(3));
+    CAPTURE(head);
+    const auto plate = [head](const char *recorded) {
+        return owner_plate_slice([head, recorded](PresetBundle &bundle) {
+            if (recorded == nullptr)
+                return;
+            DynamicPrintConfig &process = bundle.prints.get_edited_preset().config;
+            PerHeadProcess::widen(process, bundle.printers.get_edited_preset().config);
+            const std::vector<int> columns = PerHeadProcess::head_columns(process, head);
+            REQUIRE_FALSE(columns.empty());
+            set_wide_column(process, "outer_wall_speed", size_t(columns.front()), 40.);
+            PerHeadProcess::set_head_value(process, head, "outer_wall_speed", columns.front());
+            std::vector<std::string> sizes(head + 1);
+            sizes[head] = recorded;
+            process.set_key_value(PerHeadProcess::nozzle_key, new ConfigOptionStrings(sizes));
+        });
+    };
+    const std::unique_ptr<OwnerPlateSlice> reference = plate(nullptr);
+    REQUIRE(reference->sources.size() == HEADS);
+    REQUIRE(outer_wall_feedrates(reference->gcode, int(head)) != std::set<int>{40 * 60});
+
+    const std::unique_ptr<OwnerPlateSlice> inactive = plate("1000");
+    REQUIRE(inactive->sources.size() == HEADS);
+    for (size_t h = 0; h < HEADS; ++h) {
+        CAPTURE(h);
+        REQUIRE(inactive->sources[h].preset != nullptr);
+        REQUIRE(reference->sources[h].preset != nullptr);
+        CHECK(inactive->sources[h].preset->name == reference->sources[h].preset->name);
+        CHECK(inactive->sources[h].reason == reference->sources[h].reason);
+        CHECK(inactive->sources[h].overridden_keys.empty());
+    }
+    check_executes_as(inactive->gcode, reference->gcode);
+
+    const char *const carried[HEADS] = {"200", "400", "600", "800"};
+    CHECK(outer_wall_feedrates(plate(carried[head])->gcode, int(head)) == std::set<int>{40 * 60});
+}
+
+TEST_CASE("Without a process table per tool head values set for a tool head while it carried another nozzle size stay out of its G-code too", "[PerHeadProcess][NozzleBound][Profiles]")
+{
+    const bool home_sizes = GENERATE(false, true);
+    CAPTURE(home_sizes);
+    const auto plate = [home_sizes](const char *recorded) {
+        return owner_plate_slice([home_sizes, recorded](PresetBundle &bundle) {
+            if (home_sizes) {
+                bundle.printers.get_edited_preset().config.set_key_value("nozzle_diameter", new ConfigOptionFloats(std::vector<double>(HEADS, 0.4)));
+                bundle.project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true)->values = std::vector<int>(HEADS, int(nvtStandard));
+            } else
+                bundle.process_follows_nozzle = false;
+            if (recorded == nullptr)
+                return;
+            DynamicPrintConfig &process = bundle.prints.get_edited_preset().config;
+            PerHeadProcess::widen(process, bundle.printers.get_edited_preset().config);
+            const std::vector<int> columns = PerHeadProcess::head_columns(process, 2);
+            REQUIRE_FALSE(columns.empty());
+            set_wide_column(process, "outer_wall_speed", size_t(columns.front()), 40.);
+            PerHeadProcess::set_head_value(process, 2, "outer_wall_speed", columns.front());
+            process.set_key_value(PerHeadProcess::nozzle_key, new ConfigOptionStrings({"", "", recorded}));
+        });
+    };
+    const std::unique_ptr<OwnerPlateSlice> reference = plate(nullptr);
+    REQUIRE(reference->sources.size() == (home_sizes ? HEADS : size_t(0)));
+    for (const PerHeadProcess::Source &source : reference->sources) {
+        REQUIRE_FALSE(source.derived);
+        REQUIRE_FALSE(source.flow_chosen);
+    }
+    const std::set<int> selected_rate = {preset_feedrate(reference->bundle.prints.get_selected_preset(), "outer_wall_speed", nvtStandard)};
+    REQUIRE(selected_rate != std::set<int>{40 * 60});
+    REQUIRE(outer_wall_feedrates(reference->gcode, 2) == selected_rate);
+
+    const std::unique_ptr<OwnerPlateSlice> inactive = plate("200");
+    check_executes_as(inactive->gcode, reference->gcode);
+    CHECK(PerHeadProcess::head_override_keys(inactive->bundle.prints.get_edited_preset().config, 2) == std::vector<std::string>{"outer_wall_speed"});
+
+    CHECK(outer_wall_feedrates(plate(home_sizes ? "400" : "600")->gcode, 2) == std::set<int>{40 * 60});
+}
+
+TEST_CASE("The G-code header names the keys set for a tool head and not the nozzle size they were set for", "[PerHeadProcess][NozzleBound]")
+{
+    DynamicPrintConfig unrecorded = nozzle_bound_config();
+    set_head_2_outer_wall(unrecorded);
+    DynamicPrintConfig recorded = unrecorded;
+    PerHeadProcess::stamp_head(recorded, recorded, 1);
+    REQUIRE(recorded.option<ConfigOptionStrings>(PerHeadProcess::nozzle_key)->values == std::vector<std::string>{"", "600"});
+
+    const std::unique_ptr<TwoHeadSlice> slice = two_head_slice(recorded);
+    const auto *applied = slice->print.full_print_config().option<ConfigOptionStrings>(PerHeadProcess::nozzle_key);
+    REQUIRE(applied != nullptr);
+    CHECK(applied->values == std::vector<std::string>{"", "600"});
+    CHECK_FALSE(config_block_value(slice->gcode, PerHeadProcess::nozzle_key).has_value());
+
+    const std::optional<std::string> marker = config_block_value(slice->gcode, PerHeadProcess::override_key);
+    REQUIRE(marker.has_value());
+    INFO("print_extruder_override = " << *marker);
+    CHECK(marker->find("outer_wall_speed") != std::string::npos);
+    CHECK(marker->find("outer_wall_line_width") != std::string::npos);
+
+    const std::string before    = two_head_gcode(unrecorded);
+    const bool        identical = config_block(before) == config_block(slice->gcode);
+    INFO("first difference: " << first_difference(config_block(before), config_block(slice->gcode)));
+    CHECK(identical);
+
+    DynamicPrintConfig inactive = unrecorded;
+    inactive.set_key_value(PerHeadProcess::nozzle_key, new ConfigOptionStrings({"", "200"}));
+    REQUIRE(PerHeadProcess::drop_inactive(inactive, inactive));
+    const std::string                dropped        = two_head_gcode(inactive);
+    const std::optional<std::string> dropped_marker = config_block_value(dropped, PerHeadProcess::override_key);
+    REQUIRE(dropped_marker.has_value());
+    INFO("print_extruder_override after the drop = " << *dropped_marker);
+    CHECK(dropped_marker->find("outer_wall") == std::string::npos);
+    CHECK_FALSE(config_block_value(dropped, PerHeadProcess::nozzle_key).has_value());
+}
+
+TEST_CASE("A nozzle size recorded for values that print already keeps the slice", "[PerHeadProcess][NozzleBound]")
+{
+    DynamicPrintConfig config = nozzle_bound_config();
+    set_head_2_outer_wall(config);
+    const std::unique_ptr<TwoHeadSlice> slice = two_head_slice(config);
+    Print                              &print = slice->print;
+    REQUIRE(print.objects().size() == 2);
+    REQUIRE(print.objects()[1]->is_step_done(posPerimeters));
+    REQUIRE(print.objects()[1]->is_step_done(posInfill));
+    REQUIRE(print.is_step_done(psGCodeExport));
+
+    DynamicPrintConfig recorded = print.full_print_config();
+    print.apply(slice->model, recorded);
+    REQUIRE(print.is_step_done(psGCodeExport));
+
+    recorded.set_key_value(PerHeadProcess::nozzle_key, new ConfigOptionStrings({"", "600"}));
+    print.apply(slice->model, recorded);
+    CHECK(print.objects()[1]->is_step_done(posPerimeters));
+    CHECK(print.objects()[1]->is_step_done(posInfill));
+    CHECK_FALSE(print.is_step_done(psGCodeExport));
+}
+
+TEST_CASE("A width set for a tool head while it carried another nozzle size does not exempt the head from the warning of a width changed under All tool heads", "[PerHeadProcess][NozzleBound][Profiles]")
+{
+    const auto warned = [](const std::optional<std::string> &head_4) {
+        const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice(
+            [&head_4](PresetBundle &bundle) {
+                DynamicPrintConfig &process = bundle.prints.get_edited_preset().config;
+                process.set_key_value("outer_wall_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.42, false)});
+                if (!head_4.has_value())
+                    return;
+                set_head_width(bundle, 3, "outer_wall_line_width", "0.45");
+                if (!head_4->empty())
+                    process.set_key_value(PerHeadProcess::nozzle_key, new ConfigOptionStrings({"", "", "", *head_4}));
+            },
+            nullptr, /*slice_plate=*/false);
+        return outer_wall_width_warnings(slice->print);
+    };
+    const std::set<int> without = warned(std::nullopt);
+    // 0.42 mm is below the 0.6 and 0.8 mm nozzles and above twice 0.2 mm.
+    REQUIRE(without == std::set<int>{0, 2, 3});
+    // Tool head 4 carries 0.8 mm; no recorded size counts as carried.
+    CHECK(warned(std::string("800")) == std::set<int>{0, 2});
+    CHECK(warned(std::string()) == std::set<int>{0, 2});
+    CHECK(warned(std::string("400")) == without);
+}
+
+TEST_CASE("A table whose width of another nozzle size was dropped validates as the table without it", "[PerHeadProcess][NozzleBound]")
+{
+    DynamicPrintConfig without = nozzle_bound_config();
+    for (size_t column = 0; column <= HEADS; ++column)
+        set_wide_column_text(without, "outer_wall_line_width", column, "0.42");
+    DynamicPrintConfig config = without;
+    set_head_2_outer_wall(config);
+    // 0.42 mm is below the 0.6 mm nozzle of tool head 2.
+    REQUIRE(outer_wall_width_warnings(two_head_slice(without)->print) == std::set<int>{1});
+
+    SECTION("set for the 0.6 mm the head carries: the mark exempts the head") {
+        PerHeadProcess::stamp_head(config, config, 1);
+        CHECK_FALSE(PerHeadProcess::drop_inactive(config, config));
+        CHECK(outer_wall_width_warnings(two_head_slice(config)->print).empty());
+    }
+    SECTION("set for 0.2 mm: dropped with its mark, the head is warned about") {
+        config.set_key_value(PerHeadProcess::nozzle_key, new ConfigOptionStrings({"", "200"}));
+        REQUIRE(PerHeadProcess::drop_inactive(config, config));
+        const std::unique_ptr<TwoHeadSlice> slice = two_head_slice(config);
+        CHECK(outer_wall_width_warnings(slice->print) == std::set<int>{1});
+        REQUIRE(slice->print.objects().size() == 2);
+        const PrintObject *cube_2 = slice->print.objects()[1];
+        REQUIRE(cube_2->num_printing_regions() == 1);
+        const PrintRegionConfig &region = cube_2->printing_region(0).config();
+        CHECK(region.print_extruder_override.get_at(1).empty());
+        CHECK_FALSE(Flow::width_at(region.outer_wall_line_width, 1).percent);
+        CHECK_THAT(Flow::width_at(region.outer_wall_line_width, 1).value, Catch::Matchers::WithinAbs(0.42, 1e-9));
+    }
+}

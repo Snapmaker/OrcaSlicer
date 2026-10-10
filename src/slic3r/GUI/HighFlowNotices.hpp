@@ -223,6 +223,9 @@ wxString own_preset_description(bool quality_page, const std::string &heads, boo
 // plate's: the head prints that height (the Layer height field above is greyed).
 wxString preferred_height_sentence(double height);
 wxString values_set_label(size_t count);
+// "0.6", as "printer_variant" spells it.
+std::string nozzle_size_label(double size);
+wxString inactive_values_label(size_t count, double nozzle);
 // The closing sentence under a selected tool head, on both pages.
 wxString shared_settings_sentence();
 // The link under a selected tool head that clears the values set for it on this page.

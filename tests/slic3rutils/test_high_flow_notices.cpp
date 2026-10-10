@@ -926,6 +926,8 @@ TEST_CASE("The texts of the Quality page name line widths, the values set and wh
     CHECK(HighFlowNotices::preferred_height_sentence(0.1) == "Prints 0.10 mm layers.");
     CHECK(HighFlowNotices::values_set_label(1) == "1 value set");
     CHECK(HighFlowNotices::values_set_label(13) == "13 values set");
+    CHECK(HighFlowNotices::inactive_values_label(13, 0.2) == "13 values set for 0.2 mm, not used");
+    CHECK(HighFlowNotices::inactive_values_label(1, 0.6) == "1 value set for 0.6 mm, not used");
     CHECK(HighFlowNotices::shared_settings_sentence() == "Greyed settings apply to every extruder.");
     CHECK(HighFlowNotices::clear_head_link_label(true) == "Clear the line widths set for this extruder");
     CHECK(HighFlowNotices::clear_head_link_label(false) == "Clear the speeds set for this extruder");

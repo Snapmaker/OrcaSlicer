@@ -28,6 +28,7 @@
 #include <wx/imaglist.h>
 #include <wx/settings.h>
 #include <wx/filedlg.h>
+#include <wx/textdlg.h>
 #include <iomanip>
 #include <sstream>
 
@@ -1653,6 +1654,8 @@ void Tab::on_roll_back_value(const bool to_sys /*= true*/)
     m_presets->discard_current_changes();
 
     m_postpone_update_ui = false;
+    if (m_head_selector)
+        switch_excluder(-1, true);
 
     // When all values are rolled, then we have to update whole tab in respect to the reverted values
     update();
@@ -2854,6 +2857,7 @@ void Tab::cache_config_diff(const std::vector<std::string>& selected_options, co
     m_cache_process_source.clear();
     if (m_type == Preset::TYPE_PRINT) {
         std::vector<std::string> keys(print_options_with_variant.begin(), print_options_with_variant.end());
+        keys.emplace_back(PerHeadProcess::nozzle_key);
         m_cache_process_source.apply_only(source, keys, true);
     }
     m_cache_filament_source.clear();
@@ -2885,7 +2889,14 @@ void Tab::apply_config_from_cache()
                 else
                     plain.emplace_back(option);
             }
-            PerHeadProcess::transfer_columns(edited, m_cache_process_source, indexed, m_preset_bundle->printers.get_edited_preset().config);
+            std::vector<std::pair<size_t, double>> replaced;
+            PerHeadProcess::transfer_columns(edited, m_cache_process_source, indexed, m_preset_bundle->printers.get_edited_preset().config, &replaced);
+            for (const auto &[head, size] : replaced)
+                if (Plater *plater = wxGetApp().plater(); plater != nullptr)
+                    plater->get_notification_manager()->push_notification(
+                        NotificationType::CustomNotification, NotificationManager::NotificationLevel::WarningNotificationLevel,
+                        // TRN %1% the extruder, %2% a nozzle size
+                        GUI::format(_u8L("Extruder %1%: the values set for %2% mm were replaced."), head + 1, HighFlowNotices::nozzle_size_label(size)));
             m_cache_options = plain;
         }
         // Snapmaker Orca: filament columns are matched by variant name; a column the target lacks
@@ -3780,12 +3791,15 @@ void TabPrint::update_description_lines()
                 show = false;
             else if (head < 0)
                 show = PerHeadProcess::marker_names_any(*m_config);
+            else if (head_inactive(head))
+                show = true;
             else {
                 const std::set<std::string> page_keys = page_head_keys();
                 for (const std::string &key : PerHeadProcess::head_override_keys(*m_config, size_t(head)))
                     show = show || page_keys.count(key) > 0;
             }
-            m_per_head_clear_link->SetLabel(head >= 0 ? HighFlowNotices::clear_head_link_label(quality_page_active()) : _L("Clear the values set per extruder..."));
+            m_per_head_clear_link->SetLabel(head_inactive(head) ? _L("Clear") :
+                                            head >= 0 ? HighFlowNotices::clear_head_link_label(quality_page_active()) : _L("Clear the values set per extruder..."));
             m_per_head_clear_link->Show(show);
             if (wxSizer *sizer = m_per_head_clear_link->GetContainingSizer(); sizer != nullptr)
                 sizer->Layout();
@@ -3889,7 +3903,7 @@ void TabPrint::install_head_hooks()
         for (ConfigOptionsGroupShp &group : page->m_optgroups) {
             group->m_before_change      = [this](const std::string &key, int &index) { return before_head_change(key, index); };
             group->m_after_change       = [this](const std::string &key, int index) { after_head_change(key, index); };
-            group->m_before_revert      = [this](const std::string &key, bool to_sys) { return before_head_revert(key, to_sys); };
+            group->m_before_revert      = [this](const std::string &key, bool to_sys) { return before_head_revert(key.substr(0, key.find('#')), to_sys); };
             group->m_display_source     = [this](const std::string &key, int index, const DynamicPrintConfig *&config, int &source_index) {
                 return head_display_source(key, index, config, source_index);
             };
@@ -3923,6 +3937,8 @@ bool TabPrint::before_head_change(const std::string &opt_key, int &opt_index)
         return true;
     if (PerHeadProcess::head_editable_keys().count(opt_key) == 0)
         // A uniform key of the variant set is written under All tool heads only (its field is disabled under a head).
+        return false;
+    if (head_inactive(head))
         return false;
     if (!PerHeadProcess::is_wide(*m_config)) {
         // The first value set for a tool head: the preset gets its shared columns and one column
@@ -3964,6 +3980,7 @@ void TabPrint::after_head_change(const std::string &opt_key, int opt_index)
     } else {
         // Under a tool head: both of its flow columns hold the value and are marked for the key.
         PerHeadProcess::set_head_value(*m_config, size_t(head), opt_key, opt_index);
+        PerHeadProcess::stamp_head(*m_config, m_preset_bundle->printers.get_edited_preset().config, size_t(head));
     }
     update_head_entries();
     update_description_lines();
@@ -3976,6 +3993,8 @@ bool TabPrint::before_head_revert(const std::string &opt_key, bool to_sys)
     const int head = selected_head();
     if (head < 0 || !PerHeadProcess::is_wide(*m_config) || print_options_with_variant.count(opt_key) == 0)
         return false;
+    if (head_inactive(head))
+        return true;
     const std::vector<int> columns = PerHeadProcess::head_columns(*m_config, size_t(head));
     const bool marked = !columns.empty() && PerHeadProcess::is_marked(*m_config, size_t(columns.front()), opt_key);
     if (marked) {
@@ -4010,23 +4029,37 @@ bool TabPrint::head_display_source(const std::string &opt_key, int opt_index, co
     if (!m_head_selector || m_config == nullptr || opt_index < 0)
         return false;
     const int head = selected_head();
-    if (head < 0 || PerHeadProcess::composed_keys().count(opt_key) == 0)
+    if (head < 0)
         return false;
-    if (PerHeadProcess::is_marked(*m_config, size_t(opt_index), opt_key) || m_all_edited_keys.count(opt_key) > 0)
+    const bool marked   = PerHeadProcess::is_marked(*m_config, size_t(opt_index), opt_key);
+    const bool inactive = marked && head_inactive(head);
+    if (marked && !inactive)
         return false;
-    if (size_t(head) >= m_head_sources.size() || !m_head_sources[size_t(head)].derived || m_head_sources[size_t(head)].preset == nullptr)
+    if (PerHeadProcess::composed_keys().count(opt_key) > 0 && m_all_edited_keys.count(opt_key) == 0 && size_t(head) < m_head_sources.size() &&
+        m_head_sources[size_t(head)].derived && m_head_sources[size_t(head)].preset != nullptr) {
+        // A speed comes from the head's speeds source at the flow it prints; a line width from its width
+        // source's Standard shared column (the selected preset, -1, for a home-size head and for a High
+        // Flow head whose speeds were re-picked).
+        const PerHeadProcess::Source &source = m_head_sources[size_t(head)];
+        const Preset                 *from   = nullptr;
+        const int column = PerHeadProcess::composed_column_for_key(source, opt_key, head_speed_flow(size_t(head)), m_preset_bundle->printers.get_edited_preset().config, from);
+        if (column >= 0 && from != nullptr) {
+            config = &from->config;
+            index  = column;
+            return true;
+        }
+    }
+    if (!inactive)
         return false;
-    // A speed comes from the head's speeds source at the flow it prints; a line width from its width
-    // source's Standard shared column (the selected preset, -1, for a home-size head and for a High
-    // Flow head whose speeds were re-picked).
-    const PerHeadProcess::Source &source = m_head_sources[size_t(head)];
-    const Preset                 *from   = nullptr;
-    const int column = PerHeadProcess::composed_column_for_key(source, opt_key, head_speed_flow(size_t(head)), m_preset_bundle->printers.get_edited_preset().config, from);
-    if (column < 0 || from == nullptr)
-        return false;
-    config = &from->config;
-    index  = column;
-    return true;
+    config = m_config;
+    index  = PerHeadProcess::shared_column(*m_config, head_speed_flow(size_t(head)));
+    return index >= 0;
+}
+
+bool TabPrint::head_inactive(int head) const
+{
+    return head >= 0 && m_config != nullptr && m_preset_bundle != nullptr &&
+           PerHeadProcess::head_values(*m_config, m_preset_bundle->printers.get_edited_preset().config, size_t(head)) == PerHeadProcess::HeadValues::Inactive;
 }
 
 wxString TabPrint::head_values_tooltip(const std::string &opt_key) const
@@ -4036,17 +4069,15 @@ wxString TabPrint::head_values_tooltip(const std::string &opt_key) const
     const std::vector<size_t> heads = PerHeadProcess::heads_marked_for(*m_config, opt_key);
     if (heads.empty())
         return wxEmptyString;
-    wxString text = _L("Set per extruder:");
-    for (size_t i = 0; i < heads.size(); ++i) {
-        const std::vector<int> columns = PerHeadProcess::head_columns(*m_config, heads[i]);
-        if (columns.empty())
+    wxString entries;
+    for (size_t head : heads) {
+        const std::vector<int> columns = PerHeadProcess::head_columns(*m_config, head);
+        if (columns.empty() || head_inactive(int(head)))
             continue;
         // TRN %1% a tool head, %2% the value set for it
-        text += " " + format_wxstr(_L("Extruder %1%: %2%"), heads[i] + 1, get_string_value(opt_key + "#" + std::to_string(columns.front()), *m_config));
-        if (i + 1 < heads.size())
-            text += ",";
+        entries += (entries.IsEmpty() ? " " : ", ") + format_wxstr(_L("Extruder %1%: %2%"), head + 1, get_string_value(opt_key + "#" + std::to_string(columns.front()), *m_config));
     }
-    return text;
+    return entries.IsEmpty() ? wxString() : _L("Set per extruder:") + entries;
 }
 
 // Page controls are destroyed when another page activates or the pages are rebuilt: the cached
@@ -4100,13 +4131,19 @@ wxSizer* TabPrint::per_head_line_widget(wxWindow *parent, int label_em, bool sta
     m_speed_source_reset->SetToolTip(_L("Use the automatic preset again"));
     m_speed_source_reset->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { choose_speed_source(std::string()); });
     row->Add(m_speed_source_reset, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, m_em_unit / 2);
+    m_speed_source_save = new ScalableButton(parent, wxID_ANY, "save");
+    m_speed_source_save->SetToolTip(_L("Save as extruder preset"));
+    m_speed_source_save->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { save_extruder_preset(); });
+    row->Add(m_speed_source_save, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, m_em_unit / 2);
     sizer->Add(row, 0, wxEXPAND | wxBOTTOM, 2);
     m_speed_source_label->Hide();
     m_speed_source_combo->Hide();
     m_speed_source_reset->Hide();
+    m_speed_source_save->Hide();
     forget_on_destroy(m_speed_source_label);
     forget_on_destroy(m_speed_source_combo);
     forget_on_destroy(m_speed_source_reset);
+    forget_on_destroy(m_speed_source_save);
 
     // The line wraps to the width of the page, again on every width change (a narrow sidebar), and
     // the page is laid out for the lines it takes.
@@ -4153,7 +4190,7 @@ static std::string preset_width_for_head(const Preset &preset, const char *key, 
 
 void TabPrint::update_speed_source_picker()
 {
-    if (m_speed_source_combo == nullptr || m_speed_source_label == nullptr || m_speed_source_reset == nullptr)
+    if (m_speed_source_combo == nullptr || m_speed_source_label == nullptr || m_speed_source_reset == nullptr || m_speed_source_save == nullptr)
         return;
     const int head = selected_head();
     std::vector<PerHeadProcess::Source> sources;
@@ -4165,6 +4202,7 @@ void TabPrint::update_speed_source_picker()
         m_speed_source_label->Show(show);
         m_speed_source_combo->Show(show);
         m_speed_source_reset->Show(show);
+        m_speed_source_save->Show(show);
     }
     if (!show) {
         if (wxSizer *sizer = m_speed_source_combo->GetContainingSizer(); sizer != nullptr)
@@ -4276,6 +4314,7 @@ void TabPrint::update_speed_source_picker()
     // The closed text of an item the list holds under another name: the automatic and the disabled entries carry their own.
     m_speed_source_combo->SetLabel(m_speed_source_combo->GetString(unsigned(selection)));
     m_speed_source_reset->Show(!source.chosen.empty());
+    m_speed_source_save->Enable(!PerHeadProcess::extruder_preset(*m_preset_bundle, size_t(head)).parent.empty());
     const bool enabled = source.reason != PerHeadProcess::Reason::NoMachinePreset && source.reason != PerHeadProcess::Reason::NoParent;
     m_speed_source_combo->Enable(enabled);
     m_speed_source_combo->SetToolTip(enabled ? _L("The process preset this extruder takes its speeds, accelerations, jerk and line widths from. Every other setting stays the plate's.") :
@@ -4312,6 +4351,71 @@ void TabPrint::choose_speed_source(const std::string &name)
         m_page_view->GetParent()->Layout();
     if (m_speed_source_combo != nullptr && m_speed_source_combo->IsShown())
         m_speed_source_combo->SetFocus();
+}
+
+static wxString new_preset_name_error(const std::string &name, PresetCollection &presets)
+{
+    const char *unusable_symbols = "<>[]:/\\|?*\"";
+    if (name.empty())
+        return _L("The name field is not allowed to be empty.");
+    if (name.find_first_of(unusable_symbols) != std::string::npos)
+        return _L("Name is invalid;") + "\n" + _L("illegal characters:") + " " + unusable_symbols;
+    if (name.find(PresetCollection::get_suffix_modified()) != std::string::npos)
+        return _L("Name is invalid;") + "\n" + _L("illegal suffix:") + "\n\t" + from_u8(PresetCollection::get_suffix_modified());
+    if (name.front() == ' ')
+        return _L("The name is not allowed to start with a space.");
+    if (name.back() == ' ')
+        return _L("The name is not allowed to end with a space.");
+    if (name == "Default Setting" || presets.find_preset(name, false) != nullptr)
+        return from_u8((boost::format(_u8L("Preset \"%1%\" already exists.")) % name).str());
+    if (presets.get_preset_name_by_alias(name) != name)
+        return _L("The name cannot be the same as a preset alias name.");
+    return wxString();
+}
+
+void TabPrint::save_extruder_preset()
+{
+    const int head = selected_head();
+    if (head < 0 || m_preset_bundle == nullptr || m_config == nullptr || m_type != Preset::TYPE_PRINT)
+        return;
+    PerHeadProcess::ExtruderPreset made = PerHeadProcess::extruder_preset(*m_preset_bundle, size_t(head));
+    if (made.parent.empty())
+        return;
+    std::string name = made.parent + " - Copy";
+    for (int n = 2; m_presets->find_preset(name, false) != nullptr; ++n)
+        name = made.parent + " - Copy " + std::to_string(n);
+    for (;;) {
+        wxTextEntryDialog dialog(this, _L("Name"), _L("Save as extruder preset"), from_u8(name));
+        if (dialog.ShowModal() != wxID_OK)
+            return;
+        name = into_u8(dialog.GetValue());
+        const wxString error = new_preset_name_error(name, *m_presets);
+        if (error.IsEmpty())
+            break;
+        MessageDialog(this, error, _L("Save as extruder preset"), wxOK | wxICON_WARNING).ShowModal();
+    }
+    made = PerHeadProcess::extruder_preset(*m_preset_bundle, size_t(head));
+    if (made.parent.empty())
+        return;
+    Preset *preset = m_presets->add_user_preset(name, made.parent, std::move(made.config));
+    if (preset == nullptr)
+        return;
+    preset->sync_info = "create";
+    if (wxGetApp().is_user_login())
+        preset->user_id = wxGetApp().getAgent()->get_user_id();
+    preset->save_info();
+    m_preset_bundle->update_compatible(PresetSelectCompatibleType::Never);
+    if (made.choose)
+        PerHeadProcess::set_chosen(*m_preset_bundle, size_t(head), name);
+    PerHeadProcess::clear_head(*m_config, size_t(head), std::set<std::string>(made.moved.begin(), made.moved.end()));
+    refresh_after_head_change(PerHeadProcess::marker_empty(*m_config));
+    update_tab_ui();
+    if (Plater *plater = wxGetApp().plater(); plater != nullptr) {
+        plater->sidebar().update_presets(Preset::TYPE_PRINT);
+        plater->sidebar().update_nozzle_process_hints();
+        plater->update_project_dirty_from_presets();
+        plater->schedule_background_process();
+    }
 }
 
 void TabPrint::on_speed_source_key(wxKeyEvent &event)
@@ -4370,6 +4474,8 @@ void TabPrint::msw_rescale()
     }
     if (m_speed_source_reset != nullptr)
         m_speed_source_reset->msw_rescale();
+    if (m_speed_source_save != nullptr)
+        m_speed_source_save->msw_rescale();
 }
 
 void TabPrint::sys_color_changed()
@@ -4377,6 +4483,8 @@ void TabPrint::sys_color_changed()
     Tab::sys_color_changed();
     if (m_speed_source_reset != nullptr)
         m_speed_source_reset->msw_rescale();
+    if (m_speed_source_save != nullptr)
+        m_speed_source_save->msw_rescale();
 }
 
 wxString TabPrint::head_selection_description() const
@@ -4446,6 +4554,10 @@ wxString TabPrint::head_selection_description() const
             break;
         }
     }
+    const bool inactive = head_inactive(head);
+    if (inactive)
+        text = HighFlowNotices::inactive_values_label(PerHeadProcess::head_override_keys(*m_config, size_t(head)).size(), PerHeadProcess::made_for(*m_config, size_t(head))) + "." +
+               (text.IsEmpty() ? wxString() : " " + text);
     auto add = [&text](const wxString &sentence) { text += (text.IsEmpty() ? "" : " ") + sentence; };
     if (quality) {
         // The Layer height field above is greyed: the head's height is named here.
@@ -4455,7 +4567,7 @@ wxString TabPrint::head_selection_description() const
             add(HighFlowNotices::preferred_height_sentence(notes[size_t(head)].printed));
         // A width set for the head in the other unit than the value under All tool heads: an older
         // version reads the first entry's number with the percent sign of any entry.
-        const std::vector<std::string> widths  = head_width_keys(PerHeadProcess::head_override_keys(*m_config, size_t(head)));
+        const std::vector<std::string> widths  = head_width_keys(PerHeadProcess::head_keys_in_use(*m_config, printer_config, size_t(head)));
         const std::vector<int>         columns = PerHeadProcess::head_columns(*m_config, size_t(head));
         const int                      shared  = PerHeadProcess::shared_column(*m_config, nvtStandard);
         for (const std::string &key : widths) {
@@ -4468,7 +4580,8 @@ wxString TabPrint::head_selection_description() const
             }
         }
     }
-    add(HighFlowNotices::shared_settings_sentence());
+    if (!inactive)
+        add(HighFlowNotices::shared_settings_sentence());
     return text;
 }
 
@@ -4477,7 +4590,9 @@ void TabPrint::clear_head_values()
     if (!m_head_selector || m_config == nullptr)
         return;
     const int head = selected_head();
-    if (head >= 0) {
+    if (head_inactive(head)) {
+        PerHeadProcess::clear_head(*m_config, size_t(head));
+    } else if (head >= 0) {
         // The values of this page alone: the widths on the Quality page, the speeds on the Speed page.
         PerHeadProcess::clear_head(*m_config, size_t(head), page_head_keys());
     } else {
@@ -4541,6 +4656,13 @@ void TabPrint::toggle_options()
             for (const auto &kvp : group->opt_map())
                 if (kvp.second.second < 0)
                     toggle_option(kvp.second.first, true);
+    if (selector_page && m_head_fields_locked) {
+        for (ConfigOptionsGroupShp &group : m_active_page->m_optgroups)
+            for (const auto &kvp : group->opt_map())
+                if (kvp.second.second >= 0 && PerHeadProcess::head_editable_keys().count(kvp.second.first) > 0)
+                    toggle_option(kvp.second.first, true, kvp.second.second + 256);
+        m_head_fields_locked = false;
+    }
 
     m_config_manipulation.toggle_print_fff_options(m_config, int(intptr_t(m_extruder_switch->GetClientData())), m_type < Preset::TYPE_COUNT);
     // The visibility pass may have switched the legacy toggle on for a loaded selection.
@@ -4667,6 +4789,13 @@ void TabPrint::toggle_options()
                 else if (PerHeadProcess::head_editable_keys().count(key) == 0 && print_options_with_variant.count(key) > 0)
                     toggle_option(key, false, index + 256);
             }
+        if (head_inactive(selected_head())) {
+            for (ConfigOptionsGroupShp &group : m_active_page->m_optgroups)
+                for (const auto &kvp : group->opt_map())
+                    if (kvp.second.second >= 0 && PerHeadProcess::head_editable_keys().count(kvp.second.first) > 0)
+                        toggle_option(kvp.second.first, false, kvp.second.second + 256);
+            m_head_fields_locked = true;
+        }
     }
 }
 
@@ -4722,6 +4851,7 @@ void TabPrint::clear_pages()
     m_speed_source_label    = nullptr;
     m_speed_source_combo    = nullptr;
     m_speed_source_reset    = nullptr;
+    m_speed_source_save     = nullptr;
     m_speed_source_items.clear();
 }
 
@@ -10673,7 +10803,9 @@ void Tab::update_head_entries()
             // TRN %1% is a process preset chosen for the tool head that cannot apply now (not installed, another nozzle size)
             tip += "\n" + format_wxstr(_L("%1% (chosen) does not apply now."), from_u8(chosen));
         if (!keys.empty())
-            tip += "\n" + HighFlowNotices::values_set_label(keys.size());
+            tip += "\n" + (PerHeadProcess::head_values(*m_config, printer_config, size_t(head)) == PerHeadProcess::HeadValues::Inactive ?
+                               HighFlowNotices::inactive_values_label(keys.size(), PerHeadProcess::made_for(*m_config, size_t(head))) :
+                               HighFlowNotices::values_set_label(keys.size()));
         button->SetToolTip(tip);
     }
 }

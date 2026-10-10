@@ -617,6 +617,9 @@ protected:
 	void		after_head_change(const std::string &opt_key, int opt_index);
 	bool		before_head_revert(const std::string &opt_key, bool to_sys);
 	bool		head_display_source(const std::string &opt_key, int opt_index, const DynamicPrintConfig *&config, int &index);
+	// The head's values were set for another nozzle size.
+	bool		head_inactive(int head) const;
+	bool		m_head_fields_locked = false;
 	wxString	head_values_tooltip(const std::string &opt_key) const;
 	// The line and the link under the selector: what the selection means, and the clear of the
 	// values set for the selected tool head (no confirmation) or for every head (confirmed).
@@ -637,6 +640,7 @@ protected:
 	// The page is laid out again for the lines its wrapped description lines take, scroll range included.
 	void		fit_page_to_lines();
 	void		choose_speed_source(const std::string &name);
+	void		save_extruder_preset();
 	void		on_speed_source_key(wxKeyEvent &event);
 
 private:
@@ -651,6 +655,7 @@ private:
 	wxStaticText*	m_speed_source_label = nullptr;
 	::ComboBox*		m_speed_source_combo = nullptr;
 	ScalableButton*	m_speed_source_reset = nullptr;
+	ScalableButton*	m_speed_source_save = nullptr;
 	int				m_speed_source_label_em = 15;    // the label column of the page the picker is on (15 Speed, 20 Quality)
 	bool			m_speed_source_stacked = false;  // Quality page: the label on its own line above a full-width combo
 	std::vector<std::string> m_speed_source_items;

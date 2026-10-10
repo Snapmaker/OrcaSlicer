@@ -621,6 +621,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "extruder_process_preset",
         "extruder_process_choice",
         "extruder_process_flow",
+        "print_extruder_value_nozzle",
         "filament_multi_colors",
         "filament_colour_mode",
         "default_filament_colour",

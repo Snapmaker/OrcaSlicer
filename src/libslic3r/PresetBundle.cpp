@@ -5344,21 +5344,23 @@ DynamicPrintConfig PresetBundle::full_config_for_print(bool apply_extruder, std:
         apply_extruder_layer_height_plan(config);
         return config;
     };
+    const bool fff   = this->printers.get_edited_preset().printer_technology() == ptFFF;
+    auto       plain = [&]() { return fff ? this->full_fff_config(apply_extruder, filament_maps, filament_volume_maps, true) : this->full_sla_config(); };
     // The preference off and no head with a chosen preset: the plain config (PerHeadProcess::active).
-    if (!PerHeadProcess::active(*this) || this->printers.get_edited_preset().printer_technology() != ptFFF)
-        return planned(this->full_config(apply_extruder, filament_maps, filament_volume_maps));
+    if (!PerHeadProcess::active(*this) || !fff)
+        return planned(plain());
     std::vector<PerHeadProcess::Source> heads = PerHeadProcess::head_sources(*this);
     if (sources != nullptr)
         *sources = heads;
     // A head with a chosen flow (a High Flow nozzle printing the Standard speeds) composes too.
     const bool any_derived = std::any_of(heads.begin(), heads.end(), [](const PerHeadProcess::Source &source) { return source.derived || source.flow_chosen; });
     if (!any_derived)
-        return planned(this->full_config(apply_extruder, filament_maps, filament_volume_maps));
+        return planned(plain());
     // Composed on the unexpanded config: Print::apply narrows the composed per-head layout the
     // same way the expansion of full_fff_config(true) would.
-    DynamicPrintConfig out = this->full_fff_config(false, filament_maps, filament_volume_maps);
+    DynamicPrintConfig out = this->full_fff_config(false, filament_maps, filament_volume_maps, true);
     if (!PerHeadProcess::compose(out, PerHeadProcess::all_edited_keys(*this), heads))
-        return planned(this->full_config(apply_extruder, filament_maps, filament_volume_maps));
+        return planned(plain());
     if (sources != nullptr)
         *sources = heads;
     return planned(std::move(out));
@@ -5428,7 +5430,7 @@ std::set<std::string> PresetBundle::project_different_keys(const std::string &di
     return keys_set;
 }
 
-DynamicPrintConfig PresetBundle::full_fff_config(bool apply_extruder, std::optional<std::vector<int>> filament_maps_new, std::optional<std::vector<int>> filament_volume_maps_new) const
+DynamicPrintConfig PresetBundle::full_fff_config(bool apply_extruder, std::optional<std::vector<int>> filament_maps_new, std::optional<std::vector<int>> filament_volume_maps_new, bool for_print) const
 {
     DynamicPrintConfig out;
     out.apply(FullPrintConfig::defaults());
@@ -5437,6 +5439,8 @@ DynamicPrintConfig PresetBundle::full_fff_config(bool apply_extruder, std::optio
 	out.apply(this->filaments.default_preset().config);
 	out.apply(this->printers.get_edited_preset().config);
     out.apply(this->project_config);
+    if (for_print)
+        PerHeadProcess::drop_inactive(out, out);
 
     // BBS
     size_t  num_filaments = this->filament_presets.size();

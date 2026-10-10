@@ -6982,6 +6982,7 @@ int CLI::run(int argc, char **argv)
                         }
                         // Snapmaker Orca: the preferred layer heights are planned as the GUI plans them for slicing.
                         apply_extruder_layer_height_plan(new_print_config);
+                        PerHeadProcess::drop_inactive(new_print_config, new_print_config);
                         print->apply(model, new_print_config);
                         BOOST_LOG_TRIVIAL(info) << boost::format("set no_check to %1%:")%no_check;
                         print->set_no_check_flag(no_check);//BBS

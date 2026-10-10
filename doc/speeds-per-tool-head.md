@@ -21,7 +21,8 @@ ladder: `High Quality` and `Color Mixing` ask for `High Quality`, then `Standard
 asks for itself, then `Standard`. Without any class match the machine preset's default process
 preset is taken, then the first compatible preset by name. The 32 speed, acceleration and jerk keys
 come from that preset; a value changed in the selected preset under "All extruders" is kept on
-every extruder, and a value set for one extruder on the Speed or Quality page beats everything.
+every extruder, and a value set for one extruder on the Speed or Quality page beats everything while
+the extruder carries the nozzle size it was set for.
 
 ## The U1 matrix
 
@@ -175,9 +176,10 @@ under All extruders (an older version reads the first number with the percent si
 `0.42,0.42,110%` reads as `0.42 %` there); the link "Clear the line widths set for this extruder"
 clears the widths alone, the speeds set on the Speed page stay. The picker's item tooltips show the
 default, outer wall and first layer widths of every preset ("110 % (0.22 mm)") and mark a preset
-whose widths differ from the automatic preset's. A nozzle size change with an absolute line width
-set for the extruder raises "Extruder N keeps a line width of X mm set for a Y mm nozzle; it now has Z
-mm." with "Clear"; a percent width follows the new nozzle by itself. A slice warning about a width a
+whose widths differ from the automatic preset's. After a nozzle size change the widths set for the
+extruder are not used (see "Values set per extruder and the nozzle size"). Widths without a recorded size
+stay in use: an absolute one raises "Extruder N keeps a line width of X mm set for a Y mm nozzle; it now
+has Z mm." with "Clear", a percent one follows the new nozzle by itself. A slice warning about a width a
 extruder prints ("Set for this extruder") and a refusal naming an extruder open the field with that
 extruder selected. On a printer without the row (one extruder, a Bambu two-extruder printer, the plate,
 object and part tabs) a line width has one value: the field shows it and a write fills every column.
@@ -204,6 +206,29 @@ chosen extruder too.
 The plater's process combo names every extruder's preset in its tooltip. Switching the plate's
 preset while an extruder has a chosen preset raises a notice: that extruder keeps its preset, the others
 follow the new quality.
+
+## Values set per extruder and the nozzle size
+
+A value set for an extruder is made for the nozzle that extruder carried. The process preset records that
+size per extruder (`print_extruder_value_nozzle`, microns as text, written when a value is set). While the
+extruder carries another size its values are **not used**: they stay in the preset and in the project, the
+fields under the extruder show what prints and are locked, the entry's tooltip and the line under the row
+say "N values set for X mm, not used", and the link there clears them. They are used again when the size
+returns. Slicing drops them from its copy of the settings (`PerHeadProcess::drop_inactive`, in
+`PresetBundle::full_config_for_print`, the command line and the calibration path); presets and projects are
+never rewritten because of a nozzle size. Values from before this key have no size and print as before,
+until a value is set for that extruder.
+
+**Save as extruder preset** (the button beside the picker) turns the speeds and line widths set for the
+selected extruder into a user preset that inherits the system preset of that nozzle size. It is chosen
+for the extruder and those values leave the plate's preset; a value also changed under All extruders
+stays set for the extruder, and so do the travel values and the top surface flow ratio, which a chosen
+preset does not supply. Values that are not used are saved for the size they were set for and cleared,
+and the preset is not chosen. A Transfer of values onto a preset that holds values of another nozzle size
+for the same extruder replaces those and says so. The picker lists the preset under "User presets" for every extruder that carries that size, in
+any project.
+
+Older builds and mainline OrcaSlicer drop the key and apply every value by extruder number.
 
 ## Where the choice lives and what resets it
 

@@ -15,6 +15,7 @@
 #include <cassert>
 #include <cctype>
 #include <cmath>
+#include <map>
 #include <memory>
 
 namespace Slic3r { namespace PerHeadProcess {
@@ -436,9 +437,9 @@ std::vector<Source> compute_sources(const PresetBundle &bundle, bool with_choice
             source.class_used = trace.class_used;
             split_keys(source);
         }
-    // The keys set for a tool head on the Speed or Quality page, whatever its reason.
+    // The keys set for a tool head on the Speed or Quality page that print, whatever its reason.
     for (Source &source : out)
-        source.overridden_keys = head_override_keys(edited_config, source.head);
+        source.overridden_keys = head_keys_in_use(edited_config, printer.config, source.head);
     return out;
 }
 
@@ -717,7 +718,7 @@ std::string override_seed(const PresetBundle &bundle, const std::string &key, co
     // What a tool head prints for the key: the value set for it, its width source's, or the shared value.
     const auto printed = [&](size_t head) -> std::string {
         for (int column : head_columns(process, head))
-            if (is_marked(process, size_t(column), key))
+            if (is_marked(process, size_t(column), key) && head_values(process, printer, head) != HeadValues::Inactive)
                 return text_of(values, column);
         if (head < sources.size()) {
             const Source &source = sources[head];
@@ -1003,6 +1004,7 @@ bool compose(DynamicPrintConfig &full, const std::set<std::string> &edited, std:
 // ---- Values set per tool head ------------------------------------------------------------------
 
 const char *const override_key = "print_extruder_override";
+const char *const nozzle_key   = "print_extruder_value_nozzle";
 
 namespace {
 
@@ -1139,6 +1141,46 @@ std::vector<int> distinct_heads(const Layout &layout)
             heads.emplace_back(id - 1);
     std::sort(heads.begin(), heads.end());
     return heads;
+}
+
+int microns(double mm)
+{
+    return int(std::lround(mm * 1000.));
+}
+
+int stamp_of(const DynamicPrintConfig &config, size_t head)
+{
+    const auto *stamps = config.option<ConfigOptionStrings>(nozzle_key);
+    if (stamps == nullptr || head >= stamps->values.size())
+        return 0;
+    return std::max(0, std::atoi(stamps->values[head].c_str()));
+}
+
+int nozzle_of(const DynamicPrintConfig &printer, size_t head)
+{
+    const auto *nozzles = printer.option<ConfigOptionFloats>("nozzle_diameter");
+    return nozzles == nullptr || head >= nozzles->values.size() ? 0 : microns(nozzles->values[head]);
+}
+
+void tidy_stamps(DynamicPrintConfig &config)
+{
+    auto *stamps = config.option<ConfigOptionStrings>(nozzle_key);
+    if (stamps == nullptr || stamps->values.empty())
+        return;
+    for (size_t head = 0; head < stamps->values.size(); ++head)
+        if (!stamps->values[head].empty() && head_override_keys(config, head).empty())
+            stamps->values[head].clear();
+    while (!stamps->values.empty() && stamps->values.back().empty())
+        stamps->values.pop_back();
+}
+
+void write_stamp(DynamicPrintConfig &config, size_t head, int size)
+{
+    auto *stamps = config.option<ConfigOptionStrings>(nozzle_key, true);
+    if (stamps->values.size() <= head)
+        stamps->values.resize(head + 1);
+    stamps->values[head] = size > 0 ? std::to_string(size) : std::string();
+    tidy_stamps(config);
 }
 
 } // namespace
@@ -1300,6 +1342,7 @@ void relayout(DynamicPrintConfig &config, const Layout &to)
             write_marker(config, t, mine);
         }
     }
+    tidy_stamps(config);
 }
 
 void widen(DynamicPrintConfig &config, const DynamicPrintConfig &printer)
@@ -1334,6 +1377,7 @@ void narrow(DynamicPrintConfig &config)
     config.set_key_value(override_key, new ConfigOptionStrings(std::vector<std::string>(shared.size(), std::string())));
     config.set_key_value("print_extruder_id", new ConfigOptionInts(std::vector<int>(shared.size(), 1)));
     config.set_key_value("print_extruder_variant", new ConfigOptionStrings(std::move(variants)));
+    tidy_stamps(config);
 }
 
 const DynamicPrintConfig &reference_in_layout_of(const DynamicPrintConfig &child, const DynamicPrintConfig &reference, DynamicPrintConfig &storage)
@@ -1498,6 +1542,7 @@ void clear_head_value(DynamicPrintConfig &config, size_t head, const std::string
         keys.erase(key);
         write_marker(config, size_t(column), keys);
     }
+    tidy_stamps(config);
 }
 
 void clear_head(DynamicPrintConfig &config, size_t head)
@@ -1529,6 +1574,53 @@ std::vector<size_t> heads_marked_for(const DynamicPrintConfig &config, const std
                 break;
             }
     return out;
+}
+
+HeadValues head_values(const DynamicPrintConfig &process, const DynamicPrintConfig &printer, size_t head)
+{
+    if (head_override_keys(process, head).empty())
+        return HeadValues::None;
+    const int stamp = stamp_of(process, head);
+    if (stamp <= 0)
+        return HeadValues::Unknown;
+    const int nozzle = nozzle_of(printer, head);
+    return nozzle <= 0 || nozzle == stamp ? HeadValues::InUse : HeadValues::Inactive;
+}
+
+double made_for(const DynamicPrintConfig &process, size_t head)
+{
+    return head_override_keys(process, head).empty() ? 0. : stamp_of(process, head) / 1000.;
+}
+
+std::vector<std::string> head_keys_in_use(const DynamicPrintConfig &process, const DynamicPrintConfig &printer, size_t head)
+{
+    return head_values(process, printer, head) == HeadValues::Inactive ? std::vector<std::string>() : head_override_keys(process, head);
+}
+
+void stamp_head(DynamicPrintConfig &process, const DynamicPrintConfig &printer, size_t head)
+{
+    if (head_override_keys(process, head).empty())
+        tidy_stamps(process);
+    else if (const int nozzle = nozzle_of(printer, head); nozzle > 0)
+        write_stamp(process, head, nozzle);
+}
+
+bool drop_inactive(DynamicPrintConfig &config, const DynamicPrintConfig &printer, std::vector<size_t> *dropped)
+{
+    const auto *stamps = config.option<ConfigOptionStrings>(nozzle_key);
+    if (stamps == nullptr || stamps->values.empty())
+        return false;
+    bool changed = false;
+    for (int head : distinct_heads(layout_of(config)))
+        if (head_values(config, printer, size_t(head)) == HeadValues::Inactive) {
+            clear_head(config, size_t(head));
+            changed = true;
+            if (dropped != nullptr)
+                dropped->emplace_back(size_t(head));
+        }
+    if (changed && is_wide(config) && marker_empty(config))
+        narrow(config);
+    return changed;
 }
 
 void set_every_column(DynamicPrintConfig &config, const std::string &key, const FloatOrPercent &value)
@@ -1720,9 +1812,11 @@ void normalise(DynamicPrintConfig &config, const DynamicPrintConfig *parent, con
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": a marker on a process layout without shared columns; dropped";
         config.set_key_value(override_key, new ConfigOptionStrings(std::vector<std::string>(layout.size(), std::string())));
     }
+    tidy_stamps(config);
 }
 
-void transfer_columns(DynamicPrintConfig &target, const DynamicPrintConfig &source, const std::vector<std::string> &indexed_options, const DynamicPrintConfig &printer)
+void transfer_columns(DynamicPrintConfig &target, const DynamicPrintConfig &source, const std::vector<std::string> &indexed_options, const DynamicPrintConfig &printer,
+                      std::vector<std::pair<size_t, double>> *replaced)
 {
     const Layout from = layout_of(source);
     if (from.size() == 0)
@@ -1732,6 +1826,8 @@ void transfer_columns(DynamicPrintConfig &target, const DynamicPrintConfig &sour
     const Layout to = layout_of(target);
     if (to.size() == 0)
         return;
+    std::map<size_t, int> sizes;
+    std::set<size_t>      seen;
     for (const std::string &option : indexed_options) {
         const size_t hash = option.find('#');
         if (hash == std::string::npos)
@@ -1750,6 +1846,18 @@ void transfer_columns(DynamicPrintConfig &target, const DynamicPrintConfig &sour
         if (is_wide(source) && from.ids[column] > 0) {
             if (!is_marked(source, column, key))
                 continue;
+            if (const size_t head = size_t(from.ids[column] - 1); seen.insert(head).second) {
+                const int theirs_size = stamp_of(source, head);
+                const int mine_size   = stamp_of(target, head);
+                const int size        = theirs_size > 0 ? theirs_size : nozzle_of(printer, head);
+                if (mine_size > 0 && size > 0 && mine_size != size) {
+                    if (replaced != nullptr)
+                        replaced->emplace_back(head, mine_size / 1000.);
+                    clear_head(target, head);
+                }
+                if (size > 0 && (theirs_size > 0 || mine_size > 0))
+                    sizes[head] = size;
+            }
             for (size_t t = 0; t < to.size(); ++t)
                 if (to.ids[t] == from.ids[column] && to.variants[t] == variant) {
                     copy_column(*mine, *theirs, t, column);
@@ -1773,8 +1881,11 @@ void transfer_columns(DynamicPrintConfig &target, const DynamicPrintConfig &sour
         if (is_wide(target))
             set_shared_value(target, key, variant_names_type(variant, nvtHighFlow) ? nvtHighFlow : nvtStandard);
     }
+    for (const auto &[head, size] : sizes)
+        write_stamp(target, head, size);
     if (is_wide(target) && marker_empty(target))
         narrow(target);
+    tidy_stamps(target);
 }
 
 int column_for_head(const DynamicPrintConfig &process, size_t head, NozzleVolumeType type, const DynamicPrintConfig &printer)
@@ -1817,6 +1928,93 @@ bool has_high_flow_values(const DynamicPrintConfig &process, size_t head, const 
 bool reads_high_flow(const Source &source, NozzleVolumeType flow, const DynamicPrintConfig &printer)
 {
     return flow == nvtHighFlow && source.derived && source.preset != nullptr && source_column(*source.preset, source.head, nvtHighFlow, printer) >= 0;
+}
+
+ExtruderPreset extruder_preset(const PresetBundle &bundle, size_t head)
+{
+    ExtruderPreset            out;
+    const DynamicPrintConfig &edited  = bundle.prints.get_edited_preset().config;
+    const DynamicPrintConfig &printer = bundle.printers.get_edited_preset().config;
+    const HeadValues          state   = head_values(edited, printer, head);
+    const std::vector<int>    columns = head_columns(edited, head);
+    std::set<std::string>     marked;
+    for (const std::string &key : head_override_keys(edited, head))
+        if (composed_keys().count(key) > 0)
+            marked.insert(key);
+    const std::vector<Source> sources         = head_sources(bundle);
+    const Preset             *selected_parent = system_parent(bundle);
+    if (marked.empty() || columns.empty() || head >= sources.size() || selected_parent == nullptr)
+        return out;
+    const Source &source   = sources[head];
+    const bool    inactive = state == HeadValues::Inactive;
+    const Preset *parent   = nullptr;
+    if (inactive) {
+        out.size = made_for(edited, head);
+        const double home = NozzleFilament::home_nozzle_size(printer);
+        if (home > 0. && microns(home) == microns(out.size))
+            parent = selected_parent;
+        else if (const Preset *machine = NozzleFilament::head_machine_preset(bundle.printers, printer.opt_string("printer_model"), out.size); machine != nullptr) {
+            Reason reason = Reason::Derived;
+            parent = source_for_head(bundle, *machine, 0., bundle.prints.get_selected_preset(), std::string(), reason);
+        }
+    } else {
+        out.size = nozzle_of(printer, head) / 1000.;
+        // The selected preset's column serves the head's flow: no single preset holds its values.
+        if (source.derived && composed_column(source, source.flow, printer) < 0)
+            return out;
+        const Preset *base = source.derived && source.preset != nullptr ? source.preset : selected_parent;
+        parent = base->is_system ? base : bundle.prints.get_preset_base(*base);
+        if (parent != nullptr && !fits(bundle, *parent, head))
+            parent = nullptr;
+    }
+    if (parent == nullptr || !parent->is_system)
+        return out;
+
+    out.config = parent->config;
+    narrow(out.config);
+    const Layout                layout     = layout_of(out.config);
+    const size_t                width      = std::max<size_t>(1, layout.size());
+    const std::set<std::string> edited_all = all_edited_keys(bundle);
+    for (const std::string &key : composed_keys()) {
+        auto       *mine  = dynamic_cast<ConfigOptionVectorBase *>(out.config.option(key));
+        const auto *plate = dynamic_cast<const ConfigOptionVectorBase *>(edited.option(key));
+        if (mine == nullptr || plate == nullptr || mine->type() != plate->type())
+            continue;
+        if (marked.count(key) > 0) {
+            for (size_t column = 0; column < width; ++column)
+                copy_column(*mine, *plate, column, size_t(columns.front()));
+            if (inactive || edited_all.count(key) == 0)
+                out.moved.emplace_back(key);
+            continue;
+        }
+        if (inactive)
+            continue;
+        if (flow_independent_keys().count(key) > 0) {
+            const Preset *from = width_source(source);
+            if (from == nullptr && edited_all.count(key) > 0)
+                continue;
+            const DynamicPrintConfig &config = from != nullptr ? from->config : edited;
+            const auto               *theirs = dynamic_cast<const ConfigOptionVectorBase *>(config.option(key));
+            const int                 shared = shared_column(config, nvtStandard);
+            if (theirs != nullptr && shared >= 0 && theirs->type() == mine->type())
+                for (size_t column = 0; column < width; ++column)
+                    copy_column(*mine, *theirs, column, size_t(shared));
+            continue;
+        }
+        if (!source.derived || source.preset == nullptr)
+            continue;
+        const auto *theirs = dynamic_cast<const ConfigOptionVectorBase *>(source.preset->config.option(key));
+        if (theirs == nullptr || theirs->type() != mine->type())
+            continue;
+        for (size_t column = 0; column < layout.size(); ++column) {
+            const int from = composed_column(source, variant_names_type(layout.variants[column], nvtHighFlow) ? nvtHighFlow : nvtStandard, printer);
+            if (from >= 0)
+                copy_column(*mine, *theirs, column, size_t(from));
+        }
+    }
+    out.parent = parent->name;
+    out.choose = !inactive;
+    return out;
 }
 
 } // namespace PerHeadProcess

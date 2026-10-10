@@ -6603,6 +6603,12 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionStrings { "" });
     def->cli = ConfigOptionDef::nocli;
 
+    // Snapmaker Orca: in microns.
+    def = this->add("print_extruder_value_nozzle", coStrings);
+    def->label = "Nozzle size of the process values set per extruder";
+    def->set_default_value(new ConfigOptionStrings());
+    def->cli = ConfigOptionDef::nocli;
+
     /*def = this->add("filament_extruder_id", coInts);
     def->label = "Filament extruder id";
     def->tooltip = "Filament extruder id.";

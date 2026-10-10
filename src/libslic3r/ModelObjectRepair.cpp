@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <string>
 
 #include "BoundingBox.hpp"
@@ -50,6 +49,17 @@ bool is_not_3dimensional_part(const TriangleMesh &mesh)
     return false;
 }
 
+// Orca: Whether the volume, or any of the shells it would be split into, encloses a volume.
+bool has_3dimensional_part(const ModelVolume &volume)
+{
+    if (!volume.is_splittable())
+        return !is_not_3dimensional_part(volume.mesh());
+    for (indexed_triangle_set &shell : its_split(volume.mesh().its))
+        if (!is_not_3dimensional_part(TriangleMesh(std::move(shell))))
+            return true;
+    return false;
+}
+
 } // namespace
 
 void repair_model_object(ModelObject                                               &model_object,
@@ -57,18 +67,23 @@ void repair_model_object(ModelObject                                            
                          const std::function<void(const char *message, int percent)> &on_progress,
                          const std::function<void()>                               &throw_on_cancel)
 {
-    size_t ivolume = 0;
-    auto progress = [&](const char *msg, unsigned prcnt) {
+    if (volume_idx < -1 || volume_idx >= int(model_object.volumes.size()))
+        throw Slic3r::InvalidArgument("repair_model_object: no such volume");
+    // Orca: Checked shell by shell before anything changes: ModelVolume::split() alone drops parts with a degenerate
+    // convex hull, and the shells of a volume may enclose a signed volume together while each of them is flat.
+    if (std::none_of(model_object.volumes.begin(), model_object.volumes.end(), [&throw_on_cancel](const ModelVolume *v) {
+            throw_on_cancel();
+            return has_3dimensional_part(*v);
+        }))
+        throw Slic3r::RuntimeError(_u8L("The object has no part that encloses a volume"));
+
+    size_t ivolume  = volume_idx == -1 ? 0 : size_t(volume_idx);
+    auto   progress = [&](const char *msg, unsigned prcnt) {
         const size_t total = std::max<size_t>(1, model_object.volumes.size());
-        on_progress(msg, int(std::floor((float(prcnt) + float(ivolume) * 100.f) / float(total))));
+        on_progress(msg, std::min(100, int(std::floor((float(prcnt) + float(ivolume) * 100.f) / float(total)))));
     };
 
-    size_t start_volume = volume_idx == -1 ? 0 : size_t(volume_idx);
-    size_t end_volume   = volume_idx == -1 ? std::numeric_limits<size_t>::max() : size_t(volume_idx);
-
-    for (ivolume = start_volume; ivolume < model_object.volumes.size(); ++ivolume) {
-        if (volume_idx != -1 && ivolume > end_volume)
-            break;
+    while (ivolume < model_object.volumes.size()) {
         throw_on_cancel();
 
         progress(L("Repairing model object"), 10);
@@ -80,45 +95,32 @@ void repair_model_object(ModelObject                                            
         if (volume->is_splittable()) {
             parts_count = volume->split(1);
             if (parts_count > 1) {
-                const std::string msg = Slic3r::format(L("Split into %1% parts"), parts_count);
+                // Orca: Translated here, the receiver cannot look the formatted message up in the catalog.
+                const std::string msg = Slic3r::format(_u8L("Split into %1% parts"), parts_count);
                 progress(msg.c_str(), 10);
             }
         }
 
-        size_t part_end = std::min(ivolume + parts_count - 1, model_object.volumes.size() - 1);
-        if (volume_idx != -1)
-            end_volume = part_end;
+        // Orca: The parts of this volume are [ivolume, part_end).
+        size_t part_end = std::min(ivolume + parts_count, model_object.volumes.size());
 
-        size_t removed_parts = 0;
-        for (size_t idx = part_end + 1; idx > ivolume; --idx) {
-            const size_t part_idx = idx - 1;
-            const ModelVolume *part_volume = model_object.volumes[part_idx];
-            if (!is_not_3dimensional_part(part_volume->mesh()))
+        for (size_t part_idx = part_end; part_idx-- > ivolume;) {
+            if (!is_not_3dimensional_part(model_object.volumes[part_idx]->mesh()))
                 continue;
-
+            if (model_object.volumes.size() == 1)
+                throw Slic3r::RuntimeError(_u8L("The object has no part that encloses a volume"));
             model_object.delete_volume(part_idx);
-            ++removed_parts;
-            if (part_end > 0)
-                --part_end;
-            else
-                part_end = 0;
-            if (volume_idx != -1)
-                end_volume = part_end;
+            --part_end;
         }
 
-        if (removed_parts >= parts_count) {
-            ivolume = part_end;
-            progress(L("Repair finished"), 100);
-            continue;
-        }
-
-        for (size_t part_idx = ivolume; part_idx <= part_end && part_idx < model_object.volumes.size(); ++part_idx) {
+        for (size_t part_idx = ivolume; part_idx < part_end; ++part_idx) {
+            throw_on_cancel();
             ModelVolume *part_volume = model_object.volumes[part_idx];
             TriangleMesh mesh = part_volume->mesh();
             if (its_num_open_edges(mesh.its) != 0) {
                 std::string error;
                 if (!MeshBoolean::cgal::repair(mesh, nullptr, &error))
-                    throw Slic3r::RuntimeError(error.empty() ? L("Repair failed") : error.c_str());
+                    throw Slic3r::RuntimeError(error.empty() ? _u8L("Repair failed") : error);
 
                 part_volume->set_mesh(std::move(mesh));
                 part_volume->calculate_convex_hull();
@@ -127,16 +129,16 @@ void repair_model_object(ModelObject                                            
             }
         }
 
-        ivolume = part_end;
-
         progress(L("Repair finished"), 100);
+
+        // Orca: The next volume follows the parts left of this one, even when all of them were dropped.
+        ivolume = part_end;
+        if (volume_idx != -1)
+            break;
     }
 
     model_object.invalidate_bounding_box();
-
-    if (ivolume > 0)
-        --ivolume;
-    progress(L("Repair finished"), 100);
+    on_progress(L("Repair finished"), 100);
 }
 
 } // namespace Slic3r

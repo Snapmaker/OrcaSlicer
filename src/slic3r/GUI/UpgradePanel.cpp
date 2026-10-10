@@ -515,6 +515,21 @@ void MachineInfoPanel::begin_upgrade_telemetry(const std::string& module, const 
 
 void MachineInfoPanel::report_upgrade_telemetry(int error_code)
 {
+    const bool success = error_code == 0;
+    const auto sinks = success ? SnapLog::v1::SinkPostHog : (SnapLog::v1::SinkGateway | SnapLog::v1::SinkPostHog);
+    const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Error;
+    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::FirmwareUpgradeResult,
+        {
+            {"module", m_upgrade_telemetry_module},
+            {"fromVersion", m_upgrade_telemetry_from_version},
+            {"toVersion", m_upgrade_telemetry_to_version},
+            {"success", SnapTelemetry::bool_value(success)},
+            {"result", SnapTelemetry::firmware_upgrade_result(error_code)},
+            {"reason", SnapTelemetry::firmware_upgrade_reason(error_code)},
+            {"errorCode", std::to_string(error_code)},
+            {"printerModel", m_obj ? m_obj->printer_type : ""},
+        },
+        "firmware upgrade result");
 }
 
 void MachineInfoPanel::update(MachineObject* obj)

@@ -575,6 +575,11 @@ void SSWCP_Instance::sw_SnapLog()
         handle_general_fail(-1, "param [policy] must be a string!");
         return;
     }
+    if (!m_param_data.count("ext") || !m_param_data["ext"].is_object() || !m_param_data["ext"].contains("eventName") ||
+        !m_param_data["ext"]["eventName"].is_string()) {
+        handle_general_fail(-1, "param [ext.eventName] required!");
+        return;
+    }
 
     std::string level_str = m_param_data["level"].get<std::string>();
     std::string message   = m_param_data["message"].get<std::string>();
@@ -587,6 +592,27 @@ void SSWCP_Instance::sw_SnapLog()
             BOOST_LOG_TRIVIAL(warning) << "[WCP] [SnapLog] " << local_log;
         }
     }
+
+    using namespace Slic3r::SnapLog::v1;
+    const std::string event_name = m_param_data["ext"]["eventName"].get<std::string>();
+    const auto        event      = snap_event_from_name(event_name);
+    if (!event) {
+        handle_general_fail(-1, "param [ext.eventName] is not a registered event!");
+        return;
+    }
+
+    SnapLogExt ext;
+    for (auto it = m_param_data["ext"].begin(); it != m_param_data["ext"].end(); ++it) {
+        if (it.key() == "eventName")
+            continue;
+        ext.emplace_back(it.key(), it.value().is_string() ? it.value().get<std::string>() : it.value().dump());
+    }
+    ext.emplace_back("source", "flutter");
+
+    SnapLogLevel lvl = (level_str == "ERROR" || level_str == "error") ? SnapLogLevel::Error
+                    : (level_str == "WARN"  || level_str == "warning") ? SnapLogLevel::Warning
+                    : SnapLogLevel::Info;
+    SnapLogClient::instance().log_event(lvl, "flutter", 0, SinkGateway, *event, std::move(ext), message);
 
     send_to_js();
     finish_job();
@@ -1892,6 +1918,12 @@ void SSWCP_MachineFind_Instance::sw_WakeupFind()
 void SSWCP_MachineFind_Instance::sw_StartMachineFind()
 {
     try {
+        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::DeviceDiscoveryStart,
+            {
+                {"source", "cpp"},
+            },
+            "device discovery start");
+
         std::vector<string> protocols;
 
         float last_time = -1;
@@ -6841,11 +6873,25 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         if (m_param_data.count("server_address") || !m_param_data["server_address"].is_string()) {
             server_address = m_param_data["server_address"].get<std::string>();
             if (server_address == "") {
+                SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreateFailed,
+                    {
+                        {"source", "cpp"},
+                        {"connectSessionId", session_id},
+                        {"reason", "server_address illegal"},
+                    },
+                    "mqtt client create failed");
                 handle_general_fail(-1, "the value of param [server_address] is illegal");
                 return;
             }
         }
         else {
+            SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreateFailed,
+                {
+                    {"source", "cpp"},
+                    {"connectSessionId", session_id},
+                    {"reason", "server_address missing"},
+                },
+                "mqtt client create failed");
             handle_general_fail(-1, "param [server_address] is required or wrong type");
             return;
         }
@@ -6853,10 +6899,24 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         if (m_param_data.count("clientId") || !m_param_data["clientId"].is_string()) {
             clientId = m_param_data["clientId"].get<std::string>();
             if (clientId == "") {
+                SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreateFailed,
+                    {
+                        {"source", "cpp"},
+                        {"connectSessionId", session_id},
+                        {"reason", "clientId illegal"},
+                    },
+                    "mqtt client create failed");
                 handle_general_fail(-1, "the value of param [clientId] is illegal");
                 return;
             }
         } else {
+            SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreateFailed,
+                {
+                    {"source", "cpp"},
+                    {"connectSessionId", session_id},
+                    {"reason", "clientId missing"},
+                },
+                "mqtt client create failed");
             handle_general_fail(-1, "param [clientId] is required or wroing type");
             return;
         }
@@ -6886,6 +6946,13 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         }
 
         if (client == nullptr) {
+            SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreateFailed,
+                {
+                    {"source", "cpp"},
+                    {"connectSessionId", session_id},
+                    {"reason", "create instance failed"},
+                },
+                "mqtt client create failed");
             handle_general_fail(-1, "create instance failed");
             return;
         }
@@ -6900,6 +6967,13 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         //
         bool flag = set_current_engine({std::to_string(int64_t(client.get())), client});
         if (!flag) {
+            SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreateFailed,
+                {
+                    {"source", "cpp"},
+                    {"connectSessionId", session_id},
+                    {"reason", "set_current_engine failed"},
+                },
+                "mqtt client create failed");
             handle_general_fail(-1, "create failed");
             return;
         }
@@ -6908,6 +6982,16 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
 
         m_res_data["type"] = type;
         m_res_data["id"]   = std::to_string(int64_t(get_current_engine().get()));
+
+        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreate,
+            {
+                {"source", "cpp"},
+                {"connectSessionId", session_id},
+                {"transport", type},
+                {"useTls", type == "mqtts" ? "true" : "false"},
+                {"server", server_address},
+            },
+            "mqtt client created");
 
         send_to_js();
         finish_job();
@@ -6920,6 +7004,12 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
 void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
 {
     try {
+        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttConnectAttempt,
+            {
+                {"source", "cpp"},
+                {"connectSessionId", get_connect_session_id()},
+            },
+            "mqtt connect attempt");
         if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
             handle_general_fail(-1, "param [id] is required or wrong type");
 
@@ -6959,6 +7049,12 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
                 if (!engine) {
                     return;
                 }
+                SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttConnectFailure,
+                    {
+                        {"source", "cpp"},
+                        {"connectSessionId", session_id},
+                    },
+                    "mqtt connection failure callback");
                 std::string msg = "";
                 engine->Disconnect(msg);
             });
@@ -6970,10 +7066,25 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
+                        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttConnectResult,
+                            {
+                                {"source", "cpp"},
+                                {"connectSessionId", session_id},
+                                {"success", "true"},
+                            },
+                            "mqtt connect result");
                         self->m_msg = msg;
                         self->send_to_js();
                         self->finish_job();
                     } else {
+                        SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttConnectResult,
+                            {
+                                {"source", "cpp"},
+                                {"connectSessionId", session_id},
+                                {"success", "false"},
+                                {"reason", msg},
+                            },
+                            "mqtt connect result");
                         self->handle_general_fail(-1, msg);
                     }
                 }
@@ -7026,6 +7137,12 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_disconnect()
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
+                        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::DeviceDisconnect,
+                            {
+                                {"source", "cpp"},
+                                {"connectSessionId", session_id},
+                            },
+                            "device disconnect");
                         // Printer disconnected — clear Flutter MQTT identity in SnapLog.
                         ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid("");
                         ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn("");
@@ -7107,6 +7224,15 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
+                        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttSubscribeResult,
+                            {
+                                {"source", "cpp"},
+                                {"connectSessionId", session_id},
+                                {"success", "true"},
+                                {"topic", topic},
+                                {"qos", std::to_string(qos)},
+                            },
+                            "mqtt subscribe result");
                         // response set event_id
                         if (self->m_event_id != "") {
                             self->m_msg = msg;
@@ -7120,6 +7246,16 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
                         }
 
                     } else {
+                        SNAP_LOG_WARNING(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttSubscribeResult,
+                            {
+                                {"source", "cpp"},
+                                {"connectSessionId", session_id},
+                                {"success", "false"},
+                                {"topic", topic},
+                                {"qos", std::to_string(qos)},
+                                {"reason", msg},
+                            },
+                            "mqtt subscribe result");
                         self->handle_general_fail(-1, msg);
                     }
                 }
@@ -7343,6 +7479,16 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
 
                     std::string link_mode       = m_param_data.count("link_mode") ? m_param_data["link_mode"] : "lan";
                     connect_params["link_mode"] = link_mode;
+
+                    SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::DeviceEngineSet,
+                        {
+                            {"source", "cpp"},
+                            {"connectSessionId", get_connect_session_id()},
+                            {"printerSN", host->m_sn},
+                            {"clientId", host->m_client_id},
+                            {"linkMode", link_mode},
+                        },
+                        "device engine set");
 
                     std::string id     = m_param_data.count("id") ? m_param_data["id"].get<std::string>() : "";
                     std::string userid = m_param_data.count("userid") ? m_param_data["userid"].get<std::string>() : "";

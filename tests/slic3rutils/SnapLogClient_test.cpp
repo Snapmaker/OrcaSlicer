@@ -40,10 +40,13 @@ TEST_CASE("SnapEvent registry maps every enum to a unique stable name", "[snaplo
 {
     REQUIRE(snap_event_name(SnapEvent::AppLaunch) == "app_launch");
     REQUIRE(snap_event_name(SnapEvent::SliceFailed) == "slice_failed");
+    REQUIRE(snap_event_name(SnapEvent::SliceCancelled) == "slice_cancelled");
+    REQUIRE(snap_event_name(SnapEvent::UserLoginResult) == "user_login_result");
+    REQUIRE(snap_event_name(SnapEvent::UserLogout) == "user_logout");
     REQUIRE(snap_event_from_name("calibration_result") == SnapEvent::CalibrationResult);
     REQUIRE_FALSE(snap_event_from_name("not_a_snap_event").has_value());
 
-    const std::array<SnapEvent, 23> events = {
+    const std::array<SnapEvent, 26> events = {
         SnapEvent::AppLaunch,           SnapEvent::AppSessionEnd,           SnapEvent::CalibrationResult,
         SnapEvent::DeviceConnectAttempt, SnapEvent::DeviceDisconnect,       SnapEvent::DeviceDiscoveryStart,
         SnapEvent::DeviceEngineSet,      SnapEvent::FileImportResult,       SnapEvent::FirmwareUpgradeResult,
@@ -51,7 +54,8 @@ TEST_CASE("SnapEvent registry maps every enum to a unique stable name", "[snaplo
         SnapEvent::MqttClientCreateFailed, SnapEvent::MqttConnectAttempt,   SnapEvent::MqttConnectFailure,
         SnapEvent::MqttConnectResult,    SnapEvent::MqttSubscribeResult,    SnapEvent::PrintJobSendResult,
         SnapEvent::PrivacyConsentGranted, SnapEvent::ProjectSaveResult,     SnapEvent::SliceCompleted,
-        SnapEvent::SliceFailed,          SnapEvent::SliceStart
+        SnapEvent::SliceFailed,          SnapEvent::SliceStart,             SnapEvent::SliceCancelled,
+        SnapEvent::UserLoginResult,      SnapEvent::UserLogout
     };
 
     std::set<std::string_view> names;
@@ -529,7 +533,7 @@ TEST_CASE("direct realtime log call is a safe no-op un-init'd", "[snaplog]")
 {
     SnapLogClient::instance().log(SnapLogLevel::Info, "smoke", SnapLogExt{{"eventName", "smoke_test"}},
                                   SnapLogPolicy::Realtime, __FUNCTION__, __LINE__);
-    SNAP_LOG_BATCH(Error, "smoke2", SinkGateway, {"eventName", "smoke_test2"}, {"k", "v"});
+    SNAP_LOG_ERROR(SinkGateway, SnapEvent::AppLaunch, {{"k", "v"}}, "smoke2");
     REQUIRE(true); // reached without crash
 }
 
@@ -2370,7 +2374,7 @@ TEST_CASE("build_batch_cancel_request: empty token has no request", "[snaplog][b
 // policy — batch is a disk channel, no Error privilege).
 // ---------------------------------------------------------------------------
 
-TEST_CASE("batch log(): SNAP_LOG_BATCH lands in bt_queue", "[snaplog][batch]")
+TEST_CASE("batch log(): buffered policy lands in bt_queue", "[snaplog][batch]")
 {
     FakeClient fc;
     fc.init();

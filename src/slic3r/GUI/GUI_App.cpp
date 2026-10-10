@@ -2488,6 +2488,18 @@ bool GUI_App::OnInit()
 
 int GUI_App::OnExit()
 {
+    if (!m_app_session_end_reported) {
+        m_app_session_end_reported = true;
+        const bool has_project = plater_ && !plater_->get_project_filename().empty();
+        SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::AppSessionEnd,
+            {
+                {"sessionDurationMs", SnapTelemetry::elapsed_ms(m_session_start_time, std::chrono::steady_clock::now())},
+                {"exitReason", "normal"},
+                {"hasProject", SnapTelemetry::bool_value(has_project)},
+            },
+            "app session ended");
+    }
+
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().shutdown();
 
     stop_sync_user_preset();
@@ -3162,6 +3174,18 @@ bool GUI_App::on_init_inner()
 
     snap::SnapLogClient::instance().init(std::move(deps), std::move(snap_cfg));
     BOOST_LOG_TRIVIAL(info) << "SnapLogClient initialized";
+
+    const bool         launch_with_file = init_params && !init_params->input_files.empty();
+    const std::string launch_file_type = launch_with_file ? SnapTelemetry::file_type(boost::filesystem::path(init_params->input_files.front())) : "none";
+    SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::AppLaunch,
+        {
+            {"firstLaunch", SnapTelemetry::bool_value(!m_app_conf_exists)},
+            {"openMethod", launch_with_file ? "file" : "normal"},
+            {"launchFileType", launch_file_type},
+            {"language", app_config ? app_config->get("language") : ""},
+            {"userMode", get_mode_str()},
+        },
+        "app launched");
 
     profiler.mark("on_init_inner return");
 
@@ -4384,6 +4408,11 @@ void GUI_App::sm_request_user_logout()
     if (m_login_userinfo.is_user_login()) {
         m_login_userinfo.set_user_login(false);
     }
+    SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::UserLogout,
+        {
+            {"source", "cpp"},
+        },
+        "user logout");
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_token("");
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id("");
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid("");
@@ -4435,6 +4464,22 @@ void GUI_App::report_flutter_run_result_once(bool success)
     }
 
     m_flutter_wcp_reported = true;
+
+    if (success) {
+        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::FlutterRunResult,
+            {
+                {"source", "cpp"},
+                {"success", "true"},
+            },
+            "flutter run success");
+    } else {
+        SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::FlutterRunResult,
+            {
+                {"source", "cpp"},
+                {"success", "false"},
+            },
+            "flutter run failed");
+    }
 }
 
 void GUI_App::sm_maybe_refresh_login_token()

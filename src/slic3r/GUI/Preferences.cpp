@@ -766,6 +766,7 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
                 *reentry_guard = false;
             }
         }
+        const bool old_privacy_value = app_config->get("app", PRIVACY_POLICY_FLAGS) == "true";
         app_config->set_bool(param, checkbox->GetValue());
         app_config->save();
 
@@ -777,6 +778,15 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
             app_config->set("app", PRIVACY_POLICY_FLAGS, checkbox->GetValue());
                 BOOST_LOG_TRIVIAL(warning) <<"create_item_checkbox changed the privacy policy with: "<<(checkbox->GetValue()?"true" : "false");
                 wxGetApp().user_update_privacy_notify(checkbox->GetValue());
+                if (checkbox->GetValue()) {
+                    SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::PrivacyConsentGranted,
+                        {
+                            {"source", "preferences"},
+                            {"previousValue", SnapTelemetry::bool_value(old_privacy_value)},
+                            {"newValue", "true"},
+                        },
+                        "privacy consent granted");
+                }
             }
         // if (param == "staff_pick_switch") {
         //     bool pbool = app_config->get("staff_pick_switch") == "true";

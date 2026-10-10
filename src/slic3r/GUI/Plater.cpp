@@ -222,6 +222,17 @@ namespace GUI {
 
 static void report_file_import_result(const std::vector<fs::path>& input_files, bool success, const std::string& source)
 {
+    const auto sinks = success ? SnapLog::v1::SinkPostHog : (SnapLog::v1::SinkGateway | SnapLog::v1::SinkPostHog);
+    const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
+    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::FileImportResult,
+        {
+            {"source", source.empty() ? "other" : source},
+            {"fileType", SnapTelemetry::file_types(input_files)},
+            {"fileCount", std::to_string(input_files.size())},
+            {"success", SnapTelemetry::bool_value(success)},
+            {"reason", success ? "" : "cancelled_or_failed"},
+        },
+        success ? "file import completed" : "file import failed");
 }
 
 static std::string telemetry_printer_model();
@@ -234,10 +245,40 @@ static unsigned telemetry_result_sinks(bool success)
 
 static void report_project_save_result(const fs::path& path, bool success, bool save_as)
 {
+    const auto sinks = telemetry_result_sinks(success);
+    const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
+    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::ProjectSaveResult,
+        {
+            {"fileType", "3mf"},
+            {"fileSizeBytes", SnapTelemetry::file_size_bytes(path)},
+            {"success", SnapTelemetry::bool_value(success)},
+            {"result", SnapTelemetry::operation_result(success)},
+            {"reason", success ? "" : "save_failed"},
+            {"saveAs", SnapTelemetry::bool_value(save_as)},
+            {"plateCount", std::to_string(wxGetApp().plater()->get_partplate_list().get_plate_count())},
+            {"objectCount", std::to_string(wxGetApp().plater()->model().objects.size())},
+            {"printerModel", telemetry_printer_model()},
+        },
+        success ? "project save completed" : "project save failed");
 }
 
 static void report_gcode_3mf_export_result(const fs::path& path, bool success)
 {
+    const auto sinks = telemetry_result_sinks(success);
+    const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
+    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::GcodeExportResult,
+        {
+            {"fileType", "gcode.3mf"},
+            {"fileSizeBytes", SnapTelemetry::file_size_bytes(path)},
+            {"success", SnapTelemetry::bool_value(success)},
+            {"result", SnapTelemetry::operation_result(success)},
+            {"reason", success ? "" : "export_failed"},
+            {"plateCount", std::to_string(wxGetApp().plater()->get_partplate_list().get_plate_count())},
+            {"objectCount", std::to_string(wxGetApp().plater()->model().objects.size())},
+            {"filamentCount", std::to_string(telemetry_filament_count())},
+            {"printerModel", telemetry_printer_model()},
+        },
+        success ? "gcode 3mf export completed" : "gcode 3mf export failed");
 }
 
 class ScopedFileImportTelemetry
@@ -10610,7 +10651,7 @@ struct Plater::priv
     void on_export_began(wxCommandEvent&);
     void on_export_finished(wxCommandEvent&);
     void on_slicing_began();
-    void report_slice_telemetry(const std::string& event_name, bool success, bool cancelled, const std::string& reason);
+    void report_slice_telemetry(SnapLog::v1::SnapEvent event, bool success, bool cancelled, const std::string& reason);
     void report_gcode_export_telemetry(bool success, bool cancelled);
 
     void clear_warnings();
@@ -15391,6 +15432,21 @@ void Plater::priv::on_slicing_began()
         m_slice_next_trigger = "auto";
         m_slice_session_active = true;
         m_slice_result_reported = false;
+        SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::SliceStart,
+            {
+                {"trigger", m_slice_trigger},
+                {"plateCount", std::to_string(partplate_list.get_plate_count())},
+                {"objectCount", std::to_string(model.objects.size())},
+                {"filamentCount", std::to_string(telemetry_filament_count())},
+                {"filamentTypes", telemetry_filament_types()},
+                {"printerModel", telemetry_printer_model()},
+                {"processPresetType", telemetry_process_preset_type()},
+                {"infillPattern", telemetry_infill_pattern()},
+                {"infillDensity", telemetry_infill_density()},
+                {"supportType", telemetry_support_type()},
+                {"bedType", telemetry_bed_type()},
+            },
+            "slice started");
     }
     m_slice_timing_active = true;
     clear_warnings();
@@ -15403,12 +15459,49 @@ void Plater::priv::on_slicing_began()
     notification_manager->update_slicing_notif_dailytips(need_change_dailytips);
 }
 
-void Plater::priv::report_slice_telemetry(const std::string& event_name, bool success, bool cancelled, const std::string& reason)
+void Plater::priv::report_slice_telemetry(SnapLog::v1::SnapEvent event, bool success, bool cancelled, const std::string& reason)
 {
+    const auto sinks = telemetry_result_sinks(success);
+    const auto level = success ? SnapLog::v1::SnapLogLevel::Info :
+                               (cancelled ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Error);
+    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, event,
+        {
+            {"trigger", m_slice_trigger},
+            {"sliceDurationMs", m_slice_duration_ms},
+            {"success", SnapTelemetry::bool_value(success)},
+            {"result", SnapTelemetry::operation_result(success, cancelled)},
+            {"reason", reason},
+            {"plateCount", std::to_string(partplate_list.get_plate_count())},
+            {"objectCount", std::to_string(model.objects.size())},
+            {"filamentCount", std::to_string(telemetry_filament_count())},
+            {"filamentTypes", telemetry_filament_types()},
+            {"printerModel", telemetry_printer_model()},
+            {"processPresetType", telemetry_process_preset_type()},
+            {"infillPattern", telemetry_infill_pattern()},
+            {"infillDensity", telemetry_infill_density()},
+            {"supportType", telemetry_support_type()},
+            {"bedType", telemetry_bed_type()},
+        },
+        "slice result");
 }
 
 void Plater::priv::report_gcode_export_telemetry(bool success, bool cancelled)
 {
+    const auto sinks = telemetry_result_sinks(success);
+    const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
+    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::GcodeExportResult,
+        {
+            {"fileType", "gcode"},
+            {"fileSizeBytes", last_output_path.empty() ? "0" : SnapTelemetry::file_size_bytes(fs::path(last_output_path))},
+            {"success", SnapTelemetry::bool_value(success)},
+            {"result", SnapTelemetry::operation_result(success, cancelled)},
+            {"reason", success ? "" : (cancelled ? "cancelled" : "export_failed")},
+            {"plateCount", std::to_string(partplate_list.get_plate_count())},
+            {"objectCount", std::to_string(model.objects.size())},
+            {"filamentCount", std::to_string(telemetry_filament_count())},
+            {"printerModel", telemetry_printer_model()},
+        },
+        "gcode export result");
 }
 void Plater::priv::add_warning(const Slic3r::PrintStateBase::Warning& warning, size_t oid)
 {
@@ -15661,13 +15754,13 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 
     if (is_finished && m_slice_session_active && !m_slice_result_reported) {
         if (evt.error())
-            report_slice_telemetry("slice_failed", false, false, evt.critical_error() ? "critical_error" : "slice_error");
+            report_slice_telemetry(SnapLog::v1::SnapEvent::SliceFailed, false, false, evt.critical_error() ? "critical_error" : "slice_error");
         else if (evt.cancelled())
-            report_slice_telemetry("slice_cancelled", false, true, "cancelled");
+            report_slice_telemetry(SnapLog::v1::SnapEvent::SliceCancelled, false, true, "cancelled");
         else if (evt.success())
-            report_slice_telemetry("slice_completed", true, false, "");
+            report_slice_telemetry(SnapLog::v1::SnapEvent::SliceCompleted, true, false, "");
         else
-            report_slice_telemetry("slice_failed", false, false, "slice_error");
+            report_slice_telemetry(SnapLog::v1::SnapEvent::SliceFailed, false, false, "slice_error");
         m_slice_result_reported = true;
         m_slice_session_active = false;
     }

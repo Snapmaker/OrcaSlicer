@@ -2734,6 +2734,12 @@ void MachineObject::set_print_state(std::string status)
 
 int MachineObject::connect(bool is_anonymous, bool use_openssl)
 {
+    SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::DeviceConnectAttempt,
+        {
+            {"connectionType", is_anonymous ? "anonymous" : "login"},
+            {"use_ssl", use_openssl ? "true" : "false"},
+        },
+        "device connect attempt");
     if (dev_ip.empty()) return -1;
     std::string username;
     std::string password;

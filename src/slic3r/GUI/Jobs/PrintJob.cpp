@@ -64,6 +64,21 @@ void PrintJob::report_job_result(bool success, bool cancelled, int result_code, 
     if (m_telemetry_result_reported)
         return;
     m_telemetry_result_reported = true;
+
+    const auto sinks = success ? SnapLog::v1::SinkPostHog : (SnapLog::v1::SinkGateway | SnapLog::v1::SinkPostHog);
+    const auto event = m_is_calibration_task ? SnapLog::v1::SnapEvent::CalibrationResult : SnapLog::v1::SnapEvent::PrintJobSendResult;
+    const std::string result_reason = !reason.empty() ? reason : SnapTelemetry::network_result_reason(result_code);
+    const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
+    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, event,
+        {
+            {"connectionType", connection_type.empty() ? "unknown" : connection_type},
+            {"plateCount", std::to_string(plate_data.is_valid ? plate_data.plate_count : m_telemetry_plate_count)},
+            {"success", SnapTelemetry::bool_value(success)},
+            {"result", SnapTelemetry::operation_result(success, cancelled)},
+            {"reason", result_reason},
+            {"printerModel", m_telemetry_printer_model},
+        },
+        "print job result");
 }
 
 void PrintJob::prepare()

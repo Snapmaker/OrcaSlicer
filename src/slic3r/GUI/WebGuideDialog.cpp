@@ -648,6 +648,15 @@ int GuideFrame::SaveProfile()
     m_MainPtr->app_config->set("app", PRIVACY_POLICY_FLAGS, PrivacyUse);
     BOOST_LOG_TRIVIAL(warning) << "SaveProfile changed the privacy policy with: " << (PrivacyUse ? "true" : "false");
     wxGetApp().user_update_privacy_notify(PrivacyUse);
+    if (PrivacyUse) {
+        SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::PrivacyConsentGranted,
+            {
+                {"source", "first_run"},
+                {"previousValue", "false"},
+                {"newValue", "true"},
+            },
+            "privacy consent granted");
+    }
     m_MainPtr->app_config->set("region", m_Region);
     m_MainPtr->app_config->set_bool("stealth_mode", StealthMode);
 

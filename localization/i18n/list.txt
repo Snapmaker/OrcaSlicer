@@ -128,7 +128,7 @@ src/slic3r/GUI/ReleaseNote.cpp
 src/slic3r/GUI/ReleaseNote.hpp
 src/slic3r/GUI/UpgradePanel.cpp
 src/slic3r/GUI/UnsavedChangesDialog.cpp
-src/slic3r/Utils/FixModelByWin10.cpp
+src/slic3r/Utils/FixModelByCgal.cpp
 src/slic3r/Utils/PresetUpdater.cpp
 src/slic3r/Utils/Http.cpp
 src/slic3r/Utils/Process.cpp
@@ -148,6 +148,7 @@ src/libslic3r/PrintObjectSlice.cpp
 src/libslic3r/PlaceholderParser.cpp
 src/libslic3r/Support/TreeSupport.cpp
 src/libslic3r/Model.cpp
+src/libslic3r/ModelObjectRepair.cpp
 src/libslic3r/Format/OBJ.cpp
 src/slic3r/GUI/CalibrationWizardPage.cpp
 src/slic3r/GUI/CalibrationPanel.cpp

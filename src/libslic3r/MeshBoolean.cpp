@@ -21,6 +21,9 @@
 #include <CGAL/Polygon_mesh_processing/remesh.h>
 #include <CGAL/Polygon_mesh_processing/repair_polygon_soup.h>
 #include <CGAL/Polygon_mesh_processing/orientation.h>
+#include <CGAL/Polygon_mesh_processing/border.h>
+#include <CGAL/Polygon_mesh_processing/triangulate_hole.h>
+#include <CGAL/iterator.h>
 // BBS: for segment
 #include <CGAL/mesh_segmentation.h>
 #include <CGAL/property_map.h>
@@ -526,7 +529,8 @@ bool repair(TriangleMesh& mesh, RepairedMeshErrors* repaired_errors, std::string
             PMP::extract_boundary_cycles(cgal_mesh, std::back_inserter(borders));
 
             for (halfedge_descriptor h : borders) {
-                PMP::triangulate_and_refine_hole(cgal_mesh, h);
+                // Orca: CGAL 5.4 has no overload without the output iterators (added in 5.6).
+                PMP::triangulate_and_refine_hole(cgal_mesh, h, CGAL::Emptyset_iterator(), CGAL::Emptyset_iterator());
             }
         }
 

@@ -20,7 +20,7 @@ uniform int step_count;
 uniform int debug_view;
 out vec4 out_color;
 #ifdef AO_EDGE_OUTPUT
-// RGBA8 L/R/+Y/-Y, normalized connectivity. See xegtao-LICENSE.txt.
+// RGBA8 L/R/+Y/-Y, normalized connectivity. See ../third_party_licenses.txt.
 out vec4 out_edges;
 #endif
 
@@ -86,7 +86,7 @@ float guide_weight(ivec2 p, ivec2 q, vec3 P, vec3 N) {
 }
 /*
  * Horizon integration adapted from three.js r180, examples/jsm/shaders/GTAOShader.js.
- * See gtao-LICENSE.txt for the pinned upstream revision and MIT license.
+ * See ../third_party_licenses.txt for the pinned upstream revision and MIT license.
  */
 
 const float PI=3.141592653589793;

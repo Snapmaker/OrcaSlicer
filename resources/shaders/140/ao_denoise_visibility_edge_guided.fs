@@ -1,7 +1,7 @@
 #version 140
 // Copyright (C) 2016-2021, Intel Corporation. SPDX-License-Identifier: MIT
 // XeGTAO a5b1686 edge-guided stencil adapted to normalized FS AO (no 1.5 encoding or exponent).
-// RGBA8 edge order: left, right, +Y, -Y. See xegtao-LICENSE.txt.
+// RGBA8 edge order: left, right, +Y, -Y. See ../third_party_licenses.txt.
 uniform sampler2D depth_texture;
 uniform sampler2D ao_texture;
 uniform sampler2D edge_texture;

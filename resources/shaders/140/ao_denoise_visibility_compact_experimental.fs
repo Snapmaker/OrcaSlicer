@@ -1,7 +1,7 @@
 #version 140
 // Copyright (C) 2016-2021, Intel Corporation
 // SPDX-License-Identifier: MIT
-// Adapted from XeGTAO_Denoise; see xe-gtao-denoise-LICENSE.txt.
+// Adapted from XeGTAO_Denoise; see ../third_party_licenses.txt.
 // GLSL 140 prototype: RGBA8 edges, one pixel/invocation, no deliberate edge leakage.
 uniform sampler2D depth_texture;
 uniform sampler2D ao_texture;

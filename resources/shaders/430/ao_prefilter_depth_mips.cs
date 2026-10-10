@@ -1,6 +1,7 @@
 #version 430 core
 // Copyright (C) 2016-2021, Intel Corporation. SPDX-License-Identifier: MIT
 // XeGTAO a5b1686: FP32 GLSL port; OpenGL inverse projection and padded boundaries.
+// Full MIT notice and adaptation details: ../third_party_licenses.txt.
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(binding = 0) uniform sampler2D source_depth;
 layout(r32f, binding = 0) writeonly uniform image2D mip0;

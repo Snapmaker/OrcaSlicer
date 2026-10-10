@@ -182,11 +182,11 @@ bool GLShaderProgram::init_from_texts(const std::string& name, const ShaderSourc
     if (shader_ids[static_cast<size_t>(EShaderType::Vertex)] > 0)
         bind_default_attrib_locations(m_id);
 
-    if (name == "gtao_edges" || name == "gtao_edges_xy") {
+    if (name == "ao_evaluate_visibility_edges_fs" || name == "ao_evaluate_visibility_edges_xy_fs") {
         glsafe(::glBindFragDataLocation(m_id, 0, "out_color"));
         glsafe(::glBindFragDataLocation(m_id, 1, "out_edges"));
     }
-    if (name == "ao_normal_confidence") {
+    if (name == "ao_reconstruct_view_normals_confidence") {
         glsafe(::glBindFragDataLocation(m_id, 0, "out_color"));
         glsafe(::glBindFragDataLocation(m_id, 1, "out_confidence"));
     }

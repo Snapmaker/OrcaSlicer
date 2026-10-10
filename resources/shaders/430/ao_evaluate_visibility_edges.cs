@@ -1,6 +1,7 @@
 #version 430 core
 // Copyright (C) 2016-2021, Intel Corporation. SPDX-License-Identifier: MIT
 // XeGTAO a5b1686: scalar AO port, FP32, GL lower-left coordinates, orthographic support.
+// Full MIT notice and adaptation details: ../third_party_licenses.txt.
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(binding = 0) uniform sampler2D linear_depth;
 layout(binding = 1) uniform sampler2D normals;

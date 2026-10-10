@@ -158,9 +158,13 @@ RpcFrame classify_jsonrpc_message(const nlohmann::json& message)
         return frame;
     }
     if (method != message.end() && method->is_string()) {
+        const auto params = message.find("params");
+        if (params != message.end() && !params->is_object() && !params->is_array())
+            return frame;
+
         frame.type   = RpcFrameType::Notification;
         frame.method = method->get<std::string>();
-        frame.params = message.value("params", nlohmann::json::object());
+        frame.params = params != message.end() ? *params : nlohmann::json::object();
     }
     return frame;
 }

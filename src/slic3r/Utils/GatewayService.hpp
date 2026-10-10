@@ -174,6 +174,7 @@ private:
     Dependencies            dependencies_;
     detail::ReconnectPolicy reconnect_policy_;
 
+    std::mutex              lifecycle_mutex_;
     mutable std::mutex      state_mutex_;
     std::condition_variable state_condition_;
     ConnectionState         state_{ConnectionState::Disconnected};
@@ -181,7 +182,7 @@ private:
     HealthInfo              health_;
     bool                    websocket_open_{false};
     std::string             websocket_error_;
-    bool                    stop_requested_{false};
+    std::atomic<bool>       stop_requested_{false};
     std::thread             worker_;
 
     mutable std::mutex                          callback_mutex_;

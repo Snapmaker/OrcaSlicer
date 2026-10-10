@@ -82,6 +82,15 @@ struct FakeWebSocket final : public WebSocketTransport
             listener.message(nlohmann::json{{"jsonrpc", "2.0"}, {"id", request["id"]}, {"result", {{"watching", true}}}}.dump());
         } else if (request.value("method", "") == "sync.echo") {
             listener.message(nlohmann::json{{"jsonrpc", "2.0"}, {"id", request["id"]}, {"result", {{"echoed", true}}}}.dump());
+        } else if (request.value("method", "") == "sync.malformed_error") {
+            listener.message(
+                nlohmann::json{{"jsonrpc", "2.0"}, {"id", request["id"]}, {"error", nlohmann::json{{"code", "invalid"}, {"message", 7}}}}
+                    .dump());
+        } else if (request.value("method", "") == "sync.unsigned_error") {
+            listener.message(nlohmann::json{{"jsonrpc", "2.0"},
+                                            {"id", request["id"]},
+                                            {"error", nlohmann::json{{"code", 18446744073709551615ULL}, {"message", "too large"}}}}
+                                 .dump());
         }
         // "sync.silent" intentionally gets no response (timeout / failure scenarios).
         return true;
@@ -204,6 +213,10 @@ TEST_CASE("GatewayService connects, handles device watch, and calls HTTP APIs", 
     REQUIRE(!device.error);
     REQUIRE(device.value.at("devices").at(0).at("sn") == "A1");
 
+    const auto device_with_serial = service.get_device("SN 1/A");
+    REQUIRE(!device_with_serial.error);
+    REQUIRE(http->urls.back() == "http://127.0.0.1:8888/api/cache/all/SN%201%2FA");
+
     const auto account = service.get_account();
     REQUIRE(!account.error);
     REQUIRE(account.value.at("user") == "u");
@@ -220,17 +233,17 @@ TEST_CASE("GatewayService connects, handles device watch, and calls HTTP APIs", 
     REQUIRE(posted.at("payload").at("file_path") == "C:/tmp/a.gcode");
     REQUIRE(posted.at("payload").at("file_name") == "a.gcode");
 
-    http->store_response = R"({"ok":true,"data":{"file_exists":false}})";
+    http->store_response    = R"({"ok":true,"data":{"file_exists":false}})";
     const auto missing_file = service.store_preprint_context("store-id", {{"file_path", "C:/tmp/missing.gcode"}});
     REQUIRE(missing_file.ok);
     REQUIRE_FALSE(missing_file.file_exists);
 
-    http->store_response = R"({"code":200,"data":{"file_path":"C:/tmp/missing.gcode"},"meta":{"file_exists":false}})";
+    http->store_response           = R"({"code":200,"data":{"file_path":"C:/tmp/missing.gcode"},"meta":{"file_exists":false}})";
     const auto legacy_missing_file = service.store_preprint_context("store-id", {{"file_path", "C:/tmp/missing.gcode"}});
     REQUIRE(legacy_missing_file.ok);
     REQUIRE_FALSE(legacy_missing_file.file_exists);
 
-    http->store_response = R"({"ok":false})";
+    http->store_response    = R"({"ok":false})";
     const auto failed_store = service.store_preprint_context("store-id", {{"file_path", "C:/tmp/a.gcode"}});
     REQUIRE_FALSE(failed_store.ok);
     REQUIRE(failed_store.error.code == GatewayErrorCode::InvalidResponse);
@@ -243,6 +256,26 @@ TEST_CASE("GatewayService connects, handles device watch, and calls HTTP APIs", 
     REQUIRE(account_changes.load() == 1);
 
     service.stop();
+    REQUIRE(service.state() == ConnectionState::Disconnected);
+}
+
+TEST_CASE("GatewayService concurrent stops are idempotent", "[gateway][service][lifecycle]")
+{
+    std::shared_ptr<ConnectionProcessManager> process;
+    std::shared_ptr<FakeHttp>                 http;
+    std::shared_ptr<FakeWebSocket>            websocket;
+    GatewayService                            service(GatewayService::Config{}, make_dependencies(process, http, websocket));
+
+    REQUIRE(service.start("zh-CN"));
+    REQUIRE(wait_for_state(service, ConnectionState::Connected));
+
+    std::vector<std::thread> stoppers;
+    stoppers.reserve(4);
+    for (int index = 0; index < 4; ++index)
+        stoppers.emplace_back([&] { service.stop(); });
+    for (std::thread& stopper : stoppers)
+        stopper.join();
+
     REQUIRE(service.state() == ConnectionState::Disconnected);
 }
 
@@ -266,13 +299,13 @@ TEST_CASE("GatewayService reconnects after the first websocket failure", "[gatew
 
 TEST_CASE("GatewayService exposes health page URLs before the websocket connects", "[gateway][service]")
 {
-    auto manager = std::make_shared<ConnectionProcessManager>(ConnectionProcessManager::Config{boost::filesystem::path{
-                                                                  "snapmaker_connection.exe"}},
-                                                              [](const std::vector<std::string>&) {
-                                                                ConnectionProcessManager::ProcessRunResult result;
-                                                                result.stdout_data = "PORT:8888\r\n\r\n";
-                                                                return result;
-                                                              });
+    auto manager   = std::make_shared<ConnectionProcessManager>(ConnectionProcessManager::Config{boost::filesystem::path{
+                                                                    "snapmaker_connection.exe"}},
+                                                                [](const std::vector<std::string>&) {
+                                                                  ConnectionProcessManager::ProcessRunResult result;
+                                                                  result.stdout_data = "PORT:8888\r\n\r\n";
+                                                                  return result;
+                                                                });
     auto http      = std::make_shared<FakeHttp>();
     auto websocket = std::make_shared<BlockingFirstWebSocket>();
 
@@ -398,6 +431,30 @@ TEST_CASE("request_sync returns the rpc result", "[gateway][service][sync]")
     service.stop();
 }
 
+TEST_CASE("request_sync tolerates malformed rpc error fields", "[gateway][service][sync]")
+{
+    std::shared_ptr<ConnectionProcessManager> process;
+    std::shared_ptr<FakeHttp>                 http;
+    std::shared_ptr<FakeWebSocket>            websocket;
+    GatewayService                            service(GatewayService::Config{}, make_dependencies(process, http, websocket));
+
+    REQUIRE(service.start("zh-CN"));
+    REQUIRE(wait_for_state(service, ConnectionState::Connected));
+
+    const auto result = service.request_sync("sync.malformed_error", nlohmann::json::object(), std::chrono::milliseconds{1000});
+    REQUIRE(result.error);
+    REQUIRE(result.error.code == GatewayErrorCode::RpcError);
+    REQUIRE(result.error.message == "JSON-RPC error");
+    REQUIRE(result.error.rpc_code == 0);
+
+    const auto unsigned_error = service.request_sync("sync.unsigned_error", nlohmann::json::object(), std::chrono::milliseconds{1000});
+    REQUIRE(unsigned_error.error);
+    REQUIRE(unsigned_error.error.code == GatewayErrorCode::RpcError);
+    REQUIRE(unsigned_error.error.rpc_code == 2147483647);
+
+    service.stop();
+}
+
 TEST_CASE("request_sync times out when nothing answers", "[gateway][service][sync]")
 {
     std::shared_ptr<ConnectionProcessManager> process;
@@ -408,8 +465,8 @@ TEST_CASE("request_sync times out when nothing answers", "[gateway][service][syn
     REQUIRE(service.start("zh-CN"));
     REQUIRE(wait_for_state(service, ConnectionState::Connected));
 
-    const auto start  = std::chrono::steady_clock::now();
-    const auto result = service.request_sync("sync.silent", nlohmann::json::object(), std::chrono::milliseconds{200});
+    const auto start   = std::chrono::steady_clock::now();
+    const auto result  = service.request_sync("sync.silent", nlohmann::json::object(), std::chrono::milliseconds{200});
     const auto elapsed = std::chrono::steady_clock::now() - start;
     REQUIRE(result.error);
     REQUIRE(result.error.code == GatewayErrorCode::TransportError);
@@ -429,9 +486,9 @@ TEST_CASE("request_sync fails fast when the websocket drops while waiting", "[ga
     REQUIRE(service.start("zh-CN"));
     REQUIRE(wait_for_state(service, ConnectionState::Connected));
 
-    std::atomic<int>          error_code{-1};
-    std::atomic<long long>    elapsed_ms{0};
-    std::thread               caller([&] {
+    std::atomic<int>       error_code{-1};
+    std::atomic<long long> elapsed_ms{0};
+    std::thread            caller([&] {
         const auto start  = std::chrono::steady_clock::now();
         const auto result = service.request_sync("sync.silent", nlohmann::json::object(), std::chrono::milliseconds{10000});
         const auto end    = std::chrono::steady_clock::now();

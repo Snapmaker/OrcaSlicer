@@ -244,15 +244,16 @@ bool GatewayDevice::parse_machine_slots(const nlohmann::json& result, std::vecto
         std::string vendor          = array_string(*vendors, index, "NONE");
         std::string type            = array_string(*types, index, "NONE");
         const bool  has_exist_state = exists != nullptr && index < exists->size();
-        if (has_exist_state && (!(*exists)[index].is_boolean() || !(*exists)[index].get<bool>())) {
+        const bool  filament_exists = !has_exist_state || ((*exists)[index].is_boolean() && (*exists)[index].get<bool>());
+        if (!filament_exists) {
             vendor = "NONE";
             type   = "NONE";
         }
 
         ConnectMachineInfo slot;
         slot.index         = static_cast<int>(index);
-        slot.filament_info = machine_filament_display_name(vendor, type,
-                                                           array_string(sub_types ? *sub_types : nlohmann::json::array(), index, "NONE"));
+        const std::string sub_type = array_string(sub_types ? *sub_types : nlohmann::json::array(), index, "NONE");
+        slot.filament_info         = filament_exists ? machine_filament_display_name(vendor, type, sub_type) : "NONE";
         slot.filament_type = type;
         slot.nozzle_info   = index < nozzles.size() ? nozzles[index] : std::string{};
         if (slot.nozzle_info.empty())

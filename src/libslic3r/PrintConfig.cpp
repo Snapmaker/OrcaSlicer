@@ -501,6 +501,24 @@ PrintConfigDef::PrintConfigDef()
     assign_printer_technology_to_unknown(this->options, ptFFF);
     this->init_sla_params();
     assign_printer_technology_to_unknown(this->options, ptSLA);
+
+    // Generic enum vector defaults are built with brace initialisation, which cannot know the
+    // definition's enum map. Attach it now so configs assembled from bare defaults (tests, CLI)
+    // serialize names instead of numbers.
+    for (auto &kvp : this->options) {
+        ConfigOptionDef &def = kvp.second;
+        if (def.type != coEnums || !def.default_value || def.enum_keys_map == nullptr)
+            continue;
+        if (dynamic_cast<const ConfigOptionEnumsGeneric *>(def.default_value.get()) != nullptr) {
+            auto *fixed = static_cast<ConfigOptionEnumsGeneric *>(def.default_value->clone());
+            fixed->keys_map = def.enum_keys_map;
+            def.set_default_value(fixed);
+        } else if (dynamic_cast<const ConfigOptionEnumsGenericNullable *>(def.default_value.get()) != nullptr) {
+            auto *fixed = static_cast<ConfigOptionEnumsGenericNullable *>(def.default_value->clone());
+            fixed->keys_map = def.enum_keys_map;
+            def.set_default_value(fixed);
+        }
+    }
 }
 
 void PrintConfigDef::init_common_params()

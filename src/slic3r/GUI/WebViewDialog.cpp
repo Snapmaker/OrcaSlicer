@@ -37,13 +37,9 @@ namespace GUI {
 WebViewPanel::WebViewPanel(wxWindow *parent)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize)
  {
-    wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                      "/web/flutter_web/index.html?path=0");
+    wxString url = wxGetApp().gateway_web_url("home_page");
     // wxString url = wxString::Format("file://%s/web/homepage/index.html?path=homepage.html", from_u8(resources_dir()));
     // wxString url     = wxString("http://127.0.0.1:") + wxString(std::to_string(PAGE_HTTP_PORT)) + wxString("/web/flutter_web/index.html?path=1");
-    url = wxGetApp().get_international_url(url);
-    wxGetApp().start_flutter_wcp_timeout_watch();
-
     // test
     // url = "http://localhost:13619/web/flutter_web/1.html";
 
@@ -255,7 +251,7 @@ void WebViewPanel::reload() {
 void WebViewPanel::load_url(wxString& url)
 {
 
-    m_browser->LoadURL(url);
+    WebView::LoadUrl(m_browser, url);
 
     wxGetApp().fltviews().add_webview_panel(this, url);
 
@@ -429,9 +425,6 @@ void WebViewPanel::OnClose(wxCloseEvent& evt)
 
 void WebViewPanel::OnFreshLoginStatus(wxTimerEvent &event)
 {
-    /*auto mainframe = Slic3r::GUI::wxGetApp().mainframe;
-    if (mainframe && mainframe->m_webview == this)
-        Slic3r::GUI::wxGetApp().sm_get_login_info();*/
 }
 
 void WebViewPanel::SetLoginPanelVisibility(bool bshow)
@@ -663,7 +656,6 @@ void WebViewPanel::OnScriptMessage(wxWebViewEvent& evt)
     // update login status
     if (m_LoginUpdateTimer == nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Create Timer";
-        wxGetApp().on_flutter_wcp_received();
         m_LoginUpdateTimer = new wxTimer(this, LOGIN_INFO_UPDATE_TIMER_ID);
         m_LoginUpdateTimer->Start(2000);
     }

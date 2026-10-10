@@ -12,9 +12,11 @@
 #include "sentry_wrapper/SentryWrapper.hpp"
 #include "slic3r/Utils/SnapLogClient.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <iterator>
 #include <exception>
 #include <cstdlib>
+#include <cmath>
 #include <iomanip>
 #include <regex>
 #include <thread>
@@ -41,13 +43,11 @@
 
 #include "MoonRaker.hpp"
 
-#include "slic3r/GUI/WebPresetDialog.hpp"
 #include "slic3r/GUI/HttpServer.hpp"
 #include <mutex>
 
 #include "slic3r/GUI/SMPhysicalPrinterDialog.hpp"
 #include "slic3r/GUI/WebUrlDialog.hpp"
-#include "slic3r/GUI/WebSMUserLoginDialog.hpp"
 #include "slic3r/GUI/FilamentGroupDialog.hpp"
 #include "slic3r/GUI/FlowTypeHelper.hpp"
 
@@ -63,6 +63,47 @@ namespace pt = boost::property_tree;
 using namespace nlohmann;
 
 namespace Slic3r { namespace GUI {
+
+namespace {
+
+long long preprint_color_to_int(const std::string& color)
+{
+    auto hex_digit = [](char digit) {
+        if (digit >= '0' && digit <= '9')
+            return digit - '0';
+        if (digit >= 'a' && digit <= 'f')
+            return digit - 'a' + 10;
+        if (digit >= 'A' && digit <= 'F')
+            return digit - 'A' + 10;
+        return -1;
+    };
+
+    if ((color.size() != 7 && color.size() != 9) || color.front() != '#')
+        return 0;
+
+    long long result = 0;
+    for (size_t index = 1; index < color.size(); ++index) {
+        const int digit = hex_digit(color[index]);
+        if (digit < 0)
+            return 0;
+        result = result * 16 + digit;
+    }
+    return result;
+}
+
+bool parse_thumbnail_dimension(const std::string& value, double& result)
+{
+    if (value.empty())
+        return false;
+
+    errno             = 0;
+    char* end         = nullptr;
+    result            = std::strtod(value.c_str(), &end);
+    const bool consumed_value = end == value.c_str() + value.size();
+    return consumed_value && errno != ERANGE && std::isfinite(result) && result > 0.0;
+}
+
+} // namespace
 
 // WCP_Logger
 WCP_Logger::WCP_Logger() {
@@ -469,12 +510,6 @@ void SSWCP_Instance::process() {
         async_test();
     } else if (m_cmd == "sw_test_mqtt_moonraker") {
         test_mqtt_request();
-    } else if (m_cmd == "sw_SetCache") {
-        sw_SetCache();
-    } else if (m_cmd == "sw_GetCache") {
-        sw_GetCache();
-    } else if (m_cmd == "sw_RemoveCache") {
-        sw_RemoveCache();
     } else if (m_cmd == "sw_SwitchTab") {
         sw_SwitchTab();
     } else if (m_cmd == "sw_Webview_Unsubscribe") {
@@ -497,10 +532,6 @@ void SSWCP_Instance::process() {
         sw_Exit();
     } else  if(m_cmd == "sw_FileLog") {
         sw_FileLog();
-    } else if (m_cmd == "sw_SubscribeCacheKey") {
-        sw_SubscribeCacheKey();
-    } else if (m_cmd == "sw_UnsubscribeCacheKeys") {
-        sw_UnsubscribeCacheKeys();
     } else if (m_cmd == "sw_UploadEvent") {
         sw_UploadEvent();
     } else if (m_cmd == "sw_SnapLog") {
@@ -736,6 +767,41 @@ void SSWCP_Instance::sw_Exit() {
     wxGetApp().Exit();
 }
 
+nlohmann::json SSWCP::build_active_file_metadata()
+{
+    nlohmann::json metadata_json = nlohmann::json::object();
+    if (wxGetApp().model().model_info) {
+        auto& items = wxGetApp().model().model_info->metadata_items;
+        auto lookup = [&](const std::string& key) {
+            auto it = items.find(key);
+            if (it != items.end())
+                metadata_json[key] = it->second;
+        };
+        lookup("DesignModelId");
+        lookup("DesignProfileId");
+        lookup("DesignRegion");
+    }
+    return metadata_json;
+}
+
+nlohmann::json SSWCP::build_active_file_json(const std::string& file_path, const std::string& file_name, bool /*is_zip*/)
+{
+    std::string url_path = file_path;
+    std::replace(url_path.begin(), url_path.end(), '\\', '/');
+
+    nlohmann::json result;
+    result["metadata"]  = build_active_file_metadata();
+    result["file_name"] = file_name;
+    result["file_path"] = file_path;
+    result["url"]       = wxGetApp().gateway_localfile_url(url_path);
+
+    boost::system::error_code file_error;
+    const bool                file_exists = boost::filesystem::is_regular_file(file_path, file_error);
+    result["origin_size"] = file_exists ? boost::filesystem::file_size(file_path) : 0;
+    result["checksum"]    = file_exists ? calc_sha256_base64(file_path) : std::string{};
+    return result;
+}
+
 void SSWCP_Instance::sw_GetActiveFile()
 {
     std::string file_path = SSWCP::get_active_filename();
@@ -783,7 +849,7 @@ void SSWCP_Instance::sw_GetActiveFile()
                 self->m_res_data["origin_size"] = SSWCP::m_active_file_size;
                 std::string url_zip_path = std::string(wxString(zipname).ToUTF8());
                 std::replace(url_zip_path.begin(), url_zip_path.end(), '\\', '/');
-                self->m_res_data["url"] = LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/localfile/" + Http::url_encode(url_zip_path);
+                self->m_res_data["url"] = wxGetApp().gateway_localfile_url(url_zip_path);
                 SSWCP::m_file_size_mutex.unlock();
 
                 // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
@@ -814,7 +880,7 @@ void SSWCP_Instance::sw_GetActiveFile()
 
         // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
         m_res_data["checksum"] = calc_sha256_base64(file_path);
-        m_res_data["url"]      = LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/localfile/" + Http::url_encode(url_path);
+        m_res_data["url"]      = wxGetApp().gateway_localfile_url(url_path);
 
         send_to_js();
         finish_job();
@@ -1060,9 +1126,6 @@ void SSWCP_Instance::send_to_js()
                 WebView::RunScript(self->m_webview, str_res);
             }
 
-            // Flutter debug: copy message to Flutter debug interface via WebSocket
-            // This is independent of the original communication path above
-            SSWCP::send_message_to_flutter(json_str);
         } 
     });
 
@@ -1089,9 +1152,6 @@ void SSWCP_Instance::async_test() {
     .perform();
 }
 
-// Synchronous test implementation
-std::unordered_map<std::string, json> SSWCP_Instance::m_wcp_cache;
-
 void SSWCP_Instance::sync_test() {
     m_res_data = m_param_data;
     send_to_js();
@@ -1115,7 +1175,6 @@ void SSWCP_Instance::test_mqtt_request() {
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
-        // host->async_get_printer_info([self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
     } catch (std::exception& e) {
         handle_general_fail();
     }
@@ -1126,157 +1185,16 @@ void SSWCP_Instance::sw_SwitchTab() {
 
         if (m_param_data.count("target")) {
             std::string target_tab = m_param_data["target"].get<std::string>();
-            if (SSWCP::m_tab_map.count(target_tab)) {
-                wxGetApp().mainframe->request_select_tab(MainFrame::TabPosition(SSWCP::m_tab_map[target_tab]));
+            auto tab_item = std::find_if(SSWCP::m_tab_map.begin(), SSWCP::m_tab_map.end(),
+                                         [&target_tab](const auto& tab) { return boost::iequals(tab.first, target_tab); });
+            if (tab_item != SSWCP::m_tab_map.end()) {
+                wxGetApp().mainframe->request_select_tab(MainFrame::TabPosition(tab_item->second));
                 send_to_js();
                 finish_job();
                 return;
             }
         }        
         handle_general_fail();
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_Instance::sw_SetCache() {
-    try {
-        if (m_param_data.count("objects") && m_param_data["objects"].is_array() &&
-            m_param_data["objects"].size() > 0) {
-            json objects = m_param_data["objects"];
-            for (size_t i = 0; i < objects.size(); ++i) {
-                std::string key = objects[i]["key"].get<std::string>();
-                m_wcp_cache[key] = objects[i]["value"];
-                wxGetApp().cache_notify(key, objects[i]["value"]);
-            }
-
-            send_to_js();
-            finish_job();
-        } else {
-            handle_general_fail();
-        }
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
-
-}
-
-void SSWCP_Instance::sw_GetCache()
-{
-    try {
-        if (m_param_data.count("keys") && m_param_data["keys"].is_array() && m_param_data["keys"].size() > 0) {
-            json res_data;
-            json keys = m_param_data["keys"];
-            for (size_t i = 0; i < keys.size(); ++i) {
-                std::string key = keys[i].get<std::string>();
-                if (m_wcp_cache.count(key)) {
-                    res_data.push_back(m_wcp_cache[key]);
-                } else {
-                    res_data.push_back(json::object());
-                }
-            }
-            m_res_data = res_data;
-            send_to_js();
-            finish_job();
-        } else {
-            handle_general_fail();
-        }
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-
-void SSWCP_Instance::sw_RemoveCache()
-{
-    try {
-        if (m_param_data.count("keys") && m_param_data["keys"].is_array()) {
-            json keys = m_param_data["keys"];
-            if (keys.size() == 0) {
-                for (const auto& item : m_wcp_cache) {
-                    wxGetApp().cache_notify(item.first, json::value_t::null);
-                }
-                m_wcp_cache.clear();
-            } else {
-                for (size_t i = 0; i < keys.size(); ++i) {
-                    std::string key = keys[i].get<std::string>();
-                    if (m_wcp_cache.count(key)) {
-                        wxGetApp().cache_notify(key, json::value_t::null);
-                        m_wcp_cache.erase(key);
-                    }
-                }
-            }
-
-            send_to_js();
-            finish_job();
-        } else {
-            handle_general_fail();
-        }
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_Instance::sw_SubscribeCacheKey()
-{
-    try {
-        if (!m_param_data.count("key") || !m_param_data["key"].is_string()) {
-            handle_general_fail(-1, "param [keys] required or wrong type");
-            return;
-        }
-
-        std::string key       = m_param_data["key"].get<std::string>();
-        auto& cache_map = wxGetApp().m_cache_subscribers;
-
-        for (auto iter = cache_map.begin(); iter != cache_map.end();) {
-            if (iter->first.first == m_webview && iter->second == key) {
-                // remove the old sub
-                iter = cache_map.erase(iter);
-            } else {
-                ++iter;
-            }
-        }
-
-        std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
-        cache_map[{m_webview, weak_self}]       = key;
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_Instance::sw_UnsubscribeCacheKeys()
-{
-    try {
-        if (!m_param_data.count("keys") || !m_param_data["keys"].is_array()) {
-            handle_general_fail(-1, "param [keys] required or wrong type!");
-            return;
-        }
-
-        json keys = m_param_data["keys"];
-        auto& cache_map = wxGetApp().m_cache_subscribers;
-        if (keys.size() == 0) {
-            for (auto iter = cache_map.begin(); iter != cache_map.end();) {
-                if (iter->first.first == m_webview) {
-                    iter = cache_map.erase(iter);
-                } else {
-                    iter++;
-                }
-            }
-        } else {
-            for (size_t i = 0; i < keys.size(); ++i) {
-                std::string delete_key = keys[i].get<std::string>();
-                for (auto iter = cache_map.begin(); iter != cache_map.end();) {
-                    if (iter->first.first == m_webview && iter->second == delete_key) {
-                        iter = cache_map.erase(iter);
-                    } else {
-                        iter++;
-                    }
-                }
-            }
-        }
     }
     catch (std::exception& e) {
         handle_general_fail();
@@ -1328,10 +1246,7 @@ void SSWCP_Instance::on_mqtt_msg_arrived(std::shared_ptr<SSWCP_Instance> obj, co
 }
 
 void SSWCP_Instance::sw_UnsubscribeAll() {
-    wxGetApp().m_device_card_subscribers.clear();
     wxGetApp().m_recent_file_subscribers.clear();
-    wxGetApp().m_user_login_subscribers.clear();
-    wxGetApp().m_cache_subscribers.clear();
     wxGetApp().m_user_update_privacy_subscribers.clear();
     wxGetApp().m_foreground_change_subscribers.clear();
 
@@ -1340,37 +1255,10 @@ void SSWCP_Instance::sw_UnsubscribeAll() {
 }
 
 void SSWCP_Instance::sw_Webview_Unsubscribe() {
-    auto& device_map = wxGetApp().m_device_card_subscribers;
-    for (auto iter = device_map.begin(); iter != device_map.end();) {
-        if (iter->first == m_webview) {
-            iter = device_map.erase(iter);
-        } else {
-            iter++;
-        }
-    }
-
-    auto& login_map = wxGetApp().m_user_login_subscribers;
-    for (auto iter = login_map.begin(); iter != login_map.end();) {
-        if (iter->first == m_webview) {
-            iter = login_map.erase(iter);
-        } else {
-            iter++;
-        }
-    }
-
     auto& recent_file_map = wxGetApp().m_recent_file_subscribers;
     for (auto iter = recent_file_map.begin(); iter != recent_file_map.end();) {
         if (iter->first == m_webview) {
             iter = recent_file_map.erase(iter);
-        } else {
-            iter++;
-        }
-    }
-
-    auto& cache_map = wxGetApp().m_cache_subscribers;
-    for (auto iter = cache_map.begin(); iter != cache_map.end();) {
-        if (iter->first.first == m_webview) {
-            iter = cache_map.erase(iter);
         } else {
             iter++;
         }
@@ -1408,99 +1296,9 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
             return;
         }
 
-        auto&       device_map = wxGetApp().m_device_card_subscribers;
-        auto&       login_map  = wxGetApp().m_user_login_subscribers;
         auto&       privacy_map     = wxGetApp().m_user_update_privacy_subscribers;
         auto&       recent_file_map = wxGetApp().m_recent_file_subscribers;
-        auto&       cache_map       = wxGetApp().m_cache_subscribers;
-
-        if (cmd == "") {
-            for (auto iter = device_map.begin(); iter != device_map.end();) {
-                if (iter->first == m_webview) {
-                    auto ptr = iter->second.lock();
-                    if (ptr) {
-                        if (ptr->m_event_id == event_id) {
-                            iter = device_map.erase(iter);
-                        } else {
-                            iter++;
-                        }
-                    } else {
-                        iter = device_map.erase(iter);
-                    }
-                } else {
-                    iter++;
-                }
-            }
-
-            for (auto iter = login_map.begin(); iter != login_map.end();) {
-                if (iter->first == m_webview) {
-                    auto ptr = iter->second.lock();
-                    if (ptr) {
-                        if (ptr->m_event_id == event_id) {
-                            iter = login_map.erase(iter);
-                        } else {
-                            iter++;
-                        }
-                    } else {
-                        iter = login_map.erase(iter);
-                    }
-                } else {
-                    iter++;
-                }
-            }
-
-             for (auto iter = privacy_map.begin(); iter != privacy_map.end();) {
-                if (iter->first == m_webview) {
-                    auto ptr = iter->second.lock();
-                    if (ptr) {
-                        if (ptr->m_event_id == event_id) {
-                            iter = privacy_map.erase(iter);
-                        } else {
-                            iter++;
-                        }
-                    } else {
-                        iter = privacy_map.erase(iter);
-                    }
-                } else {
-                    iter++;
-                }
-            }
-
-            for (auto iter = recent_file_map.begin(); iter != recent_file_map.end();) {
-                if (iter->first == m_webview) {
-                    auto ptr = iter->second.lock();
-                    if (ptr) {
-                        if (ptr->m_event_id == event_id) {
-                            iter = recent_file_map.erase(iter);
-                        } else {
-                            iter++;
-                        }
-                    } else {
-                        iter = recent_file_map.erase(iter);
-                    }
-                } else {
-                    iter++;
-                }
-            }
-
-            for (auto iter = cache_map.begin(); iter != cache_map.end();) {
-                if (iter->first.first == m_webview) {
-                    auto ptr = iter->first.second.lock();
-                    if (ptr) {
-                        if (ptr->m_event_id == event_id) {
-                            iter = cache_map.erase(iter);
-                        } else {
-                            iter++;
-                        }
-                    } else {
-                        iter = cache_map.erase(iter);
-                    }
-                } else {
-                    iter++;
-                }
-            }
-
-        } else if (cmd == "sw_SubscribeRecentFiles") {
+        if (cmd == "sw_SubscribeRecentFiles") {
             for (auto iter = recent_file_map.begin(); iter != recent_file_map.end();) {
                 if (iter->first == m_webview) {
                     auto ptr = iter->second.lock();
@@ -1512,23 +1310,6 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
                         }
                     } else {
                         iter = recent_file_map.erase(iter);
-                    }
-                } else {
-                    iter++;
-                }
-            }
-        } else if (cmd == "sw_SubscribeUserLoginState") {
-            for (auto iter = login_map.begin(); iter != login_map.end();) {
-                if (iter->first == m_webview) {
-                    auto ptr = iter->second.lock();
-                    if (ptr) {
-                        if (event_id == "" || (event_id != "" && event_id == ptr->m_event_id)) {
-                            iter = login_map.erase(iter);
-                        } else {
-                            iter++;
-                        }
-                    } else {
-                        iter = login_map.erase(iter);
                     }
                 } else {
                     iter++;
@@ -1536,7 +1317,7 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
             }
         } else if (cmd == UPDATE_PRIVACY_STATUS) {
 
-             for (auto iter = privacy_map.begin(); iter != privacy_map.end();) {
+            for (auto iter = privacy_map.begin(); iter != privacy_map.end();) {
                 if (iter->first == m_webview) {
                     auto ptr = iter->second.lock();
                     if (ptr) {
@@ -1552,44 +1333,7 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
                     iter++;
                 }
             }
-
-        }else if (cmd == "sw_SubscribeLocalDevices") {
-            for (auto iter = device_map.begin(); iter != device_map.end();) {
-                if (iter->first == m_webview) {
-                    auto ptr = iter->second.lock();
-                    if (ptr) {
-                        if (event_id == "" || (event_id != "" && event_id == ptr->m_event_id)) {
-                            iter = device_map.erase(iter);
-                        } else {
-                            iter++;
-                        }
-                    } else {
-                        iter = device_map.erase(iter);
-                    }
-                } else {
-                    iter++;
-                }
-            }
-        } else if (cmd == "sw_SubscribeCacheKey") {
-            for (auto iter = cache_map.begin(); iter != cache_map.end();) {
-                if (iter->first.first == m_webview) {
-                    auto ptr = iter->first.second.lock();
-                    if (ptr) {
-                        if (event_id == "" || (event_id != "" && event_id == ptr->m_event_id)) {
-                            iter = cache_map.erase(iter);
-                        } else {
-                            iter++;
-                        }
-                    } else {
-                        iter = cache_map.erase(iter);
-                    }
-                } else {
-                    iter++;
-                }
-            }
-        }
-        else
-        {
+        } else {
             BOOST_LOG_TRIVIAL(warning) << "unknown command: " << cmd;
         }
         send_to_js();
@@ -1605,212 +1349,6 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
 void SSWCP_Instance::on_timeout() {
     handle_general_fail(-2, "time out");
     finish_job();
-}
-
-void SSWCP_Instance::update_filament_info(const json& objects, bool send_message)
-{
-    if (objects.size() < 1) {
-        if (send_message)
-            handle_general_fail(-1, "objects is empty!");
-        return;
-    }
-
-    if (!objects[0].count("key") || !objects[0]["key"].is_string()) {
-        if (send_message)
-            handle_general_fail(-1, "param [key] required or wrong type!");
-        return;
-    }
-
-    if (!objects[0].count("value") || !objects[0]["value"].is_string()) {
-        if (send_message)
-            handle_general_fail(-1, "param [value] required or wrong type!");
-        return;
-    }
-
-    std::string sn    = objects[0]["key"].get<std::string>();
-    std::string value = objects[0]["value"].get<std::string>();
-
-    DeviceInfo info;
-    if (!wxGetApp().app_config->get_device_info(sn, info)) {
-        m_msg = "sn does not exist!";
-        if (send_message) {
-            handle_general_fail(-1, m_msg);
-        }
-        return;
-    } else {
-        if (!info.connected) {
-            m_msg = "The machine is not connected!";
-            if (send_message) {
-                handle_general_fail(-1, m_msg);
-            }
-            return;
-        } else {
-            json j_value;
-            try {
-                j_value = json::parse(value);
-            } catch (std::exception& e) {
-                if (send_message)
-                    handle_general_fail(-1, "value parse failed");
-                return;
-            }
-
-            if (!j_value.count("nozzle_diameters") ||!j_value.count("filament_vendor") || !j_value["filament_vendor"].is_array() ||
-                !j_value.count("filament_type") ||
-                !j_value["filament_type"].is_array() || !j_value.count("filament_sub_type") || !j_value["filament_sub_type"].is_array() ||
-                ((!j_value.count("filament_color") || !j_value["filament_color"].is_array()) &&
-                 (!j_value.count("filament_color_rgba") || !j_value["filament_color_rgba"].is_array())) ||
-                !j_value.count("extruder_map_table") || !j_value["extruder_map_table"].is_array() || !j_value.count("filament_official") ||
-                !j_value["filament_official"].is_array()) {
-                if (send_message) {
-                    handle_general_fail(-1, "value parse failed");
-                }
-                return;
-            }
-
-            // Validate optional nozzle_volume_types
-            std::vector<std::string> nozzle_volume_types;
-            const auto flow_status = SSWCPProtocol::parse_optional_flow_types(
-                j_value, "nozzle_volume_types", j_value["filament_official"].size(), nozzle_volume_types);
-            if (flow_status == SSWCPProtocol::OptionalFlowTypesStatus::Invalid) {
-                // Degrade: treat malformed flow data as absent rather than aborting the
-                // entire filament update, which would discard otherwise-valid entries.
-                nozzle_volume_types.clear();
-            }
-
-
-            // save filament and update the gui filament
-            auto& filaments = wxGetApp().preset_bundle->machine_filaments;
-            auto& machine_nozzles = wxGetApp().preset_bundle->m_connect_machine_info_list;
-            static auto tmp_filaments = filaments;
-
-            if (m_first_connected) {
-                tmp_filaments = filaments;
-                m_first_connected = false;
-            }
-
-            machine_nozzles.clear();
-            filaments.clear();
-
-            size_t count = 0;
-            for (size_t i = 0; i < j_value["filament_official"].size(); ++i) {
-                bool is_official = j_value["filament_official"][i].get<bool>();
-                ConnectMachineInfo machineData;
-                if (/*is_official*/ true) {
-                    std::string vendor   = j_value["filament_vendor"][i].get<std::string>();
-                    std::string type     = j_value["filament_type"][i].get<std::string>();
-                    std::string sub_type = j_value["filament_sub_type"][i].get<std::string>();
-
-                    machineData.filament_type = type;
-
-                    std::string name = "";
-
-                    if (sub_type == "Support") {
-                        name = vendor + " Support" + " For " + type;
-                    } else {
-                        name = vendor + " " + type + ((sub_type != "NONE" && sub_type != "") ? " " + sub_type : "");
-                    }
-
-                    int extruder = j_value["extruder_map_table"][i].get<int>();
-                    machineData.index = static_cast<int>(i);
-                    machineData.filament_info = name;
-
-                    json::const_iterator multiColorIt = j_value.find("filament_color_multi");
-                    if (multiColorIt != j_value.end() && multiColorIt->is_array() && multiColorIt->size() > i &&
-                        (*multiColorIt)[i].is_object())
-                    {
-                        const json& multiColor = (*multiColorIt)[i];
-                        json::const_iterator colorsIt = multiColor.find("colors");
-                        if (colorsIt != multiColor.end() && colorsIt->is_array())
-                        {
-                            for (const json& colorJson : *colorsIt)
-                            {
-                                if (!colorJson.is_string())
-                                    continue;
-
-                                const std::string colorText = colorJson.get<std::string>();
-                                const std::string normalized = FilamentColorUtils::NormalizeHexColor(colorText);
-                                if (!normalized.empty())
-                                    machineData.multiColors.emplace_back(normalized);
-                            }
-                        }
-
-                        json::const_iterator modeIt = multiColor.find("mode");
-                        if (machineData.multiColors.size() > 1 && modeIt != multiColor.end() && modeIt->is_number_integer())
-                            machineData.colorMode = FilamentColorModeFromConfig(modeIt->get<int>());
-                    }
-
-                    if (j_value.count("filament_color_rgba") && j_value["filament_color_rgba"].is_array() &&
-                        j_value["filament_color_rgba"].size() != 0) {
-                        std::string str_color = "#" + j_value["filament_color_rgba"][i].get<std::string>();
-                        const std::string normalizedColor = FilamentColorUtils::NormalizeHexColor(str_color, "#FFFFFF");
-                        str_color = normalizedColor.empty() ? str_color : normalizedColor;
-                        filaments.insert({int(i), {name, str_color}});
-                        machineData.color_info = str_color;
-                    } else {
-                        if (j_value["filament_color"][i].is_number()) {
-                            int                color = j_value["filament_color"][i].get<int>();
-                            std::ostringstream oss;
-                            oss << "#" << std::uppercase << std::setfill('0') << std::setw(6) << std::hex
-                                << (color & 0x00FFFFFF); // lower 24
-
-                            std::string str_color = oss.str();
-                            filaments.insert({int(i), {name, str_color}});
-                            machineData.color_info    = str_color;
-                        } else {
-                            std::string str_color = "#" + j_value["filament_color"][i].get<std::string>();
-                            const std::string normalizedColor = FilamentColorUtils::NormalizeHexColor(str_color, "#FFFFFF");
-                            str_color = normalizedColor.empty() ? str_color : normalizedColor;
-                            filaments.insert({int(i), {name, str_color}});
-                            machineData.color_info    = str_color;
-                        }
-                    }
-                    if (machineData.multiColors.empty() && !machineData.color_info.empty())
-                        machineData.multiColors.emplace_back(machineData.color_info);
-                    if (machineData.multiColors.size() <= 1)
-                        machineData.colorMode = FilamentColorMode::Segment;
-                    if (j_value["nozzle_diameters"].is_array() && !j_value["nozzle_diameters"].empty())
-                        machineData.nozzle_info = j_value["nozzle_diameters"][i].get<std::string>();
-                    if (flow_status == SSWCPProtocol::OptionalFlowTypesStatus::Valid && i < nozzle_volume_types.size())
-                        machineData.nozzle_volume_type = nozzle_volume_types[i];
-                    machine_nozzles.push_back(machineData);
-                }
-            }
-
-            bool need_load_preset = false;
-
-            if (filaments.size() == 0 && tmp_filaments.size() != 0)
-                need_load_preset = true;
-
-            for (auto iter = filaments.begin(); iter != filaments.end(); iter++) {
-                if (tmp_filaments.count(iter->first)) {
-                    auto pair     = iter->second;
-                    auto tmp_pair = tmp_filaments[iter->first];
-                    if (pair.first == tmp_pair.first && pair.second == tmp_pair.second) {
-                        continue;
-                    } else {
-                        need_load_preset = true;
-                        break;
-                    }
-                } else {
-                    auto pair        = iter->second;
-                    if (pair.first.find("NONE") != std::string::npos) {
-                        continue;
-                    }
-                    need_load_preset = true;
-                    break;
-                }
-            }
-            if (need_load_preset) {
-                tmp_filaments = filaments;
-                wxGetApp().load_current_presets();
-            }
-
-            if (send_message) {
-                send_to_js();
-                finish_job();
-            }
-        }
-    }
 }
 
 // SSWCP_MachineFind_Instance implementation
@@ -2122,36 +1660,6 @@ void SSWCP_MachineFind_Instance::add_machine_to_list(const json& machine_info)
 
             m_res_data[key]["connected"] = false;
 
-            DeviceInfo info;
-            if (wxGetApp().app_config->get_device_info(sn, info)) {
-                if (info.connected) {
-                    m_res_data[key]["connected"] = true;
-                }
-                std::string ip = value["ip"].get<std::string>();
-                if (0) {
-                    info.ip = ip;
-                    wxGetApp().app_config->save_device_info(info);
-
-
-
-                    wxGetApp().CallAfter([]() {
-                        auto devices = wxGetApp().app_config->get_devices();
-                        json param;
-                        param["command"]       = "local_devices_arrived";
-                        param["sequece_id"]    = "10001";
-                        param["data"]          = devices;
-                        std::string logout_cmd = param.dump();
-                        wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-                        GUI::wxGetApp().run_script(strJS);
-
-                        // wcp sub
-                        json data = devices;
-                        wxGetApp().device_card_notify(data);
-                    });
-
-                }
-            }
-
             if (need_send) {
                 send_to_js();
             }
@@ -2185,22 +1693,6 @@ void SSWCP_MachineOption_Instance::process()
         sw_SendGCodes();
     } else if (m_cmd == "sw_FileGetStatus") {
         sw_FileGetStatus();
-    } else if (m_cmd == "sw_SystemGetDeviceInfo") {
-        sw_SystemGetDeviceInfo();
-    } else if (m_cmd == "sw_GetMachineState") {
-        sw_GetMachineState();
-    } else if (m_cmd == "sw_SubscribeMachineState") {
-        sw_SubscribeMachineState();
-    } else if (m_cmd == "sw_GetMachineObjects") {
-        sw_GetMachineObjects();
-    } else if (m_cmd == "sw_SetSubscribeFilter") {
-        sw_SetMachineSubscribeFilter();
-    } else if (m_cmd == "sw_StopMachineStateSubscription") {
-        sw_UnSubscribeMachineState();
-    } else if (m_cmd == "sw_GetPrinterInfo") {
-        sw_GetPrintInfo();
-    } else if (m_cmd == "sw_GetMachineSystemInfo") {
-        sw_GetSystemInfo();
     } else if (m_cmd == "sw_MachinePrintStart") {
         sw_MachinePrintStart();
     } else if (m_cmd == "sw_MachinePrintPause") {
@@ -2273,8 +1765,6 @@ void SSWCP_MachineOption_Instance::process()
         sw_exception_query();
     } else if (m_cmd == "sw_GetFileListPage") {
         sw_GetFileListPage();
-    } else if (m_cmd == "sw_UpdateMachineFilamentInfo") {
-        sw_UpdateMachineFilamentInfo();
     } else if (m_cmd == "sw_UploadCameraTimelapse") {
         sw_UploadCameraTimelapse();
     } else if (m_cmd == "sw_UploadAsyncTimelapseInstance") {
@@ -2294,152 +1784,6 @@ void SSWCP_MachineOption_Instance::process()
         sw_GetDeviceDataStorageSpace();
     }
     else {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_UnSubscribeMachineState() {
-    try {
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-
-        if (!host) {
-            m_status = 1;
-            m_msg    = "failure";
-            send_to_js();
-            finish_job();
-        }
-
-        auto weak_self  = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        std::string key       = m_event_id + std::to_string(int64_t(m_webview));
-        host->async_unsubscribe_machine_info(key, [weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-            }
-        });
-
-        SSWCP::stop_subscribe_machine();
-
-
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_SubscribeMachineState() {
-    try {
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-
-        if (!host) {
-            m_status = 1;
-            m_msg    = "failure";
-            send_to_js();
-            finish_job();
-            return;
-        }
-
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        std::string key       = m_event_id + std::to_string(int64_t(m_webview));
-        host->async_subscribe_machine_info(key, [weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_status_msg_arrived(self, response);
-            }
-        });
-
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_GetPrintInfo() {
-    try {
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-
-        if (!host) {
-            handle_general_fail();
-            return;
-        }
-
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        host->async_get_printer_info([weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-            }
-        });
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_GetMachineState() {
-    try {
-        if (m_param_data.count("objects")) {
-            std::shared_ptr<PrintHost> host = nullptr;
-            wxGetApp().get_connect_host(host);
-            std::vector<std::pair<std::string, std::vector<std::string>>> targets;
-
-            json items = m_param_data["objects"];
-            for (auto& [key, value] : items.items()) {
-                if (value.is_null()) {
-                    targets.push_back({key, {}});
-                } else {
-                    std::vector<std::string> items;
-                    if (value.is_array()) {
-                        for (size_t i = 0; i < value.size(); ++i) {
-                            items.push_back(value[i].get<std::string>());
-                        }
-                    } else {
-                        items.push_back(value.get<std::string>());
-                    }
-                    targets.push_back({key, items});
-                }
-            }
-
-            if (!host) {
-                handle_general_fail();
-                return;
-            }
-
-            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-            host->async_get_machine_info(targets, [weak_self](const json& response) {
-                auto self = weak_self.lock();
-                if (self) {
-                    SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-                }
-            });
-        } else {
-            handle_general_fail();
-        }
-
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_SystemGetDeviceInfo() {
-    try {
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-        if (!host) {
-            handle_general_fail();
-            return;
-        }
-
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        host->async_get_device_info([weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-            }
-        });
-
-    } catch (const std::exception&) {
         handle_general_fail();
     }
 }
@@ -2600,98 +1944,6 @@ void SSWCP_MachineOption_Instance::sw_MachinePrintCancel()
     }
 }
 
-void SSWCP_MachineOption_Instance::sw_GetSystemInfo()
-{
-    try {
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-
-        if (!host) {
-            handle_general_fail();
-            return;
-        }
-
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        host->async_get_system_info([weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-            }
-        });
-    }
-    catch(std::exception& e){
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_SetMachineSubscribeFilter()
-{
-    try {
-        if (m_param_data.count("objects")) {
-            std::shared_ptr<PrintHost> host = nullptr;
-            wxGetApp().get_connect_host(host);
-            std::vector<std::pair<std::string, std::vector<std::string>>> targets;
-
-            json items = m_param_data["objects"];
-            for (auto& [key, value] : items.items()) {
-                if (value.is_null()) {
-                    targets.push_back({key, {}});
-                } else {
-                    std::vector<std::string> items;
-                    if (value.is_array()) {
-                        for (size_t i = 0; i < value.size(); ++i) {
-                            items.push_back(value[i].get<std::string>());
-                        }
-                    } else {
-                        items.push_back(value.get<std::string>());
-                    }
-                    targets.push_back({key, items});
-                }
-            }
-
-            if (!host) {
-                handle_general_fail();
-            } else {
-                auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-                host->async_set_machine_subscribe_filter(targets, [weak_self](const json& response) {
-                    auto self = weak_self.lock();
-                    if (self) {
-                        SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-                    }
-                });
-            }
-        } else {
-            handle_general_fail();
-        }
-
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-void SSWCP_MachineOption_Instance::sw_GetMachineObjects()
-{
-    try {
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-
-        if (!host) {
-            handle_general_fail(-1, "Can't find the active machine");
-            return;
-        }
-
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        host->async_get_machine_objects([weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-            }
-        });
-
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
 void SSWCP_MachineOption_Instance::sw_PullCloudFile()
 {
     try {
@@ -2713,22 +1965,6 @@ void SSWCP_MachineOption_Instance::sw_PullCloudFile()
             }
         });
     } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_UpdateMachineFilamentInfo()
-{
-    try {
-        if (!m_param_data.count("objects") || !m_param_data["objects"].is_array()) {
-            handle_general_fail(-1, "param [objects] required or wrong type!");
-            return;
-        }
-
-        update_filament_info(m_param_data["objects"], true);
-
-    }
-    catch (std::exception& e) {
         handle_general_fail();
     }
 }
@@ -3292,6 +2528,198 @@ void SSWCP_MachineOption_Instance::on_finish_filament_mapping_custom_flow_regrou
             wxGetApp().mainframe->start_slice();
     });
 }
+nlohmann::json SSWCP::build_filament_mapping_json(const std::string& filename, const std::string& display_name)
+{
+    json response = json::object();
+    try {
+        if (filename.empty() || !boost::filesystem::exists(filename) || !boost::filesystem::is_regular_file(filename))
+            return response;
+
+        auto* current_plate = wxGetApp().plater() ? wxGetApp().plater()->get_partplate_list().get_curr_plate() : nullptr;
+        if (current_plate == nullptr)
+            return response;
+
+        auto* print = current_plate->fff_print();
+        if (print == nullptr)
+            return response;
+
+        auto& config = print->config();
+        auto full_config = print->full_print_config();
+        auto* slice_result = current_plate->get_slice_result();
+        if (slice_result == nullptr)
+            return response;
+
+        auto& result = *slice_result;
+        response["estimated_time"] = result.print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
+
+        auto color_to_int = [](const std::string& original_color) -> long long { return preprint_color_to_int(original_color); };
+
+        if (config.has("filament_colour")) {
+            std::vector<std::string> filament_color = config.option<ConfigOptionStrings>("filament_colour")->values;
+            const ConfigOptionStrings* filament_multi_colors = nullptr;
+            if (config.has("filament_multi_colors"))
+                filament_multi_colors = config.option<ConfigOptionStrings>("filament_multi_colors");
+            const ConfigOptionInts* filament_colour_modes = nullptr;
+            if (config.has("filament_colour_mode"))
+                filament_colour_modes = config.option<ConfigOptionInts>("filament_colour_mode");
+
+            std::vector<long long> number_result(filament_color.size(), 0);
+            std::vector<std::string> string_result(filament_color.size());
+            json multi_color_result = json::array();
+            for (size_t i = 0; i < filament_color.size(); ++i) {
+                number_result[i] = color_to_int(filament_color[i]);
+                string_result[i] = filament_color[i];
+                const bool has_multi_colors = filament_multi_colors != nullptr && filament_multi_colors->values.size() > i;
+                const bool has_mode = filament_colour_modes != nullptr && filament_colour_modes->values.size() > i;
+                const std::string multi_colors = has_multi_colors ? filament_multi_colors->values[i] : std::string{};
+                FilamentColorMode color_mode = FilamentColorMode::Segment;
+                if (has_mode)
+                    color_mode = FilamentColorModeFromConfig(filament_colour_modes->values[i]);
+                multi_color_result.push_back(FilamentColorUtils::BuildPreprintColorMultiItem(multi_colors, color_mode, filament_color[i]));
+            }
+            response["filament_color"] = number_result;
+            response["filament_color_rgba"] = string_result;
+            response["filament_color_multi"] = multi_color_result;
+        }
+
+        if (const auto* filament_type_opt = full_config.option<ConfigOptionStrings>("filament_type");
+            filament_type_opt != nullptr && !filament_type_opt->values.empty()) {
+            std::vector<std::string> filament_types;
+            size_t filament_count = filament_type_opt->values.size();
+            if (const auto* filament_colour_opt = full_config.option<ConfigOptionStrings>("filament_colour"))
+                filament_count = std::max(filament_count, filament_colour_opt->values.size());
+            filament_types.reserve(filament_count);
+            for (size_t i = 0; i < filament_count; ++i) {
+                std::string filament_type = filament_type_opt->get_at(int(i));
+                boost::trim(filament_type);
+                filament_types.emplace_back(std::move(filament_type));
+            }
+            response["filament_type"] = filament_types;
+        }
+
+        if (full_config.has("nozzle_diameter")) {
+            const auto* nozzle_diameters_opt = full_config.option<ConfigOptionFloats>("nozzle_diameter");
+            if (nozzle_diameters_opt != nullptr) {
+                std::vector<std::string> nozzle_diameters;
+                nozzle_diameters.reserve(nozzle_diameters_opt->values.size());
+                for (double diameter : nozzle_diameters_opt->values) {
+                    std::ostringstream stream;
+                    stream << std::fixed << std::setprecision(1) << diameter;
+                    nozzle_diameters.emplace_back(stream.str());
+                }
+                response["nozzle_diameters"] = nozzle_diameters;
+            }
+        }
+
+        if (config.has("filament_density")) {
+            auto filament_density = config.option<ConfigOptionFloats>("filament_density")->values;
+            std::vector<double> filament_used_g(filament_density.size(), 0);
+            double total_weight = 0;
+            for (const auto& item : result.print_statistics.total_volumes_per_extruder) {
+                if (item.first >= filament_density.size())
+                    continue;
+                filament_used_g[item.first] = filament_density[item.first] * item.second * 0.001;
+                total_weight += filament_used_g[item.first];
+            }
+            response["filament_weight"] = filament_used_g;
+            response["filament_weight_total"] = total_weight;
+        }
+
+        if (config.has("filament_diameter")) {
+            const auto* filament_diameter_opt = config.option<ConfigOptionFloats>("filament_diameter");
+            if (!filament_diameter_opt)
+                return response;
+            auto filament_diameter = filament_diameter_opt->values;
+            std::vector<double> filament_used_mm(filament_diameter.size(), 0);
+            for (const auto& item : result.print_statistics.total_volumes_per_extruder) {
+                if (item.first >= filament_diameter.size())
+                    continue;
+                const double diameter = static_cast<double>(filament_diameter[item.first]);
+                if (diameter > 0)
+                    filament_used_mm[item.first] = item.second / (M_PI * diameter * 0.5 * diameter * 0.5);
+            }
+            response["filament_used_mm"] = filament_used_mm;
+        }
+
+        auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
+        if (!filament_extruder_map.empty()) {
+            json object;
+            for (const auto& item : filament_extruder_map)
+                object[std::to_string(item.first)] = std::to_string(item.second);
+            response["filament_extruder_map"] = object;
+        }
+
+        if (current_plate) {
+            auto* current_print = current_plate->fff_print();
+            auto* nozzle_opt = current_print ? current_print->config().option<ConfigOptionFloats>("nozzle_diameter") : nullptr;
+            if (nozzle_opt) {
+                std::vector<std::string> nozzle_list;
+                for (float diameter : nozzle_opt->values) {
+                    nozzle_list.push_back(std::abs(diameter - 0.2f) < 1e-5f ? "0.2" :
+                                          std::abs(diameter - 0.4f) < 1e-5f ? "0.4" :
+                                          std::abs(diameter - 0.6f) < 1e-5f ? "0.6" :
+                                          std::abs(diameter - 0.8f) < 1e-5f ? "0.8" : std::to_string(diameter));
+                }
+                response["nozzle_info"] = nozzle_list;
+            }
+        }
+
+        auto current_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
+        std::string preset_name;
+        if (current_preset.is_system) {
+            preset_name = current_preset.name;
+        } else {
+            auto base_preset = wxGetApp().preset_bundle->printers.get_preset_base(current_preset);
+            preset_name = base_preset->name;
+        }
+        response["machine_model"] = preset_name;
+
+        json thumbnails = json::array();
+        if (config.has("thumbnails")) {
+            std::string thumbnail_description = config.option<ConfigOptionString>("thumbnails")->value;
+            std::vector<std::pair<double, double>> thumbnail_sizes;
+            do {
+                const size_t separator = thumbnail_description.find(", ");
+                std::string item;
+                if (separator != std::string::npos) {
+                    item = thumbnail_description.substr(0, separator);
+                    thumbnail_description = thumbnail_description.substr(separator + 2);
+                } else {
+                    item = thumbnail_description;
+                    thumbnail_description.clear();
+                }
+                const size_t slash = item.find("/");
+                if (slash == std::string::npos)
+                    break;
+                item = item.substr(0, slash);
+                const size_t x = item.find("x");
+                if (x == std::string::npos)
+                    break;
+                double width  = 0.0;
+                double height = 0.0;
+                if (!parse_thumbnail_dimension(item.substr(0, x), width) || !parse_thumbnail_dimension(item.substr(x + 1), height))
+                    break;
+                thumbnail_sizes.emplace_back(width, height);
+            } while (!thumbnail_description.empty());
+
+            auto thumbnail_list = load_thumbnails(filename, int(thumbnail_sizes.size()));
+            for (size_t i = 0; i < thumbnail_list.size(); ++i) {
+                json thumbnail;
+                thumbnail["url"] = "data:image/png;base64," + thumbnail_list[i];
+                thumbnail["width"] = thumbnail_sizes[i].first;
+                thumbnail["height"] = thumbnail_sizes[i].second;
+                thumbnails.push_back(std::move(thumbnail));
+            }
+        }
+        response["thumbnails"] = thumbnails;
+        response["filename"] = display_name;
+        response["filepath"] = filename;
+    } catch (...) {
+        return json::object();
+    }
+    return response;
+}
+
 void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 {
     try {
@@ -3313,42 +2741,36 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             return;
         }
 
-        auto* print = wxGetApp().plater()->get_partplate_list().get_curr_plate()->fff_print();
+        auto* current_plate = wxGetApp().plater() ? wxGetApp().plater()->get_partplate_list().get_curr_plate() : nullptr;
+        if (current_plate == nullptr) {
+            handle_general_fail();
+            return;
+        }
+
+        auto* print = current_plate->fff_print();
+        if (print == nullptr) {
+            handle_general_fail();
+            return;
+        }
+
         auto& config = print->config();
         auto full_config = print->full_print_config();
-        auto& result = *(wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_slice_result());
+        auto* slice_result = current_plate->get_slice_result();
+        if (slice_result == nullptr) {
+            handle_general_fail();
+            return;
+        }
+
+        auto& result = *slice_result;
         /*GCodeProcessor processor;
         processor.process_file(filename.data());
         auto& result = processor.result();
         auto& config = processor.current_dynamic_config();*/
 
-        auto time = wxGetApp()
-            .mainframe->plater()
-            ->get_partplate_list()
-            .get_curr_plate()
-            ->get_slice_result()
-            ->print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)]
-            .time;
+        auto time = result.print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
         response["estimated_time"] = time;
 
-        auto color_to_int = [](const std::string& oriclr) -> long long {
-
-            long long res = 0;
-            if ((oriclr.size() != 7 && oriclr.size() != 9) || oriclr[0] != '#') {
-                return 0;
-            }
-
-            auto colorSize = oriclr.size();//7 or 9
-            for (auto i = 1; i < colorSize; i++)
-            {
-                if (oriclr[colorSize - i] - '0' >= 0 && oriclr[colorSize - i] - '0' <= 9) {
-                    res += std::pow(16, i - 1) * (oriclr[colorSize - i] - '0');
-                } else {
-                    res += std::pow(16, i - 1) * (oriclr[colorSize - i] - 'A' + 10);
-                }
-            }
-            return res;
-        };
+        auto color_to_int = [](const std::string& oriclr) -> long long { return preprint_color_to_int(oriclr); };
 
         // filament colour
         if (config.has("filament_colour")) {
@@ -4279,8 +3701,6 @@ void SSWCP_MachineConnect_Instance::process() {
         sw_connect();
     } else if (m_cmd == "sw_Disconnect") {
         sw_disconnect();
-    } else if (m_cmd == "sw_GetConnectedMachine") {
-        sw_get_connect_machine();
     } else if (m_cmd == "sw_ConnectOtherMachine"){
         sw_connect_other_device();
     } else if (m_cmd == "sw_GetPincode") {
@@ -4474,55 +3894,16 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
 
 }
 
-void SSWCP_MachineConnect_Instance::sw_get_connect_machine() {
-    try {
-        auto devices = wxGetApp().app_config->get_devices();
-        for (const auto& device : devices) {
-            if (device.connected) {
-                m_res_data = device;
-                break;
-            }
-        }
-
-        send_to_js();
-        finish_job();
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
 void SSWCP_MachineConnect_Instance::sw_disconnect() {
     bool need_reload = m_param_data.count("need_reload") ? m_param_data["need_reload"].get<bool>() : true;
-
-    std::string dev_id = m_param_data.count("dev_id") ? m_param_data["dev_id"] : "";
 
     auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
 
     if (m_work_thread.joinable())
         m_work_thread.join();
 
-    m_work_thread = std::thread([weak_self, need_reload, dev_id](){
+    m_work_thread = std::thread([weak_self, need_reload](){
         auto                       self = weak_self.lock();
-
-        if (dev_id != "") {
-            DeviceInfo info;
-            if (wxGetApp().app_config->get_device_info(dev_id, info)) {
-                if (info.connected == false) {
-                    if (self) {
-                        self->handle_general_fail(-3, dev_id + " is not connected before disconnect!");
-                        return;
-                    }
-                }
-            } else {
-                if (self) {
-                    self->handle_general_fail(-1, dev_id + " is not exist!");
-                    return;
-                }
-            }
-        }
-
-
 
         bool res = wxGetApp().sm_disconnect_current_machine(need_reload);
         m_first_connected = true;
@@ -4537,7 +3918,6 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
         wxGetApp().CallAfter([]() {
 
             wxGetApp().app_config->clear_filament_extruder_map();
-            wxGetApp().preset_bundle->machine_filaments.clear();
             wxGetApp().load_current_presets();
         });
 
@@ -4700,18 +4080,7 @@ void SSWCP_UserLogin_Instance::process()
         m_header.clear();
         m_header["event_id"] = m_event_id;
     }
-    if (m_cmd == "sw_UserLogin") {
-        sw_UserLogin();
-    } else if (m_cmd == "sw_AskUserLogin") {
-        sw_AskUserLogin();
-    } else if (m_cmd == "sw_UserLogout") {
-        sw_UserLogout();
-    } else if (m_cmd == "sw_GetUserLoginState") {
-        sw_GetUserLoginState();
-    } else if (m_cmd == "sw_SubscribeUserLoginState") {
-        sw_SubscribeUserLoginState();
-    }
-    else if (m_cmd == UPDATE_PRIVACY_STATUS) {
+    if (m_cmd == UPDATE_PRIVACY_STATUS) {
         sw_SubUserUpdatePrivacy();
     } else if (m_cmd == GET_PRIVACY_STATUS) {
         sw_GetUserUpdatePrivacy();
@@ -4735,128 +4104,6 @@ void SSWCP_UserLogin_Instance::process()
         sw_NotifyUploadTimelaspe();
     }
     else {
-        handle_general_fail();
-    }
-}
-void SSWCP_UserLogin_Instance::sw_UserLogin()
-{
-    try {
-        send_to_js();
-        finish_job();
-        bool show = m_param_data.count("show") ? m_param_data["show"].get<bool>() : true;
-
-        wxGetApp().CallAfter([show]() {
-            wxGetApp().sm_request_login(show);
-        });
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_UserLogin_Instance::sw_AskUserLogin()
-{
-    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-    wxGetApp().CallAfter([weak_self]() {
-        auto self = weak_self.lock();
-        if (!self)
-            return;
-
-        if (s_ask_dialog_showing) {
-            auto already_queued = [&self](const std::weak_ptr<SSWCP_Instance>& waiter) {
-                auto locked = waiter.lock();
-                return locked && locked.get() == self.get();
-            };
-            if (!std::any_of(s_ask_waiters.begin(), s_ask_waiters.end(), already_queued))
-                s_ask_waiters.push_back(self);
-            return;
-        }
-
-        struct AskLoginDialogStateGuard
-        {
-            bool active = true;
-
-            ~AskLoginDialogStateGuard()
-            {
-                if (active) {
-                    s_ask_dialog_showing = false;
-                    s_ask_waiters.clear();
-                }
-            }
-        };
-
-        bool                     login = false;
-        AskLoginDialogStateGuard state_guard;
-        s_ask_dialog_showing = true;
-        s_ask_waiters.push_back(self);
-
-        SMAskUserLoginDialog dlg(wxGetApp().mainframe);
-        dlg.SetKeepAliveCallback([]() {
-            for (auto& weak : s_ask_waiters)
-                if (auto alive = weak.lock())
-                    SSWCP::renew_instance_timeout(alive.get());
-        });
-        login = (dlg.ShowModal() == wxID_OK);
-
-        s_ask_dialog_showing = false;
-        json data;
-        data["result"] = login ? "login" : "cancel";
-        for (auto& weak : s_ask_waiters) {
-            auto waiter = weak.lock();
-            if (!waiter)
-                continue;
-            waiter->m_res_data = data;
-            waiter->send_to_js();
-            waiter->finish_job();
-        }
-        s_ask_waiters.clear();
-        state_guard.active = false;
-
-        if (login)
-            wxGetApp().sm_request_login(true);
-    });
-}
-
-bool SSWCP_UserLogin_Instance::s_ask_dialog_showing = false;
-std::vector<std::weak_ptr<SSWCP_Instance>> SSWCP_UserLogin_Instance::s_ask_waiters;
-
-void SSWCP_UserLogin_Instance::sw_UserLogout()
-{
-    try {
-        send_to_js();
-        wxGetApp().sm_request_user_logout();
-        finish_job();
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_UserLogin_Instance::sw_GetUserLoginState()
-{
-    try {
-        json data;
-        auto pInfo = wxGetApp().sm_get_userinfo();
-        if (pInfo) {
-            bool islogin = pInfo->is_user_login();
-            if (islogin) {
-                data["status"] = "online";
-                data["nickname"] = pInfo->get_user_name();
-                data["icon"]     = pInfo->get_user_icon_url();
-                data["token"]    = pInfo->get_user_token();
-                data["userid"]   = pInfo->get_user_id();
-                data["account"]  = pInfo->get_user_account();
-            } else {
-                data["status"] = "offline";
-            }
-
-            m_res_data = data;
-            send_to_js();
-            finish_job();
-        } else {
-            handle_general_fail();
-        }
-    }
-    catch (std::exception& e) {
         handle_general_fail();
     }
 }
@@ -4897,7 +4144,7 @@ void SSWCP_UserLogin_Instance::sw_DownloadFileAndOpen()
 
         // WebView script message runs inside the webview event handler; calling ShowModal() synchronously
         // (via GenericDownloadDialog in downloadOpenProject) causes re-entrancy / crashes on Windows.
-        // Defer to the next event-loop iteration — same pattern as sw_UserLogin().
+        // Defer to the next event-loop iteration to avoid webview event re-entrancy.
         std::shared_ptr<SSWCP_UserLogin_Instance> self =
             std::static_pointer_cast<SSWCP_UserLogin_Instance>(shared_from_this());
         wxGetApp().CallAfter([self, fileUrl, fileName]() {
@@ -5973,7 +5220,6 @@ void SSWCP_UserLogin_Instance::push_timelapse_state(const std::string& sn,
             if (it != m_subscribe_map.end() && it->second && it->second->webview) {
                 WebView::RunScript(it->second->webview, script);
             }
-            SSWCP::send_message_to_flutter(json_str);
         });
     }
 }
@@ -6240,73 +5486,6 @@ void SSWCP_UserLogin_Instance::sw_SubUserUpdatePrivacy()
 
 }
 
-void SSWCP_UserLogin_Instance::sw_SubscribeUserLoginState()
-{
-    try {
-        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
-        wxGetApp().m_user_login_subscribers[m_webview]  = weak_ptr;
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-// SSWCP_MachineManage_Instance
-void SSWCP_MachineManage_Instance::process()
-{
-    if (m_event_id != "") {
-        json header;
-        send_to_js();
-
-        m_header.clear();
-        m_header["event_id"] = m_event_id;
-    }
-
-    if (m_cmd == "sw_GetLocalDevices") {
-        sw_GetLocalDevices();
-    } else if (m_cmd == "sw_AddDevice") {
-        sw_AddDevice();
-    } else if (m_cmd == "sw_SubscribeLocalDevices") {
-        sw_SubscribeLocalDevices();
-    } else if (m_cmd == "sw_RenameDevice") {
-        sw_RenameDevice();
-    } else if (m_cmd == "sw_SwitchModel") {
-        sw_SwitchModel();
-    } else if (m_cmd == "sw_DeleteDevices") {
-        sw_DeleteDevices();
-    } else if (m_cmd == "sw_UpdateDeviceInfo") {
-        sw_UpdateDeviceInfo();
-    } else {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineManage_Instance::sw_GetLocalDevices()
-{
-    try {
-        auto devices = wxGetApp().app_config->get_devices();
-        m_res_data = devices;
-
-        send_to_js();
-        finish_job();
-    }
-    catch (std::exception& e)
-    {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineManage_Instance::sw_SubscribeLocalDevices()
-{
-    try {
-        auto self = shared_from_this();
-        wxGetApp().m_device_card_subscribers[m_webview] = self;
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-// SSWCP_PageStateChange_Instance
 void SSWCP_PageStateChange_Instance::process()
 {
     if (m_event_id != "") {
@@ -6366,1394 +5545,6 @@ void SSWCP_PageStateChange_Instance::sw_UnsubscribePageStateChange()
     }
 }
 
-void SSWCP_MachineManage_Instance::sw_AddDevice()
-{
-    try {
-        wxGetApp().CallAfter([] {
-            if (wxGetApp().web_device_dialog)
-                delete wxGetApp().web_device_dialog;
-
-            wxGetApp().web_device_dialog = new WebDeviceDialog;
-            wxGetApp().web_device_dialog->run();
-        });
-        send_to_js();
-
-        finish_job();
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineManage_Instance::sw_RenameDevice()
-{
-    try {
-        if (m_param_data.count("dev_id") && m_param_data.count("dev_name")) {
-            std::string dev_id = m_param_data["dev_id"].get<std::string>();
-            std::string dev_name = m_param_data["dev_name"].get<std::string>();
-
-            DeviceInfo info;
-            wxGetApp().app_config->get_device_info(dev_id, info);
-            info.dev_name = dev_name;
-            wxGetApp().app_config->save_device_info(info);
-
-            wxGetApp().CallAfter([] {
-
-                // wcp订阅
-                json data = wxGetApp().app_config->get_devices();
-                wxGetApp().device_card_notify(data);
-            });
-
-            send_to_js();
-            finish_job();
-        } else {
-            handle_general_fail();
-        }
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineManage_Instance::sw_DeleteDevices()
-{
-    try {
-        if (m_param_data.count("dev_ids") && m_param_data["dev_ids"].is_array()) {
-            auto ids = m_param_data["dev_ids"];
-            if (ids.size() == 0) {
-                auto devices = wxGetApp().app_config->get_devices();
-                for (size_t i = 0; i < devices.size(); ++i) {
-                    if (devices[i].connected) {
-                        std::shared_ptr<PrintHost> current_host;
-                        wxGetApp().get_connect_host(current_host);
-                        if (current_host && current_host->get_sn() == devices[i].sn) {
-                            wxString msg = "";
-                            json     param;
-                            current_host->disconnect(msg, param);
-                        }
-                    }
-                }
-                wxGetApp().app_config->clear_device_info();
-            } else {
-                for (size_t i = 0; i < ids.size(); ++i) {
-                    std::string dev_id = ids[i].get<std::string>();
-
-                    DeviceInfo info;
-                    if (wxGetApp().app_config->get_device_info(dev_id, info)) {
-                        if (info.connected) {
-                            std::shared_ptr<PrintHost> current_host;
-                            wxGetApp().get_connect_host(current_host);
-                            wxString msg = "";
-                            json     param;
-                            current_host->disconnect(msg, param);
-                        }
-                    }
-                    wxGetApp().app_config->remove_device_info(dev_id);
-
-                }
-            }
-
-            wxGetApp().CallAfter([] {
-                // wcp sub
-                json data = wxGetApp().app_config->get_devices();
-                wxGetApp().device_card_notify(data);
-            });
-
-            send_to_js();
-            finish_job();
-        } else {
-            handle_general_fail();
-        }
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineManage_Instance::sw_SwitchModel()
-{
-    try {
-        if (m_param_data.count("dev_id")) {
-            std::string dev_id = m_param_data["dev_id"].get<std::string>();
-            send_to_js();
-            wxGetApp().CallAfter([dev_id]() {
-                WebPresetDialog dialog(&wxGetApp());
-                dialog.m_device_id = dev_id;
-                dialog.run();
-            });
-            finish_job();
-
-        } else {
-            handle_general_fail();
-        }
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineManage_Instance::sw_UpdateDeviceInfo()
-{
-    // Expect "devices": [ { dev_id, ... }, ... ] — batch merge update
-    if (!m_param_data.count("devices") || !m_param_data["devices"].is_array()) {
-        handle_general_fail(-1, "param [devices] is required (array)");
-        return;
-    }
-
-    std::string new_preset_model;
-    std::string new_preset_nozzle;
-    bool        any_changed = false;
-
-    wxGetApp().CallAfter([devices_json = m_param_data["devices"], new_preset_model, new_preset_nozzle, any_changed]() mutable {
-        for (const auto& item : devices_json) {
-            if (!item.is_object())
-                continue;
-            if (!item.count("dev_id") || !item["dev_id"].is_string())
-                continue;
-
-            std::string dev_id = item["dev_id"].get<std::string>();
-
-            // Load existing or start fresh
-            DeviceInfo info;
-            bool       exist = wxGetApp().app_config->get_device_info(dev_id, info);
-            if (!exist) {
-                info.dev_id    = dev_id;
-                info.connected = false;
-                info.protocol  = 0;
-                info.port      = 0;
-            }
-
-            // Snapshot before merge for diff
-            DeviceInfo before = info;
-
-            // —— Merge: only overwrite fields that are present ——
-
-            if (item.count("ip") && item["ip"].is_string())
-                info.ip = item["ip"].get<std::string>();
-
-            if (item.count("dev_name") && item["dev_name"].is_string())
-                info.dev_name = item["dev_name"].get<std::string>();
-
-            if (item.count("model_name") && item["model_name"].is_string()) {
-                info.model_name  = item["model_name"].get<std::string>();
-                new_preset_model = info.model_name;
-
-                // Machine cover image
-                size_t vendor_pos = info.model_name.find_first_of(" ");
-                if (vendor_pos != std::string::npos) {
-                    std::string vendor = info.model_name.substr(0, vendor_pos);
-                    info.img = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/profiles/" + vendor + "/" +
-                               info.model_name + "_cover.png";
-                }
-            }
-
-            if (item.count("connected") && item["connected"].is_boolean())
-                info.connected = item["connected"].get<bool>();
-
-            if (item.count("sn") && item["sn"].is_string())
-                info.sn = item["sn"].get<std::string>();
-
-            if (item.count("link_mode") && item["link_mode"].is_string())
-                info.link_mode = item["link_mode"].get<std::string>();
-
-            if (item.count("id") && item["id"].is_string())
-                info.id = item["id"].get<std::string>();
-
-            if (item.count("userid") && item["userid"].is_string())
-                info.userid = item["userid"].get<std::string>();
-
-            if (item.count("protocol") && item["protocol"].is_number())
-                info.protocol = item["protocol"].get<int>();
-
-            if (item.count("port") && item["port"].is_number())
-                info.port = item["port"].get<int>();
-
-            if (item.count("user") && item["user"].is_string())
-                info.user = item["user"].get<std::string>();
-
-            if (item.count("password") && item["password"].is_string())
-                info.password = item["password"].get<std::string>();
-
-            if (item.count("ca") && item["ca"].is_string())
-                info.ca = item["ca"].get<std::string>();
-
-            if (item.count("cert") && item["cert"].is_string())
-                info.cert = item["cert"].get<std::string>();
-
-            if (item.count("key") && item["key"].is_string())
-                info.key = item["key"].get<std::string>();
-
-            if (item.count("clientId") && item["clientId"].is_string())
-                info.clientId = item["clientId"].get<std::string>();
-
-            if (item.count("api_key") && item["api_key"].is_string())
-                info.api_key = item["api_key"].get<std::string>();
-
-            if (item.count("img") && item["img"].is_string())
-                info.img = item["img"].get<std::string>();
-
-            if (item.count("nozzle_sizes") && item["nozzle_sizes"].is_array()) {
-                info.nozzle_sizes.clear();
-                for (const auto& n : item["nozzle_sizes"]) {
-                    if (n.is_string()) {
-                        std::string v = n.get<std::string>();
-                        if (v == "0.2" || v == "0.4" || v == "0.6" || v == "0.8")
-                            info.nozzle_sizes.push_back(v);
-                    } else if (n.is_number()) {
-                        double d = n.get<double>();
-                        if (fabs(d - 0.2) < 1e-6)
-                            info.nozzle_sizes.push_back("0.2");
-                        else if (fabs(d - 0.4) < 1e-6)
-                            info.nozzle_sizes.push_back("0.4");
-                        else if (fabs(d - 0.6) < 1e-6)
-                            info.nozzle_sizes.push_back("0.6");
-                        else if (fabs(d - 0.8) < 1e-6)
-                            info.nozzle_sizes.push_back("0.8");
-                    }
-                }
-                if (!info.nozzle_sizes.empty())
-                    new_preset_nozzle = info.nozzle_sizes[0];
-            }
-
-            if (item.count("nozzle_volume_type") && item["nozzle_volume_type"].is_array()) {
-                info.nozzle_volume_type.clear();
-                for (const auto& volume_type : item["nozzle_volume_type"]) {
-                    if (!volume_type.is_string())
-                        continue;
-
-                    const std::string type = volume_type.get<std::string>();
-                    if (type == "standard" || type == "high_flow")
-                        info.nozzle_volume_type.push_back(type);
-                }
-            }
-
-            if (item.count("preset_name") && item["preset_name"].is_string())
-                info.preset_name = item["preset_name"].get<std::string>();
-
-            // Build preset name if it wasn't explicitly set but we have model + nozzle
-            if (info.preset_name.empty() && !info.model_name.empty() && !info.nozzle_sizes.empty())
-                info.preset_name = info.model_name + " (" + info.nozzle_sizes[0] + " nozzle)";
-
-            // —— Diff: skip save if nothing changed ——
-            if (exist && before.ip == info.ip && before.dev_name == info.dev_name && before.model_name == info.model_name &&
-                before.preset_name == info.preset_name && before.connected == info.connected && before.img == info.img &&
-                before.nozzle_sizes == info.nozzle_sizes && before.nozzle_volume_type == info.nozzle_volume_type && before.sn == info.sn &&
-                before.protocol == info.protocol && before.api_key == info.api_key && before.user == info.user &&
-                before.password == info.password && before.ca == info.ca && before.cert == info.cert && before.key == info.key &&
-                before.clientId == info.clientId && before.port == info.port && before.link_mode == info.link_mode &&
-                before.userid == info.userid && before.id == info.id) {
-                continue;
-            }
-
-            wxGetApp().app_config->save_device_info(info);
-            any_changed = true;
-        }
-
-        if (!any_changed)
-            return;
-
-        // Update ProfileJson for any newly-seen model/nozzle combination
-        if (!new_preset_model.empty() && !new_preset_nozzle.empty()) {
-            std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
-            int                         nModel = m_ProfileJson["model"].size();
-            bool                        isFind = false;
-            for (int m = 0; m < nModel; m++) {
-                if (m_ProfileJson["model"][m]["model"].get<std::string>() == new_preset_model) {
-                    isFind                      = true;
-                    std::string nozzle_selected = m_ProfileJson["model"][m]["nozzle_selected"].get<std::string>();
-                    if (nozzle_selected.find(new_preset_nozzle) == std::string::npos) {
-                        nozzle_selected += ";" + new_preset_nozzle;
-                        m_ProfileJson["model"][m]["nozzle_selected"] = nozzle_selected;
-                    }
-                    break;
-                }
-            }
-
-            if (!isFind) {
-                json new_item;
-                new_item["vendor"]          = "Snapmaker";
-                new_item["model"]           = new_preset_model;
-                new_item["nozzle_selected"] = new_preset_nozzle;
-                new_item["nozzle_diameter"] = new_preset_nozzle;
-                m_ProfileJson["model"].push_back(new_item);
-            }
-        }
-
-        // Update UI
-        auto devices = wxGetApp().app_config->get_devices();
-
-        json param;
-        param["command"]       = "local_devices_arrived";
-        param["sequece_id"]    = "10001";
-        param["data"]          = devices;
-        std::string logout_cmd = param.dump();
-        wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-        GUI::wxGetApp().run_script(strJS);
-
-        json data = devices;
-        wxGetApp().device_card_notify(data);
-
-        wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(false);
-
-        if (SSWCP_MqttAgent_Instance::m_dialog) {
-            SSWCP_MqttAgent_Instance::m_dialog->SaveProfile();
-            bool flag = false;
-            SSWCP_MqttAgent_Instance::m_dialog->apply_config(wxGetApp().app_config, wxGetApp().preset_bundle, wxGetApp().preset_updater,
-                                                             flag);
-            wxGetApp().update_mode();
-        } else {
-            BOOST_LOG_TRIVIAL(warning) << "sw_UpdateDeviceInfo: preset dialog not available, skip preset install";
-        }
-    });
-
-    send_to_js();
-    finish_job();
-}
-
-// SSWCP_MqttAgent_Instance
-
-namespace {
-// Fresh UUID string for connectSessionId — the funnel-correlation key shared by
-// every mqtt-agent event in one connection attempt (see SSWCP.hpp).
-std::string make_connect_session_id()
-{
-    return boost::uuids::to_string(boost::uuids::random_generator()());
-}
-} // namespace
-
-std::unordered_map<wxWebView*, std::pair<std::string, std::shared_ptr<MqttClient>>> SSWCP_MqttAgent_Instance::m_mqtt_engine_map;
-std::mutex                                          SSWCP_MqttAgent_Instance::m_engine_map_mtx;
-std::map<std::pair<std::string, wxWebView*>, std::string>   SSWCP_MqttAgent_Instance::m_subscribe_map;
-std::map<std::pair<std::string, wxWebView*>, std::weak_ptr<SSWCP_Instance>> SSWCP_MqttAgent_Instance::m_subscribe_instance_map;
-WebPresetDialog*                                                                    SSWCP_MqttAgent_Instance::m_dialog = nullptr;
-std::unordered_map<wxWebView*, std::string>                                          SSWCP_MqttAgent_Instance::m_connect_session_map;
-
-void SSWCP_MqttAgent_Instance::process()
-{
-    if (m_cmd == "sw_create_mqtt_client") {
-        sw_create_mqtt_client();
-    } else if (m_cmd == "sw_mqtt_connect") {
-        sw_mqtt_connect();
-    } else if (m_cmd == "sw_mqtt_disconnect") {
-        sw_mqtt_disconnect();
-    } else if (m_cmd == "sw_mqtt_subscribe") {
-        sw_mqtt_subscribe();
-    } else if (m_cmd == "sw_mqtt_unsubscribe") {
-        sw_mqtt_unsubscribe();
-    } else if (m_cmd == "sw_mqtt_publish") {
-        sw_mqtt_publish();
-    } else if (m_cmd == "sw_mqtt_set_engine") {
-        sw_mqtt_set_engine();
-    } else {
-        handle_general_fail();
-    }
-}
-
-// check mqtt id
-bool SSWCP_MqttAgent_Instance::validate_id(const std::string& id)
-{
-    bool flag = true;
-
-    m_engine_map_mtx.lock();
-    if (!m_mqtt_engine_map.count(m_webview)) {
-        flag = false;
-    } else {
-        flag = m_mqtt_engine_map[m_webview].first == id;
-    }
-
-    m_engine_map_mtx.unlock();
-
-    return flag;
-}
-
-// webview illegal call back
-void SSWCP_MqttAgent_Instance::set_Instance_illegal()
-{
-    SSWCP_Instance::set_Instance_illegal();
-
-    clean_current_engine();
-}
-
-// detele mqtt instance
-void SSWCP_MqttAgent_Instance::clean_current_engine()
-{
-
-    for (auto iter = m_subscribe_map.begin(); iter != m_subscribe_map.end();) {
-        if (iter->first.second == m_webview) {
-            iter = m_subscribe_map.erase(iter);
-        } else {
-            iter++;
-        }
-    }
-
-    for (auto iter = m_subscribe_instance_map.begin(); iter != m_subscribe_instance_map.end();) {
-        if (iter->first.second == m_webview) {
-            iter = m_subscribe_instance_map.erase(iter);
-        } else {
-            iter++;
-        }
-    }
-
-    m_engine_map_mtx.lock();
-    m_mqtt_engine_map.erase(m_webview);
-    m_engine_map_mtx.unlock();
-}
-
-// mqtt static msg callback
-void SSWCP_MqttAgent_Instance::mqtt_msg_cb(const std::string& topic, const std::string& payload, void* client)
-{
-    auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    {
-        wxGetApp().CallAfter([topic, payload, client]() {
-            for (const auto& item : SSWCP_MqttAgent_Instance::m_subscribe_map) {
-
-                std::string id_topic = item.second;
-                std::string target_topic = topic;
-                if (id_topic.find("+") != std::string::npos) {
-                    id_topic = id_topic.substr(id_topic.find_first_of("/"));
-                    target_topic = topic.substr(topic.find_first_of("/"));
-
-                }
-
-                if (id_topic == target_topic) {
-                    if (SSWCP_MqttAgent_Instance::m_subscribe_instance_map.count(item.first)) {
-                        auto& instance                = SSWCP_MqttAgent_Instance::m_subscribe_instance_map[item.first];
-                        if (auto self = instance.lock()) {
-                            auto mqtt_self            = dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(self);
-
-                            if (mqtt_self && (void*)(mqtt_self->get_current_engine().get()) == client) {
-                                self->m_res_data["topic"] = topic;
-                                self->m_res_data["data"]  = payload;
-                                self->send_to_js();
-                            }
-                        }
-
-                    } else {
-                        return;
-                    }
-                }
-            }
-        });
-
-    }
-}
-
-void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
-{
-    try {
-        // Assign the funnel id for this connection attempt; all subsequent
-        // mqtt-agent events (connect/subscribe/set_engine/disconnect) reuse it.
-        set_connect_session_id(make_connect_session_id());
-        const std::string session_id = get_connect_session_id();
-
-        // A new connect attempt starts here. Reset the per-device SnapLog identity so
-        // this session's preamble events (create/connect/subscribe, which fire BEFORE
-        // sw_mqtt_set_engine refreshes them) don't inherit the PREVIOUS device's values.
-        // Without this, switching devices without a disconnect in between mis-tags the
-        // whole connect funnel with the prior printerSN/connect_clientid.
-        // print_sn stays empty here (sn is only known to sw_mqtt_set_engine); connect_clientid
-        // is re-filled just below, right after clientId is validated.
-        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn("");
-        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid("");
-
-        // Parse connection parameters.
-        std::string server_address = "";
-        std::string clientId       = "";
-        std::string ca             = "";
-        std::string cert           = "";
-        std::string key            = "";
-        std::string username       = "";
-        std::string password       = "";
-        bool        clean_session  = false;
-
-        if (m_param_data.count("server_address") || !m_param_data["server_address"].is_string()) {
-            server_address = m_param_data["server_address"].get<std::string>();
-            if (server_address == "") {
-                SNAP_LOG_BATCH(Error, "mqtt client create failed",
-                    {"eventName", "mqtt_client_create_failed"}, {"source", "cpp"},
-                    {"connectSessionId", session_id}, {"reason", "server_address illegal"});
-                handle_general_fail(-1, "the value of param [server_address] is illegal");
-                return;
-            }
-        }
-        else {
-            SNAP_LOG_BATCH(Error, "mqtt client create failed",
-                {"eventName", "mqtt_client_create_failed"}, {"source", "cpp"},
-                {"connectSessionId", session_id}, {"reason", "server_address missing"});
-            handle_general_fail(-1, "param [server_address] is required or wrong type");
-            return;
-        }
-
-        if (m_param_data.count("clientId") || !m_param_data["clientId"].is_string()) {
-            clientId = m_param_data["clientId"].get<std::string>();
-            if (clientId == "") {
-                SNAP_LOG_BATCH(Error, "mqtt client create failed",
-                    {"eventName", "mqtt_client_create_failed"}, {"source", "cpp"},
-                    {"connectSessionId", session_id}, {"reason", "clientId illegal"});
-                handle_general_fail(-1, "the value of param [clientId] is illegal");
-                return;
-            }
-        } else {
-            SNAP_LOG_BATCH(Error, "mqtt client create failed",
-                {"eventName", "mqtt_client_create_failed"}, {"source", "cpp"},
-                {"connectSessionId", session_id}, {"reason", "clientId missing"});
-            handle_general_fail(-1, "param [clientId] is required or wroing type");
-            return;
-        }
-
-        // clientId is validated and non-empty here — mirror it into SnapLog now so this
-        // session's connect-stage events carry the correct connect_clientid (matches what
-        // sw_mqtt_set_engine sets later at SSWCP.cpp:5847), instead of the cleared value above.
-        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid(clientId);
-
-        ca = m_param_data.count("ca") ? m_param_data["ca"].get<std::string>() : "";
-        cert = m_param_data.count("cert") ? m_param_data["cert"].get<std::string>() : "";
-        key  = m_param_data.count("key") ? m_param_data["key"].get<std::string>() : "";
-
-        clean_session = m_param_data.count("clean_session") ? m_param_data["clean_session"].get<bool>() : false;
-
-        username = m_param_data.count("username") ? m_param_data["username"].get<std::string>() : "";
-        password = m_param_data.count("password") ? m_param_data["password"].get<std::string>() : "";
-
-        
-        std::shared_ptr<MqttClient> client = nullptr;
-        std::string type = "mqtt";
-        if (ca != "" && cert != "" && key != "") {
-            type = "mqtts";
-            client = MqttClient::create(server_address, clientId, ca, cert, key, username, password, clean_session);
-        }else{
-            client = MqttClient::create(server_address, clientId, username, password, clean_session);
-        }
-
-        if (client == nullptr) {
-            // Report client creation failure before returning.
-            SNAP_LOG_BATCH(Error, "mqtt client create failed",
-                {"eventName", "mqtt_client_create_failed"}, {"source", "cpp"},
-                {"connectSessionId", session_id}, {"reason", "create instance failed"});
-            handle_general_fail(-1, "create instance failed");
-            return;
-        }
-
-        // clear list for current sub machine
-        auto ptr = get_current_engine();
-        if (!ptr) {
-            ptr.reset();
-        }
-        clean_current_engine();
-
-        //
-        bool flag = set_current_engine({std::to_string(int64_t(client.get())), client});
-        if (!flag) {
-            SNAP_LOG_BATCH(Error, "mqtt client create failed",
-                {"eventName", "mqtt_client_create_failed"}, {"source", "cpp"},
-                {"connectSessionId", session_id}, {"reason", "set_current_engine failed"});
-            handle_general_fail(-1, "create failed");
-            return;
-        }
-        
-        client->SetMessageCallback(SSWCP_MqttAgent_Instance::mqtt_msg_cb);
-
-        m_res_data["type"] = type;
-        m_res_data["id"]   = std::to_string(int64_t(get_current_engine().get()));
-
-        SNAP_LOG_BATCH(Info, "mqtt client created",
-            {"eventName", "mqtt_client_create"}, {"source", "cpp"},
-            {"connectSessionId", session_id},
-            {"transport", type}, {"useTls", type == "mqtts" ? "true" : "false"},
-            {"server", server_address});
-
-        send_to_js();
-        finish_job();
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-// mqtt connect
-void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
-{
-    try {
-        SNAP_LOG_BATCH(Info, "mqtt connect attempt",
-            {"eventName", "mqtt_connect_attempt"}, {"source", "cpp"},
-            {"connectSessionId", get_connect_session_id()});
-        if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
-            handle_general_fail(-1, "param [id] is required or wrong type");
-
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_connect param [id] is required or wrong type"), DEVICE_CONNECT_ERR);
-            return;
-        }
-
-        std::string id = m_param_data["id"].get<std::string>();
-
-        if (!validate_id(id)) {
-            handle_general_fail(-1, "id is illegal");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_connect id is illegal"),DEVICE_CONNECT_ERR);
-            return;
-        }
-
-        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
-        auto                          engine   = get_current_engine();
-
-        if (m_work_thread.joinable())
-            m_work_thread.join();
-
-        m_work_thread = std::thread([weak_ptr, engine]() {
-            if (!weak_ptr.lock()) {
-                return;
-            }
-            auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
-            const std::string session_id = self ? self->get_connect_session_id() : std::string{};
-
-            // Capture the engine WEAKLY: this callback is stored inside the
-            // engine itself (MqttClient::connection_failure_callback_), so a
-            // shared_ptr capture would keep its refcount >= 1 forever and
-            // ~MqttClient — the only place the callback gets cleared — would
-            // never run, leaking the client and its Paho handles.
-            std::weak_ptr<MqttClient> weak_engine = engine;
-            engine->SetConnectionFailureCallback([weak_engine, session_id]() {
-                auto engine = weak_engine.lock();
-                if (!engine) {
-                    return;
-                }
-                SNAP_LOG_BATCH(Error, "mqtt connection failure callback",
-                    {"eventName", "mqtt_connect_failure"}, {"source", "cpp"},
-                    {"connectSessionId", session_id});
-                std::string msg = "";
-                engine->Disconnect(msg);
-            });
-
-            std::string msg;
-            bool flag = engine->Connect(msg);
-
-            wxGetApp().CallAfter([weak_ptr, msg, flag, session_id]() {
-                auto self = weak_ptr.lock();
-                if (self) {
-                    if (flag) {
-                        SNAP_LOG_BATCH(Info, "mqtt connect result",
-                            {"eventName", "mqtt_connect_result"}, {"source", "cpp"},
-                            {"connectSessionId", session_id}, {"success", "true"});
-                        self->m_msg = msg;
-                        self->send_to_js();
-                        self->finish_job();
-                    } else {
-                        SNAP_LOG_BATCH(Error, "mqtt connect result",
-                            {"eventName", "mqtt_connect_result"}, {"source", "cpp"},
-                            {"connectSessionId", session_id}, {"success", "false"},
-                            {"reason", msg});
-                        self->handle_general_fail(-1, msg);
-                    }
-                }
-            });
-        });
-
-
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-
-void SSWCP_MqttAgent_Instance::sw_mqtt_disconnect()
-{
-    try {
-        if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
-            handle_general_fail(-1, "param [id] is required or wrong type");
-            return;
-        }
-
-        std::string id = m_param_data["id"].get<std::string>();
-
-        if (!validate_id(id)) {
-            handle_general_fail(-1, "id is illegal");
-            return;
-        }
-
-        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
-        auto                          engine   = get_current_engine();
-
-        if (m_work_thread.joinable())
-            m_work_thread.join();
-
-        m_work_thread                          = std::thread([weak_ptr, engine]() {
-            if (!weak_ptr.lock()) {
-                return;
-            }
-            auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
-            const std::string session_id = self ? self->get_connect_session_id() : std::string{};
-
-            std::string msg  = "success";
-            bool        flag = engine->Disconnect(msg);
-            if (flag && self) {
-                // Connection gone — drop the funnel id so later events don't reuse it.
-                self->clear_connect_session_id();
-            }
-
-            wxGetApp().CallAfter([weak_ptr, msg, flag, session_id]() {
-                auto self = weak_ptr.lock();
-                if (self) {
-                    if (flag) {
-                        SNAP_LOG_BATCH(Info, "device disconnect",
-                            {"eventName", "device_disconnect"}, {"source", "cpp"},
-                            {"connectSessionId", session_id});
-                        // Printer disconnected — clear Flutter MQTT identity in SnapLog.
-                        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid("");
-                        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn("");
-                        self->m_msg = msg;
-                        self->send_to_js();
-                        self->finish_job();
-                    } else {
-                        self->handle_general_fail(-1, msg);
-                    }
-                }
-            });
-        });
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
-{
-    try {
-        if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
-            handle_general_fail(-1, "param [id] is required or wrong type");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_subscribe param [id] is required or wrong type"), DEVICE_SUBSCRIBE_ERR);
-            return;
-        }
-
-        std::string id = m_param_data["id"].get<std::string>();
-
-        if (!validate_id(id)) {
-            handle_general_fail(-1, "id is illegal");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_subscribe id is illegal with:")+id,DEVICE_SUBSCRIBE_ERR);
-            return;
-        }
-
-        if (m_event_id == "") {
-            handle_general_fail(-1, "event_id is required or wrong type");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_subscribe event_id is required or wrong type with:") + id,DEVICE_SUBSCRIBE_ERR);
-            return;
-        }
-
-        std::string event_id = m_event_id;
-
-        if (!m_param_data.count("topic") || !m_param_data["topic"].is_string()) {
-            handle_general_fail(-1, "param [topic] is required or wrong type");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_subscribe param [topic] is required or wrong type"),DEVICE_SUBSCRIBE_ERR);
-            return;
-        }
-        std::string topic = m_param_data["topic"].get<std::string>();
-
-
-        m_subscribe_map[{event_id, m_webview}] = topic;
-        m_subscribe_instance_map[{event_id, m_webview}] = shared_from_this();
-
-        if (!m_param_data.count("qos") || !m_param_data["qos"].is_number()) {
-            handle_general_fail(-1, "param [qos] is required or wrong type");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_subscribe param [qos] is required or wrong type"), DEVICE_SUBSCRIBE_ERR);
-            return;
-        }
-        int qos = m_param_data["qos"].get<int>();
-
-        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
-        auto                          engine   = get_current_engine();
-
-        if (m_work_thread.joinable())
-            m_work_thread.join();
-
-        m_work_thread                          = std::thread([weak_ptr, engine, topic, qos]() {
-            if (!weak_ptr.lock()) {
-                return;
-            }
-            auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
-            const std::string session_id = self ? self->get_connect_session_id() : std::string{};
-
-            std::string msg  = "success";
-            bool        flag = engine->Subscribe(topic, qos, msg);
-
-            wxGetApp().CallAfter([weak_ptr, msg, flag, topic, qos, session_id]() {
-                auto self = weak_ptr.lock();
-                if (self) {
-                    if (flag) {
-                        SNAP_LOG_BATCH(Info, "mqtt subscribe result",
-                            {"eventName", "mqtt_subscribe_result"}, {"source", "cpp"},
-                            {"connectSessionId", session_id}, {"success", "true"},
-                            {"topic", topic}, {"qos", std::to_string(qos)});
-                        // response set event_id
-                        if (self->m_event_id != "") {
-                            self->m_msg = msg;
-                            self->send_to_js();
-
-                            json header;
-                            self->m_header.clear();
-                            self->m_header["event_id"] = self->m_event_id;
-                        } else {
-                            self->handle_general_fail(-1, "event_id is null");
-                        }
-
-                    } else {
-                        SNAP_LOG_BATCH(Warning, "mqtt subscribe result",
-                            {"eventName", "mqtt_subscribe_result"}, {"source", "cpp"},
-                            {"connectSessionId", session_id}, {"success", "false"},
-                            {"topic", topic}, {"qos", std::to_string(qos)},
-                            {"reason", msg});
-                        self->handle_general_fail(-1, msg);
-                    }
-                }
-            });
-        });
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MqttAgent_Instance::sw_mqtt_unsubscribe() {
-    try {
-        if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
-            handle_general_fail(-1, "param [id] is required or wrong type");
-            return;
-        }
-
-        std::string id = m_param_data["id"].get<std::string>();
-
-        if (!validate_id(id)) {
-            handle_general_fail(-1, "id is illegal");
-            return;
-        }
-
-        if (!m_param_data.count("topic") || !m_param_data["topic"].is_string()) {
-            handle_general_fail(-1, "param [topic] is required or wrong type");
-            return;
-        }
-        std::string topic = m_param_data["topic"].get<std::string>();
-        
-        for (auto iter = m_subscribe_map.begin();
-            iter != m_subscribe_map.end(); ) {
-            if (iter->second == topic) {
-                if (m_subscribe_instance_map.count(iter->first)) {
-                    m_subscribe_instance_map.erase(iter->first);
-                }
-                iter = m_subscribe_map.erase(iter);
-            } else {
-                ++iter;
-            }
-        }
-
-        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
-        auto                          engine   = get_current_engine();
-
-        if (m_work_thread.joinable())
-            m_work_thread.join();
-
-        m_work_thread                          = std::thread([weak_ptr, engine, topic]() {
-            if (!weak_ptr.lock()) {
-                return;
-            }
-            auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
-
-            std::string msg  = "success";
-            bool        flag = engine->Unsubscribe(topic, msg);
-
-            wxGetApp().CallAfter([weak_ptr, msg, flag]() {
-                auto self = weak_ptr.lock();
-                if (self) {
-                    if (flag) {
-                        self->m_msg = msg;
-                        self->send_to_js();
-                        self->finish_job();
-                    } else {
-                        self->handle_general_fail(-1, msg);
-                    }
-                }
-            });
-        });
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
-{
-    try {
-        if (!m_param_data.count("engine_id") || !m_param_data["engine_id"].is_string()) {
-            handle_general_fail(-1, "param [engine_id] is required or wrong type");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine param [engine_id] is required or wrong type"),DEVICE_SET_ENGINE_ERR);
-            return;
-        }
-
-        std::string engine_id = m_param_data["engine_id"].get<std::string>();
-
-        if (!validate_id(engine_id)) {
-            handle_general_fail(-1, "id is illegal");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine id is illegal with:") + engine_id, DEVICE_SET_ENGINE_ERR);
-            return;
-        }
-
-        if (!m_param_data.count("ip") || !m_param_data["ip"].is_string()) {
-            handle_general_fail(-1, "param [ip] is required or wrong type");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine param [ip] is required or wrong type"),DEVICE_SET_ENGINE_ERR);
-            return;
-        }
-        std::string ip = m_param_data["ip"].get<std::string>();
-
-        if (!m_param_data.count("port") || !m_param_data["port"].is_number()) {
-            handle_general_fail(-1, "param [port] is required or wrong type");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine param [port] is required or wrong type"), DEVICE_SET_ENGINE_ERR);
-            return;
-        }
-
-        bool reload_device_view = m_param_data.count("need_reload") ? m_param_data["need_reload"].get<bool>() : true;
-
-        int port = m_param_data["port"].get<int>();
-
-        auto config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-
-        PrintHostType type = PrintHostType::htMoonRaker_mqtt;
-        // todo : add cin-type
-
-        config.option<ConfigOptionEnum<PrintHostType>>("host_type")->value = type;
-
-        config.set("print_host", ip + (port == -1 ? "" : ":" + std::to_string(port)));
-
-        std::shared_ptr<PrintHost> tmp_host(PrintHost::get_print_host(&config));
-        wxGetApp().set_connect_host(tmp_host);
-        wxGetApp().set_host_config(config);
-
-        // Device switch: every in-progress timelapse download is now stale —
-        // stop them all and mark each unfinished file as "Download Failed".
-        cancel_all_active_timelapse();
-
-        std::shared_ptr<Moonraker_Mqtt> host = dynamic_pointer_cast<Moonraker_Mqtt>(tmp_host);
-        if (host) {
-            auto engine = get_current_engine();
-
-            if (engine == nullptr) {
-                handle_general_fail(-1, "invalid engine");
-                Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine invalid engine"),DEVICE_SET_ENGINE_ERR);
-                return;
-            }            
-
-            if (!engine->CheckConnected()) {
-                BOOST_LOG_TRIVIAL(error) << "[SSWCP_MqttAgent_Instance] connect error";
-                handle_general_fail(-1, "engine connection lost");
-                Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine engine connection lost"), DEVICE_SET_ENGINE_ERR);
-                return;
-            }            
-
-            std::string msg    = "success";          
-            bool flag = host->set_engine(engine, msg);            
-
-            if (flag)
-            {
-                if (m_param_data.count("ip")) {
-                    std::string ip = m_param_data["ip"].get<std::string>();
-
-                    int port = -1;
-                    if (m_param_data.count("port") && m_param_data["port"].is_number_integer()) {
-                        port = m_param_data["port"].get<int>();
-                    }
-
-                    // test
-                    if (port == -1 || port == 1883) {
-                        port = 1884;
-                    }
-
-                    json connect_params;
-                    if (m_param_data.count("sn") && m_param_data["sn"].is_string()) {
-                        connect_params["sn"] = m_param_data["sn"].get<std::string>();
-
-                        host->m_sn_mtx.lock();
-                        host->m_sn = m_param_data["sn"].get<std::string>();
-                        host->m_sn_mtx.unlock();
-                        // Mirror-push printer SN into SnapLog (emitted in ext as print_sn).
-                        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn(m_param_data["sn"].get<std::string>());
-                    } else {
-                        handle_general_fail(-1, "param [sn] is required or wrong type");
-                        return;
-                    }
-                    
-                    if (m_param_data.count("code")){
-                        connect_params["code"] = m_param_data["code"];
-                    }
-
-
-                    if (m_param_data.count("ca")) {
-                        connect_params["ca"] = m_param_data["ca"];
-                        host->m_ca           = m_param_data["ca"].get<std::string>();
-                    }
-
-
-                    if (m_param_data.count("cert")) {
-                        connect_params["cert"] = m_param_data["cert"];
-                        host->m_cert           = m_param_data["cert"].get<std::string>();
-                    }
-
-
-                    if (m_param_data.count("key")) {
-                        connect_params["key"] = m_param_data["key"];
-                        host->m_key           = m_param_data["key"].get<std::string>();
-                    }
-
-                    if (m_param_data.count("user")) {
-                        connect_params["user"] = m_param_data["user"];
-                        host->m_user_name           = m_param_data["user"].get<std::string>();
-                    }
-
-                    if (m_param_data.count("password")) {
-                        connect_params["password"] = m_param_data["password"];
-                        host->m_password           = m_param_data["password"].get<std::string>();
-                    }
-
-                    if (m_param_data.count("port")) {
-                        connect_params["port"] = m_param_data["port"];
-                        host->m_port           = m_param_data["port"].get<int>();
-                    }
-
-                    if (m_param_data.count("clientId")) {
-                        connect_params["clientId"] = m_param_data["clientId"];
-                        host->m_client_id           = m_param_data["clientId"].get<std::string>();
-                        // Mirror-push MQTT clientId into SnapLog (emitted in ext as connect_clientid).
-                        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid(host->m_client_id);
-                    }
-
-
-                    std::string link_mode       = m_param_data.count("link_mode") ? m_param_data["link_mode"] : "lan";
-                    connect_params["link_mode"] = link_mode;
-
-                    SNAP_LOG_BATCH(Info, "device engine set",
-                        {"eventName", "device_engine_set"}, {"source", "cpp"},
-                        {"connectSessionId", get_connect_session_id()},
-                        {"printerSN", host->m_sn},
-                        {"clientId", host->m_client_id},
-                        {"linkMode", link_mode});
-
-                    std::string id     = m_param_data.count("id") ? m_param_data["id"].get<std::string>() : "";
-                    std::string userid = m_param_data.count("userid") ? m_param_data["userid"].get<std::string>() : "";
-
-                    if (!host) {
-                        handle_general_fail(-1, "host created failed");
-                        Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine host created failed"), DEVICE_SET_ENGINE_ERR);
-                        return;
-                    } else {
-                        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-
-                        if (m_work_thread.joinable())
-                            m_work_thread.join();
-
-                        m_work_thread = std::thread([weak_self, host, connect_params, link_mode, id, userid, reload_device_view] {
-                            auto     self = weak_self.lock();
-                            wxString msg  = "";
-                            json     params;
-                            host->set_connection_lost([]() {
-                                wxGetApp().CallAfter([]() {
-                                    SSWCP_Instance::m_first_connected = true;
-                                    wxGetApp().app_config->clear_filament_extruder_map();
-                                    wxGetApp().preset_bundle->machine_filaments.clear();
-                                    wxGetApp().load_current_presets();
-                                });
-                                wxGetApp().CallAfter([]() {
-                                    wxGetApp().app_config->set("use_new_connect", "false");
-                                    auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
-                                    p_config->set("print_host", "");
-
-                                    std::shared_ptr<PrintHost> ptr = nullptr;
-                                    wxGetApp().get_connect_host(ptr);
-                                    if (ptr) {
-                                        wxString disconn_msg = "";
-                                        json     disconn_param;
-                                        ptr->disconnect(disconn_msg, disconn_param);
-                                    }
-
-                                    wxGetApp().set_connect_host(nullptr);
-
-                                    auto devices = wxGetApp().app_config->get_devices();
-                                    for (size_t i = 0; i < devices.size(); ++i) {
-                                        if (devices[i].connected) {
-                                            devices[i].connected = false;
-                                            wxGetApp().app_config->save_device_info(devices[i]);
-                                            break;
-                                        }
-                                    }
-
-                                    // update card
-                                    json param;
-                                    param["command"]       = "local_devices_arrived";
-                                    param["sequece_id"]    = "10001";
-                                    param["data"]          = devices;
-                                    std::string logout_cmd = param.dump();
-                                    wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-                                    GUI::wxGetApp().run_script(strJS);
-
-                                    // wcp sub
-                                    json data = devices;
-                                    wxGetApp().device_card_notify(data);
-
-                                    MessageDialog msg_window(nullptr, " " + _L("Connection has been disconnected and recovery attempt failed. Please reconnect.") + "\n", _L("Machine Disconnected"),
-                                                             wxICON_QUESTION | wxOK);
-                                    msg_window.ShowModal();
-
-                                    wxGetApp().set_connect_host(nullptr);
-
-                                    wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
-                                });
-                            });
-                            bool res = true;
-
-                            std::string ip_port = host->get_host();
-                            std::string ip;
-                            {
-                                int pos = ip_port.find(':');
-                                ip      = (pos != std::string::npos) ? ip_port.substr(0, pos) : ip_port;
-                            }
-
-                            // Defer all AppConfig writes to the UI thread to avoid data races
-                            // with sw_UpdateDeviceInfo and other MachineManage handlers that
-                            // also read/write DeviceInfo on the UI thread via CallAfter.
-                            wxGetApp().CallAfter([weak_self, reload_device_view, ip, host, connect_params, link_mode, id, userid]() {
-                                // Mark other devices as disconnected
-                                auto devices = wxGetApp().app_config->get_devices();
-                                for (size_t i = 0; i < devices.size(); ++i) {
-                                    if (devices[i].connected) {
-                                        devices[i].connected = false;
-                                        wxGetApp().app_config->save_device_info(devices[i]);
-                                        break;
-                                    }
-                                }
-
-                                // Save a minimal DeviceInfo from the connection params.
-                                // Full device details (machine_type, nozzle_sizes, device_name)
-                                // are pushed later by Flutter via sw_UpdateDeviceInfo.
-                                std::string dev_id = connect_params.count("sn") ? connect_params["sn"].get<std::string>() : ip;
-                                {
-                                    DeviceInfo info;
-                                    bool exist = wxGetApp().app_config->get_device_info(dev_id, info);
-                                    if (!exist) {
-                                        info.dev_id    = dev_id;
-                                        info.connected = false;
-                                        info.protocol  = 0;
-                                        info.port      = 0;
-                                    }
-                                    info.ip        = ip;
-                                    info.connected = true;
-                                    info.link_mode = link_mode;
-                                    info.protocol  = int(PrintHostType::htMoonRaker_mqtt);
-                                    info.id        = id;
-                                    info.userid    = userid;
-                                    info.dev_name  = ip; // fallback device name
-                                    if (connect_params.count("sn") && connect_params["sn"].is_string()) {
-                                        info.sn       = connect_params["sn"].get<std::string>();
-                                        info.dev_name = info.sn != "" ? info.sn : ip;
-                                        info.dev_id   = info.sn != "" ? info.sn : info.dev_id;
-                                    }
-                                    // Carry over auth info from host
-                                    auto auth_info = host->get_auth_info();
-                                    info.ca       = "";
-                                    info.cert     = "";
-                                    info.key      = "";
-                                    info.user     = auth_info["user"];
-                                    info.password = auth_info["password"];
-                                    info.port     = auth_info["port"];
-                                    info.clientId = auth_info["clientId"];
-                                    wxGetApp().app_config->save_device_info(info);
-                                }
-
-                                devices = wxGetApp().app_config->get_devices();
-
-                                    json param;
-                                    param["command"]       = "local_devices_arrived";
-                                    param["sequece_id"]    = "10001";
-                                    param["data"]          = devices;
-                                    std::string logout_cmd = param.dump();
-                                    wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-                                    GUI::wxGetApp().run_script(strJS);
-
-                                    // wcp sub
-                                    json data = devices;
-                                    wxGetApp().device_card_notify(data);
-
-                                    /*MessageDialog msg_window(nullptr, ip + " " + _L("connected sucessfully !") + "\n", _L("Machine
-                                    Connected"), wxICON_QUESTION | wxOK); msg_window.ShowModal();*/
-
-                                    auto dialog = wxGetApp().get_web_device_dialog();
-                                    if (dialog) {
-                                        dialog->EndModal(1);
-                                    }
-
-                                    wxGetApp().app_config->set("use_new_connect", "true");
-                                    wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(reload_device_view);
-                                    wxGetApp().mainframe->m_print_enable = true;
-                                    wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventPlateUpdate);
-
-                                    if (!wxGetApp().mainframe->m_printer_view->isSnapmakerPage()) {
-                                        wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                                                               "/web/flutter_web/index.html?path=2");
-                                        auto     real_url = wxGetApp().get_international_url(url);
-                                        wxGetApp().mainframe->load_printer_url(real_url);
-                                    } else {
-                                        if (reload_device_view) {
-                                            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                                                                   "/web/flutter_web/index.html?path=2");
-                                            auto     real_url = wxGetApp().get_international_url(url);
-
-                                            wxGetApp().mainframe->load_printer_url(real_url);
-                                        }
-
-                                    }
-
-                                    auto self = weak_self.lock();
-                                    if (!self) {
-                                        return;
-                                    }
-
-                                    wxGetApp().app_config->clear_filament_extruder_map();
-
-                                    if (self->m_wcp_cache.count("deviceFilamentInfo")) {
-                                        try {
-                                            // Flutter writers encode this cache value inconsistently:
-                                            // one path jsonEncodes the payload once, another encodes it
-                                            // twice. Unwrap the extra string layer instead of assuming
-                                            // an object with a "value" key (operator[] would throw).
-                                            json value;
-                                            std::string value_str;
-                                            if (self->m_wcp_cache["deviceFilamentInfo"].is_string()) {
-                                                value_str = self->m_wcp_cache["deviceFilamentInfo"].get<std::string>();
-                                                value     = json::parse(value_str);
-                                                if (value.is_string())
-                                                    value = json::parse(value.get<std::string>());
-                                            } else {
-                                                value = self->m_wcp_cache["deviceFilamentInfo"];
-                                            }
-
-                                            if (value.is_object() && value.contains("value") && value["value"].is_object()) {
-                                                json value_item            = value["value"];
-                                                auto machines     = wxGetApp().app_config->get_devices();
-                                                bool find                  = false;
-                                                for (auto& [key, value] : value_item.items()) {
-                                                    if (find) {
-                                                        break;
-                                                    }
-
-                                                    for (const auto& machine : machines) {
-                                                        if (machine.sn == key && machine.connected) {
-                                                            find = true;
-                                                            json target = json::array();
-                                                            json object = json::object();
-                                                            object["key"] = key;
-                                                            object["value"]    = value.dump();
-                                                            target.push_back(object);
-                                                            self->update_filament_info(target, false);
-                                                            break;
-                                                        }
-                                                    }
-
-                                                }
-                                            } else {
-                                                BOOST_LOG_TRIVIAL(warning) << "[WCP] deviceFilamentInfo cache has unexpected format, skip. type=" << value.type_name()
-                                                                           << " raw=" << (value_str.empty() ? self->m_wcp_cache["deviceFilamentInfo"].dump() : value_str);
-                                            }
-                                        } catch (const std::exception& e) {
-                                            BOOST_LOG_TRIVIAL(error) << "[WCP] deviceFilamentInfo cache parse failed: " << e.what();
-                                        }
-                                    }
-
-                                    auto mqtt_self = dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(self);
-                                    mqtt_self->clean_current_engine();
-                                    self->send_to_js();
-                                    self->finish_job();
-                                });
-
-                        });
-                    }
-
-                } else {
-                    handle_general_fail(-1, "param [ip] required");
-                }
-            } else {
-                handle_general_fail();
-            }
-        } else {
-            handle_general_fail();
-        }
-
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MqttAgent_Instance::sw_mqtt_publish()
-{
-    try {
-        if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
-            handle_general_fail(-1, "param [id] is required or wrong type");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_publish host created failed"), DEVICE_PBLISH_ERR);
-            return;
-        }
-
-        std::string id = m_param_data["id"].get<std::string>();
-
-        if (!validate_id(id)) {
-            handle_general_fail(-1, "id is illegal");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_publish id is illegal"), DEVICE_PBLISH_ERR);
-            return;
-        }
-
-        if (!m_param_data.count("topic") || !m_param_data["topic"].is_string()) {
-            handle_general_fail(-1, "param [topic] is required or wrong type");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_publish param [topic] is required or wrong type"), DEVICE_PBLISH_ERR);
-            return;
-        }
-        std::string topic = m_param_data["topic"].get<std::string>();
-
-        if (!m_param_data.count("qos") || !m_param_data["qos"].is_number()) {
-            handle_general_fail(-1, "param [qos] is required or wrong type");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_publish param [qos] is required or wrong type"), DEVICE_PBLISH_ERR);
-            return;
-        }
-        int qos = m_param_data["qos"].get<int>();
-
-        if (!m_param_data.count("payload") || !m_param_data["payload"].is_string()) {
-            handle_general_fail(-1, "param [payload] required");
-            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_publish param [payload] required"), DEVICE_PBLISH_ERR);
-            return;
-        }
-        std::string payload = m_param_data["payload"].get<std::string>();
-
-
-        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
-        auto                          engine   = get_current_engine();
-
-        if (m_work_thread.joinable())
-            m_work_thread.join();
-
-        m_work_thread                          = std::thread([weak_ptr, engine, topic, payload, qos]() {
-            if (!weak_ptr.lock()) {
-                return;
-            }
-            auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
-
-            std::string msg  = "success";
-            bool        flag = engine->Publish(topic, payload, qos, msg);
-
-            wxGetApp().CallAfter([weak_ptr, msg, flag]() {
-                auto self = weak_ptr.lock();
-                if (self) {
-                    if (flag) {
-                        self->m_msg = msg;
-                        self->send_to_js();
-                        self->finish_job();
-                    } else {
-                        self->handle_general_fail(-1, msg);
-                    }
-                }
-            });
-        });
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-
-
-// SSWCP
 TimeoutMap<SSWCP_Instance*, std::shared_ptr<SSWCP_Instance>> SSWCP::m_instance_list;
 constexpr std::chrono::milliseconds SSWCP::DEFAULT_INSTANCE_TIMEOUT;
 
@@ -7763,12 +5554,7 @@ long long   SSWCP::m_active_file_size       = 0;
 
 std::unordered_map<std::string, std::shared_ptr<SSWCP_UserLogin_Instance::SubscribeInfo>>
     SSWCP_UserLogin_Instance::m_subscribe_map;
-std::mutex  SSWCP::m_file_size_mutex;
-
-// WebSocket Debug Server static members
-std::unique_ptr<WebSocketDebugServer> SSWCP::m_debug_server = nullptr;
-std::mutex SSWCP::m_debug_server_mutex;
-bool SSWCP::m_debug_mode_enabled = false;
+std::mutex SSWCP::m_file_size_mutex;
 
 std::unordered_map<std::string, int> SSWCP::m_tab_map = {
     {"Home", MainFrame::TabPosition::tpHome},
@@ -7790,21 +5576,12 @@ std::unordered_set<std::string> SSWCP::m_machine_find_cmd_list = {
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
-    "system.get_device_info",
     "sw_SendGCodes",
     "sw_FileGetStatus",
-    "sw_SystemGetDeviceInfo",
-    "sw_GetMachineState",
-    "sw_SubscribeMachineState",
-    "sw_GetMachineObjects",
-    "sw_SetSubscribeFilter",
-    "sw_StopMachineStateSubscription",
-    "sw_GetPrinterInfo",
     "sw_MachinePrintStart",
     "sw_MachinePrintPause",
     "sw_MachinePrintResume",
     "sw_MachinePrintCancel",
-    "sw_GetMachineSystemInfo",
     "sw_MachineFilesRoots",
     "sw_MachineFilesMetadata",
     "sw_MachineFilesThumbnails",
@@ -7837,7 +5614,6 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_FilesThumbnailsBase64",
     "sw_exception_query",
     "sw_GetFileListPage",
-    "sw_UpdateMachineFilamentInfo",
     "sw_UploadCameraTimelapse",
     "sw_UploadAsyncTimelapseInstance",
     "sw_DeleteCameraTimelapse",
@@ -7852,7 +5628,6 @@ std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {
     "sw_Test_connect",
     "sw_Connect",
     "sw_Disconnect",
-    "sw_GetConnectedMachine",
     "sw_ConnectOtherMachine",
     "sw_GetPincode",
     "sw_SubscribeForegroundChange"
@@ -7862,21 +5637,11 @@ std::unordered_set<std::string> SSWCP::m_project_cmd_list = {
     "sw_NewProject", "sw_OpenProject", "sw_GetRecentProjects", "sw_OpenRecentFile", "sw_DeleteRecentFiles", "sw_SubscribeRecentFiles",
 };
 
-std::unordered_set<std::string> SSWCP::m_login_cmd_list = {"sw_UserLogin", "sw_AskUserLogin", "sw_UserLogout", "sw_GetUserLoginState", "sw_SubscribeUserLoginState",
-                                                           UPDATE_PRIVACY_STATUS,  GET_PRIVACY_STATUS,
+std::unordered_set<std::string> SSWCP::m_login_cmd_list = {UPDATE_PRIVACY_STATUS,  GET_PRIVACY_STATUS,
                                                            FILE_VIEW, OPEN_TIMELAPSE_FOLDER, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN, DOWN_LOAD_FILE, SUBSCRIBE_DOWNLOAD_STATE, UNSUBSCRIBE_DOWNLOAD_STATE, NOTIFY_UPLOAD_TIMELASPE, GET_FILES_FROM_DIR};
-
-std::unordered_set<std::string> SSWCP::m_machine_manage_cmd_list = {
-    "sw_GetLocalDevices", "sw_AddDevice", "sw_SubscribeLocalDevices", "sw_RenameDevice", "sw_SwitchModel", "sw_DeleteDevices",
-    "sw_UpdateDeviceInfo"
-};
 
 std::unordered_set<std::string> SSWCP::m_page_state_cmd_list = {
     "sw_SubscribePageStateChange", "sw_UnsubscribePageStateChange"
-};
-
-std::unordered_set<std::string> SSWCP::m_mqtt_agent_cmd_list = {
-    "sw_create_mqtt_client", "sw_mqtt_connect", "sw_mqtt_disconnect", "sw_mqtt_subscribe", "sw_mqtt_unpublish", "sw_mqtt_publish", "sw_mqtt_set_engine"
 };
 
 std::shared_ptr<SSWCP_Instance> SSWCP::create_sswcp_instance(std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview)
@@ -7893,12 +5658,8 @@ std::shared_ptr<SSWCP_Instance> SSWCP::create_sswcp_instance(std::string cmd, co
         instance = std::make_shared<SSWCP_SliceProject_Instance>(cmd, header, data, event_id, webview);
     } else if (m_login_cmd_list.find(cmd) != m_login_cmd_list.end()) {
         instance = std::make_shared<SSWCP_UserLogin_Instance>(cmd, header, data, event_id, webview);
-    } else if (m_machine_manage_cmd_list.find(cmd) != m_machine_manage_cmd_list.end()) {
-        instance = std::make_shared<SSWCP_MachineManage_Instance>(cmd, header, data, event_id, webview);
     } else if (m_page_state_cmd_list.find(cmd) != m_page_state_cmd_list.end()) {
         instance = std::make_shared<SSWCP_PageStateChange_Instance>(cmd, header, data, event_id, webview);
-    } else if(m_mqtt_agent_cmd_list.find(cmd) != m_mqtt_agent_cmd_list.end()) {
-        instance = std::make_shared<SSWCP_MqttAgent_Instance>(cmd, header, data, event_id, webview);
     }
     else {
         instance = std::make_shared<SSWCP_Instance>(cmd, header, data, event_id, webview);
@@ -7954,46 +5715,6 @@ void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
     }
 }
 
-// Handle incoming web messages for Flutter debug (no webview required)
-void SSWCP::handle_webmsg_for_debug(std::string message) {
-    {
-        WCP_Logger::getInstance().add_log(message, false, "", "WCP", "info");
-
-        json j_message = json::parse(message);
-
-        if (j_message.empty() || !j_message.count("header") || !j_message.count("payload") || !j_message["payload"].count("cmd")) {
-            return;
-        }
-
-        json header = j_message["header"];
-        json payload = j_message["payload"];
-
-        std::string cmd = "";
-        std::string event_id = "";
-        json params;
-
-        if (payload.count("cmd")) {
-            cmd = payload["cmd"].get<std::string>();
-        }
-        if (payload.count("params")) {
-            params = payload["params"];
-        }
-
-        if (payload.count("event_id") && !payload["event_id"].is_null()) {
-            event_id = payload["event_id"].get<std::string>();
-        }
-        std::shared_ptr<SSWCP_Instance> instance = create_sswcp_instance(cmd, header, params, event_id, nullptr);
-        if (instance) {
-            if (event_id != "") {
-                m_instance_list.add_infinite(instance.get(), instance);
-            } else {
-                m_instance_list.add(instance.get(), instance, DEFAULT_INSTANCE_TIMEOUT);
-            }
-            instance->process();
-        }
-    }
-}
-
 // Delete instance from list
 void SSWCP::delete_target(SSWCP_Instance* target) {
     wxGetApp().CallAfter([target]() {
@@ -8004,31 +5725,6 @@ void SSWCP::delete_target(SSWCP_Instance* target) {
 // Extend a one-shot instance's timeout by the default timeout
 void SSWCP::renew_instance_timeout(SSWCP_Instance* instance) {
     m_instance_list.update_timeout(instance, DEFAULT_INSTANCE_TIMEOUT);
-}
-
-// Stop all machine subscriptions
-void SSWCP::stop_subscribe_machine()
-{
-    wxGetApp().CallAfter([]() {
-        std::vector<SSWCP_Instance*> instances_to_stop;
-
-        auto snapshot = m_instance_list.get_snapshot();
-
-        // Get all subscription instances to stop
-        for (const auto& instance : snapshot) {
-            if (instance.second->getType() == SSWCP_MachineFind_Instance::MACHINE_OPTION && instance.second->m_cmd == "sw_SubscribeMachineState") {
-                instances_to_stop.push_back(instance.first);
-            }
-        }
-
-        // Stop each instance
-        for (auto* instance : instances_to_stop) {
-            auto instance_ptr = m_instance_list.get(instance);
-            if (instance_ptr) {
-                (*instance_ptr)->finish_job();
-            }
-        }
-    });
 }
 
 // Stop all machine discovery instances
@@ -8077,24 +5773,6 @@ void SSWCP::on_webview_delete(wxWebView* view)
         }
     }
 
-    auto& device_map = wxGetApp().m_device_card_subscribers;
-    for (auto iter = device_map.begin(); iter != device_map.end();) {
-        if (iter->first == view) {
-            iter = device_map.erase(iter);
-        } else {
-            iter++;
-        }
-    }
-
-    auto& login_map = wxGetApp().m_user_login_subscribers;
-    for (auto iter = login_map.begin(); iter != login_map.end();) {
-        if (iter->first == view) {
-            iter = login_map.erase(iter);
-        } else {
-            iter++;
-        }
-    }
-
     auto& privacy_map = wxGetApp().m_user_update_privacy_subscribers;
     for (auto iter = privacy_map.begin(); iter != privacy_map.end();) {
         if (iter->first == view) {
@@ -8108,15 +5786,6 @@ void SSWCP::on_webview_delete(wxWebView* view)
     for (auto iter = recent_file_map.begin(); iter != recent_file_map.end();) {
         if (iter->first == view) {
             iter = recent_file_map.erase(iter);
-        } else {
-            iter++;
-        }
-    }
-
-    auto& cache_map = wxGetApp().m_cache_subscribers;
-    for (auto iter = cache_map.begin(); iter != cache_map.end();) {
-        if (iter->first.first == view) {
-            iter = cache_map.erase(iter);
         } else {
             iter++;
         }
@@ -8176,223 +5845,10 @@ void SSWCP::update_active_filename(const std::string& filename)
     m_active_gcode_filename = filename;
 }
 
-// query the info of the machine
-bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, MachineInfo& out, int timeout_second)
-{
-    if (!host) return false;
-
-    std::condition_variable cv;
-    std::shared_ptr<std::mutex> mutex(new std::mutex);
-    std::weak_ptr<std::mutex>   cb_mutex = mutex;
-    bool received = false;
-    bool timeout = false;
-    json system_info;
-
-    host->async_get_system_info(
-        [&, cb_mutex](const json& response) {
-            if (cb_mutex.expired()) {
-                return;
-            }
-            std::lock_guard<std::mutex> lock(*mutex);
-            if (!response.is_null() && !response.count("error")) {
-                system_info = response;
-            }
-            received = true;
-            cv.notify_one();
-        }
-    );
-
-    {
-        std::unique_lock<std::mutex> lock(*mutex);
-        auto predicate = [&received]() { return received; };
-        timeout = !cv.wait_for(lock, std::chrono::seconds(timeout_second), predicate);
-    }
-
-    if (!timeout && !system_info.is_null())
-        return SSWCPProtocol::parse_machine_info_response(system_info, out);
-    return false;
-}
-
-
-SSWCPProtocol::ResolveResult SSWCP::resolve_machine_info(std::shared_ptr<PrintHost>& host, int timeout_second)
-{
-    SSWCPProtocol::ResolveResult result;
-    if (!host) return result;
-
-    std::condition_variable cv;
-    std::shared_ptr<std::mutex> mutex(new std::mutex);
-    std::weak_ptr<std::mutex>   cb_mutex = mutex;
-    std::shared_ptr<bool>       done(new bool(false));
-    int                         received_count = 0;
-    const int                   expected_count = 2;
-    json                        system_info;
-    json                        objects_query;
-
-    auto on_system_info = [&, cb_mutex, done](const json& response) {
-        auto locked = cb_mutex.lock();
-        if (!locked) return;
-        std::lock_guard<std::mutex> lock(*locked);
-        if (*done) return;
-        if (!response.is_null() && !response.count("error"))
-            system_info = response;
-        if (++received_count >= expected_count) cv.notify_one();
-    };
-    auto on_objects_query = [&, cb_mutex, done](const json& response) {
-        auto locked = cb_mutex.lock();
-        if (!locked) return;
-        std::lock_guard<std::mutex> lock(*locked);
-        if (*done) return;
-        if (!response.is_null() && !response.count("error"))
-            objects_query = response;
-        if (++received_count >= expected_count) cv.notify_one();
-    };
-
-    // Send both requests in parallel; seq_ids are distinct so they never collide.
-    // Query up to 8 extruder objects. Moonraker ignores keys that don't exist on the printer,
-    // so extra entries are harmless. The parser dynamically discovers whatever is returned.
-    std::vector<std::pair<std::string, std::vector<std::string>>> extruder_targets;
-    extruder_targets.emplace_back("extruder", std::vector<std::string>{});
-    for (int i = 1; i <= 7; ++i)
-        extruder_targets.emplace_back("extruder" + std::to_string(i), std::vector<std::string>{});
-    host->async_get_system_info(on_system_info);
-    host->async_get_machine_info(extruder_targets, on_objects_query);
-
-    {
-        std::unique_lock<std::mutex> lock(*mutex);
-        cv.wait_for(lock, std::chrono::seconds(timeout_second),
-                    [&received_count, expected_count]() { return received_count >= expected_count; });
-        *done = true;
-    }
-    // --- Merge by field priority ---
-    MachineInfo& mi = result.info;
-    // model / device_name: system_info is authoritative, normalized for whitelist safety.
-    MachineInfo sys_mi;
-    bool        got_system = !system_info.is_null() && SSWCPProtocol::parse_machine_info_response(system_info, sys_mi);
-    if (got_system) {
-        mi.model       = SSWCPProtocol::normalize_machine_model(sys_mi.model);
-        mi.device_name = sys_mi.device_name;
-        // system_info nozzle data as fallback
-        mi.nozzle_diameters    = sys_mi.nozzle_diameters;
-        mi.nozzle_volume_types = sys_mi.nozzle_volume_types;
-    }
-    // nozzle: objects.query is preferred (real-time), overrides system_info.
-    std::vector<std::string> obj_diameters, obj_flows;
-    if (!objects_query.is_null() && SSWCPProtocol::parse_extruder_nozzle_info(objects_query, obj_diameters, obj_flows)) {
-        mi.nozzle_diameters    = std::move(obj_diameters);
-        // Only overwrite flows when objects.query actually reported them; otherwise keep
-        // whatever system_info provided so we never silently clear the user's flow config.
-        if (!obj_flows.empty())
-            mi.nozzle_volume_types = std::move(obj_flows);
-    }
-
-    // If the machine reported nozzle diameters but no flow types (neither system_info
-    // nor objects.query carried them), default to standard -- one per nozzle. This
-    // matches the read-side semantics (FlowType::nozzle_volume_types() pads missing
-    // entries with standard) and lets sync always write a complete, usable vector
-    // instead of silently skipping the update.
-    if (!mi.nozzle_diameters.empty() && mi.nozzle_volume_types.empty())
-        mi.nozzle_volume_types.assign(mi.nozzle_diameters.size(), FLOW_MODE_STANDARD);
-
-    // Determine status
-    if (mi.model.empty())
-        result.status = SSWCPProtocol::ResolveStatus::NoResponse;
-    else if (mi.nozzle_diameters.empty())
-        result.status = SSWCPProtocol::ResolveStatus::GotIdentity;
-    else
-        result.status = SSWCPProtocol::ResolveStatus::Complete;
-
-    return result;
-}
-
-
 MachineIPType* MachineIPType::getInstance()
 {
     static MachineIPType mipt_instance;
     return &mipt_instance;
-}
-
-// WebSocket Debug Server implementation
-void SSWCP::enable_debug_mode(bool enable, unsigned short port)
-{
-    std::lock_guard<std::mutex> lock(m_debug_server_mutex);
-
-    if (enable && !m_debug_server) {
-        BOOST_LOG_TRIVIAL(info) << "Enabling WebSocket debug mode on port " << port;
-
-        m_debug_server = std::make_unique<WebSocketDebugServer>(port);
-
-        // Set message callback to handle messages from Flutter Web
-        m_debug_server->set_message_callback([](const std::string& message) {
-            BOOST_LOG_TRIVIAL(debug) << "Received message from Flutter Web via WebSocket";
-
-            // Handle the message using existing logic (no webview in debug/Flutter path)
-            wxGetApp().CallAfter([message]() {
-                SSWCP::handle_webmsg_for_debug(message);
-            });
-        });
-
-        if (m_debug_server->start()) {
-            m_debug_mode_enabled = true;
-            BOOST_LOG_TRIVIAL(debug) << " WebSocket debug mode enabled successfully";
-            BOOST_LOG_TRIVIAL(debug) << " Flutter Web can connect to: ws://localhost:" << port;
-        } else {
-            BOOST_LOG_TRIVIAL(error) << "Failed to start WebSocket debug server";
-            m_debug_server.reset();
-            m_debug_mode_enabled = false;
-        }
-    } else if (!enable && m_debug_server) {
-        BOOST_LOG_TRIVIAL(debug) << "Disabling WebSocket debug mode";
-        m_debug_server->stop();
-        m_debug_server.reset();
-        m_debug_mode_enabled = false;
-    }
-}
-
-void SSWCP::disable_debug_mode()
-{
-    enable_debug_mode(false);
-}
-
-bool SSWCP::is_debug_mode_enabled()
-{
-    std::lock_guard<std::mutex> lock(m_debug_server_mutex);
-    return m_debug_mode_enabled;
-}
-
-void SSWCP::send_message_to_flutter(const std::string& message)
-{
-    std::lock_guard<std::mutex> lock(m_debug_server_mutex);
-
-    if (m_debug_server && m_debug_mode_enabled) {
-        m_debug_server->send_message(message);
-    } else {
-        BOOST_LOG_TRIVIAL(debug) << "Cannot send message: WebSocket debug mode not enabled";
-    }
-}
-
-void SSWCP::send_message_auto(const std::string& message, wxWebView* webview)
-{
-    // Original production path: send via WebView postMessage (unchanged, not affected by debug logic)
-    if (webview && webview->GetRefData()) {
-        BOOST_LOG_TRIVIAL(debug) << "Sending message to Flutter via WebView postMessage";
-        std::string js_code = "window.postMessage(JSON.stringify(" + message + "), '*');";
-        WebView::RunScript(webview, js_code);
-    }
-
-    // Debug path: copy the message to Flutter debug interface via WebSocket (independent of original path)
-    {
-        std::lock_guard<std::mutex> lock(m_debug_server_mutex);
-        if (m_debug_mode_enabled && m_debug_server && m_debug_server->has_client()) {
-            BOOST_LOG_TRIVIAL(debug) << "[DEBUG] Sending message to Flutter via WebSocket";
-            m_debug_server->send_message(message);
-        }
-    }
-
-    // Warning if no channel is available
-    if ((!webview || !webview->GetRefData()) &&
-        (!m_debug_mode_enabled || !m_debug_server || !m_debug_server->has_client())) {
-        BOOST_LOG_TRIVIAL(warning) << "Cannot send message: no WebSocket client and no WebView available";
-    }
 }
 
 }}; // namespace Slic3r::GUI

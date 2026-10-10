@@ -13,7 +13,7 @@
 #include "slic3r/Utils/NetworkAgent.hpp"
 #include "slic3r/GUI/WebViewDialog.hpp"
 #include "slic3r/GUI/WebUserLoginDialog.hpp"
-#include "slic3r/GUI/WebSMUserLoginDialog.hpp"
+#include "slic3r/Utils/GatewayAccount.hpp"
 #include "slic3r/GUI/WebDeviceDialog.hpp"
 #include "slic3r/GUI/WebPreprintDialog.hpp"
 #include "slic3r/GUI/BindDialog.hpp"
@@ -32,9 +32,12 @@
 #include <wx/msgdlg.h>
 
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <stack>
+#include <thread>
 #include <unordered_map>
+#include <vector>
 //#define BBL_HAS_FIRST_PAGE          1
 #define STUDIO_INACTIVE_TIMEOUT     15*60*1000
 #define LOG_FILES_MAX_NUM           30
@@ -77,6 +80,12 @@ class DeviceManager;
 class NetworkAgent;
 class TaskManager;
 
+namespace Gateway {
+class GatewayService;
+struct CurrentDevice;
+struct PreprintStoreResult;
+}
+
 namespace GUI{
 
 class RemovableDriveManager;
@@ -97,7 +106,6 @@ class HMSQuery;
 class ModelMallDialog;
 class PingCodeBindDialog;
 class NetworkErrorDialog;
-
 
 enum FileType
 {
@@ -259,8 +267,6 @@ private:
     bool            m_app_conf_exists{ false };
     EAppMode        m_app_mode{ EAppMode::Editor };
     bool            m_is_recreating_gui{ false };
-    /// Set only for the duration of `MsgUpdateConfig::ShowModal()` in load_flutter_web (atomic: safe vs updater threads + CallAfter).
-    std::atomic<bool> m_flutter_web_config_update_dlg_open{ false };
     /// Set only for the duration of profile/preset `MsgUpdateConfig::ShowModal()` (atomic: safe vs updater threads + CallAfter).
     std::atomic<bool> m_profile_config_update_dlg_open{ false };
 #ifdef __linux__
@@ -327,7 +333,6 @@ private:
 
     // login widget
     ZUserLogin*     login_dlg { nullptr };
-    SMUserLogin*    sm_login_dlg{ nullptr };
 
 
 public:
@@ -352,19 +357,28 @@ private:
 
 public:
     HttpServer       m_page_http_server;
+    mutable std::shared_ptr<Gateway::GatewayService> m_gateway_service;
     
 private:
     bool             m_show_gcode_window{true};
     boost::thread    m_check_network_thread;
 
     std::shared_ptr<PrintHost> m_connected_host = nullptr;
-    std::mutex                 m_cnt_hst_mtx;
+    mutable std::mutex         m_cnt_hst_mtx;
     DynamicPrintConfig              m_host_config;
     std::mutex                 m_host_cfg_mtx;
 
-    wxTimer* m_machine_find_timer = nullptr;
-    std::shared_ptr<Bonjour> m_machine_find_engine = nullptr;
-    const int                m_machine_find_id     = 10086;
+    struct GatewayDeviceState
+    {
+        std::uint64_t generation{0};
+        std::string   serial_number;
+        bool          connected{false};
+        bool          objects_query_active{false};
+        bool          objects_refresh_pending{false};
+        std::string   watched_serial_number;
+    };
+    GatewayDeviceState m_gateway_device;
+    std::string m_gateway_loaded_base_url;
 
   public:
     DynamicPrintConfig*             get_host_config() {
@@ -378,10 +392,6 @@ private:
 
     void import_presets();
 
-    void import_flutter_web();
-
-    void reset_machine_find_engine() { m_machine_find_engine = nullptr; }
-
     void                       set_host_config(const DynamicPrintConfig& config)
     {
         m_host_cfg_mtx.lock();
@@ -390,6 +400,7 @@ private:
     }
     void      get_connect_host(std::shared_ptr<PrintHost>& output);
     void                       set_connect_host(const std::shared_ptr<PrintHost>& intput);
+    bool                       physical_printer_connected() const;
     wxDialog* get_web_device_dialog() { return web_device_dialog; }
     void                       set_web_preprint_dialog(WebPreprintDialog* obj) { web_preprint_dialog = obj; }
     wxDialog*                  get_web_preprint_dialog() { return web_preprint_dialog; }
@@ -409,7 +420,6 @@ private:
     //explicit GUI_App(EAppMode mode = EAppMode::Editor);
     ~GUI_App() override;
 
-    void                   machine_find();
     void show_message_box(std::string msg) { wxMessageBox(msg); }
     EAppMode get_app_mode() const { return m_app_mode; }
     Slic3r::DeviceManager* getDeviceManager() { return m_device_manager; }
@@ -419,14 +429,6 @@ private:
     bool is_editor() const { return m_app_mode == EAppMode::Editor; }
     bool is_gcode_viewer() const { return m_app_mode == EAppMode::GCodeViewer; }
     bool is_recreating_gui() const { return m_is_recreating_gui; }
-    bool flutter_web_config_update_dlg_open() const
-    {
-        return m_flutter_web_config_update_dlg_open.load(std::memory_order_acquire);
-    }
-    void set_flutter_web_config_update_dlg_open(bool v)
-    {
-        m_flutter_web_config_update_dlg_open.store(v, std::memory_order_release);
-    }
     bool profile_config_update_dlg_open() const { return m_profile_config_update_dlg_open.load(std::memory_order_acquire); }
     void set_profile_config_update_dlg_open(bool v) { m_profile_config_update_dlg_open.store(v, std::memory_order_release); }
     std::string logo_name() const { return is_editor() ? "Snapmaker_Orca" : "Snapmaker_Orca-gcodeviewer"; }
@@ -543,70 +545,12 @@ private:
     void            get_login_info();
     bool            is_user_login();
 
-    wxString get_international_url(const wxString& origin_url);
-
-    // SM
-    struct SMUserInfo
-    {
-    public:
-        bool is_user_login() { return m_login; }
-        void set_user_login(bool login)
-        {
-            m_login = login;
-            notify();
-        }
-
-        std::string get_user_name() { return m_login_user_name; }
-        void     set_user_name(const std::string& name) { m_login_user_name = name; }
-
-        std::string get_user_token() { return m_login_user_token; }
-        void     set_user_token(const std::string& token) { m_login_user_token = token; }
-
-        std::string get_user_icon_url() { return m_login_user_icon_url; }
-        void     set_user_icon_url(const std::string& url) { m_login_user_icon_url = url; }
-
-        std::string get_user_id() { return m_login_user_id; }
-        void        set_user_id(const std::string& id) { m_login_user_id = id; }
-
-        std::string get_user_account() { return m_login_user_account; }
-        void        set_user_account(const std::string& account) { m_login_user_account = account; }
-
-        void clear() {
-            m_login_user_name = "";
-            m_login_user_token = "";
-            m_login_user_icon_url = "";
-            m_login_user_id       = "";
-            m_login_user_account  = "";
-            m_login               = false;
-        }
-
-        void notify();
-    private:
-        std::string m_login_user_name = "";
-        std::string m_login_user_token = "";
-        std::string m_login_user_icon_url = "";
-        std::string m_login_user_id       = "";
-        std::string m_login_user_account  = "";
-        bool     m_login = false;
-    };
-
-    SMUserInfo*     sm_get_userinfo() { return &m_login_userinfo; }
-    void            sm_get_login_info();
-    void            sm_request_login(bool show_user_info = false);
-    void            sm_ShowUserLogin(bool show  =  true);
-    void            sm_request_user_logout();
-    void            start_flutter_wcp_timeout_watch();
-    void            on_flutter_wcp_received();
-    void            report_flutter_run_result_once(bool success);
-
-    // Silent login-token maintenance: the Snapmaker access token expires after
-    // ~24 h; a hidden login webview re-runs the cookie session and picks up a
-    // fresh token without user interaction.
-    void            sm_maybe_refresh_login_token();  // due-check + guards; main thread
-    void            sm_on_token_captured(std::size_t refresh_generation); // call on every token acquisition
-    void            sm_stop_silent_token_refresh();  // drop an in-flight silent refresh
-    bool            sm_is_token_refresh_current(std::size_t refresh_generation) const;
-    std::size_t     sm_token_refresh_generation() const { return m_silent_refresh_generation; }
+    // SM login state is owned by the connection gateway. The app only mirrors
+    // GET /api/account / notify.account.changed frames for native consumers
+    // (currently SnapLog identity and the region-switch hint).
+    const Gateway::AccountSnapshot& gateway_account() const { return m_gateway_account; }
+    void                            apply_gateway_account(const Gateway::AccountSnapshot& snapshot);
+    void                            refresh_gateway_account();
 
     void            request_user_logout();
     int             request_user_unbind(std::string dev_id);
@@ -628,7 +572,6 @@ private:
     bool            m_studio_active = true;
     std::chrono::system_clock::time_point  last_active_point;
 
-    void            check_web_version();
     void            check_preset_version();
     void            check_new_version_sf(bool show_tips = false, bool by_user = false);
     // Gray release: POST /config/get (snapmaker-config) first, falls back to check_new_version_sf on failure
@@ -655,11 +598,15 @@ private:
     /// Actual listen port (may differ from PAGE_HTTP_PORT if the default was in use).
     boost::asio::ip::port_type get_page_http_port() const { return m_page_http_server.get_port(); }
 
-    enum class FlutterWebCopyStatus { Ok, UpgradeFailed, InstallFailed, Other };
-    /// Copy bundled flutter_web into the user data directory. On failure, records status for deferred user notification.
-    bool            copy_bundled_flutter_web(bool upgrade);
-    void            report_flutter_web_copy_failure(FlutterWebCopyStatus status);
-    void            try_notify_flutter_web_copy_failure();
+    bool            start_gateway_service(bool restart = false);
+    void            stop_gateway_service();
+    wxString        gateway_web_url(const wxString& page_key) const;
+    std::string     gateway_localfile_url(const std::string& file_path) const;
+    Gateway::PreprintStoreResult gateway_store_preprint_context(const std::string& id, const nlohmann::json& payload) const;
+    bool            is_gateway_url(const wxString& url) const;
+    std::shared_ptr<Gateway::GatewayService> gateway_service() const { return m_gateway_service; }
+    bool            gateway_device_connected() const;
+
     void            switch_staff_pick(bool on);
     bool            check_privacy_update();
     
@@ -672,7 +619,18 @@ private:
 
     bool            switch_language();
     bool            load_language(wxString language, bool initial);
+    std::string     gateway_locale() const;
 
+private:
+    void            register_gateway_notifications();
+    void            query_gateway_current_device();
+    void            query_gateway_device_objects();
+    void            clear_gateway_device();
+    void            apply_gateway_machine_slots(std::vector<ConnectMachineInfo> slots);
+    void            clear_gateway_machine_slots();
+    void            refresh_gateway_machine_slots_ui();
+
+public:
     Tab*            get_tab(Preset::Type type);
     Tab*            get_plate_tab();
     Tab*            get_model_tab(bool part = false);
@@ -860,8 +818,6 @@ private:
     void            update_http_extra_header();
     bool            check_older_app_config(Semver current_version, bool backup);
     void            copy_older_config();
-    void                               copy_web_resources();
-    void            do_notify_flutter_web_copy_failure();
     void            window_pos_save(wxTopLevelWindow* window, const std::string &name);
     bool            window_pos_restore(wxTopLevelWindow* window, const std::string &name, bool default_maximized = false);
     void            window_pos_sanitize(wxTopLevelWindow* window);
@@ -876,55 +832,21 @@ private:
     std::string             m_older_data_dir_path;
     boost::optional<Semver> m_last_config_version;
     bool                    m_config_corrupted { false };
-    FlutterWebCopyStatus    m_flutter_web_copy_status{ FlutterWebCopyStatus::Ok };
-    bool                    m_flutter_web_copy_notified{ false };
-    bool                    m_flutter_wcp_reported{false};
-    std::unique_ptr<wxTimer> m_flutter_wcp_timeout_timer;
-    static constexpr int    FLUTTER_WCP_TIMEOUT_MS = 120 * 1000;
-    void                    on_flutter_wcp_timeout(wxTimerEvent &event);
     std::string             m_open_method;
-    SMUserInfo m_login_userinfo;
-
-    // --- Silent login-token refresh bookkeeping (see sm_maybe_refresh_login_token) ---
-    static constexpr int SM_TOKEN_REFRESH_INTERVAL_H = 12;           // refresh cadence, well inside the 24 h token lifetime
-    static constexpr int SM_TOKEN_REFRESH_RETRY_MIN  = 30;           // min wait after a failed attempt
-    static constexpr int SM_TOKEN_REFRESH_TIMEOUT_S  = 120;          // give up on a single silent attempt
-    static constexpr int SM_TOKEN_CHECK_INTERVAL_MS  = 5 * 60 * 1000; // periodic due-check tick
-
-    std::chrono::system_clock::time_point m_token_last_refresh_success{};
-    std::chrono::system_clock::time_point m_token_last_refresh_attempt{};
-    std::size_t                           m_silent_refresh_generation     = 0;
-    bool     m_sm_silent_refresh_in_progress = false;
-    bool     m_sm_login_dialog_showing       = false;
-    std::unique_ptr<wxTimer>              m_token_check_timer;
-    std::unique_ptr<wxTimer>              m_silent_refresh_timeout_timer;
-    void     on_token_check_timer(wxTimerEvent &event);
-    void     on_silent_refresh_timeout(wxTimerEvent &event);
+    Gateway::AccountSnapshot   m_gateway_account;
+    std::atomic<std::uint64_t> m_gateway_account_refresh_generation{0};
+    std::vector<std::thread>   m_gateway_account_refresh_workers;
 
 public:
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_recent_file_subscribers;
-    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_user_login_subscribers;
-    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_device_card_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_page_state_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_foreground_change_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_user_update_privacy_subscribers;
-    struct CachePairCompare
-    {
-        bool operator()(const std::pair<void*, std::weak_ptr<SSWCP_Instance>>& lhs,
-                        const std::pair<void*, std::weak_ptr<SSWCP_Instance>>& rhs) const
-        {
-            return lhs.first <= rhs.first;
-        }
-    };
-    std::map<std::pair<void*, std::weak_ptr<SSWCP_Instance>>, std::string, CachePairCompare>                     m_cache_subscribers;
-
     void recent_file_notify(const json& res);
-    void user_login_notify(const json& res);
-    void device_card_notify(const json& res);
     void page_state_notify_webview(wxWebView* webview, const std::string& state);
+
     // Push foreground/background state change to all subscribed webview instances
     void notify_foreground_change(const bool active);
-    void cache_notify(const std::string& key, const json& res);
     void user_update_privacy_notify(const bool& res);
 
 public:
@@ -981,20 +903,19 @@ public:
         void reload_all() {
             for (const auto& view : webviews) {
                 auto ptr = view.first;
-                wxString new_url = app->get_international_url(view.second);
-                ptr->LoadURL(new_url);
+                ptr->LoadURL(view.second);
             }
 
             for (const auto& panel : webview_panels) {
                 auto ptr = panel.first;
-                wxString new_url = app->get_international_url(panel.second);
-                ptr->load_url(new_url);
+                wxString url = panel.second;
+                ptr->load_url(url);
             }
 
             for (const auto& prview : printerviews) {
                 auto ptr = prview.first;
-                wxString new_url = app->get_international_url(prview.second.first);
-                ptr->load_url(new_url, prview.second.second);
+                auto     url  = prview.second.first;
+                ptr->load_url(url, prview.second.second);
             }
         }
     };

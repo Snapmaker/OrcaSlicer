@@ -306,10 +306,6 @@ void initSentryEx()
             
             sentry_set_tag("snapmaker_version", Snapmaker_VERSION);
 
-            std::string flutterVersion = common::get_flutter_version();
-            if (!flutterVersion.empty())
-                sentry_set_tag("flutter_version", flutterVersion.c_str());
-
             std::string machineID = common::getMachineId();
             if (!machineID.empty())
                 sentry_set_tag("machine_id", machineID.c_str());
@@ -368,11 +364,6 @@ void sentryReportLogEx(SENTRY_LOG_LEVEL   logLevel,
     sentry_value_t attr = sentry_value_new_attribute(sentry_value_new_string(Snapmaker_VERSION), NULL);
     sentry_value_set_by_key(tags, "snapmaker_version", attr);
 
-    std::string flutterVersion = common::get_flutter_version();
-    if (!flutterVersion.empty()) {
-        sentry_value_t attr = sentry_value_new_attribute(sentry_value_new_string(flutterVersion.c_str()), NULL);
-        sentry_value_set_by_key(tags, "flutter_version", attr);
-    }
     // PC name is personal data; intentionally disabled for privacy.
     // std::string pcName = common::get_pc_name();
     // if (!pcName.empty()) {

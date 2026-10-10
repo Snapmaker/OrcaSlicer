@@ -127,6 +127,7 @@ static std::vector<int> clamp_color_match_weights_mirror(const std::vector<int> 
 {
     const int minimum = std::clamp(min_component_percent, 0, 50);
     std::vector<int> constrained(weights.size(), 0);
+    std::vector<unsigned char> supplied(weights.size(), 0);
     if (constrained.empty())
         return constrained;
 
@@ -134,25 +135,31 @@ static std::vector<int> clamp_color_match_weights_mirror(const std::vector<int> 
     for (size_t idx = 0; idx < weights.size(); ++idx) {
         if (weights[idx] < 0) {
             constrained[idx] = minimum;
+            supplied[idx] = 1;
             ++supplied_participants;
         } else if (weights[idx] > 0) {
             constrained[idx] = std::max(weights[idx], minimum);
+            supplied[idx] = 1;
             ++supplied_participants;
         }
     }
     if (minimum > 0 && supplied_participants < 2) {
         for (size_t idx = 0; idx < weights.size(); ++idx)
-            if (weights[idx] == 0)
+            if (weights[idx] == 0) {
                 constrained[idx] = minimum;
+                supplied[idx] = 1;
+            }
     }
 
     constrained = normalize_color_match_weights_mirror(constrained);
     if (minimum <= 0)
         return constrained;
 
-    std::vector<size_t> active(constrained.size(), 0);
-    for (size_t idx = 0; idx < active.size(); ++idx)
-        active[idx] = idx;
+    std::vector<size_t> active;
+    active.reserve(constrained.size());
+    for (size_t idx = 0; idx < constrained.size(); ++idx)
+        if (supplied[idx])
+            active.emplace_back(idx);
     std::sort(active.begin(), active.end(), [&constrained](size_t lhs, size_t rhs) {
         if (constrained[lhs] != constrained[rhs])
             return constrained[lhs] > constrained[rhs];
@@ -319,6 +326,13 @@ TEST_CASE("Mixed color match weights enforce the configured minimum", "[MixedFil
         const Weights constrained = clamp_color_match_weights_mirror({-20, 43, 77}, 35);
         CHECK(constrained == Weights{0, 35, 65});
         CHECK(clamp_color_match_weights_mirror(constrained, 35) == constrained);
+    }
+
+    SECTION("Preserves excluded zero-weight colors")
+    {
+        CHECK(clamp_color_match_weights_mirror({60, 40, 0}, 15) == Weights{60, 40, 0});
+        CHECK(clamp_color_match_weights_mirror({50, 50, 0}, 15) == Weights{50, 50, 0});
+        CHECK(clamp_color_match_weights_mirror({100, 0, 0}, 15) == Weights{70, 15, 15});
     }
 
     SECTION("Supports two-color and four-color inputs")

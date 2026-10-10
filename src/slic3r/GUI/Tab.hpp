@@ -641,6 +641,10 @@ protected:
 	void		fit_page_to_lines();
 	void		choose_speed_source(const std::string &name);
 	void		save_extruder_preset();
+	// Toggles the selected head's preset as the default for its nozzle size.
+	void		toggle_pinned_preset();
+	// Binds the selected head's unused values to its current nozzle.
+	void		use_head_values();
 	void		on_speed_source_key(wxKeyEvent &event);
 
 private:
@@ -650,12 +654,14 @@ private:
 	// Snapmaker Orca: the line naming the tool heads that print with another process preset.
 	ogStaticText*	m_per_head_process_line = nullptr;
 	HyperLink*		m_per_head_clear_link = nullptr;
+	HyperLink*		m_per_head_use_link = nullptr;
 	// The speed picker row: label, combo and the reset to the automatic preset; the preset name
 	// behind every item ("" for the automatic item and the headers). Cleared with the page.
 	wxStaticText*	m_speed_source_label = nullptr;
 	::ComboBox*		m_speed_source_combo = nullptr;
 	ScalableButton*	m_speed_source_reset = nullptr;
 	ScalableButton*	m_speed_source_save = nullptr;
+	ScalableButton*	m_speed_source_pin = nullptr;
 	int				m_speed_source_label_em = 15;    // the label column of the page the picker is on (15 Speed, 20 Quality)
 	bool			m_speed_source_stacked = false;  // Quality page: the label on its own line above a full-width combo
 	std::vector<std::string> m_speed_source_items;

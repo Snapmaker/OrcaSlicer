@@ -2832,3 +2832,201 @@ TEST_CASE("A table whose width of another nozzle size was dropped validates as t
         CHECK_THAT(Flow::width_at(region.outer_wall_line_width, 1).value, Catch::Matchers::WithinAbs(0.42, 1e-9));
     }
 }
+
+namespace {
+
+const char *const STD_024_06 = "0.24mm Standard @Snapmaker U1 (0.6 nozzle)";
+
+Preset &add_user_process(PresetBundle &bundle, const char *name, const char *parent)
+{
+    const Preset *base = bundle.prints.find_preset(parent, false);
+    REQUIRE(base != nullptr);
+    DynamicPrintConfig config = base->config;
+    config.option<ConfigOptionString>("inherits", true)->value = parent;
+    Preset &preset = bundle.prints.load_preset(std::string(), name, std::move(config), false);
+    preset.is_visible = true;
+    return preset;
+}
+
+void set_every_speed(DynamicPrintConfig &config, const std::string &key, double value)
+{
+    auto *option = dynamic_cast<ConfigOptionVectorBase *>(config.option(key));
+    REQUIRE(option != nullptr);
+    for (size_t column = 0; column < option->size(); ++column)
+        set_wide_column(config, key, column, value);
+}
+
+void select_offsize_plate(PresetBundle &bundle)
+{
+    REQUIRE(bundle.printers.select_preset_by_name("Snapmaker U1 (0.6 nozzle)", true));
+    DynamicPrintConfig &printer = bundle.printers.get_edited_preset().config;
+    printer.set_key_value("nozzle_diameter", new ConfigOptionFloats(OFFSIZE_DIAMETERS));
+    printer.set_key_value("extruder_layer_height", new ConfigOptionFloats(std::vector<double>(HEADS, 0.)));
+    REQUIRE(bundle.prints.select_preset_by_name(STD_024_06, true));
+    bundle.filament_presets = {MATTE_0_6, MATTE_0_4, MATTE_0_6, MATTE_0_6};
+    REQUIRE(bundle.filaments.select_preset_by_name(MATTE_0_6, true));
+}
+
+} // namespace
+
+TEST_CASE("An absolute width of a user preset that is the width source of a tool head raises no warning of a width changed under All tool heads", "[PerHeadProcess][NozzleBound][Profiles]")
+{
+    const bool as_default = GENERATE(false, true);
+    CAPTURE(as_default);
+    const char *const mine  = "My 0.6";
+    using Overrides = std::vector<std::vector<ConfigBase::SetDeserializeItem>>;
+    const auto        plate = [as_default, mine](bool under_all, const Overrides *overrides = nullptr) {
+        return owner_plate_slice(
+            [as_default, mine, under_all](PresetBundle &bundle) {
+                Preset &user = add_user_process(bundle, mine, STD_024_06);
+                PerHeadProcess::set_every_column(user.config, "outer_wall_line_width", FloatOrPercent(0.36, false));
+                if (as_default)
+                    PerHeadProcess::set_pinned(bundle, 2, mine);
+                else
+                    PerHeadProcess::set_chosen(bundle, 2, mine);
+                if (under_all)
+                    bundle.prints.get_edited_preset().config.set_key_value("outer_wall_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.36, false)});
+            },
+            overrides, /*slice_plate=*/false);
+    };
+
+    const std::unique_ptr<OwnerPlateSlice> from_preset = plate(false);
+    REQUIRE(from_preset->sources.size() == HEADS);
+    REQUIRE(PerHeadProcess::width_source(from_preset->sources[2]) != nullptr);
+    REQUIRE(PerHeadProcess::width_source(from_preset->sources[2])->name == mine);
+    REQUIRE(column_text(from_preset->config, "outer_wall_line_width", 2) == "0.36");
+    // 0.36 mm is below the 0.6 mm nozzle of tool head 3.
+    CHECK(outer_wall_width_warnings(from_preset->print).empty());
+
+    const std::unique_ptr<OwnerPlateSlice> from_all = plate(true);
+    REQUIRE(column_text(from_all->config, "outer_wall_line_width", 2) == "0.36");
+    // Below the 0.4, 0.6 and 0.8 mm nozzles, within twice 0.2 mm.
+    CHECK(outer_wall_width_warnings(from_all->print) == std::set<int>{1, 2, 3});
+
+    // An override of the object is no value of the preset.
+    const Overrides on_object = {{{"extruder", "1"}}, {{"extruder", "2"}}, {{"extruder", "3"}, {"outer_wall_line_width", "0.42"}}, {{"extruder", "4"}}};
+    CHECK(outer_wall_width_warnings(plate(false, &on_object)->print) == std::set<int>{2});
+}
+
+TEST_CASE("A speed and a width set for a High Flow tool head reach its G-code under a printer preset with one Standard column per tool head", "[PerHeadProcess][NozzleBound][Profiles]")
+{
+    const bool follows_nozzle = GENERATE(true, false);
+    CAPTURE(follows_nozzle);
+    const auto plate = [follows_nozzle](bool set_for_head) {
+        return owner_plate_slice([follows_nozzle, set_for_head](PresetBundle &bundle) {
+            select_offsize_plate(bundle);
+            bundle.process_follows_nozzle = follows_nozzle;
+            if (!set_for_head)
+                return;
+            DynamicPrintConfig       &process = bundle.prints.get_edited_preset().config;
+            const DynamicPrintConfig &printer = bundle.printers.get_edited_preset().config;
+            PerHeadProcess::widen(process, printer);
+            const std::vector<int> columns = PerHeadProcess::head_columns(process, 1);
+            REQUIRE(columns.size() == 1);
+            REQUIRE(PerHeadProcess::column_for_head(process, 1, nvtHighFlow, printer) < 0);
+            set_wide_column(process, "outer_wall_speed", size_t(columns.front()), 40.);
+            PerHeadProcess::set_head_value(process, 1, "outer_wall_speed", columns.front());
+            set_head_width(bundle, 1, "sparse_infill_line_width", "0.55");
+            PerHeadProcess::stamp_head(process, printer, 1);
+        });
+    };
+
+    const std::unique_ptr<OwnerPlateSlice> reference = plate(false);
+    REQUIRE(outer_wall_feedrates(reference->gcode, 1) != std::set<int>{40 * 60});
+    const auto reference_widths = feature_widths(reference->gcode, 2);
+    REQUIRE(reference_widths.at(1).count("Sparse infill") == 1);
+    REQUIRE_FALSE(all_near(reference_widths.at(1).at("Sparse infill"), 0.55, 0.02));
+
+    const std::unique_ptr<OwnerPlateSlice> slice = plate(true);
+    REQUIRE(slice->print.config().nozzle_volume_type.get_at(1) == int(nvtHighFlow));
+    if (follows_nozzle) {
+        REQUIRE(slice->sources.size() == HEADS);
+        CHECK(slice->sources[1].reason == PerHeadProcess::Reason::HighFlow);
+        CHECK(slice->sources[1].overridden_keys == std::vector<std::string>{"outer_wall_speed", "sparse_infill_line_width"});
+    }
+    CHECK(outer_wall_feedrates(slice->gcode, 1) == std::set<int>{40 * 60});
+    const auto widths = feature_widths(slice->gcode, 2);
+    REQUIRE(widths.at(1).count("Sparse infill") == 1);
+    CHECK(all_near(widths.at(1).at("Sparse infill"), 0.55));
+    for (int tool : {0, 2, 3}) {
+        CAPTURE(tool);
+        CHECK(outer_wall_feedrates(slice->gcode, tool) == outer_wall_feedrates(reference->gcode, tool));
+        REQUIRE(widths.at(tool).count("Sparse infill") == 1);
+        CHECK_FALSE(all_near(widths.at(tool).at("Sparse infill"), 0.55, 0.02));
+    }
+}
+
+TEST_CASE("On a plate of four nozzle sizes the default preset of the 0.6 mm nozzle size prints on the 0.6 mm tool head unless a preset is chosen for it", "[PerHeadProcess][NozzleBound][Profiles]")
+{
+    const char *const mine  = "My 0.6";
+    const char *const other = "My other 0.6";
+    const auto        plate = [mine, other](bool as_default, bool choose_other) {
+        return owner_plate_slice([mine, other, as_default, choose_other](PresetBundle &bundle) {
+            set_every_speed(add_user_process(bundle, mine, STD_024_06).config, "outer_wall_speed", 99.);
+            set_every_speed(add_user_process(bundle, other, STD_024_06).config, "outer_wall_speed", 77.);
+            if (as_default)
+                PerHeadProcess::set_pinned(bundle, 2, mine);
+            if (choose_other)
+                PerHeadProcess::set_chosen(bundle, 2, other);
+        });
+    };
+    const std::unique_ptr<OwnerPlateSlice> by_rule = plate(false, false);
+    REQUIRE(by_rule->sources.size() == HEADS);
+    REQUIRE(by_rule->sources[2].preset != nullptr);
+    REQUIRE(by_rule->sources[2].preset->is_system);
+    REQUIRE(outer_wall_feedrates(by_rule->gcode, 2) != std::set<int>{99 * 60});
+    REQUIRE(outer_wall_feedrates(by_rule->gcode, 2) != std::set<int>{77 * 60});
+
+    SECTION("no preset chosen: the default's outer wall speed, on that tool head alone") {
+        const std::unique_ptr<OwnerPlateSlice> slice = plate(true, false);
+        REQUIRE(slice->sources.size() == HEADS);
+        CHECK_FALSE(PerHeadProcess::any_chosen(slice->bundle));
+        REQUIRE(slice->sources[2].preset != nullptr);
+        CHECK(slice->sources[2].preset->name == mine);
+        CHECK(slice->sources[2].step == PerHeadProcess::Step::Pinned);
+        CHECK(outer_wall_feedrates(slice->gcode, 2) == std::set<int>{99 * 60});
+        for (int tool : {0, 1, 3}) {
+            CAPTURE(tool);
+            CHECK(outer_wall_feedrates(slice->gcode, tool) == outer_wall_feedrates(by_rule->gcode, tool));
+        }
+    }
+
+    SECTION("a preset chosen for the tool head prints in its place") {
+        const std::unique_ptr<OwnerPlateSlice> slice = plate(true, true);
+        REQUIRE(slice->sources.size() == HEADS);
+        REQUIRE(slice->sources[2].preset != nullptr);
+        CHECK(slice->sources[2].preset->name == other);
+        CHECK(slice->sources[2].step == PerHeadProcess::Step::Chosen);
+        CHECK(outer_wall_feedrates(slice->gcode, 2) == std::set<int>{77 * 60});
+    }
+}
+
+TEST_CASE("A default preset without High Flow speeds prints its Standard speeds on a High Flow tool head of its nozzle size", "[PerHeadProcess][NozzleBound][Profiles]")
+{
+    const auto plate = [](bool as_default) {
+        return owner_plate_slice([as_default](PresetBundle &bundle) {
+            select_offsize_plate(bundle);
+            if (as_default)
+                PerHeadProcess::set_pinned(bundle, 1, OWNER_PROCESS);
+        });
+    };
+    const std::unique_ptr<OwnerPlateSlice> by_rule = plate(false);
+    REQUIRE(by_rule->sources.size() == HEADS);
+    REQUIRE(by_rule->sources[1].reason == PerHeadProcess::Reason::HighFlow);
+    const std::set<int> high_flow_rate = outer_wall_feedrates(by_rule->gcode, 1);
+
+    const std::unique_ptr<OwnerPlateSlice> slice = plate(true);
+    REQUIRE(slice->sources.size() == HEADS);
+    REQUIRE(slice->sources[1].preset != nullptr);
+    CHECK(slice->sources[1].preset->name == OWNER_PROCESS);
+    CHECK(slice->sources[1].step == PerHeadProcess::Step::Pinned);
+    CHECK(slice->sources[1].reason == PerHeadProcess::Reason::Derived);
+    CHECK(slice->sources[1].own_standard_variants == std::vector<int>{int(nvtHighFlow)});
+    const std::set<int> standard_rate = {preset_feedrate(*slice->sources[1].preset, "outer_wall_speed", nvtStandard)};
+    REQUIRE(standard_rate != high_flow_rate);
+    CHECK(outer_wall_feedrates(slice->gcode, 1) == standard_rate);
+    for (int tool : {0, 2, 3}) {
+        CAPTURE(tool);
+        CHECK(outer_wall_feedrates(slice->gcode, tool) == outer_wall_feedrates(by_rule->gcode, tool));
+    }
+}

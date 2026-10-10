@@ -39,7 +39,8 @@ enum class Step {
     SameQuality,    // the nearest layer height among the presets of the plate's quality class
     ClassLadder,    // the plate's class has no preset of the head's size: the next class of the ladder (class_used)
     SizeDefault,    // no class matched: the default_print_profile of the head's machine preset
-    FirstByName     // no class matched and no default: the first compatible preset by name
+    FirstByName,    // no class matched and no default: the first compatible preset by name
+    Pinned          // the user's default for the head's nozzle size (pinned_of)
 };
 
 // The state of the process preset the project chose for a tool head (choice_key).
@@ -68,6 +69,7 @@ struct Source
     ChosenState              chosen_state { ChosenState::None };
     std::string              chosen_reason;       // Unfit / Inactive: "size 0.6" (the size of the preset's machine when known), "no machine preset", "no parent"
     const Preset            *automatic { nullptr }; // a chosen head: the preset the rule would give it (nullptr: the selected preset)
+    Step                     automatic_step { Step::SelectedPreset }; // a chosen head: the step of `automatic`
     std::vector<int>         own_standard_variants; // a chosen head: volume types served by the chosen preset's Standard column (it has none of their own)
     NozzleVolumeType         flow { nvtStandard };  // the flow type whose speeds column the head prints (effective_flow)
     bool                     flow_chosen { false };  // `flow` was chosen for the head (flow_key) and is not its nozzle's own
@@ -210,6 +212,8 @@ double made_for(const DynamicPrintConfig &process, size_t head);
 std::vector<std::string> head_keys_in_use(const DynamicPrintConfig &process, const DynamicPrintConfig &printer, size_t head);
 // Records the head's current nozzle size for its values.
 void stamp_head(DynamicPrintConfig &process, const DynamicPrintConfig &printer, size_t head);
+// stamp_head for every head of unknown size.
+bool stamp_unknown(DynamicPrintConfig &process, const DynamicPrintConfig &printer);
 // For a slicing copy, never a preset.
 bool drop_inactive(DynamicPrintConfig &config, const DynamicPrintConfig &printer, std::vector<size_t> *dropped = nullptr);
 
@@ -267,6 +271,10 @@ std::string chosen_of(const PresetBundle &bundle, size_t head);
 void set_chosen(PresetBundle &bundle, size_t head, const std::string &name);
 // Some tool head has a choice.
 bool any_chosen(const PresetBundle &bundle);
+// The user's default preset for the head's nozzle size (key "<printer_model>/<microns>"), "" when none.
+std::string pinned_key(const PresetBundle &bundle, size_t head);
+std::string pinned_of(const PresetBundle &bundle, size_t head);
+void        set_pinned(PresetBundle &bundle, size_t head, const std::string &name);
 // The per-head process table is in use: the preference process_follows_nozzle is on, some head has
 // a choice or some head has a chosen flow in effect (both apply whether the preference is on or
 // off). The one gate every reader of head_sources uses.
@@ -372,6 +380,7 @@ struct LoadReportEntry
     std::string recorded;            // the record, never empty
     std::string current;             // the preset the head prints with now; empty: the selected preset
     Reason      reason { Reason::HomeSize }; // why the head prints with `current`
+    Step        step { Step::SelectedPreset };
     bool        recorded_installed { true }; // the recorded preset is still in the bundle
 };
 

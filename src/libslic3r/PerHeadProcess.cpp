@@ -83,6 +83,10 @@ std::string quality_class(const std::string &preset_name)
 
 namespace {
 
+int                      nozzle_of(const DynamicPrintConfig &printer, size_t head);
+std::vector<std::string> split_marker(const std::string &entry);
+std::string              join_marker(const std::set<std::string> &keys);
+
 bool same_height(double a, double b) { return std::abs(a - b) < EPSILON; }
 
 double layer_height_of(const Preset &preset)
@@ -387,7 +391,14 @@ std::vector<Source> compute_sources(const PresetBundle &bundle, bool with_choice
         const double preferred = heights != nullptr && head < heights->values.size() ? heights->values[head] : 0.;
         Reason        reason   = Reason::Derived;
         RuleTrace     trace;
-        const Preset *by_rule  = source_for_head(bundle, *machine, preferred, selected, std::string(), reason, {}, &trace);
+        const Preset *by_rule  = nullptr;
+        if (const std::string pinned = pinned_of(bundle, head); !pinned.empty())
+            if (const Preset *preset = resolve_chosen(bundle, pinned); preset != nullptr && preset->name != selected.name && fits(bundle, *preset, head)) {
+                by_rule    = preset;
+                trace.step = Step::Pinned;
+            }
+        if (by_rule == nullptr)
+            by_rule = source_for_head(bundle, *machine, preferred, selected, std::string(), reason, {}, &trace);
         if (by_rule == nullptr) {
             source.reason = Reason::NoProcessPreset;
             continue;
@@ -413,7 +424,7 @@ std::vector<Source> compute_sources(const PresetBundle &bundle, bool with_choice
     if (bundle.process_follows_nozzle && parent != nullptr)
         for (size_t head = 0; head < out.size(); ++head) {
             Source &source = out[head];
-            if (source.flow != nvtHighFlow || source.step == Step::Chosen)
+            if (source.flow != nvtHighFlow || source.step == Step::Chosen || source.step == Step::Pinned)
                 continue;
             if (source.reason != Reason::HomeSize && source.reason != Reason::Derived && source.reason != Reason::NotInstalled && source.reason != Reason::Unfit)
                 continue;
@@ -455,8 +466,10 @@ std::vector<Source> head_sources(const PresetBundle &bundle)
     if (any_chosen_head) {
         const std::vector<Source> plain = compute_sources(bundle, false);
         for (size_t head = 0; head < out.size() && head < plain.size(); ++head)
-            if (out[head].step == Step::Chosen)
-                out[head].automatic = plain[head].derived ? plain[head].preset : nullptr;
+            if (out[head].step == Step::Chosen) {
+                out[head].automatic      = plain[head].derived ? plain[head].preset : nullptr;
+                out[head].automatic_step = plain[head].step;
+            }
     }
     return out;
 }
@@ -484,6 +497,30 @@ bool any_chosen(const PresetBundle &bundle)
 {
     const auto *option = bundle.project_config.option<ConfigOptionStrings>(choice_key);
     return option != nullptr && std::any_of(option->values.begin(), option->values.end(), [](const std::string &entry) { return !entry.empty(); });
+}
+
+std::string pinned_key(const PresetBundle &bundle, size_t head)
+{
+    const DynamicPrintConfig &printer = bundle.printers.get_edited_preset().config;
+    const int                 size    = nozzle_of(printer, head);
+    return size > 0 ? printer.opt_string("printer_model") + "/" + std::to_string(size) : std::string();
+}
+
+std::string pinned_of(const PresetBundle &bundle, size_t head)
+{
+    const auto found = bundle.extruder_presets.find(pinned_key(bundle, head));
+    return found == bundle.extruder_presets.end() ? std::string() : found->second;
+}
+
+void set_pinned(PresetBundle &bundle, size_t head, const std::string &name)
+{
+    const std::string key = pinned_key(bundle, head);
+    if (key.empty())
+        return;
+    if (name.empty())
+        bundle.extruder_presets.erase(key);
+    else
+        bundle.extruder_presets[key] = name;
 }
 
 bool active(const PresetBundle &bundle)
@@ -677,7 +714,7 @@ int composed_column(const Source &source, NozzleVolumeType flow, const DynamicPr
     if (!source.derived || source.preset == nullptr)
         return -1;
     const int column = source_column(*source.preset, source.head, flow, printer);
-    if (column >= 0 || source.step != Step::Chosen)
+    if (column >= 0 || (source.step != Step::Chosen && source.step != Step::Pinned))
         return column;
     return shared_column(source.preset->config, nvtStandard);
 }
@@ -806,6 +843,7 @@ std::vector<LoadReportEntry> load_report(const PresetBundle &bundle)
         entry.recorded           = record;
         entry.current            = current;
         entry.reason             = sources[head].reason;
+        entry.step               = sources[head].step;
         entry.recorded_installed = bundle.prints.find_preset(record, false) != nullptr;
         out.emplace_back(std::move(entry));
     }
@@ -887,9 +925,14 @@ bool compose(DynamicPrintConfig &full, const std::set<std::string> &edited, std:
     // layout of the selected preset before it is rewritten.
     std::vector<int> source_columns;
     source_columns.reserve(columns.size());
+    const bool wide = is_wide(full);
     for (const Column &column : columns) {
-        const int index = full.get_index_for_extruder(int(column.head) + 1, "print_extruder_id", head_extruder_type(full, column.head, size_t(heads)),
-                                                      lookup_flow(column), "print_extruder_variant");
+        int index = full.get_index_for_extruder(int(column.head) + 1, "print_extruder_id", head_extruder_type(full, column.head, size_t(heads)),
+                                                lookup_flow(column), "print_extruder_variant");
+        // No column of the flow: the head's own, its values hold in every flow.
+        if (index < 0 && wide)
+            if (const std::vector<int> own = head_columns(full, column.head); !own.empty())
+                index = own.front();
         source_columns.emplace_back(index >= 0 ? index : 0);
     }
 
@@ -907,6 +950,7 @@ bool compose(DynamicPrintConfig &full, const std::set<std::string> &edited, std:
             // automatic source leaves the flow to the selected preset's column (head_sources has
             // already applied the High Flow rule).
             switch (source.step) {
+            case Step::Pinned:
             case Step::Chosen: {
                 index = shared_column(source.preset->config, nvtStandard);
                 std::vector<int> &own = source.own_standard_variants;
@@ -946,6 +990,8 @@ bool compose(DynamicPrintConfig &full, const std::set<std::string> &edited, std:
     DynamicPrintConfig marker_snapshot;
     if (const ConfigOption *marker = full.option(override_key); marker != nullptr)
         marker_snapshot.set_key_value(override_key, marker->clone());
+    // Widths from a user preset count as set for the head (Print::validate).
+    std::vector<std::set<std::string>> preset_widths(columns.size());
 
     for (const std::string &key : print_options_with_variant) {
         if (key == "print_extruder_id" || key == "print_extruder_variant")
@@ -972,6 +1018,8 @@ bool compose(DynamicPrintConfig &full, const std::set<std::string> &edited, std:
                     if (preset_option != nullptr && !preset_option->empty() && preset_option->type() == out->type()) {
                         from  = preset_option;
                         index = shared_column(source_of_width->config, nvtStandard);
+                        if (!source_of_width->is_system)
+                            preset_widths[c].insert(key);
                     }
                 }
             } else if (composed && !marked && preset_columns[c] >= 0) {
@@ -985,6 +1033,14 @@ bool compose(DynamicPrintConfig &full, const std::set<std::string> &edited, std:
         }
         full.set_key_value(key, out.release());
     }
+
+    if (auto *marker = full.option<ConfigOptionStrings>(override_key); marker != nullptr && marker->values.size() == columns.size())
+        for (size_t c = 0; c < columns.size(); ++c)
+            if (!preset_widths[c].empty()) {
+                for (const std::string &key : split_marker(marker->values[c]))
+                    preset_widths[c].insert(key);
+                marker->values[c] = join_marker(preset_widths[c]);
+            }
 
     std::vector<int>         ids;
     std::vector<std::string> variants;
@@ -1603,6 +1659,17 @@ void stamp_head(DynamicPrintConfig &process, const DynamicPrintConfig &printer, 
         tidy_stamps(process);
     else if (const int nozzle = nozzle_of(printer, head); nozzle > 0)
         write_stamp(process, head, nozzle);
+}
+
+bool stamp_unknown(DynamicPrintConfig &process, const DynamicPrintConfig &printer)
+{
+    bool changed = false;
+    for (int head : distinct_heads(layout_of(process)))
+        if (head_values(process, printer, size_t(head)) == HeadValues::Unknown && nozzle_of(printer, size_t(head)) > 0) {
+            stamp_head(process, printer, size_t(head));
+            changed = true;
+        }
+    return changed;
 }
 
 bool drop_inactive(DynamicPrintConfig &config, const DynamicPrintConfig &printer, std::vector<size_t> *dropped)

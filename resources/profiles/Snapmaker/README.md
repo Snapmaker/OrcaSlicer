@@ -104,8 +104,9 @@ printer's columns: the U1 child `0.20mm Standard` becomes `print_extruder_id` 0,
 with Standard / High Flow per head, a one-column preset 0,1,1,2,2,3,3,4,4. The key
 `print_extruder_override` names, per column, the keys set for the column's tool head; it is empty on
 a shared column. Without a value set the preset keeps its vendor layout byte for byte. A value set
-for a tool head lives in both of its flow columns, so a flow change never strands it, and stays with
-the head when its nozzle size changes (the size notice says so). Precedence at slice time: an
+for a tool head lives in both of its flow columns, so a flow change never strands it. It is bound to
+the nozzle size it was set for (`print_extruder_value_nozzle`): kept, not printed, while the head
+carries another size. Precedence at slice time: an
 override of an object, part or layer range (as wide as the shared columns, read by the flow of each
 head) > the value set for the tool head > a value changed under All > the composed source of an
 off-size head > the vendor column. The preference "Process speeds follow the nozzle size" gates the

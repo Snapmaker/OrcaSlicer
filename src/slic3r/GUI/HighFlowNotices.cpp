@@ -525,6 +525,9 @@ wxString automatic_reason(PerHeadProcess::Step step, const std::string &plate_cl
     case PerHeadProcess::Step::FirstByName:
         // TRN Why a tool head prints with a process preset. %1% is a nozzle size
         return format_wxstr(_L("Automatic: the first preset installed for a %1% mm nozzle."), from_u8(head_size));
+    case PerHeadProcess::Step::Pinned:
+        // TRN %1% a nozzle size
+        return format_wxstr(_L("Default for %1% mm nozzles"), from_u8(head_size)) + ".";
     case PerHeadProcess::Step::SelectedPreset:
     case PerHeadProcess::Step::Chosen:
         break;

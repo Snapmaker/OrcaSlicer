@@ -12019,9 +12019,14 @@ std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicP
                     // Snapmaker Orca: a tool head a per-head layout (PerHeadProcess) has no column for
                     // takes the shared column of its flow ("All extruders"), not head 1's value.
                     if (id_name == "print_extruder_id" && PerHeadProcess::is_wide(*this)) {
-                        slot_index = PerHeadProcess::shared_column(*this, nozzle_volume_type);
-                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: the process layout has no column for extruder %2%, nozzle_volume_type %3%; its shared column %4% is used")
-                            % __LINE__ % (e_index + 1) % s_keys_names_NozzleVolumeType[nozzle_volume_type] % slot_index;
+                        // The head's own column first.
+                        if (const std::vector<int> own = PerHeadProcess::head_columns(*this, size_t(e_index)); !own.empty())
+                            slot_index = own.front();
+                        else {
+                            slot_index = PerHeadProcess::shared_column(*this, nozzle_volume_type);
+                            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: the process layout has no column for extruder %2%, nozzle_volume_type %3%; its shared column %4% is used")
+                                % __LINE__ % (e_index + 1) % s_keys_names_NozzleVolumeType[nozzle_volume_type] % slot_index;
+                        }
                     } else
                         // Orca: This is expected during transient UI states (e.g. popup windows),
                         // fall back to 0 silently.

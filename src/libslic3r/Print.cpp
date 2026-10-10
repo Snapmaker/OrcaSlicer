@@ -2934,9 +2934,13 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                 // An absolute width that reached a tool head through All tool heads and lies below
                 // the head's nozzle or above twice it is meant for another nozzle size in all
                 // likelihood: a warning naming the head (the sidebar offers to set it for the head).
-                auto warn_all_width = [&](const ConfigBase &config, const ConfigOptionVector<FloatOrPercent> &widths, const char *opt_key, size_t head) {
+                auto warn_all_width = [&](const ConfigBase &config, const ConfigOptionVector<FloatOrPercent> &widths, const ConfigOptionVector<FloatOrPercent> &print_widths,
+                                          const char *opt_key, size_t head) {
                     const ConfigOptionFloatOrPercent width = Flow::width_at(widths, head);
-                    if (width.percent || width.value <= 0. || marked_on_head(region_config, head, opt_key) || !width_warned.emplace(opt_key, head).second)
+                    const ConfigOptionFloatOrPercent own   = Flow::width_at(print_widths, head);
+                    // A mark covers the print's value, not an override of the item.
+                    const bool exempt = marked_on_head(region_config, head, opt_key) && !own.percent && std::abs(own.value - width.value) < EPSILON;
+                    if (width.percent || width.value <= 0. || exempt || !width_warned.emplace(opt_key, head).second)
                         return;
                     const double nozzle = m_config.nozzle_diameter.get_at(head);
                     if (width.value >= nozzle - EPSILON && width.value <= 2. * nozzle + EPSILON)
@@ -2952,11 +2956,12 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                 };
                 for (const auto &[opt_key, filament] : role_widths) {
                     const size_t head = this->width_slot(filament);
-                    const auto *widths = region_config.option<ConfigOptionFloatsOrPercentsNullable>(opt_key);
-                    if (widths != nullptr)
-                        warn_all_width(region_config, *widths, opt_key, head);
-                    warn_all_width(object->config(), object->config().line_width, "line_width", head);
-                    warn_all_width(m_config, m_config.initial_layer_line_width, "initial_layer_line_width", head);
+                    const auto *widths       = region_config.option<ConfigOptionFloatsOrPercentsNullable>(opt_key);
+                    const auto *print_widths = m_default_region_config.option<ConfigOptionFloatsOrPercentsNullable>(opt_key);
+                    if (widths != nullptr && print_widths != nullptr)
+                        warn_all_width(region_config, *widths, *print_widths, opt_key, head);
+                    warn_all_width(object->config(), object->config().line_width, m_default_object_config.line_width, "line_width", head);
+                    warn_all_width(m_config, m_config.initial_layer_line_width, m_config.initial_layer_line_width, "initial_layer_line_width", head);
                 }
             }
 

@@ -6035,6 +6035,8 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
     // the tool head changes are kept for the import notice.
     this->last_flow_import_report.clear();
     normalize_snapmaker_flow_config(config, this->last_flow_import_report);
+    // Values of unknown size take the nozzle sizes they were saved with.
+    const bool sizes_recorded = printer_technology == ptFFF && PerHeadProcess::stamp_unknown(config, config);
 
 #if 0
     size_t num_extruders = (printer_technology == ptFFF) ?
@@ -6070,6 +6072,8 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
     compatible_prints_condition_values.resize(num_filaments, std::string());
     inherits_values.resize(num_filaments + 2, std::string());
     different_values.resize(num_filaments + 2, std::string());
+    if (sizes_recorded && different_values[0].find(PerHeadProcess::nozzle_key) == std::string::npos)
+        different_values[0] += (different_values[0].empty() ? "" : ";") + std::string(PerHeadProcess::nozzle_key);
     filament_ids.resize(num_filaments, std::string());
     // The "default_filament_profile" will be later extracted into the printer profile.
 	switch (printer_technology) {

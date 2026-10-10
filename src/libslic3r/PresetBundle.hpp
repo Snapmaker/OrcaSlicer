@@ -461,6 +461,8 @@ public:
     // Snapmaker Orca: preference "process_follows_nozzle" (PerHeadProcess.hpp), off unless the application
     // sets it. A preset chosen for a head applies either way (gate: PerHeadProcess::active).
     bool                        process_follows_nozzle { false };
+    // Snapmaker Orca: default process preset per nozzle size (PerHeadProcess::pinned_of).
+    std::map<std::string, std::string> extruder_presets;
     // Session memory of the rule, never stored: (family, machine preset name) -> the user preset
     // a slot left because of its size (NozzleFilament::remember_user_preset()). target_for_slot()
     // prefers it over the system version while it exists, is installed and fits.

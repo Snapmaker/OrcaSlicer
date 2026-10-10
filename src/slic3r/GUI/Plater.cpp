@@ -11841,10 +11841,10 @@ void Sidebar::apply_nozzle_diameter(size_t i, const wxString &diameter_label)
                 const std::string now = after.derived && after.preset != nullptr ? (after.preset->alias.empty() ? after.preset->name : after.preset->alias) : _u8L("the selected preset");
                 choice_inactive = after.chosen_reason.rfind("size ", 0) == 0 ?
                     // TRN %1% the nozzle, %2% the process preset chosen for its tool head, %3% the nozzle size the preset is made for, %4% the new size, %5% the preset the head prints with now
-                    GUI::format(_u8L("Nozzle %1%: %2%, chosen for this extruder in this project, is made for a %3% mm nozzle and does not apply while the nozzle is %4% mm; the extruder uses %5% (automatic)."),
+                    GUI::format(_u8L("Nozzle %1%: %2%, chosen for this extruder in this project, is made for a %3% mm nozzle and does not apply while the nozzle is %4% mm; the extruder uses %5%."),
                                 i + 1, shown, after.chosen_reason.substr(5), diameter_label.ToStdString(), now) :
                     // TRN %1% the nozzle, %2% the process preset chosen for its tool head, %3% the new size, %4% the preset the head prints with now
-                    GUI::format(_u8L("Nozzle %1%: %2%, chosen for this extruder in this project, is not made for a %3% mm nozzle and does not apply; the extruder uses %4% (automatic)."),
+                    GUI::format(_u8L("Nozzle %1%: %2%, chosen for this extruder in this project, is not made for a %3% mm nozzle and does not apply; the extruder uses %4%."),
                                 i + 1, shown, diameter_label.ToStdString(), now);
             } else if (before.chosen_state == ChosenState::Unfit && after.chosen_state == ChosenState::Applied) {
                 notice += "\n";
@@ -12337,7 +12337,8 @@ void Sidebar::update_nozzle_process_hints()
             const bool    high_flow = source != nullptr && printer != nullptr && PerHeadProcess::reads_high_flow(*source, flow_of(i), *printer);
             const wxString shown    = from_u8(preset.alias.empty() ? preset.name : preset.alias);
             // TRN The state of the process preset a tool head prints with: given by the rule; empty for the selected preset itself
-            const wxString state    = is_chosen ? _L("(chosen)") : source != nullptr ? _L("(automatic)") : wxString();
+            const wxString state    = is_chosen ? _L("(chosen)") : source == nullptr ? wxString() :
+                                      source->step == PerHeadProcess::Step::Pinned ? _L("(default)") : _L("(automatic)");
             label = HighFlowNotices::speeds_hint_label(shown, state,
                                                        flow_chosen ? HighFlowNotices::SpeedsNote::StandardChosen :
                                                        high_flow   ? HighFlowNotices::SpeedsNote::HighFlow :
@@ -32871,7 +32872,7 @@ void Plater::check_per_head_process_record()
                 line += " " + _u8L("The option \"Process speeds and line widths follow the nozzle size\" is off.");
             else if (entry.reason == PerHeadProcess::Reason::HomeSize || entry.reason == PerHeadProcess::Reason::NoMachinePreset)
                 line += " " + _u8L("The nozzle size of the extruder changed.");
-            else if (entry.reason == PerHeadProcess::Reason::Derived && entry.recorded_installed) {
+            else if (entry.reason == PerHeadProcess::Reason::Derived && entry.step != PerHeadProcess::Step::Pinned && entry.recorded_installed) {
                 // Both presets installed system presets and the head still derived by the rule: a
                 // project saved by a build whose rule read the layer height before the quality class.
                 const Preset *recorded = bundle->prints.find_preset(entry.recorded, false);

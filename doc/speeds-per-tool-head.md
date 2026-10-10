@@ -210,25 +210,31 @@ follow the new quality.
 ## Values set per extruder and the nozzle size
 
 A value set for an extruder is made for the nozzle that extruder carried. The process preset records that
-size per extruder (`print_extruder_value_nozzle`, microns as text, written when a value is set). While the
-extruder carries another size its values are **not used**: they stay in the preset and in the project, the
-fields under the extruder show what prints and are locked, the entry's tooltip and the line under the row
-say "N values set for X mm, not used", and the link there clears them. They are used again when the size
-returns. Slicing drops them from its copy of the settings (`PerHeadProcess::drop_inactive`, in
-`PresetBundle::full_config_for_print`, the command line and the calibration path); presets and projects are
-never rewritten because of a nozzle size. Values from before this key have no size and print as before,
-until a value is set for that extruder.
+size per extruder (`print_extruder_value_nozzle`, microns as text) when a value is set; a project file
+whose values have no size takes the nozzle sizes it was saved with. While the extruder carries another
+size its values are **not used**: they stay in the preset and in the project, the fields under the
+extruder show what prints and are locked, and the line under the row says "N values set for X mm, not
+used" with two links: **Use for Y mm** binds them to the nozzle the extruder carries now, **Clear**
+removes them. They are used again when the size returns. Slicing drops them from its copy of the
+settings (`PerHeadProcess::drop_inactive`); presets and projects are never rewritten because of a nozzle
+size. Values of an installed preset from before this key have no size and print as before, until a value
+is set for that extruder.
 
-**Save as extruder preset** (the button beside the picker) turns the speeds and line widths set for the
-selected extruder into a user preset that inherits the system preset of that nozzle size. It is chosen
-for the extruder and those values leave the plate's preset; a value also changed under All extruders
-stays set for the extruder, and so do the travel values and the top surface flow ratio, which a chosen
-preset does not supply. Values that are not used are saved for the size they were set for and cleared,
-and the preset is not chosen. A Transfer of values onto a preset that holds values of another nozzle size
-for the same extruder replaces those and says so. The picker lists the preset under "User presets" for every extruder that carries that size, in
-any project.
+**Save as extruder preset** (the save button beside the picker) turns the speeds and line widths set for
+the selected extruder into a user preset that inherits the system preset of that nozzle size. It is
+chosen for the extruder and those values leave the plate's preset; a value also changed under All
+extruders stays set for the extruder, as do the travel values and the top surface flow ratio. Values that
+are not used are saved for the size they were set for and cleared. The picker lists the preset under
+"User presets" for every extruder that carries that size.
 
-Older builds and mainline OrcaSlicer drop the key and apply every value by extruder number.
+**Default for a nozzle size** (the lock button beside the picker) makes the preset the selected extruder
+prints with the default for its nozzle size on this printer model: in every project, an extruder of
+another size than the printer preset that has no choice of its own prints with it ("(default)"). The
+defaults are stored in the application settings (`extruder_presets`); a project's choice comes first.
+
+A Transfer of values onto a preset that holds values of another nozzle size for the same extruder
+replaces those and says so. Older builds and mainline OrcaSlicer drop the key and apply every value by
+extruder number.
 
 ## Where the choice lives and what resets it
 

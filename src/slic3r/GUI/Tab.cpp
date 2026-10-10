@@ -3801,6 +3801,12 @@ void TabPrint::update_description_lines()
             m_per_head_clear_link->SetLabel(head_inactive(head) ? _L("Clear") :
                                             head >= 0 ? HighFlowNotices::clear_head_link_label(quality_page_active()) : _L("Clear the values set per extruder..."));
             m_per_head_clear_link->Show(show);
+            if (m_per_head_use_link != nullptr) {
+                if (head_inactive(head))
+                    // TRN %1% a nozzle size
+                    m_per_head_use_link->SetLabel(format_wxstr(_L("Use for %1% mm"), from_u8(HighFlowNotices::head_nozzle_size_label(m_preset_bundle->printers.get_edited_preset().config, size_t(head)))));
+                m_per_head_use_link->Show(head_inactive(head));
+            }
             if (wxSizer *sizer = m_per_head_clear_link->GetContainingSizer(); sizer != nullptr)
                 sizer->Layout();
         }
@@ -4135,15 +4141,20 @@ wxSizer* TabPrint::per_head_line_widget(wxWindow *parent, int label_em, bool sta
     m_speed_source_save->SetToolTip(_L("Save as extruder preset"));
     m_speed_source_save->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { save_extruder_preset(); });
     row->Add(m_speed_source_save, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, m_em_unit / 2);
+    m_speed_source_pin = new ScalableButton(parent, wxID_ANY, "lock_open");
+    m_speed_source_pin->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { toggle_pinned_preset(); });
+    row->Add(m_speed_source_pin, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, m_em_unit / 2);
     sizer->Add(row, 0, wxEXPAND | wxBOTTOM, 2);
     m_speed_source_label->Hide();
     m_speed_source_combo->Hide();
     m_speed_source_reset->Hide();
     m_speed_source_save->Hide();
+    m_speed_source_pin->Hide();
     forget_on_destroy(m_speed_source_label);
     forget_on_destroy(m_speed_source_combo);
     forget_on_destroy(m_speed_source_reset);
     forget_on_destroy(m_speed_source_save);
+    forget_on_destroy(m_speed_source_pin);
 
     // The line wraps to the width of the page, again on every width change (a narrow sidebar), and
     // the page is laid out for the lines it takes.
@@ -4157,7 +4168,15 @@ wxSizer* TabPrint::per_head_line_widget(wxWindow *parent, int label_em, bool sta
     m_per_head_clear_link->Hide();
     m_per_head_clear_link->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &) { clear_head_values(); });
     forget_on_destroy(m_per_head_clear_link);
-    sizer->Add(m_per_head_clear_link, 0, wxALIGN_LEFT | wxTOP, 2);
+    m_per_head_use_link = new HyperLink(parent, wxEmptyString);
+    m_per_head_use_link->SetFont(wxGetApp().normal_font());
+    m_per_head_use_link->Hide();
+    m_per_head_use_link->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &) { use_head_values(); });
+    forget_on_destroy(m_per_head_use_link);
+    auto *links = new wxBoxSizer(wxHORIZONTAL);
+    links->Add(m_per_head_use_link, 0, wxRIGHT, m_em_unit);
+    links->Add(m_per_head_clear_link, 0);
+    sizer->Add(links, 0, wxALIGN_LEFT | wxTOP, 2);
     return sizer;
 }
 
@@ -4190,7 +4209,8 @@ static std::string preset_width_for_head(const Preset &preset, const char *key, 
 
 void TabPrint::update_speed_source_picker()
 {
-    if (m_speed_source_combo == nullptr || m_speed_source_label == nullptr || m_speed_source_reset == nullptr || m_speed_source_save == nullptr)
+    if (m_speed_source_combo == nullptr || m_speed_source_label == nullptr || m_speed_source_reset == nullptr || m_speed_source_save == nullptr ||
+        m_speed_source_pin == nullptr)
         return;
     const int head = selected_head();
     std::vector<PerHeadProcess::Source> sources;
@@ -4203,6 +4223,7 @@ void TabPrint::update_speed_source_picker()
         m_speed_source_combo->Show(show);
         m_speed_source_reset->Show(show);
         m_speed_source_save->Show(show);
+        m_speed_source_pin->Show(show);
     }
     if (!show) {
         if (wxSizer *sizer = m_speed_source_combo->GetContainingSizer(); sizer != nullptr)
@@ -4245,7 +4266,10 @@ void TabPrint::update_speed_source_picker()
         return item;
     };
     // TRN The first item of the speed picker. %1% is a process preset ("0.24mm Standard")
-    append(automatic != nullptr ? format_wxstr(_L("%1% (automatic)"), from_u8(alias_of(*automatic))) : _L("Selected preset (automatic)"), std::string(), reason);
+    const bool is_default = (source.step == PerHeadProcess::Step::Chosen ? source.automatic_step : source.step) == PerHeadProcess::Step::Pinned;
+    append(automatic == nullptr ? _L("Selected preset (automatic)") :
+           format_wxstr(is_default ? _L("%1% (default)") : _L("%1% (automatic)"), from_u8(alias_of(*automatic))),
+           std::string(), reason);
     // A choice the list does not hold: not installed, not made for this size, inactive.
     int selection = 0;
     if (!source.chosen.empty() && source.chosen_state != ChosenState::Applied && source.chosen_state != ChosenState::SameAsSelected) {
@@ -4299,7 +4323,7 @@ void TabPrint::update_speed_source_picker()
                 // TRN Item tooltip of the speed picker. %1% the layer height the preset is made for, %2% the one the tool head prints
                 tip += "\n" + format_wxstr(_L("Made for %1% mm layers; this extruder prints %2% mm layers."), from_u8(float_to_string_decimal_point(layer->value, 2)),
                                           from_u8(float_to_string_decimal_point(height, 2)));
-            if (candidate.is_automatic)
+            if (candidate.is_automatic && !is_default)
                 tip += "\n" + _L("Also the automatic choice today. Choosing it by name keeps this preset for the extruder when the plate's quality changes; automatic follows the quality.");
             if (candidate.is_selected)
                 tip += "\n" + _L("The selected process preset. Choosing it by name keeps it for the extruder when the plate's preset changes.");
@@ -4315,6 +4339,12 @@ void TabPrint::update_speed_source_picker()
     m_speed_source_combo->SetLabel(m_speed_source_combo->GetString(unsigned(selection)));
     m_speed_source_reset->Show(!source.chosen.empty());
     m_speed_source_save->Enable(!PerHeadProcess::extruder_preset(*m_preset_bundle, size_t(head)).parent.empty());
+    const std::string pinned  = PerHeadProcess::pinned_of(*m_preset_bundle, size_t(head));
+    const bool        derived = source.derived && source.preset != nullptr;
+    m_speed_source_pin->SetBitmap_(derived && source.preset->name == pinned ? "lock_closed" : "lock_open");
+    m_speed_source_pin->Enable(derived);
+    // TRN %1% a nozzle size
+    m_speed_source_pin->SetToolTip(format_wxstr(_L("Default for %1% mm nozzles"), from_u8(size)));
     const bool enabled = source.reason != PerHeadProcess::Reason::NoMachinePreset && source.reason != PerHeadProcess::Reason::NoParent;
     m_speed_source_combo->Enable(enabled);
     m_speed_source_combo->SetToolTip(enabled ? _L("The process preset this extruder takes its speeds, accelerations, jerk and line widths from. Every other setting stays the plate's.") :
@@ -4418,6 +4448,40 @@ void TabPrint::save_extruder_preset()
     }
 }
 
+void TabPrint::toggle_pinned_preset()
+{
+    const int head = selected_head();
+    if (head < 0 || m_preset_bundle == nullptr || m_type != Preset::TYPE_PRINT)
+        return;
+    const std::vector<PerHeadProcess::Source> sources = PerHeadProcess::head_sources(*m_preset_bundle);
+    if (size_t(head) >= sources.size() || !sources[size_t(head)].derived || sources[size_t(head)].preset == nullptr)
+        return;
+    const std::string current = sources[size_t(head)].preset->name;
+    PerHeadProcess::set_pinned(*m_preset_bundle, size_t(head), current == PerHeadProcess::pinned_of(*m_preset_bundle, size_t(head)) ? std::string() : current);
+    wxGetApp().app_config->set_section("extruder_presets", m_preset_bundle->extruder_presets);
+    wxGetApp().app_config->save();
+    reload_config();
+    update_head_entries();
+    update_description_lines();
+    if (Plater *plater = wxGetApp().plater(); plater != nullptr) {
+        plater->sidebar().update_nozzle_process_hints();
+        plater->schedule_background_process();
+    }
+}
+
+void TabPrint::use_head_values()
+{
+    const int head = selected_head();
+    if (!head_inactive(head))
+        return;
+    PerHeadProcess::stamp_head(*m_config, m_preset_bundle->printers.get_edited_preset().config, size_t(head));
+    refresh_after_head_change(false);
+    if (Plater *plater = wxGetApp().plater(); plater != nullptr) {
+        plater->sidebar().update_nozzle_process_hints();
+        plater->schedule_background_process();
+    }
+}
+
 void TabPrint::on_speed_source_key(wxKeyEvent &event)
 {
     ::ComboBox *combo = m_speed_source_combo;
@@ -4476,6 +4540,8 @@ void TabPrint::msw_rescale()
         m_speed_source_reset->msw_rescale();
     if (m_speed_source_save != nullptr)
         m_speed_source_save->msw_rescale();
+    if (m_speed_source_pin != nullptr)
+        m_speed_source_pin->msw_rescale();
 }
 
 void TabPrint::sys_color_changed()
@@ -4485,6 +4551,8 @@ void TabPrint::sys_color_changed()
         m_speed_source_reset->msw_rescale();
     if (m_speed_source_save != nullptr)
         m_speed_source_save->msw_rescale();
+    if (m_speed_source_pin != nullptr)
+        m_speed_source_pin->msw_rescale();
 }
 
 wxString TabPrint::head_selection_description() const
@@ -4848,10 +4916,12 @@ void TabPrint::clear_pages()
     m_top_bottom_shell_thickness_explanation = nullptr;
     m_per_head_process_line = nullptr;
     m_per_head_clear_link   = nullptr;
+    m_per_head_use_link     = nullptr;
     m_speed_source_label    = nullptr;
     m_speed_source_combo    = nullptr;
     m_speed_source_reset    = nullptr;
     m_speed_source_save     = nullptr;
+    m_speed_source_pin      = nullptr;
     m_speed_source_items.clear();
 }
 
@@ -9929,7 +9999,7 @@ void Tab::delete_preset()
         for (size_t head : chosen_heads) {
             const std::string now = head < sources.size() && sources[head].derived && sources[head].preset != nullptr ? alias_of(*sources[head].preset) : _u8L("the selected preset");
             // TRN Notice after a process preset chosen for a tool head was deleted. %1% the preset, %2% the tool head, %3% the preset the head prints with now
-            text += (text.empty() ? "" : "\n") + GUI::format(_u8L("%1% supplied the speeds and line widths of extruder %2% in this project; the extruder uses %3% (automatic) until another preset is chosen."),
+            text += (text.empty() ? "" : "\n") + GUI::format(_u8L("%1% supplied the speeds and line widths of extruder %2% in this project; the extruder uses %3% until another preset is chosen."),
                                                               current_preset.name, head + 1, now);
         }
         wxGetApp().plater()->get_notification_manager()->push_notification(NotificationType::CustomNotification, NotificationManager::NotificationLevel::RegularNotificationLevel, text);
@@ -10766,7 +10836,12 @@ int Tab::head_selection_column(int selection) const
     // The head's column at the flow whose speeds it prints (the Standard column of a High Flow
     // nozzle set to the Standard speeds); a value set for the head lands in both of its columns.
     const int index = m_config->get_index_for_extruder(int(head) + 1, "print_extruder_id", extruder_type, head_speed_flow(head), "print_extruder_variant");
-    return index >= 0 ? index : PerHeadProcess::shared_column(*m_config, head_speed_flow(head));
+    if (index >= 0)
+        return index;
+    // No column of the flow: the head's own, as compose() reads it.
+    if (const std::vector<int> own = PerHeadProcess::head_columns(*m_config, head); PerHeadProcess::is_wide(*m_config) && !own.empty())
+        return own.front();
+    return PerHeadProcess::shared_column(*m_config, head_speed_flow(head));
 }
 
 void Tab::update_head_entries()
@@ -10794,11 +10869,10 @@ void Tab::update_head_entries()
             // TRN %1% is the process preset the user chose for the tool head (its speeds and line widths)
             tip += "\n" + format_wxstr(_L("Preset: %1% (chosen)"), from_u8(alias_of(*sources[size_t(head)].preset)));
         else if (size_t(head) < sources.size() && sources[size_t(head)].derived && sources[size_t(head)].preset != nullptr)
-            tip += "\n" + (PerHeadProcess::reads_high_flow(sources[size_t(head)], head_speed_flow(size_t(head)), printer_config) ?
-                               // TRN %1% a process preset
-                               format_wxstr(_L("Preset: %1%, High Flow (automatic)"), from_u8(alias_of(*sources[size_t(head)].preset))) :
-                               // TRN %1% a process preset
-                               format_wxstr(_L("Preset: %1% (automatic)"), from_u8(alias_of(*sources[size_t(head)].preset))));
+            tip += "\n" + HighFlowNotices::speeds_hint_label(from_u8(alias_of(*sources[size_t(head)].preset)),
+                                                            sources[size_t(head)].step == PerHeadProcess::Step::Pinned ? _L("(default)") : _L("(automatic)"),
+                                                            PerHeadProcess::reads_high_flow(sources[size_t(head)], head_speed_flow(size_t(head)), printer_config) ?
+                                                                HighFlowNotices::SpeedsNote::HighFlow : HighFlowNotices::SpeedsNote::Plain);
         if (!chosen.empty() && (size_t(head) >= sources.size() || sources[size_t(head)].step != PerHeadProcess::Step::Chosen))
             // TRN %1% is a process preset chosen for the tool head that cannot apply now (not installed, another nozzle size)
             tip += "\n" + format_wxstr(_L("%1% (chosen) does not apply now."), from_u8(chosen));

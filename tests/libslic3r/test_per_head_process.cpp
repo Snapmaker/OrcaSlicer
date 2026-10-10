@@ -4701,3 +4701,395 @@ TEST_CASE("A High Flow tool head that prints the selected preset's High Flow spe
     REQUIRE(sources[2].fallback_variants == std::vector<int>{int(nvtHighFlow)});
     CHECK(PerHeadProcess::extruder_preset(*bundle, 2).parent.empty());
 }
+
+TEST_CASE("A High Flow tool head of another size prints the values set for it under a printer preset without a High Flow column", "[PerHeadProcess][NozzleBound][Profiles][nb_high_flow_head_value]")
+{
+    auto bundle = load_snapmaker_bundle();
+    select_u1(*bundle, {0.2, 0.4, 0.2, 0.2}, {0., 0.20, 0., 0.}, STD_012_02, U1_02);
+    bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true)->values = {int(nvtStandard), int(nvtHighFlow), int(nvtStandard), int(nvtStandard)};
+    ScopedTemporaryDir temp_dir("orca_extruder_preset");
+    bundle->prints.update_user_presets_directory(temp_dir.string(), PRESET_PRINT_NAME);
+    const DynamicPrintConfig &edited  = bundle->prints.get_edited_preset().config;
+    const DynamicPrintConfig &printer = bundle->printers.get_edited_preset().config;
+    mark_for_preset(*bundle, 1);
+    // The printer preset declares one Standard column per tool head.
+    REQUIRE(PerHeadProcess::head_columns(edited, 1).size() == 1);
+    REQUIRE(PerHeadProcess::column_for_head(edited, 1, nvtHighFlow, printer) < 0);
+
+    const std::vector<PerHeadProcess::Source> sources = PerHeadProcess::head_sources(*bundle);
+    REQUIRE(sources.size() == 4);
+    REQUIRE(sources[1].derived);
+    REQUIRE(sources[1].preset->name == STD_020_04);
+    CHECK(sources[1].overridden_keys == std::vector<std::string>{"default_acceleration", "outer_wall_speed", "sparse_infill_line_width", "travel_speed"});
+    const DynamicPrintConfig before = sliced(*bundle);
+    REQUIRE(strings_of(before, "print_extruder_variant")[1] == DD_HIGH_FLOW);
+    CHECK(text_at(before, "outer_wall_speed", 1) == "77");
+    CHECK(text_at(before, "sparse_infill_line_width", 1) == "0.7");
+    CHECK(text_at(before, "default_acceleration", 1) == "2500");
+    CHECK(text_at(before, "travel_speed", 1) == "333");
+    bundle->process_follows_nozzle = false;
+    CHECK(printed(*bundle, "outer_wall_speed")[1] == "77");
+    bundle->process_follows_nozzle = true;
+
+    save_extruder_preset(*bundle, 1, "Extruder 2 walls");
+    check_same_values(sliced(*bundle), before);
+}
+
+TEST_CASE("The composed marker of a tool head names the line widths read from a user preset that is its width source", "[PerHeadProcess][NozzleBound][Profiles][nb_width_marker]")
+{
+    auto bundle = load_snapmaker_bundle();
+    select_u1(*bundle, {0.4, 0.8, 0.6, 0.4}, {0., 0., 0., 0.});
+    DynamicPrintConfig       &edited  = bundle->prints.get_edited_preset().config;
+    const DynamicPrintConfig &printer = bundle->printers.get_edited_preset().config;
+    const std::string         key     = "sparse_infill_line_width";
+    const std::string         other   = "outer_wall_line_width";
+    const char *const         mine    = "My 0.6";
+    Preset &user = add_user_process(*bundle, mine, STD_024_06, 99.);
+    PerHeadProcess::set_every_column(user.config, key, FloatOrPercent(0.7, false));
+    PerHeadProcess::set_every_column(user.config, other, FloatOrPercent(0.62, false));
+    CHECK(PerHeadProcess::marker_empty(sliced(*bundle)));
+
+    const bool pinned = GENERATE(false, true);
+    CAPTURE(pinned);
+    if (pinned)
+        PerHeadProcess::set_pinned(*bundle, 2, mine);
+    else
+        PerHeadProcess::set_chosen(*bundle, 2, mine);
+    std::vector<PerHeadProcess::Source> sources;
+    DynamicPrintConfig composed = bundle->full_config_for_print(false, std::nullopt, std::nullopt, &sources);
+    REQUIRE(sources.size() == 4);
+    REQUIRE(ints_of(composed, "print_extruder_id") == std::vector<int>{1, 2, 3, 4});
+    REQUIRE(PerHeadProcess::width_source(sources[2]) != nullptr);
+    CHECK(PerHeadProcess::width_source(sources[2])->name == mine);
+    REQUIRE(PerHeadProcess::width_source(sources[1]) != nullptr);
+    CHECK(PerHeadProcess::width_source(sources[1])->is_system);
+
+    SECTION("the widths of the user preset are named on its tool head, a speed and the widths of a system preset are not") {
+        CHECK(text_at(composed, key, 2) == "0.7");
+        CHECK(text_at(composed, other, 2) == "0.62");
+        CHECK(text_at(composed, "outer_wall_speed", 2) == "99");
+        CHECK(PerHeadProcess::is_marked(composed, 2, key));
+        CHECK(PerHeadProcess::is_marked(composed, 2, other));
+        CHECK_FALSE(PerHeadProcess::is_marked(composed, 2, "outer_wall_speed"));
+        for (size_t head : {size_t(0), size_t(1), size_t(3)}) {
+            INFO("tool head " << head + 1);
+            CHECK(strings_of(composed, OVERRIDE)[head].empty());
+        }
+        const DynamicPrintConfig narrowed = sliced(*bundle);
+        CHECK(PerHeadProcess::is_marked(narrowed, 2, key));
+        CHECK(strings_of(narrowed, OVERRIDE)[1].empty());
+    }
+
+    SECTION("a tool head with a column per flow has them named on both") {
+        bundle->printers.get_edited_preset().config.option<ConfigOptionStrings>("extruder_nozzle_stats", true)->values = std::vector<std::string>(4, "Standard#1|High Flow#1");
+        composed = bundle->full_config_for_print(false);
+        REQUIRE(ints_of(composed, "print_extruder_id") == std::vector<int>{1, 1, 2, 2, 3, 3, 4, 4});
+        for (int column : PerHeadProcess::head_columns(composed, 2)) {
+            CAPTURE(column);
+            CHECK(text_at(composed, key, size_t(column)) == "0.7");
+            CHECK(PerHeadProcess::is_marked(composed, size_t(column), key));
+        }
+        for (int column : PerHeadProcess::head_columns(composed, 1))
+            CHECK(strings_of(composed, OVERRIDE)[size_t(column)].empty());
+    }
+
+    SECTION("a width changed under All tool heads is not named") {
+        edited.set_key_value(key, new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.5, false)});
+        REQUIRE(PerHeadProcess::all_edited_keys(*bundle).count(key) == 1);
+        composed = bundle->full_config_for_print(false);
+        CHECK(text_at(composed, key, 2) == "0.5");
+        CHECK_FALSE(PerHeadProcess::is_marked(composed, 2, key));
+        CHECK(text_at(composed, other, 2) == "0.62");
+        CHECK(PerHeadProcess::is_marked(composed, 2, other));
+    }
+
+    SECTION("the keys the selected preset marks for the tool head stay in its entry") {
+        PerHeadProcess::widen(edited, printer);
+        set_head(edited, 2, "outer_wall_speed", "77");
+        set_head(edited, 2, other, "0.66");
+        composed = bundle->full_config_for_print(false);
+        CHECK(text_at(composed, "outer_wall_speed", 2) == "77");
+        CHECK(text_at(composed, other, 2) == "0.66");
+        CHECK(text_at(composed, key, 2) == "0.7");
+        for (const std::string &named : {std::string("outer_wall_speed"), other, key}) {
+            INFO(named);
+            CHECK(PerHeadProcess::is_marked(composed, 2, named));
+        }
+        CHECK(strings_of(composed, OVERRIDE)[1].empty());
+    }
+}
+
+TEST_CASE("The default preset of a nozzle size is the source of every tool head of that size without a choice", "[PerHeadProcess][NozzleBound][Profiles][nb_pinned]")
+{
+    using PerHeadProcess::Reason;
+    using PerHeadProcess::Step;
+    auto bundle = load_snapmaker_bundle();
+    select_u1(*bundle, {0.4, 0.6, 0.6, 0.8}, {0., 0., 0., 0.});
+    const DynamicPrintConfig &printer = bundle->printers.get_edited_preset().config;
+    const char *const         mine    = "My 0.6";
+    add_user_process(*bundle, mine, STD_024_06, 99.);
+    const std::vector<std::string> by_rule = {"", STD_018_06, STD_018_06, STD_024_08};
+    REQUIRE(source_names(PerHeadProcess::head_sources(*bundle)) == by_rule);
+
+    CHECK(PerHeadProcess::pinned_key(*bundle, 1) == "Snapmaker U1/600");
+    CHECK(PerHeadProcess::pinned_key(*bundle, 4).empty());
+    CHECK(PerHeadProcess::pinned_of(*bundle, 1).empty());
+    PerHeadProcess::set_pinned(*bundle, 1, mine);
+    CHECK(bundle->extruder_presets == std::map<std::string, std::string>{{"Snapmaker U1/600", mine}});
+    CHECK(PerHeadProcess::pinned_of(*bundle, 2) == mine);
+    CHECK(PerHeadProcess::pinned_of(*bundle, 0).empty());
+    CHECK(PerHeadProcess::pinned_of(*bundle, 3).empty());
+
+    std::vector<PerHeadProcess::Source> sources;
+    const DynamicPrintConfig composed = bundle->full_config_for_print(false, std::nullopt, std::nullopt, &sources);
+    REQUIRE(sources.size() == 4);
+    REQUIRE(ints_of(composed, "print_extruder_id") == std::vector<int>{1, 2, 3, 4});
+    CHECK(source_names(sources) == std::vector<std::string>{"", mine, mine, STD_024_08});
+    for (size_t head : {size_t(1), size_t(2)}) {
+        INFO("tool head " << head + 1);
+        CHECK(sources[head].step == Step::Pinned);
+        CHECK(sources[head].reason == Reason::Derived);
+        CHECK(sources[head].chosen_state == PerHeadProcess::ChosenState::None);
+        CHECK(sources[head].automatic == nullptr);
+        for (const std::string &key : PerHeadProcess::composed_keys()) {
+            INFO(key);
+            CHECK(text_at(composed, key, head) == preset_text(*sources[head].preset, key));
+        }
+        CHECK(text_at(composed, "outer_wall_speed", head) == "99");
+    }
+    CHECK(sources[0].step == Step::SelectedPreset);
+    CHECK(sources[3].step == Step::SameQuality);
+
+    SECTION("a preset chosen for a tool head wins and the default is its automatic preset") {
+        PerHeadProcess::set_chosen(*bundle, 1, STD_030_06);
+        sources = PerHeadProcess::head_sources(*bundle);
+        REQUIRE(sources.size() == 4);
+        CHECK(source_names(sources) == std::vector<std::string>{"", STD_030_06, mine, STD_024_08});
+        CHECK(sources[1].step == Step::Chosen);
+        CHECK(sources[1].reason == Reason::Explicit);
+        REQUIRE(sources[1].automatic != nullptr);
+        CHECK(sources[1].automatic->name == mine);
+        CHECK(sources[2].step == Step::Pinned);
+    }
+
+    SECTION("a default that is not installed or is made for another size leaves the rule in charge") {
+        add_user_process(*bundle, "My 0.8", STD_024_08, 88.);
+        const std::string name = GENERATE(std::string("No such preset"), std::string("My 0.8"), std::string(STD_020_04));
+        CAPTURE(name);
+        PerHeadProcess::set_pinned(*bundle, 1, name);
+        REQUIRE(PerHeadProcess::pinned_of(*bundle, 2) == name);
+        sources = PerHeadProcess::head_sources(*bundle);
+        REQUIRE(sources.size() == 4);
+        CHECK(source_names(sources) == by_rule);
+        for (size_t head : {size_t(1), size_t(2)}) {
+            CHECK(sources[head].step == Step::SameQuality);
+            CHECK(sources[head].reason == Reason::Derived);
+        }
+    }
+
+    SECTION("the selected preset is no default") {
+        Preset &both = add_user_process(*bundle, "Both sizes", STD_020_04, 60.);
+        both.config.option<ConfigOptionStrings>("compatible_printers", true)->values = {U1_04, "Snapmaker U1 (0.6 nozzle)"};
+        PerHeadProcess::set_pinned(*bundle, 1, "Both sizes");
+        REQUIRE(source_names(PerHeadProcess::head_sources(*bundle)) == std::vector<std::string>{"", "Both sizes", "Both sizes", STD_024_08});
+        REQUIRE(bundle->prints.select_preset_by_name("Both sizes", true));
+        REQUIRE(bundle->prints.get_selected_preset().name == "Both sizes");
+        sources = PerHeadProcess::head_sources(*bundle);
+        REQUIRE(sources.size() == 4);
+        CHECK(source_names(sources) == by_rule);
+        CHECK(sources[1].step == Step::SameQuality);
+    }
+
+    SECTION("a tool head of the printer preset's size keeps the selected preset") {
+        PerHeadProcess::set_pinned(*bundle, 0, HQ_020_04);
+        REQUIRE(bundle->extruder_presets.count("Snapmaker U1/400") == 1);
+        sources = PerHeadProcess::head_sources(*bundle);
+        REQUIRE(sources.size() == 4);
+        CHECK_FALSE(sources[0].derived);
+        CHECK(sources[0].reason == Reason::HomeSize);
+        CHECK(sources[0].step == Step::SelectedPreset);
+        CHECK(sources[0].preset->name == STD_020_04);
+        CHECK(printed(*bundle, "outer_wall_speed") == std::vector<std::string>{"200", "99", "99", text_at(composed, "outer_wall_speed", 3)});
+    }
+
+    SECTION("with the preference off no tool head takes the default") {
+        bundle->process_follows_nozzle = false;
+        CHECK_FALSE(PerHeadProcess::active(*bundle));
+        sources = PerHeadProcess::head_sources(*bundle);
+        REQUIRE(sources.size() == 4);
+        for (const PerHeadProcess::Source &source : sources) {
+            CHECK_FALSE(source.derived);
+            CHECK(source.reason == Reason::Off);
+        }
+        CHECK(printed(*bundle, "outer_wall_speed") == std::vector<std::string>(4, "200"));
+    }
+
+    SECTION("an empty name removes the default") {
+        PerHeadProcess::set_pinned(*bundle, 2, std::string());
+        CHECK(bundle->extruder_presets.empty());
+        CHECK(PerHeadProcess::pinned_of(*bundle, 1).empty());
+        CHECK(source_names(PerHeadProcess::head_sources(*bundle)) == by_rule);
+    }
+
+    SECTION("the values set for the tool head make a preset of the system parent of the default") {
+        ScopedTemporaryDir temp_dir("orca_extruder_preset");
+        bundle->prints.update_user_presets_directory(temp_dir.string(), PRESET_PRINT_NAME);
+        DynamicPrintConfig &edited = bundle->prints.get_edited_preset().config;
+        PerHeadProcess::widen(edited, printer);
+        set_head(edited, 1, "inner_wall_speed", "88");
+        PerHeadProcess::stamp_head(edited, printer, 1);
+        const DynamicPrintConfig before = sliced(*bundle);
+        CHECK(text_at(before, "outer_wall_speed", 1) == "99");
+        CHECK(text_at(before, "inner_wall_speed", 1) == "88");
+
+        const PerHeadProcess::ExtruderPreset made = save_extruder_preset(*bundle, 1, "Extruder 2 walls");
+        CHECK(made.parent == STD_024_06);
+        CHECK(made.choose);
+        CHECK(text_at(made.config, "outer_wall_speed", 0) == "99");
+        CHECK(text_at(made.config, "inner_wall_speed", 0) == "88");
+        sources = PerHeadProcess::head_sources(*bundle);
+        REQUIRE(sources.size() == 4);
+        CHECK(source_names(sources) == std::vector<std::string>{"", "Extruder 2 walls", mine, STD_024_08});
+        check_same_values(sliced(*bundle), before);
+    }
+}
+
+TEST_CASE("A default preset without a High Flow column gives a High Flow tool head its own Standard values and the High Flow rule leaves it", "[PerHeadProcess][NozzleBound][Profiles][nb_pinned]")
+{
+    using PerHeadProcess::Reason;
+    using PerHeadProcess::Step;
+    auto bundle = load_snapmaker_bundle();
+    select_u1(*bundle, {0.2, 0.4, 0.2, 0.2}, {0., 0., 0., 0.}, HQ_010_02, U1_02);
+    bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true)->values = {int(nvtStandard), int(nvtHighFlow), int(nvtStandard), int(nvtStandard)};
+    const DynamicPrintConfig &printer = bundle->printers.get_edited_preset().config;
+    const Preset             *quality = bundle->prints.find_preset(HQ_020_04, false);
+    REQUIRE(quality != nullptr);
+    REQUIRE(strings_of(quality->config, "print_extruder_variant") == std::vector<std::string>{DD_STANDARD});
+
+    std::vector<PerHeadProcess::Source> sources = PerHeadProcess::head_sources(*bundle);
+    REQUIRE(sources.size() == 4);
+    REQUIRE(sources[1].reason == Reason::HighFlow);
+    REQUIRE(sources[1].preset->name != HQ_020_04);
+
+    PerHeadProcess::set_pinned(*bundle, 1, HQ_020_04);
+    CHECK(PerHeadProcess::pinned_key(*bundle, 1) == "Snapmaker U1/400");
+    const DynamicPrintConfig composed = bundle->full_config_for_print(false, std::nullopt, std::nullopt, &sources);
+    REQUIRE(sources.size() == 4);
+    REQUIRE(sources[1].derived);
+    CHECK(sources[1].preset->name == HQ_020_04);
+    CHECK(sources[1].step == Step::Pinned);
+    CHECK(sources[1].reason == Reason::Derived);
+    CHECK(sources[1].own_standard_variants == std::vector<int>{int(nvtHighFlow)});
+    CHECK(sources[1].fallback_variants.empty());
+    CHECK_FALSE(PerHeadProcess::reads_high_flow(sources[1], nvtHighFlow, printer));
+    CHECK(PerHeadProcess::composed_column(sources[1], nvtHighFlow, printer) == PerHeadProcess::shared_column(quality->config, nvtStandard));
+    CHECK(strings_of(composed, "print_extruder_variant")[1] == DD_HIGH_FLOW);
+    for (const std::string &key : headline_keys()) {
+        INFO(key);
+        CHECK(text_at(composed, key, 1) == preset_text(*quality, key));
+    }
+}
+
+TEST_CASE("Stamping the values of unknown size records the nozzle of every tool head with a marked key and no entry", "[PerHeadProcess][NozzleBound][nb_stamp_unknown]")
+{
+    const DynamicPrintConfig printer = u1_like_printer({0.2, 0.4, 0.6, 0.8});
+    DynamicPrintConfig       config  = flow_only_process();
+
+    SECTION("a config without a marked key is left as it is") {
+        const bool wide = GENERATE(false, true);
+        CAPTURE(wide);
+        if (wide)
+            PerHeadProcess::widen(config, printer);
+        const DynamicPrintConfig before = config;
+        CHECK_FALSE(PerHeadProcess::stamp_unknown(config, printer));
+        check_same(config, before);
+        CHECK_FALSE(config.has(NOZZLE));
+    }
+
+    SECTION("the tool heads without an entry take their nozzle and a recorded size stays") {
+        PerHeadProcess::widen(config, printer);
+        set_head(config, 0, "outer_wall_speed", "90");
+        set_head(config, 2, "outer_wall_speed", "110");
+        set_head(config, 3, "travel_speed", "300");
+        PerHeadProcess::stamp_head(config, u1_like_printer({0.2, 0.4, 0.4, 0.8}), 2);
+        REQUIRE(stamps_of(config) == std::vector<std::string>{"", "", "400"});
+        DynamicPrintConfig expected = config;
+        expected.set_key_value(NOZZLE, new ConfigOptionStrings({"200", "", "400", "800"}));
+
+        CHECK(PerHeadProcess::stamp_unknown(config, printer));
+        check_same(config, expected);
+        CHECK(PerHeadProcess::head_values(config, printer, 0) == HeadValues::InUse);
+        CHECK(PerHeadProcess::head_values(config, printer, 1) == HeadValues::None);
+        CHECK(PerHeadProcess::head_values(config, printer, 2) == HeadValues::Inactive);
+        CHECK(PerHeadProcess::head_values(config, printer, 3) == HeadValues::InUse);
+        check_invariants(config);
+
+        CHECK_FALSE(PerHeadProcess::stamp_unknown(config, printer));
+        CHECK_FALSE(PerHeadProcess::stamp_unknown(config, u1_like_printer({0.6, 0.6, 0.6, 0.6})));
+        check_same(config, expected);
+    }
+
+    SECTION("a tool head the printer has no nozzle for is not stamped") {
+        PerHeadProcess::widen(config, printer);
+        set_head(config, 3, "outer_wall_speed", "90");
+        CHECK_FALSE(PerHeadProcess::stamp_unknown(config, three_head_printer()));
+        CHECK_FALSE(config.has(NOZZLE));
+    }
+}
+
+TEST_CASE("A project loads the values set for a tool head without a recorded nozzle size as set for the nozzle sizes it was saved with", "[PerHeadProcess][NozzleBound][Profiles][nb_project_stamp]")
+{
+    auto bundle = load_snapmaker_bundle();
+    select_u1(*bundle, {0.2, 0.4, 0.6, 0.4}, {0., 0., 0., 0.});
+    bundle->project_config.option<ConfigOptionStrings>("filament_colour", true)->values = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    DynamicPrintConfig &printer = bundle->printers.get_edited_preset().config;
+    DynamicPrintConfig &edited  = bundle->prints.get_edited_preset().config;
+    PerHeadProcess::widen(edited, printer);
+    set_head(edited, 0, "outer_wall_speed", "77");
+    set_head(edited, 2, "sparse_infill_line_width", "0.7");
+    REQUIRE(stamps_of(edited).empty());
+
+    auto          reloaded = load_snapmaker_bundle();
+    PresetBundle &second   = *reloaded;
+    second.process_follows_nozzle = true;
+    const DynamicPrintConfig &loaded         = second.prints.get_edited_preset().config;
+    DynamicPrintConfig       &loaded_printer = second.printers.get_edited_preset().config;
+    Semver                    file_version;
+
+    SECTION("a file without the key: every tool head with values takes the nozzle size of the project") {
+        DynamicPrintConfig project = project_round_trip(bundle->full_config_secure(), file_version);
+        REQUIRE(stamps_of(project).empty());
+        project.erase(NOZZLE);
+        std::vector<std::string> different;
+        Slic3r::unescape_strings_cstyle(strings_of(project, "different_settings_to_system")[0], different);
+        REQUIRE(std::find(different.begin(), different.end(), NOZZLE) == different.end());
+        second.load_config_model("older.3mf", std::move(project), file_version);
+
+        CHECK(stamps_of(loaded) == std::vector<std::string>{"200", "", "600"});
+        CHECK(PerHeadProcess::head_values(loaded, loaded_printer, 0) == HeadValues::InUse);
+        CHECK(PerHeadProcess::head_values(loaded, loaded_printer, 2) == HeadValues::InUse);
+        CHECK(printed(second, "outer_wall_speed")[0] == "77");
+        CHECK(printed(second, "sparse_infill_line_width")[2] == "0.7");
+        set_nozzle(loaded_printer, 0, 0.6);
+        CHECK(PerHeadProcess::head_values(loaded, loaded_printer, 0) == HeadValues::Inactive);
+        CHECK(printed(second, "outer_wall_speed")[0] != "77");
+    }
+
+    SECTION("an entry recorded for another size stays and its values are inactive") {
+        PerHeadProcess::stamp_head(edited, printer, 0);
+        set_nozzle(printer, 0, 0.6);
+        DynamicPrintConfig project = project_round_trip(bundle->full_config_secure(), file_version);
+        REQUIRE(stamps_of(project) == std::vector<std::string>{"200"});
+        second.load_config_model("nozzle_bound.3mf", std::move(project), file_version);
+
+        CHECK(stamps_of(loaded) == std::vector<std::string>{"200", "", "600"});
+        CHECK(PerHeadProcess::head_values(loaded, loaded_printer, 0) == HeadValues::Inactive);
+        CHECK(PerHeadProcess::head_values(loaded, loaded_printer, 2) == HeadValues::InUse);
+        CHECK(printed(second, "outer_wall_speed")[0] != "77");
+        CHECK(printed(second, "sparse_infill_line_width")[2] == "0.7");
+    }
+
+    CHECK(ints_of(loaded, "print_extruder_id") == U1_WIDE_IDS);
+    CHECK(strings_of(loaded, OVERRIDE) == strings_of(edited, OVERRIDE));
+    check_same_values(loaded, edited);
+}

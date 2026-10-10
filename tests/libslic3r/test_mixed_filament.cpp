@@ -160,9 +160,9 @@ static std::vector<int> clamp_color_match_weights_mirror(const std::vector<int> 
     for (size_t idx = 0; idx < constrained.size(); ++idx)
         if (supplied[idx])
             active.emplace_back(idx);
-    std::sort(active.begin(), active.end(), [&constrained](size_t lhs, size_t rhs) {
-        if (constrained[lhs] != constrained[rhs])
-            return constrained[lhs] > constrained[rhs];
+    std::sort(active.begin(), active.end(), [&weights](size_t lhs, size_t rhs) {
+        if (weights[lhs] != weights[rhs])
+            return weights[lhs] > weights[rhs];
         return lhs < rhs;
     });
     const size_t max_active = std::min<size_t>(active.size(), size_t(100 / minimum));
@@ -344,7 +344,7 @@ TEST_CASE("Mixed color match weights enforce the configured minimum", "[MixedFil
             CHECK((weight == 0 || weight >= 15));
 
         const Weights four_colors_at_high_minimum = clamp_color_match_weights_mirror({10, 20, 30, 40}, 40);
-        CHECK(four_colors_at_high_minimum == Weights{60, 40, 0, 0});
+        CHECK(four_colors_at_high_minimum == Weights{0, 0, 40, 60});
     }
 
     SECTION("Clamping is idempotent and preserves excluded colors")
@@ -358,7 +358,9 @@ TEST_CASE("Mixed color match weights enforce the configured minimum", "[MixedFil
             {{10, 20, 30, 40}, 15},
             {{10, 20, 30, 40}, 40},
         };
-        for (const auto &[input, minimum] : cases) {
+        for (const auto &entry : cases) {
+            const Weights &input  = entry.first;
+            const int     &minimum = entry.second;
             const Weights once = clamp_color_match_weights_mirror(input, minimum);
             CHECK(clamp_color_match_weights_mirror(once, minimum) == once);
         }

@@ -161,9 +161,9 @@ std::vector<int> clamp_color_match_weights_to_minimum(const std::vector<int> &we
     for (size_t idx = 0; idx < constrained.size(); ++idx)
         if (supplied[idx])
             active.emplace_back(idx);
-    std::sort(active.begin(), active.end(), [&constrained](size_t lhs, size_t rhs) {
-        if (constrained[lhs] != constrained[rhs])
-            return constrained[lhs] > constrained[rhs];
+    std::sort(active.begin(), active.end(), [&weights](size_t lhs, size_t rhs) {
+        if (weights[lhs] != weights[rhs])
+            return weights[lhs] > weights[rhs];
         return lhs < rhs;
     });
     const size_t max_active = std::min<size_t>(active.size(), size_t(100 / minimum));

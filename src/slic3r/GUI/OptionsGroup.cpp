@@ -1880,7 +1880,8 @@ bool ogStaticText::wrap_to_current_width()
     if (width <= 0 || width == m_wrapped_width)
         return false;
     m_wrapped_width = width;
-    set_wrapped_label(width);
+    // macOS: the text cell is narrower than the control.
+    set_wrapped_label(std::max(1, width - FromDIP(8)));
     return true;
 }
 

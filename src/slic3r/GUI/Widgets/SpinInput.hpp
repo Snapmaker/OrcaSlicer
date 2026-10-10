@@ -24,6 +24,7 @@ class SpinInput : public wxNavigationEnabled<StaticBox>
     int max;
     int delta;
     int step;
+    bool sanitizing { false };
 
     static const int SpinInputWidth = 200;
     static const int SpinInputHeight = 50;
@@ -96,6 +97,7 @@ private:
     void onTimer(wxTimerEvent &evnet);
     void onTextLostFocus(wxEvent &event);
     void onTextEnter(wxCommandEvent &event);
+    void onTextChanged(wxCommandEvent &event);
 
     void sendSpinEvent();
 

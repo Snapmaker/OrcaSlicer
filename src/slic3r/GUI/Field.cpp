@@ -1168,8 +1168,11 @@ void SpinCtrl::BUILD() {
         bEnterPressed = true;
     }), temp->GetId());
 
-	temp->GetTextCtrl()->Bind(wxEVT_TEXT, ([this, temp](wxCommandEvent e)
-	{
+    // By-ref + Skip(): wx dispatches dynamically bound handlers in LIFO
+    // order, so skipping here lets the sanitizer bound inside SpinInput
+    // (IME input on macOS/Linux bypasses the wxTextValidator) run too.
+    temp->GetTextCtrl()->Bind(wxEVT_TEXT, ([this, temp](wxCommandEvent &e)
+    {
 // 		# On OSX / Cocoa, SpinInput::GetValue() doesn't return the new value
 // 		# when it was changed from the text control, so the on_change callback
 // 		# gets the old one, and on_kill_focus resets the control to the old value.
@@ -1203,6 +1206,7 @@ void SpinCtrl::BUILD() {
             }
 #endif
         }
+        e.Skip();
 	}), temp->GetTextCtrl()->GetId());
 
 	temp->SetToolTip(get_tooltip_text(text_value));

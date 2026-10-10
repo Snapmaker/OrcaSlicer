@@ -65,6 +65,7 @@ void SpinInput::Create(wxWindow *parent,
     state_handler.attach_child(text_ctrl);
     text_ctrl->Bind(wxEVT_KILL_FOCUS, &SpinInput::onTextLostFocus, this);
     text_ctrl->Bind(wxEVT_TEXT_ENTER, &SpinInput::onTextEnter, this);
+    text_ctrl->Bind(wxEVT_TEXT, &SpinInput::onTextChanged, this);
     text_ctrl->Bind(wxEVT_KEY_DOWN, &SpinInput::keyPressed, this);
     text_ctrl->Bind(wxEVT_RIGHT_DOWN, [this](auto &e) {}); // disable context menu
     button_inc = createButton(true);
@@ -279,11 +280,54 @@ void SpinInput::onTextLostFocus(wxEvent &event)
     e.Skip();
 }
 
+/*
+ * The wxTextValidator can only veto characters arriving as a vetoable
+ * wxEVT_CHAR. Text committed by IMEs or dead keys on macOS/Linux is inserted
+ * without such an event, so re-check the text after every change and drop
+ * whatever cannot be part of an integer.
+ */
+void SpinInput::onTextChanged(wxCommandEvent &event)
+{
+    if (!sanitizing) {
+        const wxString current = text_ctrl->GetValue();
+        wxString       digits;
+        for (const wxUniChar &ch : current) {
+            if (ch >= '0' && ch <= '9') { digits += ch; }
+        }
+        const wxString cleaned = (min < 0 && !current.empty() && current[0] == '-') ? wxString('-') + digits : digits;
+
+        if (cleaned != current) {
+            // Keep the caret on the same kept character, if any.
+            long pos          = text_ctrl->GetInsertionPoint();
+            long kept         = 0;
+            long current_len  = static_cast<long>(current.length());
+            long cleaned_len  = static_cast<long>(cleaned.length());
+            for (long i = 0; i < pos && i < current_len; ++i) {
+                const wxUniChar ch = current[i];
+                if ((ch >= '0' && ch <= '9') || (min < 0 && i == 0 && ch == '-')) { ++kept; }
+            }
+            sanitizing = true;
+            text_ctrl->ChangeValue(cleaned); // ChangeValue: does not emit wxEVT_TEXT, so no recursion
+            text_ctrl->SetInsertionPoint(kept > cleaned_len ? cleaned_len : kept);
+            // Let the wxEVT_TEXT listeners (e.g. Field.cpp) re-parse the sanitized text.
+            wxCommandEvent sanitized_event(wxEVT_TEXT, text_ctrl->GetId());
+            sanitized_event.SetEventObject(text_ctrl);
+            sanitized_event.SetString(cleaned);
+            text_ctrl->GetEventHandler()->ProcessEvent(sanitized_event);
+            sanitizing = false;
+        }
+    }
+    event.Skip();
+}
+
 void SpinInput::onTextEnter(wxCommandEvent &event)
 {
     long value;
-    if (!text_ctrl->GetValue().ToLong(&value)) { value = val; }
-    if (value != val) {
+    if (!text_ctrl->GetValue().ToLong(&value)) {
+        // Not a number (e.g. empty after wiping illegal input): restore the
+        // last valid value, matching the blocked-input behaviour on Windows.
+        SetValue(val);
+    } else if (value != val) {
         SetValue(value);
         sendSpinEvent();
     }

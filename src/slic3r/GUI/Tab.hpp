@@ -643,8 +643,7 @@ private:
 	wxString	per_head_process_description() const;
 	ogStaticText*	m_recommended_thin_wall_thickness_description_line = nullptr;
 	ogStaticText*	m_top_bottom_shell_thickness_explanation = nullptr;
-	// Snapmaker Orca: the line on the Speed page that names the process presets the tool heads of
-	// another nozzle size print with (libslic3r/PerHeadProcess.hpp).
+	// Snapmaker Orca: the line naming the tool heads that print with another process preset.
 	ogStaticText*	m_per_head_process_line = nullptr;
 	HyperLink*		m_per_head_clear_link = nullptr;
 	// The speed picker row: label, combo and the reset to the automatic preset; the preset name
@@ -652,7 +651,6 @@ private:
 	wxStaticText*	m_speed_source_label = nullptr;
 	::ComboBox*		m_speed_source_combo = nullptr;
 	ScalableButton*	m_speed_source_reset = nullptr;
-	ogStaticText*	m_speed_source_note = nullptr;   // the line under the picker: what the preset supplies on this page
 	int				m_speed_source_label_em = 15;    // the label column of the page the picker is on (15 Speed, 20 Quality)
 	bool			m_speed_source_stacked = false;  // Quality page: the label on its own line above a full-width combo
 	std::vector<std::string> m_speed_source_items;

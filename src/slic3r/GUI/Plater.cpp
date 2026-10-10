@@ -1464,7 +1464,6 @@ struct NozzlePage
     wxPanel      *panel { nullptr };
     wxStaticText *diameter_label { nullptr };
     wxStaticText *flow_label { nullptr };
-    ogStaticText *flow_hint { nullptr };            // the reason line of a ruled out Flow row, wrapped to the page; may be nullptr
     wxStaticText *layer_height_label { nullptr };
     ogStaticText *process_hint { nullptr };         // the process preset the tool head prints with (PerHeadProcess), wrapped to the page; may be nullptr
     ComboBox     *diameter { nullptr };
@@ -1513,12 +1512,6 @@ static void layout_nozzle_page(const NozzlePage &page)
     };
     add_row(page.diameter_label, page.diameter);
     add_row(page.flow_label, page.flow);
-    if (page.flow_hint != nullptr) {
-        page.flow_hint->SetMinSize({ panel->FromDIP(40), -1 });   // never widen the page: the hint wraps to it (ogStaticText::WrapToWidth)
-        auto *hint_row = new wxBoxSizer(wxHORIZONTAL);
-        hint_row->Add(page.flow_hint, 1, wxLEFT, label_w + col_gap);
-        rows->Add(hint_row, 0, wxEXPAND | wxTOP, hint_gap);
-    }
     add_row(page.layer_height_label, page.layer_height);
     for (ogStaticText *hint : { page.layer_height_hint, page.layer_height_link }) {
         if (hint == nullptr)
@@ -11576,15 +11569,11 @@ void Sidebar::update_nozzle_layer_height_hints()
             const ExtruderLayerHeightNote &note = notes[i];
             if (note.off_grid) {
                 warning = true;
-                // TRN Warning under the preferred layer height of a nozzle tab. %1% the entered height, %2% the height it prints at, %3% the object layer height, all in mm
-                text = format_wxstr(_L("%1% mm is not on this plate's layer grid and prints at %2% mm (object layer height %3% mm)."),
-                                    number(note.preferred), number(note.printed), number(note.grid));
-            } else if (note.preferred <= 0. && (std::abs(note.printed - base) > 1e-6 || std::abs(note.grid - base) > 1e-6)) {
-                // TRN Under the preferred layer height Default of a nozzle tab. %1% the height it prints at, %2% the object layer height, in mm
-                text = format_wxstr(_L("Default: prints %1% mm layers (object layer height %2% mm)."), number(note.printed), number(note.grid));
-            } else if (note.preferred > 0. && std::abs(note.grid - base) > 1e-6) {
-                // TRN Under the preferred layer height of a nozzle tab. %1% the height it prints at, %2% the object layer height, in mm
-                text = format_wxstr(_L("Prints %1% mm layers (object layer height %2% mm)."), number(note.printed), number(note.grid));
+                // TRN %1% the printed layer height
+                text = format_wxstr(_L("Prints at %1% mm."), number(note.printed));
+            } else if (note.preferred <= 0. && std::abs(note.printed - base) > 1e-6) {
+                // TRN %1% the printed layer height
+                text = format_wxstr(_L("Prints %1% mm layers."), number(note.printed));
             }
         }
         ogStaticText *hint = page.layer_height_hint;
@@ -12012,9 +12001,6 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             // Do not event.Skip(): see the diameter combo.
         });
         p->m_nozzle_flow_lists.push_back(flow_combo);
-        // The reason of a ruled out Flow row, under it: a fact in the colour of the disabled combo
-        // text, no warning. Text and visibility come from update_nozzle_flow_values().
-        page.flow_hint = make_hint();
 
         // Preferred layer height row: the layer height this extruder should print with (the
         // "extruder_layer_height" printer option), stored as entered.
@@ -12156,9 +12142,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         });
         p->m_nozzle_layer_height_lists.push_back(lh_field);
 
-        // Under the row: the height the extruder prints when it differs from the entered one or the
-        // object layer height changes for slicing; a warning in orange for an entered height off the
-        // grid, with the way to print every entered height exactly. Filled by update_nozzle_layer_height_hints().
+        // Filled by update_nozzle_layer_height_hints().
         page.layer_height_hint = make_hint();
         page.layer_height_link = make_hint();
         page.layer_height_link->SetForegroundColour(wxColour("#009688"));
@@ -12174,7 +12158,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         page.layer_height_link->Bind(wxEVT_LEFT_DOWN, [](wxMouseEvent &) { wxGetApp().CallAfter([]() { print_exact_layer_heights(); }); });
 
         // The process preset a tool head of another nozzle size prints with (PerHeadProcess), under
-        // the rows, in the style of the Flow hint. Text and visibility come from
+        // the rows. Text and visibility come from
         // update_nozzle_process_hints(). A click leads to the speed picker of the Process tab.
         page.process_hint = make_hint();
         page.process_hint->SetCursor(wxCursor(wxCURSOR_HAND));
@@ -12266,7 +12250,7 @@ void Sidebar::update_nozzle_values()
 }
 
 // Snapmaker Orca: the nozzle tab hint names the process preset an extruder of another nozzle size
-// prints with (PerHeadProcess.hpp) and its headline values; hidden when it uses the selected preset.
+// prints with (PerHeadProcess.hpp); hidden when it uses the selected preset.
 // Snapmaker Orca: the nozzle tab hint and the notices lead to the speed picker of the Process tab,
 // on the global Speed page with tool head `head` selected and the picker focused.
 static void open_speed_source_picker(size_t head)
@@ -12288,36 +12272,6 @@ void Sidebar::update_nozzle_process_hints()
     const DynamicPrintConfig *process = bundle == nullptr ? nullptr : &bundle->prints.get_edited_preset().config;
     const DynamicPrintConfig *printer = bundle == nullptr ? nullptr : &bundle->printers.get_edited_preset().config;
 
-    // A column of a process key as a whole number ("120").
-    auto column_of = [](const DynamicPrintConfig &config, const char *key, int column) {
-        const auto *option = dynamic_cast<const ConfigOptionVectorBase *>(config.option(key));
-        if (option == nullptr || option->empty())
-            return std::string("-");
-        const std::vector<std::string> values = option->vserialize();
-        return std::to_string(long(std::lround(std::atof(values[column >= 0 && size_t(column) < values.size() ? size_t(column) : 0].c_str()))));
-    };
-    // The value tool head `head` prints with (libslic3r/PerHeadProcess.hpp): its own value when set
-    // for it, else the source's column, else the shared column of its flow.
-    auto effective = [&](size_t head, const PerHeadProcess::Source *source, const char *key) {
-        if (process == nullptr)
-            return std::string("-");
-        // The flow whose column the head prints: the nozzle's, or the Standard column chosen for a High Flow nozzle.
-        const NozzleVolumeType flow    = PerHeadProcess::effective_flow(*bundle, head);
-        const std::vector<int> columns = PerHeadProcess::head_columns(*process, head);
-        if (!columns.empty() && PerHeadProcess::is_marked(*process, size_t(columns.front()), key))
-            return column_of(*process, key, columns.front());
-        if (source != nullptr && source->derived && source->preset != nullptr && PerHeadProcess::composed_keys().count(key) > 0 && printer != nullptr) {
-            // The column the composer reads: a chosen preset without a column for the head's flow
-            // serves its Standard column; an automatic source without one serves nothing and the
-            // compose takes the selected preset's column of that flow (Source::fallback_variants), as
-            // below. A line width reads its width source (the size preset, never the High Flow re-pick).
-            const Preset *from   = nullptr;
-            const int     column = PerHeadProcess::composed_column_for_key(*source, key, flow, *printer, from);
-            if (column >= 0 && from != nullptr)
-                return column_of(from->config, key, column);
-        }
-        return column_of(*process, key, PerHeadProcess::shared_column(*process, flow));
-    };
     // The flow type whose speeds a tool head prints (PerHeadProcess::effective_flow), Standard without a bundle.
     auto flow_of = [bundle](size_t head) { return bundle == nullptr ? nvtStandard : PerHeadProcess::effective_flow(*bundle, head); };
     // The default line width tool head `head` prints, for the tooltip ("110 % (0.22 mm)"): its own
@@ -12366,9 +12320,6 @@ void Sidebar::update_nozzle_process_hints()
             }
             continue;
         }
-        const std::string outer_wall = effective(i, source, "outer_wall_speed");
-        const std::string sparse     = effective(i, source, "sparse_infill_speed");
-        const std::string accel      = effective(i, source, "default_acceleration");
         wxString label, tip;
         if (source != nullptr || same_as_selected || flow_chosen) {
             const Preset &preset    = source != nullptr ? *source->preset : bundle->prints.get_selected_preset();
@@ -12380,8 +12331,7 @@ void Sidebar::update_nozzle_process_hints()
             label = HighFlowNotices::speeds_hint_label(shown, state,
                                                        flow_chosen ? HighFlowNotices::SpeedsNote::StandardChosen :
                                                        high_flow   ? HighFlowNotices::SpeedsNote::HighFlow :
-                                                                     HighFlowNotices::SpeedsNote::Plain,
-                                                       outer_wall, sparse, accel);
+                                                                     HighFlowNotices::SpeedsNote::Plain);
             std::string kept;
             if (source != nullptr)
                 for (const std::string &key : source->kept_keys)
@@ -12419,14 +12369,13 @@ void Sidebar::update_nozzle_process_hints()
             if (flow_chosen)
                 tip += (tip.IsEmpty() ? "" : " ") + HighFlowNotices::standard_chosen_tooltip();
         } else if (!set_keys.empty()) {
-            // TRN Line under the rows of a nozzle tab in the sidebar. %1% the number of values set for the tool head on the Speed and Quality pages, %2%..%4% the outer wall speed, sparse infill speed and acceleration it prints with
-            label = format_wxstr(_L("Values set for this extruder: %1% (outer wall %2%, sparse %3%, accel %4%)"), set_keys.size(), outer_wall, sparse, accel);
+            label = HighFlowNotices::values_set_label(set_keys.size());
         } else {
             // A chosen preset that does not apply (not installed, another size, a detached plate preset) on a head the rule leaves alone.
             const Preset  *named = PerHeadProcess::resolve_chosen(*bundle, chosen);
             const wxString shown = from_u8(named != nullptr ? (named->alias.empty() ? named->name : named->alias) : chosen);
-            // TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset chosen for the tool head that does not apply now, %2%..%4% the outer wall speed, sparse infill speed and acceleration the tool head prints with
-            label = format_wxstr(_L("Preset: %1% (inactive) · speeds: outer wall %2%, sparse %3%, accel %4%"), shown, outer_wall, sparse, accel);
+            // TRN %1% a chosen process preset that does not apply now
+            label = format_wxstr(_L("Preset: %1% (inactive)"), shown);
             tip   = _L("The process preset chosen for this extruder in this project does not apply now; the extruder prints with the selected process preset.");
         }
         if (!chosen.empty() && i < sources.size() && sources[i].step != PerHeadProcess::Step::Chosen)
@@ -12475,27 +12424,15 @@ void Sidebar::update_nozzle_flow_values()
         const HighFlowNotices::FlowRowState state = HighFlowNotices::flow_row_state(printer_config, i, size_offers);
         // The row sizer of a page counts as hidden when both of its windows are.
         const bool row       = state != HighFlowNotices::FlowRowState::Hidden;
-        // The reason names the head's own size; a head without a diameter is never ruled out.
-        const std::string size      = HighFlowNotices::head_nozzle_size_label(printer_config, i);
-        const bool        ruled_out = state == HighFlowNotices::FlowRowState::RuledOut && !size.empty();
         page.flow_label->Show(row);
         page.flow->Show(row);
-        page.flow_hint->Show(ruled_out);
         if (!row)
             continue;
         HighFlowNotices::fill_flow_combo(page.flow, printer_config, i,
                                          volume_types != nullptr && i < volume_types->values.size() ? volume_types->values[i] : int(nvtStandard),
                                          size_offers);
         // On the label as well: a disabled combo shows no tooltip on Windows and GTK.
-        const wxString tip = HighFlowNotices::flow_tooltip(state, size);
-        page.flow_label->SetToolTip(tip);
-        if (ruled_out) {
-            // TRN Line under the disabled Flow row of a nozzle tab in the sidebar. %1% is the nozzle size of this tool head, e.g. 0.2
-            const wxString hint = format_wxstr(_L("High Flow is not available for a %1% mm nozzle."), size);
-            if (page.flow_hint->GetUnwrappedText() != hint)
-                page.flow_hint->SetText(hint, false);
-            page.flow_hint->SetToolTip(tip);
-        }
+        page.flow_label->SetToolTip(HighFlowNotices::flow_tooltip(state, HighFlowNotices::head_nozzle_size_label(printer_config, i)));
     }
 
     // The rows a page shows decide its height.

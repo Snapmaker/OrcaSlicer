@@ -202,17 +202,14 @@ wxString flow_tooltip(FlowRowState state, const std::string &head_size);
 wxString automatic_reason(PerHeadProcess::Step step, const std::string &plate_class, const std::string &class_used, const std::string &head_size,
                           double height, bool preferred);
 
-// Speed-page intro and speed-selector tooltip for a tool head: head, nozzle size and flow type;
 // `standard_chosen`: a High Flow nozzle set to print the Standard speeds (PerHeadProcess::flow_key).
-wxString head_flow_description(size_t head, const std::string &head_size, NozzleVolumeType nozzle, bool standard_chosen);
-wxString head_entry_tooltip(size_t head, const std::string &head_size, NozzleVolumeType nozzle, bool standard_chosen);
+wxString head_entry_tooltip(const std::string &head_size, NozzleVolumeType nozzle, bool standard_chosen);
 
 // The "Preset:" line under a nozzle tab's rows in the sidebar: `preset` the alias of the process preset the
 // head prints with, `state` "(automatic)" / "(chosen)" or empty, `note` its column (Plain: the nozzle's flow,
-// HighFlow, StandardChosen: Standard on a High Flow nozzle); the three values as the hint shows them.
+// HighFlow, StandardChosen: Standard on a High Flow nozzle).
 enum class SpeedsNote { Plain, HighFlow, StandardChosen };
-wxString speeds_hint_label(const wxString &preset, const wxString &state, SpeedsNote note, const std::string &outer_wall, const std::string &sparse,
-                           const std::string &accel);
+wxString speeds_hint_label(const wxString &preset, const wxString &state, SpeedsNote note);
 // The sentence the hint's tooltip adds for a head that prints the Standard speeds by choice.
 wxString standard_chosen_tooltip();
 
@@ -220,24 +217,12 @@ wxString standard_chosen_tooltip();
 // Texts of the Quality page's selector, picker and line for the nine line widths; plain strings
 // in, wxStrings out, testable without a window.
 
-// The line under All tool heads: which tool heads print with the line widths of another process
-// preset. `derived_heads` "1 (0.2 mm), 3 (0.6 mm)", `presets` their aliases, `other_heads` the
-// heads that print the selected preset's widths ("2"; may be empty), `several` the plural form.
-wxString widths_description(const std::string &derived_heads, const std::string &presets, const std::string &other_heads, bool several);
-// The line under the picker: what the picked preset supplies on this page and on the other one.
-wxString picker_note(bool quality_page);
+// Names the heads ("1, 3") that print the widths or speeds of another process preset.
+wxString own_preset_description(bool quality_page, const std::string &heads, bool several);
 // Under a selected tool head on the Quality page, when its preferred layer height differs from the
-// plate's: the head prints that height (the Layer height field above is greyed). `head` 0-based.
-wxString preferred_height_sentence(double height, size_t head);
-// Under a selected tool head: a line width changed under All tool heads applies to it in place of
-// its width source's value. `label` the setting, `value` the All value, `source_alias` and
-// `source_value` the preset the head takes its widths from and what it has.
-wxString all_edited_width_sentence(const wxString &label, const std::string &value, const wxString &source_alias, const std::string &source_value);
-// The values set for a tool head by kind ("1 line width, 3 speeds"); empty when both counts are zero.
-wxString head_values_by_kind(size_t widths, size_t speeds);
-// The count sentence of the page under a selected tool head ("3 line widths set for this
-// extruder." / "2 speeds set for this extruder."); empty for zero.
-wxString head_values_set_sentence(bool quality_page, size_t count);
+// plate's: the head prints that height (the Layer height field above is greyed).
+wxString preferred_height_sentence(double height);
+wxString values_set_label(size_t count);
 // The closing sentence under a selected tool head, on both pages.
 wxString shared_settings_sentence();
 // The link under a selected tool head that clears the values set for it on this page.

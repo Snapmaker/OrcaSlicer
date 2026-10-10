@@ -166,13 +166,11 @@ undo button (the page's wide label column would clip a name like "0.10mm High Qu
 the narrowest sidebar); the Speed page keeps the one-line row. The dot on an extruder entry is the same on
 both pages: it marks an extruder that has anything of its own (a value on either page, a chosen preset, a
 chosen flow), so on the Quality page an extruder with speeds set and no width shows the dot, and the
-entry's tooltip says what it is ("Speed: Outer wall, ..."). Under All extruders the line names
-the extruders that print the line widths of another preset and says that every other setting of
-the page applies to every extruder; the counts read by kind ("Extruder 4: 1 line width, 3 speeds").
-Under an extruder the widths show that extruder's values (its own, else its width source's, else the
-shared value) and every other field of the page is greyed; the line adds the extruder's preferred layer
-height when it differs from the plate's, every line width changed under All extruders with the
-width source's value, and a warning when a width set for the extruder has the other unit than the value
+entry's tooltip gives the number of values set. Under All extruders the line names the extruders that
+print the line widths of another preset. Under an extruder the widths show that extruder's values (its
+own, else its width source's, else the shared value) and every other field of the page is greyed; the
+line adds the extruder's preferred layer height when it differs from the plate's and a warning when a
+width set for the extruder has the other unit than the value
 under All extruders (an older version reads the first number with the percent sign of any entry:
 `0.42,0.42,110%` reads as `0.42 %` there); the link "Clear the line widths set for this extruder"
 clears the widths alone, the speeds set on the Speed page stay. The picker's item tooltips show the
@@ -195,11 +193,11 @@ filament-diameter ratio of the outer wall volumetric speed keep today's numbers.
 On the Speed and Quality pages of the Process tab, with an extruder selected in the row above the
 settings, the first line is **Extruder preset**: a list with the automatic result first ("0.24mm
 Standard (automatic)"), then the system presets made for the extruder's nozzle size, the user presets
-and the project presets that fit; the line under it says what the preset supplies on this page and
-on the other one. Picking one **chooses** it as the extruder's base for its speeds and its line widths:
+and the project presets that fit. Picking one **chooses** it as the extruder's base for its speeds and its line widths:
 the fields below show its values, the extruder entry gets a dot, the nozzle tab hint in the sidebar
-reads "(chosen)", the undo button beside the list returns to automatic. The description line under
-the row says why the automatic preset was chosen or what the choice means. Values set for the extruder
+reads "(chosen)", the undo button beside the list returns to automatic. The tooltip of the automatic
+entry says why the automatic preset was chosen; the line under the row names a choice that does not
+apply. Values set for the extruder
 on either page keep winning above the choice, and values changed under "All extruders" apply to a
 chosen extruder too.
 

@@ -787,7 +787,7 @@ TEST_CASE("A user preset that lowers a Standard value keeps the High Flow value 
 }
 
 // A U1 tool head whose preset declares Standard only (0.2 / 0.6 / 0.8 mm) still shows its Flow row,
-// disabled at "Standard" with the reason line of its size, as the model offers High Flow on 0.4 mm.
+// disabled at "Standard", as the model offers High Flow on 0.4 mm.
 TEST_CASE("The speed selector shortens its labels before it breaks the row", "[HighFlow][SpeedSelector][hs_selector_fit]")
 {
     // "All extruders", four "Extruder k · s" entries; the short set "All", "Ek · s".
@@ -897,88 +897,36 @@ TEST_CASE("The automatic reason names the step of the quality rule and the layer
 }
 
 // The flow toggle of the Speed page (PerHeadProcess::flow_key): the texts of a High Flow tool head
-// that prints the Standard speeds by choice, on the page, in the entry's tooltip and in the hint.
+// that prints the Standard speeds by choice.
 TEST_CASE("The texts of a High Flow tool head printing the Standard speeds name the choice", "[HighFlow][SpeedSelector][hs_flow_choice_text]")
 {
     using HighFlowNotices::SpeedsNote;
-    const wxString description = HighFlowNotices::head_flow_description(2, "0.4", nvtHighFlow, true);
-    CHECK(description.Contains("Extruder 3"));
-    CHECK(description.Contains("0.4 mm"));
-    CHECK(description.Contains("High Flow"));
-    CHECK(description.Contains("Standard speeds (chosen)"));
-    const wxString plain = HighFlowNotices::head_flow_description(2, "0.4", nvtHighFlow, false);
-    CHECK(plain.Contains("High Flow"));
-    CHECK_FALSE(plain.Contains("chosen"));
-    CHECK(HighFlowNotices::head_flow_description(0, "0.2", nvtStandard, false).Contains("Standard."));
-
-    const wxString tooltip = HighFlowNotices::head_entry_tooltip(0, "0.4", nvtHighFlow, true);
-    CHECK(tooltip.Contains("Extruder 1 (sidebar: Nozzle 1)"));
-    CHECK(tooltip.Contains("High Flow"));
-    CHECK(tooltip.Contains("Standard speeds (chosen)"));
-    const wxString plain_tooltip = HighFlowNotices::head_entry_tooltip(0, "0.4", nvtStandard, false);
-    CHECK(plain_tooltip.Contains("sidebar: Nozzle 1"));
-    CHECK(plain_tooltip.Contains("Standard."));
-    CHECK_FALSE(plain_tooltip.Contains("chosen"));
+    CHECK(HighFlowNotices::head_entry_tooltip("0.4", nvtHighFlow, true) == "0.4 mm nozzle, High Flow, Standard speeds (chosen)");
+    CHECK(HighFlowNotices::head_entry_tooltip("0.4", nvtHighFlow, false) == "0.4 mm nozzle, High Flow");
+    CHECK(HighFlowNotices::head_entry_tooltip("0.2", nvtStandard, false) == "0.2 mm nozzle, Standard");
 
     // The hint: the selected preset without a state, an automatic source, the High Flow column, a chosen preset.
-    const wxString hint = HighFlowNotices::speeds_hint_label("0.20mm High Quality", wxString(), SpeedsNote::StandardChosen, "60", "100", "4000");
-    CHECK(hint.Contains("Preset: 0.20mm High Quality, Standard (chosen for this High Flow nozzle)"));
-    CHECK(hint.Contains("speeds: outer wall 60"));
-    CHECK_FALSE(hint.Contains("Speeds:"));
-    CHECK(hint.Contains("sparse 100"));
-    CHECK(hint.Contains("accel 4000"));
-    const wxString automatic = HighFlowNotices::speeds_hint_label("0.18mm Standard", "(automatic)", SpeedsNote::StandardChosen, "120", "100", "10000");
-    CHECK(automatic.Contains("0.18mm Standard (automatic), Standard (chosen for this High Flow nozzle)"));
-    const wxString high_flow = HighFlowNotices::speeds_hint_label("0.20mm Standard", "(automatic)", SpeedsNote::HighFlow, "500", "600", "10000");
-    CHECK(high_flow.Contains("Preset: 0.20mm Standard, High Flow (automatic)"));
-    CHECK(high_flow.Contains("speeds: outer wall 500"));
-    CHECK_FALSE(high_flow.Contains("chosen"));
-    const wxString chosen = HighFlowNotices::speeds_hint_label("0.12mm Standard", "(chosen)", SpeedsNote::Plain, "120", "150", "10000");
-    CHECK(chosen.Contains("Preset: 0.12mm Standard (chosen)"));
-    CHECK(chosen.Contains("accel 10000"));
+    CHECK(HighFlowNotices::speeds_hint_label("0.20mm High Quality", wxString(), SpeedsNote::StandardChosen) == "Preset: 0.20mm High Quality, Standard speeds (chosen)");
+    CHECK(HighFlowNotices::speeds_hint_label("0.18mm Standard", "(automatic)", SpeedsNote::StandardChosen) == "Preset: 0.18mm Standard (automatic), Standard speeds (chosen)");
+    CHECK(HighFlowNotices::speeds_hint_label("0.20mm Standard", "(automatic)", SpeedsNote::HighFlow) == "Preset: 0.20mm Standard, High Flow (automatic)");
+    CHECK(HighFlowNotices::speeds_hint_label("0.12mm Standard", "(chosen)", SpeedsNote::Plain) == "Preset: 0.12mm Standard (chosen)");
 
     CHECK(HighFlowNotices::standard_chosen_tooltip().Contains("High Flow nozzle"));
     CHECK(HighFlowNotices::standard_chosen_tooltip().Contains("Standard speeds"));
 }
 
 // The texts of the Quality page under the speed selector.
-TEST_CASE("The texts of the Quality page name line widths, the values by kind and what an older version reads", "[HighFlow][SpeedSelector][PerHeadWidth][hs_quality_page_text]")
+TEST_CASE("The texts of the Quality page name line widths, the values set and what an older version reads", "[HighFlow][SpeedSelector][PerHeadWidth][hs_quality_page_text]")
 {
-    // The line under All tool heads: one derived head, several, and every head derived.
-    const wxString one = HighFlowNotices::widths_description("3 (0.6 mm)", "0.18mm Standard", "1, 2, 4", false);
-    CHECK(one.Contains("Extruder 3 (0.6 mm) prints with the line widths of 0.18mm Standard."));
-    CHECK(one.Contains("apply to extruders 1, 2, 4, and to every extruder for the widths you changed"));
-    CHECK(one.Contains("every other setting on this page applies to every extruder"));
-    const wxString several = HighFlowNotices::widths_description("1 (0.2 mm), 3 (0.6 mm), 4 (0.8 mm)", "0.10mm High Quality, 0.18mm Standard, 0.24mm Standard", "2", true);
-    CHECK(several.Contains("Extruders 1 (0.2 mm), 3 (0.6 mm), 4 (0.8 mm) print with the line widths of"));
-    CHECK(several.Contains("apply to extruders 2, and"));
-    const wxString all = HighFlowNotices::widths_description("1 (0.2 mm), 2 (0.6 mm)", "0.10mm High Quality, 0.18mm Standard", "", true);
-    CHECK(all.Contains("apply to every extruder for the widths you changed"));
-    CHECK_FALSE(all.Contains("extruders ,"));
+    CHECK(HighFlowNotices::own_preset_description(true, "3", false) == "Extruder 3 prints the line widths of its extruder preset.");
+    CHECK(HighFlowNotices::own_preset_description(true, "1, 3, 4", true) == "Extruders 1, 3, 4 print the line widths of their extruder presets.");
+    CHECK(HighFlowNotices::own_preset_description(false, "2", false) == "Extruder 2 prints the speeds of its extruder preset.");
+    CHECK(HighFlowNotices::own_preset_description(false, "1, 3", true) == "Extruders 1, 3 print the speeds of their extruder presets.");
 
-    // The line under the picker, per page.
-    CHECK(HighFlowNotices::picker_note(true).Contains("Its line widths print on this extruder"));
-    CHECK(HighFlowNotices::picker_note(true).Contains("(Speed page)"));
-    CHECK(HighFlowNotices::picker_note(false).Contains("speeds, accelerations and jerk print on this extruder"));
-    CHECK(HighFlowNotices::picker_note(false).Contains("(Quality page)"));
-
-    // Under a head: the preferred layer height, a width changed under All, the counts.
-    const wxString height = HighFlowNotices::preferred_height_sentence(0.1, 0);
-    CHECK(height.Contains("prints 0.10 mm layers"));
-    CHECK(height.Contains("nozzle 1 in the sidebar"));
-    const wxString edited = HighFlowNotices::all_edited_width_sentence("Inner wall", "110%", "0.10mm High Quality", "112.5%");
-    CHECK(edited == "Inner wall 110% from All extruders (0.10mm High Quality has 112.5%).");
-    CHECK(HighFlowNotices::head_values_by_kind(1, 3) == "1 line width, 3 speeds");
-    CHECK(HighFlowNotices::head_values_by_kind(2, 0) == "2 line widths");
-    CHECK(HighFlowNotices::head_values_by_kind(0, 1) == "1 speed");
-    CHECK(HighFlowNotices::head_values_by_kind(0, 0).IsEmpty());
-    CHECK(HighFlowNotices::head_values_set_sentence(true, 1) == "1 line width set for this extruder.");
-    CHECK(HighFlowNotices::head_values_set_sentence(true, 3) == "3 line widths set for this extruder.");
-    CHECK(HighFlowNotices::head_values_set_sentence(false, 1) == "1 speed set for this extruder.");
-    CHECK(HighFlowNotices::head_values_set_sentence(false, 2) == "2 speeds set for this extruder.");
-    CHECK(HighFlowNotices::head_values_set_sentence(true, 0).IsEmpty());
-    CHECK(HighFlowNotices::shared_settings_sentence().Contains("Greyed settings are shared by every extruder"));
-    CHECK(HighFlowNotices::shared_settings_sentence().Contains("layer height of an extruder is set in the sidebar"));
+    CHECK(HighFlowNotices::preferred_height_sentence(0.1) == "Prints 0.10 mm layers.");
+    CHECK(HighFlowNotices::values_set_label(1) == "1 value set");
+    CHECK(HighFlowNotices::values_set_label(13) == "13 values set");
+    CHECK(HighFlowNotices::shared_settings_sentence() == "Greyed settings apply to every extruder.");
     CHECK(HighFlowNotices::clear_head_link_label(true) == "Clear the line widths set for this extruder");
     CHECK(HighFlowNotices::clear_head_link_label(false) == "Clear the speeds set for this extruder");
 

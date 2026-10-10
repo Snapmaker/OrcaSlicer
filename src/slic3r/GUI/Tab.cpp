@@ -3767,22 +3767,9 @@ void TabPrint::update_description_lines()
 
     if (m_per_head_process_line && m_preset_bundle) {
         // Snapmaker Orca: under a tool head of the speed selector the line describes that head,
-        // under All tool heads the composer's sentence plus the values set per tool head. The
+        // under All tool heads the composer's sentence. The
         // Speed page speaks of speeds, the Quality page of line widths (quality_page_active).
-        wxString text = m_head_selector && selected_head() >= 0 ? head_selection_description() : per_head_process_description();
-        if (m_head_selector && selected_head() < 0 && m_config != nullptr) {
-            std::string heads;
-            for (int head = 0; head < m_preset_bundle->get_printer_extruder_count(); ++head)
-                if (const std::vector<std::string> keys = PerHeadProcess::head_override_keys(*m_config, size_t(head)); !keys.empty()) {
-                    const size_t widths = head_width_keys(keys).size();
-                    // TRN %1% a tool head, %2% the values set for it by kind ("1 line width, 3 speeds")
-                    heads += (heads.empty() ? "" : ", ") + into_u8(format_wxstr(_L("Extruder %1%: %2%"), head + 1, HighFlowNotices::head_values_by_kind(widths, keys.size() - widths)));
-                }
-            if (!heads.empty())
-                // TRN Line on the Speed and Quality pages. %1% lists tool heads with the values set for each ("Extruder 2: 3 speeds, Extruder 4: 1 line width, 2 speeds")
-                text += (text.IsEmpty() ? "" : " ") + format_wxstr(_L("Values set per extruder: %1%."), from_u8(heads));
-        }
-        m_per_head_process_line->SetText(text);
+        m_per_head_process_line->SetText(m_head_selector && selected_head() >= 0 ? head_selection_description() : per_head_process_description());
         update_speed_source_picker();
         if (m_per_head_clear_link != nullptr && m_config != nullptr) {
             const int  head = selected_head();
@@ -3869,35 +3856,16 @@ wxString TabPrint::per_head_process_description() const
         return wxEmptyString;
     const bool quality = quality_page_active();
     const std::vector<PerHeadProcess::Source> sources = PerHeadProcess::head_sources(*m_preset_bundle);
-    const DynamicPrintConfig &printer_config = m_preset_bundle->printers.get_edited_preset().config;
-    std::string derived_heads, presets, other_heads;
+    std::string derived_heads;
     size_t      derived = 0;
-    for (const PerHeadProcess::Source &source : sources) {
-        const Preset *preset = quality ? PerHeadProcess::width_source(source) : (source.derived ? source.preset : nullptr);
-        if (preset != nullptr) {
-            // "2 (0.4 mm, High Flow)" for a head that prints the High Flow column of its speeds source.
-            derived_heads += (derived_heads.empty() ? "" : ", ") + std::to_string(source.head + 1) + " (" + HighFlowNotices::head_nozzle_size_label(printer_config, source.head) + " mm" +
-                             (!quality && PerHeadProcess::reads_high_flow(source, head_speed_flow(source.head), printer_config) ? ", " + into_u8(_L("High Flow")) : std::string()) + ")";
-            presets += (presets.empty() ? "" : ", ") + alias_of(*preset) +
-                       // TRN Marks a process preset a tool head takes its speeds from by the user's choice
-                       (source.step == PerHeadProcess::Step::Chosen ? " " + into_u8(_L("(chosen)")) : std::string());
+    for (const PerHeadProcess::Source &source : sources)
+        if ((quality ? PerHeadProcess::width_source(source) : (source.derived ? source.preset : nullptr)) != nullptr) {
+            derived_heads += (derived_heads.empty() ? "" : ", ") + std::to_string(source.head + 1);
             ++derived;
-        } else
-            other_heads += (other_heads.empty() ? "" : ", ") + std::to_string(source.head + 1);
-    }
+        }
     if (derived == 0)
         return wxEmptyString;
-    if (quality) {
-        wxString text = HighFlowNotices::widths_description(derived_heads, presets, other_heads, derived > 1);
-        if (this->type() != Preset::TYPE_PRINT)
-            text += " " + _L("An override on a part applies on every extruder that prints it.");
-        return text;
-    }
-    wxString text = derived == 1 ?
-        // TRN Line on the Speed page of the process settings. %1% is a tool head with its nozzle size ("2 (0.2 mm)"), %2% a process preset, %3% the other tool heads ("1, 3, 4")
-        format_wxstr(_L("Extruder %1% prints with the speeds of %2%. The values below apply to extruders %3%, and to every extruder for the settings you changed."), derived_heads, presets, other_heads) :
-        // TRN Line on the Speed page of the process settings. %1% lists tool heads with their nozzle sizes ("2 (0.2 mm), 3 (0.6 mm)"), %2% process presets, %3% the other tool heads ("1, 4")
-        format_wxstr(_L("Extruders %1% print with the speeds of %2%. The values below apply to extruders %3%, and to every extruder for the settings you changed."), derived_heads, presets, other_heads);
+    wxString text = HighFlowNotices::own_preset_description(quality, derived_heads, derived > 1);
     if (this->type() != Preset::TYPE_PRINT)
         text += " " + _L("An override on a part applies on every extruder that prints it.");
     return text;
@@ -4139,14 +4107,6 @@ wxSizer* TabPrint::per_head_line_widget(wxWindow *parent, int label_em, bool sta
     forget_on_destroy(m_speed_source_label);
     forget_on_destroy(m_speed_source_combo);
     forget_on_destroy(m_speed_source_reset);
-    // The line under the picker: what the picked preset supplies on this page and on the other one
-    // (HighFlowNotices::picker_note); wrapped like the description line, shown with the picker.
-    m_speed_source_note = new ogStaticText(parent, wxEmptyString, wxST_NO_AUTORESIZE);
-    m_speed_source_note->SetFont(wxGetApp().normal_font());
-    m_speed_source_note->WrapToWidth([this]() { fit_page_to_lines(); });
-    m_speed_source_note->Hide();
-    forget_on_destroy(m_speed_source_note);
-    sizer->Add(m_speed_source_note, 0, wxEXPAND | wxBOTTOM, 2);
 
     // The line wraps to the width of the page, again on every width change (a narrow sidebar), and
     // the page is laid out for the lines it takes.
@@ -4205,12 +4165,6 @@ void TabPrint::update_speed_source_picker()
         m_speed_source_label->Show(show);
         m_speed_source_combo->Show(show);
         m_speed_source_reset->Show(show);
-    }
-    if (m_speed_source_note != nullptr) {
-        if (show)
-            m_speed_source_note->SetText(HighFlowNotices::picker_note(quality_page));
-        if (m_speed_source_note->IsShown() != show)
-            m_speed_source_note->Show(show);
     }
     if (!show) {
         if (wxSizer *sizer = m_speed_source_combo->GetContainingSizer(); sizer != nullptr)
@@ -4433,9 +4387,7 @@ wxString TabPrint::head_selection_description() const
     const bool quality = quality_page_active();
     const DynamicPrintConfig &printer_config = m_preset_bundle->printers.get_edited_preset().config;
     const std::string size = HighFlowNotices::head_nozzle_size_label(printer_config, size_t(head));
-    // The head, its nozzle and, for a High Flow nozzle set to the Standard speeds, that choice.
-    wxString text = HighFlowNotices::head_flow_description(size_t(head), size, head_flow(size_t(head)), PerHeadProcess::flow_chosen(*m_preset_bundle, size_t(head)));
-    // One sentence for the head: the choice, or why the rule gave it its preset (aliases only).
+    wxString text;
     // Sources are read afresh: a choice applies with the preference off too.
     const std::vector<PerHeadProcess::Source> sources = m_preset_bundle != nullptr ? PerHeadProcess::head_sources(*m_preset_bundle) : std::vector<PerHeadProcess::Source>();
     if (size_t(head) < sources.size()) {
@@ -4444,120 +4396,79 @@ wxString TabPrint::head_selection_description() const
         const PerHeadProcess::Source &source = sources[size_t(head)];
         const wxString automatic = source.derived && source.step != PerHeadProcess::Step::Chosen ? from_u8(alias_of(*source.preset)) :
                                    source.automatic != nullptr ? from_u8(alias_of(*source.automatic)) : _L("the selected preset");
-        wxString sentence;
         switch (source.chosen_state) {
         case ChosenState::Applied:
-            sentence = source.automatic != nullptr ?
-                // TRN Under a tool head whose process preset was chosen in the picker. %1% is the preset the rule would give it
-                format_wxstr(_L("Chosen in this project; automatic would be %1%."), automatic) :
-                _L("Chosen in this project; automatic would be the selected preset.");
-            break;
         case ChosenState::SameAsSelected:
-            sentence = _L("Chosen in this project; the same as the selected process preset, so the extruder keeps it when the plate's preset changes.");
             break;
         case ChosenState::NotInstalled:
             // TRN %1% the chosen process preset, %2% the preset the tool head prints with instead
-            sentence = format_wxstr(_L("%1%, chosen in this project, is not installed; the extruder uses %2% (automatic)."), from_u8(source.chosen), automatic);
+            text = format_wxstr(_L("%1% is not installed; using %2%."), from_u8(source.chosen), automatic);
             break;
         case ChosenState::Unfit: {
             const Preset  *chosen = PerHeadProcess::resolve_chosen(*m_preset_bundle, source.chosen);
             const wxString name   = from_u8(chosen != nullptr ? alias_of(*chosen) : source.chosen);
             if (source.chosen_reason.rfind("size ", 0) == 0)
-                // TRN %1% the chosen process preset, %2% the nozzle size it is made for, %3% the size of the tool head, %4% the preset the tool head prints with instead
-                sentence = format_wxstr(_L("%1%, chosen in this project, is made for a %2% mm nozzle and does not apply while the nozzle is %3% mm; the extruder uses %4% (automatic)."),
-                                        name, from_u8(source.chosen_reason.substr(5)), from_u8(size), automatic);
+                // TRN %1% the chosen process preset, %2% the nozzle size it is made for, %3% the preset the tool head prints with instead
+                text = format_wxstr(_L("%1% is made for a %2% mm nozzle; using %3%."), name, from_u8(source.chosen_reason.substr(5)), automatic);
             else
                 // TRN %1% the chosen process preset, %2% the size of the tool head, %3% the preset the tool head prints with instead
-                sentence = format_wxstr(_L("%1%, chosen in this project, is not made for a %2% mm nozzle and does not apply; the extruder uses %3% (automatic)."),
-                                        name, from_u8(size), automatic);
+                text = format_wxstr(_L("%1% is not made for a %2% mm nozzle; using %3%."), name, from_u8(size), automatic);
             break;
         }
         case ChosenState::Inactive:
             // TRN %1% the chosen process preset
-            sentence = format_wxstr(_L("%1%, chosen in this project, does not apply: the process preset is detached from its system preset, so the speeds and line widths of other presets cannot be combined with it."),
-                                    from_u8(source.chosen));
+            text = format_wxstr(_L("%1% does not apply: the process preset is detached from its system preset."), from_u8(source.chosen));
             break;
         case ChosenState::None:
             switch (source.reason) {
             case Reason::Off:
-                sentence = _L("\"Process speeds and line widths follow the nozzle size\" is off in Preferences, so the extruder prints with the selected process preset; a preset chosen here still applies.");
-                break;
-            case Reason::HomeSize:
-                sentence = _L("This extruder has the nozzle size of the printer preset and prints with the selected process preset.");
+                text = _L("\"Process speeds and line widths follow the nozzle size\" is off in Preferences.");
                 break;
             case Reason::NoMachinePreset:
             case Reason::NoProcessPreset:
                 // TRN %1% is a nozzle size
-                sentence = format_wxstr(_L("No process preset for a %1% mm nozzle is installed; the extruder prints with the speeds and line widths of the selected preset."), from_u8(size));
+                text = format_wxstr(_L("No process preset for a %1% mm nozzle is installed."), from_u8(size));
                 break;
             case Reason::NoParent:
-                sentence = _L("The process preset is detached from its system preset, so the speeds and line widths of other presets cannot be combined with it.");
+                text = _L("The process preset is detached from its system preset.");
                 break;
             case Reason::HighFlow: {
                 // The re-pick moves the speeds alone: the widths stay with the size preset or the selected preset.
                 const Preset *widths_from = PerHeadProcess::width_source(source);
                 // TRN Under a High Flow tool head. %1% is the process preset whose High Flow speeds it prints, %2% the preset its line widths come from
-                sentence = format_wxstr(_L("Automatic: %1%, the preset of this nozzle size with High Flow speeds; the selected preset has none. Line widths stay those of %2%."), automatic,
-                                        widths_from != nullptr ? from_u8(alias_of(*widths_from)) : _L("the selected preset"));
+                text = format_wxstr(_L("High Flow speeds from %1%; line widths from %2%."), automatic,
+                                    widths_from != nullptr ? from_u8(alias_of(*widths_from)) : _L("the selected preset"));
                 break;
             }
-            default: {
-                bool         preferred = false;
-                const double height    = PerHeadProcess::target_layer_height(*m_preset_bundle, size_t(head), &preferred);
-                sentence = HighFlowNotices::automatic_reason(source.step, PerHeadProcess::plate_quality_class(*m_preset_bundle), source.class_used, size, height, preferred);
+            default:
                 break;
-            }
             }
             break;
         }
-        if (!sentence.IsEmpty())
-            text += " " + sentence;
-        if (!quality && source.derived && !source.kept_keys.empty())
-            // TRN %1% the number of settings changed under All tool heads
-            text += " " + format_wxstr(_L("%1% settings changed under All extruders apply here too."), source.kept_keys.size());
-        if (quality) {
-            // The Layer height field above is greyed: the height the head prints for slicing is named
-            // when it differs from the object layer height (a preferred layer height of the nozzle tab).
-            const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(
-                extruder_layer_height_inputs(m_preset_bundle->printers.get_edited_preset().config, m_preset_bundle->prints.get_edited_preset().config));
-            if (size_t(head) < notes.size() && notes[size_t(head)].preferred > 0. && std::abs(notes[size_t(head)].printed - notes[size_t(head)].grid) > EPSILON)
-                text += " " + HighFlowNotices::preferred_height_sentence(notes[size_t(head)].printed, size_t(head));
-            // A line width changed under All tool heads applies here in place of the width source's.
-            if (const Preset *from = PerHeadProcess::width_source(source); from != nullptr) {
-                const int shared = PerHeadProcess::shared_column(*m_config, nvtStandard);
-                const int theirs = PerHeadProcess::shared_column(from->config, nvtStandard);
-                for (const std::string &key : source.kept_keys) {
-                    if (PerHeadProcess::flow_independent_keys().count(key) == 0)
-                        continue;
-                    const ConfigOptionDef *def = m_config->def()->get(key);
-                    text += " " + HighFlowNotices::all_edited_width_sentence(def == nullptr ? from_u8(key) : _(def->label),
-                                                                             into_u8(get_string_value(key + "#" + std::to_string(std::max(shared, 0)), *m_config)),
-                                                                             from_u8(alias_of(*from)),
-                                                                             into_u8(get_string_value(key + "#" + std::to_string(std::max(theirs, 0)), from->config)));
-                }
-            }
-        }
     }
-    const std::vector<std::string> set_keys = PerHeadProcess::head_override_keys(*m_config, size_t(head));
-    const std::vector<std::string> widths   = head_width_keys(set_keys);
+    auto add = [&text](const wxString &sentence) { text += (text.IsEmpty() ? "" : " ") + sentence; };
     if (quality) {
+        // The Layer height field above is greyed: the head's height is named here.
+        const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(
+            extruder_layer_height_inputs(m_preset_bundle->printers.get_edited_preset().config, m_preset_bundle->prints.get_edited_preset().config));
+        if (size_t(head) < notes.size() && notes[size_t(head)].preferred > 0. && std::abs(notes[size_t(head)].printed - notes[size_t(head)].grid) > EPSILON)
+            add(HighFlowNotices::preferred_height_sentence(notes[size_t(head)].printed));
         // A width set for the head in the other unit than the value under All tool heads: an older
         // version reads the first entry's number with the percent sign of any entry.
-        const std::vector<int> columns = PerHeadProcess::head_columns(*m_config, size_t(head));
-        const int              shared  = PerHeadProcess::shared_column(*m_config, nvtStandard);
+        const std::vector<std::string> widths  = head_width_keys(PerHeadProcess::head_override_keys(*m_config, size_t(head)));
+        const std::vector<int>         columns = PerHeadProcess::head_columns(*m_config, size_t(head));
+        const int                      shared  = PerHeadProcess::shared_column(*m_config, nvtStandard);
         for (const std::string &key : widths) {
             const auto *option = m_config->option<ConfigOptionFloatsOrPercentsNullable>(key);
             if (option == nullptr || columns.empty() || shared < 0 || size_t(columns.front()) >= option->values.size() || size_t(shared) >= option->values.size())
                 continue;
             if (option->values[size_t(columns.front())].percent != option->values[size_t(shared)].percent) {
                 const ConfigOptionDef *def = m_config->def()->get(key);
-                text += " " + HighFlowNotices::mixed_unit_sentence(def == nullptr ? from_u8(key) : _(def->label), HighFlowNotices::old_reader_width(option->vserialize()));
+                add(HighFlowNotices::mixed_unit_sentence(def == nullptr ? from_u8(key) : _(def->label), HighFlowNotices::old_reader_width(option->vserialize())));
             }
         }
     }
-    if (const wxString counts = HighFlowNotices::head_values_set_sentence(quality, quality ? widths.size() : set_keys.size() - widths.size()); !counts.IsEmpty())
-        text += " " + counts;
-    text += " " + HighFlowNotices::shared_settings_sentence();
+    add(HighFlowNotices::shared_settings_sentence());
     return text;
 }
 
@@ -10748,33 +10659,21 @@ void Tab::update_head_entries()
         Button *button = m_extruder_switch->GetButton(unsigned(head + 1));
         if (button == nullptr)
             continue;
-        wxString tip = HighFlowNotices::head_entry_tooltip(size_t(head), HighFlowNotices::head_nozzle_size_label(printer_config, size_t(head)), head_flow(size_t(head)), flow_chosen);
+        wxString tip = HighFlowNotices::head_entry_tooltip(HighFlowNotices::head_nozzle_size_label(printer_config, size_t(head)), head_flow(size_t(head)), flow_chosen);
         if (size_t(head) < sources.size() && sources[size_t(head)].step == PerHeadProcess::Step::Chosen && sources[size_t(head)].preset != nullptr)
             // TRN %1% is the process preset the user chose for the tool head (its speeds and line widths)
-            tip += " " + format_wxstr(_L("Preset %1% (chosen in this project)."), from_u8(sources[size_t(head)].preset->name));
+            tip += "\n" + format_wxstr(_L("Preset: %1% (chosen)"), from_u8(alias_of(*sources[size_t(head)].preset)));
         else if (size_t(head) < sources.size() && sources[size_t(head)].derived && sources[size_t(head)].preset != nullptr)
-            tip += " " + (PerHeadProcess::reads_high_flow(sources[size_t(head)], head_speed_flow(size_t(head)), printer_config) ?
-                              // TRN %1% is a process preset whose High Flow column the tool head prints with by the automatic rule
-                              format_wxstr(_L("Preset %1%, High Flow (automatic)."), from_u8(sources[size_t(head)].preset->name)) :
-                              // TRN %1% is a process preset the tool head prints with by the automatic rule
-                              format_wxstr(_L("Preset %1% (automatic)."), from_u8(sources[size_t(head)].preset->name)));
+            tip += "\n" + (PerHeadProcess::reads_high_flow(sources[size_t(head)], head_speed_flow(size_t(head)), printer_config) ?
+                               // TRN %1% a process preset
+                               format_wxstr(_L("Preset: %1%, High Flow (automatic)"), from_u8(alias_of(*sources[size_t(head)].preset))) :
+                               // TRN %1% a process preset
+                               format_wxstr(_L("Preset: %1% (automatic)"), from_u8(alias_of(*sources[size_t(head)].preset))));
         if (!chosen.empty() && (size_t(head) >= sources.size() || sources[size_t(head)].step != PerHeadProcess::Step::Chosen))
             // TRN %1% is a process preset chosen for the tool head that cannot apply now (not installed, another nozzle size)
-            tip += " " + format_wxstr(_L("%1%, chosen in this project, does not apply now."), from_u8(chosen));
-        if (!keys.empty()) {
-            std::string labels;
-            for (const std::string &key : keys) {
-                const ConfigOptionDef *def = m_config->def()->get(key);
-                // The group before the label: "Outer wall" is a line width and a speed.
-                // TRN Prefix of a line width setting in the list of values set for a tool head ("Line width: Outer wall")
-                const wxString group = PerHeadProcess::flow_independent_keys().count(key) > 0 ? _L("Line width") :
-                                       // TRN Prefix of a speed, acceleration or jerk setting in the list of values set for a tool head ("Speed: Outer wall")
-                                       _L("Speed");
-                labels += (labels.empty() ? "" : ", ") + into_u8(group) + ": " + (def == nullptr ? key : into_u8(_(def->label)));
-            }
-            // TRN %1% the number of values set for the tool head, %2% their names
-            tip += " " + format_wxstr(_L("%1% values set for this extruder: %2%."), keys.size(), from_u8(labels));
-        }
+            tip += "\n" + format_wxstr(_L("%1% (chosen) does not apply now."), from_u8(chosen));
+        if (!keys.empty())
+            tip += "\n" + HighFlowNotices::values_set_label(keys.size());
         button->SetToolTip(tip);
     }
 }
@@ -10865,7 +10764,7 @@ void Tab::choose_head_flow(size_t head, NozzleVolumeType flow)
 
 // Snapmaker Orca: the speed selector in a narrow panel. The long labels while they fit the width
 // the row may take, else the short ones, on one row or on as many as the width needs
-// (HighFlowNotices::head_selector_fit); the full text stays in the tooltip of every entry.
+// (HighFlowNotices::head_selector_fit).
 void Tab::fit_head_selector()
 {
     if (!m_head_selector || m_extruder_switch == nullptr || m_head_labels_long.empty() ||

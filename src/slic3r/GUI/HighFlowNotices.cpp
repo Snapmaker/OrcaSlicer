@@ -528,38 +528,27 @@ wxString automatic_reason(PerHeadProcess::Step step, const std::string &plate_cl
     return wxEmptyString;
 }
 
-wxString head_flow_description(size_t head, const std::string &head_size, NozzleVolumeType nozzle, bool standard_chosen)
+wxString head_entry_tooltip(const std::string &head_size, NozzleVolumeType nozzle, bool standard_chosen)
 {
     if (standard_chosen)
-        // TRN Line on the Speed page under a selected High Flow tool head that prints the Standard speeds by choice. %1% the tool head, %2% its nozzle size
-        return format_wxstr(_L("Extruder %1%, %2% mm nozzle, High Flow, printing the Standard speeds (chosen)."), head + 1, from_u8(head_size));
-    // TRN Line on the Speed page under a selected tool head. %1% the tool head, %2% its nozzle size, %3% its flow type ("Standard")
-    return format_wxstr(_L("Extruder %1%, %2% mm nozzle, %3%."), head + 1, from_u8(head_size), _L(get_nozzle_volume_type_string(nozzle)));
+        // TRN %1% the nozzle size
+        return format_wxstr(_L("%1% mm nozzle, High Flow, Standard speeds (chosen)"), from_u8(head_size));
+    // TRN %1% the nozzle size, %2% the flow type ("Standard")
+    return format_wxstr(_L("%1% mm nozzle, %2%"), from_u8(head_size), _L(get_nozzle_volume_type_string(nozzle)));
 }
 
-wxString head_entry_tooltip(size_t head, const std::string &head_size, NozzleVolumeType nozzle, bool standard_chosen)
-{
-    if (standard_chosen)
-        // TRN Tooltip of an entry of the speed selector: a High Flow tool head that prints the Standard speeds by choice. %1% the tool head, %2% its nozzle size
-        return format_wxstr(_L("Extruder %1% (sidebar: Nozzle %1%), %2% mm nozzle, High Flow, printing the Standard speeds (chosen)."), head + 1, from_u8(head_size));
-    // TRN Tooltip of an entry of the speed selector. %1% the tool head, %2% its nozzle size, %3% its flow type ("Standard")
-    return format_wxstr(_L("Extruder %1% (sidebar: Nozzle %1%), %2% mm nozzle, %3%."), head + 1, from_u8(head_size), _L(get_nozzle_volume_type_string(nozzle)));
-}
-
-wxString speeds_hint_label(const wxString &preset, const wxString &state, SpeedsNote note, const std::string &outer_wall, const std::string &sparse,
-                           const std::string &accel)
+wxString speeds_hint_label(const wxString &preset, const wxString &state, SpeedsNote note)
 {
     switch (note) {
     case SpeedsNote::HighFlow:
-        // TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.20mm Standard") whose High Flow column the tool head prints with, %2% "(automatic)" or "(chosen)", %3%..%5% the outer wall speed, sparse infill speed and acceleration
-        return format_wxstr(_L("Preset: %1%, High Flow %2% · speeds: outer wall %3%, sparse %4%, accel %5%"), preset, state, outer_wall, sparse, accel);
+        // TRN %1% a process preset ("0.20mm Standard"), %2% "(automatic)" or "(chosen)"
+        return format_wxstr(_L("Preset: %1%, High Flow %2%"), preset, state);
     case SpeedsNote::StandardChosen:
-        // TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset with its state ("0.20mm High Quality", "0.18mm Standard (automatic)") whose Standard speeds the High Flow tool head prints by choice, %2%..%4% the outer wall speed, sparse infill speed and acceleration
-        return format_wxstr(_L("Preset: %1%, Standard (chosen for this High Flow nozzle) · speeds: outer wall %2%, sparse %3%, accel %4%"),
-                            state.IsEmpty() ? preset : preset + " " + state, outer_wall, sparse, accel);
+        // TRN %1% a process preset with its state ("0.18mm Standard (automatic)")
+        return format_wxstr(_L("Preset: %1%, Standard speeds (chosen)"), state.IsEmpty() ? preset : preset + " " + state);
     default:
-        // TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.12mm Standard"), %2% "(automatic)" or "(chosen)", %3%..%5% the outer wall speed, sparse infill speed and acceleration the tool head prints with
-        return format_wxstr(_L("Preset: %1% %2% · speeds: outer wall %3%, sparse %4%, accel %5%"), preset, state, outer_wall, sparse, accel);
+        // TRN %1% a process preset ("0.12mm Standard"), %2% "(automatic)" or "(chosen)"
+        return format_wxstr(_L("Preset: %1% %2%"), preset, state);
     }
 }
 
@@ -569,66 +558,35 @@ wxString standard_chosen_tooltip()
               "Speed page; its filament settings stay those of a High Flow nozzle.");
 }
 
-wxString widths_description(const std::string &derived_heads, const std::string &presets, const std::string &other_heads, bool several)
+wxString own_preset_description(bool quality_page, const std::string &heads, bool several)
 {
-    if (other_heads.empty())
-        // TRN Line on the Quality page of the process settings when every tool head prints the widths of another preset. %1% lists tool heads with their nozzle sizes ("1 (0.2 mm), 3 (0.6 mm)"), %2% process presets
-        return format_wxstr(_L("Extruders %1% print with the line widths of %2%. The line widths below apply to every extruder for the widths you changed; every other setting on this page applies to every extruder."),
-                            from_u8(derived_heads), from_u8(presets));
+    if (quality_page)
+        return several ?
+            // TRN %1% extruder numbers ("1, 3")
+            format_wxstr(_L("Extruders %1% print the line widths of their extruder presets."), from_u8(heads)) :
+            // TRN %1% an extruder number ("3")
+            format_wxstr(_L("Extruder %1% prints the line widths of its extruder preset."), from_u8(heads));
     return several ?
-        // TRN Line on the Quality page of the process settings. %1% lists tool heads with their nozzle sizes ("1 (0.2 mm), 3 (0.6 mm)"), %2% process presets, %3% the other tool heads ("2")
-        format_wxstr(_L("Extruders %1% print with the line widths of %2%. The line widths below apply to extruders %3%, and to every extruder for the widths you changed; every other setting on this page applies to every extruder."),
-                     from_u8(derived_heads), from_u8(presets), from_u8(other_heads)) :
-        // TRN Line on the Quality page of the process settings. %1% is a tool head with its nozzle size ("3 (0.6 mm)"), %2% a process preset, %3% the other tool heads ("1, 2, 4")
-        format_wxstr(_L("Extruder %1% prints with the line widths of %2%. The line widths below apply to extruders %3%, and to every extruder for the widths you changed; every other setting on this page applies to every extruder."),
-                     from_u8(derived_heads), from_u8(presets), from_u8(other_heads));
+        // TRN %1% extruder numbers ("2, 3")
+        format_wxstr(_L("Extruders %1% print the speeds of their extruder presets."), from_u8(heads)) :
+        // TRN %1% an extruder number ("2")
+        format_wxstr(_L("Extruder %1% prints the speeds of its extruder preset."), from_u8(heads));
 }
 
-wxString picker_note(bool quality_page)
+wxString preferred_height_sentence(double height)
 {
-    // TRN Line under the picker of the process preset of a tool head, on the Quality / Speed page of the process settings
-    return quality_page ? _L("Its line widths print on this extruder; so do its speeds (Speed page).") :
-                          _L("Its speeds, accelerations and jerk print on this extruder; so do its line widths (Quality page).");
+    // TRN %1% a layer height
+    return format_wxstr(_L("Prints %1% mm layers."), from_u8(float_to_string_decimal_point(height, 2)));
 }
 
-wxString preferred_height_sentence(double height, size_t head)
+wxString values_set_label(size_t count)
 {
-    // TRN Under a selected tool head on the Quality page. %1% a layer height in mm, %2% the nozzle in the sidebar
-    return format_wxstr(_L("This extruder prints %1% mm layers (preferred layer height, nozzle %2% in the sidebar)."), from_u8(float_to_string_decimal_point(height, 2)), head + 1);
-}
-
-wxString all_edited_width_sentence(const wxString &label, const std::string &value, const wxString &source_alias, const std::string &source_value)
-{
-    // TRN Under a selected tool head on the Quality page. %1% a line width setting ("Inner wall"), %2% its value under All tool heads ("110%"), %3% the process preset the tool head takes its widths from, %4% that preset's value
-    return format_wxstr(_L("%1% %2% from All extruders (%3% has %4%)."), label, from_u8(value), source_alias, from_u8(source_value));
-}
-
-wxString head_values_by_kind(size_t widths, size_t speeds)
-{
-    wxString text;
-    if (widths > 0)
-        // TRN A count of line widths set for a tool head, in a list like "1 line width, 3 speeds"
-        text = format_wxstr(_L_PLURAL("%1% line width", "%1% line widths", unsigned(widths)), widths);
-    if (speeds > 0)
-        // TRN A count of speeds, accelerations and jerk values set for a tool head, in a list like "1 line width, 3 speeds"
-        text += (text.IsEmpty() ? "" : ", ") + format_wxstr(_L_PLURAL("%1% speed", "%1% speeds", unsigned(speeds)), speeds);
-    return text;
-}
-
-wxString head_values_set_sentence(bool quality_page, size_t count)
-{
-    if (count == 0)
-        return wxEmptyString;
-    return quality_page ?
-        // TRN Under a selected tool head on the Quality page. %1% the number of line widths set for it
-        format_wxstr(_L_PLURAL("%1% line width set for this extruder.", "%1% line widths set for this extruder.", unsigned(count)), count) :
-        // TRN Under a selected tool head on the Speed page. %1% the number of speeds, accelerations and jerk values set for it
-        format_wxstr(_L_PLURAL("%1% speed set for this extruder.", "%1% speeds set for this extruder.", unsigned(count)), count);
+    return format_wxstr(_L_PLURAL("%1% value set", "%1% values set", unsigned(count)), count);
 }
 
 wxString shared_settings_sentence()
 {
-    return _L("Greyed settings are shared by every extruder; the layer height of an extruder is set in the sidebar.");
+    return _L("Greyed settings apply to every extruder.");
 }
 
 wxString clear_head_link_label(bool quality_page)

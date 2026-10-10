@@ -11,6 +11,7 @@
 #include "GLToolbar.hpp"
 #include "GLPickingBuffer.hpp"
 #include "GLAOPass.hpp"
+#include "GLAOFrameTarget.hpp"
 #include "Event.hpp"
 #include "Selection.hpp"
 #include "ThumbnailView.hpp"     // ThumbnailView enum (kept lightweight, separate from this header)
@@ -667,18 +668,21 @@ private:
     // Requests a frame that may reuse the cached main scene.
     bool m_overlayDirty{ false };
     GLAOPass m_ao_pass;
-    int m_ao_comparison_stage{0}; // 0 idle, 1 measuring, 2 capturing
-    bool m_ao_comparison_filter{false};
-    bool m_ao_comparison_denoise{false};
-    bool m_ao_comparison_sampling{false};
-    bool m_ao_comparison_composite{false};
-    bool m_ao_comparison_confidence{false};
-    bool m_ao_comparison_split{false};
-    bool m_ao_comparison_pixel{false}, m_ao_comparison_pixel_fs{false};
-    bool m_ao_comparison_reconstruction{false};
-    bool m_ao_comparison_backends{false};
-    bool m_ao_comparison_low{false};
-    bool m_ao_comparison_qualities{false}; // One CS/FS pair for each quality preset.
+    GLAOFrameTarget m_ao_frame_target;
+    bool m_ownedFrameLastRender{false};
+    std::string m_frameTargetFallbackReason;
+    int             m_ao_comparison_stage{0}; // 0 idle, 1 measuring, 2 capturing
+    bool            m_ao_comparison_filter{false};
+    bool            m_ao_comparison_denoise{false};
+    bool            m_ao_comparison_sampling{false};
+    bool            m_ao_comparison_composite{false};
+    bool            m_ao_comparison_confidence{false};
+    bool            m_ao_comparison_split{false};
+    bool            m_ao_comparison_pixel{false}, m_ao_comparison_pixel_fs{false};
+    bool            m_ao_comparison_reconstruction{false};
+    bool            m_ao_comparison_backends{false};
+    bool            m_ao_comparison_low{false};
+    bool            m_ao_comparison_qualities{false}; // One CS/FS pair for each quality preset.
     int m_ao_comparison_run{0}; // Three alternating default/directions pairs.
     std::string m_ao_comparison_root, m_ao_comparison_signature, m_ao_comparison_capture;
     void finish_ao_comparison(const std::string& reason);
@@ -1473,11 +1477,13 @@ private:
      */
     void RenderPlateIconTooltip(const MainSceneRenderParams& params, int oldPlateHoverId);
     /** @brief Draws the selection box after scene presentation with explicit depth and blend state. */
-    void RenderSelectionBoxWithExplicitState();
-    bool RenderPickingBuffer(const Camera& camera);
-    VolumePickResult QueryVolumeFromPickingBuffer(const Vec2d& screenPosition, const Camera& camera, int toleranceRadiusPx);
-    PickingPassResult QueryHybridPickingHit(const Vec2d& screenPosition, const Camera& camera, const ClippingPlane& clippingPlane,
-                                            int volumeToleranceRadiusPx);
+    void              RenderSelectionBoxWithExplicitState();
+    bool              RenderPickingBuffer(const Camera& camera);
+    VolumePickResult  QueryVolumeFromPickingBuffer(const Vec2d& screenPosition, const Camera& camera, int toleranceRadiusPx);
+    PickingPassResult QueryHybridPickingHit(const Vec2d&         screenPosition,
+                                            const Camera&        camera,
+                                            const ClippingPlane& clippingPlane,
+                                            int                  volumeToleranceRadiusPx);
 
     /**
      * @brief Projects a Volume surface hit onto the original mouse ray using the active drag-plane semantics.

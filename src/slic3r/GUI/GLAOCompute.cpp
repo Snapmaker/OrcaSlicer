@@ -80,7 +80,14 @@ bool GLAOCompute::prepare(int width, int height, const std::array<unsigned int, 
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
-    if (glGetError() != GL_NO_ERROR) {
+    const GLenum allocation_error = glGetError();
+    if (allocation_error != GL_NO_ERROR) {
+        if (allocation_error == GL_CONTEXT_LOST) {
+            state.forget_context();
+            forget_context();
+            m_failure = "OpenGL context lost";
+            return false;
+        }
         disable("CS texture allocation failed");
         return false;
     }
@@ -152,6 +159,8 @@ bool GLAOCompute::render(unsigned int depth, unsigned int normals, const Paramet
     }
     const GLenum error = glGetError();
     if (error != GL_NO_ERROR) {
+        if (error == GL_CONTEXT_LOST)
+            state.forget_context();
         m_failure = error == GL_CONTEXT_LOST ? "OpenGL context lost" : "XeGTAO dispatch failed";
         return false;
     }
@@ -350,6 +359,8 @@ void GLAOCompute::State::forget_textures(const std::array<unsigned int, 6>& text
 
 GLAOCompute::State::~State()
 {
+    if (!m_restore_state)
+        return;
     for (GLuint i = 0; i < m_images.size(); ++i) {
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(GL_TEXTURE_2D, m_textures[i]);

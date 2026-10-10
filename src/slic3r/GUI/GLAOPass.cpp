@@ -58,7 +58,7 @@ void AOBenchmark::begin(const std::string& signature)
     if (m_signature.empty()) {
         m_signature = signature;
         std::ofstream metadata(std::filesystem::path(m_directory) / "metadata.txt");
-        metadata << "benchmark_schema=9\n"
+        metadata << "benchmark_schema=10\n"
                  << signature << "\nGPU: " << reinterpret_cast<const char*>(glGetString(GL_RENDERER))
                  << "\nVendor: " << reinterpret_cast<const char*>(glGetString(GL_VENDOR))
                  << "\nGL: " << reinterpret_cast<const char*>(glGetString(GL_VERSION))
@@ -271,6 +271,8 @@ std::array<int, 2> cs_ao_samples(GLAOPass::Quality quality, int override_slices)
 // The pass uses its own VAO and texture units 0..4 (3: MSAA depth, 4: optional confidence).
 struct AOState
 {
+    bool restore_state{true};
+    void forget_context() { restore_state = false; }
     GLint     read_fbo{}, draw_fbo{}, viewport[4]{}, program{}, vao{}, array_buffer{}, active{}, textures[5]{}, sample_texture{};
     GLint     depth_func{}, blend_src[2]{}, blend_dst[2]{}, blend_eq[2]{}, polygon_mode[2]{};
     GLboolean depth_mask{}, color_mask[4]{}, multisample{}, sample_mask{}, sample_shading{};
@@ -326,6 +328,8 @@ struct AOState
     }
     ~AOState()
     {
+        if (!restore_state)
+            return;
         glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw_fbo);
         glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
@@ -393,8 +397,8 @@ bool write_gray_bmp(const std::filesystem::path& path, const std::vector<unsigne
     std::ofstream out(path, std::ios::binary);
     if (!out)
         return false;
-    const unsigned int stride = (unsigned int(w * 3) + 3u) & ~3u;
-    const unsigned int size   = 54u + stride * unsigned int(h);
+    const unsigned int stride = (static_cast<unsigned int>(w * 3) + 3u) & ~3u;
+    const unsigned int size   = 54u + stride * static_cast<unsigned int>(h);
     auto               put16  = [&out](unsigned int v) {
         out.put(char(v));
         out.put(char(v >> 8));
@@ -408,12 +412,12 @@ bool write_gray_bmp(const std::filesystem::path& path, const std::vector<unsigne
     put32(0);
     put32(54);
     put32(40);
-    put32(unsigned int(w));
-    put32(unsigned int(h));
+    put32(static_cast<unsigned int>(w));
+    put32(static_cast<unsigned int>(h));
     put16(1);
     put16(24);
     put32(0);
-    put32(stride * unsigned int(h));
+    put32(stride * static_cast<unsigned int>(h));
     put32(0);
     put32(0);
     put32(0);
@@ -423,9 +427,10 @@ bool write_gray_bmp(const std::filesystem::path& path, const std::vector<unsigne
             for (int c = 0; c < 3; ++c)
                 out.put(char(pixels[rgb ? (size_t(y) * w + x) * 3 + 2 - c : size_t(y) * w + x]));
         }
-        for (unsigned int p = unsigned int(w * 3); p < stride; ++p)
+        for (unsigned int p = static_cast<unsigned int>(w * 3); p < stride; ++p)
             out.put(0);
     }
+    out.close();
     return bool(out);
 }
 
@@ -697,6 +702,8 @@ bool capture_ao_parameters(const std::filesystem::path& path,
             out << ' ' << frame.inverse_projection(r, c);
     out << "\nsource_samples " << source_samples << "\nsample_composite " << sample_composite << '\n';
     out << "scene_view " << frame.scene_view << "\nexplosion_ratio " << frame.explosion_ratio << '\n';
+    out << "frame_target " << frame.frame_target << "\ncapture_samples " << frame.capture_samples
+        << "\ncapture_completion " << (frame.defer_capture_completion ? "after_frame_presentation" : "after_ao") << '\n';
     return bool(out);
 }
 } // namespace
@@ -742,11 +749,6 @@ bool GLAOPass::fail(const std::string& reason)
 void GLAOPass::release()
 {
     m_compute.release();
-    glDeleteFramebuffers(2, m_scene_fbo.data());
-    glDeleteRenderbuffers(3, m_scene_rbo.data());
-    m_scene_fbo     = {};
-    m_scene_rbo     = {};
-    m_scene_samples = 0;
     glDeleteTextures(1, &m_split_texture);
     glDeleteFramebuffers(1, &m_split_fbo);
     m_split_texture = m_split_fbo = 0;
@@ -791,6 +793,7 @@ bool GLAOPass::validate_fs_shaders(bool needs_upsample)
 
 bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shaders& shaders)
 {
+    m_frame_target = frame.frame_target;
     if (settings.quality == Quality::Off || !m_failure.empty())
         return false;
     if (!GLEW_VERSION_3_1)
@@ -869,6 +872,11 @@ bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shade
     // A recursive retry would save those bindings and then delete their objects.
     if (m_use_compute && !m_compute.prepare(w, h, compute_programs, m_denoise_passes)) {
         m_backend_reason = m_compute.failure_reason();
+        if (m_backend_reason == "OpenGL context lost") {
+            state.forget_context();
+            benchmark.finish("ABORTED: OpenGL context lost", false);
+            return fail(m_backend_reason);
+        }
         benchmark.finish("ABORTED: CS initialization failed: " + m_backend_reason);
         m_use_compute       = false;
         m_effective_samples = ao_samples(settings.quality, settings.fs_slices_override);
@@ -982,6 +990,8 @@ bool GLAOPass::prepare(const Frame& frame, const Settings& settings, const Shade
 
 void GLAOPass::forget_context()
 {
+    m_capture_directory.clear();
+    m_pending_capture_directory.clear();
     m_split_texture = m_split_fbo = 0;
     m_quality = Quality::Off;
     m_pixel_active = false;
@@ -995,9 +1005,6 @@ void GLAOPass::forget_context()
     m_compute.forget_context();
     m_use_compute = false;
     m_backend_reason.clear();
-    m_scene_fbo     = {};
-    m_scene_rbo     = {};
-    m_scene_samples = 0;
     m_texture       = {};
     m_fbo           = {};
     m_queries       = {};
@@ -1012,100 +1019,6 @@ void GLAOPass::forget_context()
     m_sample_count                                 = 0;
     m_sample_active = m_sample_failed = false;
     m_failure.clear();
-}
-
-bool GLAOPass::render_scene(const Frame& frame, const std::function<bool(const Frame&)>& draw_scene)
-{
-    AOState saved;
-    glBindFramebuffer(GL_FRAMEBUFFER, frame.target);
-    GLint samples = 0, depth_bits = 0, stencil_bits = 0;
-    glGetIntegerv(GL_SAMPLES, &samples);
-    if (frame.source != 0 || frame.target != 0 || samples <= 1 || !GLEW_VERSION_4_0 || !frame.sample_composite)
-        return draw_scene(frame);
-    GLint red_bits = 0, green_bits = 0, blue_bits = 0, color_encoding = GL_LINEAR, color_buffer = 0;
-    glGetIntegerv(GL_RED_BITS, &red_bits);
-    glGetIntegerv(GL_GREEN_BITS, &green_bits);
-    glGetIntegerv(GL_BLUE_BITS, &blue_bits);
-    glGetIntegerv(GL_DRAW_BUFFER0, &color_buffer);
-    const GLenum color_attachment = color_buffer == GL_BACK  ? GL_BACK_LEFT :
-                                    color_buffer == GL_FRONT ? GL_FRONT_LEFT :
-                                                               GLenum(color_buffer);
-    glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, color_attachment, GL_FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING, &color_encoding);
-    // Other window formats keep resolved AO until their presentation conversion is validated.
-    if (red_bits != 8 || green_bits != 8 || blue_bits != 8 || color_encoding != GL_LINEAR)
-        return draw_scene(frame);
-    glGetIntegerv(GL_DEPTH_BITS, &depth_bits);
-    glGetIntegerv(GL_STENCIL_BITS, &stencil_bits);
-    // Match the window depth format for the later depth-only transfer.
-    const GLenum depth_format = stencil_bits     ? (depth_bits == 32 ? GL_DEPTH32F_STENCIL8 : GL_DEPTH24_STENCIL8) :
-                                depth_bits == 32 ? GL_DEPTH_COMPONENT32F :
-                                depth_bits == 16 ? GL_DEPTH_COMPONENT16 :
-                                                   GL_DEPTH_COMPONENT24;
-    GLint        old_rbo      = 0;
-    glGetIntegerv(GL_RENDERBUFFER_BINDING, &old_rbo);
-    if (m_scene_samples != samples) {
-        glDeleteFramebuffers(2, m_scene_fbo.data());
-        glDeleteRenderbuffers(3, m_scene_rbo.data());
-        glGenFramebuffers(2, m_scene_fbo.data());
-        glGenRenderbuffers(3, m_scene_rbo.data());
-        glBindFramebuffer(GL_FRAMEBUFFER, m_scene_fbo[0]);
-        glBindRenderbuffer(GL_RENDERBUFFER, m_scene_rbo[0]);
-        glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, m_width, m_height);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, m_scene_rbo[0]);
-        glBindRenderbuffer(GL_RENDERBUFFER, m_scene_rbo[1]);
-        glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, depth_format, m_width, m_height);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, stencil_bits ? GL_DEPTH_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,
-                                  m_scene_rbo[1]);
-        bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-        glBindFramebuffer(GL_FRAMEBUFFER, m_scene_fbo[1]);
-        glBindRenderbuffer(GL_RENDERBUFFER, m_scene_rbo[2]);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, m_width, m_height);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, m_scene_rbo[2]);
-        complete &= glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-        glBindRenderbuffer(GL_RENDERBUFFER, old_rbo);
-        if (!complete || consume_errors())
-            return fail("AO scene target allocation failed");
-        m_scene_samples = samples;
-    }
-    Frame scene  = frame;
-    scene.source = scene.target = m_scene_fbo[0];
-    scene.viewport[0] = scene.viewport[1] = 0;
-    glBindFramebuffer(GL_FRAMEBUFFER, scene.target);
-    glViewport(0, 0, m_width, m_height);
-    const std::string capture_directory = m_capture_directory;
-    if (!draw_scene(scene))
-        return false;
-    std::error_code capture_error;
-    const auto      complete_path = std::filesystem::path(capture_directory) / "capture-complete.txt";
-    const bool      captured      = !capture_directory.empty() && std::filesystem::exists(complete_path, capture_error);
-    if (captured)
-        std::filesystem::remove(complete_path, capture_error);
-    saved.fullscreen();
-    benchmark.mark(11);
-    // Resolve only once in the FBO layout. Do not copy multisample colors to the
-    // default framebuffer: its sample numbering/pattern need not match ours.
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, scene.target);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_scene_fbo[1]);
-    glBlitFramebuffer(0, 0, m_width, m_height, 0, 0, m_width, m_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    benchmark.mark(18);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_scene_fbo[1]);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, frame.target);
-    glBlitFramebuffer(0, 0, m_width, m_height, frame.viewport[0], frame.viewport[1], frame.viewport[0] + m_width,
-                      frame.viewport[1] + m_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    // Preserve geometric depth for subsequent decorations/transparent volumes.
-    benchmark.mark(12);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, scene.target);
-    glBlitFramebuffer(0, 0, m_width, m_height, frame.viewport[0], frame.viewport[1], frame.viewport[0] + m_width,
-                      frame.viewport[1] + m_height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
-    benchmark.mark(13);
-    if (consume_errors())
-        return fail("AO scene presentation failed");
-    if (captured && !capture_error &&
-        capture_ao_color(std::filesystem::path(capture_directory) / "color-presented.bmp", frame.target, frame.viewport)) {
-        std::ofstream complete(complete_path);
-        complete << "AO capture complete\n" << m_width << ' ' << m_height << '\n';
-    }
-    return true;
 }
 
 bool GLAOPass::allocate_depth(unsigned int format)
@@ -1180,7 +1093,7 @@ bool GLAOPass::capture_sample_depth(const Frame& frame)
     if (disabled && std::string(disabled) == "1")
         return false;
     // Never index a window's colors with sample IDs from a copied texture. Window
-    // MSAA scenes must go through render_scene; other formats use resolved AO.
+    // Strict sample operations require a Canvas-owned MSAA target of known layout.
     if (!frame.sample_composite || !GLEW_VERSION_4_0 || m_samples <= 1 || frame.source == 0 || frame.source != frame.target ||
         m_sample_failed)
         return false;
@@ -1268,7 +1181,8 @@ void GLAOPass::draw(int index, unsigned int target, int w, int h, const Frame& f
 void GLAOPass::begin_timing()
 {
     std::ostringstream description;
-    description << "actual_backend=" << backend() << "\nfallback_reason=" << m_backend_reason << "\nao_size=" << m_ao_width << 'x'
+    description << "actual_backend=" << backend() << "\nfallback_reason=" << m_backend_reason
+                << "\nframe_target=" << m_frame_target << "\npresentation_stage=after_imgui_before_swap\n" << "ao_size=" << m_ao_width << 'x'
                 << m_ao_height << "\ncs_denoise_actual=" << (m_use_compute ? m_denoise_passes : 0)
                 << "\ncomposite_variant=" << (m_pixel_active ? "pixel" : m_split_active ? "split_msaa" : m_use_confidence ? "confidence_precomputed" : m_composite_reference ? "reference" : "optimized") << "\ncs_low_normalization=" << (m_use_compute && m_quality == Quality::Low ? (m_cs_low_reference ? "legacy" : "unoccluded_slice") : "not_applicable") << "\nfs_reconstruction=" << (m_use_compute ? "not_applicable" : fast_reconstruction_active() ? "separable_xy" : "matrix") << "\nfs_filter=" << (m_use_compute ? "not_applicable" : m_use_edge_filter ? (m_fs_edge_passes == 3 ? "connectivity_3pass" : "connectivity_2pass") : "geometry") << "\nactual_slices=" << m_effective_samples[0] << "\nactual_steps=" << m_effective_samples[1]
                 << "\ncs_evaluate_program=" << (m_use_compute ? m_compute.evaluation_program() : 0) << "\ncs_implementation=xegtao_glsl_v1\ncs_upstream=" << GLAOCompute::upstream;
@@ -1339,8 +1253,12 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
         benchmark.mark(29);
     // Color sample capture is independent of whether AO uses a copied sample-depth texture.
     const int color_sample_count = frame.source != 0 && frame.source == frame.target && m_samples > 1 ? m_samples : 0;
-    if (frame.require_msaa_comparison && (color_sample_count <= 1 || settings.debug_view != 0) && benchmark.active())
-        benchmark.finish("ABORTED: pixel/MSAA comparison requires an MSAA scene and normal display");
+    if ((frame.require_msaa_comparison && (color_sample_count <= 1 || settings.debug_view != 0)) ||
+        (frame.require_sample_composite && !m_sample_active)) {
+        benchmark.finish("ABORTED: requested MSAA composite unavailable");
+        m_recording = false;
+        return false;
+    }
     m_split_active = m_split_ready && m_sample_active && m_sample_count > 1 && m_sample_count <= 8 && settings.debug_view == 0;
     if (frame.split_composite && !m_split_active && benchmark.active())
         benchmark.finish("ABORTED: split composite requires its programs and 2..8 MSAA samples");
@@ -1440,8 +1358,9 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
                 capture_ok &= m_compute.capture(capture_path.string(), m_denoise_passes);
         } else {
             m_backend_reason = m_compute.failure_reason().empty() ? "invalid CS parameters" : m_compute.failure_reason();
-            benchmark.finish("ABORTED: CS dispatch failed: " + m_backend_reason);
+            benchmark.finish("ABORTED: CS dispatch failed: " + m_backend_reason, m_backend_reason != "OpenGL context lost");
             if (m_backend_reason == "OpenGL context lost") {
+                state.forget_context();
                 m_recording = false;
                 return fail(m_backend_reason);
             }
@@ -1524,6 +1443,7 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
     if (!capture_path.empty()) {
         std::ofstream metadata(capture_path / "backend-info.txt");
         metadata << "actual_backend=" << backend() << "\nfallback_reason=" << m_backend_reason << "\nupstream=" << GLAOCompute::upstream
+                 << "\nframe_target=" << frame.frame_target << "\ncolor_sample_capture=" << frame.capture_samples
                  << "\nscene_view=" << frame.scene_view << "\nexplosion_ratio=" << frame.explosion_ratio
                  << "\ncs_evaluate_program=" << (m_use_compute ? m_compute.evaluation_program() : 0) << "\nsample_capture_version=3\nsample_surface_diagnostics=" << (m_sample_active ? "available" : "not_applicable")
                  << "\ncolor_sample_count=" << color_sample_count << "\ndenoise_passes=" << (m_use_compute ? m_denoise_passes : 0) << "\nactual_slices=" << m_effective_samples[0]
@@ -1551,7 +1471,7 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
     }
     if (!capture_path.empty())
         capture_ok &= capture_ao_color(capture_path / "color-before-ao.bmp", frame.target, frame.viewport);
-    if (!capture_path.empty() && color_sample_count > 1)
+    if (!capture_path.empty() && frame.capture_samples && color_sample_count > 1)
         capture_ok &= capture_ao_sample_colors(capture_path, "before", frame.target, frame.viewport, color_sample_count, m_vao);
     if (m_split_active) {
         glActiveTexture(GL_TEXTURE4);
@@ -1587,7 +1507,7 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
         capture_ok &= capture_ao_color(capture_path / "color-after-ao.bmp", frame.target, frame.viewport);
         if (m_split_active)
             capture_ok &= capture_ao_texture(capture_path / "composite-fast-factor.bmp", m_split_texture, m_width, m_height);
-        if (color_sample_count > 1)
+        if (frame.capture_samples && color_sample_count > 1)
             capture_ok &= capture_ao_sample_colors(capture_path, "after", frame.target, frame.viewport, color_sample_count, m_vao);
         AOState capture_state;
         capture_state.fullscreen();
@@ -1705,7 +1625,9 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
     }
     const bool rendered = !consume_errors();
     if (rendered && !capture_path.empty()) {
-        if (capture_ok) {
+        if (capture_ok && frame.defer_capture_completion) {
+            m_pending_capture_directory = capture_path.string();
+        } else if (capture_ok) {
             std::ofstream complete(capture_path / "capture-complete.txt", std::ios::trunc);
             complete << "AO capture complete\n" << m_width << ' ' << m_height << '\n';
             capture_ok = bool(complete);
@@ -1714,6 +1636,45 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
             BOOST_LOG_TRIVIAL(warning) << "AO capture could not write all diagnostic files";
     }
     return rendered || fail("AO composite failed");
+}
+
+bool GLAOPass::finalize_capture(const Frame& frame, bool success)
+{
+    const std::string directory = m_pending_capture_directory.empty() ? m_capture_directory : m_pending_capture_directory;
+    const bool pending = !m_pending_capture_directory.empty();
+    m_pending_capture_directory.clear();
+    m_capture_directory.clear();
+    if (directory.empty())
+        return true;
+    const auto path = std::filesystem::path(directory);
+    std::error_code error;
+    std::filesystem::remove(path / "capture-complete.txt", error);
+    if (!success || !pending || error)
+        return false;
+    if (!capture_ao_color(path / "color-presented.bmp", frame.target, frame.viewport) || consume_errors()) {
+        BOOST_LOG_TRIVIAL(warning) << "AO final frame capture failed";
+        return false;
+    }
+    std::ofstream info(path / "presentation-info.txt");
+    info << "stage=after_imgui_before_swap\nframe_target=" << frame.frame_target << "\n";
+    info.close();
+    if (!info)
+        return false;
+    const auto temporary = path / "capture-complete.tmp";
+    std::ofstream complete(temporary);
+    complete << "AO capture complete\n" << frame.viewport[2] << ' ' << frame.viewport[3] << '\n';
+    complete.close();
+    if (!complete) {
+        std::filesystem::remove(temporary, error);
+        return false;
+    }
+    std::filesystem::rename(temporary, path / "capture-complete.txt", error);
+    if (error) {
+        std::error_code cleanup_error;
+        std::filesystem::remove(temporary, cleanup_error);
+        return false;
+    }
+    return true;
 }
 
 }} // namespace Slic3r::GUI

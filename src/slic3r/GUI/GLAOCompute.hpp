@@ -66,6 +66,7 @@ public:
         State();
         ~State();
         void forget_textures(const std::array<unsigned int, 6>& textures);
+        void forget_context() { m_restore_state = false; }
         State(const State&)            = delete;
         State& operator=(const State&) = delete;
 
@@ -77,6 +78,7 @@ public:
         int                         m_program{}, m_active_texture{};
         std::array<int, 5>          m_textures{}, m_samplers{};
         std::array<ImageBinding, 5> m_images{};
+        bool m_restore_state{true};
     };
 
 private:

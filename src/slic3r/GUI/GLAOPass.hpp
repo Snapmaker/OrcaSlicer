@@ -32,15 +32,19 @@ public:
         float explosion_ratio{1.0f};
         bool composite_reference{false};
         bool cs_low_reference{false};
-        bool precomputed_confidence{false};
-        bool split_composite{false};
-        bool pixel_composite{true}; // Default AO factor is shared by the covered MSAA samples.
-        bool require_msaa_comparison{false};
-        GLShaderProgram* split_classify{nullptr};
-        GLShaderProgram* split_fast{nullptr};
-        GLShaderProgram* split_edges{nullptr};
-        GLShaderProgram* confidence_normal{nullptr};
-        GLShaderProgram* confidence_composite{nullptr};
+        bool               precomputed_confidence{false};
+        bool               split_composite{false};
+        bool               pixel_composite{true}; // Default AO factor is shared by the covered MSAA samples.
+        bool               require_msaa_comparison{false};
+        bool               require_sample_composite{false};
+        bool               capture_samples{false};          // Explicit diagnostics only; never copy window sample colors.
+        bool               defer_capture_completion{false}; // Canvas completes captures after the full frame is presented.
+        const char*        frame_target{"external"};
+        GLShaderProgram*   split_classify{nullptr};
+        GLShaderProgram*   split_fast{nullptr};
+        GLShaderProgram*   split_edges{nullptr};
+        GLShaderProgram*   confidence_normal{nullptr};
+        GLShaderProgram*   confidence_composite{nullptr};
         GLShaderProgram* confidence_sample_composite{nullptr};
         // Optional OpenGL 4 shader; ordinary AO remains available on OpenGL 3.1.
         GLShaderProgram* sample_composite{nullptr};
@@ -70,15 +74,19 @@ public:
     static Quality resolve_quality(const std::string& value, const std::string& renderer);
     static float   resolve_strength(const std::string& value);
     bool           prepare(const Frame& frame, const Settings& settings, const Shaders& shaders);
-    // Render window MSAA scenes directly in a consistent offscreen sample layout.
-    // The callback draws opaque color/depth and evaluates AO; presentation resolves color once.
-    bool render_scene(const Frame& frame, const std::function<bool(const Frame&)>& draw_scene);
     // receiver_draw runs with the AO depth FBO bound, depth writes on, and all color writes off.
     bool render(const Frame& frame, const Settings& settings, const std::function<void()>& receiver_draw);
     // The next successful AO render exports one diagnostic frame, then clears the request.
-    void request_capture(const std::string& directory) { m_capture_directory = directory; }
+    void request_capture(const std::string& directory)
+    {
+        m_capture_directory = directory;
+        m_pending_capture_directory.clear();
+    }
+    bool capture_requested() const { return !m_capture_directory.empty(); }
+    // Writes color-presented only after the canvas has drawn all dynamic layers.
+    bool        finalize_capture(const Frame& presented_frame, bool success);
     AOBenchmark benchmark;
-    void release();
+    void        release();
     // After the old context is released/destroyed, discard its names and allow a fresh capability probe.
     void                         forget_context();
     bool                         has_resources() const { return m_vao != 0; }
@@ -131,9 +139,6 @@ private:
     void end_timing();
 
     unsigned int                m_vao{0}, m_depth_fbo{0}, m_depth{0};
-    std::array<unsigned int, 2> m_scene_fbo{};
-    std::array<unsigned int, 3> m_scene_rbo{};
-    int                         m_scene_samples{0};
     unsigned int                m_sample_fbo{0}, m_sample_depth{0}, m_depth_format{0};
     int                         m_sample_count{0};
     bool                        m_sample_active{false}, m_sample_failed{false};
@@ -146,6 +151,8 @@ private:
     Shaders                     m_shaders{};
     std::string                 m_failure;
     std::string                 m_capture_directory;
+    std::string                 m_pending_capture_directory;
+    const char*                 m_frame_target{"external"};
     // Four frames, nine timestamps: eight intervals, with the last interval unused by half/full dispatch as needed.
     std::array<std::array<unsigned int, 9>, 4> m_queries{};
     std::array<bool, 4>                        m_pending{};

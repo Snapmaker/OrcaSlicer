@@ -205,6 +205,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/GLAOPass.hpp
     GUI/GLAOCompute.cpp
     GUI/GLAOCompute.hpp
+    GUI/GLAOFrameTarget.cpp
+    GUI/GLAOFrameTarget.hpp
     GUI/SceneRenderStage.hpp
     GUI/GLShader.cpp
     GUI/GLShader.hpp

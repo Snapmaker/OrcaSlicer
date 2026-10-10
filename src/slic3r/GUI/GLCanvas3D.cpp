@@ -1648,6 +1648,10 @@ GLCanvas3D::~GLCanvas3D()
         m_gizmos.DetachPainterGlResources();
 
     if (contextCurrent)
+        m_ao_frame_target.release();
+    else
+        m_ao_frame_target.forget_context();
+    if (contextCurrent)
         m_pickingBuffer.Reset();
     else
         m_pickingBuffer.ForgetContext();
@@ -3281,6 +3285,10 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
 
     wxGetApp().imgui()->new_frame();
 
+    // Context-loss exits must close the CPU frame without drawing on the lost context.
+    // After normal render(), cancel_frame() is a no-op.
+    ScopeGuard imgui_frame_guard([imgui = wxGetApp().imgui()]() { imgui->cancel_frame(); });
+
     const int oldPlateHoverId = m_hover_plate_idxs.empty() ? -1 : m_hover_plate_idxs.front();
     bool sinkingContourSceneChanged = false;
     std::optional<PickingPassResult> currentMousePick;
@@ -3339,13 +3347,86 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
 
     const std::array<int, 4>& viewport = camera.get_viewport();
     const Size sceneCacheSize(viewport[2], viewport[3]);
-    int sceneCacheSamples = 0;
-    const bool sceneCacheEligible = CanUseSceneCache(sceneCacheSize, targetDrawFramebuffer, sceneCacheSamples);
-    const std::string ao_configuration = std::to_string(static_cast<int>(ResolveAOQualityForView())) + ":" +
+    auto ao_plan = BuildAOFramePlan(camera);
+    const bool owned_target_requested = ao_plan.owned_target;
+    if (m_ownedFrameLastRender && !owned_target_requested)
+        m_ao_frame_target.release();
+    bool owned_target_active = false;
+    if (owned_target_requested) {
+        GLint       samples = 0, red = 0, green = 0, blue = 0, depth = 0, stencil = 0;
+        GLint       encoding = GL_LINEAR, color_buffer = 0;
+        std::string unavailable         = "full-frame MSAA requires a linear RGB8 window and OpenGL 4";
+        const bool  composite_available = ao_plan.frame.sample_composite ||
+                                         (ao_plan.frame.pixel_composite && !ao_plan.frame.require_msaa_comparison);
+        if (targetDrawFramebuffer == 0 && wxGetApp().is_gl_version_greater_or_equal_to(4, 0) && composite_available) {
+            glGetIntegerv(GL_SAMPLES, &samples);
+            glGetIntegerv(GL_RED_BITS, &red);
+            glGetIntegerv(GL_GREEN_BITS, &green);
+            glGetIntegerv(GL_BLUE_BITS, &blue);
+            glGetIntegerv(GL_DEPTH_BITS, &depth);
+            glGetIntegerv(GL_STENCIL_BITS, &stencil);
+            glGetIntegerv(GL_DRAW_BUFFER0, &color_buffer);
+            const GLenum attachment = color_buffer == GL_BACK  ? GL_BACK_LEFT :
+                                      color_buffer == GL_FRONT ? GL_FRONT_LEFT :
+                                                                 GLenum(color_buffer);
+            glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, attachment, GL_FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING, &encoding);
+            if (samples > 1 && red == 8 && green == 8 && blue == 8 && encoding == GL_LINEAR && depth > 0) {
+                GLAOFrameTarget::Description description;
+                description.context      = m_context;
+                description.width        = viewport[2];
+                description.height       = viewport[3];
+                description.samples      = samples;
+                description.color_format = GL_RGBA8;
+                description.stencil      = stencil > 0;
+                description.depth_format = stencil     ? (depth == 32 ? GL_DEPTH32F_STENCIL8 : GL_DEPTH24_STENCIL8) :
+                                           depth == 32 ? GL_DEPTH_COMPONENT32F :
+                                           depth == 16 ? GL_DEPTH_COMPONENT16 :
+                                                         GL_DEPTH_COMPONENT24;
+                owned_target_active      = m_ao_frame_target.prepare(description);
+                unavailable              = m_ao_frame_target.failure_reason();
+            }
+        }
+        if (!owned_target_active) {
+            if (unavailable == "OpenGL context lost") {
+                m_ao_frame_target.forget_context();
+                m_ao_pass.benchmark.finish("ABORTED: OpenGL context lost", false);
+                finish_ao_comparison("ABORTED: OpenGL context lost");
+                m_ao_pass.finalize_capture(ao_plan.frame, false);
+                InvalidateSceneAndPickingCaches();
+                return;
+            }
+            if (m_frameTargetFallbackReason != unavailable) {
+                BOOST_LOG_TRIVIAL(warning) << "AO frame target unavailable: " << unavailable;
+                m_frameTargetFallbackReason = unavailable;
+            }
+            InvalidateSceneCache();
+            if (ao_plan.strict_target) {
+                m_ao_pass.benchmark.finish("ABORTED: " + unavailable);
+                finish_ao_comparison("ABORTED: " + unavailable);
+                ao_plan.settings.quality = GLAOPass::Quality::Off;
+                m_ao_pass.finalize_capture(ao_plan.frame, false);
+            } else {
+                ao_plan.frame.pixel_composite = true; // Safe window fallback; keep its original color/depth samples paired.
+            }
+        }
+    }
+    if (m_ownedFrameLastRender != owned_target_active)
+        InvalidateSceneCache();
+    m_ownedFrameLastRender = owned_target_active;
+    GLAOFrameTarget::Session frame_target_session(owned_target_active ? &m_ao_frame_target : nullptr);
+    if (owned_target_active) {
+        ao_plan.frame.source = ao_plan.frame.target = m_ao_frame_target.framebuffer();
+        ao_plan.frame.viewport[0] = ao_plan.frame.viewport[1] = 0;
+    }
+    ao_plan.frame.frame_target    = owned_target_active ? "canvas_msaa" : owned_target_requested ? "window_fallback" : "window";
+    int        sceneCacheSamples  = 0;
+    const bool sceneCacheEligible = !owned_target_requested && CanUseSceneCache(sceneCacheSize, targetDrawFramebuffer, sceneCacheSamples);
+    if (owned_target_requested)
+        fullSceneRefresh = true;
+    const std::string ao_configuration = std::to_string(static_cast<int>(ao_plan.settings.quality)) + ":" +
                                          wxGetApp().app_config->get("render_ao_debug");
     if (IsAOSceneView() && m_sceneCacheValid &&
-        (m_sceneCacheAOConfiguration != ao_configuration ||
-         !camera.get_view_matrix().matrix().isApprox(m_sceneCacheViewMatrix, 0.0) ||
+        (m_sceneCacheAOConfiguration != ao_configuration || !camera.get_view_matrix().matrix().isApprox(m_sceneCacheViewMatrix, 0.0) ||
          !camera.get_projection_matrix().matrix().isApprox(m_sceneCacheProjectionMatrix, 0.0) ||
          m_sceneCacheResources.width != static_cast<unsigned int>(sceneCacheSize.get_width()) ||
          m_sceneCacheResources.height != static_cast<unsigned int>(sceneCacheSize.get_height()) ||
@@ -3359,7 +3440,7 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
     if (IsAOSceneView()) {
         bool sceneReady = false;
         if (!fullSceneRefresh) {
-            sceneReady = PresentSceneCache();
+            sceneReady      = PresentSceneCache();
             ao_scene_cached = sceneReady && m_sceneCacheHasAO;
             if (!sceneReady) {
                 InvalidateSceneCache();
@@ -3370,11 +3451,20 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
         if (!sceneReady) {
             m_selectionHighlightValid = false;
             m_ao_pass.benchmark.mark(1);
-            ao_rendered = RenderMainSceneContent(camera, sceneParams);
+            ao_rendered = RenderMainSceneContent(camera, sceneParams, ao_plan);
+            if (m_ao_pass.failure_reason() == "OpenGL context lost") {
+                frame_target_session.forget();
+                m_ao_frame_target.forget_context();
+                m_ao_pass.benchmark.finish("ABORTED: OpenGL context lost", false);
+                finish_ao_comparison("ABORTED: OpenGL context lost");
+                m_ao_pass.finalize_capture(ao_plan.frame, false);
+                InvalidateSceneCache();
+                return;
+            }
             m_ao_pass.benchmark.mark(14);
             InvalidateSceneCache();
             const bool sceneIsActivelyChanging = m_mouse.dragging || m_gizmos.is_dragging() || m_sceneCacheCaptureDeferred;
-            m_sceneCacheCaptureDeferred = false;
+            m_sceneCacheCaptureDeferred        = false;
             if (!sceneIsActivelyChanging && sceneCacheEligible && EnsureSceneCacheResources(sceneCacheSize, sceneCacheSamples) &&
                 CaptureSceneCache()) {
                 m_sceneCacheViewMatrix = camera.get_view_matrix().matrix();
@@ -3600,6 +3690,26 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
 
     wxGetApp().imgui()->render();
 
+    // Every geometry/UI layer is complete before any owned color samples are averaged.
+    const bool frame_presented = frame_target_session.present([this](int index) { m_ao_pass.benchmark.mark(index); });
+    auto       presented_frame = ao_plan.frame;
+    presented_frame.target     = static_cast<unsigned int>(targetDrawFramebuffer);
+    presented_frame.viewport   = viewport;
+    m_ao_pass.finalize_capture(presented_frame, frame_presented && (ao_rendered || ao_scene_cached));
+    if (!frame_presented) {
+        BOOST_LOG_TRIVIAL(warning) << "AO frame presentation failed: " << m_ao_frame_target.failure_reason();
+        const bool context_lost = m_ao_frame_target.failure_reason() == "OpenGL context lost";
+        m_ao_pass.benchmark.finish("ABORTED: frame presentation failed", !context_lost);
+        finish_ao_comparison("ABORTED: frame presentation failed");
+        InvalidateSceneAndPickingCaches();
+        if (context_lost) {
+            m_ao_frame_target.forget_context();
+            return;
+        }
+        set_as_dirty();
+        request_extra_frame();
+        return;
+    }
     m_ao_pass.benchmark.end();
     m_canvas->SwapBuffers();
     advance_ao_comparison();
@@ -3611,10 +3721,10 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
     m_overlayDirty = false;
 }
 
-void GLCanvas3D::render_thumbnail(ThumbnailData &         thumbnail_data,
+void GLCanvas3D::render_thumbnail(ThumbnailData&          thumbnail_data,
                                   unsigned int            w,
                                   unsigned int            h,
-                                  const ThumbnailsParams &thumbnail_params,
+                                  const ThumbnailsParams& thumbnail_params,
                                   Camera::EType           camera_type,
                                   bool                    use_top_view,
                                   bool                    for_picking,
@@ -8924,7 +9034,7 @@ GLAOPass::Quality GLCanvas3D::ResolveAOQualityForView() const
     return GLAOPass::resolve_quality(wxGetApp().app_config->get("render_ao_quality"), OpenGLManager::get_gl_info().get_renderer());
 }
 
-bool GLCanvas3D::RenderMainSceneContent(const Camera& camera, const MainSceneRenderParams& params)
+GLCanvas3D::AOFramePlan GLCanvas3D::BuildAOFramePlan(const Camera& camera) const
 {
     glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
     _render_background();

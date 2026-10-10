@@ -19,8 +19,10 @@ public:
     void begin(const std::string& signature);
     void mark(int index);
     void pipeline(const std::string& description);
-    void end();
-    void finish(const std::string& reason);
+    void               end();
+    // When the owning context is unavailable, record the result and forget query
+    // names; context destruction owns their eventual GPU cleanup.
+    void finish(const std::string& reason, bool context_current = true);
     void release();
     void forget();
 

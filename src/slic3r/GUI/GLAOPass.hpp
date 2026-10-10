@@ -28,6 +28,8 @@ public:
         std::array<int, 4> viewport{};
         unsigned int       source{0}, target{0};
         bool               perspective{true};
+        const char* scene_view{"external"}; // Diagnostic tag; supplied as a static literal by the canvas.
+        float explosion_ratio{1.0f};
         bool composite_reference{false};
         bool cs_low_reference{false};
         bool precomputed_confidence{false};

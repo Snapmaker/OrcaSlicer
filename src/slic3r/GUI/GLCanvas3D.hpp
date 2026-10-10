@@ -587,7 +587,7 @@ private:
         int samples{ 0 };
     };
 
-    /** @brief Parameters shared by cached and legacy View3D main-scene rendering. */
+    /** @brief Parameters shared by cached and legacy preparation/assembly rendering. */
     struct MainSceneRenderParams
     {
         bool onlyCurrent{ false };
@@ -743,10 +743,18 @@ private:
     SceneCacheResources m_sceneCacheResources;
     // Identifies the selection membership represented by the cached highlight textures.
     Selection::IndicesList m_selectionHighlightVolumeIndices;
-    bool m_sceneCacheValid{ false };
+    bool                   m_sceneCacheValid{false};
+    bool                   m_sceneCacheHasAO{false};
+    // AO settings and the shared camera may change while this canvas is hidden.
+    Matrix4d    m_sceneCacheViewMatrix{Matrix4d::Identity()};
+    Matrix4d    m_sceneCacheProjectionMatrix{Matrix4d::Identity()};
+    std::string m_sceneCacheAOConfiguration;
+    float       m_sceneCacheExplosionRatio{1.0f};
+    float       m_appliedExplosionRatio{1.0f};
+    bool        m_explosionBoundsDirty{true};
     // Avoids glGetError on the hot path after each Scene Cache copy direction has been validated.
-    bool m_sceneCacheCaptureValidated{ false };
-    bool m_sceneCachePresentValidated{ false };
+    bool m_sceneCacheCaptureValidated{false};
+    bool m_sceneCachePresentValidated{false};
     // Defers cache capture while short-lived camera input is producing consecutive FullScene frames.
     bool m_sceneCacheCaptureDeferred{ false };
     bool m_selectionHighlightValid{ false };
@@ -868,6 +876,8 @@ public:
     bool is_initialized() const { return m_initialized; }
 
     void set_context(wxGLContext* context);
+    // Called before hiding this canvas so a comparison cannot resume across a view switch.
+    void on_view_deactivated();
     const std::string& get_ao_failure_reason() const { return m_ao_pass.failure_reason(); }
     void set_type(ECanvasType type) { if (m_canvas_type != type) InvalidateSceneAndPickingCaches(); m_canvas_type = type; }
     ECanvasType get_canvas_type() { return m_canvas_type; }
@@ -1440,13 +1450,17 @@ private:
     void SetOverlayAsDirty();
     /** @brief Invalidates cached selection highlight data and schedules an overlay frame. */
     void SetSelectionAsDirty();
-    /** @brief Checks whether the current target and framebuffer format support Scene Cache V1. */
+    bool IsAOSceneView() const;
+    bool ApplyExplosionRatio(float ratio);
+    bool IsAssembleClipped() const;
+    GLAOPass::Quality ResolveAOQualityForView() const;
+    /** @brief Checks whether the current view, target and framebuffer format support Scene Cache. */
     bool CanUseSceneCache(const Size& canvasSize, int targetDrawFramebuffer, int& samples) const;
     /** @brief Creates or reuses Scene Cache framebuffer resources for the requested specification. */
     bool EnsureSceneCacheResources(const Size& canvasSize, int samples);
     /** @brief Releases all Scene Cache OpenGL resources. */
     void ReleaseSceneCacheResources();
-    /** @brief Copies the directly rendered View3D main scene from the window framebuffer into Scene Cache. */
+    /** @brief Copies the rendered preparation/assembly scene into its canvas-owned Scene Cache. */
     bool CaptureSceneCache();
     /** @brief Copies cached color and depth into the window framebuffer. */
     bool PresentSceneCache();

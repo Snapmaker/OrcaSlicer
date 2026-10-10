@@ -303,6 +303,9 @@ public:
 
     unsigned int volumes_count() const { return (unsigned int)m_list.size(); }
     const BoundingBoxf3& get_bounding_box() const;
+    // Display-only transforms (e.g. assembly explosion) change world bounds
+    // without editing the model or changing selection membership.
+    void invalidate_render_bounds() { set_bounding_boxes_dirty(); }
     // Bounding box of a single full instance selection, in world coordinates, with no instance scaling applied.
     // This bounding box is useful for absolute scaling of tilted objects in world coordinate space.
     // Modifiers are NOT taken in account

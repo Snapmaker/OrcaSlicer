@@ -14764,9 +14764,16 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
     preview->get_canvas3d()->reset_select_plate_toolbar_selection();
 
     wxPanel* old_panel = current_panel;
-//#if BBL_HAS_FIRST_PAGE
+    if (old_panel != panel) {
+        // Stop while the old canvas is still visible and can activate its context.
+        if (old_panel == view3D && view3D)
+            view3D->get_canvas3d()->on_view_deactivated();
+        else if (old_panel == assemble_view && assemble_view)
+            assemble_view->get_canvas3d()->on_view_deactivated();
+    }
+    // #if BBL_HAS_FIRST_PAGE
     if (!old_panel) {
-        //BBS: only switch to the first panel when visible
+        // BBS: only switch to the first panel when visible
         panel->Show();
         //dynamic_cast<View3D *>(panel)->get_canvas3d()->render();
         if (!panel->IsShownOnScreen())

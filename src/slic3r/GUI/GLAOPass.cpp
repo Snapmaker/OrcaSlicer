@@ -147,7 +147,7 @@ void AOBenchmark::end()
     m_slot = -1;
 }
 
-void AOBenchmark::finish(const std::string& reason)
+void AOBenchmark::finish(const std::string& reason, bool context_current)
 {
     if (!m_active)
         return;
@@ -223,7 +223,10 @@ void AOBenchmark::finish(const std::string& reason)
     BOOST_LOG_TRIVIAL(info) << "AO benchmark " << reason << ": " << m_directory;
     status.close();
     m_completed = reason == "COMPLETE" && bool(csv) && bool(status);
-    release();
+    if (context_current)
+        release();
+    else
+        forget();
 }
 
 void AOBenchmark::release()
@@ -693,6 +696,7 @@ bool capture_ao_parameters(const std::filesystem::path& path,
         for (int r = 0; r < 4; ++r)
             out << ' ' << frame.inverse_projection(r, c);
     out << "\nsource_samples " << source_samples << "\nsample_composite " << sample_composite << '\n';
+    out << "scene_view " << frame.scene_view << "\nexplosion_ratio " << frame.explosion_ratio << '\n';
     return bool(out);
 }
 } // namespace
@@ -1520,6 +1524,7 @@ bool GLAOPass::render(const Frame& frame, const Settings& settings, const std::f
     if (!capture_path.empty()) {
         std::ofstream metadata(capture_path / "backend-info.txt");
         metadata << "actual_backend=" << backend() << "\nfallback_reason=" << m_backend_reason << "\nupstream=" << GLAOCompute::upstream
+                 << "\nscene_view=" << frame.scene_view << "\nexplosion_ratio=" << frame.explosion_ratio
                  << "\ncs_evaluate_program=" << (m_use_compute ? m_compute.evaluation_program() : 0) << "\nsample_capture_version=3\nsample_surface_diagnostics=" << (m_sample_active ? "available" : "not_applicable")
                  << "\ncolor_sample_count=" << color_sample_count << "\ndenoise_passes=" << (m_use_compute ? m_denoise_passes : 0) << "\nactual_slices=" << m_effective_samples[0]
                  << "\nactual_steps=" << m_effective_samples[1] << "\ncomposite_variant=" << (m_pixel_active ? "pixel" : m_split_active ? "split_msaa" : m_use_confidence ? "confidence_precomputed" : m_composite_reference ? "reference" : "optimized") << "\ncs_low_normalization=" << (m_use_compute && m_quality == Quality::Low ? (m_cs_low_reference ? "legacy" : "unoccluded_slice") : "not_applicable") << "\nfs_reconstruction=" << (m_use_compute ? "not_applicable" : fast_reconstruction_active() ? "separable_xy" : "matrix") << "\nfs_filter=" << (m_use_compute ? "not_applicable" : m_use_edge_filter ? (m_fs_edge_passes == 3 ? "connectivity_3pass" : "connectivity_2pass") : "geometry") << '\n';

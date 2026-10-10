@@ -44,9 +44,9 @@ REM ============================================================
 if not defined GITLAB_BASE_URL  set "GITLAB_BASE_URL=gitlab.s.com"
 if not defined GITLAB_GROUP     set "GITLAB_GROUP=snapmaker_orca"
 
-set "GITLAB_VENDOR=http://%GITLAB_BASE_URL%/%GITLAB_GROUP%/snapmaker_orca_vendor.git"
+set "GITLAB_VENDOR=git@%GITLAB_BASE_URL%:%GITLAB_GROUP%/snapmaker_orca_vendor.git"
 set "GITLAB_WXWIDGETS=git@%GITLAB_BASE_URL%:%GITLAB_GROUP%/Orca-deps-wxWidgets.git"
-set "GITLAB_SENTRY=http://%GITLAB_BASE_URL%/%GITLAB_GROUP%/sentry-native.git"
+set "GITLAB_SENTRY=git@%GITLAB_BASE_URL%:%GITLAB_GROUP%/sentry-native.git"
 
 REM Script location = orca main repo root
 set "ORCA_ROOT=%CD%"

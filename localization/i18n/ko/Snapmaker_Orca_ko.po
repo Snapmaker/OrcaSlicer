@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Snapmaker Orca\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-28 13:11+0200\n"
+"POT-Creation-Date: 2026-10-10 15:26+0200\n"
 "PO-Revision-Date: 2025-06-02 17:12+0900\n"
 "Last-Translator: crwusiz <crwusiz@gmail.com>\n"
 "Language-Team: \n"
@@ -292,6 +292,9 @@ msgstr "표준"
 
 msgid "TPU High Flow"
 msgstr "TPU 고유량"
+
+msgid "E3D High Flow"
+msgstr ""
 
 msgid "Unknown"
 msgstr "알 수 없는"
@@ -2031,6 +2034,16 @@ msgstr "구성 패키지가 로드되었지만, 일부 값이 인식되지 않�
 msgid "The configuration file “%1%” was loaded, but some values were not recognized."
 msgstr "구성 파일 \"%1%\"가 로드되었지만 일부 값이 인식되지 않았습니다."
 
+#, c-format, boost-format
+msgid ""
+"\"%s\" is not a plain document, image or model file. Opening it may run it as a program or script on this computer.\n"
+"\n"
+"Only open attachments from projects you trust. Open it anyway?"
+msgstr ""
+
+msgid "Open attachment"
+msgstr ""
+
 msgid "Loading configuration"
 msgstr "구성 파일 로드 중"
 
@@ -2583,7 +2596,6 @@ msgstr "서포트"
 msgid "Flush options"
 msgstr "버리기 옵션"
 
-#. TRN Prefix of a speed, acceleration or jerk setting in the list of values set for a tool head ("Speed: Outer wall")
 msgid "Speed"
 msgstr "속도"
 
@@ -2599,6 +2611,9 @@ msgstr "상단 최소 쉘 두께"
 msgid "Top Surface Density"
 msgstr "상단 표면 밀도"
 
+msgid "Top paint penetration layers"
+msgstr ""
+
 msgid "Bottom solid layers"
 msgstr "하단 꽉찬 레이어"
 
@@ -2607,6 +2622,9 @@ msgstr "하단 최소 쉘 두께"
 
 msgid "Bottom Surface Density"
 msgstr "하단 표면 밀도"
+
+msgid "Bottom paint penetration layers"
+msgstr ""
 
 msgid "Ironing"
 msgstr "다림질"
@@ -2640,6 +2658,9 @@ msgstr "서포트 차단기 추가"
 
 msgid "Add Support Enforcer"
 msgstr "서포트 강제기 추가"
+
+msgid "Add Precise Seam"
+msgstr ""
 
 msgid "Add text"
 msgstr "텍스트 추가"
@@ -2763,6 +2784,9 @@ msgstr "서포트 차단기"
 
 msgid "Support Enforcer"
 msgstr "서포트 강제기"
+
+msgid "Precise Seam"
+msgstr ""
 
 msgid "Change part type"
 msgstr "부품 유형 변경"
@@ -2900,6 +2924,30 @@ msgstr "Z축을 따라 반전"
 
 msgid "Mirror object"
 msgstr "객체 반전"
+
+msgid "Precise Seam Type"
+msgstr ""
+
+msgid "Seam Center"
+msgstr ""
+
+msgid "Seam Left"
+msgstr ""
+
+msgid "Seam Right"
+msgstr ""
+
+msgid "Seam Enforced"
+msgstr ""
+
+msgid "Seam Blocked"
+msgstr ""
+
+msgid "Seam Neutral"
+msgstr ""
+
+msgid "Choose precise seam subtype"
+msgstr ""
 
 msgid "Edit text"
 msgstr "텍스트 편집"
@@ -4800,17 +4848,6 @@ msgstr "최소 챔버 온도(%d℃)가 목표 챔버 온도(%d℃)보다 높습�
 msgid "Layer height is too small. It will be set to the minimum (%g mm)."
 msgstr "레이어 높이가 너무 작습니다. 최솟값(%g mm)으로 설정됩니다."
 
-#, c-format, boost-format
-msgid "A layer height of %g mm is not a divisor of the extruders' preferred layer heights (%s mm); parts printed by those extruders need whole multiples of the object layer height."
-msgstr ""
-
-#, c-format, boost-format
-msgid "Adjust it to %g mm, the coarsest layer height every preferred height is a whole multiple of?"
-msgstr ""
-
-msgid "Adjust"
-msgstr "조정"
-
 # AI Translated
 msgid "Layer height is outside the limits set in Printer Settings -> Extruder -> Layer height limits, this may cause printing quality issues."
 msgstr "레이어 높이가 프린터 설정 -> 압출기 -> 레이어 높이 한도에서 설정한 범위를 벗어났습니다. 출력 품질 문제가 발생할 수 있습니다."
@@ -4819,6 +4856,17 @@ msgstr "레이어 높이가 프린터 설정 -> 압출기 -> 레이어 높이 �
 #, c-format, boost-format
 msgid "Adjust it to the limit (%g mm) automatically?"
 msgstr "한도(%g mm)에 맞게 자동으로 조정할까요?"
+
+msgid "Adjust"
+msgstr "조정"
+
+#, c-format, boost-format
+msgid "The paint penetration layers (current: %d) exceed the shell layers (current: %d). The top paint penetration layers will be reset automatically."
+msgstr ""
+
+#, c-format, boost-format
+msgid "The paint penetration layers (current: %d) exceed the shell layers (current: %d). The bottom paint penetration layers will be reset automatically."
+msgstr ""
 
 msgid ""
 "Layer height too small\n"
@@ -5039,101 +5087,77 @@ msgstr ""
 msgid "Automatic: the first preset installed for a %1% mm nozzle."
 msgstr ""
 
-#. TRN Line on the Speed page under a selected High Flow tool head that prints the Standard speeds by choice. %1% the tool head, %2% its nozzle size
+#. TRN %1% a nozzle size
 #, boost-format
-msgid "Extruder %1%, %2% mm nozzle, High Flow, printing the Standard speeds (chosen)."
+msgid "Default for %1% mm nozzles"
 msgstr ""
 
-#. TRN Line on the Speed page under a selected tool head. %1% the tool head, %2% its nozzle size, %3% its flow type ("Standard")
+#. TRN %1% the nozzle size
 #, boost-format
-msgid "Extruder %1%, %2% mm nozzle, %3%."
+msgid "%1% mm nozzle, High Flow, Standard speeds (chosen)"
 msgstr ""
 
-#. TRN Tooltip of an entry of the speed selector: a High Flow tool head that prints the Standard speeds by choice. %1% the tool head, %2% its nozzle size
+#. TRN %1% the nozzle size, %2% the flow type ("Standard")
 #, boost-format
-msgid "Extruder %1% (sidebar: Nozzle %1%), %2% mm nozzle, High Flow, printing the Standard speeds (chosen)."
+msgid "%1% mm nozzle, %2%"
 msgstr ""
 
-#. TRN Tooltip of an entry of the speed selector. %1% the tool head, %2% its nozzle size, %3% its flow type ("Standard")
+#. TRN %1% a process preset ("0.20mm Standard"), %2% "(automatic)" or "(chosen)"
 #, boost-format
-msgid "Extruder %1% (sidebar: Nozzle %1%), %2% mm nozzle, %3%."
+msgid "Preset: %1%, High Flow %2%"
 msgstr ""
 
-#. TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.20mm Standard") whose High Flow column the tool head prints with, %2% "(automatic)" or "(chosen)", %3%..%5% the outer wall speed, sparse infill speed and acceleration
+#. TRN %1% a process preset with its state ("0.18mm Standard (automatic)")
 #, boost-format
-msgid "Preset: %1%, High Flow %2% · speeds: outer wall %3%, sparse %4%, accel %5%"
+msgid "Preset: %1%, Standard speeds (chosen)"
 msgstr ""
 
-#. TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset with its state ("0.20mm High Quality", "0.18mm Standard (automatic)") whose Standard speeds the High Flow tool head prints by choice, %2%..%4% the outer wall speed, sparse infill speed and acceleration
+#. TRN %1% a process preset ("0.12mm Standard"), %2% "(automatic)" or "(chosen)"
 #, boost-format
-msgid "Preset: %1%, Standard (chosen for this High Flow nozzle) · speeds: outer wall %2%, sparse %3%, accel %4%"
-msgstr ""
-
-#. TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.12mm Standard"), %2% "(automatic)" or "(chosen)", %3%..%5% the outer wall speed, sparse infill speed and acceleration the tool head prints with
-#, boost-format
-msgid "Preset: %1% %2% · speeds: outer wall %3%, sparse %4%, accel %5%"
+msgid "Preset: %1% %2%"
 msgstr ""
 
 msgid "This extruder carries a High Flow nozzle and prints the Standard speeds, accelerations and jerk, chosen with the toggle of the Speed page; its filament settings stay those of a High Flow nozzle."
 msgstr ""
 
-#. TRN Line on the Quality page of the process settings when every tool head prints the widths of another preset. %1% lists tool heads with their nozzle sizes ("1 (0.2 mm), 3 (0.6 mm)"), %2% process presets
+#. TRN %1% extruder numbers ("1, 3")
 #, boost-format
-msgid "Extruders %1% print with the line widths of %2%. The line widths below apply to every extruder for the widths you changed; every other setting on this page applies to every extruder."
+msgid "Extruders %1% print the line widths of their extruder presets."
 msgstr ""
 
-#. TRN Line on the Quality page of the process settings. %1% lists tool heads with their nozzle sizes ("1 (0.2 mm), 3 (0.6 mm)"), %2% process presets, %3% the other tool heads ("2")
+#. TRN %1% an extruder number ("3")
 #, boost-format
-msgid "Extruders %1% print with the line widths of %2%. The line widths below apply to extruders %3%, and to every extruder for the widths you changed; every other setting on this page applies to every extruder."
+msgid "Extruder %1% prints the line widths of its extruder preset."
 msgstr ""
 
-#. TRN Line on the Quality page of the process settings. %1% is a tool head with its nozzle size ("3 (0.6 mm)"), %2% a process preset, %3% the other tool heads ("1, 2, 4")
+#. TRN %1% extruder numbers ("2, 3")
 #, boost-format
-msgid "Extruder %1% prints with the line widths of %2%. The line widths below apply to extruders %3%, and to every extruder for the widths you changed; every other setting on this page applies to every extruder."
+msgid "Extruders %1% print the speeds of their extruder presets."
 msgstr ""
 
-#. TRN Line under the picker of the process preset of a tool head, on the Quality / Speed page of the process settings
-msgid "Its line widths print on this extruder; so do its speeds (Speed page)."
-msgstr ""
-
-msgid "Its speeds, accelerations and jerk print on this extruder; so do its line widths (Quality page)."
-msgstr ""
-
-#. TRN Under a selected tool head on the Quality page. %1% a layer height in mm, %2% the nozzle in the sidebar
+#. TRN %1% an extruder number ("2")
 #, boost-format
-msgid "This extruder prints %1% mm layers (preferred layer height, nozzle %2% in the sidebar)."
+msgid "Extruder %1% prints the speeds of its extruder preset."
 msgstr ""
 
-#. TRN Under a selected tool head on the Quality page. %1% a line width setting ("Inner wall"), %2% its value under All tool heads ("110%"), %3% the process preset the tool head takes its widths from, %4% that preset's value
+#. TRN %1% a layer height
+#. TRN %1% the printed layer height
 #, boost-format
-msgid "%1% %2% from All extruders (%3% has %4%)."
+msgid "Prints %1% mm layers."
 msgstr ""
 
-#. TRN A count of line widths set for a tool head, in a list like "1 line width, 3 speeds"
 #, boost-format
-msgid "%1% line width"
-msgid_plural "%1% line widths"
+msgid "%1% value set"
+msgid_plural "%1% values set"
 msgstr[0] ""
 
-#. TRN A count of speeds, accelerations and jerk values set for a tool head, in a list like "1 line width, 3 speeds"
+#. TRN %1% the number of values, %2% a nozzle size
 #, boost-format
-msgid "%1% speed"
-msgid_plural "%1% speeds"
+msgid "%1% value set for %2% mm, not used"
+msgid_plural "%1% values set for %2% mm, not used"
 msgstr[0] ""
 
-#. TRN Under a selected tool head on the Quality page. %1% the number of line widths set for it
-#, boost-format
-msgid "%1% line width set for this extruder."
-msgid_plural "%1% line widths set for this extruder."
-msgstr[0] ""
-
-#. TRN Under a selected tool head on the Speed page. %1% the number of speeds, accelerations and jerk values set for it
-#, boost-format
-msgid "%1% speed set for this extruder."
-msgid_plural "%1% speeds set for this extruder."
-msgstr[0] ""
-
-msgid "Greyed settings are shared by every extruder; the layer height of an extruder is set in the sidebar."
+msgid "Greyed settings apply to every extruder."
 msgstr ""
 
 #. TRN Link under a selected tool head of the Quality / Speed page of the process settings
@@ -6323,17 +6347,14 @@ msgstr ""
 msgid "Filaments %s cannot be printed directly on the surface of this plate."
 msgstr "필라멘트 %s은(는) 이 플레이트 표면에 직접 인쇄할 수 없습니다."
 
-msgid "PLA and PETG filaments detected in the mixture. Adjust parameters according to the Wiki to ensure print quality."
-msgstr "PLA와 PETG 필라멘트의 혼합이 감지되었습니다. 인쇄 품질을 보장하기 위해 위키에 따라 매개변수를 조정하세요."
+msgid "PLA and PETG filaments detected on the same plate. When used as mutual support materials, parameter adjustment is recommended."
+msgstr ""
 
 msgid "The prime tower extends beyond the plate boundary."
 msgstr "프라임 타워가 플레이트 경계를 초과합니다."
 
 msgid "Partial flushing volume set to 0. Multi-color printing may cause color mixing in models. Please readjust flushing settings."
 msgstr "부분 플러싱 볼륨이 0으로 설정되었습니다. 멀티컬러 인쇄 시 모델에 색상 혼합이 발생할 수 있습니다. 플러싱 설정을 재조정하세요."
-
-msgid "Click Wiki for help."
-msgstr "도움말은 위키를 클릭하세요."
 
 msgid "Click here to regroup"
 msgstr "재그룹핑하려면 여기를 클릭하세요"
@@ -6392,15 +6413,6 @@ msgstr "실시간 화면보기 재시도"
 
 msgid "Resolution"
 msgstr "해상도"
-
-msgid "Enable"
-msgstr "활성화"
-
-msgid "Hostname or IP"
-msgstr "호스트 이름 또는 IP"
-
-msgid "Custom camera source"
-msgstr "커스텀 카메라 소스"
 
 msgid "Show \"Live Video\" guide page."
 msgstr "라이브 비디오 가이드 페이지를 표시합니다."
@@ -6470,11 +6482,17 @@ msgstr "아니오"
 msgid "will be closed before creating a new model. Do you want to continue?"
 msgstr "새 모델을 생성하기 전에 닫힙니다. 계속하시겠습니까?"
 
-msgid "Slice plate"
-msgstr "플레이트 슬라이스"
+msgid "Print all"
+msgstr "모두 출력"
 
 msgid "Print plate"
 msgstr "플레이트 출력"
+
+msgid "Export plate sliced file"
+msgstr "플레이트 슬라이스 파일 내보내기"
+
+msgid "Export all sliced file"
+msgstr "모든 슬라이스 파일 내보내기"
 
 msgid "Export G-code file"
 msgstr "Gcode 파일 내보내기"
@@ -6483,14 +6501,17 @@ msgctxt "Verb"
 msgid "Print"
 msgstr "출력"
 
-msgid "Export plate sliced file"
-msgstr "플레이트 슬라이스 파일 내보내기"
+msgid "Send"
+msgstr "전송"
 
-msgid "Export all sliced file"
-msgstr "모든 슬라이스 파일 내보내기"
+msgid "Send all"
+msgstr "모두 전송"
 
 msgid "Send to Multi-device"
 msgstr "여러 장치로 보내기"
+
+msgid "Slice plate"
+msgstr "플레이트 슬라이스"
 
 msgid "Keyboard Shortcuts"
 msgstr "키보드 단축키"
@@ -7005,6 +7026,15 @@ msgstr "GStreamer GTK 비디오 싱크가 없거나 초기화에 실패하여 �
 msgid "Please confirm if the printer is connected."
 msgstr "프린터가 연결되어 있는지 확인하세요."
 
+msgid "Sign in to OrcaCloud to view the camera."
+msgstr ""
+
+msgid "Initializing..."
+msgstr "초기화 중..."
+
+msgid "Playing..."
+msgstr "재생중...."
+
 msgid "The printer is currently busy downloading. Please try again after it finishes."
 msgstr "프린터가 현재 다운로드 중입니다. 다운로드가 완료된 후 다시 시도하세요."
 
@@ -7020,20 +7050,17 @@ msgstr "LAN 전용 라이브뷰가 꺼져 있습니다. 프린터 화면에서 �
 msgid "Please enter the IP of the printer to connect."
 msgstr "연결할 프린터의 IP를 입력하세요."
 
-msgid "Initializing..."
-msgstr "초기화 중..."
-
 msgid "Connection Failed. Please check the network and try again"
 msgstr "연결에 실패했습니다. 네트워크를 확인한 후 다시 시도하세요"
+
+msgid "Video Stopped."
+msgstr "비디오가 중지되었습니다."
 
 msgid "Please check the network and try again. You can restart or update the printer if the issue persists."
 msgstr "네트워크를 확인하고 다시 시도해 보세요. 문제가 지속되면 프린터를 다시 시작하거나 업데이트할 수 있습니다."
 
 msgid "The printer has been logged out and cannot connect."
 msgstr "프린터가 로그아웃되어 연결할 수 없습니다."
-
-msgid "Video Stopped."
-msgstr "비디오가 중지되었습니다."
 
 msgid "LAN Connection Failed (Failed to start liveview)"
 msgstr "LAN 연결 실패(라이브뷰 시작 실패)"
@@ -7066,9 +7093,6 @@ msgstr "네트워크에 연결할 수 없음"
 
 msgid "Information"
 msgstr "정보"
-
-msgid "Playing..."
-msgstr "재생중...."
 
 msgid "Loading..."
 msgstr "로딩 중..."
@@ -7408,9 +7432,6 @@ msgstr "저장 장치"
 
 msgid "Camera Setting"
 msgstr "카메라 설정"
-
-msgid "Switch Camera View"
-msgstr "카메라 보기 전환"
 
 msgid "Control"
 msgstr "제어"
@@ -8106,6 +8127,9 @@ msgstr "경고:"
 
 msgid "Warning:"
 msgstr "경고:"
+
+msgid "Wiki"
+msgstr "위키"
 
 msgid "Exported successfully"
 msgstr "내보내기 성공."
@@ -8846,59 +8870,9 @@ msgstr ""
 msgid "Filament types and colors have been successfully synced from the printer."
 msgstr ""
 
+#. TRN %1% the printed layer height
 #, boost-format
-msgid "The preferred layer height of extruder %1% cannot exceed its nozzle diameter and was set to %2% mm."
-msgstr ""
-
-#, boost-format
-msgid "Object layer height set to %1% mm, the coarsest height every preferred layer height is a whole multiple of."
-msgstr ""
-
-#, boost-format
-msgid "Object layer height set to %1% mm, the coarsest height the preferred layer heights land on."
-msgstr ""
-
-#, boost-format
-msgid "extruder %1%: %2% mm"
-msgstr ""
-
-#, boost-format
-msgid "Preferred layer heights rounded to whole multiples of it: %1%."
-msgstr ""
-
-#, boost-format
-msgid "Extruders without a preference keep their height: %1%."
-msgstr ""
-
-#, boost-format
-msgid "Extruders without a preference are set to the whole multiple of it nearest their height: %1%."
-msgstr ""
-
-#, boost-format
-msgid "The own layer height of some objects was set so that every extruder's layer height is a whole multiple of it: %1%."
-msgstr ""
-
-#, boost-format
-msgid "An object layer height of %1% mm is not a divisor of the extruders' preferred layer heights (%2%); object parts printed by those extruders need whole multiples of it."
-msgstr ""
-
-#, boost-format
-msgid "Adjust the preferred layer heights to the nearest whole multiples (%1%), or use %2% mm, the coarsest height every preferred layer height is a whole multiple of, as the object layer height?"
-msgstr ""
-
-#, boost-format
-msgid "Adjust the preferred layer heights to the nearest whole multiples (%1%), or use %2% mm, the coarsest height the preferred layer heights land on, as the object layer height (they are then rounded to %3%)?"
-msgstr ""
-
-msgid "Adjust extruder heights"
-msgstr ""
-
-#, boost-format
-msgid "Use %1% mm"
-msgstr ""
-
-#, boost-format
-msgid "Preferred layer heights adjusted to whole multiples of %1% mm: %2%."
+msgid "Prints at %1% mm."
 msgstr ""
 
 #, boost-format
@@ -8921,6 +8895,11 @@ msgstr "노즐 %1%의 선호 레이어 높이가 더 이상 노즐을 통과하�
 msgid "Filament %1% of nozzle %2% has no value of its own for some of these settings and prints with the printer's."
 msgstr ""
 
+#. TRN %1% the extruder, %2% "3 values set for 0.2 mm, not used"
+#, boost-format
+msgid "Extruder %1%: %2%."
+msgstr ""
+
 #. TRN %1% the tool head, %2% the number of values set for it on the Speed and Quality pages of the process settings
 #, boost-format
 msgid "Extruder %1% keeps %2% values set for it (Speed and Quality pages)."
@@ -8941,12 +8920,12 @@ msgstr ""
 
 #. TRN %1% the nozzle, %2% the process preset chosen for its tool head, %3% the nozzle size the preset is made for, %4% the new size, %5% the preset the head prints with now
 #, boost-format
-msgid "Nozzle %1%: %2%, chosen for this extruder in this project, is made for a %3% mm nozzle and does not apply while the nozzle is %4% mm; the extruder uses %5% (automatic)."
+msgid "Nozzle %1%: %2%, chosen for this extruder in this project, is made for a %3% mm nozzle and does not apply while the nozzle is %4% mm; the extruder uses %5%."
 msgstr ""
 
 #. TRN %1% the nozzle, %2% the process preset chosen for its tool head, %3% the new size, %4% the preset the head prints with now
 #, boost-format
-msgid "Nozzle %1%: %2%, chosen for this extruder in this project, is not made for a %3% mm nozzle and does not apply; the extruder uses %4% (automatic)."
+msgid "Nozzle %1%: %2%, chosen for this extruder in this project, is not made for a %3% mm nozzle and does not apply; the extruder uses %4%."
 msgstr ""
 
 #. TRN %1% the nozzle, %2% the process preset chosen for its tool head
@@ -8967,7 +8946,7 @@ msgstr ""
 msgid "Preferred layer height"
 msgstr "선호 레이어 높이"
 
-msgid "Layer height this nozzle should print with. Enter a height in mm, or Default to print with the object layer height. The object layer height is chosen so that every preferred layer height is a whole multiple of it."
+msgid "Layer height this nozzle should print with. Pick a listed height, which prints as listed, or enter any height in mm; Default prints the object layer height. For slicing, the object layer height is chosen so that every preferred layer height is a whole multiple of it; the line below names the height the extruder prints when it differs."
 msgstr ""
 
 #, boost-format
@@ -8978,9 +8957,18 @@ msgstr ""
 msgid "The layer height of extruder %1% cannot exceed its nozzle diameter (%2% mm)."
 msgstr ""
 
+#. TRN Link under the warning of a preferred layer height off the layer grid; turns on "Exact preferred layer heights"
+msgid "Print exact heights"
+msgstr ""
+
+msgid "Turns on \"Exact preferred layer heights\" in the printer settings: every preferred layer height prints as entered, and the object layer height becomes the coarsest height they are all whole multiples of, which can mean many more layers."
+msgstr ""
+
 #. TRN The state of the process preset a tool head prints with: given by the rule; empty for the selected preset itself
-#. TRN Marks a process preset a tool head takes its speeds from by the user's choice
 msgid "(chosen)"
+msgstr ""
+
+msgid "(default)"
 msgstr ""
 
 msgid "(automatic)"
@@ -9015,14 +9003,9 @@ msgstr ""
 msgid "Its High Flow speeds are those of the selected process preset, as %1% has no High Flow values."
 msgstr ""
 
-#. TRN Line under the rows of a nozzle tab in the sidebar. %1% the number of values set for the tool head on the Speed and Quality pages, %2%..%4% the outer wall speed, sparse infill speed and acceleration it prints with
+#. TRN %1% a chosen process preset that does not apply now
 #, boost-format
-msgid "Values set for this extruder: %1% (outer wall %2%, sparse %3%, accel %4%)"
-msgstr ""
-
-#. TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset chosen for the tool head that does not apply now, %2%..%4% the outer wall speed, sparse infill speed and acceleration the tool head prints with
-#, boost-format
-msgid "Preset: %1% (inactive) · speeds: outer wall %2%, sparse %3%, accel %4%"
+msgid "Preset: %1% (inactive)"
 msgstr ""
 
 msgid "The process preset chosen for this extruder in this project does not apply now; the extruder prints with the selected process preset."
@@ -9039,11 +9022,6 @@ msgid "Values set for this extruder: %1%."
 msgstr ""
 
 msgid "Click to choose the preset of this extruder."
-msgstr ""
-
-#. TRN Line under the disabled Flow row of a nozzle tab in the sidebar. %1% is the nozzle size of this tool head, e.g. 0.2
-#, boost-format
-msgid "High Flow is not available for a %1% mm nozzle."
 msgstr ""
 
 #, c-format, boost-format
@@ -9190,9 +9168,6 @@ msgstr "일부 게시된 설정을 적용할 수 없습니다:"
 # AI Translated
 msgid "Some filament slots were changed:"
 msgstr "일부 필라멘트 슬롯이 변경되었습니다:"
-
-msgid "Printing by object with caution. This function may cause the print head to collide with printed parts during switching."
-msgstr ""
 
 # AI Translated
 msgid "Component name(s) inside step file not in UTF-8 format!"
@@ -9576,6 +9551,9 @@ msgstr "3mf 파일 준비..."
 msgid "Download failed; unknown file format."
 msgstr "다운로드에 실패했습니다. 파일 형식을 알 수 없습니다."
 
+msgid "Importing to Snapmaker Orca failed. Please download the file and manually import it."
+msgstr "Snapmaker Orca로 가져오는 데 실패했습니다. 파일을 다운로드하여 수동으로 가져오세요."
+
 msgid "Downloading project..."
 msgstr "프로젝트 다운로드 중 ..."
 
@@ -9585,9 +9563,6 @@ msgstr "다운로드에 실패했습니다. 파일 크기 예외입니다."
 #, c-format, boost-format
 msgid "Project downloaded %d%%"
 msgstr "프로젝트 %d%% 다운로드됨"
-
-msgid "Importing to Snapmaker Orca failed. Please download the file and manually import it."
-msgstr "Snapmaker Orca로 가져오는 데 실패했습니다. 파일을 다운로드하여 수동으로 가져오세요."
 
 msgid "INFO:"
 msgstr "정보:"
@@ -9764,6 +9739,9 @@ msgstr "업로드 및 출력"
 
 msgid "Abnormal print file data. Please slice again"
 msgstr "비정상적인 출력 파일 데이터입니다. 다시 슬라이스하세요"
+
+msgid "Printing by object with caution. This function may cause the print head to collide with printed parts during switching."
+msgstr ""
 
 msgid "Slicing was not started because you aborted the very long slice. Use Slice to slice anyway."
 msgstr ""
@@ -10111,6 +10089,9 @@ msgstr ""
 "- 레이어 접착 문제\n"
 "\n"
 "이 기능을 계속 사용하시겠습니까?"
+
+msgid "Click Wiki for help."
+msgstr "도움말은 위키를 클릭하세요."
 
 msgid "Browse"
 msgstr "탐색"
@@ -10516,6 +10497,12 @@ msgid ""
 msgstr ""
 
 msgid "High and Low Temperature Material Mixing Risk"
+msgstr ""
+
+msgid "Remember last print action"
+msgstr ""
+
+msgid "If enabled, Snapmaker Orca will remember the last selected option in the print button's dropdown (e.g. Print, Export plate sliced file, Export G-code file) and use it as the default on next startup."
 msgstr ""
 
 msgid "Touchpad"
@@ -11185,6 +11172,9 @@ msgstr "출력 순서"
 msgid "Same as Global"
 msgstr "글로벌과 동일"
 
+msgid "Enable"
+msgstr "활성화"
+
 msgid "Disable"
 msgstr "비활성"
 
@@ -11404,10 +11394,6 @@ msgstr ""
 msgid "Search actions"
 msgstr ""
 
-#, c-format, boost-format
-msgid "Search %s actions"
-msgstr ""
-
 msgid "Recent"
 msgstr ""
 
@@ -11428,7 +11414,7 @@ msgid "No tabs"
 msgstr ""
 
 #, c-format, boost-format
-msgid "Showing %s of %s actions"
+msgid "Showing %s actions"
 msgstr ""
 
 #, c-format, boost-format
@@ -11608,9 +11594,6 @@ msgstr "공유 PA 프로필"
 msgid "Nozzles and filaments of the same type share the same PA profile."
 msgstr "같은 유형의 노즐과 필라멘트는 동일한 PA 프로필을 공유합니다."
 
-msgid "Send"
-msgstr "전송"
-
 msgid "Send complete"
 msgstr "전송 완료"
 
@@ -11678,6 +11661,10 @@ msgstr "필라멘트가 AMS 슬롯의 필라멘트와 일치하지 않습니다.
 #, c-format, boost-format
 msgid "The selected printer (%s) is incompatible with the print file configuration (%s). Please adjust the printer preset in the prepare page or choose a compatible printer on this page."
 msgstr "선택한 프린터(%s)가 출력 파일 구성(%s)과 호환되지 않습니다. 준비 페이지에서 프린터 사전 설정을 조정하거나 이 페이지에서 호환되는 프린터를 선택하세요."
+
+#, c-format, boost-format
+msgid "The selected printer (%s) has an unknown model, so compatibility with the print file configuration (%s) cannot be verified. Please verify the printer preset before sending."
+msgstr ""
 
 msgid "When spiral vase mode is enabled, machines with I3 structure will not generate timelapse videos."
 msgstr "나선형 꽃병 모드를 활성화하면 I3 구조의 장치는 타임랩스 비디오를 생성하지 않습니다."
@@ -11763,6 +11750,12 @@ msgstr "정리"
 
 msgid "Preparing print job"
 msgstr "출력 작업 준비 중"
+
+msgid "Failed to upload the file to the printer's storage. Please try again."
+msgstr ""
+
+msgid "Send Failed"
+msgstr ""
 
 msgid "The name length exceeds the limit."
 msgstr "이름 길이가 제한을 초과합니다."
@@ -11950,6 +11943,9 @@ msgstr "빈 플레이트에 대한 출력 작업을 보낼 수 없습니다"
 msgid "Storage needs to be inserted to record timelapse."
 msgstr "타임랩스를 녹화하려면 스토리지를 삽입해야 합니다."
 
+msgid "The selected printer model could not be identified, so compatibility with the print file configuration cannot be verified. Please verify the printer preset before sending."
+msgstr ""
+
 msgid "You have selected both external and AMS filaments for an extruder. You will need to manually switch the external filament during printing."
 msgstr "압출기용 외부 필라멘트와 AMS 필라멘트를 모두 선택했습니다. 출력 중에 외부 필라멘트를 수동으로 전환해야 합니다."
 
@@ -12017,6 +12013,9 @@ msgstr ""
 
 msgid "The printer does not support sending to printer storage."
 msgstr "프린터가 프린터 저장소로 전송을 지원하지 않습니다."
+
+msgid "Failed to initialize the printer file transfer. Please check the connection and try again."
+msgstr ""
 
 msgid "Sending..."
 msgstr "보내는 중..."
@@ -12163,6 +12162,37 @@ msgstr "모든 설정을 마지막으로 저장한 사전 설정으로 되돌립
 msgid "Reverts every value of the preset, Standard and High Flow."
 msgstr ""
 
+#, c-format, boost-format
+msgid "Detected %s as support interface material for %s models. PLA and PETG do not bond together — we recommend adjusting the following parameters:"
+msgstr ""
+
+#, c-format, boost-format
+msgid "  • Top Z distance: %.2f → 0 mm\n"
+msgstr ""
+
+msgid "  • Base pattern → Default\n"
+msgstr ""
+
+#, c-format, boost-format
+msgid "  • Top interface layers: %d → 3\n"
+msgstr ""
+
+msgid "  • Interface pattern → Rectilinear Interlaced\n"
+msgstr ""
+
+#, c-format, boost-format
+msgid "  • Interface spacing: %.2f → 0 mm\n"
+msgstr ""
+
+msgid ""
+"Change these settings automatically?\n"
+"Yes - Change these settings automatically.\n"
+"No  - Do not change these settings for me."
+msgstr ""
+"이 설정을 자동으로 변경하시겠습니까?\n"
+"예 - 이 설정을 자동으로 변경합니다\n"
+"아니요 - 이 설정을 변경하지 않습니다"
+
 msgid "The current layer height is 0.1 mm or below. Enabling Subdivide Mixing Layers may cause the subdivided layer height to fall outside the printer's supported range. This could affect print quality."
 msgstr ""
 
@@ -12220,15 +12250,6 @@ msgstr ""
 "지원 인터페이스에 대한 지원 자료를 사용할 때 다음 설정을 권장합니다.\n"
 "0 상단 z 거리, 0 인터페이스 간격, 인터레이스된 직선 패턴 및 독립 지지 레이어 높이 비활성화"
 
-msgid ""
-"Change these settings automatically?\n"
-"Yes - Change these settings automatically.\n"
-"No  - Do not change these settings for me."
-msgstr ""
-"이 설정을 자동으로 변경하시겠습니까?\n"
-"예 - 이 설정을 자동으로 변경합니다\n"
-"아니요 - 이 설정을 변경하지 않습니다"
-
 # AI Translated
 msgid ""
 "When using soluble material for the support interface, we recommend the following settings:\n"
@@ -12264,6 +12285,11 @@ msgid ""
 msgstr ""
 "툴헤드 없이 시간 경과를 기록할 경우 \"타임랩스 프라임 타워\"를 추가하는 것이 좋습니다\n"
 "빌드 플레이트의 빈 위치를 마우스 오른쪽 버튼으로 클릭하고 \"기본 모델 추가\"-> \"타임랩스 프라임 타워\"를 선택합니다."
+
+#. TRN %1% the extruder, %2% a nozzle size
+#, boost-format
+msgid "Extruder %1%: the values set for %2% mm were replaced."
+msgstr ""
 
 msgid "A copy of the current system preset will be created, which will be detached from the system preset."
 msgstr "현재 시스템 프리셋의 복사본이 생성되며, 이 복사본은 시스템 프리셋에서 분리됩니다."
@@ -12332,7 +12358,6 @@ msgstr "전체 프로필 이름"
 msgid "symbolic profile name"
 msgstr "기호 프로필 이름"
 
-#. TRN Prefix of a line width setting in the list of values set for a tool head ("Line width: Outer wall")
 msgid "Line width"
 msgstr "선 너비"
 
@@ -12432,31 +12457,20 @@ msgstr "플러그인 구성"
 msgid "Notes"
 msgstr "메모"
 
-#. TRN %1% a tool head, %2% the values set for it by kind ("1 line width, 3 speeds")
-#. TRN %1% a tool head, %2% the value set for it
-#, boost-format
-msgid "Extruder %1%: %2%"
-msgstr ""
-
-#. TRN Line on the Speed and Quality pages. %1% lists tool heads with the values set for each ("Extruder 2: 3 speeds, Extruder 4: 1 line width, 2 speeds")
-#, boost-format
-msgid "Values set per extruder: %1%."
-msgstr ""
-
 msgid "Clear the values set per extruder..."
+msgstr ""
+
+#. TRN %1% a nozzle size
+#, boost-format
+msgid "Use for %1% mm"
 msgstr ""
 
 msgid "An override on a part applies on every extruder that prints it."
 msgstr ""
 
-#. TRN Line on the Speed page of the process settings. %1% is a tool head with its nozzle size ("2 (0.2 mm)"), %2% a process preset, %3% the other tool heads ("1, 3, 4")
+#. TRN %1% a tool head, %2% the value set for it
 #, boost-format
-msgid "Extruder %1% prints with the speeds of %2%. The values below apply to extruders %3%, and to every extruder for the settings you changed."
-msgstr ""
-
-#. TRN Line on the Speed page of the process settings. %1% lists tool heads with their nozzle sizes ("2 (0.2 mm), 3 (0.6 mm)"), %2% process presets, %3% the other tool heads ("1, 4")
-#, boost-format
-msgid "Extruders %1% print with the speeds of %2%. The values below apply to extruders %3%, and to every extruder for the settings you changed."
+msgid "Extruder %1%: %2%"
 msgstr ""
 
 msgid "Set per extruder:"
@@ -12470,12 +12484,18 @@ msgstr ""
 msgid "Use the automatic preset again"
 msgstr ""
 
-#. TRN The first item of the speed picker. %1% is a process preset ("0.24mm Standard")
-#, boost-format
-msgid "%1% (automatic)"
+msgid "Save as extruder preset"
 msgstr ""
 
 msgid "Selected preset (automatic)"
+msgstr ""
+
+#, boost-format
+msgid "%1% (default)"
+msgstr ""
+
+#, boost-format
+msgid "%1% (automatic)"
 msgstr ""
 
 #. TRN An item of the speed picker: the chosen process preset is not installed
@@ -12537,56 +12557,44 @@ msgid "The process preset is detached from its system preset, so the speeds and 
 msgstr ""
 
 #. TRN Tooltip of the disabled speed picker. %1% is a nozzle size
-#. TRN %1% is a nozzle size
 #, boost-format
 msgid "No process preset for a %1% mm nozzle is installed; the extruder prints with the speeds and line widths of the selected preset."
 msgstr ""
 
-#. TRN Under a tool head whose process preset was chosen in the picker. %1% is the preset the rule would give it
-#, boost-format
-msgid "Chosen in this project; automatic would be %1%."
-msgstr ""
-
-msgid "Chosen in this project; automatic would be the selected preset."
-msgstr ""
-
-msgid "Chosen in this project; the same as the selected process preset, so the extruder keeps it when the plate's preset changes."
-msgstr ""
-
 #. TRN %1% the chosen process preset, %2% the preset the tool head prints with instead
 #, boost-format
-msgid "%1%, chosen in this project, is not installed; the extruder uses %2% (automatic)."
+msgid "%1% is not installed; using %2%."
 msgstr ""
 
-#. TRN %1% the chosen process preset, %2% the nozzle size it is made for, %3% the size of the tool head, %4% the preset the tool head prints with instead
+#. TRN %1% the chosen process preset, %2% the nozzle size it is made for, %3% the preset the tool head prints with instead
 #, boost-format
-msgid "%1%, chosen in this project, is made for a %2% mm nozzle and does not apply while the nozzle is %3% mm; the extruder uses %4% (automatic)."
+msgid "%1% is made for a %2% mm nozzle; using %3%."
 msgstr ""
 
 #. TRN %1% the chosen process preset, %2% the size of the tool head, %3% the preset the tool head prints with instead
 #, boost-format
-msgid "%1%, chosen in this project, is not made for a %2% mm nozzle and does not apply; the extruder uses %3% (automatic)."
+msgid "%1% is not made for a %2% mm nozzle; using %3%."
 msgstr ""
 
 #. TRN %1% the chosen process preset
 #, boost-format
-msgid "%1%, chosen in this project, does not apply: the process preset is detached from its system preset, so the speeds and line widths of other presets cannot be combined with it."
+msgid "%1% does not apply: the process preset is detached from its system preset."
 msgstr ""
 
-msgid "\"Process speeds and line widths follow the nozzle size\" is off in Preferences, so the extruder prints with the selected process preset; a preset chosen here still applies."
+msgid "\"Process speeds and line widths follow the nozzle size\" is off in Preferences."
 msgstr ""
 
-msgid "This extruder has the nozzle size of the printer preset and prints with the selected process preset."
+#. TRN %1% is a nozzle size
+#, boost-format
+msgid "No process preset for a %1% mm nozzle is installed."
+msgstr ""
+
+msgid "The process preset is detached from its system preset."
 msgstr ""
 
 #. TRN Under a High Flow tool head. %1% is the process preset whose High Flow speeds it prints, %2% the preset its line widths come from
 #, boost-format
-msgid "Automatic: %1%, the preset of this nozzle size with High Flow speeds; the selected preset has none. Line widths stay those of %2%."
-msgstr ""
-
-#. TRN %1% the number of settings changed under All tool heads
-#, boost-format
-msgid "%1% settings changed under All extruders apply here too."
+msgid "High Flow speeds from %1%; line widths from %2%."
 msgstr ""
 
 #. TRN Confirmation before every value set per tool head is cleared. %1% the number of values, %2% the tool heads ("2, 4")
@@ -13021,7 +13029,7 @@ msgstr "선택한 사전 설정을 %1%하시겠습니까?"
 
 #. TRN Notice after a process preset chosen for a tool head was deleted. %1% the preset, %2% the tool head, %3% the preset the head prints with now
 #, boost-format
-msgid "%1% supplied the speeds and line widths of extruder %2% in this project; the extruder uses %3% (automatic) until another preset is chosen."
+msgid "%1% supplied the speeds and line widths of extruder %2% in this project; the extruder uses %3% until another preset is chosen."
 msgstr ""
 
 # AI Translated
@@ -13089,27 +13097,12 @@ msgstr ""
 
 #. TRN %1% is the process preset the user chose for the tool head (its speeds and line widths)
 #, boost-format
-msgid "Preset %1% (chosen in this project)."
-msgstr ""
-
-#. TRN %1% is a process preset whose High Flow column the tool head prints with by the automatic rule
-#, boost-format
-msgid "Preset %1%, High Flow (automatic)."
-msgstr ""
-
-#. TRN %1% is a process preset the tool head prints with by the automatic rule
-#, boost-format
-msgid "Preset %1% (automatic)."
+msgid "Preset: %1% (chosen)"
 msgstr ""
 
 #. TRN %1% is a process preset chosen for the tool head that cannot apply now (not installed, another nozzle size)
 #, boost-format
-msgid "%1%, chosen in this project, does not apply now."
-msgstr ""
-
-#. TRN %1% the number of values set for the tool head, %2% their names
-#, boost-format
-msgid "%1% values set for this extruder: %2%."
+msgid "%1% (chosen) does not apply now."
 msgstr ""
 
 # AI Translated
@@ -13731,7 +13724,10 @@ msgstr ""
 msgid "Available anywhere in the window, even while typing in a text field."
 msgstr ""
 
-msgid "Run a speed dial favorite while the dial is open"
+msgid "Run favorite 1 to 10"
+msgstr ""
+
+msgid "Pin or unpin the selected action"
 msgstr ""
 
 # AI Translated
@@ -13846,8 +13842,11 @@ msgid ""
 "\"%s\""
 msgstr ""
 
+msgid "The system uses this shortcut, so it cannot be assigned."
+msgstr ""
+
 #, c-format, boost-format
-msgid "Already used as a step of %s."
+msgid "Shift and Ctrl with this key belong to %s and cannot be assigned."
 msgstr ""
 
 #, c-format, boost-format
@@ -13920,6 +13919,21 @@ msgstr "IP"
 
 msgid "Access Code"
 msgstr "액세스 코드"
+
+msgid "HTTPS CA File"
+msgstr "HTTPS CA 파일"
+
+msgid "Certificate files (*.crt, *.pem)|*.crt;*.pem|All files|*.*"
+msgstr "인증서 파일 (*.crt, *.pem)|*.crt;*.pem|All files|*.*"
+
+msgid "Open CA certificate file"
+msgstr "CA 인증서 파일 열기"
+
+msgid "HTTPS CA file is optional. It is only needed if you use HTTPS with a self-signed certificate."
+msgstr "HTTPS CA 파일은 선택 사항입니다. 자체 서명된 인증서와 함께 HTTPS를 사용하는 경우에만 필요합니다."
+
+msgid "This system uses HTTPS certificates from the system Certificate Store or Keychain. To use a custom CA file, import it there."
+msgstr ""
 
 msgid "Printer model"
 msgstr "프린터 모델"
@@ -14191,6 +14205,21 @@ msgstr "그룹화 오류: %1%은(는) 오른쪽 노즐에 배치할 수 없습�
 msgid "Group error in manual mode. Please check nozzle count or regroup."
 msgstr "수동 모드에서 그룹 오류가 발생했습니다. 노즐 개수를 확인하거나 다시 그룹화하십시오."
 
+msgid "multiple intersections with a perimeter detected"
+msgstr ""
+
+msgid "modifier fully crosses the printable perimeter"
+msgstr ""
+
+msgid "modifier shape is not solid (has holes inside) and was ignored"
+msgstr ""
+
+msgid "perimeter is fully contained inside modifier and was ignored"
+msgstr ""
+
+msgid "Seam placement may differ from expected."
+msgstr ""
+
 msgid "Internal Bridge"
 msgstr "내부 브릿지"
 
@@ -14366,6 +14395,22 @@ msgid "Spiral (vase) mode does not work when an object contains more than one ma
 msgstr "객체에 둘 이상의 재료가 포함된 경우 나선형 꽃병 모드가 작동하지 않습니다."
 
 #, boost-format
+msgid "The shell layers (current: %1%) exceed the model layers (total: %2%). Please reduce the top shell layers."
+msgstr ""
+
+#, boost-format
+msgid "The shell layers (current: %1%) exceed the model layers (total: %2%). Please reduce the bottom shell layers."
+msgstr ""
+
+#, boost-format
+msgid "The paint penetration layers (current: %1%) exceed the model layers (total: %2%). Please reduce the top paint penetration layers."
+msgstr ""
+
+#, boost-format
+msgid "The paint penetration layers (current: %1%) exceed the model layers (total: %2%). Please reduce the bottom paint penetration layers."
+msgstr ""
+
+#, boost-format
 msgid "While the object %1% itself fits the build volume, it exceeds the maximum build volume height because of material shrinkage compensation."
 msgstr "객체 %1% 자체는 빌드 볼륨에 맞지만, 머티리얼 수축 보정 때문에 최대 빌드 볼륨 높이를 초과합니다."
 
@@ -14477,9 +14522,6 @@ msgstr "유기적 서포트에서는 속 빈/기본 베이스 패턴에서만 �
 # AI Translated
 msgid "The Lightning base pattern is not supported by this support type; Rectilinear will be used instead."
 msgstr "이 서포트 유형은 번개 베이스 패턴을 지원하지 않으므로 대신 직선 패턴이 사용됩니다."
-
-msgid "Organic support tree tip diameter must not be smaller than support material extrusion width."
-msgstr "유기체 서포트 트리 끝 직경은 서포트 재료 압출 너비보다 작아서는 안 됩니다."
 
 msgid "Organic support branch diameter must not be smaller than 2x support material extrusion width."
 msgstr "유기체 서포트 가지 직경은 서포트 재료 압출 너비의 2배보다 작아서는 안 됩니다."
@@ -14829,9 +14871,6 @@ msgstr "Flashforge 로컬 API에는 프린터 일련번호가 필요합니다."
 msgid "Name of the printer."
 msgstr "프린터 이름"
 
-msgid "HTTPS CA File"
-msgstr "HTTPS CA 파일"
-
 msgid "Custom CA certificate file can be specified for HTTPS OctoPrint connections, in crt/pem format. If left blank, the default OS CA certificate repository is used."
 msgstr "사용자 정의 CA 인증서 파일은 crt/pem 형식의 HTTPS OctoPrint 연결에 대해 지정할 수 있습니다. 비워 두면 기본 OS CA 인증서 저장소가 사용됩니다."
 
@@ -14936,6 +14975,9 @@ msgstr "하단 쉘 두께"
 
 msgid "The number of bottom solid layers is increased when slicing if the thickness calculated by bottom shell layers is thinner than this value. This can avoid having too thin a shell when layer height is small. 0 means that this setting is disabled and the thickness of the bottom shell is determined simply by the number of bottom shell layers."
 msgstr "하단 쉘 레이어로 계산된 두께가 이 값보다 얇은 경우 슬라이싱할 때 하단 꽉찬 레이어의 수가 증가합니다. 이렇게 하면 레이어 높이가 작을 때 쉘이 너무 얇아지는 것을 방지할 수 있습니다. 0은 이 설정이 비활성화되고 하단 쉘의 두께가 절대적으로 하단 쉘 레이어에 의해 결정됨을 의미합니다"
+
+msgid "This is the number of layers of bottom paint penetration."
+msgstr ""
 
 msgid "Apply gap fill"
 msgstr "간격 채우기 적용"
@@ -18297,10 +18339,10 @@ msgstr "특수 보조 냉각 팬 속도로, 처음 x개 레이어에만 적용�
 msgid "The lowest printable layer height for the extruder. Used to limit the minimum layer height when enable adaptive layer height. Parts printed with a thicker preferred extruder layer height never fall back below this height either (the first layer excepted)."
 msgstr "이 압출기로 출력할 수 있는 최저 레이어 높이. 적응형 레이어 높이 사용 시 최소 레이어 높이를 제한하는 데 쓰입니다. 더 두꺼운 선호 압출기 레이어 높이로 출력되는 부품도 이 높이 아래로는 절대 내려가지 않습니다(첫 레이어 제외)."
 
-msgid "Layer height this extruder should print with, used for printers whose extruders have different nozzle sizes. Any value can be entered: the object layer height becomes the coarsest height on which every preferred layer height lands within 0.01 mm of a whole multiple (from the finest preferred height down to a quarter of it), and the preferred heights are rounded to those multiples; with \"Exact preferred layer heights\" enabled every entered value is kept instead. A part whose features all follow this extruder prints only on every Nth layer with correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it falls back to the object layer height. When the rest of the part cannot follow, walls assigned to this extruder still combine to this height on their own, full-density top surfaces absorb the solid layers below them, and sparse or 100% dense infill combines to this height where the part prints every layer; inside a part printing on every Nth layer the infill follows that part's layers. 0 means to use the object layer height."
+msgid "Layer height this extruder should print with, used for printers whose extruders have different nozzle sizes. Any value can be entered and is kept as entered. For slicing, the object layer height becomes the coarsest height on which every preferred layer height lands within 0.01 mm of a whole multiple (from the finest preferred height down to a quarter of it), and the preferred heights print rounded to those multiples; with \"Exact preferred layer heights\" enabled every entered value prints exactly instead. A part whose features all follow this extruder prints only on every Nth layer with correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it falls back to the object layer height. When the rest of the part cannot follow, walls assigned to this extruder still combine to this height on their own, full-density top surfaces absorb the solid layers below them, and sparse or 100% dense infill combines to this height where the part prints every layer; inside a part printing on every Nth layer the infill follows that part's layers. 0 means to use the object layer height."
 msgstr ""
 
-msgid "Experimental. Keep every preferred layer height exactly as entered: the object layer height becomes the coarsest height all of them are whole multiples of, which can be very fine (0.13 and 0.37 mm share only 0.01 mm). Extruders left at Default, supports, the first layers and the areas that cannot follow an extruder's height print at that grid, so slicing and printing can take much longer. The prime tower prints one slab per tool change on that grid in either mode; a coarse extruder purging on a slab of a fine grid extrudes below its minimum layer height there, which slicing reports. Off: the preferred heights are rounded to the coarsest grid on which they land within 0.01 mm."
+msgid "Experimental. Keep every preferred layer height exactly as entered: the object layer height becomes the coarsest height all of them are whole multiples of, which can be very fine (0.13 and 0.37 mm share only 0.01 mm). Extruders left at Default, supports, the first layers and the areas that cannot follow an extruder's height print at that grid, so slicing and printing can take much longer. The prime tower prints one slab per tool change on that grid in either mode; a coarse extruder purging on a slab of a fine grid extrudes below its minimum layer height there, which slicing reports. Off: the preferred heights print rounded to the coarsest grid on which they land within 0.01 mm."
 msgstr ""
 
 msgid "Min print speed"
@@ -18722,8 +18764,8 @@ msgstr "첫 번째 라프트 또는 서포트의 밀도"
 msgid "First layer expansion"
 msgstr "초기 레이어 확장"
 
-msgid "This expands the first raft or support layer to improve bed adhesion."
-msgstr "베드 플레이트 안착을 향상시키기 위해 첫 번째 라프트 또는 서포트 확장"
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
+msgstr ""
 
 msgid "Raft layers"
 msgstr "라프트 레이어"
@@ -18876,6 +18918,9 @@ msgstr "보우덴"
 
 msgid "Hybrid"
 msgstr "하이브리드"
+
+msgid "Extra High Flow"
+msgstr ""
 
 # AI Translated
 msgid "Enable filament dynamic map"
@@ -19392,6 +19437,17 @@ msgstr "희소 레이어 없음(베타)"
 msgid "If enabled, the wipe tower will not be printed on layers with no tool changes. On layers with a tool change, extruder will travel downward to print the wipe tower, so the tower ends up below the model and the toolhead has to reach down to it. Layouts where that would collide with an already printed object are rejected. Has no effect with smooth timelapse or clumping detection, which need a tower on every layer."
 msgstr "활성화하면 툴체인지가 없는 레이어에서는 프라임 타워가 출력되지 않습니다. 툴체인지가 있는 레이어에서는 압출기가 아래로 이동해 프라임 타워를 출력하므로, 타워가 모델보다 아래에 놓이고 툴헤드가 거기까지 내려가야 합니다. 이미 출력된 객체와 충돌하게 되는 배치는 거부됩니다. 모든 레이어에 타워가 필요한 스무드 타임랩스나 노즐 클럼핑 감지에서는 효과가 없습니다."
 
+msgid "Combine sparse layers"
+msgstr ""
+
+msgid ""
+"If enabled, consecutive layers on which the prime tower has no filament change are printed as a single thicker tower layer instead of one thin layer each, the same way infill combination merges sparse infill. The merged layer is printed at the top of the run, at the height of everything it covers.\n"
+"\n"
+"Only whole layers are merged, and never past the maximum layer height of the nozzle printing the tower (three quarters of the nozzle diameter when that is left at 0). Two or more layers therefore have to fit under that limit before anything changes at all: at a 0.2 mm layer height under a 0.3 mm maximum nothing is merged, while at 0.1 mm three layers become one.\n"
+"\n"
+"Unlike \"No sparse layers\" the tower keeps following the model, so the toolhead never has to reach down to it. Has no effect with \"No sparse layers\", smooth timelapse or clumping detection, which need a tower on every layer."
+msgstr ""
+
 msgid "Prime all printing extruders"
 msgstr "모든 활성화된 압출기 프라이밍"
 
@@ -19618,6 +19674,12 @@ msgstr ""
 "접점 선의 간격입니다. 0이면 꽉찬 접점을 의미합니다.\n"
 "서포트 다림질이 활성화되면 꽉찬 접점을 강제로 사용합니다."
 
+msgid "Minimum Support Contact Area"
+msgstr ""
+
+msgid "Lower values generate more support contact surfaces."
+msgstr ""
+
 msgid "Bottom interface spacing"
 msgstr "하단 접점 선 간격"
 
@@ -19747,6 +19809,30 @@ msgstr "트리 서포트 가지 각도"
 
 msgid "This setting determines the maximum overhang angle that the branches of tree support are allowed to make. If the angle is increased, the branches can be printed more horizontally, allowing them to reach farther."
 msgstr "이 설정은 트리 서포트의 가지가 만들 수 있는 오버행의 최대 각도를 결정합니다. 각도가 증가하면 가지가 멀리까지 닿을 수 있도록 더 수평으로 출력될 수 있습니다."
+
+msgid "Tree support transition layers"
+msgstr ""
+
+msgid "Number of transition layers between tree support interface and support body. 0 disables transition layers. Bambu Studio uses 1 layer by default; Snapmaker recommends 2 layers for better adhesion with high-shrinkage materials like ABS/PC/PA."
+msgstr ""
+
+msgid "Support transition perimeter"
+msgstr ""
+
+msgid "Generate a perimeter loop before transition layer infill for better surface connection. Recommended to keep enabled."
+msgstr ""
+
+msgid "Support transition speed"
+msgstr ""
+
+msgid "Independent printing speed for support transition layers. Lower speed improves layer adhesion. Different from bridge_speed which is for bridging over gaps."
+msgstr ""
+
+msgid "Support transition flow ratio"
+msgstr ""
+
+msgid "Flow ratio for support transition layers relative to normal support flow. Slightly lower than interface flow for a more natural transition. 0.85 = 85% of normal support flow."
+msgstr ""
 
 msgid "Preferred Branch Angle"
 msgstr "선호하는 가지 각도"
@@ -19929,6 +20015,9 @@ msgstr "상단 쉘 두께"
 msgid "The number of top solid layers is increased when slicing if the thickness calculated by top shell layers is thinner than this value. This can avoid having too thin a shell when layer height is small. 0 means that this setting is disabled and thickness of top shell is determined simply by the number of top shell layers."
 msgstr "상단 쉘 레이어로 계산된 두께가 이 값보다 얇은 경우 슬라이싱할 때 상단 꽉찬 레이어의 수가 증가합니다. 이렇게 하면 레이어 높이가 작을 때 쉘이 너무 얇아지는 것을 방지할 수 있습니다. 0은 이 설정이 비활성화되고 상단 쉘의 두께가 절대적으로 상단 쉘 레이어에 의해 결정됨을 의미합니다"
 
+msgid "This is  the number of layers of top paint penetration."
+msgstr ""
+
 # AI Translated
 msgid "Separated infills"
 msgstr "분리된 채우기"
@@ -20084,10 +20173,10 @@ msgstr "안정화 원뿔 정점 각도"
 msgid "Angle at the apex of the cone that is used to stabilize the wipe tower. Larger angle means wider base."
 msgstr "프라임 타워를 안정화하는 데 사용되는 원뿔 꼭대기의 각도입니다. 각도가 클수록 베이스가 넓어집니다."
 
-msgid "Maximum wipe tower print speed of out wall"
+msgid "Max speed"
 msgstr ""
 
-msgid "Maximum wipe tower print speed of out wall."
+msgid "The maximum printing speed on the prime tower excluding ramming."
 msgstr ""
 
 # AI Translated
@@ -21181,6 +21270,12 @@ msgstr "서포트 생성 중"
 
 msgid "Optimizing toolpath"
 msgstr "툴 경로 최적화"
+
+msgid "Empty layers around bottom are replaced by nearest normal layers."
+msgstr "바닥 주변의 빈 레이어는 가장 가까운 일반 레이어로 대체됩니다."
+
+msgid "The model has too many empty layers."
+msgstr "모델에 빈 레이어가 너무 많습니다."
 
 msgid "Slicing mesh"
 msgstr "슬라이싱 메시"
@@ -22972,15 +23067,6 @@ msgstr "기기 탭에서 출력 호스트의 웹UI 표시"
 
 msgid "Replace the BambuLab's device tab with print host webui"
 msgstr "뱀부랩의 기기 탭을 출력 호스트의 웹UI로 교체"
-
-msgid "HTTPS CA file is optional. It is only needed if you use HTTPS with a self-signed certificate."
-msgstr "HTTPS CA 파일은 선택 사항입니다. 자체 서명된 인증서와 함께 HTTPS를 사용하는 경우에만 필요합니다."
-
-msgid "Certificate files (*.crt, *.pem)|*.crt;*.pem|All files|*.*"
-msgstr "인증서 파일 (*.crt, *.pem)|*.crt;*.pem|All files|*.*"
-
-msgid "Open CA certificate file"
-msgstr "CA 인증서 파일 열기"
 
 #, c-format, boost-format
 msgid "On this system, %s uses HTTPS certificates from the system Certificate Store or Keychain."
@@ -26986,14 +27072,14 @@ msgstr "준비 하기/미리 보기 전환"
 msgid "Collapse/Expand the sidebar"
 msgstr "사이드바 접기/펼치기"
 
-msgid "Open the speed dial"
-msgstr ""
-
 msgid "Reload the device page"
 msgstr ""
 
 msgid "Show keyboard shortcuts list"
 msgstr "키보드 단축키 목록 보기"
+
+msgid "Open the Speed Dial"
+msgstr ""
 
 msgid "Slicing and printing"
 msgstr ""
@@ -27014,6 +27100,9 @@ msgid "Painting tools"
 msgstr ""
 
 msgid "Application"
+msgstr ""
+
+msgid "Speed Dial"
 msgstr ""
 
 #: resources/data/hints.ini: [hint:Precise wall]
@@ -27303,6 +27392,24 @@ msgid ""
 "Avoid warping\n"
 "Did you know that when printing materials that are prone to warping such as ABS, appropriately increasing the heatbed temperature can reduce the probability of warping."
 msgstr ""
+
+#~ msgid "PLA and PETG filaments detected in the mixture. Adjust parameters according to the Wiki to ensure print quality."
+#~ msgstr "PLA와 PETG 필라멘트의 혼합이 감지되었습니다. 인쇄 품질을 보장하기 위해 위키에 따라 매개변수를 조정하세요."
+
+#~ msgid "Hostname or IP"
+#~ msgstr "호스트 이름 또는 IP"
+
+#~ msgid "Custom camera source"
+#~ msgstr "커스텀 카메라 소스"
+
+#~ msgid "Switch Camera View"
+#~ msgstr "카메라 보기 전환"
+
+#~ msgid "Organic support tree tip diameter must not be smaller than support material extrusion width."
+#~ msgstr "유기체 서포트 트리 끝 직경은 서포트 재료 압출 너비보다 작아서는 안 됩니다."
+
+#~ msgid "This expands the first raft or support layer to improve bed adhesion."
+#~ msgstr "베드 플레이트 안착을 향상시키기 위해 첫 번째 라프트 또는 서포트 확장"
 
 #~ msgid "\"Fix Model\" feature is currently only on Windows. Please repair the model on Snapmaker Orca(windows) or CAD softwares."
 #~ msgstr "\"모델 수리\" 기능은 현재 Windows에만 있습니다. Snapmaker Orca(Wndows) 또는 CAD 소프트웨어 등에서 모델을 수정하세요."
@@ -28156,12 +28263,6 @@ msgstr ""
 #~ msgid "Application is closing"
 #~ msgstr "응용 프로그램 닫는 중"
 
-#~ msgid "Print all"
-#~ msgstr "모두 출력"
-
-#~ msgid "Send all"
-#~ msgstr "모두 전송"
-
 #~ msgid "Show the list of the keyboard shortcuts"
 #~ msgstr "키보드 단축키 목록 표시"
 
@@ -28324,9 +28425,6 @@ msgstr ""
 
 #~ msgid "Detail."
 #~ msgstr "세부 사항."
-
-#~ msgid "Wiki"
-#~ msgstr "위키"
 
 #~ msgid "Exporting."
 #~ msgstr "내보내는중."
@@ -32318,12 +32416,6 @@ msgstr ""
 
 #~ msgid "Filter out gaps smaller than the threshold specified. This setting won't affect top/bottom layers"
 #~ msgstr "지정된 임계값보다 작은 갭을 필터링합니다. 이 설정은 상단 표면/하단 표면 레이어에 영향을 주지 않습니다"
-
-#~ msgid "Empty layers around bottom are replaced by nearest normal layers."
-#~ msgstr "바닥 주변의 빈 레이어는 가장 가까운 일반 레이어로 대체됩니다."
-
-#~ msgid "The model has too many empty layers."
-#~ msgstr "모델에 빈 레이어가 너무 많습니다."
 
 #~ msgid "Cali"
 #~ msgstr "교정"

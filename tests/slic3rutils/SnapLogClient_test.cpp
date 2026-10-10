@@ -46,17 +46,32 @@ TEST_CASE("SnapEvent registry maps every enum to a unique stable name", "[snaplo
     REQUIRE(snap_event_from_name("calibration_result") == SnapEvent::CalibrationResult);
     REQUIRE_FALSE(snap_event_from_name("not_a_snap_event").has_value());
 
-    const std::array<SnapEvent, 26> events = {
-        SnapEvent::AppLaunch,           SnapEvent::AppSessionEnd,           SnapEvent::CalibrationResult,
-        SnapEvent::DeviceConnectAttempt, SnapEvent::DeviceDisconnect,       SnapEvent::DeviceDiscoveryStart,
-        SnapEvent::DeviceEngineSet,      SnapEvent::FileImportResult,       SnapEvent::FirmwareUpgradeResult,
-        SnapEvent::FlutterRunResult,     SnapEvent::GcodeExportResult,      SnapEvent::MqttClientCreate,
-        SnapEvent::MqttClientCreateFailed, SnapEvent::MqttConnectAttempt,   SnapEvent::MqttConnectFailure,
-        SnapEvent::MqttConnectResult,    SnapEvent::MqttSubscribeResult,    SnapEvent::PrintJobSendResult,
-        SnapEvent::PrivacyConsentGranted, SnapEvent::ProjectSaveResult,     SnapEvent::SliceCompleted,
-        SnapEvent::SliceFailed,          SnapEvent::SliceStart,             SnapEvent::SliceCancelled,
-        SnapEvent::UserLoginResult,      SnapEvent::UserLogout
-    };
+    const std::array<SnapEvent, 26> events = {SnapEvent::AppLaunch,
+                                              SnapEvent::AppSessionEnd,
+                                              SnapEvent::CalibrationResult,
+                                              SnapEvent::DeviceConnectAttempt,
+                                              SnapEvent::DeviceDisconnect,
+                                              SnapEvent::DeviceDiscoveryStart,
+                                              SnapEvent::DeviceEngineSet,
+                                              SnapEvent::FileImportResult,
+                                              SnapEvent::FirmwareUpgradeResult,
+                                              SnapEvent::FlutterRunResult,
+                                              SnapEvent::GcodeExportResult,
+                                              SnapEvent::MqttClientCreate,
+                                              SnapEvent::MqttClientCreateFailed,
+                                              SnapEvent::MqttConnectAttempt,
+                                              SnapEvent::MqttConnectFailure,
+                                              SnapEvent::MqttConnectResult,
+                                              SnapEvent::MqttSubscribeResult,
+                                              SnapEvent::PrintJobSendResult,
+                                              SnapEvent::PrivacyConsentGranted,
+                                              SnapEvent::ProjectSaveResult,
+                                              SnapEvent::SliceCompleted,
+                                              SnapEvent::SliceFailed,
+                                              SnapEvent::SliceStart,
+                                              SnapEvent::SliceCancelled,
+                                              SnapEvent::UserLoginResult,
+                                              SnapEvent::UserLogout};
 
     std::set<std::string_view> names;
     for (const auto event : events)
@@ -531,8 +546,8 @@ TEST_CASE("SnapLogClient: re-login clears auth_known_dead; empty token does not"
 
 TEST_CASE("direct realtime log call is a safe no-op un-init'd", "[snaplog]")
 {
-    SnapLogClient::instance().log(SnapLogLevel::Info, "smoke", SnapLogExt{{"eventName", "smoke_test"}},
-                                  SnapLogPolicy::Realtime, __FUNCTION__, __LINE__);
+    SnapLogClient::instance().log(SnapLogLevel::Info, "smoke", SnapLogExt{{"eventName", "smoke_test"}}, SnapLogPolicy::Realtime,
+                                  __FUNCTION__, __LINE__);
     SNAP_LOG_ERROR(SinkGateway, SnapEvent::AppLaunch, {{"k", "v"}}, "smoke2");
     REQUIRE(true); // reached without crash
 }
@@ -875,18 +890,18 @@ TEST_CASE("PostHog event renders a flattened and sanitized capture event", "[sna
 TEST_CASE("renderers inject and allow caller override of profileVersion", "[snaplog][fields]")
 {
     BatchLineContext ctx;
-    ctx.eventName     = "app_launch";
+    ctx.eventName      = "app_launch";
     ctx.profileVersion = "02.03.03.03";
 
-    auto gateway       = render_batch_line(SnapLogLevel::Info, "", {}, 64 * 1024, ctx);
+    auto gateway        = render_batch_line(SnapLogLevel::Info, "", {}, 64 * 1024, ctx);
     auto parsed_gateway = nlohmann::json::parse(gateway.substr(0, gateway.size() - 1));
     REQUIRE(parsed_gateway["ext"]["profileVersion"] == "02.03.03.03");
 
     PostHogEvent event;
-    event.context       = ctx;
+    event.context           = ctx;
     event.context.eventName = "app_launch";
-    event.ext           = {{"profileVersion", "99.99.99.99"}, {"source", "flutter"}};
-    auto parsed_posthog = nlohmann::json::parse(render_posthog_event(event));
+    event.ext               = {{"profileVersion", "99.99.99.99"}, {"source", "flutter"}};
+    auto parsed_posthog     = nlohmann::json::parse(render_posthog_event(event));
     REQUIRE(parsed_posthog["properties"]["profileVersion"] == "99.99.99.99");
     REQUIRE(parsed_posthog["properties"]["source"] == "flutter");
 
@@ -895,10 +910,10 @@ TEST_CASE("renderers inject and allow caller override of profileVersion", "[snap
     auto parsed_empty  = nlohmann::json::parse(empty_gateway.substr(0, empty_gateway.size() - 1));
     REQUIRE(parsed_empty["ext"]["profileVersion"] == "");
 
-    ctx.clientId       = "machine-1";
-    ctx.profileVersion = "02.03.03.03";
+    ctx.clientId           = "machine-1";
+    ctx.profileVersion     = "02.03.03.03";
     auto protected_gateway = render_batch_line(SnapLogLevel::Info, "", {{"clientUUID", "attacker-value"}}, 64 * 1024, ctx);
-    auto parsed_protected = nlohmann::json::parse(protected_gateway.substr(0, protected_gateway.size() - 1));
+    auto parsed_protected  = nlohmann::json::parse(protected_gateway.substr(0, protected_gateway.size() - 1));
     REQUIRE(parsed_protected["ext"]["clientUUID"] == "machine-1");
 }
 
@@ -964,7 +979,7 @@ TEST_CASE("sink admission rechecks consent before final enqueue", "[snaplog][pos
 
     std::atomic<bool> clock_entered{false};
     std::atomic<bool> consent_off_done{false};
-    fc.deps.now_ms              = [&clock_entered, &consent_off_done]() {
+    fc.deps.now_ms = [&clock_entered, &consent_off_done]() {
         clock_entered.store(true);
         while (!consent_off_done.load())
             std::this_thread::yield();
@@ -996,7 +1011,7 @@ TEST_CASE("sink admission rechecks login before final gateway enqueue", "[snaplo
 
     std::atomic<bool> clock_entered{false};
     std::atomic<bool> logout_done{false};
-    fc.deps.now_ms              = [&clock_entered, &logout_done]() {
+    fc.deps.now_ms = [&clock_entered, &logout_done]() {
         clock_entered.store(true);
         while (!logout_done.load())
             std::this_thread::yield();
@@ -1238,72 +1253,31 @@ TEST_CASE("PostHog shutdown drains queued events best effort", "[snaplog][postho
 }
 
 // ---------------------------------------------------------------------------
-// Task 10: build_realtime_request — auth selection (Bearer vs HMAC public)
+// Task 10: build_realtime_request — auth selection (Bearer only; login gate)
 // ---------------------------------------------------------------------------
 
 TEST_CASE("build_realtime_request: token present -> Bearer + upload/print", "[snaplog][auth]")
 {
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
     SnapLogConfig cfg;
     cfg.gateway_base = "https://api.snapmaker.com";
-    cfg.hmac_secret  = "c25hcG1ha2VyLU9yY2E";
 
-    RealtimeRequest req = build_realtime_request(deps, cfg, /*clientId*/ "app-123", /*token*/ "tok-xyz",
-                                                 /*nonce_gen*/ []() { return std::string("9b2226b29c3e460eae7ff1d3315c522d"); });
+    RealtimeRequest req = build_realtime_request(cfg, /*clientId*/ "app-123", /*token*/ "tok-xyz");
 
     REQUIRE(req.url == "https://api.snapmaker.com/api/log/upload/print");
     REQUIRE(hdr(req.headers, "Authorization") == "Bearer tok-xyz");
     REQUIRE(hdr(req.headers, "X-Client-Type") == "Orca");
     REQUIRE(hdr(req.headers, "X-Client-Id") == "app-123");
-    // Logged-in path must NOT carry the HMAC signing headers.
-    REQUIRE(hdr(req.headers, "X-Sign") == "");
-    REQUIRE(hdr(req.headers, "X-Nonce") == "");
-    REQUIRE(hdr(req.headers, "X-Timestamp") == "");
 }
 
-TEST_CASE("build_realtime_request: token empty -> public + HMAC headers", "[snaplog][auth]")
+TEST_CASE("build_realtime_request: token empty -> no request", "[snaplog][auth]")
 {
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
     SnapLogConfig cfg;
     cfg.gateway_base = "https://api.snapmaker.com";
-    cfg.hmac_secret  = "c25hcG1ha2VyLU9yY2E";
 
-    RealtimeRequest req = build_realtime_request(deps, cfg, /*clientId*/ "app-123", /*token*/ "",
-                                                 /*nonce_gen*/ []() { return std::string("9b22cafe00ll00000000ff00dd00ee00"); });
+    RealtimeRequest req = build_realtime_request(cfg, /*clientId*/ "app-123", /*token*/ "");
 
-    REQUIRE(req.url == "https://api.snapmaker.com/api/log/public/upload/print");
-    REQUIRE(hdr(req.headers, "Authorization") == "");
-    REQUIRE(hdr(req.headers, "X-Client-Type") == "Orca");
-    REQUIRE(hdr(req.headers, "X-Client-Id") == "app-123");
-    REQUIRE(hdr(req.headers, "X-Timestamp") == "1778639794110");
-    REQUIRE(hdr(req.headers, "X-Nonce") == "9b22cafe00ll00000000ff00dd00ee00");
-    // X-Sign must equal HMAC over "Orca" || clientId || ts || nonce (no sep).
-    std::string expected = hmac_sha256_hex("c25hcG1ha2VyLU9yY2E",
-                                           std::string("Orca") + "app-123" + "1778639794110" + "9b22cafe00ll00000000ff00dd00ee00");
-    REQUIRE(hdr(req.headers, "X-Sign") == expected);
-}
-
-TEST_CASE("build_realtime_request: X-Sign reproduces doc vector", "[snaplog][auth]")
-{
-    // Known doc vector: clientType=Orca ... but our clientType is always "Orca".
-    // Verify the formula reproduces for our fixed inputs by computing expected
-    // directly. (clientType=desktop here, not "Orca" — this test pins OUR formula.)
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
-    SnapLogConfig cfg;
-    cfg.hmac_secret = "c25hcG1ha2VyLU9yY2E";
-
-    RealtimeRequest req = build_realtime_request(deps, cfg, "app-123", "", []() { return std::string("9b2226b29c3e460eae7ff1d3315c522d"); });
-
-    std::string expected = hmac_sha256_hex("c25hcG1ha2VyLU9yY2E",
-                                           std::string("Orca") + "app-123" + "1778639794110" + "9b2226b29c3e460eae7ff1d3315c522d");
-    REQUIRE(hdr(req.headers, "X-Sign") == expected);
-    REQUIRE(hdr(req.headers, "X-Sign").size() == 64); // 32 bytes lowercase hex
+    REQUIRE(req.url.empty());
+    REQUIRE(req.headers.empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -2187,32 +2161,21 @@ TEST_CASE("rotate_active handles Windows target-exists collision", "[snaplog][ba
 // ---------------------------------------------------------------------------
 // Plan B Task 3: batch create/complete/cancel request building
 // Pure functions that produce BatchRequest { url, headers, body } for the
-// three file-upload lifecycle endpoints. Auth selection mirrors realtime:
-// token non-empty -> Bearer; empty -> HMAC public path.
+// three file-upload lifecycle endpoints. A token is required: non-empty ->
+// Bearer; empty -> no request.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("build_batch_create_request: Bearer -> /api/log/upload/create", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
     SnapLogConfig cfg;
     cfg.gateway_base = "https://api.snapmaker.com";
-    cfg.hmac_secret  = "c25hcG1ha2VyLU9yY2E";
 
-    BatchRequest req = build_batch_create_request(
-        deps, cfg, /*clientId*/ "app-123", /*token*/ "tok-xyz",
-        /*nonce_gen*/ []() { return std::string("9b2226b29c3e460eae7ff1d3315c522d"); },
-        /*fileName*/ "batch.123.log");
+    BatchRequest req = build_batch_create_request(cfg, /*clientId*/ "app-123", /*token*/ "tok-xyz", /*fileName*/ "batch.123.log");
 
     REQUIRE(req.url == "https://api.snapmaker.com/api/log/upload/create");
     REQUIRE(hdr(req.headers, "Authorization") == "Bearer tok-xyz");
     REQUIRE(hdr(req.headers, "X-Client-Type") == "Orca");
     REQUIRE(hdr(req.headers, "X-Client-Id") == "app-123");
-    // Logged-in path must NOT carry the HMAC signing headers.
-    REQUIRE(hdr(req.headers, "X-Sign") == "");
-    REQUIRE(hdr(req.headers, "X-Nonce") == "");
-    REQUIRE(hdr(req.headers, "X-Timestamp") == "");
     // Body has fileName, no checkSum.
     REQUIRE(req.body.find("\"fileName\"") != std::string::npos);
     REQUIRE(req.body.find("batch.123.log") != std::string::npos);
@@ -2221,18 +2184,12 @@ TEST_CASE("build_batch_create_request: Bearer -> /api/log/upload/create", "[snap
 
 TEST_CASE("build_batch_request: empty token builds no Gateway request", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    deps.now_ms  = []() { return int64_t(1778639794110); };
     SnapLogConfig cfg;
     cfg.gateway_base = "https://api.snapmaker.com";
-    cfg.hmac_secret  = "c25hcG1ha2VyLU9yY2E";
 
-    const auto create = build_batch_create_request(
-        deps, cfg, "app-123", "", []() { return std::string("nonce"); }, "mylog.ndjson");
-    const auto complete = build_batch_complete_request(
-        deps, cfg, "app-123", "", []() { return std::string("nonce"); }, "key1");
-    const auto cancel = build_batch_cancel_request(
-        deps, cfg, "app-123", "", []() { return std::string("nonce"); }, "upload1");
+    const auto create   = build_batch_create_request(cfg, "app-123", "", "mylog.ndjson");
+    const auto complete = build_batch_complete_request(cfg, "app-123", "", "key1");
+    const auto cancel   = build_batch_cancel_request(cfg, "app-123", "", "upload1");
 
     REQUIRE(create.url.empty());
     REQUIRE(create.headers.empty());
@@ -2244,55 +2201,22 @@ TEST_CASE("build_batch_request: empty token builds no Gateway request", "[snaplo
 
 TEST_CASE("build_batch_create_request: empty token has no public fallback", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
     SnapLogConfig cfg;
     cfg.gateway_base = "https://api.snapmaker.com";
-    cfg.hmac_secret  = "c25hcG1ha2VyLU9yY2E";
 
-    BatchRequest req = build_batch_create_request(
-        deps, cfg, /*clientId*/ "app-123", /*token*/ "",
-        /*nonce_gen*/ []() { return std::string("9b22cafe00ll00000000ff00dd00ee00"); },
-        /*fileName*/ "mylog.ndjson");
+    BatchRequest req = build_batch_create_request(cfg, /*clientId*/ "app-123", /*token*/ "", /*fileName*/ "mylog.ndjson");
 
     REQUIRE(req.url.empty());
     REQUIRE(req.headers.empty());
     REQUIRE(req.body.empty());
 }
 
-TEST_CASE("build_batch_create_request: realtime public auth is not reused by batch", "[snaplog][batch]")
-{
-    // The signing rule is identical between realtime and batch — verify by
-    // computing the realtime X-Sign with the same inputs and asserting equality.
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
-    SnapLogConfig cfg;
-    cfg.hmac_secret = "c25hcG1ha2VyLU9yY2E";
-
-    RealtimeRequest rt = build_realtime_request(deps, cfg, "app-123", "", []() { return std::string("9b2226b29c3e460eae7ff1d3315c522d"); });
-
-    BatchRequest bq =
-        build_batch_create_request(deps, cfg, "app-123", "", []() { return std::string("9b2226b29c3e460eae7ff1d3315c522d"); }, "f.log");
-
-    REQUIRE(rt.url.find("/public/") != std::string::npos);
-    REQUIRE(bq.url.empty());
-    REQUIRE(hdr(bq.headers, "X-Sign").empty());
-}
-
 TEST_CASE("build_batch_complete_request: single-part body carries fileName, URL ends /completed", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
     SnapLogConfig cfg;
     cfg.gateway_base = "https://api.snapmaker.com";
-    cfg.hmac_secret  = "secret";
 
-    BatchRequest req = build_batch_complete_request(
-        deps, cfg, "app-123", "tok", []() { return std::string("nonce123"); },
-        /*full_key*/ "logs/2026/batch.abc.ndjson");
+    BatchRequest req = build_batch_complete_request(cfg, "app-123", "tok", /*full_key*/ "logs/2026/batch.abc.ndjson");
 
     REQUIRE(req.url == "https://api.snapmaker.com/api/log/upload/completed");
     REQUIRE(hdr(req.headers, "Authorization") == "Bearer tok");
@@ -2305,12 +2229,10 @@ TEST_CASE("build_batch_complete_request: single-part body carries fileName, URL 
 
 TEST_CASE("build_batch_complete_request: empty token has no request", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    deps.now_ms = []() { return int64_t(100); };
     SnapLogConfig cfg;
     cfg.gateway_base = "https://gw.example.com";
 
-    BatchRequest req = build_batch_complete_request(deps, cfg, "cid", "", []() { return std::string("n"); }, "key1");
+    BatchRequest req = build_batch_complete_request(cfg, "cid", "", "key1");
 
     REQUIRE(req.url.empty());
     REQUIRE(req.headers.empty());
@@ -2318,15 +2240,10 @@ TEST_CASE("build_batch_complete_request: empty token has no request", "[snaplog]
 
 TEST_CASE("build_batch_cancel_request: empty uploadId -> body {}", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
     SnapLogConfig cfg;
     cfg.gateway_base = "https://api.snapmaker.com";
 
-    BatchRequest req = build_batch_cancel_request(
-        deps, cfg, "app-123", "tok", []() { return std::string("n"); },
-        /*uploadId*/ "");
+    BatchRequest req = build_batch_cancel_request(cfg, "app-123", "tok", /*uploadId*/ "");
 
     REQUIRE(req.url == "https://api.snapmaker.com/api/log/upload/cancel");
     REQUIRE(hdr(req.headers, "Authorization") == "Bearer tok");
@@ -2338,13 +2255,9 @@ TEST_CASE("build_batch_cancel_request: empty uploadId -> body {}", "[snaplog][ba
 
 TEST_CASE("build_batch_cancel_request: non-empty uploadId -> body has it", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    deps.now_ms = []() { return int64_t(0); };
     SnapLogConfig cfg;
 
-    BatchRequest req = build_batch_cancel_request(
-        deps, cfg, "cid", "tok", []() { return std::string("n"); },
-        /*uploadId*/ "upload-xyz");
+    BatchRequest req = build_batch_cancel_request(cfg, "cid", "tok", /*uploadId*/ "upload-xyz");
 
     REQUIRE(req.url.find("/cancel") != std::string::npos);
     nlohmann::json parsed = nlohmann::json::parse(req.body);
@@ -2353,14 +2266,10 @@ TEST_CASE("build_batch_cancel_request: non-empty uploadId -> body has it", "[sna
 
 TEST_CASE("build_batch_cancel_request: empty token has no request", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    int64_t     ts = 42;
-    deps.now_ms    = [&ts]() { return ts; };
     SnapLogConfig cfg;
     cfg.gateway_base = "https://gw.example.com";
-    cfg.hmac_secret  = "sec";
 
-    BatchRequest req = build_batch_cancel_request(deps, cfg, "cid", "", []() { return std::string("nonce1"); }, "uid1");
+    BatchRequest req = build_batch_cancel_request(cfg, "cid", "", "uid1");
 
     REQUIRE(req.url.empty());
     REQUIRE(req.headers.empty());

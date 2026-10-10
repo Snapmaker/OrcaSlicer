@@ -3127,7 +3127,6 @@ bool GUI_App::on_init_inner()
                                 :
                                 "https://api.snapmaker.com";
     snap_cfg.posthog_api_key = SNAP_LOG_POSTHOG_API_KEY;
-    snap_cfg.hmac_secret = SNAP_LOG_HMAC_SECRET;
     snap_cfg.spool_dir = (boost::filesystem::path(data_dir()) / "log_upload_spool").string();
     std::string machine_id;
     if (app_config) {

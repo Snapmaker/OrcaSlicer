@@ -138,29 +138,7 @@ std::string hmac_sha256_hex(std::string_view key, std::string_view msg)
     return r;
 }
 
-std::string default_nonce()
-{
-    // 16 random bytes -> 32 lowercase hex chars (128 bits of entropy).
-    // we deliberately avoid boost::uuids.
-    unsigned char buf[16];
-    if (RAND_bytes(buf, sizeof(buf)) != 1) {
-        // RAND_bytes should not fail in practice; fall back to zeros so the
-        // call is still total (the signature still validates, just with a
-        // weak nonce — server-side nonce-replay protection catches abuse).
-        for (auto& b : buf)
-            b = 0;
-    }
-    static const char* H = "0123456789abcdef";
-    std::string        r(32, '0');
-    for (int i = 0; i < 16; ++i) {
-        r[2 * i]     = H[buf[i] >> 4];
-        r[2 * i + 1] = H[buf[i] & 0xF];
-    }
-    return r;
-}
-
-RealtimeRequest build_realtime_request(
-    const SnapLogDeps& deps, const SnapLogConfig& cfg, const std::string& clientId, const std::string& token, NonceGenerator nonce_gen)
+RealtimeRequest build_realtime_request(const SnapLogConfig& cfg, const std::string& clientId, const std::string& token)
 {
     RealtimeRequest r;
 
@@ -179,19 +157,6 @@ RealtimeRequest build_realtime_request(
         r.url = cfg.gateway_base + "/api/log/upload/print";
         r.headers.emplace_back("Authorization", std::string("Bearer ") + token);
         add_common();
-    } else {
-        // Public path: HMAC-signed, public endpoint.
-        r.url = cfg.gateway_base + "/api/log/public/upload/print";
-        add_common();
-        // Timestamp in ms from the injected clock.
-        int64_t     ts     = deps.now_ms ? deps.now_ms() : 0;
-        std::string ts_str = std::to_string(ts);
-        std::string nonce  = nonce_gen ? nonce_gen() : default_nonce();
-        // X-Sign = HMAC_SHA256(secret, clientType||clientId||ts||nonce)
-        std::string sign = hmac_sha256_hex(cfg.hmac_secret, std::string(kSnapLogClientType) + clientId + ts_str + nonce);
-        r.headers.emplace_back("X-Timestamp", ts_str);
-        r.headers.emplace_back("X-Nonce", nonce);
-        r.headers.emplace_back("X-Sign", sign);
     }
     return r;
 }
@@ -941,8 +906,7 @@ void SnapLogClient::rt_worker_loop(std::shared_ptr<Internals> in)
                     in->dropped.fetch_add(1, std::memory_order_relaxed);
                     return;
                 } else {
-                    // Build the request OUTSIDE m_h_mu (now_ms/hmac may be
-                    // non-trivial; keep the lock window tight).
+                    // Build the request OUTSIDE m_h_mu to keep the lock window tight.
                     std::string      token_snap;
                     RealtimeIdentity id;
                     id.client_id       = in->machine_id_snapshot; // set once at init, immutable
@@ -960,8 +924,7 @@ void SnapLogClient::rt_worker_loop(std::shared_ptr<Internals> in)
                     id.orca_version      = in->cfg.app_version;
                     id.os                = in->cfg.os_version;
                     id.ts_ms             = in->deps.now_ms ? in->deps.now_ms() : 0;
-                    NonceGenerator  ng   = in->nonce_gen_for_test ? in->nonce_gen_for_test : NonceGenerator{};
-                    RealtimeRequest req  = build_realtime_request(in->deps, in->cfg, in->machine_id_snapshot, token_snap, ng);
+                    RealtimeRequest req  = build_realtime_request(in->cfg, in->machine_id_snapshot, token_snap);
                     std::string     body = render_realtime_body(ev.level, ev.message, ev.ext, in->cfg.line_max_bytes, id);
 
                     // Fire the async request OUTSIDE m_h_mu (do_request creates
@@ -1285,7 +1248,7 @@ std::shared_future<bool> SnapLogClient::begin_spool_purge(const std::shared_ptr<
 
     std::thread([this, in, completion_promise, previous_completion, retired_worker_handle]() mutable {
         PurgeCompletionGuard completion_guard(completion_promise);
-        bool                 purged = false;
+        bool                 purged                = false;
         bool                 lock_failure_reported = false;
 
         if (retired_worker_handle->joinable())
@@ -1660,12 +1623,7 @@ static std::string extract_event_name(const SnapLogExt& ext)
     return {};
 }
 
-void SnapLogClient::log(SnapLogLevel  lvl,
-                        std::string   msg,
-                        SnapLogExt    ext,
-                        SnapLogPolicy policy,
-                        const char*   caller_func,
-                        int /*caller_line*/)
+void SnapLogClient::log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, SnapLogPolicy policy, const char* caller_func, int /*caller_line*/)
 {
     auto in = internals();
     // 1. Not init'd → safe no-op.
@@ -1854,37 +1812,17 @@ void SnapLogClient::log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, const
 }
 
 void SnapLogClient::log_event(SnapLogLevel level, const char* caller_func, int caller_line, unsigned sinks, SnapEvent event)
-{
-    log_event(level, caller_func, caller_line, sinks, event, SnapLogExt{}, std::string{});
-}
+{ log_event(level, caller_func, caller_line, sinks, event, SnapLogExt{}, std::string{}); }
 
-void SnapLogClient::log_event(SnapLogLevel    level,
-                              const char*      caller_func,
-                              int              caller_line,
-                              unsigned         sinks,
-                              SnapEvent        event,
-                              SnapLogExt       ext)
-{
-    log_event(level, caller_func, caller_line, sinks, event, std::move(ext), std::string{});
-}
+void SnapLogClient::log_event(SnapLogLevel level, const char* caller_func, int caller_line, unsigned sinks, SnapEvent event, SnapLogExt ext)
+{ log_event(level, caller_func, caller_line, sinks, event, std::move(ext), std::string{}); }
 
-void SnapLogClient::log_event(SnapLogLevel      level,
-                              const char*        caller_func,
-                              int                caller_line,
-                              unsigned           sinks,
-                              SnapEvent          event,
-                              const std::string& msg)
-{
-    log_event(level, caller_func, caller_line, sinks, event, SnapLogExt{}, msg);
-}
+void SnapLogClient::log_event(
+    SnapLogLevel level, const char* caller_func, int caller_line, unsigned sinks, SnapEvent event, const std::string& msg)
+{ log_event(level, caller_func, caller_line, sinks, event, SnapLogExt{}, msg); }
 
-void SnapLogClient::log_event(SnapLogLevel      level,
-                              const char*        caller_func,
-                              int                caller_line,
-                              unsigned           sinks,
-                              SnapEvent          event,
-                              SnapLogExt         ext,
-                              const std::string& msg)
+void SnapLogClient::log_event(
+    SnapLogLevel level, const char* caller_func, int caller_line, unsigned sinks, SnapEvent event, SnapLogExt ext, const std::string& msg)
 {
     ext.emplace(ext.begin(), "eventName", std::string(snap_event_name(event)));
     log(level, msg, std::move(ext), caller_func, caller_line, sinks);
@@ -2036,14 +1974,6 @@ std::vector<SnapLogLevel> SnapLogClient::realtime_queue_levels_for_test() const
     for (const auto& e : m_int->rt_queue)
         out.push_back(e.level);
     return out;
-}
-
-void SnapLogClient::set_nonce_generator_for_test(NonceGenerator ng)
-{
-    std::lock_guard<std::mutex> state_lock(m_state_mu);
-    if (!m_int)
-        return;
-    m_int->nonce_gen_for_test = std::move(ng);
 }
 
 std::size_t SnapLogClient::batch_queue_size_for_test() const
@@ -2297,18 +2227,16 @@ uintmax_t sealed_total_bytes(const boost::filesystem::path& spool, const boost::
 
 //
 // Three endpoints (create/completed/cancel). Batch upload is login-only: an
-// empty token produces no request. Realtime keeps its separate public HMAC path.
+// empty token produces no request.
 
 namespace {
 
 // Shared auth+URL builder for all three batch endpoints. Mirrors the structure
 // of build_realtime_request but returns a BatchRequest (with body left empty
 // for the caller to fill) and takes the endpoint path suffix.
-BatchRequest build_batch_request_common(const SnapLogDeps&   deps,
-                                        const SnapLogConfig& cfg,
+BatchRequest build_batch_request_common(const SnapLogConfig& cfg,
                                         const std::string&   clientId,
                                         const std::string&   token,
-                                        NonceGenerator       nonce_gen,
                                         const std::string&   path_suffix)
 {
     BatchRequest r;
@@ -2327,31 +2255,18 @@ BatchRequest build_batch_request_common(const SnapLogDeps&   deps,
         r.url = cfg.gateway_base + "/api/log/upload/" + path_suffix;
         r.headers.emplace_back("Authorization", std::string("Bearer ") + token);
         add_common();
-    } else {
-        // Public path: HMAC-signed, public endpoint.
-        r.url = cfg.gateway_base + "/api/log/public/upload/" + path_suffix;
-        add_common();
-        int64_t     ts     = deps.now_ms ? deps.now_ms() : 0;
-        std::string ts_str = std::to_string(ts);
-        std::string nonce  = nonce_gen ? nonce_gen() : default_nonce();
-        std::string sign   = hmac_sha256_hex(cfg.hmac_secret, std::string(kSnapLogClientType) + clientId + ts_str + nonce);
-        r.headers.emplace_back("X-Timestamp", ts_str);
-        r.headers.emplace_back("X-Nonce", nonce);
-        r.headers.emplace_back("X-Sign", sign);
     }
     return r;
 }
 
 } // anonymous namespace
 
-BatchRequest build_batch_create_request(const SnapLogDeps&   deps,
-                                        const SnapLogConfig& cfg,
+BatchRequest build_batch_create_request(const SnapLogConfig& cfg,
                                         const std::string&   clientId,
                                         const std::string&   token,
-                                        NonceGenerator       nonce_gen,
                                         const std::string&   fileName)
 {
-    BatchRequest   r = build_batch_request_common(deps, cfg, clientId, token, nonce_gen, "create");
+    BatchRequest r = build_batch_request_common(cfg, clientId, token, "create");
     if (r.url.empty())
         return r;
     nlohmann::json body;
@@ -2360,14 +2275,12 @@ BatchRequest build_batch_create_request(const SnapLogDeps&   deps,
     return r;
 }
 
-BatchRequest build_batch_complete_request(const SnapLogDeps&   deps,
-                                          const SnapLogConfig& cfg,
+BatchRequest build_batch_complete_request(const SnapLogConfig& cfg,
                                           const std::string&   clientId,
                                           const std::string&   token,
-                                          NonceGenerator       nonce_gen,
                                           const std::string&   full_key)
 {
-    BatchRequest   r = build_batch_request_common(deps, cfg, clientId, token, nonce_gen, "completed");
+    BatchRequest r = build_batch_request_common(cfg, clientId, token, "completed");
     if (r.url.empty())
         return r;
     nlohmann::json body;
@@ -2376,14 +2289,12 @@ BatchRequest build_batch_complete_request(const SnapLogDeps&   deps,
     return r;
 }
 
-BatchRequest build_batch_cancel_request(const SnapLogDeps&   deps,
-                                        const SnapLogConfig& cfg,
+BatchRequest build_batch_cancel_request(const SnapLogConfig& cfg,
                                         const std::string&   clientId,
                                         const std::string&   token,
-                                        NonceGenerator       nonce_gen,
                                         const std::string&   uploadId)
 {
-    BatchRequest   r    = build_batch_request_common(deps, cfg, clientId, token, nonce_gen, "cancel");
+    BatchRequest r = build_batch_request_common(cfg, clientId, token, "cancel");
     if (r.url.empty())
         return r;
     nlohmann::json body = nlohmann::json::object();
@@ -2534,8 +2445,8 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
 
     auto issue_request = [&](const std::string& method, const std::string& url, std::vector<std::pair<std::string, std::string>> headers,
                              const fs::path* body_file, const std::string* body_str) -> bool {
-        if (url.empty() || !batch_worker_current(in, generation) || in->stop_uploads.load(std::memory_order_acquire) || batch_deps_unavailable(*in) ||
-            !in->deps.do_request)
+        if (url.empty() || !batch_worker_current(in, generation) || in->stop_uploads.load(std::memory_order_acquire) ||
+            batch_deps_unavailable(*in) || !in->deps.do_request)
             return false;
 
         std::shared_ptr<SnapLogHandle> h;
@@ -2612,8 +2523,7 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
         uint64_t    seq       = in->upload_seq.fetch_add(1, std::memory_order_relaxed);
         std::string file_name = make_upload_file_name(in->bt_frozen_client_id, seg_batch, now_ms, seq);
 
-        BatchRequest req = build_batch_create_request(in->deps, in->cfg, in->bt_frozen_client_id, in->bt_frozen_token,
-                                                      in->nonce_gen_for_test, file_name);
+        BatchRequest req = build_batch_create_request(in->cfg, in->bt_frozen_client_id, in->bt_frozen_token, file_name);
         if (issue_request("POST", req.url, req.headers, nullptr, &req.body)) {
             in->bt_upload_phase = Phase::AwaitCreate;
         } else {
@@ -2724,8 +2634,7 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
         bool ok = (res.status >= 200 && res.status < 300);
         if (ok) {
             // completed: POST {fileName: key}. Success = 2xx + code==200 -> delete sealed.
-            BatchRequest req = build_batch_complete_request(in->deps, in->cfg, in->bt_frozen_client_id, in->bt_frozen_token,
-                                                            in->nonce_gen_for_test, in->bt_put_key);
+            BatchRequest req = build_batch_complete_request(in->cfg, in->bt_frozen_client_id, in->bt_frozen_token, in->bt_put_key);
             if (issue_request("POST", req.url, req.headers, nullptr, &req.body)) {
                 in->bt_upload_phase = Phase::AwaitComplete;
             } else {
@@ -2793,8 +2702,7 @@ static void handle_bt_retry_or_fail(std::shared_ptr<SnapLogClient::Internals> in
     // Best-effort cancel (single-part: empty uploadId). Fire-and-forget — ignore
     // its result; the handle cleans itself up.
     if (in->deps.do_request) {
-        BatchRequest creq = build_batch_cancel_request(in->deps, in->cfg, in->bt_frozen_client_id, in->bt_frozen_token,
-                                                       in->nonce_gen_for_test, /*uploadId*/ "");
+        BatchRequest creq = build_batch_cancel_request(in->cfg, in->bt_frozen_client_id, in->bt_frozen_token, /*uploadId*/ "");
         in->batch_requests_in_progress.fetch_add(1, std::memory_order_acq_rel);
         (void) in->deps.do_request("POST", creq.url, creq.headers, nullptr, &creq.body);
         in->batch_requests_in_progress.fetch_sub(1, std::memory_order_acq_rel);
@@ -2814,8 +2722,7 @@ static void handle_bt_retry_or_fail(std::shared_ptr<SnapLogClient::Internals> in
         int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         uint64_t     seq       = in->upload_seq.fetch_add(1, std::memory_order_relaxed);
         std::string  file_name = make_upload_file_name(in->bt_frozen_client_id, in->bt_frozen_batch_id, now_ms, seq);
-        BatchRequest req       = build_batch_create_request(in->deps, in->cfg, in->bt_frozen_client_id, in->bt_frozen_token,
-                                                            in->nonce_gen_for_test, file_name);
+        BatchRequest req       = build_batch_create_request(in->cfg, in->bt_frozen_client_id, in->bt_frozen_token, file_name);
 
         bool issued = false;
         if (batch_worker_current(in, generation) && !in->stop_uploads.load(std::memory_order_acquire) && !batch_deps_unavailable(*in) &&

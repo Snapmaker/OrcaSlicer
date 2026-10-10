@@ -291,17 +291,17 @@ Implementation order is delete-first: strip the old interface and every referenc
 - Modify: `src/slic3r/GUI/WebSMUserLoginDialog.cpp`
 - Modify: `src/slic3r/Utils/SnapLogClient.hpp`
 
-- [ ] **Step 1: Delete the legacy macro and every call site**
+- [x] **Step 1: Delete the legacy macro and every call site**
 
 Delete the `SNAP_LOG_BATCH` macro definition from `SnapLogClient.hpp`. Then remove every `SNAP_LOG_BATCH(...)` call statement across the GUI files listed above, together with the local variables that only served those calls. Do not replace them yet in this step.
 
 Keep `SNAP_LOG` and `SNAP_LOG_BATCH_FORCE` absent. Also confirm no header or source references the deleted macro shape (`SnapLogPolicy`-based `log` overload, `bypass_login_gate`) from production code.
 
-- [ ] **Step 2: Verify the stripped build**
+- [x] **Step 2: Verify the stripped build**
 
 Build `libslic3r_gui` (or the app target) and run `rg -n "SNAP_LOG_BATCH|SNAP_LOG_BATCH_FORCE|#define SNAP_LOG\\b" src`. Expected: compilation succeeds and the search returns nothing. The codebase now has zero legacy logging entry; site-by-site restoration starts only after this checkpoint.
 
-- [ ] **Step 3: Adapt each site to the new API**
+- [x] **Step 3: Adapt each site to the new API**
 
 Re-add logging at the stripped sites using the matching level macro, the registry enum, and the original business fields and messages, minus the old `{"eventName", ...}` pair. For example:
 
@@ -316,7 +316,7 @@ SNAP_LOG_INFO(SinkPostHog, SnapEvent::AppLaunch,
 
 Convert direct `SnapLogClient::log` result reporters to `SNAP_LOG_INFO` or `SNAP_LOG_WARNING` branches, or use `log_event` with an already-resolved strongly typed event.
 
-- [ ] **Step 4: Convert dynamic event names to registry values**
+- [x] **Step 4: Convert dynamic event names to registry values**
 
 For `calibration_result`, use:
 
@@ -336,7 +336,7 @@ if (!event)
 
 Then route through the new sink path with `SinkGateway`.
 
-- [ ] **Step 5: Search verification**
+- [x] **Step 5: Search verification**
 
 Run:
 
@@ -358,7 +358,7 @@ Expected: no matches. `eventName` may remain only in SnapLog protocol rendering 
 
 Gateway log reporting is login-only: without a user token, gateway events are dropped at admission. PostHog does not require the Gateway login token. The historical anonymous upload paths and their signing key are dead code once the realtime and forced entries are gone, so remove them outright.
 
-- [ ] **Step 1: Remove the anonymous signing key**
+- [x] **Step 1: Remove the anonymous signing key**
 
 Delete from `CMakeLists.txt`:
 
@@ -375,13 +375,13 @@ snap_cfg.hmac_secret = SNAP_LOG_HMAC_SECRET;
 
 Delete `SnapLogConfig::hmac_secret`. Keep the `hmac_sha256_hex` primitive itself: `hash_pii` reuses its OpenSSL SHA-256 core for local PII hashing with `clientId` as the key, and no shared secret is involved there.
 
-- [ ] **Step 2: Remove the public upload paths**
+- [x] **Step 2: Remove the public upload paths**
 
 In `build_realtime_request` and `build_batch_create_request` / `build_batch_complete_request` / `build_batch_cancel_request`, delete the `token.empty()` branches that target `/api/log/public/upload/...` and emit `X-Timestamp` / `X-Nonce` / `X-Sign`. Only the logged-in `Authorization: Bearer` paths remain. A missing token must produce no request.
 
 Add a test asserting an empty token yields no URL/headers (or that the worker issues no request), replacing the historical public-path HMAC tests including the X-Sign doc-vector cases.
 
-- [ ] **Step 3: Search verification**
+- [x] **Step 3: Search verification**
 
 ```powershell
 rg -n "SNAP_LOG_HMAC_SECRET|hmac_secret" CMakeLists.txt src tests

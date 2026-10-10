@@ -212,21 +212,6 @@ std::vector<boost::filesystem::path> list_sealed(const boost::filesystem::path& 
 // to by `exclude_in_flight` (may be nullptr to count all). Never throws.
 uintmax_t sealed_total_bytes(const boost::filesystem::path& spool, const boost::filesystem::path* exclude_in_flight);
 
-//
-// Nonce generator callback: returns a freshly-generated nonce string (>=128
-// bits, hex). Default impl uses RAND_bytes (OpenSSL); tests inject a fixed
-// generator to make X-Sign deterministic.
-//
-// The actual build_realtime_request() function is declared below (after
-// SnapLogDeps / SnapLogConfig are defined), since its signature references
-// those types.
-using NonceGenerator = std::function<std::string()>;
-
-// Build the default nonce via OpenSSL RAND_bytes: 16 random bytes -> 32 hex.
-// we deliberately avoid boost::uuids (weak random_device on some
-// MinGW toolchains).
-std::string default_nonce();
-
 // Per-eventName token bucket that caps outbound event volume so a chatty
 // module can't starve critical events. allow() is safe to call from producer
 // threads; the mutex keeps bucket refill/consumption a single atomic operation.
@@ -377,7 +362,6 @@ struct SnapLogConfig
     bool        posthog_enabled = true;
     std::string spool_dir; // Plan B; empty ok in Plan A
     bool        enabled = true;
-    std::string hmac_secret; // injected at build time
 
     // Populated by the GUI wiring layer (B7) at init. Defaults are empty; the
     // renderer treats empty strings as "field omitted" gracefully.
@@ -434,16 +418,11 @@ struct RealtimeRequest
 //   url = gateway_base + "/api/log/upload/print"
 //   headers: Authorization: Bearer <token>, X-Client-Type: desktop, X-Client-Id
 //
-// Public path (token empty):
-//   url = gateway_base + "/api/log/public/upload/print"
-//   headers: X-Client-Type, X-Client-Id, X-Timestamp (ms via deps.now_ms()),
-//            X-Nonce (via nonce_gen), X-Sign = hmac_sha256_hex(hmac_secret,
-//            clientType||clientId||timestamp||nonce) — no separator, lowercase.
+// Empty token: no request. Gateway log uploads are login-only.
 //
 // clientId is passed in by the caller; for Plan A the worker passes the
 // machine_id snapshot (a stand-in).
-RealtimeRequest build_realtime_request(
-    const SnapLogDeps& deps, const SnapLogConfig& cfg, const std::string& clientId, const std::string& token, NonceGenerator nonce_gen);
+RealtimeRequest build_realtime_request(const SnapLogConfig& cfg, const std::string& clientId, const std::string& token);
 
 // Meyers singleton. init() must be called before log(); un-init log() is a
 // safe no-op. shutdown() stops workers; between shutdown() and a
@@ -455,36 +434,21 @@ public:
     static SnapLogClient& instance();
     void                  init(SnapLogDeps deps, SnapLogConfig cfg);
     void                  shutdown();
-    void                  log(SnapLogLevel  lvl,
-                              std::string   msg,
-                              SnapLogExt    ext,
-                              SnapLogPolicy policy,
-                              const char*   caller_func,
-                              int           caller_line);
-    void                  log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, const char* caller_func, int caller_line, unsigned sinks);
-    void                  log_event(SnapLogLevel level, const char* caller_func, int caller_line, unsigned sinks, SnapEvent event);
-    void                  log_event(SnapLogLevel    level,
-                                    const char*      caller_func,
-                                    int              caller_line,
-                                    unsigned         sinks,
-                                    SnapEvent        event,
-                                    SnapLogExt       ext);
-    void                  log_event(SnapLogLevel      level,
-                                    const char*        caller_func,
-                                    int                caller_line,
-                                    unsigned           sinks,
-                                    SnapEvent          event,
-                                    const std::string& msg);
-    void                  log_event(SnapLogLevel      level,
-                                    const char*        caller_func,
-                                    int                caller_line,
-                                    unsigned           sinks,
-                                    SnapEvent          event,
-                                    SnapLogExt         ext,
-                                    const std::string& msg);
-    void                  set_user_token(std::string t);
-    void                  set_user_id(std::string u);
-    void                  set_device_id(std::string d);
+    void log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, SnapLogPolicy policy, const char* caller_func, int caller_line);
+    void log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, const char* caller_func, int caller_line, unsigned sinks);
+    void log_event(SnapLogLevel level, const char* caller_func, int caller_line, unsigned sinks, SnapEvent event);
+    void log_event(SnapLogLevel level, const char* caller_func, int caller_line, unsigned sinks, SnapEvent event, SnapLogExt ext);
+    void log_event(SnapLogLevel level, const char* caller_func, int caller_line, unsigned sinks, SnapEvent event, const std::string& msg);
+    void log_event(SnapLogLevel       level,
+                   const char*        caller_func,
+                   int                caller_line,
+                   unsigned           sinks,
+                   SnapEvent          event,
+                   SnapLogExt         ext,
+                   const std::string& msg);
+    void set_user_token(std::string t);
+    void set_user_id(std::string u);
+    void set_device_id(std::string d);
     // Flutter MQTT identity of the connected printer (pushed from
     // sw_mqtt_set_engine; cleared on disconnect/logout).
     void set_connect_clientid(std::string v);
@@ -511,11 +475,6 @@ public:
     // running the 401 flusher). No-op / false when un-init'd.
     bool auth_known_dead_for_test() const;
     void set_auth_known_dead_for_test(bool v);
-
-    // Test-only: override the nonce generator used by the worker so X-Sign is
-    // deterministic in tests. Pass an empty function to restore the default
-    // (RAND_bytes). No-op when un-init'd.
-    void set_nonce_generator_for_test(NonceGenerator ng);
 
     //
     // bt_worker_loop drains bt_queue -> active.log, rotates to sealed at
@@ -669,9 +628,6 @@ public:
         // batchId never collide on S3 (which would silently overwrite).
         std::atomic<uint64_t> upload_seq{0};
 
-        // --- Test-injected nonce generator (empty => default_nonce) ---
-        NonceGenerator nonce_gen_for_test;
-
         explicit Internals(SnapLogDeps d, SnapLogConfig c)
             : deps(std::move(d)), cfg(std::move(c)), rate_limiter(deps.now_ms ? deps.now_ms : []() { return int64_t(0); })
         {}
@@ -719,8 +675,8 @@ std::string make_upload_file_name(const std::string& clientId, const std::string
 
 // Result of batch request building: URL + ordered headers + JSON body string.
 // Unlike RealtimeRequest, batch endpoints carry a JSON body (create/completed/
-// cancel lifecycle). Auth-header selection is identical to realtime (Bearer vs
-// HMAC public); the body is endpoint-specific per [DOC-2].
+// cancel lifecycle). Auth-header selection is identical to realtime
+// (Bearer-only); the body is endpoint-specific per [DOC-2].
 struct BatchRequest
 {
     std::string                                      url;
@@ -729,37 +685,31 @@ struct BatchRequest
 };
 
 // Build the batch create request (pre-signed PUT URL acquisition).
-//   URL: {gateway}/api/log/(public/)upload/create
+//   URL: {gateway}/api/log/upload/create
 //   body: {"fileName":"<sanitized name>"} (checkSum omitted for v1 — server
 //         doesn't require it; computing it needs the file bytes which belongs
 //         in the flusher, not the request builder).
-BatchRequest build_batch_create_request(const SnapLogDeps&   deps,
-                                        const SnapLogConfig& cfg,
+BatchRequest build_batch_create_request(const SnapLogConfig& cfg,
                                         const std::string&   clientId,
                                         const std::string&   token,
-                                        NonceGenerator       nonce_gen,
                                         const std::string&   fileName);
 
 // Build the batch complete request (notify server the PUT finished).
-//   URL: {gateway}/api/log/(public/)upload/completed
+//   URL: {gateway}/api/log/upload/completed
 //   body: {"fileName":"<full S3 key returned by create response>"}
 //         (single-part: no uploadId/uploadParts).
-BatchRequest build_batch_complete_request(const SnapLogDeps&   deps,
-                                          const SnapLogConfig& cfg,
+BatchRequest build_batch_complete_request(const SnapLogConfig& cfg,
                                           const std::string&   clientId,
                                           const std::string&   token,
-                                          NonceGenerator       nonce_gen,
                                           const std::string&   full_key);
 
 // Build the batch cancel request (abort an in-progress upload).
-//   URL: {gateway}/api/log/(public/)upload/cancel
+//   URL: {gateway}/api/log/upload/cancel
 //   body: {"uploadId":"<id>"} when uploadId is non-empty; "{}" when empty
 //         (single-part has no uploadId — cancel is best-effort).
-BatchRequest build_batch_cancel_request(const SnapLogDeps&   deps,
-                                        const SnapLogConfig& cfg,
+BatchRequest build_batch_cancel_request(const SnapLogConfig& cfg,
                                         const std::string&   clientId,
                                         const std::string&   token,
-                                        NonceGenerator       nonce_gen,
                                         const std::string&   uploadId);
 
 // These are defined in SnapLogClient.cpp and used by the GUI wiring code
@@ -782,9 +732,11 @@ make_production_do_request(SnapLogConfig cfg);
 //   SNAP_LOG_INFO(SinkGateway | SinkPostHog, SnapEvent::AppLaunch);
 
 #define SNAP_LOG_INFO(...) \
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log_event(::Slic3r::SnapLog::v1::SnapLogLevel::Info, __FUNCTION__, __LINE__, __VA_ARGS__)
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log_event(::Slic3r::SnapLog::v1::SnapLogLevel::Info, __FUNCTION__, __LINE__, \
+                                                               __VA_ARGS__)
 #define SNAP_LOG_WARNING(...) \
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log_event( \
-        ::Slic3r::SnapLog::v1::SnapLogLevel::Warning, __FUNCTION__, __LINE__, __VA_ARGS__)
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log_event(::Slic3r::SnapLog::v1::SnapLogLevel::Warning, __FUNCTION__, __LINE__, \
+                                                               __VA_ARGS__)
 #define SNAP_LOG_ERROR(...) \
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log_event(::Slic3r::SnapLog::v1::SnapLogLevel::Error, __FUNCTION__, __LINE__, __VA_ARGS__)
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log_event(::Slic3r::SnapLog::v1::SnapLogLevel::Error, __FUNCTION__, __LINE__, \
+                                                               __VA_ARGS__)

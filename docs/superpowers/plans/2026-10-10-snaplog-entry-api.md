@@ -395,7 +395,7 @@ Expected: no matches outside this plan document. `hash_pii` and `hmac_sha256_hex
 **Files:**
 - No new files.
 
-- [ ] **Step 1: Build and run focused tests**
+- [x] **Step 1: Build and run focused tests**
 
 ```powershell
 cmake --build build2 --target slic3rutils_tests --config Release
@@ -404,7 +404,7 @@ cmake --build build2 --target slic3rutils_tests --config Release
 
 Expected: all tests pass with no new warnings.
 
-- [ ] **Step 2: Build the application**
+- [x] **Step 2: Build the application**
 
 ```powershell
 cmake --build build2 --target Snapmaker_Orca --config Release
@@ -412,7 +412,7 @@ cmake --build build2 --target Snapmaker_Orca --config Release
 
 If the existing unrelated `PresetBundle::full_print_config` build error remains, record it as pre-existing and do not revert unrelated worktree changes.
 
-- [ ] **Step 3: Review the diff**
+- [x] **Step 3: Review the diff**
 
 Confirm:
 

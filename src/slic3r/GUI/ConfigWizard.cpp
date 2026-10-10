@@ -1387,7 +1387,8 @@ void PageDiameters::apply_custom_config(DynamicPrintConfig &config)
     auto set_extrusion_width = [&config, opt_nozzle](const char *key, double dmr) {
         char buf[64]; // locales don't matter here (sprintf/atof)
         sprintf(buf, "%.2lf", dmr * opt_nozzle->values.front() / 0.4);
-        config.set_key_value(key, new ConfigOptionFloatOrPercent(atof(buf),false));
+        // Snapmaker Orca: the widths are columns per tool head; one value for the one head of this printer.
+        config.set_key_value(key, new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(atof(buf), false)});
     };
 
     set_extrusion_width("support_line_width", 0.35);
@@ -2720,7 +2721,7 @@ ConfigWizard::ConfigWizard(wxWindow *parent)
     SetSizerAndFit(vsizer);
 
     // We can now enable scrolling on hscroll
-    p->hscroll->SetScrollRate(30, 30);
+    p->hscroll->SetScrollRate(30, FromDIP(20));
 
     on_window_geometry(this, [this]() {
         p->init_dialog_size();
@@ -2762,7 +2763,7 @@ ConfigWizard::ConfigWizard(wxWindow *parent)
     });
 
     if (wxLinux_gtk3)
-        this->Bind(wxEVT_SHOW, [this, vsizer](const wxShowEvent& e) {
+        this->Bind(wxEVT_SHOW, [](const wxShowEvent& e) {
             ;
         });
 

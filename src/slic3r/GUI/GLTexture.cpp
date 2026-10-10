@@ -9,6 +9,7 @@
 #include "3DScene.hpp"
 #include "OpenGLManager.hpp"
 #include "GUI_App.hpp"
+#include "GUI.hpp"
 #include "GLModel.hpp"
 
 #include <glad/gl.h>
@@ -31,8 +32,59 @@
 #include "GUI_App.hpp"
 #include <boost/log/trivial.hpp>
 #include <wx/dcgraph.h>
+#include <wx/dcmemory.h>
 namespace Slic3r {
 namespace GUI {
+
+namespace {
+
+// Box-filters an RGBA level down to the next mipmap level, weighting the colour by alpha so
+// transparent texels do not darken the edges of icons.
+std::vector<unsigned char> GenerateNextRawMipmapLevel(const std::vector<unsigned char>& sourceData, int sourceWidth,
+                                                      int sourceHeight, int targetWidth, int targetHeight)
+{
+    std::vector<unsigned char> targetData(static_cast<size_t>(targetWidth) * static_cast<size_t>(targetHeight) * 4, 0);
+    if (sourceData.empty() || sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0 || targetHeight <= 0)
+        return targetData;
+
+    for (int targetY = 0; targetY < targetHeight; ++targetY) {
+        const int sourceY0 = std::min(targetY * 2, sourceHeight - 1);
+        const int sourceY1 = std::min(sourceY0 + 1, sourceHeight - 1);
+        for (int targetX = 0; targetX < targetWidth; ++targetX) {
+            const int sourceX0 = std::min(targetX * 2, sourceWidth - 1);
+            const int sourceX1 = std::min(sourceX0 + 1, sourceWidth - 1);
+            const size_t sourceOffsets[4] = {
+                (static_cast<size_t>(sourceY0) * static_cast<size_t>(sourceWidth) + static_cast<size_t>(sourceX0)) * 4,
+                (static_cast<size_t>(sourceY0) * static_cast<size_t>(sourceWidth) + static_cast<size_t>(sourceX1)) * 4,
+                (static_cast<size_t>(sourceY1) * static_cast<size_t>(sourceWidth) + static_cast<size_t>(sourceX0)) * 4,
+                (static_cast<size_t>(sourceY1) * static_cast<size_t>(sourceWidth) + static_cast<size_t>(sourceX1)) * 4
+            };
+            const size_t targetOffset = (static_cast<size_t>(targetY) * static_cast<size_t>(targetWidth) +
+                                         static_cast<size_t>(targetX)) * 4;
+
+            int alphaSum = 0;
+            int colorSums[3] = { 0, 0, 0 };
+            for (int sourceIndex = 0; sourceIndex < 4; ++sourceIndex) {
+                const int alpha = static_cast<int>(sourceData[sourceOffsets[sourceIndex] + 3]);
+                alphaSum += alpha;
+                for (int channel = 0; channel < 3; ++channel) {
+                    colorSums[channel] += static_cast<int>(sourceData[sourceOffsets[sourceIndex] + channel]) * alpha;
+                }
+            }
+
+            targetData[targetOffset + 3] = static_cast<unsigned char>(alphaSum / 4);
+            if (alphaSum == 0)
+                continue;
+
+            for (int channel = 0; channel < 3; ++channel)
+                targetData[targetOffset + channel] = static_cast<unsigned char>(colorSums[channel] / alphaSum);
+        }
+    }
+
+    return targetData;
+}
+
+} // namespace
 
 void GLTexture::Compressor::reset()
 {
@@ -201,12 +253,16 @@ bool GLTexture::load_from_raw_data(std::vector<unsigned char> data, unsigned int
         int lod_w = m_width;
         int lod_h = m_height;
         GLint level = 0;
+        std::vector<unsigned char> mipData = data;
         while (lod_w > 1 || lod_h > 1) {
             ++level;
-            lod_w = std::max(lod_w / 2, 1);
-            lod_h = std::max(lod_h / 2, 1);
-            n_pixels = lod_w * lod_h;
-            glsafe(::glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA, (GLsizei)lod_w, (GLsizei)lod_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, (const void*)data.data()));
+            const int nextLodW = std::max(lod_w / 2, 1);
+            const int nextLodH = std::max(lod_h / 2, 1);
+            mipData = GenerateNextRawMipmapLevel(mipData, lod_w, lod_h, nextLodW, nextLodH);
+            lod_w = nextLodW;
+            lod_h = nextLodH;
+            glsafe(::glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA, (GLsizei)lod_w, (GLsizei)lod_h, 0, GL_RGBA,
+                                  GL_UNSIGNED_BYTE, (const void*)mipData.data()));
         }
 
         glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, level));
@@ -749,6 +805,29 @@ GLModel& GLTexture::InitModelForRenderImage()
         model.init_from(std::move(init_data));
     }
     return model;
+}
+
+void GLTexture::copy_from_framebuffer(unsigned int& tex_id, std::array<unsigned int, 2>& tex_size, unsigned int width, unsigned int height, int filter)
+{
+    if (tex_id == 0) {
+        glsafe(::glGenTextures(1, &tex_id));
+        glsafe(::glBindTexture(GL_TEXTURE_2D, tex_id));
+        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter));
+        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter));
+        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+    }
+    else
+        glsafe(::glBindTexture(GL_TEXTURE_2D, tex_id));
+
+    if (tex_size[0] != width || tex_size[1] != height) {
+        glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr));
+        tex_size = { width, height };
+    }
+
+    // Copying from the default framebuffer resolves its multisampling.
+    glsafe(::glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, 0));
 }
 
 static bool to_squared_power_of_two(const std::string& filename, int max_size_px, int& w, int& h)

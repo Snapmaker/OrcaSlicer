@@ -737,10 +737,13 @@ std::string CoolingBuffer::apply_layer_cooldown(
         &ironing_fan_control, &ironing_fan_speed
     ](bool immediately_apply) {
 #define EXTRUDER_CONFIG(OPT) m_config.OPT.get_at(m_current_extruder)
-        float fan_min_speed = EXTRUDER_CONFIG(fan_min_speed);
+// The fan speeds of a filament hold one value per filament variant column. This filter runs beside
+// the G-code generator, so the column comes from the config alone.
+#define FILAMENT_VARIANT_CONFIG(OPT) m_config.OPT.get_at(first_filament_variant_column(m_config.filament_self_index.values, m_current_extruder))
+        float fan_min_speed = FILAMENT_VARIANT_CONFIG(fan_min_speed);
         float fan_speed_new = EXTRUDER_CONFIG(reduce_fan_stop_start_freq) ? fan_min_speed : 0;
         //BBS
-        int additional_fan_speed_new = EXTRUDER_CONFIG(additional_cooling_fan_speed);
+        int additional_fan_speed_new = FILAMENT_VARIANT_CONFIG(additional_cooling_fan_speed);
         int close_fan_the_first_x_layers = EXTRUDER_CONFIG(close_fan_the_first_x_layers);
         // Is the fan speed ramp enabled?
         int full_fan_speed_layer = EXTRUDER_CONFIG(full_fan_speed_layer);
@@ -776,7 +779,7 @@ std::string CoolingBuffer::apply_layer_cooldown(
             // additional_fan_speed_new is left at its configured value (auxiliary fan is independent of the
             // part-cooling override).
         } else if (int(layer_id) >= close_fan_the_first_x_layers) {
-            float   fan_max_speed             = EXTRUDER_CONFIG(fan_max_speed);
+            float   fan_max_speed             = FILAMENT_VARIANT_CONFIG(fan_max_speed);
             float slow_down_layer_time = float(EXTRUDER_CONFIG(slow_down_layer_time));
             float fan_cooling_layer_time      = float(EXTRUDER_CONFIG(fan_cooling_layer_time));
             //BBS: always enable the fan speed interpolation according to layer time
@@ -831,6 +834,7 @@ std::string CoolingBuffer::apply_layer_cooldown(
             ironing_fan_speed   = EXTRUDER_CONFIG(ironing_fan_speed);
             ironing_fan_control = ironing_fan_speed >= 0;
 #undef EXTRUDER_CONFIG
+#undef FILAMENT_VARIANT_CONFIG
             
         } else {
             overhang_fan_control = false;
@@ -1024,28 +1028,29 @@ std::string CoolingBuffer::apply_layer_cooldown(
         }
 
         if (need_set_fan) {
+            const auto set_fan = [&](int speed) {
+                if (m_current_fan_speed != speed) {
+                    new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, speed, part_cooling_fan_min_pwm);
+                    m_current_fan_speed = speed;
+                }
+            };
             if (fan_speed_change_requests[CoolingLine::TYPE_OVERHANG_FAN_START]){
-                new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, overhang_fan_speed, part_cooling_fan_min_pwm);
-                m_current_fan_speed = overhang_fan_speed;
+                set_fan(overhang_fan_speed);
             } else if (fan_speed_change_requests[CoolingLine::TYPE_INTERNAL_BRIDGE_FAN_START]){ // ORCA: Add support for separate internal bridge fan speed control
-                new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, internal_bridge_fan_speed, part_cooling_fan_min_pwm);
-                m_current_fan_speed = internal_bridge_fan_speed;
+                set_fan(internal_bridge_fan_speed);
             }
             else if (fan_speed_change_requests[CoolingLine::TYPE_SUPPORT_INTERFACE_FAN_START]){
-                new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, supp_interface_fan_speed, part_cooling_fan_min_pwm);
-                m_current_fan_speed = supp_interface_fan_speed;
+                set_fan(supp_interface_fan_speed);
             }
             else if (fan_speed_change_requests[CoolingLine::TYPE_IRONING_FAN_START]){
-                new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, ironing_fan_speed, part_cooling_fan_min_pwm);
-                m_current_fan_speed = ironing_fan_speed;
+                set_fan(ironing_fan_speed);
             }
             else if(fan_speed_change_requests[CoolingLine::TYPE_FORCE_RESUME_FAN] && m_current_fan_speed != -1){
                 new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_current_fan_speed, part_cooling_fan_min_pwm);
                 fan_speed_change_requests[CoolingLine::TYPE_FORCE_RESUME_FAN] = false;
             }
             else {
-                new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_fan_speed, part_cooling_fan_min_pwm);
-                m_current_fan_speed = m_fan_speed;
+                set_fan(m_fan_speed);
             }
             need_set_fan = false;
         }

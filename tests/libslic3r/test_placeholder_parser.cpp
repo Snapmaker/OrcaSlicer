@@ -14,9 +14,8 @@ SCENARIO("Placeholder parser scripting", "[PlaceholderParser]") {
 	    { "nozzle_diameter", "0.6,0.6,0.6,0.6" },
 	    { "nozzle_temperature", "357,359,363,378" }
 	});
-    // To test the "min_width_top_surface" over "inner_wall_line_width".
-    config.option<ConfigOptionFloatOrPercent>("inner_wall_line_width")->value = 150.;
-    config.option<ConfigOptionFloatOrPercent>("inner_wall_line_width")->percent = true;
+    // To test the "min_width_top_surface" over "inner_wall_line_width" (a column per tool head).
+    config.option<ConfigOptionFloatsOrPercentsNullable>("inner_wall_line_width")->values = {FloatOrPercent(150., true)};
     // To let the PlaceholderParser throw when referencing scarf_joint_speed if it is set to percent, as the PlaceholderParser does not know
     // a percent to what.
     config.option<ConfigOptionFloatOrPercent>("scarf_joint_speed")->value = 50.;
@@ -354,5 +353,96 @@ SCENARIO("Placeholder parser coFloatsOrPercents vector access", "[PlaceholderPar
     SECTION("coFloats indexed access - non-nullable") {
         // pressure_advance[2] = 3.0
         REQUIRE(std::stod(parser.process("{pressure_advance[2]}")) == Catch::Approx(3.0));
+    }
+}
+
+// Snapmaker Orca: per tool head widths. Unindexed and legacy [key] read the current filament's head
+// column, indexed reads its column; a percent key over a width resolves against that column in mm.
+SCENARIO("Per tool head line widths in the placeholder parser", "[PlaceholderParser][PerHeadWidth]") {
+    DynamicConfig external;
+    external.set_key_value("filament_map", new ConfigOptionInts({1, 2}));
+    PlaceholderParser parser(&external);
+    auto config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({
+        { "nozzle_diameter", "0.4,0.6" },
+        { "line_width", "100%,110%" },
+        { "outer_wall_line_width", "0.42,0.66" },
+        { "inner_wall_line_width", "150%,120%" },
+        { "sparse_infill_line_width", "0,0" },
+        { "bridge_line_width", "0,0" },
+        { "internal_solid_infill_line_width", "0,0" },
+        { "min_width_top_surface", "200%" },
+        { "overhang_reverse_threshold", "50%" },
+        { "infill_anchor", "300%" },
+        { "infill_anchor_max", "400%" },
+        { "wipe_inward_distance", "50%" },
+    });
+    parser.apply_config(config);
+
+    SECTION("unindexed: the current filament's head, in mm") {
+        REQUIRE(std::stod(parser.process("{line_width}", 0)) == Catch::Approx(0.4));
+        REQUIRE(std::stod(parser.process("{line_width}", 1)) == Catch::Approx(0.66));
+        REQUIRE(std::stod(parser.process("{outer_wall_line_width}", 1)) == Catch::Approx(0.66));
+        // A role width of 0 falls back to the default width of the same head.
+        REQUIRE(std::stod(parser.process("{sparse_infill_line_width}", 1)) == Catch::Approx(0.66));
+        REQUIRE(std::stod(parser.process("{bridge_line_width}", 0)) == Catch::Approx(0.4));
+    }
+    SECTION("indexed: the column against its nozzle") {
+        REQUIRE(std::stod(parser.process("{inner_wall_line_width[1]}", 0)) == Catch::Approx(0.72));
+        REQUIRE(std::stod(parser.process("{inner_wall_line_width[0]}", 1)) == Catch::Approx(0.6));
+        REQUIRE(std::stod(parser.process("{outer_wall_line_width[0]}", 1)) == Catch::Approx(0.42));
+    }
+    SECTION("legacy [key]: the raw string of the current filament's column") {
+        REQUIRE(parser.process("[line_width]", 0) == "100%");
+        REQUIRE(parser.process("[line_width]", 1) == "110%");
+        REQUIRE(parser.process("[inner_wall_line_width]", 1) == "120%");
+    }
+    SECTION("a percent key over a width resolves against the head's column in mm") {
+        // min_width_top_surface 200 % of inner_wall_line_width: 150 % of 0.4 / 120 % of 0.6.
+        REQUIRE(std::stod(parser.process("{min_width_top_surface}", 0)) == Catch::Approx(1.2));
+        REQUIRE(std::stod(parser.process("{min_width_top_surface}", 1)) == Catch::Approx(1.44));
+        // overhang_reverse_threshold 50 % of line_width.
+        REQUIRE(std::stod(parser.process("{overhang_reverse_threshold}", 0)) == Catch::Approx(0.2));
+        REQUIRE(std::stod(parser.process("{overhang_reverse_threshold}", 1)) == Catch::Approx(0.33));
+        // infill_anchor 300 % of sparse_infill_line_width, which is 0 and falls back to line_width.
+        REQUIRE(std::stod(parser.process("{infill_anchor}", 1)) == Catch::Approx(1.98));
+        REQUIRE(std::stod(parser.process("{infill_anchor_max}", 0)) == Catch::Approx(1.6));
+        // wipe_inward_distance 50 % of outer_wall_line_width.
+        REQUIRE(std::stod(parser.process("{wipe_inward_distance}", 1)) == Catch::Approx(0.33));
+    }
+}
+
+SCENARIO("Placeholder parser names in branches that are not taken", "[PlaceholderParser]") {
+    PlaceholderParser parser;
+    auto config = DynamicPrintConfig::full_print_config();
+    parser.apply_config(config);
+    parser.set("idx", 0);
+    PlaceholderParser::ContextData context;
+    context.global_config = std::make_unique<DynamicConfig>();
+    auto process = [&parser, &context](const std::string &templ) { return parser.process(templ, 0, nullptr, nullptr, &context); };
+
+    SECTION("a declaration continuing after a variable reference parses when not taken") {
+        REQUIRE(process("{if false}{local a = layer_height + 1}{endif}ok") == "ok");
+    }
+    SECTION("names are not checked by default") {
+        REQUIRE(process("{if false}{no_such_var}[no_such_var]{endif}ok") == "ok");
+    }
+    SECTION("names must resolve when check_inactive_branches is set") {
+        struct Restore { ~Restore() { PlaceholderParser::check_inactive_branches = false; } } restore;
+        PlaceholderParser::check_inactive_branches = true;
+
+        CHECK_THROWS_WITH(process("{if false}{no_such_var}{endif}"), Catch::Matchers::ContainsSubstring("Not a variable name (in an inactive branch)"));
+        CHECK_THROWS_WITH(process("{if false}[no_such_var]{endif}"), Catch::Matchers::ContainsSubstring("Variable does not exist (in an inactive branch)"));
+        CHECK_THROWS_WITH(process("{if false}[nozzle_temperature[no_such_var]]{endif}"), Catch::Matchers::ContainsSubstring("Variable does not exist (in an inactive branch)"));
+        CHECK_THROWS(process("{if true}{else}{no_such_var}{endif}"));
+        CHECK_THROWS(process("{if false}{local a = no_such_var + 1}{endif}"));
+
+        CHECK(process("{if false}{layer_height}[layer_height][nozzle_temperature_0][nozzle_temperature[idx]]{endif}ok") == "ok");
+        CHECK(process("{if false}{local a = 1}{a = a + 1}{a}{endif}{if false}{a}{endif}ok") == "ok");
+        // A global declared in a branch that is not taken counts as defined for later expansions sharing the context.
+        CHECK(process("{if false}{global g = 1}{endif}{if false}{g}{endif}ok") == "ok");
+        CHECK(process("{if false}{g}{endif}ok") == "ok");
+        // Boolean expressions are not checked, so compatibility conditions keep their behaviour.
+        CHECK(PlaceholderParser::evaluate_boolean_expression("false ? no_such_var == 1 : true", config));
     }
 }

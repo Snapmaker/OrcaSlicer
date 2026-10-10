@@ -171,6 +171,10 @@ namespace GUI {
         void init_from(Geometry&& data);
         void init_from(const TriangleMesh& mesh);
         void init_from(const indexed_triangle_set& its);
+        // Snapmaker Orca: the render geometry of a mesh as plain CPU data (flat normals, or per-corner
+        // smooth normals), empty for an empty mesh. Reads no preference and makes no OpenGL call, so
+        // it may run on any thread; init_from(const indexed_triangle_set&) is built on it.
+        static Geometry make_geometry(const indexed_triangle_set& its, bool smooth_normals_enabled);
         void init_from(const Polygons& polygons, float z);
         bool init_from_file(const std::string& filename);
 

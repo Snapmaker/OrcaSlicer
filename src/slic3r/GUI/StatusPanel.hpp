@@ -14,7 +14,9 @@
 #include <wx/sizer.h>
 #include <wx/gbsizer.h>
 #include <wx/webrequest.h>
+#include <memory>
 #include "MediaPlayCtrl.h"
+#include "WebMediaController.hpp"
 #include "AMSSetting.hpp"
 #include "Calibration.hpp"
 #include "CalibrationWizardPage.hpp"
@@ -36,6 +38,7 @@
 #include "HMS.hpp"
 #include "PartSkipDialog.hpp"
 #include "DeviceErrorDialog.hpp"
+#include "StagedBuild.hpp"
 
 class StepIndicator;
 
@@ -375,7 +378,7 @@ public:
     void paint(wxPaintEvent&);
 };
 
-class StatusBasePanel : public wxScrolledWindow
+class StatusBasePanel : public wxScrolledWindow, public StagedBuild
 {
 protected:
     wxBitmap m_item_placeholder;
@@ -439,11 +442,11 @@ protected:
     wxStaticBitmap *m_bitmap_sdcard_img;
     wxStaticBitmap *m_bitmap_static_use_time;
     wxStaticBitmap *m_bitmap_static_use_weight;
-    wxStaticBitmap* m_camera_switch_button;
+    // wxStaticBitmap* m_camera_switch_button;
 
 
     wxMediaCtrl3 *  m_media_ctrl;
-    MediaPlayCtrl * m_media_play_ctrl;
+    MediaPlayCtrl * m_media_play_ctrl{nullptr};
 
     Label *         m_staticText_printing;
     wxStaticBitmap *m_bitmap_thumbnail;
@@ -461,6 +464,8 @@ protected:
     ScalableButton *m_button_abort;
     Button *        m_button_clean;
     wxWebView *     m_custom_camera_view{nullptr};
+    std::unique_ptr<WebMediaController> m_web_media_controller;
+
     wxSimplebook*   m_extruder_book;
     std::vector<ExtruderImage *> m_extruderImage;
 
@@ -576,13 +581,8 @@ protected:
     virtual void on_axis_ctrl_e_up_10(wxCommandEvent &event) { event.Skip(); }
     virtual void on_axis_ctrl_e_down_10(wxCommandEvent &event) { event.Skip(); }
     virtual void on_nozzle_selected(wxCommandEvent &event) { event.Skip(); }
-    void on_camera_source_change(wxCommandEvent& event);
-    void handle_camera_source_change();
     void remove_controls();
     void on_webview_navigating(wxWebViewEvent& evt);
-    void on_camera_switch_toggled(wxMouseEvent& event);
-    void toggle_custom_camera();
-    void toggle_builtin_camera();
 
 public:
     StatusBasePanel(wxWindow *      parent,
@@ -629,6 +629,8 @@ class StatusPanel : public StatusBasePanel
 {
 private:
     friend class MonitorPanel;
+    void wire_controls();
+    bool load_thumbnail_from_url(const wxString &url, MachineObject *obj);
 
 protected:
     std::shared_ptr<SliceInfoPopup> m_slice_info_popup;
@@ -679,7 +681,7 @@ protected:
     std::map<std::string, std::string> m_print_connect_types;
     std::vector<Button *>       m_buttons;
     int last_status;
-    ScoreData *m_score_data;
+    ScoreData *m_score_data = nullptr;
     wxBitmap* calib_bitmap = nullptr;
     CalibMode m_calib_mode;
     CalibrationMethod m_calib_method;

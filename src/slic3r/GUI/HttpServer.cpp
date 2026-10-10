@@ -1,16 +1,27 @@
 #include "HttpServer.hpp"
 #include <boost/log/trivial.hpp>
+#include <boost/algorithm/string.hpp>
+#include <boost/filesystem.hpp>
+#include <cstdio>
+#include <cstdint>
+#include <cstring>
+#include <ctime>
 #include <condition_variable>
 #include "GUI_App.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
 #include "slic3r/Utils/BBLNetworkPlugin.hpp"
+#include "libslic3r/Thread.hpp"
 #include  "sentry_wrapper/SentryWrapper.hpp"
 #include <boost/beast/core/detail/base64.hpp>
+#include <nlohmann/json.hpp>
+// windows.h stays last: its min/max/GetObject macros break nlohmann/json.hpp.
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
 #endif
+
+using json = nlohmann::json;
 
 namespace Slic3r { namespace GUI {
 
@@ -74,6 +85,201 @@ std::string utf8_to_filesystem_encoding(const std::string& utf8_str)
     return utf8_str;
 #endif
 }
+
+std::string http_headers::get_header(const std::string& name) const
+{
+    for (const auto& header : headers) {
+        if (boost::iequals(header.first, name))
+            return boost::trim_copy(header.second);
+    }
+    return "";
+}
+
+namespace {
+
+// Locale-independent month/weekday names (HTTP dates are always English).
+static const char* k_http_month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+static const char* k_http_day_names[]   = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+
+// Resolve the on-disk path used to serve a file, mirroring the open logic below.
+boost::filesystem::path resolve_response_file_path(const std::string& file_path, bool native_path)
+{
+    if (native_path)
+        return boost::filesystem::path(file_path);
+
+    const std::string system_file_path = utf8_to_filesystem_encoding(file_path);
+    boost::filesystem::path p(system_file_path);
+    if (boost::filesystem::exists(p))
+        return p;
+    return boost::filesystem::path(file_path);
+}
+
+std::time_t get_file_last_write_time(const std::string& file_path, bool native_path)
+{
+    boost::system::error_code ec;
+    const std::time_t t = boost::filesystem::last_write_time(resolve_response_file_path(file_path, native_path), ec);
+    return ec ? static_cast<std::time_t>(-1) : t;
+}
+
+// Portable UTC std::tm -> time_t (equivalent to timegm / _mkgmtime).
+std::time_t tm_to_time_t_utc(const std::tm& tm)
+{
+    int y = tm.tm_year + 1900;
+    int m = tm.tm_mon + 1;
+    int d = tm.tm_mday;
+    y -= (m <= 2);
+    const int      era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = static_cast<unsigned>(y - era * 400);
+    const unsigned doy = (153u * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    const long long days = static_cast<long long>(era) * 146097 + static_cast<long long>(doe) - 719468;
+    return static_cast<std::time_t>(days * 86400 + tm.tm_hour * 3600 + tm.tm_min * 60 + tm.tm_sec);
+}
+
+// Format std::time_t as an IMF-fixdate HTTP date (locale-independent).
+std::string format_http_date(std::time_t t)
+{
+    std::tm tm = {};
+#ifdef _WIN32
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%s, %02d %s %04d %02d:%02d:%02d GMT",
+                  k_http_day_names[tm.tm_wday], tm.tm_mday, k_http_month_names[tm.tm_mon],
+                  tm.tm_year + 1900, tm.tm_hour, tm.tm_min, tm.tm_sec);
+    return std::string(buf);
+}
+
+// Parse an IMF-fixdate HTTP date ("Sun, 06 Nov 1994 08:49:37 GMT"). Returns -1 on failure.
+std::time_t parse_http_date(const std::string& value)
+{
+    char wday[4] = {};
+    char mon[4]  = {};
+    int  day = 0, year = 0, hour = 0, minute = 0, second = 0;
+    if (std::sscanf(value.c_str(), "%3s, %d %3s %d %d:%d:%d", wday, &day, mon, &year, &hour, &minute, &second) != 7)
+        return static_cast<std::time_t>(-1);
+
+    int month = -1;
+    for (int i = 0; i < 12; ++i) {
+        if (std::strcmp(mon, k_http_month_names[i]) == 0) {
+            month = i;
+            break;
+        }
+    }
+    if (month < 0)
+        return static_cast<std::time_t>(-1);
+
+    std::tm tm = {};
+    tm.tm_year = year - 1900;
+    tm.tm_mon  = month;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min  = minute;
+    tm.tm_sec  = second;
+    return tm_to_time_t_utc(tm);
+}
+
+// ETag derived from mtime + size (the same scheme nginx uses), quoted per RFC 7232.
+std::string make_etag(std::time_t mtime, std::uintmax_t size)
+{
+    return "\"" + std::to_string(static_cast<long long>(mtime)) + "-" +
+           std::to_string(static_cast<unsigned long long>(size)) + "\"";
+}
+
+// True when the request's conditional headers prove the client's cached copy is still current.
+bool is_not_modified(const std::string& if_modified_since, const std::string& if_none_match,
+                     const std::string& etag, std::time_t mtime)
+{
+    if (!if_none_match.empty()) {
+        // If-None-Match: * is deliberately not answered with 304, although RFC 7232 allows
+        // it for an existing representation. A 304 has an empty body; if the client has no
+        // usable cache entry, the shell stays blank. Only the concrete ETag matches.
+        return if_none_match == etag;
+    }
+
+    if (!if_modified_since.empty()) {
+        const std::time_t since = parse_http_date(if_modified_since);
+        if (since != static_cast<std::time_t>(-1))
+            return mtime <= since;
+    }
+    return false;
+}
+
+// True if basename matches Flutter web's content-hashed naming (name.<hex-hash>.ext),
+// where <hex-hash> is at least 16 hex characters (Flutter emits 16-char truncated
+// digests). The hash is a content digest, so the URL changes whenever the content
+// changes and the file is safe to serve immutable. Expects a lowercased basename.
+bool is_content_hashed(const std::string& basename)
+{
+    const std::size_t last_dot = basename.find_last_of('.');
+    if (last_dot == std::string::npos || last_dot == 0)
+        return false;
+
+    const std::size_t hash_dot = basename.find_last_of('.', last_dot - 1);
+    if (hash_dot == std::string::npos)
+        return false;
+
+    const std::size_t hash_len = last_dot - hash_dot - 1;
+    if (hash_len < 16)
+        return false;
+
+    for (std::size_t i = hash_dot + 1; i < last_dot; ++i) {
+        const char c = basename[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+            return false;
+    }
+    return true;
+}
+
+// Return a Cache-Control value for a served file.
+// - content-hashed files (name.<hex-hash>.ext, e.g. main.983d3eca8f92f614.js) are
+//   content-addressed, so their URL changes whenever the content changes → safe to
+//   serve immutable.
+// - index.html / version.json / manifest.json must always be fresh.
+// - canvaskit/** / fonts / images / other assets keep fixed names, so they are
+//   revalidated via Last-Modified + ETag (304 when unchanged — the 304 logic is in
+//   ResponseFile::write_response).
+std::string get_cache_control_header(const std::string& file_path)
+{
+    std::string lower = boost::to_lower_copy(file_path);
+
+    std::string basename = lower;
+    std::size_t slash    = lower.find_last_of("/\\");
+    if (slash != std::string::npos)
+        basename = lower.substr(slash + 1);
+
+    // Content-hashed files (name.<hex-hash>.ext): immutable, the URL is content-addressed.
+    if (is_content_hashed(basename))
+        return "public, max-age=31536000, immutable";
+
+    // App shell + version probe: always fresh (tiny, re-downloaded each boot)
+    if (boost::ends_with(basename, "index.html") ||
+        boost::ends_with(basename, "version.json") ||
+        boost::ends_with(basename, "version.changelog") ||
+        boost::ends_with(basename, "manifest.json"))
+        return "no-cache, no-store";
+
+    // canvaskit / fonts / images / svgs / other assets: fixed names, so revalidate
+    // via Last-Modified + ETag (304 when unchanged).
+    return "no-cache";
+}
+
+// Writes the header lines shared by every response: the status line, the CORS
+// headers, and Connection: close. The server never reuses a connection, so the
+// explicit Connection: close stops clients from assuming HTTP/1.1 keep-alive and
+// racing against our socket close.
+void write_common_headers(std::stringstream& out, int status_code, const std::string& reason_phrase)
+{
+    out << "HTTP/1.1 " << status_code << " " << reason_phrase << "\r\n";
+    out << "Access-Control-Allow-Origin: *\r\n";
+    out << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+    out << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
+    out << "Connection: close\r\n";
+}
+
+} // namespace
 
 std::string url_get_param(const std::string& url, const std::string& key)
 {
@@ -141,13 +347,9 @@ void session::read_next_line()
     if (headers.method == "OPTIONS") {
         // 构造OPTIONS响应（允许跨域）
         std::stringstream ssOut;
-        ssOut << "HTTP/1.1 200 OK\r\n";
-        ssOut << "Access-Control-Allow-Origin: *\r\n";                            // 允许所有源
-        ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";          // 允许的方法
-        ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"; // 允许的请求头
-        ssOut << "Content-Length: 0\r\n";                                         // 无响应体
-        ssOut << "Connection: close\r\n";
-        ssOut << "\r\n";                                                          // 头和主体之间的空行（必须）
+        write_common_headers(ssOut, 200, "OK");
+        ssOut << "Content-Length: 0\r\n"; // no response body
+        ssOut << "\r\n";                  // blank line between headers and body (required)
 
         // 异步发送响应
         async_write(socket, boost::asio::buffer(ssOut.str()), [this, self](const boost::beast::error_code& e, std::size_t s) {
@@ -177,6 +379,7 @@ void session::read_next_line()
 
                     const std::string url_str = Http::url_decode(headers.get_url());
                     const auto        resp    = server.server.m_request_handler(url_str);
+                    resp->set_conditional_headers(headers.get_header("if-modified-since"), headers.get_header("if-none-match"));
                     std::stringstream ssOut;
                     resp->write_response(ssOut);
                     std::shared_ptr<std::string> str = std::make_shared<std::string>(ssOut.str());
@@ -302,27 +505,41 @@ boost::asio::ip::port_type HttpServer::find_available_port(boost::asio::ip::port
 
 void HttpServer::start()
 {
-    if (start_http_server)
-        return;
+    {
+        std::lock_guard<std::mutex> lock(m_server_mtx);
+        if (start_http_server)
+            return;
+        start_locked();
+    }
 
+    // Started with m_server_mtx released: start_health_check() may join a retired
+    // health-check thread that is blocked in is_healthy() waiting for that lock.
+    start_health_check();
+}
+
+void HttpServer::start_locked()
+{
     BOOST_LOG_TRIVIAL(info) << "start_http_service...";
 
     try {
-        // 如果指定端口不可用，查找下一个可用端口
+        // Switch to the next free port when the configured one is taken.
         if (!is_port_available(port)) {
             auto new_port = find_available_port(port + 1);
             BOOST_LOG_TRIVIAL(info) << "Original port " << port << " is in use, switching to port " << new_port;
             port = new_port;
         }
 
-        start_http_server    = true;
-        m_http_server_thread = create_thread([this] {
+        start_http_server = true;
+        // The IOServer is created on the calling thread, so the io thread never writes server_;
+        // stop() and restart() join the io thread before destroying it, which keeps srv valid.
+        server_ = std::make_unique<IOServer>(*this);
+        server_->acceptor.listen();
+        server_->do_accept();
+        IOServer* srv = server_.get();
+        m_http_server_thread = create_thread([this, srv] {
             try {
                 set_current_thread_name("http_server");
-                server_ = std::make_unique<IOServer>(*this);
-                server_->acceptor.listen();
-                server_->do_accept();
-                server_->io_service.run();
+                srv->io_service.run();
             } catch (const std::exception& e) {
                 BOOST_LOG_TRIVIAL(error) << "HTTP server error: " << e.what();
                 Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,std::string("bury_point_HttpServer::start ") + e.what(), BP_LOCAL_SERVER);
@@ -330,7 +547,7 @@ void HttpServer::start()
             }
         });
 
-        // 等待服务器启动
+        // Give the server thread time to start.
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         if (!start_http_server) {
@@ -339,13 +556,8 @@ void HttpServer::start()
         }
 
         BOOST_LOG_TRIVIAL(info) << "HTTP server started successfully on port " << port;
-        
-        // 启动健康检查
-        BOOST_LOG_TRIVIAL(debug) << "Starting health check for HTTP server...";
-        start_health_check();
-        
-        // 重启检查已集成到健康检查中，无需单独线程
-        
+
+        // start() and restart() start the health check once m_server_mtx is released.
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to start HTTP server: " << e.what();
         std::string error_msg = "bury_point_Failed to start HTTP server on port " + std::to_string(port) + ": " + e.what();
@@ -358,12 +570,12 @@ void HttpServer::start()
 void HttpServer::stop()
 {
     start_http_server = false;
-    
-    // 停止健康检查
+
     stop_health_check();
-    
-    // 重启检查已集成到健康检查中，无需单独停止
-    
+
+    // Handlers call IOServer::stop(session) on the io thread, so the acceptor and the sessions
+    // are shut down there as well; m_server_mtx serializes this with restart() and is_healthy().
+    std::lock_guard<std::mutex> lock(m_server_mtx);
     if (server_) {
         IOServer* io_server = server_.get();
         boost::asio::post(io_server->io_service, [io_server] {
@@ -376,56 +588,77 @@ void HttpServer::stop()
     }
     if (m_http_server_thread.joinable())
         m_http_server_thread.join();
+    // The io thread is gone: drop any session its early exit left behind.
+    if (server_)
+        server_->stop_all();
     server_.reset();
 }
 
 void HttpServer::restart()
 {
     BOOST_LOG_TRIVIAL(info) << "Restarting HTTP server on port " << port << "...";
-    
+
     BOOST_LOG_TRIVIAL(debug) << "Stopping current HTTP server...";
-    // 只停止HTTP服务器，不停止健康检查和重启检查线程
+    // Stops only the HTTP server; the health-check thread keeps running.
     start_http_server = false;
-    
-    if (server_) {
-        server_->acceptor.close();
-        server_->stop_all();
-        server_->io_service.stop();
+
+    {
+        // Held across teardown and start_locked(): an is_healthy() in between would see no
+        // server and trigger another restart on top of this one.
+        std::lock_guard<std::mutex> lock(m_server_mtx);
+        if (server_) {
+            IOServer* io_server = server_.get();
+            boost::asio::post(io_server->io_service, [io_server] {
+                boost::system::error_code ec;
+                io_server->acceptor.cancel(ec);
+                io_server->acceptor.close(ec);
+                io_server->stop_all();
+                io_server->io_service.stop();
+            });
+        }
+        if (m_http_server_thread.joinable())
+            m_http_server_thread.join();
+        if (server_)
+            server_->stop_all();
+        server_.reset();
+
+        BOOST_LOG_TRIVIAL(debug) << "Waiting for resources to be released...";
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+        BOOST_LOG_TRIVIAL(debug) << "Starting new HTTP server...";
+        start_locked();
     }
-    if (m_http_server_thread.joinable())
-        m_http_server_thread.join();
-    server_.reset();
-    
-    BOOST_LOG_TRIVIAL(debug) << "Waiting for resources to be released...";
-    std::this_thread::sleep_for(std::chrono::milliseconds(500)); // 等待资源释放
-    
-    BOOST_LOG_TRIVIAL(debug) << "Starting new HTTP server...";
-    start();
-    
+
+    // Runs with m_server_mtx released: start_health_check() joins a retired health-check
+    // thread, which may be blocked in is_healthy() waiting for that lock.
+    start_health_check();
+
     BOOST_LOG_TRIVIAL(info) << "HTTP server restart completed";
 }
 
 bool HttpServer::is_healthy()
 {
+    // May run on the health-check thread concurrently with stop()/restart().
+    std::lock_guard<std::mutex> lock(m_server_mtx);
     if (!start_http_server || !server_) {
         BOOST_LOG_TRIVIAL(fatal) << "Health check failed: server not started or server object is null";
         return false;
     }
     
     try {
-        // 检查acceptor是否正常打开
+        // The acceptor must be open.
         if (!server_->acceptor.is_open()) {
             BOOST_LOG_TRIVIAL(fatal) << "Health check failed: acceptor is not open";
             return false;
         }
         
-        // 检查io_service是否正在运行
+        // The io_service must be running.
         if (server_->io_service.stopped()) {
             BOOST_LOG_TRIVIAL(fatal) << "Health check failed: io_service is stopped";
             return false;
         }
         
-        // 尝试创建一个测试连接来验证服务器是否真正响应
+        // A test connection verifies that the server actually responds.
         boost::asio::io_service test_io_service;
         boost::asio::ip::tcp::socket test_socket(test_io_service);
         boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address::from_string("127.0.0.1"), port);
@@ -449,13 +682,38 @@ bool HttpServer::is_healthy()
 
 void HttpServer::start_health_check()
 {
-    std::lock_guard<std::mutex> lock(m_health_check_mutex);
-    
-    if (m_health_check_enabled) {
-        BOOST_LOG_TRIVIAL(info) << "Health check is already running";
-        return; // 已经在运行
+    boost::thread retired;
+    {
+        std::lock_guard<std::mutex> lock(m_health_check_mutex);
+
+        if (m_health_check_enabled) {
+            BOOST_LOG_TRIVIAL(info) << "Health check is already running";
+            return;
+        }
+
+        if (m_health_check_thread.joinable()) {
+            if (m_health_check_thread.get_id() == boost::this_thread::get_id()) {
+                // stop() disabled the check while this health-check thread was restarting the
+                // server. Reassigning its own joinable handle would terminate, so the handle is
+                // detached and the check stays disabled; the loop exits on its next iteration.
+                m_health_check_thread.detach();
+                BOOST_LOG_TRIVIAL(warning) << "Health check was disabled during restart; leaving it stopped";
+                return;
+            }
+            retired = std::move(m_health_check_thread); // joined below, outside the lock
+        }
     }
-    
+
+    // Joined outside m_health_check_mutex: the retired thread takes it to leave its loop.
+    if (retired.joinable())
+        retired.join();
+
+    std::lock_guard<std::mutex> lock(m_health_check_mutex);
+    if (m_health_check_enabled) {
+        // Another thread started the check during the join.
+        return;
+    }
+
     BOOST_LOG_TRIVIAL(info) << "Starting HTTP server health check with interval: " << m_health_check_interval << "ms";
     m_health_check_enabled = true;
     m_health_check_thread = create_thread([this] {
@@ -976,12 +1234,10 @@ void HttpServer::ResponseRedirect::write_response(std::stringstream& ssOut)
         "</div></body></html>";
     size_t            content_length = sHTML.size(); // 字节长度
 
-    ssOut << "HTTP/1.1 302 Found\r\n";
+    write_common_headers(ssOut, 302, "Found");
     ssOut << "Location: " << location_str << "\r\n";
     ssOut << "Content-Type: text/html\r\n";
     ssOut << "Content-Length: " << content_length << "\r\n"; // 正确计算长度
-    ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
-    ssOut << "Connection: close\r\n";
     ssOut << "\r\n";                                         // 头和主体之间的空行（必须）
     ssOut << sHTML;                                          // 响应体（长度必须匹配）
 }
@@ -991,11 +1247,9 @@ void HttpServer::ResponseNotFound::write_response(std::stringstream& ssOut)
     const std::string sHTML          = "<html><body><h1>404 Not Found</h1><p>There's nothing here.</p></body></html>";
     size_t            content_length = sHTML.size(); // 字节长度
 
-    ssOut << "HTTP/1.1 404 Not Found\r\n";
+    write_common_headers(ssOut, 404, "Not Found");
     ssOut << "Content-Type: text/html\r\n";
     ssOut << "Content-Length: " << content_length << "\r\n"; // 正确计算长度
-    ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
-    ssOut << "Connection: close\r\n";
     ssOut << "\r\n";                                         // 头和主体之间的空行（必须）
     ssOut << sHTML;                                          // 响应体（长度必须匹配）
 }
@@ -1024,6 +1278,21 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
     std::string fileContent    = fileStream.str();
     size_t      content_length = fileContent.size(); // 字节长度，非字符数
 
+    const std::time_t last_write_time = get_file_last_write_time(file_path, m_native_path);
+    const bool        can_revalidate  = last_write_time >= 0;
+    std::string       last_modified   = can_revalidate ? format_http_date(last_write_time) : "";
+    std::string       etag            = can_revalidate ? make_etag(last_write_time, content_length) : "";
+
+    if (can_revalidate && is_not_modified(m_if_modified_since, m_if_none_match, etag, last_write_time)) {
+        // Client's cached copy is still current: no body.
+        write_common_headers(ssOut, 304, "Not Modified");
+        ssOut << "Cache-Control: " << get_cache_control_header(file_path) << "\r\n";
+        ssOut << "ETag: " << etag << "\r\n";
+        ssOut << "Last-Modified: " << last_modified << "\r\n";
+        ssOut << "\r\n";
+        return;
+    }
+
     // 确定Content-Type（保持原有逻辑）
     std::string content_type = "application/octet-stream";
     if (ends_with(file_path, ".html"))
@@ -1032,6 +1301,8 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
         content_type = "text/css";
     else if (ends_with(file_path, ".js"))
         content_type = "text/javascript";
+    else if (ends_with(file_path, ".wasm"))
+        content_type = "application/wasm";
     else if (ends_with(file_path, ".png"))
         content_type = "image/png";
     else if (ends_with(file_path, ".jpg"))
@@ -1042,6 +1313,8 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
         content_type = "image/svg+xml";
     else if (ends_with(file_path, ".ttf"))
         content_type = "application/x-font-ttf";
+    else if (ends_with(file_path, ".otf"))
+        content_type = "font/otf";
     else if (ends_with(file_path, ".json"))
         content_type = "application/json";
     else if (ends_with(file_path, ".webp"))
@@ -1052,13 +1325,14 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
         content_type = "font/woff2";
 
     // 构造响应头（严格使用\r\n，头结束后空行）
-    ssOut << "HTTP/1.1 200 OK\r\n";
+    write_common_headers(ssOut, 200, "OK");
     ssOut << "Content-Type: " << content_type << "\r\n";
     ssOut << "Content-Length: " << content_length << "\r\n"; // 必须与实际内容长度一致
-    ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
-    ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
-    ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
-    ssOut << "Connection: close\r\n";
+    ssOut << "Cache-Control: " << get_cache_control_header(file_path) << "\r\n";
+    if (can_revalidate) {
+        ssOut << "ETag: " << etag << "\r\n";
+        ssOut << "Last-Modified: " << last_modified << "\r\n";
+    }
     ssOut << "\r\n";      // 头和主体之间的空行（必须）
     ssOut << fileContent; // 响应体（长度必须与Content-Length一致）
 }
@@ -1067,11 +1341,9 @@ void HttpServer::ResponseHtml::write_response(std::stringstream& ssOut)
 {
     const size_t content_length = html.size(); // 字节长度
 
-    ssOut << "HTTP/1.1 200 OK\r\n";
+    write_common_headers(ssOut, 200, "OK");
     ssOut << "Content-Type: text/html\r\n";
     ssOut << "Content-Length: " << content_length << "\r\n";
-    ssOut << "Access-Control-Allow-Origin: *\r\n"; // CORS头
-    ssOut << "Connection: close\r\n";
     ssOut << "\r\n";
     ssOut << html;
 }

@@ -1,5 +1,6 @@
 #include "FilamentMapPanel.hpp"
 #include "GUI_App.hpp"
+#include "I18N.hpp"
 #include "Plater.hpp"
 #include "Widgets/MultiNozzleSync.hpp" // manuallySetNozzleCount producer for extruder_nozzle_stats
 #include <algorithm>
@@ -184,6 +185,12 @@ std::vector<int> FilamentMapManualPanel::GetFilamentVolumeMaps() const
     auto preset_bundle        = wxGetApp().preset_bundle;
     auto proj_config          = preset_bundle->project_config;
     auto nozzle_volume_values = proj_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type")->values;
+    // The high-flow panel of the right extruder also holds an E3D High Flow nozzle; keep that type
+    // instead of writing plain High Flow, which the extruder does not have.
+    const int  right_extruder_id      = 1;
+    const bool right_e3d_high_flow    = nozzle_volume_values.size() > right_extruder_id &&
+                                        nozzle_volume_values[right_extruder_id] == static_cast<int>(NozzleVolumeType::nvtE3DHighFlow);
+    const int  right_high_flow_volume = static_cast<int>(right_e3d_high_flow ? NozzleVolumeType::nvtE3DHighFlow : NozzleVolumeType::nvtHighFlow);
 
     for (int i = 0; i < (int) volume_map.size(); ++i) {
         int filament_id = i + 1;
@@ -198,7 +205,7 @@ std::vector<int> FilamentMapManualPanel::GetFilamentVolumeMaps() const
             }
         }
         else if (std::find(right_high_flow_filaments.begin(), right_high_flow_filaments.end(), filament_id) != right_high_flow_filaments.end()) {
-            volume_map[i] = static_cast<int>(NozzleVolumeType::nvtHighFlow);
+            volume_map[i] = right_high_flow_volume;
         }
         else if (std::find(right_standard_filaments.begin(), right_standard_filaments.end(), filament_id) != right_standard_filaments.end()) {
             volume_map[i] = static_cast<int>(NozzleVolumeType::nvtStandard);
@@ -642,19 +649,12 @@ void FilamentMapBtnPanel::Select(bool selected)
     Refresh();
 }
 
-void GUI::FilamentMapBtnPanel::Hide()
+bool GUI::FilamentMapBtnPanel::Show(bool show)
 {
-    m_btn->Hide();
-    m_label->Hide();
-    m_detail->Hide();
-    wxPanel::Hide();
-}
-void GUI::FilamentMapBtnPanel::Show()
-{
-    m_btn->Show();
-    m_label->Show();
-    m_detail->Show();
-    wxPanel::Show();
+    m_btn->Show(show);
+    m_label->Show(show);
+    m_detail->Show(show);
+    return wxPanel::Show(show);
 }
 
 FilamentMapAutoPanel::FilamentMapAutoPanel(wxWindow *parent, FilamentMapMode mode, bool machine_synced) : wxPanel(parent)
@@ -694,18 +694,11 @@ FilamentMapAutoPanel::FilamentMapAutoPanel(wxWindow *parent, FilamentMapMode mod
     Layout();
     GUI::wxGetApp().UpdateDarkUIWin(this);
 }
-void FilamentMapAutoPanel::Hide()
+bool FilamentMapAutoPanel::Show(bool show)
 {
-    m_flush_panel->Hide();
-    m_match_panel->Hide();
-    wxPanel::Hide();
-}
-
-void FilamentMapAutoPanel::Show()
-{
-    m_flush_panel->Show();
-    m_match_panel->Show();
-    wxPanel::Show();
+    m_flush_panel->Show(show);
+    m_match_panel->Show(show);
+    return wxPanel::Show(show);
 }
 
 void FilamentMapAutoPanel::UpdateStatus()
@@ -743,16 +736,10 @@ FilamentMapDefaultPanel::FilamentMapDefaultPanel(wxWindow *parent) : wxPanel(par
     GUI::wxGetApp().UpdateDarkUIWin(this);
 }
 
-void FilamentMapDefaultPanel::Hide()
+bool FilamentMapDefaultPanel::Show(bool show)
 {
-    m_label->Hide();
-    wxPanel::Hide();
-}
-
-void FilamentMapDefaultPanel::Show()
-{
-    m_label->Show();
-    wxPanel::Show();
+    m_label->Show(show);
+    return wxPanel::Show(show);
 }
 
 }} // namespace Slic3r::GUI

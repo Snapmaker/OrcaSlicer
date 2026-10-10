@@ -14,6 +14,13 @@ inline int number_of_support_interface_bottom_layers(const PrintObjectConfig& ob
         object_config.support_interface_bottom_layers.value;
 }
 
+// Free-form (off-grid) support layer heights are only allowed without the prime tower;
+// with the tower enabled the classic generator synchronizes with the object layers and
+// tree supports plan grid-aligned thick layers instead.
+inline bool support_layer_heights_free(const PrintConfig &print_config) {
+    return print_config.independent_support_layer_height && !print_config.enable_prime_tower;
+}
+
 struct SupportParameters {
     SupportParameters() = delete;
     SupportParameters(const PrintObject& object)
@@ -43,7 +50,12 @@ struct SupportParameters {
             bool different_support_interface_filament = object_config.support_interface_filament != 0 &&
                                                        object_config.support_interface_filament != object_config.support_filament;
  
-            if (non_soluble_base_top) { // ORCA: Try to support soluble dense interfaces with non-soluble dense interfaces.
+            if (!is_tree(object_config.support_type)) {
+                // Normal support prints transition layers with the support body filament below the configured top
+                // interface layers: two below a soluble or different interface filament, one otherwise.
+                this->num_top_base_interface_layers = num_top_interface_layers == 0 ? 0 :
+                    (non_soluble_base_top || different_support_interface_filament) ? 2 : 1;
+            } else if (non_soluble_base_top) { // ORCA: Try to support soluble dense interfaces with non-soluble dense interfaces.
                 this->num_top_base_interface_layers = size_t(std::min(int(num_top_interface_layers) / 2, 2));
             } else {
                 // Keep at least one configured layer on the interface filament.
@@ -135,18 +147,22 @@ struct SupportParameters {
         this->raft_interface_fill_pattern = this->raft_interface_density > 0.95 ? ipRectilinear : ipSupportBase;
         const coordf_t contact_interface_density = this->num_top_interface_layers > 0 ?
             this->top_interface_density : this->bottom_interface_density;
-        const bool zero_gap_contact_interface = this->num_top_interface_layers > 0 ?
-            this->zero_gap_interface_top : this->zero_gap_interface_bottom;
         if (object_config.support_interface_pattern == smipGrid)
             this->contact_fill_pattern = ipGrid;
         else if (object_config.support_interface_pattern == smipRectilinearInterlaced)
             this->contact_fill_pattern = ipRectilinear;
-        else
+        else if (object_config.support_interface_pattern == smipSpiralInset)
+            this->contact_fill_pattern = ipSpiralInset;
+        else {
+            // The automatic pattern is concentric for a soluble interface filament.
+            const bool interface_filament_soluble = object_config.support_interface_filament.value > 0 &&
+                print_config.filament_soluble.get_at(object_config.support_interface_filament.value - 1);
             this->contact_fill_pattern =
-            (object_config.support_interface_pattern == smipAuto && zero_gap_contact_interface) ||
+            (object_config.support_interface_pattern == smipAuto && interface_filament_soluble) ||
             object_config.support_interface_pattern == smipConcentric ?
             ipConcentric :
             (contact_interface_density > 0.95 ? ipRectilinear : ipSupportBase);
+        }
 
         this->raft_angle_1st_layer  = 0.f;
         this->raft_angle_base       = 0.f;
@@ -179,12 +195,47 @@ struct SupportParameters {
             assert(slicing_params.raft_layers() == 0);
         }
 
-	    const auto     nozzle_diameter = print_config.nozzle_diameter.get_at(object_config.support_interface_filament - 1);
-        const coordf_t extrusion_width = object_config.line_width.get_abs_value(nozzle_diameter);
-        support_extrusion_width        = object_config.support_line_width.get_abs_value(nozzle_diameter);
+        // ORCA: honors the support nozzle diameter restriction for "default" support filaments.
+        // Snapmaker Orca: the widths are columns per tool head, read at the interface head whose
+        // nozzle resolves them here (the base width at the interface head is the pre-existing rule).
+        float          nozzle_diameter = 0.f;
+        const size_t   width_head      = support_head(&object, object_config.support_interface_filament, true, &nozzle_diameter);
+        const coordf_t extrusion_width = Flow::width_at(object_config.line_width, width_head).get_abs_value(nozzle_diameter);
+        support_extrusion_width        = Flow::width_at(object_config.support_line_width, width_head).get_abs_value(nozzle_diameter);
         support_extrusion_width        = support_extrusion_width > 0 ? support_extrusion_width : extrusion_width;
 
         independent_layer_height = print_config.independent_support_layer_height;
+        // The prime tower is built on the object layer grid, so toolchanges must land on
+        // grid Zs: independent support heights stay enabled but snap to whole multiples
+        // of object layers (tree supports; the classic generator synchronizes instead).
+        grid_aligned_layer_height = independent_layer_height && print_config.enable_prime_tower;
+        // Sub-layer step for grid-aligned heights: 1 = whole object layers, 2/4 allow
+        // boundaries on half/quarter subdivisions (thin tower layers appear there).
+        grid_height_step         = 1;
+        grid_max_height_priority = false;
+        if (grid_aligned_layer_height && !print_config.single_extruder_multi_material) {
+            const SupportLayerHeightStep step = print_config.support_layer_height_step.value;
+            if (step == slhsHalfLayer)
+                grid_height_step = 2;
+            else if (step == slhsQuarterLayer)
+                grid_height_step = 4;
+            else if (step == slhsAuto || step == slhsMaxHeight) {
+                // The coarsest step whose ladder reaches the tallest support layer the support
+                // nozzle allows: whole layers when they do, else half, else quarter (a 0.14 mm
+                // maximum on a 0.08 mm grid needs quarter steps: 1.75 layers).
+                grid_max_height_priority = step == slhsMaxHeight;
+                const double h          = object_config.layer_height.value;
+                const double max_height = std::max(slicing_params.max_suport_layer_height, h);
+                double       best       = 0.;
+                for (int s : {1, 2, 4}) {
+                    const double reach = std::floor(max_height / (h / s) + EPSILON) * (h / s);
+                    if (reach > best + EPSILON) {
+                        best             = reach;
+                        grid_height_step = s;
+                    }
+                }
+            }
+        }
 
         // force double walls everywhere if wall count is larger than 1        
         tree_branch_diameter_double_wall_area_scaled = object_config.tree_support_wall_count.value > 1  ? 0.1 :
@@ -201,8 +252,13 @@ struct SupportParameters {
         }
         if (support_style == smsDefault) {
             if (is_tree(object_config.support_type)) {
-                // Orca: use organic as default
-                support_style = smsTreeOrganic;
+                // Organic supports handle neither variable layer height nor a zero top Z distance.
+                if (tree_default_style_is_hybrid(object_config.support_top_z_distance.value, object_config.support_interface_top_layers.value,
+                                                 object.model_object()->has_custom_layering())) {
+                    support_style = smsTreeHybrid;
+                } else {
+                    support_style = smsTreeOrganic;
+                }
             } else {
                 support_style = smsGrid;
             }
@@ -228,8 +284,8 @@ struct SupportParameters {
     bool                    has_contacts() const { return this->has_top_contacts || this->has_bottom_contacts; }
     bool                    has_interfaces() const { return this->num_top_interface_layers + this->num_bottom_interface_layers > 0; }
     bool                    has_base_interfaces() const { return this->num_top_base_interface_layers + this->num_bottom_base_interface_layers > 0; }
-    size_t                  num_top_interface_layers_only() const { return this->num_top_interface_layers - this->num_top_base_interface_layers; }
-    size_t                  num_bottom_interface_layers_only() const { return this->num_bottom_interface_layers - this->num_bottom_base_interface_layers; }
+    size_t                  num_top_interface_layers_only() const { return std::max(0, int(this->num_top_interface_layers) - int(this->num_top_base_interface_layers)); }
+    size_t                  num_bottom_interface_layers_only() const { return std::max(0, int(this->num_bottom_interface_layers) - int(this->num_bottom_base_interface_layers)); }
 
 	// Flow at the 1st print layer.
 	Flow 					first_layer_flow;
@@ -315,7 +371,13 @@ struct SupportParameters {
         }
 		
     bool independent_layer_height = false;
-    const double thresh_big_overhang = Slic3r::sqr(scale_(10));
+    bool grid_aligned_layer_height = false;
+    // 1 = whole object layers; 2/4 = half/quarter sub-layer boundaries allowed.
+    int  grid_height_step = 1;
+    // ORCA: support pieces run through overhang contact layers; the gap rounds to support layers.
+    bool grid_max_height_priority = false;
+    // Length of a big overhang (10 mm); area comparisons use its square.
+    const double thresh_big_overhang = scale_(10);
 
 	bool          ironing;
     Flow          ironing_flow; // Flow at the interface ironing.

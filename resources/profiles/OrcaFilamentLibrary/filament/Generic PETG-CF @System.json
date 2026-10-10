@@ -1,7 +1,7 @@
 {
 	"type": "filament",
 	"name": "Generic PETG-CF @System",
-	"inherits": "fdm_filament_pet",
+	"inherits": "Generic PETG-CF @base",
 	"from": "system",
 	"setting_id": "aRVqy4a3X1UTIKem",
 	"instantiation": "true",
@@ -15,6 +15,11 @@
 		"5"
 	],
 	"filament_max_volumetric_speed": [
+		"11.5",
+		"11.5",
+		"11.5",
+		"11.5",
+		"11.5",
 		"11.5"
 	],
 	"filament_multitool_ramming_flow": [

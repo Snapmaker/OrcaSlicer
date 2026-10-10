@@ -240,6 +240,15 @@ void initSentryEx()
                 std::cout<< "Failed to get temp path, Sentry data directory will be empty";
             }
         }
+#else
+        // Linux: the breakpad backend runs in-process, so no handler path is
+        // needed; keep the minidump database under the XDG data directory.
+        const char* xdg_data_env = std::getenv("XDG_DATA_HOME");
+        const char* home_dir_env = std::getenv("HOME");
+        if (xdg_data_env != nullptr && xdg_data_env[0] != '\0')
+            dataBaseDir = std::string(xdg_data_env) + "/Snapmaker_Orca/SentryData";
+        else if (home_dir_env != nullptr && home_dir_env[0] != '\0')
+            dataBaseDir = std::string(home_dir_env) + "/.local/share/Snapmaker_Orca/SentryData";
 #endif
 
         if (!handlerDir.empty())

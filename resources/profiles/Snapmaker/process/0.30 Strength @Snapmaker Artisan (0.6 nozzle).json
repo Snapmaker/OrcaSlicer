@@ -1,6 +1,7 @@
 {
   "type": "process",
   "from": "system",
+  "bottom_color_penetration_layers": "3",
   "instantiation": "true",
   "name": "0.30 Strength @Snapmaker Artisan (0.6 nozzle)",
   "setting_id": "87417016",
@@ -10,6 +11,7 @@
   ],
   "layer_height": "0.3",
   "top_shell_layers": "3",
+  "top_color_penetration_layers": "3",
   "bridge_speed": "30",
   "line_width": "0.62",
   "outer_wall_line_width": "0.62",

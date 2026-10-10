@@ -2,6 +2,7 @@
 
 #include "FilamentColorUtils.hpp"
 #include "GUI_App.hpp"
+#include "I18N.hpp"
 #include "Widgets/Button.hpp"
 #include "Widgets/Label.hpp"
 #include "Widgets/StateColor.hpp"

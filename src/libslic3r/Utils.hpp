@@ -16,7 +16,8 @@
 #include <boost/date_time.hpp>
 #include "boost/date_time/posix_time/ptime.hpp"
 
-#include <openssl/md5.h>
+#include <array>
+#include <openssl/evp.h>
 
 #include "libslic3r.h"
 #include "Semver.hpp"
@@ -70,6 +71,7 @@
 #define CLI_FILAMENT_CAN_NOT_MAP      -66
 #define CLI_ONLY_ONE_TPU_SUPPORTED      -67
 #define CLI_FILAMENTS_NOT_SUPPORTED_BY_EXTRUDER  -68
+#define CLI_MIXED_FILAMENT_INVALID      -69
 
 #define CLI_SLICING_ERROR                  -100
 #define CLI_GCODE_PATH_CONFLICTS           -101
@@ -266,6 +268,19 @@ extern bool is_gallery_file(const std::string& path, char const* type);
 extern bool is_shapes_dir(const std::string& dir);
 //BBS: add json support
 extern bool is_json_file(const std::string& path);
+// True if rel_path is relative, has no ".." component or embedded NUL and, joined to root, still resolves inside it.
+// Both '/' and '\\' are treated as separators on every platform, so an archive rejected on one OS
+// is rejected on all of them.
+extern bool is_path_within_root(const std::string &rel_path, const boost::filesystem::path &root);
+// True if a symlink stored at link_rel_path (relative to root) with this target stays inside root: the target
+// must be relative, and joined to the link's directory it must pass is_path_within_root.
+extern bool is_symlink_target_within_root(const std::string &link_rel_path, const std::string &target, const boost::filesystem::path &root);
+// True if path names an entry strictly inside root: it must be spelled with root as its prefix,
+// and must still resolve inside root once symlinks are followed.
+extern bool is_absolute_path_within_root(const boost::filesystem::path &path, const boost::filesystem::path &root);
+// True if a file with this name is of a type that the desktop opens as plain content, so it cannot run code.
+// Anything unknown is not safe.
+extern bool is_safe_to_open_file_name(const std::string &file_name);
 
 // Orca: custom protocal support utils
 inline bool is_orca_open(const std::string& url)
@@ -294,6 +309,21 @@ inline std::string sanitize_filename(const std::string &filename){
     const std::regex special_chars("[/\\\\:*?\"<>|]");
     return std::regex_replace(filename, special_chars, "_");
 }
+// Reduce an untrusted, possibly path-qualified name to a single sanitized file name.
+// Returns an empty string when nothing usable remains.
+inline std::string sanitize_file_basename(const std::string &name){
+    const size_t sep = name.find_last_of("/\\");
+    const std::string base = sanitize_filename(sep == std::string::npos ? name : name.substr(sep + 1));
+    // Names made only of dots and spaces refer to the folder or its parent, or are stripped to nothing on Windows.
+    return base.find_first_not_of(". ") == std::string::npos ? std::string() : base;
+}
+// Marker file a download of this process writes to before it is renamed to filename.
+boost::filesystem::path download_marker_path(const boost::filesystem::path &dest_folder, const std::string &filename);
+// Finds a sanitized variant of filename, "name(N).ext" if needed, that neither an entry of dest_folder
+// nor the download marker of another download uses. The marker at ignored_marker does not count.
+// Returns true and the name in result, or false and the last name tried.
+bool find_unused_filename(const boost::filesystem::path &dest_folder, const std::string &filename,
+                          const boost::filesystem::path &ignored_marker, std::string &result);
 // File path / name / extension splitting utilities, working with UTF-8,
 // to be published to Perl.
 namespace PerlUtils {
@@ -323,6 +353,9 @@ extern unsigned get_current_pid();
 std::string per_user_temp_id();
 // Per-user temp root under `base`; an empty `user_id` returns `base` unchanged.
 std::string per_user_temp_dir(const std::string &base, const std::string &user_id);
+// Completes a relative command line input path against the current working directory. Absolute
+// paths and custom open protocol URLs are returned unchanged.
+std::string resolve_cli_input_path(const std::string &path);
 // BBS: backup & restore
 std::string get_process_name(int pid);
 
@@ -718,7 +751,10 @@ inline std::string get_bbl_remain_time_dhms(float time_in_secs)
     return buffer;
 }
 
-bool bbl_calc_md5(std::string &filename, std::string &md5_out);
+bool bbl_calc_md5(const std::string &filename, std::string &md5_out);
+// SHA-256 of a file (UTF-8 path). Returns false, and leaves digest_out zeroed, when the file cannot
+// be read to its end or the digest fails; a partial hash is never returned.
+bool calc_file_sha256(const std::string &filename, std::array<unsigned char, 32> &digest_out);
 
 inline std::string filter_characters(const std::string& str, const std::string& filterChars)
 {
@@ -772,6 +808,11 @@ void remove_installed_vendor(const std::string& vendor);
 // The vendors `dir` holds, sorted: one is named by its profile or, in a build that
 // ships preset caches instead of the raw profile JSONs, by its cache alone.
 std::set<std::string> vendor_names_in(const boost::filesystem::path& dir);
+
+// The version of the preset cache `<vendor>.opc` in `dir` when that cache is the form of the
+// vendor to install (it covers the vendor profile beside it, if any); invalid when the vendor
+// installs as its profile JSON. See utils.cpp.
+Semver installable_cache_version(const boost::filesystem::path& dir, const std::string& vendor);
 
 // The version a build ships `vendor` at: whichever of its preset cache and its
 // profile is newer, that being the one installing lays down. Invalid Semver if the

@@ -9,6 +9,7 @@
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Color.hpp"
+#include "libslic3r/MeshLod.hpp"
 // BBS
 #include "libslic3r/ObjectID.hpp"
 
@@ -16,7 +17,10 @@
 #include "GLShader.hpp"
 #include "MeshUtils.hpp"
 
+#include <array>
+#include <cfloat>
 #include <functional>
+#include <memory>
 #include <optional>
 
 #ifndef NDEBUG
@@ -41,7 +45,8 @@ extern Slic3r::ColorRGBA              adjust_color_for_rendering(const Slic3r::C
 namespace Slic3r {
 namespace GUI {
     class Size;
-    class Camera;
+    struct Camera;
+    class MeshLod;
 }
 
 class SLAPrintObject;
@@ -94,6 +99,13 @@ public:
     static ColorRGBA SUPPORT_ENFORCER_COL;
     static ColorRGBA SUPPORT_BLOCKER_COL;
     static ColorRGBA MODEL_HIDDEN_COL;
+    // Precise Seam modifier colors
+    static ColorRGBA PRECISE_SEAM_CENTER_COL;
+    static ColorRGBA PRECISE_SEAM_LEFT_COL;
+    static ColorRGBA PRECISE_SEAM_RIGHT_COL;
+    static ColorRGBA PRECISE_SEAM_ENFORCED_COL;
+    static ColorRGBA PRECISE_SEAM_NEUTRAL_COL;
+    static ColorRGBA PRECISE_SEAM_BLOCKED_COL;
 
     static void update_render_colors();
     static void load_render_colors();
@@ -229,6 +241,25 @@ public:
     EHoverState         	hover;
 
     GUI::GLModel            model;
+
+    // Snapmaker Orca: render LOD, the reduced models of this mesh, shared by its instances; null if
+    // none. MeshLodCache / MeshLodPool supersede upstream #737 / #844 (g_meshVolumesMap,
+    // SimplifyMesh() ...). Never set for GLWipeTowerVolume, whose render_with_outline() is render().
+    std::shared_ptr<GUI::MeshLod> m_lod;
+    // Written by GLVolumeCollection::update_lod() only, once per scene pass, and read by the
+    // colour pass (draw_model()) and the shadow pass (shadow_model()) of that scene pass, so the
+    // two always draw the same model.
+    LodLevel                m_lod_level{ LodLevel::High };
+    // The grant of one draw: true only inside GLVolumeCollection::render() of an opted-in
+    // collection, so every other caller (thumbnails, picking, ...) draws the full model.
+    bool                    m_lod_draw{ false };
+    // The model the current draw uses: a reduced one under the grant, never while picking, never
+    // for a ranged volume, and only once it is promoted; the full model otherwise.
+    GUI::GLModel&           draw_model();
+    // The same choice without the grant, for the shadow depth pass of GLCanvas3D, which follows
+    // update_lod() within the same scene pass.
+    GUI::GLModel&           shadow_model();
+
     // raycaster used for picking
     std::unique_ptr<GUI::MeshRaycaster> mesh_raycaster;
     // BBS
@@ -352,6 +383,10 @@ public:
 
     //BBS: add simple render function for thumbnail
     void simple_render(GLShaderProgram* shader, ModelObjectPtrs& model_objects, std::vector<ColorRGBA>& extruder_colors, bool ban_light =false);
+    // Snapmaker Orca: whether simple_render() draws this volume from its painted (multi material
+    // segmentation) models. The one rule of simple_render() and of the render LOD, which keeps a
+    // painted volume at full detail. painted_volume receives the ModelVolume when true.
+    bool is_mmu_painted_for_render(const ModelObjectPtrs& model_objects, ModelVolume** painted_volume = nullptr) const;
 
     void                set_bounding_boxes_as_dirty() {
         m_transformed_bounding_box.reset();
@@ -444,9 +479,27 @@ private:
 
     Slope m_slope;
     bool m_show_sinking_contours = false;
+    // Snapmaker Orca: render LOD is opt-in per collection. The collections of the command line
+    // slicer, of the calibration helpers and of the thumbnails never opt in.
+    bool m_lod_enabled{ false };
+    // Volumes per LodLevel as decided by the last update_lod().
+    std::array<unsigned, 3> m_lod_stats{};
+    // When update_lod() submits the jobs of its volumes again that ended worth a retry.
+    LodRetryTimer m_lod_retry;
 
 public:
     GLVolumePtrs volumes;
+
+    void set_lod_enabled(bool enabled) { m_lod_enabled = enabled; }
+    bool lod_enabled() const { return m_lod_enabled; }
+    // Snapmaker Orca: sets every volume's level, once per scene pass before drawing; takes over
+    // finished models (<= 500k faces, at least one mesh per call) and resubmits failed jobs. Full
+    // detail if !allowed or a volume reaches above pin_above_z; pixel_scale is the HiDPI factor.
+    void update_lod(const GUI::Camera& camera, bool allowed, float pixel_scale, double pin_above_z = DBL_MAX);
+    const std::array<unsigned, 3>& lod_stats() const { return m_lod_stats; }
+    // Snapmaker Orca: drops all reduced models (jobs cancelled, unshared buffers freed); needs a
+    // current OpenGL context. For collections not rebuilt when LOD is turned off (preview shells).
+    void release_lod();
 
     GLVolumeCollection() {
         set_default_slope_normal_z();
@@ -522,6 +575,7 @@ public:
            ) const;
 
     // Clear the geometry
+    // LOD: GLVolume::m_lod is a shared_ptr; upstream's release_volume() (#737/#844) is deliberately not ported.
     void clear() { for (auto *v : volumes) delete v; volumes.clear(); }
 
     bool empty() const { return volumes.empty(); }

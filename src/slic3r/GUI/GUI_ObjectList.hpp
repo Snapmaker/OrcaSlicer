@@ -40,6 +40,9 @@ typedef std::map<t_layer_height_range, ModelConfig> t_layer_config_ranges;
 #define FIX_THROUGH_CGAL_ALWAYS 1
 
 namespace GUI {
+
+enum class Shortcut : uint8_t;
+
 struct ObjectVolumeID {
     ModelObject* object{ nullptr };
     ModelVolume* volume{ nullptr };
@@ -85,6 +88,7 @@ struct MeshErrorsInfo
 class ObjectList : public wxDataViewCtrl
 {
 public:
+
     enum SELECTION_MODE
     {
         smUndef     = 0,
@@ -229,6 +233,7 @@ public:
     void                create_objects_ctrl();
     // BBS
     void                update_objects_list_filament_column(size_t filaments_count);
+    void                refresh_layer_range_filament_items();
     void                update_objects_list_filament_column_when_delete_filament(size_t filament_id, size_t filaments_count, int replace_filament_id = -1);
     void                update_filament_colors();
     // show/hide "Extruder" column for Objects List
@@ -270,7 +275,11 @@ public:
     void                extruder_editing();
 #ifndef __WXOSX__
     void                key_event(wxKeyEvent& event);
+#else
+    // wxDataViewCtrl never sees key events on macOS, so the bindings are installed as accelerators.
+    void                update_shortcut_accelerators();
 #endif /* __WXOSX__ */
+    bool                dispatch_shortcut(Shortcut shortcut);
 
     void                copy();
     void                paste();
@@ -423,7 +432,12 @@ public:
 #if 0 // ORCA: disabled alongside definition in GUI_ObjectList.cpp (see #if 0 block there)
     void change_part_type();
 #endif
-	void set_volume_type(ModelVolumeType new_type);
+	// preserve_ps_subtype = true: when new_type is PRECISE_SEAM_CENTER, volumes that are
+	//   already Precise Seam keep their existing subtype (LEFT/RIGHT/etc.). Used by the
+	//   generic "Change type → Precise Seam" entry where CENTER is a default fallback.
+	// preserve_ps_subtype = false: no preservation — target type is applied verbatim. Used
+	//   by the "Precise Seam Type" subtype picker where the user explicitly wants CENTER.
+	void set_volume_type(ModelVolumeType new_type, bool preserve_ps_subtype = true);
     ModelVolumeType get_selected_volume_type();
 
     void last_volume_is_deleted(const int obj_idx);
@@ -482,8 +496,8 @@ public:
 
 private:
 #ifdef __WXOSX__
-//    void OnChar(wxKeyEvent& event);
     wxAcceleratorTable m_accel;
+    wxWindowID         m_shortcut_id_base;
 #endif /* __WXOSX__ */
     void OnContextMenu(wxDataViewEvent &event);
     void list_manipulation(const wxPoint& mouse_pos, bool evt_context_menu = false);

@@ -505,6 +505,23 @@ bool ImGuiWrapper::update_key_data(wxKeyEvent &evt)
     if (evt.GetEventType() == wxEVT_CHAR) {
         // Char event
         const auto key = evt.GetUnicodeKey();
+        // THE MEASUREMENT THAT CANNOT LIE. This is the ONLY place in the application where ImGui
+        // is ever handed a character, so an ImGui text field that stays empty while reporting
+        // itself active has exactly two possible causes, and this line separates them: no output
+        // at all means the wxEVT_CHAR never reached the GL canvas (a focus problem, upstream of
+        // ImGui entirely), while output with unicode=0 means the character arrived empty and is
+        // being dropped right here.
+        //
+        // It lives here rather than on the canvas because a probe bound on the canvas CANNOT
+        // answer this: GLCanvas3D::on_char is bound later than any constructor-time probe, wx
+        // runs handlers in reverse bind order, and on_char returns without Skip() whenever this
+        // function returns true — so such a probe stays silent whether or not the key arrived.
+        // A day was lost to reading that silence as evidence.
+        if (std::getenv("ORCA_CAD_UXTRACE")) {
+            fprintf(stderr, "[UX] imgui_char unicode=%d keycode=%d want_text=%d\n",
+                    (int) key, evt.GetKeyCode(), (int) io.WantTextInput);
+            fflush(stderr);
+        }
         if (key != 0) {
             io.AddInputCharacter(key);
         }
@@ -573,11 +590,39 @@ void ImGuiWrapper::new_frame()
     // BBL: end copy & paste
 }
 
-void ImGuiWrapper::render()
+ImDrawData* ImGuiWrapper::end_frame()
 {
     ImGui::Render();
-    render_draw_data(ImGui::GetDrawData());
     m_new_frame_open = false;
+    return ImGui::GetDrawData();
+}
+
+void ImGuiWrapper::render(ImDrawData* draw_data)
+{
+    render_draw_data(draw_data);
+}
+
+ImGuiID ImGuiWrapper::draw_data_signature(const ImDrawData* draw_data)
+{
+    ImGuiID hash = 0;
+    if (draw_data == nullptr)
+        return hash;
+
+    for (int i = 0; i < draw_data->CmdListsCount; ++i) {
+        const ImDrawList* list = draw_data->CmdLists[i];
+        hash = ImHashData(list->VtxBuffer.Data, list->VtxBuffer.Size * sizeof(ImDrawVert), hash);
+        hash = ImHashData(list->IdxBuffer.Data, list->IdxBuffer.Size * sizeof(ImDrawIdx), hash);
+        // ImDrawCmd has padding, and a hovered ImageButton3() differs only in TextureId.
+        for (const ImDrawCmd& cmd : list->CmdBuffer) {
+            hash = ImHashData(&cmd.ClipRect, sizeof(cmd.ClipRect), hash);
+            hash = ImHashData(&cmd.TextureId, sizeof(cmd.TextureId), hash);
+            hash = ImHashData(&cmd.VtxOffset, sizeof(cmd.VtxOffset), hash);
+            hash = ImHashData(&cmd.IdxOffset, sizeof(cmd.IdxOffset), hash);
+            hash = ImHashData(&cmd.ElemCount, sizeof(cmd.ElemCount), hash);
+            hash = ImHashData(&cmd.UserCallback, sizeof(cmd.UserCallback), hash);
+        }
+    }
+    return hash;
 }
 
 ImVec2 ImGuiWrapper::calc_text_size(std::string_view text,
@@ -3158,9 +3203,6 @@ void ImGuiWrapper::render_draw_data(ImDrawData *draw_data)
         return;
 
     GLShaderProgram* curr_shader = wxGetApp().get_current_shader();
-    if (curr_shader != nullptr)
-        curr_shader->stop_using();
-
     shader->start_using();
 
     // Backup GL state
@@ -3266,11 +3308,16 @@ void ImGuiWrapper::render_draw_data(ImDrawData *draw_data)
             glsafe(::glEnableVertexAttribArray(color_id));
         }
 
+        bool hasBoundTexture = false;
+        GLuint boundTextureId = 0;
+
         for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; ++cmd_i) {
             const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
-            if (pcmd->UserCallback)
+            if (pcmd->UserCallback) {
                 // User callback (registered via ImDrawList::AddCallback)
                 pcmd->UserCallback(cmd_list, pcmd);
+                hasBoundTexture = false;
+            }
             else {
                 // Project scissor/clipping rectangles into framebuffer space
                 const ImVec2 clip_min((pcmd->ClipRect.x - clip_off.x) * clip_scale.x, (pcmd->ClipRect.y - clip_off.y) * clip_scale.y);
@@ -3282,8 +3329,15 @@ void ImGuiWrapper::render_draw_data(ImDrawData *draw_data)
                 glsafe(::glScissor((int)clip_min.x, (int)(fb_height - clip_max.y), (int)(clip_max.x - clip_min.x), (int)(clip_max.y - clip_min.y)));
 
                 // Bind texture, Draw
-                glsafe(::glActiveTexture(GL_TEXTURE0 + stage));
-                glsafe(::glBindTexture(GL_TEXTURE_2D, (GLuint)(intptr_t)pcmd->GetTexID()));
+                // Consecutive commands sharing a texture skip the rebind; a user callback may change
+                // the texture state, so the next command binds again.
+                const GLuint textureId = (GLuint)(intptr_t)pcmd->GetTexID();
+                if (!hasBoundTexture || boundTextureId != textureId) {
+                    glsafe(::glActiveTexture(GL_TEXTURE0 + stage));
+                    glsafe(::glBindTexture(GL_TEXTURE_2D, textureId));
+                    boundTextureId = textureId;
+                    hasBoundTexture = true;
+                }
                 glsafe(::glDrawElements(GL_TRIANGLES, (GLsizei)pcmd->ElemCount, sizeof(ImDrawIdx) == 2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, (void*)(intptr_t)(pcmd->IdxOffset * sizeof(ImDrawIdx))));
             }
         }
@@ -3328,10 +3382,10 @@ void ImGuiWrapper::render_draw_data(ImDrawData *draw_data)
     glsafe(::glViewport(last_viewport[0], last_viewport[1], (GLsizei)last_viewport[2], (GLsizei)last_viewport[3]));
     glsafe(::glScissor(last_scissor_box[0], last_scissor_box[1], (GLsizei)last_scissor_box[2], (GLsizei)last_scissor_box[3]));
 
-    shader->stop_using();
-
     if (curr_shader != nullptr)
         curr_shader->start_using();
+    else
+        shader->stop_using();
 }
 
 bool ImGuiWrapper::display_initialized() const

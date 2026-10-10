@@ -4,6 +4,7 @@
 
 #include <boost/container/small_vector.hpp>
 #include <boost/log/trivial.hpp>
+#include <bitset>
 #include <cstddef>
 #include <functional>
 #include <tbb/parallel_for.h>
@@ -1785,6 +1786,13 @@ TriangleSelector::TriangleSplittingData TriangleSelector::serialize() const {
     return out.data;
 }
 
+// A split code keeps the split side (one split) or the kept side (two splits) in its upper two
+// bits, where 3 is not a side. The value is ignored for a three-side split.
+static bool split_code_valid(int code)
+{
+    return (code & 0b11) == 3 || (code >> 2) != 3;
+}
+
 void TriangleSelector::deserialize(const TriangleSplittingData &data,
                                    bool                         needs_reset,
                                    EnforcerBlockerType          max_ebt,
@@ -1820,24 +1828,31 @@ void TriangleSelector::deserialize(const TriangleSplittingData &data,
 
     for (auto [triangle_id, ibit] : data.triangles_to_split) {
         assert(triangle_id < int(m_triangles.size()));
-        assert(ibit < int(data.bitstream.size()));
-        auto next_nibble = [&data, &ibit = ibit]() {
+        // Set when the bitstream runs out or holds an impossible split before this triangle's tree is complete.
+        bool corrupt = false;
+        auto next_nibble = [&data, &ibit = ibit, &corrupt]() {
             int n = 0;
-            for (int i = 0; i < 4; ++ i)
-                n |= data.bitstream[ibit ++] << i;
+            if (! data.read_nibble(ibit, n))
+                corrupt = true;
             return n;
         };
         // Decode a leaf state stored behind the "11" prefix: 4-bit chunks of (state - 3), where a
         // chunk of 0b1111 means "add 15 and read another chunk". This covers the one-nibble form
         // (states 3..17), the 0b1111 + (state-18) form (states 18..32) and any longer chain.
-        auto decode_leaf_state = [&next_nibble]() {
-            int extension_count = 0;
-            int nibble          = next_nibble();
-            while (nibble == 0b1111) {
-                ++extension_count;
+        // A chain past ExtruderMax marks the triangle as corrupt.
+        auto decode_leaf_state = [&next_nibble, &corrupt]() {
+            int state  = 3;
+            int nibble = next_nibble();
+            while (nibble == 0b1111 && state <= int(EnforcerBlockerType::ExtruderMax)) {
+                state += 15;
                 nibble = next_nibble();
             }
-            return EnforcerBlockerType(nibble + 15 * extension_count + 3);
+            state += nibble;
+            if (state > int(EnforcerBlockerType::ExtruderMax)) {
+                corrupt = true;
+                return EnforcerBlockerType::NONE;
+            }
+            return EnforcerBlockerType(state);
         };
 
         parents.clear();
@@ -1849,6 +1864,10 @@ void TriangleSelector::deserialize(const TriangleSplittingData &data,
             bool is_split = num_of_children != 0;
             // Only valid if not is_split.
             auto state = is_split ? EnforcerBlockerType::NONE : ((code & 0b1100) == 0b1100 ? decode_leaf_state() : EnforcerBlockerType(code >> 2));
+            if (is_split && ! split_code_valid(code))
+                corrupt = true;
+            if (corrupt)
+                break;
 
             // BBS / Orca: remap painted filament states, either through an explicit state map
             // or through the delete/replace fallback.
@@ -1869,7 +1888,7 @@ void TriangleSelector::deserialize(const TriangleSplittingData &data,
             }
 
             // Only valid if is_split.
-            int special_side = code >> 2;
+            int special_side = num_of_split_sides == 3 ? 0 : code >> 2;
 
             // Take care of the first iteration separately, so handling of the others is simpler.
             if (parents.empty()) {
@@ -1924,51 +1943,60 @@ void TriangleSelector::deserialize(const TriangleSplittingData &data,
             if (parents.empty())
                 break;
         }
+
+        if (corrupt) {
+            // Every split above allocated all of its children, so the partial tree unwinds cleanly.
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": malformed paint data, dropping paint of triangle " << triangle_id;
+            undivide_triangle(triangle_id);
+            m_triangles[triangle_id].set_state(EnforcerBlockerType::NONE);
+        }
     }
 }
 
-void TriangleSelector::TriangleSplittingData::update_used_states(const size_t bitstream_start_idx) {
-    assert(bitstream_start_idx < this->bitstream.size());
-    assert(!this->bitstream.empty() && this->bitstream.size() != bitstream_start_idx);
-    assert((this->bitstream.size() - bitstream_start_idx) % 4 == 0);
+bool TriangleSelector::TriangleSplittingData::update_used_states(const size_t bitstream_start_idx) {
+    constexpr int max_state = int(EnforcerBlockerType::ExtruderMax);
+    int           ibit      = static_cast<int>(bitstream_start_idx);
+    // States found so far, copied into used_states only once every tree decodes cleanly.
+    std::bitset<size_t(EnforcerBlockerType::ExtruderMax) + 1> states;
+    do {
+        // Walk one triangle's tree depth-first, counting the nodes still to be read; a split node adds its children.
+        for (int pending_nodes = 1; pending_nodes > 0; --pending_nodes) {
+            int code;
+            if (!this->read_nibble(ibit, code))
+                return false;
 
-    if (this->bitstream.empty() || this->bitstream.size() == bitstream_start_idx)
-        return;
-
-    size_t nibble_idx = bitstream_start_idx;
-
-    auto read_next_nibble = [&data_bitstream = std::as_const(this->bitstream), &nibble_idx]() -> uint8_t {
-        assert(nibble_idx + 3 < data_bitstream.size());
-        uint8_t code = 0;
-        for (size_t bit_idx = 0; bit_idx < 4; ++bit_idx)
-            code |= data_bitstream[nibble_idx++] << bit_idx;
-        return code;
-    };
-
-    while (nibble_idx < this->bitstream.size()) {
-        const uint8_t code = read_next_nibble();
-
-        if (const bool is_split = (code & 0b11) != 0; is_split)
-            continue;
-
-        size_t facet_state = code >> 2;
-        if ((code & 0b1100) == 0b1100) {
-            // Leaf behind the "11" prefix: 4-bit chunks of (state - 3), where a chunk of 0b1111
-            // means "add 15 and read another chunk".
-            size_t extension_count = 0;
-            size_t next_code       = read_next_nibble();
-            while (next_code == 0b1111) {
-                ++extension_count;
-                next_code = read_next_nibble();
+            if (const int num_of_split_sides = code & 0b11; num_of_split_sides != 0) {
+                if (!split_code_valid(code))
+                    return false;
+                pending_nodes += num_of_split_sides + 1;
+                continue;
             }
-            facet_state = next_code + 15 * extension_count + 3;
-        }
-        assert(facet_state < this->used_states.size());
-        if (facet_state >= this->used_states.size())
-            continue;
 
-        this->used_states[facet_state] = true;
-    }
+            int facet_state = code >> 2;
+            if (facet_state == 0b11) {
+                // Leaf behind the "11" prefix: 4-bit chunks of (state - 3), where a chunk of 0b1111
+                // means "add 15 and read another chunk". A chain past ExtruderMax is malformed.
+                int nibble;
+                if (!this->read_nibble(ibit, nibble))
+                    return false;
+                facet_state = 3;
+                while (nibble == 0b1111) {
+                    facet_state += 15;
+                    if (facet_state > max_state || !this->read_nibble(ibit, nibble))
+                        return false;
+                }
+                facet_state += nibble;
+                if (facet_state > max_state)
+                    return false;
+            }
+            states.set(size_t(facet_state));
+        }
+    } while (static_cast<size_t>(ibit) < this->bitstream.size());
+
+    for (size_t state_idx = 0; state_idx < std::min(this->used_states.size(), states.size()); ++state_idx)
+        if (states.test(state_idx))
+            this->used_states[state_idx] = true;
+    return true;
 }
 
 // Lightweight variant of deserialization, which only tests whether a face of test_state exists.
@@ -1980,16 +2008,17 @@ bool TriangleSelector::has_facets(const TriangleSplittingData &data, const Enfor
 
     for (const TriangleBitStreamMapping &triangle_id_and_ibit : data.triangles_to_split) {
         int ibit = triangle_id_and_ibit.bitstream_start_idx;
-        assert(ibit < int(data.bitstream.size()));
-        auto next_nibble = [&data, &ibit = ibit]() {
+        // Stop reading a triangle whose stream is truncated or chains a leaf state past ExtruderMax.
+        bool truncated = false;
+        auto next_nibble = [&data, &ibit = ibit, &truncated]() {
             int n = 0;
-            for (int i = 0; i < 4; ++ i)
-                n |= data.bitstream[ibit ++] << i;
+            if (! data.read_nibble(ibit, n))
+                truncated = true;
             return n;
         };
         // < 0 -> negative of a number of children
         // >= 0 -> state
-        auto num_children_or_state = [&next_nibble]() -> int {
+        auto num_children_or_state = [&next_nibble, &truncated]() -> int {
             int code               = next_nibble();
             int num_of_split_sides = code & 0b11;
             if (num_of_split_sides != 0)
@@ -1997,17 +2026,24 @@ bool TriangleSelector::has_facets(const TriangleSplittingData &data, const Enfor
             if ((code & 0b1100) != 0b1100)
                 return code >> 2;
             // Leaf behind the "11" prefix: 4-bit chunks of (state - 3), where a chunk of 0b1111
-            // means "add 15 and read another chunk".
-            int extension_count = 0;
-            int next_code       = next_nibble();
-            while (next_code == 0b1111) {
-                ++extension_count;
+            // means "add 15 and read another chunk". A chain past ExtruderMax is malformed.
+            int state     = 3;
+            int next_code = next_nibble();
+            while (next_code == 0b1111 && state <= int(EnforcerBlockerType::ExtruderMax)) {
+                state += 15;
                 next_code = next_nibble();
             }
-            return next_code + 15 * extension_count + 3;
+            state += next_code;
+            if (state > int(EnforcerBlockerType::ExtruderMax)) {
+                truncated = true;
+                return 0;
+            }
+            return state;
         };
 
         int state = num_children_or_state();
+        if (truncated)
+            continue;
         if (state < 0) {
             // Root is split.
             parents_children.clear();
@@ -2015,6 +2051,8 @@ bool TriangleSelector::has_facets(const TriangleSplittingData &data, const Enfor
             do {
                 if (-- parents_children.back() >= 0) {
                     int state = num_children_or_state();
+                    if (truncated)
+                        break;
                     if (state < 0)
                         // Child is split.
                         parents_children.emplace_back(- state);

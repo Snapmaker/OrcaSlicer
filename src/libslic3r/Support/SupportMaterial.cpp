@@ -333,8 +333,7 @@ PrintObjectSupportMaterial::PrintObjectSupportMaterial(const PrintObject *object
     m_print_config          (&object->print()->config()),
     m_object_config         (&object->config()),
     m_slicing_params        (slicing_params),
-    m_support_params        (*object),
-	m_object                (object)
+    m_support_params        (*object)
 {
 }
 
@@ -478,6 +477,7 @@ void PrintObjectSupportMaterial::generate(PrintObject &object)
     // and base interface layers (for soluble interface / non souble base only)
 	SupportGeneratorLayersPtr empty_layers;
     auto [interface_layers, base_interface_layers] = generate_interface_layers(*m_object_config, m_support_params, bottom_contacts, top_contacts, empty_layers, empty_layers, intermediate_layers, layer_storage);
+
 
     BOOST_LOG_TRIVIAL(info) << "Support generator - Creating raft";
 
@@ -1588,7 +1588,7 @@ static inline std::tuple<Polygons, Polygons, double> detect_contacts(
 
         // Cache support trimming polygons derived from lower layer polygons, possible merged with "on build plate only" trimming polygons.
         auto slices_margin_update =
-            [&slices_margin, &layer, &lower_layer, &lower_layer_polygons, buildplate_only, has_enforcer, &annotations, layer_id]
+            [&slices_margin, &lower_layer, &lower_layer_polygons, buildplate_only, has_enforcer, &annotations, layer_id]
         (float slices_margin_offset, float no_interface_offset) {
             if (slices_margin.offset != slices_margin_offset) {
                 slices_margin.offset = slices_margin_offset;
@@ -1748,7 +1748,7 @@ static inline std::pair<SupportGeneratorLayer*, SupportGeneratorLayer*> new_cont
     }
     else {
         // BBS: need to consider adaptive layer heights
-        if (print_config.independent_support_layer_height) {
+        if (support_layer_heights_free(print_config)) {
             print_z = layer.bottom_z() - slicing_params.gap_support_object;
             height = 0;
         }
@@ -1781,13 +1781,13 @@ static inline std::pair<SupportGeneratorLayer*, SupportGeneratorLayer*> new_cont
 
         // Contact layer will be printed with a normal flow, but
         // it will support layers printed with a bridging flow.
-        if (object_config.thick_bridges && SupportMaterialInternal::has_bridging_extrusions(layer) && print_config.independent_support_layer_height) {
+        if (object_config.thick_bridges && SupportMaterialInternal::has_bridging_extrusions(layer) && support_layer_heights_free(print_config)) {
             coordf_t bridging_height = 0.;
             for (const LayerRegion* region : layer.regions())
                 bridging_height += region->region().bridging_height_avg(print_config);
             bridging_height /= coordf_t(layer.regions().size());
             // BBS: align bridging height
-            if (!print_config.independent_support_layer_height)
+            if (!support_layer_heights_free(print_config))
                 bridging_height = std::ceil(bridging_height / object_config.layer_height - EPSILON) * object_config.layer_height;
             coordf_t bridging_print_z = layer.print_z - bridging_height - slicing_params.gap_support_object;
             if (bridging_print_z >= min_print_z) {
@@ -1807,7 +1807,7 @@ static inline std::pair<SupportGeneratorLayer*, SupportGeneratorLayer*> new_cont
                     } else {
                         // BBS: if independent_support_layer_height is not enabled, the support layer_height should be the same as layer height.
                         // Note that for this case, adaptive layer height must be disabled.
-                        bridging_layer->height = print_config.independent_support_layer_height ? 0. : object_config.layer_height;
+                        bridging_layer->height = support_layer_heights_free(print_config) ? 0. : object_config.layer_height;
                         // Don't know the height yet.
                         bridging_layer->bottom_z = bridging_print_z - bridging_layer->height;
                     }
@@ -2150,7 +2150,10 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::top_contact_layers(
 
     // check if the sharp tails should be extended higher
     bool detect_first_sharp_tail_only = false;
-    const coordf_t extrusion_width = m_object_config->line_width.get_abs_value(object.print()->config().nozzle_diameter.get_at(object.config().support_interface_filament-1));
+    // Snapmaker Orca: the width is a column per tool head, read at the interface head whose nozzle resolves it.
+    float        sharp_tail_nozzle = 0.f;
+    const size_t sharp_tail_head   = support_head(&object, object.config().support_interface_filament, true, &sharp_tail_nozzle);
+    const coordf_t extrusion_width = Flow::width_at(m_object_config->line_width, sharp_tail_head).get_abs_value(sharp_tail_nozzle);
     const coordf_t extrusion_width_scaled = scale_(extrusion_width);
     if (is_auto(m_object_config->support_type.value) && g_config_support_sharp_tails && !detect_first_sharp_tail_only) {
         for (size_t layer_nr = layer_id_start; layer_nr < num_layers; layer_nr++) {
@@ -2419,7 +2422,7 @@ static inline SupportGeneratorLayer* detect_bottom_contacts(
     // with some spacing from object - it looks we don't need the actual
     // top shapes so this can be done here
     Layer* upper_layer = layer.upper_layer;
-    if (object.print()->config().independent_support_layer_height) {
+    if (support_layer_heights_free(object.print()->config())) {
         // If the layer is extruded with no bridging flow, support just the normal extrusions.
         layer_new.height = slicing_params.zero_gap_interface_bottom ?
             // Align the interface layer with the object's layer height.
@@ -3159,6 +3162,15 @@ void PrintObjectSupportMaterial::trim_support_layers_by_object(
                     const Layer &object_layer = *object.layers()[i];
                     if (object_layer.bottom_z() > support_layer.print_z + gap_extra_above - EPSILON)
                         break;
+
+                    // Skip the object layer directly supported by this top contact layer: its lslices
+                    // cover the overhang itself, so trimming by it would cut away the contact area.
+                    // With variable layer heights the synchronised gap is shorter than the configured
+                    // gap, so this layer used to fall inside the trimming window and removed ~80% of
+                    // the contact surface.
+                    if (support_layer.layer_type == SupporLayerType::TopContact &&
+                        i == support_layer.idx_object_layer_above)
+                        continue;
 
                     bool is_overlap = is_layers_overlap(support_layer, object_layer);
                     for (const ExPolygon& expoly : object_layer.lslices) {

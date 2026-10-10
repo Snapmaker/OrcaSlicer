@@ -16,6 +16,10 @@ on:
       arch:
         required: false
         type: string
+      compiler:
+        required: false
+        type: string
+        default: msvc
       build-deps-only:
         required: false
         type: boolean
@@ -134,14 +138,11 @@ jobs:
             if (-not "${{ vars.SELF_HOSTED }}") {
               choco install strawberryperl
             }
-            $arch = "${{ inputs.arch }}"
-            if ($arch -eq "arm64") {
-              .\build_release_vs.bat deps arm64
-              .\build_release_vs.bat pack arm64
-            } else {
-              .\build_release_vs.bat deps
-              .\build_release_vs.bat pack
-            }
+            # cache-path is the install directory inside the deps build directory.
+            $deps = (Split-Path "${{ inputs.cache-path }}").Replace('\', '/')
+            # -l compiles with Visual Studio's clang-cl and -x builds with Ninja; --msvc --msbuild is cl under the Visual Studio generator.
+            $flags = if ("${{ inputs.compiler }}" -eq "clang") { "-l", "-x" } else { "--msvc", "--msbuild" }
+            .\build_win.bat -d --arch ${{ inputs.arch }} --deps-dir $deps @flags
         shell: pwsh
 
       - name: Build on Mac ${{ inputs.arch }}
@@ -155,7 +156,7 @@ jobs:
             # build_release_macos.sh / CMakeLists.txt (12.0), and the deps must be
             # built against the same target as the slicer (see build_orca.yml).
             # wxWidgets 3.3 and the bundled CPython 3.12 runtime cannot target 10.15.
-            ./build_release_macos.sh -dx ${{ !vars.SELF_HOSTED && '-1' || '' }} -a ${{ inputs.arch }}
+            ./build_release_macos.sh -dx ${{ !vars.SELF_HOSTED && '-j 3' || '' }} -a ${{ inputs.arch }}
             (cd "${{ github.workspace }}/deps/build/${{ inputs.arch }}" && \
             find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} +)
 
@@ -208,19 +209,5 @@ jobs:
       cache-path: ${{ inputs.cache-path }}
       os: ${{ inputs.os }}
       arch: ${{ inputs.arch }}
-    secrets: inherit
-
-  # Only the Windows x64 leg produces a PDB artifact (see build_orca.yml: "Pack
-  # PDB"/"Upload artifacts Win PDB" skip arm64). The macOS dSYM is produced by the
-  # universal *combine* leg, which build_all.yml calls directly rather than through
-  # this workflow -- build_all.yml's upload_symbols_macos job handles that.
-  upload_symbols:
-    name: Upload Debug Symbols to Sentry
-    needs: [build_orca]
-    if: ${{ !cancelled() && needs.build_orca.result == 'success' && (startsWith(inputs.os, 'windows') || inputs.os == 'orca-win-server') && inputs.arch != 'arm64' }}
-    uses: ./.github/workflows/sentry_cli.yml
-    with:
-      os: ${{ inputs.os }}
-      pdb-artifact-name: PDB
-      release: ${{ needs.build_orca.outputs.release || github.sha }}
+      compiler: ${{ inputs.compiler }}
     secrets: inherit

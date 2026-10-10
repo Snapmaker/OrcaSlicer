@@ -14,6 +14,7 @@
 #include <boost/algorithm/string.hpp>
 
 #include <curl/curl.h>
+#include <openssl/crypto.h>
 
 #ifdef OPENSSL_CERT_OVERRIDE
 #include <openssl/x509.h>
@@ -76,6 +77,11 @@ struct CurlGlobalInit
         if (CURLcode ec = ::curl_global_init(CURL_GLOBAL_DEFAULT)) {
             message += "CURL initialization failed. See the log for additional details.";
             BOOST_LOG_TRIVIAL(error) << ::curl_easy_strerror(ec);
+        } else {
+            // Logs the linked TLS library. curl 7.75 misreads OpenSSL 3.x (3.5.7 as
+            // "OpenSSL/3.5.0g"), so OpenSSL's own version string is logged next to it.
+            BOOST_LOG_TRIVIAL(info) << "HTTP stack: " << ::curl_version()
+                                    << "; TLS: " << ::OpenSSL_version(OPENSSL_VERSION);
         }
     }
 
@@ -271,10 +277,8 @@ int Http::priv::xfercb(void *userp, curl_off_t dltotal, curl_off_t dlnow, curl_o
 	bool cb_cancel = false;
 
 	if (self->progressfn) {
-		double speed;
+		double speed = 0.;
         curl_easy_getinfo(self->curl, CURLINFO_SPEED_UPLOAD, &speed);
-		if (speed > 0.01)
-			speed = speed;
 		Progress progress(dltotal, dlnow, ultotal, ulnow, self->buffer, speed);
 		self->progressfn(progress, cb_cancel);
 	}
@@ -340,8 +344,10 @@ void Http::priv::form_add_file(const char *name, const fs::path &path, const cha
 	// We can't use CURLFORM_FILECONTENT, because curl doesn't support Unicode filenames on Windows
 	// and so we use CURLFORM_STREAM with boost ifstream to read the file.
 
+	std::string filename_str;
 	if (filename == nullptr) {
-		filename = path.string().c_str();
+		filename_str = path.string();
+		filename = filename_str.c_str();
 	}
 
 	form_files.emplace_back(path, offset, length);
@@ -520,10 +526,11 @@ void Http::priv::http_perform()
 				}
 			}
 		}
-		//BBS check error http status code
-		else if (http_status >= 400) {
-			if (errorfn) { errorfn(std::move(buffer), std::string(), http_status); }
-		}
+        //BBS check error http status code (any non-2xx, including 1xx/3xx
+        // that survived redirect following, must fire the error callback)
+        else {
+            if (errorfn) { errorfn(std::move(buffer), std::string(), http_status); }
+        }
 	}
 }
 
@@ -950,7 +957,8 @@ std::string Http::tls_system_cert_store()
     std::string ret;
 
 #ifdef OPENSSL_CERT_OVERRIDE
-    ret = ::getenv(X509_get_default_cert_file_env());
+    if (const char* cert_file = ::getenv(X509_get_default_cert_file_env()))
+        ret = cert_file;
 #endif
 
     return ret;

@@ -7,6 +7,8 @@
 #include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "libslic3r/Thread.hpp"
+#include "slic3r/Utils/SnapLogClient.hpp"
+#include "slic3r/Utils/SnapTelemetry.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -468,13 +470,75 @@ void MachineInfoPanel::update_printer_imgs(MachineObject* obj)
 
 }
 
+std::string MachineInfoPanel::upgrade_module_version(const std::string& module) const
+{
+    if (!m_obj)
+        return "";
+
+    const auto current = m_obj->module_vers.find(module);
+    if (current != m_obj->module_vers.end())
+        return current->second.sw_ver;
+
+    if (module == "ota")
+        return m_obj->get_ota_version();
+    if (module.rfind("ams", 0) == 0) {
+        for (const auto& item : m_obj->module_vers) {
+            if (item.first.rfind("ams", 0) == 0 || item.first.rfind("n3f/", 0) == 0 || item.first.rfind("n3s/", 0) == 0)
+                return item.second.sw_ver;
+        }
+    }
+    return "";
+}
+
+std::string MachineInfoPanel::upgrade_target_version(const std::string& module) const
+{
+    if (!m_obj)
+        return "";
+
+    if (module == "ota")
+        return m_obj->ota_new_version_number;
+    if (module.rfind("ams", 0) == 0)
+        return m_obj->ams_new_version_number;
+
+    const auto target = m_obj->new_ver_list.find(module);
+    return target != m_obj->new_ver_list.end() ? target->second.sw_new_ver : "";
+}
+
+void MachineInfoPanel::begin_upgrade_telemetry(const std::string& module, const std::string& to_version)
+{
+    const std::string normalized_module = module.empty() ? "unknown" : module;
+    m_upgrade_telemetry_active = true;
+    m_upgrade_telemetry_module = normalized_module;
+    m_upgrade_telemetry_from_version = upgrade_module_version(normalized_module);
+    m_upgrade_telemetry_to_version = to_version.empty() ? upgrade_target_version(normalized_module) : to_version;
+}
+
+void MachineInfoPanel::report_upgrade_telemetry(int error_code)
+{
+}
+
 void MachineInfoPanel::update(MachineObject* obj)
 {
     if (m_obj != obj)
         update_printer_imgs(obj);
 
+    if (m_obj != obj) {
+        m_upgrade_telemetry_active = false;
+        m_last_upgrade_telemetry_state = -1;
+    }
     m_obj = obj;
     if (obj) {
+        const int upgrade_state = obj->upgrade_display_state;
+        if (upgrade_state == (int) MachineObject::UpgradingDisplayState::UpgradingInProgress && !m_upgrade_telemetry_active) {
+            const std::string module = obj->upgrade_module.empty() ? (panel_type == ptAmsPanel ? "ams" : "ota") : obj->upgrade_module;
+            begin_upgrade_telemetry(module, upgrade_target_version(module));
+        }
+        if (upgrade_state == (int) MachineObject::UpgradingDisplayState::UpgradingFinished && m_upgrade_telemetry_active) {
+            report_upgrade_telemetry(obj->upgrade_err_code);
+            m_upgrade_telemetry_active = false;
+        }
+        m_last_upgrade_telemetry_state = upgrade_state;
+
         this->Freeze();
         //update online status img
         m_panel_caption->Freeze();
@@ -1156,6 +1220,8 @@ void MachineInfoPanel::on_sys_color_changed()
 void MachineInfoPanel::confirm_upgrade(MachineObject* obj)
 {
     if (obj) {
+        const std::string module = obj->upgrade_module.empty() ? (panel_type == ptAmsPanel ? "ams" : "ota") : obj->upgrade_module;
+        begin_upgrade_telemetry(module, upgrade_target_version(module));
         obj->command_upgrade_confirm();
         obj->upgrade_display_state = MachineObject::UpgradingDisplayState::UpgradingInProgress;
         obj->upgrade_display_hold_count = HOLD_COUNT_MAX;
@@ -1168,8 +1234,10 @@ void MachineInfoPanel::upgrade_firmware_internal() {
     if (!m_obj)
         return;
     if (panel_type == ptOtaPanel) {
+        begin_upgrade_telemetry(m_ota_info.module_type.empty() ? "ota" : m_ota_info.module_type, m_ota_info.version);
         m_obj->command_upgrade_firmware(m_ota_info);
     } else if (panel_type == ptAmsPanel) {
+        begin_upgrade_telemetry(m_ams_info.module_type.empty() ? "ams" : m_ams_info.module_type, m_ams_info.version);
         m_obj->command_upgrade_firmware(m_ams_info);
     } else if (panel_type == ptPushPanel) {
         confirm_upgrade();

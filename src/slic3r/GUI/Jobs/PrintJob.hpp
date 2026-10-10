@@ -47,6 +47,8 @@ class PrintJob : public Job
     std::function<void()> m_enter_ip_address_fun_fail{ nullptr };
     std::function<void()> m_enter_ip_address_fun_success{ nullptr };
     Plater *m_plater;
+    int         m_telemetry_plate_count = 0;
+    std::string m_telemetry_printer_model;
 
 public:
     PrintPrepareData job_data;
@@ -69,6 +71,7 @@ public:
     std::string m_dst_path;
 
     bool m_is_calibration_task = false;
+    bool m_telemetry_result_reported = false;
 
     int         m_print_from_sdc_plate_idx = 0;
 
@@ -125,6 +128,7 @@ public:
     wxString get_http_error_msg(unsigned int status, std::string body);
     std::string truncate_string(const std::string& str, size_t maxLength);
     void set_calibration_task(bool is_calibration);
+    void report_job_result(bool success, bool cancelled, int result_code, const std::string& reason = "");
 
 };
 

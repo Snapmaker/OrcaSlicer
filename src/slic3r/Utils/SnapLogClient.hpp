@@ -15,7 +15,10 @@
 #include <utility>
 #include <vector>
 #include "Http.hpp"
+#include "SnapLogEvents.hpp"
 namespace Slic3r { namespace SnapLog { inline namespace v1 {
+
+struct SnapLogConfig;
 
 using SnapLogExt                           = std::vector<std::pair<std::string, std::string>>;
 inline constexpr char kSnapLogClientType[] = "Orca";
@@ -116,6 +119,7 @@ struct BatchLineContext
     std::string appBuild;
     std::string platform;
     std::string osVersion;
+    std::string profileVersion;
     std::string sessionId;
     std::string region;
     std::string batchId;
@@ -129,6 +133,14 @@ struct BatchLineContext
     std::string home_for_redact;
 };
 
+// Output destinations for batch logging. The values are a stable bitmask so
+// callers can express one sink or combine sinks with bitwise OR.
+enum SnapLogSinks : unsigned int {
+    SinkNone    = 0,
+    SinkGateway = 1u << 0,
+    SinkPostHog = 1u << 1,
+};
+
 // ext contains clientId (per [DOC-3]) + caller-supplied event keys.
 // Privacy policy (same as realtime): drop ext keys starting with "raw"
 // (case-insensitive); pass all string values through mask_secret_in_value;
@@ -138,6 +150,28 @@ struct BatchLineContext
 // Always valid JSON + trailing '\n'.
 std::string render_batch_line(
     SnapLogLevel lvl, const std::string& msg, const SnapLogExt& ext, std::size_t line_max_bytes, const BatchLineContext& ctx);
+
+// A PostHog capture event snapshot. Rendering happens on the producer thread:
+// identity, timestamp, and all property values are fixed before queueing.
+struct PostHogEvent
+{
+    SnapLogLevel     level = SnapLogLevel::Info;
+    std::string      message;
+    SnapLogExt       ext;
+    std::string      logger;
+    BatchLineContext context;
+};
+
+std::string render_posthog_event(const PostHogEvent& event);
+
+struct PostHogBatchRequest
+{
+    std::string                                      url;
+    std::vector<std::pair<std::string, std::string>> headers;
+    std::string                                      body;
+};
+
+PostHogBatchRequest build_posthog_batch_request(const SnapLogConfig& cfg, const std::vector<std::string>& event_lines);
 
 // Clock callback for rotate_active timestamp injection (testability). Returns
 // milliseconds-since-epoch. Default (nullptr) uses the wall clock.
@@ -338,14 +372,18 @@ struct SnapLogDeps
 struct SnapLogConfig
 {
     std::string gateway_base = "https://api.snapmaker.com";
+    std::string posthog_base = "https://ph.snapmaker.cn";
+    std::string posthog_api_key;
+    bool        posthog_enabled = true;
     std::string spool_dir; // Plan B; empty ok in Plan A
-    bool        enabled     = true;
+    bool        enabled = true;
     std::string hmac_secret; // injected at build time
 
     // Populated by the GUI wiring layer (B7) at init. Defaults are empty; the
     // renderer treats empty strings as "field omitted" gracefully.
     std::string app_version;     // e.g. "2.5.0"
     std::string app_build;       // e.g. "12345"
+    std::string profile_version; // installed Snapmaker system profile bundle version
     std::string platform;        // e.g. "win64" / "macos-arm64" / "linux"
     std::string os_version;      // e.g. "10.0.19045"
     std::string session_id;      // per-session UUID (set at init)
@@ -379,6 +417,10 @@ struct SnapLogConfig
     int    drain_wall_budget_ms       = 20;
     int    realtime_join_deadline_sec = 5;
     int    batch_join_deadline_sec    = 30;
+
+    size_t posthog_queue_cap  = 1024;
+    size_t posthog_batch_size = 50;
+    int    posthog_flush_sec  = 60;
 };
 
 // Result of realtime request building: the target URL + ordered headers.
@@ -413,11 +455,36 @@ public:
     static SnapLogClient& instance();
     void                  init(SnapLogDeps deps, SnapLogConfig cfg);
     void                  shutdown();
-    void log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, SnapLogPolicy policy, const char* caller_func, int caller_line,
-             bool bypass_login_gate = false);
-    void set_user_token(std::string t);
-    void set_user_id(std::string u);
-    void set_device_id(std::string d);
+    void                  log(SnapLogLevel  lvl,
+                              std::string   msg,
+                              SnapLogExt    ext,
+                              SnapLogPolicy policy,
+                              const char*   caller_func,
+                              int           caller_line);
+    void                  log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, const char* caller_func, int caller_line, unsigned sinks);
+    void                  log_event(SnapLogLevel level, const char* caller_func, int caller_line, unsigned sinks, SnapEvent event);
+    void                  log_event(SnapLogLevel    level,
+                                    const char*      caller_func,
+                                    int              caller_line,
+                                    unsigned         sinks,
+                                    SnapEvent        event,
+                                    SnapLogExt       ext);
+    void                  log_event(SnapLogLevel      level,
+                                    const char*        caller_func,
+                                    int                caller_line,
+                                    unsigned           sinks,
+                                    SnapEvent          event,
+                                    const std::string& msg);
+    void                  log_event(SnapLogLevel      level,
+                                    const char*        caller_func,
+                                    int                caller_line,
+                                    unsigned           sinks,
+                                    SnapEvent          event,
+                                    SnapLogExt         ext,
+                                    const std::string& msg);
+    void                  set_user_token(std::string t);
+    void                  set_user_id(std::string u);
+    void                  set_device_id(std::string d);
     // Flutter MQTT identity of the connected printer (pushed from
     // sw_mqtt_set_engine; cleared on disconnect/logout).
     void set_connect_clientid(std::string v);
@@ -432,6 +499,8 @@ public:
 
     std::size_t batch_queue_size_for_test() const;    // bt_queue size under queue_mu
     uint64_t    batch_queue_dropped_for_test() const; // batch_queue_dropped atomic
+    std::size_t posthog_queue_size_for_test() const;
+    void        set_posthog_timer_expired_for_test();
 
     // Used to verify that a timed-out consent-OFF leaves bt_worker non-joinable
     // (so OFF->ON restart works). Also used to verify file-lock defers bt_worker.
@@ -528,25 +597,31 @@ public:
         std::mutex                     m_h_mu;
         std::shared_ptr<SnapLogHandle> rt_handle;
         std::shared_ptr<SnapLogHandle> bt_handle; // Plan B
+        std::shared_ptr<SnapLogHandle> ph_handle;
 
         // --- Realtime worker thread (started in init, joined in shutdown) ---
         std::thread rt_worker;
 
         // bt_queue reuses RtEvent{level,message,ext,logger}. Guarded by queue_mu
         // (same mutex as rt_queue — fine, short hold).
-        std::deque<RtEvent>   bt_queue;
-        std::atomic<bool>     auth_known_dead{false};        // set on 401/403 (B5)
-        std::atomic<bool>     drain_and_flush{false};        // shutdown final-flush (B5/B6)
-        std::atomic<bool>     stop_uploads{false};           // shutdown/consent aborts uploads
-        std::atomic<bool>     batch_deps_invalid{false};     // batch-only dependency fence
-        std::atomic<uint32_t> batch_requests_in_progress{0}; // synchronous do_request calls
-        std::atomic<uint64_t> batch_queue_dropped{0};
-        std::atomic<uint64_t> auth_dead_create_skipped{0}; // bumped in B5
-        std::atomic<bool>     auth_dead_skip_counted{false};
-        std::atomic<uint64_t> disk_write_failed{0};              // bumped in B5
-        std::atomic<uint64_t> shutdown_detach_queue_residual{0}; // bumped in B6
-        std::atomic<uint64_t> purge_delete_failed{0};            // bumped in B6 (Windows delete-fail)
-        std::thread           bt_worker;                         // started in B6, not here
+        std::deque<RtEvent>     bt_queue;
+        std::deque<std::string> ph_queue;
+        std::atomic<bool>       auth_known_dead{false};        // set on 401/403 (B5)
+        std::atomic<bool>       drain_and_flush{false};        // shutdown final-flush (B5/B6)
+        std::atomic<bool>       stop_uploads{false};           // shutdown/consent aborts uploads
+        std::atomic<bool>       batch_deps_invalid{false};     // batch-only dependency fence
+        std::atomic<uint32_t>   batch_requests_in_progress{0}; // synchronous do_request calls
+        std::atomic<uint64_t>   batch_queue_dropped{0};
+        std::atomic<bool>       posthog_drain_and_flush{false};
+        std::atomic<bool>       posthog_stop_uploads{false};
+        std::atomic<int64_t>    posthog_last_flush_ms{0};
+        std::atomic<uint64_t>   auth_dead_create_skipped{0}; // bumped in B5
+        std::atomic<bool>       auth_dead_skip_counted{false};
+        std::atomic<uint64_t>   disk_write_failed{0};              // bumped in B5
+        std::atomic<uint64_t>   shutdown_detach_queue_residual{0}; // bumped in B6
+        std::atomic<uint64_t>   purge_delete_failed{0};            // bumped in B6 (Windows delete-fail)
+        std::thread             bt_worker;                         // started in B6, not here
+        std::thread             ph_worker;
         // Each production worker captures a generation. Consent OFF/re-init
         // increments it before retiring the old worker, so a late return from
         // a blocked request cannot mutate the restarted worker's state.
@@ -603,6 +678,7 @@ public:
     };
 
     static void bt_worker_loop(std::shared_ptr<Internals> in, uint64_t generation = 0);
+    static void ph_worker_loop(std::shared_ptr<Internals> in);
 
     // Test-only factory: build a fresh Internals from deps + cfg. Used by the
     // batch tests to construct a fake flusher context (spool dir, queues, etc)
@@ -616,17 +692,19 @@ private:
     mutable std::mutex         m_lifecycle_mu;
     std::shared_ptr<Internals> m_int;
     // The spool path is stable after init, so one pending purge is sufficient.
-    boost::filesystem::path    m_purge_spool_dir;
+    boost::filesystem::path             m_purge_spool_dir;
     std::shared_ptr<std::promise<bool>> m_purge_promise;
-    std::shared_future<bool>   m_purge_completion;
-    boost::filesystem::path    m_purge_lock_spool_dir;
-    SpoolLock                  m_purge_spool_lock;
-    std::shared_ptr<Internals> internals() const;
-    void                       cancel_current(const std::shared_ptr<Internals>& in, SnapLogPolicy p);
-    void                       start_batch_worker(const std::shared_ptr<Internals>& in);
-    std::shared_future<bool>   begin_spool_purge(const std::shared_ptr<Internals>& in, std::thread retired_worker = {});
-    void                       start_batch_worker_after_purge(const std::shared_ptr<Internals>& in);
-    bool                       spool_purge_blocks_worker(const boost::filesystem::path& spool_dir) const;
+    std::shared_future<bool>            m_purge_completion;
+    boost::filesystem::path             m_purge_lock_spool_dir;
+    SpoolLock                           m_purge_spool_lock;
+    std::shared_ptr<Internals>          internals() const;
+    void                                cancel_current(const std::shared_ptr<Internals>& in, SnapLogPolicy p);
+    void                                cancel_posthog_current(const std::shared_ptr<Internals>& in);
+    void                                start_posthog_worker(const std::shared_ptr<Internals>& in);
+    void                                start_batch_worker(const std::shared_ptr<Internals>& in);
+    std::shared_future<bool>            begin_spool_purge(const std::shared_ptr<Internals>& in, std::thread retired_worker = {});
+    void                                start_batch_worker_after_purge(const std::shared_ptr<Internals>& in);
+    bool                                spool_purge_blocks_worker(const boost::filesystem::path& spool_dir) const;
     // Realtime worker thread entry point (defined in .cpp where Internals is
     // complete). Static + takes Internals by shared_ptr so it runs detached
     // from the client instance.
@@ -701,21 +779,12 @@ make_production_do_request(SnapLogConfig cfg);
 }}} // namespace Slic3r::SnapLog::v1
 
 // Global-scope macros using the fully-qualified namespace. Call sites write:
-//   SNAP_LOG(Info, "slice done", {"eventName","slice_completed"}, {"durationMs","123"});
-//   SNAP_LOG_BATCH(Error, "boom", {"eventName","x"});
-// At least one ext pair is required; for zero-ext use log() directly with {}.
-#define SNAP_LOG(lvl, msg, ...) \
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log(::Slic3r::SnapLog::v1::SnapLogLevel::lvl, (msg), \
-                                                         ::Slic3r::SnapLog::v1::SnapLogExt{__VA_ARGS__}, \
-                                                         ::Slic3r::SnapLog::v1::SnapLogPolicy::Realtime, __FUNCTION__, __LINE__)
+//   SNAP_LOG_INFO(SinkGateway | SinkPostHog, SnapEvent::AppLaunch);
 
-#define SNAP_LOG_BATCH(lvl, msg, ...) \
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log(::Slic3r::SnapLog::v1::SnapLogLevel::lvl, (msg), \
-                                                         ::Slic3r::SnapLog::v1::SnapLogExt{__VA_ARGS__}, \
-                                                         ::Slic3r::SnapLog::v1::SnapLogPolicy::Buffered, __FUNCTION__, __LINE__)
-
-// bypass_login_gate keeps anonymous events on the public endpoint; consent, config, and rate limits still apply.
-#define SNAP_LOG_BATCH_FORCE(lvl, msg, ...) \
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log(::Slic3r::SnapLog::v1::SnapLogLevel::lvl, (msg), \
-                                                         ::Slic3r::SnapLog::v1::SnapLogExt{__VA_ARGS__}, \
-                                                         ::Slic3r::SnapLog::v1::SnapLogPolicy::Buffered, __FUNCTION__, __LINE__, true)
+#define SNAP_LOG_INFO(...) \
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log_event(::Slic3r::SnapLog::v1::SnapLogLevel::Info, __FUNCTION__, __LINE__, __VA_ARGS__)
+#define SNAP_LOG_WARNING(...) \
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log_event( \
+        ::Slic3r::SnapLog::v1::SnapLogLevel::Warning, __FUNCTION__, __LINE__, __VA_ARGS__)
+#define SNAP_LOG_ERROR(...) \
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log_event(::Slic3r::SnapLog::v1::SnapLogLevel::Error, __FUNCTION__, __LINE__, __VA_ARGS__)

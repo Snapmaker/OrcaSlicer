@@ -28,6 +28,9 @@ class SendJob : public Job
     std::function<void(int)> m_enter_ip_address_fun_fail{nullptr};
     std::function<void()> m_enter_ip_address_fun_success{nullptr};
     Plater *m_plater;
+    bool m_telemetry_result_reported = false;
+    int m_telemetry_plate_count = 0;
+    std::string m_telemetry_printer_model;
 
 public:
     void prepare();
@@ -63,6 +66,7 @@ public:
     void on_check_ip_address_success(std::function<void()> func);
     void finalize(bool canceled, std::exception_ptr &) override;
     void set_project_name(std::string name);
+    void report_job_result(bool success, bool cancelled, int result_code, const std::string& reason = "");
 };
 
 }}

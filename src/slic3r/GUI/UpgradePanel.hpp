@@ -192,6 +192,11 @@ public:
     MachineObject *m_obj{nullptr};
     FirmwareInfo  m_ota_info;
     FirmwareInfo  m_ams_info;
+    bool          m_upgrade_telemetry_active = false;
+    std::string   m_upgrade_telemetry_module;
+    std::string   m_upgrade_telemetry_from_version;
+    std::string   m_upgrade_telemetry_to_version;
+    int           m_last_upgrade_telemetry_state = -1;
 
     bool is_upgrading = false;
 
@@ -203,6 +208,10 @@ public:
     }panel_type;
 
 private:
+    std::string upgrade_module_version(const std::string& module) const;
+    std::string upgrade_target_version(const std::string& module) const;
+    void begin_upgrade_telemetry(const std::string& module, const std::string& to_version);
+    void report_upgrade_telemetry(int error_code);
     void createAirPumpWidgets(wxBoxSizer* main_left_sizer);
     void createCuttingWidgets(wxBoxSizer* main_left_sizer);
     void createLaserWidgets(wxBoxSizer* main_left_sizer);

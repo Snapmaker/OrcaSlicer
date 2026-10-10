@@ -33,6 +33,7 @@
 #include <libslic3r/miniz_extension.hpp>
 #include <libslic3r/Utils.hpp>
 #include "CreatePresetsDialog.hpp"
+#include "slic3r/Utils/SnapLogClient.hpp"
 #include <mutex>
 #include <vector>
 #include <tbb/parallel_for.h>

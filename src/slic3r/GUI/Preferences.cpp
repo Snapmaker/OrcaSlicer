@@ -21,6 +21,8 @@
 #include <memory>
 
 #include "sentry_wrapper/SentryWrapper.hpp"
+#include "slic3r/Utils/SnapLogClient.hpp"
+#include "slic3r/Utils/SnapTelemetry.hpp"
 #include "SSWCP.hpp"
 
 #ifdef __WINDOWS__

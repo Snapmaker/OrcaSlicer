@@ -6,6 +6,9 @@
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/format.hpp"
+#include "slic3r/GUI/DeviceManager.hpp"
+#include "slic3r/Utils/SnapLogClient.hpp"
+#include "slic3r/Utils/SnapTelemetry.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -33,6 +36,21 @@ SendJob::SendJob(std::string dev_id)
     m_dev_id(dev_id)
 {
     m_print_job_completed_id = m_plater->get_send_finished_event();
+    m_telemetry_plate_count   = m_plater->get_partplate_list().get_plate_count();
+    try {
+        auto* device_manager = wxGetApp().getDeviceManager();
+        auto* device = device_manager ? device_manager->get_local_machine(m_dev_id) : nullptr;
+        m_telemetry_printer_model = device ? device->printer_type : "";
+    } catch (...) {
+        m_telemetry_printer_model.clear();
+    }
+}
+
+void SendJob::report_job_result(bool success, bool cancelled, int result_code, const std::string& reason)
+{
+    if (m_telemetry_result_reported)
+        return;
+    m_telemetry_result_reported = true;
 }
 
 void SendJob::prepare()
@@ -100,6 +118,7 @@ inline std::string get_transform_string(int bytes)
 
 void SendJob::process(Ctl &ctl)
 {
+    m_telemetry_result_reported = false;
     BBL::PrintParams params;
     std::string msg;
     int curr_percent = 10;
@@ -139,6 +158,7 @@ void SendJob::process(Ctl &ctl)
         if (plate == nullptr) {
             BOOST_LOG_TRIVIAL(error) << "can not find plate with valid gcode file when sending to print, plate_index="<< job_data.plate_idx;
             ctl.update_status(curr_percent, check_gcode_failed_str);
+            report_job_result(false, false, result, "invalid_plate");
             return;
         }
     }
@@ -146,11 +166,13 @@ void SendJob::process(Ctl &ctl)
     /* check gcode is valid */
     if (!plate->is_valid_gcode_file()) {
         ctl.update_status(curr_percent, check_gcode_failed_str);
+        report_job_result(false, false, result, "invalid_gcode");
         return;
     }
 
     if (ctl.was_canceled()) {
         ctl.update_status(curr_percent, printjob_cancel_str);
+        report_job_result(false, true, result, "cancelled");
         return;
     }
 
@@ -295,6 +317,7 @@ void SendJob::process(Ctl &ctl)
             result = m_agent->start_send_gcode_to_sdcard(params, update_fn, cancel_fn, nullptr);
         } else {
             ctl.update_status(curr_percent, _u8L("An SD card needs to be inserted before sending to printer."));
+            report_job_result(false, false, result, "no_sdcard");
             return;
         }
     }
@@ -333,6 +356,7 @@ void SendJob::process(Ctl &ctl)
             ctl.show_error_info(msg_text, 0, "", "");
         }
         BOOST_LOG_TRIVIAL(error) << "send_job: failed, result = " << result;
+        report_job_result(false, result == BAMBU_NETWORK_ERR_CANCELED, result);
 
     }
     else {
@@ -341,6 +365,7 @@ void SendJob::process(Ctl &ctl)
         evt->SetString(from_u8(params.project_name));
         wxQueueEvent(m_plater, evt);
         m_job_finished = true;
+        report_job_result(true, false, result);
     }
 }
 
@@ -369,6 +394,11 @@ void SendJob::finalize(bool canceled, std::exception_ptr &eptr)
     } catch (...) {
         eptr = std::current_exception();
     }
+
+    if (canceled)
+        report_job_result(false, true, -1, "cancelled");
+    else if (eptr)
+        report_job_result(false, false, -1, "exception");
 
     if (canceled || eptr)
         return;

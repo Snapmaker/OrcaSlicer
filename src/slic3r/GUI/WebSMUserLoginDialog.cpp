@@ -288,9 +288,6 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                             ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_consent(consent);
                         }
 
-                        SNAP_LOG_BATCH(Info, "user login success",
-                            {"eventName", "user_login_result"}, {"source", "cpp"},
-                            {"success", "true"}, {"userId", user_id});
                     }
                 })
                 .on_error([&](std::string body, std::string, unsigned status) {
@@ -300,9 +297,6 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                     std::string http_code = BP_LOGIN_HTTP_CODE + string(":") + std::to_string(status) +
                                             ", body_size=" + std::to_string(body.size());
                     sentryReportLog(SENTRY_LOG_TRACE, http_code, BP_LOGIN);
-                    SNAP_LOG_BATCH(Error, "user login failed",
-                        {"eventName", "user_login_result"}, {"source", "cpp"},
-                        {"success", "false"}, {"httpStatus", std::to_string(status)});
                 })
                 .perform_sync();
         });

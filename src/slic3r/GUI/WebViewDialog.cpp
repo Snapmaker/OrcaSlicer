@@ -571,7 +571,7 @@ void WebViewPanel::OnNavigationRequest(wxWebViewEvent& evt)
             else
                 file = "//" + file; // When file from network location
 #endif
-            wxGetApp().plater()->load_files(wxArrayString{1, &file});
+            wxGetApp().plater()->load_files(wxArrayString{1, &file}, "model_library");
             evt.Veto();
             return;
         }

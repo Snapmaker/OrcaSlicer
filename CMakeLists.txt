@@ -104,6 +104,10 @@ set(SNAP_LOG_HMAC_SECRET "c25hcG1ha2VyLU9yY2E" CACHE STRING
     "Public SnapLog gateway signing key (not a user credential)")
 add_definitions("-DSNAP_LOG_HMAC_SECRET=\"${SNAP_LOG_HMAC_SECRET}\"")
 
+set(SNAP_LOG_POSTHOG_API_KEY "phc_pYjcTLWnSAxdkoKFh5R9SQtM5SMVgBLwbAjAyPckACkt" CACHE STRING
+    "Public SnapLog PostHog project API key")
+add_definitions("-DSNAP_LOG_POSTHOG_API_KEY=\"${SNAP_LOG_POSTHOG_API_KEY}\"")
+
 option(SLIC3R_STATIC 			"Compile Snapmaker_Orca with static libraries (Boost, TBB, glew)" ${SLIC3R_STATIC_INITIAL})
 option(SLIC3R_GUI    			"Compile Snapmaker_Orca with GUI components (OpenGL, wxWidgets)" 1)
 option(SLIC3R_FHS               "Assume Snapmaker_Orca is to be installed in a FHS directory structure" 0)

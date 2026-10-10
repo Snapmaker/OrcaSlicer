@@ -33,15 +33,10 @@ namespace Slic3r { namespace SnapLog { inline namespace v1 {
 constexpr int kShutdownRealtimeJoinMaxSec = 2;
 constexpr int kShutdownBatchJoinMaxSec    = 3;
 
-static bool is_valid_spool_path(const boost::filesystem::path& path)
-{
-    return !path.empty() && !path.native().empty();
-}
+static bool is_valid_spool_path(const boost::filesystem::path& path) { return !path.empty() && !path.native().empty(); }
 
 static void log_detached_thread_failure(const char* operation) noexcept
-{
-    BOOST_LOG_TRIVIAL(warning) << "SnapLog " << operation << " thread failed";
-}
+{ BOOST_LOG_TRIVIAL(warning) << "SnapLog " << operation << " thread failed"; }
 
 static void fulfill_purge_completion(const std::shared_ptr<std::promise<bool>>& completion, bool succeeded) noexcept
 {
@@ -56,10 +51,7 @@ class PurgeCompletionGuard
 public:
     explicit PurgeCompletionGuard(std::shared_ptr<std::promise<bool>> completion) : m_completion(std::move(completion)) {}
 
-    ~PurgeCompletionGuard()
-    {
-        fulfill_purge_completion(m_completion, false);
-    }
+    ~PurgeCompletionGuard() { fulfill_purge_completion(m_completion, false); }
 
     void fulfill(bool succeeded)
     {
@@ -105,7 +97,7 @@ SnapLogClient::SpoolLock& SnapLogClient::SpoolLock::operator=(SnapLogClient::Spo
 
 SnapLogClient::SpoolLock SnapLogClient::try_acquire_spool_lock(const boost::filesystem::path& dir)
 {
-    SpoolLock                 lk;
+    SpoolLock lk;
     if (!is_valid_spool_path(dir))
         return lk;
 
@@ -621,9 +613,15 @@ std::string render_batch_line(
     ext_pairs.emplace_back("connect_clientid", sanitize_value("connect_clientid", ctx.connect_clientid));
     ext_pairs.emplace_back("printerSN", sanitize_value("printerSN", ctx.print_sn));
     ext_pairs.emplace_back("orcaVersion", sanitize_value("orcaVersion", ctx.appVersion));
+    ext_pairs.emplace_back("profileVersion", sanitize_value("profileVersion", ctx.profileVersion));
     ext_pairs.emplace_back("os", sanitize_value("os", ctx.osVersion));
     ext_pairs.emplace_back("batchId", ctx.batchId);
     ext_pairs.emplace_back("localTime", format_local_time_ms(ctx.ts_ms));
+
+    auto is_batch_protected = [](const std::string& k) {
+        return k == "clientUUID" || k == "processId" || k == "connect_clientid" || k == "printerSN" || k == "orcaVersion" || k == "os" ||
+               k == "batchId" || k == "localTime" || k == "eventName" || k == "opId";
+    };
     for (const auto& kv : ext) {
         const std::string& key = kv.first;
         // Drop raw* keys (case-insensitive prefix check).
@@ -635,6 +633,8 @@ std::string render_batch_line(
                 continue;
         }
         std::string safe_key = utf8_safe_prefix(key, key.size());
+        if (is_batch_protected(safe_key))
+            continue;
         ext_pairs.emplace_back(safe_key, sanitize_value(key, kv.second));
     }
 
@@ -648,10 +648,6 @@ std::string render_batch_line(
 
     std::vector<std::pair<std::string, std::string>> kept = ext_pairs;
     // Never drop clientUUID (it's protected) — it's how the server correlates.
-    auto is_batch_protected = [](const std::string& k) {
-        return k == "clientUUID" || k == "processId" || k == "connect_clientid" || k == "printerSN" || k == "orcaVersion" || k == "os" ||
-               k == "batchId" || k == "localTime" || k == "eventName" || k == "opId";
-    };
     while (!kept.empty()) {
         nlohmann::json test_obj   = build_ext_obj(kept);
         std::string    serialized = test_obj.dump();
@@ -722,6 +718,93 @@ std::string render_batch_line(
 
     out.push_back('\n'); // NDJSON: line ends with newline.
     return out;
+}
+
+std::string render_posthog_event(const PostHogEvent& event)
+{
+    const BatchLineContext& ctx = event.context;
+
+    auto reserved_property = [](const std::string& key) {
+        return key == "level" || key == "service" || key == "message" || key == "eventName" || key == "userId" || key == "clientType" ||
+               key == "clientUUID" || key == "processId" || key == "connect_clientid" || key == "printerSN" || key == "orcaVersion" ||
+               key == "os" || key == "batchId" || key == "localTime";
+    };
+
+    auto sanitize_value = [&](const std::string& key, const std::string& value) {
+        if (is_secret_key(key))
+            return std::string("***");
+        if (is_pii_key(key) && !value.empty())
+            return hash_pii(ctx.clientId, value);
+        if (is_pii_key(key))
+            return std::string{};
+        if (looks_like_path(value))
+            return mask_secret_in_value(redact_path(ctx.home_for_redact, value));
+        return mask_secret_in_value(value);
+    };
+
+    std::string event_name = utf8_safe_prefix(mask_secret_in_value(ctx.eventName), ctx.eventName.size());
+    if (event_name.empty())
+        event_name = "unnamed_event";
+
+    nlohmann::json properties      = nlohmann::json::object();
+    properties["level"]            = level_str(event.level);
+    properties["service"]          = ctx.service.empty() ? "snapmaker-desktop" : ctx.service;
+    properties["message"]          = sanitize_message(ctx.home_for_redact, event.message);
+    properties["eventName"]        = event_name;
+    properties["userId"]           = utf8_safe_prefix(mask_secret_in_value(ctx.userId), ctx.userId.size());
+    properties["clientType"]       = ctx.clientType.empty() ? kSnapLogClientType : utf8_safe_prefix(ctx.clientType, ctx.clientType.size());
+    properties["clientUUID"]       = ctx.clientId;
+    properties["processId"]        = ctx.processId;
+    properties["connect_clientid"] = sanitize_value("connect_clientid", ctx.connect_clientid);
+    properties["printerSN"]        = sanitize_value("printerSN", ctx.print_sn);
+    properties["orcaVersion"]      = ctx.appVersion;
+    properties["profileVersion"]   = sanitize_value("profileVersion", ctx.profileVersion);
+    properties["os"]               = ctx.osVersion;
+    properties["batchId"]          = ctx.batchId;
+    properties["localTime"]        = format_local_time_ms(ctx.ts_ms);
+    properties["source"]           = "cpp";
+
+    for (const auto& kv : event.ext) {
+        const std::string& key = kv.first;
+        if (key.size() >= 3) {
+            const char c0 = static_cast<char>(std::tolower(static_cast<unsigned char>(key[0])));
+            const char c1 = static_cast<char>(std::tolower(static_cast<unsigned char>(key[1])));
+            const char c2 = static_cast<char>(std::tolower(static_cast<unsigned char>(key[2])));
+            if (c0 == 'r' && c1 == 'a' && c2 == 'w')
+                continue;
+        }
+        if (key.empty() || reserved_property(key))
+            continue;
+        properties[utf8_safe_prefix(key, key.size())] = sanitize_value(key, kv.second);
+    }
+
+    nlohmann::json capture;
+    capture["event"]       = event_name;
+    capture["distinct_id"] = ctx.clientId;
+    capture["timestamp"]   = format_iso8601_utc(ctx.ts_ms);
+    capture["properties"]  = std::move(properties);
+    return capture.dump();
+}
+
+PostHogBatchRequest build_posthog_batch_request(const SnapLogConfig& cfg, const std::vector<std::string>& event_lines)
+{
+    PostHogBatchRequest request;
+    std::string         base = cfg.posthog_base;
+    while (!base.empty() && base.back() == '/')
+        base.pop_back();
+    request.url     = base + "/batch/";
+    request.headers = {{"Content-Type", "application/json"}};
+
+    nlohmann::json body;
+    body["api_key"] = cfg.posthog_api_key;
+    body["batch"]   = nlohmann::json::array();
+    for (const auto& line : event_lines) {
+        auto event = nlohmann::json::parse(line, nullptr, false);
+        if (!event.is_discarded() && event.is_object())
+            body["batch"].push_back(std::move(event));
+    }
+    request.body = body.dump();
+    return request;
 }
 
 bool RateLimiter::allow(const std::string&                eventName,
@@ -912,6 +995,109 @@ void SnapLogClient::rt_worker_loop(std::shared_ptr<Internals> in)
     }
 }
 
+static int64_t steady_now_ms()
+{ return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+
+void SnapLogClient::ph_worker_loop(std::shared_ptr<Internals> in)
+{
+    if (!in)
+        return;
+
+    while (true) {
+        if (!in->consent.load(std::memory_order_relaxed)) {
+            std::lock_guard<std::mutex> hk(in->m_h_mu);
+            if (in->ph_handle) {
+                in->ph_handle->cancel();
+                in->ph_handle.reset();
+            }
+            if (in->posthog_stop_uploads.load(std::memory_order_relaxed) && in->stop_receiving.load(std::memory_order_relaxed))
+                return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(in->cfg.poll_interval_ms > 0 ? in->cfg.poll_interval_ms : 1));
+            continue;
+        }
+
+        std::shared_ptr<SnapLogHandle> handle;
+        {
+            std::lock_guard<std::mutex> hk(in->m_h_mu);
+            handle = in->ph_handle;
+            if (handle && handle->done()) {
+                in->ph_handle.reset();
+                handle.reset();
+            }
+        }
+        if (handle) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(in->cfg.poll_interval_ms > 0 ? in->cfg.poll_interval_ms : 1));
+            continue;
+        }
+
+        if (in->deps_invalid.load(std::memory_order_relaxed) || in->posthog_stop_uploads.load(std::memory_order_relaxed)) {
+            if (in->stop_receiving.load(std::memory_order_relaxed))
+                return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(in->cfg.poll_interval_ms > 0 ? in->cfg.poll_interval_ms : 1));
+            continue;
+        }
+
+        const bool  drain      = in->posthog_drain_and_flush.load(std::memory_order_relaxed);
+        std::size_t queue_size = 0;
+        {
+            std::lock_guard<std::mutex> qk(in->queue_mu);
+            queue_size = in->ph_queue.size();
+        }
+
+        const int64_t now = steady_now_ms();
+        if (queue_size == 0) {
+            in->posthog_last_flush_ms.store(now, std::memory_order_relaxed);
+            if (in->stop_receiving.load(std::memory_order_relaxed))
+                return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(in->cfg.poll_interval_ms > 0 ? in->cfg.poll_interval_ms : 1));
+            continue;
+        }
+
+        const std::size_t batch_size = in->cfg.posthog_batch_size;
+        const int         flush_sec  = in->cfg.posthog_flush_sec;
+        const int64_t     last_flush = in->posthog_last_flush_ms.load(std::memory_order_relaxed);
+        const bool        size_due   = batch_size > 0 && queue_size >= batch_size;
+        const bool        timer_due  = flush_sec > 0 && last_flush > 0 && now - last_flush >= int64_t(flush_sec) * 1000;
+        if (!drain && !size_due && !timer_due) {
+            if (in->stop_receiving.load(std::memory_order_relaxed))
+                return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(in->cfg.poll_interval_ms > 0 ? in->cfg.poll_interval_ms : 1));
+            continue;
+        }
+
+        std::vector<std::string> events;
+        {
+            std::lock_guard<std::mutex> qk(in->queue_mu);
+            const std::size_t           count = batch_size > 0 ? std::min(queue_size, batch_size) : in->ph_queue.size();
+            events.reserve(count);
+            for (std::size_t i = 0; i < count && !in->ph_queue.empty(); ++i) {
+                events.push_back(std::move(in->ph_queue.front()));
+                in->ph_queue.pop_front();
+            }
+        }
+        in->posthog_last_flush_ms.store(now, std::memory_order_relaxed);
+
+        std::shared_ptr<SnapLogHandle> issued;
+        if (!in->deps_invalid.load(std::memory_order_relaxed) && !in->posthog_stop_uploads.load(std::memory_order_relaxed) &&
+            in->consent.load(std::memory_order_relaxed) && in->deps.do_request) {
+            PostHogBatchRequest request = build_posthog_batch_request(in->cfg, events);
+            issued                      = in->deps.do_request("POST", request.url, request.headers, nullptr, &request.body);
+        }
+
+        {
+            std::lock_guard<std::mutex> hk(in->m_h_mu);
+            if (issued && in->consent.load(std::memory_order_relaxed) && !in->deps_invalid.load(std::memory_order_relaxed) &&
+                !in->posthog_stop_uploads.load(std::memory_order_relaxed)) {
+                in->ph_handle = std::move(issued);
+            } else if (issued) {
+                issued->cancel();
+            }
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(in->cfg.poll_interval_ms > 0 ? in->cfg.poll_interval_ms : 1));
+    }
+}
+
 // Forward declaration: generate_batch_id is defined later (near bt_worker_loop)
 // but init() needs it to seed current_batch_id on startup.
 namespace {
@@ -938,12 +1124,13 @@ static bool purge_spool(const std::shared_ptr<SnapLogClient::Internals>& in)
     auto purge_file = [&in](const fs::path& path) {
         const auto mark_failure = [&in](const char* stage, const boost::system::error_code& failure_ec) {
             in->purge_delete_failed.fetch_add(1, std::memory_order_relaxed);
-            BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: privacy purge failed at " << stage << ": " << failure_ec.message();
+            BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: privacy purge failed at " << stage << ": "
+                                       << failure_ec.message();
             return false;
         };
 
         boost::system::error_code ec;
-        const bool exists = fs::exists(path, ec);
+        const bool                exists = fs::exists(path, ec);
         if (!ec && !exists)
             return true;
         if (ec == boost::system::errc::no_such_file_or_directory)
@@ -967,7 +1154,7 @@ static bool purge_spool(const std::shared_ptr<SnapLogClient::Internals>& in)
             return mark_failure("resize", resize_ec);
 
         boost::system::error_code size_ec;
-        const auto size = fs::file_size(path, size_ec);
+        const auto                size = fs::file_size(path, size_ec);
         if (size_ec || size != 0)
             return mark_failure("file size", size_ec);
 
@@ -995,7 +1182,7 @@ void SnapLogClient::start_batch_worker(const std::shared_ptr<Internals>& in)
         return;
 
     if (!in->bt_spool_lock.acquired && m_purge_lock_spool_dir == in->spool_dir_resolved && m_purge_spool_lock.acquired) {
-        in->bt_spool_lock       = std::move(m_purge_spool_lock);
+        in->bt_spool_lock = std::move(m_purge_spool_lock);
         m_purge_lock_spool_dir.clear();
     }
 
@@ -1006,12 +1193,13 @@ void SnapLogClient::start_batch_worker(const std::shared_ptr<Internals>& in)
             return;
         }
     }
+    in->batch_locked_out.store(false);
 
     namespace fs = boost::filesystem;
     boost::system::error_code ec;
     if (fs::exists(in->active_path, ec)) {
         boost::system::error_code size_ec;
-        const auto active_size = fs::file_size(in->active_path, size_ec);
+        const auto                active_size = fs::file_size(in->active_path, size_ec);
         if (!size_ec && active_size > 0) {
             std::string err;
             rotate_active(in->spool_dir_resolved, in->active_path, "recovery00000000", err);
@@ -1032,11 +1220,26 @@ void SnapLogClient::start_batch_worker(const std::shared_ptr<Internals>& in)
     }
     reset_batch_upload_state(*in);
     in->events_in_active = 0;
-    in->last_flush_ms    = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    in->last_flush_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 
     std::shared_ptr<Internals> in_for_bt  = in;
     const uint64_t             generation = in->batch_worker_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
-    in->bt_worker = std::thread(bt_worker_loop, in_for_bt, generation);
+    in->bt_worker                         = std::thread(bt_worker_loop, in_for_bt, generation);
+}
+
+void SnapLogClient::start_posthog_worker(const std::shared_ptr<Internals>& in)
+{
+    if (!in || in->ph_worker.joinable() || !in->cfg.posthog_enabled || in->cfg.posthog_base.empty() || in->cfg.posthog_api_key.empty())
+        return;
+
+    in->posthog_drain_and_flush.store(false);
+    in->posthog_stop_uploads.store(false);
+    in->posthog_last_flush_ms.store(steady_now_ms(), std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> hk(in->m_h_mu);
+        in->ph_handle.reset();
+    }
+    in->ph_worker = std::thread(ph_worker_loop, in);
 }
 
 static bool purge_completion_blocks(const std::shared_future<bool>& completion)
@@ -1049,9 +1252,7 @@ static bool purge_completion_blocks(const std::shared_future<bool>& completion)
 }
 
 static bool purge_completion_active(const std::shared_future<bool>& completion)
-{
-    return completion.valid() && completion.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
-}
+{ return completion.valid() && completion.wait_for(std::chrono::seconds(0)) != std::future_status::ready; }
 
 std::shared_future<bool> SnapLogClient::begin_spool_purge(const std::shared_ptr<Internals>& in, std::thread retired_worker)
 {
@@ -1061,10 +1262,10 @@ std::shared_future<bool> SnapLogClient::begin_spool_purge(const std::shared_ptr<
 
     auto retired_worker_handle = std::make_shared<std::thread>(std::move(retired_worker));
     if (!in->bt_spool_lock.acquired && m_purge_lock_spool_dir == in->spool_dir_resolved && m_purge_spool_lock.acquired) {
-        in->bt_spool_lock       = std::move(m_purge_spool_lock);
+        in->bt_spool_lock = std::move(m_purge_spool_lock);
         m_purge_lock_spool_dir.clear();
     } else if (m_purge_lock_spool_dir != in->spool_dir_resolved) {
-        m_purge_spool_lock       = SpoolLock{};
+        m_purge_spool_lock = SpoolLock{};
         m_purge_lock_spool_dir.clear();
     }
 
@@ -1076,53 +1277,68 @@ std::shared_future<bool> SnapLogClient::begin_spool_purge(const std::shared_ptr<
     }
 
     auto previous_completion = m_purge_completion;
-    auto completion_promise = std::make_shared<std::promise<bool>>();
-    auto completion = completion_promise->get_future().share();
-    m_purge_spool_dir = in->spool_dir_resolved;
-    m_purge_promise   = completion_promise;
-    m_purge_completion = completion;
+    auto completion_promise  = std::make_shared<std::promise<bool>>();
+    auto completion          = completion_promise->get_future().share();
+    m_purge_spool_dir        = in->spool_dir_resolved;
+    m_purge_promise          = completion_promise;
+    m_purge_completion       = completion;
 
-    std::thread(
-        [this, in, completion_promise, previous_completion, retired_worker_handle]() mutable {
-            PurgeCompletionGuard completion_guard(completion_promise);
-            bool purged = false;
+    std::thread([this, in, completion_promise, previous_completion, retired_worker_handle]() mutable {
+        PurgeCompletionGuard completion_guard(completion_promise);
+        bool                 purged = false;
+        bool                 lock_failure_reported = false;
 
-            if (retired_worker_handle->joinable())
-                retired_worker_handle->join();
-            if (previous_completion.valid())
-                previous_completion.wait();
+        if (retired_worker_handle->joinable())
+            retired_worker_handle->join();
+        if (previous_completion.valid())
+            previous_completion.wait();
 
+        while (true) {
             if (!in->bt_spool_lock.acquired)
                 in->bt_spool_lock = try_acquire_spool_lock(in->spool_dir_resolved);
-            if (in->bt_spool_lock.acquired)
-                purged = purge_spool(in);
-            else {
-                in->purge_delete_failed.fetch_add(1, std::memory_order_relaxed);
-                BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: privacy purge could not acquire the spool lock";
+
+            if (!in->bt_spool_lock.acquired) {
+                if (!lock_failure_reported) {
+                    lock_failure_reported = true;
+                    in->purge_delete_failed.fetch_add(1, std::memory_order_relaxed);
+                    BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: privacy purge could not acquire the spool lock; retrying";
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
             }
 
-            std::lock_guard<std::mutex> lifecycle_lock(m_lifecycle_mu);
-            if (in->bt_spool_lock.acquired) {
-                m_purge_spool_lock       = std::move(in->bt_spool_lock);
-                m_purge_lock_spool_dir = in->spool_dir_resolved;
+            purged = purge_spool(in);
+            if (purged)
+                break;
+
+            if (!lock_failure_reported) {
+                lock_failure_reported = true;
+                BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: privacy purge could not complete; retrying";
             }
-            if (m_purge_promise == completion_promise && purged) {
-                m_purge_promise.reset();
-                m_purge_completion = {};
-                m_purge_spool_dir.clear();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        std::lock_guard<std::mutex> lifecycle_lock(m_lifecycle_mu);
+        if (m_purge_promise == completion_promise && in->bt_spool_lock.acquired) {
+            m_purge_spool_lock     = std::move(in->bt_spool_lock);
+            m_purge_lock_spool_dir = in->spool_dir_resolved;
+        }
+        if (m_purge_promise == completion_promise && purged) {
+            m_purge_promise.reset();
+            m_purge_completion = {};
+            m_purge_spool_dir.clear();
+        }
+        if (m_int == in) {
+            if (in->stop_receiving.load(std::memory_order_relaxed)) {
+                std::lock_guard<std::mutex> state_lock(m_state_mu);
+                m_int.reset();
+            } else if (purged && in->consent.load(std::memory_order_relaxed)) {
+                start_batch_worker(in);
             }
-            if (m_int == in) {
-                if (in->stop_receiving.load(std::memory_order_relaxed)) {
-                    std::lock_guard<std::mutex> state_lock(m_state_mu);
-                    m_int.reset();
-                } else if (purged && in->consent.load(std::memory_order_relaxed)) {
-                    start_batch_worker(in);
-                }
-            }
-            // The deferred starter must not observe completion before spool-lock ownership has moved.
-            completion_guard.fulfill(purged);
-        })
-        .detach();
+        }
+        // The deferred starter must not observe completion before spool-lock ownership has moved.
+        completion_guard.fulfill(purged);
+    }).detach();
 
     return completion;
 }
@@ -1156,9 +1372,7 @@ void SnapLogClient::start_batch_worker_after_purge(const std::shared_ptr<Interna
 }
 
 bool SnapLogClient::spool_purge_blocks_worker(const boost::filesystem::path& spool_dir) const
-{
-    return m_purge_spool_dir == spool_dir && purge_completion_blocks(m_purge_completion);
-}
+{ return m_purge_spool_dir == spool_dir && purge_completion_blocks(m_purge_completion); }
 
 void SnapLogClient::init(SnapLogDeps deps, SnapLogConfig cfg)
 {
@@ -1223,6 +1437,26 @@ void SnapLogClient::init(SnapLogDeps deps, SnapLogConfig cfg)
                 in_pin->batch_deps_invalid.store(true);
             }
         }
+        if (old->ph_worker.joinable()) {
+            old->posthog_drain_and_flush.store(false);
+            old->posthog_stop_uploads.store(true, std::memory_order_release);
+            cancel_posthog_current(old);
+            auto                       join_promise = std::make_shared<std::promise<void>>();
+            auto                       join_future  = join_promise->get_future();
+            std::shared_ptr<Internals> in_pin       = old;
+            std::thread                joiner([in_pin, join_promise]() {
+                if (in_pin->ph_worker.joinable()) {
+                    in_pin->ph_worker.join();
+                    join_promise->set_value();
+                }
+            });
+            joiner.detach();
+            int deadline_sec = std::min(in_pin->cfg.batch_join_deadline_sec, kShutdownBatchJoinMaxSec);
+            if (deadline_sec < 1)
+                deadline_sec = 1;
+            if (join_future.wait_for(std::chrono::seconds(deadline_sec)) != std::future_status::ready)
+                in_pin->deps_invalid.store(true);
+        }
     }
     auto in = std::make_shared<Internals>(std::move(deps), std::move(cfg));
     if (in->deps.consent_ok)
@@ -1249,6 +1483,7 @@ void SnapLogClient::init(SnapLogDeps deps, SnapLogConfig cfg)
     // shutdown; shutdown joins before m_int.reset() in the shutdown path).
     std::shared_ptr<Internals> in_for_thread = in;
     in->rt_worker                            = std::thread(rt_worker_loop, in_for_thread);
+    start_posthog_worker(in);
 
     // Start the batch worker thread if spool_dir is configured. drain_and_flush
     // starts false (only set true during shutdown for the final flush).
@@ -1290,6 +1525,13 @@ void SnapLogClient::shutdown()
     if (!in)
         return;
     const bool deferred_consent_purge = purge_completion_active(m_purge_completion) && m_purge_spool_dir == in->spool_dir_resolved;
+    if (in->consent.load(std::memory_order_relaxed)) {
+        in->posthog_drain_and_flush.store(true);
+    } else {
+        in->posthog_drain_and_flush.store(false);
+        in->posthog_stop_uploads.store(true, std::memory_order_release);
+        cancel_posthog_current(in);
+    }
     in->stop_receiving.store(true);
     cancel_current(in, SnapLogPolicy::Realtime); // abort in-flight so worker's done() trips
 
@@ -1334,6 +1576,28 @@ void SnapLogClient::shutdown()
             // Note: rt_worker is still running; we intentionally do NOT join
             // it here. m_int.reset() below releases our ref; the worker keeps
             // its own shared_ptr<Internals> alive until it exits.
+        }
+    }
+
+    if (in->ph_worker.joinable()) {
+        auto                       ph_join_promise = std::make_shared<std::promise<void>>();
+        auto                       ph_join_future  = ph_join_promise->get_future();
+        std::shared_ptr<Internals> ph_in_pin       = in;
+        std::thread                ph_joiner([ph_in_pin, ph_join_promise]() {
+            if (ph_in_pin->ph_worker.joinable()) {
+                ph_in_pin->ph_worker.join();
+                ph_join_promise->set_value();
+            }
+        });
+        ph_joiner.detach();
+        int ph_deadline_sec = std::min(in->cfg.batch_join_deadline_sec, kShutdownBatchJoinMaxSec);
+        if (ph_deadline_sec < 1)
+            ph_deadline_sec = 1;
+        if (ph_join_future.wait_for(std::chrono::seconds(ph_deadline_sec)) == std::future_status::ready) {
+            // PostHog worker joined within deadline.
+        } else {
+            in->deps_invalid.store(true);
+            cancel_posthog_current(in);
         }
     }
 
@@ -1396,8 +1660,12 @@ static std::string extract_event_name(const SnapLogExt& ext)
     return {};
 }
 
-void SnapLogClient::log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, SnapLogPolicy policy, const char* caller_func,
-                        int /*caller_line*/, bool bypass_login_gate)
+void SnapLogClient::log(SnapLogLevel  lvl,
+                        std::string   msg,
+                        SnapLogExt    ext,
+                        SnapLogPolicy policy,
+                        const char*   caller_func,
+                        int /*caller_line*/)
 {
     auto in = internals();
     // 1. Not init'd → safe no-op.
@@ -1415,11 +1683,9 @@ void SnapLogClient::log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, SnapL
     if (in->stop_receiving.load(std::memory_order_relaxed))
         return;
 
-    if (!bypass_login_gate) {
-        std::lock_guard<std::mutex> tk(in->token_mu);
-        if (in->user_token.empty())
-            return;
-    }
+    std::lock_guard<std::mutex> tk(in->token_mu);
+    if (in->user_token.empty())
+        return;
 
     // 4. Disabled event name → no-op.
     std::string event_name = extract_event_name(ext);
@@ -1492,6 +1758,138 @@ void SnapLogClient::log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, SnapL
     }
 }
 
+void SnapLogClient::log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, const char* caller_func, int /*caller_line*/, unsigned sinks)
+{
+    auto in = internals();
+    if (!in || !in->cfg.enabled || sinks == SinkNone || !in->consent.load(std::memory_order_relaxed) ||
+        in->stop_receiving.load(std::memory_order_relaxed))
+        return;
+
+    const bool wants_gateway = (sinks & SinkGateway) != 0;
+    const bool wants_posthog = (sinks & SinkPostHog) != 0 && in->cfg.posthog_enabled && !in->cfg.posthog_api_key.empty() &&
+                               !in->cfg.posthog_base.empty();
+
+    bool gateway_allowed = false;
+    if (wants_gateway) {
+        std::lock_guard<std::mutex> tk(in->token_mu);
+        gateway_allowed = !in->user_token.empty() && !in->batch_locked_out.load(std::memory_order_acquire);
+    }
+
+    if (!gateway_allowed && !wants_posthog)
+        return;
+
+    const std::string event_name = extract_event_name(ext);
+    for (const auto& blocked : in->cfg.event_disable_list) {
+        if (blocked == event_name)
+            return;
+    }
+    if (!in->rate_limiter.allow(event_name, in->cfg.default_rate_cap_per_sec, in->cfg.total_unknown_rate_cap_per_sec,
+                                in->cfg.event_rate_cap_per_sec))
+        return;
+
+    std::string posthog_line;
+    if (wants_posthog) {
+        PostHogEvent event;
+        event.level   = lvl;
+        event.message = msg;
+        event.ext     = ext;
+        event.logger  = normalize_logger(caller_func);
+
+        BatchLineContext& ctx = event.context;
+        ctx.clientId          = in->machine_id_snapshot;
+        if (ctx.clientId.empty() && in->deps.machine_id)
+            ctx.clientId = in->deps.machine_id();
+        {
+            std::lock_guard<std::mutex> tk(in->token_mu);
+            ctx.userId           = in->user_id;
+            ctx.deviceId         = in->device_id;
+            ctx.connect_clientid = in->connect_clientid;
+            ctx.print_sn         = in->print_sn;
+            ctx.batchId          = in->current_batch_id_snapshot;
+        }
+        ctx.service         = "snapmaker-desktop";
+        ctx.clientType      = kSnapLogClientType;
+        ctx.processId       = in->cfg.process_id;
+        ctx.appVersion      = in->cfg.app_version;
+        ctx.appBuild        = in->cfg.app_build;
+        ctx.profileVersion  = in->cfg.profile_version;
+        ctx.platform        = in->cfg.platform;
+        ctx.osVersion       = in->cfg.os_version;
+        ctx.sessionId       = in->cfg.session_id;
+        ctx.region          = in->cfg.region;
+        ctx.eventName       = event_name;
+        ctx.logger          = event.logger;
+        ctx.ts_ms           = in->deps.now_ms ? in->deps.now_ms() : 0;
+        ctx.home_for_redact = in->cfg.home_for_redact;
+        posthog_line        = render_posthog_event(event);
+    }
+
+    if (!gateway_allowed && posthog_line.empty())
+        return;
+
+    std::lock_guard<std::mutex> lk(in->queue_mu);
+    if (!in->consent.load(std::memory_order_acquire))
+        return;
+    if (gateway_allowed) {
+        std::lock_guard<std::mutex> tk(in->token_mu);
+        gateway_allowed = !in->user_token.empty() && !in->batch_locked_out.load(std::memory_order_acquire);
+    }
+    if (!gateway_allowed && !wants_posthog)
+        return;
+    if (gateway_allowed) {
+        const std::size_t cap = in->cfg.batch_queue_cap;
+        if (cap == 0 || in->bt_queue.size() >= cap) {
+            in->batch_queue_dropped.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            in->bt_queue.push_back(RtEvent{lvl, std::move(msg), std::move(ext), normalize_logger(caller_func)});
+        }
+    }
+
+    if (wants_posthog) {
+        const std::size_t cap = in->cfg.posthog_queue_cap;
+        if (cap != 0 && in->ph_queue.size() < cap) {
+            in->ph_queue.push_back(std::move(posthog_line));
+        } // Queue full: drop the incoming event.
+    }
+}
+
+void SnapLogClient::log_event(SnapLogLevel level, const char* caller_func, int caller_line, unsigned sinks, SnapEvent event)
+{
+    log_event(level, caller_func, caller_line, sinks, event, SnapLogExt{}, std::string{});
+}
+
+void SnapLogClient::log_event(SnapLogLevel    level,
+                              const char*      caller_func,
+                              int              caller_line,
+                              unsigned         sinks,
+                              SnapEvent        event,
+                              SnapLogExt       ext)
+{
+    log_event(level, caller_func, caller_line, sinks, event, std::move(ext), std::string{});
+}
+
+void SnapLogClient::log_event(SnapLogLevel      level,
+                              const char*        caller_func,
+                              int                caller_line,
+                              unsigned           sinks,
+                              SnapEvent          event,
+                              const std::string& msg)
+{
+    log_event(level, caller_func, caller_line, sinks, event, SnapLogExt{}, msg);
+}
+
+void SnapLogClient::log_event(SnapLogLevel      level,
+                              const char*        caller_func,
+                              int                caller_line,
+                              unsigned           sinks,
+                              SnapEvent          event,
+                              SnapLogExt         ext,
+                              const std::string& msg)
+{
+    ext.emplace(ext.begin(), "eventName", std::string(snap_event_name(event)));
+    log(level, msg, std::move(ext), caller_func, caller_line, sinks);
+}
+
 void SnapLogClient::set_user_token(std::string t)
 {
     auto in = internals();
@@ -1547,13 +1945,24 @@ void SnapLogClient::set_consent(bool ok)
     auto                        in = internals();
     if (!in)
         return;
-    in->consent.store(ok);
-    // Both transitions clear the queues (symmetric — avoids OFF-period
+    const bool previous_consent = in->consent.exchange(ok, std::memory_order_acq_rel);
+    if (previous_consent == ok)
+        return;
+
+    // Actual transitions clear the queues (symmetric — avoids OFF-period
     // backlog flushing on ON; avoids stale events lingering after OFF).
     {
         std::lock_guard<std::mutex> lk(in->queue_mu);
         in->rt_queue.clear();
         in->bt_queue.clear();
+        in->ph_queue.clear();
+    }
+    in->posthog_stop_uploads.store(!ok, std::memory_order_release);
+    if (!ok) {
+        cancel_posthog_current(in);
+    } else {
+        in->posthog_last_flush_ms.store(steady_now_ms(), std::memory_order_relaxed);
+        start_posthog_worker(in);
     }
 
     if (!ok) {
@@ -1586,6 +1995,15 @@ void SnapLogClient::cancel_current(const std::shared_ptr<Internals>& in, SnapLog
     auto&                       h = (p == SnapLogPolicy::Realtime) ? in->rt_handle : in->bt_handle;
     if (h)
         h->cancel();
+}
+
+void SnapLogClient::cancel_posthog_current(const std::shared_ptr<Internals>& in)
+{
+    if (!in)
+        return;
+    std::lock_guard<std::mutex> lk(in->m_h_mu);
+    if (in->ph_handle)
+        in->ph_handle->cancel();
 }
 
 // --- Test-only accessors ---
@@ -1635,6 +2053,24 @@ std::size_t SnapLogClient::batch_queue_size_for_test() const
         return 0;
     std::lock_guard<std::mutex> lk(m_int->queue_mu);
     return m_int->bt_queue.size();
+}
+
+std::size_t SnapLogClient::posthog_queue_size_for_test() const
+{
+    std::lock_guard<std::mutex> state_lock(m_state_mu);
+    if (!m_int)
+        return 0;
+    std::lock_guard<std::mutex> lk(m_int->queue_mu);
+    return m_int->ph_queue.size();
+}
+
+void SnapLogClient::set_posthog_timer_expired_for_test()
+{
+    auto in = internals();
+    if (!in)
+        return;
+    const int interval_sec = in->cfg.posthog_flush_sec > 0 ? in->cfg.posthog_flush_sec : 1;
+    in->posthog_last_flush_ms.store(steady_now_ms() - static_cast<int64_t>(interval_sec) * 1000, std::memory_order_relaxed);
 }
 
 uint64_t SnapLogClient::batch_queue_dropped_for_test() const
@@ -1822,7 +2258,7 @@ bool rotate_active(const boost::filesystem::path& spool,
 std::vector<boost::filesystem::path> list_sealed(const boost::filesystem::path& spool)
 {
     namespace fs = boost::filesystem;
-    std::vector<fs::path>     result;
+    std::vector<fs::path> result;
     if (!is_valid_spool_path(spool))
         return result;
 
@@ -1860,11 +2296,8 @@ uintmax_t sealed_total_bytes(const boost::filesystem::path& spool, const boost::
 }
 
 //
-// Three endpoints (create/completed/cancel), two auth variants each. Auth
-// selection mirrors build_realtime_request exactly: token non-empty -> Bearer
-// logged-in path; empty -> HMAC public path. The path suffix differs per
-// endpoint, so we factor a shared helper that takes the suffix and builds
-// URL + headers, then each public function supplies its own JSON body.
+// Three endpoints (create/completed/cancel). Batch upload is login-only: an
+// empty token produces no request. Realtime keeps its separate public HMAC path.
 
 namespace {
 
@@ -1879,6 +2312,8 @@ BatchRequest build_batch_request_common(const SnapLogDeps&   deps,
                                         const std::string&   path_suffix)
 {
     BatchRequest r;
+    if (token.empty())
+        return r;
 
     auto add_common = [&]() {
         r.headers.emplace_back("X-Client-Type", kSnapLogClientType);
@@ -1917,6 +2352,8 @@ BatchRequest build_batch_create_request(const SnapLogDeps&   deps,
                                         const std::string&   fileName)
 {
     BatchRequest   r = build_batch_request_common(deps, cfg, clientId, token, nonce_gen, "create");
+    if (r.url.empty())
+        return r;
     nlohmann::json body;
     body["fileName"] = fileName;
     r.body           = body.dump();
@@ -1931,6 +2368,8 @@ BatchRequest build_batch_complete_request(const SnapLogDeps&   deps,
                                           const std::string&   full_key)
 {
     BatchRequest   r = build_batch_request_common(deps, cfg, clientId, token, nonce_gen, "completed");
+    if (r.url.empty())
+        return r;
     nlohmann::json body;
     body["fileName"] = full_key;
     r.body           = body.dump();
@@ -1945,6 +2384,8 @@ BatchRequest build_batch_cancel_request(const SnapLogDeps&   deps,
                                         const std::string&   uploadId)
 {
     BatchRequest   r    = build_batch_request_common(deps, cfg, clientId, token, nonce_gen, "cancel");
+    if (r.url.empty())
+        return r;
     nlohmann::json body = nlohmann::json::object();
     if (!uploadId.empty()) {
         body["uploadId"] = uploadId;
@@ -2093,7 +2534,7 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
 
     auto issue_request = [&](const std::string& method, const std::string& url, std::vector<std::pair<std::string, std::string>> headers,
                              const fs::path* body_file, const std::string* body_str) -> bool {
-        if (!batch_worker_current(in, generation) || in->stop_uploads.load(std::memory_order_acquire) || batch_deps_unavailable(*in) ||
+        if (url.empty() || !batch_worker_current(in, generation) || in->stop_uploads.load(std::memory_order_acquire) || batch_deps_unavailable(*in) ||
             !in->deps.do_request)
             return false;
 
@@ -2132,6 +2573,10 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
         {
             std::lock_guard<std::mutex> tk(in->token_mu);
             in->bt_frozen_token = in->user_token;
+        }
+        if (in->bt_frozen_token.empty()) {
+            reset_batch_upload_state(*in);
+            return;
         }
         std::string client_id = in->machine_id_snapshot;
         if (client_id.empty() && in->deps.machine_id)
@@ -2555,6 +3000,7 @@ void SnapLogClient::bt_worker_loop(std::shared_ptr<Internals> in, uint64_t gener
                 c.clientType             = kSnapLogClientType;
                 c.processId              = in->cfg.process_id;
                 c.appVersion             = in->cfg.app_version;
+                c.profileVersion         = in->cfg.profile_version;
                 c.appBuild               = in->cfg.app_build;
                 c.platform               = in->cfg.platform;
                 c.osVersion              = in->cfg.os_version;
@@ -2709,8 +3155,8 @@ make_production_do_request(SnapLogConfig cfg)
         h->prom   = std::make_shared<std::promise<SnapLogResult>>();
         auto prom = h->prom;
         // weak_ptr breaks the Handle -> Http -> callback -> Handle cycle. The
- // io_thread inside Http::perform() keeps the Http object alive, so the
- // callbacks can safely observe an expired handle after the worker resets it.
+        // io_thread inside Http::perform() keeps the Http object alive, so the
+        // callbacks can safely observe an expired handle after the worker resets it.
         auto hweak = std::weak_ptr<SnapLogHandle>(h);
         http.on_complete([prom, hweak](std::string body, unsigned http_status) {
             if (auto hcap = hweak.lock()) {

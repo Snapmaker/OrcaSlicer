@@ -8,6 +8,7 @@ get_filename_component(_TEST_NAME ${CMAKE_CURRENT_LIST_DIR} NAME)
 add_executable(${_TEST_NAME}_tests
     ${_TEST_NAME}_tests_main.cpp
     SnapLogClient_test.cpp
+    SnapTelemetry_test.cpp
     )
 
 find_package(JPEG REQUIRED)

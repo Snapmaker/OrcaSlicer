@@ -1,9 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <future>
+#include <set>
 #include <string_view>
 #include <memory>
 #include <mutex>
@@ -33,6 +35,29 @@ static std::string hdr(const std::vector<std::pair<std::string, std::string>>& h
 }
 
 TEST_CASE("SnapLog scaffold compiles", "[snaplog]") { REQUIRE(true); }
+
+TEST_CASE("SnapEvent registry maps every enum to a unique stable name", "[snaplog][events]")
+{
+    REQUIRE(snap_event_name(SnapEvent::AppLaunch) == "app_launch");
+    REQUIRE(snap_event_name(SnapEvent::SliceFailed) == "slice_failed");
+    REQUIRE(snap_event_from_name("calibration_result") == SnapEvent::CalibrationResult);
+    REQUIRE_FALSE(snap_event_from_name("not_a_snap_event").has_value());
+
+    const std::array<SnapEvent, 23> events = {
+        SnapEvent::AppLaunch,           SnapEvent::AppSessionEnd,           SnapEvent::CalibrationResult,
+        SnapEvent::DeviceConnectAttempt, SnapEvent::DeviceDisconnect,       SnapEvent::DeviceDiscoveryStart,
+        SnapEvent::DeviceEngineSet,      SnapEvent::FileImportResult,       SnapEvent::FirmwareUpgradeResult,
+        SnapEvent::FlutterRunResult,     SnapEvent::GcodeExportResult,      SnapEvent::MqttClientCreate,
+        SnapEvent::MqttClientCreateFailed, SnapEvent::MqttConnectAttempt,   SnapEvent::MqttConnectFailure,
+        SnapEvent::MqttConnectResult,    SnapEvent::MqttSubscribeResult,    SnapEvent::PrintJobSendResult,
+        SnapEvent::PrivacyConsentGranted, SnapEvent::ProjectSaveResult,     SnapEvent::SliceCompleted,
+        SnapEvent::SliceFailed,          SnapEvent::SliceStart
+    };
+
+    std::set<std::string_view> names;
+    for (const auto event : events)
+        REQUIRE(names.insert(snap_event_name(event)).second);
+}
 
 TEST_CASE("hmac_sha256_hex matches doc vector", "[snaplog]")
 {
@@ -388,6 +413,12 @@ TEST_CASE("SnapLogConfig defaults match spec", "[snaplog][config]")
 {
     SnapLogConfig c;
     REQUIRE(c.gateway_base == "https://api.snapmaker.com");
+    REQUIRE(c.posthog_base == "https://ph.snapmaker.cn");
+    REQUIRE(c.posthog_api_key.empty());
+    REQUIRE(c.posthog_enabled == true);
+    REQUIRE(c.posthog_queue_cap == 1024);
+    REQUIRE(c.posthog_batch_size == 50);
+    REQUIRE(c.posthog_flush_sec == 60);
     REQUIRE(c.enabled == true);
     REQUIRE(c.default_rate_cap_per_sec == 5);
     REQUIRE(c.total_unknown_rate_cap_per_sec == 20);
@@ -494,10 +525,11 @@ TEST_CASE("SnapLogClient: re-login clears auth_known_dead; empty token does not"
     SnapLogClient::instance().shutdown();
 }
 
-TEST_CASE("SNAP_LOG macro compiles and is a safe no-op un-init'd", "[snaplog]")
+TEST_CASE("direct realtime log call is a safe no-op un-init'd", "[snaplog]")
 {
-    SNAP_LOG(Info, "smoke", {"eventName", "smoke_test"});
-    SNAP_LOG_BATCH(Error, "smoke2", {"eventName", "smoke_test2"}, {"k", "v"});
+    SnapLogClient::instance().log(SnapLogLevel::Info, "smoke", SnapLogExt{{"eventName", "smoke_test"}},
+                                  SnapLogPolicy::Realtime, __FUNCTION__, __LINE__);
+    SNAP_LOG_BATCH(Error, "smoke2", SinkGateway, {"eventName", "smoke_test2"}, {"k", "v"});
     REQUIRE(true); // reached without crash
 }
 
@@ -510,18 +542,26 @@ TEST_CASE("SNAP_LOG macro compiles and is a safe no-op un-init'd", "[snaplog]")
 namespace {
 struct FakeClient
 {
-    int64_t       now           = 0;
-    int           request_count = 0;
-    SnapLogDeps   deps;
-    SnapLogConfig cfg;
+    int64_t                                          now = 0;
+    std::atomic<int>                                 request_count{0};
+    std::mutex                                       request_mu;
+    std::vector<std::pair<std::string, std::string>> requests;
+    SnapLogDeps                                      deps;
+    SnapLogConfig                                    cfg;
 
     FakeClient()
     {
-        deps.do_request = [this](const std::string& /*method*/, const std::string& /*url*/,
+        deps.do_request = [this](const std::string& /*method*/, const std::string& url,
                                  std::vector<std::pair<std::string, std::string>> /*headers*/, const boost::filesystem::path* /*body_file*/,
-                                 const std::string* /*body_str*/) {
+                                 const std::string* body_str) {
             ++request_count;
-            auto h = std::make_shared<SnapLogHandle>();
+            if (body_str) {
+                std::lock_guard<std::mutex> lock(request_mu);
+                requests.emplace_back(url, *body_str);
+            }
+            auto h  = std::make_shared<SnapLogHandle>();
+            h->prom = std::make_shared<std::promise<SnapLogResult>>();
+            h->prom->set_value({200, "", false});
             h->fulfilled.store(true);
             return h;
         };
@@ -549,8 +589,79 @@ struct FakeClient
         SnapLogClient::instance().set_user_token("tok");
     }
     void shutdown() { SnapLogClient::instance().shutdown(); }
+
+    std::size_t posthog_request_count() const
+    {
+        std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(request_mu));
+        std::size_t                 count = 0;
+        for (const auto& request : requests)
+            if (request.first.find("/batch/") != std::string::npos)
+                ++count;
+        return count;
+    }
+
+    std::string last_posthog_body() const
+    {
+        std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(request_mu));
+        for (auto it = requests.rbegin(); it != requests.rend(); ++it)
+            if (it->first.find("/batch/") != std::string::npos)
+                return it->second;
+        return {};
+    }
 };
 } // anonymous namespace
+
+static bool wait_for_condition(const std::function<bool()>& condition, int timeout_ms = 2000)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (condition())
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return condition();
+}
+
+TEST_CASE("level macros route event-only and field-only forms", "[snaplog][api]")
+{
+    FakeClient fc;
+    fc.cfg.default_rate_cap_per_sec       = 1000;
+    fc.cfg.total_unknown_rate_cap_per_sec = 10000;
+    fc.cfg.posthog_api_key                = "phc_test";
+    fc.init();
+
+    SNAP_LOG_INFO(SinkPostHog, SnapEvent::AppLaunch);
+    SNAP_LOG_WARNING(SinkGateway | SinkPostHog, SnapEvent::FileImportResult,
+                     {
+                         {"source", "dialog"},
+                         {"success", "false"},
+                     });
+
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 1);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 2);
+    fc.shutdown();
+}
+
+TEST_CASE("level macros route message-only and field-plus-message forms", "[snaplog][api]")
+{
+    FakeClient fc;
+    fc.cfg.default_rate_cap_per_sec       = 1000;
+    fc.cfg.total_unknown_rate_cap_per_sec = 10000;
+    fc.cfg.posthog_api_key                = "phc_test";
+    fc.init();
+
+    SNAP_LOG_ERROR(SinkGateway, SnapEvent::MqttClientCreateFailed, "mqtt failed");
+    SNAP_LOG_INFO(SinkPostHog, SnapEvent::FileImportResult,
+                  {
+                      {"source", "dialog"},
+                      {"fileType", "3mf"},
+                  },
+                  "import completed");
+
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 1);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 1);
+    fc.shutdown();
+}
 
 TEST_CASE("log(): consent false drops all events", "[snaplog][pipeline]")
 {
@@ -692,15 +803,434 @@ TEST_CASE("log(): empty user_token drops events (login gate)", "[snaplog][pipeli
     fc.shutdown();
 }
 
-TEST_CASE("log(): forced event bypasses empty user_token", "[snaplog][pipeline]")
+TEST_CASE("log(): login gate cannot be bypassed", "[snaplog][pipeline]")
 {
+    using LoginGatedLog = void (SnapLogClient::*)(SnapLogLevel, std::string, SnapLogExt, SnapLogPolicy, const char*, int);
+    static constexpr LoginGatedLog login_gated_log = &SnapLogClient::log;
+
     FakeClient fc;
     fc.init();
     SnapLogClient::instance().set_user_token("");
     SnapLogClient::instance().log(SnapLogLevel::Info, "forced", SnapLogExt{{"eventName", "forced"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__, true);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 1);
+                                  __LINE__);
+    REQUIRE(login_gated_log != nullptr);
+    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 0);
     fc.shutdown();
+}
+
+TEST_CASE("PostHog event renders a flattened and sanitized capture event", "[snaplog][posthog]")
+{
+    BatchLineContext ctx;
+    ctx.clientId         = "machine-1";
+    ctx.processId        = "1234";
+    ctx.connect_clientid = "mqtt-1";
+    ctx.print_sn         = "SN123";
+    ctx.userId           = "user-1";
+    ctx.appVersion       = "2.5.0";
+    ctx.osVersion        = "Windows 11";
+    ctx.batchId          = "batch-1";
+    ctx.eventName        = "slice_completed";
+    ctx.ts_ms            = 1778639794110;
+
+    PostHogEvent event;
+    event.level   = SnapLogLevel::Warning;
+    event.message = "slice done";
+    event.ext     = SnapLogExt{{"durationMs", "120"},      {"password", "hunter2"},          {"rawGcode", "G28"},
+                               {"printerSerial", "SN456"}, {"clientUUID", "attacker-value"}, {"source", "caller"}};
+    event.logger  = "test_case";
+    event.context = ctx;
+
+    auto parsed = nlohmann::json::parse(render_posthog_event(event));
+    REQUIRE(parsed["event"] == "slice_completed");
+    REQUIRE(parsed["distinct_id"] == "machine-1");
+    REQUIRE(parsed["timestamp"] == "2026-05-13T02:36:34.110Z");
+
+    const auto& props = parsed["properties"];
+    REQUIRE(parsed.contains("properties"));
+    REQUIRE_FALSE(props.contains("ext"));
+    REQUIRE(props["level"] == "WARN");
+    REQUIRE(props["service"] == "snapmaker-desktop");
+    REQUIRE(props["message"] == "slice done");
+    REQUIRE(props["eventName"] == "slice_completed");
+    REQUIRE(props["userId"] == "user-1");
+    REQUIRE(props["clientType"] == "Orca");
+    REQUIRE(props["clientUUID"] == "machine-1");
+    REQUIRE(props["processId"] == "1234");
+    REQUIRE(props["connect_clientid"] == "mqtt-1");
+    REQUIRE(props["orcaVersion"] == "2.5.0");
+    REQUIRE(props["os"] == "Windows 11");
+    REQUIRE(props["batchId"] == "batch-1");
+    REQUIRE(props["source"] == "caller");
+    REQUIRE(props["durationMs"] == "120");
+    REQUIRE(props["password"] == "***");
+    REQUIRE_FALSE(props.contains("rawGcode"));
+    REQUIRE(props["printerSN"].get<std::string>().size() == 16);
+    REQUIRE(props["printerSerial"].get<std::string>().size() == 16);
+}
+
+TEST_CASE("renderers inject and allow caller override of profileVersion", "[snaplog][fields]")
+{
+    BatchLineContext ctx;
+    ctx.eventName     = "app_launch";
+    ctx.profileVersion = "02.03.03.03";
+
+    auto gateway       = render_batch_line(SnapLogLevel::Info, "", {}, 64 * 1024, ctx);
+    auto parsed_gateway = nlohmann::json::parse(gateway.substr(0, gateway.size() - 1));
+    REQUIRE(parsed_gateway["ext"]["profileVersion"] == "02.03.03.03");
+
+    PostHogEvent event;
+    event.context       = ctx;
+    event.context.eventName = "app_launch";
+    event.ext           = {{"profileVersion", "99.99.99.99"}, {"source", "flutter"}};
+    auto parsed_posthog = nlohmann::json::parse(render_posthog_event(event));
+    REQUIRE(parsed_posthog["properties"]["profileVersion"] == "99.99.99.99");
+    REQUIRE(parsed_posthog["properties"]["source"] == "flutter");
+
+    ctx.profileVersion.clear();
+    auto empty_gateway = render_batch_line(SnapLogLevel::Info, "", {}, 64 * 1024, ctx);
+    auto parsed_empty  = nlohmann::json::parse(empty_gateway.substr(0, empty_gateway.size() - 1));
+    REQUIRE(parsed_empty["ext"]["profileVersion"] == "");
+
+    ctx.clientId       = "machine-1";
+    ctx.profileVersion = "02.03.03.03";
+    auto protected_gateway = render_batch_line(SnapLogLevel::Info, "", {{"clientUUID", "attacker-value"}}, 64 * 1024, ctx);
+    auto parsed_protected = nlohmann::json::parse(protected_gateway.substr(0, protected_gateway.size() - 1));
+    REQUIRE(parsed_protected["ext"]["clientUUID"] == "machine-1");
+}
+
+TEST_CASE("PostHog batch request carries only the capture contract", "[snaplog][posthog]")
+{
+    SnapLogConfig cfg;
+    cfg.posthog_base    = "https://ph.example.com/";
+    cfg.posthog_api_key = "phc_test_key";
+    PostHogEvent first;
+    first.context.eventName = "first";
+    first.context.clientId  = "machine-1";
+    first.context.ts_ms     = 1778639794110;
+    PostHogEvent second;
+    second.context.eventName = "second";
+    second.context.clientId  = "machine-1";
+    second.context.ts_ms     = 1778639794120;
+
+    auto req = build_posthog_batch_request(cfg, {render_posthog_event(first), render_posthog_event(second)});
+    REQUIRE(req.url == "https://ph.example.com/batch/");
+    REQUIRE(hdr(req.headers, "Content-Type") == "application/json");
+    REQUIRE(hdr(req.headers, "Authorization").empty());
+
+    auto parsed = nlohmann::json::parse(req.body);
+    REQUIRE(parsed["api_key"] == "phc_test_key");
+    REQUIRE(parsed["batch"].size() == 2);
+    REQUIRE(parsed["batch"][0]["event"] == "first");
+    REQUIRE(parsed["batch"][1]["event"] == "second");
+}
+
+TEST_CASE("sink routing separates gateway login gate from PostHog consent gate", "[snaplog][posthog][pipeline]")
+{
+    FakeClient fc;
+    fc.cfg.posthog_api_key    = "phc_test";
+    fc.cfg.posthog_batch_size = 50;
+    fc.cfg.posthog_flush_sec  = 60;
+    fc.init();
+    SnapLogClient::instance().set_user_token("");
+
+    SnapLogClient::instance().log(SnapLogLevel::Info, "anonymous", SnapLogExt{{"eventName", "anonymous_event"}}, __FUNCTION__, __LINE__,
+                                  SinkGateway | SinkPostHog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 1);
+
+    SnapLogClient::instance().log(SnapLogLevel::Info, "gateway-only", SnapLogExt{{"eventName", "gateway_event"}}, __FUNCTION__, __LINE__,
+                                  SinkGateway);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 1);
+
+    SnapLogClient::instance().set_user_token("token");
+    SnapLogClient::instance().log(SnapLogLevel::Info, "dual", SnapLogExt{{"eventName", "dual_event"}}, __FUNCTION__, __LINE__,
+                                  SinkGateway | SinkPostHog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 1);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 2);
+    fc.shutdown();
+}
+
+TEST_CASE("sink admission rechecks consent before final enqueue", "[snaplog][posthog][pipeline]")
+{
+    FakeClient fc;
+    fc.cfg.posthog_api_key    = "phc_test";
+    fc.cfg.posthog_batch_size = 50;
+    fc.cfg.posthog_flush_sec  = 60;
+
+    std::atomic<bool> clock_entered{false};
+    std::atomic<bool> consent_off_done{false};
+    fc.deps.now_ms              = [&clock_entered, &consent_off_done]() {
+        clock_entered.store(true);
+        while (!consent_off_done.load())
+            std::this_thread::yield();
+        return int64_t(1);
+    };
+
+    fc.init();
+    std::thread producer([]() {
+        SnapLogClient::instance().log(SnapLogLevel::Info, "race", SnapLogExt{{"eventName", "consent_race"}}, __FUNCTION__, __LINE__,
+                                      SinkGateway | SinkPostHog);
+    });
+    REQUIRE(wait_for_condition([&clock_entered]() { return clock_entered.load(); }));
+
+    SnapLogClient::instance().set_consent(false);
+    consent_off_done.store(true);
+    producer.join();
+
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 0);
+    fc.shutdown();
+}
+
+TEST_CASE("sink admission rechecks login before final gateway enqueue", "[snaplog][posthog][pipeline]")
+{
+    FakeClient fc;
+    fc.cfg.posthog_api_key    = "phc_test";
+    fc.cfg.posthog_batch_size = 50;
+    fc.cfg.posthog_flush_sec  = 60;
+
+    std::atomic<bool> clock_entered{false};
+    std::atomic<bool> logout_done{false};
+    fc.deps.now_ms              = [&clock_entered, &logout_done]() {
+        clock_entered.store(true);
+        while (!logout_done.load())
+            std::this_thread::yield();
+        return int64_t(1);
+    };
+
+    fc.init();
+    std::thread producer([]() {
+        SnapLogClient::instance().log(SnapLogLevel::Info, "race", SnapLogExt{{"eventName", "logout_race"}}, __FUNCTION__, __LINE__,
+                                      SinkGateway | SinkPostHog);
+    });
+    REQUIRE(wait_for_condition([&clock_entered]() { return clock_entered.load(); }));
+
+    SnapLogClient::instance().set_user_token("");
+    logout_done.store(true);
+    producer.join();
+
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 1);
+    fc.shutdown();
+}
+
+TEST_CASE("gateway login rejection does not consume rate limit tokens", "[snaplog][posthog][pipeline]")
+{
+    FakeClient fc;
+    fc.cfg.event_rate_cap_per_sec["gateway_after_login"] = 1;
+    fc.cfg.posthog_api_key.clear();
+    fc.init();
+    SnapLogClient::instance().set_user_token("");
+
+    SnapLogClient::instance().log(SnapLogLevel::Info, "anonymous", SnapLogExt{{"eventName", "gateway_after_login"}}, __FUNCTION__, __LINE__,
+                                  SinkGateway);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
+
+    SnapLogClient::instance().set_user_token("token");
+    SnapLogClient::instance().log(SnapLogLevel::Info, "accepted", SnapLogExt{{"eventName", "gateway_after_login"}}, __FUNCTION__, __LINE__,
+                                  SinkGateway);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 1);
+
+    SnapLogClient::instance().log(SnapLogLevel::Info, "throttled", SnapLogExt{{"eventName", "gateway_after_login"}}, __FUNCTION__, __LINE__,
+                                  SinkGateway);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 1);
+    fc.shutdown();
+}
+
+TEST_CASE("PostHog queue is cleared when consent is withdrawn", "[snaplog][posthog][pipeline]")
+{
+    FakeClient fc;
+    fc.cfg.posthog_api_key    = "phc_test";
+    fc.cfg.posthog_batch_size = 50;
+    fc.cfg.posthog_flush_sec  = 60;
+    fc.init();
+    SnapLogClient::instance().log(SnapLogLevel::Info, "before", SnapLogExt{{"eventName", "before_event"}}, __FUNCTION__, __LINE__,
+                                  SinkPostHog);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 1);
+
+    SnapLogClient::instance().set_consent(false);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 0);
+
+    SnapLogClient::instance().log(SnapLogLevel::Info, "blocked", SnapLogExt{{"eventName", "blocked_event"}}, __FUNCTION__, __LINE__,
+                                  SinkPostHog);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 0);
+    fc.shutdown();
+}
+
+TEST_CASE("PostHog queue survives a repeated consent enable", "[snaplog][posthog][pipeline]")
+{
+    FakeClient fc;
+    fc.cfg.posthog_api_key    = "phc_test";
+    fc.cfg.posthog_batch_size = 50;
+    fc.cfg.posthog_flush_sec  = 60;
+    fc.init();
+    SnapLogClient::instance().log(SnapLogLevel::Info, "launch", SnapLogExt{{"eventName", "app_launch"}}, __FUNCTION__, __LINE__,
+                                  SinkPostHog);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 1);
+
+    SnapLogClient::instance().set_consent(true);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 1);
+    fc.shutdown();
+}
+
+TEST_CASE("PostHog worker flushes when batch size is reached", "[snaplog][posthog][worker]")
+{
+    FakeClient fc;
+    fc.cfg.posthog_api_key    = "phc_test";
+    fc.cfg.posthog_batch_size = 2;
+    fc.cfg.posthog_flush_sec  = 60;
+    fc.cfg.poll_interval_ms   = 1;
+    fc.init();
+    SnapLogClient::instance().set_user_token("");
+
+    for (int i = 0; i < 2; ++i)
+        SnapLogClient::instance().log(SnapLogLevel::Info, "size flush", SnapLogExt{{"eventName", "posthog_size"}}, __FUNCTION__, __LINE__,
+                                      SinkPostHog);
+
+    REQUIRE(wait_for_condition(
+        [&fc]() { return fc.posthog_request_count() == 1 && SnapLogClient::instance().posthog_queue_size_for_test() == 0; }));
+    auto batch = nlohmann::json::parse(fc.last_posthog_body());
+    REQUIRE(batch["batch"].size() == 2);
+    fc.shutdown();
+}
+
+TEST_CASE("PostHog worker flushes when timer expires", "[snaplog][posthog][worker]")
+{
+    FakeClient fc;
+    fc.cfg.posthog_api_key    = "phc_test";
+    fc.cfg.posthog_batch_size = 50;
+    fc.cfg.posthog_flush_sec  = 60;
+    fc.cfg.poll_interval_ms   = 1;
+    fc.init();
+    SnapLogClient::instance().set_user_token("");
+    SnapLogClient::instance().log(SnapLogLevel::Info, "timer flush", SnapLogExt{{"eventName", "posthog_timer"}}, __FUNCTION__, __LINE__,
+                                  SinkPostHog);
+    SnapLogClient::instance().set_posthog_timer_expired_for_test();
+
+    REQUIRE(wait_for_condition(
+        [&fc]() { return fc.posthog_request_count() == 1 && SnapLogClient::instance().posthog_queue_size_for_test() == 0; }));
+    auto batch = nlohmann::json::parse(fc.last_posthog_body());
+    REQUIRE(batch["batch"].size() == 1);
+    fc.shutdown();
+}
+
+TEST_CASE("PostHog worker keeps one request in flight", "[snaplog][posthog][worker]")
+{
+    FakeClient fc;
+    fc.cfg.posthog_api_key    = "phc_test";
+    fc.cfg.posthog_batch_size = 2;
+    fc.cfg.posthog_flush_sec  = 60;
+    fc.cfg.poll_interval_ms   = 1;
+
+    auto first_handle  = std::make_shared<SnapLogHandle>();
+    first_handle->prom = std::make_shared<std::promise<SnapLogResult>>();
+    fc.deps.do_request = [&fc, first_handle](const std::string&, const std::string& url, std::vector<std::pair<std::string, std::string>>,
+                                             const boost::filesystem::path*, const std::string* body_str) {
+        ++fc.request_count;
+        if (body_str) {
+            std::lock_guard<std::mutex> lock(fc.request_mu);
+            fc.requests.emplace_back(url, *body_str);
+        }
+        return first_handle;
+    };
+    fc.init();
+    SnapLogClient::instance().set_user_token("");
+    SnapLogClient::instance().log(SnapLogLevel::Info, "first", SnapLogExt{{"eventName", "posthog_inflight"}}, __FUNCTION__, __LINE__,
+                                  SinkPostHog);
+    SnapLogClient::instance().set_posthog_timer_expired_for_test();
+    REQUIRE(wait_for_condition([&fc]() { return fc.posthog_request_count() == 1; }));
+
+    for (int i = 0; i < 2; ++i)
+        SnapLogClient::instance().log(SnapLogLevel::Info, "queued", SnapLogExt{{"eventName", "posthog_inflight"}}, __FUNCTION__, __LINE__,
+                                      SinkPostHog);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 2);
+
+    first_handle->prom->set_value({200, "", false});
+    first_handle->fulfilled.store(true);
+    REQUIRE(wait_for_condition(
+        [&fc]() { return fc.posthog_request_count() == 2 && SnapLogClient::instance().posthog_queue_size_for_test() == 0; }));
+    fc.shutdown();
+}
+
+TEST_CASE("PostHog transport failure drops the batch without retry", "[snaplog][posthog][worker]")
+{
+    FakeClient fc;
+    fc.cfg.posthog_api_key    = "phc_test";
+    fc.cfg.posthog_batch_size = 50;
+    fc.cfg.posthog_flush_sec  = 60;
+    fc.cfg.poll_interval_ms   = 1;
+    fc.deps.do_request = [&fc](const std::string&, const std::string&             url, std::vector<std::pair<std::string, std::string>>,
+                               const boost::filesystem::path*, const std::string* body_str) {
+        ++fc.request_count;
+        if (body_str) {
+            std::lock_guard<std::mutex> lock(fc.request_mu);
+            fc.requests.emplace_back(url, *body_str);
+        }
+        auto h  = std::make_shared<SnapLogHandle>();
+        h->prom = std::make_shared<std::promise<SnapLogResult>>();
+        h->prom->set_value({0, "", false});
+        h->fulfilled.store(true);
+        return h;
+    };
+    fc.init();
+    SnapLogClient::instance().set_user_token("");
+    SnapLogClient::instance().log(SnapLogLevel::Info, "failed", SnapLogExt{{"eventName", "posthog_failure"}}, __FUNCTION__, __LINE__,
+                                  SinkPostHog);
+    SnapLogClient::instance().set_posthog_timer_expired_for_test();
+    REQUIRE(wait_for_condition(
+        [&fc]() { return fc.posthog_request_count() == 1 && SnapLogClient::instance().posthog_queue_size_for_test() == 0; }));
+    REQUIRE(fc.posthog_request_count() == 1);
+    fc.shutdown();
+}
+
+TEST_CASE("PostHog consent withdrawal cancels an in-flight request", "[snaplog][posthog][worker]")
+{
+    FakeClient fc;
+    fc.cfg.posthog_api_key    = "phc_test";
+    fc.cfg.posthog_batch_size = 50;
+    fc.cfg.posthog_flush_sec  = 60;
+    fc.cfg.poll_interval_ms   = 1;
+    auto in_flight            = std::make_shared<SnapLogHandle>();
+    in_flight->prom           = std::make_shared<std::promise<SnapLogResult>>();
+    fc.deps.do_request = [&fc, in_flight](const std::string&, const std::string& url, std::vector<std::pair<std::string, std::string>>,
+                                          const boost::filesystem::path*, const std::string* body_str) {
+        ++fc.request_count;
+        if (body_str) {
+            std::lock_guard<std::mutex> lock(fc.request_mu);
+            fc.requests.emplace_back(url, *body_str);
+        }
+        return in_flight;
+    };
+    fc.init();
+    SnapLogClient::instance().set_user_token("");
+    SnapLogClient::instance().log(SnapLogLevel::Info, "cancel", SnapLogExt{{"eventName", "posthog_cancel"}}, __FUNCTION__, __LINE__,
+                                  SinkPostHog);
+    SnapLogClient::instance().set_posthog_timer_expired_for_test();
+    REQUIRE(wait_for_condition([&fc]() { return fc.posthog_request_count() == 1; }));
+
+    SnapLogClient::instance().set_consent(false);
+    REQUIRE(wait_for_condition([in_flight]() { return in_flight->cancelled.load(); }));
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 0);
+    fc.shutdown();
+}
+
+TEST_CASE("PostHog shutdown drains queued events best effort", "[snaplog][posthog][worker]")
+{
+    FakeClient fc;
+    fc.cfg.posthog_api_key    = "phc_test";
+    fc.cfg.posthog_batch_size = 50;
+    fc.cfg.posthog_flush_sec  = 60;
+    fc.cfg.poll_interval_ms   = 1;
+    fc.init();
+    SnapLogClient::instance().set_user_token("");
+    SnapLogClient::instance().log(SnapLogLevel::Info, "drain", SnapLogExt{{"eventName", "posthog_shutdown"}}, __FUNCTION__, __LINE__,
+                                  SinkPostHog);
+    fc.shutdown();
+
+    REQUIRE(fc.posthog_request_count() == 1);
+    auto batch = nlohmann::json::parse(fc.last_posthog_body());
+    REQUIRE(batch["batch"].size() == 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -1222,20 +1752,20 @@ TEST_CASE("render_batch_line ISO8601 timestamp UTC from ts_ms", "[snaplog][batch
 TEST_CASE("render_batch_line trims non-required context fields", "[snaplog][batch]")
 {
     BatchLineContext ctx;
-    ctx.userId      = "u1";
-    ctx.deviceId    = "d1";
-    ctx.appVersion  = "2.5.0";
-    ctx.appBuild    = "12345";
-    ctx.platform    = "win64";
-    ctx.osVersion   = "10.0.19045";
-    ctx.sessionId   = "s1";
-    ctx.region      = "us";
-    ctx.nodeId      = "n1";
-    ctx.logger      = "lg";
-    ctx.thread      = "th";
-    ctx.opId        = "o1";
-    ctx.eventName   = "slice_completed";
-    auto line       = render_batch_line(SnapLogLevel::Info, "m", {}, 64 * 1024, ctx);
+    ctx.userId     = "u1";
+    ctx.deviceId   = "d1";
+    ctx.appVersion = "2.5.0";
+    ctx.appBuild   = "12345";
+    ctx.platform   = "win64";
+    ctx.osVersion  = "10.0.19045";
+    ctx.sessionId  = "s1";
+    ctx.region     = "us";
+    ctx.nodeId     = "n1";
+    ctx.logger     = "lg";
+    ctx.thread     = "th";
+    ctx.opId       = "o1";
+    ctx.eventName  = "slice_completed";
+    auto line      = render_batch_line(SnapLogLevel::Info, "m", {}, 64 * 1024, ctx);
     // Keep the wire-required and functionally required fields.
     REQUIRE(line.find("\"eventName\":\"slice_completed\"") != std::string::npos);
     REQUIRE(line.find("\"userId\":\"u1\"") != std::string::npos);
@@ -1685,7 +2215,30 @@ TEST_CASE("build_batch_create_request: Bearer -> /api/log/upload/create", "[snap
     REQUIRE(req.body.find("checkSum") == std::string::npos);
 }
 
-TEST_CASE("build_batch_create_request: empty token -> public + HMAC headers", "[snaplog][batch]")
+TEST_CASE("build_batch_request: empty token builds no Gateway request", "[snaplog][batch]")
+{
+    SnapLogDeps deps;
+    deps.now_ms  = []() { return int64_t(1778639794110); };
+    SnapLogConfig cfg;
+    cfg.gateway_base = "https://api.snapmaker.com";
+    cfg.hmac_secret  = "c25hcG1ha2VyLU9yY2E";
+
+    const auto create = build_batch_create_request(
+        deps, cfg, "app-123", "", []() { return std::string("nonce"); }, "mylog.ndjson");
+    const auto complete = build_batch_complete_request(
+        deps, cfg, "app-123", "", []() { return std::string("nonce"); }, "key1");
+    const auto cancel = build_batch_cancel_request(
+        deps, cfg, "app-123", "", []() { return std::string("nonce"); }, "upload1");
+
+    REQUIRE(create.url.empty());
+    REQUIRE(create.headers.empty());
+    REQUIRE(complete.url.empty());
+    REQUIRE(complete.headers.empty());
+    REQUIRE(cancel.url.empty());
+    REQUIRE(cancel.headers.empty());
+}
+
+TEST_CASE("build_batch_create_request: empty token has no public fallback", "[snaplog][batch]")
 {
     SnapLogDeps deps;
     int64_t     ts = 1778639794110;
@@ -1699,24 +2252,12 @@ TEST_CASE("build_batch_create_request: empty token -> public + HMAC headers", "[
         /*nonce_gen*/ []() { return std::string("9b22cafe00ll00000000ff00dd00ee00"); },
         /*fileName*/ "mylog.ndjson");
 
-    REQUIRE(req.url == "https://api.snapmaker.com/api/log/public/upload/create");
-    REQUIRE(hdr(req.headers, "Authorization") == "");
-    REQUIRE(hdr(req.headers, "X-Client-Type") == "Orca");
-    REQUIRE(hdr(req.headers, "X-Client-Id") == "app-123");
-    REQUIRE(hdr(req.headers, "X-Timestamp") == "1778639794110");
-    REQUIRE(hdr(req.headers, "X-Nonce") == "9b22cafe00ll00000000ff00dd00ee00");
-    // X-Sign must equal HMAC over "Orca" || clientId || ts || nonce (no sep).
-    // Same rule as realtime — the value must be identical for identical inputs.
-    std::string expected = hmac_sha256_hex("c25hcG1ha2VyLU9yY2E",
-                                           std::string("Orca") + "app-123" + "1778639794110" + "9b22cafe00ll00000000ff00dd00ee00");
-    REQUIRE(hdr(req.headers, "X-Sign") == expected);
-    REQUIRE(hdr(req.headers, "X-Sign").size() == 64);
-    // Body still has fileName.
-    REQUIRE(req.body.find("\"fileName\"") != std::string::npos);
-    REQUIRE(req.body.find("mylog.ndjson") != std::string::npos);
+    REQUIRE(req.url.empty());
+    REQUIRE(req.headers.empty());
+    REQUIRE(req.body.empty());
 }
 
-TEST_CASE("build_batch_create_request: X-Sign matches realtime for same inputs", "[snaplog][batch]")
+TEST_CASE("build_batch_create_request: realtime public auth is not reused by batch", "[snaplog][batch]")
 {
     // The signing rule is identical between realtime and batch — verify by
     // computing the realtime X-Sign with the same inputs and asserting equality.
@@ -1731,7 +2272,9 @@ TEST_CASE("build_batch_create_request: X-Sign matches realtime for same inputs",
     BatchRequest bq =
         build_batch_create_request(deps, cfg, "app-123", "", []() { return std::string("9b2226b29c3e460eae7ff1d3315c522d"); }, "f.log");
 
-    REQUIRE(hdr(rt.headers, "X-Sign") == hdr(bq.headers, "X-Sign"));
+    REQUIRE(rt.url.find("/public/") != std::string::npos);
+    REQUIRE(bq.url.empty());
+    REQUIRE(hdr(bq.headers, "X-Sign").empty());
 }
 
 TEST_CASE("build_batch_complete_request: single-part body carries fileName, URL ends /completed", "[snaplog][batch]")
@@ -1756,7 +2299,7 @@ TEST_CASE("build_batch_complete_request: single-part body carries fileName, URL 
     REQUIRE(req.body.find("uploadId") == std::string::npos);
 }
 
-TEST_CASE("build_batch_complete_request: empty token -> public completed", "[snaplog][batch]")
+TEST_CASE("build_batch_complete_request: empty token has no request", "[snaplog][batch]")
 {
     SnapLogDeps deps;
     deps.now_ms = []() { return int64_t(100); };
@@ -1765,9 +2308,8 @@ TEST_CASE("build_batch_complete_request: empty token -> public completed", "[sna
 
     BatchRequest req = build_batch_complete_request(deps, cfg, "cid", "", []() { return std::string("n"); }, "key1");
 
-    REQUIRE(req.url == "https://gw.example.com/api/log/public/upload/completed");
-    REQUIRE(hdr(req.headers, "Authorization") == "");
-    REQUIRE(hdr(req.headers, "X-Sign") != "");
+    REQUIRE(req.url.empty());
+    REQUIRE(req.headers.empty());
 }
 
 TEST_CASE("build_batch_cancel_request: empty uploadId -> body {}", "[snaplog][batch]")
@@ -1805,7 +2347,7 @@ TEST_CASE("build_batch_cancel_request: non-empty uploadId -> body has it", "[sna
     REQUIRE(parsed["uploadId"] == "upload-xyz");
 }
 
-TEST_CASE("build_batch_cancel_request: empty token -> public cancel + HMAC", "[snaplog][batch]")
+TEST_CASE("build_batch_cancel_request: empty token has no request", "[snaplog][batch]")
 {
     SnapLogDeps deps;
     int64_t     ts = 42;
@@ -1816,11 +2358,8 @@ TEST_CASE("build_batch_cancel_request: empty token -> public cancel + HMAC", "[s
 
     BatchRequest req = build_batch_cancel_request(deps, cfg, "cid", "", []() { return std::string("nonce1"); }, "uid1");
 
-    REQUIRE(req.url == "https://gw.example.com/api/log/public/upload/cancel");
-    REQUIRE(hdr(req.headers, "Authorization") == "");
-    REQUIRE(hdr(req.headers, "X-Sign") != "");
-    REQUIRE(hdr(req.headers, "X-Timestamp") == "42");
-    REQUIRE(hdr(req.headers, "X-Nonce") == "nonce1");
+    REQUIRE(req.url.empty());
+    REQUIRE(req.headers.empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -2292,7 +2831,7 @@ struct BatchUploadFixture
         cfg.sealed_max_upload_bytes = 5 * 1024 * 1024;
         cfg.batch_max_retry         = 3;
         cfg.line_max_bytes          = 64 * 1024;
-    cfg.home_for_redact         = "/home/test";
+        cfg.home_for_redact         = "/home/test";
 
         in                     = SnapLogClient::make_internals_for_test(std::move(deps), std::move(cfg));
         in->spool_dir_resolved = spool;
@@ -2892,6 +3431,64 @@ TEST_CASE("batch lifecycle: init consent OFF purges recovery without worker", "[
     f.shutdown();
 }
 
+TEST_CASE("batch lifecycle: consent OFF purge retries after spool lock is released", "[snaplog][batch]")
+{
+    BatchLifecycleFixture f;
+    namespace fs = boost::filesystem;
+
+    {
+        fs::ofstream ofs((f.spool / "active.log").string(), std::ios::binary);
+        ofs << "{\"level\":\"INFO\",\"message\":\"locked-recovery\"}\n";
+    }
+    auto prior_sealed = f.spool / "batch.1699999999000.locked0000.sealed";
+    {
+        fs::ofstream ofs(prior_sealed.string(), std::ios::binary);
+        ofs << "{\"level\":\"WARN\",\"message\":\"locked-sealed\"}\n";
+    }
+
+    auto other_owner = SnapLogClient::try_acquire_spool_lock(f.spool);
+    REQUIRE(other_owner.acquired);
+
+    f.deps.consent_ok = []() { return false; };
+    f.init();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    other_owner = {};
+    REQUIRE(f.wait_until(
+        [&]() {
+            boost::system::error_code ec;
+            return list_sealed(f.spool).empty() && !fs::exists(f.spool / "active.log", ec);
+        },
+        3000));
+
+    REQUIRE_FALSE(SnapLogClient::instance().batch_worker_joinable_for_test());
+    REQUIRE(f.create_count.load() == 0);
+    f.shutdown();
+}
+
+TEST_CASE("batch lifecycle: logout retains sealed files without Gateway requests", "[snaplog][batch]")
+{
+    BatchLifecycleFixture f;
+    namespace fs = boost::filesystem;
+
+    f.init();
+    SnapLogClient::instance().set_user_token("");
+
+    auto sealed = f.spool / "batch.1699999999000.logout0000.sealed";
+    {
+        fs::ofstream ofs(sealed.string(), std::ios::binary);
+        ofs << "{\"level\":\"INFO\",\"message\":\"logout-sealed\"}\n";
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    REQUIRE(f.create_count.load() == 0);
+    REQUIRE(f.put_count.load() == 0);
+    REQUIRE(f.completed_count.load() == 0);
+    REQUIRE(f.cancel_count.load() == 0);
+    REQUIRE(fs::exists(sealed));
+    f.shutdown();
+}
+
 TEST_CASE("batch lifecycle: shutdown drain flushes bt_queue to sealed and uploads", "[snaplog][batch]")
 {
     BatchLifecycleFixture f;
@@ -3092,7 +3689,7 @@ TEST_CASE("batch lifecycle: consent OFF join timeout leaves bt_worker restartabl
     cfg.sealed_max_disk_mb      = 256;
     cfg.batch_max_retry         = 3;
     cfg.line_max_bytes          = 64 * 1024;
-        cfg.home_for_redact         = "/home/test";
+    cfg.home_for_redact         = "/home/test";
     cfg.spool_dir               = spool.string();
     cfg.batch_join_deadline_sec = 1; // short so the timeout branch fires fast
 
@@ -3263,4 +3860,26 @@ TEST_CASE("SpoolLock: exclusive — second acquire fails, release enables retry"
     } // lk3 released
 
     fs::remove_all(dir);
+}
+
+TEST_CASE("Gateway sink is dropped while another process owns the spool lock", "[snaplog][batch][pipeline]")
+{
+    BatchLifecycleFixture f;
+    f.cfg.posthog_api_key    = "phc_test";
+    f.cfg.posthog_batch_size = 50;
+    f.cfg.posthog_flush_sec  = 60;
+
+    auto other_owner = SnapLogClient::try_acquire_spool_lock(f.spool);
+    REQUIRE(other_owner.acquired);
+
+    f.init();
+    REQUIRE_FALSE(SnapLogClient::instance().batch_worker_joinable_for_test());
+
+    SnapLogClient::instance().log(SnapLogLevel::Info, "locked", SnapLogExt{{"eventName", "spool_locked"}}, __FUNCTION__, __LINE__,
+                                  SinkGateway | SinkPostHog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
+    REQUIRE(SnapLogClient::instance().posthog_queue_size_for_test() == 1);
+
+    other_owner = {};
+    f.shutdown();
 }

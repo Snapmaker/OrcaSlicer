@@ -100,6 +100,7 @@
 #include "../Utils/Http.hpp"
 #include "../Utils/InstanceID.hpp"
 #include "../Utils/SnapLogClient.hpp"
+#include "../Utils/SnapTelemetry.hpp"
 #include "../Utils/UndoRedo.hpp"
 #include "slic3r/Config/Snapshot.hpp"
 #include "Preferences.hpp"
@@ -1021,7 +1022,7 @@ void GUI_App::post_init()
                     input_files.push_back(wxString::FromUTF8(file));
                 }
                 this->plater()->set_project_filename(_L("Untitled"));
-                this->plater()->load_files(input_files);
+                this->plater()->load_files(input_files, "command_line");
                 try {
                     if (!input_files.empty()) {
                         std::string           file_path = input_files.front().ToStdString();
@@ -3113,6 +3114,7 @@ bool GUI_App::on_init_inner()
                                 "https://api.snapmaker.cn"
                                 :
                                 "https://api.snapmaker.com";
+    snap_cfg.posthog_api_key = SNAP_LOG_POSTHOG_API_KEY;
     snap_cfg.hmac_secret = SNAP_LOG_HMAC_SECRET;
     snap_cfg.spool_dir = (boost::filesystem::path(data_dir()) / "log_upload_spool").string();
     std::string machine_id;
@@ -3132,6 +3134,7 @@ bool GUI_App::on_init_inner()
 
     snap_cfg.app_version = SLIC3R_BUILD_ID;
     snap_cfg.app_build   = GIT_COMMIT_HASH;
+    snap_cfg.profile_version = common::get_profile_version();
 #if defined(_WIN32)
     snap_cfg.platform = "Windows";
 #elif defined(__APPLE__)
@@ -4381,8 +4384,6 @@ void GUI_App::sm_request_user_logout()
     if (m_login_userinfo.is_user_login()) {
         m_login_userinfo.set_user_login(false);
     }
-    SNAP_LOG_BATCH(Info, "user logout",
-        {"eventName", "user_logout"}, {"source", "cpp"});
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_token("");
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id("");
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid("");
@@ -4434,14 +4435,6 @@ void GUI_App::report_flutter_run_result_once(bool success)
     }
 
     m_flutter_wcp_reported = true;
-
-    if (success) {
-        SNAP_LOG_BATCH_FORCE(Info, "flutter run success",
-            {"eventName", "flutter_run_result"}, {"source", "cpp"}, {"success", "true"});
-    } else {
-        SNAP_LOG_BATCH_FORCE(Error, "flutter run failed",
-            {"eventName", "flutter_run_result"}, {"source", "cpp"}, {"success", "false"});
-    }
 }
 
 void GUI_App::sm_maybe_refresh_login_token()
@@ -7041,7 +7034,7 @@ void GUI_App::MacOpenFiles(const wxArrayString &fileNames)
                 for (size_t i = 0; i < non_gcode_files.size(); ++i) {
                     input_files.push_back(non_gcode_files[i]);
                 }
-                this->plater()->load_files(input_files);
+                this->plater()->load_files(input_files, "file_association");
             } else {
                 for (size_t i = 0; i < files.size(); ++i) {
                     this->init_params->input_files.emplace_back(files[i]);

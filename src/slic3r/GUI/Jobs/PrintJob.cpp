@@ -7,6 +7,9 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
 #include "slic3r/GUI/format.hpp"
+#include "slic3r/GUI/DeviceManager.hpp"
+#include "slic3r/Utils/SnapLogClient.hpp"
+#include "slic3r/Utils/SnapTelemetry.hpp"
 #include "bambu_networking.hpp"
 
 namespace Slic3r {
@@ -35,12 +38,32 @@ static wxString wait_sending_finish         = _L("Print task sending times out."
 //static wxString desc_wait_sending_finish    = _L("The printer timed out while receiving a print job. Please check if the network is functioning properly and send the print again.");
 //static wxString desc_wait_sending_finish    = _L("The printer timed out while receiving a print job. Please check if the network is functioning properly.");
 
+static std::string telemetry_device_printer_model(const std::string& dev_id)
+{
+    try {
+        auto* device_manager = wxGetApp().getDeviceManager();
+        auto* device = device_manager ? device_manager->get_local_machine(dev_id) : nullptr;
+        return device ? device->printer_type : "";
+    } catch (...) {
+        return "";
+    }
+}
+
 PrintJob::PrintJob(std::string dev_id)
 : m_plater{wxGetApp().plater()},
     m_dev_id(dev_id),
     m_is_calibration_task(false)
 {
     m_print_job_completed_id = m_plater->get_print_finished_event();
+    m_telemetry_plate_count   = m_plater->get_partplate_list().get_plate_count();
+    m_telemetry_printer_model = telemetry_device_printer_model(m_dev_id);
+}
+
+void PrintJob::report_job_result(bool success, bool cancelled, int result_code, const std::string& reason)
+{
+    if (m_telemetry_result_reported)
+        return;
+    m_telemetry_result_reported = true;
 }
 
 void PrintJob::prepare()
@@ -127,6 +150,7 @@ wxString PrintJob::get_http_error_msg(unsigned int status, std::string body)
 
 void PrintJob::process(Ctl &ctl)
 {
+    m_telemetry_result_reported = false;
     /* display info */
     std::string msg;
     wxString error_str;
@@ -153,17 +177,22 @@ void PrintJob::process(Ctl &ctl)
         PartPlate *plate = m_plater->get_partplate_list().get_plate(job_data.plate_idx);
         if (plate == nullptr) {
             plate = m_plater->get_partplate_list().get_curr_plate();
-            if (plate == nullptr) return;
+            if (plate == nullptr) {
+                report_job_result(false, false, result, "invalid_plate");
+                return;
+            }
         }
 
         /* check gcode is valid */
         if (!plate->is_valid_gcode_file() && m_print_type == "from_normal") {
             ctl.update_status(curr_percent, check_gcode_failed_str);
+            report_job_result(false, false, result, "invalid_gcode");
             return;
         }
 
         if (ctl.was_canceled()) {
             ctl.update_status(curr_percent, printjob_cancel_str);
+            report_job_result(false, true, result, "cancelled");
             return;
         }
     }
@@ -213,6 +242,7 @@ void PrintJob::process(Ctl &ctl)
             BOOST_LOG_TRIVIAL(error) << "access code is invalid";
             m_enter_ip_address_fun_fail();
             m_job_finished = true;
+            report_job_result(false, false, result, "invalid_access_code");
             return;
         }
 
@@ -566,6 +596,7 @@ void PrintJob::process(Ctl &ctl)
             result = m_agent->start_local_print(params, update_fn, cancel_fn);
         } else {
             ctl.update_status(curr_percent, _u8L("An SD card needs to be inserted before printing via LAN."));
+            report_job_result(false, false, result, "no_sdcard");
             return;
         }
     }
@@ -595,6 +626,7 @@ void PrintJob::process(Ctl &ctl)
         }
         
         BOOST_LOG_TRIVIAL(error) << "print_job: failed, result = " << result;
+        report_job_result(false, result == BAMBU_NETWORK_ERR_CANCELED, result);
     } else {
         // wait for printer mqtt ready the same job id
 
@@ -614,6 +646,7 @@ void PrintJob::process(Ctl &ctl)
         }
         wxQueueEvent(m_plater, evt);
         m_job_finished = true;
+        report_job_result(true, false, result);
     }
 }
 
@@ -625,6 +658,11 @@ void PrintJob::finalize(bool canceled, std::exception_ptr &eptr) {
     } catch (...) {
         eptr = std::current_exception();
     }
+
+    if (canceled)
+        report_job_result(false, true, -1, "cancelled");
+    else if (eptr)
+        report_job_result(false, false, -1, "exception");
 
     if (canceled || eptr)
         return;

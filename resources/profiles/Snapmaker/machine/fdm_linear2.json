@@ -23,7 +23,7 @@
     "1000"
   ],
   "machine_max_acceleration_z": [
-    "100"
+    "500"
   ],
   "machine_max_acceleration_e": [
     "3000"

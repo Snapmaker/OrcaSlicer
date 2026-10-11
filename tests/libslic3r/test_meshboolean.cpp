@@ -5,6 +5,7 @@
 #include <libslic3r/MeshBoolean.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <utility>
 
@@ -311,6 +312,16 @@ TEST_CASE("CGAL repair closes a hole in a part far from the origin", "[MeshBoole
     TriangleMesh mesh = repaired_solid(its);
     REQUIRE_THAT(mesh.volume(), WithinRel(1000., 0.001));
     REQUIRE(mesh.bounding_box().min.isApprox(Vec3d(1000., -1000., 500.)));
+}
+
+TEST_CASE("CGAL repair closes a hole in a part too far from the origin to weld", "[MeshBoolean]") {
+    // Coordinates / weld tolerance exceed int64, so the weld is skipped. A size of one float step at that distance
+    // keeps the vertices exact, and the volume computed in floats finite.
+    const float size = std::ldexp(1.f, 31);
+    const float distance = std::ldexp(1.f, 54);
+    indexed_triangle_set its = cube_at(size, Vec3f(distance, distance, distance));
+    its.indices.pop_back();
+    REQUIRE_THAT(repaired_solid(its).volume(), WithinRel(std::ldexp(1., 93), 0.001));
 }
 
 TEST_CASE("CGAL repair reports failure for a surface that encloses no volume", "[MeshBoolean]") {

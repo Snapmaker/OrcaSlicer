@@ -1,5 +1,6 @@
 #include "Exception.hpp"
 #include "MeshBoolean.hpp"
+#include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/TryCatchSignal.hpp"
 #include "libslic3r/format.hpp"
@@ -729,8 +730,11 @@ bool repair_unguarded(TriangleMesh &mesh, RepairedMeshErrors *repaired_errors, s
             polygons.push_back({size_t(f[0]), size_t(f[1]), size_t(f[2])});
 
         // 2) Weld nearly coincident points
-        const double tolerance = std::min(mesh.bounding_box().size().norm() * weld_tolerance_relative, weld_tolerance_max);
-        if (tolerance > 0. && std::isfinite(tolerance))
+        // The weld grid cells are int64 coordinates: skip the weld where coord / tolerance would overflow them.
+        const BoundingBoxf3 bbox      = mesh.bounding_box();
+        const double        tolerance = std::min(bbox.size().norm() * weld_tolerance_relative, weld_tolerance_max);
+        const double        extent    = std::max(bbox.min.cwiseAbs().maxCoeff(), bbox.max.cwiseAbs().maxCoeff());
+        if (tolerance > 0. && std::isfinite(extent) && extent / tolerance < 1e15)
             weld_close_points(points, polygons, tolerance);
 
         // 3) Clean the soup up and convert it to a mesh without degenerate faces and non-manifold vertices
@@ -829,6 +833,8 @@ bool repair(TriangleMesh& mesh, RepairedMeshErrors* repaired_errors, std::string
     // try_catch_signal() traps signals (Windows); elsewhere it only runs the repair.
     bool success = false;
     bool crashed = false;
+    if (self_intersections_remain)
+        *self_intersections_remain = false;
     try_catch_signal({SIGSEGV, SIGFPE}, [&success, &mesh, repaired_errors, error, self_intersections_remain] {
         success = repair_unguarded(mesh, repaired_errors, error, self_intersections_remain);
     }, [&crashed] { crashed = true; });

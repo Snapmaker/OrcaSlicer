@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "Format/bbs_3mf.hpp"
 #include "BoundingBox.hpp"
 #include "Exception.hpp"
 #include "I18N.hpp"
@@ -211,6 +212,8 @@ void apply_repaired_volumes(ModelObject &object, const ModelObject &repaired)
     for (size_t i = 0; i < object.instances.size(); ++i)
         object.instances[i]->set_transformation(repaired.instances[i]->get_transformation());
     object.invalidate_bounding_box();
+    // Deleting volumes directly bypasses ModelObject::delete_volume(), which records the mesh change for the project backup.
+    Slic3r::save_object_mesh(object);
 }
 
 } // namespace Slic3r

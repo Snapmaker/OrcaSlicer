@@ -11,7 +11,7 @@
     "3500"
   ],
   "machine_max_acceleration_z": [
-    "3000"
+    "100"
   ],
   "machine_max_acceleration_travel": [
     "3500"

@@ -255,6 +255,50 @@ TEST_CASE("CGAL repair keeps the cavity of a hollow solid while merging an overl
     REQUIRE_THAT(repaired_solid(its).volume(), WithinRel(2000. - 200. - 125., 0.001));
 }
 
+TEST_CASE("CGAL repair keeps a solid inside the cavity of a hollow solid while merging an overlapping shell", "[MeshBoolean]") {
+    indexed_triangle_set cavity = cube_at(10.f, Vec3f(5.f, 5.f, 5.f));
+    for (auto &f : cavity.indices)
+        flip(f);
+    const indexed_triangle_set island = cube_at(4.f, Vec3f(8.f, 8.f, 8.f));
+    // Overlaps the outer wall by 4 x 20 x 20 and stays clear of the cavity.
+    indexed_triangle_set overlapping = cube_at(20.f, Vec3f(16.f, 0.f, 0.f));
+    overlapping.indices.pop_back();
+    const indexed_triangle_set its = merged(merged(merged(cube_at(20.f, Vec3f::Zero()), cavity), island), overlapping);
+    REQUIRE_THAT(repaired_solid(its).volume(), WithinRel(8000. + 8000. - 1600. - 1000. + 64., 0.001));
+}
+
+TEST_CASE("CGAL repair keeps a cavity inside overlapping solids and a solid inside that cavity", "[MeshBoolean]") {
+    // The solids overlap by 10 x 20 x 20; the cavity lies inside both, so two shells contain it.
+    indexed_triangle_set cavity = cube_at(6.f, Vec3f(12.f, 7.f, 7.f));
+    for (auto &f : cavity.indices)
+        flip(f);
+    const indexed_triangle_set island = cube_at(2.f, Vec3f(14.f, 9.f, 9.f));
+    const indexed_triangle_set its    = merged(merged(merged(cube_at(20.f, Vec3f::Zero()), cube_at(20.f, Vec3f(10.f, 0.f, 0.f))), cavity),
+                                               island);
+    REQUIRE_THAT(repaired_solid(its).volume(), WithinRel(8000. + 8000. - 4000. - 216. + 8., 0.001));
+}
+
+TEST_CASE("CGAL repair reports the self-intersections it cannot remove", "[MeshBoolean]") {
+    // One closed shell: the top corner pushed through the bottom face.
+    indexed_triangle_set its = cube_at(10.f, Vec3f::Zero());
+    its.vertices[4] = Vec3f(3.f, 3.f, -5.f);
+    REQUIRE(its_num_open_edges(its) == 0);
+    REQUIRE(MeshBoolean::cgal::does_self_intersect(TriangleMesh(its)));
+    TriangleMesh mesh(its);
+    std::string  error;
+    bool         self_intersections_remain = false;
+    REQUIRE(MeshBoolean::cgal::repair(mesh, nullptr, &error, &self_intersections_remain));
+    REQUIRE(self_intersections_remain);
+    REQUIRE(MeshBoolean::cgal::does_self_intersect(mesh));
+}
+
+TEST_CASE("CGAL repair reports no self-intersections after resolving them", "[MeshBoolean]") {
+    TriangleMesh mesh(merged(cube_at(10.f, Vec3f::Zero()), cube_at(10.f, Vec3f(5.f, 5.f, 0.f))));
+    bool         self_intersections_remain = true;
+    REQUIRE(MeshBoolean::cgal::repair(mesh, nullptr, nullptr, &self_intersections_remain));
+    REQUIRE_FALSE(self_intersections_remain);
+}
+
 TEST_CASE("CGAL repair closes a hole in a sub-millimetre part", "[MeshBoolean]") {
     indexed_triangle_set its = cube_at(0.2f, Vec3f::Zero());
     its.indices.pop_back();

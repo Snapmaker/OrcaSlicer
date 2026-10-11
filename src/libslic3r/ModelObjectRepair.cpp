@@ -1,8 +1,10 @@
 #include "ModelObjectRepair.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <string>
+#include <vector>
 
 #include "BoundingBox.hpp"
 #include "Exception.hpp"
@@ -10,6 +12,7 @@
 #include "MeshBoolean.hpp"
 #include "Model.hpp"
 #include "TriangleMesh.hpp"
+#include "TryCatchSignal.hpp"
 #include "format.hpp"
 
 namespace Slic3r {
@@ -60,12 +63,84 @@ bool has_3dimensional_part(const ModelVolume &volume)
     return false;
 }
 
+// Orca: Whether the mesh has the defects repair() fixes: open edges or self-intersections. A crash of the CGAL check,
+// where try_catch_signal() traps it, counts as a defect: repair() is guarded the same way and reports the failure.
+bool is_broken(const TriangleMesh &mesh)
+{
+    if (its_num_open_edges(mesh.its) != 0)
+        return true;
+    bool self_intersecting = true;
+    try_catch_signal({SIGSEGV, SIGFPE}, [&self_intersecting, &mesh] {
+        self_intersecting = MeshBoolean::cgal::does_self_intersect(mesh);
+    }, [] {});
+    return self_intersecting;
+}
+
+// Orca: Repairs the broken volume at ivolume: splits it into its shells, drops the parts that enclose no volume and
+// repairs the broken parts. Returns the end of its parts, which start at ivolume.
+size_t repair_volume(ModelObject                                          &model_object,
+                     size_t                                                ivolume,
+                     ModelObjectRepairReport                              &report,
+                     const std::function<void(const char *, unsigned)>    &progress,
+                     const std::function<void()>                          &throw_on_cancel)
+{
+    ModelVolume *volume = model_object.volumes[ivolume];
+
+    // Orca: Split splittable volumes into parts for individual processing.
+    size_t parts_count = 1;
+    if (volume->is_splittable()) {
+        parts_count = volume->split(1);
+        if (parts_count > 1) {
+            // Orca: Translated here, the receiver cannot look the formatted message up in the catalog.
+            const std::string msg = Slic3r::format(_u8L("Split into %1% parts"), parts_count);
+            progress(msg.c_str(), 10);
+        }
+    }
+
+    size_t part_end = std::min(ivolume + parts_count, model_object.volumes.size());
+
+    for (size_t part_idx = part_end; part_idx-- > ivolume;) {
+        if (!is_not_3dimensional_part(model_object.volumes[part_idx]->mesh()))
+            continue;
+        if (model_object.volumes.size() == 1)
+            throw Slic3r::RuntimeError(_u8L("The object has no part that encloses a volume"));
+        model_object.delete_volume(part_idx);
+        --part_end;
+    }
+
+    for (size_t part_idx = ivolume; part_idx < part_end; ++part_idx) {
+        throw_on_cancel();
+        ModelVolume *part_volume = model_object.volumes[part_idx];
+        if (!is_broken(part_volume->mesh()))
+            continue;
+        TriangleMesh mesh              = part_volume->mesh();
+        std::string  error;
+        bool         self_intersecting = false;
+        if (!MeshBoolean::cgal::repair(mesh, nullptr, &error, &self_intersecting))
+            throw Slic3r::RuntimeError(error.empty() ? _u8L("Repair failed") : error);
+        report.self_intersections_remain |= self_intersecting;
+
+        part_volume->set_mesh(std::move(mesh));
+        part_volume->calculate_convex_hull();
+        part_volume->invalidate_convex_hull_2d();
+        part_volume->set_new_unique_id();
+    }
+    return part_end;
+}
+
+// Orca: Whether volume is the one of object that the repair of its copy left untouched: they share the mesh, and
+// dropping volumes did not move the transformation of the copy into the instances.
+bool is_untouched_copy(const ModelVolume &volume, const ModelVolume &copy)
+{
+    return volume.get_mesh_shared_ptr() == copy.get_mesh_shared_ptr() && volume.get_matrix().matrix() == copy.get_matrix().matrix();
+}
+
 } // namespace
 
-void repair_model_object(ModelObject                                               &model_object,
-                         int                                                        volume_idx,
-                         const std::function<void(const char *message, int percent)> &on_progress,
-                         const std::function<void()>                               &throw_on_cancel)
+ModelObjectRepairReport repair_model_object(ModelObject                                               &model_object,
+                                            int                                                        volume_idx,
+                                            const std::function<void(const char *message, int percent)> &on_progress,
+                                            const std::function<void()>                               &throw_on_cancel)
 {
     if (volume_idx < -1 || volume_idx >= int(model_object.volumes.size()))
         throw Slic3r::InvalidArgument("repair_model_object: no such volume");
@@ -77,8 +152,9 @@ void repair_model_object(ModelObject                                            
         }))
         throw Slic3r::RuntimeError(_u8L("The object has no part that encloses a volume"));
 
-    size_t ivolume  = volume_idx == -1 ? 0 : size_t(volume_idx);
-    auto   progress = [&](const char *msg, unsigned prcnt) {
+    ModelObjectRepairReport report;
+    size_t                  ivolume  = volume_idx == -1 ? 0 : size_t(volume_idx);
+    auto                    progress = [&](const char *msg, unsigned prcnt) {
         const size_t total = std::max<size_t>(1, model_object.volumes.size());
         on_progress(msg, std::min(100, int(std::floor((float(prcnt) + float(ivolume) * 100.f) / float(total)))));
     };
@@ -88,50 +164,14 @@ void repair_model_object(ModelObject                                            
 
         progress(L("Repairing model object"), 10);
 
-        ModelVolume *volume = model_object.volumes[ivolume];
-
-        // Orca: Split splittable volumes into parts for individual processing.
-        size_t parts_count = 1;
-        if (volume->is_splittable()) {
-            parts_count = volume->split(1);
-            if (parts_count > 1) {
-                // Orca: Translated here, the receiver cannot look the formatted message up in the catalog.
-                const std::string msg = Slic3r::format(_u8L("Split into %1% parts"), parts_count);
-                progress(msg.c_str(), 10);
-            }
-        }
-
-        // Orca: The parts of this volume are [ivolume, part_end).
-        size_t part_end = std::min(ivolume + parts_count, model_object.volumes.size());
-
-        for (size_t part_idx = part_end; part_idx-- > ivolume;) {
-            if (!is_not_3dimensional_part(model_object.volumes[part_idx]->mesh()))
-                continue;
-            if (model_object.volumes.size() == 1)
-                throw Slic3r::RuntimeError(_u8L("The object has no part that encloses a volume"));
-            model_object.delete_volume(part_idx);
-            --part_end;
-        }
-
-        for (size_t part_idx = ivolume; part_idx < part_end; ++part_idx) {
-            throw_on_cancel();
-            ModelVolume *part_volume = model_object.volumes[part_idx];
-            TriangleMesh mesh = part_volume->mesh();
-            if (its_num_open_edges(mesh.its) != 0) {
-                std::string error;
-                if (!MeshBoolean::cgal::repair(mesh, nullptr, &error))
-                    throw Slic3r::RuntimeError(error.empty() ? _u8L("Repair failed") : error);
-
-                part_volume->set_mesh(std::move(mesh));
-                part_volume->calculate_convex_hull();
-                part_volume->invalidate_convex_hull_2d();
-                part_volume->set_new_unique_id();
-            }
-        }
+        // Orca: A volume without defects stays as it is, even when it is made of several shells: splitting it would
+        // drop its painted facets. The next volume follows the parts left of this one, even when all of them were dropped.
+        const size_t part_end = is_broken(model_object.volumes[ivolume]->mesh()) ?
+                                    repair_volume(model_object, ivolume, report, progress, throw_on_cancel) :
+                                    ivolume + 1;
 
         progress(L("Repair finished"), 100);
 
-        // Orca: The next volume follows the parts left of this one, even when all of them were dropped.
         ivolume = part_end;
         if (volume_idx != -1)
             break;
@@ -139,6 +179,38 @@ void repair_model_object(ModelObject                                            
 
     model_object.invalidate_bounding_box();
     on_progress(L("Repair finished"), 100);
+    return report;
+}
+
+void apply_repaired_volumes(ModelObject &object, const ModelObject &repaired)
+{
+    assert(object.instances.size() == repaired.instances.size());
+    // Orca: The repair replaces, inserts and deletes volumes, the untouched ones keep their order.
+    const size_t      old_count = object.volumes.size();
+    std::vector<bool> kept(old_count, false);
+    ModelVolumePtrs   volumes;
+    volumes.reserve(repaired.volumes.size());
+    size_t next = 0;
+    for (const ModelVolume *repaired_volume : repaired.volumes) {
+        size_t i = next;
+        while (i < old_count && !is_untouched_copy(*object.volumes[i], *repaired_volume))
+            ++i;
+        if (i < old_count) {
+            kept[i] = true;
+            next    = i + 1;
+            volumes.push_back(object.volumes[i]);
+        } else
+            // Appended to object.volumes behind the old volumes, which the loop above does not look past.
+            volumes.push_back(object.add_volume(*repaired_volume));
+    }
+    for (size_t i = 0; i < old_count; ++i)
+        if (!kept[i])
+            delete object.volumes[i];
+    object.volumes = std::move(volumes);
+
+    for (size_t i = 0; i < object.instances.size(); ++i)
+        object.instances[i]->set_transformation(repaired.instances[i]->get_transformation());
+    object.invalidate_bounding_box();
 }
 
 } // namespace Slic3r

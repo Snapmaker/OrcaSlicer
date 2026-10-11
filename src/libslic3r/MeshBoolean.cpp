@@ -12,6 +12,7 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <unordered_map>
 #include <vector>
 
@@ -597,44 +598,57 @@ _EpicMesh soup_to_mesh(std::vector<SoupPoint> &points, std::vector<SoupPolygon> 
     return cgal_mesh;
 }
 
-// Orca: The union of the solid shells minus the cavities, all oriented outwards. Returns false when CGAL cannot compute
-// it, e.g. for shells touching at an edge.
-bool solids_minus_cavities(const std::vector<_EpicMesh> &shells, const std::vector<bool> &cavity, _EpicMesh &result)
+// Orca: The region the shells enclose, all of them oriented outwards, where depth[i] is the nesting level of shell i:
+// the shells at level 0 minus (the shells at level 1 minus (the shells at level 2 minus ...)). Computed from the
+// deepest shells outwards, so that a solid inside a cavity survives. Returns false when CGAL cannot compute it, e.g.
+// for shells touching at an edge.
+bool enclosed_region(const std::vector<_EpicMesh> &shells, const std::vector<size_t> &depth, _EpicMesh &result)
 {
     namespace PMP = CGAL::Polygon_mesh_processing;
 
-    bool has_result = false;
+    if (shells.empty())
+        return false;
+    // The region enclosed by the shells deeper than the current depth; corefinement changes its inputs, so the shells
+    // are copied.
+    _EpicMesh inner;
+    bool      has_inner = false;
     try {
-        for (size_t i = 0; i < shells.size(); ++i)
-            if (!cavity[i]) {
-                _EpicMesh solid = shells[i];
+        for (size_t d = *std::max_element(depth.begin(), depth.end()) + 1; d-- > 0;) {
+            _EpicMesh level;
+            bool      has_level = false;
+            for (size_t i = 0; i < shells.size(); ++i)
+                if (depth[i] == d) {
+                    _EpicMesh shell = shells[i];
+                    _EpicMesh out;
+                    if (!has_level)
+                        out = std::move(shell);
+                    else if (!PMP::corefine_and_compute_union(level, shell, out))
+                        return false;
+                    level     = std::move(out);
+                    has_level = true;
+                }
+            if (has_level && has_inner) {
                 _EpicMesh out;
-                if (!has_result)
-                    out = std::move(solid);
-                else if (!PMP::corefine_and_compute_union(result, solid, out))
+                if (!PMP::corefine_and_compute_difference(level, inner, out))
                     return false;
-                result = std::move(out);
-                has_result = true;
+                level = std::move(out);
             }
-        for (size_t i = 0; i < shells.size(); ++i)
-            if (cavity[i]) {
-                _EpicMesh hole = shells[i];
-                _EpicMesh out;
-                if (!has_result || !PMP::corefine_and_compute_difference(result, hole, out))
-                    return false;
-                result = std::move(out);
-            }
+            // Without shells at this level, the region from this level inwards is empty.
+            inner     = std::move(level);
+            has_inner = has_level;
+        }
     } catch (const std::exception &) {
         // Corefinement rejects some degenerate configurations by throwing.
         return false;
     }
-    return has_result;
+    result = std::move(inner);
+    return has_inner;
 }
 
-// Orca: Resolves a closed mesh whose shells overlap. A shell nested in an odd number of shells that it does not
-// intersect is a cavity, the others are solids. The result is the union of the solids minus the cavities. A self-union
-// with corefine_and_compute_union() is not possible, it requires a mesh without self-intersections. When the booleans
-// fail, e.g. for shells touching at an edge, the shells are only oriented: solids outwards, cavities inwards.
+// Orca: Resolves a closed mesh whose shells overlap. A shell at an odd nesting level is a cavity, the others are solids,
+// see enclosed_region(). A self-union with corefine_and_compute_union() is not possible, it requires a mesh without
+// self-intersections. When the booleans fail, e.g. for shells touching at an edge, or a shell intersects itself, the
+// shells are only oriented: solids outwards, cavities inwards.
 void resolve_overlapping_shells(_EpicMesh &cgal_mesh)
 {
     namespace PMP = CGAL::Polygon_mesh_processing;
@@ -654,39 +668,49 @@ void resolve_overlapping_shells(_EpicMesh &cgal_mesh)
         if (!self_intersecting[j])
             side_of[j] = std::make_unique<CGAL::Side_of_triangle_mesh<_EpicMesh, EpicKernel>>(shells[j]);
 
-    std::vector<bool> cavity(shells.size(), false);
+    // Shells that contain shell i without intersecting it.
+    std::vector<std::vector<size_t>> containers(shells.size());
     for (size_t i = 0; i < shells.size(); ++i) {
         const SoupPoint &probe = shells[i].point(*shells[i].vertices().begin());
-        size_t           depth = 0;
         for (size_t j = 0; j < shells.size(); ++j)
             if (j != i && side_of[j] && (*side_of[j])(probe) == CGAL::ON_BOUNDED_SIDE && !PMP::do_intersect(shells[i], shells[j]))
-                ++depth;
-        cavity[i] = depth % 2 == 1;
+                containers[i].push_back(j);
     }
+    // The nesting level of a shell is the length of the longest chain of shells containing each other around it, not
+    // the number of shells around it: overlapping shells around it make one solid, one level. The containers of a shell
+    // also contain its containers, so they have fewer containers and get their levels first.
+    std::vector<size_t> order(shells.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(), [&containers](size_t a, size_t b) { return containers[a].size() < containers[b].size(); });
+    std::vector<size_t> depth(shells.size(), 0);
+    for (size_t i : order)
+        for (size_t j : containers[i])
+            depth[i] = std::max(depth[i], depth[j] + 1);
 
     _EpicMesh result;
     if (std::none_of(self_intersecting.begin(), self_intersecting.end(), [](bool b) { return b; }) &&
-        solids_minus_cavities(shells, cavity, result)) {
+        enclosed_region(shells, depth, result)) {
         cgal_mesh = std::move(result);
         return;
     }
 
     _EpicMesh oriented;
     for (size_t i = 0; i < shells.size(); ++i) {
-        if (cavity[i])
+        if (depth[i] % 2 == 1)
             PMP::reverse_face_orientations(shells[i]);
         CGAL::copy_face_graph(shells[i], oriented);
     }
     cgal_mesh = std::move(oriented);
 }
 
-} // namespace
-
-bool repair(TriangleMesh& mesh, RepairedMeshErrors* repaired_errors, std::string* error)
+// Orca: repair() without its guard against crashes inside CGAL.
+bool repair_unguarded(TriangleMesh &mesh, RepairedMeshErrors *repaired_errors, std::string *error, bool *self_intersections_remain)
 {
     using namespace CGAL;
     namespace PMP = CGAL::Polygon_mesh_processing;
 
+    if (self_intersections_remain)
+        *self_intersections_remain = false;
     if (mesh.empty())
         return true;
 
@@ -759,9 +783,12 @@ bool repair(TriangleMesh& mesh, RepairedMeshErrors* repaired_errors, std::string
             return false;
         }
 
-        // 6) Orca: Overlapping shells become one solid, see resolve_overlapping_shells().
-        if (PMP::does_self_intersect(cgal_mesh)) {
+        // 6) Orca: Overlapping shells become one solid, see resolve_overlapping_shells(), which leaves the
+        // self-intersections it cannot resolve.
+        bool self_intersecting = PMP::does_self_intersect(cgal_mesh);
+        if (self_intersecting) {
             resolve_overlapping_shells(cgal_mesh);
+            self_intersecting = PMP::does_self_intersect(cgal_mesh);
         } else {
             // 7) Ensure outward orientation; inner shells become cavities.
             PMP::orient_to_bound_a_volume(cgal_mesh);
@@ -783,6 +810,8 @@ bool repair(TriangleMesh& mesh, RepairedMeshErrors* repaired_errors, std::string
 
         if (repaired_errors)
             *repaired_errors = errs;
+        if (self_intersections_remain)
+            *self_intersections_remain = self_intersecting;
 
         return true;
     } catch (const std::exception& e) {
@@ -790,6 +819,25 @@ bool repair(TriangleMesh& mesh, RepairedMeshErrors* repaired_errors, std::string
             *error = e.what();
         return false;
     }
+}
+
+} // namespace
+
+bool repair(TriangleMesh& mesh, RepairedMeshErrors* repaired_errors, std::string* error, bool* self_intersections_remain)
+{
+    // Orca: CGAL may crash on the meshes of arbitrary files. Trapped as the mesh booleans above do, which works where
+    // try_catch_signal() traps signals (Windows); elsewhere it only runs the repair.
+    bool success = false;
+    bool crashed = false;
+    try_catch_signal({SIGSEGV, SIGFPE}, [&success, &mesh, repaired_errors, error, self_intersections_remain] {
+        success = repair_unguarded(mesh, repaired_errors, error, self_intersections_remain);
+    }, [&crashed] { crashed = true; });
+    if (crashed) {
+        if (error)
+            *error = "Repair failed: CGAL crashed.";
+        return false;
+    }
+    return success;
 }
 
 CGALMeshPtr clone(const CGALMesh &m)

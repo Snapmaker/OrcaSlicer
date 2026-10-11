@@ -7,7 +7,10 @@
 #include <libslic3r/ModelObjectRepair.hpp>
 #include <libslic3r/TriangleMesh.hpp>
 
+#include <memory>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 using namespace Slic3r;
 
@@ -36,6 +39,23 @@ indexed_triangle_set sheet_at(const Vec3f &origin)
     return its;
 }
 
+indexed_triangle_set inverted(indexed_triangle_set its)
+{
+    for (auto &f : its.indices)
+        std::swap(f[1], f[2]);
+    return its;
+}
+
+// One closed shell that intersects itself: the top corner pushed through the bottom face; open when a side face is missing.
+indexed_triangle_set pierced_cube(bool open)
+{
+    indexed_triangle_set its = cube_at(10.f, Vec3f::Zero());
+    its.vertices[4]          = Vec3f(3.f, 3.f, -5.f);
+    if (open)
+        its.indices.erase(its.indices.begin() + 7);
+    return its;
+}
+
 indexed_triangle_set merged(indexed_triangle_set a, const indexed_triangle_set &b)
 {
     its_merge(a, b);
@@ -51,9 +71,9 @@ ModelObject &object_with(Model &model, std::initializer_list<indexed_triangle_se
     return *object;
 }
 
-void repair(ModelObject &object, int volume_idx = -1)
+ModelObjectRepairReport repair(ModelObject &object, int volume_idx = -1)
 {
-    repair_model_object(object, volume_idx, [](const char *, int) {}, [] {});
+    return repair_model_object(object, volume_idx, [](const char *, int) {}, [] {});
 }
 
 size_t open_edges(const ModelVolume &volume) { return its_num_open_edges(volume.mesh().its); }
@@ -199,4 +219,113 @@ TEST_CASE("Repairing reports progress from 0 to 100 percent", "[ModelObjectRepai
         REQUIRE(percent <= 100);
     }
     REQUIRE(reported.back() == 100);
+}
+
+TEST_CASE("Repairing leaves a closed volume made of several shells as it is", "[ModelObjectRepair]") {
+    // Side by side, and a hollow cube.
+    const indexed_triangle_set shells = GENERATE(merged(cube_at(10.f, Vec3f::Zero()), cube_at(10.f, Vec3f(20.f, 0.f, 0.f))),
+                                                 merged(cube_at(10.f, Vec3f::Zero()), inverted(cube_at(4.f, Vec3f(3.f, 3.f, 3.f)))));
+    Model        model;
+    ModelObject &object = object_with(model, {shells});
+    ModelVolume &volume = *object.volumes.front();
+    volume.supported_facets.set_triangle_from_string(0, "4");
+    volume.mmu_segmentation_facets.set_triangle_from_string(1, "8");
+    const ObjectID id   = volume.id();
+    const auto     mesh = volume.get_mesh_shared_ptr();
+    REQUIRE_FALSE(repair(object).self_intersections_remain);
+    REQUIRE(object.volumes.size() == 1);
+    REQUIRE(object.volumes.front() == &volume);
+    REQUIRE(volume.id() == id);
+    REQUIRE(volume.get_mesh_shared_ptr() == mesh);
+    REQUIRE_FALSE(volume.supported_facets.empty());
+    REQUIRE_FALSE(volume.mmu_segmentation_facets.empty());
+}
+
+TEST_CASE("Repairing splits a closed volume whose shells overlap", "[ModelObjectRepair]") {
+    Model        model;
+    ModelObject &object = object_with(model, {merged(cube_at(10.f, Vec3f::Zero()), cube_at(10.f, Vec3f(5.f, 5.f, 0.f)))});
+    repair(object);
+    REQUIRE(object.volumes.size() == 2);
+    REQUIRE_THAT(total_volume(object), WithinRel(2000., 0.001));
+}
+
+TEST_CASE("Repairing reports the self-intersections it cannot remove", "[ModelObjectRepair]") {
+    const bool   open = GENERATE(false, true);
+    Model        model;
+    ModelObject &object = object_with(model, {pierced_cube(open)});
+    REQUIRE(repair(object).self_intersections_remain);
+    REQUIRE(object.volumes.size() == 1);
+    REQUIRE(open_edges(*object.volumes.front()) == 0);
+}
+
+TEST_CASE("Repairing reports no self-intersections when it leaves none", "[ModelObjectRepair]") {
+    Model        model;
+    ModelObject &object = object_with(model, {open_cube_at(10.f, Vec3f::Zero())});
+    REQUIRE_FALSE(repair(object).self_intersections_remain);
+}
+
+TEST_CASE("Applying a repaired copy changes only the repaired volumes of the object", "[ModelObjectRepair]") {
+    Model              model;
+    ModelObject       &object    = object_with(model, {open_cube_at(10.f, Vec3f::Zero()), cube_at(10.f, Vec3f(20.f, 0.f, 0.f))});
+    const ModelVolume *untouched = object.volumes[1];
+    Model              scratch;
+    ModelObject       &copy = *scratch.add_object(object);
+    repair(copy);
+    REQUIRE(open_edges(*object.volumes[0]) > 0);
+    apply_repaired_volumes(object, copy);
+    REQUIRE(object.volumes.size() == 2);
+    REQUIRE(open_edges(*object.volumes[0]) == 0);
+    REQUIRE(object.volumes[0]->get_object() == &object);
+    REQUIRE(object.volumes[1] == untouched);
+    REQUIRE(open_edges(*copy.volumes[0]) == 0);
+}
+
+TEST_CASE("Applying a repaired copy that dropped volumes keeps the object in place", "[ModelObjectRepair]") {
+    Model        model;
+    ModelObject &object = object_with(model, {sheet_at(Vec3f::Zero()), open_cube_at(10.f, Vec3f(20.f, 0.f, 0.f))});
+    object.volumes[1]->set_offset(Vec3d(3., -7., 11.));
+    object.instances.front()->set_offset(Vec3d(100., 50., 0.));
+    const BoundingBoxf3 before = object.volumes[1]->mesh().transformed_bounding_box(object.instances.front()->get_matrix() *
+                                                                                     object.volumes[1]->get_matrix());
+    Model               scratch;
+    ModelObject        &copy = *scratch.add_object(object);
+    repair(copy);
+    apply_repaired_volumes(object, copy);
+    REQUIRE(object.volumes.size() == 1);
+    REQUIRE(open_edges(*object.volumes.front()) == 0);
+    const BoundingBoxf3 after = world_bounding_box(object);
+    REQUIRE(after.min.isApprox(before.min, 1e-5));
+    REQUIRE(after.max.isApprox(before.max, 1e-5));
+}
+
+TEST_CASE("Cancelling the repair of a copy leaves the object unchanged", "[ModelObjectRepair]") {
+    Model        model;
+    ModelObject &object = object_with(model, {merged(open_cube_at(10.f, Vec3f::Zero()), open_cube_at(10.f, Vec3f(20.f, 0.f, 0.f))),
+                                              open_cube_at(10.f, Vec3f(40.f, 0.f, 0.f))});
+    object.volumes[0]->supported_facets.set_triangle_from_string(0, "4");
+    const ModelVolumePtrs                            volumes = object.volumes;
+    std::vector<ObjectID>                            ids;
+    std::vector<std::shared_ptr<const TriangleMesh>> meshes;
+    for (const ModelVolume *v : volumes) {
+        ids.push_back(v->id());
+        meshes.push_back(v->get_mesh_shared_ptr());
+    }
+    const Transform3d instance = object.instances.front()->get_matrix();
+
+    Model        scratch;
+    ModelObject &copy = *scratch.add_object(object);
+    struct Cancelled {};
+    // Cancelled once the first volume of the copy has been split.
+    REQUIRE_THROWS_AS(repair_model_object(copy, -1, [](const char *, int) {}, [&copy] { if (copy.volumes.size() > 2) throw Cancelled(); }),
+                      Cancelled);
+    REQUIRE(copy.volumes.size() == 3);
+
+    REQUIRE(object.volumes == volumes);
+    for (size_t i = 0; i < volumes.size(); ++i) {
+        REQUIRE(volumes[i]->id() == ids[i]);
+        REQUIRE(volumes[i]->get_mesh_shared_ptr() == meshes[i]);
+        REQUIRE(volumes[i]->get_object() == &object);
+    }
+    REQUIRE_FALSE(volumes[0]->supported_facets.empty());
+    REQUIRE(object.instances.front()->get_matrix().isApprox(instance));
 }

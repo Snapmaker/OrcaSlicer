@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "libslic3r/Format/bbs_3mf.hpp"
+#include "libslic3r/Model.hpp"
 #include "libslic3r/ModelObjectRepair.hpp"
 #include "../GUI/I18N.hpp"
 
@@ -24,10 +25,15 @@ public:
 
 // Orca: Main function to repair model objects using CGAL, with progress dialog and cancellation support.
 // Returns false if fixing was canceled. fix_result contains error message if failed.
-bool fix_model_with_cgal_gui(ModelObject &model_object, int volume_idx, GUI::ProgressDialog &progress_dialog, const wxString &msg_header, std::string &fix_result)
+bool fix_model_with_cgal_gui(ModelObject &model_object, int volume_idx, GUI::ProgressDialog &progress_dialog, const wxString &msg_header, std::string &fix_result, bool *self_intersections_remain)
 {
     // Hold SaveObjectGaurd to prevent backup manager from racing concurrent mesh mutations (use-after-free).
     SaveObjectGaurd backup_gaurd(model_object);
+
+    // Orca: The worker repairs a copy. The progress dialog keeps processing events, which may draw model_object, so it
+    // changes only on this thread once the worker has finished, and not at all when the repair fails or is canceled.
+    Model        scratch;
+    ModelObject &copy = *scratch.add_object(model_object);
 
     // Orca: Synchronization primitives for progress updates between worker thread and GUI.
     std::mutex mtx;
@@ -41,7 +47,8 @@ bool fix_model_with_cgal_gui(ModelObject &model_object, int volume_idx, GUI::Pro
     std::atomic<bool> canceled = false;
     std::atomic<bool> finished = false;
 
-    bool success = false;
+    bool                    success = false;
+    ModelObjectRepairReport report;
 
     // Orca: Lambda for updating progress from worker thread.
     auto on_progress = [&mtx, &condition, &progress](const char *msg, int percent) {
@@ -53,9 +60,9 @@ bool fix_model_with_cgal_gui(ModelObject &model_object, int volume_idx, GUI::Pro
     };
 
     // Orca: Worker thread that performs the actual model repair operations.
-    auto worker_thread = std::thread([&model_object, volume_idx, on_progress, &success, &canceled, &finished, &fix_result]() {
+    auto worker_thread = std::thread([&copy, volume_idx, on_progress, &report, &success, &canceled, &finished, &fix_result]() {
         try {
-            repair_model_object(model_object, volume_idx, on_progress, [&canceled] {
+            report = repair_model_object(copy, volume_idx, on_progress, [&canceled] {
                 if (canceled)
                     throw RepairCanceledException();
             });
@@ -87,16 +94,18 @@ bool fix_model_with_cgal_gui(ModelObject &model_object, int volume_idx, GUI::Pro
         progress.updated = false;
     }
 
-    if (canceled) {
-        // Nothing to show.
-    } else if (success) {
-        fix_result.clear();
-    }
-
     if (worker_thread.joinable())
         worker_thread.join();
 
-    return !canceled;
+    if (canceled)
+        return false;
+    if (success) {
+        apply_repaired_volumes(model_object, copy);
+        fix_result.clear();
+        if (self_intersections_remain)
+            *self_intersections_remain = report.self_intersections_remain;
+    }
+    return true;
 }
 
 } // namespace Slic3r

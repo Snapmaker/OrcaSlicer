@@ -166,6 +166,59 @@ TEST_CASE("Repairing after dropping a flat first volume still repairs the next v
     REQUIRE(open_edges(*object.volumes.front()) == 0);
 }
 
+TEST_CASE("Repairing a selected volume repairs all its shells when splitting drops a flat volume before it", "[ModelObjectRepair]") {
+    // ModelVolume::split() also deletes the other volumes of the object whose convex hull is degenerate, as a sheet's is.
+    Model        model;
+    ModelObject &object = object_with(model, {sheet_at(Vec3f(0.f, 0.f, 50.f)),
+                                              merged(open_cube_at(10.f, Vec3f::Zero()), open_cube_at(10.f, Vec3f(20.f, 0.f, 0.f)))});
+    repair(object, 1);
+    size_t solids = 0;
+    for (const ModelVolume *v : object.volumes)
+        if (its_volume(v->mesh().its) > 1.f) {
+            ++solids;
+            REQUIRE(open_edges(*v) == 0);
+        }
+    REQUIRE(solids == 2);
+}
+
+TEST_CASE("Repairing keeps a clean volume whose tiny mesh is scaled up", "[ModelObjectRepair]") {
+    // The mesh of the second volume encloses 1e-6 mm³, but scaled by 1000 it is a 10 mm cube.
+    Model        model;
+    ModelObject &object = object_with(model, {open_cube_at(10.f, Vec3f::Zero()), cube_at(0.01f, Vec3f::Zero())});
+    object.volumes[1]->set_scaling_factor(Vec3d(1000., 1000., 1000.));
+    const ModelVolume *scaled = object.volumes[1];
+    repair(object);
+    REQUIRE(object.volumes.size() == 2);
+    REQUIRE(object.volumes[1] == scaled);
+    REQUIRE(open_edges(*object.volumes[0]) == 0);
+}
+
+TEST_CASE("Repairing a volume whose first shell is flat repairs its solid and leaves the other volume alone", "[ModelObjectRepair]") {
+    // ModelVolume::split() keeps the first shell in the split volume itself and then deletes it for being flat.
+    Model        model;
+    ModelObject &object = object_with(model, {merged(sheet_at(Vec3f(0.f, 0.f, 50.f)), open_cube_at(10.f, Vec3f::Zero())),
+                                              open_cube_at(10.f, Vec3f(30.f, 0.f, 0.f))});
+    const ModelVolume *other = object.volumes[1];
+    repair(object, 0);
+    REQUIRE(object.volumes.size() == 2);
+    REQUIRE(object.volumes[1] == other);
+    REQUIRE(open_edges(*other) == 3);
+    REQUIRE(open_edges(*object.volumes[0]) == 0);
+    REQUIRE_THAT(double(its_volume(object.volumes[0]->mesh().its)), WithinRel(1000., 0.001));
+}
+
+TEST_CASE("Repairing a volume whose shells are all flat leaves the only other volume alone", "[ModelObjectRepair]") {
+    // split() deletes every part, and deleting volumes gives the last one left a new id.
+    Model        model;
+    ModelObject &object = object_with(model, {merged(sheet_at(Vec3f(0.f, 0.f, 50.f)), sheet_at(Vec3f(0.f, 0.f, 80.f))),
+                                              open_cube_at(10.f, Vec3f(30.f, 0.f, 0.f))});
+    const ModelVolume *other = object.volumes[1];
+    repair(object, 0);
+    REQUIRE(object.volumes.size() == 1);
+    REQUIRE(object.volumes[0] == other);
+    REQUIRE(open_edges(*other) == 3);
+}
+
 TEST_CASE("Repairing never leaves an object without volumes", "[ModelObjectRepair]") {
     Model        model;
     ModelObject &object = object_with(model, {sheet_at(Vec3f::Zero())});

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -78,9 +79,9 @@ bool is_broken(const TriangleMesh &mesh)
 }
 
 // Orca: Repairs the broken volume at ivolume: splits it into its shells, drops the parts that enclose no volume and
-// repairs the broken parts. Returns the end of its parts, which start at ivolume.
+// repairs the broken parts. Moves ivolume to the first of its parts and returns their end.
 size_t repair_volume(ModelObject                                          &model_object,
-                     size_t                                                ivolume,
+                     size_t                                               &ivolume,
                      ModelObjectRepairReport                              &report,
                      const std::function<void(const char *, unsigned)>    &progress,
                      const std::function<void()>                          &throw_on_cancel)
@@ -90,7 +91,24 @@ size_t repair_volume(ModelObject                                          &model
     // Orca: Split splittable volumes into parts for individual processing.
     size_t parts_count = 1;
     if (volume->is_splittable()) {
-        parts_count = volume->split(1);
+        // Orca: split() also deletes the volumes of the object whose convex hull is degenerate, wherever they are,
+        // this one included, so its parts are found as the volumes that were neither before nor after it. Pointers,
+        // not ids: delete_volume() gives the last volume left a new id. split() allocates all parts before it
+        // deletes anything, so no part reuses the address of a volume listed here.
+        std::vector<const ModelVolume *> before, after;
+        for (size_t i = 0; i < model_object.volumes.size(); ++i)
+            if (i != ivolume)
+                (i < ivolume ? before : after).push_back(model_object.volumes[i]);
+        std::sort(before.begin(), before.end(), std::less<const ModelVolume *>());
+        std::sort(after.begin(), after.end(), std::less<const ModelVolume *>());
+        volume->split(1);
+        const auto in = [](const std::vector<const ModelVolume *> &volumes, const ModelVolume *v) {
+            return std::binary_search(volumes.begin(), volumes.end(), v, std::less<const ModelVolume *>());
+        };
+        const auto first = std::find_if_not(model_object.volumes.begin(), model_object.volumes.end(),
+                                            [&](const ModelVolume *v) { return in(before, v); });
+        ivolume     = size_t(first - model_object.volumes.begin());
+        parts_count = size_t(std::find_if(first, model_object.volumes.end(), [&](const ModelVolume *v) { return in(after, v); }) - first);
         if (parts_count > 1) {
             // Orca: Translated here, the receiver cannot look the formatted message up in the catalog.
             const std::string msg = Slic3r::format(_u8L("Split into %1% parts"), parts_count);
@@ -98,7 +116,7 @@ size_t repair_volume(ModelObject                                          &model
         }
     }
 
-    size_t part_end = std::min(ivolume + parts_count, model_object.volumes.size());
+    size_t part_end = ivolume + parts_count;
 
     for (size_t part_idx = part_end; part_idx-- > ivolume;) {
         if (!is_not_3dimensional_part(model_object.volumes[part_idx]->mesh()))

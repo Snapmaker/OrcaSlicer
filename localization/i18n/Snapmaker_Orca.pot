@@ -6348,6 +6348,9 @@ msgid ""
 "on Snapmaker Orca(windows) or CAD softwares."
 msgstr ""
 
+msgid "Use \"Fix Model\" to repair the mesh."
+msgstr ""
+
 #, possible-c-format, possible-boost-format
 msgid ""
 "Plate %d: %s is not suggested to be used to print filament %s (%s). If you "
@@ -8724,6 +8727,19 @@ msgid "Repair finished"
 msgstr ""
 
 msgid "Repair canceled"
+msgstr ""
+
+msgid "Repair failed"
+msgstr ""
+
+#, possible-boost-format
+msgid "Split into %1% parts"
+msgstr ""
+
+msgid "The object has no part that encloses a volume"
+msgstr ""
+
+msgid "Repaired, but self-intersections remain in"
 msgstr ""
 
 #, possible-boost-format

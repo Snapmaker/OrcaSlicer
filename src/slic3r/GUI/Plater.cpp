@@ -223,8 +223,7 @@ namespace GUI {
 static void report_file_import_result(const std::vector<fs::path>& input_files, bool success, const std::string& source)
 {
     const auto sinks = success ? SnapLog::v1::SinkPostHog : (SnapLog::v1::SinkGateway | SnapLog::v1::SinkPostHog);
-    const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
-    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::FILE_IMPORT_RESULT,
+    const SnapLog::v1::SnapLogExt ext{
         {
             {"source", source.empty() ? "other" : source},
             {"fileType", SnapTelemetry::file_types(input_files)},
@@ -232,7 +231,12 @@ static void report_file_import_result(const std::vector<fs::path>& input_files, 
             {"success", SnapTelemetry::bool_value(success)},
             {"reason", success ? "" : "cancelled_or_failed"},
         },
-        success ? "file import completed" : "file import failed");
+    };
+    if (success) {
+        SNAP_LOG_INFO(sinks, SnapLog::v1::SnapEvent::FILE_IMPORT_RESULT, ext, "file import completed");
+    } else {
+        SNAP_LOG_WARNING(sinks, SnapLog::v1::SnapEvent::FILE_IMPORT_RESULT, ext, "file import failed");
+    }
 }
 
 static std::string telemetry_printer_model();
@@ -246,8 +250,7 @@ static unsigned telemetry_result_sinks(bool success)
 static void report_project_save_result(const fs::path& path, bool success, bool save_as)
 {
     const auto sinks = telemetry_result_sinks(success);
-    const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
-    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::PROJECT_SAVE_RESULT,
+    const SnapLog::v1::SnapLogExt ext{
         {
             {"fileType", "3mf"},
             {"fileSizeBytes", SnapTelemetry::file_size_bytes(path)},
@@ -259,14 +262,18 @@ static void report_project_save_result(const fs::path& path, bool success, bool 
             {"objectCount", std::to_string(wxGetApp().plater()->model().objects.size())},
             {"printerModel", telemetry_printer_model()},
         },
-        success ? "project save completed" : "project save failed");
+    };
+    if (success) {
+        SNAP_LOG_INFO(sinks, SnapLog::v1::SnapEvent::PROJECT_SAVE_RESULT, ext, "project save completed");
+    } else {
+        SNAP_LOG_WARNING(sinks, SnapLog::v1::SnapEvent::PROJECT_SAVE_RESULT, ext, "project save failed");
+    }
 }
 
 static void report_gcode_3mf_export_result(const fs::path& path, bool success)
 {
     const auto sinks = telemetry_result_sinks(success);
-    const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
-    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::GCODE_EXPORT_RESULT,
+    const SnapLog::v1::SnapLogExt ext{
         {
             {"fileType", "gcode.3mf"},
             {"fileSizeBytes", SnapTelemetry::file_size_bytes(path)},
@@ -278,7 +285,12 @@ static void report_gcode_3mf_export_result(const fs::path& path, bool success)
             {"filamentCount", std::to_string(telemetry_filament_count())},
             {"printerModel", telemetry_printer_model()},
         },
-        success ? "gcode 3mf export completed" : "gcode 3mf export failed");
+    };
+    if (success) {
+        SNAP_LOG_INFO(sinks, SnapLog::v1::SnapEvent::GCODE_EXPORT_RESULT, ext, "gcode 3mf export completed");
+    } else {
+        SNAP_LOG_WARNING(sinks, SnapLog::v1::SnapEvent::GCODE_EXPORT_RESULT, ext, "gcode 3mf export failed");
+    }
 }
 
 class ScopedFileImportTelemetry
@@ -15462,9 +15474,7 @@ void Plater::priv::on_slicing_began()
 void Plater::priv::report_slice_telemetry(SnapLog::v1::SnapEvent event, bool success, bool cancelled, const std::string& reason)
 {
     const auto sinks = telemetry_result_sinks(success);
-    const auto level = success ? SnapLog::v1::SnapLogLevel::Info :
-                               (cancelled ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Error);
-    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, event,
+    const SnapLog::v1::SnapLogExt ext{
         {
             {"trigger", m_slice_trigger},
             {"sliceDurationMs", m_slice_duration_ms},
@@ -15482,14 +15492,18 @@ void Plater::priv::report_slice_telemetry(SnapLog::v1::SnapEvent event, bool suc
             {"supportType", telemetry_support_type()},
             {"bedType", telemetry_bed_type()},
         },
-        "slice result");
+    };
+    if (success || cancelled) {
+        SNAP_LOG_INFO(sinks, event, ext, "slice result");
+    } else {
+        SNAP_LOG_ERROR(sinks, event, ext, "slice result");
+    }
 }
 
 void Plater::priv::report_gcode_export_telemetry(bool success, bool cancelled)
 {
     const auto sinks = telemetry_result_sinks(success);
-    const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
-    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::GCODE_EXPORT_RESULT,
+    const SnapLog::v1::SnapLogExt ext{
         {
             {"fileType", "gcode"},
             {"fileSizeBytes", last_output_path.empty() ? "0" : SnapTelemetry::file_size_bytes(fs::path(last_output_path))},
@@ -15501,7 +15515,12 @@ void Plater::priv::report_gcode_export_telemetry(bool success, bool cancelled)
             {"filamentCount", std::to_string(telemetry_filament_count())},
             {"printerModel", telemetry_printer_model()},
         },
-        "gcode export result");
+    };
+    if (success) {
+        SNAP_LOG_INFO(sinks, SnapLog::v1::SnapEvent::GCODE_EXPORT_RESULT, ext, "gcode export result");
+    } else {
+        SNAP_LOG_WARNING(sinks, SnapLog::v1::SnapEvent::GCODE_EXPORT_RESULT, ext, "gcode export result");
+    }
 }
 void Plater::priv::add_warning(const Slic3r::PrintStateBase::Warning& warning, size_t oid)
 {

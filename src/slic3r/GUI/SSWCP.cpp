@@ -612,7 +612,13 @@ void SSWCP_Instance::sw_SnapLog()
     SnapLogLevel lvl = (level_str == "ERROR" || level_str == "error") ? SnapLogLevel::Error
                     : (level_str == "WARN"  || level_str == "warning") ? SnapLogLevel::Warning
                     : SnapLogLevel::Info;
-    SnapLogClient::instance().log_event(lvl, "flutter", 0, SinkGateway, *event, std::move(ext), message);
+    if (lvl == SnapLogLevel::Error) {
+        SNAP_LOG_ERROR(SinkGateway, *event, std::move(ext), message);
+    } else if (lvl == SnapLogLevel::Warning) {
+        SNAP_LOG_WARNING(SinkGateway, *event, std::move(ext), message);
+    } else {
+        SNAP_LOG_INFO(SinkGateway, *event, std::move(ext), message);
+    }
 
     send_to_js();
     finish_job();

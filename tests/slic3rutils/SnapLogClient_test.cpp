@@ -4,11 +4,15 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <future>
 #include <set>
+#include <sstream>
 #include <string_view>
 #include <memory>
 #include <mutex>
+#include <vector>
 #include <thread>
 #include <nlohmann/json.hpp>
 #include "slic3r/Utils/SnapLogClient.hpp"
@@ -76,6 +80,29 @@ TEST_CASE("SnapEvent registry maps every enum to a unique stable name", "[snaplo
     std::set<std::string_view> names;
     for (const auto event : events)
         REQUIRE(names.insert(snap_event_name(event)).second);
+}
+
+TEST_CASE("Production telemetry uses the public SnapLog macros", "[snaplog][api]")
+{
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto src_dir   = repo_root / "src" / "slic3r";
+    REQUIRE(std::filesystem::is_directory(src_dir));
+
+    std::vector<std::string> offenders;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
+        if (!entry.is_regular_file() || (entry.path().extension() != ".cpp" && entry.path().extension() != ".hpp"))
+            continue;
+        if (entry.path().lexically_relative(repo_root).generic_string() == "src/slic3r/Utils/SnapLogClient.hpp")
+            continue;
+
+        std::ifstream     input(entry.path(), std::ios::binary);
+        std::stringstream buffer;
+        buffer << input.rdbuf();
+        if (buffer.str().find(".log_event(") != std::string::npos)
+            offenders.push_back(entry.path().lexically_relative(repo_root).generic_string());
+    }
+
+    REQUIRE(offenders.empty());
 }
 
 TEST_CASE("hmac_sha256_hex matches doc vector", "[snaplog]")

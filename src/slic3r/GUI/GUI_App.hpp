@@ -33,6 +33,7 @@
 
 #include <atomic>
 #include <mutex>
+#include <vector>
 #include <stack>
 #include <unordered_map>
 //#define BBL_HAS_FIRST_PAGE          1
@@ -256,6 +257,9 @@ private:
     // post_init must not start a blank project in that case, or it discards the model the
     // URL is in the middle of loading.
     bool            m_url_open_pending { false };
+#ifdef __APPLE__
+    std::vector<wxString> m_pending_mac_open_urls;
+#endif // __APPLE__
     bool            m_app_conf_exists{ false };
     EAppMode        m_app_mode{ EAppMode::Editor };
     bool            m_is_recreating_gui{ false };

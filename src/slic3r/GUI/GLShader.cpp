@@ -9,6 +9,7 @@
 #include <boost/nowide/fstream.hpp>
 #include <GL/glew.h>
 #include <cassert>
+#include <atomic>
 
 #include <boost/log/trivial.hpp>
 
@@ -210,6 +211,8 @@ bool GLShaderProgram::init_from_texts(const std::string& name, const ShaderSourc
         return false;
     }
 
+    static std::atomic<uint64_t> next_revision{1};
+    m_revision = next_revision.fetch_add(1, std::memory_order_relaxed);
     // release shaders, they are no more needed
     release_shaders(shader_ids);
 

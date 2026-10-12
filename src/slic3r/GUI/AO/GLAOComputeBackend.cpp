@@ -1,23 +1,23 @@
-#include "GLAOCompute.hpp"
+#include "GLAOComputeBackend.hpp"
 
 #include <GL/glew.h>
-#include <cstring>
 #include <algorithm>
 #include <cmath>
-#include <filesystem>
-#include <fstream>
-#include <vector>
 
-namespace Slic3r { namespace GUI {
+namespace Slic3r { namespace GUI { namespace AO {
 
-void GLAOCompute::release()
+void GLAOComputeBackend::release()
 {
+    if (!m_textures[0])
+        return;
+    State state;
+    state.forget_textures(m_textures);
     glDeleteTextures(int(m_textures.size()), m_textures.data());
     m_textures = {};
     m_width = m_height = m_pw = m_ph = 0;
 }
 
-void GLAOCompute::forget_context()
+void GLAOComputeBackend::forget_context()
 {
     m_textures = {};
     m_programs = {};
@@ -27,13 +27,13 @@ void GLAOCompute::forget_context()
     m_capabilities = {};
 }
 
-void GLAOCompute::disable(const std::string& reason)
+void GLAOComputeBackend::disable(const std::string& reason)
 {
     release();
     m_failure = reason;
 }
 
-bool GLAOCompute::prepare(int width, int height, const std::array<unsigned int, 3>& programs, int denoise_passes)
+bool GLAOComputeBackend::prepare(int width, int height, const std::array<unsigned int, 3>& programs, int denoise_passes)
 {
     if (denoise_passes < 1 || denoise_passes > 3)
         return false;
@@ -94,14 +94,25 @@ bool GLAOCompute::prepare(int width, int height, const std::array<unsigned int, 
     return true;
 }
 
-bool GLAOCompute::render(unsigned int depth, unsigned int normals, const Parameters& p, const std::function<void(int)>& stage_done)
+bool GLAOComputeBackend::render(unsigned int                    depth,
+                                unsigned int                    normals,
+                                const Parameters&               p,
+                                const std::function<void(int)>& stage_done,
+                                const std::function<bool()>&    context_lost)
 {
     if (!m_failure.empty() || !m_textures[0] || p.width != m_width || p.height != m_height || !std::isfinite(p.radius) || p.radius <= 0 ||
         p.slices < 1 || p.steps < 1 || p.slices > 16 || p.steps > 32 || p.denoise_passes < 1 || p.denoise_passes > 3 ||
         (p.denoise_passes == 3 && !m_textures[5]))
         return false;
-    State state;
-    auto  texture = [](int unit, GLuint id) {
+    State      state;
+    const auto cancelled = [&]() {
+        if (!context_lost || !context_lost())
+            return false;
+        state.forget_context();
+        m_failure = "OpenGL context lost";
+        return true;
+    };
+    auto texture = [](int unit, GLuint id) {
         glActiveTexture(GL_TEXTURE0 + unit);
         glBindTexture(GL_TEXTURE_2D, id);
         glBindSampler(unit, 0);
@@ -123,6 +134,8 @@ bool GLAOCompute::render(unsigned int depth, unsigned int normals, const Paramet
     glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
     if (stage_done)
         stage_done(0);
+    if (cancelled())
+        return false;
     use(m_programs[1]);
     glUniformMatrix4fv(glGetUniformLocation(m_programs[1], "inverse_projection"), 1, GL_FALSE, p.inverse.data());
     glUniform1f(glGetUniformLocation(m_programs[1], "radius"), p.radius);
@@ -138,6 +151,8 @@ bool GLAOCompute::render(unsigned int depth, unsigned int normals, const Paramet
     glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
     if (stage_done)
         stage_done(1);
+    if (cancelled())
+        return false;
     use(m_programs[2]);
     texture(1, m_textures[2]);
     texture(2, m_textures[0]);
@@ -156,6 +171,8 @@ bool GLAOCompute::render(unsigned int depth, unsigned int normals, const Paramet
         glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
         if (stage_done)
             stage_done(pass + 2);
+        if (cancelled())
+            return false;
     }
     const GLenum error = glGetError();
     if (error != GL_NO_ERROR) {
@@ -167,88 +184,7 @@ bool GLAOCompute::render(unsigned int depth, unsigned int normals, const Paramet
     return true;
 }
 
-bool GLAOCompute::capture(const std::string& directory, int denoise_passes) const
-{
-    if (!m_textures[0])
-        return false;
-    State        state;
-    GLint        pack[5]{};
-    const GLenum names[] = {GL_PACK_ALIGNMENT, GL_PACK_ROW_LENGTH, GL_PACK_SKIP_ROWS, GL_PACK_SKIP_PIXELS, GL_PIXEL_PACK_BUFFER_BINDING};
-    for (int i = 0; i < 5; ++i)
-        glGetIntegerv(names[i], &pack[i]);
-    struct Restore
-    {
-        const GLenum* names;
-        GLint*        pack;
-        ~Restore()
-        {
-            for (int i = 0; i < 4; ++i)
-                glPixelStorei(names[i], pack[i]);
-            glBindBuffer(GL_PIXEL_PACK_BUFFER, pack[4]);
-        }
-    } restore{names, pack};
-    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-    glPixelStorei(GL_PACK_SKIP_ROWS, 0);
-    glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
-    glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
-    glActiveTexture(GL_TEXTURE0);
-    const std::filesystem::path root(directory);
-    bool                        ok = true;
-    glBindTexture(GL_TEXTURE_2D, m_textures[0]);
-    for (int level = 0; level < 5; ++level) {
-        int                w = m_pw >> level, h = m_ph >> level;
-        std::vector<float> data(size_t(w) * h);
-        glGetTexImage(GL_TEXTURE_2D, level, GL_RED, GL_FLOAT, data.data());
-        std::ofstream out(root / ("cs-depth-mip-" + std::to_string(level) + ".pfm"), std::ios::binary);
-        out << "Pf\n" << w << ' ' << h << "\n-1.0\n";
-        out.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size() * sizeof(float)));
-        ok &= bool(out);
-    }
-    const char*                files[] = {"cs-raw-encoded.pgm", "cs-edges-packed.pgm", "cs-denoise-first-encoded.pgm", "cs-final.pgm",
-                                          "cs-denoise-second-encoded.pgm"};
-    std::vector<unsigned char> data(size_t(m_width) * m_height);
-    auto                       pgm = [&](const std::string& name, const std::vector<unsigned char>& pixels) {
-        std::ofstream out(root / name, std::ios::binary);
-        out << "P5\n" << m_width << ' ' << m_height << "\n255\n";
-        for (int y = m_height - 1; y >= 0; --y)
-            out.write(reinterpret_cast<const char*>(pixels.data() + size_t(y) * m_width), m_width);
-        ok &= bool(out);
-    };
-    for (int i = 1; i < (denoise_passes == 3 ? 6 : 5); ++i) {
-        if (i == 3 && denoise_passes == 1)
-            continue;
-        glBindTexture(GL_TEXTURE_2D, m_textures[i]);
-        glGetTexImage(GL_TEXTURE_2D, 0, i == 4 ? GL_RED : GL_RED_INTEGER, GL_UNSIGNED_BYTE, data.data());
-        pgm(files[i - 1], data);
-        if (i == 2)
-            for (int direction = 0; direction < 4; ++direction) {
-                auto channel = data;
-                for (auto& value : channel)
-                    value = ((value >> (6 - direction * 2)) & 3) * 85;
-                pgm("cs-edge-" + std::to_string(direction) + ".pgm", channel);
-            }
-    }
-    std::ofstream meta(root / "cs-info.txt");
-    meta << "backend=cs\nupstream=" << upstream << "\nprecision=fp32\npadded_size=" << m_pw << 'x' << m_ph
-         << "\nedge_order=left,right,top(+Y),bottom(-Y)\nencoded_visibility_scale=1.5\ndenoise_passes=" << denoise_passes
-         << "\nworking_texture_bytes=" << (size_t(m_pw) * m_ph * 4 * 341 / 256 + size_t(m_width) * m_height * (m_textures[5] ? 5 : 4))
-         << '\n';
-    return ok && bool(meta) && glGetError() == GL_NO_ERROR;
-}
-
-GLAOCompute::Request GLAOCompute::parse_request(const char* value)
-{
-    if (!value || std::strcmp(value, "auto") == 0)
-        return Request::Auto;
-    if (std::strcmp(value, "cs") == 0)
-        return Request::CS;
-    // Unknown diagnostic requests must never silently enable an experimental backend.
-    return Request::FS;
-}
-
-const GLAOCompute::Capabilities& GLAOCompute::capabilities()
+const GLAOComputeBackend::Capabilities& GLAOComputeBackend::capabilities()
 {
     if (!m_probed) {
         m_capabilities = query_capabilities();
@@ -257,7 +193,7 @@ const GLAOCompute::Capabilities& GLAOCompute::capabilities()
     return m_capabilities;
 }
 
-GLAOCompute::Capabilities GLAOCompute::query_capabilities()
+GLAOComputeBackend::Capabilities GLAOComputeBackend::query_capabilities()
 {
     Capabilities result;
     if (!glGetString(GL_VERSION)) {
@@ -303,28 +239,13 @@ GLAOCompute::Capabilities GLAOCompute::query_capabilities()
     return result;
 }
 
-bool GLAOCompute::valid_dispatch(const Capabilities& caps, int width, int height)
+bool GLAOComputeBackend::valid_dispatch(const Capabilities& caps, int width, int height)
 {
     return caps.supported && width > 0 && height > 0 && width <= caps.max_texture_size && height <= caps.max_texture_size &&
            (width - 1) / 8 + 1 <= caps.max_groups[0] && (height - 1) / 8 + 1 <= caps.max_groups[1];
 }
 
-GLAOCompute::Selection GLAOCompute::select(Request request, const Capabilities& caps, bool backend_ready, bool benchmark)
-{
-    Selection result;
-    if (request == Request::FS)
-        result.reason = "FS explicitly selected";
-    else if (!caps.supported)
-        result.reason = caps.reason;
-    else if (!backend_ready)
-        result.reason = "CS backend not ready";
-    else
-        result.use_cs = true;
-    result.benchmark_allowed = !(benchmark && request == Request::CS && !result.use_cs);
-    return result;
-}
-
-GLAOCompute::State::State()
+GLAOComputeBackend::State::State()
 {
     glGetIntegerv(GL_CURRENT_PROGRAM, &m_program);
     glGetIntegerv(GL_ACTIVE_TEXTURE, &m_active_texture);
@@ -343,7 +264,7 @@ GLAOCompute::State::State()
     glActiveTexture(m_active_texture);
 }
 
-void GLAOCompute::State::forget_textures(const std::array<unsigned int, 6>& textures)
+void GLAOComputeBackend::State::forget_textures(const std::array<unsigned int, 6>& textures)
 {
     for (size_t i = 0; i < m_textures.size(); ++i) {
         for (auto texture : textures) {
@@ -357,7 +278,7 @@ void GLAOCompute::State::forget_textures(const std::array<unsigned int, 6>& text
     }
 }
 
-GLAOCompute::State::~State()
+GLAOComputeBackend::State::~State()
 {
     if (!m_restore_state)
         return;
@@ -372,4 +293,4 @@ GLAOCompute::State::~State()
     glUseProgram(m_program);
 }
 
-}} // namespace Slic3r::GUI
+}}} // namespace Slic3r::GUI::AO

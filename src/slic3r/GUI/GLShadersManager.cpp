@@ -3,6 +3,7 @@
 #include "GLShadersManager.hpp"
 #include "3DScene.hpp"
 #include "GUI_App.hpp"
+#include "AO/AOConfig.hpp"
 
 #include <cassert>
 #include <algorithm>
@@ -117,21 +118,23 @@ std::pair<bool, std::string> GLShadersManager::init()
     if (platform_flavor() == PlatformFlavor::OSXOnArm && wxPlatformInfo::Get().GetOSMajorVersion() < 12)
         valid &= append_shader("mm_gouraud", { prefix + "mm_gouraud.vs", prefix + "mm_gouraud.fs" }, { "FLIP_TRIANGLE_NORMALS"sv });
     else
-        valid &= append_shader("mm_gouraud", { prefix + "mm_gouraud.vs", prefix + "mm_gouraud.fs" });
+        valid &= append_shader("mm_gouraud", {prefix + "mm_gouraud.vs", prefix + "mm_gouraud.fs"});
 
+#if ORCA_RENDER_DIAGNOSTICS
     // Diagnostic variants are selected at launch, including automated comparisons.
     // Keep their files available without compiling every experiment in normal sessions.
-    const auto ao_option = [](const char* key) -> std::string_view {
-        const char* value = std::getenv(key);
-        return value ? std::string_view(value) : std::string_view();
-    };
-    const auto ao_comparison = ao_option("ORCA_AO_COMPARISON_MODE");
-    const auto ao_composite = ao_option("ORCA_AO_COMPOSITE");
-    const bool ao_split = ao_composite == "split" || ao_comparison == "split";
-    const bool ao_confidence = ao_composite == "confidence" || ao_comparison == "confidence";
-    const bool ao_reference = ao_composite == "reference" || ao_comparison == "composite";
-    const bool ao_fast_reconstruction = ao_option("ORCA_AO_FS_RECONSTRUCTION") == "fast" || ao_comparison == "fseval";
-    const bool ao_legacy_low = ao_option("ORCA_AO_CS_LOW") == "legacy" || ao_comparison == "cslow";
+    // The same immutable AOStartupOptions feed per-frame requests; nothing here re-reads env.
+    const auto& ao_options             = GUI::AO::startup_options();
+    const auto& ao_comparison          = ao_options.comparison_mode;
+    const auto  ao_composite           = ao_options.composite;
+    const bool  ao_split               = ao_composite == GUI::AO::AOStartupOptions::Composite::Split || ao_comparison == "split";
+    const bool  ao_confidence          = ao_composite == GUI::AO::AOStartupOptions::Composite::Confidence || ao_comparison == "confidence";
+    const bool  ao_reference           = ao_composite == GUI::AO::AOStartupOptions::Composite::Reference || ao_comparison == "composite";
+    const bool  ao_fast_reconstruction = ao_options.fs_fast_reconstruction || ao_comparison == "fseval";
+    const bool  ao_legacy_low          = ao_options.cs_low_legacy || ao_comparison == "cslow";
+#else
+    constexpr bool ao_split = false, ao_confidence = false, ao_reference = false, ao_fast_reconstruction = false, ao_legacy_low = false;
+#endif
 
     if (GUI::wxGetApp().is_gl_version_greater_or_equal_to(3, 1)) {
         // Files and registered programs use functional AO stage names.
@@ -139,10 +142,12 @@ std::pair<bool, std::string> GLShadersManager::init()
         if (ao_confidence)
             appendOptionalShader("ao_reconstruct_view_normals_confidence",
                                  {"140/ao_fullscreen_triangle.vs", "140/ao_reconstruct_view_normals.fs"}, {"AO_CONFIDENCE_OUTPUT"});
+#if ORCA_RENDER_DIAGNOSTICS
         appendOptionalShader("ao_evaluate_visibility_reference_fs",
                              {"140/ao_fullscreen_triangle.vs", "140/ao_evaluate_visibility_reference.fs"});
         appendOptionalShader("ao_denoise_visibility_geometry_reference",
                              {"140/ao_fullscreen_triangle.vs", "140/ao_denoise_visibility_geometry_reference.fs"});
+#endif
         appendOptionalShader("ao_upsample_visibility_bilateral",
                              {"140/ao_fullscreen_triangle.vs", "140/ao_upsample_visibility_bilateral.fs"});
         appendOptionalShader("ao_composite_color_pixel", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_color_pixel.fs"});

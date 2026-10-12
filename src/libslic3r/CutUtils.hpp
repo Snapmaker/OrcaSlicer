@@ -57,7 +57,14 @@ public:
 
     const ModelObjectPtrs& perform_with_plane();
     const ModelObjectPtrs& perform_by_contour(std::vector<Part> parts, int dowels_count);
-    const ModelObjectPtrs& perform_with_groove(const Groove& groove, const Transform3d& rotation_m, bool keep_as_parts = false);
+    const ModelObjectPtrs& perform_with_groove(const Groove&      groove,
+                                               const Transform3d& rotation_m,
+                                               const int          groove_count,
+                                               const float        groove_gap,
+                                               const float        radius,
+                                               bool               keep_as_parts = false);
+
+    static float calculate_groove_width(const Cut::Groove& groove, const float radius);
 
 }; // namespace Cut
 

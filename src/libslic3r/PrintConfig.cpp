@@ -7889,12 +7889,13 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
         }
     }
 
-    if (this->has("wipe_tower_filament")) {
-        // If invalid, replace with 0.
-        int extruder      = this->opt<ConfigOptionInt>("wipe_tower_filament")->value;
-        int num_extruders = this->opt<ConfigOptionFloats>("nozzle_diameter")->size();
-        if (extruder < 0 || extruder > num_extruders)
-            this->option("wipe_tower_filament")->setInt(0);
+    if (auto* filament = this->opt<ConfigOptionInt>("wipe_tower_filament")) {
+        const auto* nozzles = this->opt<ConfigOptionFloats>("nozzle_diameter");
+        // Partial presets may lack printer settings; defer the upper-bound check until they are merged.
+        if (filament->value < 0 || (nozzles != nullptr && filament->value > static_cast<int>(nozzles->size())))
+        {
+            filament->value = 0;
+        }
     }
 
     if (!this->has("solid_infill_filament") && this->has("sparse_infill_filament"))

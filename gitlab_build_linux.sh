@@ -70,6 +70,15 @@ GITLAB_BUILD_DIR="${ORCA_ROOT}/gitlab_build"
 SLIC3R_PRECOMPILED_HEADERS="ON"
 
 unset name
+# Remember an explicit CLEAN_BUILD before -c can assign the same variable.
+if [ -n "${CLEAN_BUILD+x}" ]; then
+    CLEAN_BUILD_WAS_SET=1
+    CLEAN_BUILD_REQUEST="${CLEAN_BUILD}"
+else
+    CLEAN_BUILD_WAS_SET=0
+    CLEAN_BUILD_REQUEST=""
+fi
+CLEAN_FLAG=""
 while getopts ":1j:bcCdhiprstulL" opt ; do
   case ${opt} in
     1 )
@@ -82,7 +91,7 @@ while getopts ":1j:bcCdhiprstulL" opt ; do
         BUILD_DEBUG="1"
         ;;
     c )
-        CLEAN_BUILD=1
+        CLEAN_FLAG=1
         ;;
     C )
         COLORED_OUTPUT="-DCOLORED_OUTPUT=ON"
@@ -95,7 +104,8 @@ while getopts ":1j:bcCdhiprstulL" opt ; do
         echo "   -1: limit builds to one core"
         echo "   -j N: limit builds to N cores"
         echo "   -b: build in debug mode"
-        echo "   -c: force a clean build"
+        echo "   -c: force a clean build (used only when CLEAN_BUILD is unset)"
+        echo "   CLEAN_BUILD=true|false: optional; default is off. true/1/yes cleans, false/0/no does not"
         echo "   -C: enable ANSI-colored compile output (GNU/Clang only)"
         echo "   -d: build dependencies from vendor/gitlab_deps"
         echo "   -h: prints this help text"
@@ -147,6 +157,19 @@ if [ ${OPTIND} -eq 1 ] ; then
     echo "For a first use: ./$0 -u && ./$0 -dsi"
     exit 1
 fi
+
+# Unset or false/0/no: do not clean. true/1/yes: clean.
+# -c is the old switch and applies only when CLEAN_BUILD was not passed.
+CLEAN_BUILD=""
+if [ "${CLEAN_BUILD_WAS_SET}" -eq 1 ]; then
+    case "${CLEAN_BUILD_REQUEST}" in
+        1|true|TRUE|True|yes|YES) CLEAN_BUILD=1 ;;
+        *) CLEAN_BUILD="" ;;
+    esac
+elif [ -n "${CLEAN_FLAG}" ]; then
+    CLEAN_BUILD=1
+fi
+echo "CLEAN_BUILD: ${CLEAN_BUILD:-0}"
 
 # ============================================================
 # 3. Restore patched cmake files on script exit

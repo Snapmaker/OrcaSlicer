@@ -5,11 +5,10 @@
 #
 # Default with no args: -F all -c -dsir -j 3 -I
 #
-# Branch and artifact label:
-#   ./gitlab_pack_linux.sh -v "Alves_test" -b "main"
+# Branch and version:
+#   ./gitlab_pack_linux.sh -v "2.3.3" -b "dev_2.3.3_alves_packaged"
 #   → fetch branch from GitLab + force -F all -c -dsir -j 3 -I
-#   → product version stays Snapmaker_VERSION in version.inc
-#   → Jenkins -v is appended to artifact names: ..._V2.4.0_Alves_test.*
+#   → write version into source (version.inc / metainfo) and artifact names
 #   → copy artifacts to $SCRIPT_DIR
 #
 # AppImage: host gitlab_build/ compile + appimagetool
@@ -43,7 +42,7 @@ FORMAT="all"                # appimage | flatpak | all
 ARCH="$(uname -m)"
 [[ "$ARCH" == "amd64" ]] && ARCH="x86_64"
 
-ARTIFACT_LABEL=""           # -v: optional suffix appended to artifact filenames
+VERSION_OVERRIDE=""         # -v: artifact naming and version.inc override
 GIT_BRANCH=""               # -b: GitLab branch name
 JOBS_EXPLICIT=false
 
@@ -76,10 +75,9 @@ Usage: $0 [OPTIONS]
 Package Snapmaker_Orca as AppImage and/or Flatpak.
 Default with no args: -F all -c -dsir -j 3 -I
 
-Version / branch:
-  -v, --version LABEL      Optional artifact name suffix from Jenkins. Product version
-                           is Snapmaker_VERSION in version.inc (same source as Windows).
-                           Example: -v Alves_test → ..._V2.4.0_Alves_test.AppImage
+Version / branch (aligned with gitlab_build_release_macos.sh):
+  -v, --version VER        Release version, e.g. 2.3.3 (written to source and used
+                           for artifact names; required with -b unless parsed from branch)
   -b, --branch NAME        Fetch GitLab branch, then force full pack:
                            -F all -c -dsir -j 3 -I
                            Source dir:  \$SCRIPT_DIR/gitlab_\$BRANCH/OrcaSlicer
@@ -107,19 +105,19 @@ Flatpak:
       --flatpak-build-dir DIR   flatpak-builder output directory [default: gitlab_flatpak_pack]
       --flatpak-cache-dir DIR   flatpak-builder state cache [default: .gitlab_flatpak-builder-pack]
       --flatpak-cleanup         Clean flatpak output dir before build
-      --flatpak-force-clean     flatpak-builder --force-clean
+      --flatpak-force-clean     flatpak-builder --force-clean; also remove gitlab_vendor so deps are re-cloned
       --flatpak-ccache          flatpak-builder --ccache
   -I, --install-runtime         Install GNOME Platform/SDK (default on)
       --no-install-runtime      Do not auto-install Flatpak runtime
       --flatpak-no-stubs        Do not inject local zstd / FindDBus stubs
 
-Artifact names (version from version.inc, optional -v label at the end):
-  Snapmaker_Orca_Linux_V<ver>[_<label>].AppImage
-  Snapmaker_Orca-Linux-flatpak_V<ver>_<arch>[_<label>].flatpak
+Artifact names (-v or version.inc):
+  Snapmaker_Orca_Linux_V<ver>.AppImage
+  Snapmaker_Orca-Linux-flatpak_V<ver>_<arch>.flatpak
 
 Examples:
   $0
-  $0 -v "Alves_test" -b "main"
+  $0 -v "2.3.3" -b "dev_2.3.3_alves_packaged"
   $0 -F appimage --no-dsir
   $0 -F flatpak --flatpak-force-clean
 EOF
@@ -198,6 +196,39 @@ prepare_git_repo() {
     echo ""
 }
 
+extract_version_from_branch() {
+    local branch="$1"
+    if [[ "$branch" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    fi
+}
+
+apply_version_override() {
+    local ver="$1"
+    local version_inc="$REPO_DIR/version.inc"
+    local metainfo="$REPO_DIR/scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.metainfo.xml"
+
+    if [[ ! -f "$version_inc" ]]; then
+        echo -e "${RED}Missing version.inc: $version_inc${NC}"
+        exit 1
+    fi
+
+    if ! [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo -e "${RED}Invalid version format: $ver (expected x.y.z)${NC}"
+        exit 1
+    fi
+
+    echo -e "${YELLOW}Writing version $ver → version.inc / Flatpak metainfo${NC}"
+    sed -i -E "s/set\\(Snapmaker_VERSION \"[^\"]*\"\\)/set(Snapmaker_VERSION \"$ver\")/" "$version_inc"
+
+    if [[ -f "$metainfo" ]]; then
+        sed -i -E \
+            -e "s/(<release version=\")[^\"]*(\")/\\1${ver}\\2/" \
+            -e "s/(<p>Version )[0-9]+\\.[0-9]+\\.[0-9]+( release)/\\1${ver}\\2/" \
+            "$metainfo"
+    fi
+}
+
 apply_remote_branch_profile() {
     echo -e "${BLUE}Remote branch mode: forcing full pack -F all -c -dsir -j ${JOBS} -I${NC}"
     FORMAT="all"
@@ -224,7 +255,7 @@ copy_artifacts_to_output_dir() {
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -v|--version) ARTIFACT_LABEL="$2"; shift 2 ;;
+        -v|--version) VERSION_OVERRIDE="$2"; shift 2 ;;
         -b|--branch) GIT_BRANCH="$2"; shift 2 ;;
 
         -F|--format) FORMAT="$2"; shift 2 ;;
@@ -275,6 +306,15 @@ if [[ -n "$GIT_BRANCH" ]]; then
     apply_remote_branch_profile
 fi
 
+if [[ -n "$GIT_BRANCH" && -z "$VERSION_OVERRIDE" ]]; then
+    VERSION_OVERRIDE="$(extract_version_from_branch "$GIT_BRANCH" || true)"
+    if [[ -z "$VERSION_OVERRIDE" ]]; then
+        echo -e "${RED}-b requires -v <x.y.z> (could not parse version from branch name)${NC}"
+        exit 1
+    fi
+    echo -e "${YELLOW}-v not set; parsed version from branch name: ${VERSION_OVERRIDE}${NC}"
+fi
+
 # ---------------- Prepare build directory ----------------
 
 if [[ -n "$GIT_BRANCH" ]]; then
@@ -286,6 +326,10 @@ fi
 
 cd "$REPO_DIR"
 
+if [[ -n "$VERSION_OVERRIDE" ]]; then
+    apply_version_override "$VERSION_OVERRIDE"
+fi
+
 # ---------------- Version and artifact names ----------------
 
 if [[ ! -f "$REPO_DIR/version.inc" ]]; then
@@ -294,7 +338,11 @@ if [[ ! -f "$REPO_DIR/version.inc" ]]; then
 fi
 
 APP_KEY="$(grep 'set(SLIC3R_APP_KEY' "$REPO_DIR/version.inc" | cut -d '"' -f2)"
-VER_PURE="$(grep 'set(Snapmaker_VERSION' "$REPO_DIR/version.inc" | cut -d '"' -f2)"
+if [[ -n "$VERSION_OVERRIDE" ]]; then
+    VER_PURE="$VERSION_OVERRIDE"
+else
+    VER_PURE="$(grep 'set(Snapmaker_VERSION' "$REPO_DIR/version.inc" | cut -d '"' -f2)"
+fi
 if [[ -z "$APP_KEY" || -z "$VER_PURE" ]]; then
     echo -e "${RED}Cannot parse SLIC3R_APP_KEY / Snapmaker_VERSION${NC}"
     exit 1
@@ -303,22 +351,17 @@ fi
 OUTPUT_DIR="${OUTPUT_DIR:-$REPO_DIR}"
 
 VER="V${VER_PURE}"
-NAME_SUFFIX=""
-if [[ -n "$ARTIFACT_LABEL" ]]; then
-    NAME_SUFFIX="_${ARTIFACT_LABEL}"
-fi
 APP_CMD="snapmaker-orca"
 
-APPIMAGE_NAME="Snapmaker_Orca_Linux_${VER}${NAME_SUFFIX}.AppImage"
-FLATPAK_BUNDLE_NAME="Snapmaker_Orca-Linux-flatpak_${VER}_${ARCH}${NAME_SUFFIX}.flatpak"
+APPIMAGE_NAME="Snapmaker_Orca_Linux_${VER}.AppImage"
+FLATPAK_BUNDLE_NAME="Snapmaker_Orca-Linux-flatpak_${VER}_${ARCH}.flatpak"
 
 echo -e "${BLUE}Snapmaker_Orca — Linux packaging${NC}"
 echo -e "Repo:           ${GREEN}${REPO_DIR}${NC}"
 [[ -n "$GIT_BRANCH" ]] && echo -e "Branch:         ${GREEN}${GIT_BRANCH}${NC}"
 echo -e "Output:         ${GREEN}${OUTPUT_DIR}${NC}"
 echo -e "Format:         ${GREEN}${FORMAT}${NC}"
-echo -e "Version:        ${GREEN}${VER_PURE}${NC}  (version.inc)"
-[[ -n "$ARTIFACT_LABEL" ]] && echo -e "Artifact label: ${GREEN}${ARTIFACT_LABEL}${NC}"
+echo -e "Version:        ${GREEN}${VER_PURE}${NC}"
 echo -e "Arch:           ${GREEN}${ARCH}${NC}"
 echo -e "Jobs:           ${GREEN}${JOBS}${NC}"
 echo -e "Host compile:   ${GREEN}$([ "$FULL_DSR" = true ] && echo "dsir$( [ "$CLEAN_BUILD" = true ] && echo '+clean' )" || echo "skip")${NC}"
@@ -532,8 +575,14 @@ pack_flatpak() {
         exit 1
     fi
 
-    # Clone gitlab vendor for DL_CACHE deps (used by gitlab manifest)
+    # Clone gitlab vendor for DL_CACHE deps (used by gitlab manifest).
+    # --flatpak-force-clean only removed the flatpak build/cache dirs, so an
+    # existing gitlab_vendor was reused and never picked up new deps (e.g. GMP).
     if grep -q "gitlab_vendor" "$MANIFEST" 2>/dev/null; then
+        if [[ "$FLATPAK_FORCE_CLEAN" == true && -d "$REPO_DIR/gitlab_vendor" ]]; then
+            echo -e "${YELLOW}Removing gitlab_vendor (--flatpak-force-clean)...${NC}"
+            rm -rf "$REPO_DIR/gitlab_vendor"
+        fi
         if [[ ! -d "$REPO_DIR/gitlab_vendor" ]]; then
             echo -e "${YELLOW}Cloning gitlab vendor for Flatpak deps...${NC}"
             git clone --depth 1 "http://${GITLAB_BASE_URL}/${GITLAB_GROUP}/snapmaker_orca_vendor.git" "$REPO_DIR/gitlab_vendor" || {

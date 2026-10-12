@@ -38,40 +38,40 @@ TEST_CASE("SnapLog scaffold compiles", "[snaplog]") { REQUIRE(true); }
 
 TEST_CASE("SnapEvent registry maps every enum to a unique stable name", "[snaplog][events]")
 {
-    REQUIRE(snap_event_name(SnapEvent::AppLaunch) == "app_launch");
-    REQUIRE(snap_event_name(SnapEvent::SliceFailed) == "slice_failed");
-    REQUIRE(snap_event_name(SnapEvent::SliceCancelled) == "slice_cancelled");
-    REQUIRE(snap_event_name(SnapEvent::UserLoginResult) == "user_login_result");
-    REQUIRE(snap_event_name(SnapEvent::UserLogout) == "user_logout");
-    REQUIRE(snap_event_from_name("calibration_result") == SnapEvent::CalibrationResult);
+    REQUIRE(snap_event_name(SnapEvent::APP_LAUNCH) == "app_launch");
+    REQUIRE(snap_event_name(SnapEvent::SLICE_FAILED) == "slice_failed");
+    REQUIRE(snap_event_name(SnapEvent::SLICE_CANCELLED) == "slice_cancelled");
+    REQUIRE(snap_event_name(SnapEvent::USER_LOGIN_RESULT) == "user_login_result");
+    REQUIRE(snap_event_name(SnapEvent::USER_LOGOUT) == "user_logout");
+    REQUIRE(snap_event_from_name("calibration_result") == SnapEvent::CALIBRATION_RESULT);
     REQUIRE_FALSE(snap_event_from_name("not_a_snap_event").has_value());
 
-    const std::array<SnapEvent, 26> events = {SnapEvent::AppLaunch,
-                                              SnapEvent::AppSessionEnd,
-                                              SnapEvent::CalibrationResult,
-                                              SnapEvent::DeviceConnectAttempt,
-                                              SnapEvent::DeviceDisconnect,
-                                              SnapEvent::DeviceDiscoveryStart,
-                                              SnapEvent::DeviceEngineSet,
-                                              SnapEvent::FileImportResult,
-                                              SnapEvent::FirmwareUpgradeResult,
-                                              SnapEvent::FlutterRunResult,
-                                              SnapEvent::GcodeExportResult,
-                                              SnapEvent::MqttClientCreate,
-                                              SnapEvent::MqttClientCreateFailed,
-                                              SnapEvent::MqttConnectAttempt,
-                                              SnapEvent::MqttConnectFailure,
-                                              SnapEvent::MqttConnectResult,
-                                              SnapEvent::MqttSubscribeResult,
-                                              SnapEvent::PrintJobSendResult,
-                                              SnapEvent::PrivacyConsentGranted,
-                                              SnapEvent::ProjectSaveResult,
-                                              SnapEvent::SliceCompleted,
-                                              SnapEvent::SliceFailed,
-                                              SnapEvent::SliceStart,
-                                              SnapEvent::SliceCancelled,
-                                              SnapEvent::UserLoginResult,
-                                              SnapEvent::UserLogout};
+    const std::array<SnapEvent, 26> events = {SnapEvent::APP_LAUNCH,
+                                              SnapEvent::APP_SESSION_END,
+                                              SnapEvent::CALIBRATION_RESULT,
+                                              SnapEvent::DEVICE_CONNECT_ATTEMPT,
+                                              SnapEvent::DEVICE_DISCONNECT,
+                                              SnapEvent::DEVICE_DISCOVERY_START,
+                                              SnapEvent::DEVICE_ENGINE_SET,
+                                              SnapEvent::FILE_IMPORT_RESULT,
+                                              SnapEvent::FIRMWARE_UPGRADE_RESULT,
+                                              SnapEvent::FLUTTER_RUN_RESULT,
+                                              SnapEvent::GCODE_EXPORT_RESULT,
+                                              SnapEvent::MQTT_CLIENT_CREATE,
+                                              SnapEvent::MQTT_CLIENT_CREATE_FAILED,
+                                              SnapEvent::MQTT_CONNECT_ATTEMPT,
+                                              SnapEvent::MQTT_CONNECT_FAILURE,
+                                              SnapEvent::MQTT_CONNECT_RESULT,
+                                              SnapEvent::MQTT_SUBSCRIBE_RESULT,
+                                              SnapEvent::PRINT_JOB_SEND_RESULT,
+                                              SnapEvent::PRIVACY_CONSENT_GRANTED,
+                                              SnapEvent::PROJECT_SAVE_RESULT,
+                                              SnapEvent::SLICE_COMPLETED,
+                                              SnapEvent::SLICE_FAILED,
+                                              SnapEvent::SLICE_START,
+                                              SnapEvent::SLICE_CANCELLED,
+                                              SnapEvent::USER_LOGIN_RESULT,
+                                              SnapEvent::USER_LOGOUT};
 
     std::set<std::string_view> names;
     for (const auto event : events)
@@ -548,7 +548,7 @@ TEST_CASE("direct realtime log call is a safe no-op un-init'd", "[snaplog]")
 {
     SnapLogClient::instance().log(SnapLogLevel::Info, "smoke", SnapLogExt{{"eventName", "smoke_test"}}, SnapLogPolicy::Realtime,
                                   __FUNCTION__, __LINE__);
-    SNAP_LOG_ERROR(SinkGateway, SnapEvent::AppLaunch, {{"k", "v"}}, "smoke2");
+    SNAP_LOG_ERROR(SinkGateway, SnapEvent::APP_LAUNCH, {{"k", "v"}}, "smoke2");
     REQUIRE(true); // reached without crash
 }
 
@@ -649,8 +649,8 @@ TEST_CASE("level macros route event-only and field-only forms", "[snaplog][api]"
     fc.cfg.posthog_api_key                = "phc_test";
     fc.init();
 
-    SNAP_LOG_INFO(SinkPostHog, SnapEvent::AppLaunch);
-    SNAP_LOG_WARNING(SinkGateway | SinkPostHog, SnapEvent::FileImportResult,
+    SNAP_LOG_INFO(SinkPostHog, SnapEvent::APP_LAUNCH);
+    SNAP_LOG_WARNING(SinkGateway | SinkPostHog, SnapEvent::FILE_IMPORT_RESULT,
                      {
                          {"source", "dialog"},
                          {"success", "false"},
@@ -669,8 +669,8 @@ TEST_CASE("level macros route message-only and field-plus-message forms", "[snap
     fc.cfg.posthog_api_key                = "phc_test";
     fc.init();
 
-    SNAP_LOG_ERROR(SinkGateway, SnapEvent::MqttClientCreateFailed, "mqtt failed");
-    SNAP_LOG_INFO(SinkPostHog, SnapEvent::FileImportResult,
+    SNAP_LOG_ERROR(SinkGateway, SnapEvent::MQTT_CLIENT_CREATE_FAILED, "mqtt failed");
+    SNAP_LOG_INFO(SinkPostHog, SnapEvent::FILE_IMPORT_RESULT,
                   {
                       {"source", "dialog"},
                       {"fileType", "3mf"},

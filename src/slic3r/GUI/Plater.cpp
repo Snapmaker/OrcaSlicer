@@ -224,7 +224,7 @@ static void report_file_import_result(const std::vector<fs::path>& input_files, 
 {
     const auto sinks = success ? SnapLog::v1::SinkPostHog : (SnapLog::v1::SinkGateway | SnapLog::v1::SinkPostHog);
     const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
-    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::FileImportResult,
+    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::FILE_IMPORT_RESULT,
         {
             {"source", source.empty() ? "other" : source},
             {"fileType", SnapTelemetry::file_types(input_files)},
@@ -247,7 +247,7 @@ static void report_project_save_result(const fs::path& path, bool success, bool 
 {
     const auto sinks = telemetry_result_sinks(success);
     const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
-    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::ProjectSaveResult,
+    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::PROJECT_SAVE_RESULT,
         {
             {"fileType", "3mf"},
             {"fileSizeBytes", SnapTelemetry::file_size_bytes(path)},
@@ -266,7 +266,7 @@ static void report_gcode_3mf_export_result(const fs::path& path, bool success)
 {
     const auto sinks = telemetry_result_sinks(success);
     const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
-    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::GcodeExportResult,
+    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::GCODE_EXPORT_RESULT,
         {
             {"fileType", "gcode.3mf"},
             {"fileSizeBytes", SnapTelemetry::file_size_bytes(path)},
@@ -15432,7 +15432,7 @@ void Plater::priv::on_slicing_began()
         m_slice_next_trigger = "auto";
         m_slice_session_active = true;
         m_slice_result_reported = false;
-        SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::SliceStart,
+        SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::SLICE_START,
             {
                 {"trigger", m_slice_trigger},
                 {"plateCount", std::to_string(partplate_list.get_plate_count())},
@@ -15489,7 +15489,7 @@ void Plater::priv::report_gcode_export_telemetry(bool success, bool cancelled)
 {
     const auto sinks = telemetry_result_sinks(success);
     const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
-    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::GcodeExportResult,
+    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::GCODE_EXPORT_RESULT,
         {
             {"fileType", "gcode"},
             {"fileSizeBytes", last_output_path.empty() ? "0" : SnapTelemetry::file_size_bytes(fs::path(last_output_path))},
@@ -15754,13 +15754,13 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 
     if (is_finished && m_slice_session_active && !m_slice_result_reported) {
         if (evt.error())
-            report_slice_telemetry(SnapLog::v1::SnapEvent::SliceFailed, false, false, evt.critical_error() ? "critical_error" : "slice_error");
+            report_slice_telemetry(SnapLog::v1::SnapEvent::SLICE_FAILED, false, false, evt.critical_error() ? "critical_error" : "slice_error");
         else if (evt.cancelled())
-            report_slice_telemetry(SnapLog::v1::SnapEvent::SliceCancelled, false, true, "cancelled");
+            report_slice_telemetry(SnapLog::v1::SnapEvent::SLICE_CANCELLED, false, true, "cancelled");
         else if (evt.success())
-            report_slice_telemetry(SnapLog::v1::SnapEvent::SliceCompleted, true, false, "");
+            report_slice_telemetry(SnapLog::v1::SnapEvent::SLICE_COMPLETED, true, false, "");
         else
-            report_slice_telemetry(SnapLog::v1::SnapEvent::SliceFailed, false, false, "slice_error");
+            report_slice_telemetry(SnapLog::v1::SnapEvent::SLICE_FAILED, false, false, "slice_error");
         m_slice_result_reported = true;
         m_slice_session_active = false;
     }

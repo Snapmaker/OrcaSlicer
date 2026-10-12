@@ -2491,7 +2491,7 @@ int GUI_App::OnExit()
     if (!m_app_session_end_reported) {
         m_app_session_end_reported = true;
         const bool has_project = plater_ && !plater_->get_project_filename().empty();
-        SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::AppSessionEnd,
+        SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::APP_SESSION_END,
             {
                 {"sessionDurationMs", SnapTelemetry::elapsed_ms(m_session_start_time, std::chrono::steady_clock::now())},
                 {"exitReason", "normal"},
@@ -3176,7 +3176,7 @@ bool GUI_App::on_init_inner()
 
     const bool         launch_with_file = init_params && !init_params->input_files.empty();
     const std::string launch_file_type = launch_with_file ? SnapTelemetry::file_type(boost::filesystem::path(init_params->input_files.front())) : "none";
-    SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::AppLaunch,
+    SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::APP_LAUNCH,
         {
             {"firstLaunch", SnapTelemetry::bool_value(!m_app_conf_exists)},
             {"openMethod", launch_with_file ? "file" : "normal"},
@@ -4407,7 +4407,7 @@ void GUI_App::sm_request_user_logout()
     if (m_login_userinfo.is_user_login()) {
         m_login_userinfo.set_user_login(false);
     }
-    SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::UserLogout,
+    SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::USER_LOGOUT,
         {
             {"source", "cpp"},
         },
@@ -4465,14 +4465,14 @@ void GUI_App::report_flutter_run_result_once(bool success)
     m_flutter_wcp_reported = true;
 
     if (success) {
-        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::FlutterRunResult,
+        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::FLUTTER_RUN_RESULT,
             {
                 {"source", "cpp"},
                 {"success", "true"},
             },
             "flutter run success");
     } else {
-        SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::FlutterRunResult,
+        SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::FLUTTER_RUN_RESULT,
             {
                 {"source", "cpp"},
                 {"success", "false"},

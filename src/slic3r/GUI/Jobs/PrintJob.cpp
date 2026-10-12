@@ -66,7 +66,7 @@ void PrintJob::report_job_result(bool success, bool cancelled, int result_code, 
     m_telemetry_result_reported = true;
 
     const auto sinks = success ? SnapLog::v1::SinkPostHog : (SnapLog::v1::SinkGateway | SnapLog::v1::SinkPostHog);
-    const auto event = m_is_calibration_task ? SnapLog::v1::SnapEvent::CalibrationResult : SnapLog::v1::SnapEvent::PrintJobSendResult;
+    const auto event = m_is_calibration_task ? SnapLog::v1::SnapEvent::CALIBRATION_RESULT : SnapLog::v1::SnapEvent::PRINT_JOB_SEND_RESULT;
     const std::string result_reason = !reason.empty() ? reason : SnapTelemetry::network_result_reason(result_code);
     const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
     SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, event,

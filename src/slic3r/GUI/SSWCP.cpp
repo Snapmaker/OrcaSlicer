@@ -1918,7 +1918,7 @@ void SSWCP_MachineFind_Instance::sw_WakeupFind()
 void SSWCP_MachineFind_Instance::sw_StartMachineFind()
 {
     try {
-        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::DeviceDiscoveryStart,
+        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::DEVICE_DISCOVERY_START,
             {
                 {"source", "cpp"},
             },
@@ -6873,7 +6873,7 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         if (m_param_data.count("server_address") || !m_param_data["server_address"].is_string()) {
             server_address = m_param_data["server_address"].get<std::string>();
             if (server_address == "") {
-                SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreateFailed,
+                SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MQTT_CLIENT_CREATE_FAILED,
                     {
                         {"source", "cpp"},
                         {"connectSessionId", session_id},
@@ -6885,7 +6885,7 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
             }
         }
         else {
-            SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreateFailed,
+            SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MQTT_CLIENT_CREATE_FAILED,
                 {
                     {"source", "cpp"},
                     {"connectSessionId", session_id},
@@ -6899,7 +6899,7 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         if (m_param_data.count("clientId") || !m_param_data["clientId"].is_string()) {
             clientId = m_param_data["clientId"].get<std::string>();
             if (clientId == "") {
-                SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreateFailed,
+                SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MQTT_CLIENT_CREATE_FAILED,
                     {
                         {"source", "cpp"},
                         {"connectSessionId", session_id},
@@ -6910,7 +6910,7 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
                 return;
             }
         } else {
-            SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreateFailed,
+            SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MQTT_CLIENT_CREATE_FAILED,
                 {
                     {"source", "cpp"},
                     {"connectSessionId", session_id},
@@ -6946,7 +6946,7 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         }
 
         if (client == nullptr) {
-            SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreateFailed,
+            SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MQTT_CLIENT_CREATE_FAILED,
                 {
                     {"source", "cpp"},
                     {"connectSessionId", session_id},
@@ -6967,7 +6967,7 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         //
         bool flag = set_current_engine({std::to_string(int64_t(client.get())), client});
         if (!flag) {
-            SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreateFailed,
+            SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MQTT_CLIENT_CREATE_FAILED,
                 {
                     {"source", "cpp"},
                     {"connectSessionId", session_id},
@@ -6983,7 +6983,7 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         m_res_data["type"] = type;
         m_res_data["id"]   = std::to_string(int64_t(get_current_engine().get()));
 
-        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttClientCreate,
+        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MQTT_CLIENT_CREATE,
             {
                 {"source", "cpp"},
                 {"connectSessionId", session_id},
@@ -7004,7 +7004,7 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
 void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
 {
     try {
-        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttConnectAttempt,
+        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MQTT_CONNECT_ATTEMPT,
             {
                 {"source", "cpp"},
                 {"connectSessionId", get_connect_session_id()},
@@ -7049,7 +7049,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
                 if (!engine) {
                     return;
                 }
-                SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttConnectFailure,
+                SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MQTT_CONNECT_FAILURE,
                     {
                         {"source", "cpp"},
                         {"connectSessionId", session_id},
@@ -7066,7 +7066,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
-                        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttConnectResult,
+                        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MQTT_CONNECT_RESULT,
                             {
                                 {"source", "cpp"},
                                 {"connectSessionId", session_id},
@@ -7077,7 +7077,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
                         self->send_to_js();
                         self->finish_job();
                     } else {
-                        SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttConnectResult,
+                        SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MQTT_CONNECT_RESULT,
                             {
                                 {"source", "cpp"},
                                 {"connectSessionId", session_id},
@@ -7137,7 +7137,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_disconnect()
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
-                        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::DeviceDisconnect,
+                        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::DEVICE_DISCONNECT,
                             {
                                 {"source", "cpp"},
                                 {"connectSessionId", session_id},
@@ -7224,7 +7224,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
-                        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttSubscribeResult,
+                        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MQTT_SUBSCRIBE_RESULT,
                             {
                                 {"source", "cpp"},
                                 {"connectSessionId", session_id},
@@ -7246,7 +7246,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
                         }
 
                     } else {
-                        SNAP_LOG_WARNING(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MqttSubscribeResult,
+                        SNAP_LOG_WARNING(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::MQTT_SUBSCRIBE_RESULT,
                             {
                                 {"source", "cpp"},
                                 {"connectSessionId", session_id},
@@ -7480,7 +7480,7 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                     std::string link_mode       = m_param_data.count("link_mode") ? m_param_data["link_mode"] : "lan";
                     connect_params["link_mode"] = link_mode;
 
-                    SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::DeviceEngineSet,
+                    SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::DEVICE_ENGINE_SET,
                         {
                             {"source", "cpp"},
                             {"connectSessionId", get_connect_session_id()},

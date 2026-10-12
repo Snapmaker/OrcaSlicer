@@ -518,7 +518,7 @@ void MachineInfoPanel::report_upgrade_telemetry(int error_code)
     const bool success = error_code == 0;
     const auto sinks = success ? SnapLog::v1::SinkPostHog : (SnapLog::v1::SinkGateway | SnapLog::v1::SinkPostHog);
     const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Error;
-    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::FirmwareUpgradeResult,
+    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::FIRMWARE_UPGRADE_RESULT,
         {
             {"module", m_upgrade_telemetry_module},
             {"fromVersion", m_upgrade_telemetry_from_version},

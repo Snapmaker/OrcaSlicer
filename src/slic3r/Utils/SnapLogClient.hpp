@@ -729,7 +729,7 @@ make_production_do_request(SnapLogConfig cfg);
 }}} // namespace Slic3r::SnapLog::v1
 
 // Global-scope macros using the fully-qualified namespace. Call sites write:
-//   SNAP_LOG_INFO(SinkGateway | SinkPostHog, SnapEvent::AppLaunch);
+//   SNAP_LOG_INFO(SinkGateway | SinkPostHog, SnapEvent::APP_LAUNCH);
 
 #define SNAP_LOG_INFO(...) \
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().log_event(::Slic3r::SnapLog::v1::SnapLogLevel::Info, __FUNCTION__, __LINE__, \

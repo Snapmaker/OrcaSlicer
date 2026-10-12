@@ -288,7 +288,7 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                             ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_consent(consent);
                         }
 
-                        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::UserLoginResult,
+                        SNAP_LOG_INFO(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::USER_LOGIN_RESULT,
                             {
                                 {"source", "cpp"},
                                 {"success", "true"},
@@ -304,7 +304,7 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                     std::string http_code = BP_LOGIN_HTTP_CODE + string(":") + std::to_string(status) +
                                             ", body_size=" + std::to_string(body.size());
                     sentryReportLog(SENTRY_LOG_TRACE, http_code, BP_LOGIN);
-                    SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::UserLoginResult,
+                    SNAP_LOG_ERROR(SnapLog::v1::SinkGateway, SnapLog::v1::SnapEvent::USER_LOGIN_RESULT,
                         {
                             {"source", "cpp"},
                             {"success", "false"},

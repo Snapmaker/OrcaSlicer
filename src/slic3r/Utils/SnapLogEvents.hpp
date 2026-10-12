@@ -6,32 +6,32 @@
 namespace Slic3r { namespace SnapLog { inline namespace v1 {
 
 #define SNAP_LOG_EVENT_LIST(X) \
-    X(AppLaunch, "app_launch") \
-    X(AppSessionEnd, "app_session_end") \
-    X(CalibrationResult, "calibration_result") \
-    X(DeviceConnectAttempt, "device_connect_attempt") \
-    X(DeviceDisconnect, "device_disconnect") \
-    X(DeviceDiscoveryStart, "device_discovery_start") \
-    X(DeviceEngineSet, "device_engine_set") \
-    X(FileImportResult, "file_import_result") \
-    X(FirmwareUpgradeResult, "firmware_upgrade_result") \
-    X(FlutterRunResult, "flutter_run_result") \
-    X(GcodeExportResult, "gcode_export_result") \
-    X(MqttClientCreate, "mqtt_client_create") \
-    X(MqttClientCreateFailed, "mqtt_client_create_failed") \
-    X(MqttConnectAttempt, "mqtt_connect_attempt") \
-    X(MqttConnectFailure, "mqtt_connect_failure") \
-    X(MqttConnectResult, "mqtt_connect_result") \
-    X(MqttSubscribeResult, "mqtt_subscribe_result") \
-    X(PrintJobSendResult, "print_job_send_result") \
-    X(PrivacyConsentGranted, "privacy_consent_granted") \
-    X(ProjectSaveResult, "project_save_result") \
-    X(SliceCancelled, "slice_cancelled") \
-    X(SliceCompleted, "slice_completed") \
-    X(SliceFailed, "slice_failed") \
-    X(SliceStart, "slice_start") \
-    X(UserLoginResult, "user_login_result") \
-    X(UserLogout, "user_logout")
+    X(APP_LAUNCH, "app_launch") \
+    X(APP_SESSION_END, "app_session_end") \
+    X(CALIBRATION_RESULT, "calibration_result") \
+    X(DEVICE_CONNECT_ATTEMPT, "device_connect_attempt") \
+    X(DEVICE_DISCONNECT, "device_disconnect") \
+    X(DEVICE_DISCOVERY_START, "device_discovery_start") \
+    X(DEVICE_ENGINE_SET, "device_engine_set") \
+    X(FILE_IMPORT_RESULT, "file_import_result") \
+    X(FIRMWARE_UPGRADE_RESULT, "firmware_upgrade_result") \
+    X(FLUTTER_RUN_RESULT, "flutter_run_result") \
+    X(GCODE_EXPORT_RESULT, "gcode_export_result") \
+    X(MQTT_CLIENT_CREATE, "mqtt_client_create") \
+    X(MQTT_CLIENT_CREATE_FAILED, "mqtt_client_create_failed") \
+    X(MQTT_CONNECT_ATTEMPT, "mqtt_connect_attempt") \
+    X(MQTT_CONNECT_FAILURE, "mqtt_connect_failure") \
+    X(MQTT_CONNECT_RESULT, "mqtt_connect_result") \
+    X(MQTT_SUBSCRIBE_RESULT, "mqtt_subscribe_result") \
+    X(PRINT_JOB_SEND_RESULT, "print_job_send_result") \
+    X(PRIVACY_CONSENT_GRANTED, "privacy_consent_granted") \
+    X(PROJECT_SAVE_RESULT, "project_save_result") \
+    X(SLICE_CANCELLED, "slice_cancelled") \
+    X(SLICE_COMPLETED, "slice_completed") \
+    X(SLICE_FAILED, "slice_failed") \
+    X(SLICE_START, "slice_start") \
+    X(USER_LOGIN_RESULT, "user_login_result") \
+    X(USER_LOGOUT, "user_logout")
 
 enum class SnapEvent {
 #define X(id, name) id,

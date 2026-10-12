@@ -649,7 +649,7 @@ int GuideFrame::SaveProfile()
     BOOST_LOG_TRIVIAL(warning) << "SaveProfile changed the privacy policy with: " << (PrivacyUse ? "true" : "false");
     wxGetApp().user_update_privacy_notify(PrivacyUse);
     if (PrivacyUse) {
-        SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::PrivacyConsentGranted,
+        SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::PRIVACY_CONSENT_GRANTED,
             {
                 {"source", "first_run"},
                 {"previousValue", "false"},

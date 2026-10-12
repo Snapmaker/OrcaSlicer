@@ -54,7 +54,7 @@ void SendJob::report_job_result(bool success, bool cancelled, int result_code, c
 
     const auto sinks = success ? SnapLog::v1::SinkPostHog : (SnapLog::v1::SinkGateway | SnapLog::v1::SinkPostHog);
     const auto level = success ? SnapLog::v1::SnapLogLevel::Info : SnapLog::v1::SnapLogLevel::Warning;
-    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::PrintJobSendResult,
+    SnapLog::v1::SnapLogClient::instance().log_event(level, __FUNCTION__, __LINE__, sinks, SnapLog::v1::SnapEvent::PRINT_JOB_SEND_RESULT,
         {
             {"connectionType", connection_type.empty() ? "unknown" : connection_type},
             {"plateCount", std::to_string(m_telemetry_plate_count)},

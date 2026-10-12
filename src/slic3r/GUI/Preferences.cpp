@@ -779,7 +779,7 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
                 BOOST_LOG_TRIVIAL(warning) <<"create_item_checkbox changed the privacy policy with: "<<(checkbox->GetValue()?"true" : "false");
                 wxGetApp().user_update_privacy_notify(checkbox->GetValue());
                 if (checkbox->GetValue()) {
-                    SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::PrivacyConsentGranted,
+                    SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::PRIVACY_CONSENT_GRANTED,
                         {
                             {"source", "preferences"},
                             {"previousValue", SnapTelemetry::bool_value(old_privacy_value)},

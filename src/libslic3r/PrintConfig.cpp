@@ -6109,7 +6109,7 @@ void PrintConfigDef::init_fff_params()
     //def->label = L("Z travel");
     //def->tooltip = L("Speed of vertical travel along z axis. "
     //                 "This is typically lower because build plate or gantry is hard to be moved. "
-    //                 "Zero means using travel speed directly in G-code, but will be limited by printer's ability when run G-code.");
+    //                 "Zero uses the active travel speed. Z travel is capped by a positive machine_max_speed_z.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 0;
     def->mode = comDevelop;

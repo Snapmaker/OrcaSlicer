@@ -1,0 +1,28 @@
+# AI harness review job - runs on a project/group runner with tag: ai-review.
+# Requires masked CI/CD variables (project- or group-level):
+#   AI_REVIEW_GITLAB_TOKEN  - THIS project/group access token with api scope (Reporter+)
+#   AI_REVIEW_LLM_API_KEY   - DeepSeek API key (DEEPSEEK_API_KEY also accepted)
+#   DG_CLONE_TOKEN          - dev-guidelines clone token (issued by admin)
+#   FEISHU_WEBHOOK_URL      - optional: feishu group bot webhook (card ping)
+ai_review:
+  tags: [ai-review]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  resource_group: "ai-review-mr-$CI_MERGE_REQUEST_IID"
+  allow_failure: true
+  timeout: 30m
+  variables:
+    GIT_STRATEGY: none
+    GITLAB_HOST: "gitlab.s.com"
+    AI_REVIEW_LLM_BASE_URL: "https://api.deepseek.com"
+    AI_REVIEW_MODEL: "deepseek-v4-pro"
+    AI_REVIEW_LLM_EFFORT: "medium"
+    AI_REVIEW_PROJECT_STANDARDS: "projects/snapmaker-orca"
+    DG_REF: "project/snapmaker-orca"
+    # Self-built machine with all-users Python.
+    PYEXE: "C:/Users/42196/AppData/Local/Programs/Python/Python314/python.exe"
+  script:
+    - '& $env:PYEXE -m pip install --quiet pyyaml==6.0.3'
+    - if (Test-Path dg) { Remove-Item -Recurse -Force dg }
+    - git clone --depth 1 --branch $env:DG_REF "http://oauth2:$($env:DG_CLONE_TOKEN)@gitlab.s.com/snapmaker_orca/dev-guidelines.git" dg
+    - '& $env:PYEXE dg/scripts/ai_review_gitlab.py'

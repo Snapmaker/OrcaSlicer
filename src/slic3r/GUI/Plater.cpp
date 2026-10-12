@@ -10381,8 +10381,6 @@ struct Plater::priv
 
     void reload_from_disk();
     bool replace_volume_with_stl(int object_idx, int volume_idx, const fs::path& new_path, const std::string& snapshot = "");
-    // Memory-budget confirmation shared by the STL import paths (load_files, replace_volume_with_stl, reload_from_disk).
-    bool confirm_large_stl_import(wxWindow* parent, const wxString& display_name, uintmax_t estimated_memory, uintmax_t available_memory);
     void replace_with_stl();
     void reload_all_from_disk();
 
@@ -11508,7 +11506,6 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
     std::vector<size_t> empty_result;
     bool dlg_cont = true;
     bool is_user_cancel = false;
-    bool any_large_stl_declined = false;
     bool translate_old = false;
     int current_width = 0, current_depth = 0, current_height = 0;
 
@@ -11584,9 +11581,6 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 
     for (size_t i = 0; i < input_files.size(); ++i) {
         int file_percent = 0;
-        // Per-file flag: declining the large-STL prompt suppresses the error dialogs
-        // of the current file only; is_user_cancel stays batch-wide (STEP cancel semantics).
-        bool declined_large_stl = false;
 
 #ifdef _WIN32
         auto path = input_files[i];
@@ -12250,18 +12244,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             cont          = dlg.Update(progress_percent, msg);
                             cancel        = !cont;
                     },
-                    nullptr, 0, obj_color_fun,
-                    [this, &declined_large_stl, &any_large_stl_declined, &dlg, real_filename](uintmax_t estimated_memory, uintmax_t available_memory) {
-                        const bool choice = confirm_large_stl_import(&dlg, from_path(real_filename), estimated_memory, available_memory);
-                        if (! choice) {
-                            // User declined: skip silently. Suppress the error dialog for this
-                            // file only (declined_large_stl is per-iteration) and the trailing
-                            // "no geometry data" dialog for the batch (any_large_stl_declined).
-                            declined_large_stl     = true;
-                            any_large_stl_declined = true;
-                        }
-                        return choice;
-                    });
+                    nullptr, 0, obj_color_fun);
                 }
 
                 if (designer_model_id.empty() && boost::algorithm::iends_with(path.string(), ".stl")) {
@@ -12301,15 +12284,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
             std::string message = GUI::format(_L("Failed loading file \"%1%\". An invalid configuration was found."), filename.string()) + "\n\n" + e.what();
             GUI::show_error(q, message);
             continue;
-        } catch (const std::bad_alloc &) {
-            // On Windows an OOM never reaches this handler: the process installs a
-            // new-handler that crashes on purpose to produce a dump (Snapmaker_Orca.cpp).
-            // This branch protects macOS/Linux, where std::bad_alloc is thrown normally.
-            wxString message = GUI::format_wxstr(_L("Failed loading file \"%1%\". Not enough memory."), filename.string());
-            GUI::show_error(q, message);
-            continue;
         } catch (const std::exception &e) {
-            if (!is_user_cancel && !declined_large_stl)
+            if (!is_user_cancel)
                 GUI::show_error(q, e.what());
             continue;
         }
@@ -12617,7 +12593,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 
     if (tolal_model_count <= 0 && !q->m_exported_file) {
         dlg.Hide();
-        if (!is_user_cancel && !any_large_stl_declined) {
+        if (!is_user_cancel) {
             MessageDialog msg(wxGetApp().mainframe, _L("The file does not contain any geometry data."), _L("Warning"), wxYES | wxICON_WARNING);
             if (msg.ShowModal() == wxID_YES) {}
         }
@@ -13913,15 +13889,6 @@ void Plater::priv::update_sla_scene()
     this->update_restart_background_process(true, true);
 }
 
-bool Plater::priv::confirm_large_stl_import(wxWindow* parent, const wxString& display_name, uintmax_t estimated_memory, uintmax_t available_memory)
-{
-    MessageDialog confirm_dlg(parent,
-        GUI::format_wxstr(_L("Importing model \"%1%\" requires an estimated %2% MiB of memory, and at least twice that must be free to import safely. Only %3% MiB is available. Importing may take a long time or fail. Continue?"),
-                    display_name, estimated_memory >> 20, available_memory >> 20),
-        _L("Import model"), wxYES_NO | wxNO_DEFAULT | wxICON_WARNING);
-    return confirm_dlg.ShowModal() == wxID_YES;
-}
-
 bool Plater::priv::replace_volume_with_stl(int object_idx, int volume_idx, const fs::path& new_path, const std::string& snapshot)
 {
     const std::string path = new_path.string();
@@ -13929,11 +13896,7 @@ bool Plater::priv::replace_volume_with_stl(int object_idx, int volume_idx, const
 
     Model new_model;
     try {
-        new_model = Model::read_from_file(path, nullptr, nullptr, LoadStrategy::AddDefaultInstances | LoadStrategy::LoadModel,
-                                          nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0, nullptr,
-                                          [this, new_path](uintmax_t estimated_memory, uintmax_t available_memory) {
-                                              return confirm_large_stl_import(q, from_path(new_path.filename()), estimated_memory, available_memory);
-                                          });
+        new_model = Model::read_from_file(path, nullptr, nullptr, LoadStrategy::AddDefaultInstances | LoadStrategy::LoadModel);
         for (ModelObject* model_object : new_model.objects) {
             model_object->center_around_origin();
             model_object->ensure_on_bed();
@@ -14274,10 +14237,7 @@ void Plater::priv::reload_from_disk()
                 bool   is_split = wxGetApp().app_config->get_bool("is_split_compound");
                 new_model       = Model::read_from_step(path, LoadStrategy::AddDefaultInstances | LoadStrategy::LoadModel, nullptr, nullptr, nullptr, linear, angle, is_split);
             }else {
-                new_model = Model::read_from_file(path, nullptr, nullptr, LoadStrategy::AddDefaultInstances | LoadStrategy::LoadModel, &plate_data, &project_presets, nullptr, nullptr, nullptr, nullptr, nullptr, 0, obj_color_fun,
-                                                  [this, path](uintmax_t estimated_memory, uintmax_t available_memory) {
-                                                      return confirm_large_stl_import(q, from_path(fs::path(path).filename()), estimated_memory, available_memory);
-                                                  });
+                new_model = Model::read_from_file(path, nullptr, nullptr, LoadStrategy::AddDefaultInstances | LoadStrategy::LoadModel, &plate_data, &project_presets, nullptr, nullptr, nullptr, nullptr, nullptr, 0, obj_color_fun);
             }
 
 

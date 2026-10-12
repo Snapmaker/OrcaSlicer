@@ -1645,9 +1645,6 @@ msgstr ""
 msgid "Import File"
 msgstr ""
 
-msgid "Import model"
-msgstr ""
-
 msgid "Choose files"
 msgstr ""
 
@@ -6068,10 +6065,6 @@ msgstr ""
 
 #, boost-format
 msgid "Failed loading file \"%1%\". An invalid configuration was found."
-msgstr ""
-
-#, boost-format
-msgid "Failed loading file \"%1%\". Not enough memory."
 msgstr ""
 
 msgid "Objects with zero volume removed"
@@ -15758,14 +15751,6 @@ msgid "Import Preset"
 msgstr ""
 
 msgid "Create Type"
-msgstr ""
-
-#, boost-format
-msgid "The model is too large to import: it requires an estimated %1% MiB of memory, and at least twice that must be free (only %2% MiB is available)."
-msgstr ""
-
-#, boost-format
-msgid "Importing model \"%1%\" requires an estimated %2% MiB of memory, and at least twice that must be free to import safely. Only %3% MiB is available. Importing may take a long time or fail. Continue?"
 msgstr ""
 
 msgid "The model was not found, please reselect vendor."

@@ -238,8 +238,7 @@ Model Model::read_from_file(const std::string&                                  
                             ImportstlProgressFn                                 stlFn,
                             BBLProject *                                        project,
                             int                                                 plate_id,
-                            ObjImportColorFn                                    objFn,
-                            MemoryConfirmFn                                     memory_confirm_fn)
+                            ObjImportColorFn                                    objFn)
 {
     Model model;
 
@@ -264,9 +263,9 @@ Model Model::read_from_file(const std::string&                                  
     bool is_cb_cancel = false;
     std::string message;
     if (boost::algorithm::iends_with(input_file, ".stl"))
-        result = load_stl(input_file.c_str(), &model, nullptr, stlFn, 0, memory_confirm_fn);
+        result = load_stl(input_file.c_str(), &model, nullptr, stlFn);
     else if (boost::algorithm::iends_with(input_file, ".oltp"))
-        result = load_stl(input_file.c_str(), &model, nullptr, stlFn,256, memory_confirm_fn);
+        result = load_stl(input_file.c_str(), &model, nullptr, stlFn,256);
     else if (boost::algorithm::iends_with(input_file, ".obj")) {
         ObjInfo                 obj_info;
         result = load_obj(input_file.c_str(), &model, obj_info, message);
@@ -318,9 +317,8 @@ Model Model::read_from_file(const std::string&                                  
         if (temp_stl.empty()) {
             throw Slic3r::RuntimeError("Failed to convert asset to STL via ModelIO.");
         }
-        // Remove the temporary STL on every exit path, including exceptions.
-        struct TempStlGuard { std::string path; ~TempStlGuard() { if (!path.empty()) delete_temp_file(path); } } temp_stl_guard{ temp_stl };
-        result = load_stl(temp_stl.c_str(), &model, nullptr, nullptr, 0, memory_confirm_fn);
+        result = load_stl(temp_stl.c_str(), &model);
+        delete_temp_file(temp_stl);
     }
 #endif
     else

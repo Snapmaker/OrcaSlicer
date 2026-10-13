@@ -2490,7 +2490,7 @@ int GUI_App::OnExit()
 {
     if (!m_app_session_end_reported) {
         m_app_session_end_reported = true;
-        const bool has_project = plater_ && !plater_->get_project_filename().empty();
+        const bool has_project = m_app_session_has_project;
         SNAP_LOG_INFO(SnapLog::v1::SinkPostHog, SnapLog::v1::SnapEvent::APP_SESSION_END,
             {
                 {"sessionDurationMs", SnapTelemetry::elapsed_ms(m_session_start_time, std::chrono::steady_clock::now())},

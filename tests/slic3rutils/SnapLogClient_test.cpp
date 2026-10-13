@@ -105,6 +105,27 @@ TEST_CASE("Production telemetry uses the public SnapLog macros", "[snaplog][api]
     REQUIRE(offenders.empty());
 }
 
+TEST_CASE("Session-end telemetry does not access destroyed UI objects", "[snaplog][api][lifecycle]")
+{
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto gui_app   = repo_root / "src" / "slic3r" / "GUI" / "GUI_App.cpp";
+    REQUIRE(std::filesystem::is_regular_file(gui_app));
+
+    std::ifstream     input(gui_app, std::ios::binary);
+    std::stringstream buffer;
+    buffer << input.rdbuf();
+    const auto source = buffer.str();
+
+    const auto on_exit_start = source.find("int GUI_App::OnExit()");
+    const auto client_shutdown = source.find("SnapLogClient::instance().shutdown()", on_exit_start);
+    REQUIRE(on_exit_start != std::string::npos);
+    REQUIRE(client_shutdown != std::string::npos);
+
+    const auto session_report = source.substr(on_exit_start, client_shutdown - on_exit_start);
+    REQUIRE(session_report.find("plater_") == std::string::npos);
+    REQUIRE(session_report.find("m_app_session_has_project") != std::string::npos);
+}
+
 TEST_CASE("hmac_sha256_hex matches doc vector", "[snaplog]")
 {
     // clientType=Orca clientId=app-123 ts=1778639794110 nonce=9b22...

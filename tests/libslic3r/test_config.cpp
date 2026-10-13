@@ -286,3 +286,53 @@ TEST_CASE("DynamicPrintConfig keeps ordinary filament types unchanged", "[Config
     CHECK(config.get_filament_type(display_type, 0) == "PLA");
     CHECK(display_type == "PLA");
 }
+
+TEST_CASE("Generic enum vector options keep their enum map when built from defaults", "[Config]")
+{
+    // These five coEnums options build their default with brace initialisation, which cannot
+    // carry the definition's enum map. Each one must still serialize by name, not by number.
+    const std::vector<std::string> keys = {
+        "overhang_fan_threshold", "filament_volume_type", "nozzle_volume_type", "z_hop_types", "retract_lift_enforce"};
+
+    SECTION("the definition's default value serializes by name") {
+        for (const std::string &key : keys) {
+            CAPTURE(key);
+            const ConfigOptionDef *def = print_config_def.get(key);
+            REQUIRE(def != nullptr);
+            REQUIRE(def->enum_keys_map != nullptr);
+            const auto *default_value = dynamic_cast<const ConfigOptionEnumsGeneric *>(def->default_value.get());
+            REQUIRE(default_value != nullptr);
+            REQUIRE(default_value->values.size() == 1);
+            std::string expected;
+            for (const auto &kvp : *def->enum_keys_map)
+                if (kvp.second == default_value->values.front())
+                    expected = kvp.first;
+            REQUIRE_FALSE(expected.empty());
+            CHECK(default_value->serialize() == expected);
+        }
+    }
+
+    SECTION("a static config filled from defaults serializes by name and round-trips") {
+        FullPrintConfig cfg;
+        CHECK(cfg.opt_serialize("z_hop_types") == "Slope Lift");
+        CHECK(cfg.opt_serialize("retract_lift_enforce") == "All Surfaces");
+
+        cfg.set_deserialize_strict("z_hop_types", "Spiral Lift");
+        CHECK(cfg.option<ConfigOptionEnumsGeneric>("z_hop_types")->values == std::vector<int>{ZHopType::zhtSpiral});
+        CHECK(cfg.opt_serialize("z_hop_types") == "Spiral Lift");
+    }
+
+    SECTION("a dynamic full config serializes by name") {
+        DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+        CHECK(cfg.opt_serialize("z_hop_types") == "Slope Lift");
+    }
+
+    SECTION("an option without any enum map falls back to the numeric form") {
+        ConfigOptionEnumsGeneric opt{3};
+        REQUIRE(opt.keys_map == nullptr);
+        CHECK(opt.serialize() == "3");
+        REQUIRE(opt.deserialize("2,1"));
+        CHECK(opt.values == std::vector<int>{2, 1});
+        CHECK_FALSE(opt.deserialize("Slope Lift"));
+    }
+}

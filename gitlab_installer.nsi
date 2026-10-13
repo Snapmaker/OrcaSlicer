@@ -624,36 +624,23 @@ Function un.SnapmakerUninstallFinishCreate
   StrCpy $SnapmakerFinTitle "Snapmaker Orca V${VERSION} 已成功从本机卸载。"
   StrCpy $SnapmakerFinText "点击【完成】关闭卸载程序"
   StrCpy $SnapmakerFinCheckboxText "删除个人数据"
-  GetDlgItem $0 $HWNDPARENT 1
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:完成(&F)"
+  SendMessage $mui.Button.Next ${WM_SETTEXT} 0 "STR:完成(&F)"
   Goto SnapmakerFin_l10n_done
 SnapmakerFin_l10n_en:
   StrCpy $SnapmakerFinTitle "Snapmaker Orca V${VERSION} has been successfully uninstalled from this computer."
   StrCpy $SnapmakerFinText "Click Finish to close the uninstaller"
   StrCpy $SnapmakerFinCheckboxText "Delete personal data"
-  GetDlgItem $0 $HWNDPARENT 1
-  SendMessage $0 ${WM_SETTEXT} 0 "STR:&Finish"
+  SendMessage $mui.Button.Next ${WM_SETTEXT} 0 "STR:&Finish"
 SnapmakerFin_l10n_done:
   ; Finish is the only way out: disable Back and Cancel.
-  GetDlgItem $0 $HWNDPARENT 2
-  EnableWindow $0 0
-  GetDlgItem $0 $HWNDPARENT 3
-  EnableWindow $0 0
+  EnableWindow $mui.Button.Cancel 0
+  EnableWindow $mui.Button.Back 0
   ; Welcome-page look: remove the WHOLE MUI header strip, not just its texts.
-  ; 1034 = header background, 1035 = line, 1037/1038 = title/subtitle,
-  ; 1039 = header image. (1036 is unused by MUI1's header, kept for safety.)
-  GetDlgItem $0 $HWNDPARENT 1034
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1035
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1036
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1037
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1038
-  ShowWindow $0 ${SW_HIDE}
-  GetDlgItem $0 $HWNDPARENT 1039
-  ShowWindow $0 ${SW_HIDE}
+  ShowWindow $mui.Header.Background ${SW_HIDE}
+  ShowWindow $mui.Line.Standard ${SW_HIDE}
+  ShowWindow $mui.Header.Text ${SW_HIDE}
+  ShowWindow $mui.Header.SubText ${SW_HIDE}
+  ShowWindow $mui.Header.Image ${SW_HIDE}
   ; Expand the content area (1018) to the full wizard client so no empty band
   ; is left where the header strip used to be (what MUI's ioSpecial pages do).
   System::Call '*(i, i, i, i) i .r2'

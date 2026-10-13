@@ -1295,6 +1295,8 @@ wxWindow* PreferencesDialog::create_general_page()
     auto associate_url_prusaslicer = create_item_link_association(page, L"prusaslicer", "Printables.com");
     auto associate_url_bambustudio = create_item_link_association(page, L"bambustudio", "Makerworld.com");
     auto associate_url_cura        = create_item_link_association(page, L"cura", "Thingiverse.com");
+    auto associate_url_snapmaker1   = create_item_link_association(page, L"snapmaker-orca", "models.snapmaker.com/");
+    auto associate_url_snapmaker2   = create_item_link_association(page, L"Snapmaker_Orca", "models.snapmaker.com/");
 #endif // _WIN32
 
     // auto title_modelmall = create_item_title(_L("Online Models"), page, _L("Online Models"));
@@ -1396,6 +1398,8 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(associate_url_prusaslicer, 0, wxTOP, FromDIP(3));
     sizer_page->Add(associate_url_bambustudio, 0, wxTOP, FromDIP(3));
     sizer_page->Add(associate_url_cura, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(associate_url_snapmaker1, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(associate_url_snapmaker2, 0, wxTOP, FromDIP(3));
 #endif // _WIN32
     // auto item_title_modelmall = sizer_page->Add(title_modelmall, 0, wxTOP | wxEXPAND, FromDIP(20));
     // auto item_item_modelmall = sizer_page->Add(item_modelmall, 0, wxTOP, FromDIP(3));

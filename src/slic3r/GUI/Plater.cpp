@@ -283,13 +283,16 @@ static std::string filament_display_label(int slot_1based)
 
 // Compose a single comma-separated line of "[n] Preset" labels from a list
 // of 1-based slot numbers. Used inside High/Low temperature group lines.
-static std::string format_filament_slot_list(const std::vector<int>& slots_1based)
+// The separator defaults to the plain English comma; callers that need a
+// locale-aware comma pass a translated separator (e.g. tr_u8(", "), which
+// resolves to the full-width comma in zh_CN).
+static std::string format_filament_slot_list(const std::vector<int>& slots_1based, const std::string& separator = ", ")
 {
     std::string out;
     for (size_t i = 0; i < slots_1based.size(); ++i)
     {
         if (i != 0)
-            out += ", ";
+            out += separator;
         out += filament_display_label(slots_1based[i]);
     }
     return out;
@@ -15313,6 +15316,48 @@ bool Plater::priv::warnings_dialog()
 
 }
 
+// Post-slice toast for the nozzle-HRC (hardness) mismatch. Filament prompt
+// follows the filament_temp_mixing / cold_plate / flow_ratio_zero banners:
+// translated issue sentence, then a "Filament(s): [n] Preset" line naming the
+// offending slots. warning.params holds 0-based print extruder ids; converted
+// to 1-based slot numbers for filament_display_label.
+static void push_nozzle_hrc_warning_notification(NotificationManager* nm, PartPlate* plate)
+{
+    if (nm == nullptr || plate == nullptr)
+        return;
+    GCodeProcessorResult* result = plate->get_slice_result();
+    if (result == nullptr || result->warnings.empty())
+        return;
+
+    std::string text;
+    for (GCodeProcessorResult::SliceWarning& warning : result->warnings) {
+        if (warning.msg != NOZZLE_HRC_CHECKER)
+            continue;
+        const wxString base = Plater::get_slice_warning_string(warning);
+        if (base.empty())
+            continue;
+
+        std::vector<int> offender_slots_1based;
+        for (const std::string& param : warning.params)
+            offender_slots_1based.push_back(atoi(param.c_str()) + 1);
+
+        std::string line = into_u8(base);
+        if (!offender_slots_1based.empty()) {
+            line += "\n";
+            line += tr_u8("Filament(s):");
+            line += " ";
+            line += format_filament_slot_list(offender_slots_1based, tr_u8(", "));
+        }
+        text += line + "\n";
+    }
+    if (text.empty())
+        return;
+    nm->close_notification_of_type(NotificationType::NozzleHrcWarning);
+    nm->push_notification(NotificationType::NozzleHrcWarning,
+        NotificationManager::NotificationLevel::WarningNotificationLevel,
+        text);
+}
+
 //BBS: add project slice logic
 void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 {
@@ -15486,6 +15531,9 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         }else
         if (exporting_status == ExportingStatus::EXPORTING_TO_LOCAL && !has_error)
             notification_manager->push_exporting_finished_notification(last_output_path, last_output_dir_path, false);
+
+        if (!has_error && exporting_status == ExportingStatus::NOT_EXPORTING)
+            push_nozzle_hrc_warning_notification(notification_manager.get(), background_process.get_current_plate());
 
         // BBS, Generate calibration thumbnail for current plate
         if (!has_error && preview) {

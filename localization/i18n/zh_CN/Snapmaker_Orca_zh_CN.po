@@ -15434,6 +15434,9 @@ msgstr "流量比例为 0%，挤出量为零，无法生成有效打印路径。
 msgid "Filament(s):"
 msgstr "耗材："
 
+msgid ", "
+msgstr "，"
+
 msgid "Please set the flow ratio to a value greater than 0."
 msgstr "请将其设置为大于 0 的值。"
 

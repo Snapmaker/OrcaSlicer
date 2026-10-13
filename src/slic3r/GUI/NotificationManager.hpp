@@ -151,6 +151,8 @@ enum class NotificationType
     BBLPrinterConfigUpdateAvailable,
 	BBLUserPresetExceedLimit,
         FilamentIncompatibleMixed,
+    // Nozzle hardness (HRC) too low for the loaded filament, no fade-out
+    NozzleHrcWarning,
 };
 
 class NotificationManager

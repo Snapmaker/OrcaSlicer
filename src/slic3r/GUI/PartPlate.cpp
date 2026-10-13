@@ -1809,6 +1809,9 @@ void PartPlate::render_right_arrow(const ColorRGBA render_color, bool use_lighti
 
 static void register_model_for_picking(GLCanvas3D &canvas, PickingModel &model, int id)
 {
+    if (model.mesh_raycaster == nullptr)
+        return;
+
     canvas.add_raycaster_for_picking(SceneRaycaster::EType::Bed, id, *model.mesh_raycaster, Transform3d::Identity());
 }
 

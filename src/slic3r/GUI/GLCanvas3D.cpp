@@ -76,8 +76,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <iomanip>
-#include <sstream>
 
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
@@ -3172,44 +3170,6 @@ void GLCanvas3D::render(bool only_init)
         imgui.text("Max texture size:");
         ImGui::SameLine();
         imgui.text(std::to_string(OpenGLManager::get_gl_info().get_max_tex_size()));
-        if (_softShadowRenderer != nullptr)
-        {
-            std::ostringstream shadowStats;
-            shadowStats << std::fixed << std::setprecision(3) << _softShadowRenderer->GetDepthPassGpuTimeMs() << " / "
-                        << _softShadowRenderer->GetFullMaskGpuTimeMs() << " / " << _softShadowRenderer->GetMaskPassGpuTimeMs() << " / "
-                        << _softShadowRenderer->GetReceiverGpuTimeMs();
-            imgui.text("Soft shadow GPU ms (depth / mask full / mask drag / receiver):");
-            ImGui::SameLine();
-            imgui.text(shadowStats.str());
-
-            std::ostringstream objectShadowStats;
-            objectShadowStats << std::fixed << std::setprecision(3) << _softShadowRenderer->GetSceneDepthCopyGpuTimeMs() << " / "
-                              << _softShadowRenderer->GetObjectShadeGpuTimeMs() << " / "
-                              << _softShadowRenderer->GetObjectCompositeGpuTimeMs();
-            imgui.text("Object shadow GPU ms (copy / shade / composite):");
-            ImGui::SameLine();
-            imgui.text(objectShadowStats.str());
-            imgui.text("Soft shadow rebuilds:");
-            ImGui::SameLine();
-            imgui.text(std::to_string(_softShadowRenderer->GetRebuildCount()));
-
-            const SoftShadowMapStats& mapStats = _softShadowRenderer->GetShadowMapStats();
-            std::ostringstream mapStatsText;
-            mapStatsText << "casters " << mapStats.casterCount << ", LOD " << mapStats.lodCount << ", triangles "
-                         << mapStats.triangles << ", interactive " << (mapStats.interactive ? "Y" : "N") << ", frozen "
-                         << (mapStats.frozen ? "Y" : "N") << std::fixed << std::setprecision(3) << ", extent "
-                         << mapStats.extentMm << " mm, texel " << mapStats.texelMm << " mm";
-            imgui.text("Shadow map:");
-            ImGui::SameLine();
-            imgui.text(mapStatsText.str());
-
-            bool objectReceive = _softShadowRenderer->IsObjectReceiveEnabled();
-            if (ImGui::Checkbox("Objects receive shadows", &objectReceive))
-            {
-                _softShadowRenderer->SetObjectReceiveEnabled(objectReceive);
-                set_as_dirty();
-            }
-        }
         imgui.end();
     }
 
@@ -4770,7 +4730,7 @@ void GLCanvas3D::on_key(wxKeyEvent& evt)
         if (!m_gizmos.on_key(evt)) {
             if (evt.GetEventType() == wxEVT_KEY_UP) {
                 if (evt.ShiftDown() && evt.ControlDown() && keyCode == WXK_SPACE) {
-#if 1 // local debug: enable Ctrl+Shift+Space render statistics dialog, do not commit
+#if !BBL_RELEASE_TO_PUBLIC
                     wxGetApp().plater()->toggle_render_statistic_dialog();
                     m_dirty = true;
 #endif

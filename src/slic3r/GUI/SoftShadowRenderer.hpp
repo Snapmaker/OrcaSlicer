@@ -38,20 +38,6 @@ struct SoftShadowPixelRect
     bool IsEmpty() const { return x1 <= x0 || y1 <= y0; }
 };
 
-/** @brief Diagnostics of the last shadow map rebuild. */
-struct SoftShadowMapStats
-{
-    std::size_t casterCount{ 0 };
-    std::size_t lodCount{ 0 };
-    std::size_t triangles{ 0 };
-    bool interactive{ false };
-    // Light frustum frozen with an extra margin (drag in progress)
-    bool frozen{ false };
-    // World size covered by the shadow map and the size of one of its texels, in mm
-    float extentMm{ 0.0f };
-    float texelMm{ 0.0f };
-};
-
 /** @brief Non-blocking GPU timer built on a ring of GL_TIME_ELAPSED queries. */
 class SoftShadowGpuTimer
 {
@@ -121,33 +107,6 @@ public:
     /** @brief Returns true when GL resources are allocated. */
     bool HasResources() const { return _shadowFramebuffer != 0 || _maskFramebuffer != 0; }
 
-    /** @brief Returns the smoothed GPU time of the shadow map depth pass in milliseconds. */
-    float GetDepthPassGpuTimeMs() const { return _depthPassTimer.GetTimeMs(); }
-
-    /** @brief Returns the smoothed GPU time of the ground mask pass while dragging, in milliseconds. */
-    float GetMaskPassGpuTimeMs() const { return _maskPassTimer.GetTimeMs(); }
-
-    /** @brief Returns the smoothed GPU time of the full quality (settled) ground mask pass in milliseconds. */
-    float GetFullMaskGpuTimeMs() const { return _fullMaskTimer.GetTimeMs(); }
-
-    /** @brief Returns the smoothed GPU time of the receiver pass in milliseconds. */
-    float GetReceiverGpuTimeMs() const { return _receiverTimer.GetTimeMs(); }
-
-    /** @brief Returns the smoothed GPU times of the object shadow steps (depth copy / shading / composite) in ms. */
-    float GetSceneDepthCopyGpuTimeMs() const { return _sceneDepthCopyTimer.GetTimeMs(); }
-    float GetObjectShadeGpuTimeMs() const { return _objectShadeTimer.GetTimeMs(); }
-    float GetObjectCompositeGpuTimeMs() const { return _objectCompositeTimer.GetTimeMs(); }
-
-    /** @brief Switch for objects receiving shadows; the ground shadow is unaffected. */
-    void SetObjectReceiveEnabled(bool enabled) { _objectReceiveEnabled = enabled; }
-    bool IsObjectReceiveEnabled() const { return _objectReceiveEnabled; }
-
-    /** @brief Returns how many times the shadow map and mask were rebuilt. */
-    unsigned int GetRebuildCount() const { return _rebuildCount; }
-
-    /** @brief Returns the diagnostics of the last shadow map rebuild. */
-    const SoftShadowMapStats& GetShadowMapStats() const { return _shadowMapStats; }
-
 private:
     bool EnsureResources();
     bool CreateShadowMapResources();
@@ -215,15 +174,8 @@ private:
     BoundingBoxf3 _frozenFitBox;
     bool _maskValid{ false };
 
-    SoftShadowGpuTimer _depthPassTimer;
-    // Drag and settled mask passes are timed apart; the settled one decides the drag sample count
-    SoftShadowGpuTimer _maskPassTimer;
+    // GPU time of the settled (full quality) mask pass; decides whether dragging uses fewer mask samples
     SoftShadowGpuTimer _fullMaskTimer;
-    SoftShadowGpuTimer _receiverTimer;
-    SoftShadowGpuTimer _sceneDepthCopyTimer;
-    SoftShadowGpuTimer _objectShadeTimer;
-    SoftShadowGpuTimer _objectCompositeTimer;
-    bool _objectReceiveEnabled{ true };
 
     // Copy of the scene depth used by the screen-space object shadow pass
     unsigned int _sceneDepthFramebuffer{ 0 };
@@ -239,8 +191,6 @@ private:
     unsigned int _objectShadowTexture{ 0 };
     int _objectShadowWidth{ 0 };
     int _objectShadowHeight{ 0 };
-    unsigned int _rebuildCount{ 0 };
-    SoftShadowMapStats _shadowMapStats;
 };
 
 } // namespace GUI

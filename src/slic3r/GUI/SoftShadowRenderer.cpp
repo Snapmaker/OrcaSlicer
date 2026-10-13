@@ -828,11 +828,6 @@ bool SoftShadowRenderer::RenderShadowMap(bool interactive)
 
     shader->start_using();
     shader->set_uniform("projection_matrix", _lightProjection);
-    _shadowMapStats = SoftShadowMapStats();
-    _shadowMapStats.interactive = interactive;
-    _shadowMapStats.frozen = _frustumFrozen;
-    _shadowMapStats.extentMm = _lightExtent.x();
-    _shadowMapStats.texelMm = _lightExtent.x() / static_cast<float>(_shadowMapSize);
     for (GLVolume* volume : _casters)
     {
         shader->set_uniform("view_model_matrix", _lightView * volume->world_matrix());
@@ -841,17 +836,9 @@ bool SoftShadowRenderer::RenderShadowMap(bool interactive)
         const bool heavy = volume->model.indices_count() / 3 > SHADOW_LOD_MIN_TRIANGLES;
         GLModel* const lodModel = (interactive && heavy) ? GetReadyLodModel(*volume) : nullptr;
         if (lodModel != nullptr)
-        {
             lodModel->render();
-            ++_shadowMapStats.lodCount;
-            _shadowMapStats.triangles += lodModel->indices_count() / 3;
-        }
         else
-        {
             volume->render();
-            _shadowMapStats.triangles += volume->model.indices_count() / 3;
-        }
-        ++_shadowMapStats.casterCount;
     }
     shader->stop_using();
 
@@ -1012,26 +999,25 @@ bool SoftShadowRenderer::Update(const SoftShadowFrameInput& input)
         ShadowStateGuard stateGuard;
         UpdateLightFrustum(input.interactive);
         BuildFootprintModel();
-        _depthPassTimer.Begin();
         rendered = RenderShadowMap(input.interactive);
-        _depthPassTimer.End();
         if (rendered)
             BuildLocalTopMap(input.interactive);
         if (rendered)
         {
             // Fewer samples while dragging only when a full quality mask is measured to be expensive
             const bool reducedSamples = input.interactive && _fullMaskTimer.GetTimeMs() > DRAG_MASK_BUDGET_MS;
-            SoftShadowGpuTimer& maskTimer = input.interactive ? _maskPassTimer : _fullMaskTimer;
-            maskTimer.Begin();
+            // Only the settled pass is timed, it is the full quality reference for the drag decision
+            if (!input.interactive)
+                _fullMaskTimer.Begin();
             rendered = RenderGroundMask(reducedSamples);
             if (rendered)
                 BlurGroundMask();
-            maskTimer.End();
+            if (!input.interactive)
+                _fullMaskTimer.End();
         }
     }
 
     _maskValid = rendered;
-    ++_rebuildCount;
     _lastSignature = signature;
     _lastWasInteractive = input.interactive;
     return _maskValid;
@@ -1047,7 +1033,6 @@ void SoftShadowRenderer::RenderReceivers(const Camera& camera, PartPlateList& pl
         return;
 
     ShadowStateGuard stateGuard;
-    _receiverTimer.Begin();
     glsafe(::glEnable(GL_DEPTH_TEST));
     glsafe(::glDepthFunc(GL_LESS));
     glsafe(::glDepthMask(GL_FALSE));
@@ -1067,7 +1052,6 @@ void SoftShadowRenderer::RenderReceivers(const Camera& camera, PartPlateList& pl
     shader->set_uniform("shadow_strength", darkMode ? STRENGTH_DARK : STRENGTH_LIGHT);
     plates.RenderShadowReceivers();
     shader->stop_using();
-    _receiverTimer.End();
 }
 
 void SoftShadowRenderer::DisableObjectShadows(const char* reason)
@@ -1319,7 +1303,7 @@ void SoftShadowRenderer::CompositeObjectShadows(GLShaderProgram& shader, const C
 
 void SoftShadowRenderer::RenderObjectShadows(const Camera& camera, bool darkMode)
 {
-    if (!_objectReceiveEnabled || _objectShadowsFailed || !_maskValid || _shadowDepthTexture == 0)
+    if (_objectShadowsFailed || !_maskValid || _shadowDepthTexture == 0)
         return;
 
     GLShaderProgram* const shader = wxGetApp().get_shader("shadow_screen");
@@ -1361,20 +1345,11 @@ void SoftShadowRenderer::RenderObjectShadows(const Camera& camera, bool darkMode
     const SoftShadowPixelRect copyRect = ExpandRect(workRect, 2 * scale + 2, viewport[2], viewport[3]);
 
     ShadowStateGuard stateGuard;
-    // Timed in three separate segments (GL_TIME_ELAPSED queries cannot nest)
-    _sceneDepthCopyTimer.Begin();
-    const bool copied = CopySceneDepth(viewport, copyRect);
-    _sceneDepthCopyTimer.End();
-    if (!copied || !EnsureObjectShadowTarget(targetWidth, targetHeight))
+    if (!CopySceneDepth(viewport, copyRect) || !EnsureObjectShadowTarget(targetWidth, targetHeight))
         return;
 
-    _objectShadeTimer.Begin();
     DrawObjectShadows(*shader, camera, scale, shadeRect, darkMode);
-    _objectShadeTimer.End();
-
-    _objectCompositeTimer.Begin();
     CompositeObjectShadows(*compositeShader, camera, viewport, scale, workRect);
-    _objectCompositeTimer.End();
 }
 
 void SoftShadowRenderer::Release()
@@ -1421,13 +1396,7 @@ void SoftShadowRenderer::Release()
     ReleaseSceneDepthResources();
     ReleaseObjectShadowTarget();
     _fullscreenQuad.reset();
-    _depthPassTimer.Release();
-    _maskPassTimer.Release();
     _fullMaskTimer.Release();
-    _receiverTimer.Release();
-    _sceneDepthCopyTimer.Release();
-    _objectShadeTimer.Release();
-    _objectCompositeTimer.Release();
     _casters.clear();
     _instanceBoxes.clear();
     _maskValid = false;

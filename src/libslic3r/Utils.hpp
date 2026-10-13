@@ -96,6 +96,16 @@ extern size_t total_physical_memory();
 // Used by the runtime memory guard in PrintBase.hpp.
 extern size_t get_available_physical_memory();
 
+// The two figures behind get_available_physical_memory(), reported separately
+// because they fail differently: low physical RAM makes the system page
+// (slow, recoverable), low commit makes allocations fail (crash).
+// A value of 0 means "unknown" (commit is only known on Windows).
+struct AvailableMemory {
+    size_t physical { 0 };
+    size_t commit   { 0 };
+};
+extern AvailableMemory get_available_memory();
+
 // Set a path with GUI resource files.
 void set_var_dir(const std::string &path);
 // Return a full path to the GUI resource files.

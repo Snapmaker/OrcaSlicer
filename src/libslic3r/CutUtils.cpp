@@ -529,6 +529,9 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove&       groove,
                                                 bool                keep_as_parts/* = false*/)
 {
     ModelObject* cut_mo = m_model.objects.front();
+    const int   valid_groove_count = std::max(groove_count, 1);
+    const float valid_groove_gap   = std::max(groove_gap, 0.f);
+    const float valid_radius       = radius > 0.f ? radius : 1.f;
 
     // Clone the object to duplicate instances, materials etc.
     ModelObject* upper{ nullptr };
@@ -590,38 +593,42 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove&       groove,
     }
 
     // Compute same slot outer width used in preview plane
-    const float groove_width = calculate_groove_width(groove, radius);
-
-    ModelObject* groove_object{ nullptr };
+    const float groove_width = calculate_groove_width(groove, valid_radius);
 
     // multiple cuts
-    for (int i = 0; i < groove_count; i++) {
+    for (int i = 0; i < valid_groove_count; ++i)
+    {
         bool is_first_groove = i == 0;
-        bool is_last_groove  = i == groove_count - 1;
+        bool is_last_groove  = i == valid_groove_count - 1;
 
         // Calculate the x-axis offset for this dovetail
-        float groove_offset_factor_start = -.5 * ((groove_count - 1));
-        float groove_offset_factor       = groove_offset_factor_start + i;
+        float groove_offset_factor_start = -0.5f * static_cast<float>(valid_groove_count - 1);
+        float groove_offset_factor       = groove_offset_factor_start + static_cast<float>(i);
 
-        float offset_x = groove_offset_factor * (groove_gap + groove_width);
+        float offset_x = groove_offset_factor * (valid_groove_gap + groove_width);
 
-        tmp_object->clone_for_cut(&groove_object);
-        for (ModelVolume* volume : tmp_object->volumes) {
+        Model        groove_model;
+        ModelObject* groove_object = groove_model.add_object(*tmp_object);
+        groove_object->clear_volumes();
+        for (ModelVolume* volume : tmp_object->volumes)
+        {
             ModelVolume* new_vol = groove_object->add_volume(*volume);
             new_vol->reset_from_upper();
         }
 
         // isolate area of current groove
-        if (!is_first_groove) {
-            float left_cut_position = (-groove_gap / 2.f) - (groove_width / 2.f) + offset_x;
+        if (!is_first_groove)
+        {
+            float left_cut_position = (-valid_groove_gap / 2.f) - (groove_width / 2.f) + offset_x;
 
             const Transform3d cut_matrix_left = translation_transform(rotation_m * (left_cut_position * Vec3d::UnitX())) *
                                                 m_cut_matrix * rotation_transform(Vec3d(0, PI / 2.0, 0));
 
             cut(groove_object, cut_matrix_left, ModelObjectCutAttribute::KeepUpper, tmp_model_for_cut);
         }
-        if (!is_last_groove) {
-            float right_cut_position = (groove_gap / 2.f) + (groove_width / 2.f) + offset_x;
+        if (!is_last_groove)
+        {
+            float right_cut_position = (valid_groove_gap / 2.f) + (groove_width / 2.f) + offset_x;
 
             const Transform3d cut_matrix_right = translation_transform(rotation_m * (right_cut_position * Vec3d::UnitX())) *
                                                  m_cut_matrix * rotation_transform(Vec3d(0, PI / 2.0, 0));
@@ -670,8 +677,6 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove&       groove,
         }
 
         add_volumes_from_cut(upper, ModelObjectCutAttribute::KeepLower, tmp_model_for_cut);
-
-        groove_object->clear_volumes();
     }
 
     ModelObjectPtrs cut_object_ptrs;
@@ -720,15 +725,16 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove&       groove,
 float Cut::calculate_groove_width(const Cut::Groove& groove, const float radius)
 {
     // Compute same slot outer width used in preview plane
+    const float  valid_radius          = radius > 0.f ? radius : 1.f;
     const double flap_width            = is_approx(groove.flaps_angle, 0.f) ? groove.depth : groove.depth / sin(groove.flaps_angle);
     const double total_flap_width      = 2.0 * flap_width * cos(groove.flaps_angle);
     const double slot_neck_half_width  = 0.5f * (groove.width);
     const double slot_mouth_half_width = 0.5 * (groove.width + total_flap_width);
-    const double plane_half_height     = 0.5f * (1.5f * (1.5f * radius));
+    const double plane_half_height     = 0.5f * (1.5f * (1.5f * valid_radius));
     const double flap_taper_offset     = plane_half_height * tan(groove.angle);
     const double slot_outer_x_max      = std::max(slot_mouth_half_width + flap_taper_offset, slot_neck_half_width + flap_taper_offset);
 
-    return float(2.0 * slot_outer_x_max);
+    return static_cast<float>(2.0 * slot_outer_x_max);
 }
 
 } // namespace Slic3r

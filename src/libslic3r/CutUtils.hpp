@@ -64,6 +64,10 @@ public:
                                                const float        radius,
                                                bool               keep_as_parts = false);
 
+    /// Calculate the outer X width of one dovetail groove in the cut plane.
+    /// \param groove Dovetail groove dimensions and angles.
+    /// \param radius Cut plane radius used by the preview mesh.
+    /// \return Full outer groove width used for spacing multiple grooves.
     static float calculate_groove_width(const Cut::Groove& groove, const float radius);
 
 }; // namespace Cut

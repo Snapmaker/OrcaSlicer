@@ -113,11 +113,10 @@ UninstPage custom un.SnapmakerUninstallFinishCreate un.SnapmakerUninstallFinishL
 !insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
-; Prompts in Chinese and English, wording copied from the CPack installer
-; (cmake/nsis/SnapmakerPreinstall.nsh, SnapmakerUninstallConfirm.nsh). Prompts
-; keep the space-form product name; the underscore name never reaches a prompt.
-; The texts branch on $LANGUAGE at runtime instead of using LangString, so every
-; language other than SimpChinese gets the English text.
+; Prompts in Chinese and English, wording taken from the CPack installer.
+; Prompts keep the space-form product name; the underscore name never reaches a
+; prompt. The texts branch on $LANGUAGE at runtime instead of using LangString,
+; so every language other than SimpChinese gets the English text.
 !ifndef LANG_SIMPCHINESE
 !define LANG_SIMPCHINESE 2052
 !endif

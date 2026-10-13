@@ -45,6 +45,11 @@ struct SoftShadowMapStats
     std::size_t lodCount{ 0 };
     std::size_t triangles{ 0 };
     bool interactive{ false };
+    // Light frustum frozen with an extra margin (drag in progress)
+    bool frozen{ false };
+    // World size covered by the shadow map and the size of one of its texels, in mm
+    float extentMm{ 0.0f };
+    float texelMm{ 0.0f };
 };
 
 /** @brief Non-blocking GPU timer built on a ring of GL_TIME_ELAPSED queries. */
@@ -119,8 +124,11 @@ public:
     /** @brief Returns the smoothed GPU time of the shadow map depth pass in milliseconds. */
     float GetDepthPassGpuTimeMs() const { return _depthPassTimer.GetTimeMs(); }
 
-    /** @brief Returns the smoothed GPU time of the ground mask pass in milliseconds. */
+    /** @brief Returns the smoothed GPU time of the ground mask pass while dragging, in milliseconds. */
     float GetMaskPassGpuTimeMs() const { return _maskPassTimer.GetTimeMs(); }
+
+    /** @brief Returns the smoothed GPU time of the full quality (settled) ground mask pass in milliseconds. */
+    float GetFullMaskGpuTimeMs() const { return _fullMaskTimer.GetTimeMs(); }
 
     /** @brief Returns the smoothed GPU time of the receiver pass in milliseconds. */
     float GetReceiverGpuTimeMs() const { return _receiverTimer.GetTimeMs(); }
@@ -149,8 +157,11 @@ private:
     void FitLightFrustum(const BoundingBoxf3& fitBox);
     void UpdateLightFrustum(bool interactive);
     bool RenderShadowMap(bool interactive);
+    void BuildLocalTopMap(bool interactive);
+    void BuildLocalTopMapFromBoxes();
+    bool BuildLocalTopMapFromShadowMap();
     void BuildFootprintModel();
-    bool RenderGroundMask(bool interactive);
+    bool RenderGroundMask(bool reducedSamples);
     void BlurGroundMask();
     void EnsureFullscreenQuad();
     bool EnsureSceneDepthResources(int width, int height);
@@ -173,6 +184,14 @@ private:
     unsigned int _maskBlurTexture{ 0 };
     unsigned int _rawDepthSampler{ 0 };
     unsigned int _compareDepthSampler{ 0 };
+    // Coarse map of the closest-to-light caster depth per tile; bounds the blocker search by nearby casters
+    // instead of the tallest object. Reduced from the shadow map when settled, from caster boxes while dragging.
+    unsigned int _localTopTexture{ 0 };
+    unsigned int _localTopFramebuffer{ 0 };
+    // Intermediate level of the two-step GPU reduction (many small blocks keep the GPU busy)
+    unsigned int _localTopMidFramebuffer{ 0 };
+    unsigned int _localTopMidTexture{ 0 };
+    bool _localTopValid{ false };
     unsigned int _shadowMapSize{ 0 };
     unsigned int _maskSize{ 0 };
     bool _resourcesFailed{ false };
@@ -197,7 +216,9 @@ private:
     bool _maskValid{ false };
 
     SoftShadowGpuTimer _depthPassTimer;
+    // Drag and settled mask passes are timed apart; the settled one decides the drag sample count
     SoftShadowGpuTimer _maskPassTimer;
+    SoftShadowGpuTimer _fullMaskTimer;
     SoftShadowGpuTimer _receiverTimer;
     SoftShadowGpuTimer _sceneDepthCopyTimer;
     SoftShadowGpuTimer _objectShadeTimer;

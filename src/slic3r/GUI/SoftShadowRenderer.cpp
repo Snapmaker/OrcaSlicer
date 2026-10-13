@@ -26,9 +26,16 @@ namespace {
 
 // Direction towards the light in world space, tilted ~36 deg so the shadow falls towards the default camera.
 const Vec3d TO_LIGHT_DIR = Vec3d(-0.4, 0.6, 1.0).normalized();
-constexpr float LIGHT_SPREAD = 0.04f;
+constexpr float LIGHT_SPREAD = 0.02f;
+// Smaller light for object shadows, so thin features (spikes) keep a tapering shadow
+constexpr float OBJECT_LIGHT_SPREAD = 0.02f;
 constexpr double MAX_SEARCH_MM = 25.0;
+// Narrowest penumbra in shadow map texels; wider values (3) caused jagged rims and dark spots in concave corners
 constexpr double MIN_PENUMBRA_TEXELS = 1.5;
+// Meshes above this triangle count use their simplified LOD in the shadow map while dragging
+constexpr std::size_t SHADOW_LOD_MIN_TRIANGLES = 200000;
+// While dragging the mask uses fewer samples only when a full quality mask costs more than this
+constexpr float DRAG_MASK_BUDGET_MS = 3.0f;
 constexpr double DEPTH_BIAS_MM = 0.05;
 constexpr double FRUSTUM_PADDING_MM = 1.0;
 // Room around the casters while dragging, so the frozen light frustum rarely has to be refitted
@@ -37,7 +44,9 @@ constexpr double FROZEN_FRUSTUM_MARGIN_RATIO = 0.25;
 constexpr double GROUND_Z = 0.0;
 constexpr unsigned int SHADOW_MAP_SIZE = 2048;
 constexpr unsigned int MASK_SIZE = 1024;
-constexpr double MIN_SHADOW_TEXEL_MM = 0.1;
+// Smallest area covered by the shadow map; fixed instead of size x 0.1 mm, which grew with the map size
+// and cancelled the gain of a larger map in small scenes
+constexpr double MIN_SHADOW_EXTENT_MM = 200.0;
 constexpr double MIN_MASK_TEXEL_MM = 0.15;
 constexpr double FOOTPRINT_MARGIN_TEXELS = 2.0;
 constexpr int BLOCKER_SAMPLES_HQ = 16;
@@ -52,8 +61,9 @@ constexpr float STRENGTH_LIGHT = 0.55f;
 constexpr float STRENGTH_DARK = 0.75f;
 constexpr float GPU_TIME_SMOOTHING = 0.1f;
 // Object shadows run once per screen pixel every frame, so they use fewer samples and a lighter shadow
-constexpr int OBJECT_BLOCKER_SAMPLES = 8;
-constexpr int OBJECT_PCF_SAMPLES = 16;
+// Denser PCF averages out the shadow map texel staircase on sharp object shadows
+constexpr int OBJECT_BLOCKER_SAMPLES = 12;
+constexpr int OBJECT_PCF_SAMPLES = 24;
 constexpr double OBJECT_NORMAL_OFFSET_TEXELS = 3.0;
 // Pixels added around the projected object bounds; normals read neighbouring depth pixels
 constexpr int OBJECT_RECT_MARGIN = 4;
@@ -66,7 +76,13 @@ constexpr float UPSAMPLE_DEPTH_TOLERANCE = 0.02f;
 constexpr double OBJECT_MAX_RECEIVER_SLOPE = 5.0;
 constexpr float OBJECT_STRENGTH_LIGHT = 0.45f;
 constexpr float OBJECT_STRENGTH_DARK = 0.45f;
-constexpr int GUARDED_TEXTURE_UNITS = 3;
+constexpr int GUARDED_TEXTURE_UNITS = 4;
+// Tiles per axis of the local top map (about 5 to 10 mm per tile for usual plates)
+constexpr unsigned int LOCAL_TOP_SIZE = 32;
+// Intermediate size of the two-step GPU min reduction
+constexpr unsigned int LOCAL_TOP_MID_SIZE = 256;
+// Widest ground mask blur spacing in texels, used inside wide penumbrae to remove grain
+constexpr float MASK_BLUR_MAX_STEP = 4.0f;
 
 /** @brief OpenGL states touched by the soft shadow passes, restored on destruction. */
 class ShadowStateGuard
@@ -154,7 +170,7 @@ private:
     GLint _drawFramebuffer{ 0 };
     GLint _readFramebuffer{ 0 };
     GLint _activeTexture{ GL_TEXTURE0 };
-    std::array<GLint, GUARDED_TEXTURE_UNITS> _textures{ { 0, 0, 0 } };
+    std::array<GLint, GUARDED_TEXTURE_UNITS> _textures{ { 0, 0, 0, 0 } };
 };
 
 /** @brief Texture storage matching the default framebuffer depth, required by glBlitFramebuffer. */
@@ -408,7 +424,11 @@ void SoftShadowGpuTimer::Poll()
         GLuint64 elapsedNs = 0;
         glsafe(::glGetQueryObjectui64v(_queries[i], GL_QUERY_RESULT, &elapsedNs));
         const float elapsedMs = static_cast<float>(static_cast<double>(elapsedNs) * 1.0e-6);
-        _timeMs += (elapsedMs - _timeMs) * GPU_TIME_SMOOTHING;
+        // The first sample is taken as is, so decisions based on it do not wait for the average to settle
+        if (_timeMs > 0.0f)
+            _timeMs += (elapsedMs - _timeMs) * GPU_TIME_SMOOTHING;
+        else
+            _timeMs = elapsedMs;
         _pending[i] = false;
     }
 }
@@ -473,12 +493,47 @@ bool SoftShadowRenderer::CreateShadowMapResources()
     glsafe(::glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, _shadowDepthTexture, 0));
     glsafe(::glDrawBuffer(GL_NONE));
     glsafe(::glReadBuffer(GL_NONE));
-    return _shadowDepthTexture != 0 && _rawDepthSampler != 0 && _compareDepthSampler != 0 && IsDrawFramebufferComplete();
+    if (_shadowDepthTexture == 0 || _rawDepthSampler == 0 || _compareDepthSampler == 0 || !IsDrawFramebufferComplete())
+        return false;
+
+    _localTopTexture = CreateTexture2D(GL_R32F, GL_RED, GL_FLOAT, LOCAL_TOP_SIZE);
+    if (_localTopTexture == 0)
+        return false;
+
+    // Render targets of the GPU reduction; without them the box based map is used
+    GLuint localTopFramebuffer = 0;
+    glsafe(::glGenFramebuffers(1, &localTopFramebuffer));
+    _localTopFramebuffer = static_cast<unsigned int>(localTopFramebuffer);
+    glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, localTopFramebuffer));
+    glsafe(::glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _localTopTexture, 0));
+    const bool localTopComplete = IsDrawFramebufferComplete();
+
+    _localTopMidTexture = CreateTexture2D(GL_R32F, GL_RED, GL_FLOAT, LOCAL_TOP_MID_SIZE);
+    GLuint localTopMidFramebuffer = 0;
+    glsafe(::glGenFramebuffers(1, &localTopMidFramebuffer));
+    _localTopMidFramebuffer = static_cast<unsigned int>(localTopMidFramebuffer);
+    glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, localTopMidFramebuffer));
+    glsafe(::glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _localTopMidTexture, 0));
+    if (!localTopComplete || _localTopMidTexture == 0 || !IsDrawFramebufferComplete())
+    {
+        BOOST_LOG_TRIVIAL(warning) << "Soft shadows: GPU local top reduction unavailable, using caster boxes";
+        if (_localTopFramebuffer != 0)
+            glsafe(::glDeleteFramebuffers(1, &_localTopFramebuffer));
+        if (_localTopMidFramebuffer != 0)
+            glsafe(::glDeleteFramebuffers(1, &_localTopMidFramebuffer));
+        if (_localTopMidTexture != 0)
+            glsafe(::glDeleteTextures(1, &_localTopMidTexture));
+        _localTopFramebuffer = 0;
+        _localTopMidFramebuffer = 0;
+        _localTopMidTexture = 0;
+    }
+    return true;
 }
 
 bool SoftShadowRenderer::CreateMaskResources()
 {
-    _maskTexture = CreateTexture2D(GL_R8, GL_RED, GL_UNSIGNED_BYTE, _maskSize);
+    // R = visibility, G = blur step derived from the penumbra width
+    _maskTexture = CreateTexture2D(GL_RG8, GL_RG, GL_UNSIGNED_BYTE, _maskSize);
 
     GLuint framebuffer = 0;
     glsafe(::glGenFramebuffers(1, &framebuffer));
@@ -488,7 +543,7 @@ bool SoftShadowRenderer::CreateMaskResources()
     if (_maskTexture == 0 || !IsDrawFramebufferComplete())
         return false;
 
-    _maskBlurTexture = CreateTexture2D(GL_R8, GL_RED, GL_UNSIGNED_BYTE, _maskSize);
+    _maskBlurTexture = CreateTexture2D(GL_RG8, GL_RG, GL_UNSIGNED_BYTE, _maskSize);
     GLuint blurFramebuffer = 0;
     glsafe(::glGenFramebuffers(1, &blurFramebuffer));
     _maskBlurFramebuffer = static_cast<unsigned int>(blurFramebuffer);
@@ -626,8 +681,7 @@ void SoftShadowRenderer::FitLightFrustum(const BoundingBoxf3& fitBox)
         lightBox.max.z() = std::max(lightBox.max.z(), lightZ);
     }
 
-    const double minExtent = static_cast<double>(_shadowMapSize) * MIN_SHADOW_TEXEL_MM;
-    const double side = std::max({ lightBox.size().x(), lightBox.size().y(), minExtent }) + 2.0 * MAX_SEARCH_MM;
+    const double side = std::max({ lightBox.size().x(), lightBox.size().y(), MIN_SHADOW_EXTENT_MM }) + 2.0 * MAX_SEARCH_MM;
     const Vec3d center = lightBox.center();
     const double nearZ = -lightBox.max.z() - FRUSTUM_PADDING_MM;
     const double farZ = -lightBox.min.z() + FRUSTUM_PADDING_MM;
@@ -660,6 +714,102 @@ void SoftShadowRenderer::UpdateLightFrustum(bool interactive)
     _frustumFrozen = true;
 }
 
+void SoftShadowRenderer::BuildLocalTopMap(bool interactive)
+{
+    _localTopValid = false;
+    if (_localTopTexture == 0)
+        return;
+
+    // Settled: exact reduction of the shadow map (about 3 ms, once). Dragging: caster boxes (nearly free),
+    // which are conservative and may leave slight grain at thin tips until the drag ends.
+    if (!interactive && BuildLocalTopMapFromShadowMap())
+    {
+        _localTopValid = true;
+        return;
+    }
+    BuildLocalTopMapFromBoxes();
+    _localTopValid = true;
+}
+
+bool SoftShadowRenderer::BuildLocalTopMapFromShadowMap()
+{
+    GLShaderProgram* const shader = wxGetApp().get_shader("shadow_depth_min");
+    if (shader == nullptr || _localTopFramebuffer == 0 || _localTopMidFramebuffer == 0 ||
+        _shadowMapSize < LOCAL_TOP_MID_SIZE)
+        return false;
+
+    EnsureFullscreenQuad();
+    glsafe(::glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE));
+    glsafe(::glDisable(GL_DEPTH_TEST));
+    glsafe(::glDisable(GL_BLEND));
+    glsafe(::glActiveTexture(GL_TEXTURE0));
+    glsafe(::glBindSampler(0, 0));
+
+    shader->start_using();
+    shader->set_uniform("shadow_depth", 0);
+    // Step 1: shadow map -> 256x256, small blocks so many fragments run in parallel
+    glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, _localTopMidFramebuffer));
+    glsafe(::glViewport(0, 0, static_cast<GLsizei>(LOCAL_TOP_MID_SIZE), static_cast<GLsizei>(LOCAL_TOP_MID_SIZE)));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, _shadowDepthTexture));
+    shader->set_uniform("block_size", static_cast<int>(_shadowMapSize / LOCAL_TOP_MID_SIZE));
+    _fullscreenQuad.render();
+
+    // Step 2: 256x256 -> 32x32
+    glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, _localTopFramebuffer));
+    glsafe(::glViewport(0, 0, static_cast<GLsizei>(LOCAL_TOP_SIZE), static_cast<GLsizei>(LOCAL_TOP_SIZE)));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, _localTopMidTexture));
+    shader->set_uniform("block_size", static_cast<int>(LOCAL_TOP_MID_SIZE / LOCAL_TOP_SIZE));
+    _fullscreenQuad.render();
+    shader->stop_using();
+    return true;
+}
+
+void SoftShadowRenderer::BuildLocalTopMapFromBoxes()
+{
+    // Each caster box is projected into the light; its tiles keep the depth of the box top (conservative)
+    const int tiles = static_cast<int>(LOCAL_TOP_SIZE);
+    std::vector<float> tops(static_cast<std::size_t>(tiles * tiles), 1.0f);
+    const Matrix4d lightViewProjection = _lightProjection * _lightView.matrix();
+    for (const GLVolume* volume : _casters)
+    {
+        const std::array<Vec3d, 8> corners = GetBoxCorners(volume->transformed_bounding_box());
+        double minU = std::numeric_limits<double>::max();
+        double minV = std::numeric_limits<double>::max();
+        double maxU = std::numeric_limits<double>::lowest();
+        double maxV = std::numeric_limits<double>::lowest();
+        double minDepth = 1.0;
+        for (const Vec3d& corner : corners)
+        {
+            const Vec4d clip = lightViewProjection * Vec4d(corner.x(), corner.y(), corner.z(), 1.0);
+            const double u = clip.x() / clip.w() * 0.5 + 0.5;
+            const double v = clip.y() / clip.w() * 0.5 + 0.5;
+            minU = std::min(minU, u);
+            minV = std::min(minV, v);
+            maxU = std::max(maxU, u);
+            maxV = std::max(maxV, v);
+            minDepth = std::min(minDepth, clip.z() / clip.w() * 0.5 + 0.5);
+        }
+
+        const int x0 = std::max(0, static_cast<int>(std::floor(minU * tiles)));
+        const int y0 = std::max(0, static_cast<int>(std::floor(minV * tiles)));
+        const int x1 = std::min(tiles - 1, static_cast<int>(std::floor(maxU * tiles)));
+        const int y1 = std::min(tiles - 1, static_cast<int>(std::floor(maxV * tiles)));
+        const float top = static_cast<float>(std::max(minDepth, 0.0));
+        for (int y = y0; y <= y1; ++y)
+        {
+            for (int x = x0; x <= x1; ++x)
+            {
+                float& tile = tops[static_cast<std::size_t>(y * tiles + x)];
+                tile = std::min(tile, top);
+            }
+        }
+    }
+
+    glsafe(::glActiveTexture(GL_TEXTURE0));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, _localTopTexture));
+    glsafe(::glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, tiles, tiles, GL_RED, GL_FLOAT, tops.data()));
+}
+
 bool SoftShadowRenderer::RenderShadowMap(bool interactive)
 {
     GLShaderProgram* const shader = wxGetApp().get_shader("flat");
@@ -680,11 +830,16 @@ bool SoftShadowRenderer::RenderShadowMap(bool interactive)
     shader->set_uniform("projection_matrix", _lightProjection);
     _shadowMapStats = SoftShadowMapStats();
     _shadowMapStats.interactive = interactive;
+    _shadowMapStats.frozen = _frustumFrozen;
+    _shadowMapStats.extentMm = _lightExtent.x();
+    _shadowMapStats.texelMm = _lightExtent.x() / static_cast<float>(_shadowMapSize);
     for (GLVolume* volume : _casters)
     {
         shader->set_uniform("view_model_matrix", _lightView * volume->world_matrix());
         // While dragging, simplified meshes keep the per-frame rebuild cheap; the settle rebuild uses full meshes
-        GLModel* const lodModel = interactive ? GetReadyLodModel(*volume) : nullptr;
+        // Only heavy meshes: light ones are cheap anyway, and simplification would cut off thin tips
+        const bool heavy = volume->model.indices_count() / 3 > SHADOW_LOD_MIN_TRIANGLES;
+        GLModel* const lodModel = (interactive && heavy) ? GetReadyLodModel(*volume) : nullptr;
         if (lodModel != nullptr)
         {
             lodModel->render();
@@ -730,7 +885,7 @@ void SoftShadowRenderer::BuildFootprintModel()
     _footprintModel.init_from(std::move(geometry));
 }
 
-bool SoftShadowRenderer::RenderGroundMask(bool interactive)
+bool SoftShadowRenderer::RenderGroundMask(bool reducedSamples)
 {
     GLShaderProgram* const shader = wxGetApp().get_shader("shadow_ground_mask");
     if (shader == nullptr)
@@ -738,7 +893,8 @@ bool SoftShadowRenderer::RenderGroundMask(bool interactive)
 
     glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, _maskFramebuffer));
     glsafe(::glViewport(0, 0, static_cast<GLsizei>(_maskSize), static_cast<GLsizei>(_maskSize)));
-    glsafe(::glClearColor(1.0f, 1.0f, 1.0f, 1.0f));
+    // Fully lit, no blur
+    glsafe(::glClearColor(1.0f, 0.0f, 0.0f, 1.0f));
     glsafe(::glClear(GL_COLOR_BUFFER_BIT));
 
     // A reduced resolution while dragging visibly blurred the shadow, so only the sample count drops
@@ -755,11 +911,16 @@ bool SoftShadowRenderer::RenderGroundMask(bool interactive)
     glsafe(::glActiveTexture(GL_TEXTURE1));
     glsafe(::glBindTexture(GL_TEXTURE_2D, _shadowDepthTexture));
     glsafe(::glBindSampler(1, _compareDepthSampler));
+    glsafe(::glActiveTexture(GL_TEXTURE2));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, _localTopTexture));
+    glsafe(::glBindSampler(2, 0));
 
     const double shadowTexel = static_cast<double>(_lightExtent.x()) / static_cast<double>(_shadowMapSize);
     shader->start_using();
     shader->set_uniform("shadow_depth", 0);
     shader->set_uniform("shadow_depth_cmp", 1);
+    shader->set_uniform("local_top", 2);
+    shader->set_uniform("use_local_top", _localTopValid);
     shader->set_uniform("light_view_projection", Matrix4d(_lightProjection * _lightView.matrix()));
     shader->set_uniform("mask_rect", _maskRect);
     shader->set_uniform("ground_z", static_cast<float>(GROUND_Z));
@@ -767,10 +928,13 @@ bool SoftShadowRenderer::RenderGroundMask(bool interactive)
     shader->set_uniform("light_extent", _lightExtent);
     shader->set_uniform("light_spread", LIGHT_SPREAD);
     shader->set_uniform("min_penumbra", static_cast<float>(MIN_PENUMBRA_TEXELS * shadowTexel));
+    // Blur spacing grows with a quarter of the penumbra width, capped at MASK_BLUR_MAX_STEP texels
+    const double maskTexel = static_cast<double>(_maskRect[2] - _maskRect[0]) / static_cast<double>(_maskSize);
+    shader->set_uniform("penumbra_to_step", static_cast<float>(0.25 / (maskTexel * static_cast<double>(MASK_BLUR_MAX_STEP))));
     shader->set_uniform("max_search", static_cast<float>(MAX_SEARCH_MM));
     shader->set_uniform("depth_bias", static_cast<float>(DEPTH_BIAS_MM / static_cast<double>(_depthSpan)));
-    shader->set_uniform("blocker_samples", interactive ? BLOCKER_SAMPLES_LQ : BLOCKER_SAMPLES_HQ);
-    shader->set_uniform("pcf_samples", interactive ? PCF_SAMPLES_LQ : PCF_SAMPLES_HQ);
+    shader->set_uniform("blocker_samples", reducedSamples ? BLOCKER_SAMPLES_LQ : BLOCKER_SAMPLES_HQ);
+    shader->set_uniform("pcf_samples", reducedSamples ? PCF_SAMPLES_LQ : PCF_SAMPLES_HQ);
     _footprintModel.render();
     shader->stop_using();
     return true;
@@ -791,6 +955,7 @@ void SoftShadowRenderer::BlurGroundMask()
 
     shader->start_using();
     shader->set_uniform("source_mask", 0);
+    shader->set_uniform("max_step", MASK_BLUR_MAX_STEP);
     // Horizontal: mask -> blur target, vertical: blur target -> mask
     glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, _maskBlurFramebuffer));
     glsafe(::glBindTexture(GL_TEXTURE_2D, _maskTexture));
@@ -851,12 +1016,17 @@ bool SoftShadowRenderer::Update(const SoftShadowFrameInput& input)
         rendered = RenderShadowMap(input.interactive);
         _depthPassTimer.End();
         if (rendered)
+            BuildLocalTopMap(input.interactive);
+        if (rendered)
         {
-            _maskPassTimer.Begin();
-            rendered = RenderGroundMask(input.interactive);
+            // Fewer samples while dragging only when a full quality mask is measured to be expensive
+            const bool reducedSamples = input.interactive && _fullMaskTimer.GetTimeMs() > DRAG_MASK_BUDGET_MS;
+            SoftShadowGpuTimer& maskTimer = input.interactive ? _maskPassTimer : _fullMaskTimer;
+            maskTimer.Begin();
+            rendered = RenderGroundMask(reducedSamples);
             if (rendered)
                 BlurGroundMask();
-            _maskPassTimer.End();
+            maskTimer.End();
         }
     }
 
@@ -1027,6 +1197,9 @@ void SoftShadowRenderer::DrawObjectShadows(GLShaderProgram& shader, const Camera
     glsafe(::glActiveTexture(GL_TEXTURE2));
     glsafe(::glBindTexture(GL_TEXTURE_2D, _shadowDepthTexture));
     glsafe(::glBindSampler(2, _compareDepthSampler));
+    glsafe(::glActiveTexture(GL_TEXTURE3));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, _localTopTexture));
+    glsafe(::glBindSampler(3, 0));
 
     const Matrix4d viewProjection = camera.get_projection_matrix().matrix() * camera.get_view_matrix().matrix();
     const double shadowTexel = static_cast<double>(_lightExtent.x()) / static_cast<double>(_shadowMapSize);
@@ -1034,6 +1207,8 @@ void SoftShadowRenderer::DrawObjectShadows(GLShaderProgram& shader, const Camera
     shader.set_uniform("scene_depth", 0);
     shader.set_uniform("shadow_depth", 1);
     shader.set_uniform("shadow_depth_cmp", 2);
+    shader.set_uniform("local_top", 3);
+    shader.set_uniform("use_local_top", _localTopValid);
     shader.set_uniform("inv_view_projection", Matrix4d(viewProjection.inverse()));
     shader.set_uniform("inv_projection", Matrix4d(camera.get_projection_matrix().matrix().inverse()));
     shader.set_uniform("reconstruct_offset", OBJECT_RECONSTRUCT_OFFSET);
@@ -1049,7 +1224,7 @@ void SoftShadowRenderer::DrawObjectShadows(GLShaderProgram& shader, const Camera
     shader.set_uniform("to_light", TO_LIGHT_DIR);
     shader.set_uniform("depth_span", _depthSpan);
     shader.set_uniform("light_extent", _lightExtent);
-    shader.set_uniform("light_spread", LIGHT_SPREAD);
+    shader.set_uniform("light_spread", OBJECT_LIGHT_SPREAD);
     shader.set_uniform("min_penumbra", static_cast<float>(MIN_PENUMBRA_TEXELS * shadowTexel));
     shader.set_uniform("max_search", static_cast<float>(MAX_SEARCH_MM));
     shader.set_uniform("depth_bias", static_cast<float>(OBJECT_DEPTH_BIAS_MM / static_cast<double>(_depthSpan)));
@@ -1220,6 +1395,14 @@ void SoftShadowRenderer::Release()
         glsafe(::glDeleteSamplers(1, &_rawDepthSampler));
     if (_compareDepthSampler != 0)
         glsafe(::glDeleteSamplers(1, &_compareDepthSampler));
+    if (_localTopTexture != 0)
+        glsafe(::glDeleteTextures(1, &_localTopTexture));
+    if (_localTopFramebuffer != 0)
+        glsafe(::glDeleteFramebuffers(1, &_localTopFramebuffer));
+    if (_localTopMidFramebuffer != 0)
+        glsafe(::glDeleteFramebuffers(1, &_localTopMidFramebuffer));
+    if (_localTopMidTexture != 0)
+        glsafe(::glDeleteTextures(1, &_localTopMidTexture));
 
     _shadowFramebuffer = 0;
     _maskFramebuffer = 0;
@@ -1229,12 +1412,18 @@ void SoftShadowRenderer::Release()
     _maskBlurTexture = 0;
     _rawDepthSampler = 0;
     _compareDepthSampler = 0;
+    _localTopTexture = 0;
+    _localTopFramebuffer = 0;
+    _localTopMidFramebuffer = 0;
+    _localTopMidTexture = 0;
+    _localTopValid = false;
     _footprintModel.reset();
     ReleaseSceneDepthResources();
     ReleaseObjectShadowTarget();
     _fullscreenQuad.reset();
     _depthPassTimer.Release();
     _maskPassTimer.Release();
+    _fullMaskTimer.Release();
     _receiverTimer.Release();
     _sceneDepthCopyTimer.Release();
     _objectShadeTimer.Release();

@@ -3176,8 +3176,9 @@ void GLCanvas3D::render(bool only_init)
         {
             std::ostringstream shadowStats;
             shadowStats << std::fixed << std::setprecision(3) << _softShadowRenderer->GetDepthPassGpuTimeMs() << " / "
-                        << _softShadowRenderer->GetMaskPassGpuTimeMs() << " / " << _softShadowRenderer->GetReceiverGpuTimeMs();
-            imgui.text("Soft shadow GPU ms (depth / mask / receiver):");
+                        << _softShadowRenderer->GetFullMaskGpuTimeMs() << " / " << _softShadowRenderer->GetMaskPassGpuTimeMs() << " / "
+                        << _softShadowRenderer->GetReceiverGpuTimeMs();
+            imgui.text("Soft shadow GPU ms (depth / mask full / mask drag / receiver):");
             ImGui::SameLine();
             imgui.text(shadowStats.str());
 
@@ -3195,7 +3196,9 @@ void GLCanvas3D::render(bool only_init)
             const SoftShadowMapStats& mapStats = _softShadowRenderer->GetShadowMapStats();
             std::ostringstream mapStatsText;
             mapStatsText << "casters " << mapStats.casterCount << ", LOD " << mapStats.lodCount << ", triangles "
-                         << mapStats.triangles << ", interactive " << (mapStats.interactive ? "Y" : "N");
+                         << mapStats.triangles << ", interactive " << (mapStats.interactive ? "Y" : "N") << ", frozen "
+                         << (mapStats.frozen ? "Y" : "N") << std::fixed << std::setprecision(3) << ", extent "
+                         << mapStats.extentMm << " mm, texel " << mapStats.texelMm << " mm";
             imgui.text("Shadow map:");
             ImGui::SameLine();
             imgui.text(mapStatsText.str());

@@ -82,6 +82,7 @@ std::pair<bool, std::string> GLShadersManager::init()
         appendOptionalShader("shadow_ground_mask", { prefix + "shadow_ground_mask.vs", prefix + "shadow_ground_mask.fs" });
         appendOptionalShader("shadow_receiver", { prefix + "shadow_receiver.vs", prefix + "shadow_receiver.fs" });
         appendOptionalShader("shadow_mask_blur", { prefix + "background.vs", prefix + "shadow_mask_blur.fs" });
+        appendOptionalShader("shadow_depth_min", { prefix + "background.vs", prefix + "shadow_depth_min.fs" });
         // screen-space pass that darkens object pixels lying in the shadow
         appendOptionalShader("shadow_screen", { prefix + "background.vs", prefix + "shadow_screen.fs" });
         appendOptionalShader("shadow_screen_composite", { prefix + "background.vs", prefix + "shadow_screen_composite.fs" });

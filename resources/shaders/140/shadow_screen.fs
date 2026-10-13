@@ -28,6 +28,9 @@ uniform float reconstruct_offset;
 uniform float shadow_strength;
 uniform int blocker_samples;
 uniform int pcf_samples;
+// Coarse map of the local caster top; the search radius follows nearby casters, not the tallest object of the scene
+uniform sampler2D local_top;
+uniform bool use_local_top;
 
 // R = shadow amount, G = linear view depth, BA = octahedral normal, used by the composite filter
 out vec4 frag_color;
@@ -36,7 +39,6 @@ const float GOLDEN_ANGLE = 2.39996323;
 const float TWO_PI = 6.28318531;
 // Squared radius of the inner blocker ring (half of the search radius)
 const float INNER_RING_R2 = 0.25;
-
 ivec2 g_depth_size;
 
 float FetchDepth(ivec2 c)
@@ -65,6 +67,22 @@ vec2 OctEncode(vec3 n)
     if (m.z < 0.0)
         e = (vec2(1.0) - abs(m.yx)) * vec2(m.x >= 0.0 ? 1.0 : -1.0, m.y >= 0.0 ? 1.0 : -1.0);
     return e;
+}
+
+// Closest-to-light depth of the casters around uv, from the coarse local top map (3x3 tiles)
+float LocalTop(vec2 uv)
+{
+    if (!use_local_top)
+        return 0.0;
+
+    ivec2 size = textureSize(local_top, 0);
+    ivec2 c = ivec2(floor(uv * vec2(size)));
+    float top = 1.0;
+    for (int j = -1; j <= 1; ++j) {
+        for (int i = -1; i <= 1; ++i)
+            top = min(top, texelFetch(local_top, clamp(c + ivec2(i, j), ivec2(0), size - ivec2(1)), 0).r);
+    }
+    return top;
 }
 
 vec2 VogelDisk(int i, int n, float phi)
@@ -107,7 +125,7 @@ float ShadowVisibility(vec3 pos, vec3 n, float view_depth)
     float phi = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) * TWO_PI;
 
     // Step 1: weighted blocker search
-    vec2 search_uv = vec2(min(p.z * depth_span * light_spread, max_search)) / light_extent;
+    vec2 search_uv = vec2(min(max(p.z - LocalTop(p.xy), 0.0) * depth_span * light_spread, max_search)) / light_extent;
     // Inner ring blockers take priority, keeping contact shadows hard (same as the ground mask)
     float blocker_sum = 0.0;
     float blocker_weight = 0.0;

@@ -985,10 +985,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Bottom paint penetration layers");
     def->category = L("Strength");
     def->sidetext = L("layers");
-    def->tooltip = L("The number of layers painted with the bottom surface color into the bottom shell, including the "
-                     "bottom surface layer itself. Each penetration layer shrinks inwards by one line width. "
-                     "Increase this value to reduce color bleeding at the bottom surface in multi-material printing. "
-                     "0 behaves the same as 1 (only the surface layer is painted).");
+    def->tooltip = L("This is the number of layers of bottom paint penetration.");
     def->min = 0;
     def->set_default_value(new ConfigOptionInt(3));
 
@@ -6066,17 +6063,14 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(0.6));
 
-    // Migrated from BambuStudio c782fbb8; default 5, engine clamps 0 to act as 1.
+    // Same default as BambuStudio c782fbb8; must stay <= top_shell_layers default (4); engine clamps 0 to act as 1.
     def = this->add("top_color_penetration_layers", coInt);
     def->label = L("Top paint penetration layers");
     def->category = L("Strength");
     def->sidetext = L("layers");
-    def->tooltip = L("The number of layers painted with the top surface color into the top shell, including the "
-                     "top surface layer itself. Each penetration layer shrinks inwards by one line width. "
-                     "Increase this value to reduce color bleeding at the top surface in multi-material printing. "
-                     "0 behaves the same as 1 (only the surface layer is painted).");
+    def->tooltip = L("This is  the number of layers of top paint penetration.");
     def->min = 0;
-    def->set_default_value(new ConfigOptionInt(5));
+    def->set_default_value(new ConfigOptionInt(4));
 
 
     def = this->add("top_surface_density", coPercent);

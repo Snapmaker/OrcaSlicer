@@ -1666,8 +1666,34 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
         if (auto layers = generate_object_layers(print_object.slicing_parameters(), layer_height_profile(print_object_idx), print_object.config().precise_z_height.value);
             !layers.empty()) {
 
-            // PEN-015: penetration may not exceed the total layer count (halved, see Slicing.cpp).
+            // Shell layers may not exceed the total layer count (halved, see Slicing.cpp).
             const int total_layers = int(layers.size() / 2);
+            {
+                int max_top_shell = 0, max_bottom_shell = 0;
+                for (size_t region_idx = 0; region_idx < print_object.num_printing_regions(); ++ region_idx) {
+                    const PrintRegionConfig &region_config = print_object.printing_region(region_idx).config();
+                    max_top_shell    = std::max(max_top_shell, region_config.top_shell_layers.value);
+                    max_bottom_shell = std::max(max_bottom_shell, region_config.bottom_shell_layers.value);
+                }
+                if (max_top_shell > total_layers)
+                    return StringObjectException{
+                        Slic3r::format(_u8L("The shell layers (current: %1%) exceed the model layers (total: %2%). "
+                                            "Please reduce the top shell layers."),
+                            max_top_shell, total_layers),
+                        print_object.model_object(),
+                        "top_shell_layers"
+                    };
+                if (max_bottom_shell > total_layers)
+                    return StringObjectException{
+                        Slic3r::format(_u8L("The shell layers (current: %1%) exceed the model layers (total: %2%). "
+                                            "Please reduce the bottom shell layers."),
+                            max_bottom_shell, total_layers),
+                        print_object.model_object(),
+                        "bottom_shell_layers"
+                    };
+            }
+
+            // PEN-015: penetration may not exceed the total layer count (halved, see Slicing.cpp).
             {
                 int max_top_penetration = 0, max_bottom_penetration = 0;
                 for (size_t region_idx = 0; region_idx < print_object.num_printing_regions(); ++ region_idx) {
@@ -1677,17 +1703,17 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                 }
                 if (max_top_penetration > total_layers)
                     return StringObjectException{
-                        Slic3r::format(_u8L("The top paint penetration layers (%1%) of object %2% exceed the total layer count (%3%) of this object. "
+                        Slic3r::format(_u8L("The paint penetration layers (current: %1%) exceed the model layers (total: %2%). "
                                             "Please reduce the top paint penetration layers."),
-                            max_top_penetration, print_object.model_object()->name, total_layers),
+                            max_top_penetration, total_layers),
                         print_object.model_object(),
                         "top_color_penetration_layers"
                     };
                 if (max_bottom_penetration > total_layers)
                     return StringObjectException{
-                        Slic3r::format(_u8L("The bottom paint penetration layers (%1%) of object %2% exceed the total layer count (%3%) of this object. "
+                        Slic3r::format(_u8L("The paint penetration layers (current: %1%) exceed the model layers (total: %2%). "
                                             "Please reduce the bottom paint penetration layers."),
-                            max_bottom_penetration, print_object.model_object()->name, total_layers),
+                            max_bottom_penetration, total_layers),
                         print_object.model_object(),
                         "bottom_color_penetration_layers"
                     };
@@ -1725,7 +1751,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
     // Custom layering is not allowed for tree supports as of now.
     for (size_t print_object_idx = 0; print_object_idx < m_objects.size(); ++ print_object_idx)
         if (const PrintObject &print_object = *m_objects[print_object_idx];
-            print_object.has_support_material() && is_tree(print_object.config().support_type.value) && print_object.config().support_style.value == smsTreeOrganic &&
+            print_object.config().enable_support.value && is_tree(print_object.config().support_type.value) && print_object.config().support_style.value == smsTreeOrganic &&
             print_object.model_object()->has_custom_layering()) {
             if (const std::vector<coordf_t> &layers = layer_height_profile(print_object_idx); ! layers.empty())
                 if (! check_object_layers_fixed(print_object.slicing_parameters(), layers))

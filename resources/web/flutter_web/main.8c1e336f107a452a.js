@@ -144005,7 +144005,7 @@ if(r!=null)A.S("[DeviceFileImageCacheService] \u4ece\u7f13\u5b58\u83b7\u53d6\u56
 else A.S("[DeviceFileImageCacheService] \u7f13\u5b58\u4e2d\u672a\u627e\u5230\u56fe\u7247: "+s,null)
 return r}}
 A.aHZ.prototype={
-bda(a){var s,r,q,p="1.5.0"
+bda(a){var s,r,q,p="2.0.0"
 try{s=A.ID(a,p)
 return!s}catch(q){r=A.z(q)
 A.S("checkIfVersionOutDated failed, error: "+J.t(r),null)

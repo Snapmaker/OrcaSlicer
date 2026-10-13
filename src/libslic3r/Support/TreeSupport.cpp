@@ -1172,6 +1172,13 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
             }
 
             cluster.check_small_overhang(extrusion_width_scaled, length_thresh_small_overhang, radius_thresh_small_overhang);
+            // Keep deep Small fragments: scalloped-cantilever nubs reach past the model below by one radius_thresh.
+            if (cluster.is_type(Small) && !enforce_add && cluster.min_layer >= 1) {
+                const ExPolygons deep_part = diff_ex(cluster.merged_poly,
+                    offset_ex(layer_outlines_below[cluster.min_layer - 1], radius_thresh_small_overhang));
+                if (!deep_part.empty())
+                    cluster.set_type(Small, false);
+            }
 
 #ifdef SUPPORT_TREE_DEBUG_TO_SVG
             const Layer* layer1 = m_object->get_layer(cluster.min_layer);

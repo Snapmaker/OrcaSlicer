@@ -6314,6 +6314,10 @@ msgstr "提示："
 msgid "\"Fix Model\" feature is currently only on Windows. Please repair the model on Snapmaker Orca(windows) or CAD softwares."
 msgstr "\"修复模型\"功能目前仅适用于Windows。请在Snapmaker Orca(windows)或CAD软件上修复模型。"
 
+# AI Translated
+msgid "Use \"Fix Model\" to repair the mesh."
+msgstr "请使用\"修复模型\"修复网格。"
+
 #, c-format, boost-format
 msgid "Plate %d: %s is not suggested to be used to print filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to non-zero."
 msgstr "热床 %d：%s不建议被用于打印%s（%s）材料。如果你依然想打印，请设置耗材对应的热床温度为非零值。"
@@ -8545,6 +8549,23 @@ msgstr "修复已完成"
 
 msgid "Repair canceled"
 msgstr "修复被取消"
+
+# AI Translated
+msgid "Repair failed"
+msgstr "修复失败"
+
+# AI Translated
+#, boost-format
+msgid "Split into %1% parts"
+msgstr "已拆分为 %1% 个部件"
+
+# AI Translated
+msgid "The object has no part that encloses a volume"
+msgstr "该对象没有任何封闭体积的部件"
+
+# AI Translated
+msgid "Repaired, but self-intersections remain in"
+msgstr "已修复，但以下对象仍存在自相交"
 
 #, boost-format
 msgid "Copying of file %1% to %2% failed: %3%"

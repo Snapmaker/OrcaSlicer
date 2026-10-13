@@ -340,8 +340,7 @@ cmake .. -G "Visual Studio 17 2022" -A x64 ^
     -DDEPS_SRC_DIR=gitlab_deps_src ^
     -DCMAKE_PREFIX_PATH="%DEPS%/usr/local" ^
     -DCMAKE_INSTALL_PREFIX="./Snapmaker_Orca" ^
-    -DCMAKE_BUILD_TYPE=%build_type% ^
-    -DWIN10SDK_PATH="%WindowsSdkDir%Include\%WindowsSDKVersion%\"
+    -DCMAKE_BUILD_TYPE=%build_type%
 
 if errorlevel 1 (
     echo   [ERROR] CMake configure failed for slicer

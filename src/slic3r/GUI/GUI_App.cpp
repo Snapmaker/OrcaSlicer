@@ -3073,6 +3073,12 @@ bool GUI_App::on_init_inner()
 #endif
             this->post_init();
 
+#ifdef __APPLE__
+            for (const auto& url : m_pending_mac_open_urls)
+                start_download(into_u8(url));
+            m_pending_mac_open_urls.clear();
+#endif // __APPLE__
+
             update_publish_status();
         }
 
@@ -6993,7 +6999,10 @@ void GUI_App::MacOpenURL(const wxString& url)
     // which is always empty here: macOS launches the app first and delivers the URL afterwards.
     // Without this flag post_init resets the project that this download is about to load.
     m_url_open_pending = true;
-    start_download(into_u8(url));
+    if (!m_post_initialized)
+        m_pending_mac_open_urls.push_back(url);
+    else
+        start_download(into_u8(url));
 }
 
 // wxWidgets override to get an event on open files.

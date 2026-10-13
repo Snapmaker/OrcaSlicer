@@ -1022,7 +1022,7 @@ wxBoxSizer *StatusBasePanel::create_monitoring_page()
         const std::string js_request_pip = R"(
             document.querySelector('video').requestPictureInPicture();
         )";
-        m_custom_camera_view->RunScript(js_request_pip);
+        WebView::RunScript(m_custom_camera_view, js_request_pip);
     });
     m_camera_switch_button->Hide();
 
@@ -4258,7 +4258,7 @@ void StatusBasePanel::remove_controls()
             window.wx.postMessage('enterpictureinpicture');
         });
     )";
-    m_custom_camera_view->RunScript(js_cleanup_video_element);
+    WebView::RunScript(m_custom_camera_view, js_cleanup_video_element);
 }
 
 void StatusPanel::on_camera_leave(wxMouseEvent& event)

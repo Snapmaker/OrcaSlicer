@@ -123,7 +123,10 @@ namespace instance_check_internal
 			{
 				BOOST_LOG_TRIVIAL(debug) << "win enum - found correct instance";
 				l_bambu_studio_hwnd = hwnd;
-				ShowWindow(hwnd, SW_SHOWMAXIMIZED);
+				// Do not alter the window state when opening a file in the existing instance.
+				// A minimized window still needs restoring before it can receive focus.
+				if (IsIconic(hwnd))
+					ShowWindow(hwnd, SW_RESTORE);
 				SetForegroundWindow(hwnd);
 				return false;
 			}

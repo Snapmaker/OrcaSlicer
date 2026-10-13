@@ -2086,7 +2086,15 @@ void PresetBundle::export_selections(AppConfig &config)
     config.clear_printer_settings(printer_name);
     config.set_printer_setting(printer_name, PRESET_PRINTER_NAME, printer_name);
     config.set_printer_setting(printer_name, PRESET_PRINT_NAME, prints.get_selected_preset_name());
-    config.set_printer_setting(printer_name, PRESET_FILAMENT_NAME,     filament_presets.front());
+    // Caught by the assert above in debug builds. In release, reading front() of an
+    // empty vector wrote garbage into the app config and could throw during the
+    // JSON export, so fall back to an empty name.
+    std::string first_filament_name;
+    if (filament_presets.empty())
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": no filament preset selected, writing an empty filament name";
+    else
+        first_filament_name = filament_presets.front();
+    config.set_printer_setting(printer_name, PRESET_FILAMENT_NAME, first_filament_name);
     config.set_printer_setting(printer_name, "curr_bed_type", config.get("curr_bed_type"));
     for (unsigned i = 1; i < filament_presets.size(); ++i) {
         char name[64];
@@ -2145,7 +2153,7 @@ void PresetBundle::export_selections(AppConfig &config)
     //config.set("presets", "sla_material", sla_materials.get_selected_preset_name());
     //config.set("presets", "physical_printer", physical_printers.get_selected_full_printer_name());
     //BBS: add config related log
-    BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": printer %1%, print %2%, filaments[0] %3% ")%printers.get_selected_preset_name() % prints.get_selected_preset_name() %filament_presets[0];
+    BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": printer %1%, print %2%, filaments[0] %3% ")%printers.get_selected_preset_name() % prints.get_selected_preset_name() %(filament_presets.empty() ? std::string("<none>") : filament_presets.front());
 }
 
 // BBS

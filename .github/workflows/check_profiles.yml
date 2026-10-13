@@ -5,6 +5,11 @@ on:
     - main 
     paths:
     - 'resources/profiles/**'
+    - 'submodules/Profiles'
+    - 'submodules/Profiles/**'
+    - '.gitmodules'
+    - 'CMakeLists.txt'
+    - 'cmake/SyncSnapmakerProfiles.cmake'
     - ".github/workflows/check_profiles.yml"
 
   workflow_dispatch:
@@ -22,6 +27,15 @@ jobs:
     steps:  
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Sync Snapmaker profiles
+        run: |
+          cmake -DSUB="$PWD/submodules/Profiles" \
+                -DDST="$PWD/resources/profiles" \
+                -DVERSION_STAMP="$RUNNER_TEMP/profiles-revision.txt" \
+                -P cmake/SyncSnapmakerProfiles.cmake
 
       - name: Run extra JSON check
         run: |

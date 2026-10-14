@@ -531,12 +531,27 @@ struct PaintedLineVisitor
 
     bool operator()(coord_t iy, coord_t ix)
     {
+        if (iy < 0 || ix < 0 ||
+            static_cast<size_t>(iy) >= grid.rows() ||
+            static_cast<size_t>(ix) >= grid.cols()) {
+                return false;
+        }
+
         // Called with a row and column of the grid cell, which is intersected by a line.
         auto         cell_data_range        = grid.cell_data_range(iy, ix);
+        const auto& contours = grid.contours();
         const Vec2d  v1                     = line_to_test.vector().cast<double>();
         const double v1_sqr_norm            = v1.squaredNorm();
         const double heuristic_thr_part     = line_to_test.length() + append_threshold;
         for (auto it_contour_and_segment = cell_data_range.first; it_contour_and_segment != cell_data_range.second; ++it_contour_and_segment) {
+            const size_t contour_idx = it_contour_and_segment->first;
+            const size_t segment_idx = it_contour_and_segment->second;
+
+            if (contour_idx >= contours.size())
+                continue;
+            if (segment_idx >= contours[contour_idx].num_segments())
+                continue;
+
             Line        grid_line         = grid.line(*it_contour_and_segment);
             const Vec2d v2                = grid_line.vector().cast<double>();
             double      heuristic_thr_sqr = Slic3r::sqr(heuristic_thr_part + grid_line.length());

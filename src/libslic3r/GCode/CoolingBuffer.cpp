@@ -800,7 +800,7 @@ std::string CoolingBuffer::apply_layer_cooldown(
             ironing_fan_control = false; // ORCA: Add support for ironing fan speed control
             ironing_fan_speed = 0; // ORCA: Add support for ironing fan speed control
         }
-        if (fan_speed_new != m_fan_speed) {
+        if (fan_speed_new != m_fan_speed || (immediately_apply && m_current_fan_speed != fan_speed_new)) {
             m_fan_speed = fan_speed_new;
             m_current_fan_speed = fan_speed_new;
             if (immediately_apply)
@@ -867,8 +867,8 @@ std::string CoolingBuffer::apply_layer_cooldown(
                 fan_speed_change_requests[CoolingLine::TYPE_SUPPORT_INTERFACE_FAN_START] = true;
                 need_set_fan = true;
             }
-        } else if (line->type & CoolingLine::TYPE_SUPPORT_INTERFACE_FAN_END && fan_speed_change_requests[CoolingLine::TYPE_SUPPORT_INTERFACE_FAN_START]) {
-            if (supp_interface_fan_control) {
+        } else if (line->type & CoolingLine::TYPE_SUPPORT_INTERFACE_FAN_END) {
+            if (supp_interface_fan_control && fan_speed_change_requests[CoolingLine::TYPE_SUPPORT_INTERFACE_FAN_START]) {
                 fan_speed_change_requests[CoolingLine::TYPE_SUPPORT_INTERFACE_FAN_START] = false;
             }
             need_set_fan = true;
@@ -877,8 +877,8 @@ std::string CoolingBuffer::apply_layer_cooldown(
                 fan_speed_change_requests[CoolingLine::TYPE_IRONING_FAN_START] = true;
                 need_set_fan = true;
             }
-        } else if (line->type & CoolingLine::TYPE_IRONING_FAN_END && fan_speed_change_requests[CoolingLine::TYPE_IRONING_FAN_START]) {
-            if (ironing_fan_control) {
+        } else if (line->type & CoolingLine::TYPE_IRONING_FAN_END) {
+            if (ironing_fan_control && fan_speed_change_requests[CoolingLine::TYPE_IRONING_FAN_START]) {
                 fan_speed_change_requests[CoolingLine::TYPE_IRONING_FAN_START] = false;
             }
             need_set_fan = true;
@@ -995,9 +995,12 @@ std::string CoolingBuffer::apply_layer_cooldown(
             else if(fan_speed_change_requests[CoolingLine::TYPE_FORCE_RESUME_FAN] && m_current_fan_speed != -1){
                 new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_current_fan_speed);
                 fan_speed_change_requests[CoolingLine::TYPE_FORCE_RESUME_FAN] = false;
+            } else {
+                if (m_current_fan_speed != m_fan_speed) {
+                    new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_fan_speed);
+                    m_current_fan_speed = m_fan_speed;
+                }
             }
-            else
-                new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_fan_speed);
             need_set_fan = false;
         }
         pos = line_end;

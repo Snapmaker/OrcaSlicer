@@ -83,3 +83,76 @@ SCENARIO("ExtrusionEntityCollection: Polygon flattening", "[ExtrusionEntity]") {
         }
     }
 }
+
+// Full ExtrusionRole <-> string mapping, shared by the role<->string unit tests.
+namespace {
+struct RoleStringPair { ExtrusionRole role; const char* str; };
+const RoleStringPair kRoleStringMap[] = {
+    { erNone,                     "Undefined" },
+    { erPerimeter,                "Inner wall" },
+    { erExternalPerimeter,        "Outer wall" },
+    { erOverhangPerimeter,        "Overhang wall" },
+    { erInternalInfill,           "Sparse infill" },
+    { erSolidInfill,              "Internal solid infill" },
+    { erTopSolidInfill,           "Top surface" },
+    { erBottomSurface,            "Bottom surface" },
+    { erIroning,                  "Ironing" },
+    { erBridgeInfill,             "Bridge" },
+    { erInternalBridgeInfill,     "Internal Bridge" },
+    { erGapFill,                  "Gap infill" },
+    { erSkirt,                    "Skirt" },
+    { erBrim,                     "Brim" },
+    { erSupportMaterial,          "Support" },
+    { erSupportMaterialInterface, "Support interface" },
+    { erSupportTransition,        "Support transition" },
+    { erWipeTower,                "Prime tower" },
+    { erCustom,                   "Custom" },
+    { erMixed,                    "Multiple" },
+};
+} // namespace
+
+TEST_CASE("ExtrusionEntity: role_to_string exact golden", "[ExtrusionEntity]") {
+    for (const auto& p : kRoleStringMap) {
+        DYNAMIC_SECTION(p.str) {
+            REQUIRE(ExtrusionEntity::role_to_string(p.role) == p.str);
+        }
+    }
+}
+
+TEST_CASE("ExtrusionEntity: string_to_role exact golden", "[ExtrusionEntity]") {
+    for (const auto& p : kRoleStringMap) {
+        DYNAMIC_SECTION(p.str) {
+            REQUIRE(ExtrusionEntity::string_to_role(p.str) == p.role);
+        }
+    }
+
+    // Unknown / malformed strings fall back to erNone (the default branch).
+    REQUIRE(ExtrusionEntity::string_to_role("") == erNone);
+    REQUIRE(ExtrusionEntity::string_to_role("garbage") == erNone);
+    REQUIRE(ExtrusionEntity::string_to_role("inner wall") == erNone); // case-sensitive
+}
+
+TEST_CASE("ExtrusionEntity: role↔string full round-trip", "[ExtrusionEntity]") {
+    for (const auto& p : kRoleStringMap) {
+        DYNAMIC_SECTION(p.str) {
+            REQUIRE(ExtrusionEntity::string_to_role(ExtrusionEntity::role_to_string(p.role)) == p.role);
+        }
+    }
+}
+
+// Pin the Skirt/Brim i18n asymmetry bug (source-level, not runtime-observable).
+// role_to_string marks "Skirt"/"Brim" via L() for gettext extraction, but
+// string_to_role compares against bare string literals — the only two entries
+// not wrapped in L(). Because L() is a no-op macro (#define L(s) (s) in
+// ExtrusionEntity.cpp), the two directions agree at runtime; the asymmetry only
+// affects whether xgettext extracts these strings. This test locks the runtime
+// behavior and documents the source bug so it isn't silently "fixed" without a
+// corresponding gettext review.
+TEST_CASE("ExtrusionEntity: Skirt/Brim i18n asymmetry is pinned", "[ExtrusionEntity]") {
+    // Forward direction (role -> string): marks the strings via L().
+    REQUIRE(ExtrusionEntity::role_to_string(erSkirt) == "Skirt");
+    REQUIRE(ExtrusionEntity::role_to_string(erBrim) == "Brim");
+    // Reverse direction (string -> role): compares against the bare literals.
+    REQUIRE(ExtrusionEntity::string_to_role("Skirt") == erSkirt);
+    REQUIRE(ExtrusionEntity::string_to_role("Brim") == erBrim);
+}

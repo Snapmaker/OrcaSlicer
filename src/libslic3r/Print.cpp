@@ -1873,8 +1873,10 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                 if (object->config().enable_support && object->config().support_type.value == stFins && object->config().raft_layers.value > 0)
                     return { L("Fin support cannot be combined with a raft. Set raft layers to 0 or choose another support type."), object, "raft_layers" };
 
-                if (is_tree(object->config().support_type.value)) {
-                    if (object->config().support_style == smsTreeOrganic ||
+                const bool fin_tree_fallback = object->config().support_type.value == stFins &&
+                                               object->config().support_fin_fallback.value == fsfTree;
+                if (is_tree(object->config().support_type.value) || fin_tree_fallback) {
+                    if (fin_tree_fallback || object->config().support_style == smsTreeOrganic ||
                         // Orca: use organic as default
                         object->config().support_style == smsDefault) {
                         if (warning) {

@@ -82,7 +82,7 @@ struct SupportParameters {
         for (auto layer : object.layers())
             this->support_layer_height_min = std::min(this->support_layer_height_min, std::max(0.01, layer->height));
         
-        if (object_config.support_interface_top_layers.value == 0) {
+        if (this->num_top_interface_layers == 0 && !(object_config.support_type.value == stFins && object_config.support_fin_tine_spacing.value > 0.)) {
             // No interface layers allowed, print everything with the base support pattern.
             this->support_material_interface_flow = this->support_material_flow;
         }
@@ -125,7 +125,7 @@ struct SupportParameters {
         this->raft_interface_density = std::min(1., this->raft_interface_flow.spacing() / raft_interface_spacing);
         this->support_spacing = object_config.support_base_pattern_spacing.value + this->support_material_flow.spacing();
         this->support_density = std::min(1., this->support_material_flow.spacing() / this->support_spacing);
-        if (object_config.support_interface_top_layers.value == 0) {
+        if (this->num_top_interface_layers == 0) {
             // No interface layers allowed, print everything with the base support pattern.
             this->interface_spacing = this->support_spacing;
             this->interface_density = this->support_density;

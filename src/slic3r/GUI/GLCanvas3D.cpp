@@ -3898,6 +3898,8 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
                 const Print* print = m_process->fff_print();
                 const Print* current_print = part_plate->fff_print();
                 int extruder_nums = part_plate->get_extruders(true).size();
+                if (current_print->exclude_support_from_prime_tower())
+                    extruder_nums = int(current_print->prime_tower_extruders().size());
                 if (!need_wipe_tower && extruder_nums < 2)
                     continue;
                 if (part_plate->get_objects_on_this_plate().empty())

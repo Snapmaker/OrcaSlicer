@@ -784,6 +784,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "textured_plate_temp" 
             || opt_key == "graphic_effect_plate_temp"
             || opt_key == "enable_prime_tower"
+            || opt_key == "prime_tower_include_support"
             || opt_key == "prime_tower_width"
             || opt_key == "prime_tower_brim_width"
             || opt_key == "first_layer_print_sequence"
@@ -3154,13 +3155,48 @@ void Print::finalize_first_layer_convex_hull()
 }
 
 // Wipe tower support.
+bool Print::exclude_support_from_prime_tower() const
+{ return !m_config.prime_tower_include_support && !m_config.single_extruder_multi_material && !is_BBL_printer(); }
+
+bool Print::is_prime_tower_extruder(unsigned int extruder) const
+{
+    if (!exclude_support_from_prime_tower())
+        return true;
+    const auto model_tools = prime_tower_extruders();
+    // A material used by both a model and its supports must still prime normally.
+    return std::binary_search(model_tools.begin(), model_tools.end(), extruder);
+}
+
+std::vector<unsigned int> Print::prime_tower_extruders() const
+{
+    if (!exclude_support_from_prime_tower())
+        return extruders();
+    std::vector<int> model_tools;
+    for (unsigned int tool : object_extruders())
+        model_tools.push_back(int(tool + 1));
+    const auto custom = m_model.plates_custom_gcodes.find(m_model.curr_plate_index);
+    if (custom != m_model.plates_custom_gcodes.end())
+        for (const auto& item : custom->second.gcodes)
+            if (item.type == CustomGCode::Type::ToolChange && item.extruder > 0)
+                model_tools.push_back(item.extruder);
+    const size_t physical_count = m_config.filament_diameter.size();
+    m_mixed_filament_mgr.expand_virtual_extruder_ids(model_tools, physical_count);
+    std::vector<unsigned int> result;
+    for (int tool : model_tools)
+        if (tool > 0 && size_t(tool) <= physical_count)
+            result.push_back(unsigned(tool - 1));
+    sort_remove_duplicates(result);
+    return result;
+}
+
 bool Print::has_wipe_tower() const
 {
     if (m_config.enable_prime_tower.value == true) {
         if (enable_timelapse_print())
             return true;
 
-        return !m_config.spiral_mode.value && m_config.filament_diameter.values.size() > 1;
+        return !m_config.spiral_mode.value &&
+               (exclude_support_from_prime_tower() ? prime_tower_extruders().size() > 1 : m_config.filament_diameter.values.size() > 1);
     }
     return false;
 }
@@ -3371,9 +3407,18 @@ void Print::_make_wipe_tower()
                                                   wipe_tower.get_layer_height(), m_wipe_tower_data.depth, m_wipe_tower_data.brim_width,
                                                   {scale_(origin.x()), scale_(origin.y())});
     } else {
+        std::vector<unsigned int> tower_extruders = m_wipe_tower_data.tool_ordering.all_extruders();
+        tower_extruders.erase(std::remove_if(tower_extruders.begin(), tower_extruders.end(),
+                                             [this](unsigned int tool) { return !is_prime_tower_extruder(tool); }),
+                              tower_extruders.end());
+        if (tower_extruders.empty())
+            return;
+        // A support-only material explicitly selected for tower walls must also be excluded.
+        PrintConfig tower_config = m_config;
+        if (tower_config.wipe_tower_filament > 0 && !is_prime_tower_extruder(unsigned(tower_config.wipe_tower_filament.value - 1)))
+            tower_config.wipe_tower_filament.value = 0;
         // Initialize the wipe tower.
-        WipeTower2 wipe_tower(m_config, m_default_region_config, m_plate_index, m_origin, wipe_volumes,
-                              m_wipe_tower_data.tool_ordering.first_extruder());
+        WipeTower2 wipe_tower(tower_config, m_default_region_config, m_plate_index, m_origin, wipe_volumes, tower_extruders.front());
         const std::vector<std::pair<coordf_t, std::vector<GCode::LayerToPrint>>> layers_to_print = GCode::collect_layers_to_print(*this);
         size_t layers_to_print_idx = 0;
 
@@ -3385,15 +3430,20 @@ void Print::_make_wipe_tower()
             wipe_tower.set_extruder(i, m_config);
 
         m_wipe_tower_data.priming = Slic3r::make_unique<std::vector<WipeTower::ToolChangeResult>>(
-            wipe_tower.prime((float)this->skirt_first_layer_height(), m_wipe_tower_data.tool_ordering.all_extruders(), false));
+            wipe_tower.prime((float) this->skirt_first_layer_height(), tower_extruders, false));
 
         // Lets go through the wipe tower layers and determine pairs of extruder changes for each
         // to pass to wipe_tower (so that it can use it for planning the layout of the tower)
         {
-            unsigned int current_extruder_id = m_wipe_tower_data.tool_ordering.all_extruders().back();
+            unsigned int current_extruder_id = tower_extruders.back();
+            unsigned int actual_extruder_id  = current_extruder_id;
             for (auto &layer_tools : m_wipe_tower_data.tool_ordering.layer_tools()) { // for all layers
-                if (!layer_tools.has_wipe_tower)
+                if (!layer_tools.has_wipe_tower) {
+                    const auto actual_tools = rotate_extruders_to_start_with(layer_tools.extruders, actual_extruder_id);
+                    if (!actual_tools.empty())
+                        actual_extruder_id = actual_tools.back();
                     continue;
+                }
                 while (layers_to_print_idx + 1 < layers_to_print.size() &&
                        layers_to_print[layers_to_print_idx].first + EPSILON < layer_tools.print_z) {
                     ++layers_to_print_idx;
@@ -3408,8 +3458,24 @@ void Print::_make_wipe_tower()
                 bool first_layer = &layer_tools == &m_wipe_tower_data.tool_ordering.front();
 
                 if (layers_with_same_print_z != nullptr) {
-                    const std::vector<LocalZWipeTowerToolchange> local_z_toolchanges =
-                        collect_local_z_wipe_tower_toolchanges(*this, *layers_with_same_print_z, int(current_extruder_id));
+                    std::vector<LocalZWipeTowerToolchange> local_z_toolchanges =
+                        collect_local_z_wipe_tower_toolchanges(*this, *layers_with_same_print_z,
+                                                               int(exclude_support_from_prime_tower() ? actual_extruder_id :
+                                                                                                        current_extruder_id));
+                    if (!local_z_toolchanges.empty())
+                        actual_extruder_id = local_z_toolchanges.back().new_tool;
+                    if (exclude_support_from_prime_tower()) {
+                        local_z_toolchanges.erase(std::remove_if(local_z_toolchanges.begin(), local_z_toolchanges.end(),
+                                                                 [this](const LocalZWipeTowerToolchange& tc) {
+                                                                     return !is_prime_tower_extruder(tc.new_tool);
+                                                                 }),
+                                                  local_z_toolchanges.end());
+                        unsigned int previous = current_extruder_id;
+                        for (auto& tc : local_z_toolchanges) {
+                            tc.old_tool = previous;
+                            previous    = tc.new_tool;
+                        }
+                    }
                     for (const LocalZWipeTowerToolchange &toolchange : local_z_toolchanges) {
                         wipe_tower.plan_local_z_toolchange((float) layer_tools.print_z, (float) layer_tools.wipe_tower_layer_height,
                                                            toolchange.old_tool, toolchange.new_tool, effective_wipe_tower_volume(m_config, toolchange.new_tool));
@@ -3418,13 +3484,22 @@ void Print::_make_wipe_tower()
                         current_extruder_id = local_z_toolchanges.back().new_tool;
                 }
 
-                const std::vector<unsigned int> nominal_layer_extruders =
-                    rotate_extruders_to_start_with(layer_tools.extruders, current_extruder_id);
+                std::vector<unsigned int> nominal_layer_extruders = rotate_extruders_to_start_with(layer_tools.wipe_tower_extruders,
+                                                                                                   current_extruder_id);
+                if (exclude_support_from_prime_tower()) {
+                    // Follow the exporter's actual tool order, including support-only changes.
+                    nominal_layer_extruders = rotate_extruders_to_start_with(layer_tools.extruders, actual_extruder_id);
+                    if (!nominal_layer_extruders.empty())
+                        actual_extruder_id = nominal_layer_extruders.back();
+                    nominal_layer_extruders.erase(std::remove_if(nominal_layer_extruders.begin(), nominal_layer_extruders.end(),
+                                                                 [this](unsigned int tool) { return !is_prime_tower_extruder(tool); }),
+                                                  nominal_layer_extruders.end());
+                }
 
                 wipe_tower.plan_toolchange((float) layer_tools.print_z, (float) layer_tools.wipe_tower_layer_height, current_extruder_id,
                                            current_extruder_id, false);
                 for (const auto extruder_id : nominal_layer_extruders) {
-                    if ((first_layer && extruder_id == m_wipe_tower_data.tool_ordering.all_extruders().back()) || extruder_id !=
+                    if ((first_layer && extruder_id == tower_extruders.back()) || extruder_id !=
                         current_extruder_id) {
                         float volume_to_wipe = effective_wipe_tower_volume(m_config, extruder_id);
                         if (m_config.purge_in_prime_tower && m_config.single_extruder_multi_material) {
@@ -3455,7 +3530,7 @@ void Print::_make_wipe_tower()
         }
 
         std::vector<int> categories;
-        for (size_t i = 0; i < m_config.filament_adhesiveness_category.values.size(); ++i) {
+        for (size_t i = 0; i < number_of_extruders; ++i) {
             categories.push_back(m_config.filament_adhesiveness_category.get_at(i));
         }
         wipe_tower.set_filament_categories(categories);

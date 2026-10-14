@@ -1,6 +1,7 @@
 #include "GUI_App.hpp"
 #include "InstanceCheck.hpp"
 #include "Plater.hpp"
+#include "common_func/common_func.hpp"
 #include <boost/regex.hpp>
 
 #ifdef _WIN32
@@ -106,7 +107,8 @@ namespace instance_check_internal
 			return true;
 		std::wstring classNameString(className);
 		std::wstring wndTextString(wndText);
-		if (wndTextString.find(L"Snapmaker_Orca") != std::wstring::npos && classNameString == L"wxWindowNR") {
+		static const std::wstring app_name = boost::nowide::widen(SLIC3R_APP_NAME);
+		if (wndTextString.find(app_name) != std::wstring::npos && classNameString == L"wxWindowNR") {
 			//check if other instances has same instance hash
 			//if not it is not same version(binary) as this version 
 			HANDLE   handle = GetProp(hwnd, L"Instance_Hash_Minor");
@@ -121,7 +123,10 @@ namespace instance_check_internal
 			{
 				BOOST_LOG_TRIVIAL(debug) << "win enum - found correct instance";
 				l_bambu_studio_hwnd = hwnd;
-				ShowWindow(hwnd, SW_SHOWMAXIMIZED);
+				// Do not alter the window state when opening a file in the existing instance.
+				// A minimized window still needs restoring before it can receive focus.
+				if (IsIconic(hwnd))
+					ShowWindow(hwnd, SW_RESTORE);
 				SetForegroundWindow(hwnd);
 				return false;
 			}

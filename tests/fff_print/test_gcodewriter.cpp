@@ -117,6 +117,16 @@ static void configure_writer(GCodeWriter &writer, GCodeFlavor flavor, bool relat
     writer.config.use_relative_e_distances.value = relative_e;
 }
 
+// GCodeWriter::full_gcode_comment is a process-global flag that GCode::do_export
+// rewrites from the print config. Pin it to a known value for the golden-output
+// tests below so they stay order-independent under `--order rand`.
+struct ScopedGCodeComment
+{
+    explicit ScopedGCodeComment(bool value) : previous(GCodeWriter::full_gcode_comment) { GCodeWriter::full_gcode_comment = value; }
+    ~ScopedGCodeComment() { GCodeWriter::full_gcode_comment = previous; }
+    bool previous;
+};
+
 // Configure retraction parameters and attach a single extruder.
 static void configure_retraction(GCodeWriter &writer)
 {
@@ -168,6 +178,7 @@ SCENARIO("set_pressure_advance emits flavor-specific instruction", "[GCodeWriter
 }
 
 SCENARIO("set_fan emits flavor-specific instruction", "[GCodeWriter]") {
+    ScopedGCodeComment comment_guard(true);
     GIVEN("the full GCodeFlavor matrix") {
         struct FanFlavor { GCodeFlavor flavor; const char *off; const char *on; };
         const FanFlavor flavors[] = {
@@ -226,6 +237,7 @@ SCENARIO("set_temperature emits M104/M109 depending on wait", "[GCodeWriter]") {
 }
 
 SCENARIO("toolchange emits T command only for multiple extruders", "[GCodeWriter]") {
+    ScopedGCodeComment comment_guard(true);
     GIVEN("a single-extruder writer") {
         GCodeWriter writer;
         configure_writer(writer, gcfMarlinFirmware);
@@ -256,6 +268,7 @@ SCENARIO("toolchange emits T command only for multiple extruders", "[GCodeWriter
 }
 
 SCENARIO("retract emits scaled length for wipe and toolchange", "[GCodeWriter]") {
+    ScopedGCodeComment comment_guard(true);
     GIVEN("a 50% wipe retraction") {
         GCodeWriter writer;
         configure_writer(writer, gcfMarlinFirmware);
@@ -278,6 +291,7 @@ SCENARIO("retract emits scaled length for wipe and toolchange", "[GCodeWriter]")
 }
 
 SCENARIO("retract/unretract emits relative E", "[GCodeWriter]") {
+    ScopedGCodeComment comment_guard(true);
     GIVEN("a writer with relative E distances") {
         GCodeWriter writer;
         configure_writer(writer, gcfMarlinFirmware, /*relative_e=*/true);
@@ -292,6 +306,7 @@ SCENARIO("retract/unretract emits relative E", "[GCodeWriter]") {
 }
 
 SCENARIO("retract/unretract emits absolute E", "[GCodeWriter]") {
+    ScopedGCodeComment comment_guard(true);
     GIVEN("a writer with absolute E distances") {
         GCodeWriter writer;
         configure_writer(writer, gcfMarlinFirmware, /*relative_e=*/false);
@@ -306,6 +321,7 @@ SCENARIO("retract/unretract emits absolute E", "[GCodeWriter]") {
 }
 
 SCENARIO("retract/unretract with firmware retraction", "[GCodeWriter]") {
+    ScopedGCodeComment comment_guard(true);
     GIVEN("a writer with firmware retraction enabled") {
         GCodeWriter writer;
         configure_writer(writer, gcfMarlinFirmware);

@@ -1920,6 +1920,11 @@ void ModelObject::scale_mesh_after_creation(const float scale)
         v->scale_geometry_after_creation(scale);
         v->set_offset(Vec3d(scale, scale, scale).cwiseProduct(v->get_offset()));
     }
+    // origin_translation records the shift applied by center_around_origin() in mesh coordinates.
+    // The mesh coordinates were just rescaled, so the recorded shift has to be rescaled as well,
+    // otherwise convert_multipart_object() reverts the centering with a value in the old units and
+    // the parts of an object loaded from several files end up misaligned.
+    this->origin_translation *= double(scale);
     this->invalidate_bounding_box();
 }
 

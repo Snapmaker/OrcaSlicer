@@ -49,8 +49,8 @@ constexpr unsigned int MASK_SIZE = 1024;
 constexpr double MIN_SHADOW_EXTENT_MM = 200.0;
 constexpr double MIN_MASK_TEXEL_MM = 0.15;
 constexpr double FOOTPRINT_MARGIN_TEXELS = 2.0;
-// Added to the penumbra reach of a caster: minimum penumbra, mask blur spread and rounding
-constexpr double SHADOW_MARGIN_EXTRA_MM = 2.0;
+// Mask texels added to the shadow reach for linear filtering and rounding
+constexpr double SHADOW_MARGIN_FILTER_TEXELS = 1.0;
 constexpr int BLOCKER_SAMPLES_HQ = 16;
 constexpr int PCF_SAMPLES_HQ = 32;
 // While dragging the mask keeps full resolution (no blur) and only uses fewer samples
@@ -312,17 +312,29 @@ Vec3d ProjectToGround(const Vec3d& point)
     return point - TO_LIGHT_DIR * t;
 }
 
+/** @brief Texel sizes in mm: shadow map texel in light space, mask texel on the ground. */
+struct ShadowTexels
+{
+    double shadow{ 0.0 };
+    double mask{ 0.0 };
+};
+
 /**
- * @brief Ground distance the penumbra of a caster box can reach beyond its hard shadow, plus a small allowance.
- * Fix: replaces a fixed 25 mm margin, which made the mask shade far more ground than any penumbra covers.
+ * @brief Ground distance the soft shadow of a caster box can reach beyond its hard shadow.
+ * Fix: besides the physical penumbra it covers the minimum PCF radius, the mask blur spread and filtering,
+ * all of which grow with the texel sizes of wide layouts; a fixed allowance cut such shadows at the mask edge.
  */
-double PenumbraReach(const BoundingBoxf3& box)
+double ShadowReach(const BoundingBoxf3& box, const ShadowTexels& texels)
 {
     // Light depth from the box top down to the ground, the largest blocker distance of this caster
     const double depthToGround = std::max(box.max.z() - GROUND_Z, 0.0) / TO_LIGHT_DIR.z();
     const double penumbra = std::min(depthToGround * static_cast<double>(LIGHT_SPREAD), MAX_SEARCH_MM);
+    const double pcfRadius = std::max(penumbra, MIN_PENUMBRA_TEXELS * texels.shadow);
+    // Blur taps reach two steps out; a step is a quarter of the penumbra, between 1 and MASK_BLUR_MAX_STEP texels
+    const double maxBlurStep = static_cast<double>(MASK_BLUR_MAX_STEP) * texels.mask;
+    const double blurStep = std::min(std::max(0.25 * penumbra, texels.mask), maxBlurStep);
     // A light space width stretches by 1 / cos(light angle) on the ground
-    return penumbra / TO_LIGHT_DIR.z() + SHADOW_MARGIN_EXTRA_MM;
+    return pcfRadius / TO_LIGHT_DIR.z() + 2.0 * blurStep + SHADOW_MARGIN_FILTER_TEXELS * texels.mask;
 }
 
 /** @brief Returns the ground-plane XY rectangle that may receive the shadow of a box. */
@@ -705,15 +717,6 @@ void SoftShadowRenderer::FitLightFrustum(const BoundingBoxf3& fitBox)
     _lightView = Transform3d::Identity();
     _lightView.linear() = rotation;
 
-    // The tallest caster bounds the penumbra reach of all of them
-    const double reach = PenumbraReach(fitBox);
-    const BoundingBoxf ground = GetGroundFootprint(fitBox, reach);
-    const double maskMinExtent = static_cast<double>(_maskSize) * MIN_MASK_TEXEL_MM;
-    const double maskSide = std::max({ ground.size().x(), ground.size().y(), maskMinExtent });
-    const Vec2d maskCenter = ground.center();
-    _maskRect = { { static_cast<float>(maskCenter.x() - 0.5 * maskSide), static_cast<float>(maskCenter.y() - 0.5 * maskSide),
-                    static_cast<float>(maskCenter.x() + 0.5 * maskSide), static_cast<float>(maskCenter.y() + 0.5 * maskSide) } };
-
     BoundingBoxf3 lightBox;
     const std::array<Vec3d, 8> corners = GetBoxCorners(fitBox);
     for (const Vec3d& corner : corners)
@@ -721,6 +724,28 @@ void SoftShadowRenderer::FitLightFrustum(const BoundingBoxf3& fitBox)
         lightBox.merge(Vec3d(_lightView * corner));
         lightBox.merge(Vec3d(_lightView * ProjectToGround(corner)));
     }
+
+    // The margin depends on the texel sizes, which depend on the area including the margin. It is small
+    // against the area, so two refinements from a zero margin converge; the tallest caster bounds all reaches
+    const BoundingBoxf hardShadow = GetGroundFootprint(fitBox, 0.0);
+    const double maskMinExtent = static_cast<double>(_maskSize) * MIN_MASK_TEXEL_MM;
+    double reach = 0.0;
+    for (int i = 0; i < 2; ++i)
+    {
+        ShadowTexels texels;
+        texels.mask = std::max(std::max(hardShadow.size().x(), hardShadow.size().y()) + 2.0 * reach, maskMinExtent) /
+                      static_cast<double>(_maskSize);
+        texels.shadow = (std::max({ lightBox.size().x(), lightBox.size().y(), MIN_SHADOW_EXTENT_MM }) + 2.0 * reach) /
+                        static_cast<double>(_shadowMapSize);
+        // Same margin as the footprints, so no footprint reaches past the mask
+        reach = ShadowReach(fitBox, texels) + FOOTPRINT_MARGIN_TEXELS * texels.mask;
+    }
+
+    const BoundingBoxf ground = GetGroundFootprint(fitBox, reach);
+    const double maskSide = std::max({ ground.size().x(), ground.size().y(), maskMinExtent });
+    const Vec2d maskCenter = ground.center();
+    _maskRect = { { static_cast<float>(maskCenter.x() - 0.5 * maskSide), static_cast<float>(maskCenter.y() - 0.5 * maskSide),
+                    static_cast<float>(maskCenter.x() + 0.5 * maskSide), static_cast<float>(maskCenter.y() + 0.5 * maskSide) } };
 
     // Every ground texel of the mask must lie inside the depth range, otherwise it reads as fully occluded
     for (int i = 0; i < 4; ++i)
@@ -912,12 +937,14 @@ void SoftShadowRenderer::BuildFootprintModel()
     geometry.reserve_vertices(4 * _instanceBoxes.size());
     geometry.reserve_indices(6 * _instanceBoxes.size());
 
-    const double maskTexel = static_cast<double>(_maskRect[2] - _maskRect[0]) / static_cast<double>(_maskSize);
+    ShadowTexels texels;
+    texels.mask = static_cast<double>(_maskRect[2] - _maskRect[0]) / static_cast<double>(_maskSize);
+    texels.shadow = static_cast<double>(_lightExtent.x()) / static_cast<double>(_shadowMapSize);
     unsigned int vertexId = 0;
     for (const BoundingBoxf3& box : _instanceBoxes)
     {
-        // Each instance only needs room for its own penumbra
-        const BoundingBoxf footprint = GetGroundFootprint(box, PenumbraReach(box) + FOOTPRINT_MARGIN_TEXELS * maskTexel);
+        // Each instance only needs room for its own soft shadow
+        const BoundingBoxf footprint = GetGroundFootprint(box, ShadowReach(box, texels) + FOOTPRINT_MARGIN_TEXELS * texels.mask);
         geometry.add_vertex(Vec3f(static_cast<float>(footprint.min.x()), static_cast<float>(footprint.min.y()), 0.0f));
         geometry.add_vertex(Vec3f(static_cast<float>(footprint.max.x()), static_cast<float>(footprint.min.y()), 0.0f));
         geometry.add_vertex(Vec3f(static_cast<float>(footprint.max.x()), static_cast<float>(footprint.max.y()), 0.0f));

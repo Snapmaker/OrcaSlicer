@@ -8219,8 +8219,17 @@ public:
 
     void set_post_callback(std::function<void(int)> c) {
         // serialize the swap with in-flight invocation in operator()()
-        boost::lock_guard lock(m_post_callback_mutex);
-        m_post_callback = c;
+        {
+            boost::lock_guard post_lock(m_post_callback_mutex);
+            m_post_callback = c;
+        }
+        // catch-up: a task queued while the callback was null missed its
+        // size()==1 notification; re-announce it or backup stalls until exit
+        if (c) {
+            boost::lock_guard lock(m_mutex);
+            if (!m_ui_tasks.empty())
+                c(0);
+        }
     }
 
     void run_ui_tasks() {

@@ -1565,16 +1565,6 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
-    def = this->add("treat_zero_gap_as_bridge", coBool);
-    def->label = L("Treat zero gap as bridge");
-    def->category = L("Support");
-    def->tooltip = L("When support top Z distance is 0 with normal(auto) support, undersides resting directly on the "
-                     "support interface are printed as solid bottom surfaces by default (soluble-support semantics). "
-                     "Enable this to still detect and print them as bridges (bridge speed, flow and fan). "
-                     "Tree(auto) support always detects undersides as bridges regardless of this option.");
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(false));
-
     def = this->add("thick_bridges", coBool);
     def->label = L("Thick external bridges");
     def->category = L("Quality");

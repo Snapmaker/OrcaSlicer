@@ -1006,7 +1006,6 @@ bool PrintObject::invalidate_state_by_config_options(
             //BBS: [Arthur] the following params affect bottomBridge surface type detection
             || opt_key == "support_type"
             || opt_key == "bridge_no_support"
-            || opt_key == "treat_zero_gap_as_bridge"
             || opt_key == "max_bridge_length"
             || opt_key == "support_interface_top_layers"
             || opt_key == "support_critical_regions_only"
@@ -1059,7 +1058,6 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "raft_first_layer_density"
             || opt_key == "raft_first_layer_expansion"
             || opt_key == "bridge_no_support"
-            || opt_key == "treat_zero_gap_as_bridge"
             || opt_key == "max_bridge_length"
             || opt_key == "initial_layer_line_width"
             || opt_key == "tree_support_adaptive_layer_height"
@@ -1365,18 +1363,12 @@ void PrintObject::detect_surfaces_type()
             		// In non-spiral vase mode, go over all layers.
             		m_layers.size()),
             [this, region_id, interface_shells, &surfaces_new](const tbb::blocked_range<size_t>& range) {
-                // If we have soluble support material, don't bridge. The overhang will be squished against a soluble layer separating
-                // the support from the print.
-                // BBS: the above logic only applys for normal(auto) support. Snapmaker: keep it that way - the zero-gap
-                // "fully supported bottom" shortcut is a soluble-support semantic and applies to normal(auto) only.
-                // Tree(auto) undersides are always detected as bridges, matching the 2.4.0 release behavior and
-                // BambuStudio; max_bridge_length no longer participates in the classification (it is a
-                // support-generation parameter, not a feature-recognition one, cf. OrcaSlicer issue #3905).
-                // treat_zero_gap_as_bridge stays as the opt-in escape hatch for normal(auto) zero-gap supports.
-                bool bottom_is_fully_supported = this->has_support() && m_config.support_top_z_distance.value == 0
-                    && m_config.support_type.value == stNormalAuto && !m_config.bridge_no_support.value
-                    && !m_config.treat_zero_gap_as_bridge.value;
-                SurfaceType surface_type_bottom_other = bottom_is_fully_supported ? stBottom : stBottomBridge;
+                // Snapmaker: the zero-gap "fully supported bottom" shortcut that used to live here (soluble-support
+                // semantic, see BambuStudio d4490afa / Orca 088668994c) misclassified large flat undersides as solid
+                // bottoms whenever support top z distance was 0 - for tree(auto) AND normal(auto) - because real
+                // (non-soluble) supports do not fully cover them. Undersides over void are always bridge-detected now,
+                // matching the 2.4.0 release behavior and BambuStudio (cf. OrcaSlicer issue #3905).
+                SurfaceType surface_type_bottom_other = stBottomBridge;
                 for (size_t idx_layer = range.begin(); idx_layer < range.end(); ++ idx_layer) {
                     m_print->throw_if_canceled();
                     // BOOST_LOG_TRIVIAL(trace) << "Detecting solid surfaces for region " << region_id << " and layer " << layer->print_z;

@@ -743,7 +743,7 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     for (auto el : { "support_style", "support_base_pattern",
         "support_base_pattern_spacing", "support_expansion", "support_angle",
         "support_interface_pattern", "support_interface_top_layers", "support_interface_bottom_layers",
-        "bridge_no_support", "treat_zero_gap_as_bridge", "max_bridge_length", "support_top_z_distance", "support_bottom_z_distance",
+        "bridge_no_support", "max_bridge_length", "support_top_z_distance", "support_bottom_z_distance",
         "support_type", "support_on_build_plate_only", "support_critical_regions_only", "support_interface_not_for_body",
         "support_object_xy_distance", "support_object_first_layer_gap",
         "support_interface_min_area"/*, "independent_support_layer_height"*/})

@@ -2546,7 +2546,7 @@ void GLGizmoCut3D::process_contours()
     if (CutMode(m_mode) == CutMode::cutTongueAndGroove) {
         if (has_valid_groove()) {
             Cut cut(model_objects[object_idx], instance_idx, get_cut_matrix(selection));
-            const ModelObjectPtrs& new_objects = cut.perform_with_groove(m_groove, m_rotation_m, m_groove_count, m_groove_gap, float(m_radius), true);
+            const ModelObjectPtrs& new_objects = cut.perform_with_groove(m_groove, m_rotation_m, m_groove_count, m_groove_gap, static_cast<float>(m_radius), true);
             if (!new_objects.empty())
                 m_part_selection = PartSelection(new_objects.front(), instance_idx);
         }
@@ -2896,7 +2896,7 @@ void GLGizmoCut3D::render_cut_plane_input_window(CutConnectors &connectors, floa
             render_groove_single_float_input(m_labels_map["Gap"], m_groove_gap, m_groove_gap_init, m_groove_count == 1);
 
             m_imgui->disabled_begin(true);
-            const float groove_width = Cut::calculate_groove_width(m_groove, float(m_radius));
+            const float groove_width = Cut::calculate_groove_width(m_groove, static_cast<float>(m_radius));
             m_imgui->text(m_labels_map["Spacing"]);
             ImGui::SameLine(m_label_width);
             std::ostringstream oss;
@@ -3570,7 +3570,7 @@ void GLGizmoCut3D::perform_cut(const Selection& selection)
 
         Cut cut(cut_mo, instance_idx, get_cut_matrix(selection), attributes);
         const ModelObjectPtrs& new_objects = cut_by_contour    ? cut.perform_by_contour(m_part_selection.get_cut_parts(), dowels_count):
-                                             cut_with_groove   ? cut.perform_with_groove(m_groove, m_rotation_m, m_groove_count, m_groove_gap, float(m_radius)) :
+                                             cut_with_groove   ? cut.perform_with_groove(m_groove, m_rotation_m, m_groove_count, m_groove_gap, static_cast<float>(m_radius)) :
                                                                  cut.perform_with_plane();
 
         // fix_non_manifold_edges

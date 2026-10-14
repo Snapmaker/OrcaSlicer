@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace Slic3r {
 
@@ -529,9 +530,11 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove&       groove,
                                                 bool                keep_as_parts/* = false*/)
 {
     ModelObject* cut_mo = m_model.objects.front();
-    const int   valid_groove_count = std::max(groove_count, 1);
-    const float valid_groove_gap   = std::max(groove_gap, 0.f);
-    const float valid_radius       = radius > 0.f ? radius : 1.f;
+    // sanitize the multi-groove parameters: clamp the count to the UI range (1..100) and
+    // replace non-finite / out-of-range gap and radius with safe defaults
+    const int   valid_groove_count = std::min(std::max(groove_count, 1), 100);
+    const float valid_groove_gap   = std::isfinite(groove_gap) && groove_gap >= 0.f ? groove_gap : 0.f;
+    const float valid_radius       = std::isfinite(radius) && radius > 0.f ? radius : 1.f;
 
     // Clone the object to duplicate instances, materials etc.
     ModelObject* upper{ nullptr };
@@ -722,19 +725,41 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove&       groove,
     return m_model.objects;
 }
 
+const ModelObjectPtrs& Cut::perform_with_groove(const Groove&      groove,
+                                                const Transform3d& rotation_m,
+                                                bool               keep_as_parts/* = false*/)
+{
+    // Legacy single-groove entry point: with groove_count == 1 the spacing width (and therefore
+    // the radius) has no effect on the result, so this stays equivalent to the old behavior.
+    return perform_with_groove(groove, rotation_m, 1, 0.f, 1.f, keep_as_parts);
+}
+
 float Cut::calculate_groove_width(const Cut::Groove& groove, const float radius)
 {
     // Compute same slot outer width used in preview plane
-    const float  valid_radius          = radius > 0.f ? radius : 1.f;
-    const double flap_width            = is_approx(groove.flaps_angle, 0.f) ? groove.depth : groove.depth / sin(groove.flaps_angle);
-    const double total_flap_width      = 2.0 * flap_width * cos(groove.flaps_angle);
-    const double slot_neck_half_width  = 0.5f * (groove.width);
-    const double slot_mouth_half_width = 0.5 * (groove.width + total_flap_width);
-    const double plane_half_height     = 0.5f * (1.5f * (1.5f * valid_radius));
-    const double flap_taper_offset     = plane_half_height * tan(groove.angle);
-    const double slot_outer_x_max      = std::max(slot_mouth_half_width + flap_taper_offset, slot_neck_half_width + flap_taper_offset);
+    const float valid_radius = std::isfinite(radius) && radius > 0.f ? radius : 1.f;
 
-    return static_cast<float>(2.0 * slot_outer_x_max);
+    // Conservative finite fallback: the neck half width only
+    const double slot_neck_half_width = std::isfinite(groove.width) ? 0.5f * groove.width : 0.0;
+    double       slot_outer_x_max     = slot_neck_half_width;
+
+    if (std::isfinite(groove.depth) && std::isfinite(groove.width) &&
+        std::isfinite(groove.flaps_angle) && std::isfinite(groove.angle)) {
+        const double flap_width            = is_approx(groove.flaps_angle, 0.f) ? groove.depth : groove.depth / sin(groove.flaps_angle);
+        const double total_flap_width      = 2.0 * flap_width * cos(groove.flaps_angle);
+        const double slot_mouth_half_width = 0.5 * (groove.width + total_flap_width);
+        const double plane_half_height     = 0.5f * (1.5f * (1.5f * valid_radius));
+        const double flap_taper_offset     = plane_half_height * tan(groove.angle);
+
+        const double slot_outer_x_full = std::max(slot_mouth_half_width + flap_taper_offset, slot_neck_half_width + flap_taper_offset);
+        // tan() is singular near +-90 degrees: keep the conservative width when the full one is not finite
+        if (std::isfinite(slot_outer_x_full))
+            slot_outer_x_max = slot_outer_x_full;
+    }
+
+    const float groove_width = static_cast<float>(2.0 * slot_outer_x_max);
+    // guard the double-to-float conversion against overflow for extreme inputs
+    return std::isfinite(groove_width) ? groove_width : std::numeric_limits<float>::max();
 }
 
 } // namespace Slic3r

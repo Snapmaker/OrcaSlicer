@@ -307,7 +307,24 @@ protected:
     void render_color_marker(float size, const ImU32& color);
     void render_groove_float_input(const std::string &label, float &in_val, const float &init_val, float &in_tolerance);
     void render_groove_angle_input(const std::string &label, float &in_val, const float &init_val, float min_val, float max_val);
+
+    /// <summary>
+    /// Render a single-value float input (e.g. the multi-groove Gap) with slider, reset button and undo snapshots.
+    /// </summary>
+    /// <param name="label">Label shown next to the input</param>
+    /// <param name="in_val">Value to edit, updated on change</param>
+    /// <param name="init_val">Initial value restored by the reset button</param>
+    /// <param name="disabled">Render the input as disabled when true</param>
     void render_groove_single_float_input(const std::string &label, float &in_val, const float &init_val, const bool disabled);
+
+    /// <summary>
+    /// Render an integer input (e.g. the multi-groove Count) clamped to the given range, with reset button.
+    /// </summary>
+    /// <param name="label">Label shown next to the input</param>
+    /// <param name="in_val">Value to edit, clamped to [min_val, max_val] and updated on change</param>
+    /// <param name="init_val">Initial value restored by the reset button</param>
+    /// <param name="min_val">Minimum allowed value</param>
+    /// <param name="max_val">Maximum allowed value</param>
     void render_groove_int_input(const std::string& label, int& in_val, const int& init_val, int min_val, int max_val);
     bool render_angle_input(const std::string& label, float& in_val, const float& init_val, float min_val, float max_val);
     void render_snap_specific_input(const std::string& label, const wxString& tooltip, float& in_val, const float& init_val, const float min_val, const float max_val);
@@ -385,6 +402,12 @@ private:
 
     void toggle_model_objects_visibility();
 
+    /// <summary>
+    /// Shift all triangle indices of the base index set by the given vertex offset.
+    /// </summary>
+    /// <param name="base_indices">Triangle indices of the source mesh</param>
+    /// <param name="vo">Vertex index offset added to every index</param>
+    /// <returns>Rebased triangle indices for a mesh appended after the source vertices</returns>
     std::vector<Vec3i32> offset_indices(const std::vector<Vec3i32>& base_indices, size_t vo);
     indexed_triangle_set its_make_groove_plane();
 

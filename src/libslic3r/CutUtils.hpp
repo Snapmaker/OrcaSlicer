@@ -57,6 +57,24 @@ public:
 
     const ModelObjectPtrs& perform_with_plane();
     const ModelObjectPtrs& perform_by_contour(std::vector<Part> parts, int dowels_count);
+
+    /// Cut the object with a single dovetail groove (legacy signature).
+    /// \param groove Dovetail groove dimensions and angles.
+    /// \param rotation_m Rotation from world to the groove coordinate system.
+    /// \param keep_as_parts Keep the cut result as a single object when true.
+    /// \return Resulting model objects after the cut.
+    const ModelObjectPtrs& perform_with_groove(const Groove&      groove,
+                                               const Transform3d& rotation_m,
+                                               bool               keep_as_parts = false);
+
+    /// Cut the object with one or more parallel dovetail grooves.
+    /// \param groove Dovetail groove dimensions and angles.
+    /// \param rotation_m Rotation from world to the groove coordinate system.
+    /// \param groove_count Number of parallel grooves to cut.
+    /// \param groove_gap Gap between adjacent grooves.
+    /// \param radius Cut plane radius used to compute the groove spacing width.
+    /// \param keep_as_parts Keep the cut result as a single object when true.
+    /// \return Resulting model objects after the cut.
     const ModelObjectPtrs& perform_with_groove(const Groove&      groove,
                                                const Transform3d& rotation_m,
                                                const int          groove_count,

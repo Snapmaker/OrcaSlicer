@@ -6370,8 +6370,10 @@ void SSWCP_MachineManage_Instance::sw_AddDevice()
 {
     try {
         wxGetApp().CallAfter([] {
-            if (wxGetApp().web_device_dialog)
-                delete wxGetApp().web_device_dialog;
+            if (wxGetApp().web_device_dialog) {
+                wxGetApp().web_device_dialog->Destroy();
+                wxGetApp().web_device_dialog = nullptr;
+            }
 
             wxGetApp().web_device_dialog = new WebDeviceDialog;
             wxGetApp().web_device_dialog->run();

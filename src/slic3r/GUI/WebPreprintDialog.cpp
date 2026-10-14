@@ -52,9 +52,13 @@ WebPreprintDialog::WebPreprintDialog()
 
     wxGetApp().UpdateDlgDarkUI(this);
 
+    // Destroy a leftover device dialog through wx deferred deletion and clear
+    // its global registration first; its destructor also clears the pointer,
+    // but unregistering here keeps every destruction path consistent.
     auto ptr = wxGetApp().get_web_device_dialog();
     if (ptr) {
-        delete ptr;
+        wxGetApp().web_device_dialog = nullptr;
+        ptr->Destroy();
     }
 
     wxGetApp().set_web_preprint_dialog(this);
@@ -66,7 +70,9 @@ WebPreprintDialog::~WebPreprintDialog()
 
     wxGetApp().fltviews().remove_view(m_browser);
 
-    wxGetApp().set_web_preprint_dialog(nullptr);
+    if (wxGetApp().get_web_preprint_dialog() == this) {
+        wxGetApp().set_web_preprint_dialog(nullptr);
+    }
 }
 
 bool WebPreprintDialog::is_send_page()

@@ -26,9 +26,9 @@ namespace {
 
 // Direction towards the light in world space, tilted ~36 deg so the shadow falls towards the default camera.
 const Vec3d TO_LIGHT_DIR = Vec3d(-0.4, 0.6, 1.0).normalized();
+// Light size (penumbra width per mm of blocker height), shared by the ground and object shadows;
+// small enough that thin features (spikes) keep a tapering shadow
 constexpr float LIGHT_SPREAD = 0.02f;
-// Smaller light for object shadows, so thin features (spikes) keep a tapering shadow
-constexpr float OBJECT_LIGHT_SPREAD = 0.02f;
 constexpr double MAX_SEARCH_MM = 25.0;
 // Narrowest penumbra in shadow map texels; wider values (3) caused jagged rims and dark spots in concave corners
 constexpr double MIN_PENUMBRA_TEXELS = 1.5;
@@ -49,6 +49,8 @@ constexpr unsigned int MASK_SIZE = 1024;
 constexpr double MIN_SHADOW_EXTENT_MM = 200.0;
 constexpr double MIN_MASK_TEXEL_MM = 0.15;
 constexpr double FOOTPRINT_MARGIN_TEXELS = 2.0;
+// Added to the penumbra reach of a caster: minimum penumbra, mask blur spread and rounding
+constexpr double SHADOW_MARGIN_EXTRA_MM = 2.0;
 constexpr int BLOCKER_SAMPLES_HQ = 16;
 constexpr int PCF_SAMPLES_HQ = 32;
 // While dragging the mask keeps full resolution (no blur) and only uses fewer samples
@@ -310,6 +312,19 @@ Vec3d ProjectToGround(const Vec3d& point)
     return point - TO_LIGHT_DIR * t;
 }
 
+/**
+ * @brief Ground distance the penumbra of a caster box can reach beyond its hard shadow, plus a small allowance.
+ * Fix: replaces a fixed 25 mm margin, which made the mask shade far more ground than any penumbra covers.
+ */
+double PenumbraReach(const BoundingBoxf3& box)
+{
+    // Light depth from the box top down to the ground, the largest blocker distance of this caster
+    const double depthToGround = std::max(box.max.z() - GROUND_Z, 0.0) / TO_LIGHT_DIR.z();
+    const double penumbra = std::min(depthToGround * static_cast<double>(LIGHT_SPREAD), MAX_SEARCH_MM);
+    // A light space width stretches by 1 / cos(light angle) on the ground
+    return penumbra / TO_LIGHT_DIR.z() + SHADOW_MARGIN_EXTRA_MM;
+}
+
 /** @brief Returns the ground-plane XY rectangle that may receive the shadow of a box. */
 BoundingBoxf GetGroundFootprint(const BoundingBoxf3& box, double margin)
 {
@@ -326,16 +341,27 @@ BoundingBoxf GetGroundFootprint(const BoundingBoxf3& box, double margin)
     return footprint;
 }
 
+/** @brief Clip planes of an orthographic projection, in the glOrtho convention. */
+struct OrthoBounds
+{
+    double left{ -1.0 };
+    double right{ 1.0 };
+    double bottom{ -1.0 };
+    double top{ 1.0 };
+    double nearZ{ -1.0 };
+    double farZ{ 1.0 };
+};
+
 /** @brief Builds a column-major orthographic projection equal to glOrtho. */
-Matrix4d MakeOrtho(double left, double right, double bottom, double top, double nearZ, double farZ)
+Matrix4d MakeOrtho(const OrthoBounds& b)
 {
     Matrix4d m = Matrix4d::Identity();
-    m(0, 0) = 2.0 / (right - left);
-    m(1, 1) = 2.0 / (top - bottom);
-    m(2, 2) = -2.0 / (farZ - nearZ);
-    m(0, 3) = -(right + left) / (right - left);
-    m(1, 3) = -(top + bottom) / (top - bottom);
-    m(2, 3) = -(farZ + nearZ) / (farZ - nearZ);
+    m(0, 0) = 2.0 / (b.right - b.left);
+    m(1, 1) = 2.0 / (b.top - b.bottom);
+    m(2, 2) = -2.0 / (b.farZ - b.nearZ);
+    m(0, 3) = -(b.right + b.left) / (b.right - b.left);
+    m(1, 3) = -(b.top + b.bottom) / (b.top - b.bottom);
+    m(2, 3) = -(b.farZ + b.nearZ) / (b.farZ - b.nearZ);
     return m;
 }
 
@@ -679,7 +705,9 @@ void SoftShadowRenderer::FitLightFrustum(const BoundingBoxf3& fitBox)
     _lightView = Transform3d::Identity();
     _lightView.linear() = rotation;
 
-    const BoundingBoxf ground = GetGroundFootprint(fitBox, MAX_SEARCH_MM);
+    // The tallest caster bounds the penumbra reach of all of them
+    const double reach = PenumbraReach(fitBox);
+    const BoundingBoxf ground = GetGroundFootprint(fitBox, reach);
     const double maskMinExtent = static_cast<double>(_maskSize) * MIN_MASK_TEXEL_MM;
     const double maskSide = std::max({ ground.size().x(), ground.size().y(), maskMinExtent });
     const Vec2d maskCenter = ground.center();
@@ -703,14 +731,19 @@ void SoftShadowRenderer::FitLightFrustum(const BoundingBoxf3& fitBox)
         lightBox.max.z() = std::max(lightBox.max.z(), lightZ);
     }
 
-    const double side = std::max({ lightBox.size().x(), lightBox.size().y(), MIN_SHADOW_EXTENT_MM }) + 2.0 * MAX_SEARCH_MM;
+    // The padding keeps the mask margin inside the map (ground distances only shrink in light space)
+    const double side = std::max({ lightBox.size().x(), lightBox.size().y(), MIN_SHADOW_EXTENT_MM }) + 2.0 * reach;
     const Vec3d center = lightBox.center();
-    const double nearZ = -lightBox.max.z() - FRUSTUM_PADDING_MM;
-    const double farZ = -lightBox.min.z() + FRUSTUM_PADDING_MM;
-    _lightProjection = MakeOrtho(center.x() - 0.5 * side, center.x() + 0.5 * side,
-                                 center.y() - 0.5 * side, center.y() + 0.5 * side, nearZ, farZ);
+    OrthoBounds bounds;
+    bounds.left = center.x() - 0.5 * side;
+    bounds.right = center.x() + 0.5 * side;
+    bounds.bottom = center.y() - 0.5 * side;
+    bounds.top = center.y() + 0.5 * side;
+    bounds.nearZ = -lightBox.max.z() - FRUSTUM_PADDING_MM;
+    bounds.farZ = -lightBox.min.z() + FRUSTUM_PADDING_MM;
+    _lightProjection = MakeOrtho(bounds);
     _lightExtent = Vec2f(static_cast<float>(side), static_cast<float>(side));
-    _depthSpan = static_cast<float>(farZ - nearZ);
+    _depthSpan = static_cast<float>(bounds.farZ - bounds.nearZ);
 }
 
 void SoftShadowRenderer::UpdateLightFrustum(bool interactive)
@@ -880,11 +913,11 @@ void SoftShadowRenderer::BuildFootprintModel()
     geometry.reserve_indices(6 * _instanceBoxes.size());
 
     const double maskTexel = static_cast<double>(_maskRect[2] - _maskRect[0]) / static_cast<double>(_maskSize);
-    const double margin = MAX_SEARCH_MM + FOOTPRINT_MARGIN_TEXELS * maskTexel;
     unsigned int vertexId = 0;
     for (const BoundingBoxf3& box : _instanceBoxes)
     {
-        const BoundingBoxf footprint = GetGroundFootprint(box, margin);
+        // Each instance only needs room for its own penumbra
+        const BoundingBoxf footprint = GetGroundFootprint(box, PenumbraReach(box) + FOOTPRINT_MARGIN_TEXELS * maskTexel);
         geometry.add_vertex(Vec3f(static_cast<float>(footprint.min.x()), static_cast<float>(footprint.min.y()), 0.0f));
         geometry.add_vertex(Vec3f(static_cast<float>(footprint.max.x()), static_cast<float>(footprint.min.y()), 0.0f));
         geometry.add_vertex(Vec3f(static_cast<float>(footprint.max.x()), static_cast<float>(footprint.max.y()), 0.0f));
@@ -911,10 +944,6 @@ bool SoftShadowRenderer::RenderGroundMask(bool reducedSamples)
     glsafe(::glDepthMask(GL_TRUE));
     glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
 
-    // A reduced resolution while dragging visibly blurred the shadow, so only the sample count drops
-    _maskUvScale = 1.0f;
-    const GLsizei viewportSize = static_cast<GLsizei>(std::lround(static_cast<double>(_maskSize) * _maskUvScale));
-    glsafe(::glViewport(0, 0, viewportSize, viewportSize));
     // All footprints lie at the same depth: the first fragment of a texel wins, later overlapping ones are
     // rejected by the early depth test before the expensive shader runs
     glsafe(::glEnable(GL_DEPTH_TEST));
@@ -1004,6 +1033,7 @@ void SoftShadowRenderer::EnsureFullscreenQuad()
 
 bool SoftShadowRenderer::Update(const SoftShadowFrameInput& input)
 {
+    _rebuilt = false;
     if (input.volumes == nullptr || !IsSupported())
         return false;
 
@@ -1052,6 +1082,7 @@ bool SoftShadowRenderer::Update(const SoftShadowFrameInput& input)
     }
 
     _maskValid = rendered;
+    _rebuilt = true;
     _lastSignature = signature;
     _lastWasInteractive = input.interactive;
     return _maskValid;
@@ -1082,7 +1113,6 @@ void SoftShadowRenderer::RenderReceivers(const Camera& camera, PartPlateList& pl
     shader->set_uniform("receiver_z", RECEIVER_Z);
     shader->set_uniform("shadow_mask", 0);
     shader->set_uniform("mask_rect", _maskRect);
-    shader->set_uniform("mask_uv_scale", _maskUvScale);
     shader->set_uniform("shadow_strength", darkMode ? STRENGTH_DARK : STRENGTH_LIGHT);
     plates.RenderShadowReceivers();
     shader->stop_using();
@@ -1242,7 +1272,7 @@ void SoftShadowRenderer::DrawObjectShadows(GLShaderProgram& shader, const Camera
     shader.set_uniform("to_light", TO_LIGHT_DIR);
     shader.set_uniform("depth_span", _depthSpan);
     shader.set_uniform("light_extent", _lightExtent);
-    shader.set_uniform("light_spread", OBJECT_LIGHT_SPREAD);
+    shader.set_uniform("light_spread", LIGHT_SPREAD);
     shader.set_uniform("min_penumbra", static_cast<float>(MIN_PENUMBRA_TEXELS * shadowTexel));
     shader.set_uniform("max_search", static_cast<float>(MAX_SEARCH_MM));
     shader.set_uniform("depth_bias", static_cast<float>(OBJECT_DEPTH_BIAS_MM / static_cast<double>(_depthSpan)));

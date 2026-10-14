@@ -2273,10 +2273,14 @@ void GLCanvas3D::UpdateSoftShadows(bool shadowsVisible)
 {
     if (!shadowsVisible)
     {
-        // Keep resources while a gizmo hides shadows temporarily; free them once the option is off
+        // Keep resources while a gizmo hides shadows temporarily; free them once the option is off.
+        // Dropping the renderer also clears its failure flags, so enabling the option again retries
         const bool optionEnabled = wxGetApp().app_config->get_bool("enable_soft_shadows");
-        if (!optionEnabled && _softShadowRenderer != nullptr && _softShadowRenderer->HasResources())
+        if (!optionEnabled && _softShadowRenderer != nullptr)
+        {
             _softShadowRenderer->Release();
+            _softShadowRenderer.reset();
+        }
         return;
     }
 
@@ -2288,8 +2292,9 @@ void GLCanvas3D::UpdateSoftShadows(bool shadowsVisible)
     input.interactive = is_dragging();
     input.renderSlaAuxiliaries = m_render_sla_auxiliaries;
     _softShadowRenderer->Update(input);
-    // One more frame after the interaction ends rebuilds the mask at full quality
-    if (input.interactive)
+    // One more frame after a drag rebuild, so the settle rebuild runs once the drag ends. Only after a rebuild:
+    // requesting it on every dragging frame kept redrawing at full rate while the mouse was held still
+    if (input.interactive && _softShadowRenderer->WasRebuilt())
         request_extra_frame();
 }
 

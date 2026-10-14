@@ -3,8 +3,6 @@
 uniform sampler2D shadow_mask;
 // xy = min, zw = max of the mask rectangle in world XY
 uniform vec4 mask_rect;
-// 1.0 for full quality masks, smaller while interacting
-uniform float mask_uv_scale;
 uniform float shadow_strength;
 
 in vec2 world_xy;
@@ -17,7 +15,7 @@ void main()
     if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
         discard;
 
-    float shadow = (1.0 - texture(shadow_mask, uv * mask_uv_scale).r) * shadow_strength;
+    float shadow = (1.0 - texture(shadow_mask, uv).r) * shadow_strength;
     if (shadow < 0.004)
         discard;
 

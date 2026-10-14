@@ -124,9 +124,14 @@ float ShadowVisibility(vec3 pos, vec3 n, float view_depth)
     float receiver = p.z - depth_bias;
     float phi = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) * TWO_PI;
 
+    // Nothing nearby is closer to the light than the receiver: fully lit, no search needed (as the ground mask)
+    float top = LocalTop(p.xy);
+    if (receiver <= top)
+        return 1.0;
+
     // Step 1: weighted blocker search. Fix: at least min_penumbra wide, so the search covers the PCF region
     // and the early outs below agree with it (a tiny search left hard, stair-stepped edges on top faces)
-    vec2 search_uv = vec2(clamp((p.z - LocalTop(p.xy)) * depth_span * light_spread, min_penumbra, max_search)) / light_extent;
+    vec2 search_uv = vec2(clamp((p.z - top) * depth_span * light_spread, min_penumbra, max_search)) / light_extent;
     // Inner ring blockers take priority, keeping contact shadows hard (same as the ground mask)
     float blocker_sum = 0.0;
     float blocker_weight = 0.0;

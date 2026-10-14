@@ -66,8 +66,8 @@ private:
 };
 
 /**
- * @brief Bakes PCSS soft shadows of objects into a build-plate mask and composites it.
- * The mask is rebuilt only when the caster set changes, so idle frames cost one texture fetch per pixel.
+ * @brief PCSS soft shadows: a cached build-plate mask rebuilt only when the casters change, plus a
+ * screen-space pass that darkens object pixels lying in shadow.
  */
 class SoftShadowRenderer
 {
@@ -107,6 +107,9 @@ public:
 
     /** @brief Returns true when GL resources are allocated. */
     bool HasResources() const { return _shadowFramebuffer != 0 || _maskFramebuffer != 0; }
+
+    /** @brief Returns true when the last Update() rebuilt the shadow map and mask. */
+    bool WasRebuilt() const { return _rebuilt; }
 
 private:
     bool EnsureResources();
@@ -168,7 +171,6 @@ private:
     std::array<float, 4> _maskRect{ { 0.0f, 0.0f, 1.0f, 1.0f } };
     Vec2f _lightExtent{ Vec2f::Ones() };
     float _depthSpan{ 1.0f };
-    float _maskUvScale{ 1.0f };
 
     std::size_t _lastSignature{ 0 };
     bool _lastWasInteractive{ false };
@@ -176,6 +178,7 @@ private:
     bool _frustumFrozen{ false };
     BoundingBoxf3 _frozenFitBox;
     bool _maskValid{ false };
+    bool _rebuilt{ false };
 
     // GPU time of the settled (full quality) mask pass; decides whether dragging uses fewer mask samples
     SoftShadowGpuTimer _fullMaskTimer;

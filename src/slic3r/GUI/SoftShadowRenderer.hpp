@@ -54,9 +54,10 @@ public:
     /** @brief Returns the smoothed GPU time in milliseconds. */
     float GetTimeMs() const { return _timeMs; }
 
-private:
+    /** @brief Collects finished query results without waiting; call once per frame so GetTimeMs() stays current. */
     void Poll();
 
+private:
     std::array<unsigned int, 4> _queries{ { 0, 0, 0, 0 } };
     std::array<bool, 4> _pending{ { false, false, false, false } };
     unsigned int _next{ 0 };
@@ -115,7 +116,7 @@ private:
     std::size_t ComputeSignature(bool interactive) const;
     void FitLightFrustum(const BoundingBoxf3& fitBox);
     void UpdateLightFrustum(bool interactive);
-    bool RenderShadowMap(bool interactive);
+    bool RenderShadowMap();
     void BuildLocalTopMap(bool interactive);
     void BuildLocalTopMapFromBoxes();
     bool BuildLocalTopMapFromShadowMap();
@@ -138,6 +139,8 @@ private:
     unsigned int _shadowDepthTexture{ 0 };
     unsigned int _maskFramebuffer{ 0 };
     unsigned int _maskTexture{ 0 };
+    // Depth of the mask pass, so overlapping footprints are shaded once per texel
+    unsigned int _maskDepthRenderbuffer{ 0 };
     // Ping-pong target of the separable mask blur
     unsigned int _maskBlurFramebuffer{ 0 };
     unsigned int _maskBlurTexture{ 0 };
@@ -184,6 +187,8 @@ private:
     int _sceneDepthHeight{ 0 };
     bool _sceneDepthVerified{ false };
     bool _objectShadowsFailed{ false };
+    // Silhouette background pixels only receive object shadows when the frame buffer is multisampled
+    bool _defaultFramebufferMultisampled{ false };
     GLModel _fullscreenQuad;
 
     // Intermediate object shadow result: R = shadow amount, G = linear view depth, BA = octahedral normal

@@ -32,7 +32,7 @@ constexpr float OBJECT_LIGHT_SPREAD = 0.02f;
 constexpr double MAX_SEARCH_MM = 25.0;
 // Narrowest penumbra in shadow map texels; wider values (3) caused jagged rims and dark spots in concave corners
 constexpr double MIN_PENUMBRA_TEXELS = 1.5;
-// Meshes above this triangle count use their simplified LOD in the shadow map while dragging
+// Meshes above this triangle count always use their coarsest ready LOD in the shadow map
 constexpr std::size_t SHADOW_LOD_MIN_TRIANGLES = 200000;
 // While dragging the mask uses fewer samples only when a full quality mask costs more than this
 constexpr float DRAG_MASK_BUDGET_MS = 3.0f;
@@ -386,13 +386,24 @@ bool IsLodModelReady(const std::shared_ptr<GLModel>& model)
 }
 
 /** @brief Returns the coarsest LOD model of a volume that is ready, or nullptr when none is. */
-GLModel* GetReadyLodModel(GLVolume& volume)
+GLModel* GetReadyLodModel(const GLVolume& volume)
 {
     if (IsLodModelReady(volume.m_modelSmall))
         return volume.m_modelSmall.get();
     if (IsLodModelReady(volume.m_modelMiddle))
         return volume.m_modelMiddle.get();
     return nullptr;
+}
+
+/**
+ * @brief Picks the shadow map geometry of a volume, independent of the camera driven LOD of the main view.
+ * @return The LOD model for heavy meshes, or nullptr to render the full detail geometry.
+ */
+GLModel* SelectShadowLod(const GLVolume& volume)
+{
+    // Only heavy meshes: light ones are cheap anyway, and simplification would cut off thin tips
+    const bool heavy = volume.model.indices_count() / 3 > SHADOW_LOD_MIN_TRIANGLES;
+    return heavy ? GetReadyLodModel(volume) : nullptr;
 }
 
 /** @brief Returns true when the volume should cast a shadow. */
@@ -540,6 +551,15 @@ bool SoftShadowRenderer::CreateMaskResources()
     _maskFramebuffer = static_cast<unsigned int>(framebuffer);
     glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer));
     glsafe(::glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _maskTexture, 0));
+    // Fix: with a depth buffer, overlapping instance footprints shade each mask texel only once
+    GLuint depthBuffer = 0;
+    glsafe(::glGenRenderbuffers(1, &depthBuffer));
+    _maskDepthRenderbuffer = static_cast<unsigned int>(depthBuffer);
+    glsafe(::glBindRenderbuffer(GL_RENDERBUFFER, depthBuffer));
+    glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, static_cast<GLsizei>(_maskSize),
+                                   static_cast<GLsizei>(_maskSize)));
+    glsafe(::glBindRenderbuffer(GL_RENDERBUFFER, 0));
+    glsafe(::glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthBuffer));
     if (_maskTexture == 0 || !IsDrawFramebufferComplete())
         return false;
 
@@ -640,6 +660,8 @@ std::size_t SoftShadowRenderer::ComputeSignature(bool interactive) const
             boost::hash_combine(seed, box.max[i]);
         }
         boost::hash_combine(seed, volume->model.indices_count());
+        // A LOD finishing in the background changes the shadow geometry and must trigger a rebuild
+        boost::hash_combine(seed, static_cast<const void*>(SelectShadowLod(*volume)));
     }
     return seed;
 }
@@ -810,7 +832,7 @@ void SoftShadowRenderer::BuildLocalTopMapFromBoxes()
     glsafe(::glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, tiles, tiles, GL_RED, GL_FLOAT, tops.data()));
 }
 
-bool SoftShadowRenderer::RenderShadowMap(bool interactive)
+bool SoftShadowRenderer::RenderShadowMap()
 {
     GLShaderProgram* const shader = wxGetApp().get_shader("flat");
     if (shader == nullptr)
@@ -831,14 +853,18 @@ bool SoftShadowRenderer::RenderShadowMap(bool interactive)
     for (GLVolume* volume : _casters)
     {
         shader->set_uniform("view_model_matrix", _lightView * volume->world_matrix());
-        // While dragging, simplified meshes keep the per-frame rebuild cheap; the settle rebuild uses full meshes
-        // Only heavy meshes: light ones are cheap anyway, and simplification would cut off thin tips
-        const bool heavy = volume->model.indices_count() / 3 > SHADOW_LOD_MIN_TRIANGLES;
-        GLModel* const lodModel = (interactive && heavy) ? GetReadyLodModel(*volume) : nullptr;
+        // Fix: the geometry no longer follows the camera LOD, so a cached map never depends on an earlier view
+        GLModel* const lodModel = SelectShadowLod(*volume);
         if (lodModel != nullptr)
+        {
             lodModel->render();
-        else
-            volume->render();
+            continue;
+        }
+        // simple_render picks the camera LOD level for unpainted meshes; force full detail (painted ones ignore it)
+        const LODLevel cameraLod = volume->m_curLodLevel;
+        volume->m_curLodLevel = LODLevel::High;
+        volume->render();
+        volume->m_curLodLevel = cameraLod;
     }
     shader->stop_using();
 
@@ -882,13 +908,17 @@ bool SoftShadowRenderer::RenderGroundMask(bool reducedSamples)
     glsafe(::glViewport(0, 0, static_cast<GLsizei>(_maskSize), static_cast<GLsizei>(_maskSize)));
     // Fully lit, no blur
     glsafe(::glClearColor(1.0f, 0.0f, 0.0f, 1.0f));
-    glsafe(::glClear(GL_COLOR_BUFFER_BIT));
+    glsafe(::glDepthMask(GL_TRUE));
+    glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
 
     // A reduced resolution while dragging visibly blurred the shadow, so only the sample count drops
     _maskUvScale = 1.0f;
     const GLsizei viewportSize = static_cast<GLsizei>(std::lround(static_cast<double>(_maskSize) * _maskUvScale));
     glsafe(::glViewport(0, 0, viewportSize, viewportSize));
-    glsafe(::glDisable(GL_DEPTH_TEST));
+    // All footprints lie at the same depth: the first fragment of a texel wins, later overlapping ones are
+    // rejected by the early depth test before the expensive shader runs
+    glsafe(::glEnable(GL_DEPTH_TEST));
+    glsafe(::glDepthFunc(GL_LESS));
     glsafe(::glDisable(GL_BLEND));
     glsafe(::glDisable(GL_CULL_FACE));
 
@@ -977,6 +1007,10 @@ bool SoftShadowRenderer::Update(const SoftShadowFrameInput& input)
     if (input.volumes == nullptr || !IsSupported())
         return false;
 
+    // Fix: the result used to be read only by the next settled Begin(), so the first drag after a slow
+    // settled mask still ran with the full sample count
+    _fullMaskTimer.Poll();
+
     if (!CollectCasters(input))
     {
         _maskValid = false;
@@ -999,7 +1033,7 @@ bool SoftShadowRenderer::Update(const SoftShadowFrameInput& input)
         ShadowStateGuard stateGuard;
         UpdateLightFrustum(input.interactive);
         BuildFootprintModel();
-        rendered = RenderShadowMap(input.interactive);
+        rendered = RenderShadowMap();
         if (rendered)
             BuildLocalTopMap(input.interactive);
         if (rendered)
@@ -1293,6 +1327,7 @@ void SoftShadowRenderer::CompositeObjectShadows(GLShaderProgram& shader, const C
     shader.set_uniform("resolution_scale", resolutionScale);
     shader.set_uniform("inv_projection", Matrix4d(camera.get_projection_matrix().matrix().inverse()));
     shader.set_uniform("depth_tolerance", UPSAMPLE_DEPTH_TOLERANCE);
+    shader.set_uniform("multisampled", _defaultFramebufferMultisampled);
     // Full resolution normals let the filter keep samples of one face apart from the adjacent face
     const Matrix4d viewProjection = camera.get_projection_matrix().matrix() * camera.get_view_matrix().matrix();
     shader.set_uniform("inv_view_projection", Matrix4d(viewProjection.inverse()));
@@ -1318,6 +1353,10 @@ void SoftShadowRenderer::RenderObjectShadows(const Camera& camera, bool darkMode
         DisableObjectShadows("scene is not rendered into the default framebuffer");
         return;
     }
+    // GL_SAMPLES describes the bound draw framebuffer, here the default one
+    GLint samples = 0;
+    glsafe(::glGetIntegerv(GL_SAMPLES, &samples));
+    _defaultFramebufferMultisampled = samples > 1;
 
     std::array<int, 4> viewport{ { 0, 0, 0, 0 } };
     glsafe(::glGetIntegerv(GL_VIEWPORT, viewport.data()));
@@ -1362,6 +1401,8 @@ void SoftShadowRenderer::Release()
         glsafe(::glDeleteTextures(1, &_shadowDepthTexture));
     if (_maskTexture != 0)
         glsafe(::glDeleteTextures(1, &_maskTexture));
+    if (_maskDepthRenderbuffer != 0)
+        glsafe(::glDeleteRenderbuffers(1, &_maskDepthRenderbuffer));
     if (_maskBlurFramebuffer != 0)
         glsafe(::glDeleteFramebuffers(1, &_maskBlurFramebuffer));
     if (_maskBlurTexture != 0)
@@ -1383,6 +1424,7 @@ void SoftShadowRenderer::Release()
     _maskFramebuffer = 0;
     _shadowDepthTexture = 0;
     _maskTexture = 0;
+    _maskDepthRenderbuffer = 0;
     _maskBlurFramebuffer = 0;
     _maskBlurTexture = 0;
     _rawDepthSampler = 0;

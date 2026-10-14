@@ -77,8 +77,9 @@ void main()
     }
     float phi = InterleavedGradientNoise(gl_FragCoord.xy) * TWO_PI;
 
-    // Step 1: blocker search
-    vec2 search_uv = vec2(min((p.z - top) * depth_span * light_spread, max_search)) / light_extent;
+    // Step 1: blocker search. Fix: at least min_penumbra wide, so the search always covers the PCF region
+    // and both early outs below agree with it (a tiny search left hard, stair-stepped edges near contacts)
+    vec2 search_uv = vec2(clamp((p.z - top) * depth_span * light_spread, min_penumbra, max_search)) / light_extent;
     // Blockers near the search center weigh more; when the inner ring finds any, only those are used,
     // so contact points stay hard instead of being softened by distant tall blockers
     float blocker_sum = 0.0;
@@ -104,7 +105,8 @@ void main()
         frag_color = vec4(1.0, 0.0, 0.0, 1.0);
         return;
     }
-    // The PCF region never exceeds the search region, so a fully blocked search means umbra
+    // The PCF region never exceeds the search region (both share the min_penumbra floor and the blocker average
+    // lies below the local top), so a fully blocked search means umbra
     if (blocker_count == blocker_samples) {
         frag_color = vec4(0.0, 0.0, 0.0, 1.0);
         return;

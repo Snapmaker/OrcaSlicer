@@ -11,6 +11,8 @@ uniform vec3 to_camera;
 uniform int resolution_scale;
 // Neighbours whose depth differs more than this fraction are ignored, so shadows do not bleed over silhouettes
 uniform float depth_tolerance;
+// True when the frame buffer is multisampled, so background pixels on silhouettes may hold object samples
+uniform bool multisampled;
 
 in vec2 tex_coord;
 
@@ -21,6 +23,8 @@ const float BLUR_SIGMA = 1.0;
 // Normal agreement range: samples from another face (e.g. across a cube edge) are dropped
 const float NORMAL_REJECT_LOW = 0.8;
 const float NORMAL_REJECT_HIGH = 0.95;
+// Least normal agreement of a fallback sample when the filter weights all vanish
+const float FALLBACK_NORMAL_MIN = 0.5;
 // Relative slope change between both sides of a pixel that marks a crease. Fix: 0.1 let 24-bit depth steps
 // on planes pass as creases and made spike shadows wavy; real creases change the slope several times over
 const float CREASE_TOLERANCE = 0.5;
@@ -187,18 +191,22 @@ float FilterShadow(ivec2 c, vec4 block[9], float view_depth, vec3 n)
 
             float rel_diff = abs(s.g - view_depth) / view_depth;
             float normal_dot = dot(n, OctDecode(s.ba));
+            if (rel_diff > depth_tolerance)
+                continue;
+
+            // Fix: the fallback only takes samples of a plausible surface; with none the pixel stays unshadowed
+            // instead of borrowing the shadow of a surface behind or beside it
             float score = normal_dot - rel_diff / depth_tolerance;
-            if (score > best_score) {
+            if (normal_dot >= FALLBACK_NORMAL_MIN && score > best_score) {
                 best_score = score;
                 best_shadow = s.r;
             }
-            if (rel_diff <= depth_tolerance) {
-                vec2 delta = vec2(s_coord) - p;
-                float normal_weight = smoothstep(NORMAL_REJECT_LOW, NORMAL_REJECT_HIGH, normal_dot);
-                float w = exp(-dot(delta, delta) * inv_two_sigma2) * normal_weight;
-                sum += s.r * w;
-                weight_sum += w;
-            }
+
+            vec2 delta = vec2(s_coord) - p;
+            float normal_weight = smoothstep(NORMAL_REJECT_LOW, NORMAL_REJECT_HIGH, normal_dot);
+            float w = exp(-dot(delta, delta) * inv_two_sigma2) * normal_weight;
+            sum += s.r * w;
+            weight_sum += w;
         }
     }
     return (weight_sum > 1.0e-4) ? sum / weight_sum : best_shadow;
@@ -210,6 +218,9 @@ void main()
     ivec2 c = clamp(ivec2(tex_coord * vec2(g_depth_size)), ivec2(0), g_depth_size - ivec2(1));
     float d = FetchDepth(c);
     bool silhouette = d >= 1.0;
+    // Without MSAA a background pixel holds no object sample, so darkening it would only add a dark rim
+    if (silhouette && !multisampled)
+        discard;
     if (silhouette) {
         // Fix for white dots on object/background silhouettes: such a pixel may still hold object samples, so it
         // takes the shadow of the nearest object neighbour; the plates drawn afterwards cover the background again

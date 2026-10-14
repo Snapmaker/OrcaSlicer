@@ -8226,9 +8226,13 @@ public:
         // catch-up: a task queued while the callback was null missed its
         // size()==1 notification; re-announce it or backup stalls until exit
         if (c) {
-            boost::lock_guard lock(m_mutex);
-            if (!m_ui_tasks.empty())
-                c(0);
+            bool pending;
+            {
+                boost::lock_guard lock(m_mutex);
+                pending = !m_ui_tasks.empty();
+            }
+            if (pending)
+                c(0); // outside m_mutex: only this thread drains m_ui_tasks
         }
     }
 
@@ -8579,6 +8583,7 @@ private:
     bool m_other_changes_backup = false; // visit only in main thread
     std::vector<std::pair<ModelObject*, size_t>> m_gaurd_objects;
     // serializes m_post_callback swap vs worker invocation; lock order: m_mutex -> m_post_callback_mutex
+    // boost primitives to match the class's existing synchronization (m_cond waits need boost locks)
     boost::mutex m_post_callback_mutex;
     boost::thread m_thread;
 };

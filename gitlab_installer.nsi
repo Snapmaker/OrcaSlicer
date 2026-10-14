@@ -593,6 +593,9 @@ FunctionEnd
 ; personal data" checkbox UNCHECKED so a casual Finish click keeps user data.
 ; The two tiers run from the leave callback, so a silent (/S) upgrade - no pages,
 ; no callbacks - never touches user data.
+; Bitmap: NSIS built-in win.bmp, packed into the uninstaller at compile time and
+; read back from $PLUGINSDIR at run time - a bare ${NSISDIR} path names the build
+; machine's NSIS folder, which is absent on the target.
 ; ---- Layout constants: the only values to hand-tune. ----
 ; Vertical geometry is in dialog units (u suffix applied at use sites) and
 ; derived at compile time with !define /math. Horizontal geometry is in pixels
@@ -668,9 +671,11 @@ SnapmakerFin_l10n_done:
   ; Banner: same win.bmp asset MUI_WELCOMEFINISHPAGE stretches on the installer
   ; welcome page -- full-height (client height $4, already minus SF_BTN_RESERVE)
   ; and 1/3 of the client width, flush to the top-left corner.
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\win.bmp "${NSISDIR}\Contrib\Graphics\Wizard\win.bmp"
   ${NSD_CreateBitmap} 0 0 $6 $4 ""
   Pop $SnapmakerFinBitmapCtl
-  ${NSD_SetStretchedImage} $SnapmakerFinBitmapCtl "${NSISDIR}\Contrib\Graphics\Wizard\win.bmp" $SnapmakerFinBitmap
+  ${NSD_SetStretchedImage} $SnapmakerFinBitmapCtl "$PLUGINSDIR\win.bmp" $SnapmakerFinBitmap
   ; Title in welcome-page style: 12pt bold via the built-in CreateFont
   ; instruction, same font face and size/weight as MUI2's own Welcome/Finish
   ; titles. $(^Font) resolves per installer language (MS Shell Dlg -> Segoe UI

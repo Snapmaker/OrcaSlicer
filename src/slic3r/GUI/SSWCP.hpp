@@ -265,6 +265,12 @@ private:
     // Subscribe to foreground/background change events (event_id=205890)
     void sw_SubscribeForegroundChange();
 
+    // Owns the one-shot pin-code MQTT client (sw_get_pin_code). Released on
+    // the UI thread after the response — never from a Paho callback thread,
+    // where destroying a client is not allowed.
+    static std::shared_ptr<MqttClient> m_pin_client;
+    static void release_pin_client() { m_pin_client.reset(); }
+
 };
 
 // mqtt-agent

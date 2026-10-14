@@ -8,7 +8,7 @@ uniform vec3 outline_color;
 const float fillAlpha = 0.4;
 const float outlineExclusionLow = 0.25;
 const float outlineExclusionHigh = 0.75;
-const float edgeStrength = 3.0;
+const float edgeStrength = 1.5;
 const float edgeGlow = 0.8;
 
 varying vec2 tex_coord;

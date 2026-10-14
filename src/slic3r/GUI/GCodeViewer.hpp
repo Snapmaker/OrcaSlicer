@@ -8,6 +8,8 @@
 #include "GLModel.hpp"
 #include "I18N.hpp"
 
+#include <memory>
+
 #include <boost/iostreams/device/mapped_file.hpp>
 
 #include <cstdint>
@@ -25,6 +27,8 @@ namespace GUI {
 
 class PartPlateList;
 class OpenGLManager;
+class PathLayerStack;
+class PathRenderer;
 
 static const float GCODE_VIEWER_SLIDER_SCALE = 0.6f;
 static const float SLIDER_DEFAULT_RIGHT_MARGIN  = 10.0f;
@@ -41,13 +45,6 @@ class GCodeViewer
     using InstanceBuffer = std::vector<float>;
     using InstanceIdBuffer = std::vector<size_t>;
     using InstancesOffsets = std::vector<Vec3f>;
-
-    static const std::vector<ColorRGBA> Extrusion_Role_Colors;
-    static const std::vector<ColorRGBA> Options_Colors;
-    static const std::vector<ColorRGBA> Travel_Colors;
-    static const std::vector<ColorRGBA> Range_Colors;
-    static const ColorRGBA              Wipe_Color;
-    static const ColorRGBA              Neutral_Color;
 
     enum class EOptionsColors : unsigned char
     {
@@ -754,6 +751,11 @@ private:
     ConfigOptionMode m_user_mode;
     bool m_fold = {false};
 
+    // GPU path pipeline (de-geometrized tables + shader-generated geometry);
+    // held by pointers to keep this header light
+    std::unique_ptr<PathLayerStack> _pathStack;
+    std::unique_ptr<PathRenderer> _pathRenderer;
+
     Layers m_layers;
     std::array<unsigned int, 2> m_layers_z_range;
     std::vector<ExtrusionRole> m_roles;
@@ -791,6 +793,14 @@ mutable bool m_no_render_path { false };
     bool m_is_dark = false;
 
 public:
+    // toolpath color tables, shared with the GPU path renderer
+    static const std::vector<ColorRGBA> Extrusion_Role_Colors;
+    static const std::vector<ColorRGBA> Options_Colors;
+    static const std::vector<ColorRGBA> Travel_Colors;
+    static const std::vector<ColorRGBA> Range_Colors;
+    static const ColorRGBA              Wipe_Color;
+    static const ColorRGBA              Neutral_Color;
+
     GCodeViewer();
     ~GCodeViewer();
 
@@ -854,14 +864,7 @@ public:
     bool is_only_gcode_in_preview() const { return m_only_gcode_in_preview; }
 
     EViewType get_view_type() const { return m_view_type; }
-    void set_view_type(EViewType type, bool reset_feature_type_visible = true) {
-        if (type == EViewType::Count)
-            type = EViewType::FeatureType;
-        m_view_type = (EViewType)type;
-        if (reset_feature_type_visible && type == EViewType::ColorPrint) {
-            reset_visible(EViewType::FeatureType);
-        }
-    }
+    void set_view_type(EViewType type, bool reset_feature_type_visible = true);
     void reset_visible(EViewType type) {
         if (type == EViewType::FeatureType) {
             for (size_t i = 0; i < m_roles.size(); ++i) {
@@ -876,7 +879,7 @@ public:
     bool is_toolpath_move_type_visible(EMoveType type) const;
     void set_toolpath_move_type_visible(EMoveType type, bool visible);
     unsigned int get_toolpath_role_visibility_flags() const { return m_extrusions.role_visibility_flags; }
-    void set_toolpath_role_visibility_flags(unsigned int flags) { m_extrusions.role_visibility_flags = flags; }
+    void set_toolpath_role_visibility_flags(unsigned int flags);
     unsigned int get_options_visibility_flags() const;
     void set_options_visibility_from_flags(unsigned int flags);
     void set_layers_z_range(const std::array<unsigned int, 2>& layers_z_range);
@@ -895,9 +898,15 @@ public:
 private:
     void extract_layer_metadata(const GCodeProcessorResult& gcode_result);
     void load_toolpaths(const GCodeProcessorResult& gcode_result, const BuildVolume& build_volume, const std::vector<BoundingBoxf3>& exclude_bounding_box);
+    // GPU path pipeline: builds the de-geometrized tables instead of the
+    // legacy CPU vertex buffers (enabled automatically on GL 3.1+)
+    void load_toolpaths_gpu(const GCodeProcessorResult& gcode_result, const BuildVolume& build_volume, const std::vector<BoundingBoxf3>& exclude_bounding_box);
     //BBS: always load shell at preview
     //void load_shells(const Print& print);
     void refresh_render_paths(bool keep_sequential_current_first, bool keep_sequential_current_last) const;
+    // GPU path pipeline: keeps the sequential sliders consistent without
+    // rebuilding any render paths
+    void refresh_render_paths_gpu(bool keep_sequential_current_first, bool keep_sequential_current_last) const;
     void render_toolpaths();
     void render_shells();
 

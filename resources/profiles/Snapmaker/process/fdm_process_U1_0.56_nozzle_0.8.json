@@ -3,6 +3,8 @@
     "name": "fdm_process_U1_0.56_nozzle_0.8",
     "inherits": "fdm_process_U1_common",
     "from": "system",
+    "bottom_color_penetration_layers": "3",
+    "top_color_penetration_layers": "3",
     "instantiation": "false",
     "layer_height": "0.56",
     "initial_layer_print_height": "0.4",

@@ -4,6 +4,18 @@
     "high_flow": {
       "not_recommended_filaments": ["PLA Wood", "TPU 90A", "PEBA 90A"],
       "unavailable_filaments": ["TPU 85A"]
+    },
+    "filament_order": {
+      "Snapmaker": [
+          "PLA SnapSpeed",
+          "PLA Matte",
+          "PETG HF",
+          "PLA Full Spectrum",
+          "TPU 95A HF",
+          "PEBA 90A",
+          "ABS",
+          "ASA"
+      ]
     }
   }
 }

@@ -20,6 +20,7 @@
 #include <boost/algorithm/string/trim.hpp>
 #include <boost/format/format_fwd.hpp>
 #include <boost/functional/hash.hpp>
+#include <boost/log/trivial.hpp>
 #include <boost/property_tree/ptree_fwd.hpp>
 
 #include <cereal/access.hpp>
@@ -670,7 +671,10 @@ public:
         		if (NULLABLE)
         			this->values.push_back(nil_value());
         		else
-        			throw ConfigurationError("Deserializing nil into a non-nullable object");
+        			{
+                    BOOST_LOG_TRIVIAL(warning) << "deserialize: skipping nil item in non-nullable vector";
+                    continue;
+                }
         	} else {
 	            std::istringstream iss(item_str);
 	            double value;
@@ -838,7 +842,10 @@ public:
         		if (NULLABLE)
         			this->values.push_back(nil_value());
         		else
-                    throw ConfigurationError("Deserializing nil into a non-nullable object");
+                    {
+                    BOOST_LOG_TRIVIAL(warning) << "deserialize: skipping nil item in non-nullable vector";
+                    continue;
+                }
         	} else {
 	            std::istringstream iss(item_str);
 	            int value;
@@ -1162,7 +1169,10 @@ public:
                 if (NULLABLE)
                     this->values.push_back(nil_value());
                 else
-                    throw ConfigurationError("Deserializing nil into a non-nullable object");
+                    {
+                    BOOST_LOG_TRIVIAL(warning) << "deserialize: skipping nil item in non-nullable vector";
+                    continue;
+                }
             } else {
                 bool percent = item_str.find_first_of("%") != std::string::npos;
                 std::istringstream iss(item_str);
@@ -1487,7 +1497,10 @@ public:
         		if (NULLABLE)
                     new_value = nil_value();
         		else
-                    throw ConfigurationError("Deserializing nil into a non-nullable object");
+                    {
+                    BOOST_LOG_TRIVIAL(warning) << "deserialize: skipping nil item in non-nullable vector";
+                    continue;
+                }
         	} else if (item_str == "1") {
         		new_value = true;
         	} else if (item_str == "0") {
@@ -1725,7 +1738,10 @@ public:
                 if (NULLABLE)
                     this->values.push_back(nil_value());
                 else
-                    throw ConfigurationError("Deserializing nil into a non-nullable object");
+                    {
+                    BOOST_LOG_TRIVIAL(warning) << "deserialize: skipping nil item in non-nullable vector";
+                    continue;
+                }
             }
             else {
                 auto it = this->keys_map->find(item_str);

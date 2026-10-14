@@ -29,7 +29,7 @@ class ConfigManipulation
     std::function<void()>                                       load_config = nullptr;
     std::function<void (const std::string&, bool toggle, int opt_index)>   cb_toggle_field = nullptr;
     std::function<void (const std::string&, bool toggle)>   cb_toggle_line = nullptr;
-    // callback to propagation of changed value, if needed 
+    // callback to propagation of changed value, if needed
     std::function<void(const std::string&, const boost::any&)>  cb_value_change = nullptr;
     //BBS: change local config to const DynamicPrintConfig
     const DynamicPrintConfig* local_config = nullptr;

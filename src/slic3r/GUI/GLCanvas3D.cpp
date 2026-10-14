@@ -3190,6 +3190,7 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
 
         RenderSelectionBoxWithExplicitState();
         _render_objects(GLVolumeCollection::ERenderType::Transparent, !m_gizmos.is_running());
+        RenderPlateIconTooltip(sceneParams, oldPlateHoverId);
     }
     /* preview render */
     else if (m_canvas_type == ECanvasType::CanvasPreview && m_render_preview) {
@@ -8551,6 +8552,23 @@ void GLCanvas3D::RenderMainSceneContent(const Camera& camera, const MainSceneRen
         _render_platelist(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(),
                           params.onlyCurrent, params.onlyBody, params.hoverPlateId, true, params.showGrid);
     }
+}
+
+void GLCanvas3D::RenderPlateIconTooltip(const MainSceneRenderParams& params, int oldPlateHoverId)
+{
+    // Same visibility conditions as the plate icons drawn in RenderMainSceneContent
+    const int hoverId = params.hoverPlateId;
+    if (PlateHoverAction(hoverId) < 1 || params.noPartplate || params.onlyBody)
+        return;
+
+    PartPlateList& plateList = wxGetApp().plater()->get_partplate_list();
+    if (params.onlyCurrent && hoverId / static_cast<int>(PartPlate::GRABBER_COUNT) != plateList.get_curr_plate_index())
+        return;
+
+    plateList.RenderHoverTooltip(hoverId);
+    // ImGui hides a new tooltip on its first frame, so request one more overlay frame
+    if (hoverId != oldPlateHoverId)
+        wxGetApp().imgui()->set_requires_extra_frame();
 }
 
 bool GLCanvas3D::CaptureSceneCache()

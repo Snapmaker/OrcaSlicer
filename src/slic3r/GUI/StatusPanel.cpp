@@ -4247,16 +4247,18 @@ void StatusBasePanel::on_camera_switch_toggled(wxMouseEvent& event)
 void StatusBasePanel::remove_controls()
 {
     const std::string js_cleanup_video_element = R"(
-        document.body.style.overflow='hidden';
-        const video = document.querySelector('video');
-        video.setAttribute('style', 'width: 100% !important;');
-        video.removeAttribute('controls');
-        video.addEventListener('leavepictureinpicture', () => {
-            window.wx.postMessage('leavepictureinpicture');
-        });
-        video.addEventListener('enterpictureinpicture', () => {
-            window.wx.postMessage('enterpictureinpicture');
-        });
+        (() => {
+            document.body.style.overflow='hidden';
+            const video = document.querySelector('video');
+            video.setAttribute('style', 'width: 100% !important;');
+            video.removeAttribute('controls');
+            video.addEventListener('leavepictureinpicture', () => {
+                window.wx.postMessage('leavepictureinpicture');
+            });
+            video.addEventListener('enterpictureinpicture', () => {
+                window.wx.postMessage('enterpictureinpicture');
+            });
+        })();
     )";
     WebView::RunScript(m_custom_camera_view, js_cleanup_video_element);
 }

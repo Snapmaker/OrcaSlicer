@@ -1,3 +1,7 @@
+# GitLab packaging only. gitlab_pack_linux.sh clones snapmaker_orca_vendor into
+# gitlab_vendor at the repo root before flatpak-builder. DL_CACHE modules below
+# use path: ../../gitlab_vendor/... and fail if that directory is missing.
+# Direct flatpak-builder use belongs on io.github.Snapmaker.Snapmaker_Orca.yml.
 app-id: io.github.Snapmaker.Snapmaker_Orca
 runtime: org.gnome.Platform
 runtime-version: "49"

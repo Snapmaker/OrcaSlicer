@@ -63,6 +63,12 @@ if [ -z "$PRODUCT_VERSION" ]; then
     exit 1
 fi
 
+# Same rule as gitlab_pack_linux.sh: a label like rc/1 must not become a subdirectory of BUILD_DIR.
+if [[ "$ARTIFACT_LABEL" == *"/"* || "$ARTIFACT_LABEL" == *"\\"* ]]; then
+    echo "Error: artifact label must not contain a path separator: $ARTIFACT_LABEL"
+    exit 1
+fi
+
 NAME_SUFFIX=""
 if [ -n "$ARTIFACT_LABEL" ]; then
     NAME_SUFFIX="_${ARTIFACT_LABEL}"

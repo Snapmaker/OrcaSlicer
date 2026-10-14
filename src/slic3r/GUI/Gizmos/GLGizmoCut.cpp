@@ -655,7 +655,7 @@ bool GLGizmoCut3D::render_slider_input(const std::string& label, float& value_in
     ImGui::PushItemWidth(input_width);
     ImGui::BBLDragFloat(("##input_" + label).c_str(), &value, 0.05f, min_size, max_value, format.c_str());
 
-    value_in = value * float(m_imperial_units ? GizmoObjectManipulation::in_to_mm : 1.0);
+    value_in = value * static_cast<float>(m_imperial_units ? GizmoObjectManipulation::in_to_mm : 1.0);
 
     return !is_approx(old_val, value);
 }

@@ -362,6 +362,15 @@ private:
     bool render_cut_mode_combo();
     bool render_double_input(const std::string& label, double& value_in);
     bool render_slider_double_input(const std::string& label, float& value_in, float& tolerance_in, float min_val = -0.1f, float max_tolerance = -0.1f);
+    /// <summary>
+    /// Render a slider combined with a numeric input for a float value (e.g. the multi-groove Gap),
+    /// with imperial units conversion.
+    /// </summary>
+    /// <param name="label">Label shown next to the input</param>
+    /// <param name="value_in">Value to edit, updated on change</param>
+    /// <param name="min_val">Minimum allowed value</param>
+    /// <param name="max_val">Maximum allowed value</param>
+    /// <returns>True when the value was changed, otherwise False</returns>
     bool render_slider_input(const std::string& label, float& value_in, float min_val = -0.1f, float max_val = 100.f);
     void render_move_center_input(int axis);
     void render_connect_mode_radio_button(CutConnectorMode mode);

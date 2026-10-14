@@ -26,20 +26,64 @@
 !define INSTALL_DIR_RUNTIME "$PROGRAMFILES64\Snapmaker_Orca"
 InstallDir "${INSTALL_DIR_RUNTIME}"
 
+; ---- compile-time basename helper ----
+; Peel one leading path component (up to and including the first '\') off
+; _p_work. After enough iterations, _p_work holds only the leaf (basename).
+!macro _PeelOneLevel
+    !undef _p_rest
+    !searchparse /noerrors "${_p_work}" "\" _p_rest
+    !ifdef _p_rest
+        !define /redef _p_work "${_p_rest}"
+    !endif
+!macroend
+
+; _result = basename of _path (forward slashes normalized to backslashes).
+; Handles up to 16 directory levels (far more than any CI output path).
+!macro _GetLeafName _result _path
+    !undef _p_work
+    !define _p_work "${_path}"
+    !searchreplace _p_work "${_p_work}" "/" "\"
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !define ${_result} "${_p_work}"
+    !undef _p_work
+    !undef _p_rest
+!macroend
+
 ; Jenkins passes /DVERSION=<label> and a full /DOUTPUT_FILE path whose leaf is
 ; ...V<label>.exe. Keep that directory, and name the file with the real version
-; plus the label at the end.
+; plus the label at the end. The V<label>.exe -> V<product>_<label>.exe rewrite
+; is applied only to the leaf (basename), never to the directory.
 !ifdef VERSION
     !ifdef OUTPUT_FILE
-        !searchreplace FINAL_OUTPUT "${OUTPUT_FILE}" "V${VERSION}.exe" "V${PRODUCT_VERSION}_${VERSION}.exe"
+        !insertmacro _GetLeafName OUT_LEAF "${OUTPUT_FILE}"
+        !searchreplace OUT_LEAF_FINAL "${OUT_LEAF}" "V${VERSION}.exe" "V${PRODUCT_VERSION}_${VERSION}.exe"
+        !searchreplace FINAL_OUTPUT "${OUTPUT_FILE}" "${OUT_LEAF}" "${OUT_LEAF_FINAL}"
+        !define INSTALLER_LEAF "${OUT_LEAF_FINAL}"
     !else
         !define FINAL_OUTPUT "Snapmaker_Orca_Windows_V${PRODUCT_VERSION}_${VERSION}.exe"
+        !define INSTALLER_LEAF "${FINAL_OUTPUT}"
     !endif
 !else
     !ifndef OUTPUT_FILE
         !define OUTPUT_FILE "Snapmaker_Orca_Windows_V${PRODUCT_VERSION}.exe"
     !endif
     !define FINAL_OUTPUT "${OUTPUT_FILE}"
+    !insertmacro _GetLeafName INSTALLER_LEAF "${OUTPUT_FILE}"
 !endif
 
 ; License page: show LICENSE.txt from repo root (same dir as this .nsi)
@@ -62,7 +106,7 @@ VIAddVersionKey "FileVersion" "${PRODUCT_VERSION}"
 VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
 VIAddVersionKey "InternalName" "${PRODUCT_NAME}"
 VIAddVersionKey "LegalTrademarks" ""
-VIAddVersionKey "OriginalFilename" "${FINAL_OUTPUT}"
+VIAddVersionKey "OriginalFilename" "${INSTALLER_LEAF}"
 
 ; Installer and uninstaller icon: set by build script via /DICON_FILE=path (e.g. Snapmaker_Orca.ico or snapmaker.ico)
 !ifdef ICON_FILE

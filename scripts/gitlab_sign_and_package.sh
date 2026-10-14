@@ -9,7 +9,9 @@
 set -e
 
 # -v matches gitlab_pack_linux.sh: Jenkins label, not the product version.
-ARTIFACT_LABEL="${ARTIFACT_LABEL:-}"
+# Reset (not inherit from env) so a CI-host ARTIFACT_LABEL can't silently
+# suffix the DMG name when -v is omitted.
+ARTIFACT_LABEL=""
 POSITIONAL=()
 while [ $# -gt 0 ]; do
     case "$1" in

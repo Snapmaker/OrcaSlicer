@@ -2120,9 +2120,8 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
     if (id_list.empty()) return;
 
     display_warning(wxString::Format(
-        _L("The mix ratios for %s in the Color Mapping list are outside the recommended %d"
-           "%%–%d%% range. Adjust the mix ratios manually for better results."),
-        id_list, kManualMinComponentPercent, kManualAdvisoryMaxComponentPercent));
+        _L("The mix ratios for %s in the Color Mapping list are outside the recommended ranges. Adjust the mix ratios manually for better results."),
+        id_list));
 }
 
 void MixedFilamentBatchDialog::set_manual_combo_icon(int row, int filament_idx)

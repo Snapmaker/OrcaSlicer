@@ -654,7 +654,10 @@ bool TriangleSelector::PrepareSelectionCursor(std::unique_ptr<Cursor> cursor)
 
     m_cursor = std::move(cursor);
     const bool isHeightRange = dynamic_cast<HeightRange*>(m_cursor.get()) != nullptr;
-    const float edgeLimit = isHeightRange ? 0.1f : std::min(std::sqrt(m_cursor->radius_sqr) / 5.f, 0.05f);
+    const float baseLimit = isHeightRange ? 0.1f : 0.05f;
+    float edgeLimit = isHeightRange ? baseLimit : std::min(std::sqrt(m_cursor->radius_sqr) / 5.f, baseLimit);
+    // Base limits are in mm; floor them in world space so downscaled meshes are not over-split.
+    edgeLimit = std::max(edgeLimit, baseLimit * m_cursor->meshUnitsPerMm);
     if (m_old_cursor_radius_sqr != m_cursor->radius_sqr || m_edge_limit != edgeLimit)
         set_edge_limit(edgeLimit);
     m_old_cursor_radius_sqr = m_cursor->radius_sqr;
@@ -2693,6 +2696,7 @@ TriangleSelector::Cursor::Cursor(const Vec3f &source_, float radius_world, const
     if (is_approx(sf(0), sf(1)) && is_approx(sf(1), sf(2))) {
         radius          = float(radius_world / sf(0));
         radius_sqr      = float(Slic3r::sqr(radius_world / sf(0)));
+        meshUnitsPerMm  = float(1. / sf(0));
         uniform_scaling = true;
     } else {
         // In case that the transformation is non-uniform, all checks whether

@@ -103,6 +103,8 @@ public:
         Transform3f trafo_normal;
         float       radius;
         float       radius_sqr;
+        // Mesh units per world millimeter; 1 when checks run in world coords.
+        float       meshUnitsPerMm = 1.f;
         Vec3f       dir = Vec3f(0.f, 0.f, 0.f);
 
         ClippingPlane clipping_plane; // Clipping plane to limit painting to not clipped facets only

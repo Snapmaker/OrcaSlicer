@@ -6,11 +6,14 @@
 #include "GCodeWriter.hpp"
 #include "PrintConfig.hpp"
 #include "BoundingBox.hpp"
+#include "CustomGCode.hpp"
+#include "Flow.hpp"
 
 namespace Slic3r {
 
 class GCode;
 class Model;
+class ModelObject;
 
 enum class CalibMode : int {
     Calib_None = 0,
@@ -271,8 +274,7 @@ private:
 struct SuggestedConfigCalibPAPattern
 {
     const std::vector<std::pair<std::string, double>> float_pairs{{"initial_layer_print_height", 0.25},
-                                                                  {"layer_height", 0.2},
-                                                                  {"initial_layer_speed", 30}};
+                                                                  {"layer_height", 0.2}};
 
     const std::vector<std::pair<std::string, double>> nozzle_ratio_pairs{{"line_width", 112.5}, {"initial_layer_line_width", 140}};
 

@@ -1583,6 +1583,8 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
                 }
             }
             {
+                // Vendor-shipped deployment data: holds the allow-list sections and sections.filament_order.
+                // Updates may replace the deployed copy; the running GUI re-reads the order only after a restart.
                 fs::path rules_src = rsrc_path / bundle / "filament" / "filament_allow_list.json";
                 fs::path rules_dst = vendor_path / bundle / "filament" / "filament_allow_list.json";
                 if (fs::exists(rules_src)) {
@@ -1837,6 +1839,8 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                                 }
                             }
                             {
+                                // Same deployment data as the resource path above: an update may replace the
+                                // deployed copy, and the new order is used only after a restart.
                                 fs::path rules_src = cache_profile_path / vendor_name / "filament" / "filament_allow_list.json";
                                 fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_allow_list.json";
                                 if (fs::exists(rules_src)) {

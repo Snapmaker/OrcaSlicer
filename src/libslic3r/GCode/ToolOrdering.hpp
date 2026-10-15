@@ -9,6 +9,7 @@
 #include <utility>
 
 #include <boost/container/small_vector.hpp>
+#include <boost/multiprecision/cpp_int.hpp>
 
 namespace Slic3r {
 
@@ -118,6 +119,8 @@ public:
     // Zero based extruder IDs, ordered to minimize tool switches.
     std::vector<unsigned int> 	extruders;
     bool                        preserve_extruder_order = false;
+    // Purge overrides disable Local-Z emission for the entire shared print layer.
+    bool                        has_local_z_subdivision = false;
     // If per layer extruder switches are inserted by the G-code preview slider, this value contains the new (1 based) extruder, with which the whole object layer is being printed with.
     // If not overriden, it is set to 0.
     unsigned int 				extruder_override = 0;
@@ -175,8 +178,9 @@ public:
     // (print->config().print_sequence == PrintSequence::ByObject is false).
     ToolOrdering(const Print& print, unsigned int first_extruder, bool prime_multi_material = false);
 
-    void 				clear() {
-        m_layer_tools.clear(); m_tool_order_cache.clear(); 
+    void clear() {
+        m_layer_tools.clear();
+        m_tool_order_cache.clear();
     }
 
     // Only valid for non-sequential print:
@@ -232,6 +236,8 @@ private:
                                float        layer_height  = 0.f,
                                const PrintObject* current_object = nullptr) const;
 
+    void collect_local_z_layers(const PrintObject &object);
+
     std::vector<LayerTools>    m_layer_tools;
     // First printing extruder, including the multi-material priming sequence.
     unsigned int               m_first_printing_extruder = (unsigned int)-1;
@@ -239,7 +245,8 @@ private:
     unsigned int               m_last_printing_extruder  = (unsigned int)-1;
     // All extruders, which extrude some material over m_layer_tools.
     std::vector<unsigned int>  m_all_printing_extruders;
-    std::unordered_map<uint32_t, std::vector<uint8_t>> m_tool_order_cache;
+    using uint128_t = boost::multiprecision::uint128_t;
+    std::unordered_map<uint128_t, std::vector<uint8_t>> m_tool_order_cache;
     const DynamicPrintConfig*  m_print_full_config = nullptr;
     const PrintConfig*         m_print_config_ptr = nullptr;
     const PrintObject*         m_print_object_ptr = nullptr;

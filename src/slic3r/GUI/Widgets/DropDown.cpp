@@ -1,6 +1,8 @@
 #include "DropDown.hpp"
 #include "Label.hpp"
 
+#include <algorithm>
+
 #include <wx/display.h>
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
@@ -83,14 +85,14 @@ void DropDown::Invalidate(bool clear)
         selection = hover_item = -1;
         offset = wxPoint();
     }
-    assert(selection < (int) texts.size());
+    if (selection >= (int) texts.size())
+        selection = -1;
     need_sync = true;
 }
 
 void DropDown::SetSelection(int n)
 {
-    assert(n < (int) texts.size());
-    if (n >= (int) texts.size())
+    if (n < 0 || n >= (int) texts.size())
         n = -1;
     if (selection == n) return;
     selection = n;
@@ -418,6 +420,50 @@ void DropDown::autoPosition()
             }
         }
     }
+}
+
+bool DropDown::PointInAnchorGap(const wxPoint& screen_point) const
+{
+    wxWindow* anchor = GetParent();
+    if (!anchor)
+        return false;
+
+    const wxRect anchor_rect = anchor->GetScreenRect();
+    const wxRect popup_rect  = GetScreenRect();
+
+    const int left  = std::max(anchor_rect.GetLeft(), popup_rect.GetLeft());
+    const int right = std::min(anchor_rect.GetRight(), popup_rect.GetRight());
+    if (right < left)
+        return false;
+
+    // Screen y grows downward. Boundary pixels belong to the anchor or popup, so the clickable gap is
+    // strictly between the two rectangles.
+    if (popup_rect.GetTop() > anchor_rect.GetBottom()) {
+        return screen_point.x >= left && screen_point.x <= right && screen_point.y > anchor_rect.GetBottom() &&
+               screen_point.y < popup_rect.GetTop();
+    }
+
+    if (popup_rect.GetBottom() < anchor_rect.GetTop()) {
+        return screen_point.x >= left && screen_point.x <= right && screen_point.y > popup_rect.GetBottom() &&
+               screen_point.y < anchor_rect.GetTop();
+    }
+
+    return false;
+}
+
+bool DropDown::ProcessLeftDown(wxMouseEvent& event)
+{
+#ifdef __WXOSX__
+    if (IsShown() && HitTest(event.GetPosition()) == wxHT_WINDOW_OUTSIDE && PointInAnchorGap(ClientToScreen(event.GetPosition()))) {
+        DismissAndNotify();
+
+        // wxOSX reposts an outside click to the control below the popup. The anchor/popup gap is not
+        // an activation target, so consume it after dismissing.
+        return true;
+    }
+#endif
+
+    return PopupWindow::ProcessLeftDown(event);
 }
 
 void DropDown::mouseDown(wxMouseEvent& event)

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2009, 2021 IBM Corp. and Ian Craggs
+ * Copyright (c) 2009, 2024 IBM Corp. and Ian Craggs
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v2.0
@@ -158,18 +158,21 @@ void* MQTTPacket_connack(int MQTTVersion, unsigned char aHeader, char* data, siz
 	}
 	pack->flags.all = readChar(&curdata); /* connect flags */
 	pack->rc = readChar(&curdata); /* reason code */
-	if (MQTTVersion >= MQTTVERSION_5 && datalen > 2)
+	if (MQTTVersion >= MQTTVERSION_5)
 	{
 		MQTTProperties props = MQTTProperties_initializer;
 		pack->properties = props;
-		if (MQTTProperties_read(&pack->properties, &curdata, enddata) != 1)
+		if (datalen > 2)
 		{
-			if (pack->properties.array)
-				free(pack->properties.array);
-			if (pack)
-				free(pack);
-			pack = NULL; /* signal protocol error */
-			goto exit;
+			if (MQTTProperties_read(&pack->properties, &curdata, enddata) != 1)
+			{
+				if (pack->properties.array)
+					free(pack->properties.array);
+				if (pack)
+					free(pack);
+				pack = NULL; /* signal protocol error */
+				goto exit;
+			}
 		}
 	}
 exit:

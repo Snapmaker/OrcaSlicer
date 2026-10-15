@@ -50,6 +50,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/BitmapComboBox.hpp
     GUI/BonjourDialog.cpp
     GUI/BonjourDialog.hpp
+    GUI/BufferTexture.cpp
+    GUI/BufferTexture.hpp
     GUI/calib_dlg.cpp
     GUI/calib_dlg.hpp
     GUI/Calibration.cpp
@@ -201,8 +203,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/GLShader.hpp
     GUI/GLShadersManager.cpp
     GUI/GLShadersManager.hpp
+    GUI/GLSubTextureBindRenderer.cpp
+    GUI/GLSubTextureBindRenderer.hpp
     GUI/GLTexture.cpp
     GUI/GLTexture.hpp
+    GUI/GLToolbarBackgroundTextureCache.cpp
+    GUI/GLToolbarBackgroundTextureCache.hpp
     GUI/GLToolbar.cpp
     GUI/GLToolbar.hpp
     GUI/GUI_App.cpp
@@ -370,6 +376,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/ParamsPanel.hpp
     GUI/PartPlate.cpp
     GUI/PartPlate.hpp
+    GUI/PathData.cpp
+    GUI/PathData.hpp
+    GUI/PathRenderer.cpp
+    GUI/PathRenderer.hpp
     GUI/PhysicalPrinterDialog.cpp
     GUI/PhysicalPrinterDialog.hpp
     GUI/Plater.cpp
@@ -380,6 +390,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/Preferences.hpp
     GUI/PresetComboBoxes.cpp
     GUI/PresetComboBoxes.hpp
+    GUI/FilamentDropDown.cpp
+    GUI/FilamentDropDown.hpp
+    GUI/FilamentSort.cpp
+    GUI/FilamentSort.hpp
+    GUI/PlaterFilamentComboBox.cpp
+    GUI/PlaterFilamentComboBox.hpp
     GUI/PresetHints.cpp
     GUI/PresetHints.hpp
     GUI/PrinterCloudAuthDialog.cpp
@@ -623,6 +639,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/MKS.hpp
     Utils/NetworkAgent.cpp
     Utils/NetworkAgent.hpp
+    Utils/SnapLogClient.cpp
+    Utils/SnapLogClient.hpp
     Utils/Obico.cpp
     Utils/Obico.hpp
     Utils/OctoPrint.cpp
@@ -734,7 +752,7 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SLIC3R_GUI_SOURCES})
 encoding_check(libslic3r_gui)
 
 find_package(libnoise REQUIRED)
-target_link_libraries(libslic3r_gui libslic3r cereal::cereal imgui imguizmo minilzo GLEW::GLEW OpenGL::GL hidapi ${wxWidgets_LIBRARIES} glfw libcurl OpenSSL::SSL OpenSSL::Crypto noise::noise)
+target_link_libraries(libslic3r_gui libslic3r cereal::cereal imgui imguizmo minilzo GLEW::GLEW OpenGL::GL hidapi ${wxWidgets_LIBRARIES} glfw libcurl OpenSSL::SSL OpenSSL::Crypto noise::noise nanosvg)
 
 if (MSVC)
     target_link_libraries(libslic3r_gui Setupapi.lib)

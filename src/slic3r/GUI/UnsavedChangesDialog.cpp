@@ -1160,8 +1160,16 @@ wxString get_string_from_enum(const std::string& opt_key, const DynamicPrintConf
     const std::vector<std::string>& names = def.enum_labels;//ConfigOptionEnum<T>::get_enum_names();
     int val = 0;
 
-    if (idx >= 0)
-        val = dynamic_cast<const ConfigOptionInts*>(config.option(opt_key))->get_at(idx);
+    if (idx >= 0) {
+        const auto* values = dynamic_cast<const ConfigOptionInts*>(config.option(opt_key));
+        if (values == nullptr || size_t(idx) >= values->size())
+            return _L("Undef");
+        val = values->values[idx];
+        // A nil entry of a nullable enum array (e.g. an unchecked retraction
+        // override) is not a valid index into enum_labels.
+        if (values->nullable() && val == ConfigOptionInts::nil_value())
+            return _L("Undef");
+    }
     else
         val = config.option(opt_key)->getInt();
 
@@ -1177,7 +1185,8 @@ wxString get_string_from_enum(const std::string& opt_key, const DynamicPrintConf
             }
         return _L("Undef");
     }
-    return from_u8(_utf8(names[val]));
+    // Unknown int values (older presets, stray entries) must not index out of enum_labels.
+    return (val >= 0 && size_t(val) < names.size()) ? from_u8(_utf8(names[val])) : _L("Undef");
 }
 
 // BBS
@@ -2321,7 +2330,19 @@ void DiffPresetDialog::update_tree()
 
         m_tree->model->AddPreset(type, "\"" + from_u8(left_preset->name) + "\" vs \"" + from_u8(right_preset->name) + "\"", left_pt);
 
-        const std::map<wxString, std::string>& category_icon_map = wxGetApp().get_tab(type)->get_category_icon_map();
+        // No tab is registered for some preset types (e.g. TYPE_SLA_PRINT) - the
+        // map may not exist at all.
+        static const std::map<wxString, std::string> no_category_icons;
+        Tab* type_tab = wxGetApp().get_tab(type);
+        const std::map<wxString, std::string>& category_icon_map = type_tab ? type_tab->get_category_icon_map() : no_category_icons;
+        // The map is keyed by the tab's page titles, which don't always contain the
+        // keys used below (the printer tab's "General" page is named "Basic
+        // information", and an option's category need not be a page title at all) -
+        // a missing entry must not throw out_of_range.
+        auto category_icon = [&category_icon_map](const wxString& category) {
+            const auto it = category_icon_map.find(category);
+            return it == category_icon_map.end() ? std::string() : it->second;
+        };
 
         // process changes of extruders count
         if (type == Preset::TYPE_PRINTER && left_pt == ptFFF &&
@@ -2330,7 +2351,10 @@ void DiffPresetDialog::update_tree()
             wxString left_val = from_u8((boost::format("%1%") % left_config.opt<ConfigOptionStrings>("extruder_colour")->values.size()).str());
             wxString right_val = from_u8((boost::format("%1%") % right_congig.opt<ConfigOptionStrings>("extruder_colour")->values.size()).str());
 
-            m_tree->Append("extruders_count", type, "General", "Capabilities", local_label, left_val, right_val, category_icon_map.at("General"));
+            std::string extruders_icon = category_icon("Basic information");
+            if (extruders_icon.empty())
+                extruders_icon = category_icon("General");
+            m_tree->Append("extruders_count", type, "General", "Capabilities", local_label, left_val, right_val, extruders_icon);
         }
 
         for (const std::string& opt_key : dirty_options) {
@@ -2347,7 +2371,7 @@ void DiffPresetDialog::update_tree()
                 continue;
             }
             m_tree->Append(opt_key, type, option.category_local, option.group_local, option.label_local,
-                left_val, right_val, category_icon_map.at(option.category));
+                left_val, right_val, category_icon(option.category));
         }
     }
 

@@ -64,12 +64,8 @@
   "filament_z_hop_types": [
     "Slope Lift"
   ],
-  "graphic_effect_plate_temp": [
-    "80"
-  ],
-  "graphic_effect_plate_temp_initial_layer": [
-    "80"
-  ],
+  "graphic_effect_plate_temp": ["0"],
+  "graphic_effect_plate_temp_initial_layer": ["0"],
   "hot_plate_temp": [
     "80"
   ],
@@ -85,9 +81,7 @@
   "overhang_fan_threshold": [
     "10%"
   ],
-  "pressure_advance": [
-    "0.04"
-  ],
+  "pressure_advance": ["0.04", "0.05"],
   "slow_down_min_speed": [
     "10"
   ],
@@ -112,9 +106,7 @@
   "enable_pressure_advance": [
     "1"
   ],
-  "filament_flow_support": [
-    "standard"
-  ],
+  "filament_flow_support": ["standard", "high_flow"],
   "filament_max_volumetric_speed": [
     "10"
   ],

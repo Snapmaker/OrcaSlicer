@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2017, 2020 IBM Corp. and others
+ * Copyright (c) 2017, 2024 IBM Corp. and others
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v2.0
@@ -38,7 +38,7 @@ static struct nameToType
   {MQTTPROPERTY_CODE_CORRELATION_DATA, MQTTPROPERTY_TYPE_BINARY_DATA},
   {MQTTPROPERTY_CODE_SUBSCRIPTION_IDENTIFIER, MQTTPROPERTY_TYPE_VARIABLE_BYTE_INTEGER},
   {MQTTPROPERTY_CODE_SESSION_EXPIRY_INTERVAL, MQTTPROPERTY_TYPE_FOUR_BYTE_INTEGER},
-  {MQTTPROPERTY_CODE_ASSIGNED_CLIENT_IDENTIFER, MQTTPROPERTY_TYPE_UTF_8_ENCODED_STRING},
+  {MQTTPROPERTY_CODE_ASSIGNED_CLIENT_IDENTIFIER, MQTTPROPERTY_TYPE_UTF_8_ENCODED_STRING},
   {MQTTPROPERTY_CODE_SERVER_KEEP_ALIVE, MQTTPROPERTY_TYPE_TWO_BYTE_INTEGER},
   {MQTTPROPERTY_CODE_AUTHENTICATION_METHOD, MQTTPROPERTY_TYPE_UTF_8_ENCODED_STRING},
   {MQTTPROPERTY_CODE_AUTHENTICATION_DATA, MQTTPROPERTY_TYPE_BINARY_DATA},
@@ -86,7 +86,7 @@ int MQTTProperty_getType(enum MQTTPropertyCodes value)
 }
 
 
-int MQTTProperties_len(MQTTProperties* props)
+int MQTTProperties_len(const MQTTProperties* props)
 {
   /* properties length is an mbi */
   return (props == NULL) ? 1 : props->length + MQTTPacket_VBIlen(props->length);
@@ -103,6 +103,11 @@ int MQTTProperties_add(MQTTProperties* props, const MQTTProperty* prop)
 {
   int rc = 0, type;
 
+  if (props == NULL)
+  {
+    rc = PAHO_MEMORY_ERROR;
+    goto exit;
+  }
   if ((type = MQTTProperty_getType(prop->identifier)) < 0)
   {
 	/*StackTrace_printStack(stdout);*/
@@ -117,7 +122,16 @@ int MQTTProperties_add(MQTTProperties* props, const MQTTProperty* prop)
   else if (props->count == props->max_count)
   {
     props->max_count += 10;
-    props->array = realloc(props->array, sizeof(MQTTProperty) * props->max_count);
+    void* newPtr = realloc(props->array, sizeof(MQTTProperty) * props->max_count);
+    if (newPtr == NULL)
+    {
+      free(props->array);
+      props->array = NULL;
+    }
+    else
+    {
+      props->array = newPtr;
+    }
   }
 
   if (props->array)
@@ -240,6 +254,7 @@ int MQTTProperty_read(MQTTProperty* prop, char** pptr, char* enddata)
   int type = -1,
     len = -1;
 
+  memset(prop, 0, sizeof(MQTTProperty));
   prop->identifier = readChar(pptr);
   type = MQTTProperty_getType(prop->identifier);
   if (type >= MQTTPROPERTY_TYPE_BYTE && type <= MQTTPROPERTY_TYPE_UTF_8_STRING_PAIR)
@@ -318,7 +333,18 @@ int MQTTProperties_read(MQTTProperties* properties, char** pptr, char* enddata)
     	if (properties->max_count == 10)
     	  properties->array = malloc(sizeof(MQTTProperty) * properties->max_count);
     	else
-    	  properties->array = realloc(properties->array, sizeof(MQTTProperty) * properties->max_count);
+      {
+        void* newPtr = realloc(properties->array, sizeof(MQTTProperty) * properties->max_count);
+        if (newPtr == NULL)
+        {
+          free(properties->array);
+        	properties->array = NULL;
+        }
+        else
+        {
+          properties->array = newPtr;
+        }
+      }
       }
       if (properties->array == NULL)
       {
@@ -355,7 +381,7 @@ struct {
   {MQTTPROPERTY_CODE_CORRELATION_DATA, "CORRELATION_DATA"},
   {MQTTPROPERTY_CODE_SUBSCRIPTION_IDENTIFIER, "SUBSCRIPTION_IDENTIFIER"},
   {MQTTPROPERTY_CODE_SESSION_EXPIRY_INTERVAL, "SESSION_EXPIRY_INTERVAL"},
-  {MQTTPROPERTY_CODE_ASSIGNED_CLIENT_IDENTIFER, "ASSIGNED_CLIENT_IDENTIFER"},
+  {MQTTPROPERTY_CODE_ASSIGNED_CLIENT_IDENTIFIER, "ASSIGNED_CLIENT_IDENTIFIER"},
   {MQTTPROPERTY_CODE_SERVER_KEEP_ALIVE, "SERVER_KEEP_ALIVE"},
   {MQTTPROPERTY_CODE_AUTHENTICATION_METHOD, "AUTHENTICATION_METHOD"},
   {MQTTPROPERTY_CODE_AUTHENTICATION_DATA, "AUTHENTICATION_DATA"},
@@ -431,7 +457,7 @@ MQTTProperties MQTTProperties_copy(const MQTTProperties* props)
   MQTTProperties result = MQTTProperties_initializer;
 
   FUNC_ENTRY;
-  for (i = 0; i < props->count; ++i)
+  for (i = 0; props != NULL && i < props->count; ++i)
   {
 	int rc = 0;
 
@@ -444,12 +470,12 @@ MQTTProperties MQTTProperties_copy(const MQTTProperties* props)
 }
 
 
-int MQTTProperties_hasProperty(MQTTProperties *props, enum MQTTPropertyCodes propid)
+int MQTTProperties_hasProperty(const MQTTProperties *props, enum MQTTPropertyCodes propid)
 {
 	int i = 0;
 	int found = 0;
 
-	for (i = 0; i < props->count; ++i)
+	for (i = 0; props != NULL && i < props->count; ++i)
 	{
 		if (propid == props->array[i].identifier)
 		{
@@ -461,12 +487,12 @@ int MQTTProperties_hasProperty(MQTTProperties *props, enum MQTTPropertyCodes pro
 }
 
 
-int MQTTProperties_propertyCount(MQTTProperties *props, enum MQTTPropertyCodes propid)
+int MQTTProperties_propertyCount(const MQTTProperties *props, enum MQTTPropertyCodes propid)
 {
 	int i = 0;
 	int count = 0;
 
-	for (i = 0; i < props->count; ++i)
+	for (i = 0; props != NULL && i < props->count; ++i)
 	{
 		if (propid == props->array[i].identifier)
 			count++;
@@ -475,13 +501,13 @@ int MQTTProperties_propertyCount(MQTTProperties *props, enum MQTTPropertyCodes p
 }
 
 
-int MQTTProperties_getNumericValueAt(MQTTProperties *props, enum MQTTPropertyCodes propid, int index)
+int64_t MQTTProperties_getNumericValueAt(const MQTTProperties *props, enum MQTTPropertyCodes propid, int index)
 {
 	int i = 0;
-	int rc = -9999999;
+	int64_t rc = -9999999;
 	int cur_index = 0;
 
-	for (i = 0; i < props->count; ++i)
+	for (i = 0; props != NULL && i < props->count; ++i)
 	{
 		int id = props->array[i].identifier;
 
@@ -515,19 +541,19 @@ int MQTTProperties_getNumericValueAt(MQTTProperties *props, enum MQTTPropertyCod
 }
 
 
-int MQTTProperties_getNumericValue(MQTTProperties *props, enum MQTTPropertyCodes propid)
+int64_t MQTTProperties_getNumericValue(const MQTTProperties *props, enum MQTTPropertyCodes propid)
 {
 	return MQTTProperties_getNumericValueAt(props, propid, 0);
 }
 
 
-MQTTProperty* MQTTProperties_getPropertyAt(MQTTProperties *props, enum MQTTPropertyCodes propid, int index)
+MQTTProperty* MQTTProperties_getPropertyAt(const MQTTProperties *props, enum MQTTPropertyCodes propid, int index)
 {
 	int i = 0;
 	MQTTProperty* result = NULL;
 	int cur_index = 0;
 
-	for (i = 0; i < props->count; ++i)
+	for (i = 0; props != 0 && i < props->count; ++i)
 	{
 		int id = props->array[i].identifier;
 
@@ -546,7 +572,7 @@ MQTTProperty* MQTTProperties_getPropertyAt(MQTTProperties *props, enum MQTTPrope
 }
 
 
-MQTTProperty* MQTTProperties_getProperty(MQTTProperties *props, enum MQTTPropertyCodes propid)
+MQTTProperty* MQTTProperties_getProperty(const MQTTProperties *props, enum MQTTPropertyCodes propid)
 {
 	return MQTTProperties_getPropertyAt(props, propid, 0);
 }

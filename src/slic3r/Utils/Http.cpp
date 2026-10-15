@@ -516,10 +516,11 @@ void Http::priv::http_perform()
 				}
 			}
 		}
-		//BBS check error http status code
-		else if (http_status >= 400) {
-			if (errorfn) { errorfn(std::move(buffer), std::string(), http_status); }
-		}
+        //BBS check error http status code (any non-2xx, including 1xx/3xx
+        // that survived redirect following, must fire the error callback)
+        else {
+            if (errorfn) { errorfn(std::move(buffer), std::string(), http_status); }
+        }
 	}
 }
 
@@ -848,7 +849,8 @@ std::string Http::tls_system_cert_store()
     std::string ret;
 
 #ifdef OPENSSL_CERT_OVERRIDE
-    ret = ::getenv(X509_get_default_cert_file_env());
+    if (const char* cert_file = ::getenv(X509_get_default_cert_file_env()))
+        ret = cert_file;
 #endif
 
     return ret;

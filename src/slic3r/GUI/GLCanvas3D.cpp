@@ -2543,6 +2543,15 @@ void GLCanvas3D::toggle_selected_volume_visibility(bool selected_visible)
             }
         }
     }
+
+    // A scene reload while measuring or assembling copies visibility into the
+    // picking state. Keep both in sync when restoring the other volumes too.
+    // Use the volume ID because multiple instances may share a mesh raycaster.
+    for (const auto& raycaster : *get_raycasters_for_picking(SceneRaycaster::EType::Volume)) {
+        const int volume_idx = SceneRaycaster::decode_id(SceneRaycaster::EType::Volume, raycaster->get_id());
+        if (volume_idx >= 0 && static_cast<size_t>(volume_idx) < m_volumes.volumes.size())
+            raycaster->set_active(m_volumes.volumes[volume_idx]->is_active);
+    }
 }
 
 void GLCanvas3D::toggle_sla_auxiliaries_visibility(bool visible, const ModelObject *mo, int instance_idx)
@@ -2727,6 +2736,12 @@ BoundingBoxf3 GLCanvas3D::volumes_bounding_box(bool current_plate_only) const
     for (const GLVolume *volume : m_volumes.volumes) {
         if (!m_apply_zoom_to_volumes_filter || ((volume != nullptr) && volume->zoom_to_volumes)) {
             const auto v_bb     = volume->transformed_bounding_box();
+            // BBS: never let corrupted volumes (astronomic or non-finite AABBs)
+            // blow up the camera-fit bounding box and blank the whole viewport.
+            // 1e8 mm = 100 km, far above any legitimate printer scene.
+            if (!v_bb.min.allFinite() || !v_bb.max.allFinite() || v_bb.min.cwiseAbs().maxCoeff() > 1e8 ||
+                v_bb.max.cwiseAbs().maxCoeff() > 1e8 || (v_bb.max - v_bb.min).maxCoeff() > 1e8)
+                continue;
             if (is_limit && !expand_part_plate_list_box.overlap(v_bb))
                 continue;
             bb.merge(v_bb);

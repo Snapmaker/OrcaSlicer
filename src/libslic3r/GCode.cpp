@@ -5507,9 +5507,47 @@ LayerResult GCode::process_layer(const Print& print,
         }
     }
 
+    // Tower-free priming follows the actual export order. Keep overrides local so repeated
+    // exports and sequential object instances cannot reuse an earlier priming allocation.
+    WipingExtrusions tower_free_wiping;
+    tower_free_wiping.set_layer_tools_ptr(&layer_tools);
+    WipingExtrusions& layer_wiping = m_wipe_tower ? const_cast<LayerTools&>(layer_tools).wiping_extrusions() : tower_free_wiping;
+    std::map<unsigned int, float> infill_purge_volumes;
+    if (!m_wipe_tower && !layer_tools.has_local_z_subdivision && m_writer.extruder() != nullptr) {
+        std::vector<unsigned int> priming_order = layer_tools.extruders;
+        unsigned int              previous      = m_writer.extruder()->id();
+        auto                      first         = std::find(priming_order.begin(), priming_order.end(), previous);
+        if (first != priming_order.end())
+            std::rotate(priming_order.begin(), first, priming_order.end());
+        const auto&  matrix = print.config().flush_volumes_matrix.values;
+        const size_t count  = size_t(std::sqrt(matrix.size()) + EPSILON);
+        for (unsigned int next : priming_order) {
+            if (next != previous && !print.config().filament_soluble.get_at(previous) && !print.config().filament_soluble.get_at(next) &&
+                !print.config().filament_is_support.get_at(previous) && !print.config().filament_is_support.get_at(next)) {
+                float requested = float(print.config().prime_volume.value);
+                if (print.config().single_extruder_multi_material || print.is_BBL_printer())
+                    requested = previous < count && next < count ?
+                                    float(matrix[previous * count + next] * print.config().flush_multiplier.value) :
+                                    0.f;
+                float remaining = requested;
+                for (const auto& item : layers) {
+                    if (item.object_layer == nullptr)
+                        continue;
+                    const PrintObject& object = *item.original_object;
+                    const size_t       begin  = single_object_instance_idx == size_t(-1) ? 0 : single_object_instance_idx;
+                    const size_t       end    = single_object_instance_idx == size_t(-1) ? object.instances().size() : begin + 1;
+                    for (size_t copy = begin; copy < end; ++copy)
+                        remaining = layer_wiping.mark_infill_priming(print, *item.object_layer, object, copy, next, remaining);
+                }
+                infill_purge_volumes[next] = requested - remaining;
+            }
+            previous = next;
+        }
+    }
+
     // Group extrusions by an extruder, then by an object, an island and a region.
     std::map<unsigned int, std::vector<ObjectByExtruder>> by_extruder;
-    bool is_anything_overridden = const_cast<LayerTools&>(layer_tools).wiping_extrusions().is_anything_overridden();
+    bool                                                  is_anything_overridden = layer_wiping.is_anything_overridden();
     const double nozzle_0_mm = m_config.nozzle_diameter.values.empty() ? 0.4 : m_config.nozzle_diameter.get_at(0);
     const double pointillism_pixel_size_cfg = std::max(0.0, double(m_config.mixed_filament_pointillism_pixel_size.value));
     const double pointillism_segment_len_mm = pointillism_pixel_size_cfg > EPSILON ?
@@ -5827,7 +5865,7 @@ LayerResult GCode::process_layer(const Print& print,
                 bool interface_dontcare = object.config().support_interface_filament.value == 0;
 
                 // BBS: apply wiping overridden extruders
-                WipingExtrusions& wiping_extrusions = const_cast<LayerTools&>(layer_tools).wiping_extrusions();
+                WipingExtrusions& wiping_extrusions = layer_wiping;
                 if (support_dontcare) {
                     int extruder_override = wiping_extrusions.get_support_extruder_overrides(&object);
                     if (extruder_override >= 0) {
@@ -6181,10 +6219,9 @@ LayerResult GCode::process_layer(const Print& print,
                         }
                         printing_extruders.clear();
                         if (is_anything_overridden) {
-                            entity_overrides = const_cast<LayerTools&>(layer_tools)
-                                                   .wiping_extrusions()
-                                                   .get_extruder_overrides(filtered_extrusions, layer_to_print.original_object, correct_extruder_id,
-                                                                           layer_to_print.object()->instances().size());
+                            entity_overrides = layer_wiping.get_extruder_overrides(filtered_extrusions, layer_to_print.original_object,
+                                                                                   correct_extruder_id,
+                                                                                   layer_to_print.object()->instances().size());
                             if (entity_overrides == nullptr) {
                                 printing_extruders.emplace_back(correct_extruder_id);
                             } else {
@@ -6727,7 +6764,7 @@ LayerResult GCode::process_layer(const Print& print,
                 gcode_toolchange = m_wipe_tower->tool_change(*this, extruder_id, extruder_id == layer_extruders.back());
             }
         } else {
-            gcode_toolchange = this->set_extruder(extruder_id, print_z);
+            gcode_toolchange = this->set_extruder(extruder_id, print_z, false, infill_purge_volumes[extruder_id]);
         }
         if (!gcode_toolchange.empty()) {
             // Disable vase mode for layers that has toolchange
@@ -6927,7 +6964,7 @@ LayerResult GCode::process_layer(const Print& print,
                     ExtrusionEntityCollection support_eec;
 
                     // BBS
-                    WipingExtrusions& wiping_extrusions  = const_cast<LayerTools&>(layer_tools).wiping_extrusions();
+                    WipingExtrusions& wiping_extrusions  = layer_wiping;
                     bool              support_overridden = wiping_extrusions.is_support_overridden(layer_to_print.original_object);
                     bool support_intf_overridden = wiping_extrusions.is_support_interface_overridden(layer_to_print.original_object);
 
@@ -9035,7 +9072,7 @@ std::string GCode::retract(bool toolchange, bool is_last_retraction, LiftType li
     return gcode;
 }
 
-std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool by_object)
+std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool by_object, float infill_purge_volume)
 {
     if (!m_writer.need_toolchange(extruder_id))
         return "";
@@ -9139,6 +9176,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         // ERCF_v2 with a filament cutter or Filametrix can take advantage of it)
         wipe_volume = flush_matrix[previous_extruder_id * number_of_extruders + extruder_id];
         wipe_volume *= m_config.flush_multiplier;
+        wipe_volume = std::max(0.f, wipe_volume - infill_purge_volume);
 
         old_filament_e_feedrate = (int) (60.0 * get_value_at(m_config, m_config.filament_max_volumetric_speed, ConfigFlowDomain::Filament, previous_extruder_id) / filament_area);
         old_filament_e_feedrate = old_filament_e_feedrate == 0 ? 100 : old_filament_e_feedrate;

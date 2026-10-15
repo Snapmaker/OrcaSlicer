@@ -8575,6 +8575,9 @@ private:
     size_t m_task_seq = 0;
     // param 0: should call run_ui_tasks
     // param 1: should backup current project
+    // contract: invoked with m_mutex held (worker); must not re-enter this
+    // manager. duplicate param-0 calls are fine: run_ui_tasks() drains the
+    // whole queue, extras are no-ops
     std::function<void(int)> m_post_callback;
     long m_interval = 1 * 60;
     boost::system_time m_next_backup;

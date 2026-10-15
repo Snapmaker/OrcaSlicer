@@ -6335,10 +6335,12 @@ void PrintConfigDef::init_fff_params()
     def = this->add("flush_into_infill", coBool);
     def->category = L("Flush options");
     def->label = L("Flush into objects' infill");
-    def->tooltip = L("Purging after filament change will be done inside objects' infills. "
-        "This may lower the amount of waste and decrease the print time. "
-        "If the walls are printed with transparent filament, the mixed color infill will be seen outside. "
-        "It will not take effect, unless the prime tower is enabled.");
+    def->tooltip  = L("Purging after filament change will be done inside objects' infills. "
+                      "This may lower the amount of waste and decrease the print time. "
+                      "If the walls are printed with transparent filament, the mixed color infill will be seen outside. "
+                      "Also works without a prime tower: compatible sparse infill is printed first after a filament change. "
+                      "Any remaining purge volume is handled by the printer's filament change G-code. "
+                      "Soluble and support filaments are not used for infill priming.");
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("flush_into_support", coBool);

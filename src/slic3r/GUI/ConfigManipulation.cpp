@@ -869,9 +869,11 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
 
     toggle_line("single_extruder_multi_material_priming", !bSEMM && have_prime_tower && !is_BBL_Printer);
 
-    toggle_line("prime_volume",have_prime_tower && (!purge_in_primetower || !bSEMM));
+    toggle_line("prime_volume",
+                (have_prime_tower && (!purge_in_primetower || !bSEMM)) || (!bSEMM && config->opt_bool("flush_into_infill")));
 
-    for (auto el : {"flush_into_infill", "flush_into_support", "flush_into_objects"})
+    toggle_field("flush_into_infill", true);
+    for (auto el : {"flush_into_support", "flush_into_objects"})
         toggle_field(el, have_prime_tower);
 
     bool have_avoid_crossing_perimeters = config->opt_bool("reduce_crossing_wall");

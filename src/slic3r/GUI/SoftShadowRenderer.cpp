@@ -53,7 +53,7 @@ constexpr double FOOTPRINT_MARGIN_TEXELS = 2.0;
 constexpr double SHADOW_MARGIN_FILTER_TEXELS = 1.0;
 constexpr int BLOCKER_SAMPLES_HQ = 16;
 constexpr int PCF_SAMPLES_HQ = 32;
-// While dragging the mask keeps full resolution (no blur) and only uses fewer samples
+// While dragging the mask uses fewer samples, only when the full quality mask is measured to be expensive
 constexpr int BLOCKER_SAMPLES_LQ = 8;
 constexpr int PCF_SAMPLES_LQ = 16;
 // Object shadows are shaded at half resolution and upsampled by depth and normal
@@ -538,7 +538,8 @@ bool SoftShadowRenderer::CreateShadowMapResources()
     GLuint framebuffer = 0;
     glsafe(::glGenFramebuffers(1, &framebuffer));
     _shadowFramebuffer = static_cast<unsigned int>(framebuffer);
-    glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer));
+    // Fix: bound to both targets, so glReadBuffer below applies to this framebuffer instead of the window one
+    glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, framebuffer));
     glsafe(::glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, _shadowDepthTexture, 0));
     glsafe(::glDrawBuffer(GL_NONE));
     glsafe(::glReadBuffer(GL_NONE));
@@ -679,10 +680,11 @@ bool SoftShadowRenderer::CollectCasters(const SoftShadowFrameInput& input)
     return !_casters.empty();
 }
 
-std::size_t SoftShadowRenderer::ComputeSignature(bool interactive) const
+std::size_t SoftShadowRenderer::ComputeSignature() const
 {
+    // Fix: the drag state is not hashed, so a click without moving no longer rebuilds twice;
+    // the end of a real drag is still caught by the settled check in Update()
     std::size_t seed = 0;
-    boost::hash_combine(seed, interactive);
     boost::hash_combine(seed, _casters.size());
     for (const GLVolume* volume : _casters)
     {
@@ -908,6 +910,9 @@ bool SoftShadowRenderer::RenderShadowMap()
 
     shader->start_using();
     shader->set_uniform("projection_matrix", _lightProjection);
+    // Performance: render() re-reads the filament colors from the config per volume, read them once per map
+    ModelObjectPtrs& modelObjects = wxGetApp().model().objects;
+    std::vector<ColorRGBA> extruderColors = ::get_extruders_colors();
     for (GLVolume* volume : _casters)
     {
         shader->set_uniform("view_model_matrix", _lightView * volume->world_matrix());
@@ -921,7 +926,7 @@ bool SoftShadowRenderer::RenderShadowMap()
         // simple_render picks the camera LOD level for unpainted meshes; force full detail (painted ones ignore it)
         const LODLevel cameraLod = volume->m_curLodLevel;
         volume->m_curLodLevel = LODLevel::High;
-        volume->render();
+        volume->simple_render(shader, modelObjects, extruderColors);
         volume->m_curLodLevel = cameraLod;
     }
     shader->stop_using();
@@ -1074,7 +1079,7 @@ bool SoftShadowRenderer::Update(const SoftShadowFrameInput& input)
         return false;
     }
 
-    const std::size_t signature = ComputeSignature(input.interactive);
+    const std::size_t signature = ComputeSignature();
     const bool settled = _lastWasInteractive && !input.interactive;
     if (_maskValid && signature == _lastSignature && !settled)
         return true;
@@ -1184,7 +1189,8 @@ bool SoftShadowRenderer::EnsureSceneDepthResources(int width, int height)
     GLuint framebuffer = 0;
     glsafe(::glGenFramebuffers(1, &framebuffer));
     _sceneDepthFramebuffer = static_cast<unsigned int>(framebuffer);
-    glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer));
+    // Fix: bound to both targets, so glReadBuffer below applies to this framebuffer instead of the window one
+    glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, framebuffer));
     glsafe(::glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, format.attachment, GL_TEXTURE_2D, texture, 0));
     glsafe(::glDrawBuffer(GL_NONE));
     glsafe(::glReadBuffer(GL_NONE));

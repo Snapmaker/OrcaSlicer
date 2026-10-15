@@ -116,7 +116,7 @@ private:
     bool CreateShadowMapResources();
     bool CreateMaskResources();
     bool CollectCasters(const SoftShadowFrameInput& input);
-    std::size_t ComputeSignature(bool interactive) const;
+    std::size_t ComputeSignature() const;
     void FitLightFrustum(const BoundingBoxf3& fitBox);
     void UpdateLightFrustum(bool interactive);
     bool RenderShadowMap();

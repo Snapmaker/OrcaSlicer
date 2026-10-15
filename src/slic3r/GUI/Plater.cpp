@@ -20113,6 +20113,10 @@ void Plater::reset_with_confirm()
 // BBS: save logic
 int GUI::Plater::close_with_confirm(std::function<bool(bool)> second_check)
 {
+    // Session end: discard without dialog (see wxEVT_QUERY_END_SESSION handler).
+    if (wxGetApp().in_session_end())
+        return wxID_NO;
+
     if (up_to_date(false, false)) {
         if (second_check && !second_check(false)) return wxID_CANCEL;
         model().set_backup_path("");

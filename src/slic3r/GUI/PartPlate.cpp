@@ -963,28 +963,6 @@ void PartPlate::show_tooltip(const std::string tooltip)
     ImGui::PopStyleVar(2);
 }
 
-void PartPlate::RenderIconTooltip(int hoverAction)
-{
-    std::string tooltip;
-    switch (hoverAction)
-    {
-    case 1: tooltip = _u8L("Remove current plate (if not last one)"); break;
-    case 2: tooltip = _u8L("Auto orient objects on current plate"); break;
-    case 3: tooltip = _u8L("Arrange objects on current plate"); break;
-    case 4: tooltip = is_locked() ? _u8L("Unlock current plate") : _u8L("Lock current plate"); break;
-    case 5:
-        if (m_partplate_list != nullptr && m_partplate_list->render_plate_settings)
-            tooltip = _u8L("Customize current plate");
-        break;
-    case 6: tooltip = _u8L("Edit current plate name"); break;
-    case 7: tooltip = _u8L("Move plate to the front"); break;
-    default: break;
-    }
-
-    if (!tooltip.empty())
-        show_tooltip(tooltip);
-}
-
 void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
 {
 	GLShaderProgram* shader = wxGetApp().get_shader("printbed");
@@ -1007,18 +985,21 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
         if (!only_name) {
             if (hover_id == 1) {
                 render_icon_texture(m_del_icon.model, m_partplate_list->m_del_hovered_texture);
+                show_tooltip(_u8L("Remove current plate (if not last one)"));
             }
             else
                 render_icon_texture(m_del_icon.model, m_partplate_list->m_del_texture);
 
             if (hover_id == 2) {
                 render_icon_texture(m_orient_icon.model, m_partplate_list->m_orient_hovered_texture);
+                show_tooltip(_u8L("Auto orient objects on current plate"));
             }
             else
                 render_icon_texture(m_orient_icon.model, m_partplate_list->m_orient_texture);
 
             if (hover_id == 3) {
                 render_icon_texture(m_arrange_icon.model, m_partplate_list->m_arrange_hovered_texture);
+                show_tooltip(_u8L("Arrange objects on current plate"));
             }
             else
                 render_icon_texture(m_arrange_icon.model, m_partplate_list->m_arrange_texture);
@@ -1027,10 +1008,12 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
                 if (this->is_locked()) {
                     render_icon_texture(m_lock_icon.model,
                                         m_partplate_list->m_locked_hovered_texture);
+                    show_tooltip(_u8L("Unlock current plate"));
                 }
                 else {
                     render_icon_texture(m_lock_icon.model,
                                         m_partplate_list->m_lockopen_hovered_texture);
+                    show_tooltip(_u8L("Lock current plate"));
                 }
             } else {
                 if (this->is_locked())
@@ -1041,12 +1024,14 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
 
 			if (hover_id == 6) {
                 render_icon_texture(m_plate_name_edit_icon.model, m_partplate_list->m_plate_name_edit_hovered_texture);
+                show_tooltip(_u8L("Edit current plate name"));
 			}
 			else
                 render_icon_texture(m_plate_name_edit_icon.model, m_partplate_list->m_plate_name_edit_texture);
 
 			if (hover_id == 7) {
                 render_icon_texture(m_move_front_icon.model, m_partplate_list->m_move_front_hovered_texture);
+                show_tooltip(_u8L("Move plate to the front"));
             } else
                 render_icon_texture(m_move_front_icon.model, m_partplate_list->m_move_front_texture);
 
@@ -1059,6 +1044,7 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
                     else
                         render_icon_texture(m_plate_settings_icon.model, m_partplate_list->m_plate_settings_changed_hovered_texture);
 
+                    show_tooltip(_u8L("Customize current plate"));
                 } else {
                     if (!has_plate_settings)
                         render_icon_texture(m_plate_settings_icon.model, m_partplate_list->m_plate_settings_texture);
@@ -4990,19 +4976,6 @@ void PartPlateList::render(const Transform3d& view_matrix, const Transform3d& pr
                 (*it)->render(view_matrix, projection_matrix, bottom, only_body, false, PartPlate::HEIGHT_LIMIT_NONE, -1, render_cali, show_grid);
 		}
 	}
-}
-
-void PartPlateList::RenderHoverTooltip(int hoverId)
-{
-    if (hoverId < 0)
-        return;
-
-    const int plateIndex = hoverId / static_cast<int>(PartPlate::GRABBER_COUNT);
-    const int hoverAction = hoverId % static_cast<int>(PartPlate::GRABBER_COUNT);
-    if (plateIndex >= static_cast<int>(m_plate_list.size()) || m_plate_list[plateIndex] == nullptr)
-        return;
-
-    m_plate_list[plateIndex]->RenderIconTooltip(hoverAction);
 }
 
 /*int PartPlateList::select_plate_by_hover_id(int hover_id)

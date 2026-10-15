@@ -161,8 +161,12 @@ enum SupportMaterialInterfacePattern {
 
 // BBS
 enum SupportType {
-    stNormalAuto, stTreeAuto, stNormal, stTree
+    stNormalAuto, stTreeAuto, stNormal, stTree,
+    // Orca: breakaway fins beside the object, see Support/SupportFins.cpp.
+    stFins
 };
+enum FinSupportFallback { fsfNone, fsfTree, fsfNormal };
+
 inline bool is_tree(SupportType stype)
 {
     return std::set<SupportType>{stTreeAuto, stTree}.count(stype) != 0;
@@ -930,6 +934,17 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,               support_expansion))
     ((ConfigOptionFloats,              support_speed))
     ((ConfigOptionEnum<SupportMaterialStyle>, support_style))
+    // Orca: breakaway fin support (support_type == fins).
+    ((ConfigOptionFloat,               support_fin_spacing))
+    ((ConfigOptionFloat,               support_fin_thickness))
+    ((ConfigOptionFloat,               support_fin_tine_spacing))
+    ((ConfigOptionBool,                support_fin_tine_base_rows))
+    ((ConfigOptionFloat,               support_fin_tine_depth))
+    ((ConfigOptionFloat,               support_fin_height))
+    ((ConfigOptionBool,                support_fin_lean_side_only))
+    ((ConfigOptionFloat,               support_fin_cross_spacing))
+    ((ConfigOptionInt,                 support_fin_interface_layers))
+    ((ConfigOptionEnum<FinSupportFallback>, support_fin_fallback))
     // BBS
     //((ConfigOptionBool,                independent_support_layer_height))
     // Orca internal thick bridge

@@ -1869,8 +1869,14 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
 
                 // Prusa: Fixing crashes with invalid tip diameter or branch diameter
                 // https://github.com/prusa3d/PrusaSlicer/commit/96b3ae85013ac363cd1c3e98ec6b7938aeacf46d
-                if (is_tree(object->config().support_type.value)) {
-                    if (object->config().support_style == smsTreeOrganic ||
+                // Orca: fins stand on the bed; there is no raft path for them.
+                if (object->config().enable_support && object->config().support_type.value == stFins && object->config().raft_layers.value > 0)
+                    return { L("Fin support cannot be combined with a raft. Set raft layers to 0 or choose another support type."), object, "raft_layers" };
+
+                const bool fin_tree_fallback = object->config().support_type.value == stFins &&
+                                               object->config().support_fin_fallback.value == fsfTree;
+                if (is_tree(object->config().support_type.value) || fin_tree_fallback) {
+                    if (fin_tree_fallback || object->config().support_style == smsTreeOrganic ||
                         // Orca: use organic as default
                         object->config().support_style == smsDefault) {
                         if (warning) {

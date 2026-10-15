@@ -55,9 +55,10 @@ static constexpr int LEGEND_GRID_COLS = 4;
 // the 100% total yields 15%-85% for two colors and 15%-70% for three colors.
 // Manual search keeps the legacy 0%-100% range, then uses these same bounds
 // for its post-match advisory.
-static constexpr int kAutoMinComponentPercent      = 15;
-static constexpr int kAutoMaxPairComponentPercent  = 85;
-static constexpr int kAutoMaxMultiComponentPercent = 70;
+static constexpr int    kAutoMinComponentPercent      = 15;
+static constexpr int    kAutoMaxPairComponentPercent  = 85;
+static constexpr int    kAutoMaxMultiComponentPercent = 70;
+static constexpr size_t kMultiColorComponentCount     = 3;
 
 // UI-list cap: the number of source/palette color rows the legend renders. Past this cap
 // the tail colors are dropped (see load_palette_colors) and a deferred warning is shown once
@@ -2126,7 +2127,7 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
         for (const int weight : weights) {
             if (weight > 0) ++active_components;
         }
-        const int max_component_percent = active_components >= 3
+        const int max_component_percent = active_components >= kMultiColorComponentCount
                                               ? kAutoMaxMultiComponentPercent
                                               : kAutoMaxPairComponentPercent;
         bool outside_range = false;

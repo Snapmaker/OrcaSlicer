@@ -510,9 +510,14 @@ bool assemble_transform_is_sane(const Transform3d& transform)
         return false;
     if (transform.translation().cwiseAbs().maxCoeff() > ASSEMBLY_TRANSFORM_SANITY_LIMIT)
         return false;
-    // Abnormally scaled/degenerate linear part is treated as corrupt as well.
+    // Bound the overall scale before decomposition, then reject collapsed axes
+    // and linearly dependent columns. The norm alone cannot detect either.
     const double linear_norm = transform.linear().norm();
-    return linear_norm > 1e-6 && linear_norm < 1e6;
+    if (linear_norm <= 1e-6 || linear_norm >= 1e6)
+        return false;
+    // Singular values are non-negative, so valid mirrored transforms remain valid.
+    const Eigen::JacobiSVD<Eigen::Matrix3d> svd(transform.linear());
+    return svd.singularValues().minCoeff() > 1e-6;
 }
 
 void Model::InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects)

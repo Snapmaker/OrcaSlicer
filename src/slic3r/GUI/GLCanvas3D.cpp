@@ -2641,8 +2641,8 @@ BoundingBoxf3 GLCanvas3D::volumes_bounding_box(bool current_plate_only) const
             // BBS: never let corrupted volumes (astronomic or non-finite AABBs)
             // blow up the camera-fit bounding box and blank the whole viewport.
             // 1e8 mm = 100 km, far above any legitimate printer scene.
-            if (!v_bb.min.allFinite() || !v_bb.max.allFinite() ||
-                (v_bb.max - v_bb.min).maxCoeff() > 1e8)
+            if (!v_bb.min.allFinite() || !v_bb.max.allFinite() || v_bb.min.cwiseAbs().maxCoeff() > 1e8 ||
+                v_bb.max.cwiseAbs().maxCoeff() > 1e8 || (v_bb.max - v_bb.min).maxCoeff() > 1e8)
                 continue;
             if (is_limit && !expand_part_plate_list_box.overlap(v_bb))
                 continue;

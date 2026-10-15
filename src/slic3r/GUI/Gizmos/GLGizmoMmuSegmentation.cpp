@@ -332,7 +332,8 @@ bool GLGizmoMmuSegmentation::on_key_down_select_tool_type(int keyCode)
     if (selectedTool != m_current_tool)
     {
         const wchar_t oldTool = m_current_tool;
-        FinishPaintingInteraction();
+        // Keep the drag painting with the new tool as a separate stroke.
+        SplitPaintingStroke();
         m_current_tool = selectedTool;
         tool_changed(oldTool, m_current_tool);
     }
@@ -1012,7 +1013,8 @@ void GLGizmoMmuSegmentation::update_model_object()
 void GLGizmoMmuSegmentation::init_model_triangle_selectors()
 {
     const ModelObject *mo = m_c->selection_info()->model_object();
-    FinishPaintingInteraction();
+    // Model data replaces these selectors, so drop the active stroke instead of writing it back.
+    ResetPaintingStroke();
     DetachTriangleSelectorGlResources();
     m_triangle_selectors.clear();
     m_heightRangeIndices.clear();

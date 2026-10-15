@@ -416,6 +416,10 @@ protected:
     void DiscardPaintingPreviewsAndFlush();
     /** Ends one active stroke and persists it only when selector state actually changed. */
     void FinalizePaintingStroke(const wxString& actionName);
+    /** Commits the active stroke but keeps the pressed button, so the drag continues as a new stroke. */
+    void SplitPaintingStroke();
+    /** Drops the active stroke without writing it back; the pressed button keeps painting afterwards. */
+    void ResetPaintingStroke();
     /** Captures mouse input so an active stroke receives release events outside the canvas. */
     void CapturePaintingMouse();
     /** Releases mouse input when a stroke ends without a physical mouse-up event. */

@@ -359,7 +359,8 @@ void GLGizmoFuzzySkin::update_from_model_object(bool first_update)
     wxBusyCursor wait;
 
     const ModelObject *mo = m_c->selection_info()->model_object();
-    FinishPaintingInteraction();
+    // Model data replaces these selectors, so drop the active stroke instead of writing it back.
+    ResetPaintingStroke();
     DetachTriangleSelectorGlResources();
     m_triangle_selectors.clear();
 

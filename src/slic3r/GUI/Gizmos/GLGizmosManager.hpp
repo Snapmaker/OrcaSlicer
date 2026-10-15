@@ -253,6 +253,8 @@ public:
     bool handle_shortcut(int key);
 
     bool is_dragging() const;
+    /** Returns true while an undo/redo snapshot is being loaded into the gizmos. */
+    bool IsSerializing() const { return m_serializing; }
 
     /** Releases painter-owned buffers while a compatible OpenGL context is current. */
     void ReleasePainterGlResources();

@@ -134,6 +134,29 @@ void GLGizmoPainterBase::FinalizePaintingStroke(const wxString& actionName)
     m_finishingPaintingInteraction = false;
 }
 
+void GLGizmoPainterBase::SplitPaintingStroke()
+{
+    const Button pressedButton = m_button_down;
+    if (pressedButton == Button::None)
+    {
+        FinishPaintingInteraction();
+        return;
+    }
+
+    FinalizePaintingStroke(handle_snapshot_action_name(false, pressedButton));
+    m_button_down = pressedButton;
+}
+
+void GLGizmoPainterBase::ResetPaintingStroke()
+{
+    if (m_finishingPaintingInteraction)
+        return;
+
+    DiscardPaintingPreviewsAndFlush();
+    m_strokeHasCommittedState = false;
+    m_last_mouse_click = Vec2d::Zero();
+}
+
 void GLGizmoPainterBase::CapturePaintingMouse()
 {
     if (m_button_down == Button::None)
@@ -1380,6 +1403,9 @@ void GLGizmoPainterBase::on_set_state()
     }
     if (m_state == Off && m_old_state != Off) { // the gizmo was just turned Off
         m_parent.enable_picking(true);
+        // Undo/redo has already replaced the model, so the active stroke must not be written back.
+        if (m_parent.get_gizmos_manager().IsSerializing())
+            ResetPaintingStroke();
         FinishPaintingInteraction();
         // we are actually shutting down
         on_shutdown();

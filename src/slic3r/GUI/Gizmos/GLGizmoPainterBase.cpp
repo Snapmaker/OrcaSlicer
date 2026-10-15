@@ -1029,6 +1029,14 @@ bool GLGizmoPainterBase::gizmo_event(SLAGizmoEventType action, const Vec2d& mous
 
             assert(mesh_idx < int(m_triangle_selectors.size()));
             if (pointerTool) {
+                // Rebuild the preview at the click: no move event may have restored it after the last stroke.
+                if (action != SLAGizmoEventType::Dragging)
+                {
+                    const ProjectedMousePosition& clickPosition = projected_mouse_positions.front();
+                    m_triangle_selectors[mesh_idx]->UpdatePointerPreview(
+                        clickPosition.mesh_hit, static_cast<int>(clickPosition.facet_idx));
+                }
+
                 for (const ProjectedMousePosition& projectedMousePosition : projected_mouse_positions) {
                     assert(projectedMousePosition.mesh_idx == mesh_idx);
 
@@ -1060,6 +1068,17 @@ bool GLGizmoPainterBase::gizmo_event(SLAGizmoEventType action, const Vec2d& mous
                         const TriangleSelector::CleanupMode cleanupMode = m_tool_type == ToolType::BUCKET_FILL ?
                             TriangleSelector::CleanupMode::Deferred : TriangleSelector::CleanupMode::Immediate;
                         TriangleSelectorGUI& triangleSelector = *m_triangle_selectors[mesh_idx];
+                        // Rebuild the preview at the click: no move event may have restored it after the last stroke.
+                        if (action != SLAGizmoEventType::Dragging)
+                        {
+                            if (m_tool_type == ToolType::SMART_FILL)
+                                triangleSelector.seed_fill_select_triangles(
+                                    meshHit, facetIndex, trafoMatrixNotTranslate, clippingPlane, m_smart_fill_angle,
+                                    m_paint_on_overhangs_only ? m_highlight_by_angle_threshold_deg : 0.f, false);
+                            else
+                                triangleSelector.bucket_fill_select_triangles(
+                                    meshHit, facetIndex, clippingPlane, m_smart_fill_angle, true, false);
+                        }
                         const uint64_t stateRevisionBefore = triangleSelector.GetStateRevision();
                         triangleSelector.seed_fill_apply_on_triangles(new_state, cleanupMode);
                         m_strokeHasCommittedState |= triangleSelector.GetStateRevision() != stateRevisionBefore;
@@ -1205,6 +1224,8 @@ bool GLGizmoPainterBase::gizmo_event(SLAGizmoEventType action, const Vec2d& mous
       && m_button_down != Button::None) {
         const wxString actionName = handle_snapshot_action_name(shift_down, m_button_down);
         FinalizePaintingStroke(actionName);
+        // Finalizing cleared the hover preview; rebuild it here since macOS/Linux send no move after mouse-up.
+        gizmo_event(SLAGizmoEventType::Moving, mouse_position, shift_down, alt_down, control_down);
         return true;
     }
 

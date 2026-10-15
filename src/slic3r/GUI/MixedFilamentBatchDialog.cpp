@@ -2096,6 +2096,21 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
     const size_t num_physical = m_physical_colors.size();
     if (num_physical == 0) return;
 
+    // Manual matching may select a four-color subset and then remap recipe component
+    // IDs to their project-wide filament IDs. Those IDs can exceed the current physical
+    // slot count after unselected slots are removed. Size the advisory weight vector by
+    // the largest referenced component ID so remapped participants are not truncated.
+    size_t weight_count = num_physical;
+    for (const ColorMappingEntry& e : m_result.mappings) {
+        if (e.is_pure_recipe || !e.recipe.valid) continue;
+        weight_count = std::max(weight_count, size_t(e.recipe.component_a));
+        weight_count = std::max(weight_count, size_t(e.recipe.component_b));
+        if (!e.recipe.gradient_component_ids.empty()) {
+            for (const unsigned int id : MixedFilamentManager::decode_gradient_component_ids(e.recipe.gradient_component_ids))
+                weight_count = std::max(weight_count, size_t(id));
+        }
+    }
+
     // Collect EVERY over-threshold occurrence (target_filament_id — legend badge). No dedup
     // needed: is_pure_recipe mappings are skipped below, and the rest get unique ascending
     // ids from next_virtual_id++ (assign_batch_virtual_filament_ids), preserved through
@@ -2107,9 +2122,9 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
         if (e.is_pure_recipe) continue;
         if (!e.recipe.valid) continue;
         if (e.target_filament_id == 0) continue;
-        const auto weights = expand_color_match_recipe_weights(e.recipe, num_physical);
+        const auto weights = expand_color_match_recipe_weights(e.recipe, weight_count);
         bool over = false;
-        for (size_t i = 0; i < weights.size() && i < num_physical; ++i) {
+        for (size_t i = 0; i < weights.size(); ++i) {
             if (weights[i] > kManualAdvisoryMaxComponentPercent) { over = true; break; }
         }
         if (!over) continue;

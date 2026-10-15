@@ -23500,7 +23500,8 @@ std::vector<Vec2f> Plater::get_empty_cells(const Vec2f step, const BoundingBoxf&
     BoundingBoxf bbox;
     if (safe_area_2d.defined) {
         bbox = safe_area_2d;
-    } else {
+    }
+    else {
         BoundingBoxf3 build_volume = plate->get_build_volume();
         bbox = BoundingBoxf(Vec2d(build_volume.min.x(), build_volume.min.y()),
                             Vec2d(build_volume.max.x(), build_volume.max.y()));

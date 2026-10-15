@@ -17,7 +17,7 @@ namespace GUI {
 
 // Minimum grid capacity (rough cell count = floor(W/step_x) * floor(H/step_y))
 // for FillBed to take the fast grid path; otherwise fall back to the NFP arrange.
-// Empirical threshold (STUDIO-18064): NFP path is noticeably slow even with
+// Empirical threshold : NFP path is noticeably slow even with
 // only a few dozen candidate cells, so we prefer the grid path whenever the
 // bed/step ratio leaves room for a reasonable number of copies.
 static constexpr long long FILL_BED_GRID_PATH_MIN_CAPACITY = 50;
@@ -244,16 +244,15 @@ void FillBedJob::process(Ctl &ctl)
     // Reuse ap.inflation computed by update_selected_items_inflation for the step, so the spacing matches the NFP path.
     const ArrangePolygon &tmpl = m_selected.front();
     const float inflation_mm = unscaled<float>(tmpl.inflation);
-    const Vec2f step = unscaled<float>(get_extents(tmpl.poly).size())
-                       + 2.f * Vec2f(inflation_mm, inflation_mm);
+    const Vec2f step = unscaled<float>(get_extents(tmpl.poly).size()) + 2.f * Vec2f(inflation_mm, inflation_mm);
 
     // re-click consistency: pick path by grid capacity (stable across clicks).
     // Use double here so the floor() near-edge result is not perturbed by float rounding.
     // Use long long for the product so a (pathological) tiny step on a huge bed
     // cannot overflow signed int.
     const auto bed_size = get_extents(m_bedpts).size();
-    const double bed_w  = unscaled<double>(bed_size.x());
-    const double bed_h  = unscaled<double>(bed_size.y());
+    const double bed_w = unscaled<double>(bed_size.x());
+    const double bed_h = unscaled<double>(bed_size.y());
     const double step_x = double(step.x());
     const double step_y = double(step.y());
     const long long cells_x = (step_x > 0.0) ? (long long)std::floor(bed_w / step_x) : 0;
@@ -271,7 +270,6 @@ void FillBedJob::process(Ctl &ctl)
         );
         std::vector<Vec2f> empty_cells = Plater::get_empty_cells(step, safe_area_2d);
 
-        // STUDIO-16564:
         // Items in m_unselected with bed_idx == 0 have already been normalized to plate-0 LOCAL
         // coordinates in prepare(). They include both real objects and the virtual obstacles of
         // the current plate (excluded regions / wipe tower / non-preferred regions). These
@@ -279,18 +277,16 @@ void FillBedJob::process(Ctl &ctl)
         // Plater::get_empty_cells only takes effect for cur_plate == 0, for cur_plate > 0 it no
         // longer filters these regions.
         // Items with bed_idx > 0 are copies injected onto other plates by
-        // preprocess_*_areas(num_plates = MAX_NUM_PLATES), irrelevant to this fill bed run,
-        // skip them.
+        // preprocess_*_areas(num_plates = MAX_NUM_PLATES), irrelevant to this fill bed run, skip them.
         // Template instances in m_selected (priority > 0) use world coordinates, their bbox must
         // be stride-corrected before use.
-        // TODO: root-cause fix is to make Plater::get_empty_cells honor exclude regions for any plate.
-        PartPlateList &plist       = m_plater->get_partplate_list();
-        const int plate_cols       = plist.get_plate_cols();
-        const int cur_plate_index  = plist.get_curr_plate_index();
-        const int cur_col          = cur_plate_index % plate_cols;
-        const int cur_row          = cur_plate_index / plate_cols;
-        const coord_t stride_dx    = bed_stride_x(m_plater) * cur_col;
-        const coord_t stride_dy    = bed_stride_y(m_plater) * cur_row;
+        PartPlateList &plist = m_plater->get_partplate_list();
+        const int plate_cols = plist.get_plate_cols();
+        const int cur_plate_index = plist.get_curr_plate_index();
+        const int cur_col = cur_plate_index % plate_cols;
+        const int cur_row = cur_plate_index / plate_cols;
+        const coord_t stride_dx = bed_stride_x(m_plater) * cur_col;
+        const coord_t stride_dy = bed_stride_y(m_plater) * cur_row;
 
         std::vector<BoundingBoxf> occupied;
         auto add_occupied_local = [&](const ArrangePolygon &ap, bool needs_stride_correction) {
@@ -306,12 +302,12 @@ void FillBedJob::process(Ctl &ctl)
         size_t unsel_blocked = 0, tmpl_blocked = 0;
         for (const auto &ap : m_unselected) {
             if (ap.bed_idx != 0) continue;
-            add_occupied_local(ap, /*needs_stride_correction=*/false);
+            add_occupied_local(ap, false);
             ++unsel_blocked;
         }
         for (const auto &ap : m_selected) {
             if (ap.priority > 0) {
-                add_occupied_local(ap, /*needs_stride_correction=*/true);
+                add_occupied_local(ap, true);
                 ++tmpl_blocked;
             }
         }
@@ -369,13 +365,6 @@ void FillBedJob::process(Ctl &ctl)
                 ++skipped;
             }
         }
-
-        BOOST_LOG_TRIVIAL(debug) << "FillBedJob::process[grid]: selected=" << m_selected.size()
-            << ", unselected=" << m_unselected.size()
-            << ", inflation_mm=" << inflation_mm
-            << ", cells " << cells_before << "->" << empty_cells.size()
-            << " (blocked unsel=" << unsel_blocked << ", tmpl=" << tmpl_blocked << ")"
-            << ", placed=" << placed << ", skipped=" << skipped;
     }
     else
         arrangement::arrange(m_selected, m_unselected, m_bedpts, params);

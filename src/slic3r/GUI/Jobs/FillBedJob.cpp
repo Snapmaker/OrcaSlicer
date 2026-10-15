@@ -299,20 +299,14 @@ void FillBedJob::process(Ctl &ctl)
                 Vec2d(unscale<double>(sbb.max.x()), unscale<double>(sbb.max.y()))
             );
         };
-        size_t unsel_blocked = 0, tmpl_blocked = 0;
         for (const auto &ap : m_unselected) {
             if (ap.bed_idx != 0) continue;
             add_occupied_local(ap, false);
-            ++unsel_blocked;
         }
-        for (const auto &ap : m_selected) {
-            if (ap.priority > 0) {
+        for (const auto &ap : m_selected)
+            if (ap.priority > 0)
                 add_occupied_local(ap, true);
-                ++tmpl_blocked;
-            }
-        }
 
-        const size_t cells_before = empty_cells.size();
         if (!occupied.empty()) {
             const double half_x = step(0) / 2.0;
             const double half_y = step(1) / 2.0;
@@ -344,7 +338,7 @@ void FillBedJob::process(Ctl &ctl)
         // so subtract one stride here to turn the translation into plate-0 LOCAL first; that later
         // +stride cancels out back to WORLD, so the template ModelInstance can set_offset to its
         // original position.
-        size_t cell_idx = 0, placed = 0, skipped = 0;
+        size_t cell_idx = 0, placed = 0;
         for (size_t i = 0; i < m_selected.size(); ++i) {
             if (ctl.was_canceled()) break;
             if (m_selected[i].priority > 0) {
@@ -362,7 +356,6 @@ void FillBedJob::process(Ctl &ctl)
                 m_selected[i].itemid = static_cast<int>(placed);
             } else {
                 m_selected[i].bed_idx = -1;
-                ++skipped;
             }
         }
     }

@@ -1412,6 +1412,12 @@ private:
     bool PresentSceneCache();
     /** @brief Draws the cacheable View3D scene content directly into the current window framebuffer. */
     void RenderMainSceneContent(const Camera& camera, const MainSceneRenderParams& params);
+    /**
+     * @brief Shows the hovered plate icon tooltip outside of the cached scene.
+     * @param params Scene params of the current frame.
+     * @param oldPlateHoverId Plate hover id of the previous frame.
+     */
+    void RenderPlateIconTooltip(const MainSceneRenderParams& params, int oldPlateHoverId);
     /** @brief Draws the selection box after scene presentation with explicit depth and blend state. */
     void RenderSelectionBoxWithExplicitState();
     bool RenderPickingBuffer(const Camera& camera);

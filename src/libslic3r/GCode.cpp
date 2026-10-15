@@ -775,6 +775,12 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
             m_layer_idx, m_tool_change_idx, new_extruder_id, tcr.new_tool, tcr.initial_tool));
 
     std::string gcode;
+    if (gcodegen.m_curr_print->exclude_support_from_prime_tower() && tcr.initial_tool >= 0 &&
+        gcodegen.writer().need_toolchange(tcr.initial_tool)) {
+        // Tower records may extrude walls or ram before switching to their new tool.
+        // An excluded support nozzle must not execute those model-material moves.
+        gcode += gcodegen.set_extruder(unsigned(tcr.initial_tool), gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value);
+    }
 
     // Toolchangeresult.gcode assumes the wipe tower corner is at the origin (except for priming lines)
     // We want to rotate and shift all extrusions (gcode postprocessing) and starting and ending position
@@ -1335,6 +1341,8 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
                                               bool local_z_unplanned, double local_z_nominal_layer_z)
 {
     std::string gcode;
+    if (extruder_id >= 0 && gcodegen.m_curr_print && !gcodegen.m_curr_print->is_prime_tower_extruder(unsigned(extruder_id)))
+        return gcodegen.set_extruder(unsigned(extruder_id), gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value);
     auto realign_nominal_toolchange_idx = [&](int requested_extruder_id) {
         if (requested_extruder_id < 0 || m_layer_idx < 0 || m_layer_idx >= (int)m_tool_changes.size())
             return;
@@ -1595,6 +1603,11 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
     if (m_layer_idx >= (int) m_tool_changes.size())
         return gcode;
     if (!gcodegen.is_BBL_Printer()) {
+        if (gcodegen.m_curr_print->exclude_support_from_prime_tower() &&
+            (size_t(m_tool_change_idx) >= m_tool_changes[m_layer_idx].size() ||
+             (m_tool_changes[m_layer_idx][m_tool_change_idx].new_tool != extruder_id &&
+              m_tool_changes[m_layer_idx][m_tool_change_idx].initial_tool == extruder_id)))
+            return gcodegen.set_extruder(unsigned(extruder_id), gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value);
         if (gcodegen.writer().need_toolchange(extruder_id) || finish_layer) {
             if (m_layer_idx < (int) m_tool_changes.size()) {
                 if (!(size_t(m_tool_change_idx) < m_tool_changes[m_layer_idx].size()))
@@ -1660,6 +1673,12 @@ bool WipeTowerIntegration::is_empty_wipe_tower_gcode(GCode& gcodegen, int extrud
 {
     assert(m_layer_idx >= 0);
     if (m_layer_idx >= (int) m_tool_changes.size())
+        return true;
+
+    if (gcodegen.m_curr_print->exclude_support_from_prime_tower() &&
+        (size_t(m_tool_change_idx) >= m_tool_changes[m_layer_idx].size() ||
+         (m_tool_changes[m_layer_idx][m_tool_change_idx].new_tool != extruder_id &&
+          m_tool_changes[m_layer_idx][m_tool_change_idx].initial_tool == extruder_id)))
         return true;
 
     bool ignore_sparse = false;
@@ -2829,6 +2848,12 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
                                   tool_ordering.all_extruders().back() :
                                   // Don't skip the priming towers.
                                   tool_ordering.first_extruder();
+        if (has_wipe_tower && print.exclude_support_from_prime_tower() && !print.config().single_extruder_multi_material_priming) {
+            const auto last_tower_tool = std::find_if(tool_ordering.all_extruders().rbegin(), tool_ordering.all_extruders().rend(),
+                                                      [&print](unsigned int tool) { return print.is_prime_tower_extruder(tool); });
+            if (last_tower_tool != tool_ordering.all_extruders().rend())
+                initial_extruder_id = *last_tower_tool;
+        }
 
         // BBS: try to find the non-support filament extruder if is multi color and initial_extruder is support filament
         if (initial_extruder_id != static_cast<unsigned int>(-1)) {
@@ -6704,8 +6729,11 @@ LayerResult GCode::process_layer(const Print& print,
                                     extruder_id, m_skirt_done);
 
         std::string gcode_toolchange;
-        if (has_wipe_tower) {
-            if (!m_wipe_tower->is_empty_wipe_tower_gcode(*this, extruder_id, extruder_id == layer_extruders.back())) {
+        const auto  last_tower_tool    = std::find_if(layer_extruders.rbegin(), layer_extruders.rend(),
+                                                      [&print](unsigned int tool) { return print.is_prime_tower_extruder(tool); });
+        const bool  finish_tower_layer = last_tower_tool != layer_extruders.rend() && extruder_id == *last_tower_tool;
+        if (has_wipe_tower && print.is_prime_tower_extruder(extruder_id)) {
+            if (!m_wipe_tower->is_empty_wipe_tower_gcode(*this, extruder_id, finish_tower_layer)) {
                 if (need_insert_timelapse_gcode_for_traditional && !has_insert_timelapse_gcode) {
                     gcode += this->retract(false, false, LiftType::NormalLift);
                     m_writer.add_object_change_labels(gcode);
@@ -6724,7 +6752,10 @@ LayerResult GCode::process_layer(const Print& print,
                     }
                     has_insert_timelapse_gcode = true;
                 }
-                gcode_toolchange = m_wipe_tower->tool_change(*this, extruder_id, extruder_id == layer_extruders.back());
+                gcode_toolchange = m_wipe_tower->tool_change(*this, extruder_id, finish_tower_layer);
+            } else if (print.exclude_support_from_prime_tower()) {
+                // Returning from an excluded support tool may need no tower extrusion.
+                gcode_toolchange = this->set_extruder(extruder_id, print_z);
             }
         } else {
             gcode_toolchange = this->set_extruder(extruder_id, print_z);

@@ -118,6 +118,7 @@ public:
     bool						has_support = false;
     // Zero based extruder IDs, ordered to minimize tool switches.
     std::vector<unsigned int> 	extruders;
+    std::vector<unsigned int>   wipe_tower_extruders;
     bool                        preserve_extruder_order = false;
     // Purge overrides disable Local-Z emission for the entire shared print layer.
     bool                        has_local_z_subdivision = false;
@@ -249,6 +250,7 @@ private:
     std::unordered_map<uint128_t, std::vector<uint8_t>> m_tool_order_cache;
     const DynamicPrintConfig*  m_print_full_config = nullptr;
     const PrintConfig*         m_print_config_ptr = nullptr;
+    const Print*                                        m_print             = nullptr;
     const PrintObject*         m_print_object_ptr = nullptr;
     bool                       m_is_BBL_printer = false;
     // Mixed filament support: pointer to manager (owned by Print) and

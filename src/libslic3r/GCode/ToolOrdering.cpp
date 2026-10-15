@@ -350,6 +350,7 @@ ToolOrdering::ToolOrdering(const PrintObject &object, unsigned int first_extrude
     m_is_BBL_printer = object.print()->is_BBL_printer();
     m_print_full_config = &object.print()->full_print_config();
     m_print_config_ptr = &object.print()->config();
+    m_print             = object.print();
     m_print_object_ptr = &object;
     // Mixed filament support.
     m_mixed_mgr   = &object.print()->mixed_filament_manager();
@@ -420,6 +421,7 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
     m_is_BBL_printer = print.is_BBL_printer();
     m_print_full_config = &print.full_print_config();
     m_print_config_ptr = &print.config();
+    m_print             = &print;
     // Mixed filament support.
     m_mixed_mgr   = &print.mixed_filament_manager();
     m_num_physical = print.config().filament_diameter.size();
@@ -1078,15 +1080,29 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
     if (m_layer_tools.empty())
         return;
 
+    for (LayerTools& lt : m_layer_tools) {
+        lt.wipe_tower_extruders.clear();
+        for (unsigned int tool : lt.extruders)
+            if (m_print->is_prime_tower_extruder(tool))
+                lt.wipe_tower_extruders.push_back(tool);
+    }
+    if (m_print->exclude_support_from_prime_tower() && !m_print->has_wipe_tower()) {
+        for (LayerTools& lt : m_layer_tools) {
+            lt.wipe_tower_partitions = 0;
+            lt.has_wipe_tower        = false;
+        }
+        return;
+    }
+
     // Count the minimum number of tool changes per layer.
     size_t last_extruder = size_t(-1);
     for (LayerTools &lt : m_layer_tools) {
-        lt.wipe_tower_partitions = lt.extruders.size();
-        if (! lt.extruders.empty()) {
-            if (last_extruder == size_t(-1) || last_extruder == lt.extruders.front())
+        lt.wipe_tower_partitions = lt.wipe_tower_extruders.size();
+        if (!lt.wipe_tower_extruders.empty()) {
+            if (last_extruder == size_t(-1) || last_extruder == lt.wipe_tower_extruders.front())
                 // The first extruder on this layer is equal to the current one, no need to do an initial tool change.
                 -- lt.wipe_tower_partitions;
-            last_extruder = lt.extruders.back();
+            last_extruder = lt.wipe_tower_extruders.back();
         }
     }
 
@@ -1118,21 +1134,22 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
                     for (j = i + 1; j < m_layer_tools.size() && m_layer_tools[j].print_z < lt_new.print_z - EPSILON; ++ j);
                     if (j < m_layer_tools.size() && std::abs(m_layer_tools[j].print_z - lt_new.print_z) < EPSILON) {
 						m_layer_tools[j].has_wipe_tower = true;
-					} else if (j < m_layer_tools.size() && ! m_layer_tools[j].extruders.empty()) {
+                    } else if (j < m_layer_tools.size() && !m_layer_tools[j].wipe_tower_extruders.empty()) {
                         // The layer right above the inserted one may carry no extruders, e.g. when
                         // support generation was toggled off after a slice that had it enabled: the
                         // layer plan for the raft gap then contains no extrusions for some layers.
-                        // lt_next.extruders.front() would dereference a null begin() and crash.
+                        // lt_next.wipe_tower_extruders.front() would dereference a null begin() and crash.
                         LayerTools &lt_extra = *m_layer_tools.insert(m_layer_tools.begin() + j, lt_new);
                         //LayerTools &lt_prev  = m_layer_tools[j];
                         LayerTools &lt_next  = m_layer_tools[j + 1];
-                        assert(! m_layer_tools[j - 1].extruders.empty() && ! lt_next.extruders.empty());
+                        assert(!m_layer_tools[j - 1].extruders.empty() && !lt_next.wipe_tower_extruders.empty());
                         // FIXME: Following assert tripped when running combine_infill.t. I decided to comment it out for now.
                         // If it is a bug, it's likely not critical, because this code is unchanged for a long time. It might
                         // still be worth looking into it more and decide if it is a bug or an obsolete assert.
-                        //assert(lt_prev.extruders.back() == lt_next.extruders.front());
+                        // assert(lt_prev.extruders.back() == lt_next.wipe_tower_extruders.front());
                         lt_extra.has_wipe_tower = true;
-                        lt_extra.extruders.push_back(lt_next.extruders.front());
+                        lt_extra.extruders.push_back(lt_next.wipe_tower_extruders.front());
+                        lt_extra.wipe_tower_extruders  = lt_extra.extruders;
                         lt_extra.wipe_tower_partitions = lt_next.wipe_tower_partitions;
                     }
                 }
@@ -1149,9 +1166,10 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
     for (unsigned int i=0; i+1<m_layer_tools.size(); ++i) {
         LayerTools& lt = m_layer_tools[i];
         LayerTools& lt_next = m_layer_tools[i+1];
-        if (lt.extruders.empty() || lt_next.extruders.empty())
-            break;
-        if (!lt_next.has_wipe_tower && (lt_next.extruders.front() != lt.extruders.back() || lt_next.extruders.size() > 1))
+        if (lt.wipe_tower_extruders.empty() || lt_next.wipe_tower_extruders.empty())
+            continue;
+        if (!lt_next.has_wipe_tower &&
+            (lt_next.wipe_tower_extruders.front() != lt.wipe_tower_extruders.back() || lt_next.wipe_tower_extruders.size() > 1))
             lt_next.has_wipe_tower = true;
         // We should also check that the next wipe tower layer is no further than max_layer_height:
         unsigned int j = i+1;
@@ -1160,6 +1178,15 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
             if (m_layer_tools[j+1].print_z - last_wipe_tower_print_z > max_layer_height + EPSILON) {
                 m_layer_tools[j].has_wipe_tower = true;
                 last_wipe_tower_print_z = m_layer_tools[j].print_z;
+            }
+    }
+
+    if (m_print->exclude_support_from_prime_tower()) {
+        const auto tower_tools = m_print->prime_tower_extruders();
+        for (LayerTools& lt : m_layer_tools)
+            if (lt.has_wipe_tower && lt.wipe_tower_extruders.empty() && !tower_tools.empty()) {
+                lt.wipe_tower_extruders.push_back(tower_tools.front());
+                lt.extruders.push_back(tower_tools.front());
             }
     }
 

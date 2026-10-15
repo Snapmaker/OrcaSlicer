@@ -837,7 +837,7 @@ public:
 
         auto get_closet_idx = [this](std::vector<Segment>& corners) -> int {
             Vec2f anchor{ this->m_current_pos.x(), this->m_current_pos.y() };
-            int   closestIndex = -1;
+            int   closestIndex = 0;
             float minDistance = std::numeric_limits<float>::max();
             for (int i = 0; i < corners.size(); ++i) {
                 float distance = (corners[i].start - anchor).squaredNorm();
@@ -1176,7 +1176,7 @@ public:
     {
         auto get_closet_idx = [this](std::vector<Segment>& corners) -> int {
             Vec2f anchor{this->m_current_pos.x(), this->m_current_pos.y()};
-            int   closestIndex = -1;
+            int   closestIndex = 0;
             float minDistance  = std::numeric_limits<float>::max();
             for (int i = 0; i < corners.size(); ++i) {
                 float distance = (corners[i].start - anchor).squaredNorm();
@@ -1221,6 +1221,9 @@ public:
             }
         }
 
+        if (segments.empty())
+            return;
+        // The initial writer position is a sentinel; use the first segment if distances overflow.
         int index_of_closest = get_closet_idx(segments);
         int i                = index_of_closest;
         travel(segments[i].start); // travel to the closest points

@@ -3778,7 +3778,8 @@ void PartPlateList::init()
 	assert(first_plate != NULL);
 	m_plate_list.push_back(first_plate);
 
-	m_print_index = 0;
+    // reset(false) keeps old prints (undo path), so never restart from an occupied index
+    m_print_index = NextFreePrintIndex();
 	if (printer_technology == ptFFF)
 	{
 		Print* print = new Print();
@@ -3803,6 +3804,21 @@ void PartPlateList::init()
 	unprintable_plate.set_index(1);
 
 	m_intialized = true;
+}
+
+int PartPlateList::NextFreePrintIndex() const
+{
+    int freeIndex = 0;
+    // std::map keys are sorted, rbegin() is the largest used index
+    if (!m_print_list.empty())
+    {
+        freeIndex = std::max(freeIndex, m_print_list.rbegin()->first + 1);
+    }
+    if (!m_gcode_result_list.empty())
+    {
+        freeIndex = std::max(freeIndex, m_gcode_result_list.rbegin()->first + 1);
+    }
+    return freeIndex;
 }
 
 //compute the origin for printable plate with index i
@@ -4236,6 +4252,12 @@ int PartPlateList::create_plate(bool adjust_position)
 	{
 		Print* print = new Print();
 		GCodeResult* gcode = new GCodeResult();
+        // An occupied index would bind a print not owned by m_print_list
+        if (m_print_list.count(m_print_index) > 0 || m_gcode_result_list.count(m_print_index) > 0)
+        {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": print index %1% already in use") % m_print_index;
+            m_print_index = NextFreePrintIndex();
+        }
 		m_print_list.emplace(m_print_index, print);
 		m_gcode_result_list.emplace(m_print_index, gcode);
 		plate->set_print(print, gcode, m_print_index);

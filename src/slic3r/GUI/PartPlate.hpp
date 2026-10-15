@@ -666,6 +666,9 @@ class PartPlateList : public ObjectBase
     bool m_filament_group_dirty = false;
 
     void init();
+    /// @brief Get a print index larger than every key in m_print_list and m_gcode_result_list.
+    /// @return 0 when both lists are empty, otherwise the largest used key + 1.
+    int NextFreePrintIndex() const;
     //compute the origin for printable plate with index i
     Vec3d compute_origin(int index, int column_count);
     //compute the origin for unprintable plate

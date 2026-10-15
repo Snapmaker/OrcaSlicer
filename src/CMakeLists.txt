@@ -294,6 +294,9 @@ if (SLIC3R_GUI)
     # should consume app_common instead of compiling these sources directly.
     # Until then, the no-duplicate-symbol outcome relies on direct objects
     # preceding archives on the link line and on lazy archive extraction.
+    # WARNING: do not add sources unique to app_common (not compiled directly
+    # by the production targets) until phase-2 lands - that would surface as
+    # LNK2005 / "multiple definition" at link time.
     # -----------------------------------------------------------------------
     add_library(app_common STATIC
         app_common/SentryWrapper.hpp
@@ -320,7 +323,10 @@ if (SLIC3R_GUI)
     if (WIN32)
         # common_func.cpp: RegOpenKeyEx / SHGetKnownFolderPath
         # (iphlpapi and version.lib are pulled in via in-source #pragma)
-        target_link_libraries(app_common INTERFACE Advapi32 Shell32)
+        # PRIVATE is the accurate scope (only common_func.cpp needs these);
+        # on a STATIC library it still reaches consumers' link lines
+        # (LINK_ONLY), matching what INTERFACE did here.
+        target_link_libraries(app_common PRIVATE Advapi32 Shell32)
     endif ()
     if (SLIC3R_SENTRY)
         target_compile_definitions(app_common PRIVATE SLIC3R_SENTRY)

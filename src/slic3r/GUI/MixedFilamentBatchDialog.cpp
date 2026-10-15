@@ -2131,6 +2131,10 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
                                               : kAutoMaxPairComponentPercent;
         bool outside_range = false;
         for (const int weight : weights) {
+            // Zero means this physical filament is not part of the recipe after
+            // project-wide ID remapping; it is not a participating color below 15%.
+            if (weight == 0)
+                continue;
             if (weight < kAutoMinComponentPercent || weight > max_component_percent) {
                 outside_range = true;
                 break;

@@ -4865,7 +4865,9 @@ void ObjectList::update_selections_on_canvas()
     if (sel_cnt == 0) {
         selection.remove_all();
         if (canvas_type != GLCanvas3D::ECanvasType::CanvasPreview)
-            wxGetApp().plater()->get_current_canvas3D()->update_gizmos_on_off_state();
+            wxGetApp().plater()->get_current_canvas3D()->UpdateGizmosForSelectionChange();
+        else
+            wxGetApp().plater()->get_current_canvas3D()->set_as_dirty();
         return;
     }
 
@@ -4971,8 +4973,9 @@ void ObjectList::update_selections_on_canvas()
     }
 
     if (canvas_type != GLCanvas3D::ECanvasType::CanvasPreview)
-        wxGetApp().plater()->get_current_canvas3D()->update_gizmos_on_off_state();
-    wxGetApp().plater()->canvas3D()->render();
+        wxGetApp().plater()->get_current_canvas3D()->UpdateGizmosForSelectionChange();
+    else
+        wxGetApp().plater()->get_current_canvas3D()->set_as_dirty();
 }
 
 void ObjectList::select_item(const wxDataViewItem& item)
@@ -6087,6 +6090,7 @@ void ObjectList::reload_all_plates(bool notify_partplate)
 
 void ObjectList::on_plate_selected(int plate_index)
 {
+    wxGetApp().plater()->get_view3D_canvas3D()->set_as_dirty();
     wxDataViewItem item = m_objects_model->GetItemByPlateId(plate_index);
     wxDataViewItem sel = GetSelection();
 

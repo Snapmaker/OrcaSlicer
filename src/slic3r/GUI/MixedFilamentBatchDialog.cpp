@@ -51,14 +51,13 @@ static const std::vector<std::string> FULL_SPECTRUM_FALLBACK_COLORS = {
 // (same rationale as MixedFilamentDialog's fixed-col swatch grid).
 static constexpr int LEGEND_GRID_COLS = 4;
 
-// Component-weight bounds for recipe generation (see launch_background_match).
-// Automatic mode uses a 15% floor. The 100% total then yields 15%-85% for a
-// two-color recipe and 15%-70% for a three-color recipe. Manual mode keeps the
-// legacy 0%-100% search range and its post-match over-70% advisory.
-static constexpr int kAutoMinComponentPercent           = 15;
-static constexpr int kAutoMaxPairComponentPercent       = 85;
-static constexpr int kManualMinComponentPercent         = 0;
-static constexpr int kManualAdvisoryMaxComponentPercent = 70;
+// Recommended component-weight bounds. Automatic search uses these directly;
+// the 100% total yields 15%-85% for two colors and 15%-70% for three colors.
+// Manual search keeps the legacy 0%-100% range, then uses these same bounds
+// for its post-match advisory.
+static constexpr int kAutoMinComponentPercent      = 15;
+static constexpr int kAutoMaxPairComponentPercent  = 85;
+static constexpr int kAutoMaxMultiComponentPercent = 70;
 
 // UI-list cap: the number of source/palette color rows the legend renders. Past this cap
 // the tail colors are dropped (see load_palette_colors) and a deferred warning is shown once
@@ -2091,8 +2090,8 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
     // NOTE: size by m_physical_colors.size(). In manual mode, launch_background_match's
     // manual-remap branch rewrites recipe component ids to project-wide 1-based indices, so
     // expand_color_match_recipe_weights must be sized against the FULL physical palette.
-    // A too-small count reads out-of-range indices as 0 weight and silently misses the
-    // over-threshold component.
+    // A too-small count reads out-of-range indices as 0 weight and silently misses an
+    // out-of-range component.
     const size_t num_physical = m_physical_colors.size();
     if (num_physical == 0) return;
 
@@ -2111,7 +2110,7 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
         }
     }
 
-    // Collect EVERY over-threshold occurrence (target_filament_id — legend badge). No dedup
+    // Collect EVERY out-of-range occurrence (target_filament_id — legend badge). No dedup
     // needed: is_pure_recipe mappings are skipped below, and the rest get unique ascending
     // ids from next_virtual_id++ (assign_batch_virtual_filament_ids), preserved through
     // merge_duplicate_recipe_mappings — so each reported id is already unique & in order.
@@ -2123,11 +2122,21 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
         if (!e.recipe.valid) continue;
         if (e.target_filament_id == 0) continue;
         const auto weights = expand_color_match_recipe_weights(e.recipe, weight_count);
-        bool over = false;
-        for (size_t i = 0; i < weights.size(); ++i) {
-            if (weights[i] > kManualAdvisoryMaxComponentPercent) { over = true; break; }
+        size_t active_components = 0;
+        for (const int weight : weights) {
+            if (weight > 0) ++active_components;
         }
-        if (!over) continue;
+        const int max_component_percent = active_components >= 3
+                                              ? kAutoMaxMultiComponentPercent
+                                              : kAutoMaxPairComponentPercent;
+        bool outside_range = false;
+        for (const int weight : weights) {
+            if (weight < kAutoMinComponentPercent || weight > max_component_percent) {
+                outside_range = true;
+                break;
+            }
+        }
+        if (!outside_range) continue;
         if (!first) id_list += ", ";
         id_list += wxString::Format("%u", e.target_filament_id);
         first = false;
@@ -2550,8 +2559,8 @@ void MixedFilamentBatchDialog::launch_background_match()
         // has no throw sites, so no exception handling is needed here.
         //
         // Automatic mode uses 15%-85% for two colors and 15%-70% for three colors.
-        // Manual mode preserves the legacy 0%-100% search range; over-70% results are
-        // handled as an advisory by check_manual_recipe_ratio().
+        // Manual mode preserves the legacy 0%-100% search range; out-of-range results
+        // are handled by the recommended-range advisory in check_manual_recipe_ratio().
         //
         // check_compatible is false for BOTH modes. RECOMMENDED needs none: its
         // physical_colors come from a single Full Spectrum preset (one PLA spool,
@@ -2561,7 +2570,9 @@ void MixedFilamentBatchDialog::launch_background_match()
         // preset_bundle->filament_presets unsynchronized from here, racing the UI
         // thread (data-race UB). The slice gate (Plater::has_incompatible_mixed_
         // filament_in_use) still blocks genuinely incompatible mixes at slice time.
-        const int match_min = matching_method == MANUAL ? kManualMinComponentPercent : kAutoMinComponentPercent;
+        const int match_min = matching_method == MANUAL
+                                  ? 0
+                                  : kAutoMinComponentPercent;
         const int match_max = matching_method == MANUAL
                                   ? 100
                                   : kAutoMaxPairComponentPercent;

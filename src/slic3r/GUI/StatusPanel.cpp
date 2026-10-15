@@ -1022,7 +1022,7 @@ wxBoxSizer *StatusBasePanel::create_monitoring_page()
         const std::string js_request_pip = R"(
             document.querySelector('video').requestPictureInPicture();
         )";
-        m_custom_camera_view->RunScript(js_request_pip);
+        WebView::RunScript(m_custom_camera_view, js_request_pip);
     });
     m_camera_switch_button->Hide();
 
@@ -4247,18 +4247,20 @@ void StatusBasePanel::on_camera_switch_toggled(wxMouseEvent& event)
 void StatusBasePanel::remove_controls()
 {
     const std::string js_cleanup_video_element = R"(
-        document.body.style.overflow='hidden';
-        const video = document.querySelector('video');
-        video.setAttribute('style', 'width: 100% !important;');
-        video.removeAttribute('controls');
-        video.addEventListener('leavepictureinpicture', () => {
-            window.wx.postMessage('leavepictureinpicture');
-        });
-        video.addEventListener('enterpictureinpicture', () => {
-            window.wx.postMessage('enterpictureinpicture');
-        });
+        (() => {
+            document.body.style.overflow='hidden';
+            const video = document.querySelector('video');
+            video.setAttribute('style', 'width: 100% !important;');
+            video.removeAttribute('controls');
+            video.addEventListener('leavepictureinpicture', () => {
+                window.wx.postMessage('leavepictureinpicture');
+            });
+            video.addEventListener('enterpictureinpicture', () => {
+                window.wx.postMessage('enterpictureinpicture');
+            });
+        })();
     )";
-    m_custom_camera_view->RunScript(js_cleanup_video_element);
+    WebView::RunScript(m_custom_camera_view, js_cleanup_video_element);
 }
 
 void StatusPanel::on_camera_leave(wxMouseEvent& event)

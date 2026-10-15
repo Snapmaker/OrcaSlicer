@@ -2102,11 +2102,11 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
     size_t weight_count = num_physical;
     for (const ColorMappingEntry& e : m_result.mappings) {
         if (e.is_pure_recipe || !e.recipe.valid) continue;
-        weight_count = std::max(weight_count, size_t(e.recipe.component_a));
-        weight_count = std::max(weight_count, size_t(e.recipe.component_b));
+        weight_count = std::max(weight_count, static_cast<size_t>(e.recipe.component_a));
+        weight_count = std::max(weight_count, static_cast<size_t>(e.recipe.component_b));
         if (!e.recipe.gradient_component_ids.empty()) {
             for (const unsigned int id : MixedFilamentManager::decode_gradient_component_ids(e.recipe.gradient_component_ids))
-                weight_count = std::max(weight_count, size_t(id));
+                weight_count = std::max(weight_count, static_cast<size_t>(id));
         }
     }
 

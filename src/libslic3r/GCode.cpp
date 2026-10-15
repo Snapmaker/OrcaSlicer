@@ -7280,8 +7280,8 @@ std::string GCode::change_layer(coordf_t print_z)
 
     m_need_change_layer_lift_z = true;
 
-    m_nominal_z                 = z;
-    m_writer.get_position().z() = z;
+    // The writer must retain the actual Z until the deferred layer-change travel is emitted.
+    m_nominal_z = z;
 
     // forget last wiping path as wiping after raising Z is pointless
     // BBS. Dont forget wiping path to reduce stringing.

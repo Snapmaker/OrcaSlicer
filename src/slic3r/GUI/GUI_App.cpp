@@ -132,7 +132,7 @@
 #include "PrivacyUpdateDialog.hpp"
 #include "ModelMall.hpp"
 #include "HintNotification.hpp"
-#include "bury_cfg/bury_point.hpp"
+#include "app_common/bury_point.hpp"
 //#ifdef WIN32
 //#include "BaseException.h"
 //#endif
@@ -163,7 +163,7 @@ typedef BOOL (WINAPI *LPFN_ISWOW64PROCESS2)(
 #endif
 
 #ifdef WIN32
-#include "dev-utils/BaseException.h"
+#include "app_common/BaseException.h"
 #endif
 
 #if ENABLE_THUMBNAIL_GENERATOR_DEBUG

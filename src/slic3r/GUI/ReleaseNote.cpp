@@ -24,7 +24,7 @@
 #include "Plater.hpp"
 #include "BitmapCache.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 
 namespace Slic3r { namespace GUI {
 

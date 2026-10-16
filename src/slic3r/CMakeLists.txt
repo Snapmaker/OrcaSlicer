@@ -752,6 +752,21 @@ encoding_check(libslic3r_gui)
 find_package(libnoise REQUIRED)
 target_link_libraries(libslic3r_gui libslic3r cereal::cereal imgui imguizmo minilzo GLEW::GLEW OpenGL::GL hidapi ${wxWidgets_LIBRARIES} glfw libcurl OpenSSL::SSL OpenSSL::Crypto noise::noise nanosvg)
 
+# Root fix for the L3 layer: app-layer symbols referenced by the GUI library
+# (sentryReportLog / common::get_flutter_version / common::get_profile_version /
+# CBaseException::set_log_folder / bury-point state) are closed over by
+# app_common, making this library's symbol closure self-contained (no reverse
+# dependency on the app exe/DLL or consumer stub files).
+# Note: all target_link_libraries calls on this target use the plain
+# signature; CMake requires one consistent signature per target, so the
+# PRIVATE keyword must not be used here (otherwise a "plain signature has
+# already been used" configure error occurs). Plain is semantically
+# equivalent to PUBLIC - app_common's usage requirements (src/ header path,
+# Win32 system libs) propagate through this link statement to this target's
+# own compilation and to downstream consumers, satisfying resolution of the
+# "app_common/..." headers.
+target_link_libraries(libslic3r_gui app_common)
+
 if (MSVC)
     target_link_libraries(libslic3r_gui Setupapi.lib)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")

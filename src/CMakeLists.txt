@@ -312,17 +312,14 @@ endif()
 # symbols are provided by this library so third-party consumers (tests,
 # headless tools) can link the GUI library without stub files, the
 # Snapmaker_Orca import library, or platform gating.
-# Phase 1 (shadow library): production targets Snapmaker_Orca (DLL/exe)
-# and the Windows shim still compile the same sources directly, so
-# runtime behavior is unchanged; this library initially serves only
-# libslic3r_gui and its downstream.
-# TODO(phase-2): retire the shadow duplication - production targets
-# should consume app_common instead of compiling these sources directly.
-# Until then, the no-duplicate-symbol outcome relies on direct objects
-# preceding archives on the link line and on lazy archive extraction.
-# WARNING: do not add sources unique to app_common (not compiled directly
-# by the production targets) until phase-2 lands - that would surface as
-# LNK2005 / "multiple definition" at link time.
+# Single supplier: every image (Snapmaker_Orca DLL/exe, the Windows shim,
+# libslic3r_gui consumers) links this archive instead of compiling the
+# glue sources directly, so each image holds exactly one copy of the glue
+# symbols and no link-order / lazy-extraction invariant applies. Sources
+# unique to this library can therefore be added safely.
+# On Windows the archive is compiled with BURY_EXPORTS: members linked into
+# an image export the accessors from that image (Snapmaker_Orca.dll and the
+# shim each export their own copy; no cross-image import is introduced).
 # Built unconditionally (not gated on SLIC3R_GUI): the headless build has
 # no libslic3r_gui to carry the glue symbols, so the production exe must
 # be able to link this library directly in the GUI=OFF configuration too.
@@ -450,9 +447,10 @@ if (WIN32)
     endif()
 
     
-    # app_common/bury_point.cpp is compiled in (with BURY_EXPORTS, mirroring the
-    # Snapmaker_Orca DLL target) so the shim resolves its bury-point helpers
-    # locally instead of importing them from Snapmaker_Orca.dll. The shim must
+    # The shim links the app_common archive (compiled with BURY_EXPORTS,
+    # mirroring the Snapmaker_Orca DLL image) so it resolves its bury-point
+    # helpers locally from its own copy instead of importing them from
+    # Snapmaker_Orca.dll. The shim must
     # NOT statically depend on Snapmaker_Orca.dll: that DLL statically imports
     # opengl32.dll, which the loader maps BEFORE wmain runs - the system
     # opengl32.dll could then never be released and would forever shadow the

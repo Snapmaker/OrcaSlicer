@@ -229,6 +229,8 @@ void Downloader::start_download(const std::string& full_url)
     } else {
         const std::string filename = resolve_download_filename(escaped_url, payload_parts.name_param);
         m_downloads.emplace_back(std::make_unique<Download>(id, std::move(escaped_url), this, m_dest_folder, filename));
+        // Snapmaker Lab scheme (snapmaker-orca://open / Snapmaker_Orca://open) marks a Lab import.
+        m_downloads.back()->set_lab_import(is_orca_open(full_url));
 
         NotificationManager* ntf_mngr = wxGetApp().notification_manager();
 
@@ -266,6 +268,16 @@ void Downloader::on_complete(wxCommandEvent& event)
 	wxArrayString paths;
 	paths.Add(event.GetString());
 	wxGetApp().plater()->load_files(paths);
+
+    // Snapmaker Lab funnel: fire only after the model has been imported so the 3mf
+    // metadata (project_id / export_id) is available.
+    for (const auto& download : m_downloads) {
+        if (download->get_id() == event.GetInt() && download->is_lab_import()) {
+            if (boost::algorithm::iends_with(into_u8(event.GetString()), ".3mf"))
+                wxGetApp().plater()->log_model_import_from_lab();
+            break;
+        }
+    }
 }
 bool Downloader::user_action_callback(DownloaderUserAction action, int id)
 {

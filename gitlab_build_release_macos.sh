@@ -3,6 +3,39 @@
 set -e
 set -o pipefail
 
+# --clean VALUE is optional. No flag and no CLEAN_BUILD env: do not clean.
+# -c remains the CMake configuration and is unrelated.
+NEW_ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --clean)
+            if [ $# -lt 2 ] || [[ "$2" == -* ]]; then
+                echo "--clean requires a value: true or false" >&2
+                exit 1
+            fi
+            CLEAN_BUILD="$2"
+            shift 2
+            ;;
+        --clean=*)
+            CLEAN_BUILD="${1#--clean=}"
+            shift
+            ;;
+        *)
+            NEW_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+if [ ${#NEW_ARGS[@]} -gt 0 ]; then
+    set -- "${NEW_ARGS[@]}"
+else
+    set --
+fi
+case "${CLEAN_BUILD:-}" in
+    1|true|TRUE|True|yes|YES) CLEAN_BUILD=1 ;;
+    *) CLEAN_BUILD="" ;;
+esac
+
 while getopts ":dpa:snt:xbc:1h" opt; do
   case "${opt}" in
     d )
@@ -46,6 +79,7 @@ while getopts ":dpa:snt:xbc:1h" opt; do
         echo "   -x: Use Ninja Multi-Config CMake generator, default is Xcode"
         echo "   -b: Build without reconfiguring CMake"
         echo "   -c: Set CMake build configuration, default is Release"
+        echo "   --clean true|false: optional, default off. true/1/yes deletes compiled deps and slicer build dirs; false/0/no does not. Same values via CLEAN_BUILD"
         echo "   -1: Use single job for building"
         exit 0
         ;;
@@ -287,6 +321,7 @@ echo " - BUILD_CONFIG: $BUILD_CONFIG"
 echo " - BUILD_TARGET: $BUILD_TARGET"
 echo " - CMAKE_GENERATOR: $SLICER_CMAKE_GENERATOR for Slicer, $DEPS_CMAKE_GENERATOR for deps"
 echo " - OSX_DEPLOYMENT_TARGET: $OSX_DEPLOYMENT_TARGET"
+echo " - CLEAN_BUILD: ${CLEAN_BUILD:-0}"
 echo
 
 # ============================================================
@@ -319,7 +354,7 @@ function build_deps() {
                 set -x
                 mkdir -p "$DEPS"
                 cd "$DEPS_BUILD_DIR"
-                if [ "1." != "$BUILD_ONLY". ]; then
+                if [ "1." != "$BUILD_ONLY". ] || [ -n "${CLEAN_BUILD}" ]; then
                     cmake "${DEPS_DIR}" \
                         -G "${DEPS_CMAKE_GENERATOR}" \
                         -DDESTDIR="$DEPS" \
@@ -358,7 +393,7 @@ function build_slicer() {
                 set -x
             mkdir -p "$PROJECT_BUILD_DIR"
             cd "$PROJECT_BUILD_DIR"
-            if [ "1." != "$BUILD_ONLY". ]; then
+            if [ "1." != "$BUILD_ONLY". ] || [ -n "${CLEAN_BUILD}" ]; then
                 cmake "${ORCA_ROOT}" \
                     -G "${SLICER_CMAKE_GENERATOR}" \
                     -DBBL_RELEASE_TO_PUBLIC=1 \
@@ -610,6 +645,19 @@ function build_universal() {
 sync_gitlab_repos
 patch_cmake_for_local_sources
 prepare_deps_src
+
+# cleanBuild must drop compiled deps. git fetch updates sources, but an existing
+# gitlab_deps/build keeps the previous ExternalProject stamps and objects.
+if [ -n "${CLEAN_BUILD}" ]; then
+    if [ "${BUILD_TARGET}" != "slicer" ]; then
+        echo "Cleaning compiled deps: ${DEPS_DIR}/build"
+        rm -rf "${DEPS_DIR}/build"
+    fi
+    if [ "${BUILD_TARGET}" != "deps" ]; then
+        echo "Cleaning slicer build: ${ORCA_ROOT}/gitlab_build"
+        rm -rf "${ORCA_ROOT}/gitlab_build"
+    fi
+fi
 
 case "${BUILD_TARGET}" in
     all)

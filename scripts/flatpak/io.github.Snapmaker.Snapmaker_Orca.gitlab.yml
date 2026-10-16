@@ -1,3 +1,7 @@
+# GitLab packaging only. gitlab_pack_linux.sh clones snapmaker_orca_vendor into
+# gitlab_vendor at the repo root before flatpak-builder. DL_CACHE modules below
+# use path: ../../gitlab_vendor/... and fail if that directory is missing.
+# Direct flatpak-builder use belongs on io.github.Snapmaker.Snapmaker_Orca.yml.
 app-id: io.github.Snapmaker.Snapmaker_Orca
 runtime: org.gnome.Platform
 runtime-version: "49"
@@ -191,7 +195,7 @@ modules:
 
       # MPFR
       - type: file
-        url: https://www.mpfr.org/mpfr-4.2.2/mpfr-4.2.2.tar.bz2
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/MPFR/mpfr-4.2.2.tar.bz2
         dest: external-packages/MPFR
         sha256: 9ad62c7dc910303cd384ff8f1f4767a655124980bb6d8650fe62c815a231bb7b
 

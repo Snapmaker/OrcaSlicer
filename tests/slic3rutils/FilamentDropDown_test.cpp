@@ -106,6 +106,29 @@ TEST_CASE("FilamentDropDown preserves singleton and folded group selection", "[G
     CHECK(FilamentDropDown::selected_row_for_item(items, wxString::FromUTF8("Vendor B"), 2) == 1);
 }
 
+TEST_CASE("FilamentDropDown draws the selection only on selectable rows", "[GUI][FilamentDropDown]")
+{
+    std::vector<FilamentDropDown::Item> items{
+        make_item("PLA A1", "Vendor A"),
+        make_item("PLA A2", "Vendor A"),
+        make_item("PLA B1", "Vendor B"),
+        make_item("Loose", "")};
+
+    // The fold is kept for scrolling, while the row it lands on draws no selection of its own.
+    CHECK(FilamentDropDown::selected_row_for_item(items, wxString(), 1) == 0);
+    CHECK(FilamentDropDown::drawn_row_for_item(items, wxString(), 1) == -1);
+    CHECK(FilamentDropDown::drawn_row_for_item(items, wxString(), 0) == -1);
+
+    // A row that is genuinely visible keeps its highlight: the ungrouped item and every submenu row.
+    CHECK(FilamentDropDown::drawn_row_for_item(items, wxString(), 3) == 2);
+    CHECK(FilamentDropDown::drawn_row_for_item(items, wxString::FromUTF8("Vendor A"), 1) == 1);
+
+    // A selection that is absent, out of range, or hidden in another group is never drawn.
+    CHECK(FilamentDropDown::drawn_row_for_item(items, wxString(), -1) == -1);
+    CHECK(FilamentDropDown::drawn_row_for_item(items, wxString(), 4) == -1);
+    CHECK(FilamentDropDown::drawn_row_for_item(items, wxString::FromUTF8("Vendor A"), 2) == -1);
+}
+
 TEST_CASE("FilamentDropDown preserves mapping for rows reached after scrolling", "[GUI][FilamentDropDown]")
 {
     std::vector<FilamentDropDown::Item> items;

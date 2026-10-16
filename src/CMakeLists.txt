@@ -343,6 +343,14 @@ if (WIN32)
         app_common/StackWalker.cpp
     )
 endif ()
+if (WIN32)
+    # The archive members are the single bury-state copy in every image
+    # that links this library; dllexport here reproduces the per-image
+    # export surface the direct-compilation phase-1 targets provided
+    # (Snapmaker_Orca.dll and the shim each export the accessors from
+    # their own copy - no cross-image import is introduced).
+    target_compile_definitions(app_common PRIVATE BURY_EXPORTS)
+endif ()
 # Headers are included as "app_common/..." relative to the src/ root:
 # files directly under src/ (Snapmaker_Orca.cpp etc.) resolve them via
 # quoted-include lookup in the includer's directory; GUI-internal files

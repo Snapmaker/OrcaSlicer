@@ -1426,10 +1426,10 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
     std::vector<std::vector<ExPolygons>> shell_bottom_by_layer(num_facets_states, std::vector<ExPolygons>(num_layers));
     for (size_t color_idx = 0; color_idx < num_facets_states; ++color_idx)
         for (size_t layer_idx = 0; layer_idx < num_layers; ++layer_idx) {
-            for (auto &[target, projection] : shell_triangles_by_color_top[color_idx][layer_idx])
-                append(shell_top_by_layer[color_idx][target], std::move(projection));
-            for (auto &[target, projection] : shell_triangles_by_color_bottom[color_idx][layer_idx])
-                append(shell_bottom_by_layer[color_idx][target], std::move(projection));
+            for (auto &entry : shell_triangles_by_color_top[color_idx][layer_idx])
+                append(shell_top_by_layer[color_idx][entry.first], std::move(entry.second));
+            for (auto &entry : shell_triangles_by_color_bottom[color_idx][layer_idx])
+                append(shell_bottom_by_layer[color_idx][entry.first], std::move(entry.second));
         }
 
     std::vector<std::vector<ExPolygons>> triangles_by_color_merged(num_facets_states);

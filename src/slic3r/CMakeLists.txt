@@ -195,6 +195,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/GLCanvas3D.hpp
     GUI/GLPickingBuffer.cpp
     GUI/GLPickingBuffer.hpp
+    GUI/SoftShadowRenderer.cpp
+    GUI/SoftShadowRenderer.hpp
     GUI/GLModel.cpp
     GUI/GLModel.hpp
     GUI/GLSelectionRectangle.cpp

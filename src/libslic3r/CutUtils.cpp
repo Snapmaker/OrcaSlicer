@@ -624,12 +624,9 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove&       groove,
         // cuts would otherwise pollute the state of the other grooves cut from tmp_object
         Model        groove_model;
         ModelObject* groove_object = groove_model.add_object(*tmp_object);
-        groove_object->clear_volumes();
-        for (ModelVolume* volume : tmp_object->volumes)
-        {
-            ModelVolume* new_vol = groove_object->add_volume(*volume);
-            new_vol->reset_from_upper();
-        }
+        // add_object() already deep-copied all volumes of tmp_object, only the cut state needs resetting
+        for (ModelVolume* volume : groove_object->volumes)
+            volume->reset_from_upper();
 
         // isolate area of current groove
         if (!is_first_groove)

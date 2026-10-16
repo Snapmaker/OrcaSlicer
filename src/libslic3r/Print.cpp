@@ -563,7 +563,10 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "enable_overhang_bridge_fan",
         "overhang_fan_speed",
         "overhang_fan_threshold",
+        "overhang_threshold_participating_cooling",
         "slow_down_for_layer_cooling",
+        "cooling_slowdown_logic",
+        "cooling_perimeter_transition_distance",
         "default_acceleration",
         "deretraction_speed",
         "close_fan_the_first_x_layers",
@@ -601,6 +604,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "top_surface_acceleration",
         "bridge_acceleration",
         "travel_acceleration",
+        "travel_short_distance_acceleration",
         "sparse_infill_acceleration",
         "internal_solid_infill_acceleration",
         // BBS

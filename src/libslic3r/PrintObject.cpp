@@ -1232,6 +1232,7 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "overhang_2_4_speed"
             || opt_key == "overhang_3_4_speed"
             || opt_key == "overhang_4_4_speed"
+            || opt_key == "overhang_totally_speed"
             || opt_key == "bridge_speed"
             || opt_key == "internal_bridge_speed"
             || opt_key == "outer_wall_speed"

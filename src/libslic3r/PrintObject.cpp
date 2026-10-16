@@ -2979,6 +2979,11 @@ void PrintObject::bridge_over_infill()
                     bridging_area          = closing(bridging_area, flow.scaled_spacing());
                     bridging_area          = intersection(bridging_area, limiting_area);
                     bridging_area          = intersection(bridging_area, total_fill_area);
+                    // Snapmaker: on multi-region (multi-material) layers, keep the bridge expansion
+                    // inside the candidate's own region, otherwise anchoring onto another region's
+                    // walls can produce a bridge printed in the wrong color.
+                    if (layer->regions().size() > 1)
+                        bridging_area = intersection(bridging_area, to_polygons(candidate.region->fill_expolygons));
                     bridging_area          = diff(bridging_area, total_top_area);
                     expansion_area         = diff(expansion_area, bridging_area);
 

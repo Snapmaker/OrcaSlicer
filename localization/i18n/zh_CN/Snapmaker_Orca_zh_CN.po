@@ -5855,8 +5855,8 @@ msgstr "恢复"
 msgid "The current hot bed temperature is relatively high. The nozzle may be clogged when printing this filament in a closed enclosure. Please open the front door and/or remove the upper glass."
 msgstr "当前热床温度相对较高。在封闭式外壳中打印这种丝可能会导致喷嘴堵塞。请打开前门和/或取下上部玻璃。"
 
-msgid "The nozzle hardness required by the filament is higher than the default nozzle hardness of the printer. Please replace the hardened nozzle or filament, otherwise, the nozzle will be attrited or damaged."
-msgstr "打印丝所要求的喷嘴硬度高于打印机默认的喷嘴硬度。请更换硬化的喷嘴或打印丝，否则喷嘴可能被磨损或损坏。"
+msgid "The filament is too hard for the current nozzle. Please use a harder nozzle or a softer filament to avoid nozzle wear."
+msgstr "耗材丝所要求的喷嘴硬度高于打印机的喷嘴硬度。请更换更高硬度的喷嘴或者更低硬度的耗材丝，否则可能导致喷嘴磨损。"
 
 msgid "Enabling traditional timelapse photography may cause surface imperfections. It is recommended to change to smooth mode."
 msgstr "启用传统的延时摄影可能会导致表面瑕疵。建议更改为平滑模式。"
@@ -15433,6 +15433,9 @@ msgstr "流量比例为 0%，挤出量为零，无法生成有效打印路径。
 
 msgid "Filament(s):"
 msgstr "耗材："
+
+msgid ", "
+msgstr "，"
 
 msgid "Please set the flow ratio to a value greater than 0."
 msgstr "请将其设置为大于 0 的值。"

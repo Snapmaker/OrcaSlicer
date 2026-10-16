@@ -1652,9 +1652,6 @@ bool MainFrame::can_send_gcode() const
 {
     if (m_plater && !m_plater->model().objects.empty())
     {
-        auto        devices     = wxGetApp().app_config->get_devices();
-        const auto& edit_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
-
         auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
         auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
         bool is_snapmaker_u1   = false;
@@ -1668,7 +1665,7 @@ bool MainFrame::can_send_gcode() const
             return true;
         }
 
-        if (wxGetApp().app_config->get("use_new_connect") == "true") {
+        if (wxGetApp().physical_printer_connected()) {
             return true;
         } else {
             auto cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
@@ -2400,19 +2397,8 @@ static wxMenu* generate_help_menu()
         },
         "", nullptr, []() { return true; });
 
-    append_menu_item(
-        helpMenu, wxID_ANY, _L("Check for Web Resource Updates"), _L("Check for Web Resource Updates"),
-        [](wxCommandEvent&) { 
-            wxGetApp().check_web_version();
-        },
-        "", nullptr, []() { return true; });
-
     append_menu_item(helpMenu, wxID_ANY, _L("Import Profile"), _L("Import Profile"), [](wxCommandEvent&) {
         wxGetApp().import_presets();
-    });
-
-    append_menu_item(helpMenu, wxID_ANY, _L("Import Web Resource"), _L("Import Web Resource"), [](wxCommandEvent&) {
-        wxGetApp().import_flutter_web();
     });
 
     append_menu_item(helpMenu, wxID_ANY, _L("Open Network Test"), _L("Open Network Test"), [](wxCommandEvent&) {
@@ -4051,6 +4037,17 @@ void MainFrame::load_printer_url()
 
         load_printer_url(url, apikey);
     }
+}
+
+void MainFrame::reload_gateway_pages()
+{
+    wxString home_url = wxGetApp().gateway_web_url("home_page");
+    if (m_webview != nullptr && wxGetApp().is_gateway_url(home_url))
+        m_webview->load_url(home_url);
+
+    wxString device_url = wxGetApp().gateway_web_url("device_control");
+    if (wxGetApp().is_gateway_url(device_url))
+        load_printer_url(device_url);
 }
 
 bool MainFrame::is_printer_view() const { return m_tabpanel->GetSelection() == TabPosition::tpMonitor; }

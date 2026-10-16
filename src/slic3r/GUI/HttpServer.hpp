@@ -15,8 +15,8 @@
 #include <set>
 #include <memory>
 
-#define LOCALHOST_PORT      13618
-#define PAGE_HTTP_PORT      13619
+#define LOCALHOST_PORT      13628
+#define PAGE_HTTP_PORT      13629
 #define LOCALHOST_URL       "http://127.0.0.1:"
 #define WCP_DOWNLOAD_PREFIX "/wcp_download/"
 

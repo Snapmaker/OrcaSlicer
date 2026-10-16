@@ -9,6 +9,10 @@
 
 #include <boost/log/trivial.hpp>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 namespace Slic3r {
 
 using namespace Geometry;
@@ -518,9 +522,22 @@ const ModelObjectPtrs& Cut::perform_by_contour(std::vector<Part> parts, int dowe
 }
 
 
-const ModelObjectPtrs& Cut::perform_with_groove(const Groove& groove, const Transform3d& rotation_m, bool keep_as_parts/* = false*/)
+const ModelObjectPtrs& Cut::perform_with_groove(const Groove&       groove,
+                                                const Transform3d&  rotation_m,
+                                                const int           groove_count,
+                                                const float         groove_gap,
+                                                const float         radius,
+                                                bool                keep_as_parts/* = false*/)
 {
     ModelObject* cut_mo = m_model.objects.front();
+    // sanitize the multi-groove parameters: clamp the count to the UI range (1..100) and
+    // replace non-finite / out-of-range gap and radius with safe defaults
+    // max_groove_gap is a defensive upper bound (in mm), far above any plate size reachable
+    // from the UI; it only keeps gap + groove_width finite and never applies to valid input
+    constexpr float max_groove_gap  = 100000.f;
+    const int       valid_groove_count = std::min(std::max(groove_count, 1), 100);
+    const float     valid_groove_gap   = std::isfinite(groove_gap) && groove_gap >= 0.f ? std::min(groove_gap, max_groove_gap) : 0.f;
+    const float     valid_radius       = std::isfinite(radius) && radius > 0.f ? radius : 1.f;
 
     // Clone the object to duplicate instances, materials etc.
     ModelObject* upper{ nullptr };
@@ -581,44 +598,98 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove& groove, const Tran
         add_volumes_from_cut(lower, ModelObjectCutAttribute::KeepLower, tmp_model_for_cut);
     }
 
-    // cut middle part with 2 angles and add parts to related upper/lower objects
+    // Compute same slot outer width used in preview plane
+    const float groove_width = calculate_groove_width(groove, valid_radius);
 
-    const double h_side_shift = 0.5 * double(groove.width + groove.depth / tan(groove.flaps_angle));
-
-    // cut by angle1 plane
+    // multiple cuts
+    for (int i = 0; i < valid_groove_count; ++i)
     {
-        const Transform3d cut_matrix_angle1 = translation_transform(rotation_m * (-h_side_shift * Vec3d::UnitX())) * m_cut_matrix * rotation_transform(Vec3d(0, -groove.flaps_angle, -groove.angle));
+        bool is_first_groove = i == 0;
+        bool is_last_groove  = i == valid_groove_count - 1;
 
-        cut(tmp_object, cut_matrix_angle1, ModelObjectCutAttribute::KeepLower, tmp_model_for_cut);
-        add_volumes_from_cut(lower, ModelObjectCutAttribute::KeepUpper, tmp_model_for_cut);
+        // Calculate the x-axis offset for this dovetail
+        float groove_offset_factor_start = -0.5f * static_cast<float>(valid_groove_count - 1);
+        float groove_offset_factor       = groove_offset_factor_start + static_cast<float>(i);
+
+        // spacing between adjacent groove centers: guard the sum and the product against
+        // overflow from extreme inputs so the cut transforms always stay finite
+        float groove_spacing = valid_groove_gap + groove_width;
+        if (!std::isfinite(groove_spacing))
+            groove_spacing = groove_width;
+        float offset_x = groove_offset_factor * groove_spacing;
+        if (!std::isfinite(offset_x))
+            offset_x = 0.f;
+
+        // each groove works on its own temporary model copy: the repeated angle/tolerance
+        // cuts would otherwise pollute the state of the other grooves cut from tmp_object
+        Model        groove_model;
+        ModelObject* groove_object = groove_model.add_object(*tmp_object);
+        // add_object() already deep-copied all volumes of tmp_object, only the cut state needs resetting
+        for (ModelVolume* volume : groove_object->volumes)
+            volume->reset_from_upper();
+
+        // isolate area of current groove
+        if (!is_first_groove)
+        {
+            float left_cut_position = (-valid_groove_gap / 2.f) - (groove_width / 2.f) + offset_x;
+
+            const Transform3d cut_matrix_left = translation_transform(rotation_m * (left_cut_position * Vec3d::UnitX())) *
+                                                m_cut_matrix * rotation_transform(Vec3d(0, PI / 2.0, 0));
+
+            cut(groove_object, cut_matrix_left, ModelObjectCutAttribute::KeepUpper, tmp_model_for_cut);
+        }
+        if (!is_last_groove)
+        {
+            float right_cut_position = (valid_groove_gap / 2.f) + (groove_width / 2.f) + offset_x;
+
+            const Transform3d cut_matrix_right = translation_transform(rotation_m * (right_cut_position * Vec3d::UnitX())) *
+                                                 m_cut_matrix * rotation_transform(Vec3d(0, PI / 2.0, 0));
+            cut(groove_object, cut_matrix_right, ModelObjectCutAttribute::KeepLower, tmp_model_for_cut);
+        }
+
+        const Transform3d groove_translation = translation_transform(rotation_m * (offset_x * Vec3d::UnitX()));
+        // cut middle part with 2 angles and add parts to related upper/lower objects
+        const double h_side_shift = 0.5 * double(groove.width + groove.depth / tan(groove.flaps_angle));
+
+        // cut by angle1 plane
+        {
+            const Transform3d cut_matrix_angle1 = groove_translation * translation_transform(rotation_m * (-h_side_shift * Vec3d::UnitX())) *
+                                                  m_cut_matrix * rotation_transform(Vec3d(0, -groove.flaps_angle, -groove.angle));
+
+            cut(groove_object, cut_matrix_angle1, ModelObjectCutAttribute::KeepLower, tmp_model_for_cut);
+            add_volumes_from_cut(lower, ModelObjectCutAttribute::KeepUpper, tmp_model_for_cut);
+        }
+
+        // cut by angle2 plane
+        {
+            const Transform3d cut_matrix_angle2 = groove_translation * translation_transform(rotation_m * (h_side_shift * Vec3d::UnitX())) *
+                                                  m_cut_matrix * rotation_transform(Vec3d(0, groove.flaps_angle, groove.angle));
+
+            cut(groove_object, cut_matrix_angle2, ModelObjectCutAttribute::KeepLower, tmp_model_for_cut);
+            add_volumes_from_cut(lower, ModelObjectCutAttribute::KeepUpper, tmp_model_for_cut);
+        }
+
+        // apply tolerance to the middle part
+        {
+            const double h_groove_shift_tolerance = groove_half_depth - static_cast<double>(groove.depth_tolerance);
+
+            const Transform3d cut_matrix_lower_tolerance = groove_translation * translation_transform(rotation_m * (-h_groove_shift_tolerance * Vec3d::UnitZ())) *
+                                                           m_cut_matrix;
+            cut(groove_object, cut_matrix_lower_tolerance, ModelObjectCutAttribute::KeepUpper, tmp_model_for_cut);
+
+            const double h_side_shift_tolerance = h_side_shift - 0.5 * double(groove.width_tolerance);
+
+            const Transform3d cut_matrix_angle1_tolerance = groove_translation * translation_transform(rotation_m * (-h_side_shift_tolerance * Vec3d::UnitX())) *
+                                                            m_cut_matrix * rotation_transform(Vec3d(0, -groove.flaps_angle, -groove.angle));
+            cut(groove_object, cut_matrix_angle1_tolerance, ModelObjectCutAttribute::KeepLower, tmp_model_for_cut);
+
+            const Transform3d cut_matrix_angle2_tolerance = groove_translation * translation_transform(rotation_m * (h_side_shift_tolerance * Vec3d::UnitX())) *
+                                                            m_cut_matrix * rotation_transform(Vec3d(0, groove.flaps_angle, groove.angle));
+            cut(groove_object, cut_matrix_angle2_tolerance, ModelObjectCutAttribute::KeepUpper, tmp_model_for_cut);
+        }
+
+        add_volumes_from_cut(upper, ModelObjectCutAttribute::KeepLower, tmp_model_for_cut);
     }
-
-    // cut by angle2 plane
-    {
-        const Transform3d cut_matrix_angle2 = translation_transform(rotation_m * (h_side_shift * Vec3d::UnitX())) * m_cut_matrix * rotation_transform(Vec3d(0, groove.flaps_angle, groove.angle));
-
-        cut(tmp_object, cut_matrix_angle2, ModelObjectCutAttribute::KeepLower, tmp_model_for_cut);
-        add_volumes_from_cut(lower, ModelObjectCutAttribute::KeepUpper, tmp_model_for_cut);
-    }
-
-    // apply tolerance to the middle part
-    {
-        const double h_groove_shift_tolerance = groove_half_depth - (double)groove.depth_tolerance;
-
-        const Transform3d cut_matrix_lower_tolerance = translation_transform(rotation_m * (-h_groove_shift_tolerance * Vec3d::UnitZ())) * m_cut_matrix;
-        cut(tmp_object, cut_matrix_lower_tolerance, ModelObjectCutAttribute::KeepUpper, tmp_model_for_cut);
-
-        const double h_side_shift_tolerance = h_side_shift - 0.5 * double(groove.width_tolerance);
-
-        const Transform3d cut_matrix_angle1_tolerance = translation_transform(rotation_m * (-h_side_shift_tolerance * Vec3d::UnitX())) * m_cut_matrix * rotation_transform(Vec3d(0, -groove.flaps_angle, -groove.angle));
-        cut(tmp_object, cut_matrix_angle1_tolerance, ModelObjectCutAttribute::KeepLower, tmp_model_for_cut);
-
-        const Transform3d cut_matrix_angle2_tolerance = translation_transform(rotation_m * (h_side_shift_tolerance * Vec3d::UnitX())) * m_cut_matrix * rotation_transform(Vec3d(0, groove.flaps_angle, groove.angle));
-        cut(tmp_object, cut_matrix_angle2_tolerance, ModelObjectCutAttribute::KeepUpper, tmp_model_for_cut);
-    }
-
-    // this part can be added to the upper object now
-    add_volumes_from_cut(upper, ModelObjectCutAttribute::KeepLower, tmp_model_for_cut);
 
     ModelObjectPtrs cut_object_ptrs;
 
@@ -661,6 +732,44 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove& groove, const Tran
     finalize(cut_object_ptrs);
 
     return m_model.objects;
+}
+
+const ModelObjectPtrs& Cut::perform_with_groove(const Groove&      groove,
+                                                const Transform3d& rotation_m,
+                                                bool               keep_as_parts/* = false*/)
+{
+    // Legacy single-groove entry point: with groove_count == 1 the spacing width (and therefore
+    // the radius) has no effect on the result, so this stays equivalent to the old behavior.
+    return perform_with_groove(groove, rotation_m, 1, 0.f, 1.f, keep_as_parts);
+}
+
+float Cut::calculate_groove_width(const Cut::Groove& groove, const float radius)
+{
+    // Compute same slot outer width used in preview plane
+    const float valid_radius = std::isfinite(radius) && radius > 0.f ? radius : 1.f;
+
+    // Conservative finite fallback: the neck half width only
+    const double slot_neck_half_width = std::isfinite(groove.width) ? 0.5f * groove.width : 0.0;
+    double       slot_outer_x_max     = slot_neck_half_width;
+
+    if (std::isfinite(groove.depth) && std::isfinite(groove.width) &&
+        std::isfinite(groove.flaps_angle) && std::isfinite(groove.angle))
+    {
+        const double flap_width            = is_approx(groove.flaps_angle, 0.f) ? groove.depth : groove.depth / sin(groove.flaps_angle);
+        const double total_flap_width      = 2.0 * flap_width * cos(groove.flaps_angle);
+        const double slot_mouth_half_width = 0.5 * (groove.width + total_flap_width);
+        const double plane_half_height     = 0.5f * (1.5f * (1.5f * valid_radius));
+        const double flap_taper_offset     = plane_half_height * tan(groove.angle);
+
+        const double slot_outer_x_full = std::max(slot_mouth_half_width + flap_taper_offset, slot_neck_half_width + flap_taper_offset);
+        // tan() is singular near +-90 degrees: keep the conservative width when the full one is not finite
+        if (std::isfinite(slot_outer_x_full))
+            slot_outer_x_max = slot_outer_x_full;
+    }
+
+    const float groove_width = static_cast<float>(2.0 * slot_outer_x_max);
+    // guard the double-to-float conversion against overflow for extreme inputs
+    return std::isfinite(groove_width) ? groove_width : std::numeric_limits<float>::max();
 }
 
 } // namespace Slic3r

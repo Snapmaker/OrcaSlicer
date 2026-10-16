@@ -15547,6 +15547,12 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         }
         m_slice_all = false;
         m_is_slicing = false;
+        // Refresh the button right after m_is_slicing clears: in the cancelled branch
+        // above, get_enable_slice_status() still sees m_is_slicing == true and would
+        // re-disable the button instead of re-enabling it.
+        if (evt.cancelled()) {
+            this->main_frame->update_slice_print_status(MainFrame::eEventSliceUpdate, true, true);
+        }
         this->preview->reload_print(false);
         /* BBS if in publishing progress */
         if (m_is_publishing) {
@@ -23512,7 +23518,11 @@ bool Plater::set_printer_technology(PrinterTechnology printer_technology)
     p->sidebar->get_searcher().set_printer_technology(printer_technology);
 
     p->notification_manager->set_fff(printer_technology == ptFFF);
-    p->notification_manager->set_slicing_progress_hidden();
+    if (ret) {
+        // Only hide when the technology actually changed (ret): hiding on same-technology
+        // preset reload (device connect) kills the popup of a running slice for good.
+        p->notification_manager->set_slicing_progress_hidden();
+    }
 
     return ret;
 }

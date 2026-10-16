@@ -5144,7 +5144,31 @@ static void apply_config_layer_remap_mirror(
         const int           orig_obj_eid = (obj_opt ? obj_opt->getInt() : 0);
         auto                obj_it       = extruder_remap.find(orig_obj_eid);
         const bool          obj_remap    = (orig_obj_eid > 0 && obj_it != extruder_remap.end());
-        bool                object_extruder_written = false;
+        if (obj_remap) {
+            mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_it->second)));
+        } else if (orig_obj_eid <= 0) {
+            const auto default_it = extruder_remap.find(1);
+            if (default_it != extruder_remap.end()) {
+                for (const ModelVolume* mv : mo->volumes) {
+                    const ModelVolumeType vt         = mv->type();
+                    const bool            is_part    = (vt == ModelVolumeType::MODEL_PART);
+                    const bool            is_modifier = (vt == ModelVolumeType::PARAMETER_MODIFIER);
+                    if (!is_part && !is_modifier) continue;
+
+                    const ConfigOption* vol_opt = mv->config.option("extruder");
+                    if (vol_opt && vol_opt->getInt() > 0) continue;
+
+                    const bool has_default_regions =
+                        !is_part || mv->mmu_segmentation_facets.empty() ||
+                        !mv->mmu_segmentation_facets.get_facets(*mv, EnforcerBlockerType::NONE).indices.empty();
+                    if (!has_default_regions) continue;
+
+                    mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(default_it->second)));
+                    break;
+                }
+            }
+        }
+
         for (ModelVolume* mv : mo->volumes) {
             const ModelVolumeType vt = mv->type();
             const bool is_part      = (vt == ModelVolumeType::MODEL_PART);
@@ -5156,9 +5180,6 @@ static void apply_config_layer_remap_mirror(
                 auto it = extruder_remap.find(vol_opt->getInt());
                 if (it != extruder_remap.end())
                     mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(it->second)));
-            } else if (obj_remap && !object_extruder_written) {
-                mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_it->second)));
-                object_extruder_written = true;
             }
         }
 
@@ -5225,6 +5246,61 @@ TEST_CASE("apply config remap: inheriting modifier follows object consistently",
     // Neither volume gained its own config entry — they still inherit.
     REQUIRE_FALSE(part->config.has("extruder"));
     REQUIRE_FALSE(mod->config.has("extruder"));
+}
+
+TEST_CASE("apply config remap: default extruder follows source filament mapping", "[MixedFilament][batch_apply]")
+{
+    // A default object extruder resolves to physical filament 1. When batch
+    // matching maps source filament 1 to a mixed slot, implicit unpainted
+    // regions must follow that mapping without a masking modifier volume.
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+    obj->add_instance();
+    obj->ensure_on_bed();
+
+    TriangleSelector selector(part->mesh());
+    selector.set_facet(0, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector)); // one painted facet, the rest stay implicit default
+
+    // Serialization omits untouched NONE roots, but get_facets() deserializes
+    // the full mesh and must recover those implicit default triangles.
+    REQUIRE_FALSE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType::NONE));
+    REQUIRE_FALSE(part->mmu_segmentation_facets.get_facets(*part, EnforcerBlockerType::NONE).indices.empty());
+
+    const std::unordered_map<int, unsigned int> remap{{1, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE(obj->config.opt_int("extruder") == 5);
+    REQUIRE(part->extruder_id() == 5);
+    REQUIRE_FALSE(part->config.has("extruder"));
+    // Level 1 owns painted-state remapping; this mirror must leave state 2 alone.
+    REQUIRE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType(2)));
+}
+
+TEST_CASE("apply config remap: fully painted default object is not rewritten", "[MixedFilament][batch_apply]")
+{
+    // Color Mapping includes unused palette colours. If every facet is painted,
+    // no geometry actually consumes the default filament, so a 1 -> mixed mapping
+    // must not add a misleading explicit object extruder.
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+    obj->add_instance();
+    obj->ensure_on_bed();
+
+    TriangleSelector selector(part->mesh());
+    for (int facet = 0; facet < int(part->mesh().its.indices.size()); ++facet)
+        selector.set_facet(facet, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector));
+    REQUIRE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType(2)));
+    REQUIRE_FALSE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType::NONE));
+
+    const std::unordered_map<int, unsigned int> remap{{1, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE_FALSE(obj->config.has("extruder"));
+    REQUIRE(part->extruder_id() == 0);
 }
 
 TEST_CASE("apply config remap: modifier with own extruder is remapped alone", "[MixedFilament][batch_apply]")

@@ -504,6 +504,22 @@ ModelObject* Model::add_object(const ModelObject &other)
     return new_object;
 }
 
+bool assemble_transform_is_sane(const Transform3d& transform)
+{
+    if (!transform.matrix().allFinite())
+        return false;
+    if (transform.translation().cwiseAbs().maxCoeff() > ASSEMBLY_TRANSFORM_SANITY_LIMIT)
+        return false;
+    // Bound the overall scale before decomposition, then reject collapsed axes
+    // and linearly dependent columns. The norm alone cannot detect either.
+    const double linear_norm = transform.linear().norm();
+    if (linear_norm <= 1e-6 || linear_norm >= 1e6)
+        return false;
+    // Singular values are non-negative, so valid mirrored transforms remain valid.
+    const Eigen::JacobiSVD<Eigen::Matrix3d> svd(transform.linear());
+    return svd.singularValues().minCoeff() > 1e-6;
+}
+
 void Model::InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects)
 {
     constexpr double ASSEMBLY_OBJECT_GAP = 10.0;
@@ -531,6 +547,35 @@ void Model::InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects)
         }
 
         validatedObjects.push_back(modelObject);
+    }
+
+    // BBS: sanitize corrupted assemble transforms before they are used as layout
+    // input. sceneBox below is computed from the *existing* (not laid-out here)
+    // objects too, so any insane value would be amplified into the offsets of
+    // every newly loaded object (feedback loop of this very algorithm).
+    for (ModelObject* modelObject : objects) {
+        if (modelObject == nullptr)
+            continue;
+        for (ModelInstance* instance : modelObject->instances) {
+            if (instance == nullptr)
+                continue;
+            if (instance->is_assemble_initialized() &&
+                !assemble_transform_is_sane(instance->get_assemble_transformation().get_matrix())) {
+                BOOST_LOG_TRIVIAL(warning)
+                    << "InitializeAssemblyPositions: reset insane assemble transform for object '"
+                    << modelObject->name << "'";
+                instance->set_assemble_transformation(instance->get_transformation());
+            }
+            // The explosion-slider offset is nullified at ratio 1 but would fling
+            // parts to astronomic distances once the slider moves; sanitize it too.
+            const Vec3d ofs2ass = instance->get_offset_to_assembly();
+            if (!ofs2ass.allFinite() || ofs2ass.cwiseAbs().maxCoeff() > ASSEMBLY_TRANSFORM_SANITY_LIMIT) {
+                BOOST_LOG_TRIVIAL(warning)
+                    << "InitializeAssemblyPositions: reset insane offset_to_assembly for object '"
+                    << modelObject->name << "'";
+                instance->set_offset_to_assembly(Vec3d::Zero());
+            }
+        }
     }
 
     BoundingBoxf3 sceneBox = CalculateAssemblyBoundingBox(validatedObjects);
@@ -593,7 +638,17 @@ void Model::InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects)
                                            previousInstanceMaxY + ASSEMBLY_OBJECT_GAP + instanceBox.size().y() * 0.5;
             const Vec3d assemblyOffset(objectCenterX - instanceBox.center().x(),
                                        instanceCenterY - instanceBox.center().y(), -instanceBox.min.z());
-            instance->set_assemble_offset(assemblyOffset);
+            // BBS: refuse to write an insane offset out of the layout; fall back
+            // to the plate transformation instead of feeding the amplifier further.
+            if (assemblyOffset.allFinite() && assemblyOffset.cwiseAbs().maxCoeff() <= ASSEMBLY_TRANSFORM_SANITY_LIMIT) {
+                instance->set_assemble_offset(assemblyOffset);
+            }
+            else {
+                BOOST_LOG_TRIVIAL(error)
+                    << "InitializeAssemblyPositions: refused insane assembly offset for object '"
+                    << modelObject->name << "', x=" << assemblyOffset.x();
+                instance->set_assemble_transformation(instance->get_transformation());
+            }
             previousInstanceMaxY = instanceCenterY + instanceBox.size().y() * 0.5;
             firstValidInstance = false;
         }

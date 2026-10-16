@@ -1406,7 +1406,8 @@ void PartPlate::ShowRightIconTooltip(int hoverId)
         show_tooltip(is_locked() ? _u8L("Unlock current plate") : _u8L("Lock current plate"));
         break;
     case 5:
-        show_tooltip(_u8L("Customize current plate"));
+        if (m_partplate_list != nullptr && m_partplate_list->render_plate_settings)
+            show_tooltip(_u8L("Customize current plate"));
         break;
     case 6:
         show_tooltip(_u8L("Edit current plate name"));
@@ -1470,29 +1471,23 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
             if (useIconAtlas) {
                 const RightIconBatchKey key = BuildRightIconBatchKey(hover_id, hasPlateSettings);
                 rightIconsRendered = RenderRightIconBatch(key);
-                if (rightIconsRendered) {
-                    ShowRightIconTooltip(hover_id);
-                }
             }
 
             if (!rightIconsRendered) {
                 if (hover_id == 1) {
                     render_icon_texture(m_del_icon.model, m_partplate_list->m_del_hovered_texture);
-                    show_tooltip(_u8L("Remove current plate (if not last one)"));
                 }
                 else
                     render_icon_texture(m_del_icon.model, m_partplate_list->m_del_texture);
 
                 if (hover_id == 2) {
                     render_icon_texture(m_orient_icon.model, m_partplate_list->m_orient_hovered_texture);
-                    show_tooltip(_u8L("Auto orient objects on current plate"));
                 }
                 else
                     render_icon_texture(m_orient_icon.model, m_partplate_list->m_orient_texture);
 
                 if (hover_id == 3) {
                     render_icon_texture(m_arrange_icon.model, m_partplate_list->m_arrange_hovered_texture);
-                    show_tooltip(_u8L("Arrange objects on current plate"));
                 }
                 else
                     render_icon_texture(m_arrange_icon.model, m_partplate_list->m_arrange_texture);
@@ -1500,11 +1495,9 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
                 if (hover_id == 4) {
                     if (this->is_locked()) {
                         render_icon_texture(m_lock_icon.model, m_partplate_list->m_locked_hovered_texture);
-                        show_tooltip(_u8L("Unlock current plate"));
                     }
                     else {
                         render_icon_texture(m_lock_icon.model, m_partplate_list->m_lockopen_hovered_texture);
-                        show_tooltip(_u8L("Lock current plate"));
                     }
                 } else {
                     if (this->is_locked())
@@ -1516,14 +1509,12 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
                 if (hover_id == 6) {
                     render_icon_texture(m_plate_name_edit_icon.model,
                                         m_partplate_list->m_plate_name_edit_hovered_texture);
-                    show_tooltip(_u8L("Edit current plate name"));
                 }
                 else
                     render_icon_texture(m_plate_name_edit_icon.model, m_partplate_list->m_plate_name_edit_texture);
 
                 if (hover_id == 7) {
                     render_icon_texture(m_move_front_icon.model, m_partplate_list->m_move_front_hovered_texture);
-                    show_tooltip(_u8L("Move plate to the front"));
                 } else
                     render_icon_texture(m_move_front_icon.model, m_partplate_list->m_move_front_texture);
 
@@ -1535,8 +1526,6 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
                         else
                             render_icon_texture(m_plate_settings_icon.model,
                                                 m_partplate_list->m_plate_settings_changed_hovered_texture);
-
-                        show_tooltip(_u8L("Customize current plate"));
                     } else {
                         if (!hasPlateSettings)
                             render_icon_texture(m_plate_settings_icon.model,
@@ -5499,6 +5488,20 @@ void PartPlateList::RenderShadowReceivers()
             continue;
         plate->m_triangles.model.render();
     }
+}
+
+void PartPlateList::RenderHoverTooltip(int hoverId)
+{
+    if (hoverId < 0)
+        return;
+
+    const std::lock_guard<std::mutex> localLock(m_plates_mutex);
+    const int plateIndex = hoverId / static_cast<int>(PartPlate::GRABBER_COUNT);
+    const int hoverAction = hoverId % static_cast<int>(PartPlate::GRABBER_COUNT);
+    if (plateIndex >= static_cast<int>(m_plate_list.size()) || m_plate_list[plateIndex] == nullptr)
+        return;
+
+    m_plate_list[plateIndex]->ShowRightIconTooltip(hoverAction);
 }
 
 /*int PartPlateList::select_plate_by_hover_id(int hover_id)

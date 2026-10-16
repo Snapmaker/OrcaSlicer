@@ -487,7 +487,7 @@ void FilamentDropDown::render(wxDC &dc)
     const wxSize size = GetSize();
     render_background(dc, size, states);
 
-    const int selected_item = selectedItem();
+    const int selected_item = drawn_row_for_item(items, group, selection);
     const int hover_index   = hoverIndex();
     wxRect    content        = {{0, offset.y}, rowSize};
     SelectionRenderContext selection_context{size, states, selected_item, hover_index, content};
@@ -749,7 +749,7 @@ void FilamentDropDown::messureSize()
     }
     const size_t visible_rows = std::min(max_rows, std::max(count, size_t{1}));
     szContent.y                = multiply_to_int(szContent.y, visible_rows);
-    if (items.size() > max_rows)
+    if (count > max_rows)
         szContent.y = add_to_int(szContent.y, rowSize.y / 2);
     wxWindow::SetSize(szContent);
 #ifdef __WXGTK__

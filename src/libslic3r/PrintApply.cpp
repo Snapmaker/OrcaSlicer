@@ -1314,7 +1314,11 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
             return c.has("seam_slope_type") && c.opt_enum<SeamScarfType>("seam_slope_type") != SeamScarfType::None;
         };
         const bool has_scarf_joint_seam = std::any_of(o.begin(), o.end(), [&new_full_config, &opt_has_scarf_joint_seam](ModelObject* obj) {
-            return obj->get_config_value<ConfigOptionEnum<SeamScarfType>>(new_full_config, "seam_slope_type")->value != SeamScarfType::None ||
+            // Read the enum through the base option + virtual getInt(): the value may be
+            // stored as ConfigOptionEnumGeneric (DynamicConfig), where a typed downcast is UB.
+            const ConfigOption* seam_slope_opt = obj->config.has("seam_slope_type") ?
+                obj->config.option("seam_slope_type") : new_full_config.option("seam_slope_type");
+            return (seam_slope_opt != nullptr && static_cast<SeamScarfType>(seam_slope_opt->getInt()) != SeamScarfType::None) ||
                    std::any_of(obj->volumes.begin(), obj->volumes.end(), [&opt_has_scarf_joint_seam](const ModelVolume* v) { return opt_has_scarf_joint_seam(v->config.get());}) ||
                    std::any_of(obj->layer_config_ranges.begin(), obj->layer_config_ranges.end(), [&opt_has_scarf_joint_seam](const auto& r) { return opt_has_scarf_joint_seam(r.second.get());});
         });

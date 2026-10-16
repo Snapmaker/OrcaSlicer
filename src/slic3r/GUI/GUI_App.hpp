@@ -30,9 +30,11 @@
 #include <wx/string.h>
 #include <wx/snglinst.h>
 #include <wx/msgdlg.h>
+#include <wx/timer.h>
 
 #include <atomic>
 #include <mutex>
+#include <vector>
 #include <stack>
 #include <unordered_map>
 //#define BBL_HAS_FIRST_PAGE          1
@@ -246,9 +248,19 @@ public:
 
     static std::atomic<bool> m_app_alive; // 标记应用是否存活
 
+    // True once Windows began ending the session; close-path dialogs check it
+    // to auto-discard instead of interacting (Sentry SNAPMAKER_ORCA-1H6).
+    bool in_session_end() const { return m_in_session_end; }
+
+    // A queried session end was cancelled: restore interactive close.
+    void reset_session_end();
+
     static void log_version_info();
 
 private:
+    bool m_in_session_end{ false };
+    wxTimer m_session_end_reset_timer; // fallback reset for a cancelled session end
+
     bool            m_initialized { false };
     bool            m_post_initialized { false };
     // Set when a snapmaker-orca:// URL is handed to us after launch (macOS delivers these
@@ -256,6 +268,9 @@ private:
     // post_init must not start a blank project in that case, or it discards the model the
     // URL is in the middle of loading.
     bool            m_url_open_pending { false };
+#ifdef __APPLE__
+    std::vector<wxString> m_pending_mac_open_urls;
+#endif // __APPLE__
     bool            m_app_conf_exists{ false };
     EAppMode        m_app_mode{ EAppMode::Editor };
     bool            m_is_recreating_gui{ false };

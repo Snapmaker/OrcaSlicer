@@ -499,6 +499,12 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     // declare events
     Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent& event) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< ": mainframe received close_widow event";
+        // Session end: no interaction, no teardown - wx deletes all windows
+        // under us (Sentry SNAPMAKER_ORCA-1H6, see GUI_App QUERY_END_SESSION).
+        if (wxGetApp().in_session_end()) {
+            event.Skip();
+            return;
+        }
         if (event.CanVeto() && m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true)) {
             // prevents to open the save dirty project dialog
             event.Veto();
@@ -584,7 +590,9 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
 
     if (m_plater != nullptr) {
         // BBS
-        update_slice_print_status(eEventSliceUpdate, true, true);
+        // Constructor-time init: bypass the teardown guard in
+        // update_slice_print_status — mainframe is not registered yet.
+        update_slice_print_status_impl(eEventSliceUpdate, true, true);
 
         // BBS: backup project
         if (wxGetApp().app_config->get("backup_switch") == "true") {
@@ -847,6 +855,13 @@ WXLRESULT MainFrame::MSWWindowProc(WXUINT nMsg, WXWPARAM wParam, WXLPARAM lParam
         AdjustWorkingAreaForAutoHide(hWnd, mmi);
         return 0;
     }
+    case WM_ENDSESSION:
+        // wx ignores the wParam=0 "session cancelled" broadcast; without this
+        // reset the session-end guards would silently discard unsaved changes
+        // on every later manual close.
+        if (wParam == 0)
+            wxGetApp().reset_session_end();
+        break;
     case WM_WTSSESSION_CHANGE: {
         switch (wParam) {
         case WTS_SESSION_LOCK:
@@ -2192,6 +2207,32 @@ void MainFrame::update_side_button_style()
 }
 
 void MainFrame::update_slice_print_status(SlicePrintEventType event, bool can_slice, bool can_print)
+{
+    // Stale callbacks may still reach this after the frame was torn down by
+    // recreate_GUI / shutdown; skip the UI update and log loudly in that
+    // state. The leading checks do not dereference this.
+    //
+    // The MainFrame constructor updates its initial button state through
+    // update_slice_print_status_impl instead: at construction time
+    // wxGetApp().mainframe does not point at this frame yet, so going
+    // through this entry the mainframe != this check would always fire and
+    // log a false PROBE-ABNORMAL on every startup / recreate.
+    MainFrame* live_frame = wxGetApp().mainframe;
+    if ((live_frame && live_frame != this) || m_shutting_down || IsBeingDeleted()) {
+        std::string probe = std::string(__FUNCTION__) + " PROBE-ABNORMAL"
+            + " event=" + std::to_string(static_cast<int>(event))
+            + " can_slice=" + std::to_string(can_slice)
+            + " can_print=" + std::to_string(can_print)
+            + " stale_this=" + std::to_string(live_frame != this)
+            + " being_deleted=" + std::to_string(IsBeingDeleted())
+            + " shutting_down=" + std::to_string(m_shutting_down);
+        BOOST_LOG_TRIVIAL(warning) << probe;
+        return;
+    }
+    update_slice_print_status_impl(event, can_slice, can_print);
+}
+
+void MainFrame::update_slice_print_status_impl(SlicePrintEventType event, bool can_slice, bool can_print)
 {
     bool enable_print = true, enable_slice = true;
 

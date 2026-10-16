@@ -1306,13 +1306,13 @@ void GUI_App::shutdown(bool isRecreate)
 
     if (web_device_dialog != nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": web device dialog");
-        delete web_device_dialog;
+        web_device_dialog->Destroy();
         web_device_dialog = nullptr;
     }
 
     if (web_preprint_dialog != nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": web preprint dialog");
-        delete web_preprint_dialog;
+        web_preprint_dialog->Destroy();
         web_preprint_dialog = nullptr;
     }
 
@@ -2592,6 +2592,19 @@ bool GUI_App::on_init_inner()
     CBaseException::set_log_folder(data_dir());
 #endif
 
+#ifdef __WINDOWS__
+    m_session_end_reset_timer.SetOwner(this);
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) { reset_session_end(); }, m_session_end_reset_timer.GetId());
+
+    // wxApp::OnEndSession deletes all top-level windows under open modal dialogs and corrupts the heap (Sentry SNAPMAKER_ORCA-1H6).
+    wxGetApp().Bind(wxEVT_QUERY_END_SESSION, [this](wxCloseEvent&) {
+        m_in_session_end = true;
+        GUI::abort_all_modal_dialogs();
+        m_session_end_reset_timer.StartOnce(60000);
+    });
+
+    wxGetApp().Bind(wxEVT_END_SESSION, [this](wxCloseEvent&) { ::ExitProcess(0); });
+#else
     wxGetApp().Bind(wxEVT_QUERY_END_SESSION, [this](auto & e) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< "received wxEVT_QUERY_END_SESSION";
         if (mainframe) {
@@ -2606,6 +2619,7 @@ bool GUI_App::on_init_inner()
         for (auto d : dialogStack)
             d->EndModal(wxID_ABORT);
     });
+#endif
 
     // Verify resources path
     const wxString resources_dir = from_u8(Slic3r::resources_dir());
@@ -3073,6 +3087,12 @@ bool GUI_App::on_init_inner()
 #endif
             this->post_init();
 
+#ifdef __APPLE__
+            for (const auto& url : m_pending_mac_open_urls)
+                start_download(into_u8(url));
+            m_pending_mac_open_urls.clear();
+#endif // __APPLE__
+
             update_publish_status();
         }
 
@@ -3163,6 +3183,12 @@ bool GUI_App::on_init_inner()
     profiler.mark("on_init_inner return");
 
     return true;
+}
+
+void GUI_App::reset_session_end()
+{
+    m_session_end_reset_timer.Stop();
+    m_in_session_end = false;
 }
 
 void GUI_App::machine_find()
@@ -6673,6 +6699,9 @@ std::vector<std::pair<unsigned int, std::string>> GUI_App::get_selected_presets(
 // - Taking snapshot
 bool GUI_App::check_and_save_current_preset_changes(const wxString& caption, const wxString& header, bool remember_choice/* = true*/, bool dont_save_insted_of_discard/* = false*/)
 {
+    if (m_in_session_end)
+        return true;
+
     if (has_current_preset_changes()) {
         int act_buttons = ActionButtons::SAVE;
         if (dont_save_insted_of_discard)
@@ -6805,6 +6834,9 @@ bool GUI_App::can_load_project()
 
 bool GUI_App::check_print_host_queue()
 {
+    if (m_in_session_end)
+        return true;
+
     wxString dirty;
     std::vector<std::pair<std::string, std::string>> jobs;
     // Get ongoing jobs from dialog
@@ -6993,7 +7025,10 @@ void GUI_App::MacOpenURL(const wxString& url)
     // which is always empty here: macOS launches the app first and delivers the URL afterwards.
     // Without this flag post_init resets the project that this download is about to load.
     m_url_open_pending = true;
-    start_download(into_u8(url));
+    if (!m_post_initialized)
+        m_pending_mac_open_urls.push_back(url);
+    else
+        start_download(into_u8(url));
 }
 
 // wxWidgets override to get an event on open files.

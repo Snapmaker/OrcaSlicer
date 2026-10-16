@@ -181,6 +181,8 @@
 #include "Gizmos/GLGizmosManager.hpp"
 #endif // __APPLE__
 
+#include "Gizmos/GLGizmoMmuSegmentation.hpp"
+
 #include <libslic3r/CutUtils.hpp>
 #include <wx/glcanvas.h>    // Needs to be last because reasons :-/
 #include <libslic3r/miniz_extension.hpp>
@@ -3037,6 +3039,25 @@ Sidebar::Sidebar(Plater *parent)
                 const int span = (total > 0) ? (90 * current / total) : 0;
                 set_progress(5 + span);
             });
+
+        // The painting gizmo keeps an in-memory editing copy of the painting
+        // (m_triangle_selectors) and data_changed() only reloads it when the
+        // extruder count changes; a same-count palette rewrite leaves it stale.
+        // The match just rewrote mmu_segmentation_facets in the model, so force a
+        // re-deserialize on every canvas where the gizmo is active (each canvas
+        // owns its own gizmo manager). A stale copy would keep rendering the old
+        // mapping and its next update_model_object() would write that stale copy
+        // back over the applied match.
+        {
+            Plater* batch_plater = wxGetApp().plater();
+            for (GLCanvas3D* cnv : { batch_plater->get_view3D_canvas3D(), batch_plater->get_assmeble_canvas3D() }) {
+                if (cnv == nullptr) continue;
+                GLGizmosManager& gizmos_mgr = cnv->get_gizmos_manager();
+                if (gizmos_mgr.get_current_type() != GLGizmosManager::EType::MmSegmentation) continue;
+                if (auto* mmu_gizmo = dynamic_cast<GLGizmoMmuSegmentation*>(gizmos_mgr.get_gizmo(GLGizmosManager::EType::MmSegmentation)))
+                    mmu_gizmo->refresh_from_model();
+            }
+        }
 
         // cleanup already serializes; only panel refresh needed.
         set_progress(95);
@@ -16404,7 +16425,7 @@ void Plater::priv::set_project_name(const wxString& project_name)
     m_project_name = project_name;
     //update topbar title
 #ifdef __WINDOWS__
-    wxGetApp().mainframe->SetTitle(m_project_name + " - Snapmaker Orca");
+    wxGetApp().mainframe->SetTitle(m_project_name + " - " + wxString(SLIC3R_APP_NAME));
     wxGetApp().mainframe->topbar()->SetTitle(m_project_name);
 #else
     wxGetApp().mainframe->SetTitle(m_project_name);
@@ -20092,6 +20113,10 @@ void Plater::reset_with_confirm()
 // BBS: save logic
 int GUI::Plater::close_with_confirm(std::function<bool(bool)> second_check)
 {
+    // Session end: discard without dialog (see wxEVT_QUERY_END_SESSION handler).
+    if (wxGetApp().in_session_end())
+        return wxID_NO;
+
     if (up_to_date(false, false)) {
         if (second_check && !second_check(false)) return wxID_CANCEL;
         model().set_backup_path("");
@@ -21762,7 +21787,12 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
             wxGetApp().mainframe->select_tab(MainFrame::TabPosition::tpMonitor);
         }
 
-        delete dialog;
+        // Use wx deferred destruction instead of a direct delete: the dialog was
+        // just returning from its modal loop, and the destructor clears the
+        // global registration. Clear it now so nothing can touch the pending
+        // window before wx actually deletes it (Sentry SNAPMAKER_ORCA-21F).
+        dialog->Destroy();
+        wxGetApp().set_web_preprint_dialog(nullptr);
 
         return;
     }

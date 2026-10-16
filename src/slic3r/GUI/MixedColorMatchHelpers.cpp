@@ -113,6 +113,107 @@ std::vector<int> normalize_color_match_weights(const std::vector<int>& weights, 
     return out;
 }
 
+std::vector<int> clamp_color_match_weights_to_minimum(const std::vector<int> &weights, int min_component_percent)
+{
+    const int minimum = std::clamp(min_component_percent, 0, 50);
+    std::vector<int> constrained(weights.size(), 0);
+    std::vector<unsigned char> supplied(weights.size(), 0);
+    if (constrained.empty())
+        return constrained;
+
+    // Barycentric coordinates are negative when the mouse is outside the
+    // triangle. Apply the lower bound before normalization, as the original
+    // triangle drag logic did. Exact zeros remain excluded so repeated calls do
+    // not resurrect a component that participant reduction has already removed.
+    size_t supplied_participants = 0;
+    for (size_t idx = 0; idx < weights.size(); ++idx) {
+        if (weights[idx] < 0) {
+            constrained[idx] = minimum;
+            supplied[idx] = 1;
+            ++supplied_participants;
+        } else if (weights[idx] > 0) {
+            constrained[idx] = std::max(weights[idx], minimum);
+            supplied[idx] = 1;
+            ++supplied_participants;
+        }
+    }
+
+    // A valid mix needs at least two participating colors. Preserve the legacy
+    // vertex behavior by lifting every zero when the supplied input contains
+    // fewer than two participants (100/0/0 becomes 70/15/15 at a 15% minimum).
+    if (minimum > 0 && supplied_participants < 2) {
+        for (size_t idx = 0; idx < weights.size(); ++idx)
+            if (weights[idx] == 0) {
+                constrained[idx] = minimum;
+                supplied[idx] = 1;
+            }
+    }
+
+    constrained = normalize_color_match_weights(constrained, constrained.size());
+    if (minimum <= 0)
+        return constrained;
+
+    // If the selected minimum cannot support all supplied colors (for example,
+    // three colors with a minimum above 33%), retain only the strongest colors
+    // and constrain those participating colors to a valid ratio.
+    std::vector<size_t> active;
+    active.reserve(constrained.size());
+    for (size_t idx = 0; idx < constrained.size(); ++idx)
+        if (supplied[idx])
+            active.emplace_back(idx);
+    std::sort(active.begin(), active.end(), [&weights](size_t lhs, size_t rhs) {
+        if (weights[lhs] != weights[rhs])
+            return weights[lhs] > weights[rhs];
+        return lhs < rhs;
+    });
+    const size_t max_active = std::min<size_t>(active.size(), size_t(100 / minimum));
+    if (max_active < 2)
+        return constrained;
+    active.resize(max_active);
+
+    std::vector<unsigned char> participating(constrained.size(), 0);
+    int                        excess_total = 0;
+    for (const size_t idx : active) {
+        participating[idx] = 1;
+        excess_total += std::max(0, constrained[idx] - minimum);
+    }
+
+    // Redistribute only the excess weight. This keeps the resulting sum at 100
+    // without normalizing a component back below the configured minimum.
+    std::vector<double> exact(constrained.size(), 0.0);
+    std::vector<double> remainders(constrained.size(), 0.0);
+    const int           budget   = 100 - int(max_active) * minimum;
+    int                 assigned = 0;
+    for (size_t idx = 0; idx < constrained.size(); ++idx) {
+        if (!participating[idx]) {
+            constrained[idx] = 0;
+            continue;
+        }
+        const int excess = std::max(0, constrained[idx] - minimum);
+        exact[idx] = double(minimum) + (excess_total > 0 ? double(budget) * double(excess) / double(excess_total) : 0.0);
+        constrained[idx] = int(std::floor(exact[idx]));
+        remainders[idx] = exact[idx] - double(constrained[idx]);
+        assigned += constrained[idx];
+    }
+
+    for (int missing = 100 - assigned; missing > 0; --missing) {
+        size_t best_idx = size_t(-1);
+        double best_remainder = -1.0;
+        for (const size_t idx : active) {
+            if (remainders[idx] > best_remainder) {
+                best_remainder = remainders[idx];
+                best_idx = idx;
+            }
+        }
+        if (best_idx == size_t(-1))
+            break;
+        ++constrained[best_idx];
+        remainders[best_idx] = 0.0;
+    }
+
+    return constrained;
+}
+
 std::vector<int> expand_color_match_recipe_weights(const MixedColorMatchRecipeResult& recipe, size_t num_physical)
 {
     std::vector<int> weights(num_physical, 0);

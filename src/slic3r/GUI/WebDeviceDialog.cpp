@@ -52,6 +52,13 @@ WebDeviceDialog::WebDeviceDialog()
 
 WebDeviceDialog::~WebDeviceDialog()
 {
+    // Clear the global registration before the wxWidgets base destructor runs,
+    // otherwise later users of wxGetApp().web_device_dialog would dereference
+    // freed memory (Sentry SNAPMAKER_ORCA-21F).
+    if (wxGetApp().web_device_dialog == this) {
+        wxGetApp().web_device_dialog = nullptr;
+    }
+
     SSWCP::on_webview_delete(m_browser);
 }
 

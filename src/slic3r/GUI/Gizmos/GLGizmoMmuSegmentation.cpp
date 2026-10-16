@@ -293,6 +293,17 @@ void GLGizmoMmuSegmentation::data_changed(bool is_serializing)
 }
 
 // BBS
+void GLGizmoMmuSegmentation::refresh_from_model()
+{
+    // Same reload pairing data_changed() uses on extruder-count changes, but
+    // unconditional: palette/painting rewrites that keep the total count must also
+    // re-deserialize the selector states, or the stale editing copy would keep
+    // rendering the old mapping and its next update_model_object() would write
+    // that stale copy back over the model.
+    init_extruders_data();
+    init_model_triangle_selectors();
+}
+
 bool GLGizmoMmuSegmentation::on_number_key_down(int number)
 {
     int extruder_idx = number - 1;

@@ -1,6 +1,8 @@
 {
   "type": "process",
   "from": "system",
+  "bottom_color_penetration_layers": "3",
+  "top_color_penetration_layers": "4",
   "instantiation": "true",
   "name": "0.20 Standard @Snapmaker J1 (0.4 nozzle)",
   "setting_id": "4042107035",

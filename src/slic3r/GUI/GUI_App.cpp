@@ -1078,17 +1078,26 @@ void GUI_App::post_init()
         }
 //#endif
         mainframe->Thaw();
-        // Defer the final tab selection to after pending events are
-        // processed. During GL init, the PAGE_CHANGED handler posts
-        // EVT_GLVIEWTOOLBAR_3D which would undo a synchronous
-        // select_tab(0) and switch back to the Prepare tab.
-        CallAfter([this] {
-            if (is_editor() && app_config->get("default_page") != "1")
-                mainframe->select_tab(size_t(0));
-            else if (app_config->get("default_page") == "1")
-                mainframe->select_tab(size_t(1));
-        });
-        plater_->trigger_restore_project(1);
+        // A URL open already in flight loads its own project and has already selected the 3D
+        // view. Sending the user to the home page and starting a blank project would undo both.
+        // On macOS the URL arrives through MacOpenURL after launch, so it is never visible in
+        // init_params->input_files and switch_to_3d above cannot account for it. This mirrors
+        // what switch_to_3d already does on platforms that receive the URL as a launch argument.
+        if (m_url_open_pending) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", url open pending, staying on the 3D view and skipping the blank project";
+        } else {
+            // Defer the final tab selection to after pending events are
+            // processed. During GL init, the PAGE_CHANGED handler posts
+            // EVT_GLVIEWTOOLBAR_3D which would undo a synchronous
+            // select_tab(0) and switch back to the Prepare tab.
+            CallAfter([this] {
+                if (is_editor() && app_config->get("default_page") != "1")
+                    mainframe->select_tab(size_t(0));
+                else if (app_config->get("default_page") == "1")
+                    mainframe->select_tab(size_t(1));
+            });
+            plater_->trigger_restore_project(1);
+        }
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", end load_gl_resources";
     }
 //#endif
@@ -2053,6 +2062,10 @@ GUI_App::~GUI_App()
     if (m_silent_refresh_timeout_timer) {
         m_silent_refresh_timeout_timer->Stop();
         m_silent_refresh_timeout_timer.reset();
+    }
+    if (m_flutter_wcp_timeout_timer) {
+        m_flutter_wcp_timeout_timer->Stop();
+        m_flutter_wcp_timeout_timer.reset();
     }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter");
@@ -3984,7 +3997,8 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     if (!preset_bundle->is_bbl_vendor()) {
         if (is_snapmaker_u1) {
-            wxString url      = build_flutter_web_url("2");
+            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) +
+                                                   "/web/flutter_web/index.html?path=2");
             auto     real_url = wxGetApp().get_international_url(url);
             mainframe->load_printer_url(real_url);
         } else {
@@ -4386,6 +4400,47 @@ void GUI_App::sm_request_user_logout()
         http.form_add("token", m_login_userinfo.get_user_token()).perform();
     } catch (std::exception&) {
         ;
+    }
+}
+
+void GUI_App::start_flutter_wcp_timeout_watch()
+{
+    if (m_flutter_wcp_reported || m_flutter_wcp_timeout_timer)
+        return;
+
+    m_flutter_wcp_timeout_timer = std::make_unique<wxTimer>(this, wxID_ANY);
+    Bind(wxEVT_TIMER, &GUI_App::on_flutter_wcp_timeout, this, m_flutter_wcp_timeout_timer->GetId());
+    m_flutter_wcp_timeout_timer->Start(FLUTTER_WCP_TIMEOUT_MS, wxTIMER_ONE_SHOT);
+}
+
+void GUI_App::on_flutter_wcp_received()
+{
+    report_flutter_run_result_once(true);
+}
+
+void GUI_App::on_flutter_wcp_timeout(wxTimerEvent &event)
+{
+    report_flutter_run_result_once(false);
+}
+
+void GUI_App::report_flutter_run_result_once(bool success)
+{
+    if (m_flutter_wcp_reported)
+        return;
+
+    if (m_flutter_wcp_timeout_timer) {
+        m_flutter_wcp_timeout_timer->Stop();
+        m_flutter_wcp_timeout_timer.reset();
+    }
+
+    m_flutter_wcp_reported = true;
+
+    if (success) {
+        SNAP_LOG_BATCH_FORCE(Info, "flutter run success",
+            {"eventName", "flutter_run_result"}, {"source", "cpp"}, {"success", "true"});
+    } else {
+        SNAP_LOG_BATCH_FORCE(Error, "flutter run failed",
+            {"eventName", "flutter_run_result"}, {"source", "cpp"}, {"success", "false"});
     }
 }
 
@@ -5412,18 +5467,6 @@ void GUI_App::no_new_version()
 }
 
 std::string GUI_App::version_display = "";
-wxString GUI_App::flutter_web_base_url(const wxString& path)
-{
-    return wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) +
-                              "/web/flutter_web/index.html?path=" + std::string(path.utf8_str()));
-}
-
-// Full launch url: base plus &version= of the embedding desktop client, so the
-// flutter side can identify which app build it is talking to.
-wxString GUI_App::build_flutter_web_url(const wxString& path)
-{
-    return flutter_web_base_url(path) + wxString::Format("&version=%s", Snapmaker_VERSION);
-}
 
 std::string GUI_App::format_display_version()
 {
@@ -6729,6 +6772,10 @@ void GUI_App::MacOpenURL(const wxString& url)
 {
     if (url.empty())
         return;
+    // post_init() decides whether to start a blank project based on init_params->input_files,
+    // which is always empty here: macOS launches the app first and delivers the URL afterwards.
+    // Without this flag post_init resets the project that this download is about to load.
+    m_url_open_pending = true;
     start_download(into_u8(url));
 }
 
@@ -7714,6 +7761,138 @@ void GUI_App::SMUserInfo::notify() {
     wxGetApp().user_login_notify(data);
 
 }
+//---------------------------------------------------------------------------
+// Extensible incompatible support-material pair detection.
+// Each entry: {interface_material, incompatible_model_material}.
+// When the interface filament equals the first type AND the plate
+// contains models of the second type, a parameter recommendation is
+// triggered. Add new pairs here — no other code changes needed.
+//---------------------------------------------------------------------------
+namespace {
+struct IncompatibleSupportPair {
+    const char *interface_type;
+    const char *model_type;
+};
+
+const IncompatibleSupportPair INCOMPATIBLE_SUPPORT_PAIRS[] = {
+    {"PETG", "PLA"},
+    {"PLA",  "PETG"},
+    // Future: {"PLA", "TPU"},
+    // Future: {"PLA", "TPU-AMS"},
+};
+} // anonymous namespace
+
+//---------------------------------------------------------------------------
+// Scans all model objects on all plates for any of the given filament_type
+// strings. Mixed-filament virtual slots are expanded to physical components
+// before checking.
+//---------------------------------------------------------------------------
+bool has_filaments(const std::vector<std::string> &filament_types)
+{
+    if (filament_types.empty())
+        return false;
+
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr)
+        return false;
+
+    PresetBundle *preset_bundle = wxGetApp().preset_bundle;
+    if (preset_bundle == nullptr)
+        return false;
+
+    const std::vector<std::string> &filament_presets = preset_bundle->filament_presets;
+    const PresetCollection         &filaments        = preset_bundle->filaments;
+    const size_t num_physical    = filament_presets.size();
+
+    // Resolve filament_type string for a 1-based extruder index.
+    auto resolve_filament_type = [&](int extruder_id_1based) -> std::string {
+        if (extruder_id_1based <= 0)
+            return std::string();
+        unsigned int idx = static_cast<unsigned int>(extruder_id_1based - 1);
+        if (idx >= filament_presets.size())
+            return std::string();
+        const Preset *preset = filaments.find_preset(filament_presets[idx]);
+        if (preset == nullptr)
+            return std::string();
+        const ConfigOptionStrings *opt = preset->config.option<ConfigOptionStrings>(
+            "filament_type");
+        if (opt == nullptr || opt->values.empty())
+            return std::string();
+        return opt->values[0];
+    };
+
+    // Collect 1-based extruder IDs from all model volumes on all plates.
+    std::vector<int> raw_extruder_ids;
+    const ModelObjectPtrs &model_objects = plater->model().objects;
+    for (const ModelObject *obj : model_objects) {
+        if (obj == nullptr) continue;
+        for (const ModelVolume *vol : obj->volumes) {
+            if (vol == nullptr) continue;
+            std::vector<int> extruders = vol->get_extruders();
+            raw_extruder_ids.insert(raw_extruder_ids.end(),
+                                    extruders.begin(), extruders.end());
+        }
+    }
+
+    // Expand mixed-filament virtual IDs to physical components.
+    // This expansion is for MODEL material detection only — mixed slots
+    // CANNOT be selected as support_interface_filament (ConfigManipulation
+    // clamping resets them to 0 when value exceeds filament_cnt).
+    MixedFilamentManager &mixed_mgr = preset_bundle->mixed_filaments;
+    if (num_physical > 0) {
+        mixed_mgr.expand_virtual_extruder_ids(raw_extruder_ids, num_physical);
+    }
+
+    // Match each expanded physical extruder against the target list.
+    for (int extruder_id : raw_extruder_ids) {
+        std::string filament_type = resolve_filament_type(extruder_id);
+        if (filament_type.empty()) continue;
+        for (const std::string &target : filament_types) {
+            if (filament_type == target)
+                return true;
+        }
+    }
+
+    return false;
+}
+
+// Checks whether the filament at extruder_id forms an incompatible
+// PLA↔PETG support pair with any model material on the plate.
+// Returns true if a recommendation dialog should be shown.
+bool check_pla_petg_support_pair(int extruder_id)
+{
+    PresetBundle *preset_bundle = Slic3r::GUI::wxGetApp().preset_bundle;
+    if (preset_bundle == nullptr)
+        return false;
+
+    const std::vector<std::string> &filament_presets = preset_bundle->filament_presets;
+
+    if (extruder_id < 0 || extruder_id >= static_cast<int>(filament_presets.size()))
+        return false;
+
+    const Preset *filament = preset_bundle->filaments.find_preset(
+        filament_presets[extruder_id]);
+    if (filament == nullptr)
+        return false;
+
+    const ConfigOptionStrings *ft_opt =
+        filament->config.option<ConfigOptionStrings>("filament_type");
+    if (ft_opt == nullptr || ft_opt->values.empty())
+        return false;
+
+    const std::string &interface_type = ft_opt->values[0];
+
+    for (const IncompatibleSupportPair &pair : INCOMPATIBLE_SUPPORT_PAIRS) {
+        if (interface_type == pair.interface_type) {
+            bool found = has_filaments({pair.model_type});
+            if (found)
+                return true;
+        }
+    }
+
+    return false;
+}
+
 bool is_support_filament(int extruder_id)
 {
     auto &filament_presets = Slic3r::GUI::wxGetApp().preset_bundle->filament_presets;
@@ -7728,7 +7907,7 @@ bool is_support_filament(int extruder_id)
     if (support_option == nullptr) return false;
 
     return support_option->get_at(0);
-};
+}
 
 } // GUI
 } //Slic3r

@@ -75,6 +75,7 @@ class ObjectSettings;
 class ObjectLayers;
 class ObjectList;
 class GLCanvas3D;
+class GLTexture;
 class Mouse3DController;
 class NotificationManager;
 class DailyTipsWindow;
@@ -568,7 +569,6 @@ public:
     // BBS
     void on_bed_type_change(BedType bed_type);
     bool update_filament_colors_in_full_config();
-    void config_change_notification(const DynamicPrintConfig &config, const std::string& key);
     void on_config_change(const DynamicPrintConfig &config);
     /// @brief Check whether high-temperature and low-temperature filaments are mixed on the current plate.
     /// @return True if compatible; false if high/low temperature materials are mixed.
@@ -645,6 +645,11 @@ public:
     bool sync_cold_plate_notification();
     /// Check and guard filament temp mixing before slicing current plate.
     bool guard_before_slice_plate();
+    /// Live (non-slice) warning: yellow notification when the CURRENT plate's
+    /// effective print sequence is by-object. Re-evaluated on global/per-plate
+    /// print-sequence edits, on plate switch, and on page switch (prepare
+    /// and preview both render it).
+    void sync_print_seq_warning_notification();
     /// Check and guard filament temp mixing before slicing all plates.
     bool guard_before_slice_all();
     /// @brief Show confirmation dialog for allowed high/low temperature mixing before slice.
@@ -771,7 +776,7 @@ public:
     void enable_view_toolbar(bool enable);
 #endif
 
-    bool init_collapse_toolbar();
+    bool init_collapse_toolbar(const GLTexture* shared_background_texture = nullptr);
 
     const Camera& get_camera() const;
     Camera& get_camera();

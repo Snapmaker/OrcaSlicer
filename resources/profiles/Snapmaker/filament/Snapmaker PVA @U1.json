@@ -50,9 +50,7 @@
   "filament_loading_speed_start": [
     "3"
   ],
-  "filament_max_volumetric_speed": [
-    "5"
-  ],
+  "filament_max_volumetric_speed": ["5", "6"],
   "filament_minimal_purge_on_wipe_tower": [
     "20"
   ],
@@ -65,9 +63,7 @@
   "filament_retract_length_toolchange": [
     "4"
   ],
-  "filament_retraction_length": [
-    "0.4"
-  ],
+  "filament_retraction_length": ["0.4", "0.6"],
   "filament_retraction_speed": [
     "nil"
   ],
@@ -95,9 +91,7 @@
   "nozzle_temperature_initial_layer": [
     "240"
   ],
-  "slow_down_layer_time": [
-    "10"
-  ],
+  "slow_down_layer_time": ["7"],
   "textured_plate_temp": [
     "65"
   ],
@@ -122,12 +116,8 @@
   "filament_end_gcode": [
     ""
   ],
-  "filament_flow_ratio": [
-    "1"
-  ],
-  "filament_flow_support": [
-    "standard"
-  ],
+  "filament_flow_ratio": ["1", "0.97"],
+  "filament_flow_support": ["standard", "high_flow"],
   "filament_multitool_ramming_flow": [
     "10"
   ],

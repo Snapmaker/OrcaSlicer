@@ -194,7 +194,9 @@ void ScrolledWindow::OnSize(wxSizeEvent &event)
         {
             m_horizontalSplitter->SetSashPosition(clientH); // we don't need horizontal scrollbar
             if (m_rightScrollbar)
-                m_userPanel->SetSize(clientW - m_marginWidth, clientH); // don't hide the vertical scrollbar
+                // Clamp to 0: a size event can arrive before GTK finished allocating,
+                // making clientW smaller than the margin (underflow → rejected size).
+                m_userPanel->SetSize(wxMax(clientW - m_marginWidth, 0), clientH); // don't hide the vertical scrollbar
             else
                 m_userPanel->SetSize(GetClientSize());
 

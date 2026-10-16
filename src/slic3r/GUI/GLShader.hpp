@@ -12,6 +12,19 @@ namespace Slic3r {
 class ColorRGB;
 class ColorRGBA;
 
+struct GLAttributeLocation
+{
+    enum : unsigned int
+    {
+        POSITION = 0,
+        NORMAL = 1,
+        TEX_COORD = 2,
+        BARYCENTRIC = 3,
+        INSTANCE_OFFSET = 4,
+        INSTANCE_SCALES = 5
+    };
+};
+
 class GLShaderProgram
 {
 public:

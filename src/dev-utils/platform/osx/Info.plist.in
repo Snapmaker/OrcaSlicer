@@ -137,6 +137,8 @@
   <array>
     <string>_http._tcp</string>
     <string>_printer._tcp</string>
+    <string>_snapmaker._tcp</string>
+    <string>_services._dns-sd._udp</string>
   </array>
   <key>LSEnvironment</key>
   <dict>

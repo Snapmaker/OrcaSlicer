@@ -15554,6 +15554,12 @@ msgstr "选择\"是\"可尝试切片，但可能出现软件卡顿或无响应�
 msgid "Select \"No\" to terminate the slicing task immediately."
 msgstr "选择\"否\"将立即停止切片任务"
 
+msgid "Don't ask again next time"
+msgstr "下次不再提示"
+
+msgid "Show a dialog asking whether to continue slicing when memory is low"
+msgstr "内存不足时，弹窗提示用户是否执行切片"
+
 msgid "Yes, Continue"
 msgstr "是，继续"
 

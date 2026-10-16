@@ -21230,6 +21230,12 @@ bool Plater::reslice()
     if (printer_technology() == ptFFF) {
         Print* print_ptr = p->background_process.fff_print();
         if (print_ptr) {
+            // "Don't ask again next time" (dialog checkbox) or the Preferences toggle
+            // disables the memory guard entirely for subsequent slicing runs, matching
+            // the pre-guard behavior. Snapshotted on the main thread; the guard
+            // callback itself would run on TBB workers.
+            bool show_mem_warning = wxGetApp().app_config->get_bool("show_memory_usage_warning");
+            print_ptr->set_memory_guard_enabled(show_mem_warning);
             print_ptr->set_memory_guard_callback([this]() -> bool {
                 auto promise = std::make_shared<std::promise<bool>>();
                 auto future  = promise->get_future();
@@ -21247,8 +21253,13 @@ bool Plater::reslice()
                     RichMessageDialog dlg(this, msg,
                         _L("Memory Usage Warning"), wxYES_NO | wxNO_DEFAULT | wxICON_WARNING);
                     dlg.SetYesNoLabels(_L("Yes, Continue"), _L("No, Stop"));
+                    dlg.ShowCheckBox(_L("Don't ask again next time"), false);
 
                     bool result = (dlg.ShowModal() == wxID_YES);
+                    if (dlg.IsCheckBoxChecked())
+                        // Keep in sync with the Preferences checkbox, which is bound to the
+                        // same key with inverted polarity (checked there = dialog shows).
+                        wxGetApp().app_config->set_bool("show_memory_usage_warning", false);
                     if (result) {
                         // Skip toolpath preview to reduce memory usage on
                         // the subsequent load_toolpaths / load_shells phase.

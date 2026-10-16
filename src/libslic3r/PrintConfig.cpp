@@ -3597,6 +3597,18 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionPercent(25));
 
+    def = this->add("external_infill_margin", coFloatOrPercent);
+    def->label = L("Anchor solid infill by X mm");
+    def->category = L("Strength");
+    def->tooltip  = L("This parameter grows the top/bottom/solid layers by the specified mm to anchor them into the sparse infill and support the perimeters above."
+                       " Put 0 to deactivate it. Can be a %% of the width of the perimeters.");
+    def->sidetext = L("mm or %");
+    def->ratio_over  = "line_width";
+    def->min      = 0;
+    def->max_literal = 50;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloatOrPercent());
+
     def = this->add("sparse_infill_speed", coFloats);
     def->label = L("Sparse infill");
     def->category = L("Speed");

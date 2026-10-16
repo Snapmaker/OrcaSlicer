@@ -1203,6 +1203,16 @@ void Layer::make_fills(FillAdaptive::Octree* adaptive_fill_octree, FillAdaptive:
         f->z 		= this->print_z;
         f->angle 	= surface_fill.params.angle;
         f->is_using_template_angle = surface_fill.params.is_using_template_angle;
+        // Whether the layer above (same region) carries top surfaces, so that
+        // internal solid infill of this layer sits directly below a top surface.
+        if (this->id() + 1 < this->object()->layers().size()) {
+            LayerRegion *layerm_above = this->object()->layers()[this->id() + 1]->regions()[surface_fill.region_id];
+            for (const Surface &s : layerm_above->fill_surfaces.surfaces)
+                if (s.surface_type == stTop) {
+                    f->solid_under_top = true;
+                    break;
+                }
+        }
         f->adapt_fill_octree   = (surface_fill.params.pattern == ipSupportCubic) ? support_fill_octree : adaptive_fill_octree;
         f->print_config        = &this->object()->print()->config();
         f->print_object_config = &this->object()->config();

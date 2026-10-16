@@ -15735,6 +15735,17 @@ msgstr "  • 接触面图案 → 交叠直线\n"
 msgid "  • Interface spacing: %.2f → 0 mm\n"
 msgstr "  • 接触面间距：%.2f → 0 mm\n"
 
+msgid "Anchor solid infill by X mm"
+msgstr "顶部实心填充"
+
+msgid ""
+"This parameter grows the top/bottom/solid layers by the specified mm to "
+"anchor them into the sparse infill and support the perimeters above. Put 0 "
+"to deactivate it. Can be a %% of the width of the perimeters."
+msgstr ""
+"该参数会将顶/底/实体层向外扩展指定的毫米数，使其锚固到稀疏填充中，并为上方的"
+"外壁提供支撑。设为 0 可禁用此功能。也可以设为外壁宽度的百分比。"
+
 msgid "Speed of 100% overhang wall which has 0 overlap with the lower layer."
 msgstr "100% 悬空墙的速度，与下层无重叠。"
 

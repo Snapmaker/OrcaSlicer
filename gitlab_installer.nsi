@@ -21,8 +21,32 @@ Unicode true
 !define PRODUCT_LEGACY_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_LEGACY_NAME}"
 !define PRODUCT_LEGACY_INSTALL_KEY "Software\${PRODUCT_PUBLISHER}\${PRODUCT_LEGACY_NAME}"
 
-!ifndef VERSION
-    !searchparse /noerrors /file "version.inc" `set(Snapmaker_VERSION "` VERSION `")`
+; Basename at compile time via cmd's %~nxF (native, no depth limit): the temp
+; .nsh defines the result symbol, an include applies it, and a missing define
+; (cmd failed) is a hard compile error instead of a wrong OriginalFilename.
+!macro _LeafOf _result _path
+    !tempfile _leaf_file
+    !system 'cmd /c for %F in ("${_path}") do @echo !define ${_result} "%~nxF" >> "${_leaf_file}"'
+    !include "${_leaf_file}"
+    !ifndef ${_result}
+        !error "basename extraction failed: ${_path}"
+    !endif
+    !delfile "${_leaf_file}"
+    !undef _leaf_file
+!macroend
+
+; Product version always comes from version.inc. /DVERSION is only a label that
+; is appended to the installer file name: ...V<version>_<label>.exe
+!searchparse /file "${__FILEDIR__}\version.inc" `set(Snapmaker_VERSION "` PRODUCT_VERSION `")`
+!if "${PRODUCT_VERSION}" == ""
+    !error "Snapmaker_VERSION not found in ${__FILEDIR__}\version.inc"
+!endif
+
+; Three version fields -> the four numeric fields VIProductVersion requires (2.4.0 -> 2.4.0.0)
+!searchparse "${PRODUCT_VERSION}" "" VER_MAJOR "." VER_MINOR "." VER_PATCH
+!searchparse /noerrors "${VER_PATCH}" "" VER_PATCH_NUM "-"
+!ifndef VER_PATCH_NUM
+    !define VER_PATCH_NUM "${VER_PATCH}"
 !endif
 
 !ifndef SOURCE_DIR
@@ -34,8 +58,25 @@ Unicode true
 !define INSTALL_DIR_RUNTIME "$PROGRAMFILES64\Snapmaker_Orca"
 InstallDir "${INSTALL_DIR_RUNTIME}"
 
-!ifndef OUTPUT_FILE
-    !define OUTPUT_FILE "Snapmaker_Orca_Windows_Installer_V${VERSION}.exe"
+; Jenkins passes /DVERSION=<label> plus a full /DOUTPUT_FILE path. The label only
+; rewrites the leaf name (V<label>.exe -> V<version>_<label>.exe); a directory that
+; happens to contain V... is never touched, and an already-versioned leaf passes through.
+!ifdef VERSION
+    !ifdef OUTPUT_FILE
+        !insertmacro _LeafOf OUT_LEAF "${OUTPUT_FILE}"
+        !searchreplace OUT_LEAF_FINAL "${OUT_LEAF}" "V${VERSION}.exe" "V${PRODUCT_VERSION}_${VERSION}.exe"
+        !searchreplace FINAL_OUTPUT "${OUTPUT_FILE}" "${OUT_LEAF}" "${OUT_LEAF_FINAL}"
+        !define INSTALLER_LEAF "${OUT_LEAF_FINAL}"
+    !else
+        !define FINAL_OUTPUT "Snapmaker_Orca_Windows_Installer_V${PRODUCT_VERSION}_${VERSION}.exe"
+        !define INSTALLER_LEAF "${FINAL_OUTPUT}"
+    !endif
+!else
+    !ifndef OUTPUT_FILE
+        !define OUTPUT_FILE "Snapmaker_Orca_Windows_Installer_V${PRODUCT_VERSION}.exe"
+    !endif
+    !define FINAL_OUTPUT "${OUTPUT_FILE}"
+    !insertmacro _LeafOf INSTALLER_LEAF "${OUTPUT_FILE}"
 !endif
 
 ; License page: show LICENSE.txt from repo root (same dir as this .nsi)
@@ -165,8 +206,20 @@ UninstPage custom un.SnapmakerUninstallFinishCreate un.SnapmakerUninstallFinishL
     ${_PREFIX}_found:
 !macroend
 
-Name "${PRODUCT_NAME} V${VERSION}"
-OutFile "${OUTPUT_FILE}"
+; Version resource: right-click the installer -> Properties -> Details
+VIProductVersion "${VER_MAJOR}.${VER_MINOR}.${VER_PATCH_NUM}.0"
+VIAddVersionKey "ProductName"      "${PRODUCT_DISPLAY_NAME}"
+VIAddVersionKey "CompanyName"      "${PRODUCT_PUBLISHER}"
+VIAddVersionKey "FileDescription"  "${PRODUCT_DISPLAY_NAME} Installer"
+VIAddVersionKey "FileVersion"      "${PRODUCT_VERSION}"
+VIAddVersionKey "ProductVersion"   "${PRODUCT_VERSION}"
+VIAddVersionKey "LegalCopyright"   "Copyright (C) ${PRODUCT_PUBLISHER}"
+VIAddVersionKey "InternalName"     "${PRODUCT_NAME}"
+VIAddVersionKey "Comments"         "Snapmaker Orca is an open source slicer for FDM printers"
+VIAddVersionKey "OriginalFilename" "${INSTALLER_LEAF}"
+
+Name "${PRODUCT_NAME} V${PRODUCT_VERSION}"
+OutFile "${FINAL_OUTPUT}"
 
 Section "Main program" SecMain
     SectionIn RO
@@ -294,7 +347,7 @@ Section "Main program" SecMain
     WriteRegDWORD ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "NoRepair" 1
 
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_INSTALL_KEY}" "" "$INSTDIR"
-    WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_INSTALL_KEY}" "Version" "${VERSION}"
+    WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_INSTALL_KEY}" "Version" "${PRODUCT_VERSION}"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_INSTALL_KEY}" "InstallPath" "$INSTDIR"
 
     ; URL protocols (same as macOS CFBundleURLSchemes): snapmaker-orca:// and Snapmaker_Orca://
@@ -331,10 +384,10 @@ Section "Uninstall"
     ; page instead of closing the window.
     IfSilent snap_confirm_done
     StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 snap_confirm_en
-    MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "确定要彻底卸载 Snapmaker Orca V${VERSION} 及其全部组件吗？" IDYES snap_confirm_done
+    MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "确定要彻底卸载 Snapmaker Orca V${PRODUCT_VERSION} 及其全部组件吗？" IDYES snap_confirm_done
     Quit
     snap_confirm_en:
-    MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "Are you sure you want to completely uninstall Snapmaker Orca V${VERSION} and all of its components?" IDYES snap_confirm_done
+    MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "Are you sure you want to completely uninstall Snapmaker Orca V${PRODUCT_VERSION} and all of its components?" IDYES snap_confirm_done
     Quit
     snap_confirm_done:
 
@@ -432,7 +485,7 @@ SectionEnd
 ; the CPack side derives it from the version regex, so "2.4.0-rc1" reports "2.4.0"
 ; and "2.4.0.1" reports "2.4.0". Result in $R6.
 Function GetDisplayVersion
-    StrCpy $R2 "${VERSION}"
+    StrCpy $R2 "${PRODUCT_VERSION}"
     StrCpy $R6 ""
     StrCpy $R4 0
     StrCpy $R5 0
@@ -464,7 +517,7 @@ Function GetDisplayVersion
     snap_display_version_done:
         ; Never report an empty version for a string the recomposition rejects.
         StrCmp $R6 "" 0 snap_display_version_end
-        StrCpy $R6 "${VERSION}"
+        StrCpy $R6 "${PRODUCT_VERSION}"
     snap_display_version_end:
 FunctionEnd
 
@@ -624,13 +677,13 @@ FunctionEnd
 
 Function un.SnapmakerUninstallFinishCreate
   StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 SnapmakerFin_l10n_en
-  StrCpy $SnapmakerFinTitle "Snapmaker Orca V${VERSION} 已成功从本机卸载。"
+  StrCpy $SnapmakerFinTitle "Snapmaker Orca V${PRODUCT_VERSION} 已成功从本机卸载。"
   StrCpy $SnapmakerFinText "点击【完成】关闭卸载程序"
   StrCpy $SnapmakerFinCheckboxText "删除个人数据"
   SendMessage $mui.Button.Next ${WM_SETTEXT} 0 "STR:完成(&F)"
   Goto SnapmakerFin_l10n_done
 SnapmakerFin_l10n_en:
-  StrCpy $SnapmakerFinTitle "Snapmaker Orca V${VERSION} has been successfully uninstalled from this computer."
+  StrCpy $SnapmakerFinTitle "Snapmaker Orca V${PRODUCT_VERSION} has been successfully uninstalled from this computer."
   StrCpy $SnapmakerFinText "Click Finish to close the uninstaller"
   StrCpy $SnapmakerFinCheckboxText "Delete personal data"
   SendMessage $mui.Button.Next ${WM_SETTEXT} 0 "STR:&Finish"

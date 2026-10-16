@@ -2,6 +2,7 @@
 #define slic3r_GUI_PopupWindow_hpp_
 
 #include <wx/popupwin.h>
+#include <wx/weakref.h>
 
 class PopupWindow : public wxPopupTransientWindow
 {
@@ -17,6 +18,7 @@ public:
 
 private:
 #ifdef __WXGTK__
+    wxWeakRef<wxWindow> m_activation_source;
     void topWindowActiavate(wxActivateEvent &event);
 #endif
 };

@@ -479,7 +479,7 @@ boost::asio::ip::port_type HttpServer::find_available_port(boost::asio::ip::port
     // 尝试从起始端口开始查找可用端口
     for (boost::asio::ip::port_type p = start_port; p < start_port + 1000; ++p) {
         if (is_port_available(p)) {
-            BOOST_LOG_TRIVIAL(error) << "use new port for start server:"<<p;
+            BOOST_LOG_TRIVIAL(info) << "Starting local resource server on port " << p;
             return p;
         }
     }
@@ -769,7 +769,7 @@ void HttpServer::stop_health_check()
         std::lock_guard<std::mutex> lock(m_health_check_mutex);
         
         if (!m_health_check_enabled) {
-            BOOST_LOG_TRIVIAL(error) << "Health check is not running";
+            BOOST_LOG_TRIVIAL(debug) << "Health check is already stopped";
             return;
         }
         

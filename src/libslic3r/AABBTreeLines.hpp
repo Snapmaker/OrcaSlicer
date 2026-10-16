@@ -32,7 +32,8 @@ namespace AABBTreeLines {
             {
                 Vec<LineType::Dim, typename LineType::Scalar> nearest_point;
                 const LineType& line = lines[primitive_index];
-                squared_distance = line_alg::distance_to_squared(line, origin.template cast<typename LineType::Scalar>(), &nearest_point);
+                squared_distance = line_alg::distance_to_squared<LineType>(
+                    line, origin.template cast<typename LineType::Scalar>(), &nearest_point);
                 return nearest_point.template cast<ScalarType>();
             }
         };
@@ -351,10 +352,11 @@ namespace AABBTreeLines {
             return dist;
         }
 
-    	std::vector<size_t> all_lines_in_radius(const Vec<2, Scalar> &point, Floating radius)
-    	{
-        	return AABBTreeLines::all_lines_in_radius(this->lines, this->tree, point.template cast<Floating>(), radius * radius);
-    	}
+        std::vector<size_t> all_lines_in_radius(const Vec<2, Scalar> &point, Floating radius)
+        {
+            // Store a vector value, not Eigen's lazy cast expression, in the distancer.
+            return AABBTreeLines::all_lines_in_radius(this->lines, this->tree, point.template cast<Floating>().eval(), radius * radius);
+        }
 
         template <bool sorted>
         std::vector<std::pair<Vec<2, Scalar>, size_t>> intersections_with_line(const LineType& line) const

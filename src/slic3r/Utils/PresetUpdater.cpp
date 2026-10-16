@@ -1,4 +1,5 @@
 #include "PresetUpdater.hpp"
+#include "PrinterMetadataValidation.hpp"
 
 #include <algorithm>
 #include <boost/filesystem/operations.hpp>
@@ -117,6 +118,8 @@ void copy_file_fix(const fs::path &source, const fs::path &target)
 
 struct Update
 {
+    enum class DirectoryKind { PresetBundle, PrinterMetadata };
+    DirectoryKind directory_kind { DirectoryKind::PresetBundle };
 	fs::path source;
 	fs::path target;
 
@@ -167,6 +170,13 @@ struct Update
 	{
 	    if (is_directory) {
             auto validate_staging = [this](const fs::path &staging) -> bool {
+                if (directory_kind == DirectoryKind::PrinterMetadata) {
+                    if (!validate_printer_metadata_directory(staging)) {
+                        BOOST_LOG_TRIVIAL(error) << "Printer metadata staging is missing version.txt or model JSON files";
+                        return false;
+                    }
+                    return true;
+                }
                 if (vendor == "flutter_web") {
                     if (!fs::exists(staging / "version.json")) {
                         BOOST_LOG_TRIVIAL(error) << "Web resource staging is missing version.json";
@@ -1702,6 +1712,7 @@ Updates PresetUpdater::priv::get_printer_config_updates(bool update) const
         } catch (...) {}
     }
     updates.updates.emplace_back(std::move(resc_folder), std::move(config_folder), version, "bbl", change_log, version.comment, false, true);
+    updates.updates.back().directory_kind = Update::DirectoryKind::PrinterMetadata;
     return updates;
 }
 

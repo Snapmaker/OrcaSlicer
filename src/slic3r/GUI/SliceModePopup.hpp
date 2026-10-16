@@ -3,6 +3,7 @@
 
 #include <wx/popupwin.h>
 #include <wx/timer.h>
+#include <wx/weakref.h>
 
 #include <vector>
 
@@ -41,6 +42,7 @@ private:
     void on_timer(wxTimerEvent &evt);
     void update_metrics();
 #ifdef __WXGTK__
+    wxWeakRef<wxWindow> m_activation_source;
     // The popup is an override-redirect window that stays on top of everything,
     // so hide it when the application loses activation (mirrors Widgets/PopupWindow).
     void on_top_window_activate(wxActivateEvent &evt);

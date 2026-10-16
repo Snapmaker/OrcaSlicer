@@ -1711,7 +1711,8 @@ Updates PresetUpdater::priv::get_printer_config_updates(bool update) const
             version.comment = j["description"];
         } catch (...) {}
     }
-    updates.updates.emplace_back(std::move(resc_folder), std::move(config_folder), version, PRINTER_CONFIG_RESOURCE, change_log, version.comment, false, true);
+    updates.updates.emplace_back(std::move(resc_folder), std::move(config_folder), version, PRINTER_CONFIG_RESOURCE,
+                                 change_log, version.comment, false, true);
     return updates;
 }
 

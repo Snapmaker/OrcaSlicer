@@ -692,6 +692,24 @@ SCENARIO("Per-extruder layer height respects the extruder's minimum layer height
             REQUIRE(warnings_have_opt_key(warnings, "extruder_layer_height"));
         }
     }
+    GIVEN("A minimum layer height above the extruder's maximum") {
+        DynamicPrintConfig config = two_extruder_config(0.4);
+        config.set_key_value("min_layer_height", new ConfigOptionFloats({0.07, 0.7}));
+        Print print;
+        Model model;
+        init_two_part_print(print, model, config);
+        THEN("validation names the limit instead of the layers below it") {
+            std::vector<StringObjectException> warnings;
+            REQUIRE(print.validate(&warnings).string.empty());
+            const std::string text = concat_warning_strings(warnings);
+            CHECK(text.find("minimum layer height of extruder 2") != std::string::npos);
+            CHECK(text.find("whose minimum layer") == std::string::npos);
+        }
+        THEN("the variable layer height limits ignore it") {
+            CHECK_THAT(Slicing::min_layer_height_from_nozzle(config, 2), Catch::Matchers::WithinAbs(0.07, 1e-9));
+            CHECK_THAT(Slicing::max_layer_height_from_nozzle(config, 2), Catch::Matchers::WithinAbs(0.45, 1e-9));
+        }
+    }
 }
 
 // Shared check: the fine part's walls print on every layer with the base layer heights while
@@ -1999,15 +2017,17 @@ static DynamicPrintConfig restricted_support_tower_config()
 
 // A 10 x 10 x 20 mm pillar carrying a 30 x 10 x 4 mm arm at its top: the arm overhangs 20 mm to
 // one side and needs support down to the bed.
-static void init_overhanging_arm_print(Print &print, Model &model, const DynamicPrintConfig &config)
+static void init_overhanging_arm_print(Print &print, Model &model, const DynamicPrintConfig &config, int extruder = 0)
 {
     TriangleMesh pillar = make_cube(10., 10., 20.);
     TriangleMesh arm    = make_cube(30., 10., 4.);
     arm.translate(0.f, 0.f, 16.f);
     ModelObject *object = model.add_object();
     object->name = "overhanging_arm";
-    object->add_volume(std::move(pillar), ModelVolumeType::MODEL_PART, false);
-    object->add_volume(std::move(arm), ModelVolumeType::MODEL_PART, false);
+    for (ModelVolume *volume : { object->add_volume(std::move(pillar), ModelVolumeType::MODEL_PART, false),
+                                 object->add_volume(std::move(arm), ModelVolumeType::MODEL_PART, false) })
+        if (extruder > 0)
+            volume->config.set("extruder", extruder);
     object->add_instance();
     object->center_around_origin();
     object->translate(150., 150., 0.);
@@ -2063,6 +2083,678 @@ TEST_CASE("The prime tower reserved before slicing holds the tower of a restrict
     CHECK(built_x <= reserved_side + 0.5);
     CHECK(built_y <= reserved_side + 0.5);
     CHECK(std::max(built_x, built_y) >= 0.7 * reserved_side);
+}
+
+// The ladder step and tallest piece for a support maximum on the object layer height, as SupportParameters picks them.
+static std::pair<int, double> expected_reach(double max, double h, SupportLayerHeightStep step)
+{
+    auto reach = [max, h](int s) { return std::floor(max / (h / s) + 1e-9) * (h / s); };
+    if (step == slhsWholeLayer || step == slhsHalfLayer || step == slhsQuarterLayer) {
+        const int s = step == slhsWholeLayer ? 1 : step == slhsHalfLayer ? 2 : 4;
+        return { s, reach(s) };
+    }
+    int s = 1;
+    for (int finer : { 2, 4 })
+        if (reach(finer) > reach(s) + 1e-9)
+            s = finer;
+    return { s, reach(s) };
+}
+
+static bool on_quantum(double z, double quantum)
+{
+    return std::abs(z / quantum - std::round(z / quantum)) < 1e-3;
+}
+
+static bool on_object_layer(const PrintObject &object, double z, double tolerance)
+{
+    for (const Layer *layer : object.layers())
+        if (std::abs(layer->print_z - z) < tolerance)
+            return true;
+    return false;
+}
+
+static bool has_interface_path(const SupportLayer &layer)
+{
+    bool found = false;
+    for_each_path(layer.support_fills, [&found](const ExtrusionPath &path) { found = found || path.role() == erSupportMaterialInterface; });
+    return found;
+}
+
+// Index of the first differing point, or the common length when they match.
+static size_t first_difference(const Points &a, const Points &b)
+{
+    const size_t common = std::min(a.size(), b.size());
+    for (size_t i = 0; i < common; ++ i)
+        if (a[i] != b[i])
+            return i;
+    return common;
+}
+
+static DynamicPrintConfig normal_support_config(SupportLayerHeightStep step)
+{
+    DynamicPrintConfig config = fractional_support_config(step);
+    config.option<ConfigOptionEnum<SupportType>>("support_type", true)->value           = stNormalAuto;
+    config.option<ConfigOptionEnum<SupportMaterialStyle>>("support_style", true)->value = smsDefault;
+    return config;
+}
+
+static DynamicPrintConfig organic_support_config(SupportLayerHeightStep step)
+{
+    DynamicPrintConfig config = fractional_support_config(step);
+    config.option<ConfigOptionEnum<SupportMaterialStyle>>("support_style", true)->value = smsTreeOrganic;
+    return config;
+}
+
+TEST_CASE("Normal support layers reach the support extruder's maximum under the prime tower", "[MultiNozzleLayerHeight][Support][WipeTower]")
+{
+    using Catch::Matchers::WithinAbs;
+    const SupportLayerHeightStep step = GENERATE(slhsWholeLayer, slhsHalfLayer, slhsQuarterLayer, slhsAuto, slhsMaxHeight);
+    CAPTURE(int(step));
+    const DynamicPrintConfig config       = normal_support_config(step);
+    const double             layer_height = config.opt_float("layer_height");
+    // Filament 2 prints the support.
+    const double max_height = config.option<ConfigOptionFloats>("max_layer_height")->get_at(1);
+    const std::pair<int, double> ladder = expected_reach(max_height, layer_height, step);
+    // The arm bottom lies at 16 mm.
+    const double support_top = 16. - config.opt_float("support_top_z_distance");
+    Print print;
+    Model model;
+    init_overhanging_arm_print(print, model, config);
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+    print.process();
+    size_t off_ladder = 0, too_tall = 0, off_grid = 0;
+    double tallest = 0.;
+    const SupportLayer *top = nullptr;
+    for (const SupportLayer *layer : print.objects().front()->support_layers()) {
+        off_ladder += ! on_quantum(layer->print_z, layer_height / ladder.first);
+        too_tall   += layer->height > max_height + 1e-6;
+        off_grid   += ! on_quantum(layer->print_z, layer_height);
+        tallest     = std::max(tallest, layer->height);
+        if (! layer->support_fills.entities.empty())
+            top = layer;
+    }
+    REQUIRE(top != nullptr);
+    CHECK(off_ladder == 0);
+    CHECK(too_tall == 0);
+    CHECK_THAT(tallest, WithinAbs(ladder.second, 1e-6));
+    CHECK_THAT(top->print_z, WithinAbs(support_top, 1e-6));
+    CHECK_THAT(top->height, WithinAbs(layer_height, 1e-6));
+    if (ladder.first == 1)
+        CHECK(off_grid == 0);
+    else
+        CHECK(off_grid > 0);
+    size_t slabs = 0, thin_slabs = 0, off_grid_slabs = 0;
+    for (const LayerTools &lt : print.get_tool_ordering().layer_tools())
+        if (lt.has_wipe_tower) {
+            ++ slabs;
+            thin_slabs     += lt.wipe_tower_layer_height < layer_height - 1e-3;
+            off_grid_slabs += ! on_quantum(lt.print_z, layer_height);
+        }
+    CHECK(slabs > 0);
+    CHECK(thin_slabs == 0);
+    CHECK(off_grid_slabs == 0);
+    CHECK(! Slic3r::Test::gcode(print).empty());
+}
+
+TEST_CASE("Support stays on the object layers when it cannot reach two layers under the prime tower", "[MultiNozzleLayerHeight][Support][WipeTower]")
+{
+    struct Case { const char *name; SupportType type; SupportMaterialStyle style; bool independent; double max_height; };
+    const Case c = GENERATE(values<Case>({
+        { "Normal support with independent heights off", stNormalAuto, smsDefault, false, 0.56 },
+        { "Normal support whose maximum is below two layers", stNormalAuto, smsDefault, true, 0.3 },
+        { "Organic support whose maximum is below two layers", stTreeAuto, smsTreeOrganic, true, 0.3 } }));
+    INFO(c.name);
+    DynamicPrintConfig config = fractional_support_config(slhsWholeLayer);
+    config.option<ConfigOptionEnum<SupportType>>("support_type", true)->value           = c.type;
+    config.option<ConfigOptionEnum<SupportMaterialStyle>>("support_style", true)->value = c.style;
+    config.set_key_value("independent_support_layer_height", new ConfigOptionBool(c.independent));
+    config.set_key_value("max_layer_height", new ConfigOptionFloats({ 0.3, c.max_height }));
+    const double layer_height = config.opt_float("layer_height");
+    Print print;
+    Model model;
+    init_overhanging_arm_print(print, model, config);
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+    print.process();
+    const PrintObject &object = *print.objects().front();
+    size_t layers = 0, off_object = 0, too_tall = 0;
+    for (const SupportLayer *layer : object.support_layers()) {
+        ++ layers;
+        off_object += ! on_object_layer(object, layer->print_z, 1e-6);
+        too_tall   += layer->height > layer_height + 1e-6;
+    }
+    CHECK(layers > 0);
+    CHECK(off_object == 0);
+    CHECK(too_tall == 0);
+}
+
+TEST_CASE("Normal support on a raft keeps its layers on the object grid under the prime tower", "[MultiNozzleLayerHeight][Support][WipeTower]")
+{
+    using Catch::Matchers::WithinAbs;
+    DynamicPrintConfig config = normal_support_config(slhsWholeLayer);
+    config.set_key_value("raft_layers", new ConfigOptionInt(2));
+    const double layer_height = config.opt_float("layer_height");
+    const double max_height   = config.option<ConfigOptionFloats>("max_layer_height")->get_at(1);
+    Print print;
+    Model model;
+    init_overhanging_arm_print(print, model, config);
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+    print.process();
+    const PrintObject &object  = *print.objects().front();
+    const double       z0      = object.slicing_parameters().object_print_z_min;
+    const double       first_z = object.layers().front()->print_z;
+    size_t above_raft = 0, off_object = 0;
+    double tallest = 0., top = 0.;
+    for (const SupportLayer *layer : object.support_layers()) {
+        top = std::max(top, layer->print_z);
+        if (layer->print_z < first_z - 1e-6)
+            continue;
+        ++ above_raft;
+        off_object += ! on_object_layer(object, layer->print_z, 1e-6);
+        tallest     = std::max(tallest, layer->height);
+    }
+    CHECK(above_raft > 0);
+    CHECK(off_object == 0);
+    CHECK_THAT(tallest, WithinAbs(expected_reach(max_height, layer_height, slhsWholeLayer).second, 1e-6));
+    // The arm bottom lies at 16 mm above the object bottom.
+    CHECK_THAT(top, WithinAbs(z0 + 16. - config.opt_float("support_top_z_distance"), 1e-6));
+    size_t slabs = 0, off_object_slabs = 0;
+    for (const LayerTools &lt : print.get_tool_ordering().layer_tools())
+        if (lt.has_wipe_tower && lt.print_z > first_z - 1e-6) {
+            ++ slabs;
+            off_object_slabs += ! on_object_layer(object, lt.print_z, 1e-3);
+        }
+    CHECK(slabs > 0);
+    CHECK(off_object_slabs == 0);
+    CHECK(! Slic3r::Test::gcode(print).empty());
+}
+
+TEST_CASE("Thick support under a floating part reports no empty layers", "[MultiNozzleLayerHeight][Support][WipeTower]")
+{
+    using Catch::Matchers::WithinAbs;
+    DynamicPrintConfig config = normal_support_config(slhsWholeLayer);
+    config.set_key_value("max_layer_height",          new ConfigOptionFloats({ 0.3, 0.6 }));
+    config.set_key_value("support_bottom_z_distance", new ConfigOptionFloat(0.2));
+    const double layer_height = config.opt_float("layer_height");
+    const double max_height   = config.option<ConfigOptionFloats>("max_layer_height")->get_at(1);
+    Print print;
+    Model model;
+    {
+        // Two 20 x 20 x 5 mm parts of one object, the upper one floating 5 mm above the lower one.
+        TriangleMesh lower = make_cube(20., 20., 5.);
+        TriangleMesh upper = make_cube(20., 20., 5.);
+        upper.translate(0.f, 0.f, 10.f);
+        ModelObject *object = model.add_object();
+        object->name = "floating_part";
+        object->add_volume(std::move(lower), ModelVolumeType::MODEL_PART, false);
+        object->add_volume(std::move(upper), ModelVolumeType::MODEL_PART, false);
+        object->add_instance();
+        object->center_around_origin();
+        object->translate(150., 150., 0.);
+        object->ensure_on_bed();
+        print.apply(model, config);
+        print.set_status_silent();
+    }
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+    print.process();
+    double tallest = 0.;
+    for (const SupportLayer *layer : print.objects().front()->support_layers())
+        tallest = std::max(tallest, layer->height);
+    CHECK_THAT(tallest, WithinAbs(expected_reach(max_height, layer_height, slhsWholeLayer).second, 1e-6));
+    REQUIRE(! Slic3r::Test::gcode(print).empty());
+    size_t empty_layer_warnings = 0;
+    for (const PrintStateBase::Warning &warning : print.step_state_with_warnings(psGCodeExport).warnings)
+        empty_layer_warnings += warning.message_id == PrintStateBase::SlicingEmptyGcodeLayers;
+    CHECK(empty_layer_warnings == 0);
+}
+
+TEST_CASE("A support material restriction caps support layers at the extruders it allows", "[MultiNozzleLayerHeight][Support]")
+{
+    using Catch::Matchers::WithinAbs;
+    DynamicPrintConfig config = four_nozzle_config();
+    config.set_key_value("filament_type",              new ConfigOptionStrings({ "PETG", "PLA", "PLA", "PLA" }));
+    config.set_key_value("enable_support",             new ConfigOptionBool(true));
+    config.set_key_value("support_filament",           new ConfigOptionInt(0));
+    config.set_key_value("support_interface_filament", new ConfigOptionInt(0));
+    config.set_key_value("support_nozzle_diameter",    new ConfigOptionFloat(0.));
+    config.set_key_value("support_base_material",      new ConfigOptionString("PETG"));
+    config.set_key_value("support_interface_material", new ConfigOptionString("PETG"));
+    PrintConfig print_config;
+    print_config.apply(config, true);
+    PrintObjectConfig object_config;
+    object_config.apply(config, true);
+    // The object prints with extruder 4; filament 1 is the only PETG.
+    const SlicingParameters params = SlicingParameters::create_from_config(
+        print_config, object_config, 10., std::vector<unsigned int>{3}, Vec3d(1., 1., 1.));
+    CHECK_THAT(params.max_suport_layer_height, WithinAbs(config.option<ConfigOptionFloats>("max_layer_height")->get_at(0), 1e-9));
+}
+
+TEST_CASE("Organic support trunks reach the support extruder's maximum below single-layer interfaces under the prime tower", "[MultiNozzleLayerHeight][Support][WipeTower]")
+{
+    using Catch::Matchers::WithinAbs;
+    const SupportLayerHeightStep step = GENERATE(slhsWholeLayer, slhsHalfLayer);
+    CAPTURE(int(step));
+    DynamicPrintConfig config = organic_support_config(step);
+    config.set_key_value("support_interface_top_layers", new ConfigOptionInt(2));
+    const double layer_height = config.opt_float("layer_height");
+    const double max_height   = config.option<ConfigOptionFloats>("max_layer_height")->get_at(1);
+    const std::pair<int, double> ladder = expected_reach(max_height, layer_height, step);
+    const double support_top = 16. - config.opt_float("support_top_z_distance");
+    Print print;
+    Model model;
+    init_overhanging_arm_print(print, model, config);
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+    print.process();
+    size_t layers = 0, off_ladder = 0, too_tall = 0, interface_layers = 0, thick_interfaces = 0;
+    double tallest = 0., top = 0.;
+    for (const SupportLayer *layer : print.objects().front()->support_layers()) {
+        ++ layers;
+        off_ladder += ! on_quantum(layer->print_z, layer_height / ladder.first);
+        too_tall   += layer->height > max_height + 1e-6;
+        tallest     = std::max(tallest, layer->height);
+        top         = std::max(top, layer->print_z);
+        if (has_interface_path(*layer)) {
+            ++ interface_layers;
+            thick_interfaces += std::abs(layer->height - layer_height) > 1e-6;
+        }
+    }
+    CHECK(layers > 0);
+    CHECK(off_ladder == 0);
+    CHECK(too_tall == 0);
+    CHECK_THAT(tallest, WithinAbs(ladder.second, 1e-6));
+    CHECK(interface_layers > 0);
+    CHECK(thick_interfaces == 0);
+    CHECK(top < support_top + 1e-6);
+    size_t slabs = 0, thin_slabs = 0, off_grid_slabs = 0;
+    for (const LayerTools &lt : print.get_tool_ordering().layer_tools())
+        if (lt.has_wipe_tower) {
+            ++ slabs;
+            thin_slabs     += lt.wipe_tower_layer_height < layer_height - 1e-3;
+            off_grid_slabs += ! on_quantum(lt.print_z, layer_height);
+        }
+    CHECK(slabs > 0);
+    CHECK(thin_slabs == 0);
+    CHECK(off_grid_slabs == 0);
+    CHECK(! Slic3r::Test::gcode(print).empty());
+}
+
+TEST_CASE("Thick Organic support is the same on every slice", "[MultiNozzleLayerHeight][Support][WipeTower][Regression]")
+{
+    using Catch::Matchers::WithinAbs;
+    const DynamicPrintConfig config = organic_support_config(slhsHalfLayer);
+    struct Sliced { std::vector<std::pair<double, double>> layers; Points points; };
+    auto slice = [&config]() {
+        Print print;
+        Model model;
+        init_overhanging_arm_print(print, model, config);
+        print.process();
+        Sliced out;
+        for (const SupportLayer *layer : print.objects().front()->support_layers()) {
+            out.layers.emplace_back(layer->print_z, layer->height);
+            layer->support_fills.collect_points(out.points);
+        }
+        return out;
+    };
+    const Sliced first  = slice();
+    const Sliced second = slice();
+    REQUIRE(first.points.size() > 1000); // without support the comparisons below pass vacuously
+    REQUIRE(second.layers.size() == first.layers.size());
+    for (size_t i = 0; i < first.layers.size(); ++ i) {
+        INFO("support layer " << i);
+        REQUIRE_THAT(second.layers[i].first, WithinAbs(first.layers[i].first, 1e-9));
+        REQUIRE_THAT(second.layers[i].second, WithinAbs(first.layers[i].second, 1e-9));
+    }
+    REQUIRE(second.points.size() == first.points.size());
+    REQUIRE(first_difference(first.points, second.points) == first.points.size());
+}
+
+TEST_CASE("Organic support on a fine support nozzle takes quarter steps under the prime tower", "[MultiNozzleLayerHeight][Support][WipeTower]")
+{
+    DynamicPrintConfig config = restricted_support_tower_config();
+    config.option<ConfigOptionEnum<SupportMaterialStyle>>("support_style", true)->value = smsTreeOrganic;
+    const double layer_height = config.opt_float("layer_height");
+    // Filament 4 on the 0.2 mm nozzle prints the support.
+    const double max_height = config.option<ConfigOptionFloats>("max_layer_height")->get_at(3);
+    const std::pair<int, double> ladder = expected_reach(max_height, layer_height, slhsMaxHeight);
+    CAPTURE(ladder.first);
+    Print print;
+    Model model;
+    init_overhanging_arm_print(print, model, config);
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+    print.process();
+    const PrintObject &object = *print.objects().front();
+    size_t layers = 0, off_ladder = 0, off_object = 0, too_tall = 0;
+    for (const SupportLayer *layer : object.support_layers()) {
+        ++ layers;
+        off_ladder += ! on_quantum(layer->print_z, layer_height / ladder.first);
+        off_object += ! on_object_layer(object, layer->print_z, 1e-6);
+        too_tall   += layer->height > max_height + 1e-6;
+    }
+    CHECK(layers > 0);
+    CHECK(off_ladder == 0);
+    CHECK(off_object > 0);
+    CHECK(too_tall == 0);
+    size_t slabs = 0, thin_slabs = 0, off_object_slabs = 0, support_on_filament_4 = 0;
+    for (const LayerTools &lt : print.get_tool_ordering().layer_tools()) {
+        if (lt.has_wipe_tower) {
+            ++ slabs;
+            thin_slabs       += lt.wipe_tower_layer_height < layer_height - 1e-3;
+            off_object_slabs += ! on_object_layer(object, lt.print_z, 1e-3);
+        }
+        if (lt.has_support && std::find(lt.extruders.begin(), lt.extruders.end(), 3u) != lt.extruders.end())
+            ++ support_on_filament_4;
+    }
+    CHECK(slabs > 0);
+    CHECK(thin_slabs == 0);
+    CHECK(off_object_slabs == 0);
+    CHECK(support_on_filament_4 > 0);
+}
+
+// A 30 x 30 x 24 mm box holding a closed pyramid cavity: a 20 x 20 mm ceiling at z 20 and the apex at z 4.
+static TriangleMesh box_with_pyramid_cavity()
+{
+    indexed_triangle_set its = its_make_cube(30., 30., 24.);
+    const int v = int(its.vertices.size());
+    its.vertices.insert(its.vertices.end(), { { 5.f, 5.f, 20.f }, { 25.f, 5.f, 20.f }, { 25.f, 25.f, 20.f }, { 5.f, 25.f, 20.f }, { 15.f, 15.f, 4.f } });
+    // The cavity faces point into the cavity.
+    its.indices.insert(its.indices.end(), { { v, v + 2, v + 1 }, { v, v + 3, v + 2 }, { v, v + 1, v + 4 }, { v + 1, v + 2, v + 4 }, { v + 2, v + 3, v + 4 }, { v + 3, v, v + 4 } });
+    return TriangleMesh(its);
+}
+
+TEST_CASE("Merged Organic support layers keep the support resting on the model", "[MultiNozzleLayerHeight][Support][WipeTower]")
+{
+    using Catch::Matchers::WithinAbs;
+    const int bottom_interfaces = GENERATE(0, 2);
+    CAPTURE(bottom_interfaces);
+    DynamicPrintConfig config = organic_support_config(slhsHalfLayer);
+    config.set_key_value("support_interface_bottom_layers", new ConfigOptionInt(bottom_interfaces));
+    const double layer_height = config.opt_float("layer_height");
+    auto slice = [](const DynamicPrintConfig &config, Print &print, Model &model) {
+        ModelObject *object = model.add_object();
+        object->add_volume(box_with_pyramid_cavity(), ModelVolumeType::MODEL_PART, false);
+        object->add_instance();
+        object->center_around_origin();
+        object->translate(150., 150., 0.);
+        object->ensure_on_bed();
+        print.apply(model, config);
+        print.set_status_silent();
+        print.process();
+    };
+    Print merged_print, grid_print;
+    Model merged_model, grid_model;
+    slice(config, merged_print, merged_model);
+    // Without independent support heights every support layer is one object layer.
+    config.set_key_value("independent_support_layer_height", new ConfigOptionBool(false));
+    slice(config, grid_print, grid_model);
+    const auto merged = merged_print.objects().front()->support_layers();
+    size_t thick = 0;
+    for (const SupportLayer *layer : merged)
+        thick += layer->height > layer_height + 1e-6;
+    REQUIRE(thick > 0);
+    // Support area of each object layer that the merged layer printing over it lacks.
+    double total = 0., lost = 0.;
+    for (const SupportLayer *grid : grid_print.objects().front()->support_layers()) {
+        const double mid = grid->print_z - 0.5 * grid->height;
+        auto cover = std::find_if(merged.begin(), merged.end(), [mid](const SupportLayer *layer) { return layer->print_z - layer->height < mid && mid < layer->print_z; });
+        total += area(grid->support_islands);
+        lost  += area(cover == merged.end() ? grid->support_islands : diff_ex(grid->support_islands, (*cover)->support_islands));
+    }
+    REQUIRE(total > 0.);
+    CHECK_THAT(lost / total, WithinAbs(0., 1e-4));
+}
+
+TEST_CASE("A filament type change re-plans support under a material restriction", "[MultiNozzleLayerHeight][Support][Regression]")
+{
+    using Catch::Matchers::WithinAbs;
+    DynamicPrintConfig config = four_nozzle_config();
+    config.set_key_value("extruder_layer_height",      new ConfigOptionFloats({ 0., 0., 0., 0. }));
+    config.set_key_value("filament_type",              new ConfigOptionStrings({ "PLA", "PLA", "PLA", "PETG" }));
+    // Infill on filament 2 keeps two filaments, and so the prime tower, after the change.
+    config.set_key_value("sparse_infill_filament_id",  new ConfigOptionInt(2));
+    config.set_key_value("sparse_infill_density",      new ConfigOptionPercent(30.));
+    config.set_key_value("enable_support",             new ConfigOptionBool(true));
+    config.option<ConfigOptionEnum<SupportType>>("support_type", true)->value           = stNormalAuto;
+    config.option<ConfigOptionEnum<SupportMaterialStyle>>("support_style", true)->value = smsDefault;
+    config.set_key_value("support_filament",           new ConfigOptionInt(0));
+    config.set_key_value("support_interface_filament", new ConfigOptionInt(0));
+    config.set_key_value("support_nozzle_diameter",    new ConfigOptionFloat(0.));
+    config.set_key_value("support_base_material",      new ConfigOptionString("PETG"));
+    config.set_key_value("support_interface_material", new ConfigOptionString("PETG"));
+    config.set_key_value("independent_support_layer_height", new ConfigOptionBool(true));
+    config.set_key_value("enable_prime_tower",             new ConfigOptionBool(true));
+    config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(false));
+    config.set_key_value("use_relative_e_distances",       new ConfigOptionBool(true));
+    config.set_key_value("layer_change_gcode",             new ConfigOptionString("G92 E0"));
+    config.set_deserialize_strict({ { "printable_area", "0x0,270x0,270x270,0x270" } });
+    config.set_key_value("wipe_tower_x", new ConfigOptionFloats({ 10. }));
+    config.set_key_value("wipe_tower_y", new ConfigOptionFloats({ 10. }));
+    const double max_height_1 = config.option<ConfigOptionFloats>("max_layer_height")->get_at(0);
+    Print print;
+    Model model;
+    init_overhanging_arm_print(print, model, config);
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+    auto tallest = [&print]() {
+        double tallest = 0.;
+        for (const SupportLayer *layer : print.objects().front()->support_layers())
+            tallest = std::max(tallest, layer->height);
+        return tallest;
+    };
+    print.process();
+    REQUIRE(tallest() > max_height_1 + 1e-6);
+    // Filament 1 on the 0.2 mm nozzle becomes the only PETG.
+    config.set_key_value("filament_type", new ConfigOptionStrings({ "PETG", "PLA", "PLA", "PLA" }));
+    print.apply(model, config);
+    print.process();
+    CHECK_THAT(print.objects().front()->slicing_parameters().max_suport_layer_height, WithinAbs(max_height_1, 1e-9));
+    CHECK(tallest() < max_height_1 + 1e-6);
+}
+
+TEST_CASE("Raft and raft gap support layers stay within the support extruder's maximum under the prime tower", "[MultiNozzleLayerHeight][Support][WipeTower]")
+{
+    const SupportMaterialStyle style = GENERATE(smsDefault, smsTreeOrganic);
+    const double               gap   = GENERATE(0.1, 0.3);
+    CAPTURE(int(style), gap);
+    DynamicPrintConfig config = four_nozzle_config();
+    config.set_key_value("layer_height",               new ConfigOptionFloat(0.09));
+    config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.14));
+    config.set_key_value("extruder_layer_height",      new ConfigOptionFloats({ 0.09, 0.18, 0.36, 0.54 }));
+    config.set_key_value("min_layer_height",           new ConfigOptionFloats({ 0.04, 0.08, 0.12, 0.16 }));
+    config.set_key_value("max_layer_height",           new ConfigOptionFloats({ 0.14, 0.32, 0.42, 0.64 }));
+    config.set_key_value("enable_support",             new ConfigOptionBool(true));
+    config.option<ConfigOptionEnum<SupportType>>("support_type", true)->value           = style == smsDefault ? stNormalAuto : stTreeAuto;
+    config.option<ConfigOptionEnum<SupportMaterialStyle>>("support_style", true)->value = style;
+    // The support and the raft print on the 0.2 mm nozzle, whose 0.75 x nozzle default lies above its maximum.
+    config.set_key_value("support_filament",           new ConfigOptionInt(0));
+    config.set_key_value("support_interface_filament", new ConfigOptionInt(0));
+    config.set_key_value("support_nozzle_diameter",    new ConfigOptionFloat(0.2));
+    config.set_key_value("raft_layers",                new ConfigOptionInt(2));
+    config.set_key_value("raft_contact_distance",      new ConfigOptionFloat(gap));
+    config.set_key_value("independent_support_layer_height", new ConfigOptionBool(true));
+    config.option<ConfigOptionEnum<SupportLayerHeightStep>>("support_layer_height_step", true)->value = slhsMaxHeight;
+    config.set_key_value("enable_prime_tower",             new ConfigOptionBool(true));
+    config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(false));
+    config.set_key_value("use_relative_e_distances",       new ConfigOptionBool(true));
+    config.set_key_value("layer_change_gcode",             new ConfigOptionString("G92 E0"));
+    config.set_deserialize_strict({ { "printable_area", "0x0,270x0,270x270,0x270" } });
+    config.set_key_value("wipe_tower_x", new ConfigOptionFloats({ 10. }));
+    config.set_key_value("wipe_tower_y", new ConfigOptionFloats({ 10. }));
+    const double layer_height = config.opt_float("layer_height");
+    const double max_height   = config.option<ConfigOptionFloats>("max_layer_height")->get_at(0);
+    Print print;
+    Model model;
+    init_overhanging_arm_print(print, model, config, 2);
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+    print.process();
+    const PrintObject &object = *print.objects().front();
+    REQUIRE(object.slicing_parameters().raft_layers() == 2);
+    size_t layers = 0, too_tall = 0;
+    for (const SupportLayer *layer : object.support_layers())
+        if (! layer->support_fills.entities.empty()) {
+            ++ layers;
+            too_tall += layer->height > max_height + 1e-6;
+        }
+    CHECK(layers > 0);
+    CHECK(too_tall == 0);
+    size_t slabs = 0, thin_slabs = 0;
+    for (const LayerTools &lt : print.get_tool_ordering().layer_tools())
+        if (lt.has_wipe_tower) {
+            ++ slabs;
+            thin_slabs += lt.wipe_tower_layer_height < layer_height - 1e-3;
+        }
+    CHECK(slabs > 0);
+    CHECK(thin_slabs == 0);
+    CHECK(! Slic3r::Test::gcode(print).empty());
+}
+
+TEST_CASE("Objects on different extruders share their raft layers under the prime tower", "[MultiNozzleLayerHeight][WipeTower]")
+{
+    using Catch::Matchers::WithinAbs;
+    DynamicPrintConfig config = four_nozzle_config();
+    config.set_key_value("layer_height",               new ConfigOptionFloat(0.09));
+    config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.14));
+    config.set_key_value("extruder_layer_height",      new ConfigOptionFloats({ 0.09, 0.18, 0.36, 0.54 }));
+    config.set_key_value("max_layer_height",           new ConfigOptionFloats({ 0.14, 0.32, 0.42, 0.64 }));
+    config.set_key_value("raft_layers",                new ConfigOptionInt(2));
+    config.set_key_value("enable_prime_tower",             new ConfigOptionBool(true));
+    config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(false));
+    config.set_key_value("use_relative_e_distances",       new ConfigOptionBool(true));
+    config.set_key_value("layer_change_gcode",             new ConfigOptionString("G92 E0"));
+    config.set_deserialize_strict({ { "printable_area", "0x0,270x0,270x270,0x270" } });
+    config.set_key_value("wipe_tower_x", new ConfigOptionFloats({ 10. }));
+    config.set_key_value("wipe_tower_y", new ConfigOptionFloats({ 10. }));
+    Print print;
+    Model model;
+    // Two 10 mm cubes on extruders 1 and 2; the raft prints with the default support filament, extruder 1.
+    for (int extruder : { 1, 2 }) {
+        ModelObject *object = model.add_object();
+        object->add_volume(make_cube(10., 10., 10.), ModelVolumeType::MODEL_PART, false);
+        object->config.set("extruder", extruder);
+        object->add_instance();
+        object->center_around_origin();
+        object->translate(90. + 30. * extruder, 150., 0.);
+        object->ensure_on_bed();
+    }
+    print.apply(model, config);
+    print.set_status_silent();
+    const StringObjectException err = print.validate();
+    INFO(err.string);
+    CHECK(err.string.empty());
+    REQUIRE(print.objects().size() == 2);
+    const SlicingParameters &first  = print.objects().front()->slicing_parameters();
+    const SlicingParameters &second = print.objects().back()->slicing_parameters();
+    CHECK(first.raft_layers() == 2);
+    CHECK_THAT(second.contact_raft_layer_height, WithinAbs(first.contact_raft_layer_height, 1e-9));
+    CHECK(first.contact_raft_layer_height < config.option<ConfigOptionFloats>("max_layer_height")->get_at(0) + 1e-9);
+}
+
+// A 10 x 10 x 20 mm pillar with 30 x 10 x 4 mm arms overhanging one side at 16 mm and the other at 8 mm: the
+// transition layers under the lower arm share their layers with the plain base under the upper arm.
+TEST_CASE("Support layers without interface paths do not load the interface extruder under the prime tower", "[MultiNozzleLayerHeight][Support][WipeTower][Regression]")
+{
+    struct Case { const char *name; SupportType type; SupportMaterialStyle style; bool independent; };
+    const Case c = GENERATE(values<Case>({
+        { "Normal support", stNormalAuto, smsDefault, true },
+        { "Normal support with independent heights off", stNormalAuto, smsDefault, false },
+        { "Organic support", stTreeAuto, smsTreeOrganic, true },
+        { "Organic support with independent heights off", stTreeAuto, smsTreeOrganic, false },
+        { "Tree Strong support", stTreeAuto, smsTreeStrong, true } }));
+    INFO(c.name);
+    DynamicPrintConfig config = four_nozzle_config();
+    config.set_key_value("enable_support", new ConfigOptionBool(true));
+    config.option<ConfigOptionEnum<SupportType>>("support_type", true)->value           = c.type;
+    config.option<ConfigOptionEnum<SupportMaterialStyle>>("support_style", true)->value = c.style;
+    // The object prints with filament 1, the support base with filament 3 and the interface with filament 2.
+    config.set_key_value("support_filament",           new ConfigOptionInt(3));
+    config.set_key_value("support_interface_filament", new ConfigOptionInt(2));
+    config.set_key_value("independent_support_layer_height", new ConfigOptionBool(c.independent));
+    config.option<ConfigOptionEnum<SupportLayerHeightStep>>("support_layer_height_step", true)->value = slhsMaxHeight;
+    config.set_key_value("enable_prime_tower",             new ConfigOptionBool(true));
+    config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(false));
+    config.set_key_value("use_relative_e_distances",       new ConfigOptionBool(true));
+    config.set_key_value("layer_change_gcode",             new ConfigOptionString("G92 E0"));
+    config.set_deserialize_strict({ { "printable_area", "0x0,270x0,270x270,0x270" } });
+    config.set_key_value("wipe_tower_x", new ConfigOptionFloats({ 10. }));
+    config.set_key_value("wipe_tower_y", new ConfigOptionFloats({ 10. }));
+    Print print;
+    Model model;
+    {
+        TriangleMesh pillar = make_cube(10., 10., 20.);
+        TriangleMesh upper  = make_cube(30., 10., 4.);
+        upper.translate(0.f, 0.f, 16.f);
+        TriangleMesh lower  = make_cube(30., 10., 4.);
+        lower.translate(-20.f, 0.f, 8.f);
+        ModelObject *object = model.add_object();
+        for (TriangleMesh *part : { &pillar, &upper, &lower })
+            object->add_volume(std::move(*part), ModelVolumeType::MODEL_PART, false);
+        object->add_instance();
+        object->center_around_origin();
+        object->translate(150., 150., 0.);
+        object->ensure_on_bed();
+        print.apply(model, config);
+        print.set_status_silent();
+    }
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+    print.process();
+    std::vector<double> without_interface;
+    for (const SupportLayer *layer : print.objects().front()->support_layers()) {
+        bool base = false, transition = false, interface = false;
+        for_each_path(layer->support_fills, [&](const ExtrusionPath &path) {
+            base       = base || path.role() == erSupportMaterial;
+            transition = transition || path.role() == erSupportTransition;
+            interface  = interface || path.role() == erSupportMaterialInterface;
+        });
+        if (base && transition && ! interface)
+            without_interface.push_back(layer->print_z);
+    }
+    REQUIRE(! without_interface.empty());
+    std::string gcode;
+    REQUIRE_NOTHROW(gcode = Slic3r::Test::gcode(print));
+    // Filament 2 is tool T1.
+    size_t interface_loads = 0;
+    double z = 0.;
+    std::istringstream in(gcode);
+    for (std::string line; std::getline(in, line);) {
+        if (line.rfind(";Z:", 0) == 0)
+            z = std::atof(line.c_str() + 3);
+        else if (line == "T1")
+            interface_loads += std::any_of(without_interface.begin(), without_interface.end(), [z](double w) { return std::abs(w - z) < 1e-3; });
+    }
+    CHECK(interface_loads == 0);
 }
 
 SCENARIO("A painted slope cut to a ribbon prints its colour in full runs", "[MultiNozzleLayerHeight][Segmentation]") {
@@ -2781,6 +3473,40 @@ SCENARIO("Preferred layer heights are kept as entered and planned for slicing on
             CHECK_FALSE(notes[3].off_grid);
         }
     }
+    GIVEN("a minimum layer height of 0.7 mm, above the maximum, on the 0.6 and 0.8 mm extruders") {
+        DynamicPrintConfig entered = entered_heights_config({0.14, 0.21, 0., 0.});
+        entered.set_key_value("layer_height",     new ConfigOptionFloat(0.07));
+        entered.set_key_value("nozzle_diameter",  new ConfigOptionFloats({0.2, 0.4, 0.6, 0.8}));
+        entered.set_key_value("min_layer_height", new ConfigOptionFloats({0.04, 0.07, 0.7, 0.7}));
+        entered.set_key_value("max_layer_height", new ConfigOptionFloats({0.14, 0.32, 0.42, 0.56}));
+        THEN("the minimum is ignored: both are offered the grid's multiples up to their maximum") {
+            const std::vector<double> third = available_extruder_layer_heights(entered, 2);
+            REQUIRE(! third.empty());
+            CHECK(third.back() == Approx(0.42));
+            CHECK(std::any_of(third.begin(), third.end(), [](double h) { return std::abs(h - 0.07) < 1e-6; }));
+            const std::vector<double> fourth = available_extruder_layer_heights(entered, 3);
+            REQUIRE(! fourth.empty());
+            CHECK(fourth.back() == Approx(0.56));
+        }
+        THEN("fixing lowers them to the replacement, or to the cap when the replacement does not fit") {
+            DynamicPrintConfig fixed = entered;
+            const std::vector<MinLayerHeightFix> fixes =
+                fix_min_layer_heights(fixed, [](size_t extruder) { return extruder == 2 ? 0.12 : 0.9; });
+            REQUIRE(fixes.size() == 2);
+            CHECK(fixes[0].extruder == 2);
+            CHECK(fixes[0].from == Approx(0.7));
+            CHECK(fixes[0].to == Approx(0.12));
+            CHECK(fixes[1].extruder == 3);
+            CHECK(fixes[1].to == Approx(0.56));
+            const std::vector<double> &mins = fixed.option<ConfigOptionFloats>("min_layer_height")->values;
+            REQUIRE(mins.size() == 4);
+            CHECK(mins[0] == Approx(0.04));
+            CHECK(mins[1] == Approx(0.07));
+            CHECK(mins[2] == Approx(0.12));
+            CHECK(mins[3] == Approx(0.56));
+            CHECK(fix_min_layer_heights(fixed, nullptr).empty());
+        }
+    }
     GIVEN("0.12 mm entered for extruders 2 to 4 at a 0.08 mm object layer height, extruder 1 at Default") {
         DynamicPrintConfig entered = entered_heights_config({0., 0.12, 0.12, 0.12});
         entered.set_key_value("layer_height", new ConfigOptionFloat(0.08));
@@ -2876,4 +3602,256 @@ SCENARIO("Preferred layer heights are kept as entered and planned for slicing on
             CHECK(print.objects().front()->config().layer_height.value == Approx(0.2));
         }
     }
+}
+
+TEST_CASE("The layer height plan caps the first layer to the smallest nozzle", "[MultiNozzleLayerHeight][Plan]")
+{
+    using Catch::Matchers::WithinAbs;
+    SECTION("with a preferred height entered") {
+        DynamicPrintConfig entered = entered_heights_config({0.32, 0., 0., 0.});
+        entered.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.25));
+        DynamicPrintConfig planned = entered;
+        CHECK(apply_extruder_layer_height_plan(planned));
+        CHECK_THAT(planned.opt_float("initial_layer_print_height"), WithinAbs(0.2, 1e-9));
+        CHECK_THAT(planned.opt_float("layer_height"), WithinAbs(0.11, 1e-9));
+        CHECK_THAT(entered.opt_float("initial_layer_print_height"), WithinAbs(0.25, 1e-9));
+        const DynamicPrintConfig once = planned;
+        CHECK_FALSE(apply_extruder_layer_height_plan(planned));
+        CHECK(planned.equals(once));
+    }
+    SECTION("with nothing entered the first layer stays") {
+        DynamicPrintConfig config = entered_heights_config({0., 0., 0., 0.});
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.25));
+        CHECK_FALSE(apply_extruder_layer_height_plan(config));
+        CHECK_THAT(config.opt_float("initial_layer_print_height"), WithinAbs(0.25, 1e-9));
+        CHECK_FALSE(config.has(extruder_layer_height_planned_key));
+    }
+    SECTION("a first layer that fits is left alone") {
+        DynamicPrintConfig config = entered_heights_config({0.32, 0., 0., 0.});
+        apply_extruder_layer_height_plan(config);
+        CHECK_THAT(config.opt_float("initial_layer_print_height"), WithinAbs(0.12, 1e-9));
+    }
+    SECTION("the planned config validates where the entered one is refused") {
+        DynamicPrintConfig entered = entered_heights_config({0.32, 0., 0., 0.});
+        entered.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.25));
+        DynamicPrintConfig planned = entered;
+        apply_extruder_layer_height_plan(planned);
+        Print print;
+        Model model;
+        init_two_part_print(print, model, planned, 0.5f, TestMesh::cube_20x20x20, 4, 1);
+        INFO(print.validate().string);
+        CHECK(print.validate().string.empty());
+        Print unplanned;
+        Model model_unplanned;
+        init_two_part_print(unplanned, model_unplanned, entered, 0.5f, TestMesh::cube_20x20x20, 4, 1);
+        const StringObjectException err = unplanned.validate();
+        CHECK(err.opt_key == "initial_layer_print_height");
+        CHECK(err.string.find("0.25") != std::string::npos);
+    }
+}
+
+TEST_CASE("The layer height refusal names the layer height and the smallest nozzle", "[MultiNozzleLayerHeight]")
+{
+    DynamicPrintConfig config = four_nozzle_config();
+    config.set_key_value("layer_height",          new ConfigOptionFloat(0.24));
+    config.set_key_value("extruder_layer_height", new ConfigOptionFloats({0., 0., 0., 0.}));
+    Print print;
+    Model model;
+    init_two_part_print(print, model, config, 0.5f, TestMesh::cube_20x20x20, 1, 2);
+    const StringObjectException err = print.validate();
+    CHECK(err.opt_key == "layer_height");
+    CHECK(err.string.find("0.24") != std::string::npos);
+    CHECK(err.string.find("0.2 mm") != std::string::npos);
+}
+
+TEST_CASE("Normal auto support finds the overhangs of a combined part", "[MultiNozzleLayerHeight][Support]")
+{
+    DynamicPrintConfig config = two_extruder_config(0.6);
+    config.set_key_value("max_layer_height",           new ConfigOptionFloats({0.3, 0.6}));
+    config.set_key_value("enable_support",             new ConfigOptionBool(true));
+    config.option<ConfigOptionEnum<SupportType>>("support_type", true)->value = stNormalAuto;
+    config.set_key_value("support_filament",           new ConfigOptionInt(1));
+    config.set_key_value("support_interface_filament", new ConfigOptionInt(1));
+    config.set_key_value("support_threshold_angle",    new ConfigOptionInt(30));
+    config.set_key_value("support_top_z_distance",     new ConfigOptionFloat(0.2));
+    Print print;
+    Model model;
+    init_overhanging_arm_print(print, model, config, 2);
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+    print.process();
+    const PrintObject &object = *print.objects().front();
+    bool run_top = false, combined_away = false;
+    for (const Layer *layer : object.layers())
+        if (layer->print_z > 16. + EPSILON)
+            for (const LayerRegion *layerm : layer->regions()) {
+                run_top       = run_top || layerm->combined_layer_count() == 3;
+                combined_away = combined_away || layerm->combined_layer_count() == 0;
+            }
+    CHECK(run_top);
+    CHECK(combined_away);
+    size_t support_layers = 0;
+    double top_z          = 0.;
+    for (const SupportLayer *layer : object.support_layers())
+        if (! layer->support_fills.empty()) {
+            ++ support_layers;
+            top_z = std::max(top_z, layer->print_z);
+        }
+    REQUIRE(support_layers > 0);
+    CAPTURE(top_z);
+    CHECK(top_z >= 15.);
+    CHECK(top_z <= 16. + 1e-3);
+}
+
+TEST_CASE("Object grid layers that print nothing are not emitted", "[MultiNozzleLayerHeight]")
+{
+    using Catch::Matchers::WithinAbs;
+    const bool prime_tower = GENERATE(false, true);
+    DynamicPrintConfig config = two_extruder_config(0.4);
+    config.set_key_value("machine_pause_gcode",            new ConfigOptionString("M601"));
+    config.set_key_value("layer_height",                   new ConfigOptionFloat(0.1));
+    config.set_key_value("initial_layer_print_height",     new ConfigOptionFloat(0.2));
+    config.set_key_value("extruder_layer_height",          new ConfigOptionFloats({0.2, 0.4}));
+    config.set_key_value("enable_prime_tower",             new ConfigOptionBool(prime_tower));
+    config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(false));
+    config.set_key_value("use_relative_e_distances",       new ConfigOptionBool(true));
+    config.set_key_value("layer_change_gcode",             new ConfigOptionString("G92 E0"));
+    config.set_key_value("prime_tower_width",              new ConfigOptionFloat(35));
+    config.set_key_value("wipe_tower_x",                   new ConfigOptionFloats({50.}));
+    config.set_key_value("wipe_tower_y",                   new ConfigOptionFloats({50.}));
+    Print print;
+    Model model;
+    {
+        // A pause on a grid layer that prints nothing moves to the printed layer above.
+        CustomGCode::Item pause;
+        pause.print_z  = 0.3;
+        pause.type     = CustomGCode::PausePrint;
+        pause.extruder = 1;
+        CustomGCode::Info &info = model.plates_custom_gcodes[model.curr_plate_index];
+        info.mode = CustomGCode::MultiExtruder;
+        info.gcodes.push_back(pause);
+    }
+    init_two_part_print(print, model, config);
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+    const std::string gcode = Slic3r::Test::gcode(print);
+    REQUIRE(! gcode.empty());
+    size_t layer_changes = 0, idle_layers = 0, pauses = 0;
+    double z = 0., pause_z = 0.;
+    bool   extruded = true;
+    std::istringstream in(gcode);
+    for (std::string line; std::getline(in, line);) {
+        if (line.rfind(";LAYER_CHANGE", 0) == 0) {
+            ++ layer_changes;
+            if (! extruded)
+                ++ idle_layers;
+            extruded = false;
+        } else if (line.rfind(";Z:", 0) == 0) {
+            z = std::atof(line.c_str() + 3);
+        } else if (line.rfind("M601", 0) == 0) {
+            ++ pauses;
+            pause_z = z;
+        } else if (line.rfind("G1 ", 0) == 0 && line.find(" X") != std::string::npos &&
+                   line.find(" E") != std::string::npos && line.find(" E-") == std::string::npos)
+            extruded = true;
+    }
+    CHECK(idle_layers == 0);
+    CHECK(pauses == 1);
+    CHECK_THAT(pause_z, WithinAbs(0.4, 1e-6));
+    const ToolOrdering &ordering = print.tool_ordering();
+    size_t emitted = 0;
+    for (const LayerTools &lt : ordering.layer_tools())
+        if (! lt.extruders.empty())
+            ++ emitted;
+    CHECK(layer_changes == emitted);
+    CHECK(emitted < ordering.layer_tools().size());
+}
+
+TEST_CASE("Smooth timelapse prints the tower on every layer below its top and no idle layers above it", "[MultiNozzleLayerHeight][WipeTower]")
+{
+    // A 0.4 mm nozzle at 0.2 mm and a 0.6 mm nozzle at 0.4 mm layers on a 0.1 mm object grid.
+    DynamicPrintConfig config = two_extruder_config(0.4);
+    config.set_key_value("layer_height",                   new ConfigOptionFloat(0.1));
+    config.set_key_value("initial_layer_print_height",     new ConfigOptionFloat(0.2));
+    config.set_key_value("extruder_layer_height",          new ConfigOptionFloats({0.2, 0.4}));
+    config.option<ConfigOptionEnum<TimelapseType>>("timelapse_type", true)->value = tlSmooth;
+    config.set_key_value("enable_prime_tower",             new ConfigOptionBool(true));
+    config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(false));
+    config.set_key_value("use_relative_e_distances",       new ConfigOptionBool(true));
+    config.set_key_value("layer_change_gcode",             new ConfigOptionString("G92 E0"));
+    config.set_key_value("prime_tower_width",              new ConfigOptionFloat(35));
+    config.set_key_value("wipe_tower_x",                   new ConfigOptionFloats({50.}));
+    config.set_key_value("wipe_tower_y",                   new ConfigOptionFloats({50.}));
+    config.set_key_value("enable_support",                 new ConfigOptionBool(true));
+    config.option<ConfigOptionEnum<SupportType>>("support_type", true)->value           = stNormalAuto;
+    config.option<ConfigOptionEnum<SupportMaterialStyle>>("support_style", true)->value = smsDefault;
+    config.set_key_value("independent_support_layer_height", new ConfigOptionBool(true));
+    config.option<ConfigOptionEnum<SupportLayerHeightStep>>("support_layer_height_step", true)->value = slhsHalfLayer;
+    Print print;
+    Model model;
+    {
+        // A 10 x 10 x 20 mm pillar on extruder 1 carrying a 30 x 10 x 4 mm arm on extruder 2 at 8 mm: above
+        // the arm no tool changes, and every other grid layer of the pillar prints nothing.
+        TriangleMesh pillar = make_cube(10., 10., 20.);
+        TriangleMesh arm    = make_cube(30., 10., 4.);
+        arm.translate(0.f, 0.f, 8.f);
+        ModelObject *object = model.add_object();
+        object->add_volume(std::move(pillar), ModelVolumeType::MODEL_PART, false)->config.set("extruder", 1);
+        object->add_volume(std::move(arm), ModelVolumeType::MODEL_PART, false)->config.set("extruder", 2);
+        object->add_instance();
+        object->center_around_origin();
+        object->translate(150., 150., 0.);
+        object->ensure_on_bed();
+        print.apply(model, config);
+        print.set_status_silent();
+    }
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+    const std::string gcode = Slic3r::Test::gcode(print);
+    REQUIRE(! gcode.empty());
+    struct GcodeLayer { double z = 0.; bool extruded = false; bool tower = false; };
+    std::vector<GcodeLayer> layers;
+    std::istringstream in(gcode);
+    for (std::string line; std::getline(in, line);) {
+        if (line.rfind(";LAYER_CHANGE", 0) == 0)
+            layers.emplace_back();
+        else if (layers.empty())
+            continue;
+        else if (line.rfind(";Z:", 0) == 0)
+            layers.back().z = std::atof(line.c_str() + 3);
+        else if (line.rfind(";TYPE:Prime tower", 0) == 0)
+            layers.back().tower = true;
+        else if (line.rfind("G1 ", 0) == 0 && line.find(" X") != std::string::npos &&
+                 line.find(" E") != std::string::npos && line.find(" E-") == std::string::npos)
+            layers.back().extruded = true;
+    }
+    double tower_top = 0.;
+    for (const GcodeLayer &layer : layers)
+        if (layer.tower)
+            tower_top = std::max(tower_top, layer.z);
+    size_t below_top = 0, without_tower = 0, idle = 0;
+    for (const GcodeLayer &layer : layers) {
+        if (layer.z < tower_top + 1e-6) {
+            ++ below_top;
+            without_tower += ! layer.tower;
+        }
+        idle += ! layer.extruded;
+    }
+    CAPTURE(tower_top);
+    size_t empty_above_top = 0;
+    for (const Layer *layer : print.objects().front()->layers())
+        empty_above_top += layer->print_z > tower_top + 1e-6 && ! layer->has_extrusions();
+    REQUIRE(empty_above_top > 0);
+    CHECK(below_top > 0);
+    CHECK(without_tower == 0);
+    CHECK(idle == 0);
 }

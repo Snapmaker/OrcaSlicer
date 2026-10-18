@@ -7825,14 +7825,13 @@ void PrintConfigDef::init_fff_params()
     def = this->add("support_layer_height_step", coEnum);
     def->label = L("Support layer height step");
     def->category = L("Support");
-    def->tooltip = L("Step granularity for independent tree support layer heights while the prime tower is enabled "
-                     "(classic supports print on the object's layers with the prime tower). "
+    def->tooltip = L("Step granularity for independent support layer heights while the prime tower is enabled. "
                      "Automatic picks the coarsest step whose multiples reach the tallest support layer the support "
                      "nozzle allows (e.g. quarter steps for a 0.14 mm maximum on a 0.08 mm object layer height); "
                      "every support layer under an overhang contact still ends exactly one support gap below it. "
-                     "Maximum uses the same step but lets every support layer be as tall as possible: the support "
-                     "top under each contact is then the nearest support layer, so the gap varies by up to half a "
-                     "support layer above the configured value. "
+                     "Maximum uses the same step but, for Tree Slim, Tree Strong and Tree Hybrid, lets every support "
+                     "layer be as tall as possible: the support top under each contact is then the nearest support "
+                     "layer, so the gap varies by up to half a support layer above the configured value. "
                      "With whole layers, support layer heights are multiples of the object layer height. "
                      "Half or quarter steps also allow multiples like 1.5x or 1.25x, which helps when the support "
                      "nozzle's maximum layer height sits between two whole multiples. Support boundaries may then "
@@ -7861,8 +7860,8 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Independent support layer height");
     def->category = L("Support");
     def->tooltip = L("Support layer uses layer height independent with object layer. This is to support customizing Z-gap and save print time. "
-                     "With the prime tower enabled, tree supports keep independent heights aligned to the object layer grid "
-                     "(see Support layer height step); classic supports then print on the object's layers.");
+                     "With the prime tower enabled, supports keep independent heights aligned to the object layer grid "
+                     "(see Support layer height step).");
     def->mode = comAdvanced;
     // Mainline default. The Snapmaker process profiles either set this to 1
     // explicitly or (U1) leave it unset; with the old false default, loading a
@@ -10702,10 +10701,7 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
             ept_opt->value = false;
         }
 
-        // With the prime tower enabled, independent support layer heights are no longer
-        // forced off: tree supports plan grid-aligned thick layers (whole multiples of
-        // object layers) so every toolchange still lands on a tower layer, and the
-        // classic support generator falls back to synchronized layers on its own.
+        // Independent support heights stay on with the prime tower; supports then follow the object grid.
         (void) islh_opt;
         /* BBS: MusangKing - not sure if this is still valid, just comment it out cause "Independent support layer height" is re-opened.
         else {

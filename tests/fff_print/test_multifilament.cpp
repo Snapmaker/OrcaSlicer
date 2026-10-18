@@ -893,3 +893,39 @@ TEST_CASE("Each filament sets the pressure advance of its extruder variant on a 
         CHECK(gcode.find("; start pressure advance " + pressure_advance + "\n") != std::string::npos);
     }
 }
+
+// A modifier's explicit "Default" selectors follow the part's filament, not the object's.
+TEST_CASE("A modifier's Default selector resets to the part's filament", "[MultiFilament]")
+{
+    const DynamicPrintConfig config = multifilament_config(3, { { "skirt_loops", 0 }, { "brim_type", "no_brim" }, { "layer_change_gcode", "G92 E0" } });
+    Print print;
+    Model model;
+    const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides{ { { "extruder", 1 } } };
+    init_print(std::vector<TriangleMesh>{ cube(20) }, print, model, config, &overrides, false);
+    ModelObject *object = model.objects.front();
+    object->volumes.front()->config.set("extruder", 3);
+    TriangleMesh box = make_cube(12., 24., 10.);
+    box.translate(-2.f, -2.f, 10.f);
+    ModelVolume *modifier = object->add_volume(std::move(box), ModelVolumeType::PARAMETER_MODIFIER);
+    {
+        DynamicPrintConfig modifier_config;
+        modifier_config.set_deserialize_strict({ { "outer_wall_filament_id", "0" }, { "sparse_infill_filament_id", "0" }, { "wall_loops", "3" } });
+        modifier->config.apply(modifier_config);
+    }
+    print.apply(model, print.full_print_config());
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+    const PrintObject &po = *print.objects().front();
+    int modifier_regions = 0;
+    for (size_t i = 0; i < po.num_printing_regions(); ++ i) {
+        const PrintRegionConfig &region = po.printing_region(i).config();
+        if (region.wall_loops.value == 3)
+            ++ modifier_regions;
+        CHECK(region.outer_wall_filament_id.value == 3);
+        CHECK(region.sparse_infill_filament_id.value == 3);
+    }
+    CHECK(modifier_regions == 1);
+}

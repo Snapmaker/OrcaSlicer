@@ -1617,6 +1617,8 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
                 if (first_wt_idx < 0) first_wt_idx = i;
                 last_wt_idx = i;
             }
+        const bool tower_to_top = m_print != nullptr && m_print->wipe_tower_type() == WipeTowerType::Type1 &&
+                                  (config.timelapse_type == TimelapseType::tlSmooth || config.enable_wrapping_detection);
         for (int i = first_wt_idx + 1; i < last_wt_idx; ++i) {
             LayerTools &lt = m_layer_tools[i];
             if (tower_skippable(lt) && !lt.has_wipe_tower) {
@@ -1635,11 +1637,14 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
                 if (next_z - prev_z <= max_layer_height + EPSILON)
                     continue;
             }
+            // ORCA: an empty layer above the last tool change gets a slab only from a tower printed to the top.
+            if (lt.extruders.empty() && lt.wipe_tower_partitions == 0 && ! tower_to_top)
+                continue;
             lt.has_wipe_tower = true;
             // GCode::process_layer emits wipe-tower G-code inside `for (extruder_id : layer_tools.extruders)`.
             // An empty extruders vector here would silently skip wipe tower output, leaving the tower
             // physically floating. Seed from the nearest non-empty neighbor so the loop actually runs.
-            if (lt.extruders.empty()) {
+            if (lt.extruders.empty() && config.enable_prime_tower) {
                 unsigned int seed_extruder = 0;
                 bool         found_seed    = false;
                 for (int j = i - 1; j >= 0; --j)
@@ -1761,6 +1766,9 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
                     ++ next;
                 if (next <= last_wt && m_layer_tools[next].print_z - m_layer_tools[prev].print_z <= max_layer_height + EPSILON) {
                     lt.has_wipe_tower = false;
+                    // Extruders seeded for the slab only: nothing is left to print.
+                    if (! lt.has_object && ! lt.has_support)
+                        lt.extruders.clear();
                     continue;
                 }
             }
@@ -3824,6 +3832,8 @@ void ToolOrdering::assign_custom_gcodes(const Print &print)
 
 	// From the last layer to the first one:
     coordf_t print_z_above = std::numeric_limits<coordf_t>::lowest();
+	// A layer without extruders is not emitted: the printed layer above takes its custom G-code.
+	LayerTools *lt_printing_above = nullptr;
 	for (auto it_lt = m_layer_tools.rbegin(); it_lt != m_layer_tools.rend(); ++ it_lt) {
 		LayerTools &lt = *it_lt;
 		// Add the extruders of the current layer to the set of extruders printing at and above this print_z.
@@ -3855,11 +3865,17 @@ void ToolOrdering::assign_custom_gcodes(const Print &print)
 					mode == CustomGCode::SingleExtruder || 
 						(custom_gcode.extruder <= int(num_filaments) && extruder_printing_above[unsigned(custom_gcode.extruder - 1)]) :
 				 	tool_change && tool_changes_as_color_changes);
-			if (pause_or_custom_gcode || apply_color_change)
-        		lt.custom_gcode = &custom_gcode;
+			if (pause_or_custom_gcode || apply_color_change) {
+				if (! lt.extruders.empty())
+					lt.custom_gcode = &custom_gcode;
+				else if (lt_printing_above != nullptr && lt_printing_above->custom_gcode == nullptr)
+					lt_printing_above->custom_gcode = &custom_gcode;
+			}
 			// Consume that custom G-code event.
 			++ custom_gcode_it;
 		}
+		if (! lt.extruders.empty())
+			lt_printing_above = &lt;
 	}
 }
 

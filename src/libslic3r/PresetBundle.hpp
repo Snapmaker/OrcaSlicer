@@ -11,6 +11,7 @@
 #include "NozzleFilamentPresets.hpp"
 #include "PerHeadProcess.hpp"
 #include "SnapmakerFlowCompat.hpp"
+#include "Slicing.hpp"
 
 #include <functional>
 #include <memory>
@@ -510,6 +511,10 @@ public:
     // (a project of Snapmaker Orca 2.4, see normalize_snapmaker_flow_config()). Empty for every
     // other project. Filled by load_config_file_config().
     FlowImportReport last_flow_import_report;
+    // Minimum layer heights of the last loaded config that were above their maximum.
+    std::vector<MinLayerHeightFix> last_min_layer_height_fixes;
+    // Lowers each minimum layer height above its cap to the one of the printer's preset for that nozzle size, else to the cap.
+    std::vector<MinLayerHeightFix> fix_min_layer_heights(DynamicPrintConfig &config) const;
 
     // Calibrate
     Preset const * calibrate_printer = nullptr;

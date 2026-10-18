@@ -71,6 +71,23 @@ void generate_support_toolpaths(
     const SupportGeneratorLayersPtr   	&intermediate_layers,
 	const SupportGeneratorLayersPtr   	&interface_layers,
     const SupportGeneratorLayersPtr   	&base_interface_layers);
+
+struct LayerHeightData
+{
+    coordf_t print_z       = 0;
+    coordf_t height        = 0;
+    size_t   obj_layer_nr  = 0;
+    LayerHeightData()      = default;
+    LayerHeightData(coordf_t z, coordf_t h, size_t obj_layer) : print_z(z), height(h), obj_layer_nr(obj_layer) {}
+    coordf_t bottom_z() {
+        return print_z - height;
+    }
+};
+
+// Grid ladder pieces over object layers [begin, end) appended to out; each Z of close_zs also ends a piece.
+void append_grid_support_pieces(const PrintObject &object, const SupportParameters &support_params, size_t begin, size_t end,
+                                const std::vector<coordf_t> &close_zs, std::vector<LayerHeightData> &out);
+
 // FN_HIGHER_EQUAL: the provided object pointer has a Z value >= of an internal threshold.
 // Find the first item with Z value >= of an internal threshold of fn_higher_equal.
 // If no vec item with Z value >= of an internal threshold of fn_higher_equal is found, return vec.size()

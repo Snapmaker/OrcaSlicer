@@ -26,18 +26,6 @@ class PrintObject;
 class TreeSupport;
 class SupportLayer;
 
-struct LayerHeightData
-{
-    coordf_t print_z       = 0;
-    coordf_t height        = 0;
-    size_t   obj_layer_nr  = 0;
-    LayerHeightData()      = default;
-    LayerHeightData(coordf_t z, coordf_t h, size_t obj_layer) : print_z(z), height(h), obj_layer_nr(obj_layer) {}
-    coordf_t bottom_z() {
-        return print_z - height;
-    }
-};
-
 enum TreeNodeType {
     eCircle,
     eSquare,
@@ -597,6 +585,13 @@ private:
         const coordf_t       gap_extra_below,
         const coordf_t       gap_xy);
 };
+
+// Merges Organic base layers between branch tips, roots and interface bands into grid ladder pieces.
+void merge_organic_base_layers(const PrintObject &object, const SupportParameters &support_params, size_t num_raft,
+                               const TreeSupport3D::TreeModelVolumes &volumes, const std::vector<TreeSupport3D::SupportElements> &move_bounds,
+                               const SupportGeneratorLayersPtr &top_contacts, const SupportGeneratorLayersPtr &bottom_contacts,
+                               const SupportGeneratorLayersPtr &interface_layers, const SupportGeneratorLayersPtr &base_interface_layers,
+                               SupportGeneratorLayersPtr &intermediate_layers, SupportGeneratorLayerStorage &layer_storage);
 
 }
 

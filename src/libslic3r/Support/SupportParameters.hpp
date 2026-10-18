@@ -14,9 +14,7 @@ inline int number_of_support_interface_bottom_layers(const PrintObjectConfig& ob
         object_config.support_interface_bottom_layers.value;
 }
 
-// Free-form (off-grid) support layer heights are only allowed without the prime tower;
-// with the tower enabled the classic generator synchronizes with the object layers and
-// tree supports plan grid-aligned thick layers instead.
+// Free-form support heights only without the prime tower; with it supports follow the object grid ladder.
 inline bool support_layer_heights_free(const PrintConfig &print_config) {
     return print_config.independent_support_layer_height && !print_config.enable_prime_tower;
 }
@@ -205,9 +203,7 @@ struct SupportParameters {
         support_extrusion_width        = support_extrusion_width > 0 ? support_extrusion_width : extrusion_width;
 
         independent_layer_height = print_config.independent_support_layer_height;
-        // The prime tower is built on the object layer grid, so toolchanges must land on
-        // grid Zs: independent support heights stay enabled but snap to whole multiples
-        // of object layers (tree supports; the classic generator synchronizes instead).
+        // Under the prime tower support layers end on object layers or their sub-steps.
         grid_aligned_layer_height = independent_layer_height && print_config.enable_prime_tower;
         // Sub-layer step for grid-aligned heights: 1 = whole object layers, 2/4 allow
         // boundaries on half/quarter subdivisions (thin tower layers appear there).
@@ -236,6 +232,15 @@ struct SupportParameters {
                 }
             }
         }
+        // Grid ladder limits and the smooth-timelapse slab floor.
+        grid_min_height = std::max(slicing_params.min_layer_height, slicing_params.min_suport_layer_height);
+        grid_max_height = std::max({ slicing_params.max_suport_layer_height, object_config.layer_height.value / grid_height_step, grid_min_height });
+        grid_min_slab   = 0.;
+        if (grid_aligned_layer_height && print_config.timelapse_type.value == TimelapseType::tlSmooth)
+            for (unsigned int extruder_id : object.print()->extruders()) {
+                const coordf_t min_h = print_config.min_layer_height.get_at(object.print()->extruder_index_of(extruder_id));
+                grid_min_slab = std::max(grid_min_slab, min_h == 0. ? 0.07 : min_h);
+            }
 
         // force double walls everywhere if wall count is larger than 1        
         tree_branch_diameter_double_wall_area_scaled = object_config.tree_support_wall_count.value > 1  ? 0.1 :
@@ -376,6 +381,20 @@ struct SupportParameters {
     int  grid_height_step = 1;
     // ORCA: support pieces run through overhang contact layers; the gap rounds to support layers.
     bool grid_max_height_priority = false;
+    coordf_t grid_min_height = 0.;
+    coordf_t grid_max_height = 0.;
+    coordf_t grid_min_slab   = 0.;
+    // Sub-step positions of an object layer usable as support piece tops.
+    void grid_sub_positions(coordf_t print_z, coordf_t height, std::vector<coordf_t> &out) const
+    {
+        out.clear();
+        const int steps = height / grid_height_step > 0.002 ? grid_height_step : 1;
+        for (int k = 1; k < steps; ++ k) {
+            const coordf_t below = height * k / steps;
+            if (below >= grid_min_slab - EPSILON && height - below >= grid_min_slab - EPSILON)
+                out.push_back(print_z - height + below);
+        }
+    }
     // Length of a big overhang (10 mm); area comparisons use its square.
     const double thresh_big_overhang = scale_(10);
 

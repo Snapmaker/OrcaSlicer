@@ -28,8 +28,7 @@ public:
 	bool 		has_support()				const { return m_object_config->enable_support.value || m_object_config->enforce_support_layers; }
 	bool 		build_plate_only() 			const { return this->has_support() && m_object_config->support_on_build_plate_only.value; }
 	// BBS
-	// Free-form support heights only without the prime tower: with the tower on, the classic
-	// generator keeps every support layer on the object grid (see support_layer_heights_free()).
+	// With the prime tower support layers follow the object grid ladder (see support_layer_heights_free()).
 	bool 		synchronize_layers()		const { return !m_print_config->independent_support_layer_height.value || m_print_config->enable_prime_tower.value; }
 	bool 		has_contact_loops() 		const { return m_object_config->support_interface_loop_pattern.value; }
 

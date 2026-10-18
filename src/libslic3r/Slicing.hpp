@@ -4,6 +4,7 @@
 #define slic3r_Slicing_hpp_
 
 #include <cstring>
+#include <functional>
 #include <map>
 #include <set>
 #include <type_traits>
@@ -261,8 +262,8 @@ bool extruder_layer_heights_conform(const std::vector<double> &heights, double b
 // `rounded` / `pinned` as plan_extruder_layer_heights() reports them; else grid = layer_height.
 ExtruderLayerHeightPlan effective_extruder_layer_heights(const DynamicPrintConfig &config);
 
-// Writes the effective grid and heights into `config` and sets the marker when an explicit preferred
-// height is present. Idempotent. Returns true when layer_height or extruder_layer_height changed.
+// Writes the effective grid and heights into `config`, caps initial_layer_print_height to the smallest nozzle
+// and sets the marker when an explicit preferred height is present. Idempotent. Returns true when a value changed.
 bool apply_extruder_layer_height_plan(DynamicPrintConfig &config);
 
 // An object's own layer height fitted to the effective extruder heights: unchanged when every explicit
@@ -273,6 +274,19 @@ double effective_object_layer_height(const std::vector<double> &heights, const s
 // at Default, its half, quarter and whole multiples within its limits, those that print as listed without
 // moving another entered height. Ascending, no duplicates.
 std::vector<double> available_extruder_layer_heights(const DynamicPrintConfig &config, size_t extruder);
+
+// The thickest layer `extruder` prints: its nozzle diameter, lowered to max_layer_height when set (0 = unknown).
+double extruder_layer_height_cap(const DynamicPrintConfig &config, size_t extruder);
+
+// A minimum layer height corrected because it was above its extruder's cap.
+struct MinLayerHeightFix
+{
+    size_t extruder = 0;
+    double from     = 0.;
+    double to       = 0.;
+};
+// Lowers each min_layer_height above its cap to `replacement(extruder)` when that fits, else to the cap.
+std::vector<MinLayerHeightFix> fix_min_layer_heights(DynamicPrintConfig &config, const std::function<double(size_t)> &replacement);
 
 // Whether an extruder other than `extruder` has a preferred layer height entered. Without one nothing
 // constrains the grid, so the sidebar offers no list of heights for `extruder`.

@@ -100,7 +100,8 @@ inner wall, top surface, sparse infill and internal solid infill widths, `suppor
 `ConfigOptionFloatsOrPercentsNullable`); the two Locked Zag widths stay one value. Every reader of a
 width takes the column of the extruder whose nozzle resolves it (`Print::width_slot`: the nozzle
 index of the filament), so a percent width is a percent of the nozzle that prints it and a value
-set for an extruder reaches that extruder alone.
+set for an extruder reaches that extruder alone. A painted colour prints its outer wall at the width
+of its own extruder's nozzle; visible colours on one nozzle size print alike.
 
 **Where an extruder's widths come from**: the same preset as its speeds, with one exception. An extruder
 of another size prints the widths of the preset the rule or the picker gave it; an extruder of the home
@@ -143,6 +144,13 @@ at every bridge role's extruder and the bottom surface filament's); the message 
 Locked Zag widths are checked for a Locked Zag region alone. An absolute width that reached an extruder
 through All extruders and lies below the extruder's nozzle or above twice it raises a warning naming
 the extruder. Line widths that differ between extruders are refused on a Bambu printer.
+
+**Support layer heights.** With the prime tower and Independent support layer height on, Normal, Tree
+and Organic support print in layers up to the maximum layer height of the extruder that prints the
+support, in the steps that Support layer height step allows; the layer under an overhang keeps the
+object layer height (with Maximum, Tree Slim, Strong and Hybrid round it to a support layer), and
+Organic support keeps its interface layers on the object layers and starts a support layer wherever
+it rests on the model.
 
 **Files and older readers.** While every column of a width is equal (no value set per extruder)
 the key is written as one value, as before: a preset, a project, a 3MF override, a G-code header

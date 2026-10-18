@@ -2559,6 +2559,8 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
             if (layer_to_print.object_layer != nullptr)
                 for (const LayerRegion *layerm : layer_to_print.object_layer->regions())
                     layer_span = std::max(layer_span, layerm->wall_combined_height());
+            if (layer_to_print.support_layer != nullptr)
+                layer_span = std::max(layer_span, layer_to_print.support_layer->height);
             double maximal_print_z = (last_extrusion_layer ? last_extrusion_layer->print_z() : 0.) + layer_span +
                                      std::max(0., extra_gap);
             // Negative support_contact_z is not taken into account, it can result in false positives in cases
@@ -7410,9 +7412,13 @@ LayerResult GCode::process_layer(
             const SupportLayer& support_layer = *layer_to_print.support_layer;
             const PrintObject&  object        = *layer_to_print.original_object;
             if (!support_layer.support_fills.entities.empty()) {
-                ExtrusionRole role          = support_layer.support_fills.role();
-                bool          has_support   = role == erMixed || role == erSupportMaterial || role == erSupportTransition;
-                bool          has_interface = role == erMixed || role == erSupportMaterialInterface;
+                // ORCA: roles per extrusion, as ToolOrdering plans the layer's extruders.
+                bool has_support   = false;
+                bool has_interface = false;
+                for (const ExtrusionEntity *ee : support_layer.support_fills.entities) {
+                    has_support   |= ee->role() == erSupportMaterial || ee->role() == erSupportTransition;
+                    has_interface |= ee->role() == erSupportMaterialInterface;
+                }
                 // Extruder ID of the support base. -1 if "don't care".
                 unsigned int support_extruder = object.config().support_filament.value - 1;
                 // Shall the support be printed with the active extruder, preferably with non-soluble, to avoid tool changes?

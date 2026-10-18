@@ -5421,6 +5421,19 @@ const std::set<std::string> ignore_settings_list ={
     "print_settings_id", "filament_settings_id", "printer_settings_id"
 };
 
+std::vector<MinLayerHeightFix> PresetBundle::fix_min_layer_heights(DynamicPrintConfig &config) const
+{
+    const std::string model   = config.has("printer_model") ? config.opt_string("printer_model") : std::string();
+    const auto       *nozzles = config.option<ConfigOptionFloats>("nozzle_diameter");
+    return Slic3r::fix_min_layer_heights(config, [this, &model, nozzles](size_t extruder) {
+        if (nozzles == nullptr || extruder >= nozzles->values.size())
+            return 0.;
+        const Preset *size_preset = NozzleFilament::head_machine_preset(this->printers, model, nozzles->values[extruder]);
+        const auto   *mins        = size_preset == nullptr ? nullptr : size_preset->config.option<ConfigOptionFloats>("min_layer_height");
+        return mins == nullptr || mins->values.empty() ? 0. : mins->get_at(extruder);
+    });
+}
+
 std::set<std::string> PresetBundle::project_different_keys(const std::string &different_settings)
 {
     std::vector<std::string> keys;
@@ -6037,6 +6050,7 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
     normalize_snapmaker_flow_config(config, this->last_flow_import_report);
     // Values of unknown size take the nozzle sizes they were saved with.
     const bool sizes_recorded = printer_technology == ptFFF && PerHeadProcess::stamp_unknown(config, config);
+    this->last_min_layer_height_fixes = printer_technology == ptFFF ? this->fix_min_layer_heights(config) : std::vector<MinLayerHeightFix>();
 
 #if 0
     size_t num_extruders = (printer_technology == ptFFF) ?
@@ -6074,6 +6088,9 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
     different_values.resize(num_filaments + 2, std::string());
     if (sizes_recorded && different_values[0].find(PerHeadProcess::nozzle_key) == std::string::npos)
         different_values[0] += (different_values[0].empty() ? "" : ";") + std::string(PerHeadProcess::nozzle_key);
+    if (std::string &printer_keys = different_values[num_filaments + 1];
+        ! this->last_min_layer_height_fixes.empty() && project_different_keys(printer_keys).count("min_layer_height") == 0)
+        printer_keys += (printer_keys.empty() ? "" : ";") + std::string("min_layer_height");
     filament_ids.resize(num_filaments, std::string());
     // The "default_filament_profile" will be later extracted into the printer profile.
 	switch (printer_technology) {

@@ -814,13 +814,28 @@ static const ModelVolume *root_model_part_for_parent_region(const PrintObjectReg
     return (region != nullptr && region->model_volume->is_model_part()) ? region->model_volume : nullptr;
 }
 
+// ORCA: the filament a region's "Default" feature selectors follow (modifier resets, MM paint base).
+static int parent_region_extruder(const PrintObjectRegions::LayerRangeRegions &layer_range, int parent_region_id)
+{
+    for (int id = parent_region_id; id >= 0 && id < int(layer_range.volume_regions.size()); id = layer_range.volume_regions[size_t(id)].parent) {
+        const ModelVolume &volume = *layer_range.volume_regions[size_t(id)].model_volume;
+        if (volume.is_model_part()) {
+            const auto *opt = layer_range.config != nullptr ? layer_range.config->opt<ConfigOptionInt>("extruder") : nullptr;
+            return opt != nullptr && opt->value > 0 ? opt->value : volume.extruder_id();
+        }
+        if (const auto *opt = volume.config.get().opt<ConfigOptionInt>("extruder"); opt != nullptr && opt->value > 0)
+            return opt->value;
+    }
+    return 0;
+}
+
 static bool mm_paint_applies_to_parent_region(const PrintObjectRegions::LayerRangeRegions &layer_range, int parent_region_id)
 {
     const ModelVolume *root_model_part = root_model_part_for_parent_region(layer_range, parent_region_id);
     return root_model_part != nullptr && root_model_part->is_mm_painted();
 }
 
-PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders, std::vector<int>& variant_index, const VariantOverrideRule &variant_rule = VariantOverrideRule());
+PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders, std::vector<int>& variant_index, const VariantOverrideRule &variant_rule = VariantOverrideRule(), int parent_extruder = 0);
 
 void print_region_ref_inc(PrintRegion &r) { ++ r.m_ref_cnt; }
 void print_region_ref_reset(PrintRegion &r) { r.m_ref_cnt = 0; }
@@ -901,7 +916,8 @@ bool verify_update_print_object_regions(
                             } else if (PrintObjectRegions::BoundingBox parent_bbox = find_modifier_volume_extents(layer_range, parent_region_id); parent_bbox.intersects(*bbox))
                                 // Such parent region does not exist. If it is needed, then we need to reslice.
                                 // Only create new region for a modifier, which actually modifies config of it's parent.
-                                if (PrintRegionConfig config = region_config_from_model_volume(parent_region.region->config(), nullptr, **it_model_volume, num_extruders, variant_index, variant_rule);
+                                if (PrintRegionConfig config = region_config_from_model_volume(parent_region.region->config(), nullptr, **it_model_volume, num_extruders, variant_index, variant_rule,
+                                                                                               parent_region_extruder(layer_range, parent_region_id));
                                     config != parent_region.region->config())
                                     // This modifier newly overrides a region, which it did not before. We need to reslice.
                                     return false;
@@ -910,7 +926,8 @@ bool verify_update_print_object_regions(
                 }
                 PrintRegionConfig cfg = region.parent == -1 ?
                     region_config_from_model_volume(default_region_config, layer_range.config, **it_model_volume, num_extruders, variant_index, variant_rule) :
-                    region_config_from_model_volume(layer_range.volume_regions[region.parent].region->config(), nullptr, **it_model_volume, num_extruders, variant_index, variant_rule);
+                    region_config_from_model_volume(layer_range.volume_regions[region.parent].region->config(), nullptr, **it_model_volume, num_extruders, variant_index, variant_rule,
+                                                    parent_region_extruder(layer_range, region.parent));
                 if (cfg != region.region->config()) {
                     // Region configuration changed.
                     if (print_region_ref_cnt(*region.region) == 0) {
@@ -934,7 +951,7 @@ bool verify_update_print_object_regions(
             if (!mm_paint_applies_to_parent_region(layer_range, region.parent))
                 return false;
             const PrintObjectRegions::VolumeRegion &parent_region   = layer_range.volume_regions[region.parent];
-            PrintRegionConfig                       cfg             = painted_region_config(parent_region.region->config(), parent_region.model_volume->extruder_id(), region.extruder_id);
+            PrintRegionConfig                       cfg             = painted_region_config(parent_region.region->config(), parent_region_extruder(layer_range, region.parent), region.extruder_id);
             if (cfg != region.region->config()) {
                 // Region configuration changed.
                 if (print_region_ref_cnt(*region.region) == 0) {
@@ -1218,7 +1235,8 @@ static PrintObjectRegions* generate_print_object_regions(
                             if (parent_volume.is_model_part() || parent_volume.is_modifier())
                                 if (PrintObjectRegions::BoundingBox parent_bbox = find_modifier_volume_extents(layer_range, parent_region_id); parent_bbox.intersects(*bbox)) {
                                     // Only create new region for a modifier, which actually modifies config of it's parent.
-                                    if (PrintRegionConfig config = region_config_from_model_volume(parent_region.region->config(), nullptr, volume, num_extruders, variant_index, variant_rule);
+                                    if (PrintRegionConfig config = region_config_from_model_volume(parent_region.region->config(), nullptr, volume, num_extruders, variant_index, variant_rule,
+                                                                                                   parent_region_extruder(layer_range, parent_region_id));
                                         config != parent_region.region->config()) {
                                         added = true;
                                         layer_range.volume_regions.push_back({ &volume, parent_region_id, get_create_region(std::move(config)), bbox });
@@ -1242,7 +1260,7 @@ static PrintObjectRegions* generate_print_object_regions(
                 if (const PrintObjectRegions::VolumeRegion &parent_region = layer_range.volume_regions[parent_region_id];
                     (parent_region.model_volume->is_model_part() || parent_region.model_volume->is_modifier()) &&
                     mm_paint_applies_to_parent_region(layer_range, parent_region_id)) {
-                    PrintRegionConfig       cfg    = painted_region_config(parent_region.region->config(), parent_region.model_volume->extruder_id(), painted_extruder_id);
+                    PrintRegionConfig       cfg    = painted_region_config(parent_region.region->config(), parent_region_extruder(layer_range, parent_region_id), painted_extruder_id);
                     const PrintRegionConfig wanted = cfg;
                     // Keep PrintRegion config-interned. If a painted target resolves to the same
                     // config as its parent, alias it instead of creating a duplicate PrintRegion.

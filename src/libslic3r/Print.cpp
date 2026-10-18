@@ -912,6 +912,11 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             }
             if (opt_key == "enable_prime_tower" && this->raft_gap_rounding_moves_objects())
                 osteps.emplace_back(posSlice);
+            if (opt_key == "filament_type" && std::any_of(m_objects.begin(), m_objects.end(), [](const PrintObject *object) { return object->has_support_filament_restriction(); })) {
+                // Material restrictions pick the support filament, its widths and its layer height limits by type.
+                osteps.emplace_back(posSupportMaterial);
+                osteps.emplace_back(posSimplifySupportPath);
+            }
         } else if (opt_key == "timelapse_type") {
             // Print-level: everything (the key used to reach the catch-all below); object-level:
             // the support layer plan gates fractional boundaries on smooth timelapse.
@@ -2263,6 +2268,15 @@ std::string Print::slicing_errors_message(const SlicingErrors &errors) const
     return message;
 }
 
+// The thickest layer `extruder` prints: its nozzle diameter, lowered to max_layer_height when set (Slicing.hpp).
+static double layer_height_cap(const PrintConfig &config, size_t extruder)
+{
+    double cap = config.nozzle_diameter.get_at(extruder);
+    if (const double max = config.max_layer_height.get_at(extruder); max > EPSILON)
+        cap = cap > EPSILON ? std::min(cap, max) : max;
+    return cap;
+}
+
 StringObjectException Print::validate(std::vector<StringObjectException> *warnings, Polygons* collison_polygons, std::vector<std::pair<Polygon, float>>* height_polygons) const
 {
     auto add_warning = [warnings](StringObjectException w) {
@@ -2270,11 +2284,12 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
         if (warnings != nullptr)
             warnings->push_back(std::move(w));
     };
-    auto warn = [&](std::string msg, std::string opt_key = "", const ObjectBase* object = nullptr) {
+    auto warn = [&](std::string msg, std::string opt_key = "", const ObjectBase* object = nullptr, int head = -1) {
         StringObjectException w;
-        w.string  = std::move(msg);
-        w.opt_key = std::move(opt_key);
-        w.object  = object;
+        w.string    = std::move(msg);
+        w.opt_key   = std::move(opt_key);
+        w.object    = object;
+        w.tool_head = head;
         add_warning(std::move(w));
     };
 
@@ -2286,6 +2301,17 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
 
     if (extruders.empty())
         return { L("No extrusions under current settings.") };
+
+    // Snapmaker Orca: a minimum layer height above the extruder's cap is ignored.
+    for (const unsigned int filament : extruders) {
+        const size_t extruder = this->extruder_index_of(filament);
+        const double min_lh   = m_config.min_layer_height.get_at(extruder);
+        if (const double cap = layer_height_cap(m_config, extruder); cap > EPSILON && min_lh > cap + EPSILON) {
+            warn(Slic3r::format(_u8L("The minimum layer height of extruder %1% (%2% mm) is above its maximum (%3% mm)."),
+                                extruder + 1, min_lh, cap));
+            break;
+        }
+    }
 
     // Orca: a gradient mixed filament only renders its gradient with "Mixed color sublayer" on;
     // without it ToolOrdering::resolve_mixed_filaments prints one whole component per layer and
@@ -2753,6 +2779,7 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                     warned_support_mixed_nozzles = true;
                 }
 
+
                 // ORCA: support material selections ("support_base_material" / "support_interface_material")
                 // exclude filaments of other types; a selection must leave at least one usable filament and
                 // agree with an explicitly selected support filament.
@@ -2844,12 +2871,12 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                 first_layer_min_nozzle_diameter = min_nozzle_diameter;
             }
             if (initial_layer_print_height > first_layer_min_nozzle_diameter)
-                return {L("Layer height cannot exceed nozzle diameter."), object, "initial_layer_print_height"};
+                return {Slic3r::format(_u8L("First layer height %1% mm exceeds the smallest nozzle in use (%2% mm)."), initial_layer_print_height, first_layer_min_nozzle_diameter), object, "initial_layer_print_height"};
 
             // validate layer_height
             double layer_height = object->config().layer_height.value;
             if (layer_height > min_nozzle_diameter)
-                return {L("Layer height cannot exceed nozzle diameter."), object, "layer_height"};
+                return {Slic3r::format(_u8L("Layer height %1% mm exceeds the smallest nozzle in use (%2% mm)."), layer_height, min_nozzle_diameter), object, "layer_height"};
 
             // Validate extrusion widths, per tool head (Snapmaker Orca, line widths per tool head).
             std::string err_msg;
@@ -3030,7 +3057,7 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                                                              "integer multiple of the object layer height (%3% mm), not below it, and must not exceed the "
                                                              "extruder's nozzle diameter."),
                                                         extruder_idx + 1, extruder_height, layer_height),
-                                         "extruder_layer_height", object);
+                                         "extruder_layer_height", object, int(extruder_idx));
                                 }
                                 continue;
                             }
@@ -3203,13 +3230,13 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                                                                  "walls print together, so these walls keep the object layer height. "
                                                                  "Assign both wall features to filaments with large enough nozzles."),
                                                             pitch, filament + 1),
-                                             "extruder_layer_height", object);
+                                             "extruder_layer_height", object, int(this->extruder_index_of(filament)));
                                     else
                                         warn(Slic3r::format(_u8L("Some object parts prefer %1% mm layers, but the nozzle of filament %2% "
                                                                  "printing other features of the part is too small to extrude that height. "
                                                                  "These parts print with the object layer height instead."),
                                                             pitch, filament + 1),
-                                             "extruder_layer_height", object);
+                                             "extruder_layer_height", object, int(this->extruder_index_of(filament)));
                                 }
                                 region_multiplier = 1;
                                 break;
@@ -3261,7 +3288,7 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                                                  "height is %3% mm. Assign the part's features to filaments of the coarser "
                                                  "nozzle, raise the filament's maximum layer height, or accept printing above it."),
                                             pitch, filament0 + 1, max_lh),
-                             "extruder_layer_height", object);
+                             "extruder_layer_height", object, int(this->extruder_index_of(filament0)));
                     };
                     const double region_pitch = region_multiplier * layer_height;
                     // Heights the wall classes print at: the region pitch when the whole part
@@ -3372,8 +3399,10 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                     // print at (the combined infill prints above the minimum by construction).
                     if (! warned_below_min_heights && heights_feature_active)
                         for (const unsigned int filament : used_filaments) {
-                            const double min_lh = m_config.min_layer_height.get_at(this->extruder_index_of(filament));
-                            if (min_lh <= EPSILON || prints_nothing(filament))
+                            const size_t extruder = this->extruder_index_of(filament);
+                            const double min_lh   = m_config.min_layer_height.get_at(extruder);
+                            // A minimum above the extruder's cap is no limit (warned about above).
+                            if (min_lh <= EPSILON || prints_nothing(filament) || min_lh > layer_height_cap(m_config, extruder) + EPSILON)
                                 continue;
                             const double lowest = lowest_feature_height(filament);
                             const bool pitch_below_min = lowest < min_lh - EPSILON;
@@ -3399,7 +3428,7 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                                                      "nozzle for these features, or accept printing below the extruder's minimum."),
                                                 pitch_below_min ? lowest : layer_height,
                                                 filament + 1, min_lh),
-                                 "extruder_layer_height", object);
+                                 "extruder_layer_height", object, int(extruder));
                             break;
                         }
                     // Warn once about preferred heights the part cannot honor: one pitch applies to the

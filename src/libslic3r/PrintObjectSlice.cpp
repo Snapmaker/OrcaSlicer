@@ -972,6 +972,11 @@ void PrintObject::apply_extruder_layer_heights()
     const size_t first_idx = first_combined_layer_idx;
     if (m_layers.size() <= first_idx + 1)
         return;
+    // Normal support detects overhangs on the outline before combining.
+    auto keep_uncombined = [](LayerRegion *layerm) {
+        if (! layerm->m_uncombined_slices)
+            layerm->m_uncombined_slices = to_expolygons(layerm->slices.surfaces);
+    };
 
     // Runs grow to the full pitch wherever the region exists with a common shape (the intersection
     // of the run's layers), ignoring boundary drift and overhangs: narrow rings a curved or sloped
@@ -1209,6 +1214,7 @@ void PrintObject::apply_extruder_layer_heights()
             // Commit: move the common shape to the top layer of the run, drop the layers below.
             LayerRegion *top_layerm = m_layers[commit_top]->regions()[region_id];
             ExPolygons top_remainder = to_expolygons(top_layerm->slices.surfaces);
+            keep_uncombined(top_layerm);
             top_layerm->slices.set(std::move(merged), stInternal);
             top_layerm->m_combined_layer_count = (unsigned short)(commit_top - idx + 1);
             top_layerm->m_combined_height      = combined_height;
@@ -1220,6 +1226,7 @@ void PrintObject::apply_extruder_layer_heights()
                 // approximated by the run's step. Surface detection classifies the step faces it
                 // exposes via this remainder (lslices still carry the uncombined shape).
                 combined_away->m_combined_away_exposed = diff_ex(to_expolygons(combined_away->slices.surfaces), committed);
+                keep_uncombined(combined_away);
                 combined_away->slices.clear();
                 // 0 marks "extrudes at the run top above", as opposed to genuinely absent geometry.
                 combined_away->m_combined_layer_count = 0;
@@ -1388,6 +1395,7 @@ void PrintObject::apply_extruder_layer_heights()
         // Give `area` to region f on rows bottom..top (extruded on `top`): it prints there now.
         auto give = [&](size_t f, size_t bottom, size_t top, const ExPolygons &area, bool new_run) {
             LayerRegion *f_layerm = m_layers[top]->regions()[f];
+            keep_uncombined(f_layerm);
             if (new_run) {
                 f_layerm->slices.set(area, stInternal);
                 f_layerm->m_combined_layer_count = (unsigned short)(top - bottom + 1);
@@ -1602,8 +1610,10 @@ void PrintObject::apply_extruder_layer_heights()
                     for (size_t l = row + len; l <= t_h; ++ l)
                         for (size_t r = 0; r < num_regions; ++ r)
                             if (multipliers[r] <= 1)
-                                if (LayerRegion *layerm = m_layers[l]->regions()[r]; ! layerm->slices.empty())
+                                if (LayerRegion *layerm = m_layers[l]->regions()[r]; ! layerm->slices.empty()) {
+                                    keep_uncombined(layerm);
                                     layerm->slices.set(diff_ex(to_expolygons(layerm->slices.surfaces), fill), stInternal);
+                                }
                     give(h, row, t_h, fill, false);
                     append(taken, std::move(fill));
                 }
@@ -1742,6 +1752,7 @@ void PrintObject::apply_extruder_layer_heights()
                 continue;
             ExPolygons removed = dropped;
             append(removed, filled);
+            keep_uncombined(layerm);
             layerm->slices.set(diff_ex(own, removed), stInternal);
             // Dropped pieces never print and classify the surfaces around them; filled ones DO
             // print (as the neighbor's pass), so they must not count as exposed remainders.
@@ -1751,6 +1762,7 @@ void PrintObject::apply_extruder_layer_heights()
                 // they stay separate islands walled off by their own mid-air perimeters.
                 Polygons merged = to_polygons(fill_target->slices.surfaces);
                 polygons_append(merged, to_polygons(filled));
+                keep_uncombined(fill_target);
                 fill_target->slices.set(union_safety_offset_ex(merged), stInternal);
                 // Printed by the pass now: not an exposed remainder of anyone on the rows it spans.
                 for (size_t i = idx + 1 - size_t(fill_target->combined_layer_count()); i <= idx; ++ i)

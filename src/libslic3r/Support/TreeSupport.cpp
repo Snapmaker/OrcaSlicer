@@ -3721,46 +3721,8 @@ std::vector<LayerHeightData> TreeSupport::plan_layer_heights()
             layer_heights[layer_nr] = {m_object->get_layer(layer_nr)->print_z, m_object->get_layer(layer_nr)->height, size_t(layer_nr)};
         }
     } else if (m_support_params.grid_aligned_layer_height) {
-        // Grid-aligned independent heights: support boundaries land on object layers or,
-        // with a finer configured step, on half/quarter subdivisions of them. Boundaries
-        // on the object grid keep every toolchange on an existing prime tower layer;
-        // sub-layer boundaries get their own (thinner) tower layers, which costs extra
-        // purge there but lets support heights exceed whole multiples (e.g. 1.5x) when
-        // the support nozzle's maximum lies between two whole multiples.
-        const int      height_step      = std::max(1, m_support_params.grid_height_step);
-        // The support extruder's own minimum is not clamped to the object layer height: a
-        // coarse support nozzle under a fine object grid must not get sub-minimum tails.
-        const coordf_t min_layer_height = std::max(m_slicing_params.min_layer_height, m_slicing_params.min_suport_layer_height);
-        // Floor the maximum at one sub-step: a support nozzle with a maximum below the object
-        // pitch then closes its pieces on sub-grid positions instead of whole object layers.
-        const coordf_t max_layer_height = std::max({m_slicing_params.max_suport_layer_height, m_object->config().layer_height.value / height_step, min_layer_height});
+        // Grid ladder: support pieces end on object layers or their half/quarter sub-steps.
         const size_t   n = m_object->layer_count();
-        // Fractional support-only layers normally get no prime tower layer (their
-        // toolchange goes straight to the support filament), so they impose nothing on
-        // the tower. Smooth timelapse is the exception: it needs a tower layer on every
-        // print layer, so there a fractional boundary splits an object layer into two
-        // tower slabs and both must stay printable by every filament - gate sub-positions
-        // on the strictest configured minimum layer height (0 = the 0.07 mm default).
-        coordf_t tower_min_slab = 0.;
-        if (m_object->print()->config().timelapse_type.value == TimelapseType::tlSmooth)
-            for (unsigned int extruder_id : m_object->print()->extruders()) {
-                coordf_t min_h = m_object->print()->config().min_layer_height.get_at(m_object->print()->extruder_index_of(extruder_id));
-                tower_min_slab = std::max(tower_min_slab, min_h == 0. ? 0.07 : min_h);
-            }
-        // Sub-positions of an object layer usable as piece boundaries. Fractional positions
-        // keep a quantum comfortably above the tower plan's 1e-3 mm Z-merge epsilon, or the
-        // layer is left unsplittable.
-        auto sub_positions = [&](const Layer *layer, std::vector<coordf_t> &out) {
-            out.clear();
-            const coordf_t h     = layer->height;
-            const int      steps = h / height_step > 0.002 ? height_step : 1;
-            for (int k = 1; k < steps; ++k) {
-                const coordf_t below = h * k / steps;
-                if (below < tower_min_slab - EPSILON || h - below < tower_min_slab - EPSILON)
-                    continue; // a tower slab on either side of this boundary would be too thin
-                out.push_back(layer->print_z - h + below);
-            }
-        };
         // A run must end exactly at a top-contact layer so the support tops keep their
         // contact Z (mirrors the boundaries the free-form planner inserts), and the contact
         // layer itself prints at the object layer height for interface quality.
@@ -3787,7 +3749,7 @@ std::vector<LayerHeightData> TreeSupport::plan_layer_heights()
                         if (m_object->get_layer(j)->print_z <= gap_bottom + EPSILON) {
                             bool on_sub_position = false;
                             if (j + 1 < n) {
-                                sub_positions(m_object->get_layer(j + 1), layer_subs);
+                                m_support_params.grid_sub_positions(m_object->get_layer(j + 1)->print_z, m_object->get_layer(j + 1)->height, layer_subs);
                                 for (coordf_t z : layer_subs)
                                     if (std::abs(z - gap_bottom) < EPSILON) { on_sub_position = true; break; }
                             }
@@ -3799,77 +3761,12 @@ std::vector<LayerHeightData> TreeSupport::plan_layer_heights()
                         }
                 }
             }
-        auto forced_close = [&forced_close_zs](coordf_t z) {
-            for (coordf_t f : forced_close_zs)
-                if (std::abs(f - z) < EPSILON)
-                    return true;
-            return false;
-        };
         layer_heights.reserve(n);
         layer_heights.push_back({m_object->get_layer(0)->print_z, m_object->get_layer(0)->height, 0});
-        // A candidate boundary: a sub-position of an object layer.
-        struct SubPos { coordf_t z; size_t obj_layer_nr; };
-        std::vector<SubPos> subs;
-        size_t i = 1;
-        while (i < n) {
+        for (size_t i = 1; i < n;) {
             size_t span_end = i + 1;
             while (span_end < n && !boundary[span_end]) ++span_end;
-            // Sub-position ladder over object layers i..span_end-1. Grid positions use the
-            // layer's print_z verbatim so they stay bit-exact.
-            subs.clear();
-            for (size_t l = i; l < span_end; ++l) {
-                const Layer *layer = m_object->get_layer(l);
-                sub_positions(layer, layer_subs);
-                for (coordf_t z : layer_subs)
-                    subs.push_back({z, l});
-                subs.push_back({layer->print_z, l});
-            }
-            // Pieces are laid out per segment: the ladder up to each forced close (an exact
-            // support top) and the remainder get the same closing and rebalancing.
-            coordf_t piece_start = m_object->get_layer(i)->print_z - m_object->get_layer(i)->height;
-            size_t   seg_begin   = 0;
-            while (seg_begin < subs.size()) {
-                size_t seg_end = seg_begin; // index of the last ladder position of this segment
-                while (seg_end + 1 < subs.size() && !forced_close(subs[seg_end].z)) ++seg_end;
-                const size_t pieces_begin = layer_heights.size();
-                for (size_t s = seg_begin; s <= seg_end; ++s) {
-                    // Close the piece at the segment end, or right before the sub-position that
-                    // would push it past the maximum support layer height.
-                    if (s == seg_end || subs[s + 1].z - piece_start > max_layer_height + EPSILON) {
-                        layer_heights.push_back({subs[s].z, subs[s].z - piece_start, subs[s].obj_layer_nr});
-                        piece_start = subs[s].z;
-                    }
-                }
-                // Rebalance a trailing piece thinner than the support minimum.
-                if (layer_heights.size() - pieces_begin >= 2 && layer_heights.back().height < min_layer_height - EPSILON) {
-                    LayerHeightData tail = layer_heights.back(); layer_heights.pop_back();
-                    LayerHeightData prev = layer_heights.back(); layer_heights.pop_back();
-                    const coordf_t combined_start = prev.print_z - prev.height;
-                    const coordf_t combined       = tail.print_z - combined_start;
-                    if (combined <= max_layer_height + EPSILON) {
-                        layer_heights.push_back({tail.print_z, combined, tail.obj_layer_nr});
-                    } else {
-                        // Cannot merge: split the two pieces as evenly as the sub-grid allows.
-                        const coordf_t ideal = combined_start + combined / 2.;
-                        size_t         best  = subs.size();
-                        // Both halves must respect the support minimum, or the split just moves
-                        // the thin piece.
-                        for (size_t s = seg_begin; s <= seg_end; ++s)
-                            if (subs[s].z - combined_start >= min_layer_height - EPSILON && tail.print_z - subs[s].z >= min_layer_height - EPSILON &&
-                                (best == subs.size() || std::abs(subs[s].z - ideal) < std::abs(subs[best].z - ideal)))
-                                best = s;
-                        if (best < subs.size()) {
-                            layer_heights.push_back({subs[best].z, subs[best].z - combined_start, subs[best].obj_layer_nr});
-                            layer_heights.push_back({tail.print_z, tail.print_z - subs[best].z, tail.obj_layer_nr});
-                        } else {
-                            // No usable split point: keep the original pieces, thin tail and all.
-                            layer_heights.push_back(prev);
-                            layer_heights.push_back(tail);
-                        }
-                    }
-                }
-                seg_begin = seg_end + 1;
-            }
+            append_grid_support_pieces(*m_object, m_support_params, i, span_end, forced_close_zs, layer_heights);
             i = span_end;
         }
     } else {
@@ -3996,6 +3893,150 @@ std::vector<LayerHeightData> TreeSupport::plan_layer_heights()
             BOOST_LOG_TRIVIAL(trace) << format("plan_layer_heights[%d] print_z, height: %.2f, %.2f",i, layer_heights[i].print_z, layer_heights[i].height);
     }
     return layer_heights;
+}
+
+void merge_organic_base_layers(const PrintObject &object, const SupportParameters &support_params, size_t num_raft,
+                               const TreeSupport3D::TreeModelVolumes &volumes, const std::vector<TreeSupport3D::SupportElements> &move_bounds,
+                               const SupportGeneratorLayersPtr &top_contacts, const SupportGeneratorLayersPtr &bottom_contacts,
+                               const SupportGeneratorLayersPtr &interface_layers, const SupportGeneratorLayersPtr &base_interface_layers,
+                               SupportGeneratorLayersPtr &intermediate_layers, SupportGeneratorLayerStorage &layer_storage)
+{
+    if (! support_params.grid_aligned_layer_height)
+        return;
+    const size_t n     = std::min({ intermediate_layers.size(), move_bounds.size(), num_raft + object.layer_count() });
+    const size_t first = num_raft + 1;
+    if (n < first + 2)
+        return;
+    auto at = [](const SupportGeneratorLayersPtr &layers, size_t k) { return k < layers.size() ? layers[k] : nullptr; };
+    // Grid layers without base, with dense layers or in the interface bands of contacts keep their height.
+    std::vector<char> alone(n, 0);
+    for (size_t k = first; k < n; ++ k) {
+        if (! intermediate_layers[k] || at(interface_layers, k) || at(base_interface_layers, k))
+            alone[k] = 1;
+        if (at(top_contacts, k))
+            for (size_t j = 0; j <= support_params.num_top_interface_layers && j + first <= k; ++ j)
+                alone[k - j] = 1;
+        if (at(bottom_contacts, k))
+            for (size_t j = 0; j <= support_params.num_bottom_interface_layers && k + j < n; ++ j)
+                alone[k + j] = 1;
+    }
+    // A piece ends at every branch tip and below every branch root.
+    std::vector<char> close(n, 0);
+    std::vector<char> referenced;
+    for (size_t k = first; k < n; ++ k) {
+        const TreeSupport3D::SupportElements *above = k + 1 < move_bounds.size() ? &move_bounds[k + 1] : nullptr;
+        referenced.assign(above ? above->size() : 0, 0);
+        for (const TreeSupport3D::SupportElement &elem : move_bounds[k])
+            if (elem.state.result_on_layer_is_set()) {
+                bool tip = true;
+                for (int32_t parent : elem.parents)
+                    if (above && (*above)[parent].state.result_on_layer_is_set()) {
+                        tip                = false;
+                        referenced[parent] = 1;
+                    }
+                if (tip)
+                    close[k] = 1;
+            }
+        for (size_t i = 0; i < referenced.size(); ++ i)
+            if (! referenced[i] && (*above)[i].state.result_on_layer_is_set())
+                close[k] = 1;
+        if (alone[k])
+            close[k - 1] = close[k] = 1;
+    }
+    auto top    = [&object, num_raft](size_t l) { return object.get_layer(int(l - num_raft))->print_z; };
+    auto bottom = [&object, num_raft](size_t l) { return object.get_layer(int(l - num_raft))->print_z - object.get_layer(int(l - num_raft))->height; };
+    // Feet: no piece spans a model top under the base of a grid layer above it; base inside the gap of a top stays single.
+    std::vector<Polygons> model_tops(n);
+    tbb::parallel_for(tbb::blocked_range<size_t>(first, n - 1), [&model_tops, &volumes](const tbb::blocked_range<size_t> &range) {
+        for (size_t k = range.begin(); k < range.end(); ++ k)
+            model_tops[k] = diff(volumes.getCollision(0, TreeSupport3D::LayerIndex(k), true), volumes.getCollision(0, TreeSupport3D::LayerIndex(k + 1), true));
+    });
+    // Lowest grid layer a piece through grid layer k may span, k + 1 for none.
+    std::vector<size_t> reach(n, 0);
+    // Cuts within the simplification tolerance of the base are noise.
+    auto significant = [noise = float(std::min(scaled<double>(0.03), scaled<double>(object.print()->config().resolution.value)))](const Polygons &cut) {
+        return ! cut.empty() && ! offset(union_(cut), -noise).empty();
+    };
+    tbb::parallel_for(tbb::blocked_range<size_t>(first, n), [&](const tbb::blocked_range<size_t> &range) {
+        for (size_t k = range.begin(); k < range.end(); ++ k)
+            if (! alone[k]) {
+                const Polygons &base = intermediate_layers[k]->polygons;
+                auto over = [&base](const Polygons &model_top) { return model_top.empty() ? Polygons() : intersection_clipped(model_top, base); };
+                if (significant(over(model_tops[k]))) {
+                    reach[k] = k + 1;
+                    continue;
+                }
+                Polygons cut;
+                for (size_t j = k - 1; j >= first && ! close[j] && top(j) > bottom(k) - support_params.grid_max_height + EPSILON; -- j)
+                    if (const Polygons over_top = over(model_tops[j]); ! over_top.empty()) {
+                        polygons_append(cut, diff_clipped(over_top, volumes.getCollision(0, TreeSupport3D::LayerIndex(k), true)));
+                        if (significant(cut)) {
+                            reach[k] = j + 1;
+                            break;
+                        }
+                    }
+            }
+    });
+    for (size_t k = first, run = first; k < n; ++ k) {
+        if (close[k - 1])
+            run = k;
+        if (reach[k] > run) {
+            close[k - 1] = 1;
+            run = k;
+        }
+        if (reach[k] > k)
+            close[k] = 1;
+    }
+    close[n - 1] = 1;
+
+    struct Merge { size_t lo; size_t hi; SupportGeneratorLayer *layer; };
+    std::vector<Merge>           merges;
+    std::vector<LayerHeightData> pieces;
+    SupportGeneratorLayersPtr    out(intermediate_layers.begin(), intermediate_layers.begin() + first);
+    for (size_t a = first; a < n;) {
+        size_t b = a;
+        while (! close[b])
+            ++ b;
+        if (b == a)
+            out.push_back(intermediate_layers[a]);
+        else {
+            pieces.clear();
+            append_grid_support_pieces(object, support_params, a - num_raft, b + 1 - num_raft, {}, pieces);
+            size_t lo = a;
+            for (const LayerHeightData &piece : pieces) {
+                const coordf_t piece_bottom = piece.print_z - piece.height;
+                while (lo < b && top(lo) < piece_bottom + EPSILON)
+                    ++ lo;
+                size_t hi = lo;
+                while (hi < b && bottom(hi + 1) < piece.print_z - EPSILON)
+                    ++ hi;
+                if (lo == hi && std::abs(top(lo) - piece.print_z) < EPSILON && std::abs(bottom(lo) - piece_bottom) < EPSILON)
+                    out.push_back(intermediate_layers[lo]);
+                else {
+                    SupportGeneratorLayer &merged = layer_storage.allocate(SupporLayerType::Base);
+                    merged.print_z  = piece.print_z;
+                    merged.bottom_z = piece_bottom;
+                    merged.height   = piece.height;
+                    merges.push_back({ lo, hi, &merged });
+                    out.push_back(&merged);
+                }
+            }
+        }
+        a = b + 1;
+    }
+    out.insert(out.end(), intermediate_layers.begin() + n, intermediate_layers.end());
+    // A merged piece keeps out of the object collisions of every grid layer it spans.
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, merges.size()), [&merges, &intermediate_layers, &volumes](const tbb::blocked_range<size_t> &range) {
+        for (size_t i = range.begin(); i < range.end(); ++ i) {
+            Polygons base, collision;
+            for (size_t l = merges[i].lo; l <= merges[i].hi; ++ l) {
+                polygons_append(base, intermediate_layers[l]->polygons);
+                polygons_append(collision, volumes.getCollision(0, TreeSupport3D::LayerIndex(l), true));
+            }
+            merges[i].layer->polygons = diff(union_(base), union_(collision), ApplySafetyOffset::Yes);
+        }
+    });
+    intermediate_layers = std::move(out);
 }
 
 void TreeSupport::generate_contact_points()

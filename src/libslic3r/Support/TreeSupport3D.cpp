@@ -3560,6 +3560,8 @@ static void generate_support_areas(Print &print, TreeSupport* tree_support, cons
                 *print.get_object(processing.second.front()), volumes, config, move_bounds,
                 bottom_contacts, top_contacts, interface_placer, intermediate_layers, layer_storage,
                 throw_on_cancel);
+            merge_organic_base_layers(print_object, support_params, config.raft_layers.size(), volumes, move_bounds,
+                top_contacts, bottom_contacts, interface_layers, base_interface_layers, intermediate_layers, layer_storage);
 
             //tree_support->move_bounds_to_contact_nodes(move_bounds, print_object, config);
 

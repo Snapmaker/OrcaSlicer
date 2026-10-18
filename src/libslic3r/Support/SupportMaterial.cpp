@@ -1442,7 +1442,9 @@ static inline ExPolygons detect_overhangs(
                     fw - float(scale_(object_config.support_threshold_overlap.get_abs_value(unscale_(fw)))));
             // Overhang polygons for this layer and region.
             Polygons diff_polygons;
-            Polygons layerm_polygons = to_polygons(layerm->slices.surfaces);
+            // ORCA: combined regions detect overhangs on the outline before combining.
+            const ExPolygons *uncombined = layerm->uncombined_slices();
+            Polygons layerm_polygons = uncombined ? to_polygons(*uncombined) : to_polygons(layerm->slices.surfaces);
             if (lower_layer_offset == 0.f) {
                 // Support everything.
                 diff_polygons = diff(layerm_polygons, lower_layer_polygons);
@@ -1472,7 +1474,7 @@ static inline ExPolygons detect_overhangs(
 
                 // BBS
                 if (g_config_support_sharp_tails) {
-                    for (ExPolygon& expoly : layerm->raw_slices) {
+                    for (const ExPolygon& expoly : uncombined ? *uncombined : layerm->raw_slices) {
                         if (offset_ex(expoly, -0.5 * fw).empty()) continue;
                         bool is_sharp_tail = false;
                         float accum_height = layer.height;
@@ -1506,9 +1508,16 @@ static inline ExPolygons detect_overhangs(
             }
 
             if (bridge_no_support) {
+                // ORCA: a combined-away region extrudes at its run top, where its bridges are.
+                LayerRegion *bridging = layerm;
+                if (layerm->combined_layer_count() == 0) {
+                    const size_t region_id = std::find(layer.regions().begin(), layer.regions().end(), layerm) - layer.regions().begin();
+                    for (const Layer *upper = layer.upper_layer; upper != nullptr && bridging->combined_layer_count() == 0; upper = upper->upper_layer)
+                        bridging = upper->regions()[region_id];
+                }
                 //FIXME Expensive, potentially not precise enough. Misses gap fill extrusions, which bridge.
                 SupportMaterialInternal::remove_bridges_from_contacts(
-                    print_config, lower_layer, lower_layer_polygons, *layerm, fw, diff_polygons);
+                    print_config, lower_layer, lower_layer_polygons, *bridging, fw, diff_polygons);
             }
 
             if (diff_polygons.empty() || offset(diff_polygons, -0.1 * fw).empty())
@@ -1611,7 +1620,8 @@ static inline std::tuple<Polygons, Polygons, double> detect_contacts(
 
         float lower_layer_offset = 0;
         for (LayerRegion* layerm : layer.regions()) {
-            Polygons layerm_polygons = to_polygons(layerm->slices.surfaces);
+            const ExPolygons *uncombined = layerm->uncombined_slices();
+            Polygons layerm_polygons = uncombined ? to_polygons(*uncombined) : to_polygons(layerm->slices.surfaces);
 
             // Overhang polygons for this layer and region.
             Polygons diff_polygons = intersection(overhang_polygons, layerm_polygons);
@@ -2820,6 +2830,20 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::raft_and_intermediate_supp
         assert(extremes.front()->layer_type == SupporLayerType::TopContact);
         ++ idx_extreme_first;
     }
+    // Object layers a contact prints on stay single support layers.
+    std::vector<coordf_t> contact_zs;
+    if (synchronize && m_support_params.grid_aligned_layer_height) {
+        for (const SupportGeneratorLayer *layer : top_contacts)
+            contact_zs.push_back(layer->print_z);
+        for (const SupportGeneratorLayer *layer : bottom_contacts)
+            contact_zs.push_back(layer->print_z);
+        std::sort(contact_zs.begin(), contact_zs.end());
+    }
+    auto is_contact_z = [&contact_zs](coordf_t z) {
+        auto it = std::lower_bound(contact_zs.begin(), contact_zs.end(), z - EPSILON);
+        return it != contact_zs.end() && *it < z + EPSILON;
+    };
+    std::vector<LayerHeightData> pieces;
     for (size_t idx_extreme = idx_extreme_first; idx_extreme < extremes.size(); ++ idx_extreme) {
         SupportGeneratorLayer      *extr2  = extremes[idx_extreme];
         coordf_t      extr2z = extr2->extreme_z();
@@ -2871,12 +2895,55 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::raft_and_intermediate_supp
                 ++ idx_layer_object;
             if (idx_layer_object == 0 && extr1z == m_slicing_params.raft_interface_top_z) {
                 // Insert one base support layer below the object.
-                SupportGeneratorLayer &layer_new = layer_storage.allocate(SupporLayerType::Intermediate);
-                layer_new.print_z  = m_slicing_params.object_print_z_min;
-                layer_new.bottom_z = m_slicing_params.raft_interface_top_z;
-                layer_new.height   = layer_new.print_z - layer_new.bottom_z;
-                intermediate_layers.push_back(&layer_new);
+                coordf_t              bottom_z = m_slicing_params.raft_interface_top_z;
+                std::vector<coordf_t> tops;
+                // ORCA: above the support maximum it splits at the raft contact top and then in object layers.
+                if (m_slicing_params.object_print_z_min - bottom_z > m_slicing_params.max_suport_layer_height + EPSILON) {
+                    const coordf_t step = m_slicing_params.layer_height *
+                        std::max(1., std::floor(m_slicing_params.max_suport_layer_height / m_slicing_params.layer_height + EPSILON));
+                    for (coordf_t z = m_slicing_params.raft_contact_top_z; z < m_slicing_params.object_print_z_min - EPSILON; z += step)
+                        tops.push_back(z);
+                }
+                tops.push_back(m_slicing_params.object_print_z_min);
+                for (coordf_t print_z : tops) {
+                    SupportGeneratorLayer &layer_new = layer_storage.allocate(SupporLayerType::Intermediate);
+                    layer_new.print_z  = print_z;
+                    layer_new.bottom_z = bottom_z;
+                    layer_new.height   = layer_new.print_z - layer_new.bottom_z;
+                    intermediate_layers.push_back(&layer_new);
+                    bottom_z = print_z;
+                }
             }
+            if (m_support_params.grid_aligned_layer_height) {
+                // Pieces up to the support extruder's maximum; object layer 0 and contact layers stay single.
+                size_t end = idx_layer_object;
+                while (end < object.layers().size() && object.layers()[end]->print_z < extr2z + EPSILON)
+                    ++ end;
+                pieces.clear();
+                for (size_t i = idx_layer_object; i < end;) {
+                    const Layer *layer = object.layers()[i];
+                    if (i == 0 || is_contact_z(layer->print_z)) {
+                        pieces.emplace_back(layer->print_z, layer->height, i);
+                        ++ i;
+                    } else {
+                        size_t j = i + 1;
+                        while (j < end && ! is_contact_z(object.layers()[j]->print_z))
+                            ++ j;
+                        append_grid_support_pieces(object, m_support_params, i, j, {}, pieces);
+                        i = j;
+                    }
+                }
+                assert(pieces.empty() || std::abs(pieces.back().print_z - extr2z) < EPSILON);
+                for (const LayerHeightData &piece : pieces) {
+                    SupportGeneratorLayer &layer_new = layer_storage.allocate(SupporLayerType::Intermediate);
+                    layer_new.print_z  = piece.print_z;
+                    layer_new.height   = piece.height;
+                    layer_new.bottom_z = piece.print_z - piece.height;
+                    assert(intermediate_layers.empty() || intermediate_layers.back()->print_z < layer_new.print_z + EPSILON);
+                    intermediate_layers.push_back(&layer_new);
+                }
+                idx_layer_object = end;
+            } else
             // Emit all intermediate support layers synchronized with object layers up to extr2z.
             for (; idx_layer_object < object.layers().size() && object.layers()[idx_layer_object]->print_z < extr2z + EPSILON; ++ idx_layer_object) {
                 SupportGeneratorLayer &layer_new = layer_storage.allocate(SupporLayerType::Intermediate);

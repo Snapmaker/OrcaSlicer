@@ -1656,6 +1656,9 @@ void Tab::on_roll_back_value(const bool to_sys /*= true*/)
     m_postpone_update_ui = false;
     if (m_head_selector)
         switch_excluder(-1, true);
+    if (m_type == Preset::TYPE_PRINTER && m_presets->get_edited_preset().printer_technology() == ptFFF &&
+        static_cast<TabPrinter*>(this)->fix_min_layer_heights())
+        reload_config();
 
     // When all values are rolled, then we have to update whole tab in respect to the reverted values
     update();
@@ -8058,6 +8061,22 @@ void TabPrinter::on_preset_loaded()
     update_nozzle_flow_lines();
 }
 
+// Snapmaker Orca: a saved or imported preset with a minimum layer height above its maximum.
+bool TabPrinter::fix_min_layer_heights()
+{
+    const std::vector<MinLayerHeightFix> fixes = m_preset_bundle->fix_min_layer_heights(*m_config);
+    if (fixes.empty())
+        return false;
+    wxGetApp().CallAfter([this, text = Plater::min_layer_height_fix_text(fixes)]() {
+        if (wxGetApp().checked_tab(this))
+            update_dirty();
+        if (Plater *plater = wxGetApp().plater(); plater != nullptr && wxGetApp().mainframe != nullptr)
+            plater->get_notification_manager()->push_notification(NotificationType::CustomNotification,
+                                                                 NotificationManager::NotificationLevel::WarningNotificationLevel, text);
+    });
+    return true;
+}
+
 void TabPrinter::update_pages()
 {
     // update m_pages ONLY if printer technology is changed
@@ -8562,6 +8581,25 @@ void TabPrinter::on_value_change(const std::string& opt_key, const boost::any& v
     }
 
     Tab::on_value_change(opt_key, value);
+
+    // Snapmaker Orca: the minimum layer height never exceeds the maximum.
+    if (pos > 0 && !m_postpone_update_ui) {
+        const std::string key = opt_key.substr(0, pos);
+        std::string       text;
+        if (key == "nozzle_diameter")
+            text = Plater::min_layer_height_fix_text(m_preset_bundle->fix_min_layer_heights(*m_config));
+        else if (key == "min_layer_height" || key == "max_layer_height")
+            for (const MinLayerHeightFix &fix : Slic3r::fix_min_layer_heights(*m_config, nullptr))
+                text += (text.empty() ? "" : "\n") +
+                        GUI::format(_u8L("Extruder %1%: the minimum layer height cannot be above the maximum (%2% mm)."), fix.extruder + 1, fix.to);
+        if (!text.empty()) {
+            wxGetApp().plater()->get_notification_manager()->push_notification(NotificationType::CustomNotification,
+                                                                             NotificationManager::NotificationLevel::WarningNotificationLevel, text);
+            update_dirty();
+            reload_config();
+            update_tab_ui();
+        }
+    }
 }
 
 void TabPrinter::update()
@@ -8625,6 +8663,7 @@ void Tab::load_current_preset()
         if (preset.printer_technology() == ptFFF) {
             prev_variant_list = static_cast<TabPrinter*>(this)->m_extruder_variant_list;
             prev_extruder_count = static_cast<TabPrinter*>(this)->m_extruders_count;
+            static_cast<TabPrinter*>(this)->fix_min_layer_heights();
             on_preset_loaded();
         }
         else

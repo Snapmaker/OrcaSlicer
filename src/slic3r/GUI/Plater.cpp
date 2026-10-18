@@ -11718,6 +11718,10 @@ void Sidebar::apply_nozzle_diameter(size_t i, const wxString &diameter_label)
                                  variant, i + 1);
         }
     }
+    if (const std::vector<MinLayerHeightFix> fixes = wxGetApp().preset_bundle->fix_min_layer_heights(new_conf); !fixes.empty()) {
+        notice += "\n";
+        notice += Plater::min_layer_height_fix_text(fixes);
+    }
     // A preferred layer height that no longer fits through the new nozzle cannot print;
     // reset it to Default rather than leave a dead setting behind.
     if (const auto *height_opt = static_cast<const ConfigOptionFloats*>(new_conf.option("extruder_layer_height"));
@@ -16951,6 +16955,10 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                 q->get_notification_manager()->push_notification(NotificationType::CustomNotification,
                                                                                  NotificationManager::NotificationLevel::WarningNotificationLevel,
                                                                                  flow_import_text(flow_import));
+                            if (const std::vector<MinLayerHeightFix> &fixes = wxGetApp().preset_bundle->last_min_layer_height_fixes; !fixes.empty())
+                                q->get_notification_manager()->push_notification(NotificationType::CustomNotification,
+                                                                                 NotificationManager::NotificationLevel::WarningNotificationLevel,
+                                                                                 Plater::min_layer_height_fix_text(fixes));
                         }
                     }
                     if (!silence) wxGetApp().app_config->update_config_dir(path.parent_path().string());
@@ -18608,6 +18616,13 @@ void Plater::priv::process_validation_warning(StringObjectException const &warni
                 }
             }
             if (!opt.empty()) {
+                if (opt == "extruder_layer_height") {
+                    // Preferred layer heights are set in the nozzle tabs.
+                    if (Plater *plater = wxGetApp().plater(); plater->is_sidebar_collapsed())
+                        plater->collapse_sidebar(false);
+                    wxGetApp().sidebar().select_nozzle_tab(head >= 0 ? size_t(head) : wxGetApp().sidebar().selected_nozzle_tab());
+                    return false;
+                }
                 if ((!is_inst && id.id) || (is_inst && parent_id.id))
 				    wxGetApp().params_panel()->switch_to_object();
                 wxGetApp().sidebar().jump_to_option(opt, Preset::TYPE_PRINT, L"", head);
@@ -32431,6 +32446,16 @@ std::string Plater::nozzle_flow_reset_text(const std::vector<size_t> &heads)
     // N5
     return GUI::format(_u8L("Extruder %1% was set back to a Standard nozzle: there are no High Flow values for a nozzle of its size "
                             "with this printer preset."), tool_head_list(heads));
+}
+
+std::string Plater::min_layer_height_fix_text(const std::vector<MinLayerHeightFix> &fixes)
+{
+    std::string text;
+    for (const MinLayerHeightFix &fix : fixes)
+        text += (text.empty() ? "" : "\n") +
+                GUI::format(_u8L("Extruder %1%: the minimum layer height %2% mm was above the maximum and is now %3% mm."), fix.extruder + 1,
+                            fix.from, fix.to);
+    return text;
 }
 
 std::vector<size_t> Plater::sanitize_nozzle_flow_types(bool notify)

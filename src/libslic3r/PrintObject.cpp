@@ -4047,7 +4047,7 @@ static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPr
     }
 }
 
-PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders, std::vector<int>& variant_index, const VariantOverrideRule &variant_rule = VariantOverrideRule())
+PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders, std::vector<int>& variant_index, const VariantOverrideRule &variant_rule = VariantOverrideRule(), int parent_extruder = 0)
 {
     PrintRegionConfig config = default_or_parent_region_config;
     FeatureFilamentOverrideMask feature_overrides;
@@ -4062,11 +4062,9 @@ PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &defau
         feature_overrides.inner_wall_filament_id     = (config.inner_wall_filament_id.value > 0);
     }
 
-    // The part's filament as resolved so far, for explicit "Default" (0) selector resets. Seeded
-    // from the object for modifiers too (their parent part's own extruder is already folded into
-    // default_or_parent_region_config and not recoverable here).
-    int base_extruder_through_scopes = 0;
-    if (const auto *opt = volume.get_object()->config.get().opt<ConfigOptionInt>("extruder"); opt != nullptr && opt->value > 0)
+    // Explicit "Default" (0) selectors reset to this filament.
+    int base_extruder_through_scopes = parent_extruder;
+    if (const auto *opt = volume.get_object()->config.get().opt<ConfigOptionInt>("extruder"); base_extruder_through_scopes <= 0 && opt != nullptr && opt->value > 0)
         base_extruder_through_scopes = opt->value;
 
     if (volume.is_model_part()) {

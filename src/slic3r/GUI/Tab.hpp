@@ -874,6 +874,7 @@ public:
 	PageShp		build_kinematics_page();
 	void		build_unregular_pages(bool from_initial_build = false);
 	void		on_preset_loaded() override;
+	bool		fix_min_layer_heights();
 	void		init_options_list() override;
 	void		msw_rescale() override;
 	bool 		supports_printer_technology(const PrinterTechnology /* tech */) const override { return true; }

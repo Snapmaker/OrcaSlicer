@@ -6,6 +6,7 @@
 #include "SlicingAdaptive.hpp"
 #include "PrintConfig.hpp"
 #include "Model.hpp"
+#include "UsedFilaments.hpp"
 
 // #define SLIC3R_DEBUG
 
@@ -26,10 +27,19 @@ static const coordf_t MIN_LAYER_HEIGHT = 0.01;
 static const coordf_t MIN_LAYER_HEIGHT_DEFAULT = 0.07;
 static const double LAYER_HEIGHT_CHANGE_STEP = 0.04;
 
+// Snapmaker Orca: a minimum above the maximum or the nozzle is no limit (extruder_layer_height_cap()).
+static coordf_t usable_min_layer_height(coordf_t min, coordf_t max, coordf_t nozzle)
+{
+    const coordf_t cap = max > 0. ? (nozzle > 0. ? std::min(nozzle, max) : max) : nozzle;
+    return cap > 0. && min > cap + EPSILON ? 0. : min;
+}
+
 // Minimum layer height for the variable layer height algorithm.
 inline coordf_t min_layer_height_from_nozzle(const PrintConfig &print_config, int idx_nozzle)
 {
-    coordf_t min_layer_height = print_config.min_layer_height.get_at(idx_nozzle - 1);
+    coordf_t min_layer_height = usable_min_layer_height(print_config.min_layer_height.get_at(idx_nozzle - 1),
+                                                        print_config.max_layer_height.get_at(idx_nozzle - 1),
+                                                        print_config.nozzle_diameter.get_at(idx_nozzle - 1));
     return (min_layer_height == 0.) ? MIN_LAYER_HEIGHT_DEFAULT : std::max(MIN_LAYER_HEIGHT, min_layer_height);
 }
 
@@ -46,7 +56,9 @@ inline coordf_t max_layer_height_from_nozzle(const PrintConfig &print_config, in
 // Minimum layer height for the variable layer height algorithm.
 coordf_t Slicing::min_layer_height_from_nozzle(const DynamicPrintConfig &print_config, int idx_nozzle)
 {
-    coordf_t min_layer_height = print_config.opt_float("min_layer_height", idx_nozzle - 1);
+    coordf_t min_layer_height = usable_min_layer_height(print_config.opt_float("min_layer_height", idx_nozzle - 1),
+                                                        print_config.opt_float("max_layer_height", idx_nozzle - 1),
+                                                        print_config.opt_float("nozzle_diameter", idx_nozzle - 1));
     return (min_layer_height == 0.) ? MIN_LAYER_HEIGHT_DEFAULT : std::max(MIN_LAYER_HEIGHT, min_layer_height);
 }
 
@@ -132,16 +144,17 @@ SlicingParameters SlicingParameters::create_from_config(
     params.max_layer_height = std::numeric_limits<double>::max();
     if (object_config.enable_support.value || params.base_raft_layers > 0 || object_config.enforce_support_layers > 0) {
         // Has some form of support. Add the support layers to the minimum / maximum layer height limits.
-        auto support_layer_height_limit = [&print_config, &object_config, &object_extruders, &restricted_default](int configured, bool min_limit) -> coordf_t {
+        auto support_layer_height_limit = [&print_config, &object_config, &object_extruders](int configured, const std::string &material, bool min_limit) -> coordf_t {
             auto from_nozzle = [&print_config, min_limit](int filament) {
                 return min_limit ? min_layer_height_from_nozzle(print_config, filament) : max_layer_height_from_nozzle(print_config, filament);
             };
-            if (restricted_default(configured)) {
+            const SupportFilamentRestriction restriction{ object_config.support_nozzle_diameter.value, material };
+            if (configured == 0 && restriction.active()) {
                 // Combine the limits of all filaments the restriction allows.
                 coordf_t limit = min_limit ? 0. : std::numeric_limits<coordf_t>::max();
                 bool found = false;
                 for (size_t i = 0; i < print_config.nozzle_diameter.values.size(); ++ i)
-                    if (std::abs(print_config.nozzle_diameter.values[i] - object_config.support_nozzle_diameter.value) < EPSILON) {
+                    if (support_filament_passes(print_config, unsigned(i + 1), restriction)) {
                         coordf_t l = from_nozzle(int(i + 1));
                         limit = min_limit ? std::max(limit, l) : std::min(limit, l);
                         found = true;
@@ -164,11 +177,11 @@ SlicingParameters SlicingParameters::create_from_config(
             return from_nozzle(configured);
         };
         params.min_layer_height = std::max(
-            support_layer_height_limit(object_config.support_filament.value, true),
-            support_layer_height_limit(object_config.support_interface_filament.value, true));
+            support_layer_height_limit(object_config.support_filament.value, object_config.support_base_material.value, true),
+            support_layer_height_limit(object_config.support_interface_filament.value, object_config.support_interface_material.value, true));
         params.max_layer_height = std::min(
-            support_layer_height_limit(object_config.support_filament.value, false),
-            support_layer_height_limit(object_config.support_interface_filament.value, false));
+            support_layer_height_limit(object_config.support_filament.value, object_config.support_base_material.value, false),
+            support_layer_height_limit(object_config.support_interface_filament.value, object_config.support_interface_material.value, false));
         params.max_suport_layer_height = params.max_layer_height;
         // The support extruders' own (unclamped) minimum matters only when supports are pinned
         // to their own filaments or nozzle; with the object's filaments the object's clamped
@@ -240,11 +253,16 @@ SlicingParameters SlicingParameters::create_from_config(
     if (params.base_raft_layers > 0) {
         params.interface_raft_layers = (params.base_raft_layers + 1) / 2;
         params.base_raft_layers -= params.interface_raft_layers;
+        // ORCA: at most the maximum layer height of the extruder the diameter comes from.
+        auto raft_layer_height = [&](int filament, coordf_t dmr) {
+            const coordf_t max_height = restricted_default(filament) ? params.max_suport_layer_height : max_layer_height_from_nozzle(print_config, filament);
+            return std::max(params.layer_height, std::min(0.75 * dmr, max_height));
+        };
         // Use as large as possible layer height for the intermediate raft layers.
-        params.base_raft_layer_height       = std::max(params.layer_height, 0.75 * support_material_extruder_dmr);
-        params.interface_raft_layer_height  = std::max(params.layer_height, 0.75 * support_material_interface_extruder_dmr);
+        params.base_raft_layer_height       = raft_layer_height(object_config.support_filament.value, support_material_extruder_dmr);
+        params.interface_raft_layer_height  = raft_layer_height(object_config.support_interface_filament.value, support_material_interface_extruder_dmr);
         params.first_object_layer_bridging  = false;
-        params.contact_raft_layer_height    = std::max(params.layer_height, 0.75 * support_material_interface_extruder_dmr);
+        params.contact_raft_layer_height    = raft_layer_height(object_config.support_interface_filament.value, support_material_interface_extruder_dmr);
         params.first_object_layer_height    = params.layer_height;
     }
 
@@ -1196,6 +1214,18 @@ double smallest_positive(const std::vector<double> &values)
     return smallest;
 }
 
+// The min_layer_height values, 0 where one is above its extruder's cap and cannot be met.
+std::vector<double> usable_min_layer_heights(const DynamicPrintConfig &config)
+{
+    std::vector<double> mins = floats_of(config, "min_layer_height");
+    if (const size_t count = floats_of(config, "nozzle_diameter").size(); ! mins.empty() && mins.size() < count)
+        mins.resize(count, mins.back());
+    for (size_t j = 0; j < mins.size(); ++ j)
+        if (const double cap = extruder_layer_height_cap(config, j); cap > EPSILON && mins[j] > cap + EPSILON)
+            mins[j] = 0.;
+    return mins;
+}
+
 bool has_explicit_height(const std::vector<double> &heights)
 {
     return std::any_of(heights.begin(), heights.end(), [](double h) { return h > EPSILON; });
@@ -1224,6 +1254,32 @@ DynamicPrintConfig extruder_layer_height_inputs(const DynamicPrintConfig &printe
     if (const ConfigOption *option = print.option("layer_height"); option != nullptr)
         inputs.set_key_value("layer_height", option->clone());
     return inputs;
+}
+
+double extruder_layer_height_cap(const DynamicPrintConfig &config, size_t extruder)
+{
+    double cap = value_at(floats_of(config, "nozzle_diameter"), extruder);
+    if (const double max = value_at(floats_of(config, "max_layer_height"), extruder); max > EPSILON)
+        cap = cap > EPSILON ? std::min(cap, max) : max;
+    return cap;
+}
+
+std::vector<MinLayerHeightFix> fix_min_layer_heights(DynamicPrintConfig &config, const std::function<double(size_t)> &replacement)
+{
+    std::vector<MinLayerHeightFix> fixes;
+    auto *mins = config.option<ConfigOptionFloats>("min_layer_height");
+    if (mins == nullptr)
+        return fixes;
+    for (size_t j = 0; j < mins->values.size(); ++ j) {
+        const double cap = extruder_layer_height_cap(config, j);
+        if (cap <= EPSILON || mins->values[j] <= cap + EPSILON)
+            continue;
+        const double wanted = replacement ? replacement(j) : 0.;
+        const double to     = wanted > EPSILON && wanted <= cap + EPSILON ? wanted : cap;
+        fixes.push_back({ j, mins->values[j], to });
+        mins->values[j] = to;
+    }
+    return fixes;
 }
 
 bool extruder_layer_heights_conform(const std::vector<double> &heights, double base, const std::vector<double> &nozzles)
@@ -1265,7 +1321,7 @@ ExtruderLayerHeightPlan effective_extruder_layer_heights(const DynamicPrintConfi
     const auto *exact = config.option<ConfigOptionBool>("extruder_layer_height_exact");
     ExtruderLayerHeightPlan plan = plan_extruder_layer_heights(effective.heights, base, nozzles, smallest_positive(nozzles),
                                                                exact != nullptr && exact->value,
-                                                               smallest_positive(floats_of(config, "min_layer_height")) / 2.);
+                                                               smallest_positive(usable_min_layer_heights(config)) / 2.);
     return plan.grid > EPSILON ? plan : effective;
 }
 
@@ -1277,6 +1333,12 @@ bool apply_extruder_layer_height_plan(DynamicPrintConfig &config)
     config.set_key_value(extruder_layer_height_planned_key, new ConfigOptionBool(true));
     const ExtruderLayerHeightPlan effective = effective_extruder_layer_heights(config);
     bool                          changed   = false;
+    // The first layer is never combined: capped to the smallest nozzle like the grid.
+    if (auto *first = config.option<ConfigOptionFloat>("initial_layer_print_height"); first != nullptr)
+        if (const double bore = smallest_positive(floats_of(config, "nozzle_diameter")); bore > EPSILON && first->value > bore + EPSILON) {
+            first->value = std::round(std::floor(bore / 0.005 + EPSILON) * 0.005 * 1e6) / 1e6;
+            changed      = true;
+        }
     if (auto *base = config.option<ConfigOptionFloat>("layer_height"); base != nullptr && effective.grid > EPSILON &&
                                                                        std::abs(base->value - effective.grid) > 1e-9) {
         base->value = effective.grid;
@@ -1316,11 +1378,8 @@ std::vector<double> available_extruder_layer_heights(const DynamicPrintConfig &c
     if (grid <= EPSILON)
         return available;
 
-    double       cap        = value_at(floats_of(config, "nozzle_diameter"), extruder);
-    const double max_height = value_at(floats_of(config, "max_layer_height"), extruder);
-    if (max_height > EPSILON)
-        cap = cap > EPSILON ? std::min(cap, max_height) : max_height;
-    const double min_height = value_at(floats_of(config, "min_layer_height"), extruder);
+    const double cap        = extruder_layer_height_cap(config, extruder);
+    const double min_height = value_at(usable_min_layer_heights(config), extruder);
     auto offer = [&](double height) {
         height = std::round(height * 1e6) / 1e6;
         if (height + EPSILON >= min_height && (cap <= EPSILON || height <= cap + EPSILON) && on_quantum_grid(height) &&

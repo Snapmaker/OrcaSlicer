@@ -1044,6 +1044,8 @@ public:
     std::vector<size_t> sanitize_nozzle_flow_types(bool notify = true);
     // The sentence that reports tool heads reset by sanitize_nozzle_flow_types().
     static std::string nozzle_flow_reset_text(const std::vector<size_t> &heads);
+    // The lines that report minimum layer heights lowered by fix_min_layer_heights().
+    static std::string min_layer_height_fix_text(const std::vector<MinLayerHeightFix> &fixes);
     // Rates the filament of every High Flow tool head and the process preset, and keeps the
     // notices of the Prepare view in step. Returns false when a filament that cannot be printed
     // with a High Flow nozzle blocks slicing.

@@ -281,6 +281,68 @@ std::pair<SupportGeneratorLayersPtr, SupportGeneratorLayersPtr> generate_interfa
     return base_and_interface_layers;
 }
 
+void append_grid_support_pieces(const PrintObject &object, const SupportParameters &support_params, size_t begin, size_t end,
+                                const std::vector<coordf_t> &close_zs, std::vector<LayerHeightData> &out)
+{
+    auto forced_close = [&close_zs](coordf_t z) {
+        for (coordf_t f : close_zs)
+            if (std::abs(f - z) < EPSILON)
+                return true;
+        return false;
+    };
+    struct SubPos { coordf_t z; size_t obj_layer_nr; };
+    std::vector<SubPos>   subs;
+    std::vector<coordf_t> layer_subs;
+    // Grid positions copy print_z verbatim so they stay bit-exact.
+    for (size_t l = begin; l < end; ++l) {
+        const Layer *layer = object.get_layer(int(l));
+        support_params.grid_sub_positions(layer->print_z, layer->height, layer_subs);
+        for (coordf_t z : layer_subs)
+            subs.push_back({z, l});
+        subs.push_back({layer->print_z, l});
+    }
+    // Each forced close ends a segment; every segment is closed and rebalanced alike.
+    coordf_t piece_start = object.get_layer(int(begin))->print_z - object.get_layer(int(begin))->height;
+    size_t   seg_begin   = 0;
+    while (seg_begin < subs.size()) {
+        size_t seg_end = seg_begin;
+        while (seg_end + 1 < subs.size() && !forced_close(subs[seg_end].z)) ++seg_end;
+        const size_t pieces_begin = out.size();
+        for (size_t s = seg_begin; s <= seg_end; ++s) {
+            if (s == seg_end || subs[s + 1].z - piece_start > support_params.grid_max_height + EPSILON) {
+                out.push_back({subs[s].z, subs[s].z - piece_start, subs[s].obj_layer_nr});
+                piece_start = subs[s].z;
+            }
+        }
+        // Rebalance a trailing piece thinner than the support minimum.
+        if (out.size() - pieces_begin >= 2 && out.back().height < support_params.grid_min_height - EPSILON) {
+            LayerHeightData tail = out.back(); out.pop_back();
+            LayerHeightData prev = out.back(); out.pop_back();
+            const coordf_t combined_start = prev.print_z - prev.height;
+            const coordf_t combined       = tail.print_z - combined_start;
+            if (combined <= support_params.grid_max_height + EPSILON) {
+                out.push_back({tail.print_z, combined, tail.obj_layer_nr});
+            } else {
+                // Split nearest the middle where both parts reach the minimum, else keep both.
+                const coordf_t ideal = combined_start + combined / 2.;
+                size_t         best  = subs.size();
+                for (size_t s = seg_begin; s <= seg_end; ++s)
+                    if (subs[s].z - combined_start >= support_params.grid_min_height - EPSILON && tail.print_z - subs[s].z >= support_params.grid_min_height - EPSILON &&
+                        (best == subs.size() || std::abs(subs[s].z - ideal) < std::abs(subs[best].z - ideal)))
+                        best = s;
+                if (best < subs.size()) {
+                    out.push_back({subs[best].z, subs[best].z - combined_start, subs[best].obj_layer_nr});
+                    out.push_back({tail.print_z, tail.print_z - subs[best].z, tail.obj_layer_nr});
+                } else {
+                    out.push_back(prev);
+                    out.push_back(tail);
+                }
+            }
+        }
+        seg_begin = seg_end + 1;
+    }
+}
+
 SupportGeneratorLayersPtr generate_raft_base(
     const PrintObject                 &object,
     const SupportParameters           &support_params,

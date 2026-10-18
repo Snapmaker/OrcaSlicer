@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Snapmaker Orca V2.3.0 Official Release\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-10 15:26+0200\n"
+"POT-Creation-Date: 2026-10-18 10:26+0200\n"
 "PO-Revision-Date: 2025-07-06 21:08+0700\n"
 "Last-Translator: \n"
 "Language-Team: Andylg <andylg@yandex.ru>\n"
@@ -9828,6 +9828,10 @@ msgid "Extruder %1% was set back to a Standard nozzle: there are no High Flow va
 msgstr ""
 
 #, boost-format
+msgid "Extruder %1%: the minimum layer height %2% mm was above the maximum and is now %3% mm."
+msgstr ""
+
+#, boost-format
 msgid "%1% (filament %2%)"
 msgstr ""
 
@@ -12817,6 +12821,10 @@ msgstr ""
 msgid "Prime tower layer height"
 msgstr ""
 
+#, boost-format
+msgid "Extruder %1%: the minimum layer height cannot be above the maximum (%2% mm)."
+msgstr ""
+
 msgid "Switching to a printer with different extruder types or numbers will discard or reset changes to extruder or multi-nozzle-related parameters."
 msgstr "Изменения в настройках экструдера и параметрах сопел не будут перенесены в профиль принтера с другим типом или количеством сопел."
 
@@ -14159,6 +14167,10 @@ msgstr "Если вас это не пугает, эту проверку мож
 msgid "No extrusions under current settings."
 msgstr "При текущих настройках экструзия отсутствует."
 
+#, boost-format
+msgid "The minimum layer height of extruder %1% (%2% mm) is above its maximum (%3% mm)."
+msgstr ""
+
 # AI Translated
 msgid "A gradient mixed filament is used, but 'Mixed color sublayer' is disabled. The gradient will not be printed."
 msgstr "Используется смешанный материал с градиентом, но параметр «Подслой смешанного цвета» отключён. Градиент не будет напечатан."
@@ -14323,8 +14335,13 @@ msgstr "Шаблон «Полость» не поддерживается эти
 msgid "Support enforcers are used but support is not enabled. Please enable support."
 msgstr "Используется принудительная поддержка, но её генерация не включена. Пожалуйста, включите генерацию поддержки в настройках слайсера."
 
-msgid "Layer height cannot exceed nozzle diameter."
-msgstr "Высота слоя не может быть больше диаметра сопла."
+#, boost-format
+msgid "First layer height %1% mm exceeds the smallest nozzle in use (%2% mm)."
+msgstr ""
+
+#, boost-format
+msgid "Layer height %1% mm exceeds the smallest nozzle in use (%2% mm)."
+msgstr ""
 
 msgid "Line widths set per extruder are not supported on this printer; set one value under All extruders."
 msgstr ""
@@ -19634,7 +19651,7 @@ msgstr "Гибридный (древ. поддержка)"
 msgid "Support layer height step"
 msgstr ""
 
-msgid "Step granularity for independent tree support layer heights while the prime tower is enabled (classic supports print on the object's layers with the prime tower). Automatic picks the coarsest step whose multiples reach the tallest support layer the support nozzle allows (e.g. quarter steps for a 0.14 mm maximum on a 0.08 mm object layer height); every support layer under an overhang contact still ends exactly one support gap below it. Maximum uses the same step but lets every support layer be as tall as possible: the support top under each contact is then the nearest support layer, so the gap varies by up to half a support layer above the configured value. With whole layers, support layer heights are multiples of the object layer height. Half or quarter steps also allow multiples like 1.5x or 1.25x, which helps when the support nozzle's maximum layer height sits between two whole multiples. Support boundaries may then fall between object layers; such support-only layers print without a prime tower layer: the switch to the support filament happens directly (any residue ends up in the support) and the switch back purges on the next full prime tower layer. With smooth timelapse the sub-layer boundaries get their own prime tower layers instead and are only used where those stay at or above the nozzles' minimum layer height. Not used with single-extruder multi-material, which keeps whole layers."
+msgid "Step granularity for independent support layer heights while the prime tower is enabled. Automatic picks the coarsest step whose multiples reach the tallest support layer the support nozzle allows (e.g. quarter steps for a 0.14 mm maximum on a 0.08 mm object layer height); every support layer under an overhang contact still ends exactly one support gap below it. Maximum uses the same step but, for Tree Slim, Tree Strong and Tree Hybrid, lets every support layer be as tall as possible: the support top under each contact is then the nearest support layer, so the gap varies by up to half a support layer above the configured value. With whole layers, support layer heights are multiples of the object layer height. Half or quarter steps also allow multiples like 1.5x or 1.25x, which helps when the support nozzle's maximum layer height sits between two whole multiples. Support boundaries may then fall between object layers; such support-only layers print without a prime tower layer: the switch to the support filament happens directly (any residue ends up in the support) and the switch back purges on the next full prime tower layer. With smooth timelapse the sub-layer boundaries get their own prime tower layers instead and are only used where those stay at or above the nozzles' minimum layer height. Not used with single-extruder multi-material, which keeps whole layers."
 msgstr ""
 
 msgid "100% (whole layers)"
@@ -19655,7 +19672,7 @@ msgstr ""
 msgid "Independent support layer height"
 msgstr "Независимая высота слоя поддержки"
 
-msgid "Support layer uses layer height independent with object layer. This is to support customizing Z-gap and save print time. With the prime tower enabled, tree supports keep independent heights aligned to the object layer grid (see Support layer height step); classic supports then print on the object's layers."
+msgid "Support layer uses layer height independent with object layer. This is to support customizing Z-gap and save print time. With the prime tower enabled, supports keep independent heights aligned to the object layer grid (see Support layer height step)."
 msgstr ""
 
 msgid "Threshold angle"
@@ -27074,6 +27091,9 @@ msgid ""
 "Avoid warping\n"
 "Did you know that when printing materials that are prone to warping such as ABS, appropriately increasing the heatbed temperature can reduce the probability of warping."
 msgstr ""
+
+#~ msgid "Layer height cannot exceed nozzle diameter."
+#~ msgstr "Высота слоя не может быть больше диаметра сопла."
 
 # В конце подставляется "руководством."
 #~ msgid "PLA and PETG filaments detected in the mixture. Adjust parameters according to the Wiki to ensure print quality."

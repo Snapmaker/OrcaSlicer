@@ -13163,6 +13163,9 @@ void Plater::priv::reset(bool apply_presets_change)
     Plater::TakeSnapshot snapshot(q, "Reset Project", UndoRedo::SnapshotType::ProjectSeparator);
 
     clear_warnings();
+    // The nozzle-HRC toast manages its own lifecycle (its type is not part of
+    // the slicing warning sweep) and must not outlive the project it described.
+    notification_manager->close_notification_of_type(NotificationType::NozzleHrcWarning);
     first_enter_assemble = true;
 
     set_project_filename("");
@@ -15321,41 +15324,49 @@ bool Plater::priv::warnings_dialog()
 // translated issue sentence, then a "Filament(s): [n] Preset" line naming the
 // offending slots. warning.params holds 0-based print extruder ids; converted
 // to 1-based slot numbers for filament_display_label.
-static void push_nozzle_hrc_warning_notification(NotificationManager* nm, PartPlate* plate)
+// Sync semantics: this toast is pushed at WarningNotificationLevel (duration 0)
+// and its type is not swept by close_slicing_errors_and_warnings(), so only
+// this function can retire it. Always close the previous toast first, then
+// re-push only if the plate's latest slice result still reports an HRC
+// mismatch; otherwise a fixed config or a clean re-slice would leave the
+// stale warning on screen with nothing to clear it.
+static void sync_nozzle_hrc_warning_notification(NotificationManager* nm, PartPlate* plate)
 {
-    if (nm == nullptr || plate == nullptr)
-        return;
-    GCodeProcessorResult* result = plate->get_slice_result();
-    if (result == nullptr || result->warnings.empty())
+    if (nm == nullptr)
         return;
 
     std::string text;
-    for (GCodeProcessorResult::SliceWarning& warning : result->warnings) {
-        if (warning.msg != NOZZLE_HRC_CHECKER)
-            continue;
-        const wxString base = Plater::get_slice_warning_string(warning);
-        if (base.empty())
-            continue;
+    if (plate != nullptr) {
+        GCodeProcessorResult* result = plate->get_slice_result();
+        if (result != nullptr) {
+            for (GCodeProcessorResult::SliceWarning& warning : result->warnings) {
+                if (warning.msg != NOZZLE_HRC_CHECKER)
+                    continue;
+                const wxString base = Plater::get_slice_warning_string(warning);
+                if (base.empty())
+                    continue;
 
-        std::vector<int> offender_slots_1based;
-        for (const std::string& param : warning.params)
-            offender_slots_1based.push_back(atoi(param.c_str()) + 1);
+                std::vector<int> offender_slots_1based;
+                for (const std::string& param : warning.params)
+                    offender_slots_1based.push_back(atoi(param.c_str()) + 1);
 
-        std::string line = into_u8(base);
-        if (!offender_slots_1based.empty()) {
-            line += "\n";
-            line += tr_u8("Filament(s):");
-            line += " ";
-            line += format_filament_slot_list(offender_slots_1based, tr_u8(", "));
+                std::string line = into_u8(base);
+                if (!offender_slots_1based.empty()) {
+                    line += "\n";
+                    line += tr_u8("Filament(s):");
+                    line += " ";
+                    line += format_filament_slot_list(offender_slots_1based, tr_u8(", "));
+                }
+                text += line + "\n";
+            }
         }
-        text += line + "\n";
     }
-    if (text.empty())
-        return;
+
     nm->close_notification_of_type(NotificationType::NozzleHrcWarning);
-    nm->push_notification(NotificationType::NozzleHrcWarning,
-        NotificationManager::NotificationLevel::WarningNotificationLevel,
-        text);
+    if (!text.empty())
+        nm->push_notification(NotificationType::NozzleHrcWarning,
+            NotificationManager::NotificationLevel::WarningNotificationLevel,
+            text);
 }
 
 //BBS: add project slice logic
@@ -15533,7 +15544,7 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
             notification_manager->push_exporting_finished_notification(last_output_path, last_output_dir_path, false);
 
         if (!has_error && exporting_status == ExportingStatus::NOT_EXPORTING)
-            push_nozzle_hrc_warning_notification(notification_manager.get(), background_process.get_current_plate());
+            sync_nozzle_hrc_warning_notification(notification_manager.get(), background_process.get_current_plate());
 
         // BBS, Generate calibration thumbnail for current plate
         if (!has_error && preview) {
@@ -15961,6 +15972,9 @@ void Plater::priv::on_plate_selected(SimpleEvent&)
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received plate selected event\n" ;
     sidebar->obj_list()->on_plate_selected(partplate_list.get_curr_plate_index());
     q->sync_print_seq_warning_notification();
+    // Re-evaluate the nozzle-HRC toast against the newly selected plate's
+    // slice result, so it always describes the current plate (or is gone).
+    sync_nozzle_hrc_warning_notification(notification_manager.get(), partplate_list.get_curr_plate());
 }
 
 void Plater::priv::on_action_request_model_id(wxCommandEvent& evt)

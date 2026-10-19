@@ -120,8 +120,7 @@ private:
     void FitLightFrustum(const BoundingBoxf3& fitBox);
     void UpdateLightFrustum(bool interactive);
     bool RenderShadowMap();
-    void BuildLocalTopMap(bool interactive);
-    void BuildLocalTopMapFromBoxes();
+    void BuildLocalTopMap();
     bool BuildLocalTopMapFromShadowMap();
     void BuildFootprintModel();
     bool RenderGroundMask(bool reducedSamples);
@@ -150,7 +149,7 @@ private:
     unsigned int _rawDepthSampler{ 0 };
     unsigned int _compareDepthSampler{ 0 };
     // Coarse map of the closest-to-light caster depth per tile; bounds the blocker search by nearby casters
-    // instead of the tallest object. Reduced from the shadow map when settled, from caster boxes while dragging.
+    // instead of the tallest object. Reduced from the shadow map on the GPU after every rebuild.
     unsigned int _localTopTexture{ 0 };
     unsigned int _localTopFramebuffer{ 0 };
     // Intermediate level of the two-step GPU reduction (many small blocks keep the GPU busy)

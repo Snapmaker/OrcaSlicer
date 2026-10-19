@@ -550,7 +550,7 @@ bool SoftShadowRenderer::CreateShadowMapResources()
     if (_localTopTexture == 0)
         return false;
 
-    // Render targets of the GPU reduction; without them the box based map is used
+    // Render targets of the GPU reduction; without them the shaders search without a local top
     GLuint localTopFramebuffer = 0;
     glsafe(::glGenFramebuffers(1, &localTopFramebuffer));
     _localTopFramebuffer = static_cast<unsigned int>(localTopFramebuffer);
@@ -566,7 +566,7 @@ bool SoftShadowRenderer::CreateShadowMapResources()
     glsafe(::glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _localTopMidTexture, 0));
     if (!localTopComplete || _localTopMidTexture == 0 || !IsDrawFramebufferComplete())
     {
-        BOOST_LOG_TRIVIAL(warning) << "Soft shadows: GPU local top reduction unavailable, using caster boxes";
+        BOOST_LOG_TRIVIAL(warning) << "Soft shadows: GPU local top reduction unavailable, searching without it";
         if (_localTopFramebuffer != 0)
             glsafe(::glDeleteFramebuffers(1, &_localTopFramebuffer));
         if (_localTopMidFramebuffer != 0)
@@ -796,21 +796,11 @@ void SoftShadowRenderer::UpdateLightFrustum(bool interactive)
     _frustumFrozen = true;
 }
 
-void SoftShadowRenderer::BuildLocalTopMap(bool interactive)
+void SoftShadowRenderer::BuildLocalTopMap()
 {
-    _localTopValid = false;
-    if (_localTopTexture == 0)
-        return;
-
-    // Settled: exact reduction of the shadow map (about 3 ms, once). Dragging: caster boxes (nearly free),
-    // which are conservative and may leave slight grain at thin tips until the drag ends.
-    if (!interactive && BuildLocalTopMapFromShadowMap())
-    {
-        _localTopValid = true;
-        return;
-    }
-    BuildLocalTopMapFromBoxes();
-    _localTopValid = true;
+    // Fix: exact reduction also while dragging; caster boxes spread the top of a tall part over its whole box
+    // and left holes in object shadows. Without the reduction the shaders search without a local top.
+    _localTopValid = _localTopTexture != 0 && BuildLocalTopMapFromShadowMap();
 }
 
 bool SoftShadowRenderer::BuildLocalTopMapFromShadowMap()
@@ -844,52 +834,6 @@ bool SoftShadowRenderer::BuildLocalTopMapFromShadowMap()
     _fullscreenQuad.render();
     shader->stop_using();
     return true;
-}
-
-void SoftShadowRenderer::BuildLocalTopMapFromBoxes()
-{
-    // Each caster box is projected into the light; its tiles keep the depth of the box top (conservative)
-    const int tiles = static_cast<int>(LOCAL_TOP_SIZE);
-    std::vector<float> tops(static_cast<std::size_t>(tiles * tiles), 1.0f);
-    const Matrix4d lightViewProjection = _lightProjection * _lightView.matrix();
-    for (const GLVolume* volume : _casters)
-    {
-        const std::array<Vec3d, 8> corners = GetBoxCorners(volume->transformed_bounding_box());
-        double minU = std::numeric_limits<double>::max();
-        double minV = std::numeric_limits<double>::max();
-        double maxU = std::numeric_limits<double>::lowest();
-        double maxV = std::numeric_limits<double>::lowest();
-        double minDepth = 1.0;
-        for (const Vec3d& corner : corners)
-        {
-            const Vec4d clip = lightViewProjection * Vec4d(corner.x(), corner.y(), corner.z(), 1.0);
-            const double u = clip.x() / clip.w() * 0.5 + 0.5;
-            const double v = clip.y() / clip.w() * 0.5 + 0.5;
-            minU = std::min(minU, u);
-            minV = std::min(minV, v);
-            maxU = std::max(maxU, u);
-            maxV = std::max(maxV, v);
-            minDepth = std::min(minDepth, clip.z() / clip.w() * 0.5 + 0.5);
-        }
-
-        const int x0 = std::max(0, static_cast<int>(std::floor(minU * tiles)));
-        const int y0 = std::max(0, static_cast<int>(std::floor(minV * tiles)));
-        const int x1 = std::min(tiles - 1, static_cast<int>(std::floor(maxU * tiles)));
-        const int y1 = std::min(tiles - 1, static_cast<int>(std::floor(maxV * tiles)));
-        const float top = static_cast<float>(std::max(minDepth, 0.0));
-        for (int y = y0; y <= y1; ++y)
-        {
-            for (int x = x0; x <= x1; ++x)
-            {
-                float& tile = tops[static_cast<std::size_t>(y * tiles + x)];
-                tile = std::min(tile, top);
-            }
-        }
-    }
-
-    glsafe(::glActiveTexture(GL_TEXTURE0));
-    glsafe(::glBindTexture(GL_TEXTURE_2D, _localTopTexture));
-    glsafe(::glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, tiles, tiles, GL_RED, GL_FLOAT, tops.data()));
 }
 
 bool SoftShadowRenderer::RenderShadowMap()
@@ -1097,7 +1041,7 @@ bool SoftShadowRenderer::Update(const SoftShadowFrameInput& input)
         BuildFootprintModel();
         rendered = RenderShadowMap();
         if (rendered)
-            BuildLocalTopMap(input.interactive);
+            BuildLocalTopMap();
         if (rendered)
         {
             // Fewer samples while dragging only when a full quality mask is measured to be expensive

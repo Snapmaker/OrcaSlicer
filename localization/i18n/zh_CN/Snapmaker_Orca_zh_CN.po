@@ -17,6 +17,9 @@ msgstr ""
 "Plural-Forms: nplurals=1; plural=0;\n"
 "X-Generator: Poedit 3.8\n"
 
+msgid "Enable model shadows"
+msgstr "显示模型阴影"
+
 msgid "Current AMS humidity"
 msgstr "当前AMS湿度"
 

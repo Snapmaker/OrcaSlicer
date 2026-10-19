@@ -1224,12 +1224,16 @@ void PartPlate::render_grid(bool bottom) {
 		else
             color = m_partplate_list->m_is_dark ? LINE_TOP_DARK_COLOR : LINE_TOP_COLOR;
 	}
+    // Fix: like the plate background, grid lines do not write depth; at low view angles their line depth
+    // came closer than the soft shadow receiver drawn over the plate and cut holes into the shadow
+    glsafe(::glDepthMask(GL_FALSE));
     m_gridlines.set_color(color);
     m_gridlines.render();
 
 	glsafe(::glLineWidth(2.0f * m_scale_factor));
     m_gridlines_bolder.set_color(color);
     m_gridlines_bolder.render();
+    glsafe(::glDepthMask(GL_TRUE));
 }
 
 void PartPlate::render_height_limit(PartPlate::HeightLimitMode mode)
@@ -5477,6 +5481,17 @@ void PartPlateList::render(const Transform3d& view_matrix, const Transform3d& pr
                 (*it)->render(view_matrix, projection_matrix, bottom, only_body, false, PartPlate::HEIGHT_LIMIT_NONE, -1, render_cali, show_grid);
 		}
 	}
+}
+
+void PartPlateList::RenderShadowReceivers()
+{
+    const std::lock_guard<std::mutex> localLock(m_plates_mutex);
+    for (PartPlate* plate : m_plate_list)
+    {
+        if (plate == nullptr || !plate->m_triangles.model.is_initialized())
+            continue;
+        plate->m_triangles.model.render();
+    }
 }
 
 void PartPlateList::RenderHoverTooltip(int hoverId)

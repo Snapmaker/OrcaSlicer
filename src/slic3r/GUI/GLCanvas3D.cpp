@@ -24,6 +24,7 @@
 #include "GUI_Preview.hpp"
 #include "OpenGLManager.hpp"
 #include "Plater.hpp"
+#include "SoftShadowRenderer.hpp"
 #include "MainFrame.hpp"
 #include "GUI_App.hpp"
 #include "GUI_ObjectList.hpp"
@@ -1660,6 +1661,9 @@ GLCanvas3D::~GLCanvas3D()
     if (hasSelectionHighlightResources && m_canvas != nullptr && contextCurrent)
         ReleaseSelectionHighlightResources();
 
+    if (_softShadowRenderer != nullptr && m_canvas != nullptr && _set_current())
+        _softShadowRenderer->Release();
+
     reset_volumes(ResetVolumesMode::CanvasDestruction);
 
     m_sel_plate_toolbar.del_all_item();
@@ -2322,6 +2326,54 @@ void GLCanvas3D::RenderSelectionStencilFallback()
     }
 
     shader->stop_using();
+}
+
+bool GLCanvas3D::IsSoftShadowVisible(bool noPartplate) const
+{
+    if (m_canvas_type != ECanvasType::CanvasView3D || noPartplate)
+        return false;
+
+    if (!wxGetApp().app_config->get_bool("enable_soft_shadows"))
+        return false;
+
+    // Cut and boolean previews clip or replace geometry, so full-object shadows would be misleading
+    const GLGizmosManager::EType gizmoType = m_gizmos.get_current_type();
+    if (gizmoType == GLGizmosManager::Cut || gizmoType == GLGizmosManager::MeshBoolean)
+        return false;
+
+    if (!wxGetApp().plater()->get_camera().is_looking_downward())
+        return false;
+
+    return SoftShadowRenderer::IsSupported();
+}
+
+void GLCanvas3D::UpdateSoftShadows(bool shadowsVisible)
+{
+    if (!shadowsVisible)
+    {
+        // Keep resources while a gizmo hides shadows temporarily; free them once the option is off.
+        // Dropping the renderer also clears its failure flags, so enabling the option again retries
+        const bool optionEnabled = wxGetApp().app_config->get_bool("enable_soft_shadows");
+        if (!optionEnabled && _softShadowRenderer != nullptr)
+        {
+            _softShadowRenderer->Release();
+            _softShadowRenderer.reset();
+        }
+        return;
+    }
+
+    if (_softShadowRenderer == nullptr)
+        _softShadowRenderer = std::make_unique<SoftShadowRenderer>();
+
+    SoftShadowFrameInput input;
+    input.volumes = &m_volumes;
+    input.interactive = is_dragging();
+    input.renderSlaAuxiliaries = m_render_sla_auxiliaries;
+    _softShadowRenderer->Update(input);
+    // One more frame after a drag rebuild, so the settle rebuild runs once the drag ends. Only after a rebuild:
+    // requesting it on every dragging frame kept redrawing at full rate while the mouse was held still
+    if (input.interactive && _softShadowRenderer->WasRebuilt())
+        request_extra_frame();
 }
 
 void GLCanvas3D::ReleaseSelectionHighlightResources()
@@ -3185,6 +3237,13 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
     else if (gizmo_type == GLGizmosManager::BrimEars && !camera.is_looking_downward())
         show_grid = false;
 
+    const bool softShadowsVisible = IsSoftShadowVisible(no_partplate);
+    UpdateSoftShadows(softShadowsVisible);
+    // A rebuilt shadow map changes the scene image, so the cached scene cannot be reused.
+    // Fix: only while visible; hidden shadows skip Update(), which would leave a stale rebuild flag
+    if (softShadowsVisible && _softShadowRenderer != nullptr && _softShadowRenderer->WasRebuilt())
+        fullSceneRefresh = true;
+
     const int hover_id = m_hover_plate_idxs.empty() ? -1 : m_hover_plate_idxs.front();
     MainSceneRenderParams sceneParams;
     sceneParams.onlyCurrent = only_current;
@@ -3193,6 +3252,7 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
     sceneParams.noPartplate = no_partplate;
     sceneParams.showGrid = show_grid;
     sceneParams.hoverPlateId = hover_id;
+    sceneParams.softShadowsVisible = softShadowsVisible;
 
     const std::array<int, 4>& viewport = camera.get_viewport();
     const Size sceneCacheSize(viewport[2], viewport[3]);
@@ -8596,6 +8656,9 @@ void GLCanvas3D::RenderMainSceneContent(const Camera& camera, const MainSceneRen
     glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
     _render_background();
     _render_objects(GLVolumeCollection::ERenderType::Opaque, !m_gizmos.is_running());
+    // Must run before the plates are drawn, so the depth buffer holds the objects only
+    if (params.softShadowsVisible && _softShadowRenderer != nullptr)
+        _softShadowRenderer->RenderObjectShadows(camera, m_is_dark);
     _render_sla_slices();
     if (!params.noPartplate)
         _render_bed(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), params.showAxes);
@@ -8603,6 +8666,8 @@ void GLCanvas3D::RenderMainSceneContent(const Camera& camera, const MainSceneRen
         _render_platelist(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(),
                           params.onlyCurrent, params.onlyBody, params.hoverPlateId, true, params.showGrid);
     }
+    if (params.softShadowsVisible && _softShadowRenderer != nullptr)
+        _softShadowRenderer->RenderReceivers(camera, wxGetApp().plater()->get_partplate_list(), m_is_dark);
 }
 
 void GLCanvas3D::RenderPlateIconTooltip(const MainSceneRenderParams& params, int oldPlateHoverId)

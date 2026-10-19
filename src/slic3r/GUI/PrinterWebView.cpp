@@ -112,6 +112,9 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/web/flutter_web/index.html?path=2");
     auto     real_url = wxGetApp().get_international_url(url);
+    // Snapmaker upstream 5970fea62d: arms the app-wide Flutter run-result watch (a no-op when the
+    // home view has armed it already).
+    wxGetApp().start_flutter_wcp_timeout_watch();
       // Create the webview
     m_browser = WebView::CreateWebView(this, real_url);
     if (m_browser == nullptr) {
@@ -129,8 +132,9 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
     webkit_cookie_manager_set_persistent_storage(cookieManager, cookiesPath.c_str(), WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
 #endif
 
-    m_browser->Bind(wxEVT_WEBVIEW_ERROR, &PrinterWebView::OnError, this);
-    m_browser->Bind(wxEVT_WEBVIEW_LOADED, &PrinterWebView::OnLoaded, this);
+    // Panel bind so WebViewWebKit's navigation gate (also on the webview) still sees LOADED/ERROR.
+    Bind(wxEVT_WEBVIEW_ERROR, &PrinterWebView::OnError, this, m_browser->GetId());
+    Bind(wxEVT_WEBVIEW_LOADED, &PrinterWebView::OnLoaded, this, m_browser->GetId());
     m_browser->Bind(wxEVT_WEBVIEW_NEWWINDOW, &PrinterWebView::OnNewWindow, this);
     m_browser->Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &PrinterWebView::OnScriptMessage, this, m_browser->GetId());
 
@@ -201,6 +205,14 @@ bool PrinterWebView::isSnapmakerPage()
         return false;
     auto url = m_browser->GetCurrentURL();
     return (url.find("flutter_web") != std::string::npos);
+}
+
+bool PrinterWebView::is_u1_device_page()
+{
+    if (m_browser == nullptr)
+        return false;
+    auto url = m_browser->GetCurrentURL();
+    return url.find("flutter_web") != std::string::npos && url.find("path=2") != std::string::npos;
 }
 
 void PrinterWebView::sendMessage(const std::string& msg) {
@@ -308,6 +320,7 @@ void PrinterWebView::SendAPIKey()
 
 void PrinterWebView::OnError(wxWebViewEvent &evt)
 {
+    evt.Skip();
     auto e = "unknown error";
     switch (evt.GetInt()) {
       case wxWEBVIEW_NAV_ERR_CONNECTION:
@@ -340,6 +353,7 @@ void PrinterWebView::OnError(wxWebViewEvent &evt)
 
 void PrinterWebView::OnLoaded(wxWebViewEvent& evt)
 {
+    evt.Skip();
     if (evt.GetURL().IsEmpty())
         return;
     if (evt.GetURL() != m_browser->GetCurrentURL())
@@ -372,6 +386,9 @@ void PrinterWebView::OnScriptMessage(wxWebViewEvent& evt) {
         return;
     }
 
+    // Snapmaker upstream 5970fea62d. It sits after the early return above, so a message of a host
+    // page (Elegoo) is never taken for a sign of life of the Flutter app.
+    wxGetApp().on_flutter_wcp_received();
     SSWCP::handle_web_message(evt.GetString().ToUTF8().data(), m_browser);
 }
 

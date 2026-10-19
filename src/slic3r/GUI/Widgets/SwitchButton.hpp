@@ -7,6 +7,7 @@
 
 #include <vector>
 #include <wx/sizer.h>
+#include <wx/scrolwin.h>
 #include <wx/tglbtn.h>
 #include "Button.hpp"
 
@@ -147,7 +148,18 @@ public:
     }
 
     wxString GetOptionText(unsigned int index) const;
+    // The button takes the width of the new text.
     void     SetOptionText(unsigned int index, const wxString &text);
+
+    // Snapmaker Orca: the entries continue on further rows when one row of them would be wider
+    // than `width` (0: one row, whatever its width); kept over later SetOptions. The speed
+    // selector of the Process tab uses it in a narrow sidebar.
+    void SetMaxRowWidth(int width);
+    int  GetMaxRowWidth() const { return m_max_row_width; }
+    // The width the button of entry `index` would take with `option` as its text (text, padding,
+    // the indicator dot when the entry shows one), as the button measures itself. Measured without
+    // changing the entry; an index beyond the entries counts as without a dot.
+    int  MeasureOption(unsigned int index, const wxString &option) const;
 
     void *GetOptionData(unsigned int index) const;
     void  SetOptionData(unsigned int index, void *clientData);
@@ -163,6 +175,13 @@ public:
     }
     void SetButtonCornerRadius(double radius);
     void SetButtonPadding(const wxSize &padding);
+    // Snapmaker Orca: the dot of an entry (Button::SetIndicator), shown on the selected entry too.
+    // The dot widens the button, so the rows and the switch's size follow it.
+    void SetOptionIndicator(unsigned int index, bool on);
+
+    // Keep the switch exactly as wide as the buttons need instead of letting the layout stretch it.
+    // A layout with less room than that still squeezes it, and it scrolls its buttons then.
+    void SetFitToOptions(bool fit = true) { m_fit_to_options = fit; update_scroll_range(); }
 
     void Rescale();
 
@@ -173,9 +192,27 @@ protected:
     bool send_selection_event();
 
 private:
+    Button *make_button(const wxString &option, void *clientData);
+    // Lays the buttons out in rows of at most m_max_row_width (one row when 0), then sizes the switch.
+    void    rebuild_rows();
+    // Height of one button row, measured from the buttons themselves.
+    int  options_height() const;
+    // Height of all rows; the switch adds a scrollbar's height to it while the bar shows.
+    int  rows_height() const { return options_height() * m_rows; }
+    void update_scroll_range();
+    int  scrollbar_height(int options_width) const;
+    void scroll_option_into_view(Button *btn);
+    void on_size(wxSizeEvent &evt);
+
     std::vector<Button *> btns;
-    wxBoxSizer           *sizer = nullptr;
-    int                   sel   = -1;
+    // The buttons are laid out inside this scrolled area so that a switch holding more options than
+    // the layout has room for scrolls instead of clipping its tail.
+    wxScrolledWindow     *m_scroll         = nullptr;
+    wxBoxSizer           *sizer            = nullptr;   // vertical: one horizontal row sizer per row
+    bool                  m_fit_to_options = false;
+    int                   sel              = -1;
+    int                   m_max_row_width  = 0;
+    int                   m_rows           = 1;          // rows laid out by rebuild_rows
 
     StateColor m_bg_color;
     StateColor m_text_color;

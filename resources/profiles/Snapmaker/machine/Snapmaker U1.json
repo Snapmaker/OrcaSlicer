@@ -5,6 +5,7 @@
   "name": "Snapmaker U1",
   "url": "https://github.com/macdylan",
   "model_id": "SM_U1",
+  "default_materials": "Snapmaker PLA SnapSpeed @U1 0.2 nozzle;Snapmaker PLA SnapSpeed @U1;Snapmaker PLA SnapSpeed @U1 0.6 nozzle;Snapmaker PLA SnapSpeed @U1 0.8 nozzle",
   "bed_model": "Snapmaker U1_bed.stl",
   "bed_texture": "Snapmaker U1_texture.svg",
   "nozzle_diameter": "0.2;0.4;0.6;0.8"

@@ -1,7 +1,9 @@
 #include "DropDown.hpp"
 #include "Label.hpp"
 
+#include <algorithm>
 #include <cstdio>
+
 #include <wx/display.h>
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
@@ -79,13 +81,14 @@ void DropDown::Invalidate(bool clear)
         selection = hover_item = -1;
         offset = wxPoint();
     }
-    assert(selection < (int) items.size());
+    if (selection >= (int) items.size())
+        selection = -1;
     need_sync = true;
 }
 
 void DropDown::SetSelection(int n)
 {
-    if (n >= (int) items.size())
+    if (n < 0 || n >= (int) items.size())
         n = -1;
     if (selection == n) return;
     selection = n;
@@ -295,9 +298,9 @@ void DropDown::render(wxDC &dc)
     int selected_item = selectedItem();
     int hover_index   = hoverIndex();
 
-    // draw hover rectangle
+    // draw hover rectangle (a row highlighted from the keyboard is drawn like a hovered one)
     wxRect rcContent = {{0, offset.y}, rowSize};
-    if (hover_item >= 0 && (states & StateColor::Hovered) && (hover_index < 0 || !(items[hover_index].style & DD_ITEM_STYLE_SPLIT_ITEM))) {
+    if (hover_item >= 0 && ((states & StateColor::Hovered) || key_highlight) && (hover_index < 0 || !(items[hover_index].style & DD_ITEM_STYLE_SPLIT_ITEM))) {
         rcContent.y += rowSize.y * hover_item;
         if (rcContent.GetBottom() > 0 && rcContent.y < size.y) {
             if (selected_item == hover_item)
@@ -687,6 +690,50 @@ void DropDown::autoPosition()
     }
 }
 
+bool DropDown::PointInAnchorGap(const wxPoint& screen_point) const
+{
+    wxWindow* anchor = GetParent();
+    if (!anchor)
+        return false;
+
+    const wxRect anchor_rect = anchor->GetScreenRect();
+    const wxRect popup_rect  = GetScreenRect();
+
+    const int left  = std::max(anchor_rect.GetLeft(), popup_rect.GetLeft());
+    const int right = std::min(anchor_rect.GetRight(), popup_rect.GetRight());
+    if (right < left)
+        return false;
+
+    // Screen y grows downward. Boundary pixels belong to the anchor or popup, so the clickable gap is
+    // strictly between the two rectangles.
+    if (popup_rect.GetTop() > anchor_rect.GetBottom()) {
+        return screen_point.x >= left && screen_point.x <= right && screen_point.y > anchor_rect.GetBottom() &&
+               screen_point.y < popup_rect.GetTop();
+    }
+
+    if (popup_rect.GetBottom() < anchor_rect.GetTop()) {
+        return screen_point.x >= left && screen_point.x <= right && screen_point.y > popup_rect.GetBottom() &&
+               screen_point.y < anchor_rect.GetTop();
+    }
+
+    return false;
+}
+
+bool DropDown::ProcessLeftDown(wxMouseEvent& event)
+{
+#ifdef __WXOSX__
+    if (IsShown() && HitTest(event.GetPosition()) == wxHT_WINDOW_OUTSIDE && PointInAnchorGap(ClientToScreen(event.GetPosition()))) {
+        DismissAndNotify();
+
+        // wxOSX reposts an outside click to the control below the popup. The anchor/popup gap is not
+        // an activation target, so consume it after dismissing.
+        return true;
+    }
+#endif
+
+    return PopupWindow::ProcessLeftDown(event);
+}
+
 void DropDown::mouseDown(wxMouseEvent& event)
 {
     // Receivce unexcepted LEFT_DOWN on Mac after OnDismiss
@@ -758,7 +805,8 @@ void DropDown::mouseMove(wxMouseEvent &event)
         int hover = (pt.y - offset.y) / rowSize.y;
         if (hover >= (int) count) hover = -1;
         if (hover == hover_item) return;
-        hover_item = hover;
+        hover_item    = hover;
+        key_highlight = false;
         int index  = hoverIndex();
         if (index < -1) {
             auto & drop = *subDropDown;
@@ -825,6 +873,55 @@ void DropDown::sendDropDownEvent()
     GetEventHandler()->ProcessEvent(event);
 }
 
+void DropDown::MoveHighlight(int step)
+{
+    messureSize();
+    if (count == 0 || step == 0)
+        return;
+    const int rows  = int(count);
+    int       row   = hover_item;
+    // Up to `rows` steps: past every split and disabled item, around the ends.
+    for (int tries = 0; tries < rows; ++tries) {
+        row = row < 0 ? (step > 0 ? 0 : rows - 1) : ((row + step) % rows + rows) % rows;
+        hover_item      = row;
+        const int index = hoverIndex();
+        if (index >= 0 && (items[index].style & (DD_ITEM_STYLE_SPLIT_ITEM | DD_ITEM_STYLE_DISABLED)) == 0)
+            break;
+        if (tries + 1 == rows) {
+            hover_item = -1;
+            return;
+        }
+    }
+    key_highlight = true;
+    // The row scrolled into view.
+    const wxSize size = GetSize();
+    if (rowSize.y * hover_item + offset.y < 0)
+        offset.y = -rowSize.y * hover_item;
+    else if (rowSize.y * (hover_item + 1) + offset.y > size.y)
+        offset.y = size.y - rowSize.y * (hover_item + 1);
+    if (const int index = hoverIndex(); index >= 0)
+        SetToolTip(items[index].tip);
+    paintNow();
+}
+
+int DropDown::HighlightedItem()
+{
+    return hoverIndex();
+}
+
+void DropDown::CommitHighlighted()
+{
+    if (hover_item < 0)
+        return;
+    sendDropDownEvent();
+    DismissAndNotify();
+}
+
+void DropDown::Cancel()
+{
+    DismissAndNotify();
+}
+
 void DropDown::Dismiss()
 {
     if (subDropDown && subDropDown->IsShown())
@@ -858,8 +955,9 @@ void DropDown::OnDismiss()
     }
     if (subDropDown && subDropDown->IsShown())
         return;
-    dismissTime = boost::posix_time::microsec_clock::universal_time();
-    hover_item  = -1;
+    dismissTime   = boost::posix_time::microsec_clock::universal_time();
+    hover_item    = -1;
+    key_highlight = false;
     wxCommandEvent e(EVT_DISMISS);
     GetEventHandler()->ProcessEvent(e);
 }

@@ -8,6 +8,7 @@
 #include <thread>
 #include <functional>
 #include <type_traits>
+#include <vector>
 
 namespace Slic3r {
 
@@ -48,6 +49,7 @@ public:
         V value;                // The stored value
         time_point expire_time; // When this item expires
         bool never_expire;      // Flag indicating if item should never expire
+        bool paused = false;    // Expiry suspended by pause() until the next update_timeout()
         
         // Constructor initializes item with value and timeout duration
         Item(V v, std::chrono::milliseconds timeout) 
@@ -55,6 +57,10 @@ public:
             , expire_time(clock_type::now() + timeout)
             , never_expire(timeout == INFINITE_TIMEOUT)
         {}
+
+        // The one expiry rule of the map: an item is due when it neither lives forever nor is
+        // paused and its time has come. Every reader and the checker thread decide by it.
+        bool expired(time_point now) const { return ! never_expire && ! paused && expire_time <= now; }
     };
 
     // Constructor starts background thread for checking timeouts
@@ -98,7 +104,7 @@ public:
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_items.find(key);
         if (it != m_items.end()) {
-            if (it->second->expire_time > std::chrono::steady_clock::now() || it->second->never_expire) {
+            if (! it->second->expired(clock_type::now())) {
                 return std::make_shared<V>(it->second->value);
             } else {
                 m_items.erase(it);
@@ -112,7 +118,7 @@ public:
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_items.find(key);
         if (it != m_items.end()) {
-            if (it->second->expire_time > std::chrono::steady_clock::now()) {
+            if (! it->second->expired(clock_type::now())) {
                 auto value = std::make_shared<V>(it->second->value);
                 m_items.erase(it);
                 return value;
@@ -128,7 +134,7 @@ public:
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_items.find(key);
         if (it != m_items.end()) {
-            if (it->second->expire_time > std::chrono::steady_clock::now()) {
+            if (! it->second->expired(clock_type::now())) {
                 return true;
             } else {
                 m_items.erase(it);
@@ -137,15 +143,28 @@ public:
         return false;
     }
 
-    // Update timeout for an existing item
+    // Update timeout for an existing item. Also ends a pause(): the item is armed afresh.
     bool update_timeout(const K& key, std::chrono::milliseconds timeout) {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_items.find(key);
         if (it != m_items.end()) {
-            it->second->expire_time = std::chrono::steady_clock::now() + timeout;
+            it->second->expire_time = clock_type::now() + timeout;
+            it->second->paused      = false;
             return true;
         }
         return false;
+    }
+
+    // Suspend the expiry of an item while its owner is busy with something whose duration is not
+    // known in advance (a modal dialog, a transfer); update_timeout() arms it again. False when
+    // the key is not in the map.
+    bool pause(const K& key) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_items.find(key);
+        if (it == m_items.end())
+            return false;
+        it->second->paused = true;
+        return true;
     }
 
     // Clear all items from the map
@@ -160,40 +179,8 @@ public:
         return m_items.size();
     }
 
-    // Iterator support
-    using iterator = typename std::map<K, std::shared_ptr<Item>>::iterator;
-    using const_iterator = typename std::map<K, std::shared_ptr<Item>>::const_iterator;
-
-    // Iterator access methods
-    iterator begin() {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        return m_items.begin();
-    }
-
-    iterator end() {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        return m_items.end();
-    }
-
-    const_iterator begin() const {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        return m_items.begin();
-    }
-
-    const_iterator end() const {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        return m_items.end();
-    }
-
-    const_iterator cbegin() const {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        return m_items.cbegin();
-    }
-
-    const_iterator cend() const {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        return m_items.cend();
-    }
+    // No iterators: a range-for would walk m_items unlocked while the checker thread erases expiring
+    // entries; callers use get_snapshot().
 
     // Get a snapshot of current state
     std::vector<std::pair<K, V>> get_snapshot() {
@@ -216,7 +203,7 @@ private:
             auto now = clock_type::now();
             
             for (auto it = m_items.begin(); it != m_items.end();) {
-                if (!it->second->never_expire && it->second->expire_time <= now) {
+                if (it->second->expired(now)) {
                     // Handle timeout callbacks for different types
                     if constexpr (has_timeout_callback<V>::value) {
                         if (it->second->value.timeout_cb) {

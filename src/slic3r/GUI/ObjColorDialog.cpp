@@ -44,7 +44,10 @@ static void update_ui(wxWindow* window)
 }
 
 static const char g_min_cluster_color = 1;
-static const char g_max_color = (int) EnforcerBlockerType::ExtruderMax;
+// Snapmaker Orca: ExtruderMax is 255 in the fork (mixed filament states) and does not fit
+// a signed char, where it silently became -1. The colour clustering and the filament
+// list of this dialog stay capped at the 32 named extruder states, mainline's ExtruderMax.
+static const int g_max_color = (int) EnforcerBlockerType::Extruder32;
 
 wxBoxSizer* ObjColorDialog::create_btn_sizer(long flags,bool exist_error)
 {
@@ -90,8 +93,6 @@ ObjColorDialog::ObjColorDialog(wxWindow *parent, Slic3r::ObjDialogInOut &in_out,
                 wxDefaultPosition,
                 wxDefaultSize,
                 wxDEFAULT_DIALOG_STYLE /* | wxRESIZE_BORDER*/)
-    , m_filament_ids(in_out.filament_ids)
-    , m_first_extruder_id(in_out.first_extruder_id)
 {
     // Snapmaker branding: window icon
     std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % Slic3r::resources_dir()).str();
@@ -262,7 +263,7 @@ ObjColorPanel::ObjColorPanel(wxWindow *parent, Slic3r::ObjDialogInOut &in_out, c
             m_color_cluster_num_by_user_ebox->Bind(wxEVT_TEXT_ENTER, on_apply_color_cluster_text_modify);
             m_color_cluster_num_by_user_ebox->Bind(wxEVT_SPINCTRL, on_apply_color_cluster_text_modify);
 
-            m_color_cluster_num_by_user_ebox->Bind(wxEVT_CHAR, [this](wxKeyEvent &e) {
+            m_color_cluster_num_by_user_ebox->Bind(wxEVT_CHAR, [](wxKeyEvent &e) {
                 int keycode = e.GetKeyCode();
                 wxString input_char = wxString::Format("%c", keycode);
                 long     value;
@@ -365,7 +366,7 @@ ObjColorPanel::ObjColorPanel(wxWindow *parent, Slic3r::ObjDialogInOut &in_out, c
         //new color table
         m_scrolledWindow = new wxScrolledWindow(m_page_simple, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
         m_scrolledWindow->SetBackgroundColour(*wxWHITE);
-        m_scrolledWindow->SetScrollRate(0, 20);
+        m_scrolledWindow->SetScrollRate(0, FromDIP(20));
         m_scrolledWindow->EnableScrolling(false, true);
         m_scrolledWindow->ShowScrollbars(wxScrollbarVisibility::wxSHOW_SB_NEVER, wxScrollbarVisibility::wxSHOW_SB_DEFAULT);
         draw_new_table();

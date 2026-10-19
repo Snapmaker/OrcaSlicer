@@ -112,7 +112,7 @@ public:
     bool split_multi_line{false};
     bool option_label_at_right{false};
     // BBS: new layout
-    wxWindow *     stb;
+    wxWindow *     stb{ nullptr };
     const wxString  icon;
     const wxString  title;
     bool            m_labels_hidden{false};
@@ -122,6 +122,19 @@ public:
 	int				ctrl_horiz_alignment{ wxALIGN_LEFT};
     column_t		extra_column {nullptr};
     t_change		m_on_change { nullptr };
+    // Snapmaker Orca: the hooks of the speed selector of the Process tab (Tab.cpp, values set per
+    // tool head). Before a value is written: may move the write to another column (a preset laid
+    // out for the tool heads first) and returns false to refuse it (a uniform key under a head).
+    std::function<bool(const std::string &opt_key, int &opt_index)> m_before_change { nullptr };
+    // After a value was written into column `opt_index` of `opt_key`.
+    std::function<void(const std::string &opt_key, int opt_index)>  m_after_change { nullptr };
+    // Before the revert of a key (the arrow: to_sys false; the lock: true); true when the hook did it.
+    std::function<bool(const std::string &opt_key, bool to_sys)>    m_before_revert { nullptr };
+    // The config and column a field shows in place of its own value (the value a tool head prints
+    // with that its preset does not store); false to show the stored value.
+    std::function<bool(const std::string &opt_key, int opt_index, const DynamicPrintConfig *&config, int &index)> m_display_source { nullptr };
+    // The tooltip of a line whose key has a value set for some tool head; empty when none has.
+    std::function<wxString(const std::string &opt_key)>             head_values_tooltip { nullptr };
 	// To be called when the field loses focus, to assign a new initial value to the field.
 	// Used by the relative position / rotation / scale manipulation fields of the Object Manipulation UI.
     t_kill_focus    m_fill_empty_value { nullptr };
@@ -197,9 +210,12 @@ public:
 
     void            hide_labels() { label_width = 0; m_labels_hidden = true; }
 
+    // Config backing this group (null for non-config groups), used when fields are (re)built.
+    virtual const DynamicPrintConfig* get_config() const { return nullptr; }
+
 	OptionsGroup(wxWindow *_parent, const wxString &title, const wxString &icon, bool is_tab_opt = false,
                     column_t extra_clmn = nullptr);
-	~OptionsGroup() { clear(true); }
+	virtual ~OptionsGroup() { clear(true); }
 
     wxGridSizer*        get_grid_sizer() { return m_grid_sizer; }
 	const std::vector<Line>& get_lines() { return m_lines; }
@@ -250,6 +266,10 @@ protected:
 	virtual void		back_to_initial_value(const std::string& opt_key) {}
 	virtual void		back_to_sys_value(const std::string& opt_key) {}
 
+	// Preset::Type of a settings group; -1 for groups not tied to a preset. Used by append_line to
+	// register each option's wiki path with the searcher. Overridden by ConfigOptionsGroup.
+	virtual int			config_type() const { return -1; }
+
 public:
 	static wxString		get_url(const std::string& path_end);
 	static bool			launch_browser(const std::string& path_end);
@@ -273,12 +293,13 @@ public:
 		OptionsGroup(parent, wxEmptyString, wxEmptyString, true, nullptr) {}
 
 	const wxString& config_category() const throw() { return m_config_category; }
-	int config_type() const throw() { return m_config_type; }
+	int config_type() const throw() override { return m_config_type; }
 	const t_opt_map&   opt_map() const throw() { return m_opt_map; }
 
 	void 		set_config_category_and_type(const wxString &category, int type) { m_config_category = category; m_config_type = type; }
     void        set_config(DynamicPrintConfig* config) {
 		m_config = config; m_modelconfig = nullptr; }
+	const DynamicPrintConfig* get_config() const override { return m_config; }
 	Option		get_option(const std::string& opt_key, int opt_index = -1);
 	Line		create_single_option_line(const std::string& title, const std::string& path = std::string(), int idx = -1) /*const*/{
 		Option option = get_option(title, idx);
@@ -350,13 +371,30 @@ public:
 class ogStaticText :public wxStaticText{
 public:
 	ogStaticText() {}
-	ogStaticText(wxWindow* parent, const wxString& text);
+	ogStaticText(wxWindow* parent, const wxString& text, long style = 0);
 	~ogStaticText() {}
 
 	void		SetText(const wxString& value, bool wrap = true);
 	// Set special path end. It will be used to generation of the hyperlink on info page
 	void		SetPathEnd(const std::string& link);
 	void		FocusText(bool focus);
+
+	// Snapmaker Orca: wraps the text to the sizer-given width (min 40 DIP) and rewraps on resize, instead of at 60 em.
+	// Create the control with wxST_NO_AUTORESIZE. `after_wrap` runs when the lines changed (default: parent Layout);
+	// SetText then always wraps to the current width.
+	void		WrapToWidth(std::function<void()> after_wrap = {});
+	// The text without the line breaks the wrap inserted (GetLabel() holds them).
+	const wxString& GetUnwrappedText() const { return m_full_text; }
+
+private:
+	bool		wrap_to_current_width();
+	// Sets the label to the full text wrapped to `width` pixels.
+	void		set_wrapped_label(int width);
+
+	wxString				m_full_text;
+	bool					m_wrap_to_width { false };
+	int						m_wrapped_width { -1 };
+	std::function<void()>	m_after_wrap;
 };
 
 }}

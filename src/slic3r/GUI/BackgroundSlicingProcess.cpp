@@ -468,6 +468,9 @@ void BackgroundSlicingProcess::call_process(std::exception_ptr& ex) throw()
         assert(m_print->canceled());
         ex = std::current_exception();
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":got cancelled exception" << std::endl;
+    } catch (const std::exception &e) {
+        ex = std::current_exception();
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":got exception: " << e.what() << std::endl;
     } catch (...) {
         ex = std::current_exception();
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":got other exception" << std::endl;
@@ -848,7 +851,9 @@ void BackgroundSlicingProcess::finalize_gcode()
     case CopyFileResult::SUCCESS: break; // no error
     case CopyFileResult::FAIL_COPY_FILE:
         throw Slic3r::ExportError(GUI::format(
-            _L("Copying of the temporary G-code to the output G-code failed. Maybe the SD card is write locked?\nError message: %1%"),
+            m_export_path_on_removable_media ?
+                _L("Copying of the temporary G-code to the output G-code failed. Maybe the SD card is write locked?\nError message: %1%") :
+                _L("Copying of the temporary G-code to the output G-code failed.\nError message: %1%"),
             error_message));
         break;
     case CopyFileResult::FAIL_FILES_DIFFERENT:

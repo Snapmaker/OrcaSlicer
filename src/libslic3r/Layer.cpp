@@ -6,6 +6,8 @@
 #include "SVG.hpp"
 #include "BoundingBox.hpp"
 
+#include <algorithm>
+
 #include <boost/log/trivial.hpp>
 
 namespace Slic3r {
@@ -72,6 +74,45 @@ LayerRegion* Layer::add_region(const PrintRegion *print_region)
 {
     m_regions.emplace_back(new LayerRegion(this, print_region));
     return m_regions.back();
+}
+
+// ORCA: per-extruder layer height, see PrintObject::apply_extruder_layer_heights().
+double LayerRegion::combined_height() const
+{
+    return m_combined_height > 0. ? m_combined_height : m_layer->height;
+}
+
+static const Layer* nth_lower_layer(const Layer *layer, unsigned short count)
+{
+    for (unsigned short i = 0; layer != nullptr && i < count; ++ i)
+        layer = layer->lower_layer;
+    return layer;
+}
+
+const Layer* LayerRegion::combined_lower_layer() const
+{
+    // count == 0 (layer combined away into a group top) is treated as 1; it produces no extrusions anyway.
+    return nth_lower_layer(m_layer, std::max<unsigned short>(m_combined_layer_count, 1));
+}
+
+// ORCA: walls-only pitch, see PrintObject::wall_layer_height_multiplier().
+double LayerRegion::wall_combined_height() const
+{
+    return m_wall_combined_height > 0. ? m_wall_combined_height : this->combined_height();
+}
+
+const Layer* LayerRegion::wall_combined_lower_layer() const
+{
+    // count == 0 (walls extrude at the run top above) produces no wall extrusions anyway.
+    return m_wall_combined_count <= 1 ? this->combined_lower_layer() :
+                                        nth_lower_layer(m_layer, m_wall_combined_count);
+}
+
+// ORCA: split wall layer heights, see PrintObject::wall_split_pitches().
+const Layer* LayerRegion::wall_split_lower_layer() const
+{
+    return m_wall_split_count <= 1 ? this->wall_combined_lower_layer() :
+                                     nth_lower_layer(m_layer, m_wall_split_count);
 }
 
 // merge all regions' slices to get islands
@@ -180,19 +221,24 @@ bool Layer::is_perimeter_compatible(const Print& print, const PrintRegion& a, co
 {
     const PrintRegionConfig& config       = a.config();
     const PrintRegionConfig& other_config = b.config();
+    // Print::get_extruder_id takes the 0-based filament index; outer_wall_filament_id is 1-based
+    // (PerimeterGenerator.cpp and MultiMaterialSegmentation.cpp subtract 1 the same way). The
+    // speeds are compared in the slot of the tool head that prints the walls.
+    const size_t wall_head = print.get_extruder_id(static_cast<unsigned int>(std::max(config.outer_wall_filament_id.value, 1) - 1));
 
         return config.outer_wall_filament_id       == other_config.outer_wall_filament_id
 		&& config.inner_wall_filament_id       == other_config.inner_wall_filament_id
 		&& config.wall_loops                  == other_config.wall_loops
 		&& config.wall_sequence               == other_config.wall_sequence
 		&& config.is_infill_first             == other_config.is_infill_first
-		&& config.inner_wall_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id)) == other_config.inner_wall_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id))
-		&& config.outer_wall_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id)) == other_config.outer_wall_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id))
-		&& config.small_perimeter_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id)) == other_config.small_perimeter_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id))
-		&& config.small_support_perimeter_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id)) == other_config.small_support_perimeter_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id))
-        && config.gap_infill_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id)) == other_config.gap_infill_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id))
+		&& config.inner_wall_speed.get_at(wall_head) == other_config.inner_wall_speed.get_at(wall_head)
+		&& config.outer_wall_speed.get_at(wall_head) == other_config.outer_wall_speed.get_at(wall_head)
+		&& config.small_perimeter_speed.get_at(wall_head) == other_config.small_perimeter_speed.get_at(wall_head)
+		&& config.small_support_perimeter_speed.get_at(wall_head) == other_config.small_support_perimeter_speed.get_at(wall_head)
+        && config.gap_infill_speed.get_at(wall_head) == other_config.gap_infill_speed.get_at(wall_head)
         && config.filter_out_gap_fill.value == other_config.filter_out_gap_fill.value
 		&& config.detect_overhang_wall                   == other_config.detect_overhang_wall
+		&& config.unsupported_wall_last                  == other_config.unsupported_wall_last
 		&& config.overhang_reverse                       == other_config.overhang_reverse
 		&& config.overhang_reverse_threshold             == other_config.overhang_reverse_threshold
 		&& config.wall_direction                         == other_config.wall_direction
@@ -227,6 +273,12 @@ void Layer::make_perimeters()
 {
     BOOST_LOG_TRIVIAL(trace) << "Generating perimeters for layer " << this->id();
 
+    const auto clear_generated_extrusions = [](LayerRegion *layer_region) {
+        layer_region->perimeters.clear();
+        layer_region->fills.clear();
+        layer_region->thin_fills.clear();
+    };
+
     // keep track of regions whose perimeters we have already generated
     std::vector<unsigned char> done(m_regions.size(), false);
 
@@ -256,14 +308,19 @@ void Layer::make_perimeters()
                     // this is a no-op for every other configuration.
                     if (this_region.gradient_volume_id() != other_region.gradient_volume_id())
                         continue;
-                    if (is_perimeter_compatible(*m_object->print(), this_region, other_region))
-		            {
-			 			other_layerm->perimeters.clear();
-			 			other_layerm->fills.clear();
-			 			other_layerm->thin_fills.clear();
-		                layerms.push_back(other_layerm);
-		                done[it - m_regions.begin()] = true;
-		            }
+                    // Regions combined to different extruder layer heights (whole-region groups or
+                    // walls-only runs) extrude with different heights and must not share a make_perimeters() call.
+                    if ((*layerm)->combined_layer_count() == other_layerm->combined_layer_count() &&
+                        (*layerm)->wall_combined_count() == other_layerm->wall_combined_count() &&
+                        std::abs((*layerm)->wall_combined_height() - other_layerm->wall_combined_height()) < EPSILON &&
+                        (*layerm)->wall_split_count() == other_layerm->wall_split_count() &&
+                        std::abs((*layerm)->wall_split_height() - other_layerm->wall_split_height()) < EPSILON &&
+                        is_perimeter_compatible(*m_object->print(), this_region, other_region))
+                    {
+                        clear_generated_extrusions(other_layerm);
+                        layerms.push_back(other_layerm);
+                        done[it - m_regions.begin()] = true;
+                    }
 		        }
 
 	        if (layerms.size() == 1) {  // optimization
@@ -271,6 +328,10 @@ void Layer::make_perimeters()
                 (*layerm)->make_perimeters((*layerm)->slices, {*layerm}, &(*layerm)->fill_surfaces, &(*layerm)->fill_no_overlap_expolygons);
 	            (*layerm)->fill_expolygons = to_expolygons((*layerm)->fill_surfaces.surfaces);
 	        } else {
+	            // Orca: Unlike the compatible regions above, the initiating region has not
+	            // been cleared yet and may contain paths from a previous incompatible run.
+	            clear_generated_extrusions(*layerm);
+
 	            SurfaceCollection new_slices;
 	            // Use the region with highest infill rate, as the make_perimeters() function below decides on the gap fill based on the infill existence.
 	            LayerRegion *layerm_config = layerms.front();
@@ -459,6 +520,7 @@ coordf_t Layer::get_sparse_infill_max_void_area()
         double spacing = flow.scaled_spacing() * (100 - density) / density;
         switch (pattern) {
             case ipConcentric:
+            case ipSpiralInset:
             case ipRectilinear:
             case ipLine:
             case ipGyroid:

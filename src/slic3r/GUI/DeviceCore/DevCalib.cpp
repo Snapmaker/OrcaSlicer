@@ -1,5 +1,7 @@
 #include <boost/log/trivial.hpp>
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/I18N.hpp"
+#include "slic3r/GUI/DeviceManager.hpp"
 
 #include "slic3r/GUI/UserNotification.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -34,7 +36,8 @@ static NozzleVolumeType convert_to_nozzle_type(const std::string &str)
         return NozzleVolumeType::nvtHighFlow;
     else if (str[1] == 'U')
         return NozzleVolumeType::nvtTPUHighFlow;
-    // Orca: no nvtE3DHighFlow in Orca's NozzleVolumeType; map 'B' to Standard
+    else if (str[1] == 'B')
+        return NozzleVolumeType::nvtE3DHighFlow;
     else
         return NozzleVolumeType::nvtStandard;
 }

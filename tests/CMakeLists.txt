@@ -23,7 +23,10 @@ include(Catch)
 set(CATCH_EXTRA_ARGS "" CACHE STRING "Extra arguments for catch2 test suites.") # Unknown if this still works and/or should be replaced with something else.
 
 add_library(test_common INTERFACE)
-target_compile_definitions(test_common INTERFACE TEST_DATA_DIR=R"\(${TEST_DATA_DIR}\)" PROFILES_DIR=R"\(${PROFILES_DIR}\)" CATCH_CONFIG_FAST_COMPILE)
+# Snapmaker Orca: the sources, for the tests that read them (the apply sites of the GUI).
+set(SLIC3R_SOURCE_DIR ${CMAKE_SOURCE_DIR}/src)
+file(TO_NATIVE_PATH "${SLIC3R_SOURCE_DIR}" SLIC3R_SOURCE_DIR)
+target_compile_definitions(test_common INTERFACE TEST_DATA_DIR=R"\(${TEST_DATA_DIR}\)" PROFILES_DIR=R"\(${PROFILES_DIR}\)" SLIC3R_SOURCE_DIR=R"\(${SLIC3R_SOURCE_DIR}\)" CATCH_CONFIG_FAST_COMPILE)
 target_include_directories(test_common INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
 if (APPLE)
@@ -57,18 +60,28 @@ function(orcaslicer_copy_test_dlls)
         # into it). Copy them next to the executable and give it an $ORIGIN
         # rpath so the loader finds them when the tests run on the CI unit-test
         # runner, which only receives this build/tests tree.
-        get_target_property(_linked_libs ${_TEST_NAME}_tests LINK_LIBRARIES)
+        #
+        # Optional first arg: the target to patch, for directories that define
+        # more than one test executable. Defaults to ${_TEST_NAME}_tests so
+        # existing single-executable callers don't need to pass it.
+        if (ARGC GREATER 0)
+            set(_target ${ARGV0})
+        else()
+            set(_target ${_TEST_NAME}_tests)
+        endif()
+
+        get_target_property(_linked_libs ${_target} LINK_LIBRARIES)
         if (NOT "libslic3r_gui" IN_LIST _linked_libs)
             return()
         endif()
 
-        set_property(TARGET ${_TEST_NAME}_tests PROPERTY BUILD_RPATH "$ORIGIN")
+        set_property(TARGET ${_target} PROPERTY BUILD_RPATH "$ORIGIN")
         set(_configs ${CMAKE_CONFIGURATION_TYPES})
         if (NOT _configs)
             set(_configs "${CMAKE_BUILD_TYPE}")
         endif()
         foreach(_cfg IN LISTS _configs)
-            orcaslicer_copy_sos(${_TEST_NAME}_tests "${_cfg}" "" _unused_sos)
+            orcaslicer_copy_sos(${_target} "${_cfg}" "" _unused_sos)
         endforeach()
     endif()
 endfunction()
@@ -85,4 +98,9 @@ add_subdirectory(fff_print)
 add_subdirectory(sla_print)
 add_subdirectory(filament_group)
 
+# End-to-end checks of the snapmaker-orca binary. Linux only: they read result.json, which the CLI
+# writes on Linux only. src/ is added before tests/, so the target is known here.
+if (UNIX AND NOT APPLE AND TARGET Snapmaker_Orca)
+    add_subdirectory(cli)
+endif ()
 

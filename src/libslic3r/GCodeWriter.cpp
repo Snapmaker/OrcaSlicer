@@ -8,8 +8,6 @@
 #include <algorithm>
 #include <iomanip>
 #include <iostream>
-#include <map>
-#include <assert.h>
 #include <GCode/GCodeProcessor.hpp>
 
 #ifdef __APPLE__

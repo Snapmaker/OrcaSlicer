@@ -16,6 +16,7 @@
 #include <iostream>
 #include <libslic3r/Platform.hpp>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
@@ -82,6 +83,7 @@ constexpr const char* ORCA_UNSUBSCRIBE_PLUGINS = "/api/v1/plugins/subscriptions"
 constexpr const char* ORCA_PLUGINS_MINE        = "/api/v1/plugins/mine";
 constexpr const char* ORCA_PLUGINS_BASE        = "/api/v1/plugins";
 constexpr const char* ORCA_PLUGIN_DOWNLOAD_URL = "/api/v1/plugins/download";
+constexpr const char* ORCA_CLOUD_PRINTER       = "/api/v1/printers";
 
 constexpr const char* ORCA_CLOUD_LOGIN_PATH = "/orcaslicer-login";
 
@@ -96,9 +98,15 @@ constexpr const char* SECRET_STORE_SERVICE = "OrcaSlicer/Auth";
 // created on this machine. Without this sentinel, every startup probes the keychain
 // item and macOS prompts for the login-keychain password on fresh installs even
 // though the fork's primary login is the Snapmaker account (optional, in-app).
+// Empty while there is no data directory: the CLI and the unit tests never call set_data_dir(),
+// and a bare relative name would put the marker into whatever the current working directory
+// happens to be. A caller that gets no path treats it as "no session was stored here".
 static std::string orca_cloud_session_sentinel_path()
 {
-    return (boost::filesystem::path(Slic3r::data_dir()) / "orca_cloud_session_present").string();
+    const std::string& dir = Slic3r::data_dir();
+    if (dir.empty())
+        return {};
+    return (boost::filesystem::path(dir) / "orca_cloud_session_present").string();
 }
 constexpr const char* SECRET_STORE_USER    = "orca_refresh_token";
 constexpr std::chrono::seconds TOKEN_REFRESH_SKEW{900}; // 15 minutes
@@ -868,9 +876,11 @@ std::string OrcaCloudServiceAgent::build_login_cmd()
             display_name = "unknown name";
         }
         json cmd;
-        cmd["command"]        = "orca_userlogin";
-        cmd["data"]["name"]   = display_name;
-        cmd["data"]["avatar"] = get_user_avatar();
+        cmd["command"]         = "orca_userlogin";
+        cmd["data"]["name"]    = display_name;
+        cmd["data"]["avatar"]  = get_user_avatar();
+        // The unique handle, shown under the display name in the homepage account menu.
+        cmd["data"]["account"] = get_user_name();
         return cmd.dump();
     }
 
@@ -1601,7 +1611,9 @@ void OrcaCloudServiceAgent::persist_user_secret(const std::string& secret)
             wxSecretValue secret_value(wxString::FromUTF8(secret.c_str()));
             if (store.Save(SECRET_STORE_SERVICE, SECRET_STORE_USER, secret_value)) {
                 stored = true;
-                std::ofstream(orca_cloud_session_sentinel_path()) << "1";
+                const std::string sentinel = orca_cloud_session_sentinel_path();
+                if (!sentinel.empty())
+                    std::ofstream(sentinel) << "1";
             } else {
                 BOOST_LOG_TRIVIAL(warning) << "OrcaCloudServiceAgent: System Keychain save failed";
             }
@@ -1660,7 +1672,8 @@ bool OrcaCloudServiceAgent::load_user_secret(std::string& out_secret)
             }
         }
     } else {
-        if (!boost::filesystem::exists(orca_cloud_session_sentinel_path())) {
+        const std::string sentinel = orca_cloud_session_sentinel_path();
+        if (sentinel.empty() || !boost::filesystem::exists(sentinel)) {
             BOOST_LOG_TRIVIAL(info) << "OrcaCloudServiceAgent: no Orca cloud session on this machine, skipping keychain probe";
             return false;
         }
@@ -1683,13 +1696,14 @@ bool OrcaCloudServiceAgent::load_user_secret(std::string& out_secret)
 void OrcaCloudServiceAgent::clear_user_secret()
 {
     // Only touch the keychain if a session was ever stored here (see load_user_secret).
-    if (boost::filesystem::exists(orca_cloud_session_sentinel_path())) {
+    const std::string sentinel = orca_cloud_session_sentinel_path();
+    if (!sentinel.empty() && boost::filesystem::exists(sentinel)) {
         wxSecretStore store = wxSecretStore::GetDefault();
         if (store.IsOk()) {
             store.Delete(SECRET_STORE_SERVICE);
         }
         boost::system::error_code ec;
-        boost::filesystem::remove(orca_cloud_session_sentinel_path(), ec);
+        boost::filesystem::remove(sentinel, ec);
     }
 
     compute_fallback_path();
@@ -2639,11 +2653,51 @@ int OrcaCloudServiceAgent::check_user_task_report(int* task_id, bool* printable)
 
 int OrcaCloudServiceAgent::get_user_print_info(unsigned int* http_code, std::string* http_body)
 {
-    BOOST_LOG_TRIVIAL(debug) << "OrcaCloudServiceAgent: get_user_print_info (stub)";
+    std::string response;
+    unsigned int code = 0;
+    int result = http_get(ORCA_CLOUD_PRINTER, &response, &code);
+
     if (http_code)
-        *http_code = 200;
-    if (http_body)
-        *http_body = "{}";
+        *http_code = code;
+
+    if (result != 0 || code != 200)
+        return result != 0 ? result : BAMBU_NETWORK_ERR_GET_SETTING_LIST_FAILED;
+
+    try {
+        auto resp_json = nlohmann::json::parse(response);
+        nlohmann::json devices = nlohmann::json::array();
+
+        for (const auto& printer : resp_json.value("data", nlohmann::json::array())) {
+            const std::string role = printer.value("access_role", "");
+            if (role.empty() || role == "viewer")
+                continue;
+
+            nlohmann::json device;
+            device["dev_id"]   = printer.value("id", "");
+            device["dev_name"] = printer.value("name", "");
+            if (printer.contains("model") && printer["model"].is_string())
+                device["dev_model_name"] = printer["model"].get<std::string>();
+
+            bool online = false;
+            if (printer.contains("status_snapshot") && printer["status_snapshot"].is_object()) {
+                const auto& status = printer["status_snapshot"].value("status", nlohmann::json::object());
+                online = status.value("connection", nlohmann::json::object()).value("state", "") == "online";
+                if (status.contains("job") && status["job"].is_object())
+                    device["task_status"] = status["job"].value("state", "");
+            }
+            device["dev_online"] = online;
+            devices.push_back(std::move(device));
+        }
+
+        if (http_body) {
+            nlohmann::json out;
+            out["devices"] = std::move(devices);
+            *http_body = out.dump();
+        }
+    } catch (const std::exception&) {
+        return BAMBU_NETWORK_ERR_GET_SETTING_LIST_FAILED;
+    }
+
     return BAMBU_NETWORK_SUCCESS;
 }
 

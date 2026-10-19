@@ -45,10 +45,10 @@ TEST_CASE("Multi-material segmentation resolves the outer-wall line width", "[Mu
         print_config.nozzle_diameter.values = c.nozzle_diameters;
 
         PrintObjectConfig object_config;
-        object_config.line_width = ConfigOptionFloatOrPercent(c.line_value, c.line_percent);
+        object_config.line_width = ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(c.line_value, c.line_percent)};
 
         PrintRegionConfig region_config;
-        region_config.outer_wall_line_width        = ConfigOptionFloatOrPercent(c.outer_value, c.outer_percent);
+        region_config.outer_wall_line_width        = ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(c.outer_value, c.outer_percent)};
         region_config.outer_wall_filament_id.value = c.outer_wall_filament_id;
 
         REQUIRE_THAT(resolve_outer_wall_line_width(region_config, object_config, print_config),

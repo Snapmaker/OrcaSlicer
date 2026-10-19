@@ -1,0 +1,5 @@
+#pragma once
+// Snapmaker Orca: generated from the cache values SLIC3R_SNAPLOG and SNAP_LOG_HMAC_SECRET.
+// Included by GUI/SnapLogWiring.cpp only.
+#define SLIC3R_SNAPLOG_ENABLED @SLIC3R_SNAPLOG_ENABLED@
+#define SNAP_LOG_HMAC_SECRET "@SNAP_LOG_HMAC_SECRET_CONFIG@"

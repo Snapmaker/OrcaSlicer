@@ -851,15 +851,20 @@ namespace client
         // If true, the macro processor will evaluate just a boolean condition using the full expressive power of the macro processor.
         bool                     just_boolean_expression = false;
         std::string              error_message;
+        // Local variables declared in {if} branches that were not taken, see PlaceholderParser::check_inactive_branches.
+        mutable std::set<std::string> inactive_local_variables;
 
         // Table to translate symbol tag to a human readable error message.
         static std::map<std::string, std::string> tag_to_error_message;
 
+        // Snapmaker Orca: slot of an unindexed vector variable = 0-based tool head of the current filament
+        // (filament_map is 1-based, as in get_extruder_index). No map entry or a value below 1 reads slot 0.
         size_t get_extruder_id() const {
             if (external_config != nullptr) {
                 const ConfigOptionInts * filament_map_opt = external_config->option<ConfigOptionInts>("filament_map");
                 if (filament_map_opt && current_extruder_id < filament_map_opt->values.size()) {
-                    return filament_map_opt->values[current_extruder_id];
+                    const int head = filament_map_opt->values[current_extruder_id];
+                    return head >= 1 ? size_t(head - 1) : 0;
                 }
             }
             return 0;
@@ -892,6 +897,8 @@ namespace client
         }
         // Inside a block, which is conditionally suppressed?
         bool skipping() const { return m_depth_suppressed > 0; }
+        // Are variable names resolved inside the suppressed blocks too?
+        bool check_inactive_names() const { return PlaceholderParser::check_inactive_branches && ! just_boolean_expression; }
 
         const ConfigOption* 	optptr(const t_config_option_key &opt_key) const override
         {
@@ -927,7 +934,7 @@ namespace client
 
         static void legacy_variable_expansion(const MyContext *ctx, IteratorRange &opt_key, std::string &output)
         {
-            if (ctx->skipping())
+            if (ctx->skipping() && ! ctx->check_inactive_names())
                 return;
 
             std::string         opt_key_str(opt_key.begin(), opt_key.end());
@@ -949,7 +956,9 @@ namespace client
                 }
             }
             if (opt == nullptr)
-                ctx->throw_exception("Variable does not exist", opt_key);
+                ctx->throw_exception(ctx->skipping() ? "Variable does not exist (in an inactive branch)" : "Variable does not exist", opt_key);
+            if (ctx->skipping())
+                return;
             if (opt->is_scalar()) {
                 if (opt->is_nil())
                     ctx->throw_exception("Trying to reference an undefined (nil) optional variable", opt_key);
@@ -972,9 +981,10 @@ namespace client
             IteratorRange   &opt_vector_index,
             std::string     &output)
         {
-            if (ctx->skipping())
+            if (ctx->skipping() && ! ctx->check_inactive_names())
                 return;
 
+            const char         *not_found = ctx->skipping() ? "Variable does not exist (in an inactive branch)" : "Variable does not exist";
             std::string         opt_key_str(opt_key.begin(), opt_key.end());
             const ConfigOption *opt = ctx->resolve_symbol(opt_key_str);
             if (opt == nullptr) {
@@ -984,18 +994,20 @@ namespace client
                     opt = ctx->resolve_symbol(opt_key_str);
                 }
                 if (opt == nullptr)
-                    ctx->throw_exception("Variable does not exist", opt_key);
+                    ctx->throw_exception(not_found, opt_key);
             }
             if (! opt->is_vector())
                 ctx->throw_exception("Trying to index a scalar variable", opt_key);
+            const ConfigOption *opt_index = ctx->resolve_symbol(std::string(opt_vector_index.begin(), opt_vector_index.end()));
+            if (opt_index == nullptr)
+                ctx->throw_exception(not_found, opt_key);
+            if (opt_index->type() != coInt)
+                ctx->throw_exception("Indexing variable has to be integer", opt_key);
+            if (ctx->skipping())
+                return;
             const ConfigOptionVectorBase *vec = static_cast<const ConfigOptionVectorBase*>(opt);
             if (vec->empty())
                 ctx->throw_exception("Indexing an empty vector variable", opt_key);
-            const ConfigOption *opt_index = ctx->resolve_symbol(std::string(opt_vector_index.begin(), opt_vector_index.end()));
-            if (opt_index == nullptr)
-                ctx->throw_exception("Variable does not exist", opt_key);
-            if (opt_index->type() != coInt)
-                ctx->throw_exception("Indexing variable has to be integer", opt_key);
 			int idx = opt_index->getInt();
 			if (idx < 0)
                 ctx->throw_exception("Negative vector index", opt_key);
@@ -1021,6 +1033,13 @@ namespace client
                     output.writable = true;
                 }
                 output.opt = opt;
+            } else if (ctx->check_inactive_names()) {
+                // Only check the name. Back tracking may resolve the same identifier twice, so there are no side effects.
+                const std::string key{ opt_key.begin(), opt_key.end() };
+                if (ctx->resolve_symbol(key) == nullptr && ctx->resolve_output_symbol(key) == nullptr &&
+                    ctx->inactive_local_variables.count(key) == 0 &&
+                    (ctx->context_data == nullptr || ctx->context_data->inactive_global_variables.count(key) == 0))
+                    ctx->throw_exception("Not a variable name (in an inactive branch)", opt_key);
             }
             output.it_range = opt_key;
         }
@@ -1084,8 +1103,14 @@ namespace client
     			            ctx->throw_exception("FloatOrPercent variable failed to resolve the \"ratio_over\" dependencies", opt.it_range);
     			        if (boost::ends_with(opt_def->ratio_over, "line_width")) {
                     		// Line width supports defaults and a complex graph of dependencies.
-                            assert(opt_parent->type() == coFloatOrPercent);
-                        	v *= Flow::extrusion_width(opt_def->ratio_over, static_cast<const ConfigOptionFloatOrPercent*>(opt_parent), *ctx, static_cast<unsigned int>(ctx->current_extruder_id));
+                            if (opt_parent->is_vector())
+                                // Snapmaker Orca: a line width is a column per tool head, read at the
+                                // tool head of the current filament (the rule of every unindexed vector).
+                                v *= Flow::extrusion_width(opt_def->ratio_over, *ctx, static_cast<unsigned int>(ctx->current_extruder_id), ctx->get_extruder_id());
+                            else {
+                                assert(opt_parent->type() == coFloatOrPercent);
+                                v *= Flow::extrusion_width(opt_def->ratio_over, static_cast<const ConfigOptionFloatOrPercent*>(opt_parent), *ctx, static_cast<unsigned int>(ctx->current_extruder_id));
+                            }
                         	break;
                         }
                         if (opt_parent->type() == coFloat || opt_parent->type() == coFloatOrPercent) {
@@ -1122,11 +1147,14 @@ namespace client
             // Helper to resolve a FloatOrPercent value (handles ratio_over chain for percent values).
             // elem_index: the element index used to access this vector element, so that
             // parent vectors (via ratio_over) use the same index rather than the current extruder.
-            auto resolve_float_or_percent = [ctx, &opt, &output](const FloatOrPercent &fop, size_t elem_index) {
+            // nozzle_extruder: the extruder whose nozzle a line width percent resolves against (the
+            // current filament for an unindexed reference, the index for an indexed one).
+            auto resolve_float_or_percent = [ctx, &opt, &output](const FloatOrPercent &fop, size_t elem_index, size_t nozzle_extruder) {
                 std::string opt_key(opt.it_range.begin(), opt.it_range.end());
                 if (boost::ends_with(opt_key, "line_width")) {
                     // Line width supports defaults and a complex graph of dependencies.
-                    output.set_d(Flow::extrusion_width(opt_key, *ctx, static_cast<unsigned int>(ctx->current_extruder_id)));
+                    // Snapmaker Orca: the column of the element (the tool head), the nozzle of the current filament.
+                    output.set_d(Flow::extrusion_width(opt_key, *ctx, static_cast<unsigned int>(nozzle_extruder), elem_index));
                 } else if (! fop.percent) {
                     // Not a percent, just return the value.
                     output.set_d(fop.value);
@@ -1141,8 +1169,13 @@ namespace client
                             ctx->throw_exception("FloatOrPercent variable failed to resolve the \"ratio_over\" dependencies", opt.it_range);
                         if (boost::ends_with(opt_def->ratio_over, "line_width")) {
                             // Line width supports defaults and a complex graph of dependencies.
-                            assert(opt_parent->type() == coFloatOrPercent);
-                            v *= Flow::extrusion_width(opt_def->ratio_over, static_cast<const ConfigOptionFloatOrPercent*>(opt_parent), *ctx, static_cast<unsigned int>(ctx->current_extruder_id));
+                            if (opt_parent->is_vector())
+                                // Snapmaker Orca: a line width is a column per tool head, read at the column of the element.
+                                v *= Flow::extrusion_width(opt_def->ratio_over, *ctx, static_cast<unsigned int>(nozzle_extruder), elem_index);
+                            else {
+                                assert(opt_parent->type() == coFloatOrPercent);
+                                v *= Flow::extrusion_width(opt_def->ratio_over, static_cast<const ConfigOptionFloatOrPercent*>(opt_parent), *ctx, static_cast<unsigned int>(ctx->current_extruder_id));
+                            }
                             break;
                         }
                         if (opt_parent->type() == coFloat || opt_parent->type() == coFloatOrPercent) {
@@ -1213,11 +1246,11 @@ namespace client
                     const ConfigOptionFloatsOrPercentsNullable *opt_vec_nullable = dynamic_cast<const ConfigOptionFloatsOrPercentsNullable *>(opt.opt);
                     if (opt_vec_nullable) {
                         size_t elem_index = (opt_vec_nullable->size() == 1) ? 0 : ctx->get_extruder_id();
-                        resolve_float_or_percent(opt_vec_nullable->get_at(elem_index), elem_index);
+                        resolve_float_or_percent(opt_vec_nullable->get_at(elem_index), elem_index, ctx->current_extruder_id);
                     } else {
                         const ConfigOptionFloatsOrPercents *opt_vec = static_cast<const ConfigOptionFloatsOrPercents *>(opt.opt);
                         size_t elem_index = (opt_vec->size() == 1) ? 0 : ctx->get_extruder_id();
-                        resolve_float_or_percent(opt_vec->get_at(elem_index), elem_index);
+                        resolve_float_or_percent(opt_vec->get_at(elem_index), elem_index, ctx->current_extruder_id);
                     }
                     break;
                 }
@@ -1238,9 +1271,9 @@ namespace client
                 case coFloatsOrPercents: {
                     const ConfigOptionFloatsOrPercentsNullable *opt_vec_nullable = dynamic_cast<const ConfigOptionFloatsOrPercentsNullable *>(opt.opt);
                     if (opt_vec_nullable) {
-                        resolve_float_or_percent(opt_vec_nullable->values[idx], idx);
+                        resolve_float_or_percent(opt_vec_nullable->values[idx], idx, idx);
                     } else {
-                        resolve_float_or_percent(static_cast<const ConfigOptionFloatsOrPercents *>(opt.opt)->values[idx], idx);
+                        resolve_float_or_percent(static_cast<const ConfigOptionFloatsOrPercents *>(opt.opt)->values[idx], idx, idx);
                     }
                     break;
                 }
@@ -1426,6 +1459,13 @@ namespace client
                     out.opt = ctx->config_local.optptr(key);
                 }
                 out.name     = std::move(key);
+            } else if (ctx->check_inactive_names()) {
+                // Declared in a branch that is not taken: the name still counts as defined for the names that follow.
+                std::string key(it_range.begin(), it_range.end());
+                if (global_variable && ctx->context_data != nullptr)
+                    ctx->context_data->inactive_global_variables.insert(std::move(key));
+                else
+                    ctx->inactive_local_variables.insert(std::move(key));
             }
             out.it_range = it_range;
         }
@@ -1660,8 +1700,8 @@ namespace client
             const OptWithPos  &rhs)
         {
             if (ctx->skipping())
-                // Skipping, continue parsing.
-                return true;
+                // Skipping, let conditional_expression parse the whole right hand side, which may continue after the variable reference.
+                return false;
 
             if (lhs.opt) {
                 assert(lhs.opt->is_vector());

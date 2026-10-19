@@ -22,6 +22,18 @@ namespace Slic3r { namespace GUI {
 #define DISABLE_BLINKING
 #define DISABLE_UNDO_SYS
 
+// Snapmaker Orca: a greyed-out preset value cannot be reset either (an object's override stays removable).
+static bool resettable(Field *field, const Line &og_line)
+{
+    wxWindow *window = field != nullptr ? field->getWindow() : nullptr;
+    return og_line.undo_to_sys || window == nullptr || window->IsEnabled();
+}
+
+static wxBitmap act_bitmap(Field *field, const Line &og_line, const wxBitmap &bmp)
+{
+    return resettable(field, og_line) ? bmp : wxBitmap(bmp.ConvertToImage().ConvertToGreyscale(), -1, bmp.GetScaleFactor());
+}
+
 static bool is_point_in_rect(const wxPoint& pt, const wxRect& rect)
 {
     return  rect.GetLeft() <= pt.x && pt.x <= rect.GetRight() &&
@@ -158,7 +170,7 @@ wxPoint OG_CustomCtrl::get_pos(const Line& line, Field* field_in/* = nullptr*/)
             ctrl_line.height = size.y;
     };
 
-    auto add_buttons_width = [&h_pos, this] (int blinking_button_width) {
+    auto add_buttons_width = [&h_pos] (int blinking_button_width) {
 #ifndef DISABLE_BLINKING
 #  ifndef DISABLE_UNDO_SYS
         h_pos += 3 * blinking_button_width;
@@ -364,6 +376,15 @@ void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
             if (!suppress_hyperlinks && !line.og_line.label_path.empty())
                 tooltip = OptionsGroup::get_url(line.og_line.label_path) + "\n\n";
             tooltip += line.og_line.label_tooltip;
+            // Snapmaker Orca: the values set for tool heads on this line (the speed selector).
+            if (opt_group->head_values_tooltip)
+                for (const Option& opt : line.og_line.get_options()) {
+                    const wxString heads = opt_group->head_values_tooltip(opt.opt_id.substr(0, opt.opt_id.find('#')));
+                    if (!heads.IsEmpty()) {
+                        tooltip += (tooltip.IsEmpty() ? "" : "\n\n") + heads;
+                        break;
+                    }
+                }
             // BBS: markdown tip
             focusedLine = &line;
             markdowntip = line.og_line.label.empty()
@@ -381,14 +402,14 @@ void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
             if (is_point_in_rect(pos, line.rects_undo_icon[opt_idx])) {
                 if (line.og_line.has_undo_ui())
                     tooltip = *line.og_line.undo_tooltip();
-                else if (Field* field = opt_group->get_field(opt_key))
+                else if (Field* field = opt_group->get_field(opt_key); field != nullptr && resettable(field, line.og_line))
                     tooltip = *field->undo_tooltip();
                 break;
             }
             if (is_point_in_rect(pos, line.rects_undo_to_sys_icon[opt_idx])) {
                 if (line.og_line.has_undo_ui())
                     tooltip = *line.og_line.undo_to_sys_tooltip();
-                else if (Field* field = opt_group->get_field(opt_key))
+                else if (Field* field = opt_group->get_field(opt_key); field != nullptr && resettable(field, line.og_line))
                     tooltip = *field->undo_to_sys_tooltip();
                 break;
             }
@@ -444,7 +465,7 @@ void OG_CustomCtrl::OnLeftDown(wxMouseEvent& event)
                     if (ConfigOptionsGroup* conf_OG = dynamic_cast<ConfigOptionsGroup*>(line.ctrl->opt_group))
                         conf_OG->back_to_initial_value(opt_key);
                 }
-                else if (Field* field = opt_group->get_field(opt_key))
+                else if (Field* field = opt_group->get_field(opt_key); field != nullptr && resettable(field, line.og_line))
                     field->on_back_to_initial_value();
                 event.Skip();
                 return;
@@ -454,7 +475,7 @@ void OG_CustomCtrl::OnLeftDown(wxMouseEvent& event)
                     if (ConfigOptionsGroup* conf_OG = dynamic_cast<ConfigOptionsGroup*>(line.ctrl->opt_group))
                         conf_OG->back_to_sys_value(opt_key);
                 }
-                else if (Field* field = opt_group->get_field(opt_key))
+                else if (Field* field = opt_group->get_field(opt_key); field != nullptr && resettable(field, line.og_line))
                     field->on_back_to_sys_value();
                 event.Skip();
                 return;
@@ -776,8 +797,8 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
         if (field && field->undo_bitmap()) {
             // if (field)
             //  BBS: new layout
-            const wxPoint pos = draw_act_bmps(dc, wxPoint(h_pos, v_pos), field->undo_to_sys_bitmap()->bmp(),
-                                              field->undo_bitmap()->bmp(), field->blink());
+            const wxPoint pos = draw_act_bmps(dc, wxPoint(h_pos, v_pos), act_bitmap(field, og_line, field->undo_to_sys_bitmap()->bmp()),
+                                              act_bitmap(field, og_line, field->undo_bitmap()->bmp()), field->blink());
             if (field->has_edit_ui())
                 draw_edit_bmp(dc, pos, *field->edit_bitmap());
         }
@@ -791,6 +812,8 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
 
     wxString label = og_line.label;
     wxColour blink_color = StateColor::darkModeColorFor("#009688");
+    // Red pair registered in StateColor's dark-mode map ("#D01B1B" / "#BB2A3A")
+    wxColour invalid_color = StateColor::darkModeColorFor("#D01B1B");
     bool is_url_string = false;
     if (ctrl->opt_group->label_width != 0 && !label.IsEmpty()) {
         const wxColour* text_clr = field ? field->label_color() : og_line.label_color();
@@ -801,6 +824,14 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
                 break;
             }
         }
+        // The validation highlight wins over the modified/blink colors.
+        for (const Option& opt : option_set) {
+            Field* field = ctrl->opt_group->get_field(opt.opt_id);
+            if (field && field->has_invalid_highlight()) {
+                text_clr = &invalid_color;
+                break;
+            }
+        }
         bool is_multi_extruder = false;
         if (ctrl->opt_group->draw_multi_extruder)
             for (const Option& opt : option_set)
@@ -808,7 +839,18 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
         wxCoord icon_pos = h_pos;
         if (is_multi_extruder) {
             static ScalableBitmap multi_extruder(ctrl, "multi_extruder");
-            h_pos = draw_act_bmps(dc, wxPoint(h_pos, v_pos), multi_extruder.bmp(), multi_extruder.bmp(), false, 0, true).x;
+            // Snapmaker Orca: a line whose key has a value set for some tool head (the speed
+            // selector of the Process tab) draws the head icon with a dot in the same slot.
+            static ScalableBitmap head_override(ctrl, "head_override");
+            bool set_per_head = false;
+            if (ctrl->opt_group->head_values_tooltip)
+                for (const Option& opt : option_set)
+                    if (!ctrl->opt_group->head_values_tooltip(opt.opt_id.substr(0, opt.opt_id.find('#'))).IsEmpty()) {
+                        set_per_head = true;
+                        break;
+                    }
+            const ScalableBitmap &icon = set_per_head ? head_override : multi_extruder;
+            h_pos = draw_act_bmps(dc, wxPoint(h_pos, v_pos), icon.bmp(), icon.bmp(), false, 0, true).x;
         }
         is_url_string = !suppress_hyperlinks && !og_line.label_path.empty();
         // BBS
@@ -843,7 +885,8 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
 
     auto draw_buttons = [&h_pos, &dc, &v_pos, this](Field* field, size_t bmp_rect_id = 0) {
         if (field && field->undo_to_sys_bitmap()) {
-            h_pos = draw_act_bmps(dc, wxPoint(h_pos, v_pos), field->undo_to_sys_bitmap()->bmp(), field->undo_bitmap()->bmp(), field->blink(), bmp_rect_id).x;
+            h_pos = draw_act_bmps(dc, wxPoint(h_pos, v_pos), act_bitmap(field, og_line, field->undo_to_sys_bitmap()->bmp()),
+                                  act_bitmap(field, og_line, field->undo_bitmap()->bmp()), field->blink(), bmp_rect_id).x;
         }
 #ifndef DISABLE_BLINKING
         else if (field && !field->undo_to_sys_bitmap() && field->blink())
@@ -865,7 +908,9 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
             draw_buttons(field);
         // update width for full_width fields
         if (option_set.front().opt.full_width && field && field->getWindow())
-            field->getWindow()->SetSize(ctrl->GetSize().x - h_pos2 + h_pos3 - h_pos - ctrl->m_em_unit * 3, -1);
+            // Clamp to 0: before the page is allocated a real width the subtraction
+            // underflows and GTK rejects the size request (assertion).
+            field->getWindow()->SetSize(wxMax(ctrl->GetSize().x - h_pos2 + h_pos3 - h_pos - ctrl->m_em_unit * 3, 0), -1);
         return;
     }
 

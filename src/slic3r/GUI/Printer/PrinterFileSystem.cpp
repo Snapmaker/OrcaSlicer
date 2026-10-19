@@ -13,6 +13,8 @@
 #include <boost/uuid/detail/md5.hpp>
 #include <boost/regex.hpp>
 
+#include <openssl/evp.h>
+
 #include <wx/mstream.h>
 
 #include "nlohmann/json.hpp"
@@ -164,7 +166,7 @@ void PrinterFileSystem::ListAllFiles()
         req["storage"] = m_file_storage;
     req["api_version"] = 2;
     req["notify"] = "DETAIL";
-    SendRequest<FileList>(LIST_INFO, req, [this, type = m_file_type](json const& resp, FileList & list, auto) -> int {
+    SendRequest<FileList>(LIST_INFO, req, [type = m_file_type](json const& resp, FileList & list, auto) -> int {
         json files = resp["file_lists"];
         for (auto& f : files) {
             std::string     name = f["name"];
@@ -268,7 +270,8 @@ struct PrinterFileSystem::Upload : Progress
 {
     std::string                 error;
     boost::uint32_t             frag_id{0};
-    MD5_CTX                     ctx;
+    // EVP, not the MD5_* calls OpenSSL 3 deprecates. Created when the file is opened.
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx{nullptr, EVP_MD_CTX_free};
     boost::filesystem::ifstream ifs;
 };
 
@@ -1230,7 +1233,7 @@ boost::uint32_t PrinterFileSystem::RequestMediaAbility(int api_version)
     req["api_version"] = api_version;
 
     return SendRequest<MediaAbilityList>(
-        REQUEST_MEDIA_ABILITY, req, [this](const json &resp, MediaAbilityList &list, auto) -> int {
+        REQUEST_MEDIA_ABILITY, req, [](const json &resp, MediaAbilityList &list, auto) -> int {
             json abliity_list = resp["storage"];
             list              = abliity_list.get<MediaAbilityList>();
             return 0;
@@ -1328,7 +1331,12 @@ int PrinterFileSystem::UploadFileTask(std::shared_ptr<UploadFile> upload_file, b
             wxLogWarning("PrinterFileSystem::UploadFile open error: %s\n", wxString::FromUTF8(upload_file->path));
             return FILE_OPEN_ERR;
         }
-        MD5_Init(&upload->ctx);
+        upload->ctx.reset(EVP_MD_CTX_new());
+        if (!upload->ctx || EVP_DigestInit_ex(upload->ctx.get(), EVP_md5(), nullptr) != 1) {
+            wxLogWarning("PrinterFileSystem::UploadFile MD5 init error.\n");
+            upload->ifs.close();
+            return FILE_OPEN_ERR;
+        }
     }
 
     const boost::uint32_t buffer_size = upload_file->chunk_size * 1024;
@@ -1354,11 +1362,23 @@ int PrinterFileSystem::UploadFileTask(std::shared_ptr<UploadFile> upload_file, b
     req["offset"]  = upload->size;
     req["size"]    = read_size;
 
-    MD5_Update(&upload->ctx, buffer, read_size);
+    // Never send a digest that was not computed: MD5_Update/MD5_Final could not fail, EVP can.
+    if (EVP_DigestUpdate(upload->ctx.get(), buffer, static_cast<size_t>(read_size)) != 1) {
+        wxLogWarning("PrinterFileSystem::Upload MD5 update error.\n");
+        upload->ifs.close();
+        delete[] buffer;
+        return FILE_CHECK_ERR;
+    }
     upload->size += read_size;
     if (upload->size == upload->total) {
-        unsigned char digest[16];
-        MD5_Final(digest, &upload->ctx);
+        unsigned char digest[EVP_MAX_MD_SIZE];
+        unsigned int  digest_size = 0;
+        if (EVP_DigestFinal_ex(upload->ctx.get(), digest, &digest_size) != 1 || digest_size != 16) {
+            wxLogWarning("PrinterFileSystem::Upload MD5 final error.\n");
+            upload->ifs.close();
+            delete[] buffer;
+            return FILE_CHECK_ERR;
+        }
         char md5_str[33];
         for (int j = 0; j < 16; j++) { sprintf(&md5_str[j * 2], "%02X", (unsigned int) digest[j]); }
         std::string md5_out = std::string(md5_str);
@@ -1803,7 +1823,7 @@ static void* get_function(const char* name)
         return function;
 
 #if defined(_MSC_VER) || defined(_WIN32)
-    function = GetProcAddress(module, name);
+    function = reinterpret_cast<void*>(GetProcAddress(module, name));
 #else
     function = dlsym(module, name);
 #endif

@@ -70,7 +70,10 @@ std::vector<float> Layers::get_zs() const
 
 size_t Layers::get_layer_id_at(float z) const
 {
-    auto iter = std::upper_bound(m_items.begin(), m_items.end(), z, [](float z, const Item& item) { return item.z < z; });
+    // ORCA: upper_bound's comparator takes (value, element); it was inverted, so any z below
+    // the first layer (a conflict on the first layer reports its bottom z of 0) mapped to the
+    // last layer plus one.
+    auto iter = std::upper_bound(m_items.begin(), m_items.end(), z, [](float z, const Item& item) { return z < item.z; });
     return std::distance(m_items.begin(), iter);
 }
 

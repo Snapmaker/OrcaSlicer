@@ -5,6 +5,7 @@
   "name": "Snapmaker A350 Dual QSKit",
   "url": "https://github.com/macdylan",
   "model_id": "61280022",
+  "default_materials": "PolyTerra PLA @Dual 0.2 nozzle;Snapmaker PLA @Dual",
   "bed_model": "Snapmaker A350_bed.stl",
   "bed_texture": "Snapmaker A350 Dual_texture.svg",
   "nozzle_diameter": "0.2;0.4;0.6;0.8"

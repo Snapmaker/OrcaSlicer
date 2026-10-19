@@ -1,11 +1,14 @@
 #include "GLGizmoBrimEars.hpp"
 #include <glad/gl.h>
 #include "slic3r/GUI/GLCanvas3D.hpp"
+#include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/Camera.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmosCommon.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/Shortcuts.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/PerHeadProcess.hpp"
 #include "libslic3r/ExPolygon.hpp"
 #include "GLGizmoUtils.hpp"
 
@@ -45,7 +48,7 @@ bool GLGizmoBrimEars::on_init()
 {
     m_new_point_head_radius = get_brim_default_radius();
 
-    m_shortcut_key = WXK_CONTROL_E;
+    m_shortcut = Shortcut::GizmoBrimEars;
 
     const wxString ctrl = GUI::shortkey_ctrl_prefix();
     const wxString alt  = GUI::shortkey_alt_prefix();
@@ -342,7 +345,7 @@ bool GLGizmoBrimEars::on_mouse(const wxMouseEvent& mouse_event)
 // concludes that the event was not intended for it, it should return false.
 bool GLGizmoBrimEars::gizmo_event(SLAGizmoEventType action, const Vec2d &mouse_position, bool shift_down, bool alt_down, bool control_down)
 {
-    if (action != SLAGizmoEventType::MouseWheelDown || action != SLAGizmoEventType::MouseWheelUp || action != SLAGizmoEventType::Moving) {
+    if (action != SLAGizmoEventType::MouseWheelDown && action != SLAGizmoEventType::MouseWheelUp && action != SLAGizmoEventType::Moving) {
         apply_radius_change();
     }
 
@@ -1161,7 +1164,8 @@ float GLGizmoBrimEars::get_brim_default_radius() const
     const double              nozzle_diameter = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter")->get_at(0);
     const DynamicPrintConfig &print_cfg = wxGetApp().preset_bundle->prints.get_edited_preset().config;
     return std::clamp(
-        float(print_cfg.get_abs_value("initial_layer_line_width", nozzle_diameter) * 8.0),
+        // Snapmaker Orca: the width is a column per tool head; the shared value of the edited preset.
+        float(print_cfg.get_abs_value_at("initial_layer_line_width", size_t(PerHeadProcess::shared_column(print_cfg, nvtStandard)), nozzle_diameter) * 8.0),
         BRIM_EAR_RADIUS_MIN,
         BRIM_EAR_RADIUS_MAX);
 }

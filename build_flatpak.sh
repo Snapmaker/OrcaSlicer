@@ -290,6 +290,10 @@ if [[ ! -f "$MANIFEST_BASE" ]]; then
     exit 1
 fi
 
+# No deps.tar is packed here: the orca_deps module of the Snapmaker manifest takes the
+# checkout as `type: dir`, so scripts/flatpak/make_deps_tar.sh would only drop an unused
+# tarball into the tree that module copies. Call it again if the manifest moves to deps.tar.
+
 # Build the Flatpak
 echo -e "${YELLOW}Building Flatpak package...${NC}"
 echo -e "This may take a while (30+ minutes depending on your system)..."

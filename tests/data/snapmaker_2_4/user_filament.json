@@ -1,0 +1,22 @@
+{
+    "type": "filament",
+    "name": "My SnapSpeed 2.4",
+    "from": "User",
+    "inherits": "Snapmaker PLA SnapSpeed @U1",
+    "version": "2.4.0",
+    "filament_settings_id": [
+        "My SnapSpeed 2.4"
+    ],
+    "filament_flow_support": [
+        "standard",
+        "high_flow"
+    ],
+    "filament_max_volumetric_speed": [
+        "19",
+        "33"
+    ],
+    "nozzle_temperature": [
+        "222",
+        "233"
+    ]
+}

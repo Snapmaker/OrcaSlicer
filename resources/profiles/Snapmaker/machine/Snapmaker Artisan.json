@@ -5,6 +5,7 @@
   "name": "Snapmaker Artisan",
   "url": "https://github.com/macdylan",
   "model_id": "797581801",
+  "default_materials": "PolyTerra PLA @Dual 0.2 nozzle;Snapmaker PLA @Dual",
   "bed_model": "Snapmaker Artisan_bed.stl",
   "bed_texture": "Snapmaker Artisan_texture.svg",
   "nozzle_diameter": "0.2;0.4;0.6;0.8"

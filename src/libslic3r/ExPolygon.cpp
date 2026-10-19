@@ -12,6 +12,9 @@
 
 namespace Slic3r {
 
+// From Brim.cpp — used by map_moment_to_expansion.
+extern bool compSecondMoment(const ExPolygons& expolys, double& smExpolysX, double& smExpolysY);
+
 void ExPolygon::scale(double factor)
 {
     contour.scale(factor);
@@ -546,6 +549,76 @@ void keep_largest_contour_only(ExPolygons &polygons)
 	    polygons.clear();
 	    polygons.emplace_back(std::move(p));
 	}
+}
+
+// Split an expolygon with holes into up to 4 sub-expolygons along the centroid of the largest hole.
+// Ported from Bambu 976b5062c.
+ExPolygons ExPolygon::split_expoly_with_holes(coord_t gap_width, const ExPolygons& collision) const
+{
+    ExPolygons sub_overhangs;
+    Polygon    max_hole;
+    coordf_t   max_area = 0;
+    bool       is_collided = false;
+    for (const auto &hole : this->holes) {
+        if (!is_collided && Slic3r::overlaps({ExPolygon(hole)}, collision)) {
+            max_area = abs(hole.area());
+            max_hole = hole;
+            is_collided = true;
+        } else if (is_collided && Slic3r::overlaps({ExPolygon(hole)}, collision) && abs(hole.area()) > max_area) {
+            max_area = abs(hole.area());
+            max_hole = hole;
+        } else if (!is_collided && !Slic3r::overlaps({ExPolygon(hole)}, collision) && abs(hole.area()) > max_area) {
+            max_area = abs(hole.area());
+            max_hole = hole;
+        }
+    }
+    Point cent;
+    if (max_hole.size() > 0) {
+        BoundingBox overhang_bbx = get_extents(*this);
+        cent = max_hole.centroid();
+
+        // Quadrant 1: bottom-left of centroid
+        Point q1_min(overhang_bbx.min(0), overhang_bbx.min(1));
+        Point q1_max(cent.x() - gap_width, cent.y() - gap_width);
+        append(sub_overhangs, intersection_ex(ExPolygon(BoundingBox(q1_min, q1_max).polygon()), *this));
+
+        // Quadrant 2: top-right of centroid
+        Point q2_min(cent.x() + gap_width, cent.y() + gap_width);
+        Point q2_max(overhang_bbx.max(0), overhang_bbx.max(1));
+        append(sub_overhangs, intersection_ex(ExPolygon(BoundingBox(q2_min, q2_max).polygon()), *this));
+
+        // Quadrant 3: top-left of centroid
+        Point q3_min(overhang_bbx.min(0), cent.y() + gap_width);
+        Point q3_max(cent.x() - gap_width, overhang_bbx.max(1));
+        append(sub_overhangs, intersection_ex(ExPolygon(BoundingBox(q3_min, q3_max).polygon()), *this));
+
+        // Quadrant 4: bottom-right of centroid
+        Point q4_min(cent.x() + gap_width, overhang_bbx.min(1));
+        Point q4_max(overhang_bbx.max(0), cent.y() - gap_width);
+        append(sub_overhangs, intersection_ex(ExPolygon(BoundingBox(q4_min, q4_max).polygon()), *this));
+    }
+    return sub_overhangs;
+}
+
+double ExPolygon::map_moment_to_expansion(double speed, double height) const
+{
+    if (height <= 0 || speed <= 0) return 0;
+    double Ixx = 0, Iyy = 0;
+    ExPolygons self = {*this};
+    compSecondMoment(self, Ixx, Iyy);
+    Ixx = Ixx * pow(SCALING_FACTOR, 4);
+    Iyy = Iyy * pow(SCALING_FACTOR, 4);
+
+    auto bbox = get_extents(*this);
+    const double &bboxX = bbox.size()(0);
+    const double &bboxY = bbox.size()(1);
+    double height_to_area = std::max(
+        height / Ixx * (bboxY * SCALING_FACTOR),
+        height / Iyy * (bboxX * SCALING_FACTOR)
+    ) * height / 1920;
+
+    double brim_width = height_to_area * speed;
+    return std::max(std::min(brim_width, 10.), 1.);
 }
 
 } // namespace Slic3r

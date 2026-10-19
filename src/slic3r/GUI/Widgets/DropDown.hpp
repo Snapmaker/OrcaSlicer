@@ -65,6 +65,7 @@ private:
     ScalableBitmap arrow_bitmap;
 
     bool pressedDown = false;
+    bool key_highlight = false; // the hover row was set by MoveHighlight and is drawn without the mouse over it
     boost::posix_time::ptime dismissTime;
     wxPoint                  offset; // x not used
     wxPoint                  dragStart;
@@ -108,9 +109,23 @@ public:
 
     void Popup(wxWindow *focus = nullptr) override;
 
+    // Snapmaker Orca: keyboard navigation of an open list. Moves the highlight by `step` rows,
+    // skipping split and disabled items, wrapping at the ends; the selection stays until
+    // CommitHighlighted or a click.
+    void MoveHighlight(int step);
+    // The item under the highlight, -1 for none.
+    int  HighlightedItem();
+    // Sends the highlighted item as the selection the way a click does (a disabled or split item
+    // sends nothing) and dismisses the list.
+    void CommitHighlighted();
+    // Dismisses the list without a selection, like a click outside (sends EVT_DISMISS).
+    // Public entry to the protected DismissAndNotify for callers other than ComboBox.
+    void Cancel();
+
 protected:
     void Dismiss() override;
 
+    bool ProcessLeftDown(wxMouseEvent& event) override;
     void OnDismiss() override;
 
     bool ShouldDismissOnTopWindowDeactivate() override;
@@ -128,6 +143,7 @@ private:
     friend class ComboBox;
     void messureSize();
     void autoPosition();
+    bool PointInAnchorGap(const wxPoint& screen_point) const;
 
     // some useful events
     void mouseDown(wxMouseEvent& event);

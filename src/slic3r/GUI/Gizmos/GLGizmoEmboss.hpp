@@ -112,6 +112,8 @@ private:
     bool is_changed_from_default_style();
     void reset_to_default_style();
 
+    void set_keep_up(bool keep_up);
+
     // create volume from text - main functionality
     bool process(bool make_snapshot = true);
     void close();

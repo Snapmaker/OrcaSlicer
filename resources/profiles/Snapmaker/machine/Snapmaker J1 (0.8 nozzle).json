@@ -7,6 +7,10 @@
   "inherits": "fdm_idex",
   "printer_model": "Snapmaker J1",
   "default_print_profile": "0.24 Standard @Snapmaker J1 (0.8 nozzle)",
+  "default_filament_profile": [
+    "Snapmaker PLA @J1",
+    "Snapmaker PETG @J1 0.8 nozzle"
+  ],
   "printer_variant": "0.8",
   "max_layer_height": [
     "0.48"

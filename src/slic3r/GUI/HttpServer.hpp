@@ -1,6 +1,7 @@
 #ifndef slic3r_Http_App_hpp_
 #define slic3r_Http_App_hpp_
 
+#include <atomic>
 #include <iostream>
 #include <mutex>
 #include <stack>
@@ -35,6 +36,9 @@ class http_headers
     friend class session;
 public:
     std::string get_url() { return url; }
+
+    // Case-insensitive lookup with surrounding whitespace trimmed.
+    std::string get_header(const std::string& name) const;
 
     int content_length()
     {
@@ -86,6 +90,18 @@ public:
     public:
         virtual ~Response()                                   = default;
         virtual void write_response(std::stringstream& ssOut) = 0;
+
+        // Forwarded conditional request headers, used by ResponseFile to implement
+        // 304 Not Modified revalidation (If-Modified-Since / If-None-Match).
+        void set_conditional_headers(const std::string& if_modified_since, const std::string& if_none_match)
+        {
+            m_if_modified_since = if_modified_since;
+            m_if_none_match     = if_none_match;
+        }
+
+    protected:
+        std::string m_if_modified_since;
+        std::string m_if_none_match;
     };
 
     class ResponseNotFound : public Response
@@ -138,8 +154,11 @@ public:
     HttpServer(boost::asio::ip::port_type port = LOCALHOST_PORT);
     ~HttpServer();  // 添加析构函数
 
-    boost::thread m_http_server_thread;
-    bool          start_http_server = false;
+    boost::thread    m_http_server_thread;
+    // Written by the io thread's exception handler without holding m_server_mtx
+    // and read unlocked by is_started()/setPort() and the health-check loop,
+    // so it must be atomic.
+    std::atomic<bool> start_http_server = false;
     
     // 添加自动健康检查相关成员
     boost::thread m_health_check_thread;
@@ -202,6 +221,18 @@ private:
         void stop_all();
     };
     friend class session;
+
+    // Serializes server_ / m_http_server_thread lifecycle between stop(),
+    // restart() and is_healthy() (the latter runs on the health-check thread).
+    // The io thread never takes this lock; it only touches the IOServer, whose
+    // sessions set is joined before teardown (see HttpServer::stop).
+    std::mutex m_server_mtx;
+
+    // Body of start() that runs under m_server_mtx. Deliberately does NOT
+    // start the health check: start_health_check() may join a retired
+    // health-check thread that is itself blocked in is_healthy() waiting for
+    // m_server_mtx, so it must only be called after the lock is released.
+    void start_locked();
 
     std::unique_ptr<IOServer> server_{nullptr};
 

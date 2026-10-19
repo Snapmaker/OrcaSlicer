@@ -3,10 +3,12 @@
 #include "../GUI/GUI_App.hpp"
 #include "../GUI/DeviceCore/DevStorage.h"
 #include "../GUI/DeviceManager.hpp"
+#include "NetworkAgent.hpp"
 #include "../GUI/Jobs/ProgressIndicator.hpp"
 #include "../GUI/PartPlate.hpp"
 #include "libslic3r/CutUtils.hpp"
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/PerHeadProcess.hpp"
 #include "libslic3r/Utils.hpp"
 
 #include "libslic3r/Model.hpp"
@@ -62,22 +64,29 @@ std::vector<std::string> not_support_auto_pa_cali_filaments = {
 
 void get_default_k_n_value(const std::string &filament_id, float &k, float &n)
 {
-    if (filament_id.compare("GFU01") == 0) {
+    // filament_id is our OF id; the literals below are the printer's own. An id the agent has
+    // no mapping for (e.g. a caller still on the old id) passes through unchanged.
+    auto* agent = wxGetApp().getAgent();
+    const std::string printer_filament_id = agent ? agent->from_orca_filament_id(filament_id) : filament_id;
+    if (printer_filament_id.compare("GFU01") == 0) {
         /* TPU 95A */
         k = 0.25;
         n = 1.0;
-    } else if (filament_id.compare("GFU03") == 0) {
+    } else if (printer_filament_id.compare("GFU03") == 0) {
         /* TPU 90A */
         k = 0.35;
         n = 1.0;
-    } else if (filament_id.compare("GFU04") == 0) {
+    } else if (printer_filament_id.compare("GFU04") == 0) {
         /* TPU 85A */
         k = 0.65;
         n = 1.0;
-    } else if (filament_id.compare("GFG00") == 0 || filament_id.compare("GFG01") == 0 || filament_id.compare("GFG60") == 0 || filament_id.compare("GFL06") == 0 ||
-               filament_id.compare("GFL55") == 0 || filament_id.compare("GFG99") == 0 || filament_id.compare("GFG98") == 0 || filament_id.compare("GFG97") == 0 ||
-               filament_id.compare("GFG50") == 0 || filament_id.compare("GFU02") == 0 || filament_id.compare("GFU98") == 0 || filament_id.compare("GFS00") == 0 ||
-               filament_id.compare("GFS02") == 0) {
+    } else if (printer_filament_id.compare("GFG00") == 0 || printer_filament_id.compare("GFG01") == 0 ||
+               printer_filament_id.compare("GFG60") == 0 || printer_filament_id.compare("GFL06") == 0 ||
+               printer_filament_id.compare("GFL55") == 0 || printer_filament_id.compare("GFG99") == 0 ||
+               printer_filament_id.compare("GFG98") == 0 || printer_filament_id.compare("GFG97") == 0 ||
+               printer_filament_id.compare("GFG50") == 0 || printer_filament_id.compare("GFU02") == 0 ||
+               printer_filament_id.compare("GFU98") == 0 || printer_filament_id.compare("GFS00") == 0 ||
+               printer_filament_id.compare("GFS02") == 0) {
         /* 0.04 filaments */
         k = 0.04;
         n = 1.0;
@@ -98,6 +107,10 @@ wxString get_nozzle_volume_type_name(NozzleVolumeType type)
         return _L("Hybrid");
     } else if (NozzleVolumeType::nvtTPUHighFlow == type) {
         return _L("TPU High Flow");
+    } else if (NozzleVolumeType::nvtE3DHighFlow == type) {
+        return _L("E3D High Flow");
+    } else if (NozzleVolumeType::nvtExtraHighFlow == type) {
+        return _L("Extra High Flow");
     }
     return wxString();
 }
@@ -115,7 +128,8 @@ void update_speed_parameter( const std::string& key)
 
     float nozzle_diameter = printer_config.option<ConfigOptionFloats>("nozzle_diameter")->values[0];
     float layer_height = print_config.option<ConfigOptionFloat>("layer_height")->value;
-    float line_width = print_config.get_abs_value("line_width", nozzle_diameter);
+    // Snapmaker Orca: the width is a column per tool head; the shared value of the edited preset.
+    float line_width = print_config.get_abs_value_at("line_width", size_t(PerHeadProcess::shared_column(print_config, nvtStandard)), nozzle_diameter);
     if (line_width <= 0.) line_width = Flow::auto_extrusion_width(frPerimeter, nozzle_diameter);
 
     Flow flow = Flow(line_width, layer_height, nozzle_diameter);
@@ -144,7 +158,8 @@ std::vector<double> generate_max_speed_parameter_value(const std::string &key, c
 
     float nozzle_diameter = printer_config.option<ConfigOptionFloats>("nozzle_diameter")->values[0];
     float layer_height    = print_config.option<ConfigOptionFloat>("layer_height")->value;
-    float line_width      = print_config.get_abs_value("line_width", nozzle_diameter);
+    // Snapmaker Orca: the width is a column per tool head; the shared value of the edited preset.
+    float line_width      = print_config.get_abs_value_at("line_width", size_t(PerHeadProcess::shared_column(print_config, nvtStandard)), nozzle_diameter);
 
     Flow flow = Flow(line_width, layer_height, nozzle_diameter);
 
@@ -451,6 +466,17 @@ bool CalibUtils::validate_input_flow_ratio(wxString flow_ratio, float* output_va
     return true;
 }
 
+// filament_max_volumetric_speed holds one value per filament variant column (Standard / High
+// Flow). A calibration overrides all of them, so the head that prints the test gets the value
+// whatever its flow type is and the vector keeps the width the preset declares.
+static void set_max_volumetric_speed_for_calibration(DynamicPrintConfig &filament_config, double value)
+{
+    size_t columns = 1;
+    if (const auto *variants = filament_config.option<ConfigOptionStrings>("filament_extruder_variant"))
+        columns = std::max<size_t>(variants->values.size(), 1);
+    filament_config.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats(columns, value));
+}
+
 static void cut_model(Model &model, double z, ModelObjectCutAttributes attributes)
 {
     size_t obj_idx = 0;
@@ -742,10 +768,13 @@ bool CalibUtils::calib_flowrate(int pass, const CalibInfo &calib_info, wxString 
         _obj->config.set_key_value("detect_thin_wall", new ConfigOptionBool(true));
         _obj->config.set_key_value("filter_out_gap_fill", new ConfigOptionFloat(0));  // OrcaSlicer parameter
         _obj->config.set_key_value("sparse_infill_pattern", new ConfigOptionEnum<InfillPattern>(ipRectilinear));
-        _obj->config.set_key_value("top_surface_line_width", new ConfigOptionFloatOrPercent(nozzle_diameter * 1.2f, false));
-        _obj->config.set_key_value("internal_solid_infill_line_width", new ConfigOptionFloatOrPercent(nozzle_diameter * 1.2f, false));
+        // Snapmaker Orca: the widths are columns per tool head; a one-element override applies to every slot.
+        _obj->config.set_key_value("top_surface_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(nozzle_diameter * 1.2f, false)});
+        _obj->config.set_key_value("internal_solid_infill_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(nozzle_diameter * 1.2f, false)});
         _obj->config.set_key_value("top_surface_pattern", new ConfigOptionEnum<InfillPattern>(ipMonotonic));
-        _obj->config.set_key_value("top_solid_infill_flow_ratio", new ConfigOptionFloat(1.0f));
+        const auto *top_solid_flow = dynamic_cast<const ConfigOptionFloatsNullable *>(_obj->config.option("top_solid_infill_flow_ratio"));
+        _obj->config.set_key_value("top_solid_infill_flow_ratio",
+                                   new ConfigOptionFloatsNullable(top_solid_flow ? top_solid_flow->size() : 1, 1.0f));
         _obj->config.set_key_value("infill_direction", new ConfigOptionFloat(45));
         _obj->config.set_key_value("ironing_type", new ConfigOptionEnum<IroningType>(IroningType::NoIroning));
         _obj->config.set_key_value("internal_solid_infill_speed", new ConfigOptionFloatsNullable({internal_solid_speed}));
@@ -805,12 +834,14 @@ void CalibUtils::calib_pa_pattern(const CalibInfo &calib_info, Model& model)
     }
 
     int index = get_index_for_extruder_parameter(print_config, "outer_wall_speed", calib_info.extruder_id, calib_info.extruder_type, calib_info.nozzle_volume_type);
-    float wall_speed = CalibPressureAdvance::find_optimal_PA_speed(full_config, print_config.get_abs_value("line_width"), print_config.get_abs_value("layer_height"), calib_info.extruder_id, 0);
+    // Snapmaker Orca: the width is a column per tool head; the shared value against the calibrated nozzle.
+    float wall_speed = CalibPressureAdvance::find_optimal_PA_speed(full_config, print_config.get_abs_value_at("line_width", size_t(PerHeadProcess::shared_column(print_config, nvtStandard)), nozzle_diameter), print_config.get_abs_value("layer_height"), calib_info.extruder_id, 0);
     ConfigOptionFloatsNullable *wall_speed_speed_opt = print_config.option<ConfigOptionFloatsNullable>("outer_wall_speed");
     wall_speed_speed_opt->values[index]              = wall_speed;
 
     for (const auto& opt : config_pattern.nozzle_ratio_pairs) {
-        print_config.set_key_value(opt.first, new ConfigOptionFloatOrPercent(nozzle_diameter * opt.second / 100, false));
+        // Snapmaker Orca: the line widths are columns per tool head; the pattern's width fills every column.
+        PerHeadProcess::set_every_column(print_config, opt.first, FloatOrPercent(nozzle_diameter * opt.second / 100, false));
     }
 
     for (const auto& opt : config_pattern.int_pairs) {
@@ -859,7 +890,8 @@ void CalibUtils::set_for_auto_pa_model_and_config(const std::vector<CalibInfo> &
 
     for (const CalibInfo &calib_info : calib_infos) {
         int   index      = get_index_for_extruder_parameter(print_config, "outer_wall_speed", calib_info.extruder_id, calib_info.extruder_type, calib_info.nozzle_volume_type);
-        float wall_speed = CalibPressureAdvance::find_optimal_PA_speed(full_config, print_config.get_abs_value("line_width"), print_config.get_abs_value("layer_height"),
+        // Snapmaker Orca: the width is a column per tool head; the shared value against the calibrated nozzle.
+        float wall_speed = CalibPressureAdvance::find_optimal_PA_speed(full_config, print_config.get_abs_value_at("line_width", size_t(PerHeadProcess::shared_column(print_config, nvtStandard)), nozzle_diameter), print_config.get_abs_value("layer_height"),
                                                                        calib_info.extruder_id, 0);
 
         ConfigOptionFloatsNullable *wall_speed_speed_opt = print_config.option<ConfigOptionFloatsNullable>("outer_wall_speed");
@@ -870,7 +902,8 @@ void CalibUtils::set_for_auto_pa_model_and_config(const std::vector<CalibInfo> &
     }
 
     for (const auto& opt : config_pattern.nozzle_ratio_pairs) {
-        print_config.set_key_value(opt.first, new ConfigOptionFloatOrPercent(nozzle_diameter * opt.second / 100, false));
+        // Snapmaker Orca: the line widths are columns per tool head; the pattern's width fills every column.
+        PerHeadProcess::set_every_column(print_config, opt.first, FloatOrPercent(nozzle_diameter * opt.second / 100, false));
     }
 
     for (const auto& opt : config_pattern.int_pairs) { print_config.set_key_value(opt.first, new ConfigOptionInt(opt.second)); }
@@ -1088,6 +1121,7 @@ bool CalibUtils::calib_generic_PA(const CalibInfo &calib_info, wxString &error_m
         calib_pa_pattern(calib_info, model);
 
     DynamicPrintConfig print_config    = calib_info.print_prest->config;
+    print_config.set_key_value("wipe_inward", new ConfigOptionBool(false));
     DynamicPrintConfig filament_config = calib_info.filament_prest->config;
     DynamicPrintConfig printer_config  = calib_info.printer_prest->config;
 
@@ -1203,8 +1237,9 @@ void CalibUtils::calib_max_vol_speed(const CalibInfo &calib_info, wxString &erro
     auto max_lh = printer_config.option<ConfigOptionFloats>("max_layer_height");
     if (max_lh->values[0] < layer_height) max_lh->values[0] = {layer_height};
 
-    filament_config.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats{50});
-    filament_config.set_key_value("slow_down_layer_time", new ConfigOptionInts{0});
+    set_max_volumetric_speed_for_calibration(filament_config, 50.);
+    // slow_down_layer_time is defined as coFloats; a coInts option here throws in ConfigBase::apply_only.
+    filament_config.set_key_value("slow_down_layer_time", new ConfigOptionFloats{0.0});
     filament_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(calib_info.bed_type));
 
     print_config.set_key_value("enable_overhang_speed", new ConfigOptionBoolsNullable({false}));
@@ -1216,7 +1251,8 @@ void CalibUtils::calib_max_vol_speed(const CalibInfo &calib_info, wxString &erro
     print_config.set_key_value("sparse_infill_density", new ConfigOptionPercent(0));
     print_config.set_key_value("overhang_reverse", new ConfigOptionBool(false));
     print_config.set_key_value("spiral_mode", new ConfigOptionBool(true));
-    print_config.set_key_value("outer_wall_line_width", new ConfigOptionFloat(line_width));
+    // outer_wall_line_width is a column per tool head (coFloatsOrPercents); one absolute width in mm for every slot.
+    print_config.set_key_value("outer_wall_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(line_width, false)});
     print_config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(layer_height));
     print_config.set_key_value("layer_height", new ConfigOptionFloat(layer_height));
     obj->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterAndInner));
@@ -1278,8 +1314,9 @@ void CalibUtils::calib_VFA(const CalibInfo &calib_info, wxString &error_message)
     // Resolved layer height: use the (possibly auto-adjusted) value if provided, else default to nozzle/2.
     double layer_height = params.vfa_layer_height > 0.0 ? params.vfa_layer_height : nozzle_diameter / 2.0;
 
-    filament_config.set_key_value("slow_down_layer_time", new ConfigOptionInts{0});
-    filament_config.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats{200});
+    // slow_down_layer_time is defined as coFloats; a coInts option here throws in ConfigBase::apply_only.
+    filament_config.set_key_value("slow_down_layer_time", new ConfigOptionFloats{0.0});
+    set_max_volumetric_speed_for_calibration(filament_config, 200.);
     filament_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(calib_info.bed_type));
 
     print_config.set_key_value("enable_overhang_speed", new ConfigOptionBoolsNullable({false}));
@@ -1349,6 +1386,7 @@ void CalibUtils::calib_retraction(const CalibInfo &calib_info, wxString &error_m
     read_model_from_file(input_file, model);
 
     DynamicPrintConfig print_config    = calib_info.print_prest->config;
+    print_config.set_key_value("wipe_inward", new ConfigOptionBool(false));
     DynamicPrintConfig filament_config = calib_info.filament_prest->config;
     DynamicPrintConfig printer_config  = calib_info.printer_prest->config;
 
@@ -1393,7 +1431,10 @@ void CalibUtils::calib_retraction(const CalibInfo &calib_info, wxString &error_m
 
 bool CalibUtils::is_support_auto_pa_cali(std::string filament_id)
 {
-    auto iter = std::find(not_support_auto_pa_cali_filaments.begin(), not_support_auto_pa_cali_filaments.end(), filament_id);
+    // filament_id is our OF id; not_support_auto_pa_cali_filaments holds the printer's own ids.
+    auto* agent = wxGetApp().getAgent();
+    const std::string printer_filament_id = agent ? agent->from_orca_filament_id(filament_id) : filament_id;
+    auto iter = std::find(not_support_auto_pa_cali_filaments.begin(), not_support_auto_pa_cali_filaments.end(), printer_filament_id);
     if (iter != not_support_auto_pa_cali_filaments.end()) {
         return false;
     }
@@ -1620,6 +1661,7 @@ bool CalibUtils::process_and_store_3mf(Model *model, const DynamicPrintConfig &f
 
     // apply the new print config
     DynamicPrintConfig new_print_config = full_config;
+    PerHeadProcess::drop_inactive(new_print_config, new_print_config);
     print->apply(*model, new_print_config);
 
     Print *fff_print = dynamic_cast<Print *>(print);

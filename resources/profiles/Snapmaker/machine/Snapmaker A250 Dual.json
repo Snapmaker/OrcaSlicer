@@ -5,6 +5,7 @@
   "name": "Snapmaker A250 Dual",
   "url": "https://github.com/macdylan",
   "model_id": "2728546690",
+  "default_materials": "PolyTerra PLA @Dual 0.2 nozzle;Snapmaker PLA @Dual",
   "bed_model": "Snapmaker A250_bed.stl",
   "bed_texture": "Snapmaker A250 Dual_texture.svg",
   "nozzle_diameter": "0.2;0.4;0.6;0.8"

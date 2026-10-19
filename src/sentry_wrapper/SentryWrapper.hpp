@@ -10,7 +10,7 @@ namespace Slic3r {
 
 	void exitSentry();
 
-    typedef enum SENTRY_LOG_LEVEL {
+    enum SENTRY_LOG_LEVEL {
         SENTRY_LOG_TRACE   = -2,
         SENTRY_LOG_DEBUG   = -1,
         SENTRY_LOG_INFO    = 0,

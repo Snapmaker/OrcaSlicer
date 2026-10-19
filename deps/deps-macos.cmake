@@ -11,6 +11,8 @@ set(DEP_CMAKE_OPTS
     "-DCMAKE_C_FLAGS=${DEP_WERRORS_SDK}"
     "-DCMAKE_FIND_FRAMEWORK=LAST"
     "-DCMAKE_FIND_APPBUNDLE=LAST"
+    # AGL was removed from the macOS 26 SDK. CMake 3.28 FindOpenGL still treats AGL as GLU.
+    "-DOPENGL_glu_LIBRARY="
 )
 
 include("deps-unix-common.cmake")

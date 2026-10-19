@@ -107,6 +107,10 @@ public:
 
     static Flow new_from_config_width(FlowRole role, const ConfigOptionFloatOrPercent &width, float nozzle_diameter, float height);
 
+    // Snapmaker Orca: column `column` (Print::width_slot) of a per tool head width as a scalar option.
+    // A nil column or empty option reads 0 (auto width); a column past the end reads the first.
+    static ConfigOptionFloatOrPercent width_at(const ConfigOptionVector<FloatOrPercent> &widths, size_t column);
+
     // Spacing of extrusions with rounded extrusion model.
     static float rounded_rectangle_extrusion_spacing(float width, float height);
     // Width of extrusions with rounded extrusion model.
@@ -122,7 +126,11 @@ public:
     // Precise value depends on layer index (1st layer vs. other layers vs. variable layer height),
     // on active extruder etc. Therefore the value calculated by this function shall be used as a hint only.
 	static double extrusion_width(const std::string &opt_key, const ConfigOptionFloatOrPercent *opt, const ConfigOptionResolver &config, const unsigned int first_printing_extruder = 0);
+	// A per tool head width option is read at column `first_printing_extruder` (the element overload below).
 	static double extrusion_width(const std::string &opt_key, const ConfigOptionResolver &config, const unsigned int first_printing_extruder = 0);
+    // Snapmaker Orca: width of column `column` of a per tool head key, percent resolved against the nozzle
+    // of `nozzle_extruder`; the fallback chain is read at the same column. Scalar keys ignore the column.
+    static double extrusion_width(const std::string &opt_key, const ConfigOptionResolver &config, const unsigned int nozzle_extruder, size_t column);
 
 private:
     Flow(float width, float height, float spacing, float nozzle_diameter, bool bridge) : 
@@ -139,6 +147,12 @@ private:
     bool        m_bridge { false };
 };
 
+// ORCA: nozzle driving support / raft flows: the configured filament's, or the support_nozzle_diameter restriction when the filament is left at "default" (0).
+extern float support_material_nozzle_diameter(const PrintObject *object, int configured_filament);
+// Snapmaker Orca: 0-based tool head (width column and nozzle index) the support of `object` prints with: the
+// head of `configured` (support filament, 0 = default), else of resolved_default_support_filament, else head 1.
+// `nozzle` receives that head's diameter, or support_nozzle_diameter when that restriction applies.
+extern size_t support_head(const PrintObject *object, int configured, bool interface_role, float *nozzle = nullptr);
 extern Flow support_material_flow(const PrintObject* object, float layer_height = 0.f);
 extern Flow support_transition_flow(const PrintObject *object); //BBS
 extern Flow support_material_1st_layer_flow(const PrintObject *object, float layer_height = 0.f);

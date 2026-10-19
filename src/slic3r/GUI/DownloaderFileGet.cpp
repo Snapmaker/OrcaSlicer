@@ -71,17 +71,6 @@ bool FileGet::is_subdomain(const std::string& url, const std::string& domain)
 	return false;
 }
 
-namespace {
-unsigned get_current_pid()
-{
-#ifdef WIN32
-	return GetCurrentProcessId();
-#else
-	return ::getpid();
-#endif
-}
-}
-
 // int = DOWNLOAD ID; string = file path
 wxDEFINE_EVENT(EVT_DWNLDR_FILE_COMPLETE, wxCommandEvent);
 // int = DOWNLOAD ID; string = error msg
@@ -122,6 +111,18 @@ FileGet::priv::priv(int ID, std::string&& url, const std::string& filename, wxEv
 	, m_dest_folder(dest_folder)
 {
 }
+
+// Opens a download file by its wide path, so that a folder name outside the ANSI code page works on Windows too.
+static FILE* open_download_file(const boost::filesystem::path& path, bool append)
+{
+	const wxString path_wstring(path.wstring());
+#ifdef _WIN32
+	return _wfopen(path_wstring.wc_str(), append ? L"ab" : L"wb");
+#else
+	return fopen(path_wstring.c_str(), append ? "ab" : "wb");
+#endif
+}
+
 std::string extract_remote_filename(const std::string& str) {
     std::regex r("filename=\"([^\"]*)\"");
     std::smatch match;
@@ -144,36 +145,35 @@ void FileGet::priv::get_perform()
 	std::string extension;
 	if (m_written == 0)
 	{
-		boost::filesystem::path dest_path = m_dest_folder / m_filename;
-		extension = dest_path.extension().string();
-		std::string just_filename = m_filename.substr(0, m_filename.size() - extension.size());
-		std::string final_filename = just_filename;
-        // Find unsed filename 
-
-		size_t version = 0;
-		while (boost::filesystem::exists(m_dest_folder / (final_filename + extension)) || boost::filesystem::exists(m_dest_folder / (final_filename + extension + "." + std::to_string(get_current_pid()) + ".download")))
+		std::string final_filename;
+		bool found = false;
+		try {
+			found = find_unused_filename(m_dest_folder, m_filename, m_tmp_path, final_filename);
+		} catch (const boost::filesystem::filesystem_error& e)
 		{
-			++version;
-			if (version > 999)
-			{
-				wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_ERROR);
-				evt->SetString(GUI::format_wxstr(L"Failed to find suitable filename. Last name: %1%." , (m_dest_folder / (final_filename + extension)).string()));
-				evt->SetInt(m_id);
-				m_evt_handler->QueueEvent(evt);
-				return;
-			}
-			final_filename = GUI::format("%1%(%2%)", just_filename, std::to_string(version));
+			wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_ERROR);
+			evt->SetString(e.what());
+			evt->SetInt(m_id);
+			m_evt_handler->QueueEvent(evt);
+			return;
+		}
+		if (!found) {
+			wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_ERROR);
+			evt->SetString(GUI::format_wxstr(L"Failed to find suitable filename. Last name: %1%." , (m_dest_folder / final_filename).string()));
+			evt->SetInt(m_id);
+			m_evt_handler->QueueEvent(evt);
+			return;
 		}
 
-        m_filename = sanitize_filename(final_filename + extension);
+        m_filename = final_filename;
+		extension = boost::filesystem::path(m_filename).extension().string();
 
-        m_tmp_path = m_dest_folder / (m_filename + "." + std::to_string(get_current_pid()) + ".download");
+        m_tmp_path = download_marker_path(m_dest_folder, m_filename);
 
-		//the signals not work
-		//wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_NAME_CHANGE);
-		//evt->SetString(boost::nowide::widen(m_filename));
-		//evt->SetInt(m_id);
-		//m_evt_handler->QueueEvent(evt);
+		wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_NAME_CHANGE);
+		evt->SetString(boost::nowide::widen(m_filename));
+		evt->SetInt(m_id);
+		m_evt_handler->QueueEvent(evt);
 	}
 	
 	boost::filesystem::path dest_path;
@@ -182,21 +182,16 @@ void FileGet::priv::get_perform()
 
 	wxString temp_path_wstring(m_tmp_path.wstring());
 	
+	//std::cout << "dest_path: " << dest_path.string() << std::endl;
+	//std::cout << "m_tmp_path: " << m_tmp_path.string() << std::endl;
+	
 	BOOST_LOG_TRIVIAL(info) << GUI::format("Starting download from %1% to %2%. Temp path is %3%",m_url, dest_path, m_tmp_path);
 
 	FILE* file;
 	// open file for writting
-	if (m_written == 0)
-#ifndef __WIN32__
-        file = fopen(temp_path_wstring.c_str(), "wb");
-	else 
-		file = fopen(temp_path_wstring.c_str(), "ab");
-#else
-		file = _wfopen(temp_path_wstring.c_str(), L"wb");
-    else 
-		file = _wfopen(temp_path_wstring.c_str(), L"ab");
-#endif	
+	file = open_download_file(m_tmp_path, m_written != 0);
 
+	//assert(file != NULL);
 	if (file == NULL) {
 		wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_ERROR);
 		// TRN %1% = file path
@@ -217,13 +212,37 @@ void FileGet::priv::get_perform()
 			if(dest_path.empty()) {
 				std::string filename = extract_remote_filename(header);
 				if (!filename.empty()) {
-					m_filename = filename;
+					// The name comes from the server: keep it inside the destination folder and never
+					// replace an existing file. Keep the current name if nothing usable remains.
+					filename = sanitize_file_basename(filename);
+					std::string unused;
+					try {
+						if (filename.empty() || !find_unused_filename(m_dest_folder, filename, m_tmp_path, unused))
+							unused.clear();
+					} catch (const boost::filesystem::filesystem_error&) {
+						unused.clear();
+					}
+					const boost::filesystem::path tmp_path = unused.empty() ? m_tmp_path : download_marker_path(m_dest_folder, unused);
+					if (tmp_path != m_tmp_path) {
+						// Move the marker to the adopted name so that other downloads see the name as taken.
+						// Only before anything is written, so that no downloaded data has to be carried over.
+						FILE* tmp_file = m_written == 0 ? open_download_file(tmp_path, false) : nullptr;
+						if (tmp_file != nullptr) {
+							fclose(file);
+							boost::system::error_code ec;
+							boost::filesystem::remove(m_tmp_path, ec);
+							file = tmp_file;
+							m_tmp_path = tmp_path;
+						} else
+							unused.clear();
+					}
+					if (!unused.empty())
+						m_filename = unused;
 					dest_path = m_dest_folder / m_filename;
-					//the signals not work
-					//wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_NAME_CHANGE);
-					//evt->SetString(boost::nowide::widen(m_filename));
-					//evt->SetInt(m_id);
-					//m_evt_handler->QueueEvent(evt);
+					wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_NAME_CHANGE);
+					evt->SetString(boost::nowide::widen(m_filename));
+					evt->SetInt(m_id);
+					m_evt_handler->QueueEvent(evt);
 				}
 			}
 		})
@@ -264,10 +283,21 @@ void FileGet::priv::get_perform()
 
 			if (progress.dlnow != 0) {
 			if (progress.dlnow - written_this_session > DOWNLOAD_MAX_CHUNK_SIZE || progress.dlnow == progress.dltotal) {
-
-					std::string part_for_write = progress.buffer.substr(written_this_session, progress.dlnow);
-					fwrite(part_for_write.c_str(), 1, part_for_write.size(), file);
-
+					try
+					{
+						std::string part_for_write = progress.buffer.substr(written_this_session, progress.dlnow);
+						fwrite(part_for_write.c_str(), 1, part_for_write.size(), file);
+					}
+					catch (const std::exception& e)
+					{
+						// fclose(file); do it?
+						wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_ERROR);
+						evt->SetString(e.what());
+						evt->SetInt(m_id);
+						m_evt_handler->QueueEvent(evt);
+						cancel = true;
+						return;
+					}
 					written_this_session = progress.dlnow;
 					m_written = written_previously + written_this_session;
 				}
@@ -292,20 +322,51 @@ void FileGet::priv::get_perform()
 		})
 		.on_complete([&](std::string body, unsigned /* http_status */) {
 
-			// Orca: thingiverse need this
-			if (m_written < body.size())
+			// TODO: perform a body size check
+			// 
+			//size_t body_size = body.size();
+			//if (body_size != expected_size) {
+			//	return;
+			//}
+			try
 			{
-				// this code should never be entered. As there should be on_progress call after last bit downloaded.
-				std::string part_for_write = body.substr(m_written);
-				fwrite(part_for_write.c_str(), 1, part_for_write.size(), file);
+				// Orca: thingiverse need this
+				if (m_written < body.size())
+				{
+					// this code should never be entered. As there should be on_progress call after last bit downloaded.
+					std::string part_for_write = body.substr(m_written);
+					fwrite(part_for_write.c_str(), 1, part_for_write.size(), file);
 
-                wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_PROGRESS);
-                evt->SetString(std::to_string(100));
-                evt->SetInt(m_id);
-                m_evt_handler->QueueEvent(evt);
-            }
-			fclose(file);
-			boost::filesystem::rename(m_tmp_path, dest_path);
+                    wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_PROGRESS);
+                    evt->SetString(std::to_string(100));
+                    evt->SetInt(m_id);
+                    m_evt_handler->QueueEvent(evt);
+                }
+				fclose(file);
+				// Another file may have taken the name while downloading.
+				if (!dest_path.empty() && boost::filesystem::exists(dest_path)) {
+					std::string unused;
+					if (!find_unused_filename(m_dest_folder, m_filename, m_tmp_path, unused))
+						throw std::runtime_error("No unused file name.");
+					m_filename = unused;
+					dest_path = m_dest_folder / m_filename;
+					wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_NAME_CHANGE);
+					evt->SetString(boost::nowide::widen(m_filename));
+					evt->SetInt(m_id);
+					m_evt_handler->QueueEvent(evt);
+				}
+				boost::filesystem::rename(m_tmp_path, dest_path);
+			}
+			catch (const std::exception& /*e*/)
+			{
+				//TODO: report?
+				//error_message = GUI::format("Failed to write and move %1% to %2%", tmp_path, dest_path);
+				wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_ERROR);
+				evt->SetString("Failed to write and move.");
+				evt->SetInt(m_id);
+				m_evt_handler->QueueEvent(evt);
+				return;
+			}
 
 			wxCommandEvent* evt = new wxCommandEvent(EVT_DWNLDR_FILE_COMPLETE);
 			evt->SetString(dest_path.wstring());

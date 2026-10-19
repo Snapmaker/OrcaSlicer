@@ -89,7 +89,9 @@ public:
     bool     is_drop_down(){return drop_down;}
     void     DeleteOneItem(unsigned int pos) { DoDeleteOneItem(pos); }
 
-    void ForceDropdownOpen();
+    // Opens the list; `focus` keeps the keyboard focus while it is open (default: the list itself),
+    // e.g. the text control of an editable combo, so typing goes on.
+    void ForceDropdownOpen(wxWindow *focus = nullptr);
 
 protected:
     virtual int  DoInsertItems(const wxArrayStringsAdapter &items,

@@ -49,7 +49,8 @@ using namespace Slic3r;
 
 namespace {
 
-struct Rgba {
+struct Rgba
+{
     const char*    name;
     unsigned char a, r, g, b;
 };

@@ -3378,7 +3378,6 @@ void MainFrame::start_slice()
         return;
     m_plater->exit_gizmo();
     m_plater->update(true, true);
-    m_plater->log_slice_start();
     if (m_slice_select == eSliceAll)
         wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_ALL));
     else

@@ -16,6 +16,7 @@
 //	       - Single preset item: name, file is default or external.
 
 #include <wx/panel.h>
+#include <wx/weakref.h>
 #include <wx/notebook.h>
 #include <wx/listbook.h>
 #include <wx/scrolwin.h>
@@ -477,6 +478,8 @@ public:
         Tab(parent, _(L("Process")), type) {}
 	~TabPrint() {}
 
+    void refresh_support_override_notice();
+
 	void		build() override;
 	void		reload_config() override;
 	void		update_description_lines() override;
@@ -486,6 +489,9 @@ public:
 	bool 		supports_printer_technology(const PrinterTechnology tech) const override { return tech == ptFFF; }
 
 private:
+    void disable_object_support_overrides();
+    wxWeakRef<wxWindow> m_support_override_notice;
+
 	ogStaticText*	m_recommended_thin_wall_thickness_description_line = nullptr;
 	ogStaticText*	m_top_bottom_shell_thickness_explanation = nullptr;
 };

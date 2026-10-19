@@ -14,6 +14,7 @@ add_executable(${_TEST_NAME}_tests
 	test_printobject.cpp
 	test_skirt_brim.cpp
 	test_support_material.cpp
+	test_support_overrides.cpp
 	test_bed_temperature.cpp
 	test_trianglemesh.cpp
 	)

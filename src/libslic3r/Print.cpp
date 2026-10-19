@@ -6005,7 +6005,7 @@ void Print::_make_wipe_tower()
         using FlushMatrix = std::vector<std::vector<float>>;
         std::vector<FlushMatrix> multi_extruder_flush;
         for (size_t nozzle_id = 0; nozzle_id < nozzle_nums; ++nozzle_id) {
-            std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(m_config.flush_volumes_matrix.values, nozzle_id, nozzle_nums)));
+            std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(m_config.flush_volumes_matrix.values, nozzle_id, nozzle_nums, number_of_extruders)));
             std::vector<std::vector<float>> wipe_volumes;
             for (unsigned int i = 0; i < number_of_extruders; ++i)
                 wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * number_of_extruders, flush_matrix.begin() + (i + 1) * number_of_extruders));
@@ -6171,7 +6171,7 @@ void Print::_make_wipe_tower()
         m_fake_wipe_tower.outer_wall = wipe_tower.get_outer_wall();
     } else {
         // Get wiping matrix to get number of extruders and convert vector<double> to vector<float>:
-        std::vector<float> flush_matrix(cast<float>(m_config.flush_volumes_matrix.values));
+        std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(m_config.flush_volumes_matrix.values, 0, 1, number_of_extruders)));
         // Extract purging volumes for each extruder pair:
         std::vector<std::vector<float>> wipe_volumes;
         for (unsigned int i = 0; i<number_of_extruders; ++i)

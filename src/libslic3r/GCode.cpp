@@ -7023,7 +7023,7 @@ LayerResult GCode::process_layer(
 
     // BBS: get next extruder according to flush and soluble
     auto get_next_extruder = [&](int current_extruder,const std::vector<unsigned int>&extruders) {
-        std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(m_config.flush_volumes_matrix.values, 0, m_config.nozzle_diameter.values.size())));
+        std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(m_config.flush_volumes_matrix.values, 0, m_config.nozzle_diameter.values.size(), m_config.filament_colour.values.size())));
         const unsigned int number_of_extruders = (unsigned int)(sqrt(flush_matrix.size()) + EPSILON);
         // Extract purging volumes for each extruder pair:
         std::vector<std::vector<float>> wipe_volumes;
@@ -11896,7 +11896,7 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
     int old_filament_id = -1;
     int old_extruder_id = -1;
     if (m_writer.filament() != nullptr || m_start_gcode_filament != -1) {
-        std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(m_config.flush_volumes_matrix.values, new_extruder_id, m_config.nozzle_diameter.values.size())));
+        std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(m_config.flush_volumes_matrix.values, new_extruder_id, m_config.nozzle_diameter.values.size(), m_config.filament_colour.values.size())));
         const unsigned int number_of_extruders = (unsigned int) (m_config.filament_colour.values.size()); // if is multi_extruder only use the fist extruder matrix
         if (m_writer.filament() != nullptr)
             assert(m_writer.filament()->id() < number_of_extruders);

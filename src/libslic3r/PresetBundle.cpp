@@ -5389,7 +5389,7 @@ std::vector<std::vector<std::vector<float>>> PresetBundle::get_full_flush_matrix
 
     std::vector<std::vector<std::vector<float>>> matrix;
     for (size_t extruder_id = 0; extruder_id < extruder_nums; ++extruder_id) {
-        std::vector<float>              flush_matrix(cast<float>(get_flush_volumes_matrix(flush_volume_value, extruder_id, extruder_nums)));
+        std::vector<float>              flush_matrix(cast<float>(get_flush_volumes_matrix(flush_volume_value, extruder_id, extruder_nums, filament_nums)));
         std::vector<std::vector<float>> wipe_volumes;
         for (unsigned int i = 0; i < filament_nums; ++i)
             wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * filament_nums, flush_matrix.begin() + (i + 1) * filament_nums));

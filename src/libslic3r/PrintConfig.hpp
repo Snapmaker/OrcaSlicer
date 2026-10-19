@@ -2585,9 +2585,27 @@ inline bool has_extruder_layer_heights(const PrintConfig &config) {
 
 // const std::vector<double> &fv_matrix:  origin matrix from json
 // size_t extruder_id: -1 means single-nozzle for old file, 0 means the 1st extruder, 1 means the 2nd extruder
+// size_t filament_nums: > 0 sizes the result to filament_nums^2; nozzles without a stored block use the first
 template<class T>
-static std::vector<T> get_flush_volumes_matrix(const std::vector<T> &fv_matrix, size_t extruder_id = -1, size_t nozzle_nums = 1)
+static std::vector<T> get_flush_volumes_matrix(const std::vector<T> &fv_matrix, size_t extruder_id = -1, size_t nozzle_nums = 1, size_t filament_nums = 0)
 {
+    if (filament_nums > 0) {
+        const size_t n2 = filament_nums * filament_nums;
+        if (!fv_matrix.empty() && fv_matrix.size() % n2 == 0) {
+            const size_t id = extruder_id < fv_matrix.size() / n2 ? extruder_id : 0;
+            return std::vector<T>(fv_matrix.begin() + n2 * id, fv_matrix.begin() + n2 * (id + 1));
+        }
+        std::vector<T> block = nozzle_nums == 0 || extruder_id >= nozzle_nums ? fv_matrix : get_flush_volumes_matrix(fv_matrix, extruder_id, nozzle_nums);
+        const size_t   k     = size_t(std::sqrt(double(block.size())) + EPSILON);
+        if (k * k != block.size()) {
+            block.resize(n2, T(0));
+            return block;
+        }
+        std::vector<T> out(n2, T(0));
+        for (size_t i = 0; i < std::min(k, filament_nums); ++i)
+            std::copy_n(block.begin() + i * k, std::min(k, filament_nums), out.begin() + i * filament_nums);
+        return out;
+    }
     if (extruder_id != -1 && nozzle_nums != 1) {
         return std::vector<T>(fv_matrix.begin() + size_t(fv_matrix.size() / nozzle_nums * extruder_id + EPSILON),
                                    fv_matrix.begin() + size_t(fv_matrix.size() / nozzle_nums * (extruder_id + 1) + EPSILON));

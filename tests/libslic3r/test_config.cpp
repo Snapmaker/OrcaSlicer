@@ -301,6 +301,60 @@ TEST_CASE("Flush-volume warning predicate respects used filament transitions", "
     }
 }
 
+static std::vector<double> flush_block(double base)
+{
+    std::vector<double> block;
+    for (int i = 0; i < 16; ++i)
+        block.push_back(base + i);
+    return block;
+}
+
+TEST_CASE("A one-nozzle flush matrix serves every nozzle", "[Config]")
+{
+    const std::vector<double> one_nozzle = flush_block(1.);
+    const size_t              nozzle     = size_t(GENERATE(0, 1, 2, 3));
+    CAPTURE(nozzle);
+    CHECK_THAT(get_flush_volumes_matrix(one_nozzle, nozzle, 4, 4), Catch::Matchers::Equals(one_nozzle));
+}
+
+TEST_CASE("Each nozzle reads its own stored flush block, or the first one when it has none", "[Config]")
+{
+    const int           stored = GENERATE(2, 4);
+    std::vector<double> matrix;
+    for (int nozzle = 0; nozzle < stored; ++nozzle) {
+        const std::vector<double> block = flush_block(100. * nozzle);
+        matrix.insert(matrix.end(), block.begin(), block.end());
+    }
+    const int nozzle = GENERATE(0, 1, 2, 3);
+    CAPTURE(stored, nozzle);
+    CHECK_THAT(get_flush_volumes_matrix(matrix, size_t(nozzle), 4, 4), Catch::Matchers::Equals(flush_block(100. * (nozzle < stored ? nozzle : 0))));
+}
+
+TEST_CASE("A stale flush matrix is fitted to the filament count", "[Config]")
+{
+    const std::vector<double> two_filaments_two_nozzles = {1., 2., 3., 4., 5., 6., 7., 8.};
+
+    SECTION("a square block keeps its rows") {
+        CHECK_THAT(get_flush_volumes_matrix(two_filaments_two_nozzles, 1, 2, 3),
+                   Catch::Matchers::Equals(std::vector<double>{5., 6., 0., 7., 8., 0., 0., 0., 0.}));
+        CHECK_THAT(get_flush_volumes_matrix(std::vector<double>{0., 1., 2., 3., 0., 5., 6., 7., 0.}, 0, 1, 2),
+                   Catch::Matchers::Equals(std::vector<double>{0., 1., 3., 0.}));
+    }
+    SECTION("a nozzle outside the nozzle count pads the whole matrix") {
+        const std::vector<double> expected = {1., 2., 3., 4., 5., 6., 7., 8., 0.};
+        CHECK_THAT(get_flush_volumes_matrix(two_filaments_two_nozzles, size_t(-1), 2, 3), Catch::Matchers::Equals(expected));
+        CHECK_THAT(get_flush_volumes_matrix(two_filaments_two_nozzles, 2, 2, 3), Catch::Matchers::Equals(expected));
+        CHECK_THAT(get_flush_volumes_matrix(two_filaments_two_nozzles, 0, 0, 3), Catch::Matchers::Equals(expected));
+    }
+}
+
+TEST_CASE("A flush matrix lookup without a filament count slices by nozzle count only", "[Config]")
+{
+    const std::vector<double> one_nozzle = flush_block(1.);
+    CHECK_THAT(get_flush_volumes_matrix(one_nozzle), Catch::Matchers::Equals(one_nozzle));
+    CHECK_THAT(get_flush_volumes_matrix(one_nozzle, 1, 4), Catch::Matchers::Equals(std::vector<double>(one_nozzle.begin() + 4, one_nozzle.begin() + 8)));
+}
+
 // TODO: https://github.com/SoftFever/OrcaSlicer/issues/11269 - Is this test still relevant? Delete if not.
 // It was failing so at least "nozzle_type" and "extruder_printable_area" could not be serialized
 // and an exception was thrown, but "nozzle_type" has been around for at least 3 months now.

@@ -1063,3 +1063,41 @@ TEST_CASE("parse_cyclic_order parses user cyclic toolchange sequences", "[ToolOr
         REQUIRE(parse_cyclic_order("3,1", 4) == std::vector<unsigned int>({2, 0}));
     }
 }
+
+TEST_CASE("A one-nozzle flush matrix charges every filament change on a multi-nozzle printer", "[ToolOrdering][Regression]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_num_extruders(4);
+    config.set_num_filaments(4);
+    config.option<ConfigOptionStrings>("filament_colour", true)->values = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    config.option<ConfigOptionFloats>("filament_diameter", true)->values = {1.75, 1.75, 1.75, 1.75};
+    config.option<ConfigOptionFloats>("filament_density", true)->values = {1000., 1000., 1000., 1000.};
+    config.option<ConfigOptionFloats>("flush_volumes_matrix", true)->values = {0.,   280., 280., 280., 280., 0.,   280., 280.,
+                                                                               280., 280., 0.,   280., 280., 280., 280., 0.};
+    config.option<ConfigOptionFloats>("flush_multiplier", true)->values = {1., 1., 1., 1.};
+    config.option<ConfigOptionEnum<PrimeVolumeMode>>("prime_volume_mode", true)->value = PrimeVolumeMode::pvmDefault;
+    config.set("enable_prime_tower", true);
+    config.option<ConfigOptionFloats>("wipe_tower_x", true)->values = {20.};
+    config.option<ConfigOptionFloats>("wipe_tower_y", true)->values = {20.};
+    config.set("purge_in_prime_tower", true);
+    config.set("single_extruder_multi_material", true);
+
+    Model model;
+    model.add_object("cube_a", "", make_cube(10, 10, 2))->add_instance()->set_offset(Vec3d(70., 100., 0.));
+    ModelObject *object_b = model.add_object("cube_b", "", make_cube(10, 10, 2));
+    object_b->config.set_key_value("extruder", new ConfigOptionInt(2));
+    object_b->add_instance()->set_offset(Vec3d(130., 100., 0.));
+
+    Print print;
+    print.apply(model, config);
+    REQUIRE(print.config().nozzle_diameter.values.size() == 4);
+    REQUIRE(print.config().flush_volumes_matrix.values.size() == 16);
+    print.process();
+    REQUIRE(print.is_step_done(psWipeTower));
+    ToolOrdering &ordering = print.wipe_tower_data().tool_ordering;
+    REQUIRE(ordering.has_wipe_tower());
+
+    const FilamentChangeStats single = ordering.get_filament_change_stats(ToolOrdering::SingleExt);
+    REQUIRE(single.flush_filament_change_count > 0);
+    CHECK(single.filament_flush_weight == 280 * single.flush_filament_change_count);
+}

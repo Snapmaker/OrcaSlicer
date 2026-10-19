@@ -1401,7 +1401,8 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                 auto all_extruders     = object.print()->extruders();
                 auto get_next_extruder = [&](int current_extruder, const std::vector<unsigned int> &extruders) {
                     std::vector<float> flush_matrix(
-                        cast<float>(get_flush_volumes_matrix(object.print()->config().flush_volumes_matrix.values, 0, object.print()->config().nozzle_diameter.values.size())));
+                        cast<float>(get_flush_volumes_matrix(object.print()->config().flush_volumes_matrix.values, 0, object.print()->config().nozzle_diameter.values.size(),
+                                                             object.print()->config().filament_colour.values.size())));
                     const unsigned int number_of_extruders = (unsigned int) (sqrt(flush_matrix.size()) + EPSILON);
                     // Extract purging volumes for each extruder pair:
                     std::vector<std::vector<float>> wipe_volumes;
@@ -1409,9 +1410,7 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                         wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * number_of_extruders, flush_matrix.begin() + (i + 1) * number_of_extruders));
                     int   next_extruder = current_extruder;
                     float min_flush     = std::numeric_limits<float>::max();
-                    // The matrix is dimensioned from the stored flush_volumes_matrix, the ids from the
-                    // print's filament list; when they disagree (stale matrix) the lookup below would
-                    // read out of bounds. Fall back to the first usable candidate instead.
+                    // Ids beyond the filament count have no matrix row; fall back to the first usable candidate.
                     const bool matrix_covers_ids =
                         extruder_interface > 0 && extruder_interface - 1 < number_of_extruders &&
                         std::all_of(extruders.begin(), extruders.end(), [number_of_extruders](unsigned int id) { return id < number_of_extruders; });
@@ -2013,7 +2012,7 @@ static std::vector<FlushMatrix> prepare_flush_matrices(const PrintConfig& print_
     size_t filament_nums = print_config.filament_colour.values.size();
     std::vector<FlushMatrix> nozzle_flush_mtx;
     for (size_t nozzle_id = 0; nozzle_id < extruder_nums; ++nozzle_id) {
-        std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(print_config.flush_volumes_matrix.values, nozzle_id, extruder_nums)));
+        std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(print_config.flush_volumes_matrix.values, nozzle_id, extruder_nums, filament_nums)));
         std::vector<std::vector<float>> wipe_volumes;
         for (unsigned int i = 0; i < filament_nums; ++i)
             wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * filament_nums, flush_matrix.begin() + (i + 1) * filament_nums));
@@ -3411,7 +3410,7 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume(bool reorder_first
 
     std::vector<FlushMatrix> nozzle_flush_mtx;
     for (size_t nozzle_id = 0; nozzle_id < nozzle_nums; ++nozzle_id) {
-        std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(print_config->flush_volumes_matrix.values, nozzle_id, nozzle_nums)));
+        std::vector<float> flush_matrix(cast<float>(get_flush_volumes_matrix(print_config->flush_volumes_matrix.values, nozzle_id, nozzle_nums, number_of_extruders)));
         std::vector<std::vector<float>> wipe_volumes;
         if ((print_config->purge_in_prime_tower && print_config->single_extruder_multi_material) || wipe_tower_type == WipeTowerType::Type1) {
             for (unsigned int i = 0; i < number_of_extruders; ++i)

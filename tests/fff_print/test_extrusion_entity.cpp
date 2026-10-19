@@ -86,7 +86,11 @@ SCENARIO("ExtrusionEntityCollection: Polygon flattening", "[ExtrusionEntity]") {
 
 // Full ExtrusionRole <-> string mapping, shared by the role<->string unit tests.
 namespace {
-struct RoleStringPair { ExtrusionRole role; const char* str; };
+struct RoleStringPair
+{
+    ExtrusionRole role;
+    const char   *str;
+};
 const RoleStringPair kRoleStringMap[] = {
     { erNone,                     "Undefined" },
     { erPerimeter,                "Inner wall" },

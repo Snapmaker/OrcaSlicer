@@ -254,9 +254,9 @@ SCENARIO("Flow: with_cross_section adjusts the extrusion to a target area", "[Fl
             THEN("The extrusion degenerates to a circular cross-section with the spacing preserved") {
                 REQUIRE_THAT(result.width(), WithinRel(result.height(), 0.001));
                 REQUIRE_THAT(result.spacing(), WithinRel(base.spacing(), 0.001));
-                // The diameter is computed as sqrt(area_new / PI), so the resulting
-                // circle area (PI * d^2 / 4) lands at area_new / 4, not area_new.
-                // Left as an observation rather than an assertion until reviewed.
+                // Contract pinned (known bug): the diameter is computed as sqrt(area_new / PI),
+                // so the resulting circle area (PI * d^2 / 4) lands at area_new / 4, not area_new.
+                REQUIRE_THAT(result.mm3_per_mm(), WithinRel(0.02 / 4.0, 0.001));
             }
         }
     }
@@ -303,7 +303,12 @@ SCENARIO("Flow: with_spacing shifts the extrusion width", "[Flow]") {
 /// The rounded-rectangle cross-section is a rectangle of width w minus the
 /// corner caps, giving width*height - height^2*(1 - pi/4).
 SCENARIO("Flow: mm3_per_mm exact formula table", "[Flow]") {
-    struct Case { float width; float height; double expected; };
+    struct Case
+    {
+        float  width;
+        float  height;
+        double expected;
+    };
     const Case cases[] = {
         { 0.6f, 0.2f, 0.1114159265 },
         { 0.4f, 0.4f, 0.1256637061 },

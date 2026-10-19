@@ -105,9 +105,6 @@ public:
     /** @brief Releases all GL objects; the GL context must be current. */
     void Release();
 
-    /** @brief Returns true when GL resources are allocated. */
-    bool HasResources() const { return _shadowFramebuffer != 0 || _maskFramebuffer != 0; }
-
     /** @brief Returns true when the last Update() rebuilt the shadow map and mask. */
     bool WasRebuilt() const { return _rebuilt; }
 

@@ -3239,8 +3239,9 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
 
     const bool softShadowsVisible = IsSoftShadowVisible(no_partplate);
     UpdateSoftShadows(softShadowsVisible);
-    // A rebuilt shadow map changes the scene image, so the cached scene cannot be reused
-    if (_softShadowRenderer != nullptr && _softShadowRenderer->WasRebuilt())
+    // A rebuilt shadow map changes the scene image, so the cached scene cannot be reused.
+    // Fix: only while visible; hidden shadows skip Update(), which would leave a stale rebuild flag
+    if (softShadowsVisible && _softShadowRenderer != nullptr && _softShadowRenderer->WasRebuilt())
         fullSceneRefresh = true;
 
     const int hover_id = m_hover_plate_idxs.empty() ? -1 : m_hover_plate_idxs.front();

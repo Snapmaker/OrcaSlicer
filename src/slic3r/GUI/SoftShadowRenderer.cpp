@@ -1355,11 +1355,9 @@ void SoftShadowRenderer::RenderObjectShadows(const Camera& camera, bool darkMode
 
     GLint drawFramebuffer = 0;
     glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFramebuffer));
+    // Fix: a frame rendered into another framebuffer only skips the pass instead of disabling it for good
     if (drawFramebuffer != 0)
-    {
-        DisableObjectShadows("scene is not rendered into the default framebuffer");
         return;
-    }
     // GL_SAMPLES describes the bound draw framebuffer, here the default one
     GLint samples = 0;
     glsafe(::glGetIntegerv(GL_SAMPLES, &samples));

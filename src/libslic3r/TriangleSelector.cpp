@@ -526,6 +526,8 @@ bool TriangleSelector::SelectSeedFillLeaf(int triangleIndex)
 uint32_t TriangleSelector::BeginQueryGeneration(std::vector<uint32_t>& queryStamp, uint32_t& queryGeneration,
                                                 size_t requiredSize)
 {
+    // Stamps are grown lazily here, not kept in sync by push_triangle. Valid only because a query
+    // never adds triangles; stale stamps of reused slots are always older than the new generation.
     if (queryStamp.size() < requiredSize)
         queryStamp.resize(requiredSize, 0);
 
@@ -545,7 +547,6 @@ uint32_t TriangleSelector::BeginQueryGeneration(std::vector<uint32_t>& queryStam
 void TriangleSelector::PrepareForLeafIdentityChange()
 {
     seed_fill_unselect_all_triangles();
-    BeginQueryGeneration(m_triangleQueryStamp, m_triangleQueryGeneration, m_triangleQueryStamp.size());
     m_neighborCache.topologyRevision = 0;
     m_neighborCache.indexRevision = 0;
     OnLeafIdentityWillChange();
@@ -1815,7 +1816,6 @@ void TriangleSelector::reset()
     for (const stl_vertex& vert : m_mesh.its.vertices)
         m_vertices.emplace_back(vert);
     m_triangles.reserve(m_mesh.its.indices.size());
-    m_triangleQueryStamp.reserve(m_mesh.its.indices.size());
     for (size_t i = 0; i < m_mesh.its.indices.size(); ++i) {
         const stl_triangle_vertex_indices &ind = m_mesh.its.indices[i];
         push_triangle(ind[0], ind[1], ind[2], int(i));
@@ -1842,8 +1842,6 @@ int TriangleSelector::push_triangle(int a, int b, int c, int source_triangle, co
         assert(m_invalid_triangles == 0);
         idx = int(m_triangles.size());
         m_triangles.emplace_back(a, b, c, source_triangle, state);
-        m_triangleQueryStamp.resize(m_triangles.size(), 0);
-        m_triangleQueryStamp[idx] = 0;
     } else {
         // Reuse triangle from the free list.
         assert(m_free_triangles_head >= -1 && m_free_triangles_head < int(m_triangles.size()));
@@ -1857,7 +1855,6 @@ int TriangleSelector::push_triangle(int a, int b, int c, int source_triangle, co
         assert(m_invalid_triangles >= 0);
         assert((m_invalid_triangles == 0) == (m_free_triangles_head == -1));
         m_triangles[idx] = {a, b, c, source_triangle, state};
-        m_triangleQueryStamp[idx] = 0;
     }
     assert(m_triangles[idx].valid());
     return idx;
@@ -1875,15 +1872,7 @@ void TriangleSelector::perform_split(int facet_idx, const Vec3i32 &neighbors, En
     {
         size_t num_triangles_new = m_triangles.size() + m_triangles[facet_idx].number_of_split_sides() + 1;
         if (m_triangles.capacity() < num_triangles_new)
-        {
-            const size_t newCapacity = next_highest_power_of_2(num_triangles_new);
-            m_triangles.reserve(newCapacity);
-            m_triangleQueryStamp.reserve(newCapacity);
-        }
-        else if (m_triangleQueryStamp.capacity() < num_triangles_new)
-        {
-            m_triangleQueryStamp.reserve(m_triangles.capacity());
-        }
+            m_triangles.reserve(next_highest_power_of_2(num_triangles_new));
     }
 
     Triangle &tr = m_triangles[facet_idx];
@@ -2179,29 +2168,6 @@ std::vector<Vec2i32> TriangleSelector::get_seed_fill_contour() const
     return edgesOut;
 }
 
-std::vector<Vec2i32> TriangleSelector::get_seed_fill_contour(const std::vector<uint32_t>& sourceRoots) const
-{
-    if (sourceRoots.empty())
-        return {};
-
-    std::vector<uint32_t> uniqueSourceRoots;
-    uniqueSourceRoots.reserve(sourceRoots.size());
-    for (uint32_t sourceRoot : sourceRoots)
-        if (sourceRoot < static_cast<uint32_t>(m_orig_size_indices))
-            uniqueSourceRoots.push_back(sourceRoot);
-
-    if (uniqueSourceRoots.empty())
-        return {};
-
-    // Caller-supplied roots are not guaranteed unique.
-    std::sort(uniqueSourceRoots.begin(), uniqueSourceRoots.end());
-    uniqueSourceRoots.erase(std::unique(uniqueSourceRoots.begin(), uniqueSourceRoots.end()), uniqueSourceRoots.end());
-
-    std::vector<Vec2i32> edgesOut;
-    AppendSeedFillContourForUniqueRoots(uniqueSourceRoots, edgesOut);
-    return edgesOut;
-}
-
 // Roots must already be range-checked and unique; appends contour edges without copying them again.
 void TriangleSelector::AppendSeedFillContourForUniqueRoots(const std::vector<uint32_t>& sourceRoots,
                                                            std::vector<Vec2i32>& edgesOut) const
@@ -2393,7 +2359,6 @@ void TriangleSelector::deserialize(const TriangleSplittingData& data,
     // Reserve number of triangles as if each triangle was saved with 4 bits.
     // With MMU painting this estimate may be somehow low, but better than nothing.
     m_triangles.reserve(std::max(m_mesh.its.indices.size(), data.bitstream.size() / 4));
-    m_triangleQueryStamp.reserve(m_triangles.capacity());
     // Number of triangles is twice the number of vertices on a large manifold mesh of genus zero.
     // Here the triangles count account for both the nodes and leaves, thus the following line may overestimate.
     m_vertices.reserve(std::max(m_mesh.its.vertices.size(), m_triangles.size() / 2));

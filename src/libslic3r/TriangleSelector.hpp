@@ -315,9 +315,6 @@ public:
         void Build(const TriangleMesh& mesh, const Transform3d& effectiveTransform);
         bool Matches(const TriangleMesh& mesh, const Transform3d& effectiveTransform) const;
         const std::vector<uint32_t>& Query(float zBottomWorld, float zTopWorld);
-        size_t GetBucketCount() const { return m_buckets.size(); }
-        size_t GetTotalBucketReferences() const { return m_totalBucketReferences; }
-        size_t GetLongSpanRootCount() const { return m_longSpanRoots.size(); }
 
     private:
         size_t BucketIndex(float zWorld) const;
@@ -412,8 +409,6 @@ public:
     indexed_triangle_set get_facets_strict(EnforcerBlockerType state) const;
     // Get edges around the selected area by seed fill.
     std::vector<Vec2i32> get_seed_fill_contour() const;
-    // Get seed-fill contour edges by traversing only the supplied original source roots.
-    std::vector<Vec2i32> get_seed_fill_contour(const std::vector<uint32_t>& sourceRoots) const;
 
     // BBS
     void get_facets(std::vector<indexed_triangle_set>& facets_per_type) const;

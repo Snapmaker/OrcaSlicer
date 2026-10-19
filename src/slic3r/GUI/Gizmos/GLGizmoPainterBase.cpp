@@ -2410,9 +2410,9 @@ void TriangleSelectorPatch::MarkAllChunksTopologyDirty()
 
 void TriangleSelectorPatch::AggregateDirtyRoots()
 {
-    for (uint32_t chunkId : m_dirtyChunks)
-        if (chunkId < m_renderChunks.size())
-            m_renderChunks[chunkId].stateDirtyRoots.clear();
+    // ClearRenderDirtyState empties these at the end of every update.
+    assert(std::all_of(m_renderChunks.begin(), m_renderChunks.end(),
+                       [](const RenderChunk& chunk) { return chunk.stateDirtyRoots.empty(); }));
 
     for (uint32_t source : m_dirtyRoots) {
         if (source >= m_sourceToChunk.size())

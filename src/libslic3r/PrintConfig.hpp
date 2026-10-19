@@ -947,6 +947,13 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,               support_expansion))
     ((ConfigOptionFloats,              support_speed))
     ((ConfigOptionEnum<SupportMaterialStyle>, support_style))
+
+    // Orca: a flag enabling the ability to override flow ratios
+    ((ConfigOptionBool,     set_other_flow_ratios))
+    // Orca: support-related flow ratios (available for overriding, if set_other_flow_ratios is enabled)
+    ((ConfigOptionFloat,    support_flow_ratio))
+    ((ConfigOptionFloat,    support_interface_flow_ratio))
+
     // BBS
     //((ConfigOptionBool,                independent_support_layer_height))
     // Orca internal thick bridge
@@ -1178,6 +1185,15 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,                is_infill_first))
     ((ConfigOptionBool,                small_area_infill_flow_compensation))
     ((ConfigOptionEnum<WallDirection>,  wall_direction))
+
+    // Orca: other flow ratios (available for overriding, if set_other_flow_ratios is enabled)
+    ((ConfigOptionFloat,                first_layer_flow_ratio))
+    ((ConfigOptionFloat,                outer_wall_flow_ratio))
+    ((ConfigOptionFloat,                inner_wall_flow_ratio))
+    ((ConfigOptionFloat,                overhang_flow_ratio))
+    ((ConfigOptionFloat,                sparse_infill_flow_ratio))
+    ((ConfigOptionFloat,                internal_solid_infill_flow_ratio))
+    ((ConfigOptionFloat,                gap_fill_flow_ratio))
 
     // Orca: seam slopes
     ((ConfigOptionEnum<SeamScarfType>,  seam_slope_type))

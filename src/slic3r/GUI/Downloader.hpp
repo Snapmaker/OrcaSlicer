@@ -44,6 +44,11 @@ public:
     DownloadState get_state() const { return m_state; }
     void set_state(DownloadState state) { m_state = state; }
     std::string get_dest_folder() { return m_dest_folder.string(); }
+
+    // Whether this download was triggered by the Snapmaker Lab scheme
+    // (snapmaker-orca://open / Snapmaker_Orca://open).
+    void set_lab_import(bool value) { m_lab_import = value; }
+    bool is_lab_import() const { return m_lab_import; }
 private: 
     const int m_id;
     std::string m_filename;
@@ -51,6 +56,7 @@ private:
     boost::filesystem::path m_dest_folder;
     std::shared_ptr<FileGet> m_file_get;
     DownloadState m_state { DownloadState::DownloadPending };
+    bool m_lab_import { false };
 };
 
 class Downloader : public wxEvtHandler {

@@ -447,8 +447,11 @@ GLModel* SelectShadowLod(const GLVolume& volume)
 /** @brief Returns true when the volume should cast a shadow. */
 bool IsShadowCaster(const GLVolume& volume, bool renderSlaAuxiliaries)
 {
-    if (!volume.is_active || !volume.visible || volume.is_modifier)
+    if (!volume.is_active || !volume.visible)
         return false;
+    // Modifiers, negative parts, support blockers and enforcers are drawn translucent but still cast shadows
+    if (volume.is_modifier)
+        return true;
     if (!renderSlaAuxiliaries && volume.composite_id.volume_id < 0)
         return false;
     if (volume.force_transparent || volume.color.is_transparent())

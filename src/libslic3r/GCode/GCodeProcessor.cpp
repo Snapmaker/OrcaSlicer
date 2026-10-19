@@ -1038,7 +1038,7 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
         if (machine_max_jerk_y != nullptr)
             m_time_processor.machine_limits.machine_max_jerk_y.values = machine_max_jerk_y->values;
 
-        const ConfigOptionFloats* machine_max_jerk_z = config.option<ConfigOptionFloats>("machine_max_jerkz");
+        const ConfigOptionFloats* machine_max_jerk_z = config.option<ConfigOptionFloats>("machine_max_jerk_z");
         if (machine_max_jerk_z != nullptr)
             m_time_processor.machine_limits.machine_max_jerk_z.values = machine_max_jerk_z->values;
 

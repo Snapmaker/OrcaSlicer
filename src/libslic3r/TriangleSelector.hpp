@@ -329,6 +329,9 @@ public:
     bool                 has_facets(EnforcerBlockerType state) const;
     static bool          has_facets(const TriangleSplittingData &data, EnforcerBlockerType test_state);
     int                  num_facets(EnforcerBlockerType state) const;
+    // Collect indices of the original (level-0) triangles whose subtree contains at
+    // least one leaf triangle in the given state.
+    std::vector<int>     get_facets_indices_by_state(EnforcerBlockerType state) const;
     // Get facets at a given state. Don't triangulate T-joints.
     indexed_triangle_set get_facets(EnforcerBlockerType state) const;
     // Get facets at a given state. Triangulate T-joints.

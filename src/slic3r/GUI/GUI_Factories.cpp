@@ -1993,8 +1993,16 @@ void MenuFactory::append_menu_item_simplify(wxMenu* menu)
 
 void MenuFactory::append_menu_item_smooth_mesh(wxMenu* menu)
 {
-    wxMenuItem* menu_item = append_menu_item(
-        menu, wxID_ANY, _L("Subdivision mesh") + _L("(Lost color)"), "", [](wxCommandEvent&) { obj_list()->smooth_mesh(); }, "", menu,
+    wxMenu* subdivision_menu = new wxMenu();
+    if (!subdivision_menu)
+        return;
+    append_menu_item(subdivision_menu, wxID_ANY, _L("Global Subdivision"), "",
+        [](wxCommandEvent&) { obj_list()->smooth_mesh(); }, "", menu,
+        []() { return plater()->can_smooth_mesh(); }, m_parent);
+    append_menu_item(subdivision_menu, wxID_ANY, _L("Local Subdivision"), "",
+        [](wxCommandEvent&) { obj_list()->smooth_mesh_local(); }, "", menu,
+        []() { return plater()->can_smooth_mesh(); }, m_parent);
+    append_submenu(menu, subdivision_menu, wxID_ANY, _L("Subdivision mesh") + _L("(Lost color)"), "", "",
         []() { return plater()->can_smooth_mesh(); }, m_parent);
 }
 

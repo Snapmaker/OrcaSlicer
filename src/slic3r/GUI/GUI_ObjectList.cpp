@@ -5769,6 +5769,24 @@ void GUI::ObjectList::smooth_mesh()
     }
 }
 
+void GUI::ObjectList::smooth_mesh_local()
+{
+    auto plater = wxGetApp().plater();
+    if (!plater) {
+        return;
+    }
+
+    // Open the painting-style gizmo: the user paints the facets to subdivide and
+    // applies the subdivision from the gizmo panel.
+    GLGizmosManager& gizmos_mgr = plater->get_view3D_canvas3D()->get_gizmos_manager();
+    if (! gizmos_mgr.check_gizmos_closed_except(GLGizmosManager::EType::LocalSubdivision))
+        return;
+    if (gizmos_mgr.get_current_type() == GLGizmosManager::LocalSubdivision) {
+        gizmos_mgr.open_gizmo(GLGizmosManager::EType::LocalSubdivision); // toggle it off first
+    }
+    gizmos_mgr.open_gizmo(GLGizmosManager::EType::LocalSubdivision);
+}
+
 void ObjectList::update_item_error_icon(const int obj_idx, const int vol_idx) const
 {
     auto obj = object(obj_idx);

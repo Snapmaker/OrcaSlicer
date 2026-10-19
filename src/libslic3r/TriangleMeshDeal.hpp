@@ -8,6 +8,8 @@ class TriangleMeshDeal
 {
 public:
     static TriangleMesh smooth_triangle_mesh(const TriangleMesh& mesh, bool& ok);
+
+    static TriangleMesh smooth_triangle_mesh_local(const TriangleMesh& mesh, const std::vector<uint32_t>& facet_indices, bool& ok);
 };
 } // namespace Slic3r
 

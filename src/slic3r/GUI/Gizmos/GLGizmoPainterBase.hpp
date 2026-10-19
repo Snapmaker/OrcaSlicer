@@ -27,7 +27,8 @@ enum class PainterGizmoType {
     FDM_SUPPORTS,
     SEAM,
     MM_SEGMENTATION,
-    FUZZY_SKIN
+    FUZZY_SKIN,
+    LOCAL_SUBDIVISION
 };
 
 class TriangleSelectorGUI : public TriangleSelector {

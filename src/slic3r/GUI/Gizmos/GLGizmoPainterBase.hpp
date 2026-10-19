@@ -280,8 +280,6 @@ private:
         size_t leafCount = 0;
         size_t vertexCount = 0;
         size_t stagingBytes = 0;
-        /** False when the counts exceed supported render limits; the plan must be rejected. */
-        bool supported = true;
     };
 
     struct ChunkColorTask
@@ -301,9 +299,8 @@ private:
     /** Estimates exact staging sizes for one chunk rebuild from the current tree. */
     ChunkBuildPlan MakeChunkBuildPlan(uint32_t chunkId, bool showWireframe) const;
     ChunkBuildResult BuildChunkCpu(const ChunkBuildPlan& plan, bool showWireframe) const;
-    /** Bounded-batch parallel CPU rebuild followed by serial GL upload on the render thread.
-     *  Returns false before any build when a plan is rejected (all-or-nothing). */
-    bool RebuildRenderChunks(const std::vector<uint32_t>& chunkIds, bool showWireframe, const ChunkBatchLimits& limits);
+    /** Bounded-batch parallel CPU rebuild followed by serial GL upload on the render thread. */
+    void RebuildRenderChunks(const std::vector<uint32_t>& chunkIds, bool showWireframe, const ChunkBatchLimits& limits);
     /** CPU-side color rewrite and range merge for one chunk; touches no GL. */
     void PrepareChunkColorsCpu(const ChunkColorTask& task);
     /** Bounded-batch parallel color prepare followed by serial GL upload. */
@@ -338,8 +335,6 @@ private:
     std::vector<uint8_t> m_chunkInDirtyList;
     std::vector<uint32_t> m_dirtyChunks;
     bool m_renderChunksInitialized = false;
-    //Permanently disables RenderChunk rendering after a rebuild exceeds hard renderer limits
-    bool m_renderChunksUnsupported = false;
     bool m_useRenderChunks = false;
     bool m_allColorDirty = false;
     std::optional<bool> _renderChunkWireframeLayout;

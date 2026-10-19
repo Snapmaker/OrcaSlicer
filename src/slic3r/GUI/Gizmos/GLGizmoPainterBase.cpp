@@ -1797,8 +1797,6 @@ void TriangleSelectorPatch::OnSelectorMutation(MutationKind kind, int sourceTria
     case MutationKind::IndexRebuild:
         break;
     case MutationKind::FullReset:
-        // A full reset drops most subdivision; allow one fresh rebuild attempt.
-        m_renderChunksUnsupported = false;
         MarkAllChunksTopologyDirty();
         break;
     }
@@ -1809,7 +1807,6 @@ void TriangleSelectorPatch::OnSelectorMutation(MutationKind kind, int sourceTria
 
 void TriangleSelectorPatch::BuildRenderChunkLayout()
 {
-    m_renderChunksUnsupported = false;
     m_renderChunks.clear();
     m_sourceToChunk.assign(static_cast<size_t>(m_orig_size_indices), 0);
     m_rootDrawInfo.assign(static_cast<size_t>(m_orig_size_indices), RootDrawInfo());
@@ -1939,20 +1936,20 @@ TriangleSelectorPatch::ChunkBuildPlan TriangleSelectorPatch::MakeChunkBuildPlan(
     for (uint32_t source : chunk.sourceRoots)
         plan.leafCount += CountLeafTriangles(static_cast<int>(source));
 
-    if (plan.leafCount > MAX_SUPPORTED_CHUNK_VERTICES / 3) {
-        plan.supported = false;
-        return plan;
+    // Unreachable in practice: memory runs out long before a chunk hits the GLsizei draw limit.
+    if (plan.leafCount > MAX_SUPPORTED_CHUNK_VERTICES / 3)
+    {
+        BOOST_LOG_TRIVIAL(error) << "TriangleSelectorPatch: render chunk exceeds GLsizei draw limit. chunk=" << chunkId
+                                 << ", leaf_count=" << plan.leafCount
+                                 << ", max_leaf_count=" << (MAX_SUPPORTED_CHUNK_VERTICES / 3);
     }
+    assert(plan.leafCount <= MAX_SUPPORTED_CHUNK_VERTICES / 3);
     plan.vertexCount = plan.leafCount * 3;
 
     const size_t floatsPerVertex = showWireframe ? 6 : 3;
     const size_t geometryBytes   = plan.vertexCount * floatsPerVertex * sizeof(float);
     const size_t colorBytes      = plan.vertexCount * 4;
     const size_t rootInfoBytes   = chunk.sourceRoots.size() * sizeof(RootDrawInfo);
-    if (geometryBytes > std::numeric_limits<size_t>::max() - colorBytes - rootInfoBytes) {
-        plan.supported = false;
-        return plan;
-    }
     plan.stagingBytes = geometryBytes + colorBytes + rootInfoBytes;
     return plan;
 }
@@ -1980,24 +1977,13 @@ TriangleSelectorPatch::ChunkBuildResult TriangleSelectorPatch::BuildChunkCpu(con
     return result;
 }
 
-bool TriangleSelectorPatch::RebuildRenderChunks(const std::vector<uint32_t>& chunkIds, bool showWireframe,
+void TriangleSelectorPatch::RebuildRenderChunks(const std::vector<uint32_t>& chunkIds, bool showWireframe,
                                                 const ChunkBatchLimits& limits)
 {
     std::vector<ChunkBuildPlan> plans;
     plans.reserve(chunkIds.size());
-    for (uint32_t chunkId : chunkIds) {
-        ChunkBuildPlan plan = MakeChunkBuildPlan(chunkId, showWireframe);
-        if (!plan.supported) {
-            // All-or-nothing: reject before any build/upload commits partial results.
-            BOOST_LOG_TRIVIAL(error) << "TriangleSelectorPatch: render chunk exceeds supported limits; "
-                                    << "disabling RenderChunk rendering for this selector. chunk=" << chunkId
-                                    << ", leaf_count=" << plan.leafCount
-                                    << ", max_leaf_count=" << (MAX_SUPPORTED_CHUNK_VERTICES / 3)
-                                    << ", wireframe=" << showWireframe;
-            return false;
-        }
-        plans.push_back(std::move(plan));
-    }
+    for (uint32_t chunkId : chunkIds)
+        plans.push_back(MakeChunkBuildPlan(chunkId, showWireframe));
 
     size_t batchBegin = 0;
     while (batchBegin < plans.size())
@@ -2029,7 +2015,6 @@ bool TriangleSelectorPatch::RebuildRenderChunks(const std::vector<uint32_t>& chu
         // Batch results leave scope here, releasing this batch's geometry staging only.
         batchBegin = batchEnd;
     }
-    return true;
 }
 
 void TriangleSelectorPatch::RefreshRenderColorLut()
@@ -2059,7 +2044,7 @@ void TriangleSelectorPatch::render(ImGuiWrapper* imgui, const Transform3d& matri
     if (useLegacyRenderer && (!_legacyWireframeLayout.has_value() || *_legacyWireframeLayout != requestedWireframe)) {
         m_update_render_data = true;
         m_paint_changed = true;
-    } else if (!useLegacyRenderer && !m_renderChunksUnsupported &&
+    } else if (!useLegacyRenderer &&
                (!_renderChunkWireframeLayout.has_value() || *_renderChunkWireframeLayout != requestedWireframe)) {
         m_update_render_data = true;
     }
@@ -2099,7 +2084,7 @@ void TriangleSelectorPatch::render(ImGuiWrapper* imgui, const Transform3d& matri
                 this->render(static_cast<int>(bufferIndex), requestedWireframe);
             }
         }
-    } else if (!m_renderChunksUnsupported && m_renderChunksInitialized && _renderChunkWireframeLayout.has_value()) {
+    } else if (m_renderChunksInitialized && _renderChunkWireframeLayout.has_value()) {
         // Draw interprets the buffers with the layout they were uploaded in.
         const bool uploadedWireframe = *_renderChunkWireframeLayout;
         shader->set_uniform("show_wireframe", uploadedWireframe);
@@ -2319,10 +2304,8 @@ void TriangleSelectorPatch::update_render_data()
     const bool showWireframe = m_need_wireframe && wxGetApp().plater()->is_wireframe_enabled() &&
                                wxGetApp().plater()->is_show_wireframe();
     if (m_useRenderChunks && !m_filter_state) {
-        if (!m_renderChunksUnsupported)
-            UpdateRenderChunks(showWireframe);
+        UpdateRenderChunks(showWireframe);
         m_paint_changed = false;
-        // Contour updates stay independent of RenderChunk availability.
         update_paint_contour();
         return;
     }
@@ -2584,9 +2567,6 @@ void TriangleSelectorPatch::ClearRenderDirtyState()
 
 void TriangleSelectorPatch::UpdateRenderChunks(bool showWireframe)
 {
-    if (m_renderChunksUnsupported)
-        return;
-
     const bool wireframeLayoutChanged = !_renderChunkWireframeLayout.has_value() ||
                                         *_renderChunkWireframeLayout != showWireframe;
     if (wireframeLayoutChanged && m_renderChunksInitialized)
@@ -2601,12 +2581,7 @@ void TriangleSelectorPatch::UpdateRenderChunks(bool showWireframe)
         chunkIds.reserve(m_renderChunks.size());
         for (uint32_t chunkId = 0; chunkId < m_renderChunks.size(); ++chunkId)
             chunkIds.push_back(chunkId);
-        if (!RebuildRenderChunks(chunkIds, showWireframe, limits)) {
-            // Hard renderer limit hit: disable the chunk renderer and drop stale buffers.
-            m_renderChunksUnsupported = true;
-            ReleaseRenderChunks();
-            return;
-        }
+        RebuildRenderChunks(chunkIds, showWireframe, limits);
         m_renderChunksInitialized = true;
         _renderChunkWireframeLayout = showWireframe;
         ClearRenderDirtyState();
@@ -2639,11 +2614,7 @@ void TriangleSelectorPatch::UpdateRenderChunks(bool showWireframe)
     }
 
     // Geometry rebuild first: color workers then read a stable m_rootDrawInfo.
-    if (!RebuildRenderChunks(geometryChunkIds, showWireframe, limits)) {
-        m_renderChunksUnsupported = true;
-        ReleaseRenderChunks();
-        return;
-    }
+    RebuildRenderChunks(geometryChunkIds, showWireframe, limits);
     UpdateChunkColors(colorTasks, limits);
 
     _renderChunkWireframeLayout = showWireframe;

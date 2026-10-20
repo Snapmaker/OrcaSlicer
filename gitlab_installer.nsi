@@ -279,11 +279,18 @@ Section "Main program" SecMain
         ClearErrors
         Goto snap_no_existing_install
     snap_uninstall_failed:
+        IfSilent snap_uninstall_failed_silent
         StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 snap_uninstall_failed_en
         MessageBox MB_OK|MB_ICONSTOP "卸载失败。$\n卸载程序路径：$R9$\n工作目录：$R2$\n退出码：$R3"
         Goto snap_uninstall_failed_done
     snap_uninstall_failed_en:
         MessageBox MB_OK|MB_ICONSTOP "Uninstall failed.$\nUninstaller path: $R9$\nWorking dir: $R2$\nExit code: $R3"
+        Goto snap_uninstall_failed_done
+    snap_uninstall_failed_silent:
+        ; 8 = old-uninstaller failure (7 is the program-running code).
+        DetailPrint "Uninstall failed: $R9 (exit code $R3)"
+        SetErrorLevel 8
+        Quit
     snap_uninstall_failed_done:
         Abort
     snap_uninstall_skipped:
@@ -324,6 +331,16 @@ Section "Main program" SecMain
 
     ; PACK_SOURCE_DIR = compile time only. At runtime this File extracts from embedded payload to $INSTDIR.
     File /r /x "*.pdb" /x "*.ilk" /x "*.exp" /x "*.lib" /x "*.obj" /x "*.idb" /x "*.tlog" /x "*.h" /x "*.hpp" /x "*.c" /x "*.cpp" /x "*.cxx" /x "*.cc" /x "*.vcxproj" /x "*.vcxproj.filters" /x "*.sln" /x "*.cmake" /x "*.vcxproj.user" /x "CMakeFiles" /x "RelWithDebInfo" /x "Debug" /x "MinSizeRel" /x ".vs" /x "vcpkg_installed" /x "*.dir" "${PACK_SOURCE_DIR}\*.*"
+
+    ; A package without the main executable must not register and report success.
+    IfFileExists "$INSTDIR\snapmaker-orca.exe" snap_payload_ok
+    StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 snap_payload_missing_en
+    MessageBox MB_OK|MB_ICONSTOP "安装失败：安装包中缺少 snapmaker-orca.exe，安装包可能已损坏。"
+    Abort
+    snap_payload_missing_en:
+    MessageBox MB_OK|MB_ICONSTOP "Installation failed: snapmaker-orca.exe was not found in the package. The installer may be corrupted."
+    Abort
+    snap_payload_ok:
 
     DetailPrint "Creating uninstaller..."
     WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -442,6 +459,7 @@ Section "Uninstall"
     StrCpy $R0 "$INSTDIR"
     snap_install_dir_resolved:
     StrCmp $R0 "" 0 snap_install_dir_delete
+    IfSilent snap_install_dir_done
     StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 snap_install_dir_unknown_en
     MessageBox MB_OK|MB_ICONEXCLAMATION "无法确定安装目录，已跳过删除。请手动删除该目录。"
     Goto snap_install_dir_done
@@ -449,6 +467,30 @@ Section "Uninstall"
     MessageBox MB_OK|MB_ICONEXCLAMATION "The installation directory could not be determined, so it was left in place. Please delete it manually."
     Goto snap_install_dir_done
     snap_install_dir_delete:
+        ; A drive root, the Program Files root, or a directory that no longer
+        ; looks like this product's install must never be removed recursively.
+        StrLen $R1 "$R0"
+        IntCmp $R1 3 snap_install_dir_guard_root snap_install_dir_guard_pf snap_install_dir_guard_pf
+    snap_install_dir_guard_root:
+        StrCpy $R2 "$R0" 1 1
+        StrCmp $R2 ":" snap_install_dir_unsafe
+    snap_install_dir_guard_pf:
+        StrCmp "$R0" "$PROGRAMFILES64" snap_install_dir_unsafe
+        StrCmp "$R0" "$PROGRAMFILES" snap_install_dir_unsafe
+        StrCmp "$R0" "$INSTDIR" snap_install_dir_do_delete
+        StrCmp "$R0" "$PROGRAMFILES64\Snapmaker_Orca" snap_install_dir_do_delete
+        IfFileExists "$R0\snapmaker-orca.exe" snap_install_dir_do_delete
+        IfFileExists "$R0\Snapmaker_Orca.exe" snap_install_dir_do_delete
+        Goto snap_install_dir_unsafe
+    snap_install_dir_unsafe:
+        IfSilent snap_install_dir_done
+        StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 snap_install_dir_unsafe_en
+        MessageBox MB_OK|MB_ICONEXCLAMATION "安装目录不可信（盘根、Program Files 根目录或不是 Snapmaker Orca 的安装目录），已跳过删除。请手动删除该目录。"
+        Goto snap_install_dir_done
+    snap_install_dir_unsafe_en:
+        MessageBox MB_OK|MB_ICONEXCLAMATION "The installation directory is not safe to remove (a drive root, the Program Files root, or not a Snapmaker Orca install), so it was left in place. Please delete it manually."
+        Goto snap_install_dir_done
+    snap_install_dir_do_delete:
         SetOutPath "$TEMP"
         Delete "$R0\Uninstall.exe"
         ; Best effort, like the CPack installer: do not schedule a reboot
@@ -708,6 +750,7 @@ SnapmakerFin_l10n_done:
   System::Call '*$2(i, i, i .r3, i .r4)'
   System::Free $2
   IntOp $4 $4 - ${SF_BTN_RESERVE}
+  ; 1018 = IDC_CHILDRECT from the wizard template; nsDialogs::Create sizes the page from its rect.
   GetDlgItem $2 $HWNDPARENT 1018
   System::Call 'user32::SetWindowPos(p $2, p 0, i 0, i 0, i r3, i r4, i 0x4)'
   ; Horizontal layout, derived from the measured client width ($3, pixels):

@@ -4563,6 +4563,12 @@ msgstr "Параметры расстановки"
 msgid "Spacing"
 msgstr "Интервал"
 
+msgid "Count"
+msgstr "Количество"
+
+msgid "Gap"
+msgstr "Зазор"
+
 msgid "0 means auto spacing."
 msgstr "0 - автоматический интервал."
 

@@ -4496,6 +4496,12 @@ msgstr "Opcje rozmieszczania"
 msgid "Spacing"
 msgstr "Rozstaw"
 
+msgid "Count"
+msgstr "Liczba"
+
+msgid "Gap"
+msgstr "Odstęp"
+
 msgid "0 means auto spacing."
 msgstr "Wartość 0 oznacza automatyczny odstęp."
 

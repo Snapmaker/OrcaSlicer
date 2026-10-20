@@ -4513,6 +4513,12 @@ msgstr "Opções de arranjo"
 msgid "Spacing"
 msgstr "Espaçamento"
 
+msgid "Count"
+msgstr "Quantidade"
+
+msgid "Gap"
+msgstr "Vão"
+
 msgid "0 means auto spacing."
 msgstr "0 significa auto-espaçamento."
 

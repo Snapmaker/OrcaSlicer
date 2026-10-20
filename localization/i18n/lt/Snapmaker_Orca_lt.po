@@ -4486,6 +4486,12 @@ msgstr "Išdėstymo parinktys"
 msgid "Spacing"
 msgstr "Tarpai"
 
+msgid "Count"
+msgstr "Skaičius"
+
+msgid "Gap"
+msgstr "Tarpas"
+
 msgid "0 means auto spacing."
 msgstr "0 reiškia automatinius tarpus."
 

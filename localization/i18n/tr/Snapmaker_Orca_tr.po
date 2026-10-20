@@ -4468,6 +4468,12 @@ msgstr "Hizalama seçenekleri"
 msgid "Spacing"
 msgstr "Boşluk"
 
+msgid "Count"
+msgstr "Adet"
+
+msgid "Gap"
+msgstr "Aralık"
+
 msgid "0 means auto spacing."
 msgstr "0 otomatik aralık anlamına gelir."
 

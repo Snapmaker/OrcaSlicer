@@ -4540,6 +4540,12 @@ msgstr "Opzioni di disposizione"
 msgid "Spacing"
 msgstr "Spaziatura"
 
+msgid "Count"
+msgstr "Numero"
+
+msgid "Gap"
+msgstr "Spazio"
+
 msgid "0 means auto spacing."
 msgstr "0 significa spaziatura automatica."
 

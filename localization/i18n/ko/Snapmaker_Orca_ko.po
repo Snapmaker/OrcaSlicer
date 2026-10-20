@@ -4389,6 +4389,12 @@ msgstr "정렬 옵션"
 msgid "Spacing"
 msgstr "간격"
 
+msgid "Count"
+msgstr "개수"
+
+msgid "Gap"
+msgstr "틈"
+
 msgid "0 means auto spacing."
 msgstr "0은 자동 간격을 의미합니다."
 

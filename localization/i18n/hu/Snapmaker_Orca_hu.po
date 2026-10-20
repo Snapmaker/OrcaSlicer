@@ -4363,6 +4363,12 @@ msgstr "Elrendezési lehetőségek"
 msgid "Spacing"
 msgstr "Térköz"
 
+msgid "Count"
+msgstr "Darab"
+
+msgid "Gap"
+msgstr "Hézag"
+
 msgid "0 means auto spacing."
 msgstr ""
 

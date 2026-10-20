@@ -4408,6 +4408,12 @@ msgstr "Rangschik opties"
 msgid "Spacing"
 msgstr "Uitlijning"
 
+msgid "Count"
+msgstr "Aantal"
+
+msgid "Gap"
+msgstr "Tussenruimte"
+
 msgid "0 means auto spacing."
 msgstr ""
 

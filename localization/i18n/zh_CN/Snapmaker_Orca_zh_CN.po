@@ -4197,6 +4197,12 @@ msgstr "自动摆放选项"
 msgid "Spacing"
 msgstr "间距"
 
+msgid "Count"
+msgstr "数量"
+
+msgid "Gap"
+msgstr "间隙"
+
 msgid "0 means auto spacing."
 msgstr "0 表示自动间距。"
 

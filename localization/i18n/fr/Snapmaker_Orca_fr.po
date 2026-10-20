@@ -4541,6 +4541,12 @@ msgstr "Options d'agencement"
 msgid "Spacing"
 msgstr "Espacement"
 
+msgid "Count"
+msgstr "Nombre"
+
+msgid "Gap"
+msgstr "Espace"
+
 msgid "0 means auto spacing."
 msgstr "0 signifie espacement automatique."
 

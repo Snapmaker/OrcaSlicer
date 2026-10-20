@@ -4356,6 +4356,12 @@ msgstr "Arrangera val"
 msgid "Spacing"
 msgstr "Mellanrum"
 
+msgid "Count"
+msgstr "Antal"
+
+msgid "Gap"
+msgstr "Glapp"
+
 msgid "0 means auto spacing."
 msgstr ""
 

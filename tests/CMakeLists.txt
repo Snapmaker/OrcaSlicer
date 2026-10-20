@@ -78,6 +78,9 @@ set(TEST_LINK_LIBS
 if(WIN32)
     find_library(GMP_IMPORT_LIB NAMES libgmp-10 gmp-10)
     find_library(MPFR_IMPORT_LIB NAMES libmpfr-4 mpfr-4)
+    if(NOT GMP_IMPORT_LIB OR NOT MPFR_IMPORT_LIB)
+        message(FATAL_ERROR "GMP/MPFR import libraries not found; point CMAKE_PREFIX_PATH at the deps prefix")
+    endif()
     list(APPEND TEST_LINK_LIBS ${GMP_IMPORT_LIB} ${MPFR_IMPORT_LIB})
 endif()
 

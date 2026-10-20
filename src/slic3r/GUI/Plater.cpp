@@ -9444,10 +9444,13 @@ void Sidebar::show_sync_filament_dialog()
         ConfigOptionStrings* mco = preset_bundle->project_config.option<ConfigOptionStrings>("filament_multi_colors");
         ConfigOptionInts*    cmo = preset_bundle->project_config.option<ConfigOptionInts>("filament_colour_mode");
 
+        std::string slot0_matched_preset{};
         for (size_t i = 0; i < effective_size; ++i) {
             Preset* matched = resolve_filament_preset(preset_bundle, syncedData[i].m_name, syncedData[i].m_type);
             if (matched) {
                 preset_bundle->set_filament_preset(i, matched->name);
+                if (i == 0)
+                    slot0_matched_preset = matched->name;
             }
 
             if (co && i < co->values.size()) {
@@ -9476,6 +9479,30 @@ void Sidebar::show_sync_filament_dialog()
 
         const size_t num_filaments = effective_size;
         wxGetApp().plater()->on_filaments_change(num_filaments);
+
+        // Single-filament projects slice from the edited filament preset, which
+        // set_filament_preset() above does not switch. Deferred via CallAfter:
+        // running the switch and the config propagation inline inside the sync
+        // dialog's event context froze the UI.
+        const bool switch_edited_preset = num_filaments == 1 && !slot0_matched_preset.empty() &&
+            preset_bundle->filaments.get_edited_preset().name != slot0_matched_preset;
+        {
+            std::string preset_to_select = slot0_matched_preset;
+            wxGetApp().CallAfter([switch_edited_preset, preset_to_select]() {
+                // Re-fetch: a captured Plater* could dangle across GUI recreation.
+                Plater* plater = wxGetApp().plater();
+                if (plater == nullptr)
+                    return;
+                if (switch_edited_preset) {
+                    Tab* filament_tab = wxGetApp().get_tab(Preset::TYPE_FILAMENT);
+                    if (filament_tab != nullptr)
+                        filament_tab->select_preset(preset_to_select);
+                }
+                // Update the plater config and schedule a reslice, like the manual
+                // preset switch in on_select_preset.
+                plater->on_config_change(wxGetApp().preset_bundle->full_config());
+            });
+        }
 
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
         preset_bundle->export_selections(*wxGetApp().app_config);

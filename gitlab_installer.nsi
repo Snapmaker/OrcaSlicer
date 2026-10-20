@@ -451,7 +451,11 @@ Section "Uninstall"
     snap_install_dir_delete:
         SetOutPath "$TEMP"
         Delete "$R0\Uninstall.exe"
-        RMDir /r /REBOOTOK "$R0"
+        ; Best effort, like the CPack installer: do not schedule a reboot
+        ; deletion. Under _?= (upgrade) the running uninstaller cannot remove
+        ; its own directory, and a /REBOOTOK entry would delete the files the
+        ; installer writes right after this returns.
+        RMDir /r "$R0"
         RMDir "$R0"
     snap_install_dir_done:
 

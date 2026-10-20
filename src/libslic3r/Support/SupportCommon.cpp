@@ -1225,7 +1225,12 @@ static void modulate_extrusion_by_overlapping_layers(
 
     // Get the initial extrusion parameters.
     ExtrusionPath *extrusion_path_template = dynamic_cast<ExtrusionPath*>(extrusions_in_out.front());
-    assert(extrusion_path_template != nullptr);
+    if (extrusion_path_template == nullptr) {
+        // Defensive bail-out: the list contains an unexpected entity type. Skip the
+        // modulation and hand the loops back rather than dereferencing a null pointer.
+        prepend_extrusion_entities(extrusions_in_out, std::move(loop_entities));
+        return;
+    }
     ExtrusionRole extrusion_role  = extrusion_path_template->role();
     float         extrusion_width = extrusion_path_template->width;
 

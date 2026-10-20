@@ -660,10 +660,11 @@ inline void detach_extrusion_loops(ExtrusionEntitiesPtr &entities, ExtrusionEnti
 }
 
 // Put entities back in front of the list, keeping their relative order.
-// Ownership of the inserted entities moves to entities.
+// Ownership of the inserted entities moves to entities. Self-assignment
+// (entities == front) is a no-op, inserting a range into itself is UB.
 inline void prepend_extrusion_entities(ExtrusionEntitiesPtr &entities, ExtrusionEntitiesPtr &&front)
 {
-    if (! front.empty()) {
+    if (! front.empty() && &entities != &front) {
         entities.insert(entities.begin(), front.begin(), front.end());
         front.clear();
     }

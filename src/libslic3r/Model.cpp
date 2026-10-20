@@ -99,6 +99,7 @@ Model& Model::assign_copy(const Model &rhs)
     this->mk_version = rhs.mk_version;
     this->md_name = rhs.md_name;
     this->md_value = rhs.md_value;
+    this->space_info = rhs.space_info;
 
     return *this;
 }
@@ -134,6 +135,7 @@ Model& Model::assign_copy(Model &&rhs)
     this->mk_version = rhs.mk_version;
     this->md_name = rhs.md_name;
     this->md_value = rhs.md_value;
+    this->space_info = std::move(rhs.space_info);
     this->backup_path = std::move(rhs.backup_path);
     this->object_backup_id_map = std::move(rhs.object_backup_id_map);
     this->next_object_backup_id = rhs.next_object_backup_id;
@@ -1153,6 +1155,7 @@ void Model::load_from(Model& model)
     mk_version = model.mk_version;
     md_name = model.md_name;
     md_value = model.md_value;
+    space_info = model.space_info;
     model.design_info.reset();
     model.model_info.reset();
     model.profile_info.reset();

@@ -5,6 +5,7 @@
 #include "ExPolygon.hpp"
 #include "Polygon.hpp"
 #include "Surface.hpp"
+#include <optional>
 
 namespace Slic3r {
 
@@ -330,6 +331,9 @@ namespace ClipperUtils {
     [[nodiscard]] Polygons clip_clipper_polygons_with_subject_bbox(const ExPolygon &src, const BoundingBox &bbox, const bool get_entire_polygons = false);
     [[nodiscard]] Polygons clip_clipper_polygons_with_subject_bbox(const ExPolygons &src, const BoundingBox &bbox, const bool get_entire_polygons = false);
 
+    // A grid point strictly inside the polygon, or none if the polygon is at most a few units thick everywhere.
+    // Decides on which side of another path a path lies when every one of its vertices touches that path.
+    [[nodiscard]] std::optional<Point> interior_point(const Polygon &polygon);
     }
 
 // offset Polygons

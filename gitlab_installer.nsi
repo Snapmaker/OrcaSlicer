@@ -334,12 +334,19 @@ Section "Main program" SecMain
 
     ; A package without the main executable must not register and report success.
     IfFileExists "$INSTDIR\snapmaker-orca.exe" snap_payload_ok
+    IfSilent snap_payload_missing_silent
     StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 snap_payload_missing_en
     MessageBox MB_OK|MB_ICONSTOP "安装失败：安装包中缺少 snapmaker-orca.exe，安装包可能已损坏。"
     Abort
     snap_payload_missing_en:
     MessageBox MB_OK|MB_ICONSTOP "Installation failed: snapmaker-orca.exe was not found in the package. The installer may be corrupted."
     Abort
+    snap_payload_missing_silent:
+        ; 9 = corrupt or incomplete package (7 is "program running", 8 is "the
+        ; old uninstaller failed").
+        DetailPrint "Installation failed: snapmaker-orca.exe is missing from the package"
+        SetErrorLevel 9
+        Quit
     snap_payload_ok:
 
     DetailPrint "Creating uninstaller..."

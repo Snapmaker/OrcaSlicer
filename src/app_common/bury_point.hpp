@@ -4,11 +4,19 @@
 #include <iostream>
 #include <atomic>
 
+// BURY_API linkage states:
+//   BURY_EXPORTS - targets that compile bury_point.cpp as the bury state
+//     host (Snapmaker_Orca.dll, the Windows shim) and export the accessors;
+//   default (empty) - plain symbol references binding to same-image
+//     definitions, so consumers (app_common, tests, headless tools) need no
+//     import library or stub files.
+// The default is deliberately NOT dllimport: that would turn references into
+// __imp_ form and force every consumer to provide an import library.
 #ifdef _WIN32
     #ifdef BURY_EXPORTS
         #define BURY_API __declspec(dllexport)
     #else
-        #define BURY_API __declspec(dllimport)
+        #define BURY_API
     #endif
 #else
     #define BURY_API  extern
@@ -49,9 +57,6 @@
 #define BP_LOCAL_SERVER "bury_point_local_server"
 #define BP_LOCAL_SERVER_STATUS "bury_point_local_server_status"
 #define BP_LOCAL_SERVER_ERROR_CODE "bury_point_local_server_error_code"
-
-#define BP_LOCAL_SERVER "bury_point_local_server"
-#define BP_LOCAL_SERVER_ERR_CODE "bury_point_local_server_err_code"
 
 
 //device connect error info

@@ -34,7 +34,7 @@
 
 #include <wx/glcanvas.h>
 
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 namespace Slic3r {
 namespace GUI {
 //BBS: GUI refactor: to support top layout

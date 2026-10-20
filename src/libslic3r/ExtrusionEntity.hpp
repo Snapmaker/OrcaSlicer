@@ -645,6 +645,30 @@ inline void extrusion_entities_append_loops_and_paths(ExtrusionEntitiesPtr &dst,
     polylines.clear();
 }
 
+// Detach ExtrusionLoop entities out of the list, keeping their relative order.
+// Ownership of the detached entities moves to loops_out.
+inline void detach_extrusion_loops(ExtrusionEntitiesPtr &entities, ExtrusionEntitiesPtr &loops_out)
+{
+    for (auto it = entities.begin(); it != entities.end();) {
+        if ((*it)->is_loop()) {
+            loops_out.emplace_back(*it);
+            it = entities.erase(it);
+        } else {
+            ++ it;
+        }
+    }
+}
+
+// Put entities back in front of the list, keeping their relative order.
+// Ownership of the inserted entities moves to entities.
+inline void prepend_extrusion_entities(ExtrusionEntitiesPtr &entities, ExtrusionEntitiesPtr &&front)
+{
+    if (! front.empty()) {
+        entities.insert(entities.begin(), front.begin(), front.end());
+        front.clear();
+    }
+}
+
 }
 
 #endif

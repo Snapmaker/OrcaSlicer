@@ -1211,6 +1211,18 @@ static void modulate_extrusion_by_overlapping_layers(
         // The extrusions do not overlap with any other extrusion.
         return;
 
+    // Detach loop entities (support transition perimeter loops and tree-support raft walls).
+    // Loops carry a constant flow by design and must not be height-modulated, they are handed
+    // back unchanged at the end so their closed geometry is preserved. GCode re-chains the
+    // support extrusions by proximity at print time, so putting them first is safe.
+    ExtrusionEntitiesPtr loop_entities;
+    detach_extrusion_loops(extrusions_in_out, loop_entities);
+    if (extrusions_in_out.empty()) {
+        // Nothing left to modulate, hand the loops back and bail out.
+        prepend_extrusion_entities(extrusions_in_out, std::move(loop_entities));
+        return;
+    }
+
     // Get the initial extrusion parameters.
     ExtrusionPath *extrusion_path_template = dynamic_cast<ExtrusionPath*>(extrusions_in_out.front());
     assert(extrusion_path_template != nullptr);
@@ -1438,6 +1450,9 @@ static void modulate_extrusion_by_overlapping_layers(
     //FIXME this shall not happen, if the Clipper works as expected and all paths split to fragments could be re-connected.
     for (auto it_fragment = path_fragments.begin(); it_fragment != path_fragments.end(); ++ it_fragment)
         extrusion_entities_append_paths(extrusions_in_out, std::move(it_fragment->polylines), extrusion_role, it_fragment->mm3_per_mm, it_fragment->width, it_fragment->height);
+
+    // Hand the untouched loop entities back, in front of the modulated paths.
+    prepend_extrusion_entities(extrusions_in_out, std::move(loop_entities));
 }
 
 // Support layer that is covered by some form of dense interface.

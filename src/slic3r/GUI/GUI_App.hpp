@@ -274,6 +274,10 @@ private:
     bool            m_app_conf_exists{ false };
     EAppMode        m_app_mode{ EAppMode::Editor };
     bool            m_is_recreating_gui{ false };
+    bool            m_recreate_in_progress{ false };
+    bool            m_pending_version_event{ false };
+    int             m_pending_version_by_user{ 0 };
+    int             m_updateDialogByUser{ 0 };
     /// Set only for the duration of `MsgUpdateConfig::ShowModal()` in load_flutter_web (atomic: safe vs updater threads + CallAfter).
     std::atomic<bool> m_flutter_web_config_update_dlg_open{ false };
     /// Set only for the duration of profile/preset `MsgUpdateConfig::ShowModal()` (atomic: safe vs updater threads + CallAfter).
@@ -796,6 +800,7 @@ private:
     void create_update_dialog();
     void destroy_update_dialog();
     UpdateVersionDialog* m_updateDialog{nullptr};
+    wxWindow* m_updateDialogParent{nullptr};
 
 	PresetUpdater*  get_preset_updater() { return preset_updater; }
 

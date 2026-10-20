@@ -725,6 +725,19 @@ void TriangleSelector::SelectHeightRange(const std::vector<uint32_t>& sourceRoot
             options.transformNoTranslate.matrix().block(0, 0, 3, 3).inverse().transpose().cast<float>());
     }
 
+    // A root whose three vertices are all inside the band and which is already an unsplit leaf of the
+    // target state is a no-op for select_triangle(); the precomputed spans detect that without transforms.
+    const std::vector<std::pair<float, float>>* rootZSpans = options.rootZSpans;
+    if (rootZSpans != nullptr && rootZSpans->size() != static_cast<size_t>(m_orig_size_indices))
+        rootZSpans = nullptr;
+    const bool canSkipPaintedRoots = rootZSpans != nullptr && !m_cursor->clipping_plane.is_active();
+    const HeightRange& heightCursor = static_cast<const HeightRange&>(*m_cursor);
+    // Margin absorbs rounding between the double-built spans and the float cursor transform.
+    constexpr float SPAN_MARGIN = 1e-3f;
+    const float insideBottomZ = heightCursor.GetBottomZ() - HeightRange::VERTEX_TOLERANCE + SPAN_MARGIN;
+    const float insideTopZ =
+        heightCursor.GetBottomZ() + heightCursor.GetHeight() + HeightRange::VERTEX_TOLERANCE - SPAN_MARGIN;
+
     for (uint32_t sourceRoot : sourceRoots)
     {
         if (sourceRoot >= static_cast<uint32_t>(m_orig_size_indices))
@@ -732,7 +745,17 @@ void TriangleSelector::SelectHeightRange(const std::vector<uint32_t>& sourceRoot
 
         const int rootIndex = static_cast<int>(sourceRoot);
         const Triangle& rootTriangle = m_triangles[rootIndex];
-        if (!rootTriangle.valid() || !m_cursor->is_edge_inside_cursor(rootTriangle, m_vertices))
+        if (!rootTriangle.valid())
+            continue;
+
+        if (canSkipPaintedRoots && !rootTriangle.is_split() && rootTriangle.get_state() == options.state)
+        {
+            const std::pair<float, float>& zSpan = (*rootZSpans)[sourceRoot];
+            if (zSpan.first > insideBottomZ && zSpan.second < insideTopZ)
+                continue;
+        }
+
+        if (!m_cursor->is_edge_inside_cursor(rootTriangle, m_vertices))
             continue;
 
         if (options.highlightByAngleDeg != 0.f)
@@ -1600,7 +1623,7 @@ bool TriangleSelector::HeightRange::is_pointer_in_triangle(const Vec3f& p1_, con
 bool TriangleSelector::HeightRange::is_mesh_point_inside(const Vec3f& point) const
 {
     // just use 40% edge limit as tolerance
-    const float tolerance = 0.02f;
+    const float tolerance = VERTEX_TOLERANCE;
     if (clipping_plane.is_active() && clipping_plane.is_mesh_point_clipped(point))
         return false;
 

@@ -210,6 +210,11 @@ public:
         {
             return true;
         }
+        float GetBottomZ() const { return m_z_world; }
+        float GetHeight() const { return m_height; }
+
+        // World-Z tolerance used when testing whether a vertex lies inside the band.
+        static constexpr float VERTEX_TOLERANCE = 0.02f;
     private:
         float m_z_world;
         float m_height;
@@ -315,6 +320,8 @@ public:
         void Build(const TriangleMesh& mesh, const Transform3d& effectiveTransform);
         bool Matches(const TriangleMesh& mesh, const Transform3d& effectiveTransform) const;
         const std::vector<uint32_t>& Query(float zBottomWorld, float zTopWorld);
+        /** World-Z (min, max) per original root; non-finite roots hold (-inf, +inf). */
+        const std::vector<std::pair<float, float>>& GetRootZSpans() const { return m_rootZSpans; }
 
     private:
         size_t BucketIndex(float zWorld) const;
@@ -354,6 +361,8 @@ public:
         Transform3d transformNoTranslate = Transform3d::Identity();
         bool triangleSplitting = true;
         float highlightByAngleDeg = 0.f;
+        // Optional, non-owning: per-root world-Z spans in the cursor's transform, used to skip painted roots.
+        const std::vector<std::pair<float, float>>* rootZSpans = nullptr;
     };
 
     uint64_t GetTopologyRevision() const noexcept { return m_topologyRevision; }

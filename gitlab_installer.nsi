@@ -302,6 +302,13 @@ Section "Main program" SecMain
         DetailPrint "Uninstaller not found, skipping old-version removal and overwriting."
     snap_uninstall_skipped_done:
     snap_no_existing_install:
+        ; Overwrite paths never run the old uninstaller; drop its registration so
+        ; the space-form entry cannot survive next to the new underscore one.
+        SetRegView 32
+        DeleteRegKey ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_LEGACY_UNINST_KEY}"
+        DeleteRegKey HKCU "${PRODUCT_LEGACY_UNINST_KEY}"
+        DeleteRegKey ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_LEGACY_INSTALL_KEY}"
+        DeleteRegKey HKCU "${PRODUCT_LEGACY_INSTALL_KEY}"
 
     ; An upgrade clears the agreed cache directories so the freshly installed
     ; assets are unpacked instead of stale ones being reused. The context is set

@@ -2832,14 +2832,21 @@ bool GUI_App::on_init_inner()
                 }
                 if (!skip_this_version || evt.GetInt() != 0) {
                     wxString            extmsg = wxString::FromUTF8(version_info.description);
-                    if(!m_updateDialog)
-                        return;
+                    // The dialog is cached by wx; on macOS re-showing it after Hide()
+                    // leaves a blank zombie window, so always build a fresh one.
+                    destroy_update_dialog();
+                    create_update_dialog();
                     m_updateDialog->update_version_info(extmsg, version_info.version_str);
                     if (evt.GetInt() != 0) {
                         m_updateDialog->m_button_skip_version->Hide();
                     }
-                    m_updateDialog->Raise();
                     m_updateDialog->Show();
+#ifndef __WXOSX__
+                    // On macOS Show() already attaches the dialog as a child window
+                    // of the fullscreen parent; Raise() would make it key outside the
+                    // fullscreen space and pull the app out of fullscreen.
+                    m_updateDialog->Raise();
+#endif
                     m_updateDialog->setUrl(version_info.url);
 
                 }
@@ -2983,15 +2990,6 @@ bool GUI_App::on_init_inner()
 
     BOOST_LOG_TRIVIAL(info) << "create the main window";
     mainframe = new MainFrame();
-    if (!m_updateDialog)
-    {
-        m_updateDialog = new UpdateVersionDialog(mainframe);
-        m_updateDialog->Hide();
-        m_updateDialog->Bind(EVT_DOWN_URL_PACK, [this](wxCommandEvent& event) {
-            auto downloadUlr = m_updateDialog->getUrl();
-            wxLaunchDefaultBrowser(downloadUlr);
-        });
-    }
     profiler.mark("mainframe construction");
 
     // hide settings tabs after first Layout
@@ -3960,14 +3958,6 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
     switch_window_pools();
     mainframe = new MainFrame();
 
-    if (!m_updateDialog) {
-        m_updateDialog = new UpdateVersionDialog(mainframe);
-        m_updateDialog->Hide();
-        m_updateDialog->Bind(EVT_DOWN_URL_PACK, [this](wxCommandEvent& event) {
-            auto downloadUlr = m_updateDialog->getUrl();
-            wxLaunchDefaultBrowser(downloadUlr);
-        });
-    }
     if (is_editor())
         // hide settings tabs after first Layout
         mainframe->select_tab(size_t(MainFrame::tp3DEditor));
@@ -3976,6 +3966,8 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
     SetTopWindow(mainframe);
 
     dlg.Update(30, _L("Rebuild") + dots);
+    // A cached update dialog would be a child of the old frame.
+    m_updateDialog = nullptr;
     old_main_frame->Destroy();
 
     dlg.Update(80, _L("Loading current presets") + dots);
@@ -5293,6 +5285,20 @@ void maybe_attach_updater_signature(Http& http, const std::string& canonical_que
 }
 
 } // namespace
+
+void GUI_App::create_update_dialog()
+{
+    m_updateDialog = new UpdateVersionDialog(mainframe);
+    m_updateDialog->Hide();
+}
+
+void GUI_App::destroy_update_dialog()
+{
+    if (m_updateDialog) {
+        m_updateDialog->Destroy();
+        m_updateDialog = nullptr;
+    }
+}
 
 void GUI_App::check_web_version()
 {

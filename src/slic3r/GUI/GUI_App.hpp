@@ -793,6 +793,8 @@ private:
     PresetUpdater*  preset_updater{ nullptr };
     MainFrame*      mainframe{ nullptr };
     Plater*         plater_{ nullptr };
+    void create_update_dialog();
+    void destroy_update_dialog();
     UpdateVersionDialog* m_updateDialog{nullptr};
 
 	PresetUpdater*  get_preset_updater() { return preset_updater; }

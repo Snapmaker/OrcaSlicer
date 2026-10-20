@@ -131,6 +131,7 @@ void GLGizmoPainterBase::FinalizePaintingStroke(const wxString& actionName)
     m_button_down = Button::None;
     m_strokeHasCommittedState = false;
     m_last_mouse_click = Vec2d::Zero();
+    _heightRangeLastBottomZ.reset();
     m_finishingPaintingInteraction = false;
 }
 
@@ -155,6 +156,7 @@ void GLGizmoPainterBase::ResetPaintingStroke()
     DiscardPaintingPreviewsAndFlush();
     m_strokeHasCommittedState = false;
     m_last_mouse_click = Vec2d::Zero();
+    _heightRangeLastBottomZ.reset();
 }
 
 void GLGizmoPainterBase::CapturePaintingMouse()
@@ -535,19 +537,16 @@ bool GLGizmoPainterBase::EnsureHeightPreviewMesh(HeightPreviewVolumeCache& cache
         return false;
 
     // Exact matrix compare: a missed hit only costs performance, a false hit shows wrong geometry.
-    if (cache.worldMesh != nullptr &&
-        cache.sourceMesh == source &&
+    if (cache.sourceMesh == source &&
         cache.objectId == object.id() &&
         cache.instanceId == instance.id() &&
         cache.volumeId == volume.id() &&
         (cache.effectiveTransform.matrix().array() == effectiveTransform.matrix().array()).all())
         return true;
 
-    // Build the new data first; publish the cache identity only after success.
-    auto newWorldMesh = std::make_unique<TriangleMesh>(*source);
-    newWorldMesh->transform(effectiveTransform);
-
-    cache.worldMesh = std::move(newWorldMesh);
+    // Build the index first; publish the cache identity only after success.
+    cache.sourceMesh.reset();
+    cache.zIndex.Build(*source, effectiveTransform);
     cache.sourceMesh = std::move(source);
     cache.objectId = object.id();
     cache.instanceId = instance.id();
@@ -562,6 +561,63 @@ bool GLGizmoPainterBase::EnsureHeightPreviewMesh(HeightPreviewVolumeCache& cache
     return true;
 }
 
+indexed_triangle_set GLGizmoPainterBase::BuildHeightPreviewCutMesh(HeightPreviewVolumeCache& cache, float zWorld) const
+{
+    indexed_triangle_set cutMesh;
+    if (cache.sourceMesh == nullptr)
+        return cutMesh;
+
+    const indexed_triangle_set& sourceIts = cache.sourceMesh->its;
+    const int sourceVertexCount = static_cast<int>(sourceIts.vertices.size());
+
+    // Sorted faces and a monotonic vertex remap keep the original relative order, so the slice result is unchanged.
+    std::vector<uint32_t> candidateFaces = cache.zIndex.Query(zWorld, zWorld);
+    std::sort(candidateFaces.begin(), candidateFaces.end());
+
+    std::vector<int> usedVertices;
+    usedVertices.reserve(candidateFaces.size() * 3);
+    for (uint32_t face : candidateFaces)
+    {
+        assert(face < sourceIts.indices.size());
+        const stl_triangle_vertex_indices& indices = sourceIts.indices[face];
+        for (int corner = 0; corner < 3; ++corner)
+            if (indices(corner) >= 0 && indices(corner) < sourceVertexCount)
+                usedVertices.push_back(indices(corner));
+    }
+    std::sort(usedVertices.begin(), usedVertices.end());
+    usedVertices.erase(std::unique(usedVertices.begin(), usedVertices.end()), usedVertices.end());
+
+    // Same per-vertex arithmetic as TriangleMesh::transform(), the previous full-mesh path.
+    cutMesh.vertices.reserve(usedVertices.size());
+    for (int vertexIndex : usedVertices)
+    {
+        const stl_vertex worldVertex =
+            (cache.effectiveTransform * sourceIts.vertices[vertexIndex].cast<double>()).cast<float>();
+        cutMesh.vertices.push_back(worldVertex);
+    }
+
+    const auto remapVertex = [&usedVertices](int vertexIndex) -> int
+    {
+        const std::vector<int>::const_iterator found =
+            std::lower_bound(usedVertices.begin(), usedVertices.end(), vertexIndex);
+        return found != usedVertices.end() && *found == vertexIndex ?
+            static_cast<int>(found - usedVertices.begin()) : -1;
+    };
+
+    cutMesh.indices.reserve(candidateFaces.size());
+    for (uint32_t face : candidateFaces)
+    {
+        const stl_triangle_vertex_indices& indices = sourceIts.indices[face];
+        const int first = remapVertex(indices(0));
+        const int second = remapVertex(indices(1));
+        const int third = remapVertex(indices(2));
+        if (first >= 0 && second >= 0 && third >= 0)
+            cutMesh.indices.emplace_back(first, second, third);
+    }
+
+    return cutMesh;
+}
+
 void GLGizmoPainterBase::UpdateHeightPreviewCut(HeightPreviewVolumeCache& cache, size_t cutIndex,
                                                 float zWorld, float minZ, float maxZ) const
 {
@@ -570,7 +626,7 @@ void GLGizmoPainterBase::UpdateHeightPreviewCut(HeightPreviewVolumeCache& cache,
 
     const bool finiteRange =
         std::isfinite(zWorld) && std::isfinite(minZ) && std::isfinite(maxZ) && minZ <= maxZ;
-    const bool enabled = finiteRange && cache.worldMesh != nullptr && minZ < zWorld && zWorld < maxZ;
+    const bool enabled = finiteRange && cache.sourceMesh != nullptr && minZ < zWorld && zWorld < maxZ;
 
     const HeightPreviewCutKey currentKey{cache.meshRevision, zWorld, enabled};
 
@@ -589,7 +645,8 @@ void GLGizmoPainterBase::UpdateHeightPreviewCut(HeightPreviewVolumeCache& cache,
 
     MeshSlicingParams slicingParams;
     slicingParams.trafo = Transform3d::Identity().matrix();
-    const Polygons polygons = slice_mesh(cache.worldMesh->its, zWorld, slicingParams);
+    const indexed_triangle_set cutMesh = BuildHeightPreviewCutMesh(cache, zWorld);
+    const Polygons polygons = slice_mesh(cutMesh, zWorld, slicingParams);
 
     cut.contours.reset();
     if (!polygons.empty()) {
@@ -610,7 +667,7 @@ void GLGizmoPainterBase::InvalidateHeightPreviewCaches(const char* reason) const
         for (HeightPreviewCut& cut : entry->cuts)
             cut.key.reset();
         entry->sourceMesh.reset();
-        entry->worldMesh.reset();
+        entry->zIndex = TriangleSelector::HeightRangeIndex();
     }
 }
 
@@ -941,18 +998,32 @@ bool GLGizmoPainterBase::gizmo_event(SLAGizmoEventType action, const Vec2d& mous
             volumeCount = std::min(volumeCount, trafo_matrices_not_translate.size());
             volumeCount = std::min(volumeCount, m_triangle_selectors.size());
             if (m_rr.mesh_id < 0 || static_cast<size_t>(m_rr.mesh_id) >= volumeCount)
+            {
+                // Leaving the object breaks the sweep, so re-entering does not fill the gap.
+                _heightRangeLastBottomZ.reset();
                 return true;
+            }
 
             if (m_button_down == Button::None)
             {
                 m_button_down = action == SLAGizmoEventType::LeftDown ? Button::Left : Button::Right;
                 m_strokeHasCommittedState = false;
+                _heightRangeLastBottomZ.reset();
             }
 
             const size_t hitMeshIndex = static_cast<size_t>(m_rr.mesh_id);
             const Vec3d worldHit = trafo_matrices[hitMeshIndex] * m_rr.hit.cast<double>();
-            const float zBottomWorld = static_cast<float>(worldHit.z());
-            const float zTopWorld = zBottomWorld + m_cursor_height;
+            const float hitZWorld = static_cast<float>(worldHit.z());
+            // Sweep from the previous event's band to this one so fast drags leave no gaps.
+            float zBottomWorld = hitZWorld;
+            float zTopWorld = hitZWorld + m_cursor_height;
+            if (_heightRangeLastBottomZ.has_value())
+            {
+                zBottomWorld = std::min(zBottomWorld, *_heightRangeLastBottomZ);
+                zTopWorld = std::max(zTopWorld, *_heightRangeLastBottomZ + m_cursor_height);
+            }
+            const float sweepHeight = zTopWorld - zBottomWorld;
+            _heightRangeLastBottomZ = hitZWorld;
 
             for (size_t meshIndex = 0; meshIndex < volumeCount; ++meshIndex)
             {
@@ -967,7 +1038,7 @@ bool GLGizmoPainterBase::gizmo_event(SLAGizmoEventType action, const Vec2d& mous
                 const Vec3f cameraPosition = (transform.inverse() * camera.get_position()).cast<float>();
                 const TriangleSelector::ClippingPlane clippingPlane = get_clipping_plane_in_volume_coordinates(transform);
                 std::unique_ptr<TriangleSelector::HeightRange> cursor = std::make_unique<TriangleSelector::HeightRange>(
-                    zBottomWorld, cameraPosition, m_cursor_height, transform, clippingPlane);
+                    zBottomWorld, cameraPosition, sweepHeight, transform, clippingPlane);
 
                 TriangleSelector::HeightRangeSelectionOptions options;
                 options.state = new_state;

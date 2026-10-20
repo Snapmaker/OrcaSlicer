@@ -509,6 +509,8 @@ private:
 
     Button m_button_down = Button::None;
     bool m_strokeHasCommittedState = false;
+    // Hit Z of the previous height-range event in the current stroke; empty when the sweep restarts.
+    std::optional<float> _heightRangeLastBottomZ;
     bool m_finishingPaintingInteraction = false;
     EState m_old_state = Off; // to be able to see that the gizmo has just been closed (see on_set_state)
 
@@ -552,7 +554,8 @@ private:
 
         // Keeps the source alive so a released mesh address cannot be reused for a false hit.
         std::shared_ptr<const TriangleMesh> sourceMesh;
-        std::unique_ptr<TriangleMesh> worldMesh;
+        // World-Z index of sourceMesh; cuts slice only the faces it returns.
+        TriangleSelector::HeightRangeIndex zIndex;
         Transform3d effectiveTransform = Transform3d::Identity();
 
         // Geometry version of this cache entry, not a selector revision.
@@ -566,6 +569,13 @@ private:
     bool EnsureHeightPreviewMesh(HeightPreviewVolumeCache& cache, const ModelObject& object,
                                  const ModelInstance& instance, const ModelVolume& volume,
                                  const Transform3d& effectiveTransform) const;
+    /**
+     * @brief Builds a world-space sub-mesh of the faces that may cross zWorld.
+     * @param cache Volume cache holding the source mesh and its Z index.
+     * @param zWorld World Z of the cut plane.
+     * @return Faces kept in original relative order; empty when the cache has no mesh.
+     */
+    indexed_triangle_set BuildHeightPreviewCutMesh(HeightPreviewVolumeCache& cache, float zWorld) const;
     /** Per-Z cut cache; empty results are cached too. */
     void UpdateHeightPreviewCut(HeightPreviewVolumeCache& cache, size_t cutIndex,
                                 float zWorld, float minZ, float maxZ) const;

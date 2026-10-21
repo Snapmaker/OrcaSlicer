@@ -236,21 +236,10 @@ Section "Main program" SecMain
     ; the install; it only skips the removal.
     Call FindExistingUninstaller
     StrCmp $SnapmakerIsUpgrade "1" 0 snap_no_existing_install
-    Call ReadInstalledVersion
-    StrCmp $R7 "" snap_prompt_without_version snap_prompt_with_version
 
-    snap_prompt_with_version:
-        StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 snap_prompt_with_version_en
-        MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "已安装 Snapmaker Orca V$R7。$\n$\n是否先卸载旧版本，再安装新版本？" /SD IDYES IDYES snap_uninstall_old IDNO snap_no_existing_install
-        Goto snap_prompt_abort
-    snap_prompt_with_version_en:
-        MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca V$R7 is already installed.$\n$\nDo you want to uninstall the old version before installing the new one?" /SD IDYES IDYES snap_uninstall_old IDNO snap_no_existing_install
-    snap_prompt_abort:
-        Abort
-    snap_prompt_without_version:
-        StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 snap_prompt_without_version_en
-        MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "已安装 Snapmaker Orca。$\n$\n是否先卸载旧版本，再安装新版本？" /SD IDYES IDYES snap_uninstall_old IDNO snap_no_existing_install
-        Goto snap_prompt_abort_without_version
+    StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 snap_prompt_without_version_en
+    MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "已安装 Snapmaker Orca。$\n$\n是否先卸载旧版本，再安装新版本？" /SD IDYES IDYES snap_uninstall_old IDNO snap_no_existing_install
+    Goto snap_prompt_abort_without_version
     snap_prompt_without_version_en:
         MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca is already installed.$\n$\nDo you want to uninstall the old version before installing the new one?" /SD IDYES IDYES snap_uninstall_old IDNO snap_no_existing_install
     snap_prompt_abort_without_version:
@@ -656,44 +645,6 @@ Function FindExistingUninstaller
     find_uninst_done:
 FunctionEnd
 
-; Sets $R7 to the already-installed version from ARP DisplayVersion / Version.
-Function ReadInstalledVersion
-    StrCpy $R7 ""
-    SetRegView 64
-    Call ReadInstalledVersionFromView
-    StrCmp $R7 "" 0 read_ver_strip
-    SetRegView 32
-    Call ReadInstalledVersionFromView
-    read_ver_strip:
-        SetRegView 32
-        StrCmp $R7 "" read_ver_done
-        StrCpy $0 $R7 1
-        StrCmp $0 "V" read_ver_strip_one
-        StrCmp $0 "v" read_ver_strip_one read_ver_done
-    read_ver_strip_one:
-        StrCpy $R7 $R7 "" 1
-    read_ver_done:
-FunctionEnd
-
-Function ReadInstalledVersionFromView
-    ReadRegStr $R7 HKLM "${PRODUCT_UNINST_KEY}" "DisplayVersion"
-    StrCmp $R7 "" 0 read_ver_view_done
-    ReadRegStr $R7 HKCU "${PRODUCT_UNINST_KEY}" "DisplayVersion"
-    StrCmp $R7 "" 0 read_ver_view_done
-    ReadRegStr $R7 HKLM "${PRODUCT_LEGACY_UNINST_KEY}" "DisplayVersion"
-    StrCmp $R7 "" 0 read_ver_view_done
-    ReadRegStr $R7 HKCU "${PRODUCT_LEGACY_UNINST_KEY}" "DisplayVersion"
-    StrCmp $R7 "" 0 read_ver_view_done
-    ReadRegStr $R7 HKLM "${PRODUCT_INSTALL_KEY}" "Version"
-    StrCmp $R7 "" 0 read_ver_view_done
-    ReadRegStr $R7 HKCU "${PRODUCT_INSTALL_KEY}" "Version"
-    StrCmp $R7 "" 0 read_ver_view_done
-    ReadRegStr $R7 HKLM "${PRODUCT_LEGACY_INSTALL_KEY}" "Version"
-    StrCmp $R7 "" 0 read_ver_view_done
-    ReadRegStr $R7 HKCU "${PRODUCT_LEGACY_INSTALL_KEY}" "Version"
-    read_ver_view_done:
-FunctionEnd
-
 ; Prefill the directory page from the previous installation, unless the
 ; user already overrode $INSTDIR on the command line (/D=).
 Function .onInit
@@ -848,7 +799,8 @@ SnapmakerFin_l10n_done:
   SendMessage $SnapmakerFinBitmapCtl ${STM_SETIMAGE} 0 0
   Pop $SnapmakerFinBitmap
   ${NSD_FreeImage} $SnapmakerFinBitmap
-  ; Free the font created by CreateFont (title + text no longer use it).
+  ; Free the font created by CreateFont. nsDialogs::Show returns after
+  ; ParentProc destroyed the page, so no control references it.
   System::Call 'gdi32::DeleteObject(i $SnapmakerFinFont)'
 FunctionEnd
 

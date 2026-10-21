@@ -346,6 +346,8 @@ public:
     void load_gcode();
     void load_gcode(const wxString& filename);
     void reload_gcode_from_disk();
+    // rebuild the gcode preview with the current pipeline preference
+    void reload_gcode_preview();
     void refresh_print();
 
     void update_nozzle_settings();

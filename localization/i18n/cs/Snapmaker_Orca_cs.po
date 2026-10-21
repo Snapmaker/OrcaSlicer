@@ -6588,14 +6588,6 @@ msgstr "Je tiskárna připravená k tisku? Je podložka prázdná a čistá?"
 msgid "Upload and Print"
 msgstr "Nahrát a Tisknout"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Tisk podle objektu: \n"
-"Doporučujeme použít automatické uspořádání, aby se předešlo kolizím při "
-"tisku."
-
 msgid "Send G-code"
 msgstr "Odeslat G-kód"
 

@@ -73,6 +73,12 @@ size_t distinct_nozzle_flow_type_count()
     return types.empty() ? 1 : types.size();
 }
 
+bool any_nozzle_high_flow()
+{
+    const std::vector<std::string> types = nozzle_volume_types();
+    return std::find(types.begin(), types.end(), FLOW_MODE_HIGH_FLOW) != types.end();
+}
+
 // App-level memory of the per-nozzle flow selection, stored a
 // "nozzle_volume_types" section keyed by printer preset name, CSV of
 // "Standard"/"High Flow" per nozzle. The project config itself is volatile

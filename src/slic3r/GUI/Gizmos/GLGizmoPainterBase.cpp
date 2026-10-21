@@ -23,6 +23,7 @@
 #include <optional>
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
+#include <tbb/parallel_sort.h>
 #include <wx/glcanvas.h>
 
 namespace Slic3r::GUI {
@@ -1913,13 +1914,19 @@ void TriangleSelectorPatch::BuildRenderChunkLayout()
         sortedRoots.emplace_back(CalculateMortonCode(centroid, minimum, extent), static_cast<uint32_t>(source));
     }
 
-    std::sort(sortedRoots.begin(), sortedRoots.end(), [](const std::pair<uint32_t, uint32_t>& left,
-                                                         const std::pair<uint32_t, uint32_t>& right) {
+    // Ties are broken by root index, so the order is total and the parallel sort gives the same layout.
+    tbb::parallel_sort(sortedRoots.begin(), sortedRoots.end(), [](const std::pair<uint32_t, uint32_t>& left,
+                                                                  const std::pair<uint32_t, uint32_t>& right) {
         return left.first != right.first ? left.first < right.first : left.second < right.second;
     });
 
     const size_t chunkCount = (sortedRoots.size() + RENDER_CHUNK_ROOT_TARGET - 1) / RENDER_CHUNK_ROOT_TARGET;
     m_renderChunks.resize(chunkCount);
+    for (size_t chunkId = 0; chunkId < chunkCount; ++chunkId)
+    {
+        const size_t firstRoot = chunkId * RENDER_CHUNK_ROOT_TARGET;
+        m_renderChunks[chunkId].sourceRoots.reserve(std::min(RENDER_CHUNK_ROOT_TARGET, sortedRoots.size() - firstRoot));
+    }
     for (size_t sortedIndex = 0; sortedIndex < sortedRoots.size(); ++sortedIndex) {
         const uint32_t source = sortedRoots[sortedIndex].second;
         const uint32_t chunkId = static_cast<uint32_t>(sortedIndex / RENDER_CHUNK_ROOT_TARGET);

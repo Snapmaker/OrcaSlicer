@@ -3955,7 +3955,9 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
         // with it; remember to show a fresh one after the rebuild.
         m_pending_version_event = true;
         m_pending_version_by_user = m_updateDialogByUser;
-        m_pending_version_url = wxString::FromUTF8(version_info.url);
+        // Read the URL cached by the dialog on the main thread; version_info is
+        // also written by Http worker threads, so reading it here would race.
+        m_pending_version_url = wxString::FromUTF8(m_updateDialog->getUrl());
     }
 
     update_http_extra_header();
@@ -5333,6 +5335,11 @@ void GUI_App::destroy_update_dialog()
         m_updateDialog = nullptr;
     }
     m_updateDialogParent = nullptr;
+    if (m_recreate_in_progress) {
+        // The user closed the prompt while the GUI was rebuilding; do not
+        // re-post the deferred event and resurrect a dialog they dismissed.
+        m_pending_version_event = false;
+    }
 }
 
 void GUI_App::check_web_version()

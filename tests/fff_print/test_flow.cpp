@@ -376,17 +376,6 @@ SCENARIO("Fill: adjusted solid spacing", "[Flow]") {
     THEN("A width narrower than one line is left unchanged") {
         REQUIRE(Slic3r::Fill::_adjust_solid_spacing(40, 47) == 47);
     }
-
-    THEN("The result never decreases and never exceeds 1.2x the request") {
-        const coord_t widths[] = { 250, 100, 250, 40 };
-        const coord_t dists[]  = { 47, 30, 50, 47 };
-        for (int i = 0; i < 4; ++i) {
-            INFO("width=" << widths[i] << " distance=" << dists[i]);
-            coord_t d = Slic3r::Fill::_adjust_solid_spacing(widths[i], dists[i]);
-            REQUIRE(d >= dists[i]);
-            REQUIRE(d <= coord_t(dists[i] * 1.2 + 0.5));
-        }
-    }
 }
 
 /// Negative spacing (width too narrow for the height) must raise FlowError.

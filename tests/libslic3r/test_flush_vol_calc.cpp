@@ -113,8 +113,15 @@ SCENARIO("FlushVolCalc: min offset and max clamp", "[FlushVolCalc]") {
     }
 }
 
+// Golden matrix provenance:
+//   The 64 values below were captured from the production FlushVolCalculator::calc_flush_vol()
+//   over the 8 probe colors in kColors[] — there is no separate probe script; the production
+//   function is the source of truth. The pipeline is deterministic (integer arithmetic after a
+//   float32 RGB->HSV conversion), and the min/max clamp yields exact integers (60/80/560/...),
+//   so the matrix is robust to libm/compiler rounding differences. To refresh the values, run
+//   the hidden test "FlushVolCalc: dump color pair matrix" (--run-hidden-tests) and paste back.
 SCENARIO("FlushVolCalc: color pair golden matrix", "[FlushVolCalc]") {
-    GIVEN("the probe-captured 8x8 golden matrix") {
+    GIVEN("the 8x8 golden matrix") {
         FlushVolCalculator calc(0, g_max_flush_volume);
         const int           expected[8][8] = {
             { 60, 443, 237, 540, 494, 307, 586,  90},   // red
@@ -157,5 +164,18 @@ SCENARIO("FlushVolCalc: alpha independence and bounds", "[FlushVolCalc]") {
                     CHECK(v <= g_max_flush_volume);
                 }
         }
+    }
+}
+
+// Hidden regeneration probe: dump the current calc_flush_vol output matrix so the
+// golden values above can be refreshed when the production logic changes. Run with
+// `--run-hidden-tests` (or filter "dump color pair matrix"), then paste the output
+// back into the 8x8 matrix above.
+TEST_CASE("FlushVolCalc: dump color pair matrix", "[FlushVolCalc][.]") {
+    FlushVolCalculator calc(0, g_max_flush_volume);
+    for (const Rgba& s : kColors) {
+        for (const Rgba& d : kColors)
+            std::printf("%3d ", calc.calc_flush_vol(s.a, s.r, s.g, s.b, d.a, d.r, d.g, d.b));
+        std::printf("   // %s\n", s.name);
     }
 }

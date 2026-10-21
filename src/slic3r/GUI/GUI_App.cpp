@@ -961,6 +961,7 @@ static void generic_exception_handle()
 }
 
 std::atomic<bool> GUI_App::m_app_alive{true};
+std::atomic<int>  GUI_App::m_version_check_cbs_inflight{0};
 
 void GUI_App::toggle_show_gcode_window()
 {
@@ -1239,6 +1240,7 @@ void GUI_App::post_init()
 
 wxDEFINE_EVENT(EVT_ENTER_FORCE_UPGRADE, wxCommandEvent);
 wxDEFINE_EVENT(EVT_SHOW_NO_NEW_VERSION, wxCommandEvent);
+wxDEFINE_EVENT(EVT_CHECK_NEW_VERSION_SF, wxCommandEvent);
 wxDEFINE_EVENT(EVT_SHOW_DIALOG, wxCommandEvent);
 wxDEFINE_EVENT(EVT_CONNECT_LAN_MODE_PRINT, wxCommandEvent);
 IMPLEMENT_APP(GUI_App)
@@ -2054,6 +2056,14 @@ void GUI_App::init_networking_callbacks()
 GUI_App::~GUI_App()
 {
     GUI_App::m_app_alive.store(false);
+    // Close the check-then-act window of the m_app_alive guards in the
+    // version-check Http callbacks: drain every callback that already passed
+    // its guard before any member is destroyed. Bounded wait — the guarded
+    // sections only queue an event or copy strings, so 2s is ample.
+    for (int i = 0; i < 2000 && GUI_App::m_version_check_cbs_inflight.load() > 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (GUI_App::m_version_check_cbs_inflight.load() > 0)
+        BOOST_LOG_TRIVIAL(warning) << "~GUI_App: version-check callbacks still in flight, proceeding with teardown";
 
     if (m_token_check_timer) {
         m_token_check_timer->Stop();
@@ -2817,6 +2827,8 @@ bool GUI_App::on_init_inner()
         preset_updater = new PresetUpdater();
         // filament_hot_bed_nozzles.json is copied here; FilamentHotBedNozzleRules reloads in load_current_presets() (startup, recreate_GUI, preset UI sync).
         Bind(EVT_SLIC3R_VERSION_ONLINE, [this](const wxCommandEvent& evt) {
+            if (m_is_closing)
+                return;
             if (m_recreate_in_progress) {
                 // Defer the update prompt until recreate_GUI() finishes; creating
                 // a dialog against the old frame would lose it with that frame.
@@ -2863,6 +2875,16 @@ bool GUI_App::on_init_inner()
             });
 
         Bind(EVT_ENTER_FORCE_UPGRADE, [this](const wxCommandEvent& evt) {
+                if (m_is_closing)
+                    return;
+                // The upgrade payload is written to AppConfig here on the main thread;
+                // the HTTP callbacks only queue this event because AppConfig is
+                // main-thread-only data (concurrent set/save races the map walk).
+                wxGetApp().app_config->set_bool("force_upgrade", version_info.force_upgrade);
+                wxGetApp().app_config->set("upgrade", "force_upgrade", true);
+                wxGetApp().app_config->set("upgrade", "description", version_info.description);
+                wxGetApp().app_config->set("upgrade", "version", version_info.version_str);
+                wxGetApp().app_config->set("upgrade", "url", version_info.url);
                 wxString      version_str = wxString::FromUTF8(this->app_config->get("upgrade", "version"));
                 wxString      description_text = wxString::FromUTF8(this->app_config->get("upgrade", "description"));
                 std::string   download_url = this->app_config->get("upgrade", "url");
@@ -2896,6 +2918,15 @@ bool GUI_App::on_init_inner()
             wxString msg = _L("This is the newest version.");
             InfoDialog dlg(nullptr, _L("Info"), msg);
             dlg.ShowModal();
+        });
+
+        // Static version.json fallback, deferred from the config/get HTTP callback:
+        // check_new_version_sf reads AppConfig on entry, which must stay on the main thread.
+        Bind(EVT_CHECK_NEW_VERSION_SF, [this](const wxCommandEvent& evt) {
+            if (m_is_closing)
+                return;
+            const int flags = evt.GetInt();
+            this->check_new_version_sf((flags & 0x1) != 0, (flags & 0x2) != 0);
         });
 
         Bind(EVT_SHOW_DIALOG, [this](const wxCommandEvent& evt) {
@@ -5353,6 +5384,16 @@ void GUI_App::check_preset_version()
     if (preset_updater != nullptr)
         preset_updater->sync_config_async();
 }
+namespace {
+// Counts a version-check Http callback as in-flight for its whole body, so that
+// ~GUI_App can drain callbacks that already passed the m_app_alive guard
+// before destroying members (the flag alone is check-then-act).
+struct VersionCheckCbScope {
+    VersionCheckCbScope()  { GUI_App::m_version_check_cbs_inflight.fetch_add(1); }
+    ~VersionCheckCbScope() { GUI_App::m_version_check_cbs_inflight.fetch_sub(1); }
+};
+} // namespace
+
 void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
 {
     std::string update_url = app_config->get_version_upgrade_url();
@@ -5360,7 +5401,10 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
     AppConfig* app_config = wxGetApp().app_config;
 
     Http::get(update_url)
-        .on_error([&, by_user](std::string body, std::string error, unsigned http_status) {
+        .on_error([by_user](std::string body, std::string error, unsigned http_status) {
+          VersionCheckCbScope inflight_cb;
+          if (!GUI_App::m_app_alive.load())
+              return;
           (void)body;
 
             wxCommandEvent* evt = new wxCommandEvent(EVT_REQUEST_SERVER_FAIL);
@@ -5375,6 +5419,9 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
         .timeout_connect(TIMEOUT_CONNECT)
         .on_complete([this,by_user](std::string body, unsigned http_status) {
         // Http response OK
+        VersionCheckCbScope inflight_cb;
+        if (!GUI_App::m_app_alive.load())
+            return;
         if (http_status != 200) {
             BOOST_LOG_TRIVIAL(error) << format("status not 200 with: `%1%`: HTTP %2%", "check_new_version_sf", http_status);
             return;
@@ -5472,11 +5519,9 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
 
             if (isForceUpgrade)
             {
-                wxGetApp().app_config->set_bool("force_upgrade", version_info.force_upgrade);
-                wxGetApp().app_config->set("upgrade", "force_upgrade", true);
-                wxGetApp().app_config->set("upgrade", "description", version_info.description);
-                wxGetApp().app_config->set("upgrade", "version", version_info.version_str);
-                wxGetApp().app_config->set("upgrade", "url", version_info.url);
+                // The "upgrade" section is persisted by the EVT_ENTER_FORCE_UPGRADE handler
+                // on the main thread; writing AppConfig from this HTTP callback would race
+                // concurrent main-thread set/save on the same map.
                 GUI::wxGetApp().enter_force_upgrade();
                 return;
             }
@@ -5492,6 +5537,16 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
           }
         })
         .perform();
+}
+
+// Queues the static version.json fallback for execution on the main thread.
+// The config/get HTTP callback must not call check_new_version_sf directly:
+// it reads AppConfig on entry, which is main-thread-only data.
+void GUI_App::defer_check_new_version_sf(bool show_tips, bool by_user)
+{
+    wxCommandEvent* evt = new wxCommandEvent(EVT_CHECK_NEW_VERSION_SF);
+    evt->SetInt((show_tips ? 0x1 : 0) | (by_user ? 0x2 : 0));
+    GUI::wxGetApp().QueueEvent(evt);
 }
 
 void GUI_App::request_version_from_config(bool show_tips, bool by_user)
@@ -5569,14 +5624,20 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
         // trigger the static fallback (CURLOPT_TIMEOUT defaults to unlimited).
         .timeout_max(30)
         .on_error([this, show_tips, by_user](std::string body, std::string error, unsigned http_status) {
+            VersionCheckCbScope inflight_cb;
+            if (!GUI_App::m_app_alive.load())
+                return;
             (void)body;
             BOOST_LOG_TRIVIAL(warning) << format("Error posting: `%1%`: HTTP %2%, %3%, fallback to static version.json", "config/get", http_status, error);
-            check_new_version_sf(show_tips, by_user);
+            this->defer_check_new_version_sf(show_tips, by_user);
         })
         .on_complete([this, show_tips, by_user, str_field, flag_field, obj_field, client_platform_type](std::string body, unsigned http_status) {
+            VersionCheckCbScope inflight_cb;
+            if (!GUI_App::m_app_alive.load())
+                return;
             if (http_status != 200) {
                 BOOST_LOG_TRIVIAL(warning) << format("status not 200 with: `%1%`: HTTP %2%, fallback to static version.json", "config/get", http_status);
-                check_new_version_sf(show_tips, by_user);
+                this->defer_check_new_version_sf(show_tips, by_user);
                 return;
             }
             // allow_exceptions = false: a malformed or non-UTF-8 body yields a discarded value
@@ -5585,7 +5646,7 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
             json jsonObj = json::parse(body, nullptr, false);
             if (jsonObj.is_discarded() || !jsonObj.is_object()) {
                 BOOST_LOG_TRIVIAL(warning) << "config/get body is not valid JSON/UTF-8, fallback to static version.json";
-                check_new_version_sf(show_tips, by_user);
+                this->defer_check_new_version_sf(show_tips, by_user);
                 return;
             }
 
@@ -5596,7 +5657,7 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
                 errCode = code_it->get<int>();
             if (errCode != 200 || !jsonObj.contains("data") || !jsonObj["data"].is_object()) {
                 BOOST_LOG_TRIVIAL(warning) << format("config/get rejected: code %1%, msg %2%, fallback to static version.json", errCode, str_field(jsonObj, "msg"));
-                check_new_version_sf(show_tips, by_user);
+                this->defer_check_new_version_sf(show_tips, by_user);
                 return;
             }
 
@@ -5606,7 +5667,7 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
             // misconfigured gray release may never be worse than static-only behavior.
             auto reject_payload = [this, show_tips, by_user](const char* reason) {
                 BOOST_LOG_TRIVIAL(warning) << format("config/get payload rejected: %1%, fallback to static version.json", reason);
-                check_new_version_sf(show_tips, by_user);
+                this->defer_check_new_version_sf(show_tips, by_user);
             };
 
             const json dataObj = jsonObj["data"];
@@ -5693,11 +5754,9 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
 
             if (isForceUpgrade)
             {
-                wxGetApp().app_config->set_bool("force_upgrade", version_info.force_upgrade);
-                wxGetApp().app_config->set("upgrade", "force_upgrade", true);
-                wxGetApp().app_config->set("upgrade", "description", version_info.description);
-                wxGetApp().app_config->set("upgrade", "version", version_info.version_str);
-                wxGetApp().app_config->set("upgrade", "url", version_info.url);
+                // The "upgrade" section is persisted by the EVT_ENTER_FORCE_UPGRADE handler
+                // on the main thread; writing AppConfig from this HTTP callback would race
+                // concurrent main-thread set/save on the same map.
                 GUI::wxGetApp().enter_force_upgrade();
                 return;
             }

@@ -247,6 +247,10 @@ public:
     };
 
     static std::atomic<bool> m_app_alive; // 标记应用是否存活
+    // Version-check Http callbacks run on detached worker threads; ~GUI_App drains
+    // this counter after m_app_alive goes false, closing the check-then-act window
+    // of the guards before any member is destroyed.
+    static std::atomic<int> m_version_check_cbs_inflight;
 
     // True once Windows began ending the session; close-path dialogs check it
     // to auto-discard instead of interacting (Sentry SNAPMAKER_ORCA-1H6).
@@ -654,6 +658,8 @@ private:
     void            check_web_version();
     void            check_preset_version();
     void            check_new_version_sf(bool show_tips = false, bool by_user = false);
+    // Main-thread deferral of check_new_version_sf for the HTTP callback paths
+    void            defer_check_new_version_sf(bool show_tips = false, bool by_user = false);
     // Gray release: POST /config/get (snapmaker-config) first, falls back to check_new_version_sf on failure
     void            request_version_from_config(bool show_tips = false, bool by_user = false);
     void            process_network_msg(std::string dev_id, std::string msg);

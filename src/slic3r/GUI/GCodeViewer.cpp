@@ -93,60 +93,21 @@ static EMoveType buffer_type(unsigned char id) {
     return static_cast<EMoveType>(static_cast<unsigned char>(EMoveType::Retract) + id);
 }
 
-// Cached "gcode_preview_gpu_accel" preference half of gpu_path_pipeline_enabled().
-// Written only by the first-use latch below and by the invalidation at the top
-// of GCodeViewer::reset() (which the destructor also passes through). reset()
-// is the pivot of every toolpath reload: load() calls it before choosing its
-// loader branch, and the Preferences toggle reaches it via
-// GUI_App::open_preferences() -> Plater::reload_gcode_preview() ->
-// reset_gcode_toolpaths() -> reset() once the dialog closes, so
-// toggling the preference still switches pipelines without a restart. Between
-// resets the gate stays stable for the whole lifetime of the loaded toolpath
-// data, so every consumer (render, visibility queries, sliders) agrees with
-// whichever loader branch built that data. A preference write that does not
-// funnel through Plater::reload_gcode_preview() (config import, a future
-// second toggle surface) is picked up at the next reset()/load() -- the
-// earliest moment it could matter, since the pipeline only re-decides there.
-// These statics are deliberately process-global and shared by every
-// GCodeViewer instance (the view3D/preview/assemble canvases each embed one):
-// the preference is process-wide, so sharing keeps the views in agreement.
-// All GCodeViewer methods run on the UI thread (load/refresh from Preview,
-// render from paint, slider handlers, the Preferences toggle), so plain bools
-// need no synchronization; the gate must stay UI-thread-only.
-static bool s_gpu_pref_cached  = false; // false => re-read AppConfig on next gate call
-static bool s_gpu_pref_enabled = false; // true  => preference allows the GPU pipeline
-
-// Re-read gcode_preview_gpu_accel into the cache. Mirrors the original live
-// check verbatim: app_config == nullptr => preference treated as enabled.
-// Store the value before arming the flag.
-static void refresh_gpu_path_pref_cache()
-{
-    s_gpu_pref_enabled = GUI::wxGetApp().app_config == nullptr
-        || GUI::wxGetApp().app_config->get_bool("gcode_preview_gpu_accel");
-    s_gpu_pref_cached = true;
-}
-
 // GPU path pipeline (de-geometrized rendering) master switch: enabled
 // automatically whenever the OpenGL context is 3.1 or newer (the pipeline
 // needs texture buffers, GLSL 140 shaders and instanced draws); older
-// contexts keep the legacy CPU-generated vertex buffers.
+// contexts keep the legacy CPU-generated vertex buffers. Queried once per
+// load(); consumers read GCodeViewer::m_use_gpu_pipeline instead, so the
+// choice stays tied to the data that load built.
 static bool gpu_path_pipeline_enabled()
 {
     // User preference: GPU acceleration for the gcode preview defaults to
     // on, but can be turned off in Preferences -- on basic integrated
     // graphics the per-frame shader-side geometry expansion costs more than
     // the legacy CPU-generated buffers it replaces, making the preview
-    // slower than before. Cached (see s_gpu_pref_* above):
-    // AppConfig::get_bool() builds std::string temporaries (the 23-char key
-    // exceeds SSO, i.e. a heap allocation) and walks two nested std::map
-    // levels per call, and this gate runs once per move in refresh()'s range
-    // loop (m_moves_count reaches the millions) and several times per frame
-    // in render_toolpaths(), so those paths must not touch AppConfig. The
-    // Preferences toggle forces a preview reload whose reset() re-arms the
-    // cache, so the switch still takes effect without a restart.
-    if (!s_gpu_pref_cached)
-        refresh_gpu_path_pref_cache();
-    if (!s_gpu_pref_enabled)
+    // slower than before.
+    if (GUI::wxGetApp().app_config != nullptr
+        && !GUI::wxGetApp().app_config->get_bool("gcode_preview_gpu_accel"))
         return false;
 
     // GL capability: enabled on GL 3.1+ provided the gpu_path program
@@ -1104,6 +1065,10 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
     // when m_loading is set, so arming first would silently skip this cleanup and
     // the previous gcode's buffers would leak / be appended to by load_toolpaths().
     reset();
+    // choose the pipeline once per load: render, visibility queries and
+    // sliders read this flag, so they always match the loader branch below
+    // even if the preference changes before the next reload
+    m_use_gpu_pipeline = gpu_path_pipeline_enabled();
 
     // load_toolpaths() below pumps the event loop through its modal progress
     // dialog; a dispatched event can re-enter reset() (via reset_gcode_toolpaths)
@@ -1184,7 +1149,7 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
         }
         // no GPU vertex buffers were built, so there is nothing to render as toolpath
         m_no_render_path = true;
-    } else if (gpu_path_pipeline_enabled()) {
+    } else if (m_use_gpu_pipeline) {
         load_toolpaths_gpu(gcode_result, build_volume, exclude_bounding_box);
     } else {
         load_toolpaths(gcode_result, build_volume, exclude_bounding_box);
@@ -1461,7 +1426,7 @@ m_extrusions.ranges.layer_duration_log.update_from(curr.layer_duration);
 
 
     // GPU path pipeline: keep the stack in sync with the decoded tool colors
-    if (gpu_path_pipeline_enabled() && _pathStack != nullptr) {
+    if (m_use_gpu_pipeline && _pathStack != nullptr) {
         _pathStack->SetFilamentVisible(m_tools.m_tool_visibles);
         _pathStack->SetViewType(static_cast<unsigned int>(m_view_type));
     }
@@ -1496,15 +1461,8 @@ void GCodeViewer::reset()
 {
     if (m_loading)
         return;
-    // Re-read the gcode_preview_gpu_accel preference on the next
-    // gpu_path_pipeline_enabled() call. Deliberately below the m_loading
-    // guard: re-entrant reset() calls arriving while a load is in flight
-    // are ignored, and must not re-arm the cache mid-load either (that
-    // would let the gate flip underneath data built by the other pipeline).
-    // load() runs reset() before its loader branch, so the gate always
-    // agrees with the pipeline that builds the data; ~GCodeViewer() also
-    // lands here, and the lazy latch means shutdown never touches AppConfig.
-    s_gpu_pref_cached = false;
+    // no toolpath data left; load() picks the pipeline again
+    m_use_gpu_pipeline = false;
 
     //BBS: should also reset the result id
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": current result id %1% ")%m_last_result_id;
@@ -1975,7 +1933,7 @@ void GCodeViewer::update_sequential_view_current(unsigned int first, unsigned in
 {
     // GPU path pipeline: the slider delivers sids directly; the playback
     // window clips the top layer and dims the layers below
-    if (gpu_path_pipeline_enabled() && _pathStack != nullptr) {
+    if (m_use_gpu_pipeline && _pathStack != nullptr) {
         last = std::min(last, static_cast<unsigned int>(m_sequential_view.endpoints.last));
         first = std::min(first, static_cast<unsigned int>(m_sequential_view.endpoints.last));
 
@@ -2132,7 +2090,7 @@ void GCodeViewer::update_layers_slider_mode()
 
 void GCodeViewer::update_marker_curr_move() {
     if ((int)m_last_result_id != -1) {
-        if (gpu_path_pipeline_enabled() && _pathStack != nullptr) {
+        if (m_use_gpu_pipeline && _pathStack != nullptr) {
             // O(1) sid lookup; the legacy path linearly scans all moves below
             // (AdvancedRenderer replaces this the same way)
             const uint32_t moveIndex = _pathStack->MoveIndexOfSid(m_sequential_view.current.last);
@@ -2159,20 +2117,20 @@ void GCodeViewer::set_view_type(EViewType type, bool reset_feature_type_visible)
     if (reset_feature_type_visible && type == EViewType::ColorPrint) {
         reset_visible(EViewType::FeatureType);
     }
-    if (gpu_path_pipeline_enabled() && _pathStack != nullptr)
+    if (m_use_gpu_pipeline && _pathStack != nullptr)
         _pathStack->SetViewType(static_cast<unsigned int>(m_view_type));
 }
 
 void GCodeViewer::set_toolpath_role_visibility_flags(unsigned int flags)
 {
     m_extrusions.role_visibility_flags = flags;
-    if (gpu_path_pipeline_enabled() && _pathStack != nullptr)
+    if (m_use_gpu_pipeline && _pathStack != nullptr)
         _pathStack->SetRoleVisibilityFlags(flags);
 }
 
 bool GCodeViewer::is_toolpath_move_type_visible(EMoveType type) const
 {
-    if (gpu_path_pipeline_enabled() && _pathStack != nullptr)
+    if (m_use_gpu_pipeline && _pathStack != nullptr)
         return _pathStack->IsMoveTypeVisible(type);
     size_t id = static_cast<size_t>(buffer_id(type));
     return (id < m_buffers.size()) ? m_buffers[id].visible : false;
@@ -2180,7 +2138,7 @@ bool GCodeViewer::is_toolpath_move_type_visible(EMoveType type) const
 
 void GCodeViewer::set_toolpath_move_type_visible(EMoveType type, bool visible)
 {
-    if (gpu_path_pipeline_enabled() && _pathStack != nullptr) {
+    if (m_use_gpu_pipeline && _pathStack != nullptr) {
         _pathStack->SetMoveTypeVisible(type, visible);
         // mirror into the legacy buffers: their visible flags persist across
         // reloads, so they double as the storage the stack state is restored
@@ -3602,7 +3560,7 @@ void GCodeViewer::refresh_render_paths(bool keep_sequential_current_first, bool 
 
     // GPU path pipeline: the tables update lazily through their dirty flags,
     // only the slider endpoints need refreshing here
-    if (gpu_path_pipeline_enabled() && _pathStack != nullptr && _pathStack->LayerCount() > 0) {
+    if (m_use_gpu_pipeline && _pathStack != nullptr && _pathStack->LayerCount() > 0) {
         refresh_render_paths_gpu(keep_sequential_current_first, keep_sequential_current_last);
         return;
     }
@@ -4160,7 +4118,7 @@ void GCodeViewer::render_toolpaths()
 {
     // GPU path pipeline: the toolpaths are drawn from the de-geometrized
     // tables with shader-generated geometry
-    if (gpu_path_pipeline_enabled() && _pathStack != nullptr && _pathStack->LayerCount() > 0 && m_gcode_result != nullptr) {
+    if (m_use_gpu_pipeline && _pathStack != nullptr && _pathStack->LayerCount() > 0 && m_gcode_result != nullptr) {
         // sync the visibility flags: several places mutate
         // m_extrusions.role_visibility_flags / m_tools.m_tool_visibles
         // directly (legend checkboxes, view-type presets), so pull the

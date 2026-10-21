@@ -2817,6 +2817,15 @@ bool GUI_App::on_init_inner()
         preset_updater = new PresetUpdater();
         // filament_hot_bed_nozzles.json is copied here; FilamentHotBedNozzleRules reloads in load_current_presets() (startup, recreate_GUI, preset UI sync).
         Bind(EVT_SLIC3R_VERSION_ONLINE, [this](const wxCommandEvent& evt) {
+            if (m_recreate_in_progress) {
+                // Defer the update prompt until recreate_GUI() finishes; creating
+                // a dialog against the old frame would lose it with that frame.
+                m_pending_version_event = true;
+                m_pending_version_by_user = evt.GetInt();
+                m_pending_version_url = evt.GetString();
+                return;
+            }
+            m_updateDialogByUser = evt.GetInt();
             if (this->plater_ != nullptr) {
 
                 std::string skip_version_str = this->app_config->get("app", "skip_version");
@@ -3939,6 +3948,17 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "recreate_GUI enter";
     m_is_recreating_gui = true;
+    m_recreate_in_progress = true;
+
+    if (m_updateDialog && m_updateDialog->IsShown()) {
+        // The open dialog is a child of the old mainframe and will be destroyed
+        // with it; remember to show a fresh one after the rebuild.
+        m_pending_version_event = true;
+        m_pending_version_by_user = m_updateDialogByUser;
+        // Read the URL cached by the dialog on the main thread; version_info is
+        // also written by Http worker threads, so reading it here would race.
+        m_pending_version_url = wxString::FromUTF8(m_updateDialog->getUrl());
+    }
 
     update_http_extra_header();
 
@@ -3966,9 +3986,15 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
     SetTopWindow(mainframe);
 
     dlg.Update(30, _L("Rebuild") + dots);
-    // A cached update dialog would be a child of the old frame.
-    m_updateDialog = nullptr;
     old_main_frame->Destroy();
+    // Defensive: the version event is deferred for the whole rebuild, so in
+    // practice the dialog should not be created against the new frame mid-rebuild.
+    // If it was created against the old frame, it was destroyed with it; drop the
+    // stale pointer. A dialog created against the new frame stays valid/closable.
+    if (m_updateDialogParent == static_cast<wxWindow*>(old_main_frame)) {
+        m_updateDialog = nullptr;
+        m_updateDialogParent = nullptr;
+    }
 
     dlg.Update(80, _L("Loading current presets") + dots);
     m_printhost_job_queue.reset(new PrintHostJobQueue(mainframe->printhost_queue_dlg()));
@@ -4027,6 +4053,15 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
     }
 
     wxGetApp().device_card_notify(devices);
+
+    m_recreate_in_progress = false;
+    if (m_pending_version_event) {
+        m_pending_version_event = false;
+        wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
+        evt->SetInt(m_pending_version_by_user);
+        evt->SetString(m_pending_version_url);
+        QueueEvent(evt);
+    }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "recreate_GUI exit";
 }
@@ -5289,6 +5324,7 @@ void maybe_attach_updater_signature(Http& http, const std::string& canonical_que
 void GUI_App::create_update_dialog()
 {
     m_updateDialog = new UpdateVersionDialog(mainframe);
+    m_updateDialogParent = mainframe;
     m_updateDialog->Hide();
 }
 
@@ -5297,6 +5333,12 @@ void GUI_App::destroy_update_dialog()
     if (m_updateDialog) {
         m_updateDialog->Destroy();
         m_updateDialog = nullptr;
+    }
+    m_updateDialogParent = nullptr;
+    if (m_recreate_in_progress) {
+        // The user closed the prompt while the GUI was rebuilding; do not
+        // re-post the deferred event and resurrect a dialog they dismissed.
+        m_pending_version_event = false;
     }
 }
 

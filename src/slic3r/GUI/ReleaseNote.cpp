@@ -44,7 +44,6 @@ wxDEFINE_EVENT(EVT_UPDATE_NOZZLE, wxCommandEvent);
 wxDEFINE_EVENT(EVT_JUMP_TO_HMS, wxCommandEvent);
 wxDEFINE_EVENT(EVT_JUMP_TO_LIVEVIEW, wxCommandEvent);
 wxDEFINE_EVENT(EVT_UPDATE_TEXT_MSG, wxCommandEvent);
-wxDEFINE_EVENT(EVT_DOWN_URL_PACK, wxCommandEvent);
 
 ReleaseNoteDialog::ReleaseNoteDialog(Plater *plater /*= nullptr*/)
     : DPIDialog(static_cast<wxWindow *>(wxGetApp().mainframe), wxID_ANY, _L("Release Note"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)

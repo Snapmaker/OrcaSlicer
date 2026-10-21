@@ -93,23 +93,73 @@ static EMoveType buffer_type(unsigned char id) {
     return static_cast<EMoveType>(static_cast<unsigned char>(EMoveType::Retract) + id);
 }
 
+// Cached "gcode_preview_gpu_accel" preference half of gpu_path_pipeline_enabled().
+// Written only by the first-use latch below and by the invalidation at the top
+// of GCodeViewer::reset() (which the destructor also passes through). reset()
+// is the pivot of every toolpath reload: load() calls it before choosing its
+// loader branch, and the Preferences toggle reaches it via
+// GUI_App::open_preferences() -> Plater::reload_gcode_preview() ->
+// reset_gcode_toolpaths() -> reset() once the dialog closes, so
+// toggling the preference still switches pipelines without a restart. Between
+// resets the gate stays stable for the whole lifetime of the loaded toolpath
+// data, so every consumer (render, visibility queries, sliders) agrees with
+// whichever loader branch built that data. A preference write that does not
+// funnel through Plater::reload_gcode_preview() (config import, a future
+// second toggle surface) is picked up at the next reset()/load() -- the
+// earliest moment it could matter, since the pipeline only re-decides there.
+// These statics are deliberately process-global and shared by every
+// GCodeViewer instance (the view3D/preview/assemble canvases each embed one):
+// the preference is process-wide, so sharing keeps the views in agreement.
+// All GCodeViewer methods run on the UI thread (load/refresh from Preview,
+// render from paint, slider handlers, the Preferences toggle), so plain bools
+// need no synchronization; the gate must stay UI-thread-only.
+static bool s_gpu_pref_cached  = false; // false => re-read AppConfig on next gate call
+static bool s_gpu_pref_enabled = false; // true  => preference allows the GPU pipeline
+
+// Re-read gcode_preview_gpu_accel into the cache. Mirrors the original live
+// check verbatim: app_config == nullptr => preference treated as enabled.
+// Store the value before arming the flag.
+static void refresh_gpu_path_pref_cache()
+{
+    s_gpu_pref_enabled = GUI::wxGetApp().app_config == nullptr
+        || GUI::wxGetApp().app_config->get_bool("gcode_preview_gpu_accel");
+    s_gpu_pref_cached = true;
+}
+
 // GPU path pipeline (de-geometrized rendering) master switch: enabled
 // automatically whenever the OpenGL context is 3.1 or newer (the pipeline
 // needs texture buffers, GLSL 140 shaders and instanced draws); older
 // contexts keep the legacy CPU-generated vertex buffers.
 static bool gpu_path_pipeline_enabled()
 {
-    // Enabled on GL 3.1+ provided the gpu_path program actually loaded (a
-    // compile failure at startup silently falls back to the legacy buffers
-    // instead of rendering nothing for the whole session). The shader lookup
-    // comes first and short-circuits the version query, so an early call
-    // before GL initialization degrades to the legacy pipeline instead of
-    // latching a poisoned "N/A" version into the process-wide GLInfo cache.
-    // Evaluated once per process; the shader manager is populated during
-    // init_opengl, well before preview load.
-    static const bool enabled = GUI::wxGetApp().get_shader("gpu_path") != nullptr
+    // User preference: GPU acceleration for the gcode preview defaults to
+    // on, but can be turned off in Preferences -- on basic integrated
+    // graphics the per-frame shader-side geometry expansion costs more than
+    // the legacy CPU-generated buffers it replaces, making the preview
+    // slower than before. Cached (see s_gpu_pref_* above):
+    // AppConfig::get_bool() builds std::string temporaries (the 23-char key
+    // exceeds SSO, i.e. a heap allocation) and walks two nested std::map
+    // levels per call, and this gate runs once per move in refresh()'s range
+    // loop (m_moves_count reaches the millions) and several times per frame
+    // in render_toolpaths(), so those paths must not touch AppConfig. The
+    // Preferences toggle forces a preview reload whose reset() re-arms the
+    // cache, so the switch still takes effect without a restart.
+    if (!s_gpu_pref_cached)
+        refresh_gpu_path_pref_cache();
+    if (!s_gpu_pref_enabled)
+        return false;
+
+    // GL capability: enabled on GL 3.1+ provided the gpu_path program
+    // actually loaded (a compile failure at startup silently falls back to
+    // the legacy buffers instead of rendering nothing for the whole
+    // session). The shader lookup comes first and short-circuits the version
+    // query, so an early call before GL initialization degrades to the
+    // legacy pipeline instead of latching a poisoned "N/A" version into the
+    // process-wide GLInfo cache. Evaluated once per process; the shader
+    // manager is populated during init_opengl, well before preview load.
+    static const bool glCapable = GUI::wxGetApp().get_shader("gpu_path") != nullptr
         && GUI::wxGetApp().is_gl_version_greater_or_equal_to(3, 1);
-    return enabled;
+    return glCapable;
 }
 
 // Bed-containment check shared by both toolpath loaders: the build-volume
@@ -1359,6 +1409,13 @@ void GCodeViewer::refresh(const GCodeProcessorResult& gcode_result, const std::v
 
     // update ranges for coloring / legend
     m_extrusions.reset_ranges();
+    // loop-invariant hoist: neither the pipeline gate, _pathStack, nor the
+    // move-type visibility flags can change inside this loop (it does not
+    // pump events); only Extrude (via the fallthrough below) and Travel
+    // reach the feedrate update, so resolve their visibility once instead
+    // of once per move
+    const bool feedrate_visible_extrude = is_toolpath_move_type_visible(EMoveType::Extrude);
+    const bool feedrate_visible_travel  = is_toolpath_move_type_visible(EMoveType::Travel);
     for (size_t i = 0; i < m_moves_count; ++i) {
         // skip first vertex
         if (i == 0)
@@ -1389,7 +1446,7 @@ m_extrusions.ranges.layer_duration_log.update_from(curr.layer_duration);
         }
         case EMoveType::Travel:
         {
-            if (is_toolpath_move_type_visible(curr.type))
+            if (curr.type == EMoveType::Extrude ? feedrate_visible_extrude : feedrate_visible_travel)
                 m_extrusions.ranges.feedrate.update_from(curr.feedrate);
 
             break;
@@ -1439,6 +1496,16 @@ void GCodeViewer::reset()
 {
     if (m_loading)
         return;
+    // Re-read the gcode_preview_gpu_accel preference on the next
+    // gpu_path_pipeline_enabled() call. Deliberately below the m_loading
+    // guard: re-entrant reset() calls arriving while a load is in flight
+    // are ignored, and must not re-arm the cache mid-load either (that
+    // would let the gate flip underneath data built by the other pipeline).
+    // load() runs reset() before its loader branch, so the gate always
+    // agrees with the pipeline that builds the data; ~GCodeViewer() also
+    // lands here, and the lazy latch means shutdown never touches AppConfig.
+    s_gpu_pref_cached = false;
+
     //BBS: should also reset the result id
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": current result id %1% ")%m_last_result_id;
     m_last_result_id = -1;

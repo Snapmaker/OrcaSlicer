@@ -31,6 +31,7 @@ add_executable(${_TEST_NAME}_tests
 	test_sswcp_protocol.cpp
     test_indexed_triangle_set.cpp
 	TestMD5.cpp
+	test_flush_vol_calc.cpp
     ../libnest2d/printer_parts.cpp
 	)
 

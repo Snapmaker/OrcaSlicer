@@ -4574,7 +4574,8 @@ wxString GUI_App::get_international_url(const wxString& origin_url) {
         region = "US";
     }
 
-    string dark_mode = wxGetApp().app_config->get("dark_color_mode");
+    // Use the resolved native theme, including the system appearance on macOS.
+    const std::string dark_mode = wxGetApp().dark_mode() ? "1" : "0";
 
     if (baseUrl.find("?") != std::string::npos) {
         return baseUrl + wxString::FromUTF8("&locale=") + lang + wxString::FromUTF8("-") + region +

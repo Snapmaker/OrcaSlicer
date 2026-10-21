@@ -10,6 +10,7 @@ add_executable(${_TEST_NAME}_tests
 	test_config.cpp
 	test_custom_gcode.cpp
 	test_elephant_foot_compensation.cpp
+	test_extrusion_entity.cpp
 	test_geometry.cpp
 	test_icns.cpp
 	test_mixed_filament.cpp

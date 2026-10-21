@@ -111,7 +111,6 @@ private:
     bool network_plugin_ready{false};
 
 public:
-    std::string m_device_id = "";
     bool        m_bind_nozzle = false;
 
 #if wxUSE_WEBVIEW_IE

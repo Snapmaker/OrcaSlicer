@@ -25,6 +25,7 @@
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Utils.hpp"
 #include "libslic3r/Zipper.hpp"
 
 #include "Tab.hpp"
@@ -4202,17 +4203,14 @@ void MainFrame::show_sync_dialog()
 
 void MainFrame::export_logs()
 {
-    // 1. Get log folder path
-    auto log_folder = boost::filesystem::path(data_dir()) / "log";
-
-    // 2. Check if log folder exists
-    if (!boost::filesystem::exists(log_folder) || boost::filesystem::is_empty(log_folder)) {
+    // 1. Check both the application and Snapmaker Control log folders for exportable files.
+    if (collect_log_export_files(boost::filesystem::path(data_dir())).empty()) {
         MessageDialog dlg(this, _L("No logs found."), _L("Export Logs"), wxOK | wxICON_INFORMATION);
         dlg.ShowModal();
         return;
     }
 
-    // 3. Show save file dialog
+    // 2. Show save file dialog
     std::time_t t = std::time(0);
     std::tm* now_time = std::localtime(&t);
     std::stringstream buf;
@@ -4236,34 +4234,29 @@ void MainFrame::export_logs()
     // Write version info and flush to log file before zipping
     GUI_App::log_version_info();
 
-    // 4. Create ZIP file and add all logs
+    // 3. Create ZIP file and add logs from both directories. Refresh the list after version info is flushed.
     try {
-        Zipper zipper(into_u8(zip_path), Zipper::TIGHT_COMPRESSION);
+        const auto log_files = collect_log_export_files(boost::filesystem::path(data_dir()));
+        Zipper     zipper(into_u8(zip_path), Zipper::TIGHT_COMPRESSION);
 
-        // Iterate through log directory
-        for (auto& entry : boost::filesystem::directory_iterator(log_folder)) {
-            if (boost::filesystem::is_regular_file(entry.path())) {
-                std::string filename = entry.path().filename().string();
-
-                // Read file content
-                std::ifstream file(entry.path().string(), std::ios::binary);
-                if (!file.is_open()) {
-                    BOOST_LOG_TRIVIAL(warning) << "Failed to open log file: " << entry.path().string();
-                    continue;
-                }
-
-                std::string content((std::istreambuf_iterator<char>(file)),
-                                   std::istreambuf_iterator<char>());
-                file.close();
-
-                // Add to ZIP
-                zipper.add_entry(filename, content.c_str(), content.size());
+        for (const auto& log_file : log_files) {
+            // Read file content
+            std::ifstream file(log_file.source_path.string(), std::ios::binary);
+            if (!file.is_open()) {
+                BOOST_LOG_TRIVIAL(warning) << "Failed to open log file: " << log_file.source_path.string();
+                continue;
             }
+
+            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            file.close();
+
+            // Add to ZIP
+            zipper.add_entry(log_file.archive_name, content.c_str(), content.size());
         }
 
         zipper.finalize();
 
-        // 5. Show success message
+        // 4. Show success message
         MessageDialog success_dlg(this,
             _L("Logs exported successfully."),
             _L("Export Logs"),
@@ -4279,7 +4272,6 @@ void MainFrame::export_logs()
         error_dlg.ShowModal();
     }
 }
-
 
 void MainFrame::update_side_preset_ui()
 {

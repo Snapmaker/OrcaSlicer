@@ -2822,6 +2822,7 @@ bool GUI_App::on_init_inner()
                 // a dialog against the old frame would lose it with that frame.
                 m_pending_version_event = true;
                 m_pending_version_by_user = evt.GetInt();
+                m_pending_version_url = evt.GetString();
                 return;
             }
             m_updateDialogByUser = evt.GetInt();
@@ -3954,6 +3955,7 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
         // with it; remember to show a fresh one after the rebuild.
         m_pending_version_event = true;
         m_pending_version_by_user = m_updateDialogByUser;
+        m_pending_version_url = wxString::FromUTF8(version_info.url);
     }
 
     update_http_extra_header();
@@ -3983,9 +3985,10 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     dlg.Update(30, _L("Rebuild") + dots);
     old_main_frame->Destroy();
-    // If the update dialog was created against the old frame, it was destroyed
-    // with it; drop the stale pointer. A dialog created against the new frame
-    // during the rebuild is still valid and must stay closable.
+    // Defensive: the version event is deferred for the whole rebuild, so in
+    // practice the dialog should not be created against the new frame mid-rebuild.
+    // If it was created against the old frame, it was destroyed with it; drop the
+    // stale pointer. A dialog created against the new frame stays valid/closable.
     if (m_updateDialogParent == static_cast<wxWindow*>(old_main_frame)) {
         m_updateDialog = nullptr;
         m_updateDialogParent = nullptr;
@@ -4054,6 +4057,7 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
         m_pending_version_event = false;
         wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
         evt->SetInt(m_pending_version_by_user);
+        evt->SetString(m_pending_version_url);
         QueueEvent(evt);
     }
 

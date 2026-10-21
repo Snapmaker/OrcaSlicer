@@ -273,10 +273,14 @@ private:
 #endif // __APPLE__
     bool            m_app_conf_exists{ false };
     EAppMode        m_app_mode{ EAppMode::Editor };
+    // Short rebuild flag consumed by other components during teardown.
     bool            m_is_recreating_gui{ false };
+    // Covers the whole recreate_GUI() (including the device-page reload tail)
+    // and is used only to defer the version prompt.
     bool            m_recreate_in_progress{ false };
     bool            m_pending_version_event{ false };
     int             m_pending_version_by_user{ 0 };
+    wxString        m_pending_version_url;
     int             m_updateDialogByUser{ 0 };
     /// Set only for the duration of `MsgUpdateConfig::ShowModal()` in load_flutter_web (atomic: safe vs updater threads + CallAfter).
     std::atomic<bool> m_flutter_web_config_update_dlg_open{ false };

@@ -16794,17 +16794,29 @@ bool Plater::priv::can_smooth_mesh() const
 {
     std::vector<int> obj_idxs, vol_idxs;
     sidebar->obj_list()->get_selection_indexes(obj_idxs, vol_idxs);
+    if (obj_idxs.empty()) {
+        return false;
+    }
     if (vol_idxs.empty()) {
-        for (auto obj_idx : obj_idxs)
+        for (auto obj_idx : obj_idxs) {
+            if (obj_idx < 0 || obj_idx >= (int) model.objects.size())
+                return false;
             if (model.objects[obj_idx]->get_object_stl_stats().open_edges > 0)
                 return false;
+        }
         return true;
     }
 
     int obj_idx = obj_idxs.front();
-    for (auto vol_idx : vol_idxs)
-        if (model.objects[obj_idx]->get_object_stl_stats().open_edges > 0)
+    if (obj_idx < 0 || obj_idx >= (int) model.objects.size())
+        return false;
+    const ModelObject *obj = model.objects[obj_idx];
+    for (auto vol_idx : vol_idxs) {
+        if (vol_idx < 0 || vol_idx >= (int) obj->volumes.size())
             return false;
+        if (obj->volumes[vol_idx]->mesh().stats().open_edges > 0)
+            return false;
+    }
     return true;
 }
 

@@ -1,13 +1,9 @@
-# AI harness review job - runs on the local project runner (tag: ai-review).
-# Requires masked CI/CD variables:
-#   AI_REVIEW_GITLAB_TOKEN  - project access token with api scope (Reporter+)
-#   AI_REVIEW_LLM_API_KEY   - OpenAI-compatible LLM API key
-#   DG_CLONE_TOKEN          - dev-guidelines project access token (repo clone)
-#   FEISHU_WEBHOOK_URL      - optional: feishu group bot webhook (owner ping)
-# dev-guidelines source: internal repo snapmaker_orca/dev-guidelines (the public
-# GitHub copy is generic-only). Clone uses DG_CLONE_TOKEN instead of
-# CI_JOB_TOKEN: the job token carries the pipeline user's identity, which 403s
-# for users who are not members of that repo.
+# AI harness review job - runs on a group runner with tag: ai-review.
+# Requires masked CI/CD variables (group snapmaker_orca/orca_slicing_algorithm):
+#   AI_REVIEW_GITLAB_TOKEN  - THIS group's access token with api scope (Reporter+)
+#   AI_REVIEW_LLM_API_KEY   - DeepSeek API key (DEEPSEEK_API_KEY also accepted)
+#   DG_CLONE_TOKEN          - dev-guidelines clone token (read_repository only)
+#   FEISHU_WEBHOOK_URL      - optional: feishu group bot webhook (card ping)
 ai_review:
   tags: [ai-review]
   rules:
@@ -19,8 +15,8 @@ ai_review:
     GIT_STRATEGY: none
     GITLAB_HOST: "gitlab.s.com"
     AI_REVIEW_LLM_BASE_URL: "https://api.deepseek.com"
-    AI_REVIEW_MODEL: "deepseek-v4-pro"
-    AI_REVIEW_LLM_EFFORT: "medium"
+    AI_REVIEW_MODEL: "deepseek-flash"
+    AI_REVIEW_LLM_EFFORT: "high"
     AI_REVIEW_PROJECT_STANDARDS: "projects/snapmaker-orca"
     DG_REF: "project/snapmaker-orca"
     # Per-user Python on the runner box; absolute path is the only form the

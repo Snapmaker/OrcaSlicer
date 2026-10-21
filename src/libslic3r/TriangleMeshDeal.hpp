@@ -1,5 +1,7 @@
-#ifndef libslic3r_Timer_hpp_
-#define libslic3r_Timer_hpp_
+#pragma once
+
+#ifndef libslic3r_TriangleMeshDeal_hpp_
+#define libslic3r_TriangleMeshDeal_hpp_
 
 #include "TriangleMesh.hpp"
 
@@ -11,4 +13,4 @@ public:
 };
 } // namespace Slic3r
 
-#endif // libslic3r_Timer_hpp_
+#endif // libslic3r_TriangleMeshDeal_hpp_

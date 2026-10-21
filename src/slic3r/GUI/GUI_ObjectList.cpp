@@ -26,6 +26,8 @@
 #include "StepMeshDialog.hpp"
 
 #include <boost/algorithm/string.hpp>
+#include <optional>
+#include <thread>
 #include <wx/progdlg.h>
 #include <wx/listbook.h>
 #include <wx/numformatter.h>
@@ -348,6 +350,8 @@ ObjectList::ObjectList(wxWindow* parent) :
 
 ObjectList::~ObjectList()
 {
+    if (m_smooth_mesh_thread.joinable())
+        m_smooth_mesh_thread.join();
     if (m_objects_model)
             m_objects_model->DecRef();
 }
@@ -5681,25 +5685,29 @@ void ObjectList::simplify()
 
 void GUI::ObjectList::smooth_mesh()
 {
-    wxBusyCursor cursor;
-    auto         plater = wxGetApp().plater();
+    auto plater = wxGetApp().plater();
     if (!plater) {
         return;
     }
-    plater->take_snapshot("smooth_mesh");
     std::vector<int> obj_idxs, vol_idxs;
     get_selection_indexes(obj_idxs, vol_idxs);
-    auto         object_idx = obj_idxs.front();
-    ModelObject* obj{nullptr};
-    auto         show_warning_dlg = [](int cur_face_count, std::string name, bool is_part) {
-        int limit_face_count = 1000000;
+    if (obj_idxs.empty()) {
+        return;
+    }
+    // A previous smoothing job is still running in the background.
+    if (m_smooth_mesh_thread.joinable()) {
+        return;
+    }
+
+    auto show_warning_dlg = [](size_t cur_face_count, std::string name, bool is_part) {
+        size_t limit_face_count = 1000000;
         if (cur_face_count > limit_face_count) {
             auto name_str = wxString::FromUTF8(name);
             auto content  = wxString::Format(
                 _L("\"%s\" will exceed 1 million faces after this subdivision, which may increase slicing time. Do you want to continue?"),
                 name_str);
             WarningDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe), (is_part ? _L("Part") : _L("Object")) + " " + content,
-                                      wxEmptyString, wxYES_NO);
+                                  wxEmptyString, wxYES_NO);
             if (dlg.ShowModal() == wxID_NO) {
                 return true;
             }
@@ -5713,60 +5721,146 @@ void GUI::ObjectList::smooth_mesh()
         WarningDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe), content, wxEmptyString, wxOK);
         dlg.ShowModal();
     };
-    const bool keep_painting                  = GUI::wxGetApp().app_config->get_bool("keep_painting");
-    bool       has_show_smooth_mesh_error_dlg = false;
+
+    // Collect one job per volume to smooth: for a volume selection, the selected parts of
+    // the first object; otherwise all volumes of every selected object.
+    struct SmoothJob {
+        int                                obj_idx;
+        ModelVolume                       *volume;
+        std::shared_ptr<const TriangleMesh> origin; // identity of the mesh copied into input
+        TriangleMesh                       input;
+    };
+    struct SmoothResult {
+        int                                obj_idx;
+        ModelVolume                       *volume;
+        std::shared_ptr<const TriangleMesh> origin;
+        std::optional<TriangleMesh>        smoothed;
+    };
+
+    const Model &model = plater->model();
+    auto inputs        = std::make_shared<std::vector<SmoothJob>>();
     if (vol_idxs.empty()) {
-        obj                    = object(object_idx);
-        auto future_face_count = static_cast<int>(obj->facets_count()) * 4;
-        if (show_warning_dlg(future_face_count, obj->name, false)) {
-            return;
-        }
-        for (auto mv : obj->volumes) {
-            bool ok;
-            auto result_mesh = TriangleMeshDeal::smooth_triangle_mesh(mv->mesh(), ok);
-            if (ok) {
-                mv->set_mesh(result_mesh);
-                mv->calculate_convex_hull();
-                mv->invalidate_convex_hull_2d();
-                mv->set_new_unique_id();
-            } else {
-                if (!has_show_smooth_mesh_error_dlg) {
-                    show_smooth_mesh_error_dlg(mv->name);
-                    has_show_smooth_mesh_error_dlg = true;
-                }
+        for (int obj_idx : obj_idxs) {
+            if (obj_idx < 0 || obj_idx >= (int) model.objects.size()) {
+                continue;
             }
-        }
-        obj->invalidate_bounding_box();
-        obj->ensure_on_bed();
-        plater->changed_mesh(object_idx);
-    } else {
-        obj = object(obj_idxs.front());
-        for (int vol_idx : vol_idxs) {
-            auto mv                = obj->volumes[vol_idx];
-            auto future_face_count = static_cast<int>(mv->mesh().facets_count()) * 4;
-            if (show_warning_dlg(future_face_count, mv->name, true)) {
+            ModelObject *obj = model.objects[obj_idx];
+            if (!obj || obj->volumes.empty()) {
+                continue;
+            }
+            // Declining a confirmation aborts the whole job before anything is dispatched.
+            if (show_warning_dlg(obj->facets_count() * 4, obj->name, false)) {
                 return;
             }
-            bool ok;
-            auto result_mesh = TriangleMeshDeal::smooth_triangle_mesh(mv->mesh(), ok);
-            if (ok) {
-                mv->set_mesh(result_mesh);
-                mv->calculate_convex_hull();
-                mv->invalidate_convex_hull_2d();
-                mv->set_new_unique_id();
-            } else {
-                if (!has_show_smooth_mesh_error_dlg) {
-                    show_smooth_mesh_error_dlg(mv->name);
-                    has_show_smooth_mesh_error_dlg = true;
-                }
+            for (ModelVolume *mv : obj->volumes) {
+                inputs->push_back({obj_idx, mv, mv->mesh_ptr(), mv->mesh()});
             }
         }
+    } else {
+        const int object_idx = obj_idxs.front();
+        if (object_idx < 0 || object_idx >= (int) model.objects.size()) {
+            return;
+        }
+        ModelObject *obj = model.objects[object_idx];
+        if (!obj || obj->volumes.empty()) {
+            return;
+        }
+        for (int vol_idx : vol_idxs) {
+            if (vol_idx < 0 || vol_idx >= (int) obj->volumes.size()) {
+                return;
+            }
+            ModelVolume *mv = obj->volumes[vol_idx];
+            if (show_warning_dlg(mv->mesh().facets_count() * 4, mv->name, true)) {
+                return;
+            }
+            inputs->push_back({object_idx, mv, mv->mesh_ptr(), mv->mesh()});
+        }
     }
-    if (obj) {
-        obj->invalidate_bounding_box();
-        obj->ensure_on_bed();
-        plater->changed_mesh(object_idx);
+    if (inputs->empty()) {
+        return;
     }
+
+    // The worker thread must not touch the Model: the object may change or disappear while
+    // the job is running, so hand the worker deep copies of the input meshes only.
+    // Filled in by the worker thread, applied to the model on the UI thread; a nullopt
+    // result marks a volume whose mesh could not be smoothed.
+    auto results = std::make_shared<std::vector<SmoothResult>>();
+    results->reserve(inputs->size());
+
+    m_smooth_mesh_thread = std::thread([this, plater, inputs, results, show_smooth_mesh_error_dlg]() {
+        for (const SmoothJob &job : *inputs) {
+            bool        ok = false;
+            TriangleMesh smoothed = TriangleMeshDeal::smooth_triangle_mesh(job.input, ok);
+            results->push_back({job.obj_idx, job.volume, job.origin, ok ? std::make_optional(std::move(smoothed)) : std::nullopt});
+        }
+
+        // Back to the UI thread to apply the smoothed meshes and refresh the scene.
+        // Queue the callback on this ObjectList, not on the app: events pending on a
+        // destroyed handler are discarded by wxWidgets, and ~ObjectList() joins this
+        // worker before its base destructor drops the queue, so the callback can
+        // never dereference a freed ObjectList.
+        this->CallAfter([this, plater, results, show_smooth_mesh_error_dlg]() {
+            if (m_smooth_mesh_thread.joinable()) {
+                m_smooth_mesh_thread.join();
+            }
+
+            Model                   &model = plater->model();
+            std::vector<SmoothResult *> apply_list;
+            std::vector<int>        changed_objs;
+            std::string             failed_name;
+            for (SmoothResult &result : *results) {
+                if (result.obj_idx < 0 || result.obj_idx >= (int) model.objects.size()) {
+                    continue;
+                }
+                ModelObject *obj = model.objects[result.obj_idx];
+                // Skip volumes that were removed from the object while the job was running.
+                if (std::find(obj->volumes.begin(), obj->volumes.end(), result.volume) == obj->volumes.end()) {
+                    continue;
+                }
+                // The job smoothed a copy of one specific mesh object. Every mesh
+                // replacement allocates a fresh TriangleMesh, so if the volume's mesh was
+                // swapped while the job was running (e.g. a simplify finished first), this
+                // result is stale and would overwrite the newer mesh - skip it.
+                if (result.volume->mesh_ptr() != result.origin) {
+                    continue;
+                }
+                if (result.smoothed) {
+                    apply_list.push_back(&result);
+                    if (std::find(changed_objs.begin(), changed_objs.end(), result.obj_idx) == changed_objs.end()) {
+                        changed_objs.push_back(result.obj_idx);
+                    }
+                } else if (failed_name.empty()) {
+                    failed_name = result.volume->name;
+                }
+            }
+            if (!failed_name.empty()) {
+                show_smooth_mesh_error_dlg(failed_name);
+            }
+            if (!apply_list.empty()) {
+                // take_snapshot() stores the CURRENT model state, so it must run before
+                // the meshes are replaced - otherwise Ctrl+Z would restore the already
+                // subdivided meshes. One snapshot covers the whole multi-object operation.
+                plater->take_snapshot("smooth_mesh");
+                for (SmoothResult *result : apply_list) {
+                    result->volume->set_mesh(std::move(*result->smoothed));
+                    result->volume->calculate_convex_hull();
+                    result->volume->invalidate_convex_hull_2d();
+                    result->volume->set_new_unique_id();
+                    // The four FacetsAnnotation stores (supports, seams, MMU segmentation,
+                    // fuzzy skin) are indexed by face number; subdivision replaced every
+                    // face with four new ones, so the stale markers would land on wrong
+                    // faces. set_mesh()/set_new_unique_id() do not touch them - drop them
+                    // explicitly (the "(Lost color)" menu note assumes exactly this).
+                    result->volume->reset_extra_facets();
+                }
+                for (int obj_idx : changed_objs) {
+                    model.objects[obj_idx]->invalidate_bounding_box();
+                    model.objects[obj_idx]->ensure_on_bed();
+                    plater->changed_mesh(obj_idx);
+                }
+            }
+        });
+    });
 }
 
 void ObjectList::update_item_error_icon(const int obj_idx, const int vol_idx) const

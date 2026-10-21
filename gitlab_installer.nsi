@@ -167,8 +167,9 @@ UninstPage custom un.SnapmakerUninstallFinishCreate un.SnapmakerUninstallFinishL
 ; UninstallString without its "\Uninstall.exe" tail, the vendor key default value
 ; (what the CPack installer writes) and the vendor key InstallPath. Both
 ; registration names are tried; there is no $INSTDIR fallback here - the uninstaller's delete target adds one.
-; $R1..$R4 are scratch. Reads use the 32-bit view, the view this installer writes
-; those keys in.
+; $R1..$R4 are scratch. Reads use the 32-bit view, the view this installer
+; writes those keys in; CPack also writes them in the default 32-bit view (its
+; first SetRegView is for the protocol classes only).
 !macro SNAPMAKER_RESOLVE_INSTALL_DIR _PREFIX
     SetRegView 32
     StrCpy $R0 ""
@@ -422,7 +423,9 @@ Section "Uninstall"
     Quit
     snap_confirm_done:
 
-    ; Advance to the finish page as soon as the removal finishes.
+    ; Advance to the finish page as soon as the removal finishes. SetAutoClose
+    ; only skips the auto-inserted COMPLETED page; the custom finish page is the
+    ; next page, so it is still shown and its leave callback still runs.
     SetAutoClose true
 
     DetailPrint "Uninstalling ${PRODUCT_DISPLAY_NAME}..."
@@ -613,6 +616,7 @@ FunctionEnd
 ; Uninstall.exe in the target directory, or an application executable there. The
 ; flag drives both the already-installed prompt and the upgrade cache cleanup, and it is set here because
 ; the old uninstaller deletes the registry keys it would otherwise be read from.
+; Reads use the default 32-bit view, which matches both this installer and CPack.
 Function FindExistingUninstaller
     StrCpy $R9 ""
     StrCpy $SnapmakerIsUpgrade "0"

@@ -725,7 +725,7 @@ public:
     void split_volume();
     void optimize_rotation();
     // find all empty cells on the plate and won't overlap with exclusion areas
-    static std::vector<Vec2f> get_empty_cells(const Vec2f step);
+    static std::vector<Vec2f> get_empty_cells(const Vec2f step, const BoundingBoxf& safe_area_2d = BoundingBoxf());
 
     //BBS:
     void fill_color(int extruder_id);

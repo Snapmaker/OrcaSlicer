@@ -6588,6 +6588,10 @@ void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_
         if (dlg.seq_top_layer_only_changed())
 #endif // ENABLE_GCODE_LINES_ID_IN_H_SLIDER
             this->plater_->refresh_print();
+        // GPU accel toggle: applied once after the dialog closes instead of
+        // rebuilding the toolpaths inside every checkbox click
+        if (dlg.gcode_gpu_accel_changed())
+            this->plater_->reload_gcode_preview();
 #ifdef _WIN32
         if (is_editor()) {
             if (app_config->get("associate_3mf") == "true")

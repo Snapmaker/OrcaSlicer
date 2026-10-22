@@ -771,6 +771,13 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
         if (param == "allow_filament_temp_mixing" && wxGetApp().plater())
             wxGetApp().plater()->notify_filament_usage_changed();
 
+        if (param == "gcode_preview_gpu_accel")
+            // Deferred: rebuilding the toolpaths here would freeze the modal
+            // dialog for the whole reload on every click. The value is saved
+            // above; GUI_App::open_preferences() applies the reload once the
+            // dialog has closed, and only if the value actually changed.
+            m_gcode_gpu_accel_changed = (checkbox->GetValue() != m_gcode_gpu_accel_initial);
+
         if (param == "enable_soft_shadows" && wxGetApp().plater() != nullptr)
         {
             GLCanvas3D* const canvas = wxGetApp().plater()->get_view3D_canvas3D();
@@ -1061,6 +1068,8 @@ PreferencesDialog::PreferencesDialog(wxWindow *parent, wxWindowID id, const wxSt
 {
     SetBackgroundColour(*wxWHITE);
     create();
+    // baseline for the gcode_preview_gpu_accel deferred-apply flag
+    m_gcode_gpu_accel_initial = app_config->get_bool("gcode_preview_gpu_accel");
     wxGetApp().UpdateDlgDarkUI(this);
     Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent& event) {
         try {
@@ -1281,6 +1290,9 @@ wxWindow* PreferencesDialog::create_general_page()
     auto item_step_mesh_setting = create_item_checkbox(_L("Show the step mesh parameter setting dialog."), page, _L("If enabled,a parameter settings dialog will appear during STEP file import."), 50, "enable_step_mesh_setting");
     auto item_multi_machine = create_item_checkbox(_L("Multi-device Management (Take effect after restarting Snapmaker Orca)."), page, _L("With this option enabled, you can send a task to multiple devices at the same time and manage multiple devices."), 50, "enable_multi_machine");
     auto item_auto_arrange  = create_item_checkbox(_L("Auto arrange plate after cloning"), page, _L("Auto arrange plate after object cloning"), 50, "auto_arrange");
+
+    auto item_gcode_gpu_accel = create_item_checkbox(_L("GPU acceleration for G-code preview"), page,
+        _L("Rebuild toolpath geometry on the GPU: much faster preview loading and lower memory on capable graphics cards. If the preview moves slower than before (for example on basic integrated graphics), turn this off to use the compatible renderer. Takes effect when the preview is reloaded."), 50, "gcode_preview_gpu_accel");
     auto title_presets = create_item_title(_L("Presets"), page, _L("Presets"));
     //auto title_network = create_item_title(_L("Network"), page, _L("Network"));
     auto item_user_sync        = create_item_checkbox(_L("Auto sync user presets (Printer/Filament/Process)"), page, _L("User Sync"), 50, "sync_user_preset");
@@ -1383,6 +1395,7 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(item_multi_machine, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_step_mesh_setting, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_auto_arrange, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_gcode_gpu_accel, 0, wxTOP, FromDIP(3));
     sizer_page->Add(title_presets, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_calc_mode, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_user_sync, 0, wxTOP, FromDIP(3));

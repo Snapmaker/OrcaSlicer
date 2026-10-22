@@ -214,6 +214,9 @@ void AppConfig::set_defaults()
     if (get("zoom_to_mouse").empty())
         set_bool("zoom_to_mouse", false);
 
+    if (get("gcode_preview_gpu_accel").empty())
+        set_bool("gcode_preview_gpu_accel", true);
+
     if (get("enable_soft_shadows").empty())
         set_bool("enable_soft_shadows", false);
 

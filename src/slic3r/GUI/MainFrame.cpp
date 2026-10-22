@@ -2977,6 +2977,11 @@ void MainFrame::init_menubar_as_editor()
             if (dlg.seq_top_layer_only_changed())
 #endif
                 plater()->refresh_print();
+            // GPU accel toggle: applied once after the dialog closes (mirrors
+            // GUI_App::open_preferences; this Apple-menu entry shows its own
+            // PreferencesDialog)
+            if (dlg.gcode_gpu_accel_changed())
+                plater()->reload_gcode_preview();
         },
         "", nullptr, []() { return true; }, this, 1);
     //parent_menu->Insert(1, preference_item);

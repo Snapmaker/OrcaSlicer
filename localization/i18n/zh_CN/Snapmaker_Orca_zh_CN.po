@@ -6525,6 +6525,12 @@ msgstr "启用此选项后，您可以同时向多个设备发送任务并管理
 msgid "Auto arrange plate after cloning"
 msgstr "克隆后自动排列打印板"
 
+msgid "GPU acceleration for G-code preview"
+msgstr "启用GPU加速Gcode预览"
+
+msgid "Rebuild toolpath geometry on the GPU: much faster preview loading and lower memory on capable graphics cards. If the preview moves slower than before (for example on basic integrated graphics), turn this off to use the compatible renderer. Takes effect when the preview is reloaded."
+msgstr "在 GPU 上重建走线几何，在性能足够的显卡上可显著加快预览加载、降低内存占用。若预览反而变慢（常见于核显较弱的机器），可关闭此项改用兼容渲染，重新加载预览后生效。"
+
 msgid "Auto arrange plate after object cloning"
 msgstr "对象克隆后自动排列打印板"
 

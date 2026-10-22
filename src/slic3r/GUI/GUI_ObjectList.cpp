@@ -26,6 +26,8 @@
 #include "StepMeshDialog.hpp"
 
 #include <boost/algorithm/string.hpp>
+#include <optional>
+#include <thread>
 #include <wx/progdlg.h>
 #include <wx/listbook.h>
 #include <wx/numformatter.h>
@@ -348,6 +350,8 @@ ObjectList::ObjectList(wxWindow* parent) :
 
 ObjectList::~ObjectList()
 {
+    if (m_smooth_mesh_thread.joinable())
+        m_smooth_mesh_thread.join();
     if (m_objects_model)
             m_objects_model->DecRef();
 }
@@ -5681,25 +5685,29 @@ void ObjectList::simplify()
 
 void GUI::ObjectList::smooth_mesh()
 {
-    wxBusyCursor cursor;
-    auto         plater = wxGetApp().plater();
+    auto plater = wxGetApp().plater();
     if (!plater) {
         return;
     }
-    plater->take_snapshot("smooth_mesh");
     std::vector<int> obj_idxs, vol_idxs;
     get_selection_indexes(obj_idxs, vol_idxs);
-    auto         object_idx = obj_idxs.front();
-    ModelObject* obj{nullptr};
-    auto         show_warning_dlg = [](int cur_face_count, std::string name, bool is_part) {
-        int limit_face_count = 1000000;
+    if (obj_idxs.empty()) {
+        return;
+    }
+    // A previous smoothing job is still running in the background.
+    if (m_smooth_mesh_thread.joinable()) {
+        return;
+    }
+
+    auto show_warning_dlg = [](size_t cur_face_count, std::string name, bool is_part) {
+        size_t limit_face_count = 1000000;
         if (cur_face_count > limit_face_count) {
             auto name_str = wxString::FromUTF8(name);
             auto content  = wxString::Format(
                 _L("\"%s\" will exceed 1 million faces after this subdivision, which may increase slicing time. Do you want to continue?"),
                 name_str);
             WarningDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe), (is_part ? _L("Part") : _L("Object")) + " " + content,
-                                      wxEmptyString, wxYES_NO);
+                                  wxEmptyString, wxYES_NO);
             if (dlg.ShowModal() == wxID_NO) {
                 return true;
             }
@@ -5713,60 +5721,111 @@ void GUI::ObjectList::smooth_mesh()
         WarningDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe), content, wxEmptyString, wxOK);
         dlg.ShowModal();
     };
-    const bool keep_painting                  = GUI::wxGetApp().app_config->get_bool("keep_painting");
-    bool       has_show_smooth_mesh_error_dlg = false;
+
+    const int     object_idx = obj_idxs.front();
+    ModelObject  *obj        = object(object_idx);
+    if (!obj || obj->volumes.empty()) {
+        return;
+    }
+
+    // Collect the volumes to smooth: either the selected parts, or all parts of the object.
+    std::vector<ModelVolume *> volumes;
     if (vol_idxs.empty()) {
-        obj                    = object(object_idx);
-        auto future_face_count = static_cast<int>(obj->facets_count()) * 4;
+        volumes                = obj->volumes;
+        auto future_face_count = obj->facets_count() * 4;
         if (show_warning_dlg(future_face_count, obj->name, false)) {
             return;
         }
-        for (auto mv : obj->volumes) {
-            bool ok;
-            auto result_mesh = TriangleMeshDeal::smooth_triangle_mesh(mv->mesh(), ok);
-            if (ok) {
-                mv->set_mesh(result_mesh);
-                mv->calculate_convex_hull();
-                mv->invalidate_convex_hull_2d();
-                mv->set_new_unique_id();
-            } else {
-                if (!has_show_smooth_mesh_error_dlg) {
-                    show_smooth_mesh_error_dlg(mv->name);
-                    has_show_smooth_mesh_error_dlg = true;
-                }
-            }
-        }
-        obj->invalidate_bounding_box();
-        obj->ensure_on_bed();
-        plater->changed_mesh(object_idx);
     } else {
-        obj = object(obj_idxs.front());
         for (int vol_idx : vol_idxs) {
-            auto mv                = obj->volumes[vol_idx];
-            auto future_face_count = static_cast<int>(mv->mesh().facets_count()) * 4;
+            if (vol_idx < 0 || vol_idx >= (int) obj->volumes.size()) {
+                return;
+            }
+            volumes.push_back(obj->volumes[vol_idx]);
+        }
+        for (const ModelVolume *mv : volumes) {
+            auto future_face_count = mv->mesh().facets_count() * 4;
             if (show_warning_dlg(future_face_count, mv->name, true)) {
                 return;
             }
-            bool ok;
-            auto result_mesh = TriangleMeshDeal::smooth_triangle_mesh(mv->mesh(), ok);
-            if (ok) {
-                mv->set_mesh(result_mesh);
-                mv->calculate_convex_hull();
-                mv->invalidate_convex_hull_2d();
-                mv->set_new_unique_id();
-            } else {
-                if (!has_show_smooth_mesh_error_dlg) {
-                    show_smooth_mesh_error_dlg(mv->name);
-                    has_show_smooth_mesh_error_dlg = true;
-                }
-            }
         }
     }
-    if (obj) {
-        obj->invalidate_bounding_box();
-        obj->ensure_on_bed();
-        plater->changed_mesh(object_idx);
+
+    // The worker thread must not touch the Model: the object may change or disappear while
+    // the job is running, so hand the worker deep copies of the input meshes only.
+    auto inputs = std::make_shared<std::vector<std::pair<ModelVolume *, TriangleMesh>>>();
+    inputs->reserve(volumes.size());
+    for (ModelVolume *mv : volumes) {
+        inputs->emplace_back(mv, mv->mesh());
     }
+
+    // Filled in by the worker thread, applied to the model on the UI thread.
+    // A nullopt result marks a volume whose mesh could not be smoothed.
+    auto results = std::make_shared<std::vector<std::pair<ModelVolume *, std::optional<TriangleMesh>>>>();
+    results->reserve(inputs->size());
+
+    // Transient start notice (auto-fades); the terminal state is notified in the CallAfter below.
+    plater->get_notification_manager()->push_notification(_u8L("Smoothing mesh..."));
+
+    m_smooth_mesh_thread = std::thread([this, plater, object_idx, inputs, results, show_smooth_mesh_error_dlg]() {
+        for (const auto &input : *inputs) {
+            bool        ok = false;
+            TriangleMesh smoothed = TriangleMeshDeal::smooth_triangle_mesh(input.second, ok);
+            results->emplace_back(input.first, ok ? std::make_optional(std::move(smoothed)) : std::nullopt);
+        }
+
+        // Back to the UI thread to apply the smoothed meshes and refresh the scene.
+        // Queue the callback on this ObjectList, not on the app: events pending on a
+        // destroyed handler are discarded by wxWidgets, and ~ObjectList() joins this
+        // worker before its base destructor drops the queue, so the callback can
+        // never dereference a freed ObjectList.
+        this->CallAfter([this, plater, object_idx, results, show_smooth_mesh_error_dlg]() {
+            if (m_smooth_mesh_thread.joinable()) {
+                m_smooth_mesh_thread.join();
+            }
+
+            const Model &model    = plater->model();
+            ModelObject  *obj     = (object_idx >= 0 && object_idx < (int) model.objects.size()) ? model.objects[object_idx] : nullptr;
+            bool          any_change = false;
+            std::string   failed_name;
+            for (auto &result : *results) {
+                ModelVolume *mv = result.first;
+                // Skip volumes that were removed from the object while the job was running.
+                if (!obj || std::find(obj->volumes.begin(), obj->volumes.end(), mv) == obj->volumes.end()) {
+                    continue;
+                }
+                if (result.second) {
+                    mv->set_mesh(std::move(*result.second));
+                    mv->calculate_convex_hull();
+                    mv->invalidate_convex_hull_2d();
+                    mv->set_new_unique_id();
+                    any_change = true;
+                } else if (failed_name.empty()) {
+                    failed_name = mv->name;
+                }
+            }
+            // Complete the notification lifecycle opened by the "Smoothing mesh..." notice:
+            // a single CustomNotification cannot be closed individually, so report the
+            // terminal state here. Push the failure notice before the modal error dialog
+            // blocks the UI thread.
+            if (!failed_name.empty()) {
+                plater->get_notification_manager()->push_notification(NotificationType::CustomNotification,
+                    NotificationManager::NotificationLevel::WarningNotificationLevel,
+                    _u8L("Some volumes were not smoothed because their meshes contain errors."));
+                show_smooth_mesh_error_dlg(failed_name);
+            } else if (any_change) {
+                plater->get_notification_manager()->push_notification(NotificationType::CustomNotification,
+                    NotificationManager::NotificationLevel::PrintInfoShortNotificationLevel,
+                    _u8L("Mesh smoothing finished."));
+            }
+            if (any_change && obj) {
+                plater->take_snapshot("smooth_mesh");
+                obj->invalidate_bounding_box();
+                obj->ensure_on_bed();
+                plater->changed_mesh(object_idx);
+            }
+        });
+    });
 }
 
 void GUI::ObjectList::smooth_mesh_local()

@@ -632,8 +632,17 @@ void MixedFilamentBatchDialog::render_match_thumb_for_plate(int plate_idx)
     saved_colors.reserve(volumes.volumes.size());
     for (GLVolume* vol : volumes.volumes) {
         saved_colors.push_back(vol->color);
-        if (vol->extruder_id > 0 && static_cast<size_t>(vol->extruder_id - 1) < m_match_colors.size())
-            vol->color = m_match_colors[vol->extruder_id - 1];
+        // Match the update_colors_by_extruder exclusions: modifiers and auxiliary
+        // GLVolumes keep their own colors, while model parts follow the matched
+        // extruder colors. GLVolume keeps a default model-part assignment as 0;
+        // the match applies that default as physical filament 1.
+        if (vol->is_modifier || vol->is_wipe_tower || vol->volume_idx() < 0)
+            continue;
+        int color_extruder_id = vol->extruder_id;
+        if (color_extruder_id == 0)
+            color_extruder_id = 1;
+        if (color_extruder_id > 0 && static_cast<size_t>(color_extruder_id - 1) < m_match_colors.size())
+            vol->color = m_match_colors[color_extruder_id - 1];
     }
 
     // RAII guard: restore original volume colors on scope exit (normal + exception)

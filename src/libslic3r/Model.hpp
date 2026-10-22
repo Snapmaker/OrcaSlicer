@@ -748,6 +748,8 @@ public:
                                                     const EnforcerBlockerStateMap &state_map);
     indexed_triangle_set get_facets_strict(const ModelVolume& mv, EnforcerBlockerType type) const;
     bool has_facets(const ModelVolume& mv, EnforcerBlockerType type) const;
+    // Includes the implicit NONE roots that serialization omits from m_data.
+    bool has_facets_including_implicit_none(const ModelVolume& mv) const;
     bool empty() const { return m_data.triangles_to_split.empty(); }
 
     // Following method clears the config and increases its timestamp, so the deleted

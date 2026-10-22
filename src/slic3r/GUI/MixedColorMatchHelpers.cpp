@@ -2006,8 +2006,43 @@ void apply_batch_match_to_model(const BatchMatchResult& result)
         // Write the object whenever its extruder is in the remap table so
         // the parent follows the match; inheriting volumes resolve through
         // the (already rewritten) object config.
-        if (obj_remap)
+        if (obj_remap) {
             mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_it->second)));
+        } else if (orig_obj_eid <= 0) {
+            // An absent/zero object extruder means "default", which the model
+            // resolves as physical filament 1. A batch match can therefore map
+            // source filament 1 to a mixed slot. The Color Mapping list also
+            // contains unused palette slots, so write the object only when an
+            // inheriting volume consumes that default. A MODEL_PART consumes it
+            // through actual NONE triangles; a PARAMETER_MODIFIER has no paint
+            // state and always consumes the object's inherited filament. A
+            // fully-painted part without such a modifier must not gain a
+            // misleading explicit object assignment.
+            const auto default_it = extruder_remap.find(1);
+            if (default_it != extruder_remap.end()) {
+                for (const ModelVolume* mv : mo->volumes) {
+                    const ModelVolumeType vt          = mv->type();
+                    const bool            is_part     = (vt == ModelVolumeType::MODEL_PART);
+                    const bool            is_modifier = (vt == ModelVolumeType::PARAMETER_MODIFIER);
+                    if (!is_part && !is_modifier)
+                        continue;
+
+                    const ConfigOption* vol_opt = mv->config.option("extruder");
+                    if (vol_opt && vol_opt->getInt() > 0)
+                        continue; // owns a non-default filament
+
+                    const bool has_default_regions =
+                        !is_part || mv->mmu_segmentation_facets.empty() ||
+                        mv->mmu_segmentation_facets.has_facets_including_implicit_none(*mv);
+                    if (!has_default_regions)
+                        continue;
+
+                    mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(default_it->second)));
+                    break;
+                }
+            }
+        }
+
         for (ModelVolume* mv : mo->volumes) {
             const ModelVolumeType vt = mv->type();
             const bool is_part      = (vt == ModelVolumeType::MODEL_PART);

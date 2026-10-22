@@ -9257,6 +9257,93 @@ msgid ""
 "The actual bottom solid infill flow used is calculated by multiplying this value with the filament flow ratio, and if set, the object's flow ratio."
 msgstr ""
 
+msgid "Set other flow ratios"
+msgstr "设置其他流量比"
+
+msgid "Change flow ratios for other extrusion path types."
+msgstr "更改其他挤出路径类型的流量比。"
+
+msgid "First layer flow ratio"
+msgstr "第一层流量比"
+
+msgid ""
+"This factor affects the amount of material on the first layer for the extrusion path roles listed in this section.\n"
+"\n"
+"For the first layer, the actual flow ratio for each path role (does not affect brims and skirts) will be multiplied by this value."
+msgstr "此因素会影响本节中列出的挤出路径角色的第一层上的材料量。 对于第一层，每个路径角色的实际流量比（不影响Brim和​裙边）将乘以该值。"
+
+msgid "Outer wall flow ratio"
+msgstr "外壁流量比"
+
+msgid ""
+"This factor affects the amount of material for outer walls.\n"
+"\n"
+"The actual outer wall flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio."
+msgstr "该因素影响外墙材料的用量。 实际使用的外壁流量是通过将该值乘以耗材流量比以及对象的流量比（如果已设置）来计算的。"
+
+msgid "Inner wall flow ratio"
+msgstr "内壁流量比"
+
+msgid ""
+"This factor affects the amount of material for inner walls.\n"
+"\n"
+"The actual inner wall flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio."
+msgstr "该因素影响内壁材料的用量。 实际使用的内壁流量是通过将该值乘以耗材流量比以及对象的流量比（如果已设置）来计算的。"
+
+msgid "Overhang flow ratio"
+msgstr "悬垂流量比"
+
+msgid ""
+"This factor affects the amount of material for overhangs.\n"
+"\n"
+"The actual overhang flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio."
+msgstr "该因素影响悬垂材料的数量。 实际使用的悬垂流量是通过将该值乘以耗材流量比以及对象的流量比（如果已设置）来计算的。"
+
+msgid "Sparse infill flow ratio"
+msgstr "稀疏填充流量比"
+
+msgid ""
+"This factor affects the amount of material for sparse infill.\n"
+"\n"
+"The actual sparse infill flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio."
+msgstr "该因素影响稀疏填充的材料量。 实际使用的稀疏填充流量是通过将该值乘以耗材流量比以及对象的流量比（如果已设置）来计算的。"
+
+msgid "Internal solid infill flow ratio"
+msgstr "内部固体填充流动比"
+
+msgid ""
+"This factor affects the amount of material for internal solid infill.\n"
+"\n"
+"The actual internal solid infill flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio."
+msgstr "该因素影响内部固体填充材料的数量。 实际使用的内部固体填充流量是通过将该值乘以耗材流量比以及对象的流量比（如果已设置）来计算的。"
+
+msgid "Gap fill flow ratio"
+msgstr "间隙填充流量比"
+
+msgid ""
+"This factor affects the amount of material for filling the gaps.\n"
+"\n"
+"The actual gap filling flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio."
+msgstr "该因素影响填充间隙的材料量。 实际使用的间隙填充流量是通过将该值乘以耗材流量比以及对象的流量比（如果已设置）来计算的。"
+
+msgid "Support flow ratio"
+msgstr "支撑流量比"
+
+msgid ""
+"This factor affects the amount of material for support.\n"
+"\n"
+"The actual support flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio."
+msgstr "该因素影响支撑材料的数量。 实际使用的支撑流量是通过将该值乘以耗材流量比以及对象的流量比（如果已设置）来计算的。"
+
+msgid "Support interface flow ratio"
+msgstr "支撑面流量比例"
+
+msgid ""
+"This factor affects the amount of material for the support interface.\n"
+"\n"
+"The actual support interface flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio."
+msgstr "该因素影响支撑界面的材料量。 实际使用的支撑界面流量是通过将该值乘以耗材流量比以及对象的流量比（如果已设置）来计算的。"
+
 msgid "Precise wall"
 msgstr "精准外墙尺寸"
 

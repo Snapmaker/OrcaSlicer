@@ -581,6 +581,19 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
     std::string toolchange_retract_str = gcodegen.retract(true, false);
     check_add_eol(toolchange_retract_str);
 
+    // The wipe tower can be printing below the topmost printed layer (e.g. wipe_tower_no_sparse_layers keeps the
+    // tower shorter than the tallest object). change_filament_gcode / the tool change command is free to perform
+    // arbitrary XY travel (parking, docking a tool, pre-extrusion, ...), so restore Z to the real layer height
+    // before running it, otherwise that travel can collide with already-printed parts taller than the tower.
+    // Z is brought back down to the tower layer after the toolchange (see descend_to_tower_str below).
+    // Done before processing change_filament_gcode so its placeholders see the restored Z.
+    const bool  lift_for_toolchange = !tcr.priming && (current_z - z) > EPSILON;
+    std::string restore_layer_z_str;
+    if (lift_for_toolchange) {
+        restore_layer_z_str = gcodegen.writer().travel_to_z(current_z, "Restore layer Z before toolchange to avoid collision with printed parts", true);
+        check_add_eol(restore_layer_z_str);
+    }
+
     // Process the custom change_filament_gcode. If it is empty, provide a simple Tn command to change the filament.
     // Otherwise, leave control to the user completely.
     std::string        toolchange_gcode_str;
@@ -673,7 +686,7 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
         check_add_eol(toolchange_gcode_str);
 
         // retract before toolchange
-        toolchange_gcode_str = toolchange_retract_str + toolchange_gcode_str;
+        toolchange_gcode_str = toolchange_retract_str + restore_layer_z_str + toolchange_gcode_str;
         // BBS
         {
             // BBS: current position and fan_speed is unclear after interting change_filament_gcode
@@ -696,6 +709,13 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
         check_add_eol(start_pos_str);
         toolchange_gcode_str += start_pos_str;
 
+        // Now that we are over the wipe tower again, go back down to the tower layer (mirror of restore_layer_z_str).
+        if (lift_for_toolchange) {
+            std::string descend_to_tower_str = gcodegen.writer().travel_to_z(z, "Restore wipe tower layer Z after toolchange", true);
+            check_add_eol(descend_to_tower_str);
+            toolchange_gcode_str += descend_to_tower_str;
+        }
+
         // unretract before wiping
         toolchange_gcode_str += gcodegen.unretract();
         check_add_eol(toolchange_gcode_str);
@@ -704,8 +724,16 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
     std::string toolchange_command;
     if (tcr.priming || (new_extruder_id >= 0 && gcodegen.writer().need_toolchange(new_extruder_id)))
         toolchange_command = gcodegen.writer().toolchange(new_extruder_id);
-    if (!custom_gcode_changes_tool(toolchange_gcode_str, gcodegen.writer().toolchange_prefix(), new_extruder_id))
-        toolchange_gcode_str += toolchange_command;
+    if (!custom_gcode_changes_tool(toolchange_gcode_str, gcodegen.writer().toolchange_prefix(), new_extruder_id)) {
+        if (lift_for_toolchange && change_filament_gcode.empty() && !toolchange_command.empty()) {
+            // No custom change_filament_gcode: lift around the bare Tn command as well.
+            toolchange_gcode_str += restore_layer_z_str + toolchange_command;
+            std::string descend_to_tower_str = gcodegen.writer().travel_to_z(z, "Restore wipe tower layer Z after toolchange", true);
+            check_add_eol(descend_to_tower_str);
+            toolchange_gcode_str += descend_to_tower_str;
+        } else
+            toolchange_gcode_str += toolchange_command;
+    }
     else {
         // We have informed the m_writer about the current extruder_id, we can ignore the generated G-code.
     }
@@ -874,6 +902,18 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         end_filament_gcode_str = nozzle_change_gcode_trans + end_filament_gcode_str;
     }
     end_filament_gcode_str = toolchange_retract_str + end_filament_gcode_str;
+
+    // The wipe tower can be printing below the topmost printed layer (e.g. wipe_tower_no_sparse_layers keeps the
+    // tower shorter than the tallest object). change_filament_gcode is free to perform arbitrary XY travel
+    // (parking, docking a tool, pre-extrusion, the wall-gap detour, ...), so restore Z to the real layer height
+    // before running it, otherwise that travel can collide with already-printed parts taller than the tower.
+    // deretraction_str (below) already brings Z back down to the tower layer ("Force restore layer Z").
+    // Toolhead stays retracted from toolchange_retract_str above, so only Z is moved here.
+    if (!tcr.priming && needs_toolchange && (current_z - z) > EPSILON) {
+        std::string restore_layer_z_str = gcodegen.writer().travel_to_z(current_z, "Restore layer Z before toolchange to avoid collision with printed parts", true);
+        check_add_eol(restore_layer_z_str);
+        end_filament_gcode_str += restore_layer_z_str;
+    }
 
     std::string toolchange_gcode_str = end_filament_gcode_str;
     std::string deretraction_str;

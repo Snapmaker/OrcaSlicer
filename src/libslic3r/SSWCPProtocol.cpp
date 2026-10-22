@@ -52,6 +52,27 @@ std::vector<std::string> build_filament_volume_types(const std::vector<int>* val
     return result;
 }
 
+void append_flow_type_fields(nlohmann::json& response, const DynamicPrintConfig& config, const std::vector<std::string>& nozzle_volume_types)
+{
+    size_t filament_count = 0;
+    if (const auto* filament_type = config.option<ConfigOptionStrings>("filament_type"))
+        filament_count = std::max(filament_count, filament_type->values.size());
+    if (const auto* filament_colour = config.option<ConfigOptionStrings>("filament_colour"))
+        filament_count = std::max(filament_count, filament_colour->values.size());
+    if (filament_count == 0)
+        filament_count = 1;
+
+    const auto* volume_types         = config.option<ConfigOptionEnumsGeneric>("filament_volume_type");
+    const auto* volume_values        = volume_types ? &volume_types->values : nullptr;
+    response["filament_volume_type"] = build_filament_volume_types(volume_values, filament_count);
+
+    std::vector<std::string> normalized_nozzle_types;
+    normalized_nozzle_types.reserve(nozzle_volume_types.size());
+    for (const std::string& volume_type : nozzle_volume_types)
+        normalized_nozzle_types.push_back(volume_type == FLOW_MODE_HIGH_FLOW ? FLOW_MODE_HIGH_FLOW : FLOW_MODE_STANDARD);
+    response["nozzle_volume_types"] = std::move(normalized_nozzle_types);
+}
+
 OptionalFlowTypesStatus parse_optional_flow_types(const nlohmann::json& object, const char* key, size_t count, std::vector<std::string>& out)
 {
     out.clear();

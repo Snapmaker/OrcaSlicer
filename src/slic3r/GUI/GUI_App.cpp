@@ -41,6 +41,7 @@
 #include <cstdio>
 #include <random>
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/filesystem/fstream.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
 #include <boost/lexical_cast.hpp>
@@ -96,6 +97,7 @@
 #include "../Utils/PrintHost.hpp"
 #include "../Utils/Process.hpp"
 #include "../Utils/MacDarkMode.hpp"
+#include "../Utils/GatewayProtocol.hpp"
 #include "../Utils/GatewayService.hpp"
 #include "../Utils/GatewayDevice.hpp"
 #include "../Utils/Http.hpp"
@@ -847,6 +849,22 @@ static void register_win32_device_notification_event()
 // Windows 11 build number threshold: build >= 22000 = Windows 11
 constexpr int kWindows11BuildNumber = 22000;
 
+static std::string read_cli_version_from_resources()
+{
+    // The gateway CLI is shipped with the Flutter web bundle. Its manifest is
+    // updated whenever the bundled CLI is updated, so it is available even
+    // before the gateway process has started and /api/health is reachable.
+    const boost::filesystem::path manifest_path =
+        boost::filesystem::path(Slic3r::resources_dir()) / "web" / "flutter_web" / "version.json";
+    boost::filesystem::ifstream stream(manifest_path, std::ios_base::in | std::ios_base::binary);
+    if (!stream)
+        return {};
+
+    const std::string manifest_body{std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
+    const auto manifest = Gateway::parse_json_object(manifest_body);
+    return manifest ? Gateway::format_cli_version(*manifest) : std::string{};
+}
+
 void GUI_App::log_version_info()
 {
     // Cache OS description on first call so that subsequent calls from background
@@ -894,6 +912,10 @@ void GUI_App::log_version_info()
     BOOST_LOG_TRIVIAL(warning) << "[Version] Profile: " << (profile_ver.empty() ? "N/A" : profile_ver);
 
     BOOST_LOG_TRIVIAL(warning) << "[Version] OS: " << s_cached_os_desc;
+
+    const std::string snapmaker_connect_version = read_cli_version_from_resources();
+    BOOST_LOG_TRIVIAL(warning) << "[Version] Snapmaker Connect: "
+                               << (snapmaker_connect_version.empty() ? "N/A" : snapmaker_connect_version);
 
     BOOST_LOG_TRIVIAL(warning) << "========================================";
 
@@ -3831,6 +3853,7 @@ void GUI_App::keyboard_shortcuts()
 void GUI_App::ShowUserGuide() {
     // BBS:Show NewUser Guide
     try {
+        const std::string locale_before_wizard = gateway_locale();
         bool res = false;
         GuideFrame GuideDlg(this);
                 //if (GuideDlg.IsFirstUse())
@@ -3840,7 +3863,7 @@ if (res) {
             update_publish_status();
             mainframe->refresh_plugin_tips();
 
-            m_fltviews.reload_all();
+            sync_gateway_region_after_wizard(locale_before_wizard);
             // BBS: remove SLA related message
         }
     } catch (std::exception &) {
@@ -5042,7 +5065,7 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
     allow_http_auth = true;
 #endif
     bool with_auth = false;
-    const Gateway::AccountSnapshot& account = gateway_account();
+    const Gateway::AccountSnapshot& account = m_gateway_account;
     if (account.is_login) {
         const std::string& auth_token = account.token;
         if (!auth_token.empty()) {
@@ -5915,6 +5938,7 @@ void GUI_App::register_gateway_notifications()
         refresh_gateway_account();
 
         const std::string base_url         = m_gateway_service->base_url();
+        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway] [connected] base_url=" << base_url;
         const bool        endpoint_changed = m_gateway_loaded_base_url != base_url;
         m_gateway_loaded_base_url          = base_url;
         query_gateway_current_device();
@@ -5933,6 +5957,8 @@ wxString GUI_App::gateway_web_url(const wxString& page_key) const
     if (!url.empty())
         return from_u8(url);
 
+    BOOST_LOG_TRIVIAL(warning)
+        << "[FLUTTER_FLOW] [gateway] [url_fallback] page=" << into_u8(page_key) << " port=" << get_page_http_port();
     return wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) + "/web/orca/missing_connection.html");
 }
 
@@ -7244,6 +7270,7 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
 {
     wxCHECK_MSG(mainframe != nullptr, false, "Internal error: Main frame not created / null");
 
+    const std::string locale_before_wizard = gateway_locale();
     std::string strFinish = wxGetApp().app_config->get("firstguide", "finish");
     long        pStyle    = wxCAPTION | wxCLOSE_BOX | wxSYSTEM_MENU;
     if (strFinish == "false" || strFinish.empty())
@@ -7271,7 +7298,7 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
         wxGetApp().sidebar().update_nozzle_settings();
         update_publish_status();
         mainframe->refresh_plugin_tips();
-        m_fltviews.reload_all();
+        sync_gateway_region_after_wizard(locale_before_wizard);
         // BBS: remove SLA related message
     }
     auto isAgree = wxGetApp().app_config->get("app", PRIVACY_POLICY_FLAGS);
@@ -7279,6 +7306,27 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
     user_update_privacy_notify(isAgree == "true");
     BOOST_LOG_TRIVIAL(warning) << "run_wizard changed the privacy policy with: " << (isAgree);
     return res;
+}
+
+void GUI_App::sync_gateway_region_after_wizard(const std::string& locale_before_wizard)
+{
+    const std::string locale_after_wizard = gateway_locale();
+    bool              gateway_refreshed   = false;
+    if (locale_after_wizard != locale_before_wizard && m_gateway_service) {
+        const std::size_t separator = locale_after_wizard.find_last_of("-_");
+        if (separator != std::string::npos && separator + 1 < locale_after_wizard.size()) {
+            const std::string region = locale_after_wizard.substr(separator + 1);
+            const auto        result = m_gateway_service->set_region(region);
+            if (result.error) {
+                BOOST_LOG_TRIVIAL(warning) << "failed to update connection gateway region: " << result.error.message;
+            } else {
+                BOOST_LOG_TRIVIAL(info) << "connection gateway region updated to " << region << " with locale " << locale_after_wizard;
+                gateway_refreshed = true;
+            }
+        }
+    }
+    if (!gateway_refreshed)
+        m_fltviews.reload_all();
 }
 
 void GUI_App::show_desktop_integration_dialog()
@@ -7915,7 +7963,6 @@ bool check_pla_petg_support_pair(int extruder_id)
 
     return false;
 }
-
 bool is_support_filament(int extruder_id)
 {
     auto &filament_presets = Slic3r::GUI::wxGetApp().preset_bundle->filament_presets;

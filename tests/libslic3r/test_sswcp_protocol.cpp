@@ -96,3 +96,17 @@ TEST_CASE("Machine model normalization handles aliases and preserves empty", "[S
     // Unknown models pass through as-is.
     CHECK(SSWCPProtocol::normalize_machine_model("SomeFuturePrinter") == "SomeFuturePrinter");
 }
+
+TEST_CASE("Preprint mapping includes both file and nozzle flow types", "[SSWCPProtocol]")
+{
+    DynamicPrintConfig config                                                     = DynamicPrintConfig::full_print_config();
+    config.option<ConfigOptionStrings>("filament_type", true)->values             = {"PLA", "PETG", "PA"};
+    config.option<ConfigOptionStrings>("filament_colour", true)->values           = {"#000000", "#ffffff", "#ff0000", "#00ff00"};
+    config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true)->values = {fvtStandard, fvtHighFlow, 99};
+
+    json mapping = json::object();
+    SSWCPProtocol::append_flow_type_fields(mapping, config, {"standard", "high_flow", "tpu_high_flow"});
+
+    CHECK(mapping["filament_volume_type"] == json::array({"standard", "high_flow", "standard", "standard"}));
+    CHECK(mapping["nozzle_volume_types"] == json::array({"standard", "high_flow", "standard"}));
+}

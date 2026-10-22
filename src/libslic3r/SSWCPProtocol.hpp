@@ -31,6 +31,13 @@ enum class OptionalFlowTypesStatus { Missing, Valid, Invalid };
 /// If *values* is null, every entry is "standard".
 std::vector<std::string> build_filament_volume_types(const std::vector<int>* values, size_t count);
 
+/// Append the preprint flow-type contract fields to a filament-mapping object.
+/// filament_volume_type is aligned with the logical filament count. nozzle_volume_types
+/// is normalized so only standard/high_flow is emitted.
+void append_flow_type_fields(nlohmann::json&                 response,
+                             const DynamicPrintConfig&       config,
+                             const std::vector<std::string>& nozzle_volume_types);
+
 /// Parse an optional flow-types array from a JSON object.
 /// - Missing key → Missing (caller treats as "no flow data")
 /// - Present but wrong type / short / invalid value → Invalid (caller rejects the payload)

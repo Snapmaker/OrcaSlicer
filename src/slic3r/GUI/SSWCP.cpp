@@ -2597,6 +2597,8 @@ nlohmann::json SSWCP::build_filament_mapping_json(const std::string& filename, c
             response["filament_type"] = filament_types;
         }
 
+        SSWCPProtocol::append_flow_type_fields(response, full_config, GUI::FlowType::nozzle_volume_types());
+
         if (full_config.has("nozzle_diameter")) {
             const auto* nozzle_diameters_opt = full_config.option<ConfigOptionFloats>("nozzle_diameter");
             if (nozzle_diameters_opt != nullptr) {
@@ -2822,23 +2824,7 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             response["filament_type"] = filament_types;
         }
 
-        // filament volume type (flow type per filament)
-        {
-            size_t fvt_count = 0;
-            if (const auto* ftype_opt = full_config.option<ConfigOptionStrings>("filament_type"))
-                fvt_count = std::max(fvt_count, ftype_opt->values.size());
-            if (const auto* fcolour_opt = full_config.option<ConfigOptionStrings>("filament_colour"))
-                fvt_count = std::max(fvt_count, fcolour_opt->values.size());
-            if (fvt_count == 0) fvt_count = 1;
-
-            const auto* volume_types = full_config.option<ConfigOptionEnumsGeneric>("filament_volume_type");
-            const std::vector<int>* fvt_values = volume_types ? &volume_types->values : nullptr;
-            response["filament_volume_type"] = SSWCPProtocol::build_filament_volume_types(fvt_values, fvt_count);
-        }
-
-        // nozzle flow type (per-nozzle Standard/High Flow selection from the
-        // project config "nozzle_volume_types", mirrored in AppConfig "nozzle_volume_types")
-        response["nozzle_volume_types"] = GUI::FlowType::nozzle_volume_types();
+        SSWCPProtocol::append_flow_type_fields(response, full_config, GUI::FlowType::nozzle_volume_types());
 
         if (full_config.has("nozzle_diameter")) {
             const auto *opt_nozzle_diameters = full_config.option<ConfigOptionFloats>("nozzle_diameter");

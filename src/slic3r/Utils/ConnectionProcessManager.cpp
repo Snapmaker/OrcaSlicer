@@ -195,6 +195,9 @@ ConnectionProcessManager::DiscoveryResult ConnectionProcessManager::discover_por
 
     const ProcessDiscoveryError parse_error = parse_port_frame(process_result.stdout_data, result.port);
     result.error                            = parse_error;
+    if (parse_error == ProcessDiscoveryError::None) {
+        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway] [port_ready] port=" << result.port;
+    }
     switch (parse_error) {
     case ProcessDiscoveryError::NoPortFrame:
         result.message = "PORT frame was not found in " + config_.executable.filename().string() + " stdout";

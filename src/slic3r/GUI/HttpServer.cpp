@@ -433,7 +433,7 @@ void HttpServer::IOServer::stop_all()
 HttpServer::IOServer::IOServer(HttpServer& server) : server(server), acceptor(io_service)
 {
     try {
-        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::v4(), server.port);
+        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), server.port);
         acceptor.open(endpoint.protocol());
         acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
         acceptor.bind(endpoint);
@@ -462,7 +462,7 @@ bool HttpServer::is_port_available(boost::asio::ip::port_type port)
     try {
         boost::asio::io_service        io_service;
         boost::asio::ip::tcp::acceptor acceptor(io_service);
-        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::v4(), port);
+        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), port);
 
         acceptor.open(endpoint.protocol());
         acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));

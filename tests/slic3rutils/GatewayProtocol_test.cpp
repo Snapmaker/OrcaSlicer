@@ -140,6 +140,19 @@ TEST_CASE("JSON-RPC frames are classified and requests are built", "[gateway][pr
         json{{"jsonrpc", "2.0"}, {"method", "notify.account.changed"}, {"params", json{{"user", "u"}}}});
     REQUIRE(notification_frame.type == RpcFrameType::Notification);
     REQUIRE(notification_frame.method == "notify.account.changed");
+    REQUIRE(notification_frame.params == json{{"user", "u"}});
+
+    const RpcFrame notification_without_params = classify_jsonrpc_message(json{{"jsonrpc", "2.0"}, {"method", "notify.account.changed"}});
+    REQUIRE(notification_without_params.type == RpcFrameType::Notification);
+    REQUIRE(notification_without_params.params == json::object());
+
+    const RpcFrame array_params_frame = classify_jsonrpc_message(
+        json{{"jsonrpc", "2.0"}, {"method", "notify.test"}, {"params", json::array({"A1"})}});
+    REQUIRE(array_params_frame.type == RpcFrameType::Notification);
+    REQUIRE(array_params_frame.params == json::array({"A1"}));
+
+    const RpcFrame malformed_params_frame = classify_jsonrpc_message(json{{"jsonrpc", "2.0"}, {"method", "notify.test"}, {"params", 7}});
+    REQUIRE(malformed_params_frame.type == RpcFrameType::Unknown);
 }
 
 TEST_CASE("ReconnectPolicy backs off and resets after a stable connection", "[gateway][protocol]")

@@ -622,6 +622,7 @@ private:
     std::string     gateway_locale() const;
 
 private:
+    void            sync_gateway_region_after_wizard(const std::string& locale_before_wizard);
     void            register_gateway_notifications();
     void            query_gateway_current_device();
     void            query_gateway_device_objects();

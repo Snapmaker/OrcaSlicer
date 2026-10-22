@@ -72,6 +72,7 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
     if (m_browser == nullptr)
         return;
     m_apikey = apikey;
+    BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [webview] [navigation_requested] view=device url=" << url.ToUTF8().data();
 
     if (wxGetApp().is_gateway_url(url)) {
         wxGetApp().fltviews().add_printer_view(this, url, apikey);
@@ -236,6 +237,7 @@ void PrinterWebView::OnLoaded(wxWebViewEvent &evt)
         return;
     if (evt.GetURL() != m_browser->GetCurrentURL())
         return;
+    BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [webview] [navigation_loaded] view=device url=" << evt.GetURL().ToUTF8().data();
     SendAPIKey();
 }
 

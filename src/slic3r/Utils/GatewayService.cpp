@@ -14,6 +14,7 @@
 #include <deque>
 #include <exception>
 #include <future>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <utility>
@@ -164,9 +165,11 @@ private:
     void handshake()
     {
         websocket::stream_base::timeout timeout = websocket::stream_base::timeout::suggested(beast::role_type::client);
-        timeout.handshake_timeout               = std::chrono::seconds{5};  // 5 secondes timeout for the handshake, otherwise the gateway may be busy and not respond
-        timeout.idle_timeout                    = std::chrono::seconds{25}; // 25 seconds keep-alive timeout, otherwise the gateway may close the connection if no message is sent for a long time
-        timeout.keep_alive_pings                = true;
+        timeout.handshake_timeout               = std::chrono::seconds{
+            5}; // 5 secondes timeout for the handshake, otherwise the gateway may be busy and not respond
+        timeout.idle_timeout = std::chrono::seconds{
+            25}; // 25 seconds keep-alive timeout, otherwise the gateway may close the connection if no message is sent for a long time
+        timeout.keep_alive_pings = true;
         stream.set_option(timeout);
         stream.set_option(websocket::stream_base::decorator([](websocket::request_type& request) {
             request.erase(beast::http::field::origin);
@@ -299,8 +302,8 @@ void GatewayWebSocketTransport::connect(std::uint16_t port, const std::string& p
     Listener listener   = listener_;
     auto     session    = std::make_shared<Session>(io_context, host_, std::to_string(port), path, std::move(listener));
     session_            = session;
-    io_thread_          = std::thread([io_context] { io_context->run(); });
     session->run();
+    io_thread_ = std::thread([io_context] { io_context->run(); });
 }
 
 bool GatewayWebSocketTransport::send(const std::string& message)
@@ -354,13 +357,15 @@ GatewayService::~GatewayService()
 
 bool GatewayService::start(const std::string& locale)
 {
+    std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mutex_);
+    if (worker_.joinable() && !stop_requested_.load(std::memory_order_relaxed))
+        return false;
+    if (worker_.joinable())
+        worker_.join();
+
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
-        if (worker_.joinable() && !stop_requested_)
-            return false;
-        if (worker_.joinable())
-            worker_.join();
-        stop_requested_ = false;
+        stop_requested_.store(false, std::memory_order_relaxed);
         state_          = ConnectionState::Connecting;
         port_           = 0;
         health_         = HealthInfo{};
@@ -373,9 +378,13 @@ bool GatewayService::start(const std::string& locale)
 
 void GatewayService::stop()
 {
+    std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mutex_);
+    if (!worker_.joinable() && stop_requested_.load(std::memory_order_relaxed))
+        return;
+
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
-        stop_requested_ = true;
+        stop_requested_.store(true, std::memory_order_relaxed);
         state_          = ConnectionState::Disconnected;
         port_           = 0;
         health_         = HealthInfo{};
@@ -504,7 +513,9 @@ std::int64_t GatewayService::send_request(const std::string& method, const nlohm
     return id;
 }
 
-GatewayService::ApiResult GatewayService::request_sync(const std::string& method, const nlohmann::json& params, std::chrono::milliseconds timeout)
+GatewayService::ApiResult GatewayService::request_sync(const std::string&        method,
+                                                       const nlohmann::json&     params,
+                                                       std::chrono::milliseconds timeout)
 {
     ApiResult result;
     {
@@ -515,12 +526,15 @@ GatewayService::ApiResult GatewayService::request_sync(const std::string& method
         }
     }
 
-    auto               response = std::make_shared<std::promise<ApiResult>>();
-    std::future<ApiResult> future = response->get_future();
-    const std::int64_t     id     = next_request_id();
+    auto                   response = std::make_shared<std::promise<ApiResult>>();
+    std::future<ApiResult> future   = response->get_future();
+    const std::int64_t     id       = next_request_id();
     {
         std::lock_guard<std::mutex> lock(pending_mutex_);
-        pending_requests_.emplace(id, PendingRequest{[response](GatewayError error, const nlohmann::json& value) { response->set_value(ApiResult{error, value}); }, true});
+        pending_requests_.emplace(id, PendingRequest{[response](GatewayError error, const nlohmann::json& value) {
+                                                         response->set_value(ApiResult{error, value});
+                                                     },
+                                                     true});
     }
     if (!dependencies_.websocket->send(build_jsonrpc_request(id, method, params).dump())) {
         std::lock_guard<std::mutex> lock(pending_mutex_);
@@ -545,9 +559,29 @@ std::int64_t GatewayService::watch_device(const nlohmann::json& params, RpcCallb
 }
 
 GatewayService::ApiResult GatewayService::get_device(const std::optional<std::string>& serial_number)
-{ return get_json(serial_number.has_value() ? config_.device_path + "/" + *serial_number : config_.device_path); }
+{
+    if (!serial_number.has_value())
+        return get_json(config_.device_path);
+    return get_json(config_.device_path + "/" + Http::url_encode(*serial_number));
+}
 
 GatewayService::ApiResult GatewayService::get_account() { return get_json(config_.account_path); }
+
+GatewayService::ApiResult GatewayService::set_region(const std::string& region)
+{
+    if (region.empty())
+        return {{GatewayErrorCode::InvalidRequest, "region is empty"}, {}};
+
+    ApiResult result = post_json(config_.region_path, {{"region", region}});
+    if (result.error)
+        return result;
+
+    const auto code = result.value.find("code");
+    if (code == result.value.end() || !code->is_number_integer() || code->get<int>() != 200) {
+        result.error = {GatewayErrorCode::InvalidResponse, "region endpoint did not report code 200"};
+    }
+    return result;
+}
 
 PreprintStoreResult GatewayService::store_preprint_context(const std::string& id, const nlohmann::json& payload)
 {
@@ -623,7 +657,7 @@ void GatewayService::run(const std::string locale)
             state_          = ConnectionState::Disconnected;
             port_           = 0;
             health_         = HealthInfo{};
-            websocket_open_  = false;
+            websocket_open_ = false;
         }
         fail_pending({GatewayErrorCode::NotConnected, "gateway connection was lost"});
         dependencies_.websocket->close();
@@ -645,7 +679,7 @@ void GatewayService::run(const std::string locale)
         std::uniform_real_distribution<double> distribution{0.0, 1.0};
         const auto                             delay = reconnect_policy_.next_delay(distribution(random_generator));
         std::unique_lock<std::mutex>           lock(state_mutex_);
-        state_condition_.wait_for(lock, delay, [this] { return stop_requested_; });
+        state_condition_.wait_for(lock, delay, [this] { return stop_requested_.load(std::memory_order_relaxed); });
     }
 }
 
@@ -688,8 +722,15 @@ GatewayError GatewayService::wait_for_health(std::uint16_t port, HealthInfo& hea
             if (const GatewayError health_error = parse_health(response.body, health))
                 return health_error;
             BOOST_LOG_TRIVIAL(info) << "connection gateway health response: status=" << response.status
-                                    << ", device_connected=" << health.device_connected
-                                    << ", has_device_state=" << health.has_device_state;
+                                    << ", device_connected=" << health.device_connected << ", has_device_state=" << health.has_device_state;
+            std::string health_pages;
+            for (const auto &page : health.pages) {
+                if (!health_pages.empty())
+                    health_pages += ",";
+                health_pages += page.first + "=" + page.second;
+            }
+            BOOST_LOG_TRIVIAL(warning)
+                << "[FLUTTER_FLOW] [gateway] [health_ready] port=" << port << " base_url=" << health.base_url << " pages=" << health_pages;
             return {};
         }
         std::this_thread::sleep_for(config_.health_poll_interval);
@@ -705,6 +746,7 @@ GatewayError GatewayService::connect_websocket(std::uint16_t port)
         websocket_error_.clear();
     }
     dependencies_.websocket->connect(port, config_.websocket_path);
+    BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway] [websocket_connecting] port=" << port << " path=" << config_.websocket_path;
 
     std::unique_lock<std::mutex> lock(state_mutex_);
     if (!state_condition_.wait_for(lock, config_.health_timeout,
@@ -731,8 +773,24 @@ void GatewayService::handle_websocket_message(const std::string& message)
         return;
     }
     if (frame.type == RpcFrameType::Error) {
-        const std::string error_message = frame.error.is_object() ? frame.error.value("message", "JSON-RPC error") : "JSON-RPC error";
-        const int         error_code    = frame.error.is_object() ? frame.error.value("code", 0) : 0;
+        std::string error_message = "JSON-RPC error";
+        int         error_code    = 0;
+        if (frame.error.is_object()) {
+            if (const auto message = frame.error.find("message"); message != frame.error.end() && message->is_string())
+                error_message = message->get<std::string>();
+            if (const auto code = frame.error.find("code"); code != frame.error.end() && code->is_number_integer()) {
+                if (code->is_number_unsigned()) {
+                    const std::uint64_t value = code->get<std::uint64_t>();
+                    error_code = value > static_cast<std::uint64_t>(std::numeric_limits<int>::max()) ? std::numeric_limits<int>::max() :
+                                                                                                       static_cast<int>(value);
+                } else {
+                    const std::int64_t value = code->get<std::int64_t>();
+                    error_code               = value < std::numeric_limits<int>::min() ? std::numeric_limits<int>::min() :
+                                               value > std::numeric_limits<int>::max() ? std::numeric_limits<int>::max() :
+                                                                                         static_cast<int>(value);
+                }
+            }
+        }
         complete_pending(frame.id, {GatewayErrorCode::RpcError, error_message, error_code}, nlohmann::json::object());
         return;
     }

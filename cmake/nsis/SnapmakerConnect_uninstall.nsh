@@ -1,6 +1,5 @@
-; Wait for the shared connect CLI's built-in no-client self-exit before CPack
-; removes generated files. Only exact installed paths are checked; no process
-; is enumerated or terminated by name.
+; Wait for the connect CLI to release its executable after the installer has
+; force-terminated it. Exact installed paths are checked for compatibility.
 Push $R0
 StrCpy $R0 40
 
@@ -26,7 +25,7 @@ SnapmakerConnectUninstall_silent:
   SetErrorLevel 8
   Abort
 SnapmakerConnectUninstall_failed:
-  MessageBox MB_OK|MB_ICONSTOP "Snapmaker Connect is still shutting down.$\nClose Snapmaker Orca, wait up to 40 seconds, then run the uninstaller again."
+  MessageBox MB_OK|MB_ICONSTOP "The Snapmaker Connect executable is still locked.$\nMake sure Snapmaker Orca is closed, check antivirus or indexing software, then run the uninstaller again."
   Abort
 
 SnapmakerConnectUninstall_done:

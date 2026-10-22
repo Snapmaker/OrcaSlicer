@@ -206,6 +206,20 @@ TEST_CASE("GatewayDevice parse_machine_slots supports legacy and missing optiona
     REQUIRE(slots[1].nozzle_volume_type == "standard");
 }
 
+TEST_CASE("GatewayDevice parse_machine_slots renders empty slots as NONE", "[gateway][device][machine-slots]")
+{
+    nlohmann::json objects                            = machine_objects();
+    objects["print_task_config"]["filament_sub_type"] = nlohmann::json::array({"Support", "NONE"});
+    objects["print_task_config"]["filament_exist"]    = nlohmann::json::array({false, true});
+
+    std::vector<ConnectMachineInfo> slots;
+    REQUIRE(GatewayDevice::parse_machine_slots(objects, slots));
+    REQUIRE(slots.size() == 2);
+    REQUIRE(slots[0].filament_info == "NONE");
+    REQUIRE(slots[0].filament_type == "NONE");
+    REQUIRE(slots[1].filament_info == "Polymaker PETG");
+}
+
 TEST_CASE("GatewayDevice parse_machine_slots overrides only present config nozzles", "[gateway][device][machine-slots]")
 {
     nlohmann::json objects                           = machine_objects();

@@ -1,0 +1,34 @@
+# Engine-layer boundary gate (GitLab CI adaptation).
+# Same script as .github/workflows/engine-boundary-gate.yml and local runs;
+# local pre-check: python scripts/check_engine_boundary.py
+# The instance's shared runner only accepts tagged jobs (run_untagged=false)
+# -> jobs MUST carry tags: [ shared ].
+stages:
+  - test
+
+engine-boundary-gate:
+  image: python:3.12-slim
+  tags: [ shared ]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - 'src/libslic3r/**/*'
+        - 'src/app_common/**/*'
+        - 'src/common_func/**/*'
+        - 'src/mqtt/**/*'
+        - 'scripts/engine_boundary_config.json'
+        - 'scripts/check_engine_boundary.py'
+        - '.gitlab-ci.yml'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH'
+      changes:
+        - 'src/libslic3r/**/*'
+        - 'src/app_common/**/*'
+        - 'src/common_func/**/*'
+        - 'src/mqtt/**/*'
+        - 'scripts/engine_boundary_config.json'
+        - 'scripts/check_engine_boundary.py'
+        - '.gitlab-ci.yml'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+  script:
+    - python scripts/check_engine_boundary.py

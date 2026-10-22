@@ -47,6 +47,23 @@ if (WIN32)
 endif()
 
 catch_discover_tests(${_TEST_NAME}_tests TEST_PREFIX "${_TEST_NAME}: " EXTRA_ARGS ${CATCH_EXTRA_ARGS})
+
+# Native visibility regression for option-group ShowItems passes. No slicer app
+# or user profile is started. Headless environments report an explicit skip.
+add_executable(support_override_notice_tests test_support_override_notice.cpp)
+target_include_directories(support_override_notice_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src ${wxWidgets_INCLUDE_DIRS})
+target_compile_definitions(support_override_notice_tests PRIVATE ${wxWidgets_DEFINITIONS} wxDEBUG_LEVEL=0)
+set(_SUPPORT_NOTICE_WX_LIBS ${wxWidgets_LIBRARIES})
+if (APPLE)
+    list(REMOVE_ITEM _SUPPORT_NOTICE_WX_LIBS OpenGL.framework)
+endif()
+find_package(OpenGL REQUIRED)
+target_link_libraries(support_override_notice_tests PRIVATE
+    ${_SUPPORT_NOTICE_WX_LIBS} OpenGL::GL JPEG::JPEG PNG::PNG ZLIB::ZLIB ${EXPAT_LIBRARIES})
+add_test(NAME support_override_notice COMMAND support_override_notice_tests)
+set_tests_properties(support_override_notice PROPERTIES SKIP_RETURN_CODE 77)
+
 # add_test(${_TEST_NAME}_tests ${_TEST_NAME}_tests "${CATCH_EXTRA_ARGS} exclude:[NotWorking]")
 
 set(_FILAMENT_TEST_NAME filament_dropdown_mapping)

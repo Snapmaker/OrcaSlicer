@@ -23,11 +23,16 @@
 #include "../Utils/MacDarkMode.hpp"
 #endif // __APPLE__
 
-// wxGLCanvas must use GLX (deps/wxWidgets: wxUSE_GLCANVAS_EGL=OFF): with EGL, NVIDIA refuses the window
+// wxGLCanvas should use GLX (deps/wxWidgets: wxUSE_GLCANVAS_EGL=OFF): with EGL, NVIDIA refuses the window
 // surface of the X11 canvas window, the context is current without a surface and the 3D canvas stays blank.
+// A system wxWidgets (or a Flatpak runtime one) may still be built with EGL; that only warns, at build time
+// and at startup (init_gl).
 // (GLEW is built for GLX in deps/GLEW; it does not expose its backend to this file, so only wx is checked.)
 #if defined(__linux__) && defined(wxUSE_GLCANVAS_EGL) && wxUSE_GLCANVAS_EGL
-#error "wxWidgets was built with wxGLCanvas EGL support; rebuild it with -DwxUSE_GLCANVAS_EGL=OFF (deps/wxWidgets/wxWidgets.cmake)"
+#warning "wxWidgets was built with wxGLCanvas EGL support: the 3D canvas stays blank on NVIDIA's proprietary driver; rebuild it with -DwxUSE_GLCANVAS_EGL=OFF (deps/wxWidgets/wxWidgets.cmake)"
+static constexpr bool s_wx_glcanvas_egl = true;
+#else
+static constexpr bool s_wx_glcanvas_egl = false;
 #endif
 
 namespace Slic3r {
@@ -249,6 +254,8 @@ OpenGLManager::~OpenGLManager()
 bool OpenGLManager::init_gl(bool popup_error)
 {
     if (!m_gl_initialized) {
+        if (s_wx_glcanvas_egl)
+            BOOST_LOG_TRIVIAL(warning) << "wxGLCanvas was built with EGL support: the 3D canvas stays blank on NVIDIA's proprietary driver; rebuild wxWidgets with -DwxUSE_GLCANVAS_EGL=OFF";
         GLenum result = glewInit();
         if (result != GLEW_OK) {
             BOOST_LOG_TRIVIAL(error) << "Unable to init glew library";

@@ -3066,7 +3066,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         // BBS: the single bed temperature value accommodates the highest-temperature filament of the print
         // (max over all used extruders instead of the initial extruder only).
         int bed_temp_single = 0;
-        for (const unsigned int extruder_id : print.extruders())
+        for (const unsigned int extruder_id : bed_temperature_extruders(print))
             bed_temp_single = std::max(bed_temp_single, first_bed_temp_opt->get_at(extruder_id));
         this->placeholder_parser().set("bed_temperature_initial_layer_single", new ConfigOptionInt(bed_temp_single));
         this->placeholder_parser().set("bed_temperature_initial_layer_vector", new ConfigOptionString());
@@ -4012,10 +4012,25 @@ int GCode::get_bed_temperature(const int extruder_id, const bool is_first_layer,
 int GCode::get_bed_temperature_max(const Print& print, const bool is_first_layer) const
 {
     int max_bed_temp = 0;
-    for (const unsigned int extruder_id : print.extruders())
+    for (const unsigned int extruder_id : bed_temperature_extruders(print))
         max_bed_temp = std::max(
             max_bed_temp, get_bed_temperature(extruder_id, is_first_layer, print.config().curr_bed_type));
     return max_bed_temp;
+}
+
+// Extruders that actually print something on this plate.
+// Print::extruders() is derived from the configuration: e.g. support_filament is counted whenever
+// support is enabled, even if no support is generated. Such "phantom" filaments must not raise the
+// bed temperature, so prefer the extruders collected by ToolOrdering from the generated extrusions
+// (already set on the writer). Fall back to the configuration-based list before they are known.
+std::vector<unsigned int> GCode::bed_temperature_extruders(const Print& print) const
+{
+    std::vector<unsigned int> ids;
+    for (const Extruder& extruder : m_writer.extruders())
+        ids.push_back(extruder.id());
+    if (ids.empty())
+        ids = print.extruders();
+    return ids;
 }
 
 // Write 1st layer bed temperatures into the G-code.

@@ -6,7 +6,7 @@
 #   FEISHU_WEBHOOK_URL      - optional: feishu group bot webhook (owner ping)
 # dev-guidelines source: internal repo snapmaker_orca/dev-guidelines (the public
 # GitHub copy is generic-only). Clone uses DG_CLONE_TOKEN instead of
-# CI_JOB_TOKEN: the job token carries the pipeline user's identity, which 403s
+# CI_JOB_TOKEN: the pipeline user's identity carries through the token, which 403s
 # for users who are not members of that repo.
 ai_review:
   tags: [ai-review]
@@ -31,3 +31,131 @@ ai_review:
     - if (Test-Path dg) { Remove-Item -Recurse -Force dg }
     - git clone --depth 1 --branch $env:DG_REF "http://oauth2:$($env:DG_CLONE_TOKEN)@gitlab.s.com/snapmaker_orca/dev-guidelines.git" dg
     - '& $env:PYEXE dg/scripts/ai_review_gitlab.py'
+
+weekly_sanitizer_smoke:
+  tags: [orca-linux-test]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $ORCA_RUN_SANITIZER_SMOKE == "true"'
+  # A fresh dependency key can require a full dependency build; allow time to reseed the local cache.
+  timeout: 3h
+  variables:
+    GIT_DEPTH: "1"
+    GIT_LFS_SKIP_SMUDGE: "1"
+    ORCA_BUILD_JOBS: "4"
+    DEPS_CACHE_ROOT: "/data/orca-cache/orcaslicer/deps"
+    TBB_CACHE_ROOT: "/data/orca-cache/orcaslicer/tbb-clang"
+    CCACHE_DIR: "/data/orca-cache/orcaslicer/ccache/weekly-sanitizer-smoke"
+
+  before_script:
+    - |
+      set -euo pipefail
+      echo "runner=$(uname -a)"
+      echo "user=$(id)"
+      echo "clang=$(clang --version | head -n 1)"
+      echo "cmake=$(cmake --version | head -n 1)"
+      echo "ninja=$(ninja --version)"
+      mkdir -p "$DEPS_CACHE_ROOT" "$TBB_CACHE_ROOT" "$CCACHE_DIR"
+
+  script:
+    - |
+      set -euo pipefail
+
+      # Prepare Clang-built oneTBB (static, LTO off). Keep the build log, but
+      # TBB_PREFIX:: sentinel that identifies the install path.
+      bash scripts/build_tbb_clang.sh | tee build-tbb-clang.log
+      TBB_INSTALL="$(sed -n 's/^TBB_PREFIX:://p' build-tbb-clang.log | tail -n 1)"
+      export TBB_INSTALL
+      export TBBROOT="$TBB_INSTALL"
+      export TBB_INSTALL_DIR="$TBB_INSTALL"
+      test -f "$TBB_INSTALL/lib/cmake/TBB/TBBConfig.cmake"
+
+      # Reuse the GCC-built deps bundle used by weekly_small_tests.
+      DEPS_KEY="$(
+        {
+          sha256sum build_linux.sh deps/CMakeLists.txt
+          find deps -maxdepth 2 -type f \( -name '*.cmake' -o -name '*.patch' \) -print \
+            | LC_ALL=C sort | xargs -r sha256sum
+        } | sha256sum | awk '{print $1}'
+      )"
+      export ORCA_DEPS_TAR="${DEPS_CACHE_ROOT}/${DEPS_KEY}/deps-destdir.tar.zst"
+
+      if [ ! -f "$ORCA_DEPS_TAR" ]; then
+        echo "Building dependencies: $ORCA_DEPS_TAR"
+        rm -rf deps/build
+        ./build_linux.sh -dr
+        mkdir -p "$(dirname "$ORCA_DEPS_TAR")"
+        TMP_TAR="${ORCA_DEPS_TAR}.tmp.$$"
+        trap 'rm -f "$TMP_TAR"' EXIT
+        tar --zstd -cf "$TMP_TAR" -C deps/build destdir
+        mv "$TMP_TAR" "$ORCA_DEPS_TAR"
+      else
+        echo "Dependency cache hit: $ORCA_DEPS_TAR"
+        rm -rf deps/build
+        mkdir -p deps/build
+        tar --zstd -xf "$ORCA_DEPS_TAR" -C deps/build
+      fi
+
+      # The GCC deps tarball contains GCC-LTO TBB archives that Clang cannot
+      # link. Remove only the temporary copy's TBB package config so every
+      # find_package(TBB) resolves the Clang-built TBB passed via TBB_DIR.
+      rm -rf deps/build/destdir/usr/local/lib/cmake/TBB
+
+      ccache -M 50G
+      ccache -z
+
+      # Clang + RelWithDebInfo + ASan/UBSan, using the Clang-built oneTBB.
+      cmake -S . -B build-sanitizer -G Ninja \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_PREFIX_PATH="$CI_PROJECT_DIR/deps/build/destdir/usr/local" \
+        -DTBB_DIR="${TBB_INSTALL}/lib/cmake/TBB" \
+        -DSLIC3R_STATIC=ON \
+        -DSLIC3R_GUI=OFF \
+        -DBUILD_TESTS=ON \
+        -DENABLE_ASAN=ON \
+        -DENABLE_UBSAN=ON \
+        -DORCA_USE_OCCT_LINK_GROUP=ON \
+        -DCMAKE_CXX_STANDARD_LIBRARIES="$CI_PROJECT_DIR/deps/build/destdir/usr/local/lib/libfreetype.a"
+      # CMake can deduplicate the target-level freetype entry before the OCCT
+      # archives; append the bundled archive after target libraries for this
+      # sanitizer-only link-ordering case.
+
+      # LSan is disabled for the initial smoke because the application has
+      # known program-lifetime globals that produce false positives. Enable it
+      # after a curated suppression file is added. UBSan is recoverable and its
+      # diagnostics are preserved in sanitizer-runtime.log for review; smoke
+      # status is determined by the Catch2/JUnit test result.
+
+      cmake --build build-sanitizer \
+        --target libnest2d_tests fff_print_tests \
+        --parallel "$ORCA_BUILD_JOBS"
+
+      # libnest2d_tests is intentionally build-only: it checks sanitizer
+      # compilation and static linking while the selected fff_print cases run.
+      set +e
+      ASAN_OPTIONS=detect_leaks=0 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=0 \
+        build-sanitizer/tests/fff_print/fff_print_tests \
+        "Scenario: init_print functionality,Scenario: Extrusion width specifics,Scenario: Model construction,Scenario: PrintObject: Perimeter generation" \
+        --reporter JUnit --out build-sanitizer/fff-print-sanitizer-smoke.xml \
+        2>&1 | tee build-sanitizer/sanitizer-runtime.log
+      TEST_STATUS="${PIPESTATUS[0]}"
+      set -e
+
+      if grep -qE 'runtime error:|ERROR: AddressSanitizer|SUMMARY: (UndefinedBehaviorSanitizer|AddressSanitizer)' build-sanitizer/sanitizer-runtime.log; then
+        echo "WARNING: sanitizer diagnostics found; see sanitizer-runtime.log artifact"
+      fi
+
+      exit "$TEST_STATUS"
+
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - build-sanitizer/fff-print-sanitizer-smoke.xml
+      - build-sanitizer/sanitizer-runtime.log
+    reports:
+      junit: build-sanitizer/fff-print-sanitizer-smoke.xml

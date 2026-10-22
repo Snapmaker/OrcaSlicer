@@ -165,6 +165,7 @@ endif ()
 # Proposal for C++ unit tests and sandboxes
 option(SLIC3R_BUILD_SANDBOXES   "Build development sandboxes" OFF)
 option(BUILD_TESTS       "Build unit tests" OFF)
+option(ORCA_USE_OCCT_LINK_GROUP "Use a Linux OCCT/freetype linker group for Clang sanitizer builds" OFF)
 option(ORCA_TOOLS       "Build Orca tools" OFF)
 
 if (IS_CROSS_COMPILE)

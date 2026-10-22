@@ -48,6 +48,16 @@ target_link_libraries(test_nanosvg_impl PRIVATE libslic3r)
 # Common link libraries for all tests that depend on libslic3r.
 # libslic3r is a STATIC library; its PRIVATE dependencies are not propagated,
 # so every test executable must explicitly link them.
+if (ORCA_USE_OCCT_LINK_GROUP AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(OCCT_TEST_LINK_LIBRARIES
+        "-Wl,--start-group"
+        ${OCCT_LIBS}
+        ${FREETYPE_LIBRARIES}
+        "-Wl,--end-group"
+    )
+else()
+    set(OCCT_TEST_LINK_LIBRARIES ${OCCT_LIBS} ${FREETYPE_LIBRARIES})
+endif()
 set(TEST_LINK_LIBS
     test_common
     libslic3r
@@ -68,8 +78,7 @@ set(TEST_LINK_LIBS
     semver
     libslic3r_cgal
     ${EXPAT_LIBRARIES}
-    ${OCCT_LIBS}
-    ${FREETYPE_LIBRARIES}
+    ${OCCT_TEST_LINK_LIBRARIES}
     test_nanosvg_impl
 )
 

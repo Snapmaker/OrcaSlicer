@@ -3555,7 +3555,8 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
             << " reserve_slots=" << layer.local_z_reserve_slot_count
             << " planned_depth=" << layer.planned_depth();
         set_layer(layer.z, layer.height, 0, false /*layer.z == m_plan.front().z*/, layer.z == m_plan.back().z);
-
+        if (m_layer_info->depth < m_perimeter_width)
+            continue;
         if (m_wipe_tower_blocks.size() == 1) {
             if (m_layer_info->depth < m_wipe_tower_depth - m_perimeter_width) {
                 // align y shift to perimeter width

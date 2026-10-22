@@ -11,6 +11,7 @@
 #include "TriangleSelector.hpp"
 
 #include "Format/AMF.hpp"
+#include "Format/Assimp.hpp"
 #include "Format/svg.hpp"
 // BBS
 #include "FaceDetector.hpp"
@@ -296,6 +297,8 @@ Model Model::read_from_file(const std::string&                                  
             }*/
         }
     }
+    else if (is_assimp_mesh_file(input_file))
+        result = load_assimp_mesh(input_file.c_str(), &model, message);
     else if (boost::algorithm::iends_with(input_file, ".svg"))
         result = load_svg(input_file.c_str(), &model, message);
     //BBS: remove the old .amf.xml files

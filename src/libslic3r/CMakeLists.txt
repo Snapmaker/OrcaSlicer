@@ -187,6 +187,8 @@ set(lisbslic3r_sources
     Format/bbs_3mf.cpp
     Format/bbs_3mf.hpp
     format.hpp
+    Format/Assimp.cpp
+    Format/Assimp.hpp
     Format/OBJ.cpp
     Format/OBJ.hpp
     Format/objparser.cpp
@@ -491,6 +493,7 @@ cmake_policy(PUSH)
 cmake_policy(SET CMP0011 NEW)
 find_package(CGAL REQUIRED)
 find_package(OpenCV REQUIRED core)
+find_package(assimp CONFIG REQUIRED)
 cmake_policy(POP)
 
 add_library(libslic3r_cgal STATIC 
@@ -581,6 +584,7 @@ target_link_libraries(libslic3r
         ${CMAKE_DL_LIBS}
         ${EXPAT_LIBRARIES}
         ${OCCT_LIBS}
+        assimp::assimp
         boost_libs
         cereal::cereal
         clipper

@@ -2,6 +2,10 @@
 
 #include "slic3r/Utils/GatewayService.hpp"
 
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/read_until.hpp>
+#include <boost/beast/websocket.hpp>
 #include <nlohmann/json.hpp>
 
 #include <atomic>
@@ -11,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace Slic3r::Gateway;
@@ -182,7 +187,236 @@ struct RecordingProcessManager final : public ConnectionProcessManager
     void terminate() override { terminate_calls.fetch_add(1); }
 };
 
+struct UnresponsiveCloseServer
+{
+    boost::asio::io_context                                       io_context;
+    boost::asio::ip::tcp::acceptor                                acceptor;
+    boost::beast::websocket::stream<boost::asio::ip::tcp::socket> server{io_context};
+    std::promise<void>                                            data_received;
+    std::thread                                                   thread;
+
+    UnresponsiveCloseServer() : acceptor(io_context, boost::asio::ip::tcp::endpoint{boost::asio::ip::tcp::v4(), 0})
+    {
+        acceptor.listen(boost::asio::socket_base::max_listen_connections);
+        accept();
+        thread = std::thread([this] { io_context.run(); });
+    }
+
+    ~UnresponsiveCloseServer() { stop(); }
+
+    std::uint16_t port() const { return acceptor.local_endpoint().port(); }
+
+    void stop()
+    {
+        io_context.stop();
+        if (thread.joinable())
+            thread.join();
+        boost::system::error_code error;
+        acceptor.close(error);
+        server.next_layer().close(error);
+    }
+
+private:
+    void accept()
+    {
+        acceptor.async_accept(server.next_layer(), [this](const boost::system::error_code& error) {
+            if (error)
+                return;
+            server.async_accept([this](const boost::system::error_code& error) {
+                if (error)
+                    return;
+                server.next_layer().async_wait(boost::asio::ip::tcp::socket::wait_read, [this](const boost::system::error_code& error) {
+                    if (!error)
+                        data_received.set_value();
+                });
+            });
+        });
+    }
+};
+
+struct StalledHandshakeServer
+{
+    boost::asio::io_context        io_context;
+    boost::asio::ip::tcp::acceptor acceptor;
+    boost::asio::ip::tcp::socket   socket{io_context};
+    std::promise<void>             accepted;
+    std::thread                    thread;
+
+    StalledHandshakeServer() : acceptor(io_context, boost::asio::ip::tcp::endpoint{boost::asio::ip::tcp::v4(), 0})
+    {
+        acceptor.listen(boost::asio::socket_base::max_listen_connections);
+        accept();
+        thread = std::thread([this] { io_context.run(); });
+    }
+
+    ~StalledHandshakeServer() { stop(); }
+
+    std::uint16_t port() const { return acceptor.local_endpoint().port(); }
+
+    void stop()
+    {
+        io_context.stop();
+        if (thread.joinable())
+            thread.join();
+        boost::system::error_code error;
+        acceptor.close(error);
+        socket.close(error);
+    }
+
+private:
+    void accept()
+    {
+        auto request = std::make_shared<std::string>();
+        acceptor.async_accept(socket, [this, request](const boost::system::error_code& error) {
+            if (error)
+                return;
+            boost::asio::async_read_until(socket, boost::asio::dynamic_buffer(*request), "\r\n\r\n",
+                                          [this, request](const boost::system::error_code& error, std::size_t) {
+                                              if (!error)
+                                                  accepted.set_value();
+                                          });
+        });
+    }
+};
+
+struct DroppingServer
+{
+    boost::asio::io_context                                       io_context;
+    boost::asio::ip::tcp::acceptor                                acceptor;
+    boost::beast::websocket::stream<boost::asio::ip::tcp::socket> server{io_context};
+    std::thread                                                   thread;
+
+    DroppingServer() : acceptor(io_context, boost::asio::ip::tcp::endpoint{boost::asio::ip::tcp::v4(), 0})
+    {
+        acceptor.listen(boost::asio::socket_base::max_listen_connections);
+        accept();
+        thread = std::thread([this] { io_context.run(); });
+    }
+
+    ~DroppingServer() { stop(); }
+
+    std::uint16_t port() const { return acceptor.local_endpoint().port(); }
+
+    void stop()
+    {
+        io_context.stop();
+        if (thread.joinable())
+            thread.join();
+        boost::system::error_code error;
+        acceptor.close(error);
+        server.next_layer().close(error);
+    }
+
+private:
+    void accept()
+    {
+        acceptor.async_accept(server.next_layer(), [this](const boost::system::error_code& error) {
+            if (error)
+                return;
+            server.async_accept([this](const boost::system::error_code& error) {
+                if (error)
+                    return;
+                boost::system::error_code close_error;
+                server.next_layer().close(close_error);
+            });
+        });
+    }
+};
 } // namespace
+
+TEST_CASE("GatewayWebSocketTransport close is bounded when the peer ignores the close frame", "[gateway][websocket][lifecycle]")
+{
+    UnresponsiveCloseServer server;
+
+    std::promise<void>        opened;
+    std::promise<std::string> closed;
+    GatewayWebSocketTransport transport;
+    transport.set_listener({[&opened] { opened.set_value(); }, {}, [&closed](const std::string& reason) { closed.set_value(reason); }});
+
+    transport.connect(server.port(), "/ws");
+    REQUIRE(opened.get_future().wait_for(std::chrono::seconds{2}) == std::future_status::ready);
+
+    const auto start        = std::chrono::steady_clock::now();
+    auto       close_future = std::async(std::launch::async, [&transport] { transport.close(); });
+    const bool completed    = close_future.wait_for(std::chrono::milliseconds{2000}) == std::future_status::ready;
+    const auto completed_at = std::chrono::steady_clock::now();
+    server.stop(); // Keep a peer-dependent implementation from hanging this test forever.
+    close_future.get();
+    const auto elapsed = completed_at - start;
+
+    REQUIRE(completed);
+    REQUIRE(elapsed < std::chrono::milliseconds{2000});
+    REQUIRE(closed.get_future().wait_for(std::chrono::seconds{1}) == std::future_status::ready);
+}
+
+TEST_CASE("GatewayWebSocketTransport close is bounded during handshake", "[gateway][websocket][lifecycle]")
+{
+    StalledHandshakeServer server;
+
+    std::promise<std::string> closed;
+    GatewayWebSocketTransport transport;
+    transport.set_listener({{}, {}, [&closed](const std::string& reason) { closed.set_value(reason); }});
+
+    transport.connect(server.port(), "/ws");
+    REQUIRE(server.accepted.get_future().wait_for(std::chrono::seconds{2}) == std::future_status::ready);
+
+    const auto start        = std::chrono::steady_clock::now();
+    auto       close_future = std::async(std::launch::async, [&transport] { transport.close(); });
+    const bool completed    = close_future.wait_for(std::chrono::milliseconds{2000}) == std::future_status::ready;
+    const auto completed_at = std::chrono::steady_clock::now();
+    server.stop();
+    close_future.get();
+
+    REQUIRE(completed);
+    REQUIRE(completed_at - start < std::chrono::milliseconds{2000});
+    REQUIRE(closed.get_future().wait_for(std::chrono::seconds{1}) == std::future_status::ready);
+}
+
+TEST_CASE("GatewayWebSocketTransport close is bounded while a large write is outstanding", "[gateway][websocket][lifecycle]")
+{
+    UnresponsiveCloseServer server;
+
+    std::promise<void>        opened;
+    std::promise<std::string> closed;
+    GatewayWebSocketTransport transport;
+    transport.set_listener({[&opened] { opened.set_value(); }, {}, [&closed](const std::string& reason) { closed.set_value(reason); }});
+
+    transport.connect(server.port(), "/ws");
+    REQUIRE(opened.get_future().wait_for(std::chrono::seconds{2}) == std::future_status::ready);
+    REQUIRE(transport.send(std::string(std::size_t{1024} * 1024, 'x')));
+    REQUIRE(server.data_received.get_future().wait_for(std::chrono::seconds{2}) == std::future_status::ready);
+
+    const auto start        = std::chrono::steady_clock::now();
+    auto       close_future = std::async(std::launch::async, [&transport] { transport.close(); });
+    const bool completed    = close_future.wait_for(std::chrono::milliseconds{2000}) == std::future_status::ready;
+    const auto completed_at = std::chrono::steady_clock::now();
+    server.stop();
+    close_future.get();
+
+    REQUIRE(completed);
+    REQUIRE(completed_at - start < std::chrono::milliseconds{2000});
+    REQUIRE(closed.get_future().wait_for(std::chrono::seconds{1}) == std::future_status::ready);
+}
+
+TEST_CASE("GatewayWebSocketTransport close is bounded after IO stops and on repeated close", "[gateway][websocket][lifecycle]")
+{
+    DroppingServer server;
+
+    std::promise<void>        opened;
+    std::promise<std::string> closed;
+    GatewayWebSocketTransport transport;
+    transport.set_listener({[&opened] { opened.set_value(); }, {}, [&closed](const std::string& reason) { closed.set_value(reason); }});
+
+    transport.connect(server.port(), "/ws");
+    REQUIRE(opened.get_future().wait_for(std::chrono::seconds{2}) == std::future_status::ready);
+    REQUIRE(closed.get_future().wait_for(std::chrono::seconds{2}) == std::future_status::ready);
+
+    const auto start = std::chrono::steady_clock::now();
+    transport.close();
+    transport.close();
+
+    REQUIRE(std::chrono::steady_clock::now() - start < std::chrono::milliseconds{2000});
+}
 
 TEST_CASE("GatewayService connects, handles device watch, and calls HTTP APIs", "[gateway][service]")
 {

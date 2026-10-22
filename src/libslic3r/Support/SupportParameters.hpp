@@ -24,8 +24,10 @@ struct SupportParameters {
 	        (object_config.support_filament.value == 0 || ! print_config.filament_soluble.get_at(object_config.support_filament.value - 1));
 
 	    {
-	        this->num_top_interface_layers    = std::max(0, object_config.support_interface_top_layers.value);
-	        this->num_bottom_interface_layers = object_config.support_interface_bottom_layers < 0 ? 
+	        // Orca: fin support has its own interface layer count; it never prints bottom interfaces.
+	        const bool fin_support = object_config.support_type.value == stFins;
+	        this->num_top_interface_layers    = std::max(0, fin_support ? object_config.support_fin_interface_layers.value : object_config.support_interface_top_layers.value);
+	        this->num_bottom_interface_layers = fin_support ? 0 : object_config.support_interface_bottom_layers < 0 ? 
 	            num_top_interface_layers : object_config.support_interface_bottom_layers;
 	        this->has_top_contacts              = num_top_interface_layers    > 0;
 	        this->has_bottom_contacts           = num_bottom_interface_layers > 0;
@@ -80,7 +82,7 @@ struct SupportParameters {
         for (auto layer : object.layers())
             this->support_layer_height_min = std::min(this->support_layer_height_min, std::max(0.01, layer->height));
         
-        if (object_config.support_interface_top_layers.value == 0) {
+        if (this->num_top_interface_layers == 0 && !(object_config.support_type.value == stFins && object_config.support_fin_tine_spacing.value > 0.)) {
             // No interface layers allowed, print everything with the base support pattern.
             this->support_material_interface_flow = this->support_material_flow;
         }
@@ -123,7 +125,7 @@ struct SupportParameters {
         this->raft_interface_density = std::min(1., this->raft_interface_flow.spacing() / raft_interface_spacing);
         this->support_spacing = object_config.support_base_pattern_spacing.value + this->support_material_flow.spacing();
         this->support_density = std::min(1., this->support_material_flow.spacing() / this->support_spacing);
-        if (object_config.support_interface_top_layers.value == 0) {
+        if (this->num_top_interface_layers == 0) {
             // No interface layers allowed, print everything with the base support pattern.
             this->interface_spacing = this->support_spacing;
             this->interface_density = this->support_density;
@@ -193,6 +195,7 @@ struct SupportParameters {
                                                        object_config.tree_support_wall_count.value == 0 ? 0.25 * sqr(scaled<double>(5.0)) * M_PI :
                                                                                                           std::numeric_limits<double>::max();
 
+        this->fins = object_config.support_type.value == stFins;
         support_style = object_config.support_style;
         if (support_style != smsDefault) {
             if ((support_style == smsSnug || support_style == smsGrid) && is_tree(object_config.support_type)) support_style = smsDefault;
@@ -271,6 +274,8 @@ struct SupportParameters {
     // Density of the base support layers.
     coordf_t 				support_density;
     SupportMaterialStyle    support_style = smsDefault;
+    // Fin support (support_type == fins): base layers are printed solid.
+    bool                    fins = false;
 
     // Pattern of the sparse infill including sparse raft layers.
     InfillPattern           base_fill_pattern;

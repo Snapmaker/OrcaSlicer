@@ -1839,9 +1839,11 @@ WipeTower::ToolChangeResult WipeTower2::tool_change_new(const WipeTowerInfo::Too
     m_current_tool = new_tool;
     WipeTowerBlock* block = get_block_by_category(m_filpar[new_tool].category, false);
     if (!block) {
-        assert(block != nullptr);
-        // Return an empty result, but keep the tool bookkeeping consistent: G-code
-        // generation matches these results against the planned tool changes.
+        // Graceful degradation: the tool's adhesiveness category has no tower block of
+        // its own. Return an empty result, but keep the tool bookkeeping consistent:
+        // G-code generation matches these results against the planned tool changes.
+        BOOST_LOG_TRIVIAL(warning) << "WipeTower2::tool_change_new: no wipe tower block for adhesiveness category "
+            << m_filpar[new_tool].category << ", emitting an empty tool change result";
         WipeTower::ToolChangeResult result;
         result.initial_tool = int(old_tool);
         result.new_tool = int(new_tool);
@@ -3555,6 +3557,14 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
             << " reserve_slots=" << layer.local_z_reserve_slot_count
             << " planned_depth=" << layer.planned_depth();
         set_layer(layer.z, layer.height, 0, false /*layer.z == m_plan.front().z*/, layer.z == m_plan.back().z);
+        // A layer shallower than one perimeter width can only occur in a plan without any
+        // real tool change: get_wipe_depth() floors the depth of every changed-tool layer
+        // at perimeter_width (even with zero wipe volume, extra_flow/extra_spacing >= 100%),
+        // and depths propagate downward from the topmost tool-changed layer, so a real
+        // change anywhere would keep every planned layer at depth >= perimeter_width.
+        // Skipping such layers therefore drops no tool_change_new() results: for a fully
+        // degenerate tower m_tool_changes stays empty and the G-code side guards the
+        // missing entries (WipeTowerIntegration::tool_change early-returns).
         if (m_layer_info->depth < m_perimeter_width)
             continue;
         if (m_wipe_tower_blocks.size() == 1) {

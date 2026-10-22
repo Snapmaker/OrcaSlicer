@@ -1688,6 +1688,16 @@ bool WipeTowerIntegration::is_empty_wipe_tower_gcode(GCode& gcodegen, int extrud
 std::string WipeTowerIntegration::finalize(GCode& gcodegen)
 {
     std::string gcode;
+    // The trailing unload (final purge) is only meaningful for a tower that performed
+    // at least one real tool change. For a degenerate tower that never changed tools
+    // (e.g. a single raft layer resolving to the object's extruder) m_final_purge is
+    // an empty shell, and emitting it would append a phantom "CP TOOLCHANGE" unload
+    // block after the print, so it is skipped in that case.
+    if (!gcodegen.is_BBL_Printer() && !m_tool_changes.empty()) {
+        if (std::abs(gcodegen.writer().get_position().z() - m_final_purge.print_z) > EPSILON)
+            gcode += gcodegen.change_layer(m_final_purge.print_z);
+        gcode += append_tcr2(gcodegen, m_final_purge, -1);
+    }
     return gcode;
 }
 

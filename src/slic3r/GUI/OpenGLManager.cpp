@@ -23,6 +23,13 @@
 #include "../Utils/MacDarkMode.hpp"
 #endif // __APPLE__
 
+// wxGLCanvas must use GLX (deps/wxWidgets: wxUSE_GLCANVAS_EGL=OFF): with EGL, NVIDIA refuses the window
+// surface of the X11 canvas window, the context is current without a surface and the 3D canvas stays blank.
+// (GLEW is built for GLX in deps/GLEW; it does not expose its backend to this file, so only wx is checked.)
+#if defined(__linux__) && defined(wxUSE_GLCANVAS_EGL) && wxUSE_GLCANVAS_EGL
+#error "wxWidgets was built with wxGLCanvas EGL support; rebuild it with -DwxUSE_GLCANVAS_EGL=OFF (deps/wxWidgets/wxWidgets.cmake)"
+#endif
+
 namespace Slic3r {
 namespace GUI {
 

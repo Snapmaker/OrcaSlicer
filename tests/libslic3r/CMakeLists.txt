@@ -23,6 +23,7 @@ add_executable(${_TEST_NAME}_tests
 	test_mutable_priority_queue.cpp
 	test_stl.cpp
 	test_meshboolean.cpp
+	test_model_object_repair.cpp
 	test_marchingsquares.cpp
 	test_timeutils.cpp
 	test_tree_support_wall.cpp

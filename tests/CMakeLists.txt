@@ -46,8 +46,8 @@ add_library(test_nanosvg_impl OBJECT nanosvg_impl.cpp)
 target_link_libraries(test_nanosvg_impl PRIVATE libslic3r)
 
 # Common link libraries for all tests that depend on libslic3r.
-# libslic3r is a STATIC library; its PRIVATE dependencies are not propagated,
-# so every test executable must explicitly link them.
+# libslic3r is a STATIC library. CMake propagates its private archives to the final
+# executable link line, but tests repeat OCCT/freetype to control static archive order.
 if (ORCA_USE_OCCT_LINK_GROUP AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(OCCT_TEST_LINK_LIBRARIES
         "-Wl,--start-group"

@@ -583,6 +583,43 @@ if (SLIC3R_SENTRY)
 endif()
 find_package(Freetype REQUIRED)
 
+# Configure OCCT in top-level scope so the imported targets are visible to both
+# sibling src/ and tests/ directories.
+set(OpenCASCADE_DIR "${CMAKE_PREFIX_PATH}/lib/cmake/occt")
+find_package(OpenCASCADE REQUIRED)
+
+# OCCT archive names are used by libslic3r and by test executables that must
+# explicitly place OCCT and freetype in a linker group. Define them at top-level
+# scope so the sibling src/ and tests/ directories see the same list.
+set(OCCT_LIBS
+    TKXDESTEP
+    TKSTEP
+    TKSTEP209
+    TKSTEPAttr
+    TKSTEPBase
+    TKXCAF
+    TKXSBase
+    TKVCAF
+    TKCAF
+    TKLCAF
+    TKCDF
+    TKV3d
+    TKService
+    TKMesh
+    TKBO
+    TKPrim
+    TKHLR
+    TKShHealing
+    TKTopAlgo
+    TKGeomAlgo
+    TKBRep
+    TKGeomBase
+    TKG3d
+    TKG2d
+    TKMath
+    TKernel
+)
+
 
 add_library(libcurl INTERFACE)
 target_link_libraries(libcurl INTERFACE CURL::libcurl)

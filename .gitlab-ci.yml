@@ -117,11 +117,7 @@ weekly_sanitizer_smoke:
         -DBUILD_TESTS=ON \
         -DENABLE_ASAN=ON \
         -DENABLE_UBSAN=ON \
-        -DORCA_USE_OCCT_LINK_GROUP=ON \
-        -DCMAKE_CXX_STANDARD_LIBRARIES="$CI_PROJECT_DIR/deps/build/destdir/usr/local/lib/libfreetype.a"
-      # CMake can deduplicate the target-level freetype entry before the OCCT
-      # archives; append the bundled archive after target libraries for this
-      # sanitizer-only link-ordering case.
+        -DORCA_USE_OCCT_LINK_GROUP=ON
 
       # LSan is disabled for the initial smoke because the application has
       # known program-lifetime globals that produce false positives. Enable it

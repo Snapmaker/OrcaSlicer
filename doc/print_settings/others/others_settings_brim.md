@@ -15,6 +15,7 @@ Brim is a flat layer printed around a model's base to improve adhesion to the pr
     - [Ear detection radius](#ear-detection-radius)
 - [Width](#width)
 - [Brim-Object Gap](#brim-object-gap)
+- [Brim flow ratio](#brim-flow-ratio)
 
 ## Type
 
@@ -100,3 +101,11 @@ Increasing this value widens the brim, which can improve adhesion but increases 
 
 Gap between the innermost brim line and the object.  
 Increasing the gap makes the brim easier to remove but reduces its adhesion benefit; very large gaps may eliminate contact and negate the brim's purpose.
+
+## Brim flow ratio
+
+This factor affects the amount of material for brims.  
+The actual brim flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.
+
+> [!NOTE]
+> The resulting value will not be affected by the first-layer flow ratio.

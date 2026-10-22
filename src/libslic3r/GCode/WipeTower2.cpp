@@ -1840,7 +1840,14 @@ WipeTower::ToolChangeResult WipeTower2::tool_change_new(const WipeTowerInfo::Too
     WipeTowerBlock* block = get_block_by_category(m_filpar[new_tool].category, false);
     if (!block) {
         assert(block != nullptr);
-        return WipeTower::ToolChangeResult();
+        // Return an empty result, but keep the tool bookkeeping consistent: G-code
+        // generation matches these results against the planned tool changes.
+        WipeTower::ToolChangeResult result;
+        result.initial_tool = int(old_tool);
+        result.new_tool = int(new_tool);
+        result.print_z = m_z_pos;
+        result.layer_height = m_layer_height;
+        return result;
     }
     m_cur_block = block;
     WipeTower::box_coordinates cleaning_box(Vec2f(m_perimeter_width, block->cur_depth),
@@ -2861,11 +2868,11 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer_new(bool extrude_perimeter,
         float fill_box_depth = m_wipe_tower_depth - 2 * m_perimeter_width;
         if (m_wipe_tower_blocks.size() == 1)
             fill_box_depth = m_layer_info->depth - 2 * m_perimeter_width;
-        /*fill_boxes.emplace_back(Vec2f(m_perimeter_width, m_cur_block->cur_depth), 
-            m_wipe_tower_width - 2 * m_perimeter_width, m_cur_block->layer_depths[m_current_tool] - m_cur_block->cur_depth);*/
-        //fill_boxes.emplace_back(Vec2f(m_perimeter_width, m_perimeter_width), m_wipe_tower_width - 2 * m_perimeter_width, fill_box_depth);
         WipeTowerBlock* block = get_block_by_category(m_filpar[m_current_tool].category, false);
-        fill_boxes.emplace_back(Vec2f(m_perimeter_width, block->cur_depth), m_wipe_tower_width - 2 * m_perimeter_width, fill_depth);
+        if (block == nullptr && m_wipe_tower_blocks.size() == 1)
+            block = &m_wipe_tower_blocks.front();
+        const float fill_start_y = block != nullptr ? block->cur_depth : m_perimeter_width;
+        fill_boxes.emplace_back(Vec2f(m_perimeter_width, fill_start_y), m_wipe_tower_width - 2 * m_perimeter_width, fill_depth);
     }
 
     writer.set_initial_position((m_left_to_right ? fill_boxes.front().ru : fill_boxes.front().lu), m_wipe_tower_width, m_wipe_tower_depth, m_internal_rotation);
@@ -3548,7 +3555,8 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
             << " reserve_slots=" << layer.local_z_reserve_slot_count
             << " planned_depth=" << layer.planned_depth();
         set_layer(layer.z, layer.height, 0, false /*layer.z == m_plan.front().z*/, layer.z == m_plan.back().z);
-
+        if (m_layer_info->depth < m_perimeter_width)
+            continue;
         if (m_wipe_tower_blocks.size() == 1) {
             if (m_layer_info->depth < m_wipe_tower_depth - m_perimeter_width) {
                 // align y shift to perimeter width

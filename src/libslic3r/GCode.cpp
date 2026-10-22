@@ -771,7 +771,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
 {
     if (new_extruder_id != -1 && new_extruder_id != tcr.new_tool)
         throw Slic3r::InvalidArgument(Slic3r::format(
-            "Error: WipeTowerIntegration::append_tcr unexpected toolchange: layer_idx=%1% tool_change_idx=%2% requested=%3% expected=%4% initial=%5%",
+            "Error: WipeTowerIntegration::append_tcr2 unexpected toolchange: layer_idx=%1% tool_change_idx=%2% requested=%3% expected=%4% initial=%5%",
             m_layer_idx, m_tool_change_idx, new_extruder_id, tcr.new_tool, tcr.initial_tool));
 
     std::string gcode;
@@ -1688,12 +1688,6 @@ bool WipeTowerIntegration::is_empty_wipe_tower_gcode(GCode& gcodegen, int extrud
 std::string WipeTowerIntegration::finalize(GCode& gcodegen)
 {
     std::string gcode;
-    if (!gcodegen.is_BBL_Printer()) {
-        if (std::abs(gcodegen.writer().get_position().z() - m_final_purge.print_z) > EPSILON)
-            gcode += gcodegen.change_layer(m_final_purge.print_z);
-        gcode += append_tcr2(gcodegen, m_final_purge, -1);
-    }
-
     return gcode;
 }
 

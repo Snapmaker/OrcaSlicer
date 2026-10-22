@@ -2957,17 +2957,19 @@ void MainFrame::init_menubar_as_editor()
             PreferencesDialog dlg(this);
             dlg.ShowModal();
             plater()->get_current_canvas3D()->force_set_focus();
-#if ENABLE_GCODE_LINES_ID_IN_H_SLIDER
-            if (dlg.seq_top_layer_only_changed() || dlg.seq_seq_top_gcode_indices_changed())
-#else
-            if (dlg.seq_top_layer_only_changed())
-#endif
-                plater()->refresh_print();
             // GPU accel toggle: applied once after the dialog closes (mirrors
             // GUI_App::open_preferences; this Apple-menu entry shows its own
-            // PreferencesDialog)
+            // PreferencesDialog). The full reload subsumes the seq-view
+            // refresh, so run that only when the GPU toggle did not change
+            // (avoids a double rebuild).
             if (dlg.gcode_gpu_accel_changed())
                 plater()->reload_gcode_preview();
+#if ENABLE_GCODE_LINES_ID_IN_H_SLIDER
+            else if (dlg.seq_top_layer_only_changed() || dlg.seq_seq_top_gcode_indices_changed())
+#else
+            else if (dlg.seq_top_layer_only_changed())
+#endif
+                plater()->refresh_print();
         },
         "", nullptr, []() { return true; }, this, 1);
     //parent_menu->Insert(1, preference_item);

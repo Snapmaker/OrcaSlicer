@@ -67,10 +67,13 @@ protected:
 
     // bool								m_settings_layout_changed {false};
     bool m_seq_top_layer_only_changed{false};
+    bool m_gcode_gpu_accel_changed{false};
+    bool m_gcode_gpu_accel_initial{false};
     bool m_recreate_GUI{false};
 
 public:
     bool seq_top_layer_only_changed() const { return m_seq_top_layer_only_changed; }
+    bool gcode_gpu_accel_changed() const { return m_gcode_gpu_accel_changed; }
     bool recreate_GUI() const { return m_recreate_GUI; }
     void on_dpi_changed(const wxRect &suggested_rect) override;
 

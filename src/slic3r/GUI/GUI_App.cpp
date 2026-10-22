@@ -6500,10 +6500,16 @@ void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_
             canvas->force_set_focus();
         // BBS
         //app_layout_changed = dlg.settings_layout_changed();
+        // GPU accel toggle: applied once after the dialog closes instead of
+        // rebuilding the toolpaths inside every checkbox click. The full
+        // reload subsumes the seq-view refresh below, so run that only when
+        // the GPU toggle did not change (avoids a double rebuild).
+        if (dlg.gcode_gpu_accel_changed())
+            this->plater_->reload_gcode_preview();
 #if ENABLE_GCODE_LINES_ID_IN_H_SLIDER
-        if (dlg.seq_top_layer_only_changed() || dlg.seq_seq_top_gcode_indices_changed())
+        else if (dlg.seq_top_layer_only_changed() || dlg.seq_seq_top_gcode_indices_changed())
 #else
-        if (dlg.seq_top_layer_only_changed())
+        else if (dlg.seq_top_layer_only_changed())
 #endif // ENABLE_GCODE_LINES_ID_IN_H_SLIDER
             this->plater_->refresh_print();
 #ifdef _WIN32

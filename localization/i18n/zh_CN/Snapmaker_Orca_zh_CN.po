@@ -15726,3 +15726,9 @@ msgstr "  • 接触面图案 → 交叠直线\n"
 #, c-format, boost-format
 msgid "  • Interface spacing: %.2f → 0 mm\n"
 msgstr "  • 接触面间距：%.2f → 0 mm\n"
+
+msgid "Enable model station"
+msgstr "开启模型站"
+
+msgid "Show the online models entry on the home page."
+msgstr "在首页显示在线模型入口。"

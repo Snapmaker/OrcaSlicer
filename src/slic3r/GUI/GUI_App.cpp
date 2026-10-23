@@ -5921,6 +5921,27 @@ void GUI_App::register_gateway_notifications()
         if (serial_number.empty() || m_gateway_device.serial_number == serial_number)
             clear_gateway_device();
     });
+    // The CLI broadcasts config changes to every connected client (all Orca
+    // instances and the Flutter pages they host). Mirror the switch into the
+    // in-memory config so this instance reads the fresh value without a
+    // restart; the instance that changed it has already saved the shared
+    // config file, so there is nothing to persist here.
+    m_gateway_service->set_notification_handler("notify.config.changed", [this](const nlohmann::json& params) {
+        const auto apply = [this](const nlohmann::json& scope) {
+            const auto flag = scope.find("enable_model_station");
+            if (flag == scope.end() || !flag->is_boolean())
+                return false;
+            app_config->set_bool("enable_model_station", flag->get<bool>());
+            return true;
+        };
+        if (apply(params))
+            return;
+        for (const char* container : {"data", "config"}) {
+            const auto nested = params.find(container);
+            if (nested != params.end() && nested->is_object() && apply(*nested))
+                return;
+        }
+    });
 
     m_gateway_service->set_state_callback([this](Gateway::ConnectionState state, const Gateway::GatewayError& error) {
         if (state == Gateway::ConnectionState::Disconnected) {
@@ -5936,6 +5957,7 @@ void GUI_App::register_gateway_notifications()
             return;
 
         refresh_gateway_account();
+        push_model_station_to_gateway();
 
         const std::string base_url         = m_gateway_service->base_url();
         BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway] [connected] base_url=" << base_url;
@@ -7538,6 +7560,34 @@ void GUI_App::user_update_privacy_notify(const bool& res)
         }
     }
 
+}
+
+// Push the model station switch to the connect CLI. The CLI serves the value
+// to the Flutter pages via GET /api/config and broadcasts notify.config.changed
+// on its websocket when it changes; both the pages and the other Orca
+// instances (handled in register_gateway_notifications) consume that broadcast.
+void GUI_App::model_station_notify(const bool& enabled)
+{
+    if (!m_gateway_service) {
+        BOOST_LOG_TRIVIAL(warning) << "model station switch change not delivered: connection gateway is not running";
+        return;
+    }
+
+    const auto result = m_gateway_service->set_app_config("enable_model_station", enabled);
+    if (result.error)
+        BOOST_LOG_TRIVIAL(warning) << "model station switch push failed: " << result.error.message;
+}
+
+// Re-sync the switch to the CLI after every (re)connect so a restarted CLI
+// never serves a stale value and pushes missed while disconnected self-heal.
+void GUI_App::push_model_station_to_gateway()
+{
+    if (!m_gateway_service)
+        return;
+
+    const bool enabled = app_config->get_bool("enable_model_station");
+    if (m_gateway_service->set_app_config("enable_model_station", enabled).error)
+        BOOST_LOG_TRIVIAL(warning) << "failed to sync model station switch to connection gateway";
 }
 
 bool GUI_App::config_wizard_startup()

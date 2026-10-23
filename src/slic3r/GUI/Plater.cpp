@@ -13,6 +13,7 @@
 #include "libslic3r/filament_mixer.h"
 #include "common_func/common_func.hpp"
 #include "slic3r/Utils/SnapLogClient.hpp"
+#include "slic3r/Utils/SnapTelemetry.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -222,6 +223,164 @@ static const std::pair<unsigned int, unsigned int> THUMBNAIL_SIZE_3MF = { 512, 5
 
 namespace Slic3r {
 namespace GUI {
+
+static void report_file_import_result(const std::vector<fs::path>& input_files, bool success, const std::string& source)
+{
+    if (success)
+        return;
+    const SnapLog::v1::SnapLogExt ext{
+        {
+            {"source", source.empty() ? "other" : source},
+            {"fileType", SnapTelemetry::file_types(input_files)},
+            {"fileCount", std::to_string(input_files.size())},
+            {"success", SnapTelemetry::bool_value(success)},
+            {"reason", success ? "" : "cancelled_or_failed"},
+        },
+    };
+    SNAP_LOG_WARNING(SnapLog::v1::SnapEvent::FILE_IMPORT_RESULT, ext, "file import failed");
+}
+
+static std::string telemetry_printer_model();
+static size_t     telemetry_filament_count();
+
+static void report_project_save_result(const fs::path& path, bool success, bool save_as)
+{
+    if (success)
+        return;
+    const SnapLog::v1::SnapLogExt ext{
+        {
+            {"fileType", "3mf"},
+            {"fileSizeBytes", SnapTelemetry::file_size_bytes(path)},
+            {"success", SnapTelemetry::bool_value(success)},
+            {"result", SnapTelemetry::operation_result(success)},
+            {"reason", success ? "" : "save_failed"},
+            {"saveAs", SnapTelemetry::bool_value(save_as)},
+            {"plateCount", std::to_string(wxGetApp().plater()->get_partplate_list().get_plate_count())},
+            {"objectCount", std::to_string(wxGetApp().plater()->model().objects.size())},
+            {"printerModel", telemetry_printer_model()},
+        },
+    };
+    SNAP_LOG_WARNING(SnapLog::v1::SnapEvent::PROJECT_SAVE_RESULT, ext, "project save failed");
+}
+
+static void report_gcode_3mf_export_result(const fs::path& path, bool success)
+{
+    if (success)
+        return;
+    const SnapLog::v1::SnapLogExt ext{
+        {
+            {"fileType", "gcode.3mf"},
+            {"fileSizeBytes", SnapTelemetry::file_size_bytes(path)},
+            {"success", SnapTelemetry::bool_value(success)},
+            {"result", SnapTelemetry::operation_result(success)},
+            {"reason", success ? "" : "export_failed"},
+            {"plateCount", std::to_string(wxGetApp().plater()->get_partplate_list().get_plate_count())},
+            {"objectCount", std::to_string(wxGetApp().plater()->model().objects.size())},
+            {"filamentCount", std::to_string(telemetry_filament_count())},
+            {"printerModel", telemetry_printer_model()},
+        },
+    };
+    SNAP_LOG_WARNING(SnapLog::v1::SnapEvent::GCODE_EXPORT_RESULT, ext, "gcode 3mf export failed");
+}
+
+class ScopedFileImportTelemetry
+{
+public:
+    ScopedFileImportTelemetry(std::vector<fs::path> files, std::string source)
+        : m_files(std::move(files)), m_source(std::move(source))
+    {}
+
+    void set_success(bool success) { m_success = success; }
+
+    ~ScopedFileImportTelemetry() { report_file_import_result(m_files, m_success, m_source); }
+
+private:
+    std::vector<fs::path> m_files;
+    std::string           m_source;
+    bool                  m_success = false;
+};
+
+static std::string telemetry_printer_model()
+{
+    try {
+        auto& preset_bundle = *wxGetApp().preset_bundle;
+        return preset_bundle.printers.get_edited_preset().get_printer_type(&preset_bundle);
+    } catch (...) {
+        return "";
+    }
+}
+
+static std::string telemetry_filament_types()
+{
+    try {
+        const auto* option = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_type");
+        return option ? SnapTelemetry::filament_types(option->values) : "";
+    } catch (...) {
+        return "";
+    }
+}
+
+static size_t telemetry_filament_count()
+{
+    try {
+        return wxGetApp().preset_bundle->filament_presets.size();
+    } catch (...) {
+        return 0;
+    }
+}
+
+static std::string telemetry_process_preset_type()
+{
+    try {
+        return SnapTelemetry::preset_type(wxGetApp().preset_bundle->prints.get_edited_preset().is_system);
+    } catch (...) {
+        return "";
+    }
+}
+
+static std::string telemetry_infill_pattern()
+{
+    try {
+        const auto value = wxGetApp().preset_bundle->prints.get_edited_preset().config.opt_enum<InfillPattern>("sparse_infill_pattern");
+        return ConfigOptionEnum<InfillPattern>::get_enum_names().at(value);
+    } catch (...) {
+        return "";
+    }
+}
+
+static std::string telemetry_infill_density()
+{
+    try {
+        const auto* option = wxGetApp().preset_bundle->prints.get_edited_preset().config.option<ConfigOptionPercent>("sparse_infill_density");
+        return option ? SnapTelemetry::number(option->value, 2) : "";
+    } catch (...) {
+        return "";
+    }
+}
+
+static std::string telemetry_support_type()
+{
+    try {
+        const auto value = wxGetApp().preset_bundle->prints.get_edited_preset().config.opt_enum<SupportType>("support_type");
+        return ConfigOptionEnum<SupportType>::get_enum_names().at(value);
+    } catch (...) {
+        return "";
+    }
+}
+
+static std::string telemetry_bed_type()
+{
+    try {
+        const auto value = wxGetApp().preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
+        const auto* keys = print_config_def.get("curr_bed_type")->enum_keys_map;
+        for (const auto& item : *keys) {
+            if (item.second == value)
+                return item.first;
+        }
+    } catch (...) {
+    }
+    return "";
+}
 
 static void handle_newer_3mf_schema(wxWindow* parent,
                                     const DynamicPrintConfig& config)
@@ -10262,6 +10421,12 @@ struct Plater::priv
 
     std::chrono::steady_clock::time_point m_slice_start_time;
     bool                                  m_slice_timing_active = false;
+    std::string                           m_slice_duration_ms = "0";
+    std::string                           m_slice_trigger = "auto";
+    std::string                           m_slice_next_trigger = "auto";
+    bool                                  m_slice_session_active = false;
+    bool                                  m_slice_result_reported = false;
+    bool                                  m_gcode_export_active = false;
 
     // Last filament rule mismatch flags (for CustomNotification debouncing).
     bool m_prev_filament_nozzle_rule_mismatch{ false };
@@ -10525,6 +10690,8 @@ struct Plater::priv
     void on_export_began(wxCommandEvent&);
     void on_export_finished(wxCommandEvent&);
     void on_slicing_began();
+    void report_slice_telemetry(const std::string& reason);
+    void report_gcode_export_telemetry(bool cancelled);
 
     void clear_warnings();
     void add_warning(const Slic3r::PrintStateBase::Warning &warning, size_t oid);
@@ -10748,7 +10915,7 @@ bool PlaterDropTarget::OnDropFiles(wxCoord x, wxCoord y, const wxArrayString &fi
             return emboss_svg(m_plater, filename, mouse_position);
         }
     }
-    bool res = m_plater.load_files(filenames);
+    bool res = m_plater.load_files(filenames, "drag_drop");
     m_mainframe.update_title();
     return res;
 }
@@ -11258,7 +11425,7 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
             input_files.push_back(from_u8(evt.data[i].string()));
         }
         wxGetApp().mainframe->Raise();
-        this->q->load_files(input_files);
+        this->q->load_files(input_files, "other_instance");
     });
     
     this->q->Bind(EVT_START_DOWNLOAD_OTHER_INSTANCE, [](StartDownloadOtherInstanceEvent& evt) {
@@ -13900,6 +14067,7 @@ void Plater::priv::export_gcode(fs::path output_path, bool output_path_on_remova
 
     if (background_process.is_export_scheduled()) {
         GUI::show_error(q, _L("Another export job is running."));
+        report_gcode_export_telemetry(false);
         return;
     }
 
@@ -13909,10 +14077,14 @@ void Plater::priv::export_gcode(fs::path output_path, bool output_path_on_remova
         view3D->reload_scene(false);
 
     if ((state & priv::UPDATE_BACKGROUND_PROCESS_INVALID) != 0)
+    {
+        report_gcode_export_telemetry(false);
         return;
+    }
 
     show_warning_dialog = true;
     if (! output_path.empty()) {
+        m_gcode_export_active = true;
         background_process.schedule_export(output_path.string(), output_path_on_removable_media);
         notification_manager->push_delayed_notification(NotificationType::ExportOngoing, []() {return true; }, 1000, 0);
     } else {
@@ -13921,7 +14093,10 @@ void Plater::priv::export_gcode(fs::path output_path, bool output_path_on_remova
 
     // If the SLA processing of just a single object's supports is running, restart slicing for the whole object.
     this->background_process.set_task(PrintBase::TaskParams());
-    this->restart_background_process(priv::UPDATE_BACKGROUND_PROCESS_FORCE_EXPORT);
+    if (!this->restart_background_process(priv::UPDATE_BACKGROUND_PROCESS_FORCE_EXPORT) && m_gcode_export_active) {
+        report_gcode_export_telemetry(false);
+        m_gcode_export_active = false;
+    }
 }
 void Plater::priv::export_gcode(fs::path output_path, bool output_path_on_removable_media, PrintHostJob upload_job)
 {
@@ -13932,6 +14107,7 @@ void Plater::priv::export_gcode(fs::path output_path, bool output_path_on_remova
 
     if (background_process.is_export_scheduled()) {
         GUI::show_error(q, _L("Another export job is running."));
+        report_gcode_export_telemetry(false);
         return;
     }
 
@@ -13941,10 +14117,14 @@ void Plater::priv::export_gcode(fs::path output_path, bool output_path_on_remova
         view3D->reload_scene(false);
 
     if ((state & priv::UPDATE_BACKGROUND_PROCESS_INVALID) != 0)
+    {
+        report_gcode_export_telemetry(false);
         return;
+    }
 
     show_warning_dialog = true;
     if (! output_path.empty()) {
+        m_gcode_export_active = true;
         background_process.schedule_export(output_path.string(), output_path_on_removable_media);
         notification_manager->push_delayed_notification(NotificationType::ExportOngoing, []() {return true; }, 1000, 0);
     } else {
@@ -13953,7 +14133,10 @@ void Plater::priv::export_gcode(fs::path output_path, bool output_path_on_remova
 
     // If the SLA processing of just a single object's supports is running, restart slicing for the whole object.
     this->background_process.set_task(PrintBase::TaskParams());
-    this->restart_background_process(priv::UPDATE_BACKGROUND_PROCESS_FORCE_EXPORT);
+    if (!this->restart_background_process(priv::UPDATE_BACKGROUND_PROCESS_FORCE_EXPORT) && m_gcode_export_active) {
+        report_gcode_export_telemetry(false);
+        m_gcode_export_active = false;
+    }
 }
 unsigned int Plater::priv::update_restart_background_process(bool force_update_scene, bool force_update_preview)
 {
@@ -14672,7 +14855,7 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                         GUI::FlowType::sync_filament_volume_types_for_slice();
                     }
                     if (guard_passed && grouping_confirmed)
-                        slice_cancelled = !(this->q->reslice());
+                        slice_cancelled = !(this->q->reslice("auto"));
                     else {
                         slice_cancelled = true;
                         if (wxGetApp().mainframe != nullptr)
@@ -14689,7 +14872,7 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
             else if (only_has_gcode_need_preview)
             {
                 this->m_slice_all = false;
-                slice_cancelled = !this->q->reslice();
+                slice_cancelled = !this->q->reslice("auto");
             }
             //BBS: process empty plate, reset previous toolpath
             else
@@ -14882,7 +15065,7 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                 if (!this->background_process.running())
                 {
                     m_slice_all = false;
-                    this->q->reslice();
+                    this->q->reslice("auto");
                 }
             }
             // keeps current gcode preview, if any
@@ -15300,8 +15483,14 @@ void Plater::priv::on_export_finished(wxCommandEvent& evt)
 
 void Plater::priv::on_slicing_began()
 {
-    if(!m_slice_timing_active)
-        m_slice_start_time    = std::chrono::steady_clock::now();
+    if(!m_slice_timing_active) {
+        m_slice_start_time = std::chrono::steady_clock::now();
+        m_slice_duration_ms = "0";
+        m_slice_trigger = m_slice_next_trigger;
+        m_slice_next_trigger = "auto";
+        m_slice_session_active = true;
+        m_slice_result_reported = false;
+    }
     m_slice_timing_active = true;
     clear_warnings();
     notification_manager->close_notification_of_type(NotificationType::SignDetected);
@@ -15311,6 +15500,48 @@ void Plater::priv::on_slicing_began()
     bool need_change_dailytips = !(slice_all && !is_first_plate);
     notification_manager->set_slicing_progress_began();
     notification_manager->update_slicing_notif_dailytips(need_change_dailytips);
+}
+
+void Plater::priv::report_slice_telemetry(const std::string& reason)
+{
+    const SnapLog::v1::SnapLogExt ext{
+        {
+            {"trigger", m_slice_trigger},
+            {"sliceDurationMs", m_slice_duration_ms},
+            {"success", "false"},
+            {"result", SnapTelemetry::operation_result(false, false)},
+            {"reason", reason},
+            {"plateCount", std::to_string(partplate_list.get_plate_count())},
+            {"objectCount", std::to_string(model.objects.size())},
+            {"filamentCount", std::to_string(telemetry_filament_count())},
+            {"filamentTypes", telemetry_filament_types()},
+            {"printerModel", telemetry_printer_model()},
+            {"processPresetType", telemetry_process_preset_type()},
+            {"infillPattern", telemetry_infill_pattern()},
+            {"infillDensity", telemetry_infill_density()},
+            {"supportType", telemetry_support_type()},
+            {"bedType", telemetry_bed_type()},
+        },
+    };
+    SNAP_LOG_ERROR(SnapLog::v1::SnapEvent::SLICE_FAILED, ext, "slice result");
+}
+
+void Plater::priv::report_gcode_export_telemetry(bool cancelled)
+{
+    const SnapLog::v1::SnapLogExt ext{
+        {
+            {"fileType", "gcode"},
+            {"fileSizeBytes", last_output_path.empty() ? "0" : SnapTelemetry::file_size_bytes(fs::path(last_output_path))},
+            {"success", "false"},
+            {"result", SnapTelemetry::operation_result(false, cancelled)},
+            {"reason", cancelled ? "cancelled" : "export_failed"},
+            {"plateCount", std::to_string(partplate_list.get_plate_count())},
+            {"objectCount", std::to_string(model.objects.size())},
+            {"filamentCount", std::to_string(telemetry_filament_count())},
+            {"printerModel", telemetry_printer_model()},
+        },
+    };
+    SNAP_LOG_WARNING(SnapLog::v1::SnapEvent::GCODE_EXPORT_RESULT, ext, "gcode export result");
 }
 void Plater::priv::add_warning(const Slic3r::PrintStateBase::Warning& warning, size_t oid)
 {
@@ -15440,10 +15671,9 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     {
         if (m_slice_timing_active) {
             auto end_time    = std::chrono::steady_clock::now();
-            auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - m_slice_start_time).count();
-            auto timess      = duration_ms;
+            m_slice_duration_ms = SnapTelemetry::elapsed_ms(m_slice_start_time, end_time);
             if (evt.cancelled()) {
-                BOOST_LOG_TRIVIAL(info) << "Slicing cancelled after " << duration_ms << " ms";
+                BOOST_LOG_TRIVIAL(info) << "Slicing cancelled after " << m_slice_duration_ms << " ms";
                 m_slice_start_time    = {};
                 m_slice_timing_active = false;
             } else if (evt.error())
@@ -15525,7 +15755,6 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         }
         has_error = true;
         is_finished = true;
-        SNAP_LOG_BATCH(Error, "slice failed", {"eventName","slice_failed"}, {"reason", evt.format_error_message().first});
     }
     if (evt.cancelled()) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", cancel event, status: %1%") % evt.status();
@@ -15616,6 +15845,20 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         }
     }
 
+    if (is_finished && m_slice_session_active && !m_slice_result_reported) {
+        if (!evt.cancelled() && (evt.error() || !evt.success()))
+            report_slice_telemetry(evt.critical_error() ? "critical_error" : "slice_error");
+        m_slice_result_reported = true;
+        m_slice_session_active = false;
+    }
+
+    if (is_finished && m_gcode_export_active) {
+        const bool export_ok = !has_error && !evt.cancelled() && evt.success();
+        if (!export_ok)
+            report_gcode_export_telemetry(evt.cancelled());
+        m_gcode_export_active = false;
+    }
+
     exporting_status = ExportingStatus::NOT_EXPORTING;
 
 
@@ -15634,9 +15877,6 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":finished, reload print soon");
         // success (not when is_finished was forced true by error/cancel above).
-        if (!has_error && !evt.cancelled() && evt.success()) {
-            SNAP_LOG_BATCH(Info, "slice completed", {"eventName","slice_completed"});
-        }
         m_slice_all = false;
         m_is_slicing = false;
         // Refresh the button right after m_is_slicing clears: in the cancelled branch
@@ -17950,6 +18190,7 @@ int Plater::save_project(bool saveAs)
 
     //BBS export 3mf without gcode
     if (export_3mf(into_path(filename), SaveStrategy::SplitModel | SaveStrategy::ShareMesh | SaveStrategy::FullPathSources) < 0) {
+        report_project_save_result(into_path(filename), false, saveAs);
         MessageDialog(this, _L("Failed to save the project.\nPlease check whether the folder exists online or if other programs open the project file."),
             _L("Save project"), wxOK | wxICON_WARNING).ShowModal();
         return wxID_CANCEL;
@@ -17976,6 +18217,7 @@ int Plater::save_project(bool saveAs)
     catch (...) {}
 
     update_title_dirty_status();
+    report_project_save_result(into_path(filename), true, saveAs);
     return wxID_YES;
 }
 
@@ -18195,7 +18437,7 @@ void Plater::import_model_id(wxString download_info)
         /* load project */
         // Orca: If download is a zip file, treat it as if file has been drag and dropped on the plater
         if (target_path.extension() == ".zip")
-            this->load_files(wxArrayString(1, target_path.string()));
+            this->load_files(wxArrayString(1, target_path.string()), "model_library");
         else
             this->load_project(target_path.wstring());
         /*BBS set project info after load project, project info is reset in load project */
@@ -18302,7 +18544,10 @@ void Plater::add_model(bool imperial_units, std::string fname)
 
     auto strategy = LoadStrategy::LoadModel;
     if (imperial_units) strategy = strategy | LoadStrategy::ImperialUnits;
-    if (!load_files(paths, strategy, ask_multi).empty()) {
+    const std::string telemetry_source = fname.empty() ? "dialog" : "internal";
+    const bool        loaded           = !load_files(paths, strategy, ask_multi).empty();
+    report_file_import_result(paths, loaded, telemetry_source);
+    if (loaded) {
 
         if (get_project_name() == _L("Untitled") && paths.size() > 0) {
             boost::filesystem::path full_path(paths[0].string());
@@ -19201,7 +19446,7 @@ void Plater::import_zip_archive()
 
     wxArrayString arr;
     arr.Add(input_file);
-    load_files(arr);
+    load_files(arr, "archive_import");
 }
 
 void Plater::import_sl1_archive()
@@ -19606,7 +19851,7 @@ bool Plater::preview_zip_archive(const boost::filesystem::path& archive_path)
     {
         wxArrayString aux;
         aux.Add(from_u8(project_paths.front().string()));
-        bool loaded3mf = load_files(aux);
+        bool loaded3mf = load_files(aux, "archive_import");
         load_files(non_project_paths, LoadStrategy::LoadModel);
         boost::system::error_code ec;
         if (loaded3mf) {
@@ -19851,8 +20096,14 @@ void ProjectDropDialog::on_dpi_changed(const wxRect& suggested_rect)
 }
 
 //BBS: remove GCodeViewer as seperate APP logic
-bool Plater::load_files(const wxArrayString& filenames)
+bool Plater::load_files(const wxArrayString& filenames, const std::string& telemetry_source)
 {
+    std::vector<fs::path> telemetry_files;
+    telemetry_files.reserve(filenames.size());
+    for (const auto& filename : filenames)
+        telemetry_files.push_back(into_path(filename));
+    ScopedFileImportTelemetry file_import_telemetry(std::move(telemetry_files), telemetry_source);
+
     const std::regex pattern_drop(".*[.](stp|step|stl|oltp|obj|amf|3mf|svg|zip)", std::regex::icase);
     const std::regex pattern_gcode_drop(".*[.](gcode|g)", std::regex::icase);
 
@@ -19882,6 +20133,7 @@ bool Plater::load_files(const wxArrayString& filenames)
             return false;
         }
         load_gcode(from_path(gcode_paths.front()));
+        file_import_telemetry.set_success(true);
         return true;
     }
 
@@ -19960,12 +20212,15 @@ bool Plater::load_files(const wxArrayString& filenames)
 
     switch (loadfiles_type) {
     case LoadFilesType::Single3MF:
-        open_3mf_file(normal_paths[0]);
+        if (!open_3mf_file(normal_paths[0])) { res = false; }
         break;
 
     case LoadFilesType::SingleOther: {
         Plater::TakeSnapshot snapshot(this, snapshot_label);
-        if (handle_zips(normal_paths)) return true;
+        if (handle_zips(normal_paths)) {
+            file_import_telemetry.set_success(true);
+            return true;
+        }
         if (load_files(normal_paths, LoadStrategy::LoadModel, false).empty()) { res = false; }
         break;
     }
@@ -19975,14 +20230,17 @@ bool Plater::load_files(const wxArrayString& filenames)
             if (i > 0) { other_file.push_back(normal_paths[i]); }
         };
 
-        open_3mf_file(first_file[0]);
+        if (!open_3mf_file(first_file[0])) { res = false; }
         if (load_files(other_file, LoadStrategy::LoadModel).empty()) {  res = false;  }
         break;
 
     case LoadFilesType::MultipleOther: {
         Plater::TakeSnapshot snapshot(this, snapshot_label);
         if (handle_zips(normal_paths)) {
-            if (normal_paths.empty()) return true;
+            if (normal_paths.empty()) {
+                file_import_telemetry.set_success(true);
+                return true;
+            }
         }
         if (load_files(normal_paths, LoadStrategy::LoadModel, true).empty()) { res = false; }
         break;
@@ -20000,16 +20258,20 @@ bool Plater::load_files(const wxArrayString& filenames)
             }
         }
 
-        open_3mf_file(first_file[0]);
+        if (!open_3mf_file(first_file[0])) { res = false; }
         if (load_files(tmf_file, LoadStrategy::LoadModel).empty()) {  res = false;  }
         if (res && handle_zips(other_file)) {
-            if (normal_paths.empty()) return true;
+            if (normal_paths.empty()) {
+                file_import_telemetry.set_success(true);
+                return true;
+            }
         }
         if (load_files(other_file, LoadStrategy::LoadModel, false).empty()) {  res = false;  }
         break;
     default: break;
     }
 
+    file_import_telemetry.set_success(res);
     return res;
 }
 
@@ -20724,7 +20986,8 @@ void Plater::export_gcode_3mf(bool export_all)
         int plate_idx = get_partplate_list().get_curr_plate_index();
         if (export_all)
             plate_idx = PLATE_ALL_IDX;
-        export_3mf(output_path, SaveStrategy::Silence | SaveStrategy::SplitModel | SaveStrategy::WithGcode | SaveStrategy::SkipModel, plate_idx); // BBS: silence
+        const int export_result = export_3mf(output_path, SaveStrategy::Silence | SaveStrategy::SplitModel | SaveStrategy::WithGcode | SaveStrategy::SkipModel, plate_idx); // BBS: silence
+        report_gcode_3mf_export_result(output_path, export_result >= 0);
 
         RemovableDriveManager& removable_drive_manager = *wxGetApp().removable_drive_manager();
 
@@ -21445,7 +21708,7 @@ void Plater::export_toolpaths_to_obj() const
 }
 
 //BBS: add multiple plate reslice logic
-bool Plater::reslice()
+bool Plater::reslice(const std::string& trigger)
 {
     p->partplate_list.set_filament_group_dirty(false);
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: enter, process_completed_with_error=%2%")%__LINE__ %p->process_completed_with_error;
@@ -21559,10 +21822,13 @@ bool Plater::reslice()
     }
 
     this->p->background_process.set_task(PrintBase::TaskParams());
+    p->m_slice_next_trigger = trigger;
     // Only restarts if the state is valid.
     //BBS: jusdge the result
     bool result = this->p->restart_background_process(state | priv::UPDATE_BACKGROUND_PROCESS_FORCE_RESTART);
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: restart background,state=%2%, result=%3%")%__LINE__%state %result;
+    if (!result && !p->m_slice_all)
+        p->m_slice_next_trigger = "auto";
     if ((state & priv::UPDATE_BACKGROUND_PROCESS_INVALID) != 0)
     {
         //BBS: add logs
@@ -24122,7 +24388,7 @@ int Plater::select_plate(int plate_index, bool need_slice)
                         reset_gcode_toolpaths();
                         if (!guard_before_slice_plate())
                             return ret;
-                        if (!reslice())
+                        if (!reslice("auto"))
                             return ret;
                     }
                     else {
@@ -24184,7 +24450,7 @@ int Plater::select_plate(int plate_index, bool need_slice)
                     {
                         if (!guard_before_slice_plate())
                             return ret;
-                        if (!reslice())
+                        if (!reslice("auto"))
                             return ret;
                     }
                     else

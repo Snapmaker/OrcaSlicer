@@ -351,6 +351,7 @@ wxBoxSizer *PreferencesDialog::create_item_region_combobox(wxString title, wxWin
             return;
         }
         config->set("region", region.ToStdString());
+        wxGetApp().reconfigure_snaplog_site();
         Close();
         GetParent()->RemoveChild(this);
         wxGetApp().recreate_GUI(_L("Change Region"));

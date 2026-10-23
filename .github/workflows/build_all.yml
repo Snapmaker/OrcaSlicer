@@ -18,7 +18,7 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-  
+
 
 jobs:
   build_all:
@@ -102,6 +102,16 @@ jobs:
         echo "ver_pure=$ver_pure" >> $GITHUB_ENV
         echo "date=$(date +'%Y%m%d')" >> $GITHUB_ENV
       shell: bash
+    - name: "Write SnapLog secret for Flatpak build"
+      shell: bash
+      env:
+        SNAP_LOG_PUBLIC_HMAC_SECRET: ${{ secrets.SNAP_LOG_PUBLIC_HMAC_SECRET }}
+      run: |
+        if [ -z "${SNAP_LOG_PUBLIC_HMAC_SECRET}" ]; then
+          echo "::error::Missing SNAP_LOG_PUBLIC_HMAC_SECRET"
+          exit 1
+        fi
+        printf '%s' "${SNAP_LOG_PUBLIC_HMAC_SECRET}" > snaplog_public_hmac_secret.txt
     - uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
       with:
         bundle: Snapmaker_Orca-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
@@ -113,6 +123,10 @@ jobs:
         cache: true
         arch: ${{ matrix.variant.arch }}
         upload-artifact: false
+    - name: "Remove SnapLog secret file"
+      if: always()
+      shell: bash
+      run: rm -f snaplog_public_hmac_secret.txt
     - name: Find Flatpak bundle file
       id: find_bundle
       working-directory: ${{ github.workspace }}

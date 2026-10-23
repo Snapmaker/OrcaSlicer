@@ -1,12 +1,18 @@
 #include <catch2/catch_test_macros.hpp>
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <future>
+#include <set>
+#include <sstream>
 #include <string_view>
 #include <memory>
 #include <mutex>
+#include <vector>
 #include <thread>
 #include <nlohmann/json.hpp>
 #include "slic3r/Utils/SnapLogClient.hpp"
@@ -34,16 +40,489 @@ static std::string hdr(const std::vector<std::pair<std::string, std::string>>& h
 
 TEST_CASE("SnapLog scaffold compiles", "[snaplog]") { REQUIRE(true); }
 
-TEST_CASE("hmac_sha256_hex matches doc vector", "[snaplog]")
+TEST_CASE("Legacy realtime upload channel is removed", "[snaplog][api]")
 {
-    // clientType=Orca clientId=app-123 ts=1778639794110 nonce=9b22...
-    auto s = std::string("Orca") + "app-123" + "1778639794110" + "9b2226b29c3e460eae7ff1d3315c522d";
-    REQUIRE(hmac_sha256_hex("c25hcG1ha2VyLU9yY2E", s) == "a9f092d93a35c149cad8a3d5bce890248d1bdf41a3e9b2e4fd5f61de6afc2d6d");
+    const auto                                 repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const std::array<std::filesystem::path, 2> sources   = {
+        repo_root / "src" / "slic3r" / "Utils" / "SnapLogClient.hpp",
+        repo_root / "src" / "slic3r" / "Utils" / "SnapLogClient.cpp",
+    };
+
+    for (const auto& source : sources) {
+        REQUIRE(std::filesystem::is_regular_file(source));
+        std::ifstream     input(source, std::ios::binary);
+        std::stringstream buffer;
+        buffer << input.rdbuf();
+        const std::string content = buffer.str();
+        CAPTURE(source);
+        for (const std::string_view legacy_symbol :
+             {"/api/log/upload/print", "SnapLogPolicy", "RealtimeIdentity", "render_realtime_body", "decide_realtime_admit",
+              "build_realtime_request", "rt_worker_loop", "rt_queue", "rt_handle"}) {
+            CAPTURE(legacy_symbol);
+            REQUIRE(content.find(std::string{legacy_symbol}) == std::string::npos);
+        }
+    }
 }
 
-TEST_CASE("hmac_sha256_hex empty msg", "[snaplog]")
+TEST_CASE("SnapLog production uses public auth without account tokens", "[snaplog][api][auth][source]")
 {
-    REQUIRE(hmac_sha256_hex("k", "").size() == 64); // 32 bytes hex
+    const auto repo_root  = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto sources    = std::array<std::filesystem::path, 3>{
+        repo_root / "src" / "slic3r" / "Utils" / "SnapLogClient.hpp",
+        repo_root / "src" / "slic3r" / "Utils" / "SnapLogClient.cpp",
+        repo_root / "src" / "slic3r" / "GUI" / "GUI_App.cpp",
+    };
+
+    for (const auto& source : sources) {
+        REQUIRE(std::filesystem::is_regular_file(source));
+        std::ifstream input(source, std::ios::binary);
+        std::stringstream buffer;
+        buffer << input.rdbuf();
+        const std::string content = buffer.str();
+        CAPTURE(source);
+        for (const std::string_view stale : {"set_user_token", "user_token", "SnapLogClient::instance().set_user_token(snapshot.token)"}) {
+            CAPTURE(stale);
+            REQUIRE(content.find(std::string{stale}) == std::string::npos);
+        }
+    }
+
+    const auto snaplog_sources = std::array<std::filesystem::path, 2>{
+        repo_root / "src" / "slic3r" / "Utils" / "SnapLogClient.hpp",
+        repo_root / "src" / "slic3r" / "Utils" / "SnapLogClient.cpp",
+    };
+    for (const auto& source : snaplog_sources) {
+        std::ifstream input(source, std::ios::binary);
+        std::stringstream buffer;
+        buffer << input.rdbuf();
+        const std::string content = buffer.str();
+        CAPTURE(source);
+        for (const std::string_view stale :
+             {"/api/log/upload/create", "/api/log/upload/completed", "/api/log/upload/cancel",
+              "Authorization\", std::string(\"Bearer \") + token"}) {
+            CAPTURE(stale);
+            REQUIRE(content.find(std::string{stale}) == std::string::npos);
+        }
+    }
+
+}
+
+TEST_CASE("SnapLog keeps only the consent-gated sink contract", "[snaplog][api]")
+{
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto header    = repo_root / "src" / "slic3r" / "Utils" / "SnapLogClient.hpp";
+    REQUIRE(std::filesystem::is_regular_file(header));
+
+    std::ifstream     input(header, std::ios::binary);
+    std::stringstream buffer;
+    buffer << input.rdbuf();
+    const std::string content = buffer.str();
+
+    const auto deps_start = content.find("struct SnapLogDeps");
+    REQUIRE(deps_start != std::string::npos);
+    const auto deps_end = content.find("};", deps_start);
+    REQUIRE(deps_end != std::string::npos);
+    const std::string deps = content.substr(deps_start, deps_end - deps_start);
+    for (const std::string_view unused_member : {"user_token", "user_id", "device_id"}) {
+        CAPTURE(unused_member);
+        REQUIRE(deps.find(std::string{unused_member}) == std::string::npos);
+    }
+
+    for (const std::string_view dead_symbol :
+         {"hmac_sha256_hex(", "normalize_logger", "batch_idle_skip_sec", "sealed_max_upload_bytes", "nodeId;", "deviceId;", "appBuild;",
+          "platform;", "sessionId;", "region;", "caller_method;", "caller_line", "logger;"}) {
+        CAPTURE(dead_symbol);
+        REQUIRE(content.find(std::string{dead_symbol}) == std::string::npos);
+    }
+
+    REQUIRE(content.find("log_event(SnapLogLevel level, unsigned sinks") == std::string::npos);
+}
+
+TEST_CASE("SnapEvent registry maps every enum to a unique stable name", "[snaplog][events]")
+{
+    REQUIRE(snap_event_name(SnapEvent::SLICE_FAILED) == "slice_failed");
+    REQUIRE(snap_event_name(SnapEvent::USER_LOGIN_RESULT) == "user_login_result");
+    REQUIRE_FALSE(snap_event_from_name("not_a_snap_event").has_value());
+
+    const std::array<SnapEvent, 6> events = {SnapEvent::DEVICE_DISCOVERY_START,
+                                              SnapEvent::FILE_IMPORT_RESULT,
+                                              SnapEvent::GCODE_EXPORT_RESULT,
+                                              SnapEvent::PROJECT_SAVE_RESULT,
+                                              SnapEvent::SLICE_FAILED,
+                                              SnapEvent::USER_LOGIN_RESULT};
+
+    std::set<std::string_view> names;
+    for (const auto event : events)
+        REQUIRE(names.insert(snap_event_name(event)).second);
+}
+
+TEST_CASE("SnapLog event routes name the upload channel snaplog", "[snaplog][routing][naming]")
+{
+    const auto upload = snap_event_route(SnapEvent::FILE_IMPORT_RESULT, SnapLogLevel::Warning);
+    REQUIRE(upload.snaplog);
+
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const std::array<std::filesystem::path, 3> sources = {
+        repo_root / "src" / "slic3r" / "Utils" / "SnapLogEvents.hpp",
+        repo_root / "src" / "slic3r" / "Utils" / "SnapLogClient.hpp",
+        repo_root / "src" / "slic3r" / "Utils" / "SnapLogClient.cpp",
+    };
+    const auto read_source = [](const std::filesystem::path& path) {
+        std::ifstream     input(path, std::ios::binary);
+        std::stringstream buffer;
+        buffer << input.rdbuf();
+        return buffer.str();
+    };
+    for (const auto& path : sources) {
+        REQUIRE(std::filesystem::is_regular_file(path));
+        const std::string source = read_source(path);
+        for (const std::string_view stale : {"gateway_enabled", "route.gateway", "bool gateway", "gateway_allowed", "gateway_base", "SinkGateway", "kSnapLogGateway"}) {
+            CAPTURE(path.filename().string(), stale);
+            REQUIRE(source.find(std::string{stale}) == std::string::npos);
+        }
+    }
+}
+
+TEST_CASE("SnapEvent registry declares complete routes", "[snaplog][routing]")
+{
+    REQUIRE_FALSE(snap_event_route(SnapEvent::FILE_IMPORT_RESULT, SnapLogLevel::Info).snaplog);
+    REQUIRE(snap_event_route(SnapEvent::FILE_IMPORT_RESULT, SnapLogLevel::Warning).snaplog);
+    REQUIRE(snap_event_route(SnapEvent::FILE_IMPORT_RESULT, SnapLogLevel::Error).snaplog);
+    REQUIRE(snap_event_route(SnapEvent::DEVICE_DISCOVERY_START, SnapLogLevel::Info).snaplog);
+    REQUIRE(snap_event_route(SnapEvent::USER_LOGIN_RESULT, SnapLogLevel::Info).snaplog);
+
+    const std::array<SnapEvent, 6> events = {SnapEvent::DEVICE_DISCOVERY_START,
+                                              SnapEvent::FILE_IMPORT_RESULT,
+                                              SnapEvent::GCODE_EXPORT_RESULT,
+                                              SnapEvent::PROJECT_SAVE_RESULT,
+                                              SnapEvent::SLICE_FAILED,
+                                              SnapEvent::USER_LOGIN_RESULT};
+    for (const auto event : events) {
+        for (const auto level : {SnapLogLevel::Info, SnapLogLevel::Warning, SnapLogLevel::Error}) {
+            const auto route = snap_event_route(event, level);
+            CAPTURE(event, level);
+            const bool info_only = event == SnapEvent::DEVICE_DISCOVERY_START || event == SnapEvent::USER_LOGIN_RESULT;
+            REQUIRE(route.snaplog == (info_only || level != SnapLogLevel::Info));
+        }
+    }
+}
+
+
+TEST_CASE("Flutter SnapLog bridge is removed", "[snaplog][api][reachability]")
+{
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto sswcp_source = repo_root / "src" / "slic3r" / "GUI" / "SSWCP.cpp";
+    const auto sswcp_header = repo_root / "src" / "slic3r" / "GUI" / "SSWCP.hpp";
+    const auto validator = repo_root / "src" / "slic3r" / "Utils" / "SnapLogFlutter.hpp";
+    REQUIRE(std::filesystem::is_regular_file(sswcp_source));
+    REQUIRE(std::filesystem::is_regular_file(sswcp_header));
+
+    const auto read_source = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        std::stringstream buffer;
+        buffer << input.rdbuf();
+        return buffer.str();
+    };
+    for (const std::string source : {read_source(sswcp_source), read_source(sswcp_header)}) {
+        REQUIRE(source.find("sw_SnapLog") == std::string::npos);
+        REQUIRE(source.find("SnapLogFlutter") == std::string::npos);
+    }
+    REQUIRE_FALSE(std::filesystem::exists(validator));
+
+    std::vector<std::string> flutter_bundles;
+    const auto flutter_web = repo_root / "resources" / "web" / "flutter_web";
+    REQUIRE(std::filesystem::is_directory(flutter_web));
+    for (const auto& entry : std::filesystem::directory_iterator(flutter_web)) {
+        const auto name = entry.path().filename().string();
+        if (entry.is_regular_file() && name.rfind("main.", 0) == 0 && entry.path().extension() == ".js")
+            flutter_bundles.push_back(read_source(entry.path()));
+    }
+    REQUIRE_FALSE(flutter_bundles.empty());
+    for (const std::string& bundle : flutter_bundles) {
+        for (const std::string_view stale : {"sw_SnapLog", "device_connect_attempt", "device_disconnect"}) {
+            CAPTURE(stale);
+            REQUIRE(bundle.find(std::string{stale}) == std::string::npos);
+        }
+    }
+
+    REQUIRE_FALSE(snap_event_from_name("device_connect_attempt").has_value());
+    REQUIRE_FALSE(snap_event_from_name("device_disconnect").has_value());
+}
+
+TEST_CASE("SnapLog production endpoints are centralized as constants", "[snaplog][config][endpoints]")
+{
+    REQUIRE(kSnapLogUploadCnUrl == "https://api.snapmaker.cn");
+    REQUIRE(kSnapLogUploadIntlUrl == "https://api.snapmaker.com");
+
+    SnapLogConfig config;
+    REQUIRE(config.snaplog_base == kSnapLogUploadIntlUrl);
+
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto client    = repo_root / "src" / "slic3r" / "Utils" / "SnapLogClient.cpp";
+    REQUIRE(std::filesystem::is_regular_file(client));
+
+    std::ifstream     input(client, std::ios::binary);
+    std::stringstream buffer;
+    buffer << input.rdbuf();
+    const std::string source = buffer.str();
+    for (const std::string_view endpoint :
+         {"https://api.snapmaker.cn", "https://api.snapmaker.com"}) {
+        CAPTURE(endpoint);
+        REQUIRE(source.find(std::string{endpoint}) == std::string::npos);
+    }
+}
+TEST_CASE("SnapLog region switching refreshes the live site configuration", "[snaplog][config][gui]")
+{
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto preferences = repo_root / "src" / "slic3r" / "GUI" / "Preferences.cpp";
+    REQUIRE(std::filesystem::is_regular_file(preferences));
+
+    std::ifstream     input(preferences, std::ios::binary);
+    std::stringstream buffer;
+    buffer << input.rdbuf();
+    const std::string source = buffer.str();
+
+    const auto set_region = source.find("config->set(\"region\"");
+    const auto refresh    = source.find("wxGetApp().reconfigure_snaplog_site();", set_region);
+    const auto recreate   = source.find("wxGetApp().recreate_GUI", refresh);
+    REQUIRE(set_region != std::string::npos);
+    REQUIRE(refresh != std::string::npos);
+    REQUIRE(recreate != std::string::npos);
+    REQUIRE(set_region < refresh);
+    REQUIRE(refresh < recreate);
+}
+
+TEST_CASE("site reconfiguration swaps the endpoint without touching the worker", "[snaplog][config][gui]")
+{
+    FakeClient fc;
+    fc.init();
+    SnapLogClient::instance().log(SnapLogLevel::Warning, "queued", {{"eventName", "site_swap"}}, SinkSnapLog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 1);
+    const bool worker_before = SnapLogClient::instance().batch_worker_joinable_for_test();
+
+    SnapLogClient::instance().reconfigure_site("CN");
+    REQUIRE(SnapLogClient::instance().snaplog_base_for_test() == "https://api.snapmaker.cn");
+    SnapLogClient::instance().reconfigure_site("US");
+    REQUIRE(SnapLogClient::instance().snaplog_base_for_test() == "https://api.snapmaker.com");
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 1);
+    REQUIRE(SnapLogClient::instance().batch_worker_joinable_for_test() == worker_before);
+    fc.shutdown();
+}
+
+TEST_CASE("automatic slicing reports an auto trigger", "[snaplog][gui][source]")
+{
+    const auto repo_root  = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto plater_hpp = repo_root / "src" / "slic3r" / "GUI" / "Plater.hpp";
+    const auto plater_cpp = repo_root / "src" / "slic3r" / "GUI" / "Plater.cpp";
+    REQUIRE(std::filesystem::is_regular_file(plater_hpp));
+    REQUIRE(std::filesystem::is_regular_file(plater_cpp));
+
+    const auto read_source = [](const std::filesystem::path& path) {
+        std::ifstream     input(path, std::ios::binary);
+        std::stringstream buffer;
+        buffer << input.rdbuf();
+        return buffer.str();
+    };
+    const std::string header = read_source(plater_hpp);
+    const std::string source = read_source(plater_cpp);
+    REQUIRE(header.find("bool reslice(const std::string& trigger = \"manual\");") != std::string::npos);
+    REQUIRE(source.find("bool Plater::reslice(const std::string& trigger)") != std::string::npos);
+    REQUIRE(source.find("p->m_slice_next_trigger = trigger;") != std::string::npos);
+    REQUIRE(source.find("reslice(\"auto\")") != std::string::npos);
+}
+
+TEST_CASE("file import telemetry source has no silent default", "[snaplog][gui][source]")
+{
+    const auto repo_root  = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto plater_hpp = repo_root / "src" / "slic3r" / "GUI" / "Plater.hpp";
+    const auto plater_cpp = repo_root / "src" / "slic3r" / "GUI" / "Plater.cpp";
+    REQUIRE(std::filesystem::is_regular_file(plater_hpp));
+    REQUIRE(std::filesystem::is_regular_file(plater_cpp));
+
+    const auto read_source = [](const std::filesystem::path& path) {
+        std::ifstream     input(path, std::ios::binary);
+        std::stringstream buffer;
+        buffer << input.rdbuf();
+        return buffer.str();
+    };
+    const std::string header = read_source(plater_hpp);
+    const std::string source = read_source(plater_cpp);
+    REQUIRE(header.find("telemetry_source = \"drag_drop\"") == std::string::npos);
+    REQUIRE(source.find("load_files(filenames, \"drag_drop\")") != std::string::npos);
+    REQUIRE(source.find("load_files(input_files, \"other_instance\")") != std::string::npos);
+}
+
+TEST_CASE("Flatpak build injects the SnapLog secret", "[snaplog][config][ci][source]")
+{
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto workflow  = repo_root / ".github" / "workflows" / "build_all.yml";
+    const auto manifest  = repo_root / "scripts" / "flatpak" / "io.github.Snapmaker.Snapmaker_Orca.yml";
+    REQUIRE(std::filesystem::is_regular_file(workflow));
+    REQUIRE(std::filesystem::is_regular_file(manifest));
+
+    const auto read_source = [](const std::filesystem::path& path) {
+        std::ifstream     input(path, std::ios::binary);
+        std::stringstream buffer;
+        buffer << input.rdbuf();
+        return buffer.str();
+    };
+    const std::string ci       = read_source(workflow);
+    const std::string flatpak = read_source(manifest);
+    const std::string secret_env = std::string("SNAP_LOG_") + "PUBLIC_HMAC_SECRET";
+    REQUIRE(ci.find(secret_env) != std::string::npos);
+    REQUIRE(ci.find("snaplog_public_hmac_secret.txt") != std::string::npos);
+    REQUIRE(flatpak.find("snaplog_public_hmac_secret.txt") != std::string::npos);
+    REQUIRE(flatpak.find("export " + secret_env) != std::string::npos);
+}
+
+TEST_CASE("gateway device connection updates telemetry printerSN", "[snaplog][gui][source]")
+{
+    const auto repo_root      = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto gui_app        = repo_root / "src" / "slic3r" / "GUI" / "GUI_App.cpp";
+    const auto device_manager = repo_root / "src" / "slic3r" / "GUI" / "DeviceManager.cpp";
+    const auto client_header  = repo_root / "src" / "slic3r" / "Utils" / "SnapLogClient.hpp";
+    REQUIRE(std::filesystem::is_regular_file(gui_app));
+    REQUIRE(std::filesystem::is_regular_file(device_manager));
+    REQUIRE(std::filesystem::is_regular_file(client_header));
+
+    const auto read_source = [](const std::filesystem::path& path) {
+        std::ifstream     input(path, std::ios::binary);
+        std::stringstream buffer;
+        buffer << input.rdbuf();
+        return buffer.str();
+    };
+    const std::string gui     = read_source(gui_app);
+    const std::string manager = read_source(device_manager);
+    const std::string header  = read_source(client_header);
+    REQUIRE(gui.find("set_print_sn(m_gateway_device.serial_number)") != std::string::npos);
+    REQUIRE(gui.find("set_print_sn(\"\")") != std::string::npos);
+    REQUIRE(manager.find("set_print_sn") == std::string::npos);
+    REQUIRE(header.find("connect_clientid") == std::string::npos);
+}
+
+TEST_CASE("SnapLog machine id prefers the OS machine id with an install-id fallback", "[snaplog][config][gui][source]")
+{
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto gui_app   = repo_root / "src" / "slic3r" / "GUI" / "GUI_App.cpp";
+    REQUIRE(std::filesystem::is_regular_file(gui_app));
+
+    std::ifstream     input(gui_app, std::ios::binary);
+    std::stringstream buffer;
+    buffer << input.rdbuf();
+    const std::string source = buffer.str();
+
+    const auto os_machine_id = source.find("common::getMachineId()");
+    const auto install_id    = source.find("instance_id::ensure(*app_config)", os_machine_id);
+    REQUIRE(os_machine_id != std::string::npos);
+    REQUIRE(install_id != std::string::npos);
+    REQUIRE(os_machine_id < install_id);
+}
+
+TEST_CASE("3MF import cancellation affects file-import telemetry", "[snaplog][gui][source]")
+{
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto plater    = repo_root / "src" / "slic3r" / "GUI" / "Plater.cpp";
+    REQUIRE(std::filesystem::is_regular_file(plater));
+
+    std::ifstream     input(plater, std::ios::binary);
+    std::stringstream buffer;
+    buffer << input.rdbuf();
+    const std::string source = buffer.str();
+
+    const auto function_start = source.find("bool Plater::load_files(const wxArrayString&");
+    const auto function_end   = source.find("LoadType determine_load_type", function_start);
+    REQUIRE(function_start != std::string::npos);
+    REQUIRE(function_end != std::string::npos);
+    std::string load_files = source.substr(function_start, function_end - function_start);
+    load_files.erase(std::remove(load_files.begin(), load_files.end(), '\r'), load_files.end());
+
+    size_t open_calls = 0;
+    for (auto pos = load_files.find("\n        open_3mf_file("); pos != std::string::npos;
+         pos      = load_files.find("\n        open_3mf_file(", pos + 1))
+        ++open_calls;
+    size_t checked_calls = 0;
+    for (auto pos = load_files.find("\n        if (!open_3mf_file("); pos != std::string::npos;
+         pos      = load_files.find("\n        if (!open_3mf_file(", pos + 1))
+        ++checked_calls;
+    REQUIRE(open_calls == 0);
+    REQUIRE(checked_calls == 3);
+}
+
+TEST_CASE("Snapmaker release omits unreachable legacy telemetry paths", "[snaplog][api][reachability]")
+{
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto upgrade   = repo_root / "src" / "slic3r" / "GUI" / "UpgradePanel.cpp";
+    const auto device    = repo_root / "src" / "slic3r" / "GUI" / "DeviceManager.cpp";
+    REQUIRE(std::filesystem::is_regular_file(upgrade));
+    REQUIRE(std::filesystem::is_regular_file(device));
+
+    const auto read_source = [](const std::filesystem::path& path) {
+        std::ifstream     input(path, std::ios::binary);
+        std::stringstream buffer;
+        buffer << input.rdbuf();
+        return buffer.str();
+    };
+    REQUIRE(read_source(upgrade).find("SNAP_LOG_") == std::string::npos);
+    REQUIRE(read_source(upgrade).find("SnapTelemetry") == std::string::npos);
+    REQUIRE(read_source(device).find("SNAP_LOG_") == std::string::npos);
+
+    REQUIRE_FALSE(snap_event_from_name("device_connect_attempt").has_value());
+    REQUIRE_FALSE(snap_event_from_name("device_disconnect").has_value());
+    for (const std::string_view event_name :
+         {"device_engine_set", "firmware_upgrade_result", "flutter_run_result", "mqtt_client_create", "mqtt_client_create_failed", "mqtt_connect_attempt",
+          "mqtt_connect_failure", "mqtt_connect_result", "mqtt_subscribe_result"}) {
+        CAPTURE(event_name);
+        REQUIRE_FALSE(snap_event_from_name(std::string{event_name}).has_value());
+    }
+}
+TEST_CASE("Production telemetry uses the public SnapLog macros", "[snaplog][api]")
+{
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto src_dir   = repo_root / "src" / "slic3r";
+    REQUIRE(std::filesystem::is_directory(src_dir));
+
+    std::vector<std::string> offenders;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
+        if (!entry.is_regular_file() || (entry.path().extension() != ".cpp" && entry.path().extension() != ".hpp"))
+            continue;
+        const auto relative = entry.path().lexically_relative(repo_root).generic_string();
+        if (relative == "src/slic3r/Utils/SnapLogClient.hpp" || relative == "src/slic3r/Utils/SnapLogClient.cpp" ||
+            relative == "src/slic3r/Utils/SnapLogEvents.hpp" || relative == "src/slic3r/GUI/GUI_App.cpp") // production project wiring
+            continue;
+
+        std::ifstream     input(entry.path(), std::ios::binary);
+        std::stringstream buffer;
+        buffer << input.rdbuf();
+        const std::string source = buffer.str();
+        for (const std::string_view forbidden : {".log_event(", "SinkSnapLog", "SinkPostHog", "PostHogProject"}) {
+            if (source.find(std::string{forbidden}) != std::string::npos) {
+                offenders.push_back(relative + ": " + std::string{forbidden});
+                break;
+            }
+        }
+    }
+
+    REQUIRE(offenders.empty());
+}
+
+TEST_CASE("GUI wiring delegates SnapLog site selection to the client", "[snaplog][api][config]")
+{
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto gui_app   = repo_root / "src" / "slic3r" / "GUI" / "GUI_App.cpp";
+    REQUIRE(std::filesystem::is_regular_file(gui_app));
+
+    std::ifstream     input(gui_app, std::ios::binary);
+    std::stringstream buffer;
+    buffer << input.rdbuf();
+    const std::string source = buffer.str();
+
+    const auto country_code   = source.find("app_config->get_country_code()");
+    const auto project_wiring = source.find("apply_production_snaplog_site(snap_cfg, snap_cc)", country_code);
+    const auto client_init    = source.find("SnapLogClient::instance().init", project_wiring);
+    REQUIRE(country_code != std::string::npos);
+    REQUIRE(project_wiring != std::string::npos);
+    REQUIRE(client_init != std::string::npos);
+    REQUIRE(project_wiring < client_init);
+    REQUIRE(source.find("snap_cfg.snaplog_base") == std::string::npos);
 }
 
 TEST_CASE("level_str wire strings", "[snaplog]")
@@ -51,13 +530,6 @@ TEST_CASE("level_str wire strings", "[snaplog]")
     REQUIRE(std::string_view(level_str(SnapLogLevel::Info)) == "INFO");
     REQUIRE(std::string_view(level_str(SnapLogLevel::Warning)) == "WARN");
     REQUIRE(std::string_view(level_str(SnapLogLevel::Error)) == "ERROR");
-}
-
-TEST_CASE("normalize_logger takes last segment", "[snaplog]")
-{
-    REQUIRE(normalize_logger("Plater::priv::slice") == "slice");
-    REQUIRE(normalize_logger("slice") == "slice");
-    REQUIRE(normalize_logger("") == "");
 }
 
 // ---------------------------------------------------------------------------
@@ -92,86 +564,6 @@ TEST_CASE("hash_pii stable 16 hex", "[snaplog][priv]")
 {
     REQUIRE(hash_pii("desktop-1", "SN123").size() == 16);
     REQUIRE(hash_pii("desktop-1", "SN123") == hash_pii("desktop-1", "SN123"));
-}
-
-TEST_CASE("renderers hash printer SN in standard and caller fields", "[snaplog][priv]")
-{
-    const std::string expected = hash_pii("client-1", "SN12345");
-
-    RealtimeIdentity realtime_id;
-    realtime_id.client_id  = "client-1";
-    realtime_id.printer_sn = "SN12345";
-    auto realtime          = render_realtime_body(SnapLogLevel::Info, "message", {{"sn", "SN12345"}}, 64 * 1024, realtime_id);
-    REQUIRE(realtime.find("SN12345") == std::string::npos);
-    REQUIRE(realtime.find(expected) != std::string::npos);
-
-    BatchLineContext batch_ctx;
-    batch_ctx.clientId = "client-1";
-    batch_ctx.print_sn = "SN12345";
-    auto batch         = render_batch_line(SnapLogLevel::Info, "message", {{"sn", "SN12345"}}, 64 * 1024, batch_ctx);
-    REQUIRE(batch.find("SN12345") == std::string::npos);
-    REQUIRE(batch.find(expected) != std::string::npos);
-}
-
-TEST_CASE("renderers sanitize message secrets and user paths", "[snaplog][priv]")
-{
-    const std::string message = "password=hunter2 model C:\\Users\\alice\\part.stl failed";
-
-    RealtimeIdentity realtime_id;
-    realtime_id.home_for_redact = "C:/Users/alice";
-    auto realtime               = render_realtime_body(SnapLogLevel::Warning, message, {}, 64 * 1024, realtime_id);
-    REQUIRE(realtime.find("hunter2") == std::string::npos);
-    REQUIRE(realtime.find("Users\\alice") == std::string::npos);
-
-    BatchLineContext batch_ctx;
-    batch_ctx.home_for_redact = "C:/Users/alice";
-    auto batch                = render_batch_line(SnapLogLevel::Warning, message, {}, 64 * 1024, batch_ctx);
-    REQUIRE(batch.find("hunter2") == std::string::npos);
-    REQUIRE(batch.find("Users\\alice") == std::string::npos);
-}
-
-TEST_CASE("renderers keep valid JSON when UTF-8 truncates or input is invalid", "[snaplog]")
-{
-    const std::string multibyte = std::string(1000, 'x') + u8"中文日志";
-    const std::string invalid   = std::string("bad ") + char(0xFF) + char(0x80) + " bytes";
-    BatchLineContext  ctx;
-
-    auto realtime_truncated = render_realtime_body(SnapLogLevel::Info, multibyte, {}, 700);
-    (void) nlohmann::json::parse(realtime_truncated);
-    auto realtime_invalid = render_realtime_body(SnapLogLevel::Info, invalid, {}, 64 * 1024);
-    (void) nlohmann::json::parse(realtime_invalid);
-
-    auto batch_truncated = render_batch_line(SnapLogLevel::Info, multibyte, {}, 700, ctx);
-    (void) nlohmann::json::parse(batch_truncated.substr(0, batch_truncated.size() - 1));
-    auto batch_invalid = render_batch_line(SnapLogLevel::Info, invalid, {}, 64 * 1024, ctx);
-    (void) nlohmann::json::parse(batch_invalid.substr(0, batch_invalid.size() - 1));
-}
-
-TEST_CASE("render_realtime_body strips raw* and keeps allowed keys", "[snaplog][priv]")
-{
-    SnapLogExt ext  = {{"modelName", "a.stl"}, {"rawGcode", "G28"}, {"secret", "x"}};
-    auto       body = render_realtime_body(SnapLogLevel::Error, "boom", ext, 64 * 1024);
-    REQUIRE(body.find("rawGcode") == std::string::npos);
-    REQUIRE(body.find("modelName") != std::string::npos);
-    REQUIRE(body.find("boom") != std::string::npos);
-}
-
-TEST_CASE("render_realtime_body truncates long message", "[snaplog]")
-{
-    std::string big(100000, 'x');
-    auto        body = render_realtime_body(SnapLogLevel::Info, big, {}, 1024);
-    REQUIRE(body.size() <= 2048);
-    REQUIRE(body.find("truncated") != std::string::npos);
-}
-
-TEST_CASE("render_realtime_body fallback keeps real clientId", "[snaplog][priv]")
-{
-    RealtimeIdentity id;
-    id.client_id = "instance-123";
-    auto body    = render_realtime_body(SnapLogLevel::Info, "small", {}, 1, id);
-    auto parsed  = nlohmann::json::parse(body);
-    REQUIRE(parsed["clientId"].get<std::string>() == "instance-123");
-    REQUIRE(parsed["message"].get<std::string>().find("truncated") != std::string::npos);
 }
 
 // ---------------------------------------------------------------------------
@@ -282,71 +674,6 @@ TEST_CASE("rate limiter total-unknown cap throttles many distinct names", "[snap
 // Task 6: realtime eviction policy (pure function)
 // ---------------------------------------------------------------------------
 
-TEST_CASE("eviction: queue not full -> Admit", "[snaplog][evict]")
-{
-    std::deque<SnapLogLevel> q = {SnapLogLevel::Info};
-    auto                     r = decide_realtime_admit(q, 3, SnapLogLevel::Warning);
-    REQUIRE(r.decision == EvictDecision::Admit);
-    REQUIRE_FALSE(r.evict_index.has_value());
-}
-
-TEST_CASE("eviction: full + incoming Error + has non-Error -> EvictOldestNonError", "[snaplog][evict]")
-{
-    std::deque<SnapLogLevel> q = {SnapLogLevel::Info, SnapLogLevel::Error, SnapLogLevel::Warning};
-    // capacity=3, full; incoming Error; non-Error entries exist.
-    auto r = decide_realtime_admit(q, 3, SnapLogLevel::Error);
-    REQUIRE(r.decision == EvictDecision::EvictOldestNonError);
-    REQUIRE(r.evict_index.has_value());
-    REQUIRE(*r.evict_index == 0); // oldest non-Error is Info at index 0
-}
-
-TEST_CASE("eviction: full + incoming Error + all Error -> EvictOldestError", "[snaplog][evict]")
-{
-    std::deque<SnapLogLevel> q = {SnapLogLevel::Error, SnapLogLevel::Error, SnapLogLevel::Error};
-    auto                     r = decide_realtime_admit(q, 3, SnapLogLevel::Error);
-    REQUIRE(r.decision == EvictDecision::EvictOldestError);
-    REQUIRE(r.evict_index.has_value());
-    REQUIRE(*r.evict_index == 0); // oldest Error (FIFO) at index 0
-}
-
-TEST_CASE("eviction: full + incoming Warning -> DropIncoming", "[snaplog][evict]")
-{
-    std::deque<SnapLogLevel> q = {SnapLogLevel::Info, SnapLogLevel::Error};
-    auto                     r = decide_realtime_admit(q, 2, SnapLogLevel::Warning);
-    REQUIRE(r.decision == EvictDecision::DropIncoming);
-    REQUIRE_FALSE(r.evict_index.has_value());
-}
-
-TEST_CASE("eviction: full + incoming Info -> DropIncoming", "[snaplog][evict]")
-{
-    std::deque<SnapLogLevel> q = {SnapLogLevel::Error, SnapLogLevel::Error};
-    auto                     r = decide_realtime_admit(q, 2, SnapLogLevel::Info);
-    REQUIRE(r.decision == EvictDecision::DropIncoming);
-    REQUIRE_FALSE(r.evict_index.has_value());
-}
-
-TEST_CASE("eviction: mixed queue picks oldest non-Error not any non-Error", "[snaplog][evict]")
-{
-    // Queue: [Info, Error, Warning, Error], capacity=4, incoming=Error
-    // Oldest non-Error is Info (index 0), not Warning (index 2).
-    std::deque<SnapLogLevel> q = {SnapLogLevel::Info, SnapLogLevel::Error, SnapLogLevel::Warning, SnapLogLevel::Error};
-    auto                     r = decide_realtime_admit(q, 4, SnapLogLevel::Error);
-    REQUIRE(r.decision == EvictDecision::EvictOldestNonError);
-    REQUIRE(r.evict_index.has_value());
-    REQUIRE(*r.evict_index == 0); // Info is oldest non-Error
-}
-
-TEST_CASE("eviction: full + incoming Error + non-Error later in queue", "[snaplog][evict]")
-{
-    // Queue: [Error, Error, Warning], capacity=3, incoming=Error
-    // Oldest non-Error is Warning at index 2.
-    std::deque<SnapLogLevel> q = {SnapLogLevel::Error, SnapLogLevel::Error, SnapLogLevel::Warning};
-    auto                     r = decide_realtime_admit(q, 3, SnapLogLevel::Error);
-    REQUIRE(r.decision == EvictDecision::EvictOldestNonError);
-    REQUIRE(r.evict_index.has_value());
-    REQUIRE(*r.evict_index == 2);
-}
-
 // ---------------------------------------------------------------------------
 // Task 7: SnapLogHandle / SnapLogDeps / SnapLogConfig / SnapLogClient stubs
 // ---------------------------------------------------------------------------
@@ -387,15 +714,27 @@ TEST_CASE("SnapLogHandle: cancel() sets cancelled flag (null http)", "[snaplog][
 TEST_CASE("SnapLogConfig defaults match spec", "[snaplog][config]")
 {
     SnapLogConfig c;
-    REQUIRE(c.gateway_base == "https://api.snapmaker.com");
+    REQUIRE(c.snaplog_base == "https://api.snapmaker.com");
     REQUIRE(c.enabled == true);
     REQUIRE(c.default_rate_cap_per_sec == 5);
     REQUIRE(c.total_unknown_rate_cap_per_sec == 20);
-    REQUIRE(c.realtime_queue_cap == 1024);
     REQUIRE(c.http_connect_timeout_sec == 5);
     REQUIRE(c.http_total_timeout_sec == 30);
     REQUIRE(c.poll_interval_ms == 50);
-    REQUIRE(c.realtime_join_deadline_sec == 5);
+}
+
+TEST_CASE("Tests do not reference production telemetry key macros", "[snaplog][config][security][source]")
+{
+    const auto repo_root = std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path();
+    const auto test_file = repo_root / "tests" / "slic3rutils" / "SnapLogClient_test.cpp";
+    REQUIRE(std::filesystem::is_regular_file(test_file));
+
+    std::ifstream     input(test_file, std::ios::binary);
+    std::stringstream buffer;
+    buffer << input.rdbuf();
+    const std::string source = buffer.str();
+    const auto production_hmac_marker = std::string("SNAP_LOG_") + "PUBLIC_HMAC_SECRET";
+    REQUIRE(source.find(production_hmac_marker) == std::string::npos);
 }
 
 TEST_CASE("SnapLogClient: instance() returns same reference (singleton)", "[snaplog][client]")
@@ -408,7 +747,7 @@ TEST_CASE("SnapLogClient: instance() returns same reference (singleton)", "[snap
 TEST_CASE("SnapLogClient: log() on un-init client is a no-op (no crash)", "[snaplog][client]")
 {
     // No init() call — m_int is null. log() must return safely.
-    SnapLogClient::instance().log(SnapLogLevel::Info, "hello", {}, SnapLogPolicy::Realtime, __FUNCTION__, __LINE__);
+    SnapLogClient::instance().log(SnapLogLevel::Info, "hello", {}, SinkSnapLog);
     REQUIRE(true); // reached without crashing
 }
 
@@ -420,13 +759,11 @@ TEST_CASE("SnapLogClient: init + set_consent + shutdown round-trip is safe", "[s
     SnapLogConfig cfg;
     SnapLogClient::instance().init(std::move(deps), std::move(cfg));
     SnapLogClient::instance().set_consent(false);
-    SnapLogClient::instance().set_user_token("t");
     SnapLogClient::instance().set_user_id("u");
-    SnapLogClient::instance().set_device_id("d");
-    SnapLogClient::instance().log(SnapLogLevel::Warning, "w", {}, SnapLogPolicy::Realtime, __FUNCTION__, __LINE__);
+    SnapLogClient::instance().log(SnapLogLevel::Warning, "w", {}, SinkSnapLog);
     SnapLogClient::instance().shutdown();
     // Post-shutdown log() is also a no-op.
-    SnapLogClient::instance().log(SnapLogLevel::Error, "post", {}, SnapLogPolicy::Realtime, __FUNCTION__, __LINE__);
+    SnapLogClient::instance().log(SnapLogLevel::Error, "post", {}, SinkSnapLog);
     REQUIRE(true);
 }
 
@@ -438,18 +775,16 @@ TEST_CASE("SnapLogClient: concurrent log and shutdown are safe", "[snaplog][clie
         deps.now_ms     = []() { return int64_t(0); };
         SnapLogConfig cfg;
         cfg.poll_interval_ms               = 1;
-        cfg.realtime_join_deadline_sec     = 1;
         cfg.default_rate_cap_per_sec       = 1000;
         cfg.total_unknown_rate_cap_per_sec = 1000;
         SnapLogClient::instance().init(std::move(deps), std::move(cfg));
-        SnapLogClient::instance().set_user_token("token");
+        SnapLogClient::instance().set_user_id("user");
 
         std::atomic<bool> release{false};
         auto              log_worker = [&release]() {
             while (!release.load())
                 std::this_thread::yield();
-            SnapLogClient::instance().log(SnapLogLevel::Info, "race", {{"eventName", "race"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                          __LINE__);
+            SnapLogClient::instance().log(SnapLogLevel::Info, "race", {{"eventName", "race"}}, SinkSnapLog);
         };
         auto shutdown_worker = [&release]() {
             while (!release.load())
@@ -461,18 +796,16 @@ TEST_CASE("SnapLogClient: concurrent log and shutdown are safe", "[snaplog][clie
         release.store(true);
         logger.join();
         closer.join();
-        SnapLogClient::instance().log(SnapLogLevel::Error, "after", {{"eventName", "race"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                      __LINE__);
+        SnapLogClient::instance().log(SnapLogLevel::Error, "after", {{"eventName", "race"}}, SinkSnapLog);
     }
     REQUIRE(true);
 }
 
-TEST_CASE("SnapLogClient: re-login clears auth_known_dead; empty token does not", "[snaplog][batch]")
+TEST_CASE("SnapLogClient: user identity changes do not clear public-auth failure", "[snaplog][batch]")
 {
-    // Spec §4.4: after a 401/403 marks auth_known_dead, a re-login (a new
-    // non-empty token pushed via set_user_token) MUST clear the flag so batch
-    // uploads resume. An empty token (logout) MUST NOT clear it (avoid
-    // resurrecting a known-dead credential).
+    // A public HMAC 401/403 is a transport/configuration failure, not an
+    // account-token expiry; changing the mirrored account id must not resurrect
+    // a known-dead public credential.
     SnapLogDeps deps;
     deps.consent_ok = []() { return true; };
     deps.now_ms     = []() { return int64_t(0); };
@@ -483,26 +816,18 @@ TEST_CASE("SnapLogClient: re-login clears auth_known_dead; empty token does not"
     SnapLogClient::instance().set_auth_known_dead_for_test(true);
     REQUIRE(SnapLogClient::instance().auth_known_dead_for_test());
 
-    // Empty token (logout) must NOT clear the flag.
-    SnapLogClient::instance().set_user_token("");
+    SnapLogClient::instance().set_user_id("");
     REQUIRE(SnapLogClient::instance().auth_known_dead_for_test());
 
-    // Non-empty token (re-login) MUST clear the flag.
-    SnapLogClient::instance().set_user_token("new-token");
-    REQUIRE_FALSE(SnapLogClient::instance().auth_known_dead_for_test());
+    SnapLogClient::instance().set_user_id("new-user");
+    REQUIRE(SnapLogClient::instance().auth_known_dead_for_test());
 
     SnapLogClient::instance().shutdown();
 }
 
-TEST_CASE("SNAP_LOG macro compiles and is a safe no-op un-init'd", "[snaplog]")
-{
-    SNAP_LOG(Info, "smoke", {"eventName", "smoke_test"});
-    SNAP_LOG_BATCH(Error, "smoke2", {"eventName", "smoke_test2"}, {"k", "v"});
-    REQUIRE(true); // reached without crash
-}
 
 // ---------------------------------------------------------------------------
-// Task 8: log() realtime admission pipeline (consent / disable / rate / queue)
+// Task 8: log() admission pipeline (consent / disable / rate / queue)
 // ---------------------------------------------------------------------------
 // Helper: build a SnapLogClient with fake deps. now_ms starts at 0, increments
 // on each call so rate-limiter time advances naturally across calls.
@@ -510,29 +835,25 @@ TEST_CASE("SNAP_LOG macro compiles and is a safe no-op un-init'd", "[snaplog]")
 namespace {
 struct FakeClient
 {
-    int64_t       now           = 0;
-    int           request_count = 0;
+    int64_t       now = 0;
     SnapLogDeps   deps;
     SnapLogConfig cfg;
 
     FakeClient()
     {
-        deps.do_request = [this](const std::string& /*method*/, const std::string& /*url*/,
-                                 std::vector<std::pair<std::string, std::string>> /*headers*/, const boost::filesystem::path* /*body_file*/,
-                                 const std::string* /*body_str*/) {
-            ++request_count;
-            auto h = std::make_shared<SnapLogHandle>();
+        deps.do_request = [](const std::string& /*method*/, const std::string& /*url*/,
+                             std::vector<std::pair<std::string, std::string>> /*headers*/,
+                             const boost::filesystem::path* /*body_file*/, const std::string* /*body_str*/) {
+            auto h  = std::make_shared<SnapLogHandle>();
+            h->prom = std::make_shared<std::promise<SnapLogResult>>();
+            h->prom->set_value({200, "", false});
             h->fulfilled.store(true);
             return h;
         };
         deps.consent_ok = []() { return true; };
-        deps.user_token = []() { return std::string("tok"); };
-        deps.user_id    = []() { return std::string("uid"); };
-        deps.device_id  = []() { return std::string("did"); };
         deps.machine_id = []() { return std::string("mid"); };
         deps.now_ms     = [this]() { return now++; };
         // Small queue cap for fill/evict tests.
-        cfg.realtime_queue_cap             = 4;
         cfg.default_rate_cap_per_sec       = 1000; // high default so rate limit doesn't interfere
         cfg.total_unknown_rate_cap_per_sec = 10000;
     }
@@ -543,516 +864,65 @@ struct FakeClient
         SnapLogDeps   d = deps; // copy (lambdas capture by value via this*)
         SnapLogConfig c = cfg;
         SnapLogClient::instance().init(std::move(d), std::move(c));
-        // Default to logged-in so existing tests pass the login gate (log()
-        // drops events when user_token is empty). Tests that exercise the
-        // gate itself call set_user_token("") explicitly.
-        SnapLogClient::instance().set_user_token("tok");
+        // Default to a mirrored account id for tests that assert payload identity.
+        SnapLogClient::instance().set_user_id("user-1");
     }
     void shutdown() { SnapLogClient::instance().shutdown(); }
 };
 } // anonymous namespace
 
-TEST_CASE("log(): consent false drops all events", "[snaplog][pipeline]")
-{
-    FakeClient fc;
-    fc.deps.consent_ok = []() { return false; };
-    fc.init();
-    // consent is snapshotted from deps.consent_ok() at init time.
-    SnapLogClient::instance().log(SnapLogLevel::Info, "msg", SnapLogExt{{"eventName", "test"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 0);
-    fc.shutdown();
-}
-
-TEST_CASE("log(): disabled event name not enqueued", "[snaplog][pipeline]")
-{
-    FakeClient fc;
-    fc.cfg.event_disable_list.push_back("blocked_event");
-    fc.init();
-    SnapLogClient::instance().log(SnapLogLevel::Info, "msg", SnapLogExt{{"eventName", "blocked_event"}}, SnapLogPolicy::Realtime,
-                                  __FUNCTION__, __LINE__);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 0);
-    // A non-disabled event IS enqueued.
-    SnapLogClient::instance().log(SnapLogLevel::Info, "msg", SnapLogExt{{"eventName", "ok_event"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 1);
-    fc.shutdown();
-}
-
-TEST_CASE("log(): rate limit throttles beyond cap", "[snaplog][pipeline]")
-{
-    FakeClient fc;
-    fc.cfg.event_rate_cap_per_sec["throttled"] = 2;
-    fc.init();
-    // First 2 pass (cap=2 at t=0), 3rd is throttled.
-    for (int i = 0; i < 3; ++i) {
-        SnapLogClient::instance().log(SnapLogLevel::Info, "msg", SnapLogExt{{"eventName", "throttled"}}, SnapLogPolicy::Realtime,
-                                      __FUNCTION__, __LINE__);
-    }
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 2);
-    fc.shutdown();
-}
-
-TEST_CASE("log(): queue fills to cap, Error evicts oldest non-Error", "[snaplog][pipeline]")
-{
-    FakeClient fc;
-    // cap=4; rate caps high so nothing throttles.
-    fc.init();
-    // Fill with 4 Info events.
-    for (int i = 0; i < 4; ++i) {
-        SnapLogClient::instance().log(SnapLogLevel::Info, "fill", SnapLogExt{{"eventName", "fill"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                      __LINE__);
-    }
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 4);
-    // Now push an Error while full of non-Error → EvictOldestNonError.
-    // Size stays at cap (4), and the queue should contain the Error.
-    SnapLogClient::instance().log(SnapLogLevel::Error, "boom", SnapLogExt{{"eventName", "err"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 4);
-    // Verify an Error is present in the queue.
-    auto levels    = SnapLogClient::instance().realtime_queue_levels_for_test();
-    bool has_error = false;
-    for (auto l : levels)
-        if (l == SnapLogLevel::Error) {
-            has_error = true;
-            break;
-        }
-    REQUIRE(has_error);
-    fc.shutdown();
-}
-
-TEST_CASE("log(): full queue + non-Error incoming -> dropped counter increments", "[snaplog][pipeline]")
+TEST_CASE("SnapLog admission does not require a user id", "[snaplog][pipeline][auth]")
 {
     FakeClient fc;
     fc.init();
-    // Fill with 4 Info events.
-    for (int i = 0; i < 4; ++i) {
-        SnapLogClient::instance().log(SnapLogLevel::Info, "fill", SnapLogExt{{"eventName", "fill"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                      __LINE__);
-    }
-    REQUIRE(SnapLogClient::instance().dropped_for_test() == 0);
-    // 5th Info is dropped (queue full, incoming non-Error).
-    SnapLogClient::instance().log(SnapLogLevel::Info, "overflow", SnapLogExt{{"eventName", "over"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 4);
-    REQUIRE(SnapLogClient::instance().dropped_for_test() == 1);
+    SnapLogClient::instance().set_user_id("");
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
+
+    SnapLogClient::instance().log(SnapLogLevel::Warning, "anonymous accepted", {{"eventName", "anonymous_event"}}, SinkSnapLog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 1);
+
+    SnapLogClient::instance().set_user_id("user-1");
+    SnapLogClient::instance().log(SnapLogLevel::Warning, "signed-in accepted", {{"eventName", "signed_in_event"}}, SinkSnapLog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 2);
     fc.shutdown();
 }
 
-TEST_CASE("log(): Buffered policy does not land in realtime queue", "[snaplog][pipeline]")
+TEST_CASE("business macros hide sinks and accept four typed forms", "[snaplog][api]")
 {
     FakeClient fc;
+    fc.cfg.default_rate_cap_per_sec                       = 1000;
+    fc.cfg.total_unknown_rate_cap_per_sec                 = 10000;
     fc.init();
-    SnapLogClient::instance().log(SnapLogLevel::Info, "buf", SnapLogExt{{"eventName", "buf"}}, SnapLogPolicy::Buffered, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 0);
+
+    SNAP_LOG_INFO(SnapEvent::USER_LOGIN_RESULT);
+    SNAP_LOG_WARNING(SnapEvent::FILE_IMPORT_RESULT, {{"success", "false"}});
+    SNAP_LOG_ERROR(SnapEvent::SLICE_FAILED, {{"success", "false"}}, "slice failed");
+    SNAP_LOG_INFO(SnapEvent::SLICE_FAILED, {{"durationMs", "12"}}, "slice completed");
+
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 3);
     fc.shutdown();
 }
 
-TEST_CASE("log(): no eventName in ext still enqueues (unknown bucket)", "[snaplog][pipeline]")
+TEST_CASE("renderers inject and allow caller override of profileVersion", "[snaplog][fields]")
 {
-    FakeClient fc;
-    fc.init();
-    SnapLogClient::instance().log(SnapLogLevel::Info, "no-event", SnapLogExt{{"someKey", "someVal"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 1);
-    fc.shutdown();
-}
+    BatchLineContext ctx;
+    ctx.eventName      = "app_launch";
+    ctx.profileVersion = "02.03.03.03";
 
-TEST_CASE("log(): set_consent(false) after init drops events", "[snaplog][pipeline]")
-{
-    FakeClient fc;
-    fc.init();
-    // consent starts true (deps.consent_ok returns true).
-    SnapLogClient::instance().log(SnapLogLevel::Info, "before", SnapLogExt{{"eventName", "x"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 1);
-    // set_consent(false) clears the queue (spec §4.6: OFF transition purges).
-    SnapLogClient::instance().set_consent(false);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 0);
-    SnapLogClient::instance().log(SnapLogLevel::Info, "after", SnapLogExt{{"eventName", "x"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    // "after" event gated by consent → not enqueued.
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 0);
-    fc.shutdown();
-}
+    auto snaplog        = render_batch_line(SnapLogLevel::Info, "", {}, 64 * 1024, ctx);
+    auto parsed_snaplog = nlohmann::json::parse(snaplog.substr(0, snaplog.size() - 1));
+    REQUIRE(parsed_snaplog["ext"]["profileVersion"] == "02.03.03.03");
 
-TEST_CASE("log(): empty user_token drops events (login gate)", "[snaplog][pipeline]")
-{
-    FakeClient fc;
-    fc.init();
-    SnapLogClient::instance().set_user_token(""); // ensure not logged in
-    SnapLogClient::instance().log(SnapLogLevel::Info, "anon", SnapLogExt{{"eventName", "x"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 0);
-    SnapLogClient::instance().set_user_token("tok"); // login
-    SnapLogClient::instance().log(SnapLogLevel::Info, "authed", SnapLogExt{{"eventName", "x"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 1);
-    fc.shutdown();
-}
+    ctx.profileVersion.clear();
+    auto empty_snaplog = render_batch_line(SnapLogLevel::Info, "", {}, 64 * 1024, ctx);
+    auto parsed_empty  = nlohmann::json::parse(empty_snaplog.substr(0, empty_snaplog.size() - 1));
+    REQUIRE(parsed_empty["ext"]["profileVersion"] == "");
 
-TEST_CASE("log(): forced event bypasses empty user_token", "[snaplog][pipeline]")
-{
-    FakeClient fc;
-    fc.init();
-    SnapLogClient::instance().set_user_token("");
-    SnapLogClient::instance().log(SnapLogLevel::Info, "forced", SnapLogExt{{"eventName", "forced"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__, true);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 1);
-    fc.shutdown();
-}
-
-// ---------------------------------------------------------------------------
-// Task 10: build_realtime_request — auth selection (Bearer vs HMAC public)
-// ---------------------------------------------------------------------------
-
-TEST_CASE("build_realtime_request: token present -> Bearer + upload/print", "[snaplog][auth]")
-{
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
-    SnapLogConfig cfg;
-    cfg.gateway_base = "https://api.snapmaker.com";
-    cfg.hmac_secret  = "c25hcG1ha2VyLU9yY2E";
-
-    RealtimeRequest req = build_realtime_request(deps, cfg, /*clientId*/ "app-123", /*token*/ "tok-xyz",
-                                                 /*nonce_gen*/ []() { return std::string("9b2226b29c3e460eae7ff1d3315c522d"); });
-
-    REQUIRE(req.url == "https://api.snapmaker.com/api/log/upload/print");
-    REQUIRE(hdr(req.headers, "Authorization") == "Bearer tok-xyz");
-    REQUIRE(hdr(req.headers, "X-Client-Type") == "Orca");
-    REQUIRE(hdr(req.headers, "X-Client-Id") == "app-123");
-    // Logged-in path must NOT carry the HMAC signing headers.
-    REQUIRE(hdr(req.headers, "X-Sign") == "");
-    REQUIRE(hdr(req.headers, "X-Nonce") == "");
-    REQUIRE(hdr(req.headers, "X-Timestamp") == "");
-}
-
-TEST_CASE("build_realtime_request: token empty -> public + HMAC headers", "[snaplog][auth]")
-{
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
-    SnapLogConfig cfg;
-    cfg.gateway_base = "https://api.snapmaker.com";
-    cfg.hmac_secret  = "c25hcG1ha2VyLU9yY2E";
-
-    RealtimeRequest req = build_realtime_request(deps, cfg, /*clientId*/ "app-123", /*token*/ "",
-                                                 /*nonce_gen*/ []() { return std::string("9b22cafe00ll00000000ff00dd00ee00"); });
-
-    REQUIRE(req.url == "https://api.snapmaker.com/api/log/public/upload/print");
-    REQUIRE(hdr(req.headers, "Authorization") == "");
-    REQUIRE(hdr(req.headers, "X-Client-Type") == "Orca");
-    REQUIRE(hdr(req.headers, "X-Client-Id") == "app-123");
-    REQUIRE(hdr(req.headers, "X-Timestamp") == "1778639794110");
-    REQUIRE(hdr(req.headers, "X-Nonce") == "9b22cafe00ll00000000ff00dd00ee00");
-    // X-Sign must equal HMAC over "Orca" || clientId || ts || nonce (no sep).
-    std::string expected = hmac_sha256_hex("c25hcG1ha2VyLU9yY2E",
-                                           std::string("Orca") + "app-123" + "1778639794110" + "9b22cafe00ll00000000ff00dd00ee00");
-    REQUIRE(hdr(req.headers, "X-Sign") == expected);
-}
-
-TEST_CASE("build_realtime_request: X-Sign reproduces doc vector", "[snaplog][auth]")
-{
-    // Known doc vector: clientType=Orca ... but our clientType is always "Orca".
-    // Verify the formula reproduces for our fixed inputs by computing expected
-    // directly. (clientType=desktop here, not "Orca" — this test pins OUR formula.)
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
-    SnapLogConfig cfg;
-    cfg.hmac_secret = "c25hcG1ha2VyLU9yY2E";
-
-    RealtimeRequest req = build_realtime_request(deps, cfg, "app-123", "", []() { return std::string("9b2226b29c3e460eae7ff1d3315c522d"); });
-
-    std::string expected = hmac_sha256_hex("c25hcG1ha2VyLU9yY2E",
-                                           std::string("Orca") + "app-123" + "1778639794110" + "9b2226b29c3e460eae7ff1d3315c522d");
-    REQUIRE(hdr(req.headers, "X-Sign") == expected);
-    REQUIRE(hdr(req.headers, "X-Sign").size() == 64); // 32 bytes lowercase hex
-}
-
-// ---------------------------------------------------------------------------
-// Task 9: realtime worker poll-loop (in-flight=1, drains queue, consent stop)
-// ---------------------------------------------------------------------------
-
-namespace {
-// Worker test fixture: a do_request that the test controls. Returns a handle
-// whose `fulfilled` is NOT set by default; the test sets it when it wants the
-// worker to consider the request done.
-struct WorkerFake
-{
-    int64_t                                     now = 1000;
-    std::atomic<int>                            request_count{0};
-    std::vector<std::shared_ptr<SnapLogHandle>> live_handles;
-    std::mutex                                  handles_mu;
-    bool                                        auto_fulfill = false; // if true, fake completes each request immediately
-    SnapLogDeps                                 deps;
-    SnapLogConfig                               cfg;
-
-    WorkerFake()
-    {
-        deps.do_request = [this](const std::string& /*method*/, const std::string& /*url*/,
-                                 std::vector<std::pair<std::string, std::string>> /*headers*/, const boost::filesystem::path* /*body_file*/,
-                                 const std::string* /*body_str*/) {
-            auto h = std::make_shared<SnapLogHandle>();
-            if (auto_fulfill)
-                h->fulfilled.store(true);
-            {
-                std::lock_guard<std::mutex> lk(handles_mu);
-                live_handles.push_back(h);
-            }
-            ++request_count;
-            return h;
-        };
-        deps.consent_ok                    = []() { return true; };
-        deps.user_token                    = []() { return std::string("tok"); };
-        deps.machine_id                    = []() { return std::string("mid-client"); };
-        deps.now_ms                        = [this]() { return now; };
-        cfg.realtime_queue_cap             = 64;
-        cfg.default_rate_cap_per_sec       = 10000;
-        cfg.total_unknown_rate_cap_per_sec = 100000;
-        cfg.poll_interval_ms               = 1; // fast poll for tests
-    }
-
-    void init()
-    {
-        SnapLogDeps   d = deps;
-        SnapLogConfig c = cfg;
-        SnapLogClient::instance().init(std::move(d), std::move(c));
-        SnapLogClient::instance().set_user_token("tok"); // logged-in default (login gate)
-    }
-    void shutdown() { SnapLogClient::instance().shutdown(); }
-
-    // Wait until the queue drains to `target` (or timeout). Returns true if met.
-    bool wait_queue(std::size_t target, int timeout_ms = 2000)
-    {
-        auto t0 = std::chrono::steady_clock::now();
-        while (SnapLogClient::instance().realtime_queue_size_for_test() > target) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count() > timeout_ms)
-                return false;
-        }
-        return true;
-    }
-    // Wait until at least `n` requests have been issued.
-    bool wait_requests(int n, int timeout_ms = 2000)
-    {
-        auto t0 = std::chrono::steady_clock::now();
-        while (request_count.load() < n) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count() > timeout_ms)
-                return false;
-        }
-        return true;
-    }
-    void fulfill_all_live()
-    {
-        std::lock_guard<std::mutex> lk(handles_mu);
-        for (auto& h : live_handles)
-            h->fulfilled.store(true);
-    }
-};
-} // anonymous namespace
-
-TEST_CASE("worker: drains queue when handles auto-fulfill", "[snaplog][worker]")
-{
-    WorkerFake wf;
-    wf.auto_fulfill = true;
-    wf.init();
-    for (int i = 0; i < 5; ++i) {
-        SnapLogClient::instance().log(SnapLogLevel::Info, "m", SnapLogExt{{"eventName", "w"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                      __LINE__);
-    }
-    REQUIRE(wf.wait_requests(5));
-    REQUIRE(wf.wait_queue(0));
-    REQUIRE(wf.request_count.load() == 5);
-    wf.shutdown();
-}
-
-TEST_CASE("worker: in-flight=1 — blocks while handle not done", "[snaplog][worker]")
-{
-    WorkerFake wf;
-    wf.auto_fulfill = false; // handles stay not-done
-    wf.init();
-    for (int i = 0; i < 5; ++i) {
-        SnapLogClient::instance().log(SnapLogLevel::Info, "m", SnapLogExt{{"eventName", "w"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                      __LINE__);
-    }
-    // Wait a bit; exactly 1 request should fire (the first), rest queued.
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    REQUIRE(wf.request_count.load() == 1);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() >= 1);
-
-    // Now fulfill the in-flight handle — worker should send the next one.
-    wf.fulfill_all_live();
-    // Let remaining drain. (Each subsequent handle also stays not-done, so
-    // only one more fires at a time.)
-    for (int round = 2; round <= 5; ++round) {
-        // After fulfilling, the worker clears the slot and sends next.
-        REQUIRE(wf.wait_requests(round));
-        wf.fulfill_all_live();
-    }
-    REQUIRE(wf.wait_queue(0));
-    REQUIRE(wf.request_count.load() == 5);
-    wf.shutdown();
-}
-
-TEST_CASE("worker: consent false mid-run stops further sends", "[snaplog][worker]")
-{
-    WorkerFake wf;
-    wf.auto_fulfill = true;
-    wf.init();
-    // Send one event and let it drain.
-    SnapLogClient::instance().log(SnapLogLevel::Info, "first", SnapLogExt{{"eventName", "w"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(wf.wait_requests(1));
-    REQUIRE(wf.wait_queue(0));
-    int before = wf.request_count.load();
-
-    // Flip consent off, then push more events. Worker must NOT send them.
-    SnapLogClient::instance().set_consent(false);
-    for (int i = 0; i < 3; ++i) {
-        SnapLogClient::instance().log(SnapLogLevel::Info, "blocked", SnapLogExt{{"eventName", "w"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                      __LINE__);
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    REQUIRE(wf.request_count.load() == before); // no new requests
-    wf.shutdown();
-}
-
-TEST_CASE("worker: shutdown joins within reasonable time", "[snaplog][worker]")
-{
-    WorkerFake wf;
-    wf.auto_fulfill = true;
-    wf.init();
-    for (int i = 0; i < 3; ++i) {
-        SnapLogClient::instance().log(SnapLogLevel::Info, "m", SnapLogExt{{"eventName", "w"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                      __LINE__);
-    }
-    // shutdown() must join the worker thread and return.
-    auto t0 = std::chrono::steady_clock::now();
-    wf.shutdown();
-    auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
-    // poll_interval=1ms so the worker sees stop_receiving quickly. Generous bound.
-    REQUIRE(dt < 3000);
-    REQUIRE(true); // reached without hanging
-}
-
-// ---------------------------------------------------------------------------
-// Task 11: lifecycle hardening — bounded shutdown, consent gate, cancel
-// ---------------------------------------------------------------------------
-
-TEST_CASE("shutdown returns within deadline with slow handle", "[snaplog][lifecycle]")
-{
-    // Fake do_request returns a handle that NEVER auto-fulfills. Without
-    // cancel-then-join, the worker would hold the not-done handle and block
-    // shutdown indefinitely. With cancel_current before join, the handle's
-    // cancelled flag trips done() so the worker exits within ~poll_interval.
-    WorkerFake wf;
-    wf.auto_fulfill                   = false; // handles stay not-done forever
-    wf.cfg.realtime_join_deadline_sec = 2;     // short deadline for test
-    wf.init();
-    // Enqueue one event so the worker fires do_request and gets a pending handle.
-    SnapLogClient::instance().log(SnapLogLevel::Info, "slow", SnapLogExt{{"eventName", "w"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(wf.wait_requests(1));                               // request fired
-    std::this_thread::sleep_for(std::chrono::milliseconds(30)); // let worker store handle
-
-    auto t0 = std::chrono::steady_clock::now();
-    wf.shutdown();
-    auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
-    // Must return well within the deadline (cancel trips done() so join is fast).
-    REQUIRE(dt < 1500); // generous; typically <100ms
-}
-
-TEST_CASE("shutdown cancels in-flight handle", "[snaplog][lifecycle]")
-{
-    // Verify that the in-flight handle was cancelled by shutdown.
-    WorkerFake wf;
-    wf.auto_fulfill                   = false;
-    wf.cfg.realtime_join_deadline_sec = 2;
-    wf.init();
-    SnapLogClient::instance().log(SnapLogLevel::Info, "m", SnapLogExt{{"eventName", "w"}}, SnapLogPolicy::Realtime, __FUNCTION__, __LINE__);
-    REQUIRE(wf.wait_requests(1));
-    std::this_thread::sleep_for(std::chrono::milliseconds(30));
-
-    wf.shutdown();
-    // After shutdown, the live handle must have been cancelled.
-    std::lock_guard<std::mutex> lk(wf.handles_mu);
-    REQUIRE(!wf.live_handles.empty());
-    bool any_cancelled = false;
-    for (const auto& h : wf.live_handles) {
-        if (h->cancelled.load())
-            any_cancelled = true;
-    }
-    REQUIRE(any_cancelled);
-}
-
-TEST_CASE("consent OFF cancels in-flight and clears queue", "[snaplog][lifecycle]")
-{
-    WorkerFake wf;
-    wf.auto_fulfill = false; // handle stays pending
-    wf.init();
-    // Fire one request so there's an in-flight handle.
-    SnapLogClient::instance().log(SnapLogLevel::Info, "first", SnapLogExt{{"eventName", "w"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(wf.wait_requests(1));
-    std::this_thread::sleep_for(std::chrono::milliseconds(30));
-
-    // Flip consent OFF. This must cancel the in-flight handle and clear queue.
-    SnapLogClient::instance().set_consent(false);
-
-    // Push more events AFTER consent OFF — they should NOT enqueue (log() gates).
-    for (int i = 0; i < 3; ++i) {
-        SnapLogClient::instance().log(SnapLogLevel::Info, "after-off", SnapLogExt{{"eventName", "w"}}, SnapLogPolicy::Realtime,
-                                      __FUNCTION__, __LINE__);
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(30));
-
-    // Queue must be empty (cleared by set_consent(false) + log() gating).
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 0);
-
-    // In-flight handle must be cancelled.
-    {
-        std::lock_guard<std::mutex> lk(wf.handles_mu);
-        bool                        any_cancelled = false;
-        for (const auto& h : wf.live_handles) {
-            if (h->cancelled.load())
-                any_cancelled = true;
-        }
-        REQUIRE(any_cancelled);
-    }
-
-    // No further requests fire while consent is OFF.
-    int req_after = wf.request_count.load();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    REQUIRE(wf.request_count.load() == req_after);
-
-    wf.shutdown();
-}
-
-TEST_CASE("consent ON resumes sending after OFF", "[snaplog][lifecycle]")
-{
-    WorkerFake wf;
-    wf.auto_fulfill = true;
-    wf.init();
-
-    // Start with consent OFF.
-    SnapLogClient::instance().set_consent(false);
-    SnapLogClient::instance().log(SnapLogLevel::Info, "blocked", SnapLogExt{{"eventName", "w"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    std::this_thread::sleep_for(std::chrono::milliseconds(30));
-    REQUIRE(wf.request_count.load() == 0);
-
-    // Flip consent ON — worker is still running (never exited), sends resume.
-    SnapLogClient::instance().set_consent(true);
-    SnapLogClient::instance().log(SnapLogLevel::Info, "resume", SnapLogExt{{"eventName", "w"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(wf.wait_requests(1));
-    REQUIRE(wf.wait_queue(0));
-
-    wf.shutdown();
+    ctx.clientId           = "machine-1";
+    ctx.profileVersion     = "02.03.03.03";
+    auto protected_snaplog = render_batch_line(SnapLogLevel::Info, "", {{"clientUUID", "attacker-value"}}, 64 * 1024, ctx);
+    auto parsed_protected  = nlohmann::json::parse(protected_snaplog.substr(0, protected_snaplog.size() - 1));
+    REQUIRE(parsed_protected["ext"]["clientUUID"] == "machine-1");
 }
 
 TEST_CASE("consent OFF does not flush backlog on ON", "[snaplog][lifecycle]")
@@ -1117,55 +987,10 @@ TEST_CASE("redact_path backslash variant collapses to tilde", "[snaplog][priv]")
 }
 
 // ---------------------------------------------------------------------------
-// Fix #4: render_realtime_body ext-value truncation caps
+// Fix #4: renderer ext-value truncation caps
 // Per-string ext value capped to <=2000 bytes; total ext <=8000 bytes;
 // eventName (and opId) always survive even when ext must be trimmed.
 // ---------------------------------------------------------------------------
-
-TEST_CASE("render_realtime_body: huge ext value truncated, eventName survives", "[snaplog]")
-{
-    // 100KB ext value in "reason" + eventName in ext.
-    SnapLogExt ext  = {{"reason", std::string(100000, 'x')}, {"eventName", "slice_failed"}};
-    auto       body = render_realtime_body(SnapLogLevel::Error, "boom", ext, 64 * 1024);
-    REQUIRE(body.size() <= 64 * 1024);
-    REQUIRE(body.find("eventName") != std::string::npos);
-    REQUIRE(body.find("slice_failed") != std::string::npos);
-    // The huge value must have been truncated — body should be well under 8KB+overhead.
-    REQUIRE(body.size() < 12000);
-    REQUIRE(body.find("truncated") != std::string::npos);
-}
-
-TEST_CASE("render_realtime_body: many ext entries capped at 8KB, eventName kept", "[snaplog]")
-{
-    // 10 entries of ~2KB each = ~20KB, well over the 8KB ext cap.
-    SnapLogExt ext;
-    for (int i = 0; i < 10; ++i) {
-        ext.emplace_back("k" + std::to_string(i), std::string(2000, 'a' + i));
-    }
-    ext.emplace_back("eventName", "op_done");
-    ext.emplace_back("opId", "op-42");
-    auto body = render_realtime_body(SnapLogLevel::Info, "msg", ext, 64 * 1024);
-    REQUIRE(body.size() <= 64 * 1024);
-    REQUIRE(body.find("eventName") != std::string::npos);
-    REQUIRE(body.find("op_done") != std::string::npos);
-    // opId must also survive (it's a protected key).
-    REQUIRE(body.find("opId") != std::string::npos);
-    REQUIRE(body.find("op-42") != std::string::npos);
-}
-
-TEST_CASE("render_realtime_body: per-value truncation keeps eventName in ext", "[snaplog]")
-{
-    // Single huge value; verify eventName is NOT lost due to whole-ext drop.
-    SnapLogExt ext  = {{"reason", std::string(50000, 'z')}, {"eventName", "slice_failed"}, {"opId", "job-1"}};
-    auto       body = render_realtime_body(SnapLogLevel::Error, "err", ext, 64 * 1024);
-    // eventName and opId must be present — never dropped by the ext-size fallback.
-    REQUIRE(body.find("eventName") != std::string::npos);
-    REQUIRE(body.find("slice_failed") != std::string::npos);
-    REQUIRE(body.find("opId") != std::string::npos);
-    REQUIRE(body.find("job-1") != std::string::npos);
-    // The reason value must be truncated.
-    REQUIRE(body.find("truncated") != std::string::npos);
-}
 
 // ---------------------------------------------------------------------------
 // Plan B Task 1: render_batch_line — NDJSON line renderer (full field set)
@@ -1177,12 +1002,8 @@ TEST_CASE("render_batch_line has core mandatory fields", "[snaplog][batch]")
 {
     BatchLineContext ctx;
     ctx.clientId  = "c1";
-    ctx.nodeId    = "n1";
     ctx.eventName = "slice_completed";
     ctx.batchId   = "b1";
-    ctx.opId      = "o1";
-    ctx.logger    = "slice";
-    ctx.thread    = "main";
     ctx.ts_ms     = 1778639794110;
 
     std::string line = render_batch_line(SnapLogLevel::Info, "done", SnapLogExt{{"durationMs", "100"}}, 64 * 1024, ctx);
@@ -1219,27 +1040,26 @@ TEST_CASE("render_batch_line ISO8601 timestamp UTC from ts_ms", "[snaplog][batch
     REQUIRE(line.find(".110Z\"") != std::string::npos);
 }
 
+TEST_CASE("render_batch_line keeps anonymous userId empty", "[snaplog][batch]")
+{
+    BatchLineContext ctx;
+    ctx.eventName = "anonymous_event";
+    auto line     = render_batch_line(SnapLogLevel::Info, "anonymous", {}, 64 * 1024, ctx);
+    REQUIRE(line.find("\"userId\":\"\"") != std::string::npos);
+}
+
 TEST_CASE("render_batch_line trims non-required context fields", "[snaplog][batch]")
 {
     BatchLineContext ctx;
-    ctx.userId      = "u1";
-    ctx.deviceId    = "d1";
-    ctx.appVersion  = "2.5.0";
-    ctx.appBuild    = "12345";
-    ctx.platform    = "win64";
-    ctx.osVersion   = "10.0.19045";
-    ctx.sessionId   = "s1";
-    ctx.region      = "us";
-    ctx.nodeId      = "n1";
-    ctx.logger      = "lg";
-    ctx.thread      = "th";
-    ctx.opId        = "o1";
-    ctx.eventName   = "slice_completed";
-    auto line       = render_batch_line(SnapLogLevel::Info, "m", {}, 64 * 1024, ctx);
+    ctx.userId     = "u1";
+    ctx.appVersion = "2.5.0";
+    ctx.osVersion  = "10.0.19045";
+    ctx.eventName  = "slice_completed";
+    auto line      = render_batch_line(SnapLogLevel::Info, "m", {}, 64 * 1024, ctx);
     // Keep the wire-required and functionally required fields.
     REQUIRE(line.find("\"eventName\":\"slice_completed\"") != std::string::npos);
     REQUIRE(line.find("\"userId\":\"u1\"") != std::string::npos);
-    // Drop optional diagnostic fields that the gateway does not require.
+    // Drop optional diagnostic fields that the snaplog does not require.
     REQUIRE(line.find("\"logger\"") == std::string::npos);
     REQUIRE(line.find("\"thread\"") == std::string::npos);
     REQUIRE(line.find("\"requestId\"") == std::string::npos);
@@ -1299,129 +1119,6 @@ TEST_CASE("render_batch_line hashes printerSerial PII", "[snaplog][batch][priv]"
     // printerSerial must be hashed (16 hex chars), not the raw serial.
     REQUIRE(line.find("SN12345") == std::string::npos);
     REQUIRE(line.find("\"printerSerial\":\"") != std::string::npos);
-}
-
-TEST_CASE("ext carries the standard identity fields", "[snaplog][batch]")
-{
-    SECTION("batch: userId top-level; standard identity in ext")
-    {
-        BatchLineContext ctx;
-        ctx.clientId   = "inst-uuid";
-        ctx.processId  = "12345";
-        ctx.eventName  = "e1";
-        ctx.userId     = "8751";
-        ctx.deviceId   = "dev-99";
-        ctx.appVersion = "Orca 1.2.3";
-        ctx.osVersion  = "Windows 11";
-        ctx.batchId    = "ff00aabbccddeeff";
-        ctx.ts_ms      = 0; // non-positive -> localTime ""
-
-        auto line = render_batch_line(SnapLogLevel::Info, "m", {}, 64 * 1024, ctx);
-        // Strip trailing newline and parse to tell top-level apart from ext.
-        std::string    json_str = line.substr(0, line.size() - 1);
-        nlohmann::json parsed   = nlohmann::json::parse(json_str);
-
-        // userId stays top-level; deviceId is omitted from batch payloads.
-        REQUIRE_FALSE(parsed.contains("deviceId"));
-        REQUIRE(parsed.contains("userId"));
-        REQUIRE(parsed["userId"] == "8751");
-        REQUIRE_FALSE(parsed["ext"].contains("deviceId"));
-        REQUIRE_FALSE(parsed["ext"].contains("userId"));
-
-        // Remaining identity fields live in ext.
-        REQUIRE(parsed["ext"]["clientUUID"] == "inst-uuid");
-        REQUIRE(parsed["ext"]["processId"] == "12345");
-        REQUIRE(parsed["ext"]["orcaVersion"] == "Orca 1.2.3");
-        REQUIRE(parsed["ext"]["os"] == "Windows 11");
-        REQUIRE(parsed["ext"]["batchId"] == "ff00aabbccddeeff");
-        REQUIRE(parsed["ext"].contains("connect_clientid"));
-        REQUIRE(parsed["ext"].contains("printerSN"));
-
-        ctx.connect_clientid = "mqtt-cid-42";
-        ctx.print_sn         = "SN0099";
-        auto line2           = render_batch_line(SnapLogLevel::Info, "m", {}, 64 * 1024, ctx);
-        REQUIRE(line2.find("\"connect_clientid\":\"mqtt-cid-42\"") != std::string::npos);
-        REQUIRE(line2.find("SN0099") == std::string::npos);
-        REQUIRE(line2.find("\"printerSN\":\"") != std::string::npos);
-    }
-
-    SECTION("realtime: full identity set in ext, incl. deviceId/userId")
-    {
-        SnapLogExt ext;
-        // Default RealtimeIdentity -> every ext identity key present as "".
-        auto empty_body = render_realtime_body(SnapLogLevel::Info, "m", ext, 64 * 1024);
-        for (const char* k : {"clientUUID", "connect_clientid", "printerSN", "deviceId", "userId", "orcaVersion", "os", "batchId",
-                              "localTime", "processId"}) {
-            std::string needle = std::string("\"") + k + "\":\"\"";
-            REQUIRE(empty_body.find(needle) != std::string::npos);
-        }
-
-        RealtimeIdentity id;
-        id.client_id        = "inst-uuid";
-        id.process_id       = "12346";
-        id.connect_clientid = "mqtt-cid-7";
-        id.printer_sn       = "SN123";
-        id.device_id        = "dev-x";
-        id.user_id          = "8751";
-        id.orca_version     = "Orca 1.2.3";
-        id.os               = "Windows 11";
-        id.batch_id         = "ff00aabbccddeeff";
-        id.ts_ms            = 0; // localTime "" for non-positive ts
-        auto body           = render_realtime_body(SnapLogLevel::Info, "m", ext, 64 * 1024, id);
-        REQUIRE(body.find("\"clientUUID\":\"inst-uuid\"") != std::string::npos);
-        REQUIRE(body.find("\"processId\":\"12346\"") != std::string::npos);
-        REQUIRE(body.find("\"connect_clientid\":\"mqtt-cid-7\"") != std::string::npos);
-        REQUIRE(body.find("SN123") == std::string::npos);
-        REQUIRE(body.find("\"printerSN\":\"") != std::string::npos);
-        REQUIRE(body.find("\"deviceId\":\"dev-x\"") != std::string::npos);
-        REQUIRE(body.find("\"userId\":\"8751\"") != std::string::npos);
-        REQUIRE(body.find("\"orcaVersion\":\"Orca 1.2.3\"") != std::string::npos);
-        REQUIRE(body.find("\"os\":\"Windows 11\"") != std::string::npos);
-        REQUIRE(body.find("\"batchId\":\"ff00aabbccddeeff\"") != std::string::npos);
-        // Top-level clientId envelope (API contract) is preserved.
-        REQUIRE(body.find("\"clientId\":\"inst-uuid\"") != std::string::npos);
-    }
-}
-
-TEST_CASE("SnapLogClient: log does not wait for a bounded shutdown join", "[snaplog][client]")
-{
-    std::atomic<bool> request_entered{false};
-    std::atomic<bool> release_request{false};
-    SnapLogDeps       deps;
-    deps.consent_ok = []() { return true; };
-    deps.now_ms     = []() { return int64_t(0); };
-    deps.do_request = [&request_entered, &release_request](const std::string&, const std::string&,
-                                                           std::vector<std::pair<std::string, std::string>>, const boost::filesystem::path*,
-                                                           const std::string*) {
-        request_entered.store(true);
-        while (!release_request.load())
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        auto h  = std::make_shared<SnapLogHandle>();
-        h->prom = std::make_shared<std::promise<SnapLogResult>>();
-        h->fulfilled.store(true);
-        h->prom->set_value({200, std::string{}, false});
-        return h;
-    };
-
-    SnapLogConfig cfg;
-    cfg.poll_interval_ms           = 1;
-    cfg.realtime_join_deadline_sec = 1;
-    SnapLogClient::instance().init(std::move(deps), std::move(cfg));
-    SnapLogClient::instance().set_user_token("token");
-    SnapLogClient::instance().log(SnapLogLevel::Info, "blocked", {{"eventName", "test"}}, SnapLogPolicy::Realtime, __FUNCTION__, __LINE__);
-    while (!request_entered.load())
-        std::this_thread::yield();
-
-    std::thread closer([]() { SnapLogClient::instance().shutdown(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    const auto start = std::chrono::steady_clock::now();
-    SnapLogClient::instance().log(SnapLogLevel::Info, "not-blocked", {{"eventName", "test"}}, SnapLogPolicy::Realtime, __FUNCTION__,
-                                  __LINE__);
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
-    REQUIRE(elapsed < 500);
-
-    release_request.store(true);
-    closer.join();
 }
 
 TEST_CASE("render_batch_line output is valid JSON + trailing newline", "[snaplog][batch]")
@@ -1653,102 +1350,104 @@ TEST_CASE("rotate_active handles Windows target-exists collision", "[snaplog][ba
 // ---------------------------------------------------------------------------
 // Plan B Task 3: batch create/complete/cancel request building
 // Pure functions that produce BatchRequest { url, headers, body } for the
-// three file-upload lifecycle endpoints. Auth selection mirrors realtime:
-// token non-empty -> Bearer; empty -> HMAC public path.
+// three file-upload lifecycle endpoints. Every request uses the public HMAC
+// contract and receives a fresh timestamp/nonce signature.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("build_batch_create_request: Bearer -> /api/log/upload/create", "[snaplog][batch]")
+TEST_CASE("build_batch_create_request: public HMAC -> /api/log/public/upload/create", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
     SnapLogConfig cfg;
-    cfg.gateway_base = "https://api.snapmaker.com";
-    cfg.hmac_secret  = "c25hcG1ha2VyLU9yY2E";
+    cfg.snaplog_base       = "https://api.snapmaker.com";
+    cfg.public_hmac_secret = "secret";
+    cfg.now_ms             = []() { return int64_t(1778639794110); };
+    cfg.next_nonce         = []() { return std::string("nonce1"); };
 
-    BatchRequest req = build_batch_create_request(
-        deps, cfg, /*clientId*/ "app-123", /*token*/ "tok-xyz",
-        /*nonce_gen*/ []() { return std::string("9b2226b29c3e460eae7ff1d3315c522d"); },
-        /*fileName*/ "batch.123.log");
+    BatchRequest req = build_batch_create_request(cfg, /*clientId*/ "app-123", "batch.123.log");
 
-    REQUIRE(req.url == "https://api.snapmaker.com/api/log/upload/create");
-    REQUIRE(hdr(req.headers, "Authorization") == "Bearer tok-xyz");
+    REQUIRE(req.url == "https://api.snapmaker.com/api/log/public/upload/create");
+    REQUIRE(hdr(req.headers, "Authorization").empty());
     REQUIRE(hdr(req.headers, "X-Client-Type") == "Orca");
     REQUIRE(hdr(req.headers, "X-Client-Id") == "app-123");
-    // Logged-in path must NOT carry the HMAC signing headers.
-    REQUIRE(hdr(req.headers, "X-Sign") == "");
-    REQUIRE(hdr(req.headers, "X-Nonce") == "");
-    REQUIRE(hdr(req.headers, "X-Timestamp") == "");
+    REQUIRE(hdr(req.headers, "X-Timestamp") == "1778639794110");
+    REQUIRE(hdr(req.headers, "X-Nonce") == "nonce1");
+    REQUIRE(hdr(req.headers, "X-Sign") == "f57ff1173a4736366ebee61da3531470592c7f8aea2aa729b01ebfacc9b0ad4b");
     // Body has fileName, no checkSum.
     REQUIRE(req.body.find("\"fileName\"") != std::string::npos);
     REQUIRE(req.body.find("batch.123.log") != std::string::npos);
     REQUIRE(req.body.find("checkSum") == std::string::npos);
 }
 
-TEST_CASE("build_batch_create_request: empty token -> public + HMAC headers", "[snaplog][batch]")
+TEST_CASE("build_batch_request: each endpoint receives a fresh nonce", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
     SnapLogConfig cfg;
-    cfg.gateway_base = "https://api.snapmaker.com";
-    cfg.hmac_secret  = "c25hcG1ha2VyLU9yY2E";
+    cfg.snaplog_base       = "https://api.snapmaker.com";
+    cfg.public_hmac_secret = "secret";
+    cfg.now_ms             = []() { return int64_t(1778639794110); };
+    int nonce_count = 0;
+    cfg.next_nonce = [&nonce_count]() { return "nonce" + std::to_string(++nonce_count); };
 
-    BatchRequest req = build_batch_create_request(
-        deps, cfg, /*clientId*/ "app-123", /*token*/ "",
-        /*nonce_gen*/ []() { return std::string("9b22cafe00ll00000000ff00dd00ee00"); },
-        /*fileName*/ "mylog.ndjson");
+    const auto create   = build_batch_create_request(cfg, "app-123", "mylog.ndjson");
+    const auto complete = build_batch_complete_request(cfg, "app-123", "key1");
+    const auto cancel   = build_batch_cancel_request(cfg, "app-123", "upload1");
 
-    REQUIRE(req.url == "https://api.snapmaker.com/api/log/public/upload/create");
-    REQUIRE(hdr(req.headers, "Authorization") == "");
-    REQUIRE(hdr(req.headers, "X-Client-Type") == "Orca");
-    REQUIRE(hdr(req.headers, "X-Client-Id") == "app-123");
-    REQUIRE(hdr(req.headers, "X-Timestamp") == "1778639794110");
-    REQUIRE(hdr(req.headers, "X-Nonce") == "9b22cafe00ll00000000ff00dd00ee00");
-    // X-Sign must equal HMAC over "Orca" || clientId || ts || nonce (no sep).
-    // Same rule as realtime — the value must be identical for identical inputs.
-    std::string expected = hmac_sha256_hex("c25hcG1ha2VyLU9yY2E",
-                                           std::string("Orca") + "app-123" + "1778639794110" + "9b22cafe00ll00000000ff00dd00ee00");
-    REQUIRE(hdr(req.headers, "X-Sign") == expected);
-    REQUIRE(hdr(req.headers, "X-Sign").size() == 64);
-    // Body still has fileName.
-    REQUIRE(req.body.find("\"fileName\"") != std::string::npos);
-    REQUIRE(req.body.find("mylog.ndjson") != std::string::npos);
+    REQUIRE(hdr(create.headers, "X-Nonce") == "nonce1");
+    REQUIRE(hdr(complete.headers, "X-Nonce") == "nonce2");
+    REQUIRE(hdr(cancel.headers, "X-Nonce") == "nonce3");
+    REQUIRE(hdr(create.headers, "X-Sign") != hdr(complete.headers, "X-Sign"));
+    REQUIRE(hdr(create.headers, "X-Sign") != hdr(cancel.headers, "X-Sign"));
+    REQUIRE(hdr(complete.headers, "X-Sign") != hdr(cancel.headers, "X-Sign"));
 }
 
-TEST_CASE("build_batch_create_request: X-Sign matches realtime for same inputs", "[snaplog][batch]")
+TEST_CASE("build_batch_request: empty nonce builds no request", "[snaplog][batch]")
 {
-    // The signing rule is identical between realtime and batch — verify by
-    // computing the realtime X-Sign with the same inputs and asserting equality.
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
     SnapLogConfig cfg;
-    cfg.hmac_secret = "c25hcG1ha2VyLU9yY2E";
+    cfg.snaplog_base       = "https://api.snapmaker.com";
+    cfg.public_hmac_secret = "secret";
+    cfg.now_ms             = []() { return int64_t(1778639794110); };
+    cfg.next_nonce         = []() { return std::string{}; };
 
-    RealtimeRequest rt = build_realtime_request(deps, cfg, "app-123", "", []() { return std::string("9b2226b29c3e460eae7ff1d3315c522d"); });
+    const auto create   = build_batch_create_request(cfg, "app-123", "mylog.ndjson");
+    const auto complete = build_batch_complete_request(cfg, "app-123", "key1");
+    const auto cancel   = build_batch_cancel_request(cfg, "app-123", "upload1");
 
-    BatchRequest bq =
-        build_batch_create_request(deps, cfg, "app-123", "", []() { return std::string("9b2226b29c3e460eae7ff1d3315c522d"); }, "f.log");
+    REQUIRE(create.url.empty());
+    REQUIRE(create.headers.empty());
+    REQUIRE(create.body.empty());
+    REQUIRE(complete.url.empty());
+    REQUIRE(complete.headers.empty());
+    REQUIRE(complete.body.empty());
+    REQUIRE(cancel.url.empty());
+    REQUIRE(cancel.headers.empty());
+    REQUIRE(cancel.body.empty());
+}
 
-    REQUIRE(hdr(rt.headers, "X-Sign") == hdr(bq.headers, "X-Sign"));
+TEST_CASE("build_batch_request: empty signing secret builds no request", "[snaplog][batch]")
+{
+    SnapLogConfig cfg;
+    cfg.snaplog_base = "https://api.snapmaker.com";
+    cfg.now_ms       = []() { return int64_t(1778639794110); };
+    cfg.next_nonce   = []() { return std::string("nonce1"); };
+
+    BatchRequest req = build_batch_create_request(cfg, /*clientId*/ "app-123", "mylog.ndjson");
+
+    REQUIRE(req.url.empty());
+    REQUIRE(req.headers.empty());
+    REQUIRE(req.body.empty());
 }
 
 TEST_CASE("build_batch_complete_request: single-part body carries fileName, URL ends /completed", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
     SnapLogConfig cfg;
-    cfg.gateway_base = "https://api.snapmaker.com";
-    cfg.hmac_secret  = "secret";
+    cfg.snaplog_base       = "https://api.snapmaker.com";
+    cfg.public_hmac_secret = "secret";
+    cfg.now_ms             = []() { return int64_t(1778639794110); };
+    cfg.next_nonce         = []() { return std::string("nonce2"); };
 
-    BatchRequest req = build_batch_complete_request(
-        deps, cfg, "app-123", "tok", []() { return std::string("nonce123"); },
-        /*full_key*/ "logs/2026/batch.abc.ndjson");
+    BatchRequest req = build_batch_complete_request(cfg, "app-123", /*full_key*/ "logs/2026/batch.abc.ndjson");
 
-    REQUIRE(req.url == "https://api.snapmaker.com/api/log/upload/completed");
-    REQUIRE(hdr(req.headers, "Authorization") == "Bearer tok");
+    REQUIRE(req.url == "https://api.snapmaker.com/api/log/public/upload/completed");
+    REQUIRE(hdr(req.headers, "Authorization").empty());
+    REQUIRE(hdr(req.headers, "X-Sign") == "34a742481a46fd90021b0d11e243d31ad3d0f3431de83fcbb2618be394335e8d");
     // completed requires fileName (create's returned S3 key). Server returns
     // 110004 "missing fileName" for body={} (was misread as auth-dead; sealed
     // then stranded on disk after retry exhaustion).
@@ -1756,34 +1455,31 @@ TEST_CASE("build_batch_complete_request: single-part body carries fileName, URL 
     REQUIRE(req.body.find("uploadId") == std::string::npos);
 }
 
-TEST_CASE("build_batch_complete_request: empty token -> public completed", "[snaplog][batch]")
+TEST_CASE("build_batch_complete_request: empty signing secret has no request", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    deps.now_ms = []() { return int64_t(100); };
     SnapLogConfig cfg;
-    cfg.gateway_base = "https://gw.example.com";
+    cfg.snaplog_base = "https://gw.example.com";
+    cfg.now_ms       = []() { return int64_t(1); };
+    cfg.next_nonce   = []() { return std::string("nonce2"); };
 
-    BatchRequest req = build_batch_complete_request(deps, cfg, "cid", "", []() { return std::string("n"); }, "key1");
+    BatchRequest req = build_batch_complete_request(cfg, "cid", "key1");
 
-    REQUIRE(req.url == "https://gw.example.com/api/log/public/upload/completed");
-    REQUIRE(hdr(req.headers, "Authorization") == "");
-    REQUIRE(hdr(req.headers, "X-Sign") != "");
+    REQUIRE(req.url.empty());
+    REQUIRE(req.headers.empty());
 }
 
 TEST_CASE("build_batch_cancel_request: empty uploadId -> body {}", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    int64_t     ts = 1778639794110;
-    deps.now_ms    = [&ts]() { return ts; };
     SnapLogConfig cfg;
-    cfg.gateway_base = "https://api.snapmaker.com";
+    cfg.snaplog_base       = "https://api.snapmaker.com";
+    cfg.public_hmac_secret = "secret";
+    cfg.now_ms             = []() { return int64_t(1778639794110); };
+    cfg.next_nonce         = []() { return std::string("nonce2"); };
 
-    BatchRequest req = build_batch_cancel_request(
-        deps, cfg, "app-123", "tok", []() { return std::string("n"); },
-        /*uploadId*/ "");
+    BatchRequest req = build_batch_cancel_request(cfg, "app-123", /*uploadId*/ "");
 
-    REQUIRE(req.url == "https://api.snapmaker.com/api/log/upload/cancel");
-    REQUIRE(hdr(req.headers, "Authorization") == "Bearer tok");
+    REQUIRE(req.url == "https://api.snapmaker.com/api/log/public/upload/cancel");
+    REQUIRE(hdr(req.headers, "Authorization").empty());
     // Empty uploadId -> body is "{}".
     nlohmann::json parsed = nlohmann::json::parse(req.body);
     REQUIRE(parsed.is_object());
@@ -1792,35 +1488,29 @@ TEST_CASE("build_batch_cancel_request: empty uploadId -> body {}", "[snaplog][ba
 
 TEST_CASE("build_batch_cancel_request: non-empty uploadId -> body has it", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    deps.now_ms = []() { return int64_t(0); };
     SnapLogConfig cfg;
+    cfg.public_hmac_secret = "secret";
+    cfg.now_ms             = []() { return int64_t(1778639794110); };
+    cfg.next_nonce         = []() { return std::string("nonce2"); };
 
-    BatchRequest req = build_batch_cancel_request(
-        deps, cfg, "cid", "tok", []() { return std::string("n"); },
-        /*uploadId*/ "upload-xyz");
+    BatchRequest req = build_batch_cancel_request(cfg, "cid", /*uploadId*/ "upload-xyz");
 
-    REQUIRE(req.url.find("/cancel") != std::string::npos);
+    REQUIRE(req.url == "https://api.snapmaker.com/api/log/public/upload/cancel");
     nlohmann::json parsed = nlohmann::json::parse(req.body);
     REQUIRE(parsed["uploadId"] == "upload-xyz");
 }
 
-TEST_CASE("build_batch_cancel_request: empty token -> public cancel + HMAC", "[snaplog][batch]")
+TEST_CASE("build_batch_cancel_request: empty signing secret has no request", "[snaplog][batch]")
 {
-    SnapLogDeps deps;
-    int64_t     ts = 42;
-    deps.now_ms    = [&ts]() { return ts; };
     SnapLogConfig cfg;
-    cfg.gateway_base = "https://gw.example.com";
-    cfg.hmac_secret  = "sec";
+    cfg.snaplog_base = "https://gw.example.com";
+    cfg.now_ms       = []() { return int64_t(1); };
+    cfg.next_nonce   = []() { return std::string("nonce2"); };
 
-    BatchRequest req = build_batch_cancel_request(deps, cfg, "cid", "", []() { return std::string("nonce1"); }, "uid1");
+    BatchRequest req = build_batch_cancel_request(cfg, "cid", "uid1");
 
-    REQUIRE(req.url == "https://gw.example.com/api/log/public/upload/cancel");
-    REQUIRE(hdr(req.headers, "Authorization") == "");
-    REQUIRE(hdr(req.headers, "X-Sign") != "");
-    REQUIRE(hdr(req.headers, "X-Timestamp") == "42");
-    REQUIRE(hdr(req.headers, "X-Nonce") == "nonce1");
+    REQUIRE(req.url.empty());
+    REQUIRE(req.headers.empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -1830,106 +1520,6 @@ TEST_CASE("build_batch_cancel_request: empty token -> public cancel + HMAC", "[s
 // a full batch queue is FIFO-drop-incoming (NOT the realtime Error-protect
 // policy — batch is a disk channel, no Error privilege).
 // ---------------------------------------------------------------------------
-
-TEST_CASE("batch log(): SNAP_LOG_BATCH lands in bt_queue", "[snaplog][batch]")
-{
-    FakeClient fc;
-    fc.init();
-    SnapLogClient::instance().log(SnapLogLevel::Info, "batch-event", SnapLogExt{{"eventName", "batch_test"}}, SnapLogPolicy::Buffered,
-                                  __FUNCTION__, __LINE__);
-    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 1);
-    REQUIRE(SnapLogClient::instance().realtime_queue_size_for_test() == 0);
-    fc.shutdown();
-}
-
-TEST_CASE("batch log(): consent false drops event", "[snaplog][batch]")
-{
-    FakeClient fc;
-    fc.deps.consent_ok = []() { return false; };
-    fc.init();
-    SnapLogClient::instance().log(SnapLogLevel::Info, "no-consent", SnapLogExt{{"eventName", "batch_test"}}, SnapLogPolicy::Buffered,
-                                  __FUNCTION__, __LINE__);
-    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
-    fc.shutdown();
-}
-
-TEST_CASE("batch log(): disabled event name not enqueued", "[snaplog][batch]")
-{
-    FakeClient fc;
-    fc.cfg.event_disable_list.push_back("blocked_batch");
-    fc.init();
-    SnapLogClient::instance().log(SnapLogLevel::Info, "blocked", SnapLogExt{{"eventName", "blocked_batch"}}, SnapLogPolicy::Buffered,
-                                  __FUNCTION__, __LINE__);
-    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
-    // A non-disabled event IS enqueued.
-    SnapLogClient::instance().log(SnapLogLevel::Info, "ok", SnapLogExt{{"eventName", "ok_batch"}}, SnapLogPolicy::Buffered, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 1);
-    fc.shutdown();
-}
-
-TEST_CASE("batch log(): rate limit throttles beyond cap", "[snaplog][batch]")
-{
-    FakeClient fc;
-    fc.cfg.event_rate_cap_per_sec["batch_throttled"] = 2;
-    fc.init();
-    for (int i = 0; i < 3; ++i) {
-        SnapLogClient::instance().log(SnapLogLevel::Info, "msg", SnapLogExt{{"eventName", "batch_throttled"}}, SnapLogPolicy::Buffered,
-                                      __FUNCTION__, __LINE__);
-    }
-    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 2);
-    fc.shutdown();
-}
-
-TEST_CASE("batch log(): full queue drops incoming + increments counter", "[snaplog][batch]")
-{
-    FakeClient fc;
-    fc.cfg.batch_queue_cap = 4;
-    fc.init();
-    for (std::size_t i = 0; i < 4; ++i) {
-        SnapLogClient::instance().log(SnapLogLevel::Info, "fill", SnapLogExt{{"eventName", "batch_fill"}}, SnapLogPolicy::Buffered,
-                                      __FUNCTION__, __LINE__);
-    }
-    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 4);
-    REQUIRE(SnapLogClient::instance().batch_queue_dropped_for_test() == 0);
-
-    // 5th event: queue full → drop incoming (FIFO-drop, NOT Error-protect).
-    SnapLogClient::instance().log(SnapLogLevel::Error, "overflow", SnapLogExt{{"eventName", "batch_over"}}, SnapLogPolicy::Buffered,
-                                  __FUNCTION__, __LINE__);
-    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 4);
-    REQUIRE(SnapLogClient::instance().batch_queue_dropped_for_test() == 1);
-    fc.shutdown();
-}
-
-TEST_CASE("batch log(): full queue drops Error too (no Error privilege)", "[snaplog][batch]")
-{
-    // Batch queue uses FIFO-drop-incoming, NOT the realtime Error-protect policy.
-    // Even an incoming Error on a full batch queue is dropped.
-    FakeClient fc;
-    fc.cfg.batch_queue_cap = 2;
-    fc.init();
-    // Fill with Info events.
-    SnapLogClient::instance().log(SnapLogLevel::Info, "i1", SnapLogExt{{"eventName", "b"}}, SnapLogPolicy::Buffered, __FUNCTION__, __LINE__);
-    SnapLogClient::instance().log(SnapLogLevel::Info, "i2", SnapLogExt{{"eventName", "b"}}, SnapLogPolicy::Buffered, __FUNCTION__, __LINE__);
-    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 2);
-    // Error on full batch queue → dropped, NOT admitted via eviction.
-    SnapLogClient::instance().log(SnapLogLevel::Error, "err", SnapLogExt{{"eventName", "b"}}, SnapLogPolicy::Buffered, __FUNCTION__,
-                                  __LINE__);
-    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 2);
-    REQUIRE(SnapLogClient::instance().batch_queue_dropped_for_test() == 1);
-    fc.shutdown();
-}
-
-TEST_CASE("batch log(): config disabled drops event", "[snaplog][batch]")
-{
-    FakeClient fc;
-    fc.cfg.enabled = false;
-    fc.init();
-    SnapLogClient::instance().log(SnapLogLevel::Info, "disabled", SnapLogExt{{"eventName", "batch_test"}}, SnapLogPolicy::Buffered,
-                                  __FUNCTION__, __LINE__);
-    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
-    fc.shutdown();
-}
 
 // ---------------------------------------------------------------------------
 // Plan B Task 5 (Part A): bt_worker_loop skeleton
@@ -1955,9 +1545,6 @@ struct BatchFlusherFixture
         int64_t     ts  = 1700000000000;
         deps.now_ms     = [&ts]() { return ts++; };
         deps.consent_ok = []() { return true; };
-        deps.user_token = []() { return std::string("tok"); };
-        deps.user_id    = []() { return std::string("uid-1"); };
-        deps.device_id  = []() { return std::string("did-1"); };
         deps.machine_id = []() { return std::string("mid-xyz"); };
 
         SnapLogConfig cfg;
@@ -1982,12 +1569,107 @@ struct BatchFlusherFixture
 
     void enqueue(const std::string& msg, const std::string& eventName = "bt_test")
     {
+        std::string user_id;
+        {
+            std::lock_guard<std::mutex> tk(in->token_mu);
+            user_id = in->user_id;
+        }
         std::lock_guard<std::mutex> lk(in->queue_mu);
-        in->bt_queue.push_back(
-            SnapLogClient::RtEvent{SnapLogLevel::Info, msg, SnapLogExt{{"eventName", eventName}, {"opId", "op-" + msg}}, "bt_test_logger"});
+        in->bt_queue.push_back(SnapLogClient::LogEvent{SnapLogLevel::Info, msg, SnapLogExt{{"eventName", eventName}, {"opId", "op-" + msg}},
+                                                       std::move(user_id)});
     }
 };
 } // anonymous namespace
+
+TEST_CASE("batch log(): SnapLog sink lands in bt_queue", "[snaplog][batch]")
+{
+    FakeClient fc;
+    fc.init();
+    SnapLogClient::instance().log(SnapLogLevel::Info, "batch-event", SnapLogExt{{"eventName", "batch_test"}}, SinkSnapLog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 1);
+    fc.shutdown();
+}
+
+TEST_CASE("batch log(): consent false drops event", "[snaplog][batch]")
+{
+    FakeClient fc;
+    fc.deps.consent_ok = []() { return false; };
+    fc.init();
+    SnapLogClient::instance().log(SnapLogLevel::Info, "no-consent", SnapLogExt{{"eventName", "batch_test"}}, SinkSnapLog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
+    fc.shutdown();
+}
+
+TEST_CASE("batch log(): disabled event name not enqueued", "[snaplog][batch]")
+{
+    FakeClient fc;
+    fc.cfg.event_disable_list.push_back("blocked_batch");
+    fc.init();
+    SnapLogClient::instance().log(SnapLogLevel::Info, "blocked", SnapLogExt{{"eventName", "blocked_batch"}}, SinkSnapLog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
+    // A non-disabled event IS enqueued.
+    SnapLogClient::instance().log(SnapLogLevel::Info, "ok", SnapLogExt{{"eventName", "ok_batch"}}, SinkSnapLog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 1);
+    fc.shutdown();
+}
+
+TEST_CASE("batch log(): rate limit throttles beyond cap", "[snaplog][batch]")
+{
+    FakeClient fc;
+    fc.cfg.event_rate_cap_per_sec["batch_throttled"] = 2;
+    fc.init();
+    for (int i = 0; i < 3; ++i) {
+        SnapLogClient::instance().log(SnapLogLevel::Info, "msg", SnapLogExt{{"eventName", "batch_throttled"}}, SinkSnapLog);
+    }
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 2);
+    fc.shutdown();
+}
+
+TEST_CASE("batch log(): full queue drops incoming + increments counter", "[snaplog][batch]")
+{
+    FakeClient fc;
+    fc.cfg.batch_queue_cap = 4;
+    fc.init();
+    for (std::size_t i = 0; i < 4; ++i) {
+        SnapLogClient::instance().log(SnapLogLevel::Info, "fill", SnapLogExt{{"eventName", "batch_fill"}}, SinkSnapLog);
+    }
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 4);
+    REQUIRE(SnapLogClient::instance().batch_queue_dropped_for_test() == 0);
+
+    // 5th event: queue full → drop incoming (FIFO-drop, NOT Error-protect).
+    SnapLogClient::instance().log(SnapLogLevel::Error, "overflow", SnapLogExt{{"eventName", "batch_over"}}, SinkSnapLog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 4);
+    REQUIRE(SnapLogClient::instance().batch_queue_dropped_for_test() == 1);
+    fc.shutdown();
+}
+
+TEST_CASE("batch log(): full queue drops Error too (no Error privilege)", "[snaplog][batch]")
+{
+    // Batch queue uses FIFO-drop-incoming, NOT the realtime Error-protect policy.
+    // Even an incoming Error on a full batch queue is dropped.
+    FakeClient fc;
+    fc.cfg.batch_queue_cap = 2;
+    fc.init();
+    // Fill with Info events.
+    SnapLogClient::instance().log(SnapLogLevel::Info, "i1", SnapLogExt{{"eventName", "b"}}, SinkSnapLog);
+    SnapLogClient::instance().log(SnapLogLevel::Info, "i2", SnapLogExt{{"eventName", "b"}}, SinkSnapLog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 2);
+    // Error on full batch queue → dropped, NOT admitted via eviction.
+    SnapLogClient::instance().log(SnapLogLevel::Error, "err", SnapLogExt{{"eventName", "b"}}, SinkSnapLog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 2);
+    REQUIRE(SnapLogClient::instance().batch_queue_dropped_for_test() == 1);
+    fc.shutdown();
+}
+
+TEST_CASE("batch log(): config disabled drops event", "[snaplog][batch]")
+{
+    FakeClient fc;
+    fc.cfg.enabled = false;
+    fc.init();
+    SnapLogClient::instance().log(SnapLogLevel::Info, "disabled", SnapLogExt{{"eventName", "batch_test"}}, SinkSnapLog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
+    fc.shutdown();
+}
 
 TEST_CASE("bt_worker_loop drains bt_queue into active.log", "[snaplog][batch]")
 {
@@ -2014,6 +1696,30 @@ TEST_CASE("bt_worker_loop drains bt_queue into active.log", "[snaplog][batch]")
         qsize = f.in->bt_queue.size();
     }
     REQUIRE(qsize == 0);
+}
+
+TEST_CASE("bt_worker_loop renders the event-time userId", "[snaplog][batch]")
+{
+    BatchFlusherFixture f;
+    {
+        std::lock_guard<std::mutex> tk(f.in->token_mu);
+        f.in->user_id = "";
+    }
+    f.enqueue("anonymous-event", "identity_snapshot");
+    {
+        std::lock_guard<std::mutex> tk(f.in->token_mu);
+        f.in->user_id = "user-after";
+    }
+    f.in->stop_receiving.store(true);
+
+    SnapLogClient::bt_worker_loop(f.in);
+
+    REQUIRE(boost::filesystem::exists(f.in->active_path));
+    std::ifstream   ifs(f.in->active_path.string());
+    std::string     content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    nlohmann::json parsed = nlohmann::json::parse(content.substr(0, content.size() - 1));
+    REQUIRE(parsed["message"] == "anonymous-event");
+    REQUIRE(parsed["userId"] == "");
 }
 
 TEST_CASE("bt_worker_loop rotates active to sealed at active_max_bytes", "[snaplog][batch]")
@@ -2205,10 +1911,6 @@ struct BatchUploadFixture
     std::atomic<int>           completed_count{0};
     std::atomic<int>           cancel_count{0};
 
-    // The token the flusher reads from Internals->user_token. Mutable so the
-    // token-freeze test can flip it mid-flight.
-    std::string live_token{"tok-A"};
-
     FakeBatchScript script;
 
     // Classify a (method,url) into a kind string.
@@ -2232,9 +1934,6 @@ struct BatchUploadFixture
         int64_t     ts  = 1700000000000;
         deps.now_ms     = [&ts]() { return ts++; };
         deps.consent_ok = []() { return true; };
-        deps.user_token = [this]() { return this->live_token; };
-        deps.user_id    = []() { return std::string("uid-1"); };
-        deps.device_id  = []() { return std::string("did-1"); };
         deps.machine_id = []() { return std::string("mid-xyz"); };
 
         // Scripted do_request: classify, record, build handle, fulfill.
@@ -2282,17 +1981,21 @@ struct BatchUploadFixture
         };
 
         SnapLogConfig cfg;
-        cfg.poll_interval_ms        = 1;
-        cfg.drain_batch_per_tick    = 256;
-        cfg.drain_wall_budget_ms    = 50;
-        cfg.active_max_bytes        = 1024;
-        cfg.batch_max_events        = 1000;
-        cfg.batch_max_bytes         = 1 * 1024 * 1024;
-        cfg.sealed_max_disk_mb      = 256; // big — backpressure off in upload tests
-        cfg.sealed_max_upload_bytes = 5 * 1024 * 1024;
-        cfg.batch_max_retry         = 3;
-        cfg.line_max_bytes          = 64 * 1024;
-    cfg.home_for_redact         = "/home/test";
+        cfg.poll_interval_ms     = 1;
+        cfg.drain_batch_per_tick = 256;
+        cfg.drain_wall_budget_ms = 50;
+        cfg.active_max_bytes     = 1024;
+        cfg.batch_max_events     = 1000;
+        cfg.batch_max_bytes      = 1 * 1024 * 1024;
+        cfg.sealed_max_disk_mb   = 256; // big — backpressure off in upload tests
+        cfg.batch_max_retry      = 3;
+        cfg.line_max_bytes       = 64 * 1024;
+        cfg.home_for_redact      = "/home/test";
+        cfg.public_hmac_secret   = "test-public-secret";
+        cfg.now_ms               = [&ts]() { return ts++; };
+        cfg.next_nonce           = [nonce_count = 0]() mutable {
+            return "nonce-" + std::to_string(nonce_count++);
+        };
 
         in                     = SnapLogClient::make_internals_for_test(std::move(deps), std::move(cfg));
         in->spool_dir_resolved = spool;
@@ -2301,10 +2004,10 @@ struct BatchUploadFixture
         in->drain_and_flush.store(false);
         in->current_batch_id = "batch00000001";
         in->events_in_active = 0;
-        // Seed the token Internals->user_token (flusher freezes from here).
+        // Seed the account id used by the SnapLog admission gate.
         {
             std::lock_guard<std::mutex> tk(in->token_mu);
-            in->user_token = live_token;
+            in->user_id = "user-A";
         }
     }
 
@@ -2535,12 +2238,11 @@ TEST_CASE("bt upload: completed fails -> sealed retained (at-least-once)", "[sna
     REQUIRE(f.completed_count.load() >= 1);
 }
 
-TEST_CASE("bt upload: token frozen across create+completed (mid-flight change ignored)", "[snaplog][batch]")
+TEST_CASE("bt upload: public auth carries no account Authorization", "[snaplog][batch]")
 {
     BatchUploadFixture f;
     auto               sealed = f.make_sealed("ddd444");
-    // Track the token seen per kind. create should freeze "tok-A"; after create,
-    // the test flips live_token to "tok-B", but completed must still use "tok-A".
+    // Track Authorization per kind; public lifecycle requests never carry it.
     std::mutex  m;
     std::string create_tok, completed_tok;
     bool        create_done = false;
@@ -2562,8 +2264,6 @@ TEST_CASE("bt upload: token frozen across create+completed (mid-flight change ig
         if (kind == "put")
             return {200, std::string{}, false};
         if (kind == "completed") {
-            // Flip the live token AFTER create but BEFORE completed uses it.
-            // If frozen, completed_tok should be the pre-create value.
             std::lock_guard<std::mutex> lk(m);
             completed_tok = last_tok;
             return {200, ok_body(), false};
@@ -2573,12 +2273,8 @@ TEST_CASE("bt upload: token frozen across create+completed (mid-flight change ig
 
     std::thread t([&]() { SnapLogClient::bt_worker_loop(f.in); });
 
-    // After create fires, flip the live token Internals sees.
+    // After create fires, the lifecycle continues with public credentials.
     REQUIRE(f.wait_until([&]() { return f.create_count.load() >= 1; }));
-    {
-        std::lock_guard<std::mutex> tk(f.in->token_mu);
-        f.in->user_token = "tok-B";
-    }
 
     REQUIRE(f.wait_until([&]() { return f.completed_count.load() >= 1; }));
     REQUIRE(f.wait_until([&]() { return !boost::filesystem::exists(sealed); }));
@@ -2587,10 +2283,9 @@ TEST_CASE("bt upload: token frozen across create+completed (mid-flight change ig
     if (t.joinable())
         t.join();
 
-    // Both create and completed must carry the FROZEN token (tok-A), even though
-    // user_token was flipped to tok-B before completed fired.
-    REQUIRE(create_tok == "tok-A");
-    REQUIRE(completed_tok == "tok-A");
+    // Public requests carry no account Authorization.
+    REQUIRE(create_tok.empty());
+    REQUIRE(completed_tok.empty());
 }
 
 TEST_CASE("bt upload: deps_invalid drains queue with cached_context + skips create", "[snaplog][batch]")
@@ -2610,7 +2305,6 @@ TEST_CASE("bt upload: deps_invalid drains queue with cached_context + skips crea
         c.service                  = "snapmaker-desktop";
         c.clientType               = "Orca";
         c.batchId                  = f.in->current_batch_id;
-        c.thread                   = "bt-worker";
         c.home_for_redact          = "/home/test";
         f.in->cached_context_valid = true;
     }
@@ -2618,10 +2312,10 @@ TEST_CASE("bt upload: deps_invalid drains queue with cached_context + skips crea
     // Enqueue events that must be drained under deps_invalid.
     {
         std::lock_guard<std::mutex> lk(f.in->queue_mu);
-        f.in->bt_queue.push_back(SnapLogClient::RtEvent{SnapLogLevel::Info, "deps-invalid-event-1",
-                                                        SnapLogExt{{"eventName", "di"}, {"opId", "op-di1"}}, "di_logger"});
-        f.in->bt_queue.push_back(SnapLogClient::RtEvent{SnapLogLevel::Info, "deps-invalid-event-2",
-                                                        SnapLogExt{{"eventName", "di"}, {"opId", "op-di2"}}, "di_logger"});
+        f.in->bt_queue.push_back(
+            SnapLogClient::LogEvent{SnapLogLevel::Info, "deps-invalid-event-1", SnapLogExt{{"eventName", "di"}, {"opId", "op-di1"}}});
+        f.in->bt_queue.push_back(
+            SnapLogClient::LogEvent{SnapLogLevel::Info, "deps-invalid-event-2", SnapLogExt{{"eventName", "di"}, {"opId", "op-di2"}}});
     }
 
     // Flip deps_invalid. attempt_upload must skip (no create); the drain must
@@ -2739,9 +2433,6 @@ struct BatchLifecycleFixture
     {
         deps.now_ms     = [this]() { return now++; };
         deps.consent_ok = []() { return true; };
-        deps.user_token = []() { return std::string("tok"); };
-        deps.user_id    = []() { return std::string("uid-1"); };
-        deps.device_id  = []() { return std::string("did-1"); };
         deps.machine_id = []() { return std::string("mid-xyz"); };
         deps.do_request = [this](const std::string& method, const std::string&                                                url,
                                  std::vector<std::pair<std::string, std::string>> /*headers*/, const boost::filesystem::path* body_file,
@@ -2797,6 +2488,11 @@ struct BatchLifecycleFixture
         cfg.home_for_redact         = "/home/test";
         cfg.spool_dir               = spool.string(); // wire the temp spool
         cfg.batch_join_deadline_sec = 5;              // short for tests
+        cfg.public_hmac_secret      = "test-public-secret";
+        cfg.now_ms                  = [this]() { return now++; };
+        cfg.next_nonce              = [nonce_count = 0]() mutable {
+            return "lifecycle-nonce-" + std::to_string(nonce_count++);
+        };
     }
 
     void init()
@@ -2804,7 +2500,7 @@ struct BatchLifecycleFixture
         SnapLogDeps   d = deps;
         SnapLogConfig c = cfg;
         SnapLogClient::instance().init(std::move(d), std::move(c));
-        SnapLogClient::instance().set_user_token("tok"); // logged-in default (login gate)
+        SnapLogClient::instance().set_user_id("user-1"); // payload identity
     }
     void shutdown() { SnapLogClient::instance().shutdown(); }
 
@@ -2892,6 +2588,83 @@ TEST_CASE("batch lifecycle: init consent OFF purges recovery without worker", "[
     f.shutdown();
 }
 
+TEST_CASE("batch lifecycle: consent OFF purge retries after spool lock is released", "[snaplog][batch]")
+{
+    BatchLifecycleFixture f;
+    namespace fs = boost::filesystem;
+
+    {
+        fs::ofstream ofs((f.spool / "active.log").string(), std::ios::binary);
+        ofs << "{\"level\":\"INFO\",\"message\":\"locked-recovery\"}\n";
+    }
+    auto prior_sealed = f.spool / "batch.1699999999000.locked0000.sealed";
+    {
+        fs::ofstream ofs(prior_sealed.string(), std::ios::binary);
+        ofs << "{\"level\":\"WARN\",\"message\":\"locked-sealed\"}\n";
+    }
+
+    auto other_owner = SnapLogClient::try_acquire_spool_lock(f.spool);
+    REQUIRE(other_owner.acquired);
+
+    f.deps.consent_ok = []() { return false; };
+    f.init();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    other_owner = {};
+    REQUIRE(f.wait_until(
+        [&]() {
+            boost::system::error_code ec;
+            return list_sealed(f.spool).empty() && !fs::exists(f.spool / "active.log", ec);
+        },
+        3000));
+
+    REQUIRE_FALSE(SnapLogClient::instance().batch_worker_joinable_for_test());
+    REQUIRE(f.create_count.load() == 0);
+    f.shutdown();
+}
+
+TEST_CASE("batch lifecycle: anonymous state uploads sealed files", "[snaplog][batch]")
+{
+    BatchLifecycleFixture f;
+    namespace fs = boost::filesystem;
+
+    f.init();
+    SnapLogClient::instance().set_user_id("");
+
+    auto sealed = f.spool / "batch.1699999999000.logout0000.sealed";
+    {
+        fs::ofstream ofs(sealed.string(), std::ios::binary);
+        ofs << "{\"level\":\"INFO\",\"message\":\"logout-sealed\"}\n";
+    }
+
+    REQUIRE(f.wait_until([&]() { return f.completed_count.load() == 1 && !fs::exists(sealed); }, 3000));
+    REQUIRE(f.create_count.load() == 1);
+    REQUIRE(f.put_count.load() == 1);
+    REQUIRE(f.completed_count.load() == 1);
+    REQUIRE(f.cancel_count.load() == 0);
+    REQUIRE_FALSE(fs::exists(sealed));
+    f.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// Task B6 fix: consent-OFF must return without waiting for a stuck worker. The
+// worker is moved out immediately; OFF->ON defers the replacement until that
+// worker has exited and the privacy purge has completed.
+//
+// We force a REAL join timeout by making the FIRST create call BLOCK inside
+// do_request until the test releases a gate. Because bt_worker_loop only checks
+// consent at the top of each tick, and attempt_upload calls do_request
+// synchronously, a do_request that blocks parks the worker mid-tick — it never
+// returns to the top to observe consent-false, so the bounded join in
+// set_consent(false) times out. Pre-fix, the timeout branch only set
+// deps_invalid and left bt_worker joinable -> OFF->ON never restarts (guard is
+// !bt_worker.joinable()). Post-fix, the worker is moved out of bt_worker so the
+// object is non-joinable immediately and OFF->ON restarts.
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Fix A: make_upload_file_name produces unique fileNames per call.
+// Two calls with the same batchId must differ (different now_ms / seq).
+// ---------------------------------------------------------------------------
 TEST_CASE("batch lifecycle: shutdown drain flushes bt_queue to sealed and uploads", "[snaplog][batch]")
 {
     BatchLifecycleFixture f;
@@ -2901,8 +2674,7 @@ TEST_CASE("batch lifecycle: shutdown drain flushes bt_queue to sealed and upload
     // Enqueue some batch events.
     for (int i = 0; i < 3; ++i) {
         SnapLogClient::instance().log(SnapLogLevel::Info, "drain-event-" + std::to_string(i),
-                                      SnapLogExt{{"eventName", "drain_test"}, {"opId", "op" + std::to_string(i)}}, SnapLogPolicy::Buffered,
-                                      __FUNCTION__, __LINE__);
+                                      SnapLogExt{{"eventName", "drain_test"}, {"opId", "op" + std::to_string(i)}}, SinkSnapLog);
     }
     REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 3);
 
@@ -2928,7 +2700,7 @@ TEST_CASE("batch lifecycle: consent OFF purges spool + no create after", "[snapl
     // may or may not rotate to sealed (depends on thresholds + timing), but
     // either way there will be at least an active.log present.
     SnapLogClient::instance().log(SnapLogLevel::Info, "pre-consent-off", SnapLogExt{{"eventName", "consent_test"}, {"opId", "op1"}},
-                                  SnapLogPolicy::Buffered, __FUNCTION__, __LINE__);
+                                  SinkSnapLog);
     // Wait for the worker to have drained (queue should be empty).
     REQUIRE(f.wait_until([&]() { return SnapLogClient::instance().batch_queue_size_for_test() == 0; }, 3000));
 
@@ -2953,8 +2725,7 @@ TEST_CASE("batch lifecycle: consent OFF purges spool + no create after", "[snapl
     REQUIRE(f.create_count.load() == creates_after_consent_off);
 
     // Enqueuing a new batch event while consent is OFF → dropped (no-op).
-    SnapLogClient::instance().log(SnapLogLevel::Info, "after-off", SnapLogExt{{"eventName", "consent_test"}, {"opId", "op2"}},
-                                  SnapLogPolicy::Buffered, __FUNCTION__, __LINE__);
+    SnapLogClient::instance().log(SnapLogLevel::Info, "after-off", SnapLogExt{{"eventName", "consent_test"}, {"opId", "op2"}}, SinkSnapLog);
     REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
 
     f.shutdown();
@@ -2975,7 +2746,7 @@ TEST_CASE("batch lifecycle: consent ON after OFF clears bt_queue + restarts work
 
     // Now enqueue a batch event — it should be accepted and drained.
     SnapLogClient::instance().log(SnapLogLevel::Info, "after-on", SnapLogExt{{"eventName", "consent_on_test"}, {"opId", "op3"}},
-                                  SnapLogPolicy::Buffered, __FUNCTION__, __LINE__);
+                                  SinkSnapLog);
     REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() <= 1);
 
     // Worker should drain the event to active.log (file exists).
@@ -2993,28 +2764,12 @@ TEST_CASE("batch lifecycle: periodic flush rotates+uploads after batch_flush_sec
     f.init();
 
     // 1 event — below size/count thresholds, so only the flush timer rotates it.
-    SnapLogClient::instance().log(SnapLogLevel::Info, "flush-event", SnapLogExt{{"eventName", "flush_test"}, {"opId", "opf"}},
-                                  SnapLogPolicy::Buffered, __FUNCTION__, __LINE__);
+    SnapLogClient::instance().log(SnapLogLevel::Info, "flush-event", SnapLogExt{{"eventName", "flush_test"}, {"opId", "opf"}}, SinkSnapLog);
     // Periodic flush (1s) -> rotate -> create+PUT+completed -> sealed deleted.
     REQUIRE(f.wait_until([&]() { return list_sealed(f.spool).empty() && f.create_count.load() >= 1; }, 5000));
     f.shutdown();
 }
 
-// ---------------------------------------------------------------------------
-// Task B6 fix: consent-OFF must return without waiting for a stuck worker. The
-// worker is moved out immediately; OFF->ON defers the replacement until that
-// worker has exited and the privacy purge has completed.
-//
-// We force a REAL join timeout by making the FIRST create call BLOCK inside
-// do_request until the test releases a gate. Because bt_worker_loop only checks
-// consent at the top of each tick, and attempt_upload calls do_request
-// synchronously, a do_request that blocks parks the worker mid-tick — it never
-// returns to the top to observe consent-false, so the bounded join in
-// set_consent(false) times out. Pre-fix, the timeout branch only set
-// deps_invalid and left bt_worker joinable -> OFF->ON never restarts (guard is
-// !bt_worker.joinable()). Post-fix, the worker is moved out of bt_worker so the
-// object is non-joinable immediately and OFF->ON restarts.
-// ---------------------------------------------------------------------------
 TEST_CASE("batch lifecycle: consent OFF join timeout leaves bt_worker restartable", "[snaplog][batch]")
 {
     namespace fs = boost::filesystem;
@@ -3037,9 +2792,6 @@ TEST_CASE("batch lifecycle: consent OFF join timeout leaves bt_worker restartabl
     SnapLogDeps deps;
     deps.now_ms     = [&now]() { return now++; };
     deps.consent_ok = []() { return true; };
-    deps.user_token = []() { return std::string("tok"); };
-    deps.user_id    = []() { return std::string("uid-1"); };
-    deps.device_id  = []() { return std::string("did-1"); };
     deps.machine_id = []() { return std::string("mid-xyz"); };
     deps.do_request = [&](const std::string& method, const std::string& url, std::vector<std::pair<std::string, std::string>> /*headers*/,
                           const boost::filesystem::path* /*body_file*/, const std::string* /*body_str*/) -> std::shared_ptr<SnapLogHandle> {
@@ -3092,21 +2844,26 @@ TEST_CASE("batch lifecycle: consent OFF join timeout leaves bt_worker restartabl
     cfg.sealed_max_disk_mb      = 256;
     cfg.batch_max_retry         = 3;
     cfg.line_max_bytes          = 64 * 1024;
-        cfg.home_for_redact         = "/home/test";
+    cfg.home_for_redact         = "/home/test";
     cfg.spool_dir               = spool.string();
     cfg.batch_join_deadline_sec = 1; // short so the timeout branch fires fast
+    cfg.public_hmac_secret      = "test-public-secret";
+    cfg.now_ms                  = [&now]() { return now++; };
+    cfg.next_nonce              = [nonce_count = 0]() mutable {
+        return "timeout-nonce-" + std::to_string(nonce_count++);
+    };
 
     {
         SnapLogDeps   d = deps;
         SnapLogConfig c = cfg;
         SnapLogClient::instance().init(std::move(d), std::move(c));
     }
-    SnapLogClient::instance().set_user_token("tok"); // login gate
+    SnapLogClient::instance().set_user_id("user-1"); // payload identity
 
     // Enqueue an event; the worker drains it, rotates to sealed, then calls
     // create (which blocks on the gate).
     SnapLogClient::instance().log(SnapLogLevel::Info, "stuck-upload", SnapLogExt{{"eventName", "timeout_test"}, {"opId", "op1"}},
-                                  SnapLogPolicy::Buffered, __FUNCTION__, __LINE__);
+                                  SinkSnapLog);
 
     // Wait until the worker is parked inside the blocking create.
     auto wait_flag = [](std::atomic<bool>& fl, int timeout_ms) {
@@ -3136,7 +2893,7 @@ TEST_CASE("batch lifecycle: consent OFF join timeout leaves bt_worker restartabl
         SnapLogConfig reinit_cfg  = cfg;
         SnapLogClient::instance().init(std::move(reinit_deps), std::move(reinit_cfg));
     }
-    SnapLogClient::instance().set_user_token("tok");
+    SnapLogClient::instance().set_user_id("user-1");
     REQUIRE_FALSE(SnapLogClient::instance().batch_worker_joinable_for_test());
 
     // OFF -> ON records consent as true, but the replacement waits for the
@@ -3146,7 +2903,7 @@ TEST_CASE("batch lifecycle: consent OFF join timeout leaves bt_worker restartabl
 
     // Events accepted after ON remain queued across the deferred purge.
     SnapLogClient::instance().log(SnapLogLevel::Info, "replacement-upload", SnapLogExt{{"eventName", "timeout_recovery"}, {"opId", "op2"}},
-                                  SnapLogPolicy::Buffered, __FUNCTION__, __LINE__);
+                                  SinkSnapLog);
 
     REQUIRE(create_count.load() == 1);
     REQUIRE(put_count.load() == 0);
@@ -3181,10 +2938,6 @@ TEST_CASE("batch lifecycle: consent OFF join timeout leaves bt_worker restartabl
     SnapLogClient::instance().shutdown();
 }
 
-// ---------------------------------------------------------------------------
-// Fix A: make_upload_file_name produces unique fileNames per call.
-// Two calls with the same batchId must differ (different now_ms / seq).
-// ---------------------------------------------------------------------------
 TEST_CASE("make_upload_file_name: unique per call with same batchId", "[snaplog][batch]")
 {
     std::string fn1 = make_upload_file_name("client-A", "batch-001", 1700000000000, 0);
@@ -3263,4 +3016,21 @@ TEST_CASE("SpoolLock: exclusive — second acquire fails, release enables retry"
     } // lk3 released
 
     fs::remove_all(dir);
+}
+
+TEST_CASE("SnapLog sink is dropped while another process owns the spool lock", "[snaplog][batch][pipeline]")
+{
+    BatchLifecycleFixture f;
+
+    auto other_owner = SnapLogClient::try_acquire_spool_lock(f.spool);
+    REQUIRE(other_owner.acquired);
+
+    f.init();
+    REQUIRE_FALSE(SnapLogClient::instance().batch_worker_joinable_for_test());
+
+    SnapLogClient::instance().log(SnapLogLevel::Info, "locked", SnapLogExt{{"eventName", "spool_locked"}}, SinkSnapLog);
+    REQUIRE(SnapLogClient::instance().batch_queue_size_for_test() == 0);
+
+    other_owner = {};
+    f.shutdown();
 }

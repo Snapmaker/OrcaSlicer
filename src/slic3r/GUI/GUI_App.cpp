@@ -40,7 +40,6 @@
 #include <thread>
 #include <string_view>
 #include <cstdio>
-#include <random>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem/fstream.hpp>
 #include <boost/algorithm/string.hpp>
@@ -1044,7 +1043,7 @@ void GUI_App::post_init()
                     input_files.push_back(wxString::FromUTF8(file));
                 }
                 this->plater()->set_project_filename(_L("Untitled"));
-                this->plater()->load_files(input_files);
+                this->plater()->load_files(input_files, "command_line");
                 try {
                     if (!input_files.empty()) {
                         std::string           file_path = input_files.front().ToStdString();
@@ -2478,6 +2477,54 @@ class wxBoostLog : public wxLog
     }
 };
 
+void GUI_App::initialize_snaplog()
+{
+    namespace snap = ::Slic3r::SnapLog::v1;
+    snap::SnapLogConfig snap_cfg;
+    const std::string snap_cc = app_config ? app_config->get_country_code() : "";
+    snap::apply_production_snaplog_site(snap_cfg, snap_cc);
+    snap_cfg.spool_dir = (boost::filesystem::path(data_dir()) / "log_upload_spool").string();
+    // Prefer the OS/hardware machine id so SnapLog and Sentry identify the
+    // same physical machine. getMachineId() is empty on Linux and can fail on
+    // Windows/macOS; fall back to the per-install instance id so X-Client-Id
+    // stays non-empty and uploads keep working.
+    std::string machine_id = common::getMachineId();
+    while (!machine_id.empty() && (machine_id.back() == '\0' || machine_id.back() == '\r' || machine_id.back() == '\n' ||
+                                   machine_id.back() == ' ' || machine_id.back() == '\t'))
+        machine_id.pop_back();
+    if (machine_id.empty() && app_config) {
+        machine_id = ::Slic3r::instance_id::ensure(*app_config);
+    }
+
+    snap::SnapLogDeps deps;
+    deps.do_request            = snap::make_production_do_request(snap_cfg);
+    const bool privacy_consent = app_config && app_config->get("app", PRIVACY_POLICY_FLAGS) == "true";
+    deps.consent_ok            = [privacy_consent]() { return privacy_consent; };
+    deps.machine_id            = [mid = std::move(machine_id)]() -> std::string { return mid; };
+    deps.now_ms                = []() -> int64_t {
+        return static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    };
+
+    snap_cfg.app_version = SLIC3R_BUILD_ID;
+    snap_cfg.profile_version = common::get_profile_version();
+    const wxScopedCharBuffer os_buffer = wxGetOsDescription().ToUTF8();
+    snap_cfg.os_version.assign(os_buffer.data(), os_buffer.length());
+    snap_cfg.process_id = std::to_string(get_current_pid());
+    snap_cfg.home_for_redact = data_dir();
+    snap_cfg.public_hmac_secret = SNAP_LOG_PUBLIC_HMAC_SECRET;
+    snap_cfg.now_ms = deps.now_ms;
+
+    snap::SnapLogClient::instance().init(std::move(deps), std::move(snap_cfg));
+}
+
+void GUI_App::reconfigure_snaplog_site()
+{
+    if (!app_config)
+        return;
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().reconfigure_site(app_config->get_country_code());
+}
+
 bool GUI_App::on_init_inner()
 {
 #if defined(__linux__) || defined(__LINUX__)
@@ -3066,58 +3113,7 @@ bool GUI_App::on_init_inner()
                        "configuration file.\nPlease note, application settings will be lost, but printer profiles will not be affected."));
     }
 
-    namespace snap = ::Slic3r::SnapLog::v1;
-    snap::SnapLogConfig snap_cfg;
-    std::string snap_cc   = app_config ? app_config->get_country_code() : "";
-    snap_cfg.gateway_base = (snap_cc.find("CN") != std::string::npos) ?
-                                "https://api.snapmaker.cn"
-                                :
-                                "https://api.snapmaker.com";
-    snap_cfg.hmac_secret = SNAP_LOG_HMAC_SECRET;
-    snap_cfg.spool_dir = (boost::filesystem::path(data_dir()) / "log_upload_spool").string();
-    std::string machine_id;
-    if (app_config) {
-        machine_id = ::Slic3r::instance_id::ensure(*app_config);
-    }
-
-    snap::SnapLogDeps deps;
-    deps.do_request            = snap::make_production_do_request(snap_cfg);
-    const bool privacy_consent = app_config && app_config->get("app", PRIVACY_POLICY_FLAGS) == "true";
-    deps.consent_ok            = [privacy_consent]() { return privacy_consent; };
-    deps.machine_id            = [mid = std::move(machine_id)]() -> std::string { return mid; };
-    deps.now_ms                = []() -> int64_t {
-        return static_cast<int64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-    };
-
-    snap_cfg.app_version = SLIC3R_BUILD_ID;
-    snap_cfg.app_build   = GIT_COMMIT_HASH;
-#if defined(_WIN32)
-    snap_cfg.platform = "Windows";
-#elif defined(__APPLE__)
-    snap_cfg.platform = "macOS";
-#elif defined(__linux__)
-    snap_cfg.platform = "Linux";
-#else
-    snap_cfg.platform = "Unknown";
-#endif
-    snap_cfg.os_version  = wxGetOsDescription().ToUTF8().data();
-    {
-        std::random_device                          rd;
-        std::uniform_int_distribution<unsigned int> dist(0, 255);
-        char                                        hex[33];
-        for (int i = 0; i < 16; ++i) {
-            std::snprintf(hex + i * 2, 3, "%02x", dist(rd));
-        }
-        snap_cfg.session_id.assign(hex, 32);
-    }
-    snap_cfg.process_id = std::to_string(get_current_pid());
-    if (app_config) {
-        snap_cfg.region = app_config->get_country_code();
-    }
-    snap_cfg.home_for_redact = data_dir();
-
-    snap::SnapLogClient::instance().init(std::move(deps), std::move(snap_cfg));
+    initialize_snaplog();
     BOOST_LOG_TRIVIAL(info) << "SnapLogClient initialized";
 
     profiler.mark("on_init_inner return");
@@ -4236,8 +4232,18 @@ void GUI_App::apply_gateway_account(const Gateway::AccountSnapshot& snapshot)
     BOOST_LOG_TRIVIAL(info) << "[gateway][account] " << (login_changed ? "login state changed: " : "account updated: ")
                             << (snapshot.is_login ? "online" : "offline") << ", userid=" << snapshot.userid
                             << ", nickname_present=" << std::boolalpha << !snapshot.nickname.empty();
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_token(snapshot.token);
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id(snapshot.userid);
+
+    if (login_changed) {
+        if (snapshot.is_login) {
+            SNAP_LOG_INFO(SnapLog::v1::SnapEvent::USER_LOGIN_RESULT,
+                {
+                    {"source", "gateway"},
+                    {"success", "true"},
+                },
+                "user login success");
+        }
+    }
 }
 
 void GUI_App::refresh_gateway_account()
@@ -5925,8 +5931,10 @@ void GUI_App::query_gateway_current_device()
                                    }
                                    m_gateway_device.serial_number = current_device->serial_number;
                                    m_gateway_device.connected     = true;
+                                   ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn(m_gateway_device.serial_number);
                                    BOOST_LOG_TRIVIAL(info)
-                                       << "[gateway][device-status] current device applied, sn=" << m_gateway_device.serial_number;
+                                       << "[gateway][device-status] current device applied, sn_present="
+                                       << !m_gateway_device.serial_number.empty();
 
                                    if (mainframe != nullptr && mainframe->plater() != nullptr)
                                        mainframe->plater()->sidebar().update_all_preset_comboboxes(false);
@@ -5938,15 +5946,13 @@ void GUI_App::query_gateway_current_device()
                                    m_gateway_device.watched_serial_number = serial_number;
                                    m_gateway_service->watch_device(nlohmann::json{{"sn", serial_number}},
                                                                    [serial_number](Gateway::GatewayError watch_error,
-                                                                                   const nlohmann::json& watch_result) {
+                                                   const nlohmann::json& /*watch_result*/) {
                                                                        if (watch_error)
                                                                            BOOST_LOG_TRIVIAL(warning)
-                                                                               << "[gateway][device-status] failed to watch device "
-                                                                               << serial_number << ": " << watch_error.message;
+                                                                               << "[gateway][device-status] failed to watch device: " << watch_error.message;
                                                                        else
                                                                            BOOST_LOG_TRIVIAL(info)
-                                                                               << "[gateway][device-status] watching device "
-                                                                               << serial_number << ", result=" << watch_result.dump();
+                                                                               << "[gateway][device-status] watch device succeeded";
                                                                    });
                                });
 }
@@ -6009,6 +6015,7 @@ void GUI_App::clear_gateway_device()
     const std::uint64_t generation = m_gateway_device.generation + 1;
     m_gateway_device               = GatewayDeviceState{};
     m_gateway_device.generation    = generation;
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn("");
     if (preset_bundle != nullptr)
         clear_gateway_machine_slots();
     if (had_slots)
@@ -7158,7 +7165,7 @@ void GUI_App::MacOpenFiles(const wxArrayString &fileNames)
                 for (size_t i = 0; i < non_gcode_files.size(); ++i) {
                     input_files.push_back(non_gcode_files[i]);
                 }
-                this->plater()->load_files(input_files);
+                this->plater()->load_files(input_files, "file_association");
             } else {
                 for (size_t i = 0; i < files.size(); ++i) {
                     this->init_params->input_files.emplace_back(files[i]);

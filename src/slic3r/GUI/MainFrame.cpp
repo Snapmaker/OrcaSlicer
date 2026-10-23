@@ -1033,6 +1033,7 @@ void MainFrame::shutdown(bool isRecreate)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "MainFrame::shutdown enter";
     m_shutting_down = true;
+
     // BBS: backup
     Slic3r::set_backup_callback(nullptr);
 #ifdef _WIN32

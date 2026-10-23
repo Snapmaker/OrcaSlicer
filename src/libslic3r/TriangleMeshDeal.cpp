@@ -4,6 +4,12 @@
 #include <assert.h>
 #include <boost/log/trivial.hpp>
 
+#include <algorithm>
+#include <array>
+#include <map>
+#include <set>
+#include <utility>
+
 namespace Slic3r {
 TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bool& ok)
 {
@@ -17,16 +23,60 @@ TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bo
     typedef Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::DontAlign | Eigen::RowMajor> RowMatrixX3f;
     typedef Eigen::Matrix<int, Eigen::Dynamic, 3, Eigen::DontAlign | Eigen::RowMajor>   RowMatrixX3i;
 
+    indexed_triangle_set input = mesh.its;
+
+    // Drop duplicate faces first: igl::loop() assumes a manifold mesh, and one repeated
+    // face makes every of its edges non-manifold (4 incident faces), which derails the
+    // edge pairing inside the subdivision until it runs out of bounds. No menu check
+    // stops such input - repeated faces keep open_edges at 0, because the
+    // opposite-direction edge pairs still match. Keep the first occurrence only.
+    {
+        std::set<std::array<int, 3>>             seen_faces;
+        std::vector<stl_triangle_vertex_indices> unique_faces;
+        unique_faces.reserve(input.indices.size());
+        for (const auto& face : input.indices) {
+            // Fully sort the three vertex indexes: the key then matches a face
+            // regardless of rotation AND winding, so both exact repeats and
+            // opposite-winding repeats (zero-thickness walls) are caught - either
+            // kind makes the edges non-manifold and breaks igl::loop().
+            std::array<int, 3> key = {face(0), face(1), face(2)};
+            std::sort(key.begin(), key.end());
+            if (seen_faces.insert(key).second)
+                unique_faces.push_back(face);
+        }
+        input.indices = std::move(unique_faces);
+    }
+
     // igl::loop() requires a compact mesh: igl::adjacency_list() sizes its output by
     // F.maxCoeff() + 1 while loop() iterates over V.rows(), so an unreferenced trailing
     // vertex (max face index < vertex count - 1) makes loop() read past the adjacency
     // list. Drop unreferenced vertices (and reindex the faces) on a local copy first.
-    indexed_triangle_set input = mesh.its;
     its_compactify_vertices(input);
-    if (input.vertices.empty() || input.indices.empty())
-    {
+    if (input.vertices.empty() || input.indices.empty()) {
         ok = false;
         return TriangleMesh();
+    }
+
+    // Temporary guard: reject meshes with non-manifold edges - an edge shared by more
+    // than two faces cannot be paired inside igl::loop() (it pairs exactly two faces
+    // per edge) and the subdivision runs out of bounds and crashes. Duplicate faces
+    // were already removed above; this catches every other source, e.g. face fans.
+    // Open edges (a single face) are deliberately allowed: loop() handles boundary
+    // vertices explicitly.
+    {
+        std::map<std::pair<int, int>, int> edge_face_count;
+        for (const auto& face : input.indices) {
+            const int v[3] = {face(0), face(1), face(2)};
+            for (int j = 0; j < 3; ++j) {
+                const int a = std::min(v[j], v[(j + 1) % 3]);
+                const int b = std::max(v[j], v[(j + 1) % 3]);
+                if (++edge_face_count[{a, b}] > 2)
+                {
+                    ok = false;
+                    return TriangleMesh();
+                }
+            }
+        }
     }
 
     // Use Map to map the vertices and indicies into Matrixes without requiring a copy.

@@ -3,6 +3,8 @@
 
 #include "GLGizmoPainterBase.hpp"
 
+#include "slic3r/GUI/GLModel.hpp"
+
 namespace Slic3r {
 namespace GUI {
 
@@ -10,6 +12,11 @@ namespace GUI {
 // and subdivide exactly those facets with TriangleMeshDeal::smooth_triangle_mesh_local.
 // The facet selection is transient: it lives only while the gizmo is open and is
 // consumed by the "Subdivide" button.
+//
+// A "subdivision level" slider shows a live preview: the rendered geometry of the
+// painted volumes is swapped for the subdivided mesh, while painting keeps hitting
+// the original mesh (raycasting uses the ModelVolume, rendering the GLVolume).
+// The model itself stays untouched until "Subdivide" is pressed.
 class GLGizmoLocalSubdivision : public GLGizmoPainterBase
 {
 public:
@@ -33,20 +40,51 @@ protected:
     // Opened from the object context menu only, never from the toolbar.
     bool on_is_selectable() const override { return false; }
 
+    // Finer circle brush than the painting gizmos default.
+    static const constexpr float CursorRadiusMin = 0.1f;
+    const float get_cursor_radius_min() const override { return CursorRadiusMin; }
+
 private:
     bool on_init() override;
-    // The selection is transient, so nothing is stored on the ModelVolume.
-    void update_model_object() override {}
+    // The selection is transient, so nothing is stored on the ModelVolume. A finished
+    // paint stroke ends in update_model_object(), used here to invalidate the preview.
+    void update_model_object() override { m_preview_dirty = true; }
     void update_from_model_object(bool first_update = false) override;
-    void on_opening() override {}
-    void on_shutdown() override {}
+    // Every time the gizmo is opened, start without a subdivision preview.
+    void on_opening() override { m_subdiv_level = 0; }
+    void on_shutdown() override;
 
     void apply_subdivision();
     void close();
 
+    // Live preview of the subdivided region, one entry per painted model part volume.
+    // The surroundings are shown by swapping the GLVolume's own GPU model to the
+    // non-region geometry, so the canvas renders them through its normal pipeline
+    // (identical look to level 0); only the region is drawn by the gizmo itself.
+    struct Preview {
+        ModelVolume*              volume = nullptr; // the model part being previewed
+        int                       volume_idx = -1;  // its index among the model parts
+        size_t                    facet_count = 0;  // painted original facets
+        std::vector<uint32_t>     next_facets;      // selection for the next subdivision step
+        std::vector<indexed_triangle_set> meshes;   // [0] original, [n] = n-th subdivision level (bare sets, no stats)
+        std::vector<size_t>       region_counts;    // region faces of each level (front of the face list)
+        GLModel                   model;            // non-region geometry, drawn by the gizmo with the volume color
+        GLModel                   model_region;     // region-only geometry, colored like the level-0 painting
+        bool                      hidden = false;   // the original volume is hidden while the preview is shown
+    };
+    void        update_preview();
+    void        restore_preview();
+    void        render_preview_meshes();
+
     wchar_t m_current_tool = 0;
     bool m_detect_geometry_edge = true;
     std::map<std::string, wxString> m_desc;
+
+    static const int MaxSubdivLevel = 3;
+    int  m_subdiv_level  = 0;   // wanted subdivision level (slider)
+    bool m_preview_dirty = true; // painted facets changed, the caches must be rebuilt
+    int  m_shown_level   = 0;   // level whose geometry is currently displayed (0 = original)
+    std::vector<Preview> m_previews;
 };
 
 } // namespace GUI

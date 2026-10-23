@@ -207,15 +207,15 @@ static indexed_triangle_set loop_subdivide_fixed_boundary(const std::vector<stl_
 }
 
 
-TriangleMesh TriangleMeshDeal::smooth_triangle_mesh_local(const TriangleMesh& origin_mesh, const std::vector<uint32_t>& facet_indices, bool& ok) {
+indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const indexed_triangle_set& origin, const std::vector<uint32_t>& facet_indices, bool& ok) {
     // Only the face records of the selection are copied; the vertex coordinates are
     // referenced from the original mesh through indices until the result is built.
-    const std::vector<stl_vertex>&           vertices = origin_mesh.its.vertices;
+    const std::vector<stl_vertex>&           vertices = origin.vertices;
     std::vector<stl_triangle_vertex_indices> selected_faces;
     selected_faces.reserve(facet_indices.size());
     for (auto& index : facet_indices)
     {
-        selected_faces.push_back(origin_mesh.its.indices[index]);
+        selected_faces.push_back(origin.indices[index]);
     }
 
     auto selected_ff_index = face_neighbors_from_faces(selected_faces);
@@ -366,19 +366,26 @@ TriangleMesh TriangleMeshDeal::smooth_triangle_mesh_local(const TriangleMesh& or
     // Finally append the untouched part of the original mesh: every face outside the
     // selection. Its vertex indices are still valid in its.vertices, where the original
     // vertices kept their indices and the ones untouched by the patch their coordinates.
-    std::vector<char> is_selected(origin_mesh.its.indices.size(), 0);
+    std::vector<char> is_selected(origin.indices.size(), 0);
     for (uint32_t facet : facet_indices)
         is_selected[facet] = 1;
 
-    its.indices.reserve(its.indices.size() + (origin_mesh.its.indices.size() - facet_indices.size()));
-    for (size_t i = 0; i < origin_mesh.its.indices.size(); ++i) {
+    its.indices.reserve(its.indices.size() + (origin.indices.size() - facet_indices.size()));
+    for (size_t i = 0; i < origin.indices.size(); ++i) {
         if (is_selected[i])
             continue;
-        its.indices.push_back(origin_mesh.its.indices[i]);
+        its.indices.push_back(origin.indices[i]);
     }
 
-    return TriangleMesh(its);
+    return its;
 
+}
+
+TriangleMesh TriangleMeshDeal::smooth_triangle_mesh_local(const TriangleMesh& origin_mesh, const std::vector<uint32_t>& facet_indices, bool& ok)
+{
+    // Build the full stats (neighbour graph, volume, bounding box, ...) only here,
+    // when the result is actually applied, not during previewing.
+    return TriangleMesh(smooth_triangle_mesh_local_its(origin_mesh.its, facet_indices, ok));
 }
 
 } // namespace Slic3r

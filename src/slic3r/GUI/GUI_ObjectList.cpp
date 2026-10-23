@@ -5785,6 +5785,11 @@ void GUI::ObjectList::smooth_mesh()
     auto results = std::make_shared<std::vector<SmoothResult>>();
     results->reserve(inputs->size());
 
+    auto* start_notification_manager = plater->get_notification_manager();
+    if (start_notification_manager != nullptr)
+        start_notification_manager->push_notification(NotificationType::CustomNotification,
+                                                      NotificationManager::NotificationLevel::RegularNotificationLevel, into_u8(_L("Subdivision started")));
+
     m_smooth_mesh_thread = std::thread([this, plater, inputs, results, show_smooth_mesh_error_dlg]() {
         for (const SmoothJob &job : *inputs) {
             bool        ok = false;
@@ -5802,10 +5807,11 @@ void GUI::ObjectList::smooth_mesh()
                 m_smooth_mesh_thread.join();
             }
 
-            Model           &model      = plater->model();
-            bool             any_change = false;
-            std::string      failed_name;
-            std::vector<int> changed_objs;
+            Model &model = plater->model();
+            // First pass: which results can still be applied (object and volume survived
+            // while the job was running)? A nullopt result marks a failed volume.
+            std::vector<SmoothResult *> applicable;
+            std::string                failed_name;
             for (SmoothResult &result : *results) {
                 if (result.obj_idx < 0 || result.obj_idx >= (int) model.objects.size()) {
                     continue;
@@ -5815,33 +5821,67 @@ void GUI::ObjectList::smooth_mesh()
                 if (std::find(obj->volumes.begin(), obj->volumes.end(), result.volume) == obj->volumes.end()) {
                     continue;
                 }
-                if (result.smoothed) {
-                    result.volume->set_mesh(std::move(*result.smoothed));
-                    result.volume->calculate_convex_hull();
-                    result.volume->invalidate_convex_hull_2d();
-                    result.volume->set_new_unique_id();
-                    any_change = true;
-                    if (std::find(changed_objs.begin(), changed_objs.end(), result.obj_idx) == changed_objs.end()) {
-                        changed_objs.push_back(result.obj_idx);
-                    }
-                } else if (failed_name.empty()) {
+                if (result.smoothed)
+                    applicable.push_back(&result);
+                else if (failed_name.empty())
                     failed_name = result.volume->name;
-                }
             }
-            if (!failed_name.empty()) {
-                show_smooth_mesh_error_dlg(failed_name);
-            }
-            if (any_change) {
-                // One snapshot covers the whole multi-object operation.
+
+            auto *notification_manager = plater->get_notification_manager();
+            bool  any_change           = false;
+            if (! applicable.empty()) {
+                // The snapshot must capture the state BEFORE the meshes are replaced,
+                // otherwise Ctrl+Z has no pre-subdivision state to return to.
                 plater->take_snapshot("smooth_mesh");
+                std::vector<int> changed_objs;
+                for (SmoothResult *result : applicable) {
+                    result->volume->set_mesh(std::move(*result->smoothed));
+                    result->volume->calculate_convex_hull();
+                    result->volume->invalidate_convex_hull_2d();
+                    result->volume->set_new_unique_id();
+                    any_change = true;
+                    if (std::find(changed_objs.begin(), changed_objs.end(), result->obj_idx) == changed_objs.end()) {
+                        changed_objs.push_back(result->obj_idx);
+                    }
+                }
                 for (int obj_idx : changed_objs) {
                     model.objects[obj_idx]->invalidate_bounding_box();
                     model.objects[obj_idx]->ensure_on_bed();
                     plater->changed_mesh(obj_idx);
                 }
             }
+
+            if (! failed_name.empty()) {
+                show_smooth_mesh_error_dlg(failed_name);
+                if (notification_manager != nullptr)
+                    notification_manager->push_notification(NotificationType::CustomNotification,
+                                                            NotificationManager::NotificationLevel::ErrorNotificationLevel,
+                                                            into_u8(_L("Subdivision failed")));
+            } else if (any_change && notification_manager != nullptr) {
+                notification_manager->push_notification(NotificationType::CustomNotification,
+                                                        NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                                        into_u8(_L("Subdivision finished")));
+            }
         });
     });
+}
+
+void GUI::ObjectList::smooth_mesh_local()
+{
+    auto plater = wxGetApp().plater();
+    if (!plater) {
+        return;
+    }
+
+    // Open the painting-style gizmo: the user paints the facets to subdivide and
+    // applies the subdivision from the gizmo panel.
+    GLGizmosManager& gizmos_mgr = plater->get_view3D_canvas3D()->get_gizmos_manager();
+    if (! gizmos_mgr.check_gizmos_closed_except(GLGizmosManager::EType::LocalSubdivision))
+        return;
+    if (gizmos_mgr.get_current_type() == GLGizmosManager::LocalSubdivision) {
+        gizmos_mgr.open_gizmo(GLGizmosManager::EType::LocalSubdivision); // toggle it off first
+    }
+    gizmos_mgr.open_gizmo(GLGizmosManager::EType::LocalSubdivision);
 }
 
 void ObjectList::update_item_error_icon(const int obj_idx, const int vol_idx) const

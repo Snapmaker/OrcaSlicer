@@ -33,6 +33,7 @@
 #include <libslic3r/miniz_extension.hpp>
 #include <libslic3r/Utils.hpp>
 #include "CreatePresetsDialog.hpp"
+#include "slic3r/Utils/SnapLogClient.hpp"
 #include <mutex>
 #include <vector>
 #include <tbb/parallel_for.h>
@@ -638,11 +639,23 @@ int GuideFrame::SaveProfile()
     //     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "privacyuse", "1");
     // } else
     //     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "privacyuse", "0");
+    const bool first_consent = m_MainPtr->app_config->get("app", PRIVACY_POLICY_FLAGS).empty();
     m_MainPtr->app_config->set("app", PRIVACY_POLICY_FLAGS, PrivacyUse);
     BOOST_LOG_TRIVIAL(warning) << "SaveProfile changed the privacy policy with: " << (PrivacyUse ? "true" : "false");
-    wxGetApp().user_update_privacy_notify(PrivacyUse);
     m_MainPtr->app_config->set("region", m_Region);
     m_MainPtr->app_config->set_bool("stealth_mode", StealthMode);
+    if (first_consent)
+        wxGetApp().initialize_snaplog();
+    wxGetApp().user_update_privacy_notify(PrivacyUse);
+    if (PrivacyUse) {
+        SNAP_LOG_INFO(SnapLog::v1::SnapEvent::PRIVACY_CONSENT_GRANTED,
+            {
+                {"source", "first_run"},
+                {"previousValue", "false"},
+                {"newValue", "true"},
+            },
+            "privacy consent granted");
+    }
 
     //finish
     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "finish", "1");

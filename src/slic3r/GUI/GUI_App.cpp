@@ -39,7 +39,6 @@
 #include <thread>
 #include <string_view>
 #include <cstdio>
-#include <random>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
@@ -101,6 +100,7 @@
 #include "../Utils/Http.hpp"
 #include "../Utils/InstanceID.hpp"
 #include "../Utils/SnapLogClient.hpp"
+#include "../Utils/SnapTelemetry.hpp"
 #include "../Utils/UndoRedo.hpp"
 #include "slic3r/Config/Snapshot.hpp"
 #include "Preferences.hpp"
@@ -1019,7 +1019,7 @@ void GUI_App::post_init()
                     input_files.push_back(wxString::FromUTF8(file));
                 }
                 this->plater()->set_project_filename(_L("Untitled"));
-                this->plater()->load_files(input_files);
+                this->plater()->load_files(input_files, "command_line");
                 try {
                     if (!input_files.empty()) {
                         std::string           file_path = input_files.front().ToStdString();
@@ -2378,6 +2378,18 @@ bool GUI_App::OnInit()
 
 int GUI_App::OnExit()
 {
+    if (!m_app_session_end_reported) {
+        m_app_session_end_reported = true;
+        const bool has_project = m_app_session_has_project;
+        SNAP_LOG_INFO(SnapLog::v1::SnapEvent::APP_SESSION_END,
+            {
+                {"sessionDurationMs", SnapTelemetry::elapsed_ms(m_session_start_time, std::chrono::steady_clock::now())},
+                {"exitReason", "normal"},
+                {"hasProject", SnapTelemetry::bool_value(has_project)},
+            },
+            "app session ended");
+    }
+
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().shutdown();
 
     stop_gateway_service();
@@ -2441,6 +2453,37 @@ class wxBoostLog : public wxLog
         wxLog::SetActiveTarget(t);
     }
 };
+
+void GUI_App::initialize_snaplog()
+{
+    namespace snap = ::Slic3r::SnapLog::v1;
+    snap::SnapLogConfig snap_cfg;
+    const std::string snap_cc = app_config ? app_config->get_country_code() : "";
+    snap::apply_production_snaplog_site(snap_cfg, snap_cc);
+    snap_cfg.spool_dir = (boost::filesystem::path(data_dir()) / "log_upload_spool").string();
+    std::string machine_id;
+    if (app_config) {
+        machine_id = ::Slic3r::instance_id::ensure(*app_config);
+    }
+
+    snap::SnapLogDeps deps;
+    deps.do_request            = snap::make_production_do_request(snap_cfg);
+    const bool privacy_consent = app_config && app_config->get("app", PRIVACY_POLICY_FLAGS) == "true";
+    deps.consent_ok            = [privacy_consent]() { return privacy_consent; };
+    deps.machine_id            = [mid = std::move(machine_id)]() -> std::string { return mid; };
+    deps.now_ms                = []() -> int64_t {
+        return static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    };
+
+    snap_cfg.app_version = SLIC3R_BUILD_ID;
+    snap_cfg.profile_version = common::get_profile_version();
+    snap_cfg.os_version  = wxGetOsDescription().ToUTF8().data();
+    snap_cfg.process_id = std::to_string(get_current_pid());
+    snap_cfg.home_for_redact = data_dir();
+
+    snap::SnapLogClient::instance().init(std::move(deps), std::move(snap_cfg));
+}
 
 bool GUI_App::on_init_inner()
 {
@@ -2980,59 +3023,20 @@ bool GUI_App::on_init_inner()
                        "configuration file.\nPlease note, application settings will be lost, but printer profiles will not be affected."));
     }
 
-    namespace snap = ::Slic3r::SnapLog::v1;
-    snap::SnapLogConfig snap_cfg;
-    std::string snap_cc   = app_config ? app_config->get_country_code() : "";
-    snap_cfg.gateway_base = (snap_cc.find("CN") != std::string::npos) ?
-                                "https://api.snapmaker.cn"
-                                :
-                                "https://api.snapmaker.com";
-    snap_cfg.hmac_secret = SNAP_LOG_HMAC_SECRET;
-    snap_cfg.spool_dir = (boost::filesystem::path(data_dir()) / "log_upload_spool").string();
-    std::string machine_id;
-    if (app_config) {
-        machine_id = ::Slic3r::instance_id::ensure(*app_config);
-    }
-
-    snap::SnapLogDeps deps;
-    deps.do_request            = snap::make_production_do_request(snap_cfg);
-    const bool privacy_consent = app_config && app_config->get("app", PRIVACY_POLICY_FLAGS) == "true";
-    deps.consent_ok            = [privacy_consent]() { return privacy_consent; };
-    deps.machine_id            = [mid = std::move(machine_id)]() -> std::string { return mid; };
-    deps.now_ms                = []() -> int64_t {
-        return static_cast<int64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-    };
-
-    snap_cfg.app_version = SLIC3R_BUILD_ID;
-    snap_cfg.app_build   = GIT_COMMIT_HASH;
-#if defined(_WIN32)
-    snap_cfg.platform = "Windows";
-#elif defined(__APPLE__)
-    snap_cfg.platform = "macOS";
-#elif defined(__linux__)
-    snap_cfg.platform = "Linux";
-#else
-    snap_cfg.platform = "Unknown";
-#endif
-    snap_cfg.os_version  = wxGetOsDescription().ToUTF8().data();
-    {
-        std::random_device                          rd;
-        std::uniform_int_distribution<unsigned int> dist(0, 255);
-        char                                        hex[33];
-        for (int i = 0; i < 16; ++i) {
-            std::snprintf(hex + i * 2, 3, "%02x", dist(rd));
-        }
-        snap_cfg.session_id.assign(hex, 32);
-    }
-    snap_cfg.process_id = std::to_string(get_current_pid());
-    if (app_config) {
-        snap_cfg.region = app_config->get_country_code();
-    }
-    snap_cfg.home_for_redact = data_dir();
-
-    snap::SnapLogClient::instance().init(std::move(deps), std::move(snap_cfg));
+    initialize_snaplog();
     BOOST_LOG_TRIVIAL(info) << "SnapLogClient initialized";
+
+    const bool         launch_with_file = init_params && !init_params->input_files.empty();
+    const std::string launch_file_type = launch_with_file ? SnapTelemetry::file_type(boost::filesystem::path(init_params->input_files.front())) : "none";
+    SNAP_LOG_INFO(SnapLog::v1::SnapEvent::APP_LAUNCH,
+        {
+            {"firstLaunch", SnapTelemetry::bool_value(!m_app_conf_exists)},
+            {"openMethod", launch_with_file ? "file" : "normal"},
+            {"launchFileType", launch_file_type},
+            {"language", app_config ? app_config->get("language") : ""},
+            {"userMode", get_mode_str()},
+        },
+        "app launched");
 
     profiler.mark("on_init_inner return");
 
@@ -4105,6 +4109,24 @@ void GUI_App::apply_gateway_account(const Gateway::AccountSnapshot& snapshot)
                             << ", nickname_present=" << std::boolalpha << !snapshot.nickname.empty();
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_token(snapshot.token);
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id(snapshot.userid);
+
+    if (login_changed) {
+        if (snapshot.is_login) {
+            SNAP_LOG_INFO(SnapLog::v1::SnapEvent::USER_LOGIN_RESULT,
+                {
+                    {"source", "gateway"},
+                    {"success", "true"},
+                    {"userId", snapshot.userid},
+                },
+                "user login success");
+        } else {
+            SNAP_LOG_INFO(SnapLog::v1::SnapEvent::USER_LOGOUT,
+                {
+                    {"source", "gateway"},
+                },
+                "user logout");
+        }
+    }
 }
 
 void GUI_App::refresh_gateway_account()
@@ -6935,7 +6957,7 @@ void GUI_App::MacOpenFiles(const wxArrayString &fileNames)
                 for (size_t i = 0; i < non_gcode_files.size(); ++i) {
                     input_files.push_back(non_gcode_files[i]);
                 }
-                this->plater()->load_files(input_files);
+                this->plater()->load_files(input_files, "file_association");
             } else {
                 for (size_t i = 0; i < files.size(); ++i) {
                     this->init_params->input_files.emplace_back(files[i]);

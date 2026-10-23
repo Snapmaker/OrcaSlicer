@@ -593,6 +593,7 @@ set(SLIC3R_GUI_SOURCES
     Utils/CpuMemory.hpp
     Utils/CalibUtils.cpp
     Utils/CalibUtils.hpp
+    Utils/SnapTelemetry.hpp
     Utils/ColorSpaceConvert.cpp
     Utils/ColorSpaceConvert.hpp
     Utils/ConnectionProcessManager.cpp
@@ -739,6 +740,7 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/GeneratedConfig.hpp.in
                @ONLY)
 
 add_library(libslic3r_gui STATIC ${SLIC3R_GUI_SOURCES})
+snapmaker_orca_apply_posthog_definitions(libslic3r_gui)
 target_include_directories(libslic3r_gui PRIVATE Utils ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(libslic3r_gui paho-mqttpp3-static)
 

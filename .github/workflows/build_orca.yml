@@ -42,6 +42,28 @@ jobs:
           key: ${{ inputs.cache-key }}
           fail-on-cache-miss: true
 
+      - name: Validate SnapLog PostHog production keys
+        if: >-
+          github.event_name != 'pull_request' &&
+          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release_'))
+        shell: bash
+        env:
+          SNAP_LOG_POSTHOG_CN_ORCA_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_CN_ORCA_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_ORCA_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_ORCA_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_MODEL_LAB_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_MODEL_LAB_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_CLIENT_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_CLIENT_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_MODEL_COMMUNITY_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_MODEL_COMMUNITY_API_KEY }}
+        run: |
+          missing=()
+          for key in SNAP_LOG_POSTHOG_CN_ORCA_API_KEY SNAP_LOG_POSTHOG_INTL_ORCA_API_KEY SNAP_LOG_POSTHOG_INTL_MODEL_LAB_API_KEY SNAP_LOG_POSTHOG_INTL_CLIENT_API_KEY SNAP_LOG_POSTHOG_INTL_MODEL_COMMUNITY_API_KEY; do
+            if [[ -z "${!key:-}" ]]; then
+              missing+=("$key")
+            fi
+          done
+          if [[ ${#missing[@]} -ne 0 ]]; then
+            echo "::error::Missing SnapLog PostHog keys: ${missing[*]}"
+            exit 1
+          fi
       - uses: lukka/get-cmake@latest
         with:
           cmakeVersion: "~3.28.0"  # use most recent 3.28.x version
@@ -132,6 +154,12 @@ jobs:
       - name: Build slicer mac
         if: inputs.os == 'macos-15'
         working-directory: ${{ github.workspace }}
+        env:
+          SNAP_LOG_POSTHOG_CN_ORCA_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_CN_ORCA_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_ORCA_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_ORCA_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_MODEL_LAB_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_MODEL_LAB_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_CLIENT_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_CLIENT_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_MODEL_COMMUNITY_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_MODEL_COMMUNITY_API_KEY }}
         run: |
           ./build_release_macos.sh -s -n -x -a universal -t 10.15 -1
 
@@ -284,6 +312,11 @@ jobs:
         env:
           WindowsSdkDir: 'C:\Program Files (x86)\Windows Kits\10\'
           WindowsSDKVersion: '10.0.26100.0\'
+          SNAP_LOG_POSTHOG_CN_ORCA_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_CN_ORCA_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_ORCA_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_ORCA_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_MODEL_LAB_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_MODEL_LAB_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_CLIENT_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_CLIENT_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_MODEL_COMMUNITY_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_MODEL_COMMUNITY_API_KEY }}
         run: .\build_release_vs2022.bat slicer
 
       - name: Create installer Win
@@ -395,6 +428,11 @@ jobs:
         shell: bash
         env:
           ubuntu-ver-str: ${{ (inputs.os == 'ubuntu-24.04' && '_Ubuntu2404') || '' }}
+          SNAP_LOG_POSTHOG_CN_ORCA_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_CN_ORCA_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_ORCA_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_ORCA_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_MODEL_LAB_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_MODEL_LAB_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_CLIENT_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_CLIENT_API_KEY }}
+          SNAP_LOG_POSTHOG_INTL_MODEL_COMMUNITY_API_KEY: ${{ secrets.SNAP_LOG_POSTHOG_INTL_MODEL_COMMUNITY_API_KEY }}
         run: |
           ./build_linux.sh -isr
           mv -n ./build/Snapmaker_Orca_Linux_V${{ env.ver_pure }}.AppImage ./build/Snapmaker_Orca_Linux_AppImage${{ env.ubuntu-ver-str }}_${{ env.ver }}.AppImage

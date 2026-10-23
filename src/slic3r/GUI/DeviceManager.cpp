@@ -2734,10 +2734,6 @@ void MachineObject::set_print_state(std::string status)
 
 int MachineObject::connect(bool is_anonymous, bool use_openssl)
 {
-    SNAP_LOG_BATCH(Info, "device connect attempt",
-        {"eventName","device_connect_attempt"},
-        {"connectionType", is_anonymous ? "anonymous" : "login"},
-        {"use_ssl", use_openssl ? "true" : "false"});
     if (dev_ip.empty()) return -1;
     std::string username;
     std::string password;
@@ -6529,7 +6525,6 @@ bool DeviceManager::set_selected_machine(std::string dev_id, bool need_disconnec
         }
     }
     selected_machine = dev_id;
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_device_id(dev_id);
     return true;
 }
 

@@ -15,14 +15,19 @@
 #include <utility>
 #include <vector>
 #include "Http.hpp"
+#include "SnapLogEvents.hpp"
 namespace Slic3r { namespace SnapLog { inline namespace v1 {
+
+struct SnapLogConfig;
 
 using SnapLogExt                           = std::vector<std::pair<std::string, std::string>>;
 inline constexpr char kSnapLogClientType[] = "Orca";
 
-std::string hmac_sha256_hex(std::string_view key, std::string_view msg);
-
-enum class SnapLogLevel { Info, Warning, Error };
+inline constexpr std::string_view kSnapLogUploadCnUrl     = "https://api.snapmaker.cn";
+inline constexpr std::string_view kSnapLogUploadIntlUrl   = "https://api.snapmaker.com";
+inline constexpr std::string_view kSnapLogPostHogCnUrl     = "https://ph.snapmaker.cn";
+inline constexpr std::string_view kSnapLogPostHogIntlUrl   = "https://us.i.posthog.com";
+inline constexpr std::string_view kSnapLogPostHogBatchPath = "/batch/";
 
 inline const char* level_str(SnapLogLevel l)
 {
@@ -31,15 +36,6 @@ inline const char* level_str(SnapLogLevel l)
     case SnapLogLevel::Warning: return "WARN";
     default: return "ERROR";
     }
-}
-
-inline std::string normalize_logger(const char* func)
-{
-    if (!func || !*func)
-        return {};
-    std::string s(func);
-    auto        p = s.find_last_of(':');
-    return (p != std::string::npos) ? s.substr(p + 1) : s;
 }
 
 // Strip a user home prefix from `p`. If `home` matches `p` (case- and
@@ -61,50 +57,14 @@ std::string mask_secret_in_value(std::string v);
 // leaking the original serial. Pure.
 std::string hash_pii(const std::string& clientId, const std::string& serial);
 
-// Build the realtime event JSON body (enforcement point):
-//   {"clientType":"Orca","clientId":"desktop","level":"INFO|WARN|ERROR",
-//    "message":"...","ext":{...}}
-// Policy: hard-reject ext keys whose name starts with "raw" (rawGcode, raw3mf,
-// etc.); allow every other key; pass every string value through
-// mask_secret_in_value. Timestamp/service/userId/deviceId are omitted (the
-// server fills them). If the serialized line exceeds `line_max_bytes`, the
-// message and ext values are truncated and a "…[truncated]" marker is appended
-// so the result never exceeds the cap and stays valid JSON.
-//
-// the real InstanceID-derived identifier into the caller; the renderer keeps a
-// stable field shape so no downstream changes are needed.
-// Identity/metadata snapshot the realtime renderer emits into ext. Mirrors the
-// subset of BatchLineContext that the realtime channel carries. Populated by the
-// realtime worker from Internals + cfg right before rendering; empty strings are
-// emitted as-is (fields are always present, value "" when unavailable).
-struct RealtimeIdentity
-{
-    std::string client_id;        // InstanceID -> ext.clientUUID (also top-level clientId)
-    std::string process_id;       // OS process id -> ext.processId
-    std::string connect_clientid; // Flutter MQTT clientId of the connected printer
-    std::string printer_sn;       // -> ext.printerSN
-    std::string device_id;        // -> ext.deviceId (selected logical device)
-    std::string user_id;          // -> ext.userId (login data.id)
-    std::string orca_version;     // -> ext.orcaVersion
-    std::string os;               // -> ext.os (os + version)
-    std::string batch_id;         // -> ext.batchId (mirrors the batch channel)
-    int64_t     ts_ms = 0;        // -> ext.localTime (local representation)
-    std::string home_for_redact;
-};
-
-std::string render_realtime_body(
-    SnapLogLevel level, const std::string& msg, const SnapLogExt& ext, std::size_t line_max_bytes, const RealtimeIdentity& id = {});
-
 // Context struct for batch line rendering. Carries the full per-event identity
 // and metadata that the batch (file-upload) channel needs on each NDJSON line.
-// The renderer is the privacy enforcement point (same as realtime): it drops
+// The renderer is the privacy enforcement point: it drops
 // raw* keys, masks secrets, redacts paths, and hashes PII.
 struct BatchLineContext
 {
     std::string clientId;
-    std::string nodeId;
     std::string userId;
-    std::string deviceId;
     // Flutter-supplied MQTT identity of the connected printer (always emitted
     // into ext, empty when nothing is connected).
     std::string connect_clientid;
@@ -113,24 +73,24 @@ struct BatchLineContext
     std::string clientType = kSnapLogClientType;
     std::string processId;
     std::string appVersion;
-    std::string appBuild;
-    std::string platform;
     std::string osVersion;
-    std::string sessionId;
-    std::string region;
+    std::string profileVersion;
     std::string batchId;
-    std::string opId;
     std::string eventName;
-    std::string logger;
-    std::string thread;
-    std::string caller_method;
-    int         caller_line = 0;
-    int64_t     ts_ms       = 0;
+    int64_t     ts_ms = 0;
     std::string home_for_redact;
 };
 
+// Output destinations for batch logging. The values are a stable bitmask so
+// callers can express one sink or combine sinks with bitwise OR.
+enum SnapLogSinks : unsigned int {
+    SinkNone    = 0,
+    SinkSnapLog = 1u << 0,
+    SinkPostHog = 1u << 1,
+};
+
 // ext contains clientId (per [DOC-3]) + caller-supplied event keys.
-// Privacy policy (same as realtime): drop ext keys starting with "raw"
+// Privacy policy: drop ext keys starting with "raw"
 // (case-insensitive); pass all string values through mask_secret_in_value;
 // path-like values through redact_path(ctx.home_for_redact, ...); PII keys
 // like printerSerial through hash_pii(ctx.clientId, ...). Enforce the
@@ -138,6 +98,42 @@ struct BatchLineContext
 // Always valid JSON + trailing '\n'.
 std::string render_batch_line(
     SnapLogLevel lvl, const std::string& msg, const SnapLogExt& ext, std::size_t line_max_bytes, const BatchLineContext& ctx);
+
+// A PostHog capture event snapshot. Rendering happens on the producer thread:
+// identity, timestamp, and all property values are fixed before queueing.
+struct PostHogEvent
+{
+    SnapLogLevel     level = SnapLogLevel::Info;
+    std::string      message;
+    SnapLogExt       ext;
+    BatchLineContext context;
+};
+
+std::string render_posthog_event(const PostHogEvent& event);
+
+struct PostHogBatchRequest
+{
+    std::string                                      url;
+    std::vector<std::pair<std::string, std::string>> headers;
+    std::string                                      body;
+};
+
+struct PostHogProjectConfig
+{
+    std::string base = std::string{kSnapLogPostHogCnUrl};
+    std::string api_key;
+    bool        enabled = true;
+};
+
+struct PostHogProjectQueue
+{
+    std::deque<std::string> events;
+    std::size_t             bytes = 0;
+};
+
+PostHogBatchRequest build_posthog_batch_request(const PostHogProjectConfig& project, const std::vector<std::string>& event_lines);
+
+void apply_production_snaplog_site(SnapLogConfig& config, std::string_view country_code);
 
 // Clock callback for rotate_active timestamp injection (testability). Returns
 // milliseconds-since-epoch. Default (nullptr) uses the wall clock.
@@ -178,21 +174,6 @@ std::vector<boost::filesystem::path> list_sealed(const boost::filesystem::path& 
 // to by `exclude_in_flight` (may be nullptr to count all). Never throws.
 uintmax_t sealed_total_bytes(const boost::filesystem::path& spool, const boost::filesystem::path* exclude_in_flight);
 
-//
-// Nonce generator callback: returns a freshly-generated nonce string (>=128
-// bits, hex). Default impl uses RAND_bytes (OpenSSL); tests inject a fixed
-// generator to make X-Sign deterministic.
-//
-// The actual build_realtime_request() function is declared below (after
-// SnapLogDeps / SnapLogConfig are defined), since its signature references
-// those types.
-using NonceGenerator = std::function<std::string()>;
-
-// Build the default nonce via OpenSSL RAND_bytes: 16 random bytes -> 32 hex.
-// we deliberately avoid boost::uuids (weak random_device on some
-// MinGW toolchains).
-std::string default_nonce();
-
 // Per-eventName token bucket that caps outbound event volume so a chatty
 // module can't starve critical events. allow() is safe to call from producer
 // threads; the mutex keeps bucket refill/consumption a single atomic operation.
@@ -229,56 +210,6 @@ private:
     Bucket                        unknown_aggregate_; // shared across all unregistered
 };
 
-// Decision returned by the realtime queue admission policy.
-enum class EvictDecision {
-    Admit,               // queue not full -> admit incoming
-    DropIncoming,        // queue full, incoming non-Error -> drop incoming
-    EvictOldestNonError, // full + incoming Error + >=1 non-Error -> evict oldest non-Error
-    EvictOldestError,    // full + incoming Error + all Error -> evict oldest Error (FIFO)
-};
-
-// Result of the admission check: what to do, and (if evicting) which queue
-// index to remove. evict_index is std::nullopt for Admit and DropIncoming.
-struct RealtimeAdmitResult
-{
-    EvictDecision              decision;
-    std::optional<std::size_t> evict_index;
-};
-
-// Pure function: decides how the realtime in-memory queue should handle an
-// incoming event when the queue may be full.
-//   - q: current queue contents (front = oldest).
-//   - capacity: queue max size.
-//   - incoming: the level of the event attempting to enqueue.
-//
-// Policy (Error is protected; Info/Warning are non-Error):
-//   q.size() < capacity                 -> Admit
-//   full + incoming != Error            -> DropIncoming
-//   full + incoming Error + has non-Err -> EvictOldestNonError (index of oldest non-Error)
-//   full + incoming Error + all Error   -> EvictOldestError  (index 0, FIFO)
-inline RealtimeAdmitResult decide_realtime_admit(const std::deque<SnapLogLevel>& q, std::size_t capacity, SnapLogLevel incoming)
-{
-    if (q.size() < capacity)
-        return {EvictDecision::Admit, std::nullopt};
-
-    // Queue is full.
-    if (incoming != SnapLogLevel::Error)
-        return {EvictDecision::DropIncoming, std::nullopt};
-
-    // Incoming is Error; find oldest non-Error to evict.
-    for (std::size_t i = 0; i < q.size(); ++i) {
-        if (q[i] != SnapLogLevel::Error)
-            return {EvictDecision::EvictOldestNonError, i};
-    }
-
-    // All entries are Error -> evict oldest Error (FIFO, index 0).
-    return {EvictDecision::EvictOldestError, std::size_t{0}};
-}
-
-// Where a log event goes: realtime (POST, in-memory queue) or buffered
-// (batched file upload, Plan B).
-enum class SnapLogPolicy { Realtime, Buffered };
-
 // Result of a completed HTTP request. status=0 means a transport-level failure
 // (no HTTP status available); cancelled=true means the client cancelled it.
 struct SnapLogResult
@@ -298,6 +229,7 @@ struct SnapLogHandle
     std::shared_ptr<std::promise<SnapLogResult>> prom;
     std::atomic<bool>                            fulfilled{false};
     std::atomic<bool>                            cancelled{false};
+    std::atomic<int>                             completion_status{-1};
 
     // Worker/flusher polls this (success/failure/cancel -> fulfilled).
     bool done() const { return fulfilled.load(std::memory_order_acquire) || cancelled.load(std::memory_order_acquire); }
@@ -324,33 +256,28 @@ struct SnapLogDeps
     std::function<std::shared_ptr<SnapLogHandle>(const std::string&                               method,
                                                  const std::string&                               url,
                                                  std::vector<std::pair<std::string, std::string>> headers,
-                                                 const boost::filesystem::path* body_file, // batch PUT path (Plan B); nullptr for realtime
+                                                 const boost::filesystem::path* body_file, // batch PUT path; nullptr for JSON POST
                                                  const std::string*             body_str)>
-                                 do_request; // realtime POST body
+                                 do_request; // asynchronous HTTP adapter
     std::function<bool()>        consent_ok;
-    std::function<std::string()> user_token;
-    std::function<std::string()> user_id;
-    std::function<std::string()> device_id;
     std::function<std::string()> machine_id;
     std::function<int64_t()>     now_ms;
 };
 
 struct SnapLogConfig
 {
-    std::string gateway_base = "https://api.snapmaker.com";
-    std::string spool_dir; // Plan B; empty ok in Plan A
-    bool        enabled     = true;
-    std::string hmac_secret; // injected at build time
+    std::string                                    snaplog_base    = std::string{kSnapLogUploadIntlUrl};
+    bool                                           posthog_enabled = true;
+    std::map<PostHogProject, PostHogProjectConfig> posthog_projects{{PostHogProject::CnOrca, {}}};
+    std::string                                    spool_dir; // batch spool directory; empty disables the disk-upload worker
+    bool                                           enabled = true;
 
     // Populated by the GUI wiring layer (B7) at init. Defaults are empty; the
     // renderer treats empty strings as "field omitted" gracefully.
     std::string app_version;     // e.g. "2.5.0"
-    std::string app_build;       // e.g. "12345"
-    std::string platform;        // e.g. "win64" / "macos-arm64" / "linux"
+    std::string profile_version; // installed Snapmaker system profile bundle version
     std::string os_version;      // e.g. "10.0.19045"
-    std::string session_id;      // per-session UUID (set at init)
     std::string process_id;      // OS process id used to distinguish local multi-instance runs
-    std::string region;          // e.g. "us" / "cn"
     std::string home_for_redact; // user home path for redact_path() on ext values
 
     std::map<std::string, int> event_rate_cap_per_sec;
@@ -358,50 +285,32 @@ struct SnapLogConfig
     int                        total_unknown_rate_cap_per_sec = 20;
     std::vector<std::string>   event_disable_list;
 
-    size_t realtime_queue_cap = 1024;
-    size_t batch_queue_cap    = 4096; // Plan B
+    size_t batch_queue_cap = 4096;
 
-    // Plan B batch fields (unused in Plan A; kept for struct completeness).
-    size_t batch_max_events        = 500;
-    size_t batch_max_bytes         = 1 * 1024 * 1024;
-    size_t active_max_bytes        = 2 * 1024 * 1024;
-    size_t line_max_bytes          = 64 * 1024;
-    size_t sealed_max_upload_bytes = 5 * 1024 * 1024;
-    int    batch_flush_sec         = 60;
-    int    batch_idle_skip_sec     = 300;
-    int    batch_max_retry         = 3;
-    size_t sealed_max_disk_mb      = 256;
+    // Batch spool, rotation, retry, and upload fields.
+    size_t batch_max_events   = 500;
+    size_t batch_max_bytes    = 1 * 1024 * 1024;
+    size_t active_max_bytes   = 2 * 1024 * 1024;
+    size_t line_max_bytes     = 64 * 1024;
+    int    batch_flush_sec    = 60;
+    int    batch_max_retry    = 3;
+    size_t sealed_max_disk_mb = 256;
 
-    int    http_connect_timeout_sec   = 5;
-    int    http_total_timeout_sec     = 30;
-    int    poll_interval_ms           = 50;
-    size_t drain_batch_per_tick       = 256;
-    int    drain_wall_budget_ms       = 20;
-    int    realtime_join_deadline_sec = 5;
-    int    batch_join_deadline_sec    = 30;
+    int    http_connect_timeout_sec = 5;
+    int    http_total_timeout_sec   = 30;
+    int    poll_interval_ms         = 50;
+    size_t drain_batch_per_tick     = 256;
+    int    drain_wall_budget_ms     = 20;
+    int    batch_join_deadline_sec  = 30;
+
+    size_t posthog_queue_cap              = 1024;
+    size_t posthog_event_max_bytes        = 64 * 1024;
+    size_t posthog_queue_max_bytes        = 1 * 1024 * 1024;
+    size_t posthog_global_queue_max_bytes = 2 * 1024 * 1024;
+    size_t posthog_batch_size             = 50;
+    size_t posthog_batch_max_bytes        = 1 * 1024 * 1024;
+    int    posthog_flush_sec              = 60;
 };
-
-// Result of realtime request building: the target URL + ordered headers.
-struct RealtimeRequest
-{
-    std::string                                      url;
-    std::vector<std::pair<std::string, std::string>> headers;
-};
-
-// Logged-in path (token non-empty):
-//   url = gateway_base + "/api/log/upload/print"
-//   headers: Authorization: Bearer <token>, X-Client-Type: desktop, X-Client-Id
-//
-// Public path (token empty):
-//   url = gateway_base + "/api/log/public/upload/print"
-//   headers: X-Client-Type, X-Client-Id, X-Timestamp (ms via deps.now_ms()),
-//            X-Nonce (via nonce_gen), X-Sign = hmac_sha256_hex(hmac_secret,
-//            clientType||clientId||timestamp||nonce) — no separator, lowercase.
-//
-// clientId is passed in by the caller; for Plan A the worker passes the
-// machine_id snapshot (a stand-in).
-RealtimeRequest build_realtime_request(
-    const SnapLogDeps& deps, const SnapLogConfig& cfg, const std::string& clientId, const std::string& token, NonceGenerator nonce_gen);
 
 // Meyers singleton. init() must be called before log(); un-init log() is a
 // safe no-op. shutdown() stops workers; between shutdown() and a
@@ -413,11 +322,13 @@ public:
     static SnapLogClient& instance();
     void                  init(SnapLogDeps deps, SnapLogConfig cfg);
     void                  shutdown();
-    void log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, SnapLogPolicy policy, const char* caller_func, int caller_line,
-             bool bypass_login_gate = false);
-    void set_user_token(std::string t);
-    void set_user_id(std::string u);
-    void set_device_id(std::string d);
+    void                  log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, unsigned sinks);
+    void                  log_event(SnapLogLevel level, SnapEvent event);
+    void                  log_event(SnapLogLevel level, SnapEvent event, SnapLogExt ext);
+    void                  log_event(SnapLogLevel level, SnapEvent event, const std::string& msg);
+    void                  log_event(SnapLogLevel level, SnapEvent event, SnapLogExt ext, const std::string& msg);
+    void                  set_user_token(std::string t);
+    void                  set_user_id(std::string u);
     // Flutter MQTT identity of the connected printer (pushed from
     // sw_mqtt_set_engine; cleared on disconnect/logout).
     void set_connect_clientid(std::string v);
@@ -426,12 +337,15 @@ public:
 
     // Test-only accessors (no-op when un-init'd). Suffix _for_test marks them
     // as test scaffolding; production code must not rely on them.
-    std::size_t               realtime_queue_size_for_test() const;
-    uint64_t                  dropped_for_test() const;
-    std::vector<SnapLogLevel> realtime_queue_levels_for_test() const;
-
     std::size_t batch_queue_size_for_test() const;    // bt_queue size under queue_mu
     uint64_t    batch_queue_dropped_for_test() const; // batch_queue_dropped atomic
+    std::size_t posthog_queue_size_for_test() const;
+    std::size_t posthog_queue_size_for_test(PostHogProject project) const;
+    std::size_t posthog_queue_bytes_for_test(PostHogProject project) const;
+    uint64_t    posthog_queue_dropped_for_test() const;
+    void        set_posthog_timer_expired_for_test();
+    uint64_t    posthog_upload_successes_for_test() const;
+    uint64_t    posthog_upload_failures_for_test() const;
 
     // Used to verify that a timed-out consent-OFF leaves bt_worker non-joinable
     // (so OFF->ON restart works). Also used to verify file-lock defers bt_worker.
@@ -443,31 +357,22 @@ public:
     bool auth_known_dead_for_test() const;
     void set_auth_known_dead_for_test(bool v);
 
-    // Test-only: override the nonce generator used by the worker so X-Sign is
-    // deterministic in tests. Pass an empty function to restore the default
-    // (RAND_bytes). No-op when un-init'd.
-    void set_nonce_generator_for_test(NonceGenerator ng);
-
     //
     // bt_worker_loop drains bt_queue -> active.log, rotates to sealed at
     // thresholds, evicts oldest sealed under backpressure, and calls
-    // attempt_upload (a stub in Part A; Part B fills create/PUT/completed).
-    // It is a single-threaded owner of all spool FS operations, mirroring
-    // rt_worker_loop's poll/exit structure. Not started by init() yet (B6
-    // wires the lifecycle); tests call it directly.
+    // attempt_upload (create/PUT/completed). It is a single-threaded owner of
+    // all spool FS operations.
     //
     // Internals is exposed publicly ONLY so tests can construct a fake one
     // and drive bt_worker_loop without going through the singleton. Production
     // code must never construct Internals directly.
     //
-    // Stored realtime/batch event. The logger is pre-computed (normalize_logger)
-    // at log() time so the worker doesn't need to re-parse the function name.
-    struct RtEvent
+    // Stored batch event.
+    struct LogEvent
     {
         SnapLogLevel level;
         std::string  message;
         SnapLogExt   ext;
-        std::string  logger;
     };
 
     // Cross-platform exclusive file lock for spool_dir (prevents two OrcaSlicer
@@ -498,26 +403,23 @@ public:
         SnapLogConfig cfg;
         std::string   machine_id_snapshot; // read once at init for renderer
 
-        // --- Realtime queue (guarded by queue_mu) ---
-        std::mutex          queue_mu;
-        std::deque<RtEvent> rt_queue;
+        // --- Event queues (guarded by queue_mu) ---
+        std::mutex queue_mu;
 
         // --- Atomics (lock-free fast paths) ---
-        std::atomic<bool>     consent{true};
-        std::atomic<bool>     stop_receiving{true}; // true until init() flips it
-        std::atomic<bool>     deps_invalid{false};
-        std::atomic<uint64_t> dropped{0};
+        std::atomic<bool> consent{true};
+        std::atomic<bool> stop_receiving{true}; // true until init() flips it
+        std::atomic<bool> deps_invalid{false};
 
         // --- Identity (guarded by token_mu) ---
         std::mutex  token_mu;
         std::string user_token;
         std::string user_id;
-        std::string device_id;
         // Flutter MQTT identity of the connected printer.
         std::string connect_clientid;
         std::string print_sn;
         // Mirror of current_batch_id (owned by bt_worker_loop) for lock-safe
-        // reads from rt_worker_loop; refreshed by bt_worker each tick under
+        // reads from log()/PostHog rendering; refreshed by bt_worker each tick under
         // token_mu. Empty when the batch channel is inactive.
         std::string current_batch_id_snapshot;
 
@@ -526,27 +428,31 @@ public:
 
         // --- In-flight handle slots (guarded by m_h_mu; used by worker) ---
         std::mutex                     m_h_mu;
-        std::shared_ptr<SnapLogHandle> rt_handle;
-        std::shared_ptr<SnapLogHandle> bt_handle; // Plan B
+        std::shared_ptr<SnapLogHandle> bt_handle;
+        std::shared_ptr<SnapLogHandle> ph_handle;
 
-        // --- Realtime worker thread (started in init, joined in shutdown) ---
-        std::thread rt_worker;
-
-        // bt_queue reuses RtEvent{level,message,ext,logger}. Guarded by queue_mu
-        // (same mutex as rt_queue — fine, short hold).
-        std::deque<RtEvent>   bt_queue;
-        std::atomic<bool>     auth_known_dead{false};        // set on 401/403 (B5)
-        std::atomic<bool>     drain_and_flush{false};        // shutdown final-flush (B5/B6)
-        std::atomic<bool>     stop_uploads{false};           // shutdown/consent aborts uploads
-        std::atomic<bool>     batch_deps_invalid{false};     // batch-only dependency fence
-        std::atomic<uint32_t> batch_requests_in_progress{0}; // synchronous do_request calls
-        std::atomic<uint64_t> batch_queue_dropped{0};
-        std::atomic<uint64_t> auth_dead_create_skipped{0}; // bumped in B5
-        std::atomic<bool>     auth_dead_skip_counted{false};
-        std::atomic<uint64_t> disk_write_failed{0};              // bumped in B5
-        std::atomic<uint64_t> shutdown_detach_queue_residual{0}; // bumped in B6
-        std::atomic<uint64_t> purge_delete_failed{0};            // bumped in B6 (Windows delete-fail)
-        std::thread           bt_worker;                         // started in B6, not here
+        std::deque<LogEvent>                          bt_queue;
+        std::map<PostHogProject, PostHogProjectQueue> ph_queues;
+        std::atomic<bool>                             auth_known_dead{false};        // set on 401/403 (B5)
+        std::atomic<bool>                             drain_and_flush{false};        // shutdown final-flush (B5/B6)
+        std::atomic<bool>                             stop_uploads{false};           // shutdown/consent aborts uploads
+        std::atomic<bool>                             batch_deps_invalid{false};     // batch-only dependency fence
+        std::atomic<uint32_t>                         batch_requests_in_progress{0}; // synchronous do_request calls
+        std::atomic<uint64_t>                         batch_queue_dropped{0};
+        std::atomic<uint64_t>                         posthog_queue_dropped{0};
+        std::atomic<uint64_t>                         posthog_upload_successes{0};
+        std::atomic<uint64_t>                         posthog_upload_failures{0};
+        std::atomic<bool>                             posthog_drain_and_flush{false};
+        std::atomic<bool>                             posthog_stop_uploads{false};
+        std::atomic<int64_t>                          posthog_last_flush_ms{0};
+        std::atomic<uint64_t>                         posthog_consent_generation{0};
+        std::atomic<uint64_t>                         auth_dead_create_skipped{0}; // bumped in B5
+        std::atomic<bool>                             auth_dead_skip_counted{false};
+        std::atomic<uint64_t>                         disk_write_failed{0};              // bumped in B5
+        std::atomic<uint64_t>                         shutdown_detach_queue_residual{0}; // bumped in B6
+        std::atomic<uint64_t>                         purge_delete_failed{0};            // bumped in B6 (Windows delete-fail)
+        std::thread                                   bt_worker;                         // started in B6, not here
+        std::thread                                   ph_worker;
         // Each production worker captures a generation. Consent OFF/re-init
         // increments it before retiring the old worker, so a late return from
         // a blocked request cannot mutate the restarted worker's state.
@@ -594,15 +500,13 @@ public:
         // batchId never collide on S3 (which would silently overwrite).
         std::atomic<uint64_t> upload_seq{0};
 
-        // --- Test-injected nonce generator (empty => default_nonce) ---
-        NonceGenerator nonce_gen_for_test;
-
         explicit Internals(SnapLogDeps d, SnapLogConfig c)
             : deps(std::move(d)), cfg(std::move(c)), rate_limiter(deps.now_ms ? deps.now_ms : []() { return int64_t(0); })
         {}
     };
 
     static void bt_worker_loop(std::shared_ptr<Internals> in, uint64_t generation = 0);
+    static void ph_worker_loop(std::shared_ptr<Internals> in);
 
     // Test-only factory: build a fresh Internals from deps + cfg. Used by the
     // batch tests to construct a fake flusher context (spool dir, queues, etc)
@@ -616,21 +520,20 @@ private:
     mutable std::mutex         m_lifecycle_mu;
     std::shared_ptr<Internals> m_int;
     // The spool path is stable after init, so one pending purge is sufficient.
-    boost::filesystem::path    m_purge_spool_dir;
+    boost::filesystem::path             m_purge_spool_dir;
     std::shared_ptr<std::promise<bool>> m_purge_promise;
-    std::shared_future<bool>   m_purge_completion;
-    boost::filesystem::path    m_purge_lock_spool_dir;
-    SpoolLock                  m_purge_spool_lock;
-    std::shared_ptr<Internals> internals() const;
-    void                       cancel_current(const std::shared_ptr<Internals>& in, SnapLogPolicy p);
-    void                       start_batch_worker(const std::shared_ptr<Internals>& in);
-    std::shared_future<bool>   begin_spool_purge(const std::shared_ptr<Internals>& in, std::thread retired_worker = {});
-    void                       start_batch_worker_after_purge(const std::shared_ptr<Internals>& in);
-    bool                       spool_purge_blocks_worker(const boost::filesystem::path& spool_dir) const;
-    // Realtime worker thread entry point (defined in .cpp where Internals is
-    // complete). Static + takes Internals by shared_ptr so it runs detached
-    // from the client instance.
-    static void rt_worker_loop(std::shared_ptr<Internals> in);
+    std::shared_future<bool>            m_purge_completion;
+    boost::filesystem::path             m_purge_lock_spool_dir;
+    SpoolLock                           m_purge_spool_lock;
+    std::shared_ptr<Internals>          internals() const;
+    void                     dispatch_event(SnapLogLevel lvl, std::string msg, SnapLogExt ext, bool snaplog, PostHogProjectMask projects);
+    void                     cancel_current(const std::shared_ptr<Internals>& in);
+    void                     cancel_posthog_current(const std::shared_ptr<Internals>& in);
+    void                     start_posthog_worker(const std::shared_ptr<Internals>& in);
+    void                     start_batch_worker(const std::shared_ptr<Internals>& in);
+    std::shared_future<bool> begin_spool_purge(const std::shared_ptr<Internals>& in, std::thread retired_worker = {});
+    void                     start_batch_worker_after_purge(const std::shared_ptr<Internals>& in);
+    bool                     spool_purge_blocks_worker(const boost::filesystem::path& spool_dir) const;
 };
 
 // Fix A: Build a unique upload fileName for the S3 presigned-PUT key.
@@ -640,9 +543,9 @@ private:
 std::string make_upload_file_name(const std::string& clientId, const std::string& batchId, int64_t now_ms, uint64_t seq);
 
 // Result of batch request building: URL + ordered headers + JSON body string.
-// Unlike RealtimeRequest, batch endpoints carry a JSON body (create/completed/
-// cancel lifecycle). Auth-header selection is identical to realtime (Bearer vs
-// HMAC public); the body is endpoint-specific per [DOC-2].
+// Batch endpoints carry a JSON body (create/completed/
+// cancel lifecycle). Auth is Bearer-only
+// (Bearer-only); the body is endpoint-specific per [DOC-2].
 struct BatchRequest
 {
     std::string                                      url;
@@ -651,37 +554,31 @@ struct BatchRequest
 };
 
 // Build the batch create request (pre-signed PUT URL acquisition).
-//   URL: {gateway}/api/log/(public/)upload/create
+//   URL: {snaplog}/api/log/upload/create
 //   body: {"fileName":"<sanitized name>"} (checkSum omitted for v1 — server
 //         doesn't require it; computing it needs the file bytes which belongs
 //         in the flusher, not the request builder).
-BatchRequest build_batch_create_request(const SnapLogDeps&   deps,
-                                        const SnapLogConfig& cfg,
+BatchRequest build_batch_create_request(const SnapLogConfig& cfg,
                                         const std::string&   clientId,
                                         const std::string&   token,
-                                        NonceGenerator       nonce_gen,
                                         const std::string&   fileName);
 
 // Build the batch complete request (notify server the PUT finished).
-//   URL: {gateway}/api/log/(public/)upload/completed
+//   URL: {snaplog}/api/log/upload/completed
 //   body: {"fileName":"<full S3 key returned by create response>"}
 //         (single-part: no uploadId/uploadParts).
-BatchRequest build_batch_complete_request(const SnapLogDeps&   deps,
-                                          const SnapLogConfig& cfg,
+BatchRequest build_batch_complete_request(const SnapLogConfig& cfg,
                                           const std::string&   clientId,
                                           const std::string&   token,
-                                          NonceGenerator       nonce_gen,
                                           const std::string&   full_key);
 
 // Build the batch cancel request (abort an in-progress upload).
-//   URL: {gateway}/api/log/(public/)upload/cancel
+//   URL: {snaplog}/api/log/upload/cancel
 //   body: {"uploadId":"<id>"} when uploadId is non-empty; "{}" when empty
 //         (single-part has no uploadId — cancel is best-effort).
-BatchRequest build_batch_cancel_request(const SnapLogDeps&   deps,
-                                        const SnapLogConfig& cfg,
+BatchRequest build_batch_cancel_request(const SnapLogConfig& cfg,
                                         const std::string&   clientId,
                                         const std::string&   token,
-                                        NonceGenerator       nonce_gen,
                                         const std::string&   uploadId);
 
 // These are defined in SnapLogClient.cpp and used by the GUI wiring code
@@ -701,21 +598,11 @@ make_production_do_request(SnapLogConfig cfg);
 }}} // namespace Slic3r::SnapLog::v1
 
 // Global-scope macros using the fully-qualified namespace. Call sites write:
-//   SNAP_LOG(Info, "slice done", {"eventName","slice_completed"}, {"durationMs","123"});
-//   SNAP_LOG_BATCH(Error, "boom", {"eventName","x"});
-// At least one ext pair is required; for zero-ext use log() directly with {}.
-#define SNAP_LOG(lvl, msg, ...) \
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log(::Slic3r::SnapLog::v1::SnapLogLevel::lvl, (msg), \
-                                                         ::Slic3r::SnapLog::v1::SnapLogExt{__VA_ARGS__}, \
-                                                         ::Slic3r::SnapLog::v1::SnapLogPolicy::Realtime, __FUNCTION__, __LINE__)
+//   SNAP_LOG_INFO(SnapEvent::APP_LAUNCH);
 
-#define SNAP_LOG_BATCH(lvl, msg, ...) \
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log(::Slic3r::SnapLog::v1::SnapLogLevel::lvl, (msg), \
-                                                         ::Slic3r::SnapLog::v1::SnapLogExt{__VA_ARGS__}, \
-                                                         ::Slic3r::SnapLog::v1::SnapLogPolicy::Buffered, __FUNCTION__, __LINE__)
-
-// bypass_login_gate keeps anonymous events on the public endpoint; consent, config, and rate limits still apply.
-#define SNAP_LOG_BATCH_FORCE(lvl, msg, ...) \
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log(::Slic3r::SnapLog::v1::SnapLogLevel::lvl, (msg), \
-                                                         ::Slic3r::SnapLog::v1::SnapLogExt{__VA_ARGS__}, \
-                                                         ::Slic3r::SnapLog::v1::SnapLogPolicy::Buffered, __FUNCTION__, __LINE__, true)
+#define SNAP_LOG_INFO(...) \
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log_event(::Slic3r::SnapLog::v1::SnapLogLevel::Info, __VA_ARGS__)
+#define SNAP_LOG_WARNING(...) \
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log_event(::Slic3r::SnapLog::v1::SnapLogLevel::Warning, __VA_ARGS__)
+#define SNAP_LOG_ERROR(...) \
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log_event(::Slic3r::SnapLog::v1::SnapLogLevel::Error, __VA_ARGS__)

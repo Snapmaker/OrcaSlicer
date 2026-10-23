@@ -1016,6 +1016,9 @@ void MainFrame::shutdown(bool isRecreate)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "MainFrame::shutdown enter";
     m_shutting_down = true;
+    if (!isRecreate && m_plater != nullptr)
+        wxGetApp().capture_app_session_has_project(!m_plater->get_project_filename().empty());
+
     // BBS: backup
     Slic3r::set_backup_callback(nullptr);
 #ifdef _WIN32

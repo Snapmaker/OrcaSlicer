@@ -8,7 +8,9 @@ get_filename_component(_TEST_NAME ${CMAKE_CURRENT_LIST_DIR} NAME)
 add_executable(${_TEST_NAME}_tests
     ${_TEST_NAME}_tests_main.cpp
     SnapLogClient_test.cpp
+    SnapTelemetry_test.cpp
     )
+snapmaker_orca_apply_posthog_definitions(${_TEST_NAME}_tests)
 
 find_package(JPEG REQUIRED)
 find_package(PNG REQUIRED)

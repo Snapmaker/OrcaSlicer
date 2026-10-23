@@ -184,8 +184,6 @@ private:
 
     // Sentry
     void sw_UploadEvent();
-    // SnapLog
-    void sw_SnapLog();
 
     // Get software basic info
     void sw_GetSoftwareInfo();

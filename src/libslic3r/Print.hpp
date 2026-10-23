@@ -960,6 +960,9 @@ public:
 
     // Wipe tower support.
     bool                        has_wipe_tower() const;
+    bool                        exclude_support_from_prime_tower() const;
+    bool                        is_prime_tower_extruder(unsigned int extruder) const;
+    std::vector<unsigned int>   prime_tower_extruders() const;
     const WipeTowerData&        wipe_tower_data(size_t filaments_cnt = 0) const;
     const ToolOrdering& 		tool_ordering() const { return m_tool_ordering; }
 

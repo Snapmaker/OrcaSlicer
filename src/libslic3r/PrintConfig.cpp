@@ -6203,6 +6203,16 @@ void PrintConfigDef::init_fff_params()
     // BBS: change data type to floats to add partplate logic
     def->set_default_value(new ConfigOptionFloats{ 220. });
 
+    def           = this->add("prime_tower_include_support", coBool);
+    def->label    = L("Include support-only filaments");
+    def->category = L("Prime tower");
+    def->tooltip  = L("Include filaments used only for supports in the prime tower. On printers with separate nozzles, "
+                      "disable this to skip tower priming for those filaments. If only one model filament remains, no tower is generated "
+                      "unless required by smooth timelapse. Filaments also used by models remain included. "
+                      "Single-nozzle multi-material printers always include all filaments to preserve purging.");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
     def = this->add("prime_tower_width", coFloat);
     def->label = L("Width");
     def->tooltip = L("Width of the prime tower.");

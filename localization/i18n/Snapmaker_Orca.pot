@@ -16317,7 +16317,7 @@ msgid "Incompatible filament types cannot be mixed. Please correct the selection
 msgstr ""
 
 #: src/slic3r/GUI/Preferences.cpp
-msgid "GPU acceleration for G-code preview"
+msgid "GPU-accelerated G-code preview"
 msgstr ""
 
 #: src/slic3r/GUI/Preferences.cpp

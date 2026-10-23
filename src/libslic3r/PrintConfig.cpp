@@ -3873,14 +3873,14 @@ void PrintConfigDef::init_fff_params()
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0));
 
-    def = this->add("ironing_speed", coFloats);
+    def = this->add("ironing_speed", coFloat);
     def->label = L("Ironing speed");
     def->category = L("Quality");
     def->tooltip = L("Print speed of ironing lines.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloats { 20. });
+    def->set_default_value(new ConfigOptionFloat(20));
 
     def           = this->add("ironing_angle", coFloat);
     def->label    = L("Ironing angle");
@@ -7685,7 +7685,6 @@ const std::vector<std::string>& process_flow_variant_options()
         "gap_infill_speed",
         "bridge_speed",
         "internal_bridge_speed",
-        "ironing_speed",
         "small_perimeter_speed",
         "small_perimeter_threshold",
         "support_speed",

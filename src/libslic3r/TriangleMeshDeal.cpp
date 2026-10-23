@@ -5,6 +5,10 @@
 #include <assert.h>
 #include <boost/log/trivial.hpp>
 
+#include <set>
+#include <tuple>
+#include <utility>
+
 namespace Slic3r {
 TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bool& ok)
 {
@@ -18,11 +22,44 @@ TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bo
     typedef Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::DontAlign | Eigen::RowMajor> RowMatrixX3f;
     typedef Eigen::Matrix<int, Eigen::Dynamic, 3, Eigen::DontAlign | Eigen::RowMajor>   RowMatrixX3i;
 
-    auto vertices_count = mesh.its.vertices.size();
-    auto indices_count  = mesh.its.indices.size();
+    indexed_triangle_set input = mesh.its;
+
+    // Drop exact duplicate faces first: igl::loop() assumes a manifold mesh, and one
+    // repeated face makes every of its edges non-manifold (4 incident faces), which
+    // derails the edge pairing inside the subdivision until it runs out of bounds.
+    // No menu check stops such input - repeated faces keep open_edges at 0, because
+    // the opposite-direction edge pairs still match. Keep the first occurrence only.
+    {
+        std::set<std::tuple<int, int, int>>        seen_faces;
+        std::vector<stl_triangle_vertex_indices>   unique_faces;
+        unique_faces.reserve(input.indices.size());
+        for (const auto &face : input.indices) {
+            const int a = face(0), b = face(1), c = face(2);
+            // Rotate the smallest index to the front; rotations preserve winding, so
+            // the key matches a face regardless of its rotation in the face list.
+            const std::tuple<int, int, int> key = (a <= b && a <= c) ? std::make_tuple(a, b, c)
+                                                : (b <= a && b <= c) ? std::make_tuple(b, c, a)
+                                                                     : std::make_tuple(c, a, b);
+            if (seen_faces.insert(key).second)
+                unique_faces.push_back(face);
+        }
+        input.indices = std::move(unique_faces);
+    }
+
+    // igl::loop() requires a compact mesh: igl::adjacency_list() sizes its output by
+    // F.maxCoeff() + 1 while loop() iterates over V.rows(), so an unreferenced trailing
+    // vertex (max face index < vertex count - 1) makes loop() read past the adjacency
+    // list. Drop unreferenced vertices (and reindex the faces) on a local copy first.
+    its_compactify_vertices(input);
+    if (input.vertices.empty() || input.indices.empty())
+    {
+        ok = false;
+        return TriangleMesh();
+    }
+
     // Use Map to map the vertices and indicies into Matrixes without requiring a copy.
-    const Eigen::Map<const RowMatrixX3f> OV(mesh.its.vertices[0].data(), vertices_count, 3);
-    const Eigen::Map<const RowMatrixX3i> OF(mesh.its.indices[0].data(), indices_count, 3);
+    const Eigen::Map<const RowMatrixX3f> OV(input.vertices[0].data(), input.vertices.size(), 3);
+    const Eigen::Map<const RowMatrixX3i> OF(input.indices[0].data(), input.indices.size(), 3);
     Eigen::MatrixX3f                     V;
     Eigen::MatrixX3i                     F;
 
@@ -33,11 +70,6 @@ TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bo
     RowMatrixX3i OF_mat = OF;
 
     ok = true;
-    // TODO: add validation checks for the input mesh? Is this really necessary?
-    // if ( <not OK> ) {
-    //    ok = false;
-    //    return TriangleMesh();
-    // }
     loop(OV_mat, OF_mat, V, F);
 
     indexed_triangle_set its;

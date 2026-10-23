@@ -5725,14 +5725,16 @@ void GUI::ObjectList::smooth_mesh()
     // Collect one job per volume to smooth: for a volume selection, the selected parts of
     // the first object; otherwise all volumes of every selected object.
     struct SmoothJob {
-        int          obj_idx;
-        ModelVolume *volume;
-        TriangleMesh input;
+        ObjectID                           object_id; // stable identity: list indexes shift on deletion
+        ModelVolume                       *volume;
+        std::shared_ptr<const TriangleMesh> origin; // identity of the mesh copied into input
+        TriangleMesh                       input;
     };
     struct SmoothResult {
-        int                         obj_idx;
-        ModelVolume                *volume;
-        std::optional<TriangleMesh> smoothed;
+        ObjectID                           object_id;
+        ModelVolume                       *volume;
+        std::shared_ptr<const TriangleMesh> origin;
+        std::optional<TriangleMesh>        smoothed;
     };
 
     const Model &model = plater->model();
@@ -5751,7 +5753,7 @@ void GUI::ObjectList::smooth_mesh()
                 return;
             }
             for (ModelVolume *mv : obj->volumes) {
-                inputs->push_back({obj_idx, mv, mv->mesh()});
+                inputs->push_back({obj->id(), mv, mv->mesh_ptr(), mv->mesh()});
             }
         }
     } else {
@@ -5771,7 +5773,7 @@ void GUI::ObjectList::smooth_mesh()
             if (show_warning_dlg(mv->mesh().facets_count() * 4, mv->name, true)) {
                 return;
             }
-            inputs->push_back({object_idx, mv, mv->mesh()});
+            inputs->push_back({obj->id(), mv, mv->mesh_ptr(), mv->mesh()});
         }
     }
     if (inputs->empty()) {
@@ -5785,16 +5787,11 @@ void GUI::ObjectList::smooth_mesh()
     auto results = std::make_shared<std::vector<SmoothResult>>();
     results->reserve(inputs->size());
 
-    auto* start_notification_manager = plater->get_notification_manager();
-    if (start_notification_manager != nullptr)
-        start_notification_manager->push_notification(NotificationType::CustomNotification,
-                                                      NotificationManager::NotificationLevel::RegularNotificationLevel, into_u8(_L("Subdivision started")));
-
     m_smooth_mesh_thread = std::thread([this, plater, inputs, results, show_smooth_mesh_error_dlg]() {
         for (const SmoothJob &job : *inputs) {
             bool        ok = false;
             TriangleMesh smoothed = TriangleMeshDeal::smooth_triangle_mesh(job.input, ok);
-            results->push_back({job.obj_idx, job.volume, ok ? std::make_optional(std::move(smoothed)) : std::nullopt});
+            results->push_back({job.object_id, job.volume, job.origin, ok ? std::make_optional(std::move(smoothed)) : std::nullopt});
         }
 
         // Back to the UI thread to apply the smoothed meshes and refresh the scene.
@@ -5807,42 +5804,64 @@ void GUI::ObjectList::smooth_mesh()
                 m_smooth_mesh_thread.join();
             }
 
-            Model &model = plater->model();
-            // First pass: which results can still be applied (object and volume survived
-            // while the job was running)? A nullopt result marks a failed volume.
-            std::vector<SmoothResult *> applicable;
-            std::string                failed_name;
+            Model                   &model = plater->model();
+            std::vector<SmoothResult *> apply_list;
+            std::vector<int>        changed_objs;
+            std::string             failed_name;
             for (SmoothResult &result : *results) {
-                if (result.obj_idx < 0 || result.obj_idx >= (int) model.objects.size()) {
+                // Locate the object by its stable id: deleting another object shifts
+                // list indexes while the job runs, so the dispatch-time index must
+                // not be used for lookup.
+                int cur_obj_idx = -1;
+                for (size_t i = 0; i < model.objects.size(); ++i) {
+                    if (model.objects[i]->id() == result.object_id) {
+                        cur_obj_idx = (int) i;
+                        break;
+                    }
+                }
+                if (cur_obj_idx < 0) {
                     continue;
                 }
-                ModelObject *obj = model.objects[result.obj_idx];
+                ModelObject *obj = model.objects[cur_obj_idx];
                 // Skip volumes that were removed from the object while the job was running.
                 if (std::find(obj->volumes.begin(), obj->volumes.end(), result.volume) == obj->volumes.end()) {
                     continue;
                 }
-                if (result.smoothed)
-                    applicable.push_back(&result);
-                else if (failed_name.empty())
+                // The job smoothed a copy of one specific mesh object. Every mesh
+                // replacement allocates a fresh TriangleMesh, so if the volume's mesh was
+                // swapped while the job was running (e.g. a simplify finished first), this
+                // result is stale and would overwrite the newer mesh - skip it.
+                if (result.volume->mesh_ptr() != result.origin) {
+                    continue;
+                }
+                if (result.smoothed) {
+                    apply_list.push_back(&result);
+                    if (std::find(changed_objs.begin(), changed_objs.end(), cur_obj_idx) == changed_objs.end()) {
+                        changed_objs.push_back(cur_obj_idx);
+                    }
+                } else if (failed_name.empty()) {
                     failed_name = result.volume->name;
+                }
             }
-
-            auto *notification_manager = plater->get_notification_manager();
-            bool  any_change           = false;
-            if (! applicable.empty()) {
-                // The snapshot must capture the state BEFORE the meshes are replaced,
-                // otherwise Ctrl+Z has no pre-subdivision state to return to.
+            if (!failed_name.empty()) {
+                show_smooth_mesh_error_dlg(failed_name);
+            }
+            if (!apply_list.empty()) {
+                // take_snapshot() stores the CURRENT model state, so it must run before
+                // the meshes are replaced - otherwise Ctrl+Z would restore the already
+                // subdivided meshes. One snapshot covers the whole multi-object operation.
                 plater->take_snapshot("smooth_mesh");
-                std::vector<int> changed_objs;
-                for (SmoothResult *result : applicable) {
+                for (SmoothResult *result : apply_list) {
                     result->volume->set_mesh(std::move(*result->smoothed));
                     result->volume->calculate_convex_hull();
                     result->volume->invalidate_convex_hull_2d();
                     result->volume->set_new_unique_id();
-                    any_change = true;
-                    if (std::find(changed_objs.begin(), changed_objs.end(), result->obj_idx) == changed_objs.end()) {
-                        changed_objs.push_back(result->obj_idx);
-                    }
+                    // The four FacetsAnnotation stores (supports, seams, MMU segmentation,
+                    // fuzzy skin) are indexed by face number; subdivision replaced every
+                    // face with four new ones, so the stale markers would land on wrong
+                    // faces. set_mesh()/set_new_unique_id() do not touch them - drop them
+                    // explicitly (the "(Lost color)" menu note assumes exactly this).
+                    result->volume->reset_extra_facets();
                 }
                 for (int obj_idx : changed_objs) {
                     model.objects[obj_idx]->invalidate_bounding_box();
@@ -5850,38 +5869,8 @@ void GUI::ObjectList::smooth_mesh()
                     plater->changed_mesh(obj_idx);
                 }
             }
-
-            if (! failed_name.empty()) {
-                show_smooth_mesh_error_dlg(failed_name);
-                if (notification_manager != nullptr)
-                    notification_manager->push_notification(NotificationType::CustomNotification,
-                                                            NotificationManager::NotificationLevel::ErrorNotificationLevel,
-                                                            into_u8(_L("Subdivision failed")));
-            } else if (any_change && notification_manager != nullptr) {
-                notification_manager->push_notification(NotificationType::CustomNotification,
-                                                        NotificationManager::NotificationLevel::RegularNotificationLevel,
-                                                        into_u8(_L("Subdivision finished")));
-            }
         });
     });
-}
-
-void GUI::ObjectList::smooth_mesh_local()
-{
-    auto plater = wxGetApp().plater();
-    if (!plater) {
-        return;
-    }
-
-    // Open the painting-style gizmo: the user paints the facets to subdivide and
-    // applies the subdivision from the gizmo panel.
-    GLGizmosManager& gizmos_mgr = plater->get_view3D_canvas3D()->get_gizmos_manager();
-    if (! gizmos_mgr.check_gizmos_closed_except(GLGizmosManager::EType::LocalSubdivision))
-        return;
-    if (gizmos_mgr.get_current_type() == GLGizmosManager::LocalSubdivision) {
-        gizmos_mgr.open_gizmo(GLGizmosManager::EType::LocalSubdivision); // toggle it off first
-    }
-    gizmos_mgr.open_gizmo(GLGizmosManager::EType::LocalSubdivision);
 }
 
 void ObjectList::update_item_error_icon(const int obj_idx, const int vol_idx) const

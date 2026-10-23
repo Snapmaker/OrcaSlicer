@@ -5725,13 +5725,13 @@ void GUI::ObjectList::smooth_mesh()
     // Collect one job per volume to smooth: for a volume selection, the selected parts of
     // the first object; otherwise all volumes of every selected object.
     struct SmoothJob {
-        int                                obj_idx;
+        ObjectID                           object_id; // stable identity: list indexes shift on deletion
         ModelVolume                       *volume;
         std::shared_ptr<const TriangleMesh> origin; // identity of the mesh copied into input
         TriangleMesh                       input;
     };
     struct SmoothResult {
-        int                                obj_idx;
+        ObjectID                           object_id;
         ModelVolume                       *volume;
         std::shared_ptr<const TriangleMesh> origin;
         std::optional<TriangleMesh>        smoothed;
@@ -5753,7 +5753,7 @@ void GUI::ObjectList::smooth_mesh()
                 return;
             }
             for (ModelVolume *mv : obj->volumes) {
-                inputs->push_back({obj_idx, mv, mv->mesh_ptr(), mv->mesh()});
+                inputs->push_back({obj->id(), mv, mv->mesh_ptr(), mv->mesh()});
             }
         }
     } else {
@@ -5773,7 +5773,7 @@ void GUI::ObjectList::smooth_mesh()
             if (show_warning_dlg(mv->mesh().facets_count() * 4, mv->name, true)) {
                 return;
             }
-            inputs->push_back({object_idx, mv, mv->mesh_ptr(), mv->mesh()});
+            inputs->push_back({obj->id(), mv, mv->mesh_ptr(), mv->mesh()});
         }
     }
     if (inputs->empty()) {
@@ -5791,7 +5791,7 @@ void GUI::ObjectList::smooth_mesh()
         for (const SmoothJob &job : *inputs) {
             bool        ok = false;
             TriangleMesh smoothed = TriangleMeshDeal::smooth_triangle_mesh(job.input, ok);
-            results->push_back({job.obj_idx, job.volume, job.origin, ok ? std::make_optional(std::move(smoothed)) : std::nullopt});
+            results->push_back({job.object_id, job.volume, job.origin, ok ? std::make_optional(std::move(smoothed)) : std::nullopt});
         }
 
         // Back to the UI thread to apply the smoothed meshes and refresh the scene.
@@ -5809,10 +5809,20 @@ void GUI::ObjectList::smooth_mesh()
             std::vector<int>        changed_objs;
             std::string             failed_name;
             for (SmoothResult &result : *results) {
-                if (result.obj_idx < 0 || result.obj_idx >= (int) model.objects.size()) {
+                // Locate the object by its stable id: deleting another object shifts
+                // list indexes while the job runs, so the dispatch-time index must
+                // not be used for lookup.
+                int cur_obj_idx = -1;
+                for (size_t i = 0; i < model.objects.size(); ++i) {
+                    if (model.objects[i]->id() == result.object_id) {
+                        cur_obj_idx = (int) i;
+                        break;
+                    }
+                }
+                if (cur_obj_idx < 0) {
                     continue;
                 }
-                ModelObject *obj = model.objects[result.obj_idx];
+                ModelObject *obj = model.objects[cur_obj_idx];
                 // Skip volumes that were removed from the object while the job was running.
                 if (std::find(obj->volumes.begin(), obj->volumes.end(), result.volume) == obj->volumes.end()) {
                     continue;
@@ -5826,8 +5836,8 @@ void GUI::ObjectList::smooth_mesh()
                 }
                 if (result.smoothed) {
                     apply_list.push_back(&result);
-                    if (std::find(changed_objs.begin(), changed_objs.end(), result.obj_idx) == changed_objs.end()) {
-                        changed_objs.push_back(result.obj_idx);
+                    if (std::find(changed_objs.begin(), changed_objs.end(), cur_obj_idx) == changed_objs.end()) {
+                        changed_objs.push_back(cur_obj_idx);
                     }
                 } else if (failed_name.empty()) {
                     failed_name = result.volume->name;

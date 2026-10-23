@@ -879,6 +879,10 @@ public:
     // Push foreground/background state change to all subscribed webview instances
     void notify_foreground_change(const bool active);
     void user_update_privacy_notify(const bool& res);
+    // Model station switch: delivered to the connect CLI (set_app_config);
+    // the CLI relays it to the Flutter pages and the other Orca instances.
+    void model_station_notify(const bool& enabled);
+    void push_model_station_to_gateway();
 
 public:
     bool sm_disconnect_current_machine(bool need_reload_printerview = true);

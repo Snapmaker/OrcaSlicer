@@ -5954,8 +5954,33 @@ void GUI_App::register_gateway_notifications()
 wxString GUI_App::gateway_web_url(const wxString& page_key) const
 {
     const std::string url = m_gateway_service ? m_gateway_service->web_url(into_u8(page_key)) : std::string{};
-    if (!url.empty())
-        return from_u8(url);
+    if (!url.empty()) {
+        // Use the resolved native theme, including the system appearance on macOS.
+        const std::string theme = dark_mode() ? "dark_mode=1" : "dark_mode=0";
+        const std::size_t fragment = url.find('#');
+        std::string themed_url = url.substr(0, fragment);
+        const std::size_t query = themed_url.find('?');
+        bool replaced = false;
+        if (query != std::string::npos) {
+            for (std::size_t pos = query + 1; pos < themed_url.size();) {
+                const std::size_t end = themed_url.find('&', pos);
+                const std::size_t length = (end == std::string::npos ? themed_url.size() : end) - pos;
+                if (themed_url.compare(pos, 10, "dark_mode=") == 0) {
+                    themed_url.replace(pos, length, theme);
+                    replaced = true;
+                    break;
+                }
+                if (end == std::string::npos)
+                    break;
+                pos = end + 1;
+            }
+        }
+        if (!replaced)
+            themed_url += (query == std::string::npos ? "?" : "&") + theme;
+        if (fragment != std::string::npos)
+            themed_url += url.substr(fragment);
+        return from_u8(themed_url);
+    }
 
     BOOST_LOG_TRIVIAL(warning)
         << "[FLUTTER_FLOW] [gateway] [url_fallback] page=" << into_u8(page_key) << " port=" << get_page_http_port();

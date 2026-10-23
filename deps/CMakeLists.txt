@@ -294,6 +294,7 @@ include(Boost/Boost.cmake)
 
 # The order of includes respects the dependencies between libraries
 include(Cereal/Cereal.cmake)
+include(Assimp/Assimp.cmake)
 include(Qhull/Qhull.cmake)
 include(GLEW/GLEW.cmake)
 
@@ -379,6 +380,7 @@ set(_dep_list
     ${SENTRY_PKG}
     ${WXWIDGETS_PKG}
     dep_Cereal
+    dep_Assimp
     dep_NLopt
     dep_OpenVDB
     dep_OpenCSG

@@ -649,11 +649,11 @@ static const FileWildcards file_wildcards_by_type[FT_SIZE] = {
 #ifdef __APPLE__
     /* FT_MODEL */
     {"Supported files"sv,
-     {".3mf"sv, ".stl"sv, ".oltp"sv, ".stp"sv, ".step"sv, ".svg"sv, ".amf"sv, ".obj"sv, ".usd"sv, ".usda"sv, ".usdc"sv, ".usdz"sv, ".abc"sv,
-      ".ply"sv}},
+     {".3mf"sv, ".stl"sv, ".oltp"sv, ".stp"sv, ".step"sv, ".svg"sv, ".amf"sv, ".obj"sv, ".fbx"sv, ".gltf"sv, ".glb"sv, ".usd"sv, ".usda"sv,
+      ".usdc"sv, ".usdz"sv, ".abc"sv, ".ply"sv}},
 #else
     /* FT_MODEL */
-    {"Supported files"sv, {".3mf"sv, ".stl"sv, ".oltp"sv, ".stp"sv, ".step"sv, ".svg"sv, ".amf"sv, ".obj"sv}},
+    {"Supported files"sv, {".3mf"sv, ".stl"sv, ".oltp"sv, ".stp"sv, ".step"sv, ".svg"sv, ".amf"sv, ".obj"sv, ".fbx"sv, ".gltf"sv, ".glb"sv}},
 #endif
     /* FT_ZIP */ {"ZIP files"sv, {".zip"sv}},
     /* FT_PROJECT */ {"Project files"sv, {".3mf"sv}},

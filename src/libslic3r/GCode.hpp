@@ -653,6 +653,7 @@ private:
     // BBS: max bed temperature over all used extruders, so that the bed temperature always
     // accommodates the highest-temperature filament of a compatible mixed print (e.g. PLA + TPU).
     int get_bed_temperature_max(const Print& print, const bool is_first_layer) const;
+    std::vector<unsigned int> bed_temperature_extruders(const Print& print) const;
 
     std::string _extrude(const ExtrusionPath &path, std::string description = "", double speed = -1);
     bool _needSAFC(const ExtrusionPath &path);

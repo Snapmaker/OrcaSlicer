@@ -142810,7 +142810,6 @@ return A.e(m.ig(f),$async$uO)
 case 13:p=15
 e=b3.k1.dh()?"lan":"wan"
 b0=t.N
-A.jh("device_connect_attempt",null,A.x(["linkMode",e,"deviceSn",b3.y,"deviceId",b3.r,"deviceKey",f,"clientId",b3.gdT(0),"deviceName",b3.a],b0,b0),"INFO")
 d=null
 s=b3.k1.dh()?18:20
 break
@@ -142894,7 +142893,6 @@ j=J.t(m)
 i=b.y
 h=t.N
 h=A.x(["success",j,"reason","disconnect","deviceKey",i,"deviceSn",i,"deviceId",b.r,"deviceName",b.a,"clientId",b.gdT(0)],h,h)
-A.jh("device_disconnect","DeviceConnectService, disconnect, deviceKey: "+b.y+", result: "+A.d(m),h,k)
 k=m
 j=b.y
 if(k)n.hL(j,B.os)
@@ -164775,7 +164773,6 @@ case 72:return"sw_LaunchConsole"
 case 73:return"sw_Log"
 case 74:return"sw_SetLogLevel"
 case 76:return"sw_UploadEvent"
-case 77:return"sw_SnapLog"
 case 78:return"sw_OpenBrowser"
 case 79:return"sw_OpenOrcaWebview"
 case 75:return"sw_FileLog"

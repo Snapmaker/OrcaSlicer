@@ -534,8 +534,6 @@ void SSWCP_Instance::process() {
         sw_FileLog();
     } else if (m_cmd == "sw_UploadEvent") {
         sw_UploadEvent();
-    } else if (m_cmd == "sw_SnapLog") {
-        sw_SnapLog();
     } else if (m_cmd == "sw_OpenOrcaWebview") {
         sw_OpenOrcaWebview();
     } else if (m_cmd == "sw_OpenBrowser") {
@@ -585,62 +583,6 @@ void SSWCP_Instance::sw_UploadEvent() {
     catch (std::exception& e) {
         handle_general_fail();
     }
-}
-
-void SSWCP_Instance::sw_SnapLog()
-{
-    const auto require_string = [this](const char* name) -> bool {
-        auto it = m_param_data.find(name);
-        if (it == m_param_data.end() || !it->is_string()) return false;
-        return true;
-    };
-    if (!require_string("level")) {
-        handle_general_fail(-1, "param [level] required!");
-        return;
-    }
-    if (!require_string("message")) {
-        handle_general_fail(-1, "param [message] required!");
-        return;
-    }
-    if (m_param_data.count("policy") && !m_param_data["policy"].is_string()) {
-        handle_general_fail(-1, "param [policy] must be a string!");
-        return;
-    }
-
-    std::string level_str = m_param_data["level"].get<std::string>();
-    std::string message   = m_param_data["message"].get<std::string>();
-
-    if (m_param_data.count("log") && !m_param_data["log"].empty()) {
-        const auto& log_value = m_param_data["log"];
-        std::string local_log = log_value.is_string() ? log_value.get<std::string>() : log_value.dump();
-        boost::algorithm::trim(local_log);
-        if (!local_log.empty()) {
-            BOOST_LOG_TRIVIAL(warning) << "[WCP] [SnapLog] " << local_log;
-        }
-    }
-
-    using namespace Slic3r::SnapLog::v1;
-    SnapLogExt ext;
-    if (m_param_data.count("ext") && m_param_data["ext"].is_object()) {
-        for (auto it = m_param_data["ext"].begin(); it != m_param_data["ext"].end(); ++it) {
-            ext.emplace_back(it.key(), it.value().is_string() ? it.value().get<std::string>() : it.value().dump());
-        }
-    }
-    ext.emplace_back("source", "flutter");
-
-    std::string policy_str = m_param_data.count("policy")
-        ? m_param_data["policy"].get<std::string>() : "realtime";
-
-    SnapLogLevel lvl = (level_str == "ERROR" || level_str == "error") ? SnapLogLevel::Error
-                    : (level_str == "WARN"  || level_str == "warning") ? SnapLogLevel::Warning
-                    : SnapLogLevel::Info;
-    SnapLogPolicy pol = (policy_str == "batched" || policy_str == "batch")
-        ? SnapLogPolicy::Buffered : SnapLogPolicy::Realtime;
-
-    SnapLogClient::instance().log(lvl, message, std::move(ext), pol, "flutter", 0);
-
-    send_to_js();
-    finish_job();
 }
 
 void SSWCP_Instance::sw_GetSoftwareInfo()
@@ -1450,9 +1392,11 @@ void SSWCP_MachineFind_Instance::sw_WakeupFind()
 void SSWCP_MachineFind_Instance::sw_StartMachineFind()
 {
     try {
-        SNAP_LOG_BATCH(Info, "device discovery start",
-            {"eventName", "device_discovery_start"},
-            {"source", "cpp"});
+        SNAP_LOG_INFO(SnapLog::v1::SnapEvent::DEVICE_DISCOVERY_START,
+            {
+                {"source", "cpp"},
+            },
+            "device discovery start");
 
         std::vector<string> protocols;
 

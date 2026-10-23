@@ -100,9 +100,24 @@ else()
         endif()
 endif()
 
-set(SNAP_LOG_HMAC_SECRET "c25hcG1ha2VyLU9yY2E" CACHE STRING
-    "Public SnapLog gateway signing key (not a user credential)")
-add_definitions("-DSNAP_LOG_HMAC_SECRET=\"${SNAP_LOG_HMAC_SECRET}\"")
+set(SNAP_LOG_POSTHOG_API_KEYS
+    SNAP_LOG_POSTHOG_CN_ORCA_API_KEY
+    SNAP_LOG_POSTHOG_INTL_ORCA_API_KEY
+    SNAP_LOG_POSTHOG_INTL_MODEL_LAB_API_KEY
+)
+foreach(key IN LISTS SNAP_LOG_POSTHOG_API_KEYS)
+    set(${key} "$ENV{${key}}")
+endforeach()
+
+unset(SNAP_LOG_PUBLIC_HMAC_SECRET CACHE)
+set(SNAP_LOG_PUBLIC_HMAC_SECRET "$ENV{SNAP_LOG_PUBLIC_HMAC_SECRET}")
+
+function(snapmaker_orca_apply_posthog_definitions target)
+    target_compile_definitions(${target} PRIVATE SNAP_LOG_PUBLIC_HMAC_SECRET="${SNAP_LOG_PUBLIC_HMAC_SECRET}")
+    foreach(key IN LISTS SNAP_LOG_POSTHOG_API_KEYS)
+        target_compile_definitions(${target} PRIVATE "${key}=\"${${key}}\"")
+    endforeach()
+endfunction()
 
 option(SLIC3R_STATIC 			"Compile Snapmaker_Orca with static libraries (Boost, TBB, glew)" ${SLIC3R_STATIC_INITIAL})
 option(SLIC3R_GUI    			"Compile Snapmaker_Orca with GUI components (OpenGL, wxWidgets)" 1)

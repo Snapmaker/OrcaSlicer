@@ -397,7 +397,7 @@ public:
     // To be called when providing a list of files to the GUI slic3r on command line.
     std::vector<size_t> load_files(const std::vector<std::string>& input_files, LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig,  bool ask_multi = false);
     // to be called on drag and drop
-    bool load_files(const wxArrayString& filenames);
+    bool load_files(const wxArrayString& filenames, const std::string& telemetry_source = "drag_drop");
 
     const wxString& get_last_loaded_gcode() const { return m_last_loaded_gcode; }
 

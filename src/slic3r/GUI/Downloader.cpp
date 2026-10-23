@@ -265,7 +265,7 @@ void Downloader::on_complete(wxCommandEvent& event)
     set_download_state(event.GetInt(), DownloadState::DownloadDone);
 	wxArrayString paths;
 	paths.Add(event.GetString());
-	wxGetApp().plater()->load_files(paths);
+	wxGetApp().plater()->load_files(paths, "model_library");
 }
 bool Downloader::user_action_callback(DownloaderUserAction action, int id)
 {

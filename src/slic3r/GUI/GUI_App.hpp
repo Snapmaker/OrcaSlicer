@@ -265,6 +265,9 @@ private:
     // URL is in the middle of loading.
     bool            m_url_open_pending { false };
     bool            m_app_conf_exists{ false };
+    std::chrono::steady_clock::time_point m_session_start_time{std::chrono::steady_clock::now()};
+    bool            m_app_session_end_reported{ false };
+    bool            m_app_session_has_project{ false };
     EAppMode        m_app_mode{ EAppMode::Editor };
     bool            m_is_recreating_gui{ false };
     /// Set only for the duration of profile/preset `MsgUpdateConfig::ShowModal()` (atomic: safe vs updater threads + CallAfter).
@@ -410,6 +413,8 @@ private:
     std::string     get_local_models_path();
     bool            OnInit() override;
     int             OnExit() override;
+    void            capture_app_session_has_project(bool has_project) { m_app_session_has_project = has_project; }
+    void            initialize_snaplog();
     bool            initialized() const { return m_initialized; }
     inline bool     is_enable_multi_machine() { return this->app_config&& this->app_config->get("enable_multi_machine") == "true"; }
 

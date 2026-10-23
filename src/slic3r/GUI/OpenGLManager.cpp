@@ -29,7 +29,7 @@
 // and at startup (init_gl).
 // (GLEW is built for GLX in deps/GLEW; it does not expose its backend to this file, so only wx is checked.)
 #if defined(__linux__) && defined(wxUSE_GLCANVAS_EGL) && wxUSE_GLCANVAS_EGL
-#warning "wxWidgets was built with wxGLCanvas EGL support: the 3D canvas stays blank on NVIDIA's proprietary driver; rebuild it with -DwxUSE_GLCANVAS_EGL=OFF (deps/wxWidgets/wxWidgets.cmake)"
+#warning "wxWidgets was built with wxGLCanvas EGL support: the EGL canvas may fail to present on some drivers (e.g. NVIDIA), leaving the 3D canvas blank; rebuild it with -DwxUSE_GLCANVAS_EGL=OFF (deps/wxWidgets/wxWidgets.cmake)"
 static constexpr bool s_wx_glcanvas_egl = true;
 #else
 static constexpr bool s_wx_glcanvas_egl = false;
@@ -255,7 +255,7 @@ bool OpenGLManager::init_gl(bool popup_error)
 {
     if (!m_gl_initialized) {
         if (s_wx_glcanvas_egl)
-            BOOST_LOG_TRIVIAL(warning) << "wxGLCanvas was built with EGL support: the 3D canvas stays blank on NVIDIA's proprietary driver; rebuild wxWidgets with -DwxUSE_GLCANVAS_EGL=OFF";
+            BOOST_LOG_TRIVIAL(warning) << "wxGLCanvas was built with EGL support: the EGL canvas may fail to present on some drivers (e.g. NVIDIA), leaving the 3D canvas blank; rebuild wxWidgets with -DwxUSE_GLCANVAS_EGL=OFF";
         GLenum result = glewInit();
         if (result != GLEW_OK) {
             BOOST_LOG_TRIVIAL(error) << "Unable to init glew library";

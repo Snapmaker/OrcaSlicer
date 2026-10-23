@@ -3,12 +3,27 @@
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 #include "SSWCP.hpp"
+#include "slic3r/Utils/Http.hpp"
 #include <wx/sizer.h>
 #include <slic3r/GUI/Widgets/WebView.hpp>
 #include "NotificationManager.hpp"
 #include "sentry_wrapper/SentryWrapper.hpp"
 
 namespace Slic3r { namespace GUI {
+
+namespace {
+
+wxString append_store_id(const wxString& base_url, const std::string& store_id)
+{
+    if (store_id.empty())
+        return base_url;
+
+    wxString url = base_url;
+    url += (url.Contains("?") ? "&" : "?") + wxString::FromUTF8("id=" + Http::url_encode(store_id));
+    return url;
+}
+
+} // namespace
 
 BEGIN_EVENT_TABLE(WebPreprintDialog, wxDialog)
     EVT_CLOSE(WebPreprintDialog::OnClose)
@@ -17,11 +32,9 @@ END_EVENT_TABLE()
 WebPreprintDialog::WebPreprintDialog()
     : wxDialog((wxWindow*)(wxGetApp().mainframe), wxID_ANY, _L("Print preset"))
 {
-    m_prePrint_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                        "/web/flutter_web/index.html?path=4");
+    m_prePrint_url = wxGetApp().gateway_web_url("pre_paint_page");
 
-    m_preSend_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                       "/web/flutter_web/index.html?path=5");
+    m_preSend_url = wxGetApp().gateway_web_url("pre_paint_upload_page");
     SetBackgroundColour(*wxWHITE);
 
     // Create the webview with about:blank; the actual page will be loaded by run()
@@ -112,10 +125,21 @@ void WebPreprintDialog::reload()
     load_url(m_prePrint_url);
 }
 
+void WebPreprintDialog::refresh_gateway_urls()
+{
+    m_prePrint_url = wxGetApp().gateway_web_url("pre_paint_page");
+    m_preSend_url  = wxGetApp().gateway_web_url("pre_paint_upload_page");
+    if (!wxGetApp().is_gateway_url(m_prePrint_url) || !wxGetApp().is_gateway_url(m_preSend_url) || m_browser == nullptr)
+        return;
+
+    wxString real_url = build_web_url();
+    load_url(real_url);
+}
+
 void WebPreprintDialog::load_url(wxString &url)
 {
     wxGetApp().fltviews().add_view(m_browser, url);
-    m_browser->LoadURL(url);
+    WebView::LoadUrl(m_browser, url);
 
     Layout();
 }
@@ -125,7 +149,7 @@ bool WebPreprintDialog::run()
     SSWCP::update_active_filename(m_gcode_file_name);
     SSWCP::update_display_filename(m_display_file_name);
 
-    auto real_url = m_send_page ? wxGetApp().get_international_url(m_preSend_url) : wxGetApp().get_international_url(m_prePrint_url);
+    auto real_url = build_web_url();
     if(m_send_page){
         this->SetTitle(_L("Pretreat the uploaded content"));
     }else{
@@ -145,6 +169,11 @@ bool WebPreprintDialog::run()
         return m_finish;
     }
     return false;
+}
+
+wxString WebPreprintDialog::build_web_url() const
+{
+    return append_store_id(m_send_page ? m_preSend_url : m_prePrint_url, m_store_id);
 }
 
 void WebPreprintDialog::RunScript(const wxString &javascript)

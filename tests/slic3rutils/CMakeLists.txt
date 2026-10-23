@@ -36,6 +36,28 @@ if (MSVC)
 endif ()
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")
 
+add_executable(gateway_tests
+    gateway_tests_main.cpp
+    ConnectionProcessManager_test.cpp
+    GatewayProtocol_test.cpp
+    GatewayService_test.cpp
+    GatewayDevice_test.cpp
+    GatewayFlutterResources_test.cpp
+    GatewayAccount_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/ConnectionProcessManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayProtocol.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayService.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayDevice.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayAccount.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/Http.cpp
+    )
+target_link_libraries(gateway_tests test_common libslic3r boost_libs libcurl OpenSSL::SSL OpenSSL::Crypto)
+target_compile_definitions(gateway_tests PRIVATE GATEWAY_FLUTTER_BUNDLE="${CMAKE_CURRENT_SOURCE_DIR}/../../resources/web/flutter_web/main.dart.js")
+if (MSVC)
+    target_compile_definitions(gateway_tests PRIVATE _WIN32_WINNT=0x0601 NOMINMAX)
+endif ()
+set_property(TARGET gateway_tests PROPERTY FOLDER "tests")
+
 if (WIN32)
     if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
         Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
@@ -47,6 +69,7 @@ if (WIN32)
 endif()
 
 catch_discover_tests(${_TEST_NAME}_tests TEST_PREFIX "${_TEST_NAME}: " EXTRA_ARGS ${CATCH_EXTRA_ARGS})
+catch_discover_tests(gateway_tests TEST_PREFIX "gateway: " EXTRA_ARGS ${CATCH_EXTRA_ARGS})
 # add_test(${_TEST_NAME}_tests ${_TEST_NAME}_tests "${CATCH_EXTRA_ARGS} exclude:[NotWorking]")
 
 set(_FILAMENT_TEST_NAME filament_dropdown_mapping)

@@ -189,10 +189,13 @@ set(lisbslic3r_sources
     format.hpp
     Format/Assimp.cpp
     Format/Assimp.hpp
+    Format/AssimpImport.cpp
+    Format/AssimpImport.hpp
     Format/OBJ.cpp
     Format/OBJ.hpp
     Format/objparser.cpp
     Format/objparser.hpp
+    Format/ResourcePathUtils.hpp
     Format/SL1.cpp
     Format/SL1.hpp
     Format/STEP.cpp
@@ -456,6 +459,7 @@ set(lisbslic3r_sources
     Timer.hpp
     TriangleMesh.cpp
     TriangleMesh.hpp
+    TexturePainting.hpp
     TriangleMeshSlicer.cpp
     TriangleMeshSlicer.hpp
     TriangleSelector.cpp

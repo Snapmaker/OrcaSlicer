@@ -139,7 +139,7 @@ weekly_full_sanitizer_tests:
     - if: '$CI_PIPELINE_SOURCE == "web" && $ORCA_RUN_FULL_SANITIZER_TESTS == "true"'
   resource_group: orca-linux-tests
   interruptible: false
-  timeout: 6h
+  timeout: 8h
   variables:
     GIT_DEPTH: "1"
     GIT_LFS_SKIP_SMUDGE: "1"

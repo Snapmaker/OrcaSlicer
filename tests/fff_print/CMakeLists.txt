@@ -16,6 +16,7 @@ add_executable(${_TEST_NAME}_tests
 	test_support_material.cpp
 	test_bed_temperature.cpp
 	test_trianglemesh.cpp
+	test_wipe_tower.cpp
 	)
 find_package(JPEG REQUIRED)
 find_package(PNG REQUIRED)

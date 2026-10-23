@@ -165,6 +165,7 @@ endif ()
 # Proposal for C++ unit tests and sandboxes
 option(SLIC3R_BUILD_SANDBOXES   "Build development sandboxes" OFF)
 option(BUILD_TESTS       "Build unit tests" OFF)
+option(ORCA_USE_OCCT_LINK_GROUP "Use a Linux OCCT/freetype linker group for Clang sanitizer builds" OFF)
 option(ORCA_TOOLS       "Build Orca tools" OFF)
 
 if (IS_CROSS_COMPILE)
@@ -581,6 +582,43 @@ if (SLIC3R_SENTRY)
     endif()
 endif()
 find_package(Freetype REQUIRED)
+
+# Configure OCCT in top-level scope so the imported targets are visible to both
+# sibling src/ and tests/ directories.
+set(OpenCASCADE_DIR "${CMAKE_PREFIX_PATH}/lib/cmake/occt")
+find_package(OpenCASCADE REQUIRED)
+
+# OCCT archive names are used by libslic3r and by test executables that must
+# explicitly place OCCT and freetype in a linker group. Define them at top-level
+# scope so the sibling src/ and tests/ directories see the same list.
+set(OCCT_LIBS
+    TKXDESTEP
+    TKSTEP
+    TKSTEP209
+    TKSTEPAttr
+    TKSTEPBase
+    TKXCAF
+    TKXSBase
+    TKVCAF
+    TKCAF
+    TKLCAF
+    TKCDF
+    TKV3d
+    TKService
+    TKMesh
+    TKBO
+    TKPrim
+    TKHLR
+    TKShHealing
+    TKTopAlgo
+    TKGeomAlgo
+    TKBRep
+    TKGeomBase
+    TKG3d
+    TKG2d
+    TKMath
+    TKernel
+)
 
 
 add_library(libcurl INTERFACE)

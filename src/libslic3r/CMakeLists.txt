@@ -532,42 +532,28 @@ target_include_directories(libslic3r PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_
 target_include_directories(libslic3r SYSTEM PUBLIC ${EXPAT_INCLUDE_DIRS})
 
 # Find the OCCT and related libraries
-set(OpenCASCADE_DIR "${CMAKE_PREFIX_PATH}/lib/cmake/occt")
-find_package(OpenCASCADE REQUIRED)
 target_include_directories(libslic3r SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(libslic3r PUBLIC nlohmann_json)
 
 find_package(JPEG REQUIRED)
 
-set(OCCT_LIBS
-    TKXDESTEP
-    TKSTEP
-    TKSTEP209
-    TKSTEPAttr
-    TKSTEPBase
-    TKXCAF
-    TKXSBase
-    TKVCAF
-    TKCAF
-    TKLCAF
-    TKCDF
-    TKV3d
-    TKService
-    TKMesh
-    TKBO
-    TKPrim
-    TKHLR
-    TKShHealing
-    TKTopAlgo
-    TKGeomAlgo
-    TKBRep
-    TKGeomBase
-    TKG3d
-    TKG2d
-    TKMath
-    TKernel
-)
 
+
+# OCCT is built as a set of static archives with mutual dependencies, and
+# TKService depends on freetype. Static archives are scanned in a single pass.
+# Clang sanitizer builds may need OCCT and freetype wrapped in a linker group
+# so symbols resolve regardless of archive order. Keep this opt-in because the
+# default production link line must remain unchanged on every platform.
+if (ORCA_USE_OCCT_LINK_GROUP AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(OCCT_LINK_LIBRARIES
+        "-Wl,--start-group"
+        ${OCCT_LIBS}
+        ${FREETYPE_LIBRARIES}
+        "-Wl,--end-group"
+    )
+else()
+    set(OCCT_LINK_LIBRARIES ${OCCT_LIBS})
+endif()
 find_package(libnoise REQUIRED)
 target_link_libraries(libslic3r
     PUBLIC
@@ -580,7 +566,7 @@ target_link_libraries(libslic3r
     PRIVATE
         ${CMAKE_DL_LIBS}
         ${EXPAT_LIBRARIES}
-        ${OCCT_LIBS}
+        ${OCCT_LINK_LIBRARIES}
         boost_libs
         cereal::cereal
         clipper
@@ -602,8 +588,9 @@ target_link_libraries(libslic3r
 if (WIN32)
     target_link_libraries(libslic3r PRIVATE OpenSSL::Crypto crypt32 ws2_32)
 else()
-    # Link freetype for OCCT dependency (CAD operations need font rendering)
-    target_link_libraries(libslic3r PRIVATE ${FREETYPE_LIBRARIES})
+    if (NOT ORCA_USE_OCCT_LINK_GROUP OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(libslic3r PRIVATE ${FREETYPE_LIBRARIES})
+    endif()
     target_link_libraries(libslic3r PRIVATE OpenSSL::Crypto)
     if (NOT APPLE)
         target_link_libraries(libslic3r PRIVATE fontconfig)

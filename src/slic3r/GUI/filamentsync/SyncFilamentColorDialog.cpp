@@ -99,11 +99,16 @@ std::vector<Slic3r::GUI::FilamentData> collectVisibleOverwriteMachineFilaments(
     size_t designCount)
 {
     std::vector<Slic3r::GUI::FilamentData> visibleMachine;
-    size_t visibleCount = std::min(designCount, machineDataList.size());
-    visibleMachine.reserve(visibleCount);
-    for (size_t i = 0; i < visibleCount; ++i) {
-        if (!Slic3r::GUI::is_none_filament(machineDataList[i]))
-            visibleMachine.push_back(machineDataList[i]);
+    visibleMachine.reserve(std::min(designCount, machineDataList.size()));
+    // Empty toolhead slots are reported as "NONE". Skip them before applying the
+    // design-count limit: slicing the raw slot list first turned leading empty
+    // slots (e.g. slot 1 unloaded) into an empty result, and the caller then
+    // shrank the project to zero filaments.
+    for (const auto& data : machineDataList) {
+        if (visibleMachine.size() >= designCount)
+            break;
+        if (!Slic3r::GUI::is_none_filament(data))
+            visibleMachine.push_back(data);
     }
     return visibleMachine;
 }
@@ -520,49 +525,35 @@ void SyncFilamentColorDialog::onCoverMatch()
 
     size_t designCount  = m_designDataList.size();
     size_t machineCount = m_machineDataList.size();
-    size_t visibleCount = std::min(designCount, machineCount);
     if (machineCount == 0) {
         m_filamentIdRemap.clear();
         return;
     }
 
-    // 1:1 positional mapping for UI display (includes NONE slots)
+    // Same rule as collectVisibleOverwriteMachineFilaments(): skip empty ("NONE")
+    // slots first, then keep at most designCount of them. The preview and the
+    // filament ID remap must describe what the sync will actually apply.
+    std::vector<size_t> validPos;
+    for (size_t j = 0; j < machineCount && validPos.size() < designCount; ++j) {
+        if (!is_none_filament(m_machineDataList[j]))
+            validPos.push_back(j);
+    }
+    const size_t validCount = validPos.size();
+
     for (size_t i = 0; i < designCount; ++i) {
-        size_t m_idx = i % machineCount;
-        auto it = m_machineDataList.begin();
-        std::advance(it, m_idx);
-        m_pFilamentColorMapBoxGroup->updateBoxBelowData(static_cast<int>(i), *it);
+        size_t m_idx = validCount ? validPos[i % validCount] : (i % machineCount);
+        m_pFilamentColorMapBoxGroup->updateBoxBelowData(static_cast<int>(i), m_machineDataList[m_idx]);
     }
     m_pFilamentColorMapBoxGroup->setGroupBoxEnable(false, FilamentColorMapBox::ButtonType::Below);
 
-    // Build 1-based filament ID remap for overwrite mode.
-    // Cycle through non-NONE machine filaments only.
-    {
-        std::vector<size_t> validPos;
-        for (size_t j = 0; j < visibleCount; ++j) {
-            if (!is_none_filament(m_machineDataList[j]))
-                validPos.push_back(j);
-        }
-        size_t validCount = validPos.size();
-        if (validCount == 0) {
-            m_filamentIdRemap.clear();
-            return;
-        }
-
-        std::vector<unsigned int> machinePosToNewId(machineCount, 0);
-        unsigned int runningId = 0;
-        for (size_t j = 0; j < visibleCount; ++j) {
-            if (!is_none_filament(m_machineDataList[j])) {
-                ++runningId;
-                machinePosToNewId[j] = runningId;
-            }
-        }
-
+    // 1-based filament ID remap for overwrite mode: the applied list is validPos in
+    // order, so the k-th collected filament becomes filament id k + 1.
+    if (validCount == 0) {
+        m_filamentIdRemap.clear();
+    } else {
         m_filamentIdRemap.assign(designCount + 1, 0);
-        for (size_t old_id = 1; old_id <= designCount; ++old_id) {
-            size_t machine_pos = validPos[(old_id - 1) % validCount];
-            m_filamentIdRemap[old_id] = machinePosToNewId[machine_pos];
-        }
+        for (size_t old_id = 1; old_id <= designCount; ++old_id)
+            m_filamentIdRemap[old_id] = static_cast<unsigned int>((old_id - 1) % validCount + 1);
     }
 
     // Overwrite mode: mark mixed filaments for deletion

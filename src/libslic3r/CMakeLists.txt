@@ -302,6 +302,8 @@ set(lisbslic3r_sources
     ModelArrange.hpp
     Model.cpp
     Model.hpp
+    ModelObjectRepair.cpp
+    ModelObjectRepair.hpp
     MTUtils.hpp
     MultiMaterialSegmentation.cpp
     MultiMaterialSegmentation.hpp

@@ -611,8 +611,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/FileHelp.hpp
     Utils/FileDecrypt.cpp
     Utils/FileDecrypt.hpp
-    Utils/FixModelByWin10.cpp
-    Utils/FixModelByWin10.hpp
+    Utils/FixModelByCgal.cpp
+    Utils/FixModelByCgal.hpp
     Utils/FlashAir.cpp
     Utils/FlashAir.hpp
     Utils/Flashforge.cpp

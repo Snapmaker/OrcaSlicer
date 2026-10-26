@@ -5780,6 +5780,14 @@ void GUI::ObjectList::smooth_mesh()
         return;
     }
 
+    auto* start_notification_manager = plater->get_notification_manager();
+    if (start_notification_manager != nullptr)
+        start_notification_manager->push_notification_data({NotificationType::CustomNotification,
+                                                            NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                                            3, // fade out after 3 s instead of the regular 10 s
+                                                            into_u8(_L("Subdivision started"))},
+                                                           0);
+
     // The worker thread must not touch the Model: the object may change or disappear while
     // the job is running, so hand the worker deep copies of the input meshes only.
     // Filled in by the worker thread, applied to the model on the UI thread; a nullopt
@@ -5845,6 +5853,13 @@ void GUI::ObjectList::smooth_mesh()
             }
             if (!failed_name.empty()) {
                 show_smooth_mesh_error_dlg(failed_name);
+                auto* failed_notification_manager = plater->get_notification_manager();
+                if (failed_notification_manager != nullptr)
+                    failed_notification_manager->push_notification_data({NotificationType::CustomNotification,
+                                                                        NotificationManager::NotificationLevel::ErrorNotificationLevel,
+                                                                        3, // fade out after 3 s, same as the start/finish notifications
+                                                                        into_u8(_L("Subdivision failed"))},
+                                                                       0);
             }
             if (!apply_list.empty()) {
                 // take_snapshot() stores the CURRENT model state, so it must run before
@@ -5868,9 +5883,33 @@ void GUI::ObjectList::smooth_mesh()
                     model.objects[obj_idx]->ensure_on_bed();
                     plater->changed_mesh(obj_idx);
                 }
+                if (failed_name.empty()) {
+                    auto* finished_notification_manager = plater->get_notification_manager();
+                    if (finished_notification_manager != nullptr)
+                        finished_notification_manager->push_notification_data({NotificationType::CustomNotification,
+                                                                              NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                                                              3, // fade out after 3 s instead of the regular 10 s
+                                                                              into_u8(_L("Subdivision finished"))},
+                                                                             0);
+                }
             }
         });
     });
+}
+
+void ObjectList::smooth_mesh_local()
+{
+    auto plater = wxGetApp().plater();
+    GLGizmosManager& gizmos_mgr = plater->get_view3D_canvas3D()->get_gizmos_manager();
+
+    if (! gizmos_mgr.check_gizmos_closed_except(GLGizmosManager::EType::LocalSubdivision))
+        return;
+
+    if (gizmos_mgr.get_current_type() == GLGizmosManager::LocalSubdivision) {
+        // close first
+        gizmos_mgr.open_gizmo(GLGizmosManager::EType::LocalSubdivision);
+    }
+    gizmos_mgr.open_gizmo(GLGizmosManager::EType::LocalSubdivision);
 }
 
 void ObjectList::update_item_error_icon(const int obj_idx, const int vol_idx) const

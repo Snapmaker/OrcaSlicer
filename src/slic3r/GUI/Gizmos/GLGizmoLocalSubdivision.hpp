@@ -23,6 +23,10 @@ public:
     GLGizmoLocalSubdivision(GLCanvas3D& parent, const std::string& icon_filename, unsigned int sprite_id);
 
     void render_painter_gizmo() override;
+    // The facet selection is transient, so the gizmo session must not leave steps on
+    // the undo stack: after applying, one Ctrl+Z returns straight to the original mesh.
+    bool gizmo_event(SLAGizmoEventType action, const Vec2d& mouse_position, bool shift_down, bool alt_down, bool control_down) override;
+    bool wants_enter_leave_snapshots() const override { return false; }
 
 protected:
     void on_render_input_window(float x, float y, float bottom_limit) override;
@@ -62,9 +66,11 @@ private:
     // non-region geometry, so the canvas renders them through its normal pipeline
     // (identical look to level 0); only the region is drawn by the gizmo itself.
     struct Preview {
-        ModelVolume*              volume = nullptr; // the model part being previewed
-        int                       volume_idx = -1;  // its index among the model parts
-        size_t                    facet_count = 0;  // painted original facets
+        ObjectID                            object_id;  // owning object id at cache build time
+        ModelVolume*                        volume = nullptr; // the model part being previewed
+        int                                 volume_idx = -1;  // its index among the model parts
+        std::shared_ptr<const TriangleMesh> origin;      // mesh identity at cache build time
+        size_t                              facet_count = 0;  // painted original facets
         std::vector<uint32_t>     next_facets;      // selection for the next subdivision step
         std::vector<indexed_triangle_set> meshes;   // [0] original, [n] = n-th subdivision level (bare sets, no stats)
         std::vector<size_t>       region_counts;    // region faces of each level (front of the face list)
@@ -79,6 +85,10 @@ private:
     wchar_t m_current_tool = 0;
     bool m_detect_geometry_edge = true;
     std::map<std::string, wxString> m_desc;
+
+    // Mirror of the base-class stroke tracking (whose member is private), used to
+    // intercept the stroke-end events and skip their undo snapshot.
+    Button m_tracked_button_down = Button::None;
 
     static const int MaxSubdivLevel = 3;
     int  m_subdiv_level  = 0;   // wanted subdivision level (slider)

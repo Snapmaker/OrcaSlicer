@@ -15567,3 +15567,48 @@ msgstr "手动选择当前列表中的耗材进行混色匹配。"
 
 msgid "Official Full Spectrum filaments are not configured. Configured filaments will be used instead. Once the official filaments are added, the previously selected filaments can be replaced in the filament list without affecting the color mixing match result."
 msgstr "未配置官方 Full Spectrum 全光谱耗材，将自动使用已配置的耗材。完成官方耗材配置后，可在耗材列表中进行替换，不影响混色匹配结果。"
+
+msgid "Local Subdivision"
+msgstr "局部细分"
+
+msgid "Global Subdivision"
+msgstr "全局细分"
+
+msgid "Subdivision level"
+msgstr "细分层数"
+
+msgid "Subdivide"
+msgstr "细分"
+
+msgid "Selected facets"
+msgstr "已选面数"
+
+msgid "Select facets"
+msgstr "选择面片"
+
+msgid "Unselect facets"
+msgstr "取消选择面片"
+
+msgid "Erase all selection"
+msgstr "清除所有选择"
+
+msgid "Detect geometry edge"
+msgstr "检测几何边缘"
+
+msgid "Entering Local subdivision"
+msgstr "进入局部细分"
+
+msgid "Leaving Local subdivision"
+msgstr "退出局部细分"
+
+msgid "Local subdivision facet selection"
+msgstr "局部细分面选择"
+
+msgid "Subdivision started"
+msgstr "细分开始"
+
+msgid "Subdivision finished"
+msgstr "细分完成"
+
+msgid "Subdivision failed"
+msgstr "细分失败"

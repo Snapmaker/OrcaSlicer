@@ -59,6 +59,24 @@ bool GLGizmoLocalSubdivision::on_init()
     return true;
 }
 
+bool GLGizmoLocalSubdivision::gizmo_event(SLAGizmoEventType action, const Vec2d& mouse_position, bool shift_down, bool alt_down, bool control_down)
+{
+    if (action == SLAGizmoEventType::LeftDown || action == SLAGizmoEventType::RightDown)
+        m_tracked_button_down = (action == SLAGizmoEventType::LeftDown) ? Button::Left : Button::Right;
+    if ((action == SLAGizmoEventType::LeftUp || action == SLAGizmoEventType::RightUp)
+      && m_tracked_button_down != Button::None) {
+        // A paint stroke only changes the transient selection, not the model, so the
+        // GizmoAction snapshot the base class takes here would be an empty undo step.
+        // Intercepting the stroke end here (with our own button tracking, the base
+        // member is private) keeps one Ctrl+Z after the subdivision a direct jump
+        // back to the original mesh instead of stepping through the gizmo session.
+        m_tracked_button_down = Button::None;
+        update_model_object();
+        return true;
+    }
+    return GLGizmoPainterBase::gizmo_event(action, mouse_position, shift_down, alt_down, control_down);
+}
+
 void GLGizmoLocalSubdivision::render_painter_gizmo()
 {
     const Selection& selection = m_parent.get_selection();
@@ -290,7 +308,8 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
     update_preview();
 
     if (m_imgui->button(m_desc.at("remove_all"))) {
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Reset selection", UndoRedo::SnapshotType::GizmoAction);
+        // Like paint strokes, clearing the selection changes nothing on the model,
+        // so no undo snapshot is taken for it.
         ModelObject*         mo = m_c->selection_info()->model_object();
         int                  idx = -1;
         for (ModelVolume* mv : mo->volumes)
@@ -369,8 +388,10 @@ void GLGizmoLocalSubdivision::update_preview()
                 if (facets.empty())
                     continue;
                 Preview p;
+                p.object_id   = mo->id();
                 p.volume      = mv;
                 p.volume_idx  = idx;
+                p.origin      = mv->mesh_ptr();
                 p.facet_count = facets.size();
                 p.next_facets.assign(facets.begin(), facets.end());
                 p.meshes.emplace_back(mv->mesh().its); // level 0 = the original mesh
@@ -555,24 +576,64 @@ void GLGizmoLocalSubdivision::apply_subdivision()
     auto      plater     = wxGetApp().plater();
     const int object_idx = m_parent.get_selection().get_object_idx();
 
-    plater->take_snapshot("Local subdivision");
-    plater->clear_before_change_mesh(object_idx);
-
+    // First pass: which previews can still be applied. Locate the object by its
+    // stable id (deleting another object shifts list indexes while the gizmo is
+    // open), skip volumes that were removed, and skip results whose source mesh was
+    // swapped in the meantime - they are stale and would overwrite the newer mesh.
+    Model&                model = plater->model();
+    std::vector<Preview*> apply_list;
     for (Preview& p : m_previews) {
         const int level = std::min(m_subdiv_level, int(p.meshes.size()) - 1);
         if (level <= 0)
             continue;
-        p.volume->set_mesh(std::move(p.meshes[size_t(level)]));
-        p.volume->calculate_convex_hull();
-        p.volume->invalidate_convex_hull_2d();
-        p.volume->set_new_unique_id();
+        int cur_obj_idx = -1;
+        for (size_t i = 0; i < model.objects.size(); ++i) {
+            if (model.objects[i]->id() == p.object_id) {
+                cur_obj_idx = (int) i;
+                break;
+            }
+        }
+        if (cur_obj_idx < 0)
+            continue;
+        ModelObject* obj = model.objects[cur_obj_idx];
+        if (std::find(obj->volumes.begin(), obj->volumes.end(), p.volume) == obj->volumes.end())
+            continue;
+        if (p.volume->mesh_ptr() != p.origin)
+            continue;
+        apply_list.push_back(&p);
+    }
+    if (apply_list.empty())
+        return;
+
+    // Move the result meshes out of the caches: closing the gizmo below clears them.
+    std::vector<std::pair<ModelVolume*, indexed_triangle_set>> meshes_to_apply;
+    for (Preview* p : apply_list) {
+        const int level = std::min(m_subdiv_level, int(p->meshes.size()) - 1);
+        meshes_to_apply.emplace_back(p->volume, std::move(p->meshes[size_t(level)]));
+    }
+
+    // Close the gizmo BEFORE the snapshot is taken: the undo stack stores the gizmo
+    // state with each snapshot, so the snapshot must show no gizmo - one Ctrl+Z then
+    // returns to the original mesh without reopening the subdivision interface.
+    close();
+
+    plater->take_snapshot("Local subdivision");
+    plater->clear_before_change_mesh(object_idx);
+
+    for (auto& [volume, mesh] : meshes_to_apply) {
+        volume->set_mesh(std::move(mesh));
+        volume->calculate_convex_hull();
+        volume->invalidate_convex_hull_2d();
+        volume->set_new_unique_id();
+        // The four FacetsAnnotation stores (supports, seams, MMU segmentation, fuzzy
+        // skin) are indexed by face number; subdivision replaced the selected faces
+        // with up to four new ones, so the stale markers would land on wrong faces.
+        volume->reset_extra_facets();
     }
     mo->invalidate_bounding_box();
     mo->ensure_on_bed();
     plater->changed_mesh(object_idx);
     wxGetApp().obj_list()->update_item_error_icon(object_idx, -1);
-
-    close();
 }
 
 void GLGizmoLocalSubdivision::on_shutdown()
@@ -584,9 +645,12 @@ void GLGizmoLocalSubdivision::on_shutdown()
 
 void GLGizmoLocalSubdivision::close()
 {
-    // Closing the gizmo is done by opening it again (toggle semantics).
+    // Closing is done by opening the gizmo again (toggle semantics), but only while
+    // it is still open: refresh paths may already have closed it, and a blind toggle
+    // would reopen it.
     GLGizmosManager& gizmos_mgr = m_parent.get_gizmos_manager();
-    gizmos_mgr.open_gizmo(GLGizmosManager::EType::LocalSubdivision);
+    if (gizmos_mgr.get_current_type() == GLGizmosManager::LocalSubdivision)
+        gizmos_mgr.open_gizmo(GLGizmosManager::EType::LocalSubdivision);
 }
 
 } // namespace Slic3r::GUI

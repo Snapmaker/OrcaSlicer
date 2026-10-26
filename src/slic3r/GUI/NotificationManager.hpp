@@ -368,6 +368,11 @@ private:
         bool                use_warn_color { false };
 	};
 
+public:
+	// Push a fully specified notification, e.g. with a custom fade-out duration
+	// (NotificationData::duration, 0 means it never disappears).
+	bool push_notification_data(const NotificationData& notification_data, int timestamp);
+
 	// Cache of IDs to identify and reuse ImGUI windows.
 	class NotificationIDProvider
 	{
@@ -845,7 +850,6 @@ private:
 
 	//pushes notification into the queue of notifications that are rendered
 	//can be used to create custom notification
-	bool push_notification_data(const NotificationData& notification_data, int timestamp);
 	bool push_notification_data(std::unique_ptr<NotificationManager::PopNotification> notification, int timestamp);
     void close_notification_of_type_and_text(const NotificationType type, const std::string& text);
 	// Delayed notifications goes first to the m_waiting_notifications vector and only after remaining time is <= 0

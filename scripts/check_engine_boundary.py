@@ -72,9 +72,17 @@ def strip_comments(text: str) -> str:
                 out.append(c)
                 i += 1
             elif c == "'":
-                state = "chr"
-                out.append(c)
-                i += 1
+                # A quote right after an alphanumeric is a digit separator
+                # (1'000'000), not a char literal - otherwise an odd number
+                # of separators would leave the lexer stuck in chr state.
+                prev = next((ch for ch in reversed(out) if not ch.isspace()), "")
+                if prev.isalnum() or prev == "_":
+                    out.append(c)
+                    i += 1
+                else:
+                    state = "chr"
+                    out.append(c)
+                    i += 1
             else:
                 out.append(c)
                 i += 1

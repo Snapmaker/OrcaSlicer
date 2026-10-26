@@ -1,0 +1,47 @@
+on:
+  push:
+    branches:
+      - main
+      - build_platform_engineering
+    paths:
+      - 'src/libslic3r/**'
+      - 'src/app_common/**'
+      - 'src/common_func/**'
+      - 'src/mqtt/**'
+      - 'scripts/engine_boundary_config.json'
+      - 'scripts/check_engine_boundary.py'
+      - '.github/workflows/engine-boundary-gate.yml'
+  pull_request:
+    paths:
+      - 'src/libslic3r/**'
+      - 'src/app_common/**'
+      - 'src/common_func/**'
+      - 'src/mqtt/**'
+      - 'scripts/engine_boundary_config.json'
+      - 'scripts/check_engine_boundary.py'
+      - '.github/workflows/engine-boundary-gate.yml'
+  workflow_dispatch: # allows for manual dispatch
+
+name: "Engine boundary gate"
+permissions: {}
+
+# Rapid successive pushes cancel the superseded run instead of queueing.
+concurrency:
+  group: engine-boundary-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boundary-gate:
+    name: No engine->GUI reverse dependency (include + link)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      # Enforcing from day one (engine baseline is 0); emergency rollback =
+      # append --warning to the script call below (one-line change).
+      - name: Check engine-layer boundary (include + link)
+        run: python scripts/check_engine_boundary.py

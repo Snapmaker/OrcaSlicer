@@ -1,0 +1,28 @@
+{
+  "_comment": "Engine-layer boundary single source of truth. Consumed by scripts/check_engine_boundary.py. Paths are repo-root-relative with forward slashes. Linkable targets live ONLY in link_check.targets - do not duplicate them here.",
+
+  "include_check": {
+    "forbidden_substring": "slic3r/GUI/",
+    "scan_extensions": [".h", ".hpp", ".hh", ".c", ".cpp", ".cc", ".cxx", ".m", ".mm"]
+  },
+
+  "engine_dirs": [
+    { "path": "src/libslic3r", "note": "core slicing engine; own CMakeLists.txt" },
+    { "path": "src/app_common", "note": "app-layer glue static lib; target defined in src/CMakeLists.txt" },
+    { "path": "src/common_func", "note": "no standalone CMake target; sources compiled into app targets" },
+    { "path": "src/mqtt", "note": "vendored Paho MQTT C++ (independent CMake project)" }
+  ],
+
+  "link_check": {
+    "targets": [
+      { "name": "libslic3r", "cmake_file": "src/libslic3r/CMakeLists.txt" },
+      { "name": "libslic3r_cgal", "cmake_file": "src/libslic3r/CMakeLists.txt" },
+      { "name": "app_common", "cmake_file": "src/CMakeLists.txt" }
+    ],
+    "forbidden_link_patterns": ["^wx", "wxWidgets", "libslic3r_gui", "libslic3r_widgets", "^Snapmaker_Orca"],
+    "raw_scan_files": ["src/libslic3r/CMakeLists.txt"],
+    "forbidden_raw_patterns": ["wxWidgets", "find_package\\s*\\(\\s*wx", "wx::"]
+  },
+
+  "allowlist": []
+}

@@ -3,6 +3,7 @@
 #include "libslic3r/FilamentHotBedNozzleRules.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Init.hpp"
+#include "WidgetInspector.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Factories.hpp"
 #include "slic3r/GUI/UserManager.hpp"
@@ -2487,6 +2488,8 @@ bool GUI_App::OnInit()
 
 int GUI_App::OnExit()
 {
+    WidgetInspector::disable();
+
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().shutdown();
 
     stop_sync_user_preset();
@@ -3100,6 +3103,8 @@ bool GUI_App::on_init_inner()
             app_config->save();
 
     });
+
+    WidgetInspector::enable();
 
     m_initialized = true;
 

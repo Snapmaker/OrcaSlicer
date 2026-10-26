@@ -1,5 +1,5 @@
 {
-  "_comment": "Engine-layer boundary single source of truth. Consumed by scripts/check_engine_boundary.py. Paths are repo-root-relative with forward slashes.",
+  "_comment": "Engine-layer boundary single source of truth. Consumed by scripts/check_engine_boundary.py. Paths are repo-root-relative with forward slashes. Linkable targets live ONLY in link_check.targets - do not duplicate them here.",
 
   "include_check": {
     "forbidden_substring": "slic3r/GUI/",
@@ -7,10 +7,10 @@
   },
 
   "engine_dirs": [
-    { "path": "src/libslic3r", "targets": ["libslic3r", "libslic3r_cgal"], "note": "core slicing engine; own CMakeLists.txt" },
-    { "path": "src/app_common", "targets": ["app_common"], "note": "app-layer glue static lib; target defined in src/CMakeLists.txt" },
-    { "path": "src/common_func", "targets": [], "note": "no standalone CMake target; sources compiled into app targets" },
-    { "path": "src/mqtt", "targets": [], "note": "vendored Paho MQTT C++ (independent CMake project)" }
+    { "path": "src/libslic3r", "note": "core slicing engine; own CMakeLists.txt" },
+    { "path": "src/app_common", "note": "app-layer glue static lib; target defined in src/CMakeLists.txt" },
+    { "path": "src/common_func", "note": "no standalone CMake target; sources compiled into app targets" },
+    { "path": "src/mqtt", "note": "vendored Paho MQTT C++ (independent CMake project)" }
   ],
 
   "link_check": {

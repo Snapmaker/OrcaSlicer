@@ -75,20 +75,27 @@ def strip_comments(text: str) -> str:
 INCLUDE_RE = re.compile(r"^\s*#\s*include\s*[<\"]([^\">]+)", re.MULTILINE)
 
 
-def check_include_layer(cfg) -> list:
-    """Return include-layer violations: (file, line, matched_include)."""
+def check_include_layer(cfg):
+    """Return (violations, empty_dirs).
+
+    violations: (file, line, matched_include)
+    empty_dirs: engine dirs with zero scannable source files - a path typo or
+    a moved directory would otherwise make the gate pass silently.
+    """
     sub = cfg["include_check"]["forbidden_substring"]
     exts = set(cfg["include_check"]["scan_extensions"])
     allow = set(cfg.get("allowlist", []))
-    violations = []
+    violations, empty_dirs = [], []
     for entry in cfg["engine_dirs"]:
         root = REPO_ROOT / entry["path"]
         if not root.is_dir():
             print(f"ERROR: engine dir not found: {entry['path']}", file=sys.stderr)
             sys.exit(2)
+        scanned = 0
         for path in sorted(root.rglob("*")):
             if not path.is_file() or path.suffix.lower() not in exts:
                 continue
+            scanned += 1
             rel = norm_path(path)
             if rel in allow:
                 print(f"[allowlist] skipped {rel} (entry in allowlist)")
@@ -99,7 +106,9 @@ def check_include_layer(cfg) -> list:
                 if sub in target:
                     line = text.count("\n", 0, m.start()) + 1
                     violations.append((rel, line, target))
-    return violations
+        if scanned == 0:
+            empty_dirs.append(entry["path"])
+    return violations, empty_dirs
 
 
 def iter_link_blocks(text: str):
@@ -119,25 +128,36 @@ def iter_link_blocks(text: str):
             yield line, tokens[0], tokens[1:]
 
 
-def check_link_layer(cfg) -> list:
-    """Return link-layer violations: (cmake_file, line, target, token, patterns)."""
+def check_link_layer(cfg):
+    """Return (violations, unmatched_specs, matched_blocks).
+
+    unmatched_specs: specs whose target name matched no target_link_libraries
+    block in their cmake_file. Zero matches means config drift (target renamed
+    or moved) would make the link gate pass silently, so it is a hard error.
+    """
     patterns = [re.compile(p, re.IGNORECASE) for p in cfg["link_check"]["forbidden_link_patterns"]]
-    violations = []
+    violations, unmatched = [], []
+    matched_blocks = 0
     for spec in cfg["link_check"]["targets"]:
         cmake = REPO_ROOT / spec["cmake_file"]
         if not cmake.is_file():
             print(f"ERROR: CMake file not found: {spec['cmake_file']}", file=sys.stderr)
             sys.exit(2)
         text = cmake.read_text(encoding="utf-8", errors="replace")
+        found = False
         for line, target, tokens in iter_link_blocks(text):
             if target != spec["name"]:
                 continue
+            found = True
+            matched_blocks += 1
             for tok in tokens:
                 core = tok[2:-1] if tok.startswith("${") and tok.endswith("}") else tok
                 hits = [pat.pattern for pat in patterns if pat.search(core)]
                 if hits:
                     violations.append((spec["cmake_file"], line, target, tok, ", ".join(hits)))
-    return violations
+        if not found:
+            unmatched.append(spec)
+    return violations, unmatched, matched_blocks
 
 
 def check_raw_layer(cfg) -> list:
@@ -167,9 +187,25 @@ def main() -> int:
 
     cfg = json.loads(args.config.read_text(encoding="utf-8"))
 
-    include_v = check_include_layer(cfg)
-    link_v = check_link_layer(cfg)
+    include_v, empty_dirs = check_include_layer(cfg)
+    link_v, unmatched, matched_blocks = check_link_layer(cfg)
     raw_v = check_raw_layer(cfg)
+
+    # Gate integrity errors: the gate itself would silently pass. Never
+    # downgraded by --warning (that flag only softens real violations).
+    if empty_dirs or unmatched:
+        for d in empty_dirs:
+            print(f"ERROR: engine dir '{d}' contains no scannable source files.\n"
+                  f"  The include-level gate would silently pass for it. Fix the path "
+                  f"in scripts/engine_boundary_config.json.", file=sys.stderr)
+        for spec in unmatched:
+            print(f"ERROR: target '{spec['name']}' has no target_link_libraries block "
+                  f"in {spec['cmake_file']}.\n"
+                  f"  The link-level gate would silently pass for it. Fix "
+                  f"scripts/engine_boundary_config.json (target renamed/moved?) "
+                  f"or the CMake file.", file=sys.stderr)
+        print("check_engine_boundary: gate integrity check failed (exit 2)", file=sys.stderr)
+        return 2
 
     for f, line, inc in include_v:
         print(f"[engine-boundary] include-layer violation\n"
@@ -197,7 +233,8 @@ def main() -> int:
 
     print("OK: engine boundary clean (baseline 0 maintained; "
           f"{len(cfg['engine_dirs'])} engine dirs, "
-          f"{len(cfg['link_check']['targets'])} targets checked)")
+          f"{matched_blocks} link block(s) across "
+          f"{len(cfg['link_check']['targets'])} target(s) checked)")
     return 0
 
 

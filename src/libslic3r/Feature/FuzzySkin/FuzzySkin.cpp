@@ -74,8 +74,8 @@ static std::unique_ptr<noise::module::Module> get_noise_module(const FuzzySkinCo
 // This gives a uniform wave period regardless of the polygon's geometry.
 //
 // A consistent visual anchor is established by finding the leftmost Y=0 crossing
-// of the polygon (the point where the sine wave always peaks when phase shift is
-// zero), ensuring the pattern aligns across layers.
+// of the polygon (the point where every wave starts, a rising zero-crossing when
+// the phase shift is zero), ensuring the pattern aligns across layers.
 //
 // Per-layer-group phase shifting works as follows:
 //   period_index  = floor(layer_id / layers_between_ripple_offset)
@@ -99,8 +99,8 @@ static double ripple_phase_shift_rad(const FuzzySkinConfig& cfg)
 
 // Find the arc-length (in mm) of the visual anchor point along the polygon perimeter.
 // The anchor is the leftmost Y=0 crossing, falling back to the vertex with the
-// smallest |y| if no crossing exists. The anchor is where sin(phase) = 1 (a peak)
-// when the phase shift is zero, giving a stable reference across layers.
+// smallest |y| if no crossing exists. The anchor is where sin(phase) = 0 (a rising
+// zero-crossing) when the phase shift is zero, giving a stable reference across layers.
 static double ripple_anchor_arc_mm(const Points& poly)
 {
     const size_t np = poly.size();
@@ -156,6 +156,11 @@ static double ripple_anchor_arc_mm(const Points& poly)
 
 // Apply a sine-wave ripple displacement to a closed polygon.
 // Points are resampled at cfg.point_distance intervals along the perimeter.
+//
+// The core logic is similar to fuzzy_extrusion_line_ripple() (parameter checks ->
+// perimeter -> anchor + phase shift -> global-grid resampling); the two differ only
+// in their containers/payloads and in how a closed loop is expressed (wrap-around
+// here vs. duplicated first/last point there). Keep the two implementations in sync.
 static void fuzzy_polyline_ripple(Points& poly, const FuzzySkinConfig& cfg)
 {
     const double amplitude    = unscale_(cfg.thickness);
@@ -177,8 +182,9 @@ static void fuzzy_polyline_ripple(Points& poly, const FuzzySkinConfig& cfg)
     const double anchor_arc_mm   = ripple_anchor_arc_mm(poly);
     const double phase_shift_rad = ripple_phase_shift_rad(cfg);
 
-    // Phase function: φ(s) = N·2π·(s - anchor_arc) / perimeter + π/2 + phase_shift
-    // Adding π/2 ensures sin(φ) = 1 at the anchor when phase_shift = 0 (a peak).
+    // Phase function: φ(s) = N·2π·(s - anchor_arc) / perimeter + 2π + phase_shift.
+    // The additive 2π is a no-op for sin(), so with zero phase shift the anchor is
+    // a rising zero-crossing (sin(φ) = 0), not a peak; layers still align there.
     const double phase_at_anchor = M_PI * 2.0 + phase_shift_rad;
     auto arc_phase = [&](double arc_mm) -> double { return N * (2.0 * M_PI) * (arc_mm - anchor_arc_mm) / perimeter_mm + phase_at_anchor; };
 
@@ -218,8 +224,10 @@ static void fuzzy_polyline_ripple(Points& poly, const FuzzySkinConfig& cfg)
 }
 
 // Apply a sine-wave ripple displacement to an Arachne extrusion line.
-// Mirrors fuzzy_polyline_ripple but operates on ExtrusionJunction vectors so
-// that per-point line width (j.w) is preserved correctly.
+// The core logic is similar to fuzzy_polyline_ripple() (parameter checks ->
+// perimeter -> anchor + phase shift -> global-grid resampling); this variant
+// operates on ExtrusionJunction vectors so that per-point line width (j.w) is
+// preserved, and closed loops are expressed as front == back (no wrap-around).
 static void fuzzy_extrusion_line_ripple(Arachne::ExtrusionJunctions& ext_lines, const FuzzySkinConfig& cfg)
 {
     const double amplitude    = unscale_(cfg.thickness);
@@ -246,6 +254,8 @@ static void fuzzy_extrusion_line_ripple(Arachne::ExtrusionJunctions& ext_lines, 
 
     const double anchor_arc_mm   = ripple_anchor_arc_mm(poly);
     const double phase_shift_rad = ripple_phase_shift_rad(cfg);
+    // Same as in fuzzy_polyline_ripple(): the additive 2π is a no-op for sin(),
+    // so with zero phase shift the anchor is a rising zero-crossing, not a peak.
     const double phase_at_anchor = M_PI * 2.0 + phase_shift_rad;
 
     auto arc_phase = [&](double arc_mm) -> double { return N * (2.0 * M_PI) * (arc_mm - anchor_arc_mm) / perimeter_mm + phase_at_anchor; };

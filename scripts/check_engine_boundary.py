@@ -14,10 +14,21 @@ source of truth):
 Engine baseline is zero violations, so the check is a full scan: any finding
 fails the gate. Local runs and CI use this same script.
 
+Detection scope (this is a text-level gate, by design):
+  - include layer matches plain `#include "..."` / `#include <...>` lines only
+  - NOT detected: `#include_next`, macro-concatenated include names,
+    C++11 raw string literals R"(...)", or UTF-16 encoded sources (files are
+    read with errors="replace", so undecodable bytes are not matched)
+  - link layer parses target_link_libraries blocks by paren balancing; a
+    target that matches no block is reported as a gate error (exit 2) rather
+    than silently passing
+
 Usage:
   python scripts/check_engine_boundary.py [--config PATH] [--warning]
 
-Exit code 0 = clean (or warning-only with --warning), 1 = violations found.
+Exit codes: 0 = clean (or violations only, with --warning), 1 = violations
+found, 2 = gate/config error. Exit 2 is never downgraded by --warning: a gate
+that cannot verify its own scope must not report green.
 """
 
 import argparse
@@ -29,9 +40,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = Path(__file__).resolve().parent / "engine_boundary_config.json"
 
-SCOPE_KEYWORDS = {"public", "private", "interface", "link_public", "link_private",
-                  "debug", "optimized", "general"}
-
 
 def norm_path(path: Path) -> str:
     """Repo-relative, forward-slash path for config/allowlist comparison."""
@@ -40,11 +48,17 @@ def norm_path(path: Path) -> str:
 
 def strip_comments(text: str) -> str:
     """Blank out // and /* */ comments while preserving line structure, so
-    line numbers stay valid and commented-out includes never match."""
+    line numbers stay valid and commented-out includes never match.
+
+    String and char literals are tracked so an unbalanced /* inside a
+    literal (e.g. "path/*x") does not swallow the code that follows it.
+    Known limitation: C++11 raw string literals R"(...)" are not lexed
+    (see the module docstring)."""
     out = []
     i, n = 0, len(text)
-    state = "code"
+    state = "code"  # code | line | block | str | chr
     while i < n:
+        c = text[i]
         two = text[i:i + 2]
         if state == "code":
             if two == "//":
@@ -53,11 +67,31 @@ def strip_comments(text: str) -> str:
             elif two == "/*":
                 state = "block"
                 i += 2
+            elif c == '"':
+                state = "str"
+                out.append(c)
+                i += 1
+            elif c == "'":
+                state = "chr"
+                out.append(c)
+                i += 1
             else:
-                out.append(text[i])
+                out.append(c)
+                i += 1
+        elif state in ("str", "chr"):
+            quote = '"' if state == "str" else "'"
+            if c == "\\" and i + 1 < n:
+                out.append(text[i:i + 2])  # escape: keep both chars verbatim
+                i += 2
+            elif c == quote:
+                state = "code"
+                out.append(c)
+                i += 1
+            else:
+                out.append(c)
                 i += 1
         elif state == "line":
-            if text[i] == "\n":
+            if c == "\n":
                 state = "code"
                 out.append("\n")
             i += 1
@@ -66,7 +100,7 @@ def strip_comments(text: str) -> str:
                 state = "code"
                 i += 2
             else:
-                if text[i] == "\n":
+                if c == "\n":
                     out.append("\n")
                 i += 1
     return "".join(out)

@@ -135,6 +135,15 @@ jobs:
         run: |
           ./build_release_macos.sh -s -n -x -a universal -t 10.15 -1
 
+      # xcrun stapler fetches the notarization ticket over HTTP/3 (UDP/443), which GitHub
+      # macOS runners currently drop (actions/runner-images#14924). Blocking outbound
+      # UDP/443 makes stapler fall back to plain HTTPS over TCP. Remove once fixed upstream.
+      - name: Block UDP 443 to work around stapler Error 68 (actions/runner-images#14924)
+        if: inputs.os == 'macos-15'
+        run: |
+          echo "block return out quick proto udp from any to any port 443" | sudo pfctl -f -
+          sudo pfctl -E
+
  # Thanks to RaySajuuk, it's working now
       - name: Sign app and notary
         if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release_') || github.ref == 'refs/heads/2.3.0-final') && inputs.os == 'macos-15'

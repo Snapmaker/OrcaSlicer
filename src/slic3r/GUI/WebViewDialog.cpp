@@ -85,6 +85,7 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     m_info = new wxInfoBar(this);
     topsizer->Add(m_info, wxSizerFlags().Expand());
     // Create the webview
+    BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [webview] [navigation_requested] view=home url=" << url.ToUTF8().data();
     m_browser = WebView::CreateWebView(this, url);
 
     wxGetApp().fltviews().add_webview_panel(this, url);
@@ -250,6 +251,7 @@ void WebViewPanel::reload() {
 
 void WebViewPanel::load_url(wxString& url)
 {
+    BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [webview] [navigation_requested] view=home url=" << url.ToUTF8().data();
 
     WebView::LoadUrl(m_browser, url);
 
@@ -614,6 +616,7 @@ void WebViewPanel::OnDocumentLoaded(wxWebViewEvent& evt)
     // Only notify if the document is the main frame, not a subframe
     if (evt.GetURL() == m_browser->GetCurrentURL())
     {
+        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [webview] [navigation_loaded] view=home url=" << evt.GetURL().ToUTF8().data();
         if (wxGetApp().get_mode() == comDevelop)
             wxLogMessage("%s", "Document loaded; url='" + evt.GetURL() + "'");
     }

@@ -34,6 +34,7 @@ class wxSizeEvent;
 class wxIdleEvent;
 class wxKeyEvent;
 class wxMouseEvent;
+class wxMouseCaptureLostEvent;
 class wxTimerEvent;
 class wxPaintEvent;
 class wxGLCanvas;
@@ -1140,6 +1141,7 @@ public:
     void on_render_timer(wxTimerEvent& evt);
     void on_set_color_timer(wxTimerEvent& evt);
     void on_mouse(wxMouseEvent& evt);
+    void OnMouseCaptureLost(wxMouseCaptureLostEvent& event);
     void on_gesture(wxGestureEvent& evt);
     void on_paint(wxPaintEvent& evt);
     void on_set_focus(wxFocusEvent& evt);
@@ -1311,6 +1313,8 @@ public:
     Vec3d _mouse_to_3d(const Point& mouse_pos, float* z = nullptr);
 
     bool make_current_for_postinit();
+    /** Releases painter-owned GL resources while this canvas and the shared context are valid. */
+    bool ReleasePainterGlResources();
 
 private:
     bool _is_shown_on_screen() const;

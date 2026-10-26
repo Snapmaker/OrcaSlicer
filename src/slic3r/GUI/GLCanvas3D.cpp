@@ -1636,7 +1636,10 @@ GLCanvas3D::GLCanvas3D(wxGLCanvas* canvas, Bed3D &bed)
 
 GLCanvas3D::~GLCanvas3D()
 {
-    const bool contextCurrent = _set_current();
+    const bool contextCurrent = ReleasePainterGlResources();
+    if (!contextCurrent)
+        m_gizmos.DetachPainterGlResources();
+
     if (contextCurrent)
         m_pickingBuffer.Reset();
     else
@@ -1668,6 +1671,16 @@ GLCanvas3D::~GLCanvas3D()
 
     m_sel_plate_toolbar.del_all_item();
     m_sel_plate_toolbar.del_stats_item();
+}
+
+bool GLCanvas3D::ReleasePainterGlResources()
+{
+    if (m_canvas == nullptr || !_set_current())
+        return false;
+
+    m_gizmos.ReleasePainterGlResources();
+    wxGetApp().get_opengl_manager().FlushPendingBufferDeletes();
+    return true;
 }
 
 void GLCanvas3D::post_event(wxEvent &&event)
@@ -3112,6 +3125,8 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
     if (!_is_shown_on_screen() || !_set_current() || !wxGetApp().init_opengl())
         return;
 
+    wxGetApp().get_opengl_manager().FlushPendingBufferDeletes();
+
     if (!is_initialized() && !init())
         return;
     if (m_canvas_type == ECanvasType::CanvasView3D  && m_gizmos.get_current_type() == GLGizmosManager::Undefined) {
@@ -4418,6 +4433,7 @@ void GLCanvas3D::bind_event_handlers()
         m_canvas->Bind(wxEVT_KEY_DOWN, &GLCanvas3D::on_key, this);
         m_canvas->Bind(wxEVT_KEY_UP, &GLCanvas3D::on_key, this);
         m_canvas->Bind(wxEVT_MOUSEWHEEL, &GLCanvas3D::on_mouse_wheel, this);
+        m_canvas->Bind(wxEVT_MOUSE_CAPTURE_LOST, &GLCanvas3D::OnMouseCaptureLost, this);
         m_canvas->Bind(wxEVT_TIMER, &GLCanvas3D::on_timer, this);
         m_canvas->Bind(EVT_GLCANVAS_RENDER_TIMER, &GLCanvas3D::on_render_timer, this);
         m_toolbar_highlighter.set_timer_owner(m_canvas, 0);
@@ -4464,6 +4480,7 @@ void GLCanvas3D::unbind_event_handlers()
         m_canvas->Unbind(wxEVT_KEY_DOWN, &GLCanvas3D::on_key, this);
         m_canvas->Unbind(wxEVT_KEY_UP, &GLCanvas3D::on_key, this);
         m_canvas->Unbind(wxEVT_MOUSEWHEEL, &GLCanvas3D::on_mouse_wheel, this);
+        m_canvas->Unbind(wxEVT_MOUSE_CAPTURE_LOST, &GLCanvas3D::OnMouseCaptureLost, this);
         m_canvas->Unbind(wxEVT_TIMER, &GLCanvas3D::on_timer, this);
         m_canvas->Unbind(EVT_GLCANVAS_RENDER_TIMER, &GLCanvas3D::on_render_timer, this);
         m_canvas->Unbind(wxEVT_LEFT_DOWN, &GLCanvas3D::on_mouse, this);
@@ -6094,6 +6111,13 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
 	if (on_enter_workaround)
 		m_mouse.position = Vec2d(-1., -1.);
 #endif /* __WXMSW__ */
+}
+
+void GLCanvas3D::OnMouseCaptureLost(wxMouseCaptureLostEvent& event)
+{
+    m_gizmos.OnMouseCaptureLost();
+    mouse_up_cleanup();
+    event.Skip();
 }
 
 void GLCanvas3D::on_paint(wxPaintEvent& evt)

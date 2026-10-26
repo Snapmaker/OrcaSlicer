@@ -254,6 +254,13 @@ public:
     bool handle_shortcut(int key);
 
     bool is_dragging() const;
+    /** Returns true while an undo/redo snapshot is being loaded into the gizmos. */
+    bool IsSerializing() const { return m_serializing; }
+
+    /** Releases painter-owned buffers while a compatible OpenGL context is current. */
+    void ReleasePainterGlResources();
+    /** Detaches painter-owned buffer IDs without issuing OpenGL calls. */
+    void DetachPainterGlResources();
 
     //BBS
     void* get_icon_texture_id(MENU_ICON_NAME icon) {
@@ -290,6 +297,7 @@ public:
     std::string get_tooltip() const;
 
     bool on_mouse(const wxMouseEvent &mouse_event);
+    void OnMouseCaptureLost();
     bool on_mouse_wheel(const wxMouseEvent &evt);
     bool on_char(wxKeyEvent& evt);
     bool on_key(wxKeyEvent& evt);

@@ -2760,24 +2760,22 @@ std::vector<int> ModelVolume::get_extruders() const
         return std::vector<int>();
 
     if (mmu_segmentation_facets.timestamp() != mmuseg_ts) {
-        std::vector<indexed_triangle_set> its_per_type;
-        mmuseg_extruders.clear();
-        mmuseg_ts = mmu_segmentation_facets.timestamp();
-        mmu_segmentation_facets.get_facets(*this, its_per_type);
-        for (int idx = 1; idx < its_per_type.size(); idx++) {
-            indexed_triangle_set& its = its_per_type[idx];
-            if (its.indices.empty())
-                continue;
-
-            mmuseg_extruders.push_back(idx);
+        // Read painted-extruder presence from the encoded used_states flags.
+        // Materializing facets geometry here would build a full temporary selector.
+        const auto&               usedStates = mmu_segmentation_facets.get_data().used_states;
+        const auto                annotationTimestamp = mmu_segmentation_facets.timestamp();
+        std::vector<int>          paintedExtruders;
+        paintedExtruders.reserve(usedStates.size());
+        for (size_t idx = 1; idx < usedStates.size(); idx++) {
+            if (usedStates[idx])
+                paintedExtruders.push_back(static_cast<int>(idx));
         }
-
-        if (its_per_type.size() > 0 && its_per_type[0].indices.size() == 0) {
-            m_mmuseg_extruders_has_0_extruder = false;
-        }
-        else {
-            m_mmuseg_extruders_has_0_extruder = true;
-        }
+        mmuseg_extruders = std::move(paintedExtruders);
+        mmuseg_ts = annotationTimestamp;
+        // Roots that were never painted or split are not serialized and keep the default state 0.
+        const size_t serializedRootCount = mmu_segmentation_facets.get_data().triangles_to_split.size();
+        m_mmuseg_extruders_has_0_extruder = (!usedStates.empty() && usedStates[0]) ||
+            serializedRootCount < this->mesh().its.indices.size();
     }
 
     std::vector<int> volume_extruders = mmuseg_extruders;
@@ -3793,6 +3791,7 @@ void FacetsAnnotation::reset()
 {
     m_data.triangles_to_split.clear();
     m_data.bitstream.clear();
+    m_data.reset_used_states();
     this->touch();
 }
 

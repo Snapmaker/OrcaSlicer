@@ -22,6 +22,7 @@ const vec3 ORANGE = vec3(0.8, 0.4, 0.0);
 const vec3 LightRed = vec3(0.78, 0.0, 0.0);
 const vec3 LightBlue = vec3(0.73, 1.0, 1.0);
 uniform vec4 uniform_color;
+uniform bool use_vertex_color;
 
 uniform bool volume_mirrored;
 
@@ -31,6 +32,7 @@ uniform mat3 view_normal_matrix;
 in vec3 clipping_planes_dots;
 in vec4 model_pos;
 in vec4 world_pos;
+in vec4 vertex_color;
 
 struct SlopeDetection
 {
@@ -68,8 +70,11 @@ void main()
 {
     if (any(lessThan(clipping_planes_dots, ZERO)))
         discard;
-    vec3  color = uniform_color.rgb;
-    float alpha = uniform_color.a;
+    vec4 paint_color = use_vertex_color ? vertex_color : uniform_color;
+    if (use_vertex_color && paint_color.a <= 0.0)
+        discard;
+    vec3  color = paint_color.rgb;
+    float alpha = paint_color.a;
 
     vec3 triangle_normal = normalize(cross(dFdx(model_pos.xyz), dFdy(model_pos.xyz)));
 #ifdef FLIP_TRIANGLE_NORMALS

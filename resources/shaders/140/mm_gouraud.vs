@@ -13,11 +13,13 @@ uniform vec4 clipping_plane;
 
 in vec3 v_position;
 in vec3 v_barycentric;
+in vec4 v_color;
 
 out vec3 clipping_planes_dots;
 out vec4 model_pos;
 out vec4 world_pos;
 out vec3 barycentric_coordinates;
+out vec4 vertex_color;
 
 struct SlopeDetection
 {
@@ -38,4 +40,5 @@ void main()
 
     //compute the Barycentric Coordinates
     barycentric_coordinates = v_barycentric;
+    vertex_color = v_color;
 }

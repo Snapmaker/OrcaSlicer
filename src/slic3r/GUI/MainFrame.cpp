@@ -1032,6 +1032,11 @@ void MainFrame::shutdown(bool isRecreate)
     if (m_plater != nullptr) {
         m_plater->get_ui_job_worker().cancel_all();
 
+        // Release painter buffers while the view canvas can still make the shared context current.
+        GLCanvas3D* painterCanvas = m_plater->get_view3D_canvas3D();
+        if (painterCanvas != nullptr)
+            painterCanvas->ReleasePainterGlResources();
+
         // Unbinding of wxWidgets event handling in canvases needs to be done here because on MAC,
         // when closing the application using Command+Q, a mouse event is triggered after this lambda is completed,
         // causing a crash

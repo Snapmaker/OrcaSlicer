@@ -99,7 +99,6 @@ public:
 
     wxString m_developer_mode_def;
     wxString m_internal_developer_mode_def;
-    wxString m_websocket_debug_def;
     wxString m_backup_interval_def;
     wxString m_iot_environment_def;
 

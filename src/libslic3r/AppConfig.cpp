@@ -8,6 +8,7 @@
 #include "Thread.hpp"
 #include "format.hpp"
 #include "nlohmann/json.hpp"
+#include "common_func/common_func.hpp"
 
 #include <utility>
 #include <vector>
@@ -40,11 +41,17 @@ namespace Slic3r {
 static const std::string VERSION_CHECK_URL_STABLE = "https://api.github.com/repos/Snapmaker/OrcaSlicer/releases/latest";
 static const std::string VERSION_CHECK_URL = "https://api.github.com/repos/Snapmaker/OrcaSlicer/releases";
 static const std::string PROFILE_UPDATE_URL = "/upgrade/profile/";
-static const std::string FLUTTER_UPDATE_URL = "/upgrade/flutter/";
 static const std::string MODELS_STR = "models";
 
 #define APP_UPDATE_URL_BASE_CN "https://meta-cfg.snapmaker.cn"
 #define APP_UPDATE_URL_BASE_EN "https://meta-cfg.snapmaker.com"
+
+// snapmaker-config gray release API (POST /config/get). Release builds default to the
+// https prod endpoint; internal testing builds (BBL_INTERNAL_TESTING, flipped together
+// with BBL_RELEASE_TO_PUBLIC in common_func.hpp) default to the http dev gateway, which
+// resolves only inside the office network. Per-machine override: "orca_config_api_url".
+#define CONFIG_API_URL_DEV  "http://gateway.s.com/api/config/get"
+#define CONFIG_API_URL_PROD "https://api.snapmaker.com/api/config/get"
 
 #if defined(_WIN32)
 static const std::string APP_UPDATE_URL = std::string("/upgrade/orca/win/");
@@ -693,10 +700,8 @@ std::string AppConfig::load()
             }
         }
 
-        // SM Orca
-        if (j.contains("devices")) {
-            m_device_list = j["devices"].get<std::vector<DeviceInfo>>();
-        }
+        // Device ownership belongs to the connection gateway. Legacy devices in
+        // an existing config are intentionally ignored.
     } catch(std::exception err) {
         BOOST_LOG_TRIVIAL(info) << format("parse app config \"%1%\", error: %2%", AppConfig::loading_path(), err.what());
 
@@ -823,11 +828,6 @@ void AppConfig::save()
             continue;
         }
         for (const auto& kvp : category.second) {
-            // SM Orca
-            if (kvp.first == "use_new_connect") {
-                j[category.first][kvp.first] = false;
-                continue;
-            }
             if (kvp.second == "true") {
                 j[category.first][kvp.first] = true;
                 continue;
@@ -865,18 +865,6 @@ void AppConfig::save()
     }
 
     j["devices"] = json::array();
-    for (size_t i = 0; i < m_device_list.size(); ++i) {
-        if (m_device_list[i].link_mode != "wan") {
-            j["devices"].push_back(m_device_list[i]);
-        }
-    }
-
-    // j["devices"] = m_device_list;
-
-
-    for (size_t i = 0; i < j["devices"].size(); ++i) {
-        j["devices"][i]["connected"] = false;
-    }
     for (const auto& local_machine : m_local_machines) {
         json m_json;
         m_json["dev_name"]         = local_machine.second.dev_name;
@@ -1457,25 +1445,6 @@ std::string AppConfig::get_preset_upgrade_url()
     return url;
 }
 
-std::string AppConfig::get_web_resource_upgrade_url()
-{
-    
-    std::string resourceUrl = get("flutter_upgrade_url");
-    
-    if(!resourceUrl.empty())
-        return resourceUrl;
-    
-    std::string localLanguage = get("language");
-    if (localLanguage != "zh_CN")
-        localLanguage = "en";
-    std::string url  = APP_UPDATE_URL_BASE_EN + FLUTTER_UPDATE_URL + localLanguage + std::string("/version.json");
-    auto countryArea = get_country_code();
-    if (countryArea == std::string("CN"))
-        url = APP_UPDATE_URL_BASE_CN + FLUTTER_UPDATE_URL + localLanguage + std::string("/version.json");
-
-    return url;
-}
-
 std::string AppConfig::get_version_upgrade_url(bool stable_only /* = false*/) 
 {
     
@@ -1496,6 +1465,19 @@ std::string AppConfig::get_version_upgrade_url(bool stable_only /* = false*/)
     return url; 
 }
 
+std::string AppConfig::get_config_api_url()
+{
+    std::string overrideUrl = get("orca_config_api_url");
+    if (!overrideUrl.empty())
+        return overrideUrl;
+
+#if BBL_INTERNAL_TESTING
+    return CONFIG_API_URL_DEV;
+#else
+    return CONFIG_API_URL_PROD;
+#endif
+}
+
 std::string AppConfig::version_check_url(bool stable_only/* = false*/) const
 {
     auto from_settings = get("version_check_url");
@@ -1505,56 +1487,6 @@ std::string AppConfig::version_check_url(bool stable_only/* = false*/) const
 bool AppConfig::exists()
 {
     return boost::filesystem::exists(config_path());
-}
-
-void AppConfig::save_device_info(const DeviceInfo& device)
-{
-    // 检查是否已存在该设备
-    auto it = std::find_if(m_device_list.begin(), m_device_list.end(),
-        [&device](const DeviceInfo& d) { return d.dev_id == device.dev_id; });
-    
-    if (it != m_device_list.end()) {
-        // 更新已存在的设备信息
-        *it = device;
-    } else {
-        // 添加新设备
-        m_device_list.push_back(device);
-    }
-    m_dirty = true;
-}
-
-void AppConfig::clear_device_info()
-{
-    m_device_list.clear();
-    m_dirty = true;
-}
-
-void AppConfig::remove_device_info(const std::string& dev_id)
-{
-    auto it = std::find_if(m_device_list.begin(), m_device_list.end(),
-        [&dev_id](const DeviceInfo& d) { return d.dev_id == dev_id; });
-    
-    if (it != m_device_list.end()) {
-        m_device_list.erase(it);
-        m_dirty = true;
-    }
-}
-
-std::vector<DeviceInfo> AppConfig::get_devices() const
-{
-    return m_device_list;
-}
-
-bool AppConfig::get_device_info(const std::string& dev_id, DeviceInfo& info) const
-{
-    auto it = std::find_if(m_device_list.begin(), m_device_list.end(),
-        [&dev_id](const DeviceInfo& d) { return d.dev_id == dev_id; });
-    
-    if (it != m_device_list.end()) {
-        info = *it;
-        return true;
-    }
-    return false;
 }
 
 void AppConfig::clear_filament_extruder_map()

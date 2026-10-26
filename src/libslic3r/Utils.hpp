@@ -15,7 +15,7 @@
 #include <boost/date_time.hpp>
 #include "boost/date_time/posix_time/ptime.hpp"
 
-#include <openssl/md5.h>
+#include <openssl/evp.h>
 
 #include "libslic3r.h"
 
@@ -674,7 +674,7 @@ inline std::string get_bbl_remain_time_dhms(float time_in_secs)
     return buffer;
 }
 
-bool bbl_calc_md5(std::string &filename, std::string &md5_out);
+bool bbl_calc_md5(const std::string &filename, std::string &md5_out);
 
 inline std::string filter_characters(const std::string& str, const std::string& filterChars)
 {

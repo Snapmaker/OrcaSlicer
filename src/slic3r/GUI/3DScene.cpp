@@ -517,16 +517,26 @@ void GLVolume::set_bounding_boxes_as_dirty()
     m_transformed_non_sinking_bounding_box.reset();
 }
 
-void GLVolume::promote_ready_lod_models()
+bool GLVolume::promote_ready_lod_models()
 {
     // The LOD models stay render-disabled while their background thread may
     // still be writing them. Once the worker signals completion (release
     // store in SimplifyMesh), the acquire load below makes its writes
     // visible, and enable_render() hands the model over to the main thread.
-    if (m_modelMiddle && m_lodMiddleReady && m_modelMiddle->is_render_disabled() && m_lodMiddleReady->load(std::memory_order_acquire))
+    bool activeModelChanged = false;
+    if (m_modelMiddle && m_lodMiddleReady && m_modelMiddle->is_render_disabled() &&
+        m_lodMiddleReady->load(std::memory_order_acquire))
+    {
         m_modelMiddle->enable_render();
-    if (m_modelSmall && m_lodSmallReady && m_modelSmall->is_render_disabled() && m_lodSmallReady->load(std::memory_order_acquire))
+        activeModelChanged = m_curLodLevel == LODLevel::Middle;
+    }
+    if (m_modelSmall && m_lodSmallReady && m_modelSmall->is_render_disabled() &&
+        m_lodSmallReady->load(std::memory_order_acquire))
+    {
         m_modelSmall->enable_render();
+        activeModelChanged |= m_curLodLevel == LODLevel::Small;
+    }
+    return activeModelChanged;
 }
 
 Transform3d GLVolume::world_matrix() const
@@ -685,7 +695,7 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
         }
     } while (0);
 
-    // LOD evaluation is now done once per frame in GLVolumeCollection::render().
+    // LOD evaluation is handled by GLVolumeCollection::render().
     // m_curLodLevel is already set before simple_render is called.
 
     if (color_volume && !picking) {
@@ -741,21 +751,30 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
         // Select LOD model based on current LOD level
         static int lodRenderLogCounter = 0;
         lodRenderLogCounter++;
-        if (!picking) {
+        {
             // DEBUG: color-code LOD levels for visual verification
             // GREEN = HIGH (original), BLUE = MIDDLE, RED = SMALL
             if (m_curLodLevel == LODLevel::Small && m_modelSmall && !m_modelSmall->is_render_disabled() && m_modelSmall->is_initialized()) {
                 if (lodRenderLogCounter % 180 == 0)
                     BOOST_LOG_TRIVIAL(debug) << "LOD: SMALL '" << name << "'";
-                m_modelSmall->set_color(render_color);
+                const ColorRGBA previousColor = m_modelSmall->get_color();
+                m_modelSmall->set_color(picking ? model.get_color() : render_color);
                 //m_modelSmall->set_color(ColorRGBA::GREEN());
                 m_modelSmall->render();
+                if (picking)
+                    m_modelSmall->set_color(previousColor);
             } else if (m_curLodLevel == LODLevel::Middle && m_modelMiddle && !m_modelMiddle->is_render_disabled() && m_modelMiddle->is_initialized()) {
                 if (lodRenderLogCounter % 180 == 0)
                     BOOST_LOG_TRIVIAL(debug) << "LOD: MID '" << name << "'";
-                m_modelMiddle->set_color(render_color);
+                const ColorRGBA previousColor = m_modelMiddle->get_color();
+                m_modelMiddle->set_color(picking ? model.get_color() : render_color);
                 //m_modelMiddle->set_color(ColorRGBA::BLUE());
                 m_modelMiddle->render();
+                if (picking)
+                    m_modelMiddle->set_color(previousColor);
+            } else if (picking && color_volume) {
+                // Painted volume: the main pass never uploads the full mesh, so reuse its segment models.
+                RenderMmuSegmentsForPicking();
             } else {
                 if (lodRenderLogCounter % 180 == 0) {
                     BOOST_LOG_TRIVIAL(debug) << "LOD: HIGH fallback '" << name
@@ -770,16 +789,29 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
                 else
                     model.render(this->tverts_range);
             }
-        } else {
-            // Picking: always use full-resolution model
-            if (tverts_range == std::make_pair<size_t, size_t>(0, -1))
-                model.render();
-            else
-                model.render(this->tverts_range);
         }
     }
     if (this->is_left_handed())
         glFrontFace(GL_CCW);
+}
+
+void GLVolume::RenderMmuSegmentsForPicking()
+{
+    const ColorRGBA pickingColor = model.get_color();
+    const bool fullRange = tverts_range == std::make_pair<size_t, size_t>(0, -1);
+    for (GUI::GLModel& segmentModel : mmuseg_models)
+    {
+        if (!segmentModel.is_initialized())
+            continue;
+
+        const ColorRGBA previousColor = segmentModel.get_color();
+        segmentModel.set_color(pickingColor);
+        if (fullRange)
+            segmentModel.render();
+        else
+            segmentModel.render(tverts_range);
+        segmentModel.set_color(previousColor);
+    }
 }
 
 bool GLVolume::is_sla_support() const { return this->composite_id.volume_id == -int(slaposSupportTree); }
@@ -1015,9 +1047,9 @@ int GLVolumeCollection::load_wipe_tower_preview(
 
     std::vector<ColorRGBA> extruder_colors = get_extruders_colors();
     std::vector<ColorRGBA> colors;
-    GUI::PartPlateList&    ppl              = GUI::wxGetApp().plater()->get_partplate_list();
-    std::vector<int>       plate_extruders  = ppl.get_plate(plate_idx)->get_extruders(true);
-    TriangleMesh           wipe_tower_shell = make_cube(width, depth, height);
+    GUI::PartPlateList& ppl = GUI::wxGetApp().plater()->get_partplate_list();
+    std::vector<int> plate_extruders  = ppl.get_plate(plate_idx)->get_extruders(true);
+    TriangleMesh wipe_tower_shell = make_cube(width, depth, height);
     for (int extruder_id : plate_extruders) {
         if (extruder_id <= extruder_colors.size())
             colors.push_back(extruder_colors[extruder_id - 1]);
@@ -1045,6 +1077,50 @@ int GLVolumeCollection::load_wipe_tower_preview(
     v.geometry_id.first                        = 0;
     v.geometry_id.second                       = wipe_tower_instance_id().id + (obj_idx - 1000);
     v.is_wipe_tower                            = true;
+    v.shader_outside_printer_detection_enabled = !size_unknown;
+    return int(volumes.size() - 1);
+}
+
+int GLVolumeCollection::load_real_wipe_tower_preview(int obj_idx, float pos_x, float pos_y, 
+    const TriangleMesh& wt_mesh, const TriangleMesh& brim_mesh, bool render_brim, 
+    float rotation_angle, bool size_unknown, bool opengl_initialized)
+{
+    int plate_idx = obj_idx - 1000;
+    if (wt_mesh.its.vertices.empty()) 
+        return int(this->volumes.size() - 1);
+
+    std::vector<Slic3r::ColorRGBA> extruder_colors = get_extruders_colors();
+    GUI::PartPlateList& ppl = GUI::wxGetApp().plater()->get_partplate_list();
+    std::vector<int> plate_extruders = ppl.get_plate(plate_idx)->get_extruders(true);
+    std::vector<Slic3r::ColorRGBA> colors;
+    if (!plate_extruders.empty()) {
+        if (plate_extruders.front() <= extruder_colors.size())
+            colors.push_back(extruder_colors[plate_extruders.front() - 1]);
+        else
+            colors.push_back(extruder_colors[0]);
+    }
+    if (colors.empty()) 
+        return int(this->volumes.size() - 1);
+    volumes.emplace_back(new GLWipeTowerVolume({ colors }));
+    GLWipeTowerVolume& v = *dynamic_cast<GLWipeTowerVolume*>(volumes.back());
+    auto mesh = wt_mesh;
+    if (render_brim) {
+        mesh.merge(brim_mesh);
+    }
+    if (!colors.empty()) {
+        v.model_per_colors.resize(1);
+        v.model_per_colors[0].init_from(mesh);
+    }
+    TriangleMesh wipe_tower_shell = mesh.convex_hull_3d();
+    v.model.init_from(wipe_tower_shell);
+    v.mesh_raycaster = std::make_unique<GUI::MeshRaycaster>(std::make_shared<const TriangleMesh>(wipe_tower_shell));
+    v.set_convex_hull(wipe_tower_shell);
+    v.set_volume_offset(Vec3d(pos_x, pos_y, 0.0));
+    v.set_volume_rotation(Vec3d(0., 0., (M_PI / 180.) * rotation_angle));
+    v.composite_id = GLVolume::CompositeID(obj_idx, 0, 0);
+    v.geometry_id.first = 0;
+    v.geometry_id.second = wipe_tower_instance_id().id + (obj_idx - 1000);
+    v.is_wipe_tower = true;
     v.shader_outside_printer_detection_enabled = !size_unknown;
     return int(volumes.size() - 1);
 }
@@ -1124,7 +1200,7 @@ int GLVolumeCollection::get_selection_support_threshold_angle(bool& enable_suppo
     return support_threshold_angle;
 }
 
-void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
+bool GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
                                 bool                                 disable_cullface,
                                 const GUI::Camera&                   camera,
                                 std::function<bool(const GLVolume&)> filter_func,
@@ -1134,14 +1210,14 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
     const Transform3d& projection_matrix = camera.get_projection_matrix();
     GLVolumeWithIdAndZList to_render = volumes_to_render(volumes, type, view_matrix, filter_func);
     if (to_render.empty())
-        return;
+        return false;
 
     GLShaderProgram* shader = GUI::wxGetApp().get_current_shader();
     if (shader == nullptr)
-        return;
+        return false;
 
     GLShaderProgram* sink_shader  = GUI::wxGetApp().get_shader("flat");
-    GLShaderProgram* edges_shader = GUI::wxGetApp().get_shader("flat");
+    const bool canRenderSinkingContours = m_show_sinking_contours && sink_shader != nullptr;
 
     if (type == ERenderType::Transparent) {
         glsafe(::glEnable(GL_BLEND));
@@ -1151,26 +1227,29 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
     glsafe(::glCullFace(GL_BACK));
     if (disable_cullface)
         glsafe(::glDisable(GL_CULL_FACE));
+    else
+        glsafe(::glEnable(GL_CULL_FACE));
 
     // Set static camera state for LOD evaluation in GLVolume rendering
     GLVolume::s_curZoom = camera.get_zoom();
     GLVolume::s_curViewProjMatrix = (projection_matrix.matrix() * view_matrix.matrix()).eval();
     GLVolume::s_curViewport = camera.get_viewport();
 
-    // Evaluate LOD level for each volume once per frame
+    // Evaluate the LOD level for each volume in this render pass.
     float curZoom = GLVolume::s_curZoom;
     bool  shouldEvaluate = (std::abs(curZoom - GLVolume::s_lastCameraZoomValue) > ZOOM_THRESHOLD);
     if (shouldEvaluate) 
     {
         GLVolume::s_lastCameraZoomValue = curZoom;
     }
+    bool lodStateChanged = false;
     for (GLVolumeWithIdAndZ& volume : to_render)
     {
         GLVolume* v = volume.first;
         // Hand over LOD models whose background initialization finished.
         // Must run every frame, on the main thread only.
-        v->promote_ready_lod_models();
-        if (!v->picking && (shouldEvaluate || ++v->m_lodUpdateIndex >= LOD_UPDATE_FREQUENCY))
+        lodStateChanged |= v->promote_ready_lod_models();
+        if (shouldEvaluate || ++v->m_lodUpdateIndex >= LOD_UPDATE_FREQUENCY)
         {
             v->m_lodUpdateIndex = 0;
             LODLevel prevLod = v->m_curLodLevel;
@@ -1178,6 +1257,7 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
                 v->transformed_bounding_box(), GLVolume::s_curViewProjMatrix,
                 GLVolume::s_curViewport[2], GLVolume::s_curViewport[3]);
             if (prevLod != v->m_curLodLevel) {
+                lodStateChanged = true;
                 BOOST_LOG_TRIVIAL(debug) << "LOD level changed: " << static_cast<int>(prevLod)
                                            << " -> " << static_cast<int>(v->m_curLodLevel)
                                            << " (zoom=" << curZoom << ", name=" << v->name << ")";
@@ -1206,19 +1286,17 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
             volume.first->force_transparent = false;
 #endif // ENABLE_MODIFIERS_ALWAYS_TRANSPARENT
 
-        // render sinking contours of non-hovered volumes
-        shader->stop_using();
-        if (sink_shader != nullptr) {
-            sink_shader->start_using();
-            if (m_show_sinking_contours) {
-                if (volume.first->is_sinking() && !volume.first->is_below_printbed() && volume.first->hover == GLVolume::HS_None &&
-                    !volume.first->force_sinking_contours) {
-                    volume.first->render_sinking_contours();
-                }
+        if (canRenderSinkingContours)
+        {
+            const bool needSinkingContour = volume.first->is_sinking() && !volume.first->is_below_printbed() &&
+                                            volume.first->hover == GLVolume::HS_None && !volume.first->force_sinking_contours;
+            if (needSinkingContour)
+            {
+                sink_shader->start_using();
+                volume.first->render_sinking_contours();
+                shader->start_using();
             }
-            sink_shader->stop_using();
         }
-        shader->start_using();
 
         if (!volume.first->model.is_initialized())
             shader->set_uniform("uniform_color", volume.first->render_color);
@@ -1282,22 +1360,29 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
         glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
     }
 
-    if (m_show_sinking_contours) {
-        shader->stop_using();
-        if (sink_shader != nullptr) {
-            sink_shader->start_using();
-            for (GLVolumeWithIdAndZ& volume : to_render) {
-                // render sinking contours of hovered/displaced volumes
-                if (volume.first->is_sinking() && !volume.first->is_below_printbed() &&
-                    (volume.first->hover != GLVolume::HS_None || volume.first->force_sinking_contours)) {
-                    glsafe(::glDepthFunc(GL_ALWAYS));
-                    volume.first->render_sinking_contours();
-                    glsafe(::glDepthFunc(GL_LESS));
-                }
+    if (canRenderSinkingContours)
+    {
+        bool sinkShaderUsing = false;
+        for (GLVolumeWithIdAndZ& volume : to_render)
+        {
+            const bool needHoveredSinkingContour = volume.first->is_sinking() && !volume.first->is_below_printbed() &&
+                                                   (volume.first->hover != GLVolume::HS_None || volume.first->force_sinking_contours);
+            if (!needHoveredSinkingContour)
+                continue;
+
+            if (!sinkShaderUsing)
+            {
+                sink_shader->start_using();
+                sinkShaderUsing = true;
             }
-            sink_shader->start_using();
+
+            glsafe(::glDepthFunc(GL_ALWAYS));
+            volume.first->render_sinking_contours();
+            glsafe(::glDepthFunc(GL_LESS));
         }
-        shader->start_using();
+
+        if (sinkShaderUsing)
+            shader->start_using();
     }
 
     if (disable_cullface)
@@ -1305,6 +1390,8 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
 
     if (type == ERenderType::Transparent)
         glsafe(::glDisable(GL_BLEND));
+
+    return lodStateChanged;
 }
 
 bool GLVolumeCollection::check_outside_state(const BuildVolume& build_volume, ModelInstanceEPrintVolumeState* out_state) const

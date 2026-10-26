@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2009, 2023 IBM Corp.
+ * Copyright (c) 2009, 2024 IBM Corp.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v2.0
@@ -38,8 +38,8 @@
 
 #if defined(_WIN32) || defined(_WIN64)
 	#include <direct.h>
-	/* Windows doesn't have strtok_r, so remap it to strtok */
-	#define strtok_r( A, B, C ) strtok( A, B )
+	/* Windows doesn't have strtok_r, so remap it to strtok_s */
+	#define strtok_r strtok_s
 	#define snprintf _snprintf
 	int keysWin32(char *, char ***, int *);
 	int clearWin32(char *);
@@ -248,7 +248,7 @@ free_exit:
 exit:
 	FUNC_EXIT_RC(rc);
 	return rc;
-};
+}
 
 
 /** Retrieve a wire message from the client persistence directory.

@@ -1,9 +1,6 @@
  #  Changelog
  
- ## 2026-08-24
- ###Features
-  * Added device control capabilities. 
-  * Added support for more official consumables.
+ ## 2026-09-30
  ### Bug Fixes
-  * Fixed IP input issue in the German language environment.
-  * Fixed other known issues.
+  * Fix memory footprint issue on the home page.
+  * Fix other known issues.

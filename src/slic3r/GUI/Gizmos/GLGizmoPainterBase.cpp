@@ -1314,6 +1314,8 @@ bool GLGizmoPainterBase::on_mouse(const wxMouseEvent &mouse_event)
 
     if (mouse_event.Moving()) {
         gizmo_event(SLAGizmoEventType::Moving, mouse_pos, mouse_event.ShiftDown(), mouse_event.AltDown(), false);
+        // Cursor and hover previews are drawn inside the cached scene, so a move must redraw the scene.
+        m_parent.set_as_dirty();
         return false;
     }
 

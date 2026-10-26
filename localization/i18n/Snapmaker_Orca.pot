@@ -6279,8 +6279,8 @@ msgid "Upload and Print"
 msgstr ""
 
 msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
+"Printing by object with caution. This function may cause the print head to "
+"collide with printed parts during switching."
 msgstr ""
 
 msgid "Send G-code"
@@ -13241,6 +13241,38 @@ msgstr ""
 msgid "Top shell layers"
 msgstr ""
 
+msgid "Top paint penetration layers"
+msgstr ""
+
+msgid "This is  the number of layers of top paint penetration."
+msgstr ""
+
+msgid "Bottom paint penetration layers"
+msgstr ""
+
+msgid "This is the number of layers of bottom paint penetration."
+msgstr ""
+
+msgid ""
+"Top paint penetration layers cannot exceed top shell layers.\n"
+"Top paint penetration layers will be reset to %d."
+msgstr ""
+
+msgid ""
+"Bottom paint penetration layers cannot exceed bottom shell layers.\n"
+"Bottom paint penetration layers will be reset to %d."
+msgstr ""
+
+msgid ""
+"The top paint penetration layers (%1%) of object %2% exceed the total layer "
+"count (%3%) of this object. Please reduce the top paint penetration layers."
+msgstr ""
+
+msgid ""
+"The bottom paint penetration layers (%1%) of object %2% exceed the total layer "
+"count (%3%) of this object. Please reduce the bottom paint penetration layers."
+msgstr ""
+
 msgid ""
 "This is the number of solid layers of top shell, including the top surface "
 "layer. When the thickness calculated by this value is thinner than top shell "
@@ -16283,3 +16315,12 @@ msgstr ""
 
 msgid "Incompatible filament types cannot be mixed. Please correct the selection."
 msgstr ""
+
+#: src/slic3r/GUI/Preferences.cpp
+msgid "GPU acceleration for G-code preview"
+msgstr ""
+
+#: src/slic3r/GUI/Preferences.cpp
+msgid "Rebuild toolpath geometry on the GPU: much faster preview loading and lower memory on capable graphics cards. If the preview moves slower than before (for example on basic integrated graphics), turn this off to use the compatible renderer. Takes effect when the preview is reloaded."
+msgstr ""
+

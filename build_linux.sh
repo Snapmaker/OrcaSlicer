@@ -115,6 +115,41 @@ function check_available_memory_and_disk() {
 # cmake 4.x compatibility workaround
 export CMAKE_POLICY_VERSION_MINIMUM=3.5
 
+# Check CMake version — OrcaSlicer supports CMake 3.13 through 3.31.x.
+# CMake 4.x has breaking changes (try_compile error propagation) that cause
+# curl 7.75.0 and other deps to fail during configure.
+CMAKE_VER=$("${CMAKE:-cmake}" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.0.0")
+CMAKE_MAJOR=$(echo "$CMAKE_VER" | cut -d. -f1)
+CMAKE_MINOR=$(echo "$CMAKE_VER" | cut -d. -f2)
+echo "Detected CMake version: ${CMAKE_VER}"
+if [ "$CMAKE_MAJOR" -ge 4 ] 2>/dev/null; then
+    echo ""
+    echo "================================================================"
+    echo " ERROR: CMake ${CMAKE_VER} is not supported!"
+    echo ""
+    echo " CMake 4.x has breaking changes that cause dependency builds"
+    echo " (curl, OCCT, etc.) to fail during CMake configure."
+    echo ""
+    echo " Install CMake 3.28.x – 3.30.x instead:"
+    echo "   https://github.com/Kitware/CMake/releases"
+    echo "   Or: pip install cmake==3.30.6"
+    echo ""
+    echo " CMAKE_POLICY_VERSION_MINIMUM=3.5 is set but does not fully"
+    echo " restore 3.x behavior for all CMake 4.0 breaking changes."
+    echo "================================================================"
+    echo ""
+    exit 1
+fi
+if [ "$CMAKE_MAJOR" -eq 3 ] 2>/dev/null && [ "$CMAKE_MINOR" -ge 32 ] 2>/dev/null; then
+    echo ""
+    echo "================================================================"
+    echo " WARNING: CMake ${CMAKE_VER} may have compatibility issues."
+    echo " Recommended: CMake 3.28.x – 3.30.x"
+    echo " Proceeding, but dependency builds may fail."
+    echo "================================================================"
+    echo ""
+fi
+
 DISTRIBUTION=$(awk -F= '/^ID=/ {print $2}' /etc/os-release | tr -d '"')
 DISTRIBUTION_LIKE=$(awk -F= '/^ID_LIKE=/ {print $2}' /etc/os-release | tr -d '"')
 # Check for direct distribution match to Ubuntu/Debian

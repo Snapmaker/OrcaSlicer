@@ -387,8 +387,8 @@ EOF
     chmod ug+x @SLIC3R_APP_CMD@
     cp -fl @SLIC3R_APP_CMD@ "$APPDIR/@SLIC3R_APP_CMD@"
 
-    if [ -f "${CHECK_SCRIPT}" ] && [ -z "${ORCA_SKIP_APPIMAGE_AUDIT}" ]; then
-        bash "${CHECK_SCRIPT}" "$APPDIR" "$BIN_DIR/@SLIC3R_APP_CMD@"
+    if [ -x "${CHECK_SCRIPT}" ] && [ -z "${ORCA_SKIP_APPIMAGE_AUDIT}" ]; then
+        "${CHECK_SCRIPT}" "$APPDIR" "$BIN_DIR/@SLIC3R_APP_CMD@"
     fi
 # } &> $ROOT/Build.log # Capture all command output
 echo "done"
@@ -397,19 +397,39 @@ if [[ -n "$BUILD_IMAGE" ]]
 then
 echo -n "Creating Appimage for distribution..."
 # {
+    APPIMAGE_OUT="@SLIC3R_APP_KEY@_Linux_V@SoftFever_VERSION@.AppImage"
     rm -rf package_appimage
     cp -Rf package package_appimage
     pushd package_appimage > /dev/null
     chmod +x ../build_appimage.sh
-    if ../build_appimage.sh; then
-        popd > /dev/null
-        mv package_appimage/"@SLIC3R_APP_KEY@_Linux_V@Snapmaker_VERSION@.AppImage" "@SLIC3R_APP_KEY@_Linux_V@Snapmaker_VERSION@.AppImage"
+    appimage_ok=0
+    if ../build_appimage.sh && [ -f "${APPIMAGE_OUT}" ]; then
+        appimage_ok=1
+    fi
+    popd > /dev/null
+    if [ "$appimage_ok" -eq 1 ]; then
+        mv "package_appimage/${APPIMAGE_OUT}" "${APPIMAGE_OUT}"
         rm -fR package_appimage
+        echo "done"
     else
-        popd > /dev/null
-        echo "Error: AppImage build failed" >&2
-        exit 1
+        rm -fR package_appimage
+        echo "" >&2
+        echo "Warning: AppImage wrap failed (appimagetool download or pack)." >&2
+        # Step [9/9] already produced package/ (the runnable Linux tree). GitLab
+        # intranet jobs treat that as the shippable artifact; wrapping it with
+        # GitHub-hosted appimagetool is best-effort. Set ORCA_REQUIRE_APPIMAGE=1
+        # to keep wrap failure fatal (public / GitHub -i).
+        if [ -n "${ORCA_REQUIRE_APPIMAGE:-}" ]; then
+            echo "Error: ORCA_REQUIRE_APPIMAGE is set; AppImage wrap is required." >&2
+            exit 1
+        fi
+        if [ -d "package" ] && { [ -e "package/bin/@SLIC3R_APP_CMD@" ] || [ -e "package/@SLIC3R_APP_CMD@" ]; }; then
+            echo "Keeping package/ from step [9/9]; continuing without ${APPIMAGE_OUT}." >&2
+            echo "done"
+        else
+            echo "Error: AppImage wrap failed and package/ is missing." >&2
+            exit 1
+        fi
     fi
 # } &> $ROOT/Build.log # Capture all command output
-echo "done"
 fi

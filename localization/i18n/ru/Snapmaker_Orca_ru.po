@@ -4563,6 +4563,12 @@ msgstr "Параметры расстановки"
 msgid "Spacing"
 msgstr "Интервал"
 
+msgid "Count"
+msgstr "Количество"
+
+msgid "Gap"
+msgstr "Зазор"
+
 msgid "0 means auto spacing."
 msgstr "0 - автоматический интервал."
 
@@ -6785,14 +6791,6 @@ msgstr "Готов ли 3D-принтер? Печатная пластина н�
 
 msgid "Upload and Print"
 msgstr "Загрузить и напечатать"
-
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Печать по очереди: \n"
-"Рекомендуется использовать автоматическую расстановку, чтобы избежать "
-"столкновений при печати."
 
 msgid "Send G-code"
 msgstr "Отправить G-код"

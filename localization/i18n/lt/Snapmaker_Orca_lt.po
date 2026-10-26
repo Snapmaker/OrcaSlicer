@@ -4486,6 +4486,12 @@ msgstr "Išdėstymo parinktys"
 msgid "Spacing"
 msgstr "Tarpai"
 
+msgid "Count"
+msgstr "Skaičius"
+
+msgid "Gap"
+msgstr "Tarpas"
+
 msgid "0 means auto spacing."
 msgstr "0 reiškia automatinius tarpus."
 
@@ -6681,14 +6687,6 @@ msgstr ""
 
 msgid "Upload and Print"
 msgstr "Įkelti ir spausdinti"
-
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Spausdinimas pagal objektus:\n"
-"Siekiant spausdinant išvengti susidūrimų, patariama naudoti automatinį "
-"išdėstymą."
 
 msgid "Send G-code"
 msgstr "Siųsti G-kodą"

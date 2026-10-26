@@ -14,6 +14,7 @@
 #include "Tab.hpp"
 #include "wxExtensions.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/TriangleMeshDeal.hpp"
 #include "GLCanvas3D.hpp"
 #include "Selection.hpp"
 #include "PartPlate.hpp"
@@ -25,6 +26,8 @@
 #include "StepMeshDialog.hpp"
 
 #include <boost/algorithm/string.hpp>
+#include <optional>
+#include <thread>
 #include <wx/progdlg.h>
 #include <wx/listbook.h>
 #include <wx/numformatter.h>
@@ -38,6 +41,9 @@
 #include "wx/uiaction.h"
 #include <wx/renderer.h>
 #endif /* __WXMSW__ */
+#ifdef __WXGTK__
+#include <gtk/gtk.h>
+#endif /* __WXGTK__ */
 #include "Gizmos/GLGizmoScale.hpp"
 
 namespace Slic3r
@@ -347,6 +353,8 @@ ObjectList::ObjectList(wxWindow* parent) :
 
 ObjectList::~ObjectList()
 {
+    if (m_smooth_mesh_thread.joinable())
+        m_smooth_mesh_thread.join();
     if (m_objects_model)
             m_objects_model->DecRef();
 }
@@ -383,6 +391,47 @@ void ObjectList::update_min_height()
     set_min_height();
 }
 
+
+#ifdef __WXGTK__
+// Fix for the "Fit in all view" (Z) shortcut doing nothing while the object
+// list has keyboard focus on Linux/wxGTK.
+//
+// Root cause: wxGTK's wxDataViewCtrl never assigns m_wxwindow to its internal
+// GtkTreeView, so the wx key handler that dispatches wxEVT_CHAR_HOOK (the only
+// entry point of the Z shortcut, bound in MainFrame) is connected to the outer
+// GtkScrolledWindow only. GTK delivers key events to the focused GtkTreeView,
+// whose default handling consumes plain printable keys (type-ahead search)
+// before they could bubble up to the scrolled window, so MainFrame never sees
+// the key press.
+//
+// Workaround: forward unmodified z/Z presses from the tree view as a
+// wxEVT_CHAR_HOOK to the main frame, reusing its full guard chain
+// (ShouldSkipFitCameraShortcut / can_change_view). Inline renaming is
+// unaffected: while a cell editor is open, keys are consumed by the embedded
+// GtkEntry and never reach this handler. The long-term fix belongs in
+// Orca-deps-wxWidgets (connect the wx key handlers to the tree view as well).
+static gboolean objlist_treeview_key_press(GtkWidget* /*widget*/, GdkEventKey* event, ObjectList* /*self*/)
+{
+    // Lock modifiers (MOD2 = NumLock, MOD3 = ScrollLock on X11) must stay OUT of
+    // the mask: they must not suppress the shortcut, matching wx's own
+    // HasAnyModifiers(), which ignores them. MOD5 is AltGr on many layouts —
+    // wxGTK maps it to Ctrl+Alt elsewhere, so it must not pass as "plain".
+    static const guint modifier_mask = GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_MOD1_MASK | GDK_MOD5_MASK | GDK_META_MASK | GDK_SUPER_MASK;
+    if (event->type == GDK_KEY_PRESS &&
+        (event->keyval == GDK_KEY_z || event->keyval == GDK_KEY_Z) &&
+        (event->state & modifier_mask) == 0 &&
+        wxGetApp().mainframe != nullptr)
+    {
+        // Same forwarding pattern as the "get_web_shortcut" handler in GUI_App.
+        wxKeyEvent key_event(wxEVT_CHAR_HOOK);
+        key_event.m_keyCode = 'Z';
+        key_event.SetEventObject(wxGetApp().mainframe);
+        wxPostEvent(wxGetApp().mainframe, key_event);
+        return TRUE; // consume the key, also suppressing the tree view type-ahead popup
+    }
+    return FALSE;     // let the tree view keep its normal key behavior
+}
+#endif // __WXGTK__
 
 void ObjectList::create_objects_ctrl()
 {
@@ -471,6 +520,25 @@ void ObjectList::create_objects_ctrl()
         for (int cn = colName; cn < colCount; cn++)
             GetColumn(cn)->SetWidth(m_columns_width[cn] * em);
 #endif
+
+#ifdef __WXGTK__
+    // The Z-shortcut fix above: wx connects its key handlers to the outer
+    // GtkScrolledWindow (GetHandle()), while focus and key events actually go
+    // to the internal GtkTreeView child. Hook our forwarder onto that view.
+    {
+        GtkWidget* container = (GtkWidget*) GetHandle();
+        GtkWidget* treeview = nullptr;
+        if (container != nullptr) {
+            if (GTK_IS_TREE_VIEW(container))
+                treeview = container;                       // GetHandle() already points at the view
+            else if (GTK_IS_BIN(container))
+                treeview = gtk_bin_get_child(GTK_BIN(container));
+        }
+        if (treeview != nullptr && GTK_IS_TREE_VIEW(treeview))
+            g_signal_connect(treeview, "key_press_event",
+                             G_CALLBACK(objlist_treeview_key_press), this);
+    }
+#endif // __WXGTK__
 }
 
 void ObjectList::get_selected_item_indexes(int& obj_idx, int& vol_idx, const wxDataViewItem& input_item/* = wxDataViewItem(nullptr)*/)
@@ -2934,6 +3002,13 @@ void ObjectList::merge(bool to_multipart_object)
                 const Transform3d& volume_matrix = new_volume->get_matrix();
                 Transform3d new_matrix = transformation_matrix * volume_matrix;
                 new_volume->set_transformation(new_matrix);
+
+                // Remember which source object this volume came from, so that a later
+                // "split to objects" restores non-solid volumes (e.g. negative volumes)
+                // to the object they belonged to before the assembly. Keep an inherited label
+                // (re-assembly of an already assembled object) to preserve the original grouping.
+                if (!new_volume->merged_group_id().valid())
+                    new_volume->set_merged_group_id(object->id());
                 //set rotation
                 /*const Vec3d vol_rot = new_volume->get_rotation() + rotation;
                 new_volume->set_rotation(vol_rot);
@@ -5676,6 +5751,196 @@ void ObjectList::simplify()
         gizmos_mgr.open_gizmo(GLGizmosManager::EType::Simplify);
     }
     gizmos_mgr.open_gizmo(GLGizmosManager::EType::Simplify);
+}
+
+void GUI::ObjectList::smooth_mesh()
+{
+    auto plater = wxGetApp().plater();
+    if (!plater) {
+        return;
+    }
+    std::vector<int> obj_idxs, vol_idxs;
+    get_selection_indexes(obj_idxs, vol_idxs);
+    if (obj_idxs.empty()) {
+        return;
+    }
+    // A previous smoothing job is still running in the background.
+    if (m_smooth_mesh_thread.joinable()) {
+        return;
+    }
+
+    auto show_warning_dlg = [](size_t cur_face_count, std::string name, bool is_part) {
+        size_t limit_face_count = 1000000;
+        if (cur_face_count > limit_face_count) {
+            auto name_str = wxString::FromUTF8(name);
+            auto content  = wxString::Format(
+                _L("\"%s\" will exceed 1 million faces after this subdivision, which may increase slicing time. Do you want to continue?"),
+                name_str);
+            WarningDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe), (is_part ? _L("Part") : _L("Object")) + " " + content,
+                                  wxEmptyString, wxYES_NO);
+            if (dlg.ShowModal() == wxID_NO) {
+                return true;
+            }
+            return false;
+        }
+        return false;
+    };
+    auto show_smooth_mesh_error_dlg = [](std::string name) {
+        auto          name_str = wxString::FromUTF8(name);
+        auto          content  = wxString::Format(_L("\"%s\" part's mesh contains errors. Please repair it first."), name_str);
+        WarningDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe), content, wxEmptyString, wxOK);
+        dlg.ShowModal();
+    };
+
+    // Collect one job per volume to smooth: for a volume selection, the selected parts of
+    // the first object; otherwise all volumes of every selected object.
+    struct SmoothJob {
+        ObjectID                           object_id; // stable identity: list indexes shift on deletion
+        ModelVolume                       *volume;
+        std::shared_ptr<const TriangleMesh> origin; // identity of the mesh copied into input
+        TriangleMesh                       input;
+    };
+    struct SmoothResult {
+        ObjectID                           object_id;
+        ModelVolume                       *volume;
+        std::shared_ptr<const TriangleMesh> origin;
+        std::optional<TriangleMesh>        smoothed;
+    };
+
+    const Model &model = plater->model();
+    auto inputs        = std::make_shared<std::vector<SmoothJob>>();
+    if (vol_idxs.empty()) {
+        for (int obj_idx : obj_idxs) {
+            if (obj_idx < 0 || obj_idx >= (int) model.objects.size()) {
+                continue;
+            }
+            ModelObject *obj = model.objects[obj_idx];
+            if (!obj || obj->volumes.empty()) {
+                continue;
+            }
+            // Declining a confirmation aborts the whole job before anything is dispatched.
+            if (show_warning_dlg(obj->facets_count() * 4, obj->name, false)) {
+                return;
+            }
+            for (ModelVolume *mv : obj->volumes) {
+                inputs->push_back({obj->id(), mv, mv->mesh_ptr(), mv->mesh()});
+            }
+        }
+    } else {
+        const int object_idx = obj_idxs.front();
+        if (object_idx < 0 || object_idx >= (int) model.objects.size()) {
+            return;
+        }
+        ModelObject *obj = model.objects[object_idx];
+        if (!obj || obj->volumes.empty()) {
+            return;
+        }
+        for (int vol_idx : vol_idxs) {
+            if (vol_idx < 0 || vol_idx >= (int) obj->volumes.size()) {
+                return;
+            }
+            ModelVolume *mv = obj->volumes[vol_idx];
+            if (show_warning_dlg(mv->mesh().facets_count() * 4, mv->name, true)) {
+                return;
+            }
+            inputs->push_back({obj->id(), mv, mv->mesh_ptr(), mv->mesh()});
+        }
+    }
+    if (inputs->empty()) {
+        return;
+    }
+
+    // The worker thread must not touch the Model: the object may change or disappear while
+    // the job is running, so hand the worker deep copies of the input meshes only.
+    // Filled in by the worker thread, applied to the model on the UI thread; a nullopt
+    // result marks a volume whose mesh could not be smoothed.
+    auto results = std::make_shared<std::vector<SmoothResult>>();
+    results->reserve(inputs->size());
+
+    m_smooth_mesh_thread = std::thread([this, plater, inputs, results, show_smooth_mesh_error_dlg]() {
+        for (const SmoothJob &job : *inputs) {
+            bool        ok = false;
+            TriangleMesh smoothed = TriangleMeshDeal::smooth_triangle_mesh(job.input, ok);
+            results->push_back({job.object_id, job.volume, job.origin, ok ? std::make_optional(std::move(smoothed)) : std::nullopt});
+        }
+
+        // Back to the UI thread to apply the smoothed meshes and refresh the scene.
+        // Queue the callback on this ObjectList, not on the app: events pending on a
+        // destroyed handler are discarded by wxWidgets, and ~ObjectList() joins this
+        // worker before its base destructor drops the queue, so the callback can
+        // never dereference a freed ObjectList.
+        this->CallAfter([this, plater, results, show_smooth_mesh_error_dlg]() {
+            if (m_smooth_mesh_thread.joinable()) {
+                m_smooth_mesh_thread.join();
+            }
+
+            Model                   &model = plater->model();
+            std::vector<SmoothResult *> apply_list;
+            std::vector<int>        changed_objs;
+            std::string             failed_name;
+            for (SmoothResult &result : *results) {
+                // Locate the object by its stable id: deleting another object shifts
+                // list indexes while the job runs, so the dispatch-time index must
+                // not be used for lookup.
+                int cur_obj_idx = -1;
+                for (size_t i = 0; i < model.objects.size(); ++i) {
+                    if (model.objects[i]->id() == result.object_id) {
+                        cur_obj_idx = (int) i;
+                        break;
+                    }
+                }
+                if (cur_obj_idx < 0) {
+                    continue;
+                }
+                ModelObject *obj = model.objects[cur_obj_idx];
+                // Skip volumes that were removed from the object while the job was running.
+                if (std::find(obj->volumes.begin(), obj->volumes.end(), result.volume) == obj->volumes.end()) {
+                    continue;
+                }
+                // The job smoothed a copy of one specific mesh object. Every mesh
+                // replacement allocates a fresh TriangleMesh, so if the volume's mesh was
+                // swapped while the job was running (e.g. a simplify finished first), this
+                // result is stale and would overwrite the newer mesh - skip it.
+                if (result.volume->mesh_ptr() != result.origin) {
+                    continue;
+                }
+                if (result.smoothed) {
+                    apply_list.push_back(&result);
+                    if (std::find(changed_objs.begin(), changed_objs.end(), cur_obj_idx) == changed_objs.end()) {
+                        changed_objs.push_back(cur_obj_idx);
+                    }
+                } else if (failed_name.empty()) {
+                    failed_name = result.volume->name;
+                }
+            }
+            if (!failed_name.empty()) {
+                show_smooth_mesh_error_dlg(failed_name);
+            }
+            if (!apply_list.empty()) {
+                // take_snapshot() stores the CURRENT model state, so it must run before
+                // the meshes are replaced - otherwise Ctrl+Z would restore the already
+                // subdivided meshes. One snapshot covers the whole multi-object operation.
+                plater->take_snapshot("smooth_mesh");
+                for (SmoothResult *result : apply_list) {
+                    result->volume->set_mesh(std::move(*result->smoothed));
+                    result->volume->calculate_convex_hull();
+                    result->volume->invalidate_convex_hull_2d();
+                    result->volume->set_new_unique_id();
+                    // The four FacetsAnnotation stores (supports, seams, MMU segmentation,
+                    // fuzzy skin) are indexed by face number; subdivision replaced every
+                    // face with four new ones, so the stale markers would land on wrong
+                    // faces. set_mesh()/set_new_unique_id() do not touch them - drop them
+                    // explicitly (the "(Lost color)" menu note assumes exactly this).
+                    result->volume->reset_extra_facets();
+                }
+                for (int obj_idx : changed_objs) {
+                    model.objects[obj_idx]->invalidate_bounding_box();
+                    model.objects[obj_idx]->ensure_on_bed();
+                    plater->changed_mesh(obj_idx);
+                }
+            }
+        });
+    });
 }
 
 void ObjectList::update_item_error_icon(const int obj_idx, const int vol_idx) const

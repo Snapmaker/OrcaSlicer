@@ -4293,6 +4293,12 @@ msgstr "レイアウト設定"
 msgid "Spacing"
 msgstr "間隔"
 
+msgid "Count"
+msgstr "数"
+
+msgid "Gap"
+msgstr "隙間"
+
 msgid "0 means auto spacing."
 msgstr ""
 
@@ -6366,13 +6372,6 @@ msgstr ""
 
 msgid "Upload and Print"
 msgstr "アップロードとプリント"
-
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"オブジェクト順で造形：\n"
-"衝突を回避するため、自動レイアウトはお勧めです"
 
 msgid "Send G-code"
 msgstr "G-codeを送信"

@@ -413,7 +413,8 @@ public:
     static SnapLogClient& instance();
     void                  init(SnapLogDeps deps, SnapLogConfig cfg);
     void                  shutdown();
-    void log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, SnapLogPolicy policy, const char* caller_func, int caller_line);
+    void log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, SnapLogPolicy policy, const char* caller_func, int caller_line,
+             bool bypass_login_gate = false);
     void set_user_token(std::string t);
     void set_user_id(std::string u);
     void set_device_id(std::string d);
@@ -712,3 +713,9 @@ make_production_do_request(SnapLogConfig cfg);
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().log(::Slic3r::SnapLog::v1::SnapLogLevel::lvl, (msg), \
                                                          ::Slic3r::SnapLog::v1::SnapLogExt{__VA_ARGS__}, \
                                                          ::Slic3r::SnapLog::v1::SnapLogPolicy::Buffered, __FUNCTION__, __LINE__)
+
+// bypass_login_gate keeps anonymous events on the public endpoint; consent, config, and rate limits still apply.
+#define SNAP_LOG_BATCH_FORCE(lvl, msg, ...) \
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().log(::Slic3r::SnapLog::v1::SnapLogLevel::lvl, (msg), \
+                                                         ::Slic3r::SnapLog::v1::SnapLogExt{__VA_ARGS__}, \
+                                                         ::Slic3r::SnapLog::v1::SnapLogPolicy::Buffered, __FUNCTION__, __LINE__, true)

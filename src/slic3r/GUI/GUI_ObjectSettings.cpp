@@ -386,9 +386,16 @@ void ObjectSettings::update_config_values(ModelConfig* config)
 #endif
 
     //BBS: change local config to DynamicPrintConfig
-    ConfigManipulation config_manipulation(load_config, toggle_field, nullptr, nullptr, &(config->get()));
+    ConfigManipulation config_manipulation(load_config, toggle_field, nullptr, nullptr,
+                                           &(config->get()));
 
     config_manipulation.set_is_BBL_Printer(wxGetApp().preset_bundle->is_bbl_vendor());
+    config_manipulation.set_highlight_field_cb([this](const t_config_option_key& opt_key, bool invalid) {
+        Page* page = nullptr;
+        Field* field = m_tab_active->get_field(opt_key, &page);
+        if (field)
+            field->set_invalid_highlight(invalid);
+    });
 
     if (!is_object_settings)
     {

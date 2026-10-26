@@ -3,6 +3,8 @@
 
 #include <forward_list>
 #include <unordered_set>
+#include <vector>
+#include "ClipperUtils.hpp"
 #include "ExPolygon.hpp"
 #include "Point.hpp"
 #include "Slicing.hpp"
@@ -124,7 +126,10 @@ struct SupportNode
     bool           need_extra_wall = false;
     bool           is_sharp_tail   = false;
     bool           valid = true;
+    bool           fading = false;   // port of Bambu 976b5062c: edge-eCircle marked to shrink to nothing
     ExPolygon      overhang; // when type==ePolygon, set this value to get original overhang area
+    coordf_t       origin_area   = 0.0;
+    coordf_t       target_radius = -1.;
 
     /*!
      * \brief The direction of the skin lines above the tip of the branch.
@@ -349,6 +354,88 @@ struct LineHash {
 };
 
 /*!
+ * \brief Effective number of tree-support perimeter walls to draw in toolpaths.
+ *
+ * Hybrid tree support prints its trunk like normal support (grid/rectilinear infill plus a
+ * perimeter wall). With tree_support_wall_count == 0 (auto), the auto logic draws the trunk
+ * with no perimeter wall, so the infill pattern reaches the surface and damages the trunk.
+ * For hybrid support only, treat "auto" as an explicit single wall, leaving the "auto"
+ * behavior of normal, organic tree and grid support unchanged.
+ */
+inline size_t tree_support_effective_wall_count(SupportMaterialStyle style, int wall_count)
+{
+    return (style == smsTreeHybrid && wall_count == 0) ? size_t(1) : size_t(wall_count);
+}
+
+/*!
+ * \brief Sliver-hole cleanup for tree support area groups, guarded by hole ownership.
+ *
+ * draw_circles() carves the per-layer area polygons against each other
+ * (roof_areas -= roof_1st_layer, base_areas -= roofs). Since 5f02f3ed5d the diff
+ * direction is roof_areas = diff(roof_areas, roof_1st_layer), so a whole transition
+ * strip or roof fragment regularly ends up as a hole smaller than 2mm in both
+ * dimensions inside the polygon of another group. Erasing such a hole (the plain
+ * sliver cleanup inherited from Bambu Studio, same 2mm box threshold) re-expands the
+ * owner polygon over the other group's area, so two support roles get printed on top
+ * of each other at the same print_z -- observed as support interface fill crossing
+ * support transition strips. Holes overlapping the solid area of another group at
+ * this layer are therefore kept; all other sub-2mm holes are erased as before.
+ *
+ * \param expoly          group polygon whose small holes are filtered.
+ * \param all_group_areas polygons of every area group at this layer, this one included;
+ *                        it is excluded by identity, not by area. Entries must be
+ *                        non-null; the caller filters empty area slots.
+ */
+inline void erase_small_area_group_holes(ExPolygon &expoly, const std::vector<const ExPolygon*> &all_group_areas)
+{
+    // 2mm box filter inherited from Bambu Studio (TreeSupport area_groups hole cleanup).
+    const double small_hole_edge = scale_(2.);
+    // Intersections below this area are boundary-touching degeneracies, not overlaps.
+    // The area groups are exact complements after the diff pass (integer clipper), so a
+    // real carve hole either overlaps another group with (almost) its full area or not
+    // at all; 0.02mm^2 filters only degenerate slivers.
+    const double degenerate_overlap_area = Slic3r::sqr(scale_(0.02));
+
+    bool has_small_hole = false;
+    for (const Polygon &hole : expoly.holes) {
+        const auto bbox_size = get_extents(hole).size();
+        if (bbox_size[0] < small_hole_edge && bbox_size[1] < small_hole_edge) {
+            has_small_hole = true;
+            break;
+        }
+    }
+    if (!has_small_hole)
+        return;
+
+    ExPolygons other_solids;
+    other_solids.reserve(all_group_areas.size());
+    for (const ExPolygon *group_area : all_group_areas)
+        if (group_area != &expoly)
+            other_solids.emplace_back(*group_area);
+
+    for (auto hole_it = expoly.holes.begin(); hole_it != expoly.holes.end();) {
+        const auto bbox_size = get_extents(*hole_it).size();
+        if (bbox_size[0] < small_hole_edge && bbox_size[1] < small_hole_edge) {
+            Polygon hole_outer = *hole_it;
+            // Holes are stored clockwise; clipper subjects must be counter-clockwise.
+            hole_outer.make_counter_clockwise();
+            const ExPolygons overlap    = intersection_ex({ExPolygon(std::move(hole_outer))}, other_solids);
+            double         overlap_area = 0.;
+            for (const ExPolygon &island : overlap)
+                overlap_area += island.area();
+            if (overlap_area > degenerate_overlap_area) {
+                // The hole is the carve-out of another area group (e.g. a transition
+                // strip inside an interface polygon). Keep it.
+                ++hole_it;
+                continue;
+            }
+            hole_it = expoly.holes.erase(hole_it);
+        } else
+            ++hole_it;
+    }
+}
+
+/*!
  * \brief Generates a tree structure to support your models.
  */
 class TreeSupport
@@ -408,7 +495,14 @@ public:
      */
     ExPolygon m_machine_border;
 
-    enum OverhangType { Detected = 0, Enforced, SharpTail };
+    // Bitfield enum: a region can be multiple types simultaneously (e.g. BigFlat | SharpTail).
+    // Ported from Bambu 976b5062c. Use & for membership test, not ==.
+    enum OverhangType : uint8_t {
+        Normal = 0, SharpTail = 1,
+        Cantilever = 1 << 1, Small = 1 << 2,
+        BigFlat = 1 << 3, ThinPlate = 1 << 4,
+        SharpTailLowesst = 1 << 5
+    };
     std::map<const ExPolygon*, OverhangType> overhang_types;
     std::vector<std::pair<Vec3f, Vec3f>>      m_vertical_enforcer_points;
 
@@ -431,15 +525,17 @@ private:
     size_t          m_highest_overhang_layer = 0;
     std::vector<std::vector<MinimumSpanningTree>> m_spanning_trees;
     std::vector< std::unordered_map<Line, bool, LineHash>> m_mst_line_x_layer_contour_caches;
-    float    DO_NOT_MOVER_UNDER_MM = 0.0;
+    // Contact points closer than this to the bed are not moved sideways; the first ~2 mm above the
+    // bed are also where bottom branch expansion applies (see drop_nodes bottom_expand_enabled).
+    float    DO_NOT_MOVER_UNDER_MM = 2.0;
     coordf_t base_radius                        = 0.0;
     const coordf_t MAX_BRANCH_RADIUS = 10.0;
     const coordf_t MIN_BRANCH_RADIUS = 0.4;
     const coordf_t MAX_BRANCH_RADIUS_FIRST_LAYER = 12.0;
     const coordf_t MIN_BRANCH_RADIUS_FIRST_LAYER = 2.0;
     double diameter_angle_scale_factor = tan(5.0*M_PI/180.0);
-    // minimum roof area (1 mm^2), area smaller than this value will not have interface
-    const double minimum_roof_area{SQ(scaled<double>(1.))};
+    // minimum roof area (default 0.25 mm^2), area smaller than this value will not have interface.
+    double minimum_roof_area = scaled<double>(scaled<double>(0.25));
     float        top_z_distance = 0.0;
 
     bool  is_strong = false;

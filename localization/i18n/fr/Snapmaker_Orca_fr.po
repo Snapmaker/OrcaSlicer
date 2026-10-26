@@ -4541,6 +4541,12 @@ msgstr "Options d'agencement"
 msgid "Spacing"
 msgstr "Espacement"
 
+msgid "Count"
+msgstr "Nombre"
+
+msgid "Gap"
+msgstr "Espace"
+
 msgid "0 means auto spacing."
 msgstr "0 signifie espacement automatique."
 
@@ -6783,14 +6789,6 @@ msgstr ""
 
 msgid "Upload and Print"
 msgstr "Envoyer & Imprimer"
-
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Imprimer par objet :\n"
-"Nous vous suggérons d'utiliser la disposition automatique pour éviter les "
-"collisions lors de l'impression."
 
 msgid "Send G-code"
 msgstr "Envoyer le G-code"

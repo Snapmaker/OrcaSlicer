@@ -49,6 +49,7 @@
     "enable_pressure_advance": [
         "0"
     ],
+    "filament_adhesiveness_category": ["400"],
     "filament_deretraction_speed": [
         "nil"
     ],

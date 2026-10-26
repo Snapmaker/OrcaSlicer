@@ -210,11 +210,14 @@ void SpinInput::messureSize()
     minSize.x      = GetMinWidth();
     StaticBox::SetSize(size);
     SetMinSize(size);
-    wxSize btnSize = {14, (size.y - 4) / 2};
+    // Clamp to 0: during construction (outer size not laid out yet) both the button
+    // size and the text width underflow to negative values, which GTK rejects
+    // (size request assertion) leaving the controls with stale geometry.
+    wxSize btnSize = {14, wxMax((size.y - 4) / 2, 0)};
     btnSize.x = btnSize.x * btnSize.y / 10;
     wxClientDC dc(this);
     labelSize  = dc.GetMultiLineTextExtent(GetLabel());
-    textSize.x = size.x - labelSize.x - btnSize.x - 16;
+    textSize.x = wxMax(size.x - labelSize.x - btnSize.x - 16, 0);
     text_ctrl->SetSize(textSize);
     text_ctrl->SetPosition({6 + btnSize.x, (size.y - textSize.y) / 2});
     button_inc->SetSize(btnSize);

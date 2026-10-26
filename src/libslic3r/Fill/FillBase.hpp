@@ -66,6 +66,10 @@ struct FillParams
     // Don't adjust spacing to fill the space evenly.
     bool        dont_adjust 	{ true };
 
+    // Snapmaker: anchor bridge end lines at the surface's inner-contour edges
+    // (set only for external bridges >= 100% in Layer::make_fills).
+    bool        bridge_edge_anchor { false };
+
     // Monotonic infill - strictly left to right for better surface quality of top infills.
     bool 		monotonic		{ false };
 

@@ -620,6 +620,9 @@ void CalibUtils::calib_pa_pattern(const CalibInfo &calib_info, Model& model)
         print_config.set_key_value(opt.first, new ConfigOptionFloat(opt.second));
     }
 
+    // Snapmaker: flow variant -- initial_layer_speed is now coFloats (arrayed per flow variant).
+    print_config.set_key_value("initial_layer_speed", new ConfigOptionFloats { 30. });
+
     print_config.set_key_value("outer_wall_speed",
         new ConfigOptionFloats { double(CalibPressureAdvance::find_optimal_PA_speed(
             full_config, print_config.get_abs_value("line_width"),
@@ -802,7 +805,7 @@ void CalibUtils::calib_max_vol_speed(const CalibInfo &calib_info, wxString &erro
         flow_support != nullptr && !flow_support->values.empty())
         max_speed_variants = flow_support->values.size();
     filament_config.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats(max_speed_variants, 50.));
-    filament_config.set_key_value("slow_down_layer_time", new ConfigOptionInts{0});
+    filament_config.set_key_value("slow_down_layer_time", new ConfigOptionFloats{0.0});
     filament_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(calib_info.bed_type));
 
     print_config.set_key_value("enable_overhang_speed", new ConfigOptionBools{false});
@@ -814,7 +817,7 @@ void CalibUtils::calib_max_vol_speed(const CalibInfo &calib_info, wxString &erro
     print_config.set_key_value("sparse_infill_density", new ConfigOptionPercent(0));
     print_config.set_key_value("overhang_reverse", new ConfigOptionBool(false));
     print_config.set_key_value("spiral_mode", new ConfigOptionBool(true));
-    print_config.set_key_value("outer_wall_line_width", new ConfigOptionFloat(line_width));
+    print_config.set_key_value("outer_wall_line_width", new ConfigOptionFloatOrPercent(line_width, false));
     print_config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(layer_height));
     print_config.set_key_value("layer_height", new ConfigOptionFloat(layer_height));
     obj->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterAndInner));
@@ -861,7 +864,7 @@ void CalibUtils::calib_VFA(const CalibInfo &calib_info, wxString &error_message)
     DynamicPrintConfig filament_config = calib_info.filament_prest->config;
     DynamicPrintConfig printer_config  = calib_info.printer_prest->config;
 
-    filament_config.set_key_value("slow_down_layer_time", new ConfigOptionInts{0});
+    filament_config.set_key_value("slow_down_layer_time", new ConfigOptionFloats{0.0});
     size_t max_speed_variants = 1;
     if (const auto *flow_support = filament_config.option<ConfigOptionStrings>("filament_flow_support");
         flow_support != nullptr && !flow_support->values.empty())

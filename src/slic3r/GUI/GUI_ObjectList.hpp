@@ -4,6 +4,7 @@
 #include <map>
 #include <vector>
 #include <set>
+#include <thread>
 
 #include <wx/bitmap.h>
 #include <wx/dataview.h>
@@ -170,6 +171,10 @@ private:
     BitmapComboBox              *m_extruder_editor { nullptr };
 
     std::vector<wxBitmap*>      m_bmp_vector;
+
+    // Worker thread of smooth_mesh(); started and joined on the UI thread only,
+    // see smooth_mesh() and ~ObjectList().
+    std::thread                m_smooth_mesh_thread;
 
     int			m_selected_object_id = -1;
     bool		m_prevent_list_events = false;		// We use this flag to avoid circular event handling Select()
@@ -424,6 +429,7 @@ public:
     void rename_item();
     void fix_through_netfabb();
     void simplify();
+    void smooth_mesh();
     void update_item_error_icon(const int obj_idx, int vol_idx) const ;
 
     void copy_layers_to_clipboard();

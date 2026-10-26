@@ -479,6 +479,7 @@ void PrintObjectSupportMaterial::generate(PrintObject &object)
 	SupportGeneratorLayersPtr empty_layers;
     auto [interface_layers, base_interface_layers] = generate_interface_layers(*m_object_config, m_support_params, bottom_contacts, top_contacts, empty_layers, empty_layers, intermediate_layers, layer_storage);
 
+
     BOOST_LOG_TRIVIAL(info) << "Support generator - Creating raft";
 
     // If raft is to be generated, the 1st top_contact layer will contain the 1st object layer silhouette with holes filled.
@@ -3155,6 +3156,15 @@ void PrintObjectSupportMaterial::trim_support_layers_by_object(
                     const Layer &object_layer = *object.layers()[i];
                     if (object_layer.bottom_z() > support_layer.print_z + gap_extra_above - EPSILON)
                         break;
+
+                    // Skip the object layer directly supported by this top contact layer: its lslices
+                    // cover the overhang itself, so trimming by it would cut away the contact area.
+                    // With variable layer heights the synchronised gap is shorter than the configured
+                    // gap, so this layer used to fall inside the trimming window and removed ~80% of
+                    // the contact surface.
+                    if (support_layer.layer_type == SupporLayerType::TopContact &&
+                        i == support_layer.idx_object_layer_above)
+                        continue;
 
                     bool is_overlap = is_layers_overlap(support_layer, object_layer);
                     for (const ExPolygon& expoly : object_layer.lslices) {

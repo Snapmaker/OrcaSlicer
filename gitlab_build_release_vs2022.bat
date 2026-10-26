@@ -27,6 +27,9 @@
 @REM    gitlab_build_win.bat slicer       -- build slicer only
 @REM    gitlab_build_win.bat debug        -- debug build
 @REM    gitlab_build_win.bat debuginfo    -- RelWithDebInfo build
+@REM    gitlab_build_win.bat clean true   -- delete compiled deps and slicer build dirs first
+@REM    gitlab_build_win.bat clean false  -- do not clean (same as omitting it)
+@REM    CLEAN_BUILD=true|false            -- optional, default off
 @REM
 @REM  Environment variables (optional):
 @REM    GITLAB_BASE_URL  -- GitLab host (default: gitlab.s.com)
@@ -229,6 +232,20 @@ REM ============================================================
 echo [5/6] Starting build...
 echo.
 
+REM Optional. Unset / false / 0 / no: do not clean. true / 1 / yes: clean.
+REM A bare "clean" with no value does not clean.
+set "DO_CLEAN=0"
+call :set_clean_from_value "%CLEAN_BUILD%"
+call :set_clean_from_pair "%~1" "%~2"
+call :set_clean_from_pair "%~2" "%~3"
+call :set_clean_from_pair "%~3" "%~4"
+call :set_clean_from_token "%~1"
+call :set_clean_from_token "%~2"
+call :set_clean_from_token "%~3"
+call :set_clean_from_token "%~4"
+echo   CLEAN_BUILD  : %DO_CLEAN%
+echo.
+
 set "debug=OFF"
 set "debuginfo=OFF"
 if "%1"=="debug"      set "debug=ON"
@@ -272,6 +289,14 @@ REM  Other 24 deps (Boost, OpenCV, etc.) use DL_CACHE for offline build.
 REM  All deps install to: %DEPS% -> usr/local/
 REM ============================================================
 if "%1"=="slicer" goto :slicer
+
+if "%DO_CLEAN%"=="1" (
+    echo Cleaning compiled deps: %DEPS_DIR%\build*
+    if exist "%DEPS_DIR%\build" rmdir /s /q "%DEPS_DIR%\build"
+    if exist "%DEPS_DIR%\build-dbg" rmdir /s /q "%DEPS_DIR%\build-dbg"
+    if exist "%DEPS_DIR%\build-dbginfo" rmdir /s /q "%DEPS_DIR%\build-dbginfo"
+    echo.
+)
 
 echo [deps] Building dependencies...
 echo   Source:  %DEPS_DIR%
@@ -320,6 +345,14 @@ REM  gitlab_deps_src/ is used via -DDEPS_SRC_DIR=gitlab_deps_src
 REM  (copied from vendor in step [3/6], original deps_src/ untouched).
 REM ============================================================
 :slicer
+if "%DO_CLEAN%"=="1" (
+    echo Cleaning slicer build: %ORCA_ROOT%\gitlab_build*
+    if exist "%ORCA_ROOT%\gitlab_build" rmdir /s /q "%ORCA_ROOT%\gitlab_build"
+    if exist "%ORCA_ROOT%\gitlab_build-dbg" rmdir /s /q "%ORCA_ROOT%\gitlab_build-dbg"
+    if exist "%ORCA_ROOT%\gitlab_build-dbginfo" rmdir /s /q "%ORCA_ROOT%\gitlab_build-dbginfo"
+    echo.
+)
+
 echo [slicer] Building Snapmaker Orca...
 echo   Build:   %ORCA_ROOT%\%slicer_build_dir%
 echo.
@@ -400,3 +433,22 @@ if exist "%VENDOR_DIR%\.git" (
 )
 
 exit /b %EC%
+
+:set_clean_from_value
+if /I "%~1"=="1" set "DO_CLEAN=1"
+if /I "%~1"=="true" set "DO_CLEAN=1"
+if /I "%~1"=="yes" set "DO_CLEAN=1"
+if /I "%~1"=="0" set "DO_CLEAN=0"
+if /I "%~1"=="false" set "DO_CLEAN=0"
+if /I "%~1"=="no" set "DO_CLEAN=0"
+goto :eof
+
+:set_clean_from_pair
+if /I not "%~1"=="clean" goto :eof
+call :set_clean_from_value "%~2"
+goto :eof
+
+:set_clean_from_token
+set "TOK=%~1"
+if /I "!TOK:~0,6!"=="clean=" call :set_clean_from_value "!TOK:~6!"
+goto :eof

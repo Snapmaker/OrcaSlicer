@@ -237,6 +237,9 @@ void Layer::make_perimeters()
 	        
 	        // find compatible regions
 	        LayerRegionPtrs layerms;
+            (*layerm)->perimeters.clear();
+            (*layerm)->fills.clear();
+            (*layerm)->thin_fills.clear();
 	        layerms.push_back(*layerm);
 	        for (LayerRegionPtrs::const_iterator it = layerm + 1; it != m_regions.end(); ++it)
 	            if (! (*it)->slices.empty()) {

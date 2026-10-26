@@ -1396,7 +1396,8 @@ static std::string extract_event_name(const SnapLogExt& ext)
     return {};
 }
 
-void SnapLogClient::log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, SnapLogPolicy policy, const char* caller_func, int /*caller_line*/)
+void SnapLogClient::log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, SnapLogPolicy policy, const char* caller_func,
+                        int /*caller_line*/, bool bypass_login_gate)
 {
     auto in = internals();
     // 1. Not init'd → safe no-op.
@@ -1414,7 +1415,7 @@ void SnapLogClient::log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, SnapL
     if (in->stop_receiving.load(std::memory_order_relaxed))
         return;
 
-    {
+    if (!bypass_login_gate) {
         std::lock_guard<std::mutex> tk(in->token_mu);
         if (in->user_token.empty())
             return;

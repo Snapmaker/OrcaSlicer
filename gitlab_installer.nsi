@@ -10,8 +10,11 @@
 !define PRODUCT_UNINST_ROOT_KEY "HKLM"
 !define PRODUCT_INSTALL_KEY "Software\${PRODUCT_PUBLISHER}\${PRODUCT_NAME}"
 
-!ifndef VERSION
-    !define VERSION "2.3.5"
+; Product version always comes from version.inc. Jenkins -v (/DVERSION) is only a
+; label appended to the installer filename: ...V2.4.0_<label>.exe
+!searchparse /file "${__FILEDIR__}\version.inc" `set(Snapmaker_VERSION "` PRODUCT_VERSION `")`
+!if "${PRODUCT_VERSION}" == ""
+    !error "Snapmaker_VERSION not found in ${__FILEDIR__}\version.inc"
 !endif
 
 !ifndef SOURCE_DIR
@@ -23,8 +26,64 @@
 !define INSTALL_DIR_RUNTIME "$PROGRAMFILES64\Snapmaker_Orca"
 InstallDir "${INSTALL_DIR_RUNTIME}"
 
-!ifndef OUTPUT_FILE
-    !define OUTPUT_FILE "Snapmaker_Orca_Windows_V${VERSION}.exe"
+; ---- compile-time basename helper ----
+; Peel one leading path component (up to and including the first '\') off
+; _p_work. After enough iterations, _p_work holds only the leaf (basename).
+!macro _PeelOneLevel
+    !undef _p_rest
+    !searchparse /noerrors "${_p_work}" "\" _p_rest
+    !ifdef _p_rest
+        !define /redef _p_work "${_p_rest}"
+    !endif
+!macroend
+
+; _result = basename of _path (forward slashes normalized to backslashes).
+; Handles up to 16 directory levels (far more than any CI output path).
+!macro _GetLeafName _result _path
+    !undef _p_work
+    !define _p_work "${_path}"
+    !searchreplace _p_work "${_p_work}" "/" "\"
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !insertmacro _PeelOneLevel
+    !define ${_result} "${_p_work}"
+    !undef _p_work
+    !undef _p_rest
+!macroend
+
+; Jenkins passes /DVERSION=<label> and a full /DOUTPUT_FILE path whose leaf is
+; ...V<label>.exe. Keep that directory, and name the file with the real version
+; plus the label at the end. The V<label>.exe -> V<product>_<label>.exe rewrite
+; is applied only to the leaf (basename), never to the directory.
+!ifdef VERSION
+    !ifdef OUTPUT_FILE
+        !insertmacro _GetLeafName OUT_LEAF "${OUTPUT_FILE}"
+        !searchreplace OUT_LEAF_FINAL "${OUT_LEAF}" "V${VERSION}.exe" "V${PRODUCT_VERSION}_${VERSION}.exe"
+        !searchreplace FINAL_OUTPUT "${OUTPUT_FILE}" "${OUT_LEAF}" "${OUT_LEAF_FINAL}"
+        !define INSTALLER_LEAF "${OUT_LEAF_FINAL}"
+    !else
+        !define FINAL_OUTPUT "Snapmaker_Orca_Windows_V${PRODUCT_VERSION}_${VERSION}.exe"
+        !define INSTALLER_LEAF "${FINAL_OUTPUT}"
+    !endif
+!else
+    !ifndef OUTPUT_FILE
+        !define OUTPUT_FILE "Snapmaker_Orca_Windows_V${PRODUCT_VERSION}.exe"
+    !endif
+    !define FINAL_OUTPUT "${OUTPUT_FILE}"
+    !insertmacro _GetLeafName INSTALLER_LEAF "${OUTPUT_FILE}"
 !endif
 
 ; License page: show LICENSE.txt from repo root (same dir as this .nsi)
@@ -37,17 +96,17 @@ RequestExecutionLevel admin
 ; No /SOLID to avoid "Internal compiler error #12345: error mmapping datablock"
 SetCompressor lzma
 
-VIProductVersion "${VERSION}.0"
+VIProductVersion "${PRODUCT_VERSION}.0"
 VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
 VIAddVersionKey "Comments" "Snapmaker Orca is an open source slicer for FDM printers"
 VIAddVersionKey "CompanyName" "${PRODUCT_PUBLISHER}"
 VIAddVersionKey "LegalCopyright" "Copyright (C) ${PRODUCT_PUBLISHER}"
-VIAddVersionKey "FileDescription" "${PRODUCT_NAME} ${VERSION} Installer"
-VIAddVersionKey "FileVersion" "${VERSION}"
-VIAddVersionKey "ProductVersion" "${VERSION}"
+VIAddVersionKey "FileDescription" "${PRODUCT_NAME} ${PRODUCT_VERSION} Installer"
+VIAddVersionKey "FileVersion" "${PRODUCT_VERSION}"
+VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
 VIAddVersionKey "InternalName" "${PRODUCT_NAME}"
 VIAddVersionKey "LegalTrademarks" ""
-VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE}"
+VIAddVersionKey "OriginalFilename" "${INSTALLER_LEAF}"
 
 ; Installer and uninstaller icon: set by build script via /DICON_FILE=path (e.g. Snapmaker_Orca.ico or snapmaker.ico)
 !ifdef ICON_FILE
@@ -59,7 +118,7 @@ VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE}"
 !endif
 
 !define MUI_WELCOMEPAGE_TITLE "Welcome to ${PRODUCT_NAME} Setup"
-!define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of ${PRODUCT_NAME} ${VERSION}.$\r$\n$\r$\nClick Next to continue."
+!define MUI_WELCOMEPAGE_TEXT "This wizard will guide you through the installation of ${PRODUCT_NAME} ${PRODUCT_VERSION}.$\r$\n$\r$\nClick Next to continue."
 !insertmacro MUI_PAGE_WELCOME
 
 !ifdef LICENSE_FILE
@@ -87,8 +146,8 @@ VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE}"
 !insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "English"
 
-Name "${PRODUCT_NAME} ${VERSION}"
-OutFile "${OUTPUT_FILE}"
+Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
+OutFile "${FINAL_OUTPUT}"
 
 Section "Main program" SecMain
     SectionIn RO
@@ -116,13 +175,13 @@ Section "Main program" SecMain
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "InstallLocation" "$INSTDIR"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$INSTDIR\snapmaker-orca.exe"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
-    WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${VERSION}"
+    WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "URLInfoAbout" "${PRODUCT_WEB_SITE}"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "HelpLink" "${PRODUCT_WEB_SITE}"
     WriteRegDWORD ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "NoModify" 1
     WriteRegDWORD ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "NoRepair" 1
 
-    WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_INSTALL_KEY}" "Version" "${VERSION}"
+    WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_INSTALL_KEY}" "Version" "${PRODUCT_VERSION}"
     WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_INSTALL_KEY}" "InstallPath" "$INSTDIR"
 
     ; URL protocols (same as macOS CFBundleURLSchemes): snapmaker-orca:// and Snapmaker_Orca://

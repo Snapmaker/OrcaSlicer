@@ -402,6 +402,16 @@ void ObjectTableSettings::update_config_values(bool is_object, ModelObject* obje
     ConfigManipulation config_manipulation(nullptr, toggle_field, toggle_line, nullptr, &m_current_config);
 
     config_manipulation.set_is_BBL_Printer(wxGetApp().preset_bundle->is_bbl_vendor());
+    config_manipulation.set_highlight_field_cb([this](const t_config_option_key& opt_key, bool invalid) {
+        Field* field = nullptr;
+        for (auto og : m_og_settings) {
+            field = og->get_fieldc(opt_key, -1);
+            if (field != nullptr)
+                break;
+        }
+        if (field)
+            field->set_invalid_highlight(invalid);
+    });
 
     printer_technology == ptFFF  ?  config_manipulation.update_print_fff_config(&main_config) :
                                     config_manipulation.update_print_sla_config(&main_config) ;

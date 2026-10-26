@@ -14,18 +14,14 @@
     "filament_flow_ratio": [
         "0.97"
     ],
-    "filament_max_volumetric_speed": [
-        "18"
-    ],
+    "filament_max_volumetric_speed": ["18", "20"],
     "filament_multitool_ramming_flow": [
         "40"
     ],
     "filament_retraction_length": [
         "0.6"
     ],
-    "pressure_advance": [
-        "0.025"
-    ],
+    "pressure_advance": ["0.025", "0.024"],
     "graphic_effect_plate_temp": [
         "65"
     ],
@@ -41,13 +37,11 @@
     "additional_cooling_fan_speed": [
         "70"
     ],
-    "filament_flow_support": [
-        "standard"
-    ],
-    "filament_z_hop_types": [
-        "nil"
-    ],
+    "filament_flow_support": ["standard", "high_flow"],
+    "filament_z_hop_types": ["nil", "Auto Lift"],
     "pellet_flow_coefficient": [
         "0.4157"
-    ]
+    ],
+    "filament_retract_length_toolchange": ["5", "6"],
+    "slow_down_layer_time": ["12"]
 }

@@ -5,8 +5,10 @@
 #include <assert.h>
 #include <boost/log/trivial.hpp>
 
+#include <algorithm>
+#include <array>
+#include <map>
 #include <set>
-#include <tuple>
 #include <utility>
 
 namespace Slic3r {
@@ -24,22 +26,22 @@ TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bo
 
     indexed_triangle_set input = mesh.its;
 
-    // Drop exact duplicate faces first: igl::loop() assumes a manifold mesh, and one
-    // repeated face makes every of its edges non-manifold (4 incident faces), which
-    // derails the edge pairing inside the subdivision until it runs out of bounds.
-    // No menu check stops such input - repeated faces keep open_edges at 0, because
-    // the opposite-direction edge pairs still match. Keep the first occurrence only.
+    // Drop duplicate faces first: igl::loop() assumes a manifold mesh, and one repeated
+    // face makes every of its edges non-manifold (4 incident faces), which derails the
+    // edge pairing inside the subdivision until it runs out of bounds. No menu check
+    // stops such input - repeated faces keep open_edges at 0, because the
+    // opposite-direction edge pairs still match. Keep the first occurrence only.
     {
-        std::set<std::tuple<int, int, int>>        seen_faces;
-        std::vector<stl_triangle_vertex_indices>   unique_faces;
+        std::set<std::array<int, 3>>             seen_faces;
+        std::vector<stl_triangle_vertex_indices> unique_faces;
         unique_faces.reserve(input.indices.size());
-        for (const auto &face : input.indices) {
-            const int a = face(0), b = face(1), c = face(2);
-            // Rotate the smallest index to the front; rotations preserve winding, so
-            // the key matches a face regardless of its rotation in the face list.
-            const std::tuple<int, int, int> key = (a <= b && a <= c) ? std::make_tuple(a, b, c)
-                                                : (b <= a && b <= c) ? std::make_tuple(b, c, a)
-                                                                     : std::make_tuple(c, a, b);
+        for (const auto& face : input.indices) {
+            // Fully sort the three vertex indexes: the key then matches a face
+            // regardless of rotation AND winding, so both exact repeats and
+            // opposite-winding repeats (zero-thickness walls) are caught - either
+            // kind makes the edges non-manifold and breaks igl::loop().
+            std::array<int, 3> key = {face(0), face(1), face(2)};
+            std::sort(key.begin(), key.end());
             if (seen_faces.insert(key).second)
                 unique_faces.push_back(face);
         }
@@ -51,10 +53,31 @@ TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bo
     // vertex (max face index < vertex count - 1) makes loop() read past the adjacency
     // list. Drop unreferenced vertices (and reindex the faces) on a local copy first.
     its_compactify_vertices(input);
-    if (input.vertices.empty() || input.indices.empty())
-    {
+    if (input.vertices.empty() || input.indices.empty()) {
         ok = false;
         return TriangleMesh();
+    }
+
+    // Temporary guard: reject meshes with non-manifold edges - an edge shared by more
+    // than two faces cannot be paired inside igl::loop() (it pairs exactly two faces
+    // per edge) and the subdivision runs out of bounds and crashes. Duplicate faces
+    // were already removed above; this catches every other source, e.g. face fans.
+    // Open edges (a single face) are deliberately allowed: loop() handles boundary
+    // vertices explicitly.
+    {
+        std::map<std::pair<int, int>, int> edge_face_count;
+        for (const auto& face : input.indices) {
+            const int v[3] = {face(0), face(1), face(2)};
+            for (int j = 0; j < 3; ++j) {
+                const int a = std::min(v[j], v[(j + 1) % 3]);
+                const int b = std::max(v[j], v[(j + 1) % 3]);
+                if (++edge_face_count[{a, b}] > 2)
+                {
+                    ok = false;
+                    return TriangleMesh();
+                }
+            }
+        }
     }
 
     // Use Map to map the vertices and indicies into Matrixes without requiring a copy.

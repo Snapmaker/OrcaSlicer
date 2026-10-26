@@ -1015,9 +1015,9 @@ int GLVolumeCollection::load_wipe_tower_preview(
 
     std::vector<ColorRGBA> extruder_colors = get_extruders_colors();
     std::vector<ColorRGBA> colors;
-    GUI::PartPlateList&    ppl              = GUI::wxGetApp().plater()->get_partplate_list();
-    std::vector<int>       plate_extruders  = ppl.get_plate(plate_idx)->get_extruders(true);
-    TriangleMesh           wipe_tower_shell = make_cube(width, depth, height);
+    GUI::PartPlateList& ppl = GUI::wxGetApp().plater()->get_partplate_list();
+    std::vector<int> plate_extruders  = ppl.get_plate(plate_idx)->get_extruders(true);
+    TriangleMesh wipe_tower_shell = make_cube(width, depth, height);
     for (int extruder_id : plate_extruders) {
         if (extruder_id <= extruder_colors.size())
             colors.push_back(extruder_colors[extruder_id - 1]);
@@ -1045,6 +1045,50 @@ int GLVolumeCollection::load_wipe_tower_preview(
     v.geometry_id.first                        = 0;
     v.geometry_id.second                       = wipe_tower_instance_id().id + (obj_idx - 1000);
     v.is_wipe_tower                            = true;
+    v.shader_outside_printer_detection_enabled = !size_unknown;
+    return int(volumes.size() - 1);
+}
+
+int GLVolumeCollection::load_real_wipe_tower_preview(int obj_idx, float pos_x, float pos_y, 
+    const TriangleMesh& wt_mesh, const TriangleMesh& brim_mesh, bool render_brim, 
+    float rotation_angle, bool size_unknown, bool opengl_initialized)
+{
+    int plate_idx = obj_idx - 1000;
+    if (wt_mesh.its.vertices.empty()) 
+        return int(this->volumes.size() - 1);
+
+    std::vector<Slic3r::ColorRGBA> extruder_colors = get_extruders_colors();
+    GUI::PartPlateList& ppl = GUI::wxGetApp().plater()->get_partplate_list();
+    std::vector<int> plate_extruders = ppl.get_plate(plate_idx)->get_extruders(true);
+    std::vector<Slic3r::ColorRGBA> colors;
+    if (!plate_extruders.empty()) {
+        if (plate_extruders.front() <= extruder_colors.size())
+            colors.push_back(extruder_colors[plate_extruders.front() - 1]);
+        else
+            colors.push_back(extruder_colors[0]);
+    }
+    if (colors.empty()) 
+        return int(this->volumes.size() - 1);
+    volumes.emplace_back(new GLWipeTowerVolume({ colors }));
+    GLWipeTowerVolume& v = *dynamic_cast<GLWipeTowerVolume*>(volumes.back());
+    auto mesh = wt_mesh;
+    if (render_brim) {
+        mesh.merge(brim_mesh);
+    }
+    if (!colors.empty()) {
+        v.model_per_colors.resize(1);
+        v.model_per_colors[0].init_from(mesh);
+    }
+    TriangleMesh wipe_tower_shell = mesh.convex_hull_3d();
+    v.model.init_from(wipe_tower_shell);
+    v.mesh_raycaster = std::make_unique<GUI::MeshRaycaster>(std::make_shared<const TriangleMesh>(wipe_tower_shell));
+    v.set_convex_hull(wipe_tower_shell);
+    v.set_volume_offset(Vec3d(pos_x, pos_y, 0.0));
+    v.set_volume_rotation(Vec3d(0., 0., (M_PI / 180.) * rotation_angle));
+    v.composite_id = GLVolume::CompositeID(obj_idx, 0, 0);
+    v.geometry_id.first = 0;
+    v.geometry_id.second = wipe_tower_instance_id().id + (obj_idx - 1000);
+    v.is_wipe_tower = true;
     v.shader_outside_printer_detection_enabled = !size_unknown;
     return int(volumes.size() - 1);
 }
@@ -1141,7 +1185,7 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
         return;
 
     GLShaderProgram* sink_shader  = GUI::wxGetApp().get_shader("flat");
-    GLShaderProgram* edges_shader = GUI::wxGetApp().get_shader("flat");
+    const bool canRenderSinkingContours = m_show_sinking_contours && sink_shader != nullptr;
 
     if (type == ERenderType::Transparent) {
         glsafe(::glEnable(GL_BLEND));
@@ -1206,19 +1250,17 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
             volume.first->force_transparent = false;
 #endif // ENABLE_MODIFIERS_ALWAYS_TRANSPARENT
 
-        // render sinking contours of non-hovered volumes
-        shader->stop_using();
-        if (sink_shader != nullptr) {
-            sink_shader->start_using();
-            if (m_show_sinking_contours) {
-                if (volume.first->is_sinking() && !volume.first->is_below_printbed() && volume.first->hover == GLVolume::HS_None &&
-                    !volume.first->force_sinking_contours) {
-                    volume.first->render_sinking_contours();
-                }
+        if (canRenderSinkingContours)
+        {
+            const bool needSinkingContour = volume.first->is_sinking() && !volume.first->is_below_printbed() &&
+                                            volume.first->hover == GLVolume::HS_None && !volume.first->force_sinking_contours;
+            if (needSinkingContour)
+            {
+                sink_shader->start_using();
+                volume.first->render_sinking_contours();
+                shader->start_using();
             }
-            sink_shader->stop_using();
         }
-        shader->start_using();
 
         if (!volume.first->model.is_initialized())
             shader->set_uniform("uniform_color", volume.first->render_color);
@@ -1282,22 +1324,29 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
         glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
     }
 
-    if (m_show_sinking_contours) {
-        shader->stop_using();
-        if (sink_shader != nullptr) {
-            sink_shader->start_using();
-            for (GLVolumeWithIdAndZ& volume : to_render) {
-                // render sinking contours of hovered/displaced volumes
-                if (volume.first->is_sinking() && !volume.first->is_below_printbed() &&
-                    (volume.first->hover != GLVolume::HS_None || volume.first->force_sinking_contours)) {
-                    glsafe(::glDepthFunc(GL_ALWAYS));
-                    volume.first->render_sinking_contours();
-                    glsafe(::glDepthFunc(GL_LESS));
-                }
+    if (canRenderSinkingContours)
+    {
+        bool sinkShaderUsing = false;
+        for (GLVolumeWithIdAndZ& volume : to_render)
+        {
+            const bool needHoveredSinkingContour = volume.first->is_sinking() && !volume.first->is_below_printbed() &&
+                                                   (volume.first->hover != GLVolume::HS_None || volume.first->force_sinking_contours);
+            if (!needHoveredSinkingContour)
+                continue;
+
+            if (!sinkShaderUsing)
+            {
+                sink_shader->start_using();
+                sinkShaderUsing = true;
             }
-            sink_shader->start_using();
+
+            glsafe(::glDepthFunc(GL_ALWAYS));
+            volume.first->render_sinking_contours();
+            glsafe(::glDepthFunc(GL_LESS));
         }
-        shader->start_using();
+
+        if (sinkShaderUsing)
+            shader->start_using();
     }
 
     if (disable_cullface)

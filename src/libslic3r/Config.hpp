@@ -20,6 +20,7 @@
 #include <boost/algorithm/string/trim.hpp>
 #include <boost/format/format_fwd.hpp>
 #include <boost/functional/hash.hpp>
+#include <boost/log/trivial.hpp>
 #include <boost/property_tree/ptree_fwd.hpp>
 
 #include <cereal/access.hpp>
@@ -670,7 +671,10 @@ public:
         		if (NULLABLE)
         			this->values.push_back(nil_value());
         		else
-        			throw ConfigurationError("Deserializing nil into a non-nullable object");
+        			{
+                    BOOST_LOG_TRIVIAL(warning) << "deserialize: skipping nil item in non-nullable vector";
+                    continue;
+                }
         	} else {
 	            std::istringstream iss(item_str);
 	            double value;
@@ -838,7 +842,10 @@ public:
         		if (NULLABLE)
         			this->values.push_back(nil_value());
         		else
-                    throw ConfigurationError("Deserializing nil into a non-nullable object");
+                    {
+                    BOOST_LOG_TRIVIAL(warning) << "deserialize: skipping nil item in non-nullable vector";
+                    continue;
+                }
         	} else {
 	            std::istringstream iss(item_str);
 	            int value;
@@ -1162,7 +1169,10 @@ public:
                 if (NULLABLE)
                     this->values.push_back(nil_value());
                 else
-                    throw ConfigurationError("Deserializing nil into a non-nullable object");
+                    {
+                    BOOST_LOG_TRIVIAL(warning) << "deserialize: skipping nil item in non-nullable vector";
+                    continue;
+                }
             } else {
                 bool percent = item_str.find_first_of("%") != std::string::npos;
                 std::istringstream iss(item_str);
@@ -1487,7 +1497,10 @@ public:
         		if (NULLABLE)
                     new_value = nil_value();
         		else
-                    throw ConfigurationError("Deserializing nil into a non-nullable object");
+                    {
+                    BOOST_LOG_TRIVIAL(warning) << "deserialize: skipping nil item in non-nullable vector";
+                    continue;
+                }
         	} else if (item_str == "1") {
         		new_value = true;
         	} else if (item_str == "0") {
@@ -1725,7 +1738,10 @@ public:
                 if (NULLABLE)
                     this->values.push_back(nil_value());
                 else
-                    throw ConfigurationError("Deserializing nil into a non-nullable object");
+                    {
+                    BOOST_LOG_TRIVIAL(warning) << "deserialize: skipping nil item in non-nullable vector";
+                    continue;
+                }
             }
             else {
                 auto it = this->keys_map->find(item_str);
@@ -1807,6 +1823,7 @@ public:
 		    case coInts:            { auto opt = new ConfigOptionIntsNullable();	archive(*opt); return opt; }
 		    case coPercents:        { auto opt = new ConfigOptionPercentsNullable();archive(*opt); return opt; }
 		    case coBools:           { auto opt = new ConfigOptionBoolsNullable();	archive(*opt); return opt; }
+		    case coFloatsOrPercents:{ auto opt = new ConfigOptionFloatsOrPercentsNullable();	archive(*opt); return opt; }
 		    default:                throw ConfigurationError(std::string("ConfigOptionDef::load_option_from_archive(): Unknown nullable option type for option ") + this->opt_key);
 		    }
     	} else {
@@ -1820,6 +1837,7 @@ public:
 		    case coPercent:         { auto opt = new ConfigOptionPercent(); 		archive(*opt); return opt; }
 		    case coPercents:        { auto opt = new ConfigOptionPercents(); 		archive(*opt); return opt; }
 		    case coFloatOrPercent:  { auto opt = new ConfigOptionFloatOrPercent(); 	archive(*opt); return opt; }
+            case coFloatsOrPercents:{ auto opt = new ConfigOptionFloatsOrPercents();archive(*opt); return opt; }
 		    case coPoint:           { auto opt = new ConfigOptionPoint(); 			archive(*opt); return opt; }
 		    case coPoints:          { auto opt = new ConfigOptionPoints(); 			archive(*opt); return opt; }
 		    case coPoint3:          { auto opt = new ConfigOptionPoint3(); 			archive(*opt); return opt; }
@@ -1840,6 +1858,7 @@ public:
 		    case coInts:            archive(*static_cast<const ConfigOptionIntsNullable*>(opt));    break;
 		    case coPercents:        archive(*static_cast<const ConfigOptionPercentsNullable*>(opt));break;
 		    case coBools:           archive(*static_cast<const ConfigOptionBoolsNullable*>(opt)); 	break;
+		    case coFloatsOrPercents:archive(*static_cast<const ConfigOptionFloatsOrPercentsNullable*>(opt));	break;
 		    default:                throw ConfigurationError(std::string("ConfigOptionDef::save_option_to_archive(): Unknown nullable option type for option ") + this->opt_key);
 		    }
 		} else {
@@ -1853,6 +1872,7 @@ public:
 		    case coPercent:         archive(*static_cast<const ConfigOptionPercent*>(opt)); 		break;
 		    case coPercents:        archive(*static_cast<const ConfigOptionPercents*>(opt)); 		break;
 		    case coFloatOrPercent:  archive(*static_cast<const ConfigOptionFloatOrPercent*>(opt));	break;
+            case coFloatsOrPercents:archive(*static_cast<const ConfigOptionFloatsOrPercents*>(opt));break;
 		    case coPoint:           archive(*static_cast<const ConfigOptionPoint*>(opt)); 			break;
 		    case coPoints:          archive(*static_cast<const ConfigOptionPoints*>(opt)); 			break;
 		    case coPoint3:          archive(*static_cast<const ConfigOptionPoint3*>(opt)); 			break;

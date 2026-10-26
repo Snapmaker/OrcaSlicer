@@ -50,10 +50,7 @@
   "filament_loading_speed_start": [
     "3"
   ],
-  "filament_max_volumetric_speed": [
-    "15",
-    "25"
-  ],
+  "filament_max_volumetric_speed": ["15", "22"],
   "filament_minimal_purge_on_wipe_tower": [
     "50",
     "15"
@@ -90,14 +87,8 @@
     "Slope Lift",
     "Slope Lift"
   ],
-  "nozzle_temperature": [
-    "270",
-    "270"
-  ],
-  "nozzle_temperature_initial_layer": [
-    "270",
-    "270"
-  ],
+  "nozzle_temperature": ["270", "280"],
+  "nozzle_temperature_initial_layer": ["270", "280"],
   "overhang_fan_speed": [
     "80"
   ],
@@ -124,10 +115,7 @@
     "0",
     "0"
   ],
-  "filament_flow_support": [
-    "standard",
-    "high_flow"
-  ],
+  "filament_flow_support": ["standard", "high_flow"],
   "supertack_plate_temp": [
     "0"
   ],

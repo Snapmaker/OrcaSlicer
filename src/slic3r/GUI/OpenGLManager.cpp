@@ -215,6 +215,7 @@ bool OpenGLManager::s_compressed_textures_supported = false;
 bool OpenGLManager::s_force_power_of_two_textures = false;
 OpenGLManager::EMultisampleState OpenGLManager::s_multisample = OpenGLManager::EMultisampleState::Unknown;
 OpenGLManager::EFramebufferType OpenGLManager::s_framebuffers_type = OpenGLManager::EFramebufferType::Unknown;
+bool OpenGLManager::_vertexArraysSupported = false;
 
 #ifdef __APPLE__
 // Part of hack to remove crash when closing the application on OSX 10.9.5 when building against newer wxWidgets
@@ -264,6 +265,17 @@ bool OpenGLManager::init_gl(bool popup_error)
         else {
             s_framebuffers_type = EFramebufferType::Unknown;
             BOOST_LOG_TRIVIAL(warning) << "Found Framebuffer Type unknown!"<< std::endl;
+        }
+
+        if (GLEW_VERSION_3_0 != 0)
+        {
+            _vertexArraysSupported = true;
+            BOOST_LOG_TRIVIAL(info) << "Standard Vertex Array Object support enabled." << std::endl;
+        }
+        else
+        {
+            _vertexArraysSupported = false;
+            BOOST_LOG_TRIVIAL(warning) << "Standard Vertex Array Object unavailable; using legacy vertex layout." << std::endl;
         }
 
         bool valid_version = s_gl_info.is_version_greater_or_equal_to(2, 0);

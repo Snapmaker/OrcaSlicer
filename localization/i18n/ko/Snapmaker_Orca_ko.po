@@ -4389,6 +4389,12 @@ msgstr "정렬 옵션"
 msgid "Spacing"
 msgstr "간격"
 
+msgid "Count"
+msgstr "개수"
+
+msgid "Gap"
+msgstr "틈"
+
 msgid "0 means auto spacing."
 msgstr "0은 자동 간격을 의미합니다."
 
@@ -6537,13 +6543,6 @@ msgstr "프린터가 준비됐나요? 출력 시트가 제자리에 있고 비�
 
 msgid "Upload and Print"
 msgstr "업로드 및 출력"
-
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"객체별 출력:\n"
-"출력 시 충돌을 방지하기 위해 자동 정렬을 사용할 것을 제안합니다."
 
 msgid "Send G-code"
 msgstr "Gcode 전송"

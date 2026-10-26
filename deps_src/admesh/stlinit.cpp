@@ -25,9 +25,11 @@
 #include <string.h>
 #include <math.h>
 #include <assert.h>
+#include <limits.h>
 
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/cstdio.hpp>
+#include <boost/nowide/stat.hpp>
 #include <boost/predef/other/endian.h>
 
 #include "stl.h"
@@ -56,8 +58,15 @@ static FILE *stl_open_count_facets(stl_file *stl, const char *file, unsigned int
     	return nullptr;
   	}
   	// Find size of file.
-  	fseek(fp, 0, SEEK_END);
-  	long file_size = ftell(fp);
+  	// Use nowide::stat (UTF-8 aware on all platforms) rather than fseek/ftell,
+  	// which are limited to 2 GB on Windows (`long` is 32-bit even in 64-bit builds).
+  	boost::nowide::stat_t st{};
+  	if (boost::nowide::stat(file, &st) != 0) {
+		BOOST_LOG_TRIVIAL(error) << "stl_open_count_facets: Couldn't get size of " << file;
+  		fclose(fp);
+  		return nullptr;
+  	}
+  	uintmax_t file_size = st.st_size;
 
   	// Check for binary or ASCII file.
     int header_size = custom_header_length + NUM_FACET_SIZE;
@@ -85,6 +94,13 @@ static FILE *stl_open_count_facets(stl_file *stl, const char *file, unsigned int
     	// Test if the STL file has the right size.
         if (((file_size - header_size) % SIZEOF_STL_FACET != 0) || (file_size < STL_MIN_FILE_SIZE)) {
 			BOOST_LOG_TRIVIAL(error) << "stl_open_count_facets: The file " << file << " has the wrong size.";
+      		fclose(fp);
+      		return nullptr;
+    	}
+    	// Reject files whose facet count would overflow the int counters (num_facets /
+    	// original_num_facets are `int`, so the real ceiling is INT_MAX facets, ~107.37 GB).
+    	if ((file_size - header_size) > (uintmax_t)INT_MAX * SIZEOF_STL_FACET) {
+			BOOST_LOG_TRIVIAL(error) << "stl_open_count_facets: The file " << file << " is too large to be imported.";
       		fclose(fp);
       		return nullptr;
     	}

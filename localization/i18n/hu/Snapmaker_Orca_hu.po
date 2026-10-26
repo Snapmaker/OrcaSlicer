@@ -4363,6 +4363,12 @@ msgstr "Elrendezési lehetőségek"
 msgid "Spacing"
 msgstr "Térköz"
 
+msgid "Count"
+msgstr "Darab"
+
+msgid "Gap"
+msgstr "Hézag"
+
 msgid "0 means auto spacing."
 msgstr ""
 
@@ -6494,14 +6500,6 @@ msgstr ""
 
 msgid "Upload and Print"
 msgstr "Feltöltés és Nyomtatás"
-
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Nyomtatás tárgyanként: \n"
-"Javasoljuk, hogy használd az automatikus elrendezést az ütközések elkerülése "
-"érdekében."
 
 msgid "Send G-code"
 msgstr "G-kód küldése"

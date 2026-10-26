@@ -921,7 +921,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt,                 support_interface_bottom_layers))
     // Spacing between interface lines (the hatching distance). Set zero to get a solid interface.
     ((ConfigOptionFloat,               support_interface_spacing))
-    ((ConfigOptionFloats,              support_interface_speed))
+    ((ConfigOptionFloat,                support_interface_min_area))
+    ((ConfigOptionFloats,               support_interface_speed))
     ((ConfigOptionEnum<SupportMaterialPattern>, support_base_pattern))
     ((ConfigOptionEnum<SupportMaterialInterfacePattern>, support_interface_pattern))
     // Spacing between support material lines (the hatching distance).
@@ -983,6 +984,11 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionPercent,            tree_support_top_rate))
     ((ConfigOptionFloat,              tree_support_branch_diameter_organic))
     ((ConfigOptionFloat,              tree_support_branch_angle_organic))
+    // Snapmaker: Support transition layer parameters
+    ((ConfigOptionInt,                tree_support_transition_layers))
+    ((ConfigOptionBool,               support_transition_perimeter))
+    ((ConfigOptionFloats,             support_transition_speed))
+    ((ConfigOptionFloatOrPercent,     support_transition_flow_ratio))
     ((ConfigOptionEnum<GapFillTarget>,gap_fill_target))
     ((ConfigOptionFloat,              min_length_factor))
 
@@ -994,6 +1000,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloats,             initial_layer_acceleration))
     ((ConfigOptionFloatsOrPercents,   bridge_acceleration))
     ((ConfigOptionFloats,             travel_acceleration))
+    ((ConfigOptionFloatOrPercent,     first_layer_travel_acceleration))
     ((ConfigOptionFloatsOrPercents,   sparse_infill_acceleration))
     ((ConfigOptionFloatsOrPercents,   internal_solid_infill_acceleration))
 
@@ -1004,6 +1011,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloats,             top_surface_jerk))
     ((ConfigOptionFloats,             initial_layer_jerk))
     ((ConfigOptionFloats,             travel_jerk))
+    ((ConfigOptionFloatOrPercent,     first_layer_travel_jerk))
     ((ConfigOptionBool,               precise_z_height))
     ((ConfigOptionFloats,             default_junction_deviation))
         
@@ -1026,6 +1034,7 @@ PRINT_CONFIG_CLASS_DEFINE(
 
     ((ConfigOptionInt,                  bottom_shell_layers))
     ((ConfigOptionFloat,                bottom_shell_thickness))
+    ((ConfigOptionInt,                  bottom_color_penetration_layers))
     ((ConfigOptionFloat,                bridge_angle))
     ((ConfigOptionFloat,                internal_bridge_angle)) // ORCA: Internal bridge angle override
     ((ConfigOptionFloat,                bridge_flow))
@@ -1105,6 +1114,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt, top_shell_layers))
     ((ConfigOptionFloat, top_shell_thickness))
     ((ConfigOptionFloats, top_surface_speed))
+    ((ConfigOptionInt, top_color_penetration_layers))
     //BBS
     ((ConfigOptionBools,                enable_overhang_speed))
     ((ConfigOptionFloatsOrPercents,      overhang_1_4_speed))
@@ -1326,6 +1336,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloats,              filament_multitool_ramming_flow))
     ((ConfigOptionFloats,              filament_stamping_loading_speed))
     ((ConfigOptionFloats,              filament_stamping_distance))
+    ((ConfigOptionFloats, filament_tower_interface_pre_extrusion_dist))
+    ((ConfigOptionFloats, filament_tower_interface_pre_extrusion_length))
+    ((ConfigOptionInts, filament_tower_interface_print_temp))
     ((ConfigOptionBool,                purge_in_prime_tower))
     ((ConfigOptionBool,                enable_filament_ramming))
     ((ConfigOptionFloat,                ramming_line_width_ratio))
@@ -1472,6 +1485,8 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionInts,               nozzle_temperature_range_high))
     ((ConfigOptionFloats,             wipe_distance))
     ((ConfigOptionBool,               enable_prime_tower))
+    ((ConfigOptionBool,               enable_tower_interface_features))
+    ((ConfigOptionBool,               enable_tower_interface_cooldown_during_tower))
     // BBS: change wipe_tower_x and wipe_tower_y data type to floats to add partplate logic
     ((ConfigOptionFloats,             wipe_tower_x))
     ((ConfigOptionFloats,             wipe_tower_y))
@@ -1496,10 +1511,12 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloat,              wipe_tower_rib_width))
     ((ConfigOptionBool,               wipe_tower_fillet_wall))
     ((ConfigOptionBool,               wipe_tower_wall_gap))
+    ((ConfigOptionBool,               prime_tower_enable_framework))
     ((ConfigOptionInt,                wipe_tower_filament))
     ((ConfigOptionFloats,             wiping_volumes_extruders))
     ((ConfigOptionInts,       idle_temperature))
     ((ConfigOptionFloats, filament_tower_ironing_area))
+    ((ConfigOptionInts, filament_adhesiveness_category))
 
     // BBS: wipe tower is only used for priming
     ((ConfigOptionFloat,              prime_volume))

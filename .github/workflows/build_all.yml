@@ -31,8 +31,8 @@ jobs:
           # - os: ubuntu-20.04
           - os: ubuntu-24.04
           - os: windows-2022
-          # macOS 26 Tahoe (Darwin 25.x). Do not use macos-latest; pin the image.
-          - os: macos-26
+          # macOS 15 Sequoia (Darwin 24.x). Do not use macos-latest; pin the image.
+          - os: macos-15
             arch: arm64
     uses: ./.github/workflows/build_check_cache.yml
     with:

@@ -17,6 +17,18 @@ msgstr ""
 "Plural-Forms: nplurals=1; plural=0;\n"
 "X-Generator: Poedit 3.8\n"
 
+msgid "Subdivision mesh"
+msgstr "细分网格"
+
+msgid "(Lost color)"
+msgstr "（丢失颜色）"
+
+msgid "\"%s\" will exceed 1 million faces after this subdivision, which may increase slicing time. Do you want to continue?"
+msgstr "\"%s\" 细分后面数将超过 100 万，可能增加切片时间。是否继续？"
+
+msgid "\"%s\" part's mesh contains errors. Please repair it first."
+msgstr "\"%s\" 零件的网格存在错误，请先修复。"
+
 msgid "Current AMS humidity"
 msgstr "当前AMS湿度"
 

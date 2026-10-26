@@ -18710,7 +18710,9 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
         !wxGetApp().get_tab(Preset::TYPE_FILAMENT)->select_preset(filament_name))
         return;
 
-    GUI::FlowType::sync_filament_volume_types_for_slice();
+    // A custom mapping remains authoritative when standard and HF nozzles mix.
+    if (GUI::FlowType::grouping_mode() != FILAMENT_GROUPING_CUSTOM || GUI::FlowType::distinct_nozzle_flow_type_count() < 2)
+        GUI::FlowType::sync_filament_volume_types_for_slice();
     wxGetApp().mainframe->select_tab(size_t(MainFrame::tp3DEditor));
     add_model(false, Slic3r::resources_dir() + "/calib/volumetric_speed/SpeedTestStructure.step");
 

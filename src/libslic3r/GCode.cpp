@@ -8047,7 +8047,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         } else if (path.role() == erTopSolidInfill) {
             speed = this->process_flow_value(m_config.top_surface_speed);
         } else if (path.role() == erIroning) {
-            speed = this->process_flow_value(m_config.ironing_speed);
+            speed = m_config.ironing_speed;
         } else if (path.role() == erBottomSurface) {
             speed = this->process_flow_value(m_config.initial_layer_infill_speed);
         } else if (path.role() == erGapFill) {

@@ -4196,7 +4196,6 @@ void PartPlateList::reset(bool do_init)
         init();
         m_plate_list[0]->set_filament_count(m_filament_count);
 	}
-		init();
 
 	return;
 }

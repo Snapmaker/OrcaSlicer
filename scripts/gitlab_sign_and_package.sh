@@ -604,11 +604,23 @@ else
     echo "=========================================="
 
     echo "Stapling the notarization ticket onto the DMG..."
-    xcrun stapler staple "$FINAL_DMG_PATH"
+    _staple_ok=0
+    for _i in 1 2 3; do
+        if xcrun stapler staple "$FINAL_DMG_PATH"; then _staple_ok=1; break; fi
+        echo "stapler staple failed (attempt ${_i}/3), retrying in 15s..."
+        sleep 15
+    done
+    [ "$_staple_ok" -eq 1 ] || { echo "Error: staple failed after 3 attempts"; exit 1; }
 
     echo ""
     echo "Validating notarization..."
-    xcrun stapler validate -v "$FINAL_DMG_PATH"
+    _validate_ok=0
+    for _i in 1 2 3; do
+        if xcrun stapler validate -v "$FINAL_DMG_PATH"; then _validate_ok=1; break; fi
+        echo "stapler validate failed (attempt ${_i}/3), retrying in 15s..."
+        sleep 15
+    done
+    [ "$_validate_ok" -eq 1 ] || { echo "Error: validate failed after 3 attempts"; exit 1; }
 
     echo ""
     echo "=========================================="

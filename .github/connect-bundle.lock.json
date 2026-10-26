@@ -1,0 +1,11 @@
+{
+  "releaseTag": "v1.8.1",
+  "sha256": {
+    "windows-x64": "d5d519b804c418aeaeef3ce91021da5d3b05f17d38c55052351bdff545f8bc96",
+    "windows-arm64": "76e92282f60dc60b8258f915f63869ba10117a91953b8dedc4dc927147bf71db",
+    "macos-x64": "d784f5dc52c94a57ed21109987b8e71eddf6be7f94d088cd8e205763f7b1938e",
+    "macos-arm64": "2b9edf1d60ee4d62a74c0354540ab3578e4d2e19d8d008a1e4ee860d9f87cbec",
+    "linux-x64": "68df44dbbcdf55b5990e56f7f7d9e64d415dde698a8eeab0677b00fac69af5d9",
+    "linux-arm64": "4aa965cbdabfb11bd22982117060c4ab0ef9069df07193014322883452d2b980"
+  }
+}

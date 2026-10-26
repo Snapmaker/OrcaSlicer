@@ -379,6 +379,12 @@ function pack_deps() {
 }
 
 function build_slicer() {
+    echo "Staging snapmaker_connect..."
+    python3 "${ORCA_ROOT}/scripts/packaging/stage_connect_bundle.py" \
+        --lock "${ORCA_ROOT}/.github/connect-bundle.lock.json" \
+        --platform macos-universal \
+        --resources-dir "${ORCA_ROOT}/resources"
+
     # iterate over two architectures: x86_64 and arm64
     for _ARCH in x86_64 arm64; do
         # if ARCH is universal or equal to _ARCH

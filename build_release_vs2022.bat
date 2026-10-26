@@ -70,6 +70,9 @@ cd %WP%
 mkdir %build_dir%
 cd %build_dir%
 
+python ..\scripts\packaging\stage_connect_bundle.py --lock ..\.github\connect-bundle.lock.json --platform windows-x64 --resources-dir ..\resources
+if errorlevel 1 exit /b 1
+
 echo on
 cmake .. -G "Visual Studio 17 2022" -A x64 -DBBL_RELEASE_TO_PUBLIC=1 -DORCA_TOOLS=ON %SIG_FLAG% -DCMAKE_PREFIX_PATH="%DEPS%/usr/local" -DOPENSSL_ROOT_DIR="%DEPS%/usr/local" -DCMAKE_INSTALL_PREFIX="./Snapmaker_Orca" -DCMAKE_BUILD_TYPE=%build_type% -DWIN10SDK_PATH="%WindowsSdkDir%Include\%WindowsSDKVersion%\"
 cmake --build . --config %build_type% --target ALL_BUILD -- -m

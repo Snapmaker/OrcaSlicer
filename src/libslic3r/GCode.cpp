@@ -1115,7 +1115,7 @@ Polyline WipeTowerIntegration::generate_path_to_wipe_tower(const Point& start_po
     bool is_bbx_in_bed = true;
     Points avoid_points = avoid_polygon_inner.polygon().points;
     for (auto& wipe_tower_bbx_p : avoid_points) {
-        if (ClipperLib::PointInPolygon(wipe_tower_bbx_p, bed_polygon.points) != 1) {
+        if (! contains(bed_polygon, wipe_tower_bbx_p, false)) {
             is_bbx_in_bed = false;
             break;
         }

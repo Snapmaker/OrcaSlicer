@@ -42,7 +42,7 @@ double area(const ZPath &path)
     return -a * 0.5;
 }
 
-ZPaths clip_zpaths(ClipType clip_type, const ZPaths &subject, bool subject_open, const ZPaths &clip, const ZFillCallback &zfill, bool preserve_collinear)
+ZPaths clip_zpaths(ClipType clip_type, const ZPaths &subject, bool subject_open, const ZPaths &clip, const ZFillCallback &zfill, bool preserve_collinear, PolyFillType fill)
 {
     C2::Clipper64 clipper;
     clipper.PreserveCollinear(preserve_collinear);
@@ -65,8 +65,11 @@ ZPaths clip_zpaths(ClipType clip_type, const ZPaths &subject, bool subject_open,
     const C2::ClipType type = clip_type == ctIntersection ? C2::ClipType::Intersection :
                               clip_type == ctUnion        ? C2::ClipType::Union :
                               clip_type == ctDifference   ? C2::ClipType::Difference : C2::ClipType::Xor;
+    const C2::FillRule fill_rule = fill == pftEvenOdd  ? C2::FillRule::EvenOdd :
+                                   fill == pftPositive ? C2::FillRule::Positive :
+                                   fill == pftNegative ? C2::FillRule::Negative : C2::FillRule::NonZero;
     C2::Paths64 closed, open;
-    clipper.Execute(type, C2::FillRule::NonZero, closed, open);
+    clipper.Execute(type, fill_rule, closed, open);
     ZPaths out;
     append_zpaths(closed, out);
     append_zpaths(open, out);

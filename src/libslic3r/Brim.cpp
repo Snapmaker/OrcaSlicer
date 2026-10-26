@@ -124,9 +124,9 @@ static ConstPrintObjectPtrs get_top_level_objects_with_brim(const Print &print, 
         pt.z() = std::max(std::max(e1bot.z(), e1top.z()), std::max(e2bot.z(), e2top.z()));
     };
     // Union the islands; the result outline carries the Z index of its source island.
-    // Note: clip_zpaths uses the non-zero rule (the islands come from distinct objects and may
-    // overlap only between distinct objects, where max-Z attribution is exactly what we want).
-    ClipperZUtils::ZPaths union_out = ClipperZUtils::clip_zpaths(ctUnion, islands_clip, false, {}, zfill);
+    // Even-odd rule keeps the ClipperLib_Z semantics this code was written against: two
+    // islands of different objects overlapping each other do not merge into one outline.
+    ClipperZUtils::ZPaths union_out = ClipperZUtils::clip_zpaths(ctUnion, islands_clip, false, {}, zfill, false, pftEvenOdd);
 
     std::unordered_set<size_t> processed_objects_idx;
     ConstPrintObjectPtrs       top_level_objects_with_brim;

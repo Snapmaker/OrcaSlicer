@@ -108,8 +108,10 @@ inline VecOfPoints from_zpaths(const ZPaths &paths)
 // Signed area, positive for a CCW path.
 double area(const ZPath &path);
 
-// Non-zero rule boolean, the subject may be open. zfill only sees intersections off the input vertices.
-ZPaths clip_zpaths(ClipType clip_type, const ZPaths &subject, bool subject_open, const ZPaths &clip, const ZFillCallback &zfill, bool preserve_collinear = false);
+// Boolean, the subject may be open. zfill only sees intersections off the input vertices.
+// Fill rule defaults to non-zero; pass pftEvenOdd to restore Clipper1 SimplifyPolygons/
+// Execute semantics where a caller relied on even-odd.
+ZPaths clip_zpaths(ClipType clip_type, const ZPaths &subject, bool subject_open, const ZPaths &clip, const ZFillCallback &zfill, bool preserve_collinear = false, PolyFillType fill = pftNonZero);
 
 class ClipperZIntersectionVisitor {
 public:

@@ -18689,23 +18689,41 @@ void Plater::calib_temp(const Calib_Params& params) {
 
 void Plater::calib_max_vol_speed(const Calib_Params& params)
 {
-    const auto calib_vol_speed_name = wxString::Format(L"Max volumetric speed test");
-    new_project(false, false, calib_vol_speed_name);
-    wxGetApp().mainframe->select_tab(size_t(MainFrame::tp3DEditor));
-    if (params.mode != CalibMode::Calib_Vol_speed_Tower)
+    auto& preset_bundle = *wxGetApp().preset_bundle;
+    if (params.mode != CalibMode::Calib_Vol_speed_Tower || preset_bundle.filament_presets.empty())
         return;
 
+    // Calibration creates a project for the current hardware and filament mapping.
+    // A regular New Project resets the nozzle flow types to standard.
+    DynamicPrintConfig flow_config;
+    flow_config.apply_only(preset_bundle.project_config, {"nozzle_volume_type", "filament_volume_type", "filament_grouping_mode"}, true);
+    const auto calib_vol_speed_name = wxString::Format(L"Max volumetric speed test");
+    if (new_project(false, false, calib_vol_speed_name) == wxID_CANCEL)
+        return;
+    preset_bundle.project_config.apply(flow_config);
+
+    // The tower uses filament 1. Edit that preset even if another filament's
+    // settings were opened last, so the limit is lifted on the material printed.
+    sidebar().finish_param_edit();
+    const std::string filament_name = preset_bundle.filament_presets.front();
+    if (preset_bundle.filaments.get_selected_preset_name() != filament_name &&
+        !wxGetApp().get_tab(Preset::TYPE_FILAMENT)->select_preset(filament_name))
+        return;
+
+    GUI::FlowType::sync_filament_volume_types_for_slice();
+    wxGetApp().mainframe->select_tab(size_t(MainFrame::tp3DEditor));
     add_model(false, Slic3r::resources_dir() + "/calib/volumetric_speed/SpeedTestStructure.step");
 
-    auto print_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
-    auto filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
-    auto printer_config = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
-    auto obj = model().objects[0];
-    auto& obj_cfg = obj->config;
+    auto  print_config    = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
+    auto  filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
+    auto  printer_config  = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    auto  obj             = model().objects[0];
+    auto& obj_cfg         = obj->config;
+    obj_cfg.set_key_value("extruder", new ConfigOptionInt(1));
 
-    auto bed_shape = printer_config->option<ConfigOptionPoints>("printable_area")->values;
-    BoundingBoxf bed_ext = get_extents(bed_shape);
-    auto scale_obj = (bed_ext.size().x() - 10) / obj->bounding_box_exact().size().x();
+    auto         bed_shape = printer_config->option<ConfigOptionPoints>("printable_area")->values;
+    BoundingBoxf bed_ext   = get_extents(bed_shape);
+    auto         scale_obj = (bed_ext.size().x() - 10) / obj->bounding_box_exact().size().x();
     if (scale_obj < 1.0)
         obj->scale(scale_obj, 1, 1);
 
@@ -18757,13 +18775,14 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
         cut_horizontal(0, 0, height, ModelObjectCutAttribute::KeepLower);
     }
 
-    auto new_params = params;
-    auto mm3_per_mm = Flow(line_width, layer_height, nozzle_diameter).mm3_per_mm() *
-                      filament_config->option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0);
-    new_params.end = params.end / mm3_per_mm;
-    new_params.start = params.start / mm3_per_mm;
-    new_params.step = params.step / mm3_per_mm;
-
+    auto         new_params  = params;
+    const auto   full_config = preset_bundle.full_config();
+    const double flow_ratio  = get_value_at(full_config, *full_config.option<ConfigOptionFloats>("filament_flow_ratio"),
+                                            ConfigFlowDomain::Filament, 0);
+    auto         mm3_per_mm  = Flow(line_width, layer_height, nozzle_diameter).mm3_per_mm() * flow_ratio;
+    new_params.end           = params.end / mm3_per_mm;
+    new_params.start         = params.start / mm3_per_mm;
+    new_params.step          = params.step / mm3_per_mm;
 
     p->background_process.fff_print()->set_calib_params(new_params);
 }

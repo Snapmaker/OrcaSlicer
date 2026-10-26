@@ -5,6 +5,7 @@
 #include <boost/asio/bind_executor.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/log/trivial.hpp>
@@ -28,6 +29,8 @@ namespace {
 
 std::int64_t wall_now_ms()
 { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
+
+constexpr std::chrono::milliseconds websocket_close_timeout{1000};
 
 GatewayError transport_error(const std::string& message) { return {GatewayErrorCode::TransportError, message}; }
 
@@ -111,6 +114,7 @@ struct GatewayWebSocketTransport::Session : public std::enable_shared_from_this<
         : io_context(std::move(io_context))
         , executor(this->io_context->get_executor())
         , resolver(executor)
+        , close_timer(executor)
         , stream(executor)
         , host(std::move(host))
         , port(std::move(port))
@@ -130,6 +134,8 @@ struct GatewayWebSocketTransport::Session : public std::enable_shared_from_this<
 
     void close_from_any_thread()
     {
+        if (closed.load(std::memory_order_acquire))
+            return;
         post([self = shared_from_this()] { self->close(); });
     }
 
@@ -226,11 +232,18 @@ private:
         stream.async_write(asio::buffer(outbox.front()), [self = shared_from_this()](const boost::system::error_code& error, std::size_t) {
             self->writing = false;
             if (error) {
-                self->fail(error.message());
+                if (self->closing)
+                    self->finish_close(error.message());
+                else
+                    self->fail(error.message());
                 return;
             }
             if (!self->outbox.empty())
                 self->outbox.pop_front();
+            if (self->closing) {
+                self->begin_websocket_close();
+                return;
+            }
             if (!self->outbox.empty())
                 self->do_write();
         });
@@ -241,10 +254,43 @@ private:
         if (closed.exchange(true))
             return;
         closing = true;
+        close_timer.expires_after(websocket_close_timeout);
+        close_timer.async_wait([self = shared_from_this()](const boost::system::error_code& error) {
+            if (error == asio::error::operation_aborted)
+                return;
+            boost::system::error_code socket_error;
+            self->stream.next_layer().close(socket_error);
+            self->finish_close("websocket close timed out");
+        });
+        begin_websocket_close();
+    }
+
+    void begin_websocket_close()
+    {
+        if (!connected.load(std::memory_order_acquire)) {
+            finish_close("websocket closed before handshake completed");
+            return;
+        }
+        if (writing)
+            return;
+        stream.async_close(websocket::close_code::normal, [self = shared_from_this()](const boost::system::error_code& error) {
+            self->finish_close(error ? error.message() : std::string{});
+        });
+    }
+
+    void finish_close(const std::string& reason)
+    {
+        if (close_finished)
+            return;
+        closing        = true;
+        close_finished = true;
         boost::system::error_code error;
-        stream.close(websocket::close_code::normal, error);
+        close_timer.cancel(error);
+        resolver.cancel();
+        stream.next_layer().cancel(error);
+        stream.next_layer().close(error);
         if (listener.closed)
-            listener.closed(error ? error.message() : std::string{});
+            listener.closed(reason);
         io_context->stop();
     }
 
@@ -252,17 +298,13 @@ private:
     {
         if (closed.exchange(true))
             return;
-        closing = true;
-        boost::system::error_code error;
-        stream.next_layer().close(error);
-        if (listener.closed)
-            listener.closed(reason);
-        io_context->stop();
+        finish_close(reason);
     }
 
     std::shared_ptr<asio::io_context>        io_context;
     asio::any_io_executor                    executor;
     asio::ip::tcp::resolver                  resolver;
+    asio::steady_timer                       close_timer;
     websocket::stream<asio::ip::tcp::socket> stream;
     std::string                              host;
     std::string                              port;
@@ -272,6 +314,7 @@ private:
     std::deque<std::string>                  outbox;
     std::atomic<bool>                        connected{false};
     bool                                     writing{false};
+    bool                                     close_finished{false};
     bool                                     closing{false};
     std::atomic<bool>                        closed{false};
 };

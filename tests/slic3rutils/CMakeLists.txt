@@ -8,7 +8,17 @@ get_filename_component(_TEST_NAME ${CMAKE_CURRENT_LIST_DIR} NAME)
 add_executable(${_TEST_NAME}_tests
     ${_TEST_NAME}_tests_main.cpp
     SnapLogClient_test.cpp
+    GLCanvasAttribs_test.cpp
     )
+
+# GLCanvasAttribs_test.cpp includes the wx GL headers; the wx include dirs and definitions are only
+# applied to the src/ directory scope.
+if (SLIC3R_WX_STABLE)
+    find_package(wxWidgets 3.0 REQUIRED COMPONENTS base core gl)
+else ()
+    find_package(wxWidgets 3.1 REQUIRED COMPONENTS base core gl)
+endif ()
+include(${wxWidgets_USE_FILE})
 
 find_package(JPEG REQUIRED)
 find_package(PNG REQUIRED)

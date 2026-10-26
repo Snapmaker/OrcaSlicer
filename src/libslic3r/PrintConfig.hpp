@@ -279,6 +279,23 @@ enum OverhangFanThreshold {
     Overhang_threshold_bridge
 };
 
+// decide which overhang part joins the cooling slowdown
+enum OverhangThresholdParticipatingCooling {
+    Overhang_threshold_participating_cooling_none = 0,
+    Overhang_threshold_participating_cooling_1_4,
+    Overhang_threshold_participating_cooling_2_4,
+    Overhang_threshold_participating_cooling_3_4,
+    Overhang_threshold_participating_cooling_4_4,
+    Overhang_threshold_participating_cooling_bridge
+};
+
+// Cooling slowdown logic - determines how printer slows down for layer cooling
+// Ported from PrusaSlicer 2.9.3 for VFA reduction
+enum CoolingSlowdownLogicType {
+    cslUniformCooling = 0,      // Default: slow down all features equally
+    cslConsistentSurface = 1,   // Prioritize slowing infill/internal perimeters first
+};
+
 // BBS
 enum BedType {
     btDefault = 0,
@@ -931,6 +948,13 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,               support_expansion))
     ((ConfigOptionFloats,              support_speed))
     ((ConfigOptionEnum<SupportMaterialStyle>, support_style))
+
+    // Orca: a flag enabling the ability to override flow ratios
+    ((ConfigOptionBool,     set_other_flow_ratios))
+    // Orca: support-related flow ratios (available for overriding, if set_other_flow_ratios is enabled)
+    ((ConfigOptionFloat,    support_flow_ratio))
+    ((ConfigOptionFloat,    support_interface_flow_ratio))
+
     // BBS
     //((ConfigOptionBool,                independent_support_layer_height))
     // Orca internal thick bridge
@@ -1002,6 +1026,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloatsOrPercents,   bridge_acceleration))
     ((ConfigOptionFloats,             travel_acceleration))
     ((ConfigOptionFloatOrPercent,     first_layer_travel_acceleration))
+    ((ConfigOptionFloats,             travel_short_distance_acceleration))
     ((ConfigOptionFloatsOrPercents,   sparse_infill_acceleration))
     ((ConfigOptionFloatsOrPercents,   internal_solid_infill_acceleration))
 
@@ -1080,6 +1105,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloatOrPercent,       sparse_infill_line_width))
     ((ConfigOptionPercent,              infill_wall_overlap))
     ((ConfigOptionPercent,              top_bottom_infill_wall_overlap))
+    ((ConfigOptionFloatOrPercent,       external_infill_margin))
     ((ConfigOptionFloats,               sparse_infill_speed))
     ((ConfigOptionPercent, skeleton_infill_density))
     ((ConfigOptionPercent, skin_infill_density))
@@ -1125,6 +1151,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloatsOrPercents,      overhang_2_4_speed))
     ((ConfigOptionFloatsOrPercents,      overhang_3_4_speed))
     ((ConfigOptionFloatsOrPercents,      overhang_4_4_speed))
+    ((ConfigOptionFloatsOrPercents,      overhang_totally_speed))
     ((ConfigOptionBool,                 only_one_wall_top))
 
     //SoftFever
@@ -1162,6 +1189,15 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,                is_infill_first))
     ((ConfigOptionBool,                small_area_infill_flow_compensation))
     ((ConfigOptionEnum<WallDirection>,  wall_direction))
+
+    // Orca: other flow ratios (available for overriding, if set_other_flow_ratios is enabled)
+    ((ConfigOptionFloat,                first_layer_flow_ratio))
+    ((ConfigOptionFloat,                outer_wall_flow_ratio))
+    ((ConfigOptionFloat,                inner_wall_flow_ratio))
+    ((ConfigOptionFloat,                overhang_flow_ratio))
+    ((ConfigOptionFloat,                sparse_infill_flow_ratio))
+    ((ConfigOptionFloat,                internal_solid_infill_flow_ratio))
+    ((ConfigOptionFloat,                gap_fill_flow_ratio))
 
     // Orca: seam slopes
     ((ConfigOptionEnum<SeamScarfType>,  seam_slope_type))
@@ -1400,12 +1436,15 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionBools,              enable_overhang_bridge_fan))
     ((ConfigOptionInts,               overhang_fan_speed))
     ((ConfigOptionEnumsGeneric,       overhang_fan_threshold))
+    ((ConfigOptionEnumsGeneric,       overhang_threshold_participating_cooling))
     ((ConfigOptionEnum<PrintSequence>,print_sequence))
     ((ConfigOptionEnum<PrintOrder>,   print_order))
     ((ConfigOptionInts,               first_layer_print_sequence))
     ((ConfigOptionInts,               other_layers_print_sequence))
     ((ConfigOptionInt,                other_layers_print_sequence_nums))
     ((ConfigOptionBools,              slow_down_for_layer_cooling))
+    ((ConfigOptionEnumsGeneric,       cooling_slowdown_logic))
+    ((ConfigOptionFloats,             cooling_perimeter_transition_distance))
     ((ConfigOptionInts,               close_fan_the_first_x_layers))
     ((ConfigOptionEnum<DraftShield>,  draft_shield))
     ((ConfigOptionFloat,              extruder_clearance_height_to_rod))//BBs

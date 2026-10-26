@@ -383,6 +383,22 @@ static const t_config_enum_values s_keys_map_OverhangFanThreshold = {
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(OverhangFanThreshold)
 
+static const t_config_enum_values s_keys_map_OverhangThresholdParticipatingCooling = {
+    { "0%",   Overhang_threshold_participating_cooling_none },
+    { "10%",  Overhang_threshold_participating_cooling_1_4  },
+    { "25%",  Overhang_threshold_participating_cooling_2_4  },
+    { "50%",  Overhang_threshold_participating_cooling_3_4  },
+    { "75%",  Overhang_threshold_participating_cooling_4_4  },
+    { "95%",  Overhang_threshold_participating_cooling_bridge }
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(OverhangThresholdParticipatingCooling)
+
+static const t_config_enum_values s_keys_map_CoolingSlowdownLogicType = {
+    { "uniform_cooling",    cslUniformCooling },
+    { "consistent_surface", cslConsistentSurface },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(CoolingSlowdownLogicType)
+
 // BBS
 static const t_config_enum_values s_keys_map_BedType = {
     { "Default Plate",      btDefault },
@@ -1062,6 +1078,28 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.emplace_back("95%");
     def->set_default_value(new ConfigOptionEnumsGeneric{ (int)Overhang_threshold_bridge });
 
+    def = this->add("overhang_threshold_participating_cooling", coEnums);
+    def->label = L("Overhang threshold for participating cooling");
+    // xgettext:no-c-format, no-boost-format
+    def->tooltip = L("Decide which overhang part join the cooling function to slow down the speed. "
+                     "Expressed as percentage which indicates how much width of the line is without support from the lower layer. "
+                     "100% means forcing cooling for all outer wall no matter how much overhang degree.");
+    def->enum_keys_map = &ConfigOptionEnum<OverhangThresholdParticipatingCooling>::get_enum_values();
+    def->mode = comAdvanced;
+    def->enum_values.emplace_back("0%");
+    def->enum_values.emplace_back("10%");
+    def->enum_values.emplace_back("25%");
+    def->enum_values.emplace_back("50%");
+    def->enum_values.emplace_back("75%");
+    def->enum_values.emplace_back("100%");
+    def->enum_labels.emplace_back("0%");
+    def->enum_labels.emplace_back("10%");
+    def->enum_labels.emplace_back("25%");
+    def->enum_labels.emplace_back("50%");
+    def->enum_labels.emplace_back("75%");
+    def->enum_labels.emplace_back("100%");
+    def->set_default_value(new ConfigOptionEnumsGeneric{ (int)Overhang_threshold_participating_cooling_bridge });
+
     def = this->add("bridge_angle", coFloat);
     def->label = L("External bridge infill direction");
     def->category = L("Strength");
@@ -1156,6 +1194,102 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(1));
 
+    def = this->add("set_other_flow_ratios", coBool);
+    def->label = L("Set other flow ratios");
+    def->category = L("Advanced");
+    def->tooltip = L("Change flow ratios for other extrusion path types.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("first_layer_flow_ratio", coFloat);
+    def->label = L("First layer flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material on the first layer for the extrusion path roles listed in this section.\n\n"
+                     "For the first layer, the actual flow ratio for each path role (does not affect brims and skirts) will be multiplied by this value.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("outer_wall_flow_ratio", coFloat);
+    def->label = L("Outer wall flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for outer walls.\n\n"
+                     "The actual outer wall flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("inner_wall_flow_ratio", coFloat);
+    def->label = L("Inner wall flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for inner walls.\n\n"
+                     "The actual inner wall flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("overhang_flow_ratio", coFloat);
+    def->label = L("Overhang flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for overhangs.\n\n"
+                     "The actual overhang flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("sparse_infill_flow_ratio", coFloat);
+    def->label = L("Sparse infill flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for sparse infill.\n\n"
+                     "The actual sparse infill flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("internal_solid_infill_flow_ratio", coFloat);
+    def->label = L("Internal solid infill flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for internal solid infill.\n\n"
+                     "The actual internal solid infill flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("gap_fill_flow_ratio", coFloat);
+    def->label = L("Gap fill flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for filling the gaps.\n\n"
+                     "The actual gap filling flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("support_flow_ratio", coFloat);
+    def->label = L("Support flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for support.\n\n"
+                     "The actual support flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("support_interface_flow_ratio", coFloat);
+    def->label = L("Support interface flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for the support interface.\n\n"
+                     "The actual support interface flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
 
     def = this->add("precise_outer_wall",coBool);
     def->label = L("Precise wall");
@@ -1278,9 +1412,9 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionBools{ true });
 
     def = this->add("overhang_1_4_speed", coFloatsOrPercents);
-    def->label = "(10%, 25%)";
+    def->label = "10%";
     def->category = L("Speed");
-    def->full_label = "(10%, 25%)";
+    def->full_label = "10%";
     //def->tooltip = L("Speed for line of wall which has degree of overhang between 10% and 25% line width. "
     //                 "0 means using original wall speed.");
     def->sidetext = L("mm/s or %");
@@ -1290,9 +1424,9 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{0., false} });
 
     def = this->add("overhang_2_4_speed", coFloatsOrPercents);
-    def->label = "[25%, 50%)";
+    def->label = "25%";
     def->category = L("Speed");
-    def->full_label = "[25%, 50%)";
+    def->full_label = "25%";
     //def->tooltip = L("Speed for line of wall which has degree of overhang between 25% and 50% line width. "
     //                 "0 means using original wall speed.");
     def->sidetext = L("mm/s or %");
@@ -1302,9 +1436,9 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{0., false} });
 
     def = this->add("overhang_3_4_speed", coFloatsOrPercents);
-    def->label = "[50%, 75%)";
+    def->label = "50%";
     def->category = L("Speed");
-    def->full_label = "[50%, 75%)";
+    def->full_label = "50%";
     //def->tooltip = L("Speed for line of wall which has degree of overhang between 50% and 75% line width. "
     //                 "0 means using original wall speed.");
     def->sidetext = L("mm/s or %");
@@ -1314,9 +1448,9 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{0., false} });
 
     def = this->add("overhang_4_4_speed", coFloatsOrPercents);
-    def->label = "[75%, 100%)";
+    def->label = "75%";
     def->category = L("Speed");
-    def->full_label = "[75%, 100%)";
+    def->full_label = "75%";
     //def->tooltip = L("Speed for line of wall which has degree of overhang between 75% and 100% line width. "
     //                 "0 means using original wall speed.");
     def->sidetext = L("mm/s or %");
@@ -1324,6 +1458,18 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{0., false} });
+
+    def = this->add("overhang_totally_speed", coFloatsOrPercents);
+    def->label = "100%";
+    def->category = L("Speed");
+    def->full_label = "100%";
+    // xgettext:no-c-format, no-boost-format
+    def->tooltip = L("Speed of 100% overhang wall which has 0 overlap with the lower layer.");
+    def->sidetext = L("mm/s or %");
+    def->ratio_over = "outer_wall_speed";
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{10., false} });
 
     def = this->add("bridge_speed", coFloats);
     def->label = L("External");
@@ -1503,6 +1649,33 @@ void PrintConfigDef::init_fff_params()
                      "the layer time threshold in \"Max fan speed threshold\", so that layer can be cooled for longer time. "
                      "This can improve the cooling quality for needle and small details.");
     def->set_default_value(new ConfigOptionBools { true });
+
+    // Cooling slowdown logic - ported from PrusaSlicer 2.9.3 for VFA reduction
+    def = this->add("cooling_slowdown_logic", coEnums);
+    def->label = L("Cooling slowdown logic");
+    def->tooltip = L("Determines how the printer slows down when minimum layer time isn't reached.\n\n"
+                     "'Uniform cooling' slows down all print features equally (current default behavior).\n\n"
+                     "'Consistent surface' prioritizes slowing infill and internal perimeters first, "
+                     "preserving external perimeter speed for better surface finish on glossy filaments. "
+                     "This helps reduce VFA (Vertical Fine Artifacts) and maintains consistent surface shine.");
+    def->enum_keys_map = &ConfigOptionEnum<CoolingSlowdownLogicType>::get_enum_values();
+    def->enum_values.push_back("uniform_cooling");
+    def->enum_values.push_back("consistent_surface");
+    def->enum_labels.push_back(L("Uniform cooling"));
+    def->enum_labels.push_back(L("Consistent surface"));
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionEnumsGeneric { (int)cslUniformCooling });
+
+    def = this->add("cooling_perimeter_transition_distance", coFloats);
+    def->label = L("Perimeter transition distance");
+    def->tooltip = L("Distance in millimeters before the end of slowed perimeters where the original print speed "
+                     "is gradually restored. This prevents visible speed transitions at the end of perimeters.\n\n"
+                     "Only applies when 'Consistent surface' cooling logic is selected.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->max = 50;
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionFloats { 10.0 });
 
     def = this->add("default_acceleration", coFloats);
     def->label = L("Normal printing");
@@ -2706,6 +2879,19 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 10000. });
 
+    // Short travel acceleration - ported from PrusaSlicer 2.9.3 for VFA reduction
+    def = this->add("travel_short_distance_acceleration", coFloats);
+    def->label = L("Short travel");
+    def->tooltip = L("Acceleration used for short travel moves near external perimeters. "
+                     "Short travels are moves shorter than the 'Retraction minimum travel' distance.\n\n"
+                     "Lower values (e.g., 250-500 mm/s²) reduce ringing artifacts on sharp corners "
+                     "without significantly impacting print time.\n\n"
+                     "Set to 0 to disable (uses normal travel acceleration).");
+    def->sidetext = "mm/s²";
+    def->min = 0;
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionFloats { 250. });
+
     def = this->add("top_surface_acceleration", coFloats);
     def->label = L("Top surface");
     def->tooltip = L("Acceleration of top surface infill. Using a lower value may improve top surface quality.");
@@ -3543,6 +3729,18 @@ void PrintConfigDef::init_fff_params()
     def->ratio_over = "inner_wall_line_width";
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionPercent(25));
+
+    def = this->add("external_infill_margin", coFloatOrPercent);
+    def->label = L("Anchor solid infill by X mm");
+    def->category = L("Strength");
+    def->tooltip  = L("This parameter grows the top/bottom/solid layers by the specified mm to anchor them into the sparse infill and support the perimeters above."
+                       " Put 0 to deactivate it. Can be a %% of the width of the perimeters.");
+    def->sidetext = L("mm or %");
+    def->ratio_over  = "line_width";
+    def->min      = 0;
+    def->max_literal = 50;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloatOrPercent());
 
     def = this->add("sparse_infill_speed", coFloats);
     def->label = L("Sparse infill");
@@ -7538,6 +7736,7 @@ const std::vector<std::string>& process_flow_variant_options()
         "overhang_2_4_speed",
         "overhang_3_4_speed",
         "overhang_4_4_speed",
+        "overhang_totally_speed",
         "enable_overhang_speed",
         "slowdown_for_curled_perimeters",
         // ---- acceleration ----
@@ -7548,6 +7747,7 @@ const std::vector<std::string>& process_flow_variant_options()
         "initial_layer_acceleration",
         "bridge_acceleration",
         "travel_acceleration",
+        "travel_short_distance_acceleration",
         "sparse_infill_acceleration",
         "internal_solid_infill_acceleration",
         "accel_to_decel_enable",

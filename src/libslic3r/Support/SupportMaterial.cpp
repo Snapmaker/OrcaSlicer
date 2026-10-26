@@ -456,6 +456,26 @@ void PrintObjectSupportMaterial::generate(PrintObject &object)
     // Fill in intermediate layers between the top / bottom support contact layers, trim them by the object.
     this->generate_base_layers(object, bottom_contacts, top_contacts, intermediate_layers, layer_support_areas);
 
+    // Enforce "support on build plate only": no support may stay above any model footprint below.
+    if (this->build_plate_only()) {
+        const float gap_xy_scaled = float(scale_(m_support_params.gap_xy));
+        auto enforce_buildplate_only = [&object, &buildplate_covered, gap_xy_scaled](SupportGeneratorLayersPtr &layers) {
+            for (SupportGeneratorLayer *support_layer : layers) {
+                if (support_layer->polygons.empty())
+                    continue;
+                int idx_obj = int(object.layers().size()) - 1;
+                for (; idx_obj >= 0; -- idx_obj)
+                    if (object.layers()[idx_obj]->print_z <= support_layer->print_z + EPSILON)
+                        break;
+                if (idx_obj >= 0 && idx_obj < int(buildplate_covered.size()) && ! buildplate_covered[idx_obj].empty())
+                    support_layer->polygons = diff(support_layer->polygons,
+                        offset(buildplate_covered[idx_obj], gap_xy_scaled, SUPPORT_SURFACES_OFFSET_PARAMETERS));
+            }
+        };
+        enforce_buildplate_only(intermediate_layers);
+        enforce_buildplate_only(top_contacts);
+    }
+
 #ifdef SLIC3R_DEBUG
     for (SupportGeneratorLayersPtr::const_iterator it = intermediate_layers.begin(); it != intermediate_layers.end(); ++ it)
         Slic3r::SVG::export_expolygons(
@@ -2516,7 +2536,7 @@ static inline std::pair<Polygons, Polygons> project_support_to_grid(const Layer 
 {
     // Remove the areas that touched from the projection that will continue on next, lower, top surfaces.
 //            Polygons trimming = union_(to_polygons(layer.slices), touching, true);
-    Polygons trimming = layer_buildplate_covered ? std::move(*layer_buildplate_covered) : offset(layer.lslices, float(SCALED_EPSILON));
+    Polygons trimming = layer_buildplate_covered ? *layer_buildplate_covered : offset(layer.lslices, float(SCALED_EPSILON));
     Polygons overhangs_projection = diff(overhangs, trimming);
 
 #ifdef SLIC3R_DEBUG

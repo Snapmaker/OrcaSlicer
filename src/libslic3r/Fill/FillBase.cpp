@@ -29,6 +29,8 @@
 #include "FillCrossHatch.hpp"
 // #define INFILL_DEBUG_OUTPUT
 
+#define LINE_WIDTH 520
+
 namespace Slic3r {
 
 //BBS: 0% of sparse_infill_line_width, no anchor at the start of sparse infill
@@ -128,6 +130,264 @@ ThickPolylines Fill::fill_surface_arachne(const Surface* surface, const FillPara
     return thick_polylines_out;
 }
 
+namespace {
+
+constexpr int       kVerticalTol        = 10;          // scaled units: dy to treat the first line as vertical
+constexpr int       kRowJoinTol         = 10;          // x sclae_width: dy below which a segment joins a scan row
+constexpr int       kAdjacentRowTol     = 20;          // x sclae_width: dy within which points belong to one row
+constexpr long long kRowSplitGap        = 1800000;     // scaled units: x span excess that splits a scan row
+constexpr long long kRowAsymmetryGap    = 2000000;     // scaled units: end asymmetry that splits a scan row
+constexpr long long kRowEndpointGap     = 2800 * 1000; // scaled units: min x distance to extend the anchor range
+
+// Keep the fill angle if the first polyline already runs close to vertical in
+// the rotated frame, otherwise rotate the scan frame by a quarter turn.
+double top_reorder_scan_angle(const Polylines &polylines, float fill_angle)
+{
+    Eigen::Vector2d point1(polylines[0].points[0][0], polylines[0].points[0][1]);
+    Eigen::Vector2d point2(polylines[0].points[1][0], polylines[0].points[1][1]);
+    Eigen::Rotation2D rotation(-(double) fill_angle);
+    Eigen::Vector2d rotated_point1 = rotation * point1;
+    Eigen::Vector2d rotated_point2 = rotation * point2;
+    return std::abs(rotated_point1[1] - rotated_point2[1]) < kVerticalTol ? fill_angle :
+           fill_angle < M_PI / 2.0 ? fill_angle + M_PI / 2.0 : fill_angle - M_PI / 2.0;
+}
+
+Polylines top_reorder_rotate(const Polylines &polylines, double angle)
+{
+    Eigen::Rotation2D rotation(angle);
+    Polylines out;
+    out.reserve(polylines.size());
+    for (const Polyline &src : polylines) {
+        Polyline &dst = out.emplace_back();
+        dst.points.reserve(src.points.size());
+        for (const Point &p : src.points) {
+            Eigen::Vector2d rotated = rotation * Eigen::Vector2d(p[0], p[1]);
+            dst.points.emplace_back(Point(rotated[0], rotated[1]));
+        }
+    }
+    return out;
+}
+
+// Split the rotated polylines into near-horizontal scan rows. Segments whose
+// vertical run is small are joined into the current row; a large x gap between
+// consecutive segments starts a new row.
+Polylines top_reorder_split_rows(const Polylines &scan_lines, float sclae_width)
+{
+    Polylines rows;
+    for (const Polyline &line : scan_lines) {
+        Polyline &cur = rows.emplace_back();
+        for (size_t j = 0; j < line.points.size(); ++j) {
+            if (j == 0) {
+                cur.points.push_back(line.points[j]);
+                cur.points.push_back(line.points[j + 1]);
+                ++j;
+                continue;
+            } else if (j == line.points.size() - 1) {
+                cur.points.push_back(line.points[j]);
+                continue;
+            }
+
+            long long distY = std::abs(line.points[j].y() - line.points[j + 1].y());
+            if (distY < kRowJoinTol * sclae_width) {
+                cur.points.push_back(line.points[j]);
+                cur.points.push_back(line.points[j + 1]);
+                if (cur.points.size() >= 2) {
+                    long long d1 = std::abs(line.points[j].x() - line.points[j + 1].x());
+                    long long d2 = std::abs(cur.points.back().x() - cur.points[cur.points.size() - 2].x());
+                    std::vector<long long> dist = { line.points[j].x(), line.points[j + 1].x(),
+                                                    cur.points.back().x(), cur.points[cur.points.size() - 2].x() };
+                    std::sort(dist.begin(), dist.end());
+                    long long d = std::abs(dist.back() - dist.front());
+                    if (d >= d1 + d2 + kRowSplitGap || std::abs(d1 - d2) > kRowAsymmetryGap)
+                        cur = Polyline(); // gap too wide: start a new row
+                }
+                ++j;
+            } else {
+                cur.points.push_back(line.points[j]);
+            }
+        }
+    }
+    rows.erase(std::remove_if(rows.begin(), rows.end(), [](const Polyline &p) { return p.points.empty(); }), rows.end());
+    return rows;
+}
+
+// Greedy chaining: starting from row 0 (rows must be sorted by y), repeatedly
+// append the widest unvisited row whose entry point is vertically adjacent to
+// the current row's exit point and x-overlapping; when stuck, start a new chain.
+std::vector<std::vector<int>> top_reorder_chain_rows(const Polylines &rows, float sclae_width)
+{
+    const double row_tol = LINE_WIDTH * sclae_width * 1000.;
+    std::vector<bool>          marked(rows.size(), false);
+    std::vector<std::vector<int>> chains;
+    marked[0] = true;
+    chains.push_back({ 0 });
+    int index_ptr = 0;
+    while (1) {
+        // Collect unvisited rows whose first flat segment is vertically adjacent to the current row's tail.
+        std::vector<int> candidates;
+        std::vector<int> candidate_rows;
+        for (int i = 0; i < int(rows.size()); ++i) {
+            if (marked[i])
+                continue;
+            int pi = 0;
+            for (int j = 0; j < int(rows[i].points.size()) - 1; ++j) {
+                if (std::abs(rows[i].points[j].y() - rows[i].points[j + 1].y()) < kAdjacentRowTol * sclae_width) {
+                    pi = j;
+                    break;
+                }
+            }
+            if (std::abs(rows[i].points[pi].y() - rows[index_ptr].points.back().y()) < row_tol) {
+                candidate_rows.push_back(pi);
+                candidates.push_back(i);
+            }
+        }
+
+        // Anchor x range of the current row's tail, possibly extended by the
+        // previous segment when its endpoints are far apart.
+        const int p_size = int(rows[index_ptr].points.size());
+        long long left  = rows[index_ptr].points.back().x();
+        long long right = rows[index_ptr].points[rows[index_ptr].points.size() - 2].x();
+        if (p_size >= 4) {
+            if (std::abs(rows[index_ptr].points[p_size - 3].y() - rows[index_ptr].points[p_size - 4].y()) < kAdjacentRowTol * sclae_width) {
+                std::vector<long long> x1 = { rows[index_ptr].points[p_size - 1].x(), rows[index_ptr].points[p_size - 2].x() };
+                std::sort(x1.begin(), x1.end());
+                std::vector<long long> x2 = { rows[index_ptr].points[p_size - 3].x(), rows[index_ptr].points[p_size - 4].x() };
+                std::sort(x2.begin(), x2.end());
+                long long tail_span = std::abs(rows[index_ptr].points.back().x() - rows[index_ptr].points[rows[index_ptr].points.size() - 2].x());
+                if (std::abs(x1.front() - x2.front()) > kRowEndpointGap && std::abs(x1.front() - x2.front()) > tail_span) {
+                    left  = std::min(x1.front(), x2.front());
+                    right = std::max(x1.front(), x2.front());
+                }
+                if (std::abs(x1.back() - x2.back()) > kRowEndpointGap && std::abs(x1.back() - x2.back()) > tail_span) {
+                    left  = std::min(x1.back(), x2.back());
+                    right = std::max(x1.back(), x2.back());
+                }
+            }
+        }
+
+        // Keep candidates whose x span overlaps the anchor range, pick the widest one.
+        std::vector<int> matched;
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            const Polyline &row = rows[candidates[i]];
+            int pi = candidate_rows[i];
+            long long bs = std::abs(row.points[pi].x() - row.points[pi + 1].x());
+            long long ts = std::abs(left - right);
+            std::vector<long long> x_sort = { row.points[pi].x(), row.points[pi + 1].x(), left, right };
+            std::sort(x_sort.begin(), x_sort.end());
+            long long dd = x_sort.back() - x_sort.front();
+            if (dd < bs + ts && (bs - ts) < ts)
+                matched.push_back(candidates[i]);
+        }
+
+        int index = -1;
+        long long max_x_span = std::numeric_limits<long long>::min();
+        for (int i : matched) {
+            long long x_span = std::abs(rows[i].points[0].x() - rows[i].points[1].x());
+            if (x_span > max_x_span) {
+                index = i;
+                max_x_span = x_span;
+            }
+        }
+        if (index != -1) {
+            chains.back().push_back(index);
+            marked[index] = true;
+            index_ptr = index;
+        }
+
+        // When no row matched, start a new chain at the first unvisited row.
+        bool done = true;
+        for (int i = 0; i < int(rows.size()); ++i) {
+            if (!marked[i]) {
+                if (index == -1) {
+                    index_ptr = i;
+                    chains.push_back({ i });
+                    marked[i] = true;
+                }
+                done = false;
+                break;
+            }
+        }
+        if (done)
+            break;
+    }
+    return chains;
+}
+
+// Splice chains together: when chain i's row n starts right above the tail of
+// an unconsumed chain j with overlapping x span, insert chain j between the
+// two halves of chain i.
+std::vector<std::vector<int>> top_reorder_merge_chains(const std::vector<std::vector<int>> &chains, const Polylines &rows, float sclae_width)
+{
+    const double row_tol = LINE_WIDTH * sclae_width * 1000.;
+    std::vector<std::vector<int>> merged;
+    std::vector<bool>             consumed(chains.size(), false);
+    for (int i = 0; i < int(chains.size()); ++i) {
+        bool spliced = false;
+        for (int n = 0; n < int(chains[i].size()) && !spliced; ++n) {
+            for (int j = 0; j < int(chains.size()); ++j) {
+                if (i == j || consumed[j])
+                    continue;
+                float by = rows[chains[i][n]].points[0].y();
+                float ty = rows[chains[j].back()].points.back().y();
+                if ((by - ty) < row_tol && (by - ty) > 0) {
+                    long long bs = std::abs(rows[chains[i][n]].points[0].x() - rows[chains[i][n]].points[1].x());
+                    const Polyline &tail = rows[chains[j].back()];
+                    long long ts = std::abs(tail.points.back().x() - tail.points[tail.points.size() - 2].x());
+                    std::vector<long long> x_sort = { rows[chains[i][n]].points[0].x(), rows[chains[i][n]].points[1].x(),
+                                                      tail.points.back().x(), tail.points[tail.points.size() - 2].x() };
+                    std::sort(x_sort.begin(), x_sort.end());
+                    if (x_sort.back() - x_sort.front() < bs + ts) {
+                        consumed[j] = true;
+                        merged.emplace_back(chains[i].begin(), chains[i].begin() + n);
+                        merged.emplace_back(chains[j]);
+                        merged.emplace_back(chains[i].begin() + n, chains[i].end());
+                        spliced = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!spliced && !consumed[i])
+            merged.push_back(chains[i]);
+    }
+    return merged;
+}
+
+} // namespace
+
+void reorder_top_infill_polylines(Polylines &polylines, float fill_angle, float sclae_width)
+{
+    const double rot_angle = top_reorder_scan_angle(polylines, fill_angle);
+    Polylines rows = top_reorder_split_rows(top_reorder_rotate(polylines, -rot_angle), sclae_width);
+    if (rows.empty())
+        return;
+    std::sort(rows.begin(), rows.end(), [](const Polyline &a, const Polyline &b) { return a.points[0].y() < b.points[0].y(); });
+
+    std::vector<std::vector<int>> chains = top_reorder_chain_rows(rows, sclae_width);
+    std::vector<std::vector<int>> merged = top_reorder_merge_chains(chains, rows, sclae_width);
+
+    // Rotate the rows back into the original frame and emit them in chained
+    // order, keeping the first occurrence of each row.
+    Eigen::Rotation2D rotation(rot_angle);
+    for (Polyline &row : rows){
+        for (Point& p : row.points) {
+            Eigen::Vector2d rotated = rotation * Eigen::Vector2d(p[0], p[1]);
+            p = Point(rotated[0], rotated[1]);
+        }
+    }
+
+    std::vector<bool> used(rows.size(), false);
+    polylines.clear();
+    for (const std::vector<int> &chain : merged){
+        for (int idx : chain) {
+            if (!used[idx]) {
+                used[idx] = true;
+                polylines.push_back(std::move(rows[idx]));
+            }
+        }
+    }
+}
+
 // BBS: this method is used to fill the ExtrusionEntityCollection. It call fill_surface by default
 void Fill::fill_surface_extrusion(const Surface* surface, const FillParams& params, ExtrusionEntitiesPtr& out)
 {
@@ -140,6 +400,12 @@ void Fill::fill_surface_extrusion(const Surface* surface, const FillParams& para
             polylines = this->fill_surface(surface, params);
     }
     catch (InfillFailedException&) {}
+
+    if (surface->is_top() && !surface->is_internal() && params.config->top_surface_pattern.value != ipLightning && !polylines.empty())
+        reorder_top_infill_polylines(polylines, this->angle, params.flow.width() / 0.45f);
+    else if (surface->surface_type == stInternalSolid && this->solid_under_top && !polylines.empty() &&
+             params.pattern != ipLightning)
+        reorder_top_infill_polylines(polylines, this->angle, params.flow.width() / 0.45f);
 
     if (!polylines.empty() || !thick_polylines.empty()) {
         // calculate actual flow from spacing (which might have been adjusted by the infill
@@ -163,21 +429,19 @@ void Fill::fill_surface_extrusion(const Surface* surface, const FillParams& para
         eec->no_sort = this->no_sort();
         // ORCA: special flag for flow rate calibration
         auto is_flow_calib = params.extrusion_role == erTopSolidInfill && this->print_object_config->has("calib_flowrate_topinfill_special_order") &&
-                             this->print_object_config->option("calib_flowrate_topinfill_special_order")->getBool();
+            this->print_object_config->option("calib_flowrate_topinfill_special_order")->getBool();
         if (is_flow_calib) {
             eec->no_sort = true;
         }
-        size_t idx   = eec->entities.size();
+        size_t idx = eec->entities.size();
         if (params.use_arachne) {
             Flow new_flow = params.flow.with_spacing(float(this->spacing));
             variable_width(thick_polylines, params.extrusion_role, new_flow, eec->entities);
             thick_polylines.clear();
         }
         else {
-            extrusion_entities_append_paths(
-                eec->entities, std::move(polylines),
-                params.extrusion_role,
-                flow_mm3_per_mm, float(flow_width), params.flow.height());
+            extrusion_entities_append_paths(eec->entities, std::move(polylines), 
+                params.extrusion_role, flow_mm3_per_mm, float(flow_width),params.flow.height());
         }
         if (!params.can_reverse || is_flow_calib) {
             for (size_t i = idx; i < eec->entities.size(); i++)

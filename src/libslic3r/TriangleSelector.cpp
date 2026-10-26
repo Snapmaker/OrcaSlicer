@@ -656,9 +656,9 @@ bool TriangleSelector::PrepareSelectionCursor(std::unique_ptr<Cursor> cursor)
     m_cursor = std::move(cursor);
     const bool isHeightRange = dynamic_cast<HeightRange*>(m_cursor.get()) != nullptr;
     const float baseLimit = isHeightRange ? 0.1f : 0.05f;
-    float edgeLimit = isHeightRange ? baseLimit : std::min(std::sqrt(m_cursor->radius_sqr) / 5.f, baseLimit);
-    // Base limits are in mm; floor them in world space so downscaled meshes are not over-split.
-    edgeLimit = std::max(edgeLimit, baseLimit * m_cursor->meshUnitsPerMm);
+    // Base limits are in mm; widen the cap for downscaled meshes so it never goes below that in world space.
+    const float limitCap = baseLimit * std::max(m_cursor->meshUnitsPerMm, 1.f);
+    const float edgeLimit = isHeightRange ? limitCap : std::min(std::sqrt(m_cursor->radius_sqr) / 5.f, limitCap);
     if (m_old_cursor_radius_sqr != m_cursor->radius_sqr || m_edge_limit != edgeLimit)
         set_edge_limit(edgeLimit);
     m_old_cursor_radius_sqr = m_cursor->radius_sqr;

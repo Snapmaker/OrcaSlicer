@@ -8992,7 +8992,8 @@ std::string GCode::retract(bool toolchange, bool is_last_retraction, LiftType li
         return gcode;
 
     // wipe (if it's enabled for this extruder and we have a stored wipe path and no-zero wipe distance)
-    if (EXTRUDER_CONFIG(wipe) && m_wipe.has_path() && scale_(EXTRUDER_CONFIG(wipe_distance)) > SCALED_EPSILON) {
+    if (EXTRUDER_CONFIG(wipe) && m_wipe.has_path() &&
+        scale_(get_value_at(m_config, m_config.wipe_distance, ConfigFlowDomain::Filament, m_writer.extruder()->id())) > SCALED_EPSILON) {
         Wipe::RetractionValues wipeRetractions = m_wipe.calculateWipeRetractionLengths(*this, toolchange);
         gcode += toolchange ? m_writer.retract_for_toolchange(true, wipeRetractions.retractLengthBeforeWipe) :
                               m_writer.retract(true, wipeRetractions.retractLengthBeforeWipe);

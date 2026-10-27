@@ -1,13 +1,3 @@
-// Phase 1 trimmed copy of upstream TexturePainting.cpp (upstream OrcaSlicer
-// main @ 069bd402, 758 lines). Kept here:
-//   - decode_texture_image / build_multi_texture_atlas (upstream :36-283)
-//   - decode_texture_to_pixels / sample_face_from_uvs / sample_face_from_texture /
-//     sample_original_face_colors (upstream :618-756)
-// Stubbed until Phase 2 (P2.1 ports TextureToColor/ + TextureDisplacement.hpp):
-//   - texture_to_painting / face_colors_to_painting / compute_delta_e /
-//     match_clusters_to_filaments / apply_painted_mesh_to_volume (upstream :285-616)
-//   - build_tex2color_mesh / extract_painted_mesh (upstream :63-138, only used by
-//     the functions above)
 #include "TexturePainting.hpp"
 
 #include <algorithm>
@@ -16,31 +6,98 @@
 #include <cstddef>
 #include <cstring>
 #include <map>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include <opencv2/core/mat.hpp>
 #include <opencv2/core/matx.hpp>
+#include <set>
+#include <string>
+#include <utility>
+
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include <boost/log/trivial.hpp>
+#include <vector>
 
 #include "Point.hpp"
-// Phase 2 (P2.1/P2.2) restores these upstream includes with the full algorithm:
-//   #include "TextureToColor/Callbacks.hpp"
-//   #include "TextureToColor/TextureToColor.hpp"
-//   #include "TextureToColor/ColorUtils.hpp"
-//   #include "TextureToColor/TriMesh.hpp"
-//   #include "TextureDisplacement.hpp"
+#include "TextureToColor/Callbacks.hpp"
+#include "TextureToColor/TextureToColor.hpp"
+#include "TextureToColor/ColorUtils.hpp"
+
 #include "Model.hpp"
+#include "TextureToColor/TriMesh.hpp"
 #include "TriangleMesh.hpp"
 #include "TriangleSelector.hpp"
 #include "BoundingBox.hpp"
+#include "AABBTreeIndirect.hpp"
+
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
 
 namespace Slic3r {
+
+// ---- Minimal port from upstream TextureDisplacement.cpp (upstream @ 069bd402) ----
+// The full TextureDisplacement feature is not ported yet; only the UV-channel
+// transfer used by apply_painted_mesh_to_volume() is needed by the texture-to-color
+// pipeline. When TextureDisplacement lands, delete these and include its header.
+
+// Barycentric weights of `p` in the triangle (a, b, c), expressed against the edges
+// (b - a) and (c - a): p ~= (1 - w1 - w2) * a + w1 * b + w2 * c. `p` is projected onto the triangle's
+// plane, so a point a hair off the surface still reports the weights of its foot point. A degenerate
+// triangle reports its centroid, the only coordinate that means anything there.
+static void barycentric_weights(const Vec3f &a, const Vec3f &b, const Vec3f &c, const Vec3f &p, float &w1, float &w2)
+{
+    const Vec3f e0 = b - a, e1 = c - a, ep = p - a;
+    const float d00 = e0.dot(e0), d01 = e0.dot(e1), d11 = e1.dot(e1), dp0 = ep.dot(e0), dp1 = ep.dot(e1);
+    const float den = d00 * d11 - d01 * d01;
+    if (std::abs(den) <= 1e-20f) {
+        w1 = w2 = 1.f / 3.f;
+        return;
+    }
+    w1 = (d11 * dp0 - d01 * dp1) / den;
+    w2 = (d00 * dp1 - d01 * dp0) / den;
+}
+
+// Resample a per-corner UV channel (src_uv, three entries per triangle of src_mesh) onto
+// dst_mesh by closest point: every destination corner samples the barycentric-interpolated
+// UV of its nearest point on the source surface. Corners farther than `max_distance`
+// from the source get (0, 0); pass a negative max_distance for no limit.
+static std::vector<Vec2f> transfer_uv_channel(const indexed_triangle_set &src_mesh,
+                                              const std::vector<Vec2f>   &src_uv,
+                                              const indexed_triangle_set &dst_mesh,
+                                              float                       max_distance = -1.f)
+{
+    if (src_mesh.indices.empty() || dst_mesh.indices.empty() || src_uv.size() != src_mesh.indices.size() * 3)
+        return {};
+
+    const AABBTreeIndirect::Tree3f tree =
+        AABBTreeIndirect::build_aabb_tree_over_indexed_triangle_set(src_mesh.vertices, src_mesh.indices);
+    const float limit2 = max_distance >= 0.f ? max_distance * max_distance : std::numeric_limits<float>::max();
+
+    std::vector<Vec2f> out(dst_mesh.indices.size() * 3, Vec2f::Zero());
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, dst_mesh.indices.size()),
+                      [&](const tbb::blocked_range<size_t> &range) {
+        for (size_t j = range.begin(); j < range.end(); ++j) {
+            const stl_triangle_vertex_indices &tri = dst_mesh.indices[j];
+            for (int k = 0; k < 3; ++k) {
+                const Vec3f &p = dst_mesh.vertices[size_t(tri[k])];
+                size_t       hit = 0;
+                Vec3f        foot;
+                const float  d2 = AABBTreeIndirect::squared_distance_to_indexed_triangle_set(
+                    src_mesh.vertices, src_mesh.indices, tree, p, hit, foot);
+                if (d2 < 0.f || d2 > limit2 || hit >= src_mesh.indices.size())
+                    continue; // nowhere near the source surface: (0, 0), as documented
+                const stl_triangle_vertex_indices &st = src_mesh.indices[hit];
+                float w1 = 0.f, w2 = 0.f;
+                barycentric_weights(src_mesh.vertices[size_t(st[0])], src_mesh.vertices[size_t(st[1])],
+                                    src_mesh.vertices[size_t(st[2])], foot, w1, w2);
+                const Vec2f *uv        = &src_uv[hit * 3];
+                out[j * 3 + size_t(k)] = (1.f - w1 - w2) * uv[0] + w1 * uv[1] + w2 * uv[2];
+            }
+        }
+    });
+    return out;
+}
 
 static cv::Mat decode_texture_image(const TextureImage& img) {
     if (img.data.empty())
@@ -69,17 +126,82 @@ static cv::Mat decode_texture_image(const TextureImage& img) {
     return bgr;
 }
 
-// Phase 2 stub — copy from upstream :63-112 with TextureToColor/TriMesh.hpp.
-// static void build_tex2color_mesh(
-//     const TexturedMesh& textured,
-//     tex2color::TriMesh& mesh,
-//     std::vector<std::vector<Vec2f>>& uv_coords)
+static void build_tex2color_mesh(
+    const TexturedMesh& textured,
+    tex2color::TriMesh& mesh,
+    std::vector<std::vector<Vec2f>>& uv_coords)
+{
+    const size_t nv = textured.vertices.size();
+    const size_t nf = textured.indices.size();
 
-// Phase 2 stub — copy from upstream :114-138 with TextureToColor/TriMesh.hpp.
-// static void extract_painted_mesh(
-//     const tex2color::TriMesh& color_mesh,
-//     const std::vector<std::array<std::size_t,3>>& face_colors,
-//     PaintedMesh& painted)
+    mesh.vertices.resize(nv);
+    for (size_t i = 0; i < nv; ++i) {
+        mesh.vertices[i] = Vec3f(
+            textured.vertices[i][0],
+            textured.vertices[i][1],
+            textured.vertices[i][2]);
+    }
+
+    mesh.indices.resize(nf);
+    for (size_t i = 0; i < nf; ++i) {
+        mesh.indices[i] = Vec3i32(
+            textured.indices[i][0],
+            textured.indices[i][1],
+            textured.indices[i][2]);
+    }
+
+    uv_coords.resize(nf);
+    for (size_t fi = 0; fi < nf; ++fi) {
+        uv_coords[fi].resize(3);
+        for (int vi = 0; vi < 3; ++vi) {
+            if (textured.has_face_uvs()) {
+                int uv_idx = textured.uv_indices[fi][vi];
+                if (uv_idx >= 0 && static_cast<size_t>(uv_idx) < textured.uv_coords.size()) {
+                    uv_coords[fi][vi] = Vec2f(
+                        textured.uv_coords[uv_idx][0],
+                        textured.uv_coords[uv_idx][1]);
+                } else {
+                    uv_coords[fi][vi] = Vec2f(0.f, 0.f);
+                }
+            } else {
+                int vtx_idx = textured.indices[fi][vi];
+                if (vtx_idx >= 0 && static_cast<size_t>(vtx_idx) < textured.uvs.size()) {
+                    uv_coords[fi][vi] = Vec2f(
+                        textured.uvs[vtx_idx][0],
+                        textured.uvs[vtx_idx][1]);
+                } else {
+                    uv_coords[fi][vi] = Vec2f(0.f, 0.f);
+                }
+            }
+        }
+    }
+}
+
+static void extract_painted_mesh(
+    const tex2color::TriMesh& color_mesh,
+    const std::vector<std::array<std::size_t,3>>& face_colors,
+    PaintedMesh& painted)
+{
+    const size_t nv = color_mesh.vertices.size();
+    const size_t nf = color_mesh.indices.size();
+
+    painted.vertices.resize(nv);
+    for (size_t i = 0; i < nv; ++i) {
+        const auto& v = color_mesh.vertices[i];
+        painted.vertices[i] = {v.x(), v.y(), v.z()};
+    }
+
+    painted.indices.resize(nf);
+    for (size_t i = 0; i < nf; ++i) {
+        const auto& f = color_mesh.indices[i];
+        painted.indices[i] = {f[0], f[1], f[2]};
+    }
+
+    painted.face_colors = face_colors;
+
+    std::set<std::array<std::size_t,3>> unique_colors(face_colors.begin(), face_colors.end());
+    painted.cluster_colors.assign(unique_colors.begin(), unique_colors.end());
+}
 
 // Build a vertically-stacked atlas from multiple textures and remap per-face UVs.
 //
@@ -226,62 +348,338 @@ static bool build_multi_texture_atlas(
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// Phase 1 stubs. Full bodies return in Phase 2: copy from upstream
-// TexturePainting.cpp :285-616 once TextureToColor/ and TextureDisplacement.hpp
-// are ported (P2.1/P2.2). Signatures match TexturePainting.hpp so callers and
-// the dialog compile unchanged.
-// ---------------------------------------------------------------------------
-
-// Phase 2: upstream :285-366.
 bool texture_to_painting(
-    const TexturedMesh& /*textured*/,
-    PaintedMesh& /*painted*/,
-    const TexturePaintingSettings& /*settings*/,
-    PaintProgressCallback /*progress*/,
-    PaintCancelCallback /*cancel*/)
+    const TexturedMesh& textured,
+    PaintedMesh& painted,
+    const TexturePaintingSettings& settings,
+    PaintProgressCallback progress,
+    PaintCancelCallback cancel)
 {
-    return false;
+    if (textured.vertices.empty() || textured.indices.empty() || textured.textures.empty())
+        return false;
+
+    cv::Mat texture;
+    tex2color::TriMesh input_mesh;
+    std::vector<std::vector<Vec2f>> uv_coords;
+
+    const bool multi_tex = textured.textures.size() > 1 && !textured.material_texture_map.empty();
+
+    if (multi_tex) {
+        if (!build_multi_texture_atlas(textured, texture, uv_coords))
+            return false;
+        // Build mesh geometry (atlas UVs already computed above)
+        const size_t nv = textured.vertices.size();
+        const size_t nf = textured.indices.size();
+        input_mesh.vertices.resize(nv);
+        for (size_t i = 0; i < nv; ++i)
+            input_mesh.vertices[i] = Vec3f(
+                textured.vertices[i][0], textured.vertices[i][1], textured.vertices[i][2]);
+        input_mesh.indices.resize(nf);
+        for (size_t i = 0; i < nf; ++i)
+            input_mesh.indices[i] = Vec3i32(
+                textured.indices[i][0], textured.indices[i][1], textured.indices[i][2]);
+    } else {
+        texture = decode_texture_image(textured.textures[0]);
+        if (texture.empty())
+            return false;
+        build_tex2color_mesh(textured, input_mesh, uv_coords);
+    }
+
+    tex2color::TextureToColorSettings algo_settings;
+    algo_settings.target_colors_num  = settings.target_colors_num;
+    algo_settings.smooth_weight      = settings.smooth_weight;
+    algo_settings.oversampling_iters = settings.oversampling_iters;
+    switch (settings.mesh_repair_decision) {
+    case TexturePaintingSettings::MeshRepairDecision::Ask:
+        algo_settings.mesh_repair_decision = tex2color::MeshRepairDecision::Ask;
+        break;
+    case TexturePaintingSettings::MeshRepairDecision::RepairAndImport:
+        algo_settings.mesh_repair_decision = tex2color::MeshRepairDecision::RepairAndImport;
+        break;
+    case TexturePaintingSettings::MeshRepairDecision::ImportWithoutRepair:
+    default:
+        algo_settings.mesh_repair_decision = tex2color::MeshRepairDecision::ImportWithoutRepair;
+        break;
+    }
+
+    tex2color::AlgoProgressCallback algo_progress = nullptr;
+    if (progress) {
+        algo_progress = [&progress](tex2color::AlgoProgress p) {
+            progress(p.percent, p.message);
+        };
+    }
+
+    tex2color::AlgoCancelCallback algo_cancel = nullptr;
+    if (cancel) {
+        algo_cancel = [&cancel]() -> bool { return cancel(); };
+    }
+
+    tex2color::TriMesh color_mesh;
+    std::vector<std::array<std::size_t,3>> face_colors;
+    algo_settings.mesh_repair_decision_required = settings.mesh_repair_decision_required;
+    algo_settings.mesh_repair_callback = settings.mesh_repair_callback;
+
+    bool ok = tex2color::TextureToColor(
+        input_mesh, uv_coords, texture,
+        color_mesh, face_colors,
+        algo_settings, algo_progress, algo_cancel);
+
+    if (!ok)
+        return false;
+
+    extract_painted_mesh(color_mesh, face_colors, painted);
+    return true;
 }
 
-// Phase 2: upstream :368-429.
 bool face_colors_to_painting(
-    const TexturedMesh& /*mesh*/,
-    PaintedMesh& /*painted*/,
-    const TexturePaintingSettings& /*settings*/,
-    PaintProgressCallback /*progress*/,
-    PaintCancelCallback /*cancel*/)
+    const TexturedMesh& mesh,
+    PaintedMesh& painted,
+    const TexturePaintingSettings& settings,
+    PaintProgressCallback progress,
+    PaintCancelCallback cancel)
 {
-    return false;
+    if (mesh.vertices.empty() || mesh.indices.empty() || mesh.precomputed_face_colors.empty())
+        return false;
+
+    // Build tex2color::TriMesh from input geometry
+    tex2color::TriMesh input_mesh;
+    input_mesh.vertices.resize(mesh.vertices.size());
+    for (size_t i = 0; i < mesh.vertices.size(); ++i)
+        input_mesh.vertices[i] = Vec3f(mesh.vertices[i][0], mesh.vertices[i][1], mesh.vertices[i][2]);
+    input_mesh.indices.resize(mesh.indices.size());
+    for (size_t i = 0; i < mesh.indices.size(); ++i)
+        input_mesh.indices[i] = Vec3i32(mesh.indices[i][0], mesh.indices[i][1], mesh.indices[i][2]);
+
+    // Forward settings to tex2color
+    tex2color::TextureToColorSettings algo_settings;
+    algo_settings.target_colors_num = settings.target_colors_num;
+    algo_settings.smooth_weight     = settings.smooth_weight;
+    switch (settings.mesh_repair_decision) {
+    case TexturePaintingSettings::MeshRepairDecision::Ask:
+        algo_settings.mesh_repair_decision = tex2color::MeshRepairDecision::Ask;
+        break;
+    case TexturePaintingSettings::MeshRepairDecision::RepairAndImport:
+        algo_settings.mesh_repair_decision = tex2color::MeshRepairDecision::RepairAndImport;
+        break;
+    case TexturePaintingSettings::MeshRepairDecision::ImportWithoutRepair:
+    default:
+        algo_settings.mesh_repair_decision = tex2color::MeshRepairDecision::ImportWithoutRepair;
+        break;
+    }
+    algo_settings.mesh_repair_decision_required = settings.mesh_repair_decision_required;
+    algo_settings.mesh_repair_callback = settings.mesh_repair_callback;
+
+    tex2color::AlgoProgressCallback algo_progress = nullptr;
+    if (progress) {
+        algo_progress = [&progress](tex2color::AlgoProgress p) {
+            progress(p.percent, p.message);
+        };
+    }
+    tex2color::AlgoCancelCallback algo_cancel = nullptr;
+    if (cancel) {
+        algo_cancel = [&cancel]() -> bool { return cancel(); };
+    }
+
+    tex2color::TriMesh out_mesh;
+    std::vector<std::array<std::size_t,3>> out_face_colors;
+    bool ok = tex2color::ClusterAndSmooth(
+        input_mesh, mesh.precomputed_face_colors, out_mesh, out_face_colors,
+        algo_settings, algo_progress, algo_cancel,
+        mesh.precomputed_vertex_colors);
+
+    if (!ok)
+        return false;
+
+    extract_painted_mesh(out_mesh, out_face_colors, painted);
+    return true;
 }
 
-// Phase 2: upstream :431-442 (tex2color::color_utils::calc_rgb_color_difference_by_ciede2000).
 double compute_delta_e(
-    const std::array<std::size_t,3>& /*rgb1*/,
-    const std::array<float,4>& /*rgba2*/)
+    const std::array<std::size_t,3>& rgb1,
+    const std::array<float,4>& rgba2)
 {
-    return 0.0;
+    return tex2color::color_utils::calc_rgb_color_difference_by_ciede2000(
+        rgb1,
+        {
+            static_cast<std::size_t>(rgba2[0] * 255.0f),
+            static_cast<std::size_t>(rgba2[1] * 255.0f),
+            static_cast<std::size_t>(rgba2[2] * 255.0f)
+        });
 }
 
-// Phase 2: upstream :444-466.
 std::vector<FilamentMatch> match_clusters_to_filaments(
-    const std::vector<std::array<std::size_t,3>>& /*cluster_colors*/,
-    const std::vector<std::array<float,4>>& /*filament_colors*/,
+    const std::vector<std::array<std::size_t,3>>& cluster_colors,
+    const std::vector<std::array<float,4>>& filament_colors,
     const std::vector<std::string>& /*filament_names*/)
 {
-    return {};
+    std::vector<FilamentMatch> matches(cluster_colors.size());
+
+    for (size_t ci = 0; ci < cluster_colors.size(); ++ci) {
+        matches[ci].cluster_index = static_cast<int>(ci);
+        matches[ci].cluster_color = cluster_colors[ci];
+        matches[ci].delta_e = 1e9;
+
+        for (size_t fi = 0; fi < filament_colors.size(); ++fi) {
+            double de = compute_delta_e(cluster_colors[ci], filament_colors[fi]);
+            if (de < matches[ci].delta_e) {
+                matches[ci].delta_e = de;
+                matches[ci].filament_index = static_cast<int>(fi);
+                matches[ci].filament_color = filament_colors[fi];
+            }
+        }
+    }
+    return matches;
 }
 
-// Phase 2: upstream :468-616 (mmu segmentation write-back via TriangleSelector).
 bool apply_painted_mesh_to_volume(
-    const PaintedMesh& /*painted*/,
-    const std::vector<FilamentMatch>& /*matches*/,
-    ModelVolume& /*volume*/)
+    const PaintedMesh& painted,
+    const std::vector<FilamentMatch>& matches,
+    ModelVolume& volume)
 {
-    return false;
-}
+    if (painted.face_colors.empty() || matches.empty())
+        return false;
 
-// ---------------------------------------------------------------------------
+    const auto& cluster_colors = painted.cluster_colors;
+    std::map<std::array<std::size_t,3>, int> color_to_filament;
+    for (const auto& m : matches) {
+        if (m.cluster_index >= 0 && m.cluster_index < (int)cluster_colors.size() && m.filament_index >= 0)
+            color_to_filament[cluster_colors[m.cluster_index]] = m.filament_index;
+    }
+
+    indexed_triangle_set its;
+    its.vertices.resize(painted.vertices.size());
+    for (size_t i = 0; i < painted.vertices.size(); ++i) {
+        its.vertices[i] = Vec3f(
+            painted.vertices[i][0],
+            painted.vertices[i][1],
+            painted.vertices[i][2]);
+    }
+    its.indices.resize(painted.indices.size());
+    for (size_t i = 0; i < painted.indices.size(); ++i) {
+        its.indices[i] = Vec3i32(
+            painted.indices[i][0],
+            painted.indices[i][1],
+            painted.indices[i][2]);
+    }
+
+    TriangleMesh new_mesh(std::move(its));
+
+    // The volume already went through ModelObject::add_volume ->
+    // center_geometry_after_creation, which translated its mesh by
+    // -source.mesh_offset (and folded that shift into the volume
+    // transformation). The painted mesh, however, is derived from the
+    // raw textured mesh and is therefore expressed in the original
+    // un-centered coordinate frame. Reuse the exact recorded shift to
+    // align it -- do NOT compute it from the bounding-box centers of
+    // the two meshes: tex2color::TextureToColor performs subdivision
+    // and CGAL polygon-soup repair, so the painted vertex count and
+    // bbox no longer match the original textured mesh and a bbox-
+    // center alignment would silently displace the geometry.
+    //
+    // If the model has been scaled by Model::convert_from_meters /
+    // convert_from_imperial_units after load, the painted mesh fed
+    // here is already in millimetres (Model::convert_* also scales
+    // texture_mesh in place) while source.mesh_offset was recorded
+    // before the conversion and therefore still lives in the original
+    // pre-scaled frame. Bring it into the same frame as the painted
+    // vertices so the alignment shift below stays correct on the
+    // textured-import path. This compensation is scoped to this
+    // function so that other (non-textured) import paths are not
+    // affected.
+    Vec3d mesh_offset = volume.source.mesh_offset;
+    double unit_scale = 1.0;
+    if (volume.source.is_converted_from_meters)
+        unit_scale = 1000.0;
+    else if (volume.source.is_converted_from_inches)
+        unit_scale = 25.4;
+    if (unit_scale != 1.0)
+        mesh_offset *= unit_scale;
+
+    if (!mesh_offset.isApprox(Vec3d::Zero()))
+        new_mesh.translate(-mesh_offset.cast<float>());
+    new_mesh.set_init_shift(mesh_offset);
+
+    // Log bbox drift for diagnostics. Subdivision + CGAL polygon-soup
+    // repair routinely changes vertex count and bbox, so moderate drift
+    // is expected and must not block the apply.
+    if (!new_mesh.empty() && !volume.mesh().empty()) {
+        const Vec3d new_center = new_mesh.bounding_box().center();
+        const Vec3d cur_center = volume.mesh().bounding_box().center();
+        const double diag      = volume.mesh().bounding_box().size().norm();
+        const double drift     = (new_center - cur_center).norm();
+        if (drift > 0.05 * std::max(1.0, diag))
+            BOOST_LOG_TRIVIAL(warning)
+                << "apply_painted_mesh_to_volume: painted bbox center drifted by "
+                << drift << " (bbox diag=" << diag
+                << ", unit_scale=" << unit_scale
+                << ", from_meters=" << volume.source.is_converted_from_meters
+                << ", from_inches=" << volume.source.is_converted_from_inches << ")";
+        else if (drift > 1e-3 * std::max(1.0, diag))
+            BOOST_LOG_TRIVIAL(info)
+                << "apply_painted_mesh_to_volume: minor bbox drift "
+                << drift << " (bbox diag=" << diag
+                << ", unit_scale=" << unit_scale << ")";
+    }
+
+    // The model's own UV channel is indexed by triangle, and this replaces the triangles, so it has
+    // to be resampled onto them. Kept rather than dropped because it is the layout the model was
+    // authored against: a texture-displacement layer set to ModelUV maps through it, and the colour
+    // import is exactly the path a model that carries one arrives by.
+    const indexed_triangle_set old_its = volume.has_texture_uv() ? volume.mesh().its : indexed_triangle_set{};
+    const std::vector<Vec2f>   old_uv  = volume.texture_uv;
+
+    volume.set_mesh(std::move(new_mesh));
+    volume.calculate_convex_hull();
+
+    // Resampled here and not further down, while the two meshes still share a frame: the painted mesh
+    // was just shifted by the same source.mesh_offset the old one was centred by, so the only thing
+    // between them is whatever drift the repair introduced. The re-centering below translates the mesh
+    // again, and a translation is exactly what a closest-point transfer cannot see through - it would
+    // read every uv off a point that far away. A uv is a coordinate in the texture, so it does not care
+    // about either shift; it just has to be read before the second one happens.
+    if (!old_its.indices.empty())
+        volume.texture_uv = transfer_uv_channel(old_its, old_uv, volume.mesh().its);
+    else
+        // No channel to carry, so make sure none is left behind either: a leftover of the right length
+        // would read as a valid channel against a mesh it was never measured on.
+        volume.reset_texture_uv();
+
+    // Re-center the replaced mesh so its bbox center sits at the origin,
+    // matching what center_geometry_after_creation did for the original mesh.
+    // CGAL repair / subdivision may shift the bbox center (drift); without
+    // re-centering, the volume offset (which was computed for the original
+    // centered mesh) no longer matches, causing the model to float or clip.
+    // Pass false to keep source.mesh_offset unchanged.
+    volume.center_geometry_after_creation(false);
+    volume.invalidate_convex_hull_2d();
+
+    // Mesh geometry has been replaced; any per-face annotation indexed
+    // against the previous triangle set is now stale. mmu_segmentation_facets
+    // is rewritten below from the new selector; reset the others so future
+    // import paths that carry support / seam / fuzzy_skin painting cannot
+    // leak indices from the old mesh into the new one.
+    volume.supported_facets.reset();
+    volume.fuzzy_skin_facets.reset();
+    volume.seam_facets.reset();
+
+    if (ModelObject* obj = volume.get_object())
+        obj->invalidate_bounding_box();
+
+    TriangleSelector selector(volume.mesh());
+    for (size_t fi = 0; fi < painted.face_colors.size() && fi < (size_t)volume.mesh().its.indices.size(); ++fi) {
+        auto it = color_to_filament.find(painted.face_colors[fi]);
+        if (it != color_to_filament.end()) {
+            int extruder_idx = it->second;
+            auto state = static_cast<EnforcerBlockerType>(
+                static_cast<int>(EnforcerBlockerType::Extruder1) + extruder_idx);
+            if (state <= EnforcerBlockerType::ExtruderMax)
+                selector.set_facet(static_cast<int>(fi), state);
+        }
+    }
+
+    volume.mmu_segmentation_facets.set(selector);
+    return true;
+}
 
 bool decode_texture_to_pixels(
     const TextureImage& img,

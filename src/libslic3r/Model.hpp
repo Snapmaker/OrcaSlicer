@@ -55,6 +55,7 @@ class ModelInstance;
 class ModelMaterial;
 class ModelObject;
 class ModelVolume;
+struct TexturedMesh;
 class ModelWipeTower;
 class Print;
 class SLAPrint;
@@ -888,6 +889,25 @@ public:
     mutable std::vector<int> mmuseg_extruders;
     mutable Timestamp        mmuseg_ts;
 
+    // The model's own texture coordinates, as the file it was imported from carried them: three per
+    // triangle of mesh().its, in its triangle order (corner k of triangle i at 3i+k), V already
+    // flipped to the sampling convention (V = 0 is the image's top row). Empty when the source had
+    // none, which is every STL and every 3mf - only a textured OBJ brings one in today.
+    //
+    // Per corner rather than per vertex because that is what a UV layout is: the two sides of a seam
+    // are the same vertex with two different coordinates, and collapsing them would smear the texture
+    // across every island boundary.
+    //
+    // Indexed by triangle, so anything that *replaces* the mesh has to bring it across (or drop it):
+    // see transfer_uv_channel() in TexturePainting.cpp (ported from upstream TextureDisplacement.cpp),
+    // and reset_texture_uv() for the cases that cannot.
+    std::vector<Vec2f> texture_uv;
+
+    bool has_texture_uv() const { return !texture_uv.empty() && texture_uv.size() == mesh().its.indices.size() * 3; }
+    // Forgets the channel. For a mesh change that nothing can carry it across - a split, a boolean -
+    // where leaving it would map the texture by another mesh's triangle numbering.
+    void reset_texture_uv() { texture_uv.clear(); }
+
     // List of exterior faces
     FacetsAnnotation    exterior_facets;
 
@@ -1615,8 +1635,7 @@ public:
         std::vector<Preset*>* project_presets = nullptr, bool* is_xxx = nullptr, Semver* file_version = nullptr, Import3mfProgressFn proFn = nullptr,
                                 ImportstlProgressFn        stlFn                = nullptr,
                                 BBLProject *               project              = nullptr,
-                                int                        plate_id             = 0,
-                                ObjImportColorFn           objFn                = nullptr
+                                int                        plate_id             = 0
                                 );
     // BBS
     static bool    obj_import_vertex_color_deal(const std::vector<unsigned char> &vertex_filament_ids, const unsigned char &first_extruder_id, Model *model);
@@ -1728,6 +1747,10 @@ public:
     bool          is_fuzzy_skin_painted() const;
 
     std::unique_ptr<CalibPressureAdvancePattern> calib_pa_pattern;
+
+    // Texture mesh captured at import (OBJ map_Kd / OBJ precomputed colors /
+    // glTF-FBX materials); consumed by the texture import dialog in Plater.
+    std::shared_ptr<TexturedMesh> texture_mesh;
 
 private:
     explicit Model(int) : ObjectBase(-1)

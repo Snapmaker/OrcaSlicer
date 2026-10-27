@@ -461,6 +461,10 @@ set(lisbslic3r_sources
     TriangleMesh.hpp
     TexturePainting.cpp
     TexturePainting.hpp
+    TextureToColor/TextureToColor.hpp
+    TextureToColor/TextureToColor.cpp
+    TextureToColor/ColorUtils.hpp
+    TextureToColor/ColorUtils.cpp
     TriangleMeshSlicer.cpp
     TriangleMeshSlicer.hpp
     TriangleSelector.cpp
@@ -501,12 +505,13 @@ find_package(OpenCV REQUIRED core)
 find_package(assimp CONFIG REQUIRED)
 cmake_policy(POP)
 
-add_library(libslic3r_cgal STATIC 
+add_library(libslic3r_cgal STATIC
     CutSurface.hpp CutSurface.cpp
     IntersectionPoints.hpp IntersectionPoints.cpp
     MeshBoolean.hpp MeshBoolean.cpp
     TryCatchSignal.hpp TryCatchSignal.cpp
     Triangulation.hpp Triangulation.cpp
+    MeshRepair.hpp MeshRepair.cpp
 )
 target_include_directories(libslic3r_cgal PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
@@ -526,7 +531,15 @@ if (_opts)
     target_compile_options(libslic3r_cgal PRIVATE "${_opts_bad}")
 endif()
 
-target_link_libraries(libslic3r_cgal PRIVATE ${_cgal_tgt} eigen admesh libigl mcut boost_libs)
+# Lets CGAL algorithms given CGAL::Parallel_if_available_tag run on TBB.
+target_compile_definitions(libslic3r_cgal PRIVATE CGAL_LINKED_WITH_TBB)
+# CGAL_LINKED_WITH_TBB pulls TBB headers, which on Windows pull windows.h; without NOMINMAX
+# its min/max macros mangle std::min/std::max in CGAL inline code (upstream gets this
+# definition from libigl's usage requirements, this fork's libigl does not propagate it).
+if (WIN32)
+    target_compile_definitions(libslic3r_cgal PRIVATE NOMINMAX)
+endif ()
+target_link_libraries(libslic3r_cgal PRIVATE ${_cgal_tgt} eigen admesh libigl mcut boost_libs TBB::tbb)
 
 if (MSVC AND "${CMAKE_SIZEOF_VOID_P}" STREQUAL "4") # 32 bit MSVC workaround
     target_compile_definitions(libslic3r_cgal PRIVATE CGAL_DO_NOT_USE_MPZF)
@@ -535,8 +548,12 @@ endif ()
 encoding_check(libslic3r)
 
 target_compile_definitions(libslic3r PUBLIC -DUSE_TBB -DTBB_USE_CAPTURED_EXCEPTION=0)
+# CGAL changes Kd_tree's member layout when TBB is enabled. Match libslic3r_cgal
+# in every consumer so inline constructors/destructors cannot mix the two layouts
+# (TextureToColor/ compiles CGAL inline code inside libslic3r).
+target_compile_definitions(libslic3r PUBLIC CGAL_LINKED_WITH_TBB)
 # Make source directory PUBLIC so other modules (like libslic3r_gui) can include headers like SentryWrapper.hpp
-target_include_directories(libslic3r PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(libslic3r PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/TextureToColor ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(libslic3r SYSTEM PUBLIC ${EXPAT_INCLUDE_DIRS})
 
 # Find the OCCT and related libraries
@@ -636,6 +653,13 @@ endif()
 if(SLIC3R_PROFILE)
     target_link_libraries(libslic3r PRIVATE Shiny)
 endif()
+
+if (WIN32)
+    # Public, since BlacklistedLibraryCheck.hpp includes windows.h. Empty
+    # WIN32_LEAN_AND_MEAN matches the sources that define it themselves; bare
+    # NOMINMAX matches the one libigl already passes upstream.
+    target_compile_definitions(libslic3r PUBLIC "WIN32_LEAN_AND_MEAN=" "NOMINMAX")
+endif ()
 
 if (SLIC3R_PCH AND NOT SLIC3R_SYNTAXONLY)
     add_precompiled_header(libslic3r pchheader.hpp FORCEINCLUDE)

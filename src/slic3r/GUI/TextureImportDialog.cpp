@@ -8,13 +8,11 @@
 #include "format.hpp"
 #include "GUI_App.hpp"
 #include "MsgDialog.hpp"
-// Phase 3 restores these with the auto-mix / virtual-filament-picker features:
+// Phase 3 restores these with the auto-mix feature:
 //   #include "ColorDecomposeDialog.hpp"
-//   #include "ColorPickerDialog.hpp"
 //   #include "ColorDecomposeSupport.hpp"
 //   #include "libslic3r/ColorDecomposeRecipe.hpp"
-// Phase 2 restores this with the mesh-repair decision flow:
-//   #include "libslic3r/MeshRepair.hpp"
+#include "libslic3r/MeshRepair.hpp"
 #include "libslic3r/Color.hpp"
 #include <optional>
 #include <variant>
@@ -23,7 +21,6 @@
 #include "Widgets/StaticLine.hpp"
 #include "libslic3r/TriangleSelector.hpp"
 
-// Phase 1 (S4.5) demo clustering for the mapping rows.
 #include <opencv2/core.hpp>
 
 #include <utility>
@@ -41,6 +38,7 @@
 #include <mutex>
 #include <wx/button.h>
 #include <wx/colour.h>
+#include <wx/colordlg.h>
 #include <wx/dc.h>
 #include <wx/dcclient.h>
 #include <wx/dcbuffer.h>
@@ -462,7 +460,7 @@ static bool texture_entry_official_basic(const TextureFilamentEntry& entry)
 {
     if (!texture_entry_is_physical(entry.kind))
         return false;
-    // Phase 1 local stand-in for official_basic_type_from_preset_name
+    // Local stand-in for official_basic_type_from_preset_name
     // (upstream ColorDecomposeSupport): recognize the default virtual filament
     // preset family. Phase 3 restores the full color-code table mapping.
     auto official_basic_type_from_preset_name = [](const std::string& name) -> std::string {
@@ -603,18 +601,44 @@ public:
         add_section(_L("Project Mixed Filaments"), TextureFilamentKind::ExistingMixed);
         add_section(_L("New Mixed Filaments"), TextureFilamentKind::NewMixed);
 
-        // Phase 1: "+ Add Material" is shown greyed-out — opening the colour
-        // picker (upstream :628-651, ColorPickerDialog) and the "Decompose
-        // Color" entry (Phase 3 auto-mix) are disabled until those dialogs are
-        // ported. add_virtual_filament() is stubbed accordingly.
+        // "+ Add Material" opens a native colour picker. Fork adaptation: upstream uses its
+        // WebView-based ColorPickerDialog here, which is not ported; wxColourDialog covers the
+        // same pick-a-colour flow with the fork's standard native picker. The "Decompose
+        // Color" entry is Phase 3 (auto-mix) and stays absent meanwhile.
+        const bool add_enabled = !m_can_add_filament || m_can_add_filament();
         auto* add_label = new wxStaticText(this, wxID_ANY, _L("+ Add Material"));
         wxFont af = add_label->GetFont();
         af.SetPointSize(10);
         add_label->SetFont(af);
-        const wxColour header_clr_add = StateColor::darkModeColorFor(wxColour("#ACACAC"));
-        add_label->SetForegroundColour(header_clr_add);
-        add_label->SetCursor(wxCursor(wxCURSOR_ARROW));
-        add_label->SetToolTip(_L("Adding custom filaments is not available yet."));
+        const wxColour action_clr = StateColor::darkModeColorFor(wxColour("#009688"));
+        add_label->SetForegroundColour(add_enabled ? action_clr : header_clr);
+        add_label->SetCursor(wxCursor(add_enabled ? wxCURSOR_HAND : wxCURSOR_ARROW));
+        if (!add_enabled)
+            add_label->SetToolTip(wxString::Format(
+                _L_PLURAL("The project supports up to %d filament. Extra filaments will be discarded.",
+                          "The project supports up to %d filaments. Extra filaments will be discarded.",
+                          (int)MAXIMUM_EXTRUDER_NUMBER),
+                (int)MAXIMUM_EXTRUDER_NUMBER));
+        add_label->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) {
+            if (m_can_add_filament && !m_can_add_filament())
+                return;
+            auto on_add_filament = m_on_add_filament;
+            wxWindow* popup_parent = GetParent();
+            m_closing_from_action = true;
+            std::optional<wxColour> selected;
+            {
+                // Close the transient popup before the modal picker opens, mirroring the
+                // upstream flow; only copied locals are used below (Dismiss() destroys us).
+                Dismiss();
+                wxColourData cd;
+                cd.SetColour(wxColour(0, 0, 0));
+                cd.SetChooseFull(true);
+                wxColourDialog dlg(popup_parent, &cd);
+                if (dlg.ShowModal() == wxID_OK)
+                    selected = dlg.GetColourData().GetColour();
+            }
+            if (selected && on_add_filament) on_add_filament(*selected);
+        });
 
         m_content->SetSizer(outer);
         m_content->FitInside();
@@ -1728,11 +1752,25 @@ TextureImportDialog::~TextureImportDialog()
 
 int TextureImportDialog::ShowModal()
 {
-    // Phase 1: computation is the synchronous demo path (see start_computation),
-    // so the upstream initial-computation polling loop (upstream :1888-1906)
-    // is not needed. Phase 2 restores it together with the worker thread.
     if (m_state == TextureImportState::Idle && m_painted.face_colors.empty()) {
         start_computation(true, true);
+
+        while (m_initial_computation_pending) {
+            if (auto* event_loop = wxEventLoopBase::GetActive())
+                event_loop->Yield();
+            else
+                wxYield();
+            if (m_progress_dlg && m_progress_dlg->WasCancelled())
+                m_cancel_flag = true;
+            if (m_initial_cancel_callback && m_initial_cancel_callback())
+                m_cancel_flag = true;
+            wxMilliSleep(10);
+        }
+
+        if (m_worker && m_worker->joinable())
+            m_worker->join();
+        m_worker.reset();
+
         if (m_initial_computation_cancelled || m_initial_computation_failed)
             return wxID_CANCEL;
     }
@@ -2227,130 +2265,10 @@ void TextureImportDialog::update_ui_for_state()
 
 // ---- Async computation ----
 
-// ============================================================
-// Phase 1 demo helpers (S4.5)
-// The Phase 1 mapping rows need cluster colors and ΔE values while
-// texture_to_painting / compute_delta_e / match_clusters_to_filaments
-// are still stubs (Phase 2, P2.2). These local helpers provide the same
-// shape of data: face colors come from sample_original_face_colors
-// (or precomputed face colors), clustering is OpenCV kmeans, and the
-// colour distance is CIE76 in Lab space.
-// ============================================================
-
-static void demo_rgb_to_lab(double r, double g, double b, double& L, double& a, double& bb)
-{
-    auto f = [](double c) {
-        return c > 0.04045 ? std::pow((c + 0.055) / 1.055, 2.4) : c / 12.92;
-    };
-    const double R = f(r / 255.0), G = f(g / 255.0), B = f(b / 255.0);
-    const double x = (R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047;
-    const double y = (R * 0.2126 + G * 0.7152 + B * 0.0722) / 1.00000;
-    const double z = (R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883;
-    auto g2 = [](double t) {
-        return t > 0.008856 ? std::cbrt(t) : (7.787 * t + 16.0 / 116.0);
-    };
-    L = 116.0 * g2(y) - 16.0;
-    a = 500.0 * (g2(x) - g2(y));
-    bb = 200.0 * (g2(y) - g2(z));
-}
-
-// Local stand-in for the stubbed demo_delta_e (Phase 2 restores
-// the CIEDE2000 implementation from TextureToColor/ColorUtils).
-static double demo_delta_e(const std::array<std::size_t, 3>& rgb1, const std::array<float, 4>& rgba2)
-{
-    double l1, a1, b1, l2, a2, b2;
-    demo_rgb_to_lab((double) rgb1[0], (double) rgb1[1], (double) rgb1[2], l1, a1, b1);
-    demo_rgb_to_lab(rgba2[0] * 255.0, rgba2[1] * 255.0, rgba2[2] * 255.0, l2, a2, b2);
-    const double dl = l1 - l2, da = a1 - a2, db = b1 - b2;
-    return std::sqrt(dl * dl + da * da + db * db);
-}
-
-// Local stand-in for the stubbed Slic3r::match_clusters_to_filaments,
-// mirroring the upstream body (upstream TexturePainting.cpp :444-466).
-static std::vector<Slic3r::FilamentMatch> demo_match_clusters_to_filaments(
-    const std::vector<std::array<std::size_t, 3>>& cluster_colors,
-    const std::vector<std::array<float, 4>>& filament_colors,
-    const std::vector<std::string>& /*filament_names*/)
-{
-    std::vector<Slic3r::FilamentMatch> matches(cluster_colors.size());
-    for (size_t ci = 0; ci < cluster_colors.size(); ++ci) {
-        matches[ci].cluster_index = static_cast<int>(ci);
-        matches[ci].cluster_color = cluster_colors[ci];
-        matches[ci].delta_e = 1e9;
-        for (size_t fi = 0; fi < filament_colors.size(); ++fi) {
-            double de = demo_delta_e(cluster_colors[ci], filament_colors[fi]);
-            if (de < matches[ci].delta_e) {
-                matches[ci].delta_e = de;
-                matches[ci].filament_index = static_cast<int>(fi);
-                matches[ci].filament_color = filament_colors[fi];
-            }
-        }
-    }
-    return matches;
-}
-
-// Cluster the per-face colors of `textured` into `color_count` clusters with
-// OpenCV kmeans and produce a PaintedMesh carrying the original geometry plus
-// per-face cluster colors (the Phase 1 stand-in for texture_to_painting /
-// face_colors_to_painting, upstream TexturePainting.cpp :285-429).
-// color_count <= 0 picks an automatic count (min of distinct colors and 8).
-static bool demo_compute_painting(const Slic3r::TexturedMesh& textured, int color_count, Slic3r::PaintedMesh& out)
-{
-    if (textured.indices.empty())
-        return false;
-
-    std::vector<std::array<std::size_t, 3>> face_colors;
-    if (!textured.precomputed_face_colors.empty()) {
-        face_colors = textured.precomputed_face_colors;
-    } else if (!Slic3r::sample_original_face_colors(textured, face_colors)) {
-        return false;
-    }
-    const size_t nf = textured.indices.size();
-    if (face_colors.size() != nf)
-        return false;
-
-    int k = color_count;
-    if (k <= 0) {
-        std::set<std::array<std::size_t, 3>> distinct(face_colors.begin(), face_colors.end());
-        k = (int) std::min(distinct.size(), size_t(8));
-    }
-    k = std::max(1, std::min(k, (int) nf));
-
-    cv::Mat samples((int) nf, 3, CV_32F);
-    for (int i = 0; i < (int) nf; ++i) {
-        samples.at<float>(i, 0) = (float) face_colors[i][0];
-        samples.at<float>(i, 1) = (float) face_colors[i][1];
-        samples.at<float>(i, 2) = (float) face_colors[i][2];
-    }
-    cv::Mat labels, centers;
-    const cv::TermCriteria crit(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 16, 1.0);
-    if (cv::kmeans(samples, k, labels, crit, 3, cv::KMEANS_PP_CENTERS, centers) != 0)
-        return false;
-
-    out = Slic3r::PaintedMesh();
-    out.vertices = textured.vertices;
-    out.indices = textured.indices;
-    out.face_colors.resize(nf);
-    for (size_t fi = 0; fi < nf; ++fi) {
-        const int lbl = labels.at<int>((int) fi);
-        out.face_colors[fi] = {
-            (std::size_t) cvRound(centers.at<float>(lbl, 0)),
-            (std::size_t) cvRound(centers.at<float>(lbl, 1)),
-            (std::size_t) cvRound(centers.at<float>(lbl, 2))};
-    }
-    std::set<std::array<std::size_t, 3>> unique(out.face_colors.begin(), out.face_colors.end());
-    out.cluster_colors.assign(unique.begin(), unique.end());
-    return true;
-}
-
 void TextureImportDialog::start_computation(bool auto_color, bool initial)
 {
-    // Phase 1 demo (S4.5): computation runs synchronously - per-face colors
-    // (sampled or precomputed) are clustered with OpenCV kmeans and fed
-    // through the normal completion path. Phase 2 (P2.2) restores the
-    // upstream worker thread calling texture_to_painting /
-    // face_colors_to_painting with the progress dialog and the mesh-repair
-    // decision flow (upstream :2395-2493).
+    cancel_computation();
+
     m_cancel_flag = false;
     m_current_computation_initial = initial;
     m_current_computation_auto_color = auto_color;
@@ -2361,29 +2279,92 @@ void TextureImportDialog::start_computation(bool auto_color, bool initial)
     }
     set_state(TextureImportState::Computing);
 
-    Slic3r::PaintedMesh result;
-    const int requested = auto_color ? 0 : m_param_color_count;
-    if (!demo_compute_painting(m_textured_mesh, requested, result)) {
-        if (initial) {
-            m_initial_computation_failed = true;
-            m_initial_computation_pending = false;
-            m_current_computation_initial = false;
-            m_fallback_to_geometry_only = true;
-            return;
-        }
-        set_state(TextureImportState::Error);
-        Slic3r::GUI::MessageDialog dlg(this,
-            _L("Computation failed. Please adjust parameters and retry."),
-            _L("Error"), wxOK | wxICON_ERROR);
-        dlg.ShowModal();
-        return;
+    bool silent_initial = initial && static_cast<bool>(m_initial_cancel_callback);
+    if (!silent_initial) {
+        m_progress_dlg = new ProgressDialog(
+            _L("Processing"), _L("Computing texture colors..."),
+            100, initial ? GetParent() : this, wxPD_APP_MODAL | wxPD_CAN_ABORT | wxPD_AUTO_HIDE);
     }
 
-    // No worker thread in Phase 1: hand the result over and let the shared
-    // completion handler (on_computation_complete) do the state transitions.
-    m_pending_result = std::move(result);
-    wxQueueEvent(this, new wxCommandEvent(EVT_TEXTURE_COMPUTE_DONE));
+    Slic3r::TexturePaintingSettings settings;
+    settings.target_colors_num = auto_color ? 0 : (size_t)m_param_color_count;
+    settings.smooth_weight     = m_param_smooth / 10.0;
+    settings.mesh_repair_decision = m_mesh_repair_decision;
+    settings.mesh_repair_callback = [](const indexed_triangle_set& mesh,
+                                       indexed_triangle_set&       repaired_mesh,
+                                       std::function<void(const char*, unsigned)> progress_callback,
+                                       std::function<bool()>       cancel_callback,
+                                       std::string*                error_message) -> bool {
+        if (progress_callback)
+            progress_callback(_u8L("Repairing mesh").c_str(), 0);
+
+        struct Canceled {};
+        TriangleMesh tm(mesh);
+        try {
+            if (!repair_mesh(tm, nullptr, error_message, [&cancel_callback](int) {
+                    if (cancel_callback && cancel_callback())
+                        throw Canceled();
+                }))
+                return false;
+        } catch (const Canceled &) {
+            return false;
+        }
+        repaired_mesh = tm.its;
+        if (progress_callback)
+            progress_callback(_u8L("Repairing mesh").c_str(), 100);
+        return true;
+    };
+
+    Slic3r::TexturedMesh mesh_copy = m_textured_mesh;
+    wxEvtHandler* handler = this;
+
+    m_worker = std::make_unique<std::thread>([this, settings, mesh_copy, handler]() {
+        Slic3r::PaintedMesh result;
+
+        auto progress_cb = [handler](int percent, const char*) {
+            auto* evt = new wxCommandEvent(EVT_TEXTURE_COMPUTE_PROGRESS);
+            evt->SetInt(percent);
+            wxQueueEvent(handler, evt);
+        };
+
+        auto cancel_cb = [this]() -> bool {
+            return m_cancel_flag.load();
+        };
+
+        auto worker_settings = settings;
+        bool mesh_repair_decision_required = false;
+        worker_settings.mesh_repair_decision_required = &mesh_repair_decision_required;
+        bool ok;
+        if (!mesh_copy.precomputed_face_colors.empty()) {
+            ok = Slic3r::face_colors_to_painting(
+                mesh_copy, result, worker_settings, progress_cb, cancel_cb);
+        } else {
+            ok = Slic3r::texture_to_painting(mesh_copy, result, worker_settings, progress_cb, cancel_cb);
+        }
+
+        if (m_cancel_flag.load()) {
+            wxQueueEvent(handler, new wxCommandEvent(EVT_TEXTURE_COMPUTE_ERROR));
+            return;
+        }
+
+        if (!ok && mesh_repair_decision_required) {
+            wxQueueEvent(handler, new wxCommandEvent(EVT_TEXTURE_MESH_REPAIR_DECISION));
+            return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(m_result_mutex);
+            m_pending_result = std::move(result);
+        }
+
+        if (ok) {
+            wxQueueEvent(handler, new wxCommandEvent(EVT_TEXTURE_COMPUTE_DONE));
+        } else {
+            wxQueueEvent(handler, new wxCommandEvent(EVT_TEXTURE_COMPUTE_ERROR));
+        }
+    });
 }
+
 
 void TextureImportDialog::cancel_computation()
 {
@@ -2406,10 +2387,13 @@ void TextureImportDialog::cancel_computation()
 
 void TextureImportDialog::on_computation_progress(wxCommandEvent& evt)
 {
-    // Phase 1: the synchronous demo path emits no progress events.
-    // Phase 2 restores progress dialog / initial_progress_callback handling
-    // (upstream :2514-2523).
-    evt.Skip(false);
+    if (m_progress_dlg) {
+        if (!m_progress_dlg->Update(evt.GetInt()))
+            m_cancel_flag = true;
+    } else if (m_current_computation_initial && m_initial_progress_callback) {
+        if (!m_initial_progress_callback(evt.GetInt()))
+            m_cancel_flag = true;
+    }
 }
 
 void TextureImportDialog::on_computation_complete(wxCommandEvent&)
@@ -2676,7 +2660,10 @@ void TextureImportDialog::restore_current_match_order(const std::vector<Slic3r::
 
 size_t TextureImportDialog::max_filament_count() const
 {
-    return static_cast<size_t>(EnforcerBlockerType::ExtruderMax);
+    // Fork adaptation: upstream caps at EnforcerBlockerType::ExtruderMax (32 there); this fork's
+    // ExtruderMax is 255 while the sidebar only accepts MAXIMUM_EXTRUDER_NUMBER filaments, so the
+    // dialog cap must match the sidebar or add_custom_filament would silently drop the overflow.
+    return MAXIMUM_EXTRUDER_NUMBER;
 }
 
 bool TextureImportDialog::can_add_virtual_filament() const
@@ -2690,7 +2677,7 @@ int TextureImportDialog::find_closest_filament_index(const std::array<std::size_
     double best_delta = std::numeric_limits<double>::max();
     const size_t filament_count = std::min(m_filament_colors_rgba.size(), max_filament_count());
     for (size_t i = 0; i < filament_count; ++i) {
-        const double delta = demo_delta_e(color, m_filament_colors_rgba[i]);
+        const double delta = Slic3r::compute_delta_e(color, m_filament_colors_rgba[i]);
         if (delta < best_delta) {
             best_delta = delta;
             best_idx = (int)i;
@@ -2702,10 +2689,35 @@ int TextureImportDialog::find_closest_filament_index(const std::array<std::size_
 int TextureImportDialog::add_virtual_filament(const std::array<float, 4>& rgba, const std::string& hex,
                                               const std::string& preset_name)
 {
-    // Phase 1 stub - the "+ Add Material" popup entry is greyed out, so no
-    // virtual filaments can be created until Phase 2/3 restore the picker flow.
-    (void) rgba; (void) hex; (void) preset_name;
-    return -1;
+    if (m_filament_color_strs.size() != m_filament_colors_rgba.size() ||
+        m_filament_names.size() != m_filament_colors_rgba.size() ||
+        m_filament_entries.size() != m_filament_colors_rgba.size()) {
+        return -1;
+    }
+    if (!can_add_virtual_filament()) {
+        // Mark that this do_auto_match() run hit the filament cap and had to
+        // drop at least one cluster. The mapping itself still falls back via
+        // find_closest_filament_index() below; this flag only drives the
+        // inline orange warning above the bottom buttons.
+        m_filaments_dropped = true;
+        return -1;
+    }
+
+    const int new_idx = (int)m_filament_colors_rgba.size();
+    m_filament_colors_rgba.push_back(rgba);
+    m_filament_color_strs.push_back(hex);
+    m_filament_names.push_back(DEFAULT_VIRTUAL_FILAMENT_NAME);
+    TextureFilamentEntry entry;
+    entry.kind = TextureFilamentKind::NewPhysical;
+    entry.dialog_index = new_idx;
+    entry.project_config_index = size_t(-1);
+    entry.color_hex = texture_normalize_color_hex(hex);
+    entry.name = DEFAULT_VIRTUAL_FILAMENT_NAME;
+    entry.preset_name = preset_name.empty() ? m_default_virtual_filament_preset_name : preset_name;
+    m_filament_entries.push_back(entry);
+    m_new_filament_colors.push_back(rgba);
+    m_new_filament_preset_names.push_back(preset_name.empty() ? m_default_virtual_filament_preset_name : preset_name);
+    return new_idx;
 }
 
 int TextureImportDialog::add_virtual_mixed_filament(const std::string& color_hex,
@@ -2904,7 +2916,7 @@ void TextureImportDialog::compact_used_virtual_filaments()
         for (size_t i = 0; i < filament_count && i < m_filament_entries.size(); ++i) {
             if (!texture_entry_is_physical(m_filament_entries[i].kind))
                 continue;
-            const double delta = demo_delta_e(color, m_filament_colors_rgba[i]);
+            const double delta = Slic3r::compute_delta_e(color, m_filament_colors_rgba[i]);
             if (delta < best_delta) {
                 best_delta = delta;
                 best_idx = (int)i;
@@ -2927,7 +2939,7 @@ void TextureImportDialog::compact_used_virtual_filaments()
 
         if (m.filament_index >= 0 && m.filament_index < (int)m_filament_colors_rgba.size()) {
             m.filament_color = m_filament_colors_rgba[m.filament_index];
-            m.delta_e = demo_delta_e(m.cluster_color, m.filament_color);
+            m.delta_e = Slic3r::compute_delta_e(m.cluster_color, m.filament_color);
             if (m.filament_index >= (int)m_existing_filament_count)
                 m.delta_e = 0.0;
         }
@@ -3239,7 +3251,7 @@ void TextureImportDialog::do_auto_match()
             m_filament_colors_rgba.begin(),
             m_filament_colors_rgba.begin() + std::min(m_existing_filament_count, m_filament_colors_rgba.size()));
 
-        m_current_matches = demo_match_clusters_to_filaments(
+        m_current_matches = Slic3r::match_clusters_to_filaments(
             m_painted.cluster_colors, existing_filament_colors, names);
 
         // For clusters with poor match (CIEDE2000 ΔE > 5), create virtual filaments.
@@ -3261,7 +3273,7 @@ void TextureImportDialog::do_auto_match()
             }
             if (m.filament_index >= 0 && m.filament_index < (int)m_filament_colors_rgba.size()) {
                 m.filament_color = m_filament_colors_rgba[m.filament_index];
-                m.delta_e = demo_delta_e(m.cluster_color, m.filament_color);
+                m.delta_e = Slic3r::compute_delta_e(m.cluster_color, m.filament_color);
                 if (m.filament_index >= (int)m_existing_filament_count)
                     m.delta_e = 0.0;
             }
@@ -3288,7 +3300,7 @@ void TextureImportDialog::do_auto_match()
             }
             if (fm.filament_index >= 0 && fm.filament_index < (int)m_filament_colors_rgba.size()) {
                 fm.filament_color = m_filament_colors_rgba[fm.filament_index];
-                fm.delta_e = demo_delta_e(fm.cluster_color, fm.filament_color);
+                fm.delta_e = Slic3r::compute_delta_e(fm.cluster_color, fm.filament_color);
                 if (fm.filament_index >= (int)m_existing_filament_count)
                     fm.delta_e = 0.0;
             }
@@ -3616,7 +3628,7 @@ std::vector<Slic3r::FilamentMatch> TextureImportDialog::build_matches_from_rows(
         if (sel >= 0 && sel < (int)m_filament_colors_rgba.size()) {
             m.filament_index = sel;
             m.filament_color = m_filament_colors_rgba[sel];
-            m.delta_e = demo_delta_e(m.cluster_color, m.filament_color);
+            m.delta_e = Slic3r::compute_delta_e(m.cluster_color, m.filament_color);
         }
     }
     return matches;

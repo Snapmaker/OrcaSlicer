@@ -408,8 +408,7 @@ public:
     PresetCollection *  get_presets() { return m_presets; }
     TabPresetComboBox *  get_combo_box() { return m_presets_choice; }
 
-    // Snapmaker: flow variant — index of the slot selected in this tab's 标准/高流量
-    // switch (0 when the tab has no flow view). Public for the object table.
+    // Snapmaker: flow variant
     size_t flow_variant_view_index() const;
 
 	virtual void    on_value_change(const std::string& opt_key, const boost::any& value);

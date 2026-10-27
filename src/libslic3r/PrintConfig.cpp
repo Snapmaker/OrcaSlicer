@@ -3181,7 +3181,10 @@ void PrintConfigDef::init_fff_params()
     def = this->add("fuzzy_skin_thickness", coFloat);
     def->label = L("Fuzzy skin thickness");
     def->category = L("Others");
-    def->tooltip = L("The width within which to jitter. It's advised to be below outer wall line width.");
+    def->tooltip = L("The width of jittering: it\u2019s recommended to keep this lower than the outer wall line "
+                     "width.\n"
+                     "The allowed range is [0,2] mm. If the value is below 0.001 mm, fuzzy skin will be turned off "
+                     "automatically when slicing.");
     def->sidetext = "mm";	// milimeters, don't need translation
     def->min = 0;
     def->max = 2;

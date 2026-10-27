@@ -7,6 +7,7 @@
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/format.hpp"
 #include "GCodeProcessor.hpp"
+#include "SnapmakerHeader.hpp"
 
 #include <boost/log/trivial.hpp>
 #include <boost/algorithm/string/predicate.hpp>
@@ -70,7 +71,8 @@ const std::vector<std::string> GCodeProcessor::Reserved_Tags = {
     "_DURING_PRINT_EXHAUST_FAN",
     " WIPE_TOWER_START",
     " WIPE_TOWER_END",
-    " PA_CHANGE:"
+    " PA_CHANGE:",
+    "_GP_SNAPMAKER_PRINTING_TIME_PLACEHOLDER"
 };
 
 const std::vector<std::string> GCodeProcessor::Reserved_Tags_compatible = {
@@ -91,7 +93,8 @@ const std::vector<std::string> GCodeProcessor::Reserved_Tags_compatible = {
     "_DURING_PRINT_EXHAUST_FAN",
     " WIPE_TOWER_START",
     " WIPE_TOWER_END",
-    " PA_CHANGE:"
+    " PA_CHANGE:",
+    "_GP_SNAPMAKER_PRINTING_TIME_PLACEHOLDER"
 };
 
 
@@ -4404,6 +4407,8 @@ void GCodeProcessor::run_post_process()
     ExportLines export_lines(m_result.backtrace_enabled ? ExportLines::EWriteType::ByTime : ExportLines::EWriteType::BySize,
         m_time_processor.machines);
 
+    bool has_snapmaker_header = false;
+
     // replace placeholder lines with the proper final value
     // gcode_line is in/out parameter, to reduce expensive memory allocation
     auto process_placeholders = [&](std::string& gcode_line) {
@@ -4463,6 +4468,36 @@ void GCodeProcessor::run_post_process()
                         processed = true;
                     }
                 }
+            }
+            else if (line == reserved_tag(ETags::Snapmaker_Printing_Time_Placeholder)) {
+                const float time = m_time_processor.machines[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
+                export_lines.append_line(";estimated_time(s): " + std::to_string(static_cast<size_t>(time + 0.5f)) + "\n");
+                export_lines.append_line(";layer_number: " + std::to_string(m_layer_id) + "\n");
+                BoundingBoxf3 bounds;
+                auto merge_position = [&](const Vec3f& position, unsigned int extruder_id, double z_offset) {
+                    const Vec3d machine_position = (position - m_extruder_offsets[extruder_id]).cast<double>() -
+                                                  Vec3d(m_x_offset, m_y_offset, -z_offset);
+                    bounds.merge(machine_position);
+                };
+                for (size_t i = 1; i < m_result.moves.size(); ++i) {
+                    const auto& move = m_result.moves[i];
+                    if (move.type != EMoveType::Extrude || move.extrusion_role == erCustom)
+                        continue;
+                    merge_position(m_result.moves[i - 1].position, m_result.moves[i - 1].extruder_id, m_z_offset);
+                    merge_position(move.position, move.extruder_id, m_z_offset);
+                    // Arc interpolation vertices retain the original G-code Z offset.
+                    for (const Vec3f& position : move.interpolation_points)
+                        merge_position(position, move.extruder_id, 0.0);
+                }
+                if (!bounds.defined)
+                    throw Slic3r::ExportError("Cannot determine Snapmaker print bounds.");
+                for (size_t axis = 0; axis < 3; ++axis) {
+                    const std::string suffix = std::string(1, "xyz"[axis]) + "(mm): ";
+                    export_lines.append_line(";min_" + suffix + float_to_string_decimal_point(bounds.min[axis], 3) + "\n");
+                    export_lines.append_line(";max_" + suffix + float_to_string_decimal_point(bounds.max[axis], 3) + "\n");
+                }
+                has_snapmaker_header = true;
+                processed = true;
             }
             // Orca: write total layer number, this is used by Bambu printers only as of now
             else if (line == reserved_tag(ETags::Total_Layer_Number_Placeholder)) {
@@ -4756,6 +4791,8 @@ void GCodeProcessor::run_post_process()
 
     export_lines.flush(out, m_result, out_path);
 
+    if (has_snapmaker_header && !SnapmakerHeader::update_line_count(out.f, m_result.lines_ends.size()))
+        throw Slic3r::RuntimeError("GCode processor post process export failed.\nCannot update Snapmaker header.\n");
 
     out.close();
     in.close();

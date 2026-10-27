@@ -408,10 +408,26 @@ void PathLayerStack::BuildLayers(const GCodeProcessorResult& result)
         }
     }
 
-    // spiral vase prints define their own layer boundaries
+    // spiral vase prints define their own layer boundaries;
+    // otherwise the main-layer endpoint table wins over the z-step scan so
+    // Subdivide-Mix sublayer z steps fold into their nominal layer. The GPU
+    // layer stack must stay in 1:1 lockstep with the slider's m_layers table
+    // (GCodeViewer::extract_layer_metadata) or the layer window only lights up
+    // part of the geometry.
     if (!result.spiral_vase_layers.empty()) {
         _layers.clear();
         for (const auto& entry : result.spiral_vase_layers) {
+            auto layer = std::make_unique<PathLayerData>();
+            layer->_z = entry.first;
+            layer->_firstSid = static_cast<uint32_t>(entry.second.first);
+            layer->_lastSid = static_cast<uint32_t>(entry.second.second);
+            _layers.push_back(std::move(layer));
+        }
+    } else if (!result.layer_endpoints.empty()) {
+        _layers.clear();
+        for (const auto& entry : result.layer_endpoints) {
+            if (entry.first <= 0.0f)
+                continue; // unmatched z placeholder, skipped on the slider side too
             auto layer = std::make_unique<PathLayerData>();
             layer->_z = entry.first;
             layer->_firstSid = static_cast<uint32_t>(entry.second.first);

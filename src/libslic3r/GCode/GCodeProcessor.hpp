@@ -220,6 +220,13 @@ class Print;
         PrintEstimatedStatistics print_statistics;
         std::vector<CustomGCode::Item> custom_gcode_per_print_z;
         std::vector<std::pair<float, std::pair<size_t, size_t>>> spiral_vase_layers;
+        // Main-layer endpoint table, one entry per ";LAYER_CHANGE" tag:
+        // { nominal layer z (from the ";Z:"/" Z_HEIGHT:" tag), { first_move_id, last_move_id } }
+        // in the same move-id basis the viewer uses (moves.size()-1-seams_count).
+        // Lets GCodeViewer fold Subdivide-Mix sublayer travel z values into their
+        // nominal layer so the preview layer count matches the gcode header
+        // "; total layer number".
+        std::vector<std::pair<float, std::pair<size_t, size_t>>> layer_endpoints;
         //BBS
         std::vector<SliceWarning> warnings;
         int nozzle_hrc;
@@ -254,6 +261,7 @@ class Print;
             print_statistics = other.print_statistics;
             custom_gcode_per_print_z = other.custom_gcode_per_print_z;
             spiral_vase_layers = other.spiral_vase_layers;
+            layer_endpoints = other.layer_endpoints;
             warnings = other.warnings;
             bed_type = other.bed_type;
             bed_match_result = other.bed_match_result;
@@ -723,6 +731,10 @@ class Print;
         bool m_processing_start_custom_gcode;
         unsigned int m_g1_line_id;
         unsigned int m_layer_id;
+        // gcode line anchors of the layer-change tags; used in finalize() to rebuild
+        // the layer_endpoints move spans on the final moves array (OptionsZCorrector
+        // relocates moves mid-stream, so streaming move indices would drift).
+        std::vector<unsigned int> m_layer_change_line_ids;
         CpColor m_cp_color;
         SeamsDetector m_seams_detector;
         OptionsZCorrector m_options_z_corrector;

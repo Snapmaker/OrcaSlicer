@@ -1029,6 +1029,17 @@ void GCodeViewer::extract_layer_metadata(const GCodeProcessorResult& gcode_resul
         for (const auto& layer : gcode_result.spiral_vase_layers)
             m_layers.append(layer.first, { layer.second.first, layer.second.second });
     }
+    // replace layers with the main-layer endpoint table when available: Subdivide-Mix
+    // sublayer passes print at intermediate z values, which the extrude-z-step scan
+    // above mistakes for extra layers. The endpoint table carries the nominal layer
+    // boundaries, keeping the preview layer count aligned with the gcode header
+    // "; total layer number".
+    else if (!gcode_result.layer_endpoints.empty()) {
+        m_layers.reset();
+        for (const auto& layer : gcode_result.layer_endpoints)
+            if (layer.first > 0.0f)
+                m_layers.append(static_cast<double>(layer.first), { layer.second.first, layer.second.second });
+    }
 
     if (!m_layers.empty())
         m_layers_z_range = { 0, static_cast<unsigned int>(m_layers.size() - 1) };

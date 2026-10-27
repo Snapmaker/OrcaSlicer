@@ -22674,6 +22674,14 @@ bool Plater::sync_filament_temp_mixing_notification()
     p->filament_temp_mixing_notification_plate = curr_plate_index;
     p->filament_temp_mixing_notification_state = mixing_state;
 
+    // Flipping the mixing preference changes the verdict without touching
+    // the print config, so the invalidation-driven reset of
+    // process_completed_with_error (priv::update_background_process) never
+    // runs and reslice() keeps early-returning as if the plate were still
+    // failing. Clear the stranded marker once this plate is allowed again.
+    if (slicing_allowed && p->process_completed_with_error == curr_plate_index)
+        p->process_completed_with_error = -1;
+
     const bool can_slice = curr_plate->can_slice() && slicing_allowed;
     p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, can_slice);
     return slicing_allowed;

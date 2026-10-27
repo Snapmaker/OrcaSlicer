@@ -296,6 +296,11 @@ static void fuzzy_extrusion_line_ripple(Arachne::ExtrusionJunctions& ext_lines, 
         --point_idx;
     }
 
+    if (ext_lines.back().p == ext_lines.front().p) { // Connect endpoints.
+        out.front().p = out.back().p;
+        out.front().w = out.back().w;
+    }
+
     if (out.size() >= 3)
         ext_lines = std::move(out);
 }

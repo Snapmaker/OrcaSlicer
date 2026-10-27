@@ -938,7 +938,9 @@ endif()
 
 # Resources install target, configure fhs.hpp on UNIX
 if (WIN32)
-    install(DIRECTORY "${SLIC3R_RESOURCES_DIR}/" DESTINATION "./resources")
+    install(DIRECTORY "${SLIC3R_RESOURCES_DIR}/" DESTINATION "./resources"
+        PATTERN "*/gw_cache" EXCLUDE
+    )
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
     include(InstallRequiredSystemLibraries)
     install (PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION ".")
@@ -947,6 +949,7 @@ elseif (SLIC3R_FHS)
     set(SLIC3R_FHS_RESOURCES "${CMAKE_INSTALL_FULL_DATAROOTDIR}/Snapmaker_Orca")
     install(DIRECTORY ${SLIC3R_RESOURCES_DIR}/ DESTINATION ${SLIC3R_FHS_RESOURCES}
         PATTERN "*/udev" EXCLUDE
+        PATTERN "snapmaker_control_linux_*" PERMISSIONS OWNER_READ OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
     )
     install(FILES src/dev-utils/platform/unix/Snapmaker_Orca.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
     foreach(SIZE 32 128 192)
@@ -994,15 +997,31 @@ set (CPACK_NSIS_DEFINES "!define MUI_STARTMENUPAGE_DEFAULTFOLDER \"${CPACK_PACKA
 # .nsi template must stay ASCII -- the Chinese/English prompt texts therefore
 # live in the separate UTF-8 BOM .nsh instead of this inline block.
 file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh" CPACK_NSIS_EXTRA_INSTALL_COMMANDS)
+file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerConnectFirewall_install.nsh" _snapmaker_connect_firewall_install)
+string(APPEND CPACK_NSIS_EXTRA_INSTALL_COMMANDS "\n${_snapmaker_connect_firewall_install}")
 file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh" _snapmaker_nsis_uninst_url)
 set(_snapmaker_nsis_uninst_kill [=[
-  nsExec::Exec 'taskkill /F /IM snapmaker-orca.exe /T'
+  nsExec::Exec 'taskkill /F /T /IM snapmaker-orca.exe'
   Pop $0
-  nsExec::Exec 'taskkill /F /IM Snapmaker_Orca.exe /T'
+  nsExec::Exec 'taskkill /F /T /IM Snapmaker_Orca.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM snapmaker_control_windows_x64.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM snapmaker_control_windows_arm64.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM snapmaker_connection_windows_x64.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM snapmaker_connection_windows_arm64.exe'
   Pop $0
 ]=])
 string(CONCAT CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
        "${_snapmaker_nsis_uninst_kill}" "${_snapmaker_nsis_uninst_url}")
+# Wait briefly for the connect CLI to release its executable after the forced
+# termination above before generated files are removed.
+file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerConnect_uninstall.nsh" _snapmaker_connect_uninstall)
+string(APPEND CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "\n${_snapmaker_connect_uninstall}")
+file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerConnectFirewall_uninstall.nsh" _snapmaker_connect_firewall_uninstall)
+string(APPEND CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "\n${_snapmaker_connect_firewall_uninstall}")
 # Auto-close the uninstall details page so the wizard advances to the custom
 # finish page as soon as the uninstall section finishes (no extra click).
 string(APPEND CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "  SetAutoClose true\n")

@@ -16312,3 +16312,12 @@ msgstr ""
 
 msgid "Incompatible filament types cannot be mixed. Please correct the selection."
 msgstr ""
+
+#: src/slic3r/GUI/Preferences.cpp
+msgid "GPU-accelerated G-code preview"
+msgstr ""
+
+#: src/slic3r/GUI/Preferences.cpp
+msgid "Rebuild toolpath geometry on the GPU: much faster preview loading and lower memory on capable graphics cards. If the preview moves slower than before (for example on basic integrated graphics), turn this off to use the compatible renderer. Takes effect when the preview is reloaded."
+msgstr ""
+

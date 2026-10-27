@@ -444,6 +444,9 @@ void FillBedJob::finalize(bool canceled, std::exception_ptr &eptr)
         //model_object->ensure_on_bed();
         //BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ": model_object->ensure_on_bed()";
 
+        m_plater->set_prepare_state(Job::JobPrepareState::PREPARE_STATE_MENU);
+        m_plater->arrange();
+
         m_plater->update();
     }
 }

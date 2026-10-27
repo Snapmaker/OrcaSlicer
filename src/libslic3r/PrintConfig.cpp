@@ -1812,7 +1812,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_keys_map = &ConfigOptionEnum<InfillPattern>::get_enum_values();
     def->enum_values   = def_top_fill_pattern->enum_values;
     def->enum_labels   = def_top_fill_pattern->enum_labels;
-    def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipMonotonic));
+    def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipMonotonicLine));
     
     def = this->add("outer_wall_line_width", coFloatOrPercent);
     def->label = L("Outer wall");

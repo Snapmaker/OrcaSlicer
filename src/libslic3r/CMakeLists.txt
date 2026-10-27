@@ -187,8 +187,6 @@ set(lisbslic3r_sources
     Format/bbs_3mf.cpp
     Format/bbs_3mf.hpp
     format.hpp
-    Format/Assimp.cpp
-    Format/Assimp.hpp
     Format/AssimpImport.cpp
     Format/AssimpImport.hpp
     Format/OBJ.cpp

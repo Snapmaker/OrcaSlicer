@@ -4769,6 +4769,12 @@ void ObjectList::update_selections()
                 int obj_idx = gl_vol->object_idx();
                 int vol_idx = gl_vol->volume_idx();
                 assert(obj_idx >= 0 && vol_idx >= 0);
+                if (obj_idx >= static_cast<int>(m_objects->size()) ||
+                    vol_idx >= static_cast<int>(object(obj_idx)->volumes.size()))
+                {
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": stale volume index, obj " << obj_idx << ", vol " << vol_idx;
+                    continue;
+                }
                 if (object(obj_idx)->volumes[vol_idx]->is_cut_connector())
                     sels.Add(m_objects_model->GetInfoItemByType(m_objects_model->GetItemById(obj_idx), InfoItemType::CutConnectors));
                 else {

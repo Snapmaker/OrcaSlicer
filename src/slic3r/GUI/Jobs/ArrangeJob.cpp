@@ -730,6 +730,9 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
     // BBS: update slice context and gcode result.
     m_plater->update_slicing_context_to_current_partplate();
 
+    // Objects were re-sorted by arrange_order, refresh GLVolume ids before syncing the object list
+    m_plater->get_view3D_canvas3D()->reload_scene(false);
+
     wxGetApp().obj_list()->reload_all_plates();
 
     m_plater->update();

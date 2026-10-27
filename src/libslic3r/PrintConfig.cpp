@@ -5233,7 +5233,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Minimum prime length");
     def->category = L("Tool change priming");
     def->tooltip = L("Filament length primed by the tool change prime G-code when the new tool was parked only briefly. "
-                     "The prime length grows from this value to the maximum prime length as the tool's idle time grows.");
+                     "The nozzle is still hot, so this only rebuilds the pressure in it.");
     def->sidetext = "mm";
     def->min = 0;
     def->mode = comAdvanced;
@@ -5242,30 +5242,30 @@ void PrintConfigDef::init_fff_params()
     def = this->add("toolchange_prime_length_max", coFloat);
     def->label = L("Maximum prime length");
     def->category = L("Tool change priming");
-    def->tooltip = L("Filament length primed after the new tool has been idle for the full idle time, or the first time it is used. "
-                     "Longer idle times let more filament ooze out and degrade in the hot nozzle, so more is purged. "
+    def->tooltip = L("Filament length primed after the new tool has been parked for at least the idle time, or the first time it is used. "
+                     "By then the nozzle has cooled down on standby, so the filament in it is purged. "
                      "A tool that was parked across a pause or filament change always gets this length, "
                      "because the slicer cannot know how long the pause lasted.");
     def->sidetext = "mm";
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(10.));
+    def->set_default_value(new ConfigOptionFloat(20.));
 
     def = this->add("toolchange_prime_idle_time", coFloat);
     def->label = L("Idle time for maximum prime");
     def->category = L("Tool change priming");
-    def->tooltip = L("Estimated time a tool has to be parked to get the maximum prime length. "
-                     "Shorter idle times are primed proportionally between the minimum and maximum lengths.");
+    def->tooltip = L("Estimated time a tool has to be parked to get the maximum prime length, roughly the time its nozzle takes "
+                     "to cool below the filament's flow temperature on standby. Shorter parks get the minimum prime length.");
     def->sidetext = "s"; // seconds, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(300.));
+    def->set_default_value(new ConfigOptionFloat(60.));
 
     def = this->add("toolchange_prime_skip_time", coFloat);
     def->label = L("Skip prime below idle time");
     def->category = L("Tool change priming");
-    def->tooltip = L("Skip the tool change prime G-code entirely when the new tool was parked for less than this estimated time. "
-                     "Set to zero to always prime.");
+    def->tooltip = L("Leave out the prime extrusion when the new tool was parked for less than this estimated time. "
+                     "The rest of the tool change prime G-code still runs, so the retraction is still restored. Set to zero to always prime.");
     def->sidetext = "s"; // seconds, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
@@ -6077,8 +6077,9 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("This G-code primes the new tool after a tool change, for example by extruding into a purge bucket or chute and "
                      "wiping the nozzle, so no prime tower is needed. It is used only when the prime tower is disabled. "
                      "Use relative extrusion (M83) and the prime_length and prime_speed placeholders. "
-                     "Extrusions in this G-code are scaled by the estimated time the tool was parked, between the minimum and maximum "
-                     "prime lengths, and the whole block is skipped below the skip time. "
+                     "Restore the tool's retraction first with retract_restore_length, on a line commented \"; restore retraction\". "
+                     "Extrusions in this G-code are sized by the estimated time the tool was parked: the minimum prime length below the "
+                     "idle time, the maximum above it, and none below the skip time. "
                      "When primes are timed on the printer, this G-code is not changed: pass the settings to the printer's macro instead.");
     def->multiline = true;
     def->full_width = true;
@@ -9314,7 +9315,7 @@ static std::map<t_custom_gcode_key, t_config_option_keys> s_CustomGcodeSpecificP
                                "travel_point_1_x", "travel_point_1_y", "travel_point_2_x", "travel_point_2_y", "travel_point_3_x",
                                "travel_point_3_y", "x_after_toolchange", "y_after_toolchange", "z_after_toolchange", "next_wipe_x", "next_wipe_y"}},
     {"toolchange_prime_gcode",      {"layer_num", "layer_z", "max_layer_z", "next_extruder", "previous_extruder", "new_filament_temp",
-                               "prime_length", "prime_speed", "prime_first_use"}},
+                               "prime_length", "prime_speed", "prime_first_use", "retract_restore_length"}},
     {"change_extrusion_role_gcode", {"layer_num", "layer_z", "extrusion_role", "last_extrusion_role"}},
     {"printing_by_object_gcode",    {}},
     {"machine_pause_gcode",         {}},
@@ -9386,6 +9387,8 @@ CustomGcodeSpecificConfigDef::CustomGcodeSpecificConfigDef()
     new_def("prime_length", coFloat, "Prime length", "Maximum filament length to prime the new tool, in mm. Extrusions in the tool change prime G-code are scaled down by the estimated time the tool was parked.");
     new_def("prime_speed", coFloat, "Prime speed", "Extrusion feed rate for priming the new tool, in mm/min, limited by the filament's maximum volumetric speed.");
     new_def("prime_first_use", coBool, "First use of the tool", "True when the new tool is used for the first time in this print.");
+    new_def("retract_restore_length", coFloat, "Retraction to restore", "Filament length the new tool is still retracted by, in mm. "
+            "Extrude it in the purge chute on a line commented \"; restore retraction\" so the nozzle is not unretracted again on the part.");
 
 // change_extrusion_role_gcode
     std::string extrusion_role_types = "Possible Values:\n[\"Perimeter\", \"ExternalPerimeter\", "

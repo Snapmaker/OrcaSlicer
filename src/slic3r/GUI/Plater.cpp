@@ -11801,31 +11801,18 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     preset_bundle->set_num_filaments(unsigned(desired_physical_filaments));
                                 } else
                                     preset_bundle->update_multi_material_filament_presets();
-                                // Swatches render multi_colors/mode first: rebuild them from the plain colors when the 3MF lacks them.
-                                const auto *imported_multi_colors = config_loaded.option<ConfigOptionStrings>("filament_multi_colors");
-                                const auto *imported_color_modes  = config_loaded.option<ConfigOptionInts>("filament_colour_mode");
-                                bool multi_fields_rebuilt = false;
-                                if (imported_multi_colors == nullptr || imported_multi_colors->values.size() < desired_physical_filaments ||
-                                    imported_color_modes == nullptr || imported_color_modes->values.size() < desired_physical_filaments) {
-                                    ConfigOptionStrings *colors       = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
-                                    ConfigOptionStrings *multi_colors = preset_bundle->project_config.option<ConfigOptionStrings>("filament_multi_colors", true);
-                                    ConfigOptionInts    *color_modes  = preset_bundle->project_config.option<ConfigOptionInts>("filament_colour_mode", true);
-                                    if (colors != nullptr && multi_colors != nullptr && color_modes != nullptr) {
-                                        const size_t count = std::min(desired_physical_filaments, colors->values.size());
-                                        multi_colors->resize(count);
-                                        color_modes->resize(count);
-                                        const int segment_mode = FilamentColorModeToConfig(FilamentColorMode::Segment);
-                                        for (size_t i = 0; i < count; ++i) {
-                                            multi_colors->values[i] = colors->values[i];
-                                            color_modes->values[i]  = segment_mode;
-                                        }
-                                        multi_fields_rebuilt = true;
-                                    }
-                                }
+                                // Swatches render multi_colors/mode first. Both branches above ran
+                                // EnsureFilamentColorFieldsAligned(), so multi-color arrays that the
+                                // 3MF lacked, truncated, or left stale/oversized (e.g. auto-palette
+                                // leftovers saved by older builds) are healed against the imported
+                                // plain colors — nothing left to rebuild here.
+                                const auto *aligned_multi_colors = preset_bundle->project_config.option<ConfigOptionStrings>("filament_multi_colors");
+                                const auto *aligned_color_modes  = preset_bundle->project_config.option<ConfigOptionInts>("filament_colour_mode");
                                 BOOST_LOG_TRIVIAL(info) << "3MF geometry import adopted filament colors"
                                                         << " current=" << current_num_filaments
                                                         << " desired=" << desired_physical_filaments
-                                                        << " multi_rebuilt=" << (multi_fields_rebuilt ? 1 : 0);
+                                                        << " multi_count=" << (aligned_multi_colors ? aligned_multi_colors->values.size() : size_t(0))
+                                                        << " mode_count=" << (aligned_color_modes ? aligned_color_modes->values.size() : size_t(0));
                                 wxGetApp().plater()->on_filaments_change(desired_physical_filaments);
                             } else if (current_num_filaments < desired_physical_filaments) {
                                 std::vector<std::string> new_colors;

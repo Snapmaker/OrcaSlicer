@@ -3555,16 +3555,15 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                 pass_heights = build_uniform_local_z_pass_heights(interval.base_height, mixed_lower, mixed_upper);
         }
 
-        // Keep auto local-Z 2-pass cadence order stable across layers even if the
-        // dominant mixed row changes. Per-row phase assignment still controls
-        // which filament gets pass-0 vs pass-1.
-        // Skip for gradient rows, whose pass[0]/pass[1] assignment is intentional.
-        if (!dominant_is_gradient &&
-            interval.has_mixed_paint &&
-            preferred_a <= EPSILON &&
-            preferred_b <= EPSILON &&
-            pass_heights.size() == 2 &&
-            pass_heights[0] > pass_heights[1]) {
+        // Ordinary two-color rows keep the planner's A/B order, just like isolated
+        // rows. Sorting only single-row layers by height reverses their cadence
+        // when a neighboring mixed region starts or ends.
+        // Retain the existing height ordering for multicolor and pair-cycle rows.
+        const bool uses_multicolor_order = dominant_mixed_idx < mixed_rows.size() &&
+                                           (row_uses_direct_multicolor_solver[dominant_mixed_idx] != 0 ||
+                                            row_active_pairs[dominant_mixed_idx].uses_layer_cycle_sequence);
+        if (uses_multicolor_order && !dominant_is_gradient && interval.has_mixed_paint && preferred_a <= EPSILON &&
+            preferred_b <= EPSILON && pass_heights.size() == 2 && pass_heights[0] > pass_heights[1]) {
             std::swap(pass_heights[0], pass_heights[1]);
         }
 

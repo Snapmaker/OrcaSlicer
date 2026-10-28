@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers.hpp>
 #include "test_utils.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
+#include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Print.hpp"
@@ -16,6 +17,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <locale>
+#include <map>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -774,6 +776,116 @@ TEST_CASE("Local-Z two-color sublayers preserve requested ratios within height b
         CHECK(mixed_filament_effective_local_z_preview_mix_b_percent(manager.mixed_filaments().front(), preview) ==
               int(std::lround(100. * test.total_b / test.layer_height)));
     }
+}
+
+static void check_alternating_local_z_pairs(const PrintObject& object)
+{
+    struct LastPass
+    {
+        double z_hi;
+        size_t tool;
+    };
+    std::map<size_t, LastPass> last_by_group;
+    size_t                     checked_transitions = 0;
+    for (const SubLayerPlan& plan : object.local_z_sublayer_plan()) {
+        if (!plan.split_interval || plan.dependency_group == 0)
+            continue;
+        size_t tool = size_t(-1);
+        for (size_t i = 0; i < plan.painted_masks_by_extruder.size(); ++i) {
+            if (plan.painted_masks_by_extruder[i].empty())
+                continue;
+            REQUIRE(tool == size_t(-1));
+            tool = i;
+        }
+        if (tool == size_t(-1))
+            continue;
+        CAPTURE(plan.layer_id, plan.dependency_group, plan.z_lo, plan.z_hi);
+        const auto previous = last_by_group.find(plan.dependency_group);
+        if (previous != last_by_group.end() && std::abs(previous->second.z_hi - plan.z_lo) < 1e-6) {
+            CHECK(tool != previous->second.tool);
+            ++checked_transitions;
+        }
+        last_by_group[plan.dependency_group] = {plan.z_hi, tool};
+    }
+    CHECK(checked_transitions > 0);
+}
+
+TEST_CASE("Local-Z pairs keep alternating when a neighboring mixed region starts or ends", "[MixedFilament][LocalZ][Cadence]")
+{
+    MixedAutoGenerateGuard auto_generate(false);
+    for (int mix_b : {26, 50, 74}) {
+        CAPTURE(mix_b);
+        MixedFilamentManager           manager;
+        const std::vector<std::string> colors = {"#008CB3", "#AC4A74", "#CBAC00", "#F5F4F2"};
+        manager.add_custom_filament(1, 2, mix_b, colors);
+        manager.add_custom_filament(1, 2, 35, colors);
+        Model        model;
+        ModelObject* object = model.add_object();
+        object->add_volume(make_cube(10., 10., 1.6));
+        object->add_instance();
+        object->config.set("extruder", 5);
+        ModelVolume* neighbor = object->add_volume(make_cube(10., 10., 0.8));
+        neighbor->set_offset(neighbor->get_offset() + Vec3d(15., 0., 0.4));
+        neighbor->config.set("extruder", 6);
+
+        DynamicPrintConfig config = mixed_region_print_config(manager.serialize_custom_entries());
+        config.set("layer_height", 0.2);
+        config.set("initial_layer_print_height", 0.2);
+        config.set("dithering_local_z_mode", true);
+        config.set("dithering_local_z_whole_objects", true);
+        config.set("enable_prime_tower", false);
+        Print print;
+        print.set_status_silent();
+        print.apply(model, config);
+        print.get_object(0)->slice();
+        check_alternating_local_z_pairs(*print.get_object(0));
+    }
+}
+
+TEST_CASE("Painted Local-Z pairs keep alternating through the layer 66 transition", "[MixedFilament][LocalZ][Cadence]")
+{
+    MixedAutoGenerateGuard    auto_generate(false);
+    Model                     model;
+    DynamicPrintConfig        config = DynamicPrintConfig::full_print_config();
+    ConfigSubstitutionContext substitutions{ForwardCompatibilitySubstitutionRule::Enable};
+    PlateDataPtrs             plates;
+    std::vector<Preset*>      presets;
+    bool                      is_bbl = false;
+    Semver                    version;
+    const std::string         path = std::string(TEST_DATA_DIR) + "/local_z/CubeLines.3mf";
+    REQUIRE(load_bbs_3mf(path.c_str(), &config, &substitutions, &model, &plates, &presets, &is_bbl, &version, nullptr,
+                         LoadStrategy::LoadModel | LoadStrategy::LoadConfig | LoadStrategy::AddDefaultInstances));
+    release_PlateData_list(plates);
+    for (Preset* preset : presets)
+        delete preset;
+    REQUIRE(model.objects.size() == 1);
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    print.get_object(0)->slice();
+    REQUIRE(print.get_object(0)->layer_count() > 66);
+    check_alternating_local_z_pairs(*print.get_object(0));
+}
+
+TEST_CASE("Unused support interface filament produces no prime tower", "[MixedFilament][PrimeTower]")
+{
+    Model        model;
+    ModelObject* object = model.add_object();
+    object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+    object->config.set("extruder", 1);
+    DynamicPrintConfig config = mixed_region_print_config("");
+    config.set("enable_support", true);
+    config.set("support_interface_filament", 4);
+    config.set("enable_prime_tower", true);
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    print.process();
+    REQUIRE(print.is_step_done(psWipeTower));
+    REQUIRE(print.get_object(0)->support_layers().empty());
+    CHECK(print.wipe_tower_data().tool_changes.empty());
+    CHECK_FALSE(print.wipe_tower_data().wipe_tower_mesh_data);
 }
 
 TEST_CASE("Filament changes retain slices without whole-object Local-Z", "[MixedFilament][LocalZ][Invalidation]")

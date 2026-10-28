@@ -4327,6 +4327,14 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                     default_bbox = get_extents(default_segmentation);
                     layer_split  = true;
                 }
+                auto append_to_extruder = [&by_extruder, &layer_split](size_t extruder_idx, ExPolygons masks) {
+                    if (masks.empty())
+                        return;
+                    ByExtruder& region = by_extruder[extruder_idx];
+                    append(region.expolygons, std::move(masks));
+                    region.bbox = get_extents(region.expolygons);
+                    layer_split = true;
+                };
                 for (size_t channel_idx = 1; channel_idx < num_channels; ++ channel_idx) {
                     const unsigned int channel_id = unsigned(channel_idx);
                     const size_t local_layer_slot = mixed_zone_phase_slot(layer_id, channel_idx);
@@ -4343,6 +4351,34 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                             collapse_this_channel = false;
                     }
                     ExPolygons &state_masks = segmentation[layer_id][channel_idx];
+                    if (state_masks.empty())
+                        continue;
+
+                    // Same-mix painting must retain the parent's virtual filament identity.
+                    // Resolving it to a physical tool here would split an otherwise continuous
+                    // region and could restart its cadence at the painted zone's first layer.
+                    ExPolygons matching_parent_masks;
+                    if (collapse_this_channel && mixed_mgr.is_mixed(channel_id, num_physical)) {
+                        for (const LayerRegion* parent_region : layer.regions()) {
+                            const PrintRegionConfig& parent_config = parent_region->region().config();
+                            if (parent_config.wall_filament.value == int(channel_id) &&
+                                parent_config.solid_infill_filament.value == int(channel_id) &&
+                                parent_config.sparse_infill_filament.value == int(channel_id))
+                                append(matching_parent_masks, to_expolygons(parent_region->slices.surfaces));
+                        }
+                        if (matching_parent_masks.size() > 1)
+                            matching_parent_masks = union_ex(matching_parent_masks);
+                    }
+                    auto append_channel_masks = [&](ExPolygons masks, unsigned int effective_filament_id) {
+                        if (effective_filament_id != channel_id && !matching_parent_masks.empty()) {
+                            append_to_extruder(channel_idx - 1, intersection_ex(masks, matching_parent_masks));
+                            masks = diff_ex(masks, matching_parent_masks);
+                        }
+                        const size_t effective_idx = effective_filament_id >= 1 && effective_filament_id <= num_extruders ?
+                                                         size_t(effective_filament_id - 1) :
+                                                         channel_idx - 1;
+                        append_to_extruder(effective_idx, std::move(masks));
+                    };
                     const bool split_by_zone_phase =
                         collapse_this_channel &&
                         component_local_indices != nullptr &&
@@ -4366,14 +4402,9 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                                                                                float(preferred_a),
                                                                                float(preferred_b),
                                                                                float(base_height));
-                            const size_t effective_idx =
-                                effective_filament_id >= 1 && effective_filament_id <= num_extruders ?
-                                    size_t(effective_filament_id - 1) :
-                                    size_t(channel_idx - 1);
-                            ByExtruder &region = by_extruder[effective_idx];
-                            region.expolygons.emplace_back(std::move(state_masks[component_idx]));
-                            region.bbox = get_extents(region.expolygons);
-                            layer_split = true;
+                            ExPolygons component_masks;
+                            component_masks.emplace_back(std::move(state_masks[component_idx]));
+                            append_channel_masks(std::move(component_masks), effective_filament_id);
 
                             if (bias_mode_enabled &&
                                 std::abs(mixed_mgr.component_surface_offset(channel_id,
@@ -4399,19 +4430,9 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                                                                            float(preferred_b),
                                                                            float(base_height)) :
                             channel_id;
-                        const size_t effective_idx =
-                            effective_filament_id >= 1 && effective_filament_id <= num_extruders ?
-                                size_t(effective_filament_id - 1) :
-                                size_t(channel_idx - 1);
-                        ByExtruder &region = by_extruder[effective_idx];
-                        append(region.expolygons, std::move(state_masks));
-                        if (! region.expolygons.empty()) {
-                            region.bbox = get_extents(region.expolygons);
-                            layer_split = true;
-                        }
+                        append_channel_masks(std::move(state_masks), effective_filament_id);
 
-                        if (!region.expolygons.empty() &&
-                            bias_mode_enabled &&
+                        if (bias_mode_enabled &&
                             mixed_mgr.is_mixed(channel_id, num_physical) &&
                             std::abs(mixed_mgr.component_surface_offset(channel_id,
                                                                        num_physical,

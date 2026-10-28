@@ -876,6 +876,153 @@ TEST_CASE("Mixed filament component edits rebuild painted region targets", "[Mix
     CHECK(first_layer_range_painted_extruders(print) == expected_updated_second_component_extruders);
 }
 
+TEST_CASE("Painting the assigned mixed filament preserves a continuous perimeter", "[MixedFilament][Segmentation]")
+{
+    MixedAutoGenerateGuard guard(false);
+
+    Model        model;
+    ModelObject* object = model.add_object();
+    ModelVolume* volume = object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+    object->ensure_on_bed();
+
+    constexpr int      mixed_id = 5;
+    DynamicPrintConfig config   = mixed_region_print_config(single_custom_mixed_definition(2, 3, 4242));
+    config.set("enable_prime_tower", false);
+    config.set("elefant_foot_compensation", 0.);
+    config.set("outer_wall_line_width", 0.4);
+    config.set("wall_loops", 1);
+    config.option<ConfigOptionPercent>("sparse_infill_density")->value = 0.;
+    config.set("top_shell_layers", 0);
+    config.set("bottom_shell_layers", 0);
+    config.option<ConfigOptionEnum<PerimeterGeneratorType>>("wall_generator")->value = PerimeterGeneratorType::Classic;
+
+    bool assign_part = false;
+    bool paint_top   = false;
+    SECTION("Object assignment") {}
+    SECTION("Part assignment") { assign_part = true; }
+    SECTION("Region collapse disabled") { config.set("mixed_filament_region_collapse", false); }
+    SECTION("Painting starts at the top surface")
+    {
+        paint_top = true;
+        config.set("top_shell_layers", 2);
+    }
+    SECTION("Full-domain Local-Z")
+    {
+        config.set("dithering_local_z_mode", true);
+        config.set("dithering_local_z_whole_objects", true);
+    }
+    (assign_part ? volume->config : object->config).set("extruder", mixed_id);
+
+    // Leave the other faces at the assigned mix. Top paint also covers a zone
+    // whose local cadence starts later than the object's first layer.
+    TriangleSelector selector(volume->mesh());
+    selector.set_facet(paint_top ? 2 : 4, EnforcerBlockerType(mixed_id));
+    selector.set_facet(paint_top ? 3 : 5, EnforcerBlockerType(mixed_id));
+    REQUIRE(volume->mmu_segmentation_facets.set(selector));
+
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    REQUIRE(print.objects().size() == 1);
+    PrintObject* print_object = print.get_object(0);
+    print_object->slice();
+    REQUIRE(print_object->layer_count() > 1);
+
+    for (const Layer* layer : print_object->layers()) {
+        size_t populated_regions = 0;
+        for (const LayerRegion* region : layer->regions()) {
+            if (region->slices.empty())
+                continue;
+            ++populated_regions;
+            CHECK(region->region().config().wall_filament.value == mixed_id);
+            REQUIRE(region->slices.surfaces.size() == 1);
+            CHECK_THAT(region->slices.surfaces.front().area() * SCALING_FACTOR * SCALING_FACTOR, Catch::Matchers::WithinAbs(100., 0.001));
+        }
+        CHECK(populated_regions == 1);
+    }
+
+    // With ordinary layer mixing, the painted boundary must not break the wall loop.
+    if (!config.opt_bool("dithering_local_z_mode")) {
+        print.process();
+        for (const Layer* layer : print_object->layers()) {
+            size_t perimeter_count = 0;
+            for (const LayerRegion* region : layer->regions()) {
+                const ExtrusionEntityCollection perimeters = region->perimeters.flatten();
+                perimeter_count += perimeters.size();
+                for (const ExtrusionEntity* perimeter : perimeters.entities)
+                    CHECK(perimeter->is_loop());
+            }
+            CHECK(perimeter_count == 1);
+        }
+    }
+}
+
+TEST_CASE("Same-mix painting preserves other material overrides", "[MixedFilament][Segmentation]")
+{
+    MixedAutoGenerateGuard guard(false);
+
+    Model        model;
+    ModelObject* object = model.add_object();
+    ModelVolume* volume = object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+    object->ensure_on_bed();
+    constexpr int mixed_id = 5;
+    object->config.set("extruder", mixed_id);
+
+    TriangleSelector selector(volume->mesh());
+    selector.set_facet(4, EnforcerBlockerType(mixed_id));
+    selector.set_facet(5, EnforcerBlockerType(mixed_id));
+
+    int expected_physical_id = 1;
+    SECTION("Physical paint over the same mixed parent")
+    {
+        selector.set_facet(8, EnforcerBlockerType(expected_physical_id));
+        selector.set_facet(9, EnforcerBlockerType(expected_physical_id));
+    }
+    SECTION("Same mixed paint over a different part material")
+    {
+        ModelVolume* other_volume = object->add_volume(make_cube(10., 10., 2.));
+        other_volume->set_offset(Vec3d(20., 0., 0.));
+        other_volume->config.set("extruder", 1);
+        TriangleSelector other_selector(other_volume->mesh());
+        other_selector.set_facet(4, EnforcerBlockerType(mixed_id));
+        other_selector.set_facet(5, EnforcerBlockerType(mixed_id));
+        REQUIRE(other_volume->mmu_segmentation_facets.set(other_selector));
+        expected_physical_id = 3;
+    }
+    SECTION("Painting overrides a different infill material")
+    {
+        volume->config.set("sparse_infill_filament", 1);
+        expected_physical_id = 3;
+    }
+    REQUIRE(volume->mmu_segmentation_facets.set(selector));
+
+    DynamicPrintConfig config = mixed_region_print_config(single_custom_mixed_definition(2, 3, 4242));
+    config.set("elefant_foot_compensation", 0.);
+    config.set("outer_wall_line_width", 0.4);
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    REQUIRE(print.objects().size() == 1);
+    PrintObject* print_object = print.get_object(0);
+    print_object->slice();
+
+    bool found_physical_override = false;
+    bool found_mixed_parent      = false;
+    for (const Layer* layer : print_object->layers()) {
+        for (const LayerRegion* region : layer->regions()) {
+            if (region->slices.empty())
+                continue;
+            const int filament_id = region->region().config().wall_filament.value;
+            found_physical_override |= filament_id == expected_physical_id;
+            found_mixed_parent |= filament_id == mixed_id;
+        }
+    }
+    CHECK(found_physical_override);
+    CHECK(found_mixed_parent);
+}
+
 TEST_CASE("ExtrusionPath copies preserve inset index", "[MixedFilament]")
 {
     ExtrusionPath src(erPerimeter);

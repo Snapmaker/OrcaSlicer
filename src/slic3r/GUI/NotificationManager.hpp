@@ -194,6 +194,10 @@ public:
 	// ErrorNotificationLevel are never faded out.
     void push_notification(NotificationType type, NotificationLevel level, const std::string& text, const std::string& hypertext = "",
                            std::function<bool(wxEvtHandler*)> callback = std::function<bool(wxEvtHandler*)>(), int timestamp = 0);
+	// Push a NotificationType::CustomNotification with provided notification level and
+	// a custom fade-out duration in seconds (0 means it never fades out), without
+	// exposing the private NotificationData aggregate.
+	void push_notification(NotificationLevel level, int duration, const std::string& text, int timestamp = 0);
 	// Pushes basic_notification with delay. See push_delayed_notification_data.
 	void push_delayed_notification(const NotificationType type, std::function<bool(void)> condition_callback, int64_t initial_delay, int64_t delay_interval);
 	// Removes all notifications of type from m_waiting_notifications
@@ -377,9 +381,9 @@ private:
         std::string        source_key;
 	};
 
-public:
 	// Push a fully specified notification, e.g. with a custom fade-out duration
-	// (NotificationData::duration, 0 means it never disappears).
+	// (NotificationData::duration, 0 means it never disappears). Private like
+	// NotificationData itself: outside callers cannot construct the aggregate.
 	bool push_notification_data(const NotificationData& notification_data, int timestamp);
 
 	// Cache of IDs to identify and reuse ImGUI windows.

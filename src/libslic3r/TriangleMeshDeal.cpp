@@ -133,16 +133,16 @@ static std::vector<Vec3i32> face_neighbors_from_faces(const std::vector<stl_tria
         for (int j = 0; j < 3; ++j) {
             const uint32_t a = uint32_t(tri[j]);
             const uint32_t b = uint32_t(tri[(j + 1) % 3]);
-            const auto     key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
-            const auto [it, inserted] = edge_first_face.emplace(key, Vec2i32(i, j));
-            if (inserted)
+            const auto     key    = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+            const auto     result = edge_first_face.emplace(key, Vec2i32(i, j));
+            if (result.second)
                 continue;
-            const Vec2i32 first = it->second;
+            const Vec2i32 first = result.first->second;
             if (first.x() >= 0) {
                 // Pair the two faces; a third face sharing the same edge stays unpaired.
                 out[size_t(first.x())][first.y()] = i;
                 out[size_t(i)][j]                 = first.x();
-                it->second                        = Vec2i32(-1, -1);
+                result.first->second              = Vec2i32(-1, -1);
             }
         }
     }
@@ -217,8 +217,8 @@ static indexed_triangle_set loop_subdivide_fixed_boundary(const std::vector<stl_
             const uint32_t a = tri[j];
             const uint32_t b = tri[(j + 1) % 3];
             const auto edge_key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
-            const auto [it, inserted] = edge_new_vertex.emplace(edge_key, uint32_t(out.vertices.size()));
-            if (inserted) {
+            const auto result   = edge_new_vertex.emplace(edge_key, uint32_t(out.vertices.size()));
+            if (result.second) {
                 if (ff_index[face][j] < 0 || (vertex_on_boundary[a] && vertex_on_boundary[b]))
                     {
                     // Boundary edge: exact midpoint of the two endpoints.
@@ -245,7 +245,7 @@ static indexed_triangle_set loop_subdivide_fixed_boundary(const std::vector<stl_
                     out.vertices.push_back(3.f / 8.f * (va + vb) + 1.f / 8.f * (vc + vd));
                 }
             }
-            mid[j] = int(it->second);
+            mid[j] = int(result.first->second);
         }
         // Same 1-to-4 face split as igl::loop, with mid[j] the midpoint of the edge
         // (tri[j], tri[(j+1)%3]); the winding of every sub-face matches the input face.

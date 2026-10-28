@@ -29,6 +29,9 @@ msgstr "\"%s\" 细分后面数将超过 100 万，可能增加切片时间。是
 msgid "\"%s\" part's mesh contains errors. Please repair it first."
 msgstr "\"%s\" 零件的网格存在错误，请先修复。"
 
+msgid "Subdivision discarded: the model changed while it was running"
+msgstr "细分结果已丢弃：运行期间模型发生了变化"
+
 msgid "Current AMS humidity"
 msgstr "当前AMS湿度"
 

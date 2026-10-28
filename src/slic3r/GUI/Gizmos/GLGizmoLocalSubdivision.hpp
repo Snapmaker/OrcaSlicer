@@ -1,3 +1,4 @@
+#pragma once
 #ifndef slic3r_GLGizmoLocalSubdivision_hpp_
 #define slic3r_GLGizmoLocalSubdivision_hpp_
 

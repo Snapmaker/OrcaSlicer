@@ -6280,6 +6280,7 @@ bool GUI_App::load_language(wxString language, bool initial)
     }
 #endif
 
+#ifndef __linux__
     if (! wxLocale::IsAvailable(language_info->Language)&&initial) {
         language_info = wxLocale::GetLanguageInfo(wxLANGUAGE_ENGLISH_UK);
         app_config->set("language", language_info->CanonicalName.ToUTF8().data());
@@ -6334,11 +6335,23 @@ bool GUI_App::load_language(wxString language, bool initial)
 			return false;
     }
 
+#endif
+
     // Release the old locales, create new locales.
     //FIXME wxWidgets cause havoc if the current locale is deleted. We just forget it causing memory leaks for now.
     m_wxLocale.release();
     m_wxLocale = Slic3r::make_unique<wxLocale>();
-    m_wxLocale->Init(language_info->Language);
+#ifdef __linux__
+    if (!wxLocale::IsAvailable(language_info->Language)) {
+        // The bundled translation does not require a generated system locale.
+        // Keep the current native locale and the selected language's name/code for the UI.
+        const wxString native_locale = wxString::FromUTF8(wxSetlocale(LC_ALL, nullptr));
+        BOOST_LOG_TRIVIAL(info) << "Using native locale " << native_locale.ToUTF8().data() << " for translation "
+                                << language_info->CanonicalName.ToUTF8().data();
+        m_wxLocale->Init(language_info->Description, language_info->CanonicalName, native_locale);
+    } else
+#endif
+        m_wxLocale->Init(language_info->Language);
     // Override language at the active wxTranslations class (which is stored in the active m_wxLocale)
     // to load possibly different dictionary, for example, load Czech dictionary for Slovak language.
     wxTranslations::Get()->SetLanguage(language_dict);

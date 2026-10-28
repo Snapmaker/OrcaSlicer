@@ -3327,6 +3327,22 @@ TEST_CASE("Local Z infill subdivision defaults inactive when Subdivide Mix Layer
     CHECK_FALSE(full_config.opt_bool("dithering_local_z_infill"));
 }
 
+TEST_CASE("Direct multicolor Local-Z defaults enabled and respects an explicit opt-out", "[MixedFilament][Config]")
+{
+    CHECK(FullPrintConfig::defaults().dithering_local_z_direct_multicolor.value);
+    CHECK(MixedFilamentPreviewSettings{}.local_z_direct_multicolor);
+
+    PresetBundle bundle;
+    REQUIRE(bundle.project_config.has("dithering_local_z_direct_multicolor"));
+    CHECK(bundle.project_config.opt_bool("dithering_local_z_direct_multicolor"));
+
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    CHECK(config.opt_bool("dithering_local_z_direct_multicolor"));
+    bundle.project_config.set("dithering_local_z_direct_multicolor", false);
+    config.apply(bundle.project_config);
+    CHECK_FALSE(config.opt_bool("dithering_local_z_direct_multicolor"));
+}
+
 // --------------------------------------------------------------------------
 // compute_redundant_filaments
 // --------------------------------------------------------------------------

@@ -16,6 +16,9 @@
 #include "slic3r/GUI/SSWCP.hpp"
 #include "slic3r/GUI/DownloadManager.hpp"
 #include "slic3r/Utils/PresetUpdater.hpp"
+#ifdef __APPLE__
+#include "slic3r/Utils/MacUninstallWatcher.hpp"
+#endif
 #include "slic3r/Config/Version.hpp"
 #include "libslic3r/MixedFilament.hpp"
 
@@ -2598,6 +2601,10 @@ bool GUI_App::on_init_inner()
     if (!start_gateway_service())
         BOOST_LOG_TRIVIAL(warning) << "failed to start connection gateway during application startup";
     profiler.mark("gateway_service.start");
+#ifdef __APPLE__
+    ensure_macos_uninstall_watcher();
+    profiler.mark("macos uninstall watcher");
+#endif
 #ifdef _MSW_DARK_MODE
 
 #ifndef __WINDOWS__

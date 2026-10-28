@@ -516,6 +516,19 @@ function build_universal() {
 
     echo "Universal binary created at $UNIVERSAL_APP"
 
+    # The bundle copy above is the arm64 app, so SnWathcer is arm64-only until this merge.
+    WATCHER_ARM64="${ORCA_ROOT}/gitlab_build/arm64/Snapmaker_Orca/Snapmaker Orca.app/Contents/MacOS/SnWathcer"
+    WATCHER_X86="${ORCA_ROOT}/gitlab_build/x86_64/Snapmaker_Orca/Snapmaker Orca.app/Contents/MacOS/SnWathcer"
+    WATCHER_UNIVERSAL="${UNIVERSAL_APP}/Contents/MacOS/SnWathcer"
+    if [ ! -f "${WATCHER_ARM64}" ] || [ ! -f "${WATCHER_X86}" ]; then
+        echo "Error: SnWathcer is missing for arm64 or x86_64. Refusing a universal app with a single-architecture helper." >&2
+        exit 1
+    fi
+    echo "Creating universal SnWathcer..."
+    lipo -create "${WATCHER_X86}" "${WATCHER_ARM64}" -output "${WATCHER_UNIVERSAL}"
+    lipo -info "${WATCHER_UNIVERSAL}"
+    codesign --force --sign - "${WATCHER_UNIVERSAL}" 2>/dev/null || true
+
     # Create universal crashpad_handler if both architectures have it
     CRASHPAD_ARM64="${ORCA_ROOT}/gitlab_build/arm64/Snapmaker_Orca/Snapmaker Orca.app/Contents/MacOS/crashpad_handler"
     CRASHPAD_X86="${ORCA_ROOT}/gitlab_build/x86_64/Snapmaker_Orca/Snapmaker Orca.app/Contents/MacOS/crashpad_handler"
@@ -580,6 +593,12 @@ function build_universal() {
     if [ -f "$UNIVERSAL_APP/$BINARY_PATH" ]; then
         echo "Generating dSYM for universal Snapmaker_Orca..."
         dsymutil "$UNIVERSAL_APP/$BINARY_PATH" -o "${DSYM_DIR}/Snapmaker_Orca.dSYM" 2>/dev/null || echo "Warning: Failed to generate dSYM for universal Snapmaker_Orca"
+    fi
+
+    # Generate dSYM for universal SnWathcer if it exists
+    if [ -f "$UNIVERSAL_APP/Contents/MacOS/SnWathcer" ]; then
+        echo "Generating dSYM for universal SnWathcer..."
+        dsymutil "$UNIVERSAL_APP/Contents/MacOS/SnWathcer" -o "${DSYM_DIR}/SnWathcer.dSYM" 2>/dev/null || true
     fi
 
     # Generate dSYM for universal crashpad_handler if it exists

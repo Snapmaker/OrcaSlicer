@@ -697,6 +697,8 @@ endif ()
 
 if (APPLE)
     list(APPEND SLIC3R_GUI_SOURCES
+            Utils/MacUninstallWatcher.cpp
+            Utils/MacUninstallWatcher.hpp
             Utils/RetinaHelperImpl.mm
             Utils/MacDarkMode.mm
             GUI/RemovableDriveManagerMM.mm

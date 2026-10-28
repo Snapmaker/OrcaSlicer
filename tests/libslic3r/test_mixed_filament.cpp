@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <clocale>
+#include <cmath>
 #include <cstdio>
 #include <cstdint>
 #include <locale>
@@ -637,6 +638,141 @@ TEST_CASE("Local-Z plans follow repeated object and part filament changes", "[Mi
             }
         }
         CHECK(planned_tools == expected_tools);
+    }
+}
+
+TEST_CASE("Local-Z two-color sublayers preserve requested ratios within height bounds", "[MixedFilament][LocalZ][Ratios]")
+{
+    MixedAutoGenerateGuard auto_generate(false);
+    bool                   painted           = false;
+    bool                   independent_rows  = false;
+    bool                   direct_multicolor = true;
+    SECTION("Whole object") {}
+    SECTION("Painted surface") { painted = true; }
+    SECTION("Independent mixed regions") { independent_rows = true; }
+    SECTION("Whole object without direct multicolor") { direct_multicolor = false; }
+
+    struct RatioCase
+    {
+        double layer_height;
+        int    mix_b_percent;
+        double lower_bound;
+        double upper_bound;
+        double total_a;
+        double total_b;
+        size_t pass_count;
+        double preferred_a = 0.0;
+        double preferred_b = 0.0;
+    };
+    const RatioCase cases[] = {
+        {0.20, 67, 0.04, 0.16, 0.066, 0.134, 2},
+        {0.20, 33, 0.04, 0.16, 0.134, 0.066, 2},
+        {0.24, 67, 0.04, 0.16, 0.080, 0.160, 2}, // 67% reaches the upper height limit.
+        {0.24, 33, 0.04, 0.16, 0.160, 0.080, 2},
+        {0.20, 75, 0.04, 0.16, 0.050, 0.150, 2},
+        {0.20, 25, 0.04, 0.16, 0.150, 0.050, 2},
+        {0.24, 50, 0.04, 0.16, 0.120, 0.120, 2},
+        {0.24, 51, 0.04, 0.16, 0.1176, 0.1224, 2}, // Near-equal heights must stay assigned to the correct component.
+        {0.24, 49, 0.04, 0.16, 0.1224, 0.1176, 2},
+        {0.20, 95, 0.04, 0.16, 0.040, 0.160, 2}, // An infeasible ratio must still respect both limits.
+        {0.24, 75, 0.04, 0.16, 0.080, 0.160, 2},
+        {0.24, 75, 0.02, 0.16, 0.060, 0.180, 4},               // Two A/B pairs make 25/75 feasible.
+        {0.20, 67, 0.02, 0.18, 0.066, 0.134, 2},               // Wider limits must not change a feasible ratio.
+        {0.24, 67, 0.04, 0.16, 0.150, 0.090, 3, 0.075, 0.090}, // Explicit A/B heights keep their A-first cadence.
+    };
+    for (const RatioCase& test : cases) {
+        CAPTURE(test.layer_height, test.mix_b_percent, test.lower_bound, test.upper_bound);
+        const std::vector<std::string> colors = {"#FF00FF", "#FFFFFF", "#0000FF", "#FFFF00"};
+        MixedFilamentManager           manager;
+        manager.add_custom_filament(1, 2, test.mix_b_percent, colors);
+        if (independent_rows)
+            manager.add_custom_filament(3, 4, 100 - test.mix_b_percent, colors);
+        for (MixedFilament& row : manager.mixed_filaments()) {
+            row.distribution_mode = int(MixedFilament::Simple);
+            row.manual_pattern.clear();
+        }
+
+        Model        model;
+        ModelObject* object = model.add_object();
+        ModelVolume* volume = object->add_volume(make_cube(10., 10., 5. * test.layer_height));
+        object->add_instance();
+        object->config.set("extruder", painted ? 3 : 5);
+        if (painted) {
+            TriangleSelector selector(volume->mesh());
+            for (size_t facet = 0; facet < volume->mesh().its.indices.size(); ++facet)
+                selector.set_facet(int(facet), EnforcerBlockerType(5));
+            REQUIRE(volume->mmu_segmentation_facets.set(selector));
+        }
+        if (independent_rows) {
+            ModelVolume* other = object->add_volume(make_cube(10., 10., 5. * test.layer_height));
+            other->set_offset(other->get_offset() + Vec3d(15., 0., 0.));
+            other->config.set("extruder", 6);
+        }
+
+        DynamicPrintConfig config = mixed_region_print_config(manager.serialize_custom_entries());
+        config.set("layer_height", test.layer_height);
+        config.set("initial_layer_print_height", test.layer_height);
+        config.set("outer_wall_line_width", 0.4);
+        config.set("dithering_local_z_mode", true);
+        config.set("dithering_local_z_whole_objects", !painted);
+        config.set("dithering_local_z_infill", true);
+        config.set("dithering_local_z_direct_multicolor", direct_multicolor);
+        config.set("mixed_filament_height_lower_bound", test.lower_bound);
+        config.set("mixed_filament_height_upper_bound", test.upper_bound);
+        config.set("mixed_color_layer_height_a", test.preferred_a);
+        config.set("mixed_color_layer_height_b", test.preferred_b);
+        config.set("enable_prime_tower", false);
+
+        Print print;
+        print.set_status_silent();
+        print.apply(model, config);
+        REQUIRE(print.objects().size() == 1);
+        PrintObject* print_object = print.get_object(0);
+        print_object->slice();
+        const auto& intervals = print_object->local_z_intervals();
+        const auto& plans     = print_object->local_z_sublayer_plan();
+        REQUIRE(intervals.size() > 1);
+        for (const LocalZInterval& interval : intervals) {
+            if (interval.layer_id == 0)
+                continue; // The first layer intentionally remains unsplit.
+            CAPTURE(interval.layer_id);
+            REQUIRE(interval.has_mixed_paint);
+            CHECK(interval.sublayer_count == test.pass_count * (independent_rows ? 2 : 1));
+            REQUIRE(interval.first_sublayer_idx + interval.sublayer_count <= plans.size());
+            std::vector<double> component_heights(4, 0.0);
+            for (size_t i = 0; i < interval.sublayer_count; ++i) {
+                const SubLayerPlan& plan = plans[interval.first_sublayer_idx + i];
+                REQUIRE(plan.split_interval);
+                CHECK(plan.flow_height >= test.lower_bound - 1e-6);
+                CHECK(plan.flow_height <= test.upper_bound + 1e-6);
+                CHECK_THAT(plan.flow_height, WithinAbs(plan.z_hi - plan.z_lo, 1e-6));
+                CHECK(plan.z_lo >= interval.z_lo - 1e-6);
+                CHECK(plan.z_hi <= interval.z_hi + 1e-6);
+                REQUIRE(plan.painted_masks_by_extruder.size() == component_heights.size());
+                for (size_t tool = 0; tool < component_heights.size(); ++tool)
+                    if (!plan.painted_masks_by_extruder[tool].empty())
+                        component_heights[tool] += plan.flow_height;
+            }
+            CHECK_THAT(component_heights[0], WithinAbs(test.total_a, 1e-6));
+            CHECK_THAT(component_heights[1], WithinAbs(test.total_b, 1e-6));
+            CHECK_THAT(component_heights[0] + component_heights[1], WithinAbs(interval.base_height, 1e-6));
+            if (independent_rows) {
+                const bool explicit_heights = test.preferred_a > 0.0 || test.preferred_b > 0.0;
+                CHECK_THAT(component_heights[2], WithinAbs(explicit_heights ? test.total_a : test.total_b, 1e-6));
+                CHECK_THAT(component_heights[3], WithinAbs(explicit_heights ? test.total_b : test.total_a, 1e-6));
+            }
+        }
+
+        MixedFilamentPreviewSettings preview;
+        preview.local_z_mode              = true;
+        preview.local_z_direct_multicolor = direct_multicolor;
+        preview.nominal_layer_height      = test.layer_height;
+        preview.mixed_lower_bound         = test.lower_bound;
+        preview.mixed_upper_bound         = test.upper_bound;
+        preview.preferred_a_height        = test.preferred_a;
+        preview.preferred_b_height        = test.preferred_b;
+        CHECK(mixed_filament_effective_local_z_preview_mix_b_percent(manager.mixed_filaments().front(), preview) ==
+              int(std::lround(100. * test.total_b / test.layer_height)));
     }
 }
 

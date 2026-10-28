@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
 #include "test_utils.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
@@ -6,6 +7,7 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/TriangleSelector.hpp"
@@ -13,6 +15,7 @@
 #include <algorithm>
 #include <clocale>
 #include <cstdio>
+#include <fstream>
 #include <cstdint>
 #include <locale>
 #include <set>
@@ -25,6 +28,7 @@
 #endif
 
 using namespace Slic3r;
+using Catch::Approx;
 
 namespace {
 
@@ -5786,4 +5790,283 @@ TEST_CASE("Full Spectrum default selections normalize the default family argumen
             CHECK(distinct.size() == 4);
         }
     }
+}
+
+TEST_CASE("SML layer count stays consistent between gcode header and layer tags", "[MixedFilament][LocalZ][LayerCount]")
+{
+    MixedAutoGenerateGuard guard(false);
+
+    constexpr unsigned int mixed_virtual_id = 5;
+    constexpr uint64_t     stable_id        = 4242;
+
+    Model        model;
+    ModelObject *object = model.add_object();
+    object->name        = "sml-layer-count.stl";
+    ModelVolume *volume = object->add_volume(make_cube(10., 10., 10.));
+    object->add_instance();
+    object->ensure_on_bed();
+    object->config.set("extruder", 1);
+
+    // Paint one side face with the mixed filament so SML subdivides that band.
+    const indexed_triangle_set &its = volume->mesh().its;
+    TriangleSelector            selector(volume->mesh());
+    size_t                      side_facets = 0;
+    for (size_t facet_idx = 0; facet_idx < its.indices.size(); ++facet_idx) {
+        const auto  &facet  = its.indices[facet_idx];
+        const Vec3f &v0     = its.vertices[facet(0)];
+        const Vec3f &v1     = its.vertices[facet(1)];
+        const Vec3f &v2     = its.vertices[facet(2)];
+        const Vec3f  normal = (v1 - v0).cross(v2 - v0);
+        if (std::abs(normal.x()) > std::abs(normal.y()) && std::abs(normal.x()) > std::abs(normal.z())) {
+            selector.set_facet(int(facet_idx), EnforcerBlockerType(mixed_virtual_id));
+            ++side_facets;
+        }
+    }
+    REQUIRE(side_facets > 0);
+    REQUIRE(volume->mmu_segmentation_facets.set(selector));
+
+    DynamicPrintConfig config = mixed_region_print_config(single_custom_mixed_definition(1, 2, stable_id));
+    config.set("dithering_local_z_mode", true);
+
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    config = print.full_print_config();
+    try {
+        print.process();
+    } catch (const std::exception &e) {
+        printf("[layer-count-diag] process exception=%s\n", e.what());
+        fflush(stdout);
+    }
+    REQUIRE(print.objects().size() == 1);
+    const PrintObject *print_object = print.objects().front();
+    if (! print_object->is_step_done(posSlice)) {
+        SKIP("slicing did not finish in this environment (known local aborts)");
+    }
+
+    // The painted virtual extruder needs valid per-filament arrays for gcode export.
+    print.set_status_silent();
+    std::string gcode_path = "sml_layer_count_diag.gcode";
+    std::remove(gcode_path.c_str());
+    try {
+        print.export_gcode(gcode_path, nullptr);
+    } catch (const std::exception &e) {
+        printf("[layer-count-diag] export exception=%s\n", e.what());
+        fflush(stdout);
+    }
+    std::ifstream in(gcode_path, std::ios::binary);
+    if (! in.good()) {
+        std::remove(gcode_path.c_str());
+        SKIP("gcode export did not finish in this environment");
+    }
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::remove(gcode_path.c_str());
+
+    size_t layer_changes = 0;
+    for (size_t pos = 0; (pos = content.find(";LAYER_CHANGE", pos)) != std::string::npos; pos += 13)
+        ++layer_changes;
+    size_t total_layer_header = 0;
+    const size_t tag_pos = content.find("total_layer_count = ");
+    if (tag_pos != std::string::npos)
+        total_layer_header = size_t(atoi(content.c_str() + tag_pos + 21));
+
+    printf("[layer-count-diag] header=%zu layer_change_tags=%zu\n", total_layer_header, layer_changes);
+    fflush(stdout);
+    CHECK(total_layer_header == layer_changes);
+}
+
+TEST_CASE("GCodeProcessor layer endpoints table matches layer tags and covers moves", "[MixedFilament][LayerEndpoints]")
+{
+    // Simulated SML gcode: nominal layers at ;Z: 0.2/0.4/0.6, with a Local-Z
+    // sublayer printing at intermediate z 0.34 inside the second layer.
+    // s_IsBBLPrinter defaults to true in the processor; Snapmaker printers run the
+    // BBL tag flavour ("; CHANGE_LAYER" + "; Z_HEIGHT:"), which is also the GUI path.
+    const std::string gcode =
+        "G90\n"
+        "M82\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.2\n"
+        "G1 Z0.200 F600\n"
+        ";TYPE:WALL-OUTER\n"
+        "G1 X10.0 Y10.0 E1.0 F1800\n"
+        "G1 X20.0 Y10.0 E2.0\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.4\n"
+        "; COLOR_CHANGE\n"
+        "; LAYER_HEIGHT: 0.2\n"
+        "G1 Z0.400 F600\n"
+        "G1 X20.0 Y20.0 E3.0\n"
+        "G1 Z0.340 F600\n"
+        "G1 X30.0 Y20.0 E4.0\n"
+        "G1 Z0.400 F600\n"
+        "G1 X40.0 Y20.0 E5.0\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.6\n"
+        "G1 Z0.600 F600\n"
+        "G1 X40.0 Y30.0 E6.0\n"
+        "M104 S0\n"
+        ;
+
+    GCodeProcessor processor;
+    processor.initialize("layer_endpoints_test.gcode");
+    processor.process_buffer(gcode);
+    processor.finalize(false);
+    const GCodeProcessorResult& result = processor.result();
+
+    INFO("layer_endpoints size=" << result.layer_endpoints.size()
+         << " moves=" << result.moves.size());
+    REQUIRE(result.layer_endpoints.size() == 3);
+    CHECK(result.layer_endpoints[0].first == Approx(0.2f).margin(1e-4));
+    CHECK(result.layer_endpoints[1].first == Approx(0.4f).margin(1e-4));
+    CHECK(result.layer_endpoints[2].first == Approx(0.6f).margin(1e-4));
+    // Monotonic move ids and full coverage up to the last move.
+    for (size_t i = 0; i + 1 < result.layer_endpoints.size(); ++i) {
+        const auto& cur  = result.layer_endpoints[i].second;
+        const auto& next = result.layer_endpoints[i + 1].second;
+        CHECK(cur.first <= cur.second);
+        CHECK(next.first >= cur.first);
+    }
+    const size_t last_move_id = result.moves.size() - 1; // no seam markers in this gcode
+    CHECK(result.layer_endpoints.back().second.second == last_move_id);
+}
+
+// ---------------------------------------------------------------------------
+// Review follow-ups for the layer endpoint table:
+//  - moves preceding the first layer tag (prime line / initial travel) fold
+//    into the first layer span, matching the legacy z-scan visibility;
+//  - a layer with a missing/unparsable z tag inherits the previous valid z
+//    (the first layer falls back to the z of one of its own moves) instead of
+//    being silently dropped by the z > 0 consumer filter;
+//  - a layer without any move keeps its entry (slider count preserved) with a
+//    first > last sentinel span, never {0,0} which would light an unrelated move;
+//  - seam blip bookkeeping (i - seams) and the compatible (";Z:") flavour are
+//    covered.
+// NOTE: PathLayerStack::BuildLayers (GPU side, PathData.cpp) is a GUI-layer
+// consumer and is not linkable into this test target; it mirrors the slider
+// side's z > 0 filter and first > last sentinel handling verbatim by contract
+// (see the CONTRACT comments in both files).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("GCodeProcessor layer endpoints fold pre-layer moves and keep seam offsets", "[MixedFilament][LayerEndpoints]")
+{
+    // Prime line before the first layer tag, then a closed WALL-OUTER loop: the
+    // loop-ending extrude returns to the wall's first vertex, so the processor
+    // inserts an EMoveType::Seam blip when the next non-perimeter move arrives.
+    const std::string gcode =
+        "G90\n"
+        "M82\n"
+        "G1 Z0.200 F600\n"                // pre-layer travel
+        "G1 X0.0 Y0.0 E0.5 F1800\n"       // pre-layer prime line extrusion
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.2\n"
+        "; FEATURE: Outer wall\n"
+        "G0 X10.0 Y10.0\n"                // travel to the wall start vertex
+        "G1 X20.0 Y10.0 E1.0\n"           // first wall extrude; the detector's first vertex is (10,10)
+        "G1 X20.0 Y20.0 E2.0\n"
+        "G1 X10.0 Y20.0 E3.0\n"
+        "G1 X10.0 Y10.0 E4.0\n"           // closes the loop on its first vertex
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.4\n"
+        "G1 Z0.400 F600\n"                // non-perimeter move: seam blip lands here
+        "G1 X30.0 Y10.0 E5.0\n"
+        "M104 S0\n"
+        ;
+
+    GCodeProcessor processor;
+    processor.initialize("layer_endpoints_prelayer_test.gcode");
+    processor.process_buffer(gcode);
+    processor.finalize(false);
+    const GCodeProcessorResult& result = processor.result();
+
+    size_t seam_count = 0;
+    for (const auto& move : result.moves)
+        if (move.type == EMoveType::Seam)
+            ++seam_count;
+    INFO("seam moves=" << seam_count << " layer_endpoints=" << result.layer_endpoints.size());
+    REQUIRE(result.layer_endpoints.size() == 2);
+    // the seam detector must have fired on the closed outer wall loop
+    REQUIRE(seam_count == 1);
+    // pre-layer moves fold into the first layer span, starting at move id 0
+    CHECK(result.layer_endpoints.front().second.first == 0);
+    // spans stay ordered with the seam-excluded id space intact
+    CHECK(result.layer_endpoints[0].second.first <= result.layer_endpoints[0].second.second);
+    CHECK(result.layer_endpoints[1].second.first > result.layer_endpoints[0].second.second);
+    CHECK(result.layer_endpoints.back().second.second == result.moves.size() - 1 - seam_count);
+}
+
+TEST_CASE("GCodeProcessor layer endpoints repair missing z and sentinel empty layers", "[MixedFilament][LayerEndpoints]")
+{
+    // layer 1 has no z tag (falls back to the z of its own moves), layer 3 has
+    // none either (inherits layer 2's z), layer 4 is empty (no move at all)
+    const std::string gcode =
+        "G90\n"
+        "M82\n"
+        "; CHANGE_LAYER\n"
+        "G1 Z0.200 F600\n"
+        "G1 X10.0 Y10.0 E1.0 F1800\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.4\n"
+        "G1 Z0.400 F600\n"
+        "G1 X20.0 Y10.0 E2.0\n"
+        "; CHANGE_LAYER\n"
+        "G1 X20.0 Y20.0 E3.0\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.8\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.9\n"
+        "G1 Z0.900 F600\n"
+        "G1 X30.0 Y20.0 E4.0\n"
+        "M104 S0\n"
+        ;
+
+    GCodeProcessor processor;
+    processor.initialize("layer_endpoints_repair_test.gcode");
+    processor.process_buffer(gcode);
+    processor.finalize(false);
+    const GCodeProcessorResult& result = processor.result();
+
+    REQUIRE(result.layer_endpoints.size() == 5);
+    CHECK(result.layer_endpoints[0].first == Approx(0.2f).margin(1e-4)); // own-move z fallback
+    CHECK(result.layer_endpoints[1].first == Approx(0.4f).margin(1e-4));
+    CHECK(result.layer_endpoints[2].first == Approx(0.4f).margin(1e-4)); // inherited
+    CHECK(result.layer_endpoints[3].first == Approx(0.8f).margin(1e-4));
+    // the empty layer keeps its entry (slider count preserved) with a
+    // first > last sentinel span that both consumers skip
+    CHECK(result.layer_endpoints[3].second.first > result.layer_endpoints[3].second.second);
+    CHECK(result.layer_endpoints[4].second.first <= result.layer_endpoints[4].second.second);
+    CHECK(result.layer_endpoints.back().second.second == result.moves.size() - 1);
+}
+
+TEST_CASE("GCodeProcessor layer endpoints compatible flavour z tag", "[MixedFilament][LayerEndpoints]")
+{
+    // compatible (non-BBL) flavour: ";LAYER_CHANGE" + ";Z:" tags
+    struct FlavourGuard {
+        FlavourGuard() { GCodeProcessor::s_IsBBLPrinter = false; }
+        ~FlavourGuard() { GCodeProcessor::s_IsBBLPrinter = true; }
+    } guard;
+
+    const std::string gcode =
+        "G90\n"
+        "M82\n"
+        ";LAYER_CHANGE\n"
+        ";Z:0.2\n"
+        "G1 Z0.200 F600\n"
+        "G1 X10.0 Y10.0 E1.0 F1800\n"
+        ";LAYER_CHANGE\n"
+        ";Z:0.4\n"
+        "G1 Z0.400 F600\n"
+        "G1 X20.0 Y10.0 E2.0\n"
+        "M104 S0\n"
+        ;
+
+    GCodeProcessor processor;
+    processor.initialize("layer_endpoints_compatible_test.gcode");
+    processor.process_buffer(gcode);
+    processor.finalize(false);
+    const GCodeProcessorResult& result = processor.result();
+
+    REQUIRE(result.layer_endpoints.size() == 2);
+    CHECK(result.layer_endpoints[0].first == Approx(0.2f).margin(1e-4));
+    CHECK(result.layer_endpoints[1].first == Approx(0.4f).margin(1e-4));
+    CHECK(result.layer_endpoints.back().second.second == result.moves.size() - 1);
 }

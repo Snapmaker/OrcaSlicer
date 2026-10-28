@@ -379,6 +379,18 @@ else ()
     add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp)
 endif ()
 
+if (APPLE)
+    add_executable(UninstallWatcher macos/UninstallWatcher.cpp)
+    target_include_directories(UninstallWatcher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_features(UninstallWatcher PRIVATE cxx_std_17)
+    set_target_properties(UninstallWatcher PROPERTIES
+        OUTPUT_NAME "SnWathcer"
+        BUILD_RPATH ""
+        INSTALL_RPATH "")
+    target_link_options(UninstallWatcher PRIVATE
+        "LINKER:-sectcreate,__TEXT,__info_plist,${CMAKE_CURRENT_SOURCE_DIR}/macos/UninstallWatcher-Info.plist")
+endif ()
+
 if (MINGW)
     target_link_options(Snapmaker_Orca PUBLIC "-Wl,-allow-multiple-definition")
     set_target_properties(Snapmaker_Orca PROPERTIES PREFIX "")
@@ -620,6 +632,14 @@ else ()
                 COMMENT "Updating rpath for libsentry.dylib"
                 VERBATIM)
         endif()
+    endif()
+    if (APPLE)
+        add_dependencies(Snapmaker_Orca UninstallWatcher)
+        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:UninstallWatcher>" "$<TARGET_FILE_DIR:Snapmaker_Orca>/SnWathcer"
+            COMMAND sh -c "codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/SnWathcer' 2>/dev/null || true"
+            COMMENT "Copying SnWathcer next to Snapmaker Orca"
+            VERBATIM)
     endif()
 endif ()
 

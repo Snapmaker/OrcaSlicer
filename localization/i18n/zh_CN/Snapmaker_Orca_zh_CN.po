@@ -15727,8 +15727,8 @@ msgstr "  • 接触面图案 → 交叠直线\n"
 msgid "  • Interface spacing: %.2f → 0 mm\n"
 msgstr "  • 接触面间距：%.2f → 0 mm\n"
 
-msgid "Enable model station"
+msgid "Enable Snapmaker Space"
 msgstr "开启模型站"
 
-msgid "Show the online models entry on the home page."
-msgstr "在首页显示在线模型入口。"
+msgid "When enabled, online models will be displayed on the Home page."
+msgstr "开启后，将在主页显示在线模型"

@@ -19172,6 +19172,17 @@ void Plater::reload_gcode_from_disk()
     load_gcode(filename);
 }
 
+void Plater::reload_gcode_preview()
+{
+    // GCodeViewer::load() early-returns when the result id is unchanged, so
+    // a plain reload_print() would never rebuild the toolpaths for the
+    // other pipeline (legacy buffers stay empty -> blank preview). Reset
+    // the viewer first to force a full reload. Keep the gcode-import mode:
+    // the editor path would skip the parsed gcode and blank it as well.
+    p->reset_gcode_toolpaths();
+    p->preview->reload_print(false, this->only_gcode_mode());
+}
+
 void Plater::refresh_print()
 {
     p->preview->refresh_print();

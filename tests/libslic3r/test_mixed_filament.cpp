@@ -5929,3 +5929,144 @@ TEST_CASE("GCodeProcessor layer endpoints table matches layer tags and covers mo
     const size_t last_move_id = result.moves.size() - 1; // no seam markers in this gcode
     CHECK(result.layer_endpoints.back().second.second == last_move_id);
 }
+
+// ---------------------------------------------------------------------------
+// Review follow-ups for the layer endpoint table:
+//  - moves preceding the first layer tag (prime line / initial travel) fold
+//    into the first layer span, matching the legacy z-scan visibility;
+//  - a layer with a missing/unparsable z tag inherits the previous valid z
+//    (the first layer falls back to the z of one of its own moves) instead of
+//    being silently dropped by the z > 0 consumer filter;
+//  - a layer without any move keeps its entry (slider count preserved) with a
+//    first > last sentinel span, never {0,0} which would light an unrelated move;
+//  - seam blip bookkeeping (i - seams) and the compatible (";Z:") flavour are
+//    covered.
+// NOTE: PathLayerStack::BuildLayers (GPU side, PathData.cpp) is a GUI-layer
+// consumer and is not linkable into this test target; it mirrors the slider
+// side's z > 0 filter and first > last sentinel handling verbatim by contract
+// (see the CONTRACT comments in both files).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("GCodeProcessor layer endpoints fold pre-layer moves and keep seam offsets", "[MixedFilament][LayerEndpoints]")
+{
+    // Prime line before the first layer tag, then a closed WALL-OUTER loop: the
+    // loop-ending extrude returns to the wall's first vertex, so the processor
+    // inserts an EMoveType::Seam blip when the next non-perimeter move arrives.
+    const std::string gcode =
+        "G90\n"
+        "M82\n"
+        "G1 Z0.200 F600\n"                // pre-layer travel
+        "G1 X0.0 Y0.0 E0.5 F1800\n"       // pre-layer prime line extrusion
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.2\n"
+        "; FEATURE: Outer wall\n"
+        "G0 X10.0 Y10.0\n"                // travel to the wall start vertex
+        "G1 X20.0 Y10.0 E1.0\n"           // first wall extrude; the detector's first vertex is (10,10)
+        "G1 X20.0 Y20.0 E2.0\n"
+        "G1 X10.0 Y20.0 E3.0\n"
+        "G1 X10.0 Y10.0 E4.0\n"           // closes the loop on its first vertex
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.4\n"
+        "G1 Z0.400 F600\n"                // non-perimeter move: seam blip lands here
+        "G1 X30.0 Y10.0 E5.0\n"
+        "M104 S0\n"
+        ;
+
+    GCodeProcessor processor;
+    processor.initialize("layer_endpoints_prelayer_test.gcode");
+    processor.process_buffer(gcode);
+    processor.finalize(false);
+    const GCodeProcessorResult& result = processor.result();
+
+    size_t seam_count = 0;
+    for (const auto& move : result.moves)
+        if (move.type == EMoveType::Seam)
+            ++seam_count;
+    INFO("seam moves=" << seam_count << " layer_endpoints=" << result.layer_endpoints.size());
+    REQUIRE(result.layer_endpoints.size() == 2);
+    // the seam detector must have fired on the closed outer wall loop
+    REQUIRE(seam_count == 1);
+    // pre-layer moves fold into the first layer span, starting at move id 0
+    CHECK(result.layer_endpoints.front().second.first == 0);
+    // spans stay ordered with the seam-excluded id space intact
+    CHECK(result.layer_endpoints[0].second.first <= result.layer_endpoints[0].second.second);
+    CHECK(result.layer_endpoints[1].second.first > result.layer_endpoints[0].second.second);
+    CHECK(result.layer_endpoints.back().second.second == result.moves.size() - 1 - seam_count);
+}
+
+TEST_CASE("GCodeProcessor layer endpoints repair missing z and sentinel empty layers", "[MixedFilament][LayerEndpoints]")
+{
+    // layer 1 has no z tag (falls back to the z of its own moves), layer 3 has
+    // none either (inherits layer 2's z), layer 4 is empty (no move at all)
+    const std::string gcode =
+        "G90\n"
+        "M82\n"
+        "; CHANGE_LAYER\n"
+        "G1 Z0.200 F600\n"
+        "G1 X10.0 Y10.0 E1.0 F1800\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.4\n"
+        "G1 Z0.400 F600\n"
+        "G1 X20.0 Y10.0 E2.0\n"
+        "; CHANGE_LAYER\n"
+        "G1 X20.0 Y20.0 E3.0\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.8\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.9\n"
+        "G1 Z0.900 F600\n"
+        "G1 X30.0 Y20.0 E4.0\n"
+        "M104 S0\n"
+        ;
+
+    GCodeProcessor processor;
+    processor.initialize("layer_endpoints_repair_test.gcode");
+    processor.process_buffer(gcode);
+    processor.finalize(false);
+    const GCodeProcessorResult& result = processor.result();
+
+    REQUIRE(result.layer_endpoints.size() == 5);
+    CHECK(result.layer_endpoints[0].first == Approx(0.2f).margin(1e-4)); // own-move z fallback
+    CHECK(result.layer_endpoints[1].first == Approx(0.4f).margin(1e-4));
+    CHECK(result.layer_endpoints[2].first == Approx(0.4f).margin(1e-4)); // inherited
+    CHECK(result.layer_endpoints[3].first == Approx(0.8f).margin(1e-4));
+    // the empty layer keeps its entry (slider count preserved) with a
+    // first > last sentinel span that both consumers skip
+    CHECK(result.layer_endpoints[3].second.first > result.layer_endpoints[3].second.second);
+    CHECK(result.layer_endpoints[4].second.first <= result.layer_endpoints[4].second.second);
+    CHECK(result.layer_endpoints.back().second.second == result.moves.size() - 1);
+}
+
+TEST_CASE("GCodeProcessor layer endpoints compatible flavour z tag", "[MixedFilament][LayerEndpoints]")
+{
+    // compatible (non-BBL) flavour: ";LAYER_CHANGE" + ";Z:" tags
+    struct FlavourGuard {
+        FlavourGuard() { GCodeProcessor::s_IsBBLPrinter = false; }
+        ~FlavourGuard() { GCodeProcessor::s_IsBBLPrinter = true; }
+    } guard;
+
+    const std::string gcode =
+        "G90\n"
+        "M82\n"
+        ";LAYER_CHANGE\n"
+        ";Z:0.2\n"
+        "G1 Z0.200 F600\n"
+        "G1 X10.0 Y10.0 E1.0 F1800\n"
+        ";LAYER_CHANGE\n"
+        ";Z:0.4\n"
+        "G1 Z0.400 F600\n"
+        "G1 X20.0 Y10.0 E2.0\n"
+        "M104 S0\n"
+        ;
+
+    GCodeProcessor processor;
+    processor.initialize("layer_endpoints_compatible_test.gcode");
+    processor.process_buffer(gcode);
+    processor.finalize(false);
+    const GCodeProcessorResult& result = processor.result();
+
+    REQUIRE(result.layer_endpoints.size() == 2);
+    CHECK(result.layer_endpoints[0].first == Approx(0.2f).margin(1e-4));
+    CHECK(result.layer_endpoints[1].first == Approx(0.4f).margin(1e-4));
+    CHECK(result.layer_endpoints.back().second.second == result.moves.size() - 1);
+}

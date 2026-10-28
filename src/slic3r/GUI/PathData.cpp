@@ -426,6 +426,12 @@ void PathLayerStack::BuildLayers(const GCodeProcessorResult& result)
     } else if (!result.layer_endpoints.empty()) {
         _layers.clear();
         for (const auto& entry : result.layer_endpoints) {
+            // CONTRACT: this z > 0 filter (and the first > last empty-layer sentinel,
+            // skipped by the AssembleSteps guard below) must stay verbatim identical
+            // to GCodeViewer::extract_layer_metadata - the slider and this GPU layer
+            // stack are consumed by index, so any divergence desynchronizes the
+            // layer window. z fallback repair for unparsable ";Z:" tags happens
+            // upstream in GCodeProcessor::finalize, so both ends see the same table.
             if (entry.first <= 0.0f)
                 continue; // unmatched z placeholder, skipped on the slider side too
             auto layer = std::make_unique<PathLayerData>();

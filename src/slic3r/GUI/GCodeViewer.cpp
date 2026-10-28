@@ -1034,6 +1034,10 @@ void GCodeViewer::extract_layer_metadata(const GCodeProcessorResult& gcode_resul
     // above mistakes for extra layers. The endpoint table carries the nominal layer
     // boundaries, keeping the preview layer count aligned with the gcode header
     // "; total layer number".
+    // CONTRACT: the z > 0 entry filter and the first > last (empty layer) sentinel
+    // handling below must stay verbatim identical to PathLayerStack::BuildLayers in
+    // PathData.cpp, otherwise the slider and the GPU layer window each show only
+    // part of the geometry - the exact symptom this table was introduced to fix.
     else if (!gcode_result.layer_endpoints.empty()) {
         m_layers.reset();
         for (const auto& layer : gcode_result.layer_endpoints)

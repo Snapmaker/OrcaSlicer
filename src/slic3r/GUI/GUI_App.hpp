@@ -22,7 +22,6 @@
 #include "slic3r/GUI/HttpServer.hpp"
 #include "../Utils/PrintHost.hpp"
 #include "slic3r/GUI/SSWCP.hpp"
-#include "slic3r/Utils/Bonjour.hpp"
 #include "slic3r/GUI/PrinterWebView.hpp"
 #include <wx/app.h>
 #include <wx/colour.h>
@@ -35,7 +34,6 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
-#include <vector>
 #include <stack>
 #include <thread>
 #include <unordered_map>

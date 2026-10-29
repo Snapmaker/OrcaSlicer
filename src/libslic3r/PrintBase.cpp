@@ -1,6 +1,8 @@
 #include "Exception.hpp"
 #include "PrintBase.hpp"
 
+#include <tbb/global_control.h>
+
 #include <boost/filesystem.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/log/trivial.hpp>
@@ -17,6 +19,73 @@ namespace Slic3r
 void PrintTryCancel::operator()()
 {
     m_print->throw_if_canceled();
+}
+
+void PrintBase::check_memory_guard()
+{
+    using namespace std::chrono;
+    const int64_t now  = duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count();
+    int64_t       last = m_last_mem_check_ns.load(std::memory_order_relaxed);
+    // Throttle to one sample per interval; the compare-exchange makes a
+    // single thread take each sample.
+    if (now - last < duration_cast<nanoseconds>(MEM_GUARD_SAMPLE_INTERVAL).count() ||
+        ! m_last_mem_check_ns.compare_exchange_strong(last, now, std::memory_order_relaxed))
+        return;
+    // The guard already acted during this slice.
+    if (m_memory_guard_acknowledged.load(std::memory_order_relaxed))
+        return;
+
+    const AvailableMemory mem          = get_available_memory();
+    const bool            low_physical = mem.physical != 0 && mem.physical < MEM_GUARD_THRESHOLD;
+    const bool            low_commit   = mem.commit != 0 && mem.commit < MEM_GUARD_THRESHOLD;
+    if (! low_physical && ! low_commit) {
+        m_low_mem_since_ns.store(0, std::memory_order_relaxed);
+        return;
+    }
+
+    int64_t since = m_low_mem_since_ns.load(std::memory_order_relaxed);
+    if (since == 0) {
+        since = now;
+        m_low_mem_since_ns.store(now, std::memory_order_relaxed);
+    }
+    const bool critical = (mem.physical != 0 && mem.physical < MEM_GUARD_CRITICAL) ||
+                          (mem.commit != 0 && mem.commit < MEM_GUARD_CRITICAL);
+    const milliseconds sustain = critical ? milliseconds(0) : low_commit ? MEM_GUARD_SUSTAIN_COMMIT : MEM_GUARD_SUSTAIN_PHYSICAL;
+    if (now - since < duration_cast<nanoseconds>(sustain).count())
+        return;
+
+    // Claim the action for this slice; another thread may have taken the
+    // same low sample.
+    bool expected = false;
+    if (! m_memory_guard_acknowledged.compare_exchange_strong(expected, true, std::memory_order_relaxed))
+        return;
+
+    BOOST_LOG_TRIVIAL(warning) << "Memory guard: low memory during slicing, continuing on a single thread. physical available "
+        << (mem.physical >> 20) << " MB, commit available " << (mem.commit >> 20) << " MB, low for "
+        << (now - since) / 1000000 << " ms" << (critical ? " (critical)" : "") << log_memory_info(true);
+
+    {
+        // TBB lets running workers finish their current task, then keeps
+        // them out, so the rest of the slice runs on one thread.
+        std::lock_guard<std::mutex> lock(m_memory_guard_throttle_mutex);
+        m_memory_guard_throttle = std::make_shared<tbb::global_control>(tbb::global_control::max_allowed_parallelism, 1);
+    }
+    m_memory_guard_callback();
+}
+
+bool PrintBase::memory_guard_throttled() const
+{
+    std::lock_guard<std::mutex> lock(m_memory_guard_throttle_mutex);
+    return m_memory_guard_throttle != nullptr;
+}
+
+void PrintBase::release_memory_guard_throttle()
+{
+    std::lock_guard<std::mutex> lock(m_memory_guard_throttle_mutex);
+    if (m_memory_guard_throttle) {
+        m_memory_guard_throttle.reset();
+        BOOST_LOG_TRIVIAL(warning) << "Memory guard: back to full parallelism";
+    }
 }
 
 size_t PrintStateBase::g_last_timestamp = 0;

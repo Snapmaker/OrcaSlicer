@@ -10,6 +10,7 @@
 #include "libslic3r/PrintBase.hpp"
 
 #include <string>
+#include <optional>
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include <slic3r/GUI/GCodeViewer.hpp>
 
@@ -110,9 +111,16 @@ class Preview : public wxPanel
     //BBS: add only gcode mode
     bool m_only_gcode { false };
     bool m_reload_paint_after_background_process_apply{false};
-    // Set by Plater::reslice() memory dialog. When true, load_print_as_fff
-    // passes skip_toolpaths=true to skip load_toolpaths GPU vertex buffers.
+    // Set when "Generate G-code Only" is chosen in the low-memory dialog:
+    // the toolpath preview is skipped until the user asks for it.
     bool m_skip_toolpath_preview { false };
+    // Set when the memory guard acted during the current slice; only then
+    // is free memory checked before loading the toolpaths.
+    bool m_low_memory_during_slicing { false };
+    // Id of the G-code result the user asked to preview despite low memory.
+    std::optional<unsigned int> m_forced_toolpath_result_id;
+    // Id of the G-code result the low-memory notification was last shown for.
+    std::optional<unsigned int> m_low_memory_notified_result_id;
 
 public:
     enum class OptionType : unsigned int
@@ -169,10 +177,15 @@ public:
     void set_reload_paint_after_background_process_apply(bool flag) { m_reload_paint_after_background_process_apply = flag; }
     bool get_reload_paint_after_background_process_apply() { return m_reload_paint_after_background_process_apply; }
     void set_skip_toolpath_preview(bool v) { m_skip_toolpath_preview = v; }
+    void set_low_memory_during_slicing(bool v) { m_low_memory_during_slicing = v; }
     GCodeProcessorResult* get_gcode_result() { return m_gcode_result; }
 
 private:
     bool init(wxWindow* parent, Bed3D& bed, Model* model);
+    // True when the toolpath preview should not be built: "Generate G-code
+    // Only" was chosen, or the build would not fit in the memory that is free
+    // now. Shows a notification offering to build it anyway.
+    bool skip_toolpath_preview();
 
     void bind_event_handlers();
     void unbind_event_handlers();

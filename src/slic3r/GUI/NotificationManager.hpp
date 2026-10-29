@@ -151,6 +151,8 @@ enum class NotificationType
     BBLPrinterConfigUpdateAvailable,
 	BBLUserPresetExceedLimit,
         FilamentIncompatibleMixed,
+	// The G-code toolpath preview was not built because too little memory was free.
+	PreviewSkippedLowMemory,
 };
 
 class NotificationManager

@@ -4573,7 +4573,7 @@ void TabFilament::toggle_options()
         } else if (support_multi_bed_types) {
             // u1 has 7 plates
             toggle_line("supertack_plate_temp_initial_layer", true);
-            toggle_line("cool_plate_temp", true);
+            toggle_line("supertack_plate_temp", true);
             toggle_line("cool_plate_temp_initial_layer", true);
             toggle_line("cool_plate_temp", true);
             toggle_line("textured_cool_plate_temp_initial_layer", true);

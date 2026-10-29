@@ -6729,7 +6729,18 @@ LayerResult GCode::process_layer(const Print& print,
         // even when Local-Z phase-b has consumed all first-layer extrusions
         // and by_extruder is empty for this extruder.
         if (first_layer) {
+            // Sequential (by-object) mode invokes process_layer once per object,
+            // so only brims of the objects printed in this pass may be consumed
+            // here; brims of later objects are emitted when their own pass starts.
+            std::set<ObjectID> objs_printed_in_this_pass;
+            for (const LayerToPrint& layer_to_print : layers)
+                if (layer_to_print.object() != nullptr)
+                    objs_printed_in_this_pass.insert(layer_to_print.object()->id());
             for (std::set<ObjectID>::iterator brim_it = this->m_objsWithBrim.begin(); brim_it != this->m_objsWithBrim.end(); ) {
+                if (objs_printed_in_this_pass.find(*brim_it) == objs_printed_in_this_pass.end()) {
+                    ++brim_it;
+                    continue;
+                }
                 std::map<ObjectID, ExtrusionEntityCollection>::const_iterator brim_map_it = print.m_brimMap.find(*brim_it);
                 if (brim_map_it != print.m_brimMap.end() && !brim_map_it->second.empty()) {
                     this->set_origin(0., 0.);

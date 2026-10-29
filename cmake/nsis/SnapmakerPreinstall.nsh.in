@@ -25,6 +25,16 @@ SnapmakerOrcaPre_try_legacy:
   Pop $0
   IntCmp $0 0 SnapmakerOrcaPre_in_use SnapmakerOrcaPre_idle SnapmakerOrcaPre_idle
 SnapmakerOrcaPre_idle:
+  ; The detached connect CLI can outlive the app and lock the old executable.
+  ; This is the common cleanup point for overwrite and uninstall-first upgrades.
+  nsExec::Exec 'taskkill /F /T /IM snapmaker_control_windows_x64.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM snapmaker_control_windows_arm64.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM snapmaker_connection_windows_x64.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM snapmaker_connection_windows_arm64.exe'
+  Pop $0
   Goto SnapmakerOrcaPre_done
 SnapmakerOrcaPre_in_use:
   IfSilent SnapmakerOrcaPre_silent SnapmakerOrcaPre_prompt
@@ -136,6 +146,37 @@ SnapmakerOrcaPre_do_trim_slash:
   Goto SnapmakerOrcaPre_trim_inst_slash
 SnapmakerOrcaPre_trim_slash_done:
   IfFileExists "$0" 0 SnapmakerOrcaPre_uninst_launch_failed
+  ; The CLI was force-terminated above. Wait on the exact installed files while
+  ; antivirus software, indexers, and the OS release terminated-process handles.
+  StrCpy $4 40
+SnapmakerOrcaPre_connect_wait:
+  Delete "$3\resources\snapmaker_connection_windows_x64.exe"
+  Delete "$3\resources\snapmaker_connection_windows_arm64.exe"
+  Delete "$3\resources\snapmaker_control_windows_x64.exe"
+  Delete "$3\resources\snapmaker_control_windows_arm64.exe"
+  IfFileExists "$3\resources\snapmaker_connection_windows_x64.exe" SnapmakerOrcaPre_connect_retry
+  IfFileExists "$3\resources\snapmaker_connection_windows_arm64.exe" SnapmakerOrcaPre_connect_retry
+  IfFileExists "$3\resources\snapmaker_control_windows_x64.exe" SnapmakerOrcaPre_connect_retry
+  IfFileExists "$3\resources\snapmaker_control_windows_arm64.exe" SnapmakerOrcaPre_connect_retry
+  Goto SnapmakerOrcaPre_connect_done
+SnapmakerOrcaPre_connect_retry:
+  Sleep 1000
+  IntOp $4 $4 - 1
+  IntCmp $4 0 SnapmakerOrcaPre_connect_timeout SnapmakerOrcaPre_connect_timeout SnapmakerOrcaPre_connect_wait
+SnapmakerOrcaPre_connect_timeout:
+  IfSilent SnapmakerOrcaPre_connect_silent SnapmakerOrcaPre_connect_failed
+SnapmakerOrcaPre_connect_silent:
+  SetErrorLevel 8
+  Quit
+SnapmakerOrcaPre_connect_failed:
+  StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 SnapmakerOrcaPre_connect_failed_en
+  MessageBox MB_OK|MB_ICONSTOP "Snapmaker Connect 的可执行文件仍被占用。请确认 Snapmaker Orca 已关闭，检查杀毒软件或索引程序后重新运行安装程序。"
+  Abort
+SnapmakerOrcaPre_connect_failed_en:
+  MessageBox MB_OK|MB_ICONSTOP "The Snapmaker Connect executable is still locked. Make sure Snapmaker Orca is closed, check antivirus or indexing software, then run the installer again."
+  Abort
+SnapmakerOrcaPre_connect_done:
+  ClearErrors
   ; Same as CMake CPack NSIS.template.in and NSIS maintainer guidance: use _?=$DIR with NO
   ; extra quotes around the directory. _?="C:\Program Files\..." breaks parsing (log shows
   ; _?="C:\Program Fil...) and causes uninstall failure. See NSIS forums t-212468.

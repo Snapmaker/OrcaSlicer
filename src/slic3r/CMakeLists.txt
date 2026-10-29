@@ -734,11 +734,18 @@ if(ORCA_UPDATER_SIG_KEY_B64)
     set(ORCA_UPDATER_SIG_KEY_AVAILABLE 1)
 endif()
 
+if(WIN32 AND SLIC3R_WIDGET_INSPECTOR)
+    list(APPEND SLIC3R_GUI_SOURCES GUI/WidgetInspector.cpp GUI/WidgetInspector.hpp)
+endif()
+
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/GeneratedConfig.hpp.in
                ${CMAKE_CURRENT_BINARY_DIR}/GeneratedConfig.hpp
                @ONLY)
 
 add_library(libslic3r_gui STATIC ${SLIC3R_GUI_SOURCES})
+if(WIN32 AND SLIC3R_WIDGET_INSPECTOR)
+    target_compile_definitions(libslic3r_gui PRIVATE ORCA_WIDGET_INSPECTOR)
+endif()
 target_include_directories(libslic3r_gui PRIVATE Utils ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(libslic3r_gui paho-mqttpp3-static)
 

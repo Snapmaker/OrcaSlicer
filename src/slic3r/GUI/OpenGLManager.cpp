@@ -14,6 +14,7 @@
 #include <boost/log/trivial.hpp>
 
 #include <wx/glcanvas.h>
+#include "GLCanvasAttribs.hpp"
 #include <wx/msgdlg.h>
 
 #ifdef __APPLE__
@@ -345,37 +346,18 @@ wxGLContext* OpenGLManager::init_glcontext(wxGLCanvas& canvas)
 
 wxGLCanvas* OpenGLManager::create_wxglcanvas(wxWindow& parent)
 {
-    int attribList[] = {
-        WX_GL_RGBA,
-        WX_GL_DOUBLEBUFFER,
-        // RGB channels each should be allocated with 8 bit depth. One should almost certainly get these bit depths by default.
-        WX_GL_MIN_RED, 			8,
-        WX_GL_MIN_GREEN, 		8,
-        WX_GL_MIN_BLUE, 		8,
-        // Requesting an 8 bit alpha channel. Interestingly, the NVIDIA drivers would most likely work with some alpha plane, but glReadPixels would not return
-        // the alpha channel on NVIDIA if not requested when the GL context is created.
-        WX_GL_MIN_ALPHA, 		8,
-        WX_GL_DEPTH_SIZE, 		24,
-        //BBS: turn on stencil buffer for outline
-        WX_GL_STENCIL_SIZE,     8,
-        WX_GL_SAMPLE_BUFFERS, 	GL_TRUE,
-        WX_GL_SAMPLES, 			4,
-        0
-    };
-
     if (s_multisample == EMultisampleState::Unknown) {
-        detect_multisample(attribList);
+        std::vector<int> multisample_attribs = gl_canvas_attrib_list(true);
+        detect_multisample(multisample_attribs.data());
 //        // debug output
 //        std::cout << "Multisample " << (can_multisample() ? "enabled" : "disabled") << std::endl;
     }
 
-    if (! can_multisample())
-        attribList[12] = 0;
-
-    return new wxGLCanvas(&parent, wxID_ANY, attribList, wxDefaultPosition, wxDefaultSize, wxWANTS_CHARS);
+    const std::vector<int> attribs = gl_canvas_attrib_list(can_multisample());
+    return new wxGLCanvas(&parent, wxID_ANY, attribs.data(), wxDefaultPosition, wxDefaultSize, wxWANTS_CHARS);
 }
 
-void OpenGLManager::detect_multisample(int* attribList)
+void OpenGLManager::detect_multisample(const int* attribList)
 {
     int wxVersion = wxMAJOR_VERSION * 10000 + wxMINOR_VERSION * 100 + wxRELEASE_NUMBER;
     bool enable_multisample = wxVersion >= 30003;

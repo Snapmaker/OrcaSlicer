@@ -8,6 +8,7 @@
 #include "../GCode.hpp"
 #include "../Geometry.hpp"
 #include "../GCode/ThumbnailData.hpp"
+#include "../GCode/FirstLayerReference.hpp"
 #include "../Semver.hpp"
 #include "../Time.hpp"
 
@@ -312,6 +313,8 @@ static constexpr const char* FILAMENT_MAP_ATTR = "filament_maps";
 static constexpr const char* GCODE_FILE_ATTR = "gcode_file";
 static constexpr const char* THUMBNAIL_FILE_ATTR = "thumbnail_file";
 static constexpr const char* NO_LIGHT_THUMBNAIL_FILE_ATTR = "thumbnail_no_light_file";
+static constexpr const char* FIRST_LAYER_FILE_ATTR                 = "first_layer_file";
+static constexpr const char* FIRST_LAYER_METADATA_FILE_ATTR        = "first_layer_metadata_file";
 static constexpr const char* TOP_FILE_ATTR = "top_file";
 static constexpr const char* PICK_FILE_ATTR = "pick_file";
 static constexpr const char* PATTERN_FILE_ATTR = "pattern_file";
@@ -1584,6 +1587,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             }
             //plate->pattern_file = it->second->pattern_file;
             plate->no_light_thumbnail_file = it->second->no_light_thumbnail_file;
+            plate->first_layer_file          = it->second->first_layer_file;
+            plate->first_layer_metadata_file = it->second->first_layer_metadata_file;
             plate->top_file = it->second->top_file;
             plate->pick_file = it->second->pick_file.empty();
             plate->pattern_bbox_file = it->second->pattern_bbox_file.empty();
@@ -2242,6 +2247,12 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             plate_data_list[it->first-1]->thumbnail_file = (m_load_restore || it->second->thumbnail_file.empty()) ? it->second->thumbnail_file : m_backup_path + "/" + it->second->thumbnail_file;
             //plate_data_list[it->first-1]->pattern_file = (m_load_restore || it->second->pattern_file.empty()) ? it->second->pattern_file : m_backup_path + "/" + it->second->pattern_file;
             plate_data_list[it->first-1]->no_light_thumbnail_file = (m_load_restore || it->second->no_light_thumbnail_file.empty()) ? it->second->no_light_thumbnail_file : m_backup_path + "/" + it->second->no_light_thumbnail_file;
+            plate_data_list[it->first - 1]->first_layer_file          = (m_load_restore || it->second->first_layer_file.empty()) ?
+                                                                            it->second->first_layer_file :
+                                                                            m_backup_path + "/" + it->second->first_layer_file;
+            plate_data_list[it->first - 1]->first_layer_metadata_file = (m_load_restore || it->second->first_layer_metadata_file.empty()) ?
+                                                                            it->second->first_layer_metadata_file :
+                                                                            m_backup_path + "/" + it->second->first_layer_metadata_file;
             plate_data_list[it->first-1]->top_file = (m_load_restore || it->second->top_file.empty()) ? it->second->top_file : m_backup_path + "/" + it->second->top_file;
             plate_data_list[it->first-1]->pick_file = (m_load_restore || it->second->pick_file.empty()) ? it->second->pick_file : m_backup_path + "/" + it->second->pick_file;
             plate_data_list[it->first-1]->pattern_bbox_file = (m_load_restore || it->second->pattern_bbox_file.empty()) ? it->second->pattern_bbox_file : m_backup_path + "/" + it->second->pattern_bbox_file;
@@ -4308,33 +4319,26 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             else if (key == NO_LIGHT_THUMBNAIL_FILE_ATTR)
             {
                 m_curr_plater->no_light_thumbnail_file = value;
-            }
-            else if (key == TOP_FILE_ATTR)
-            {
+            } else if (key == FIRST_LAYER_FILE_ATTR) {
+                m_curr_plater->first_layer_file = value;
+            } else if (key == FIRST_LAYER_METADATA_FILE_ATTR) {
+                m_curr_plater->first_layer_metadata_file = value;
+            } else if (key == TOP_FILE_ATTR) {
                 m_curr_plater->top_file = value;
-            }
-            else if (key == PICK_FILE_ATTR)
-            {
+            } else if (key == PICK_FILE_ATTR) {
                 m_curr_plater->pick_file = value;
             }
-            //else if (key == PATTERN_FILE_ATTR)
+            // else if (key == PATTERN_FILE_ATTR)
             //{
-            //    m_curr_plater->pattern_file = value;
-            //}
-            else if (key == PATTERN_BBOX_FILE_ATTR)
-            {
+            //     m_curr_plater->pattern_file = value;
+            // }
+            else if (key == PATTERN_BBOX_FILE_ATTR) {
                 m_curr_plater->pattern_bbox_file = value;
-            }
-            else if (key == INSTANCEID_ATTR)
-            {
+            } else if (key == INSTANCEID_ATTR) {
                 m_curr_instance.instance_id = atoi(value.c_str());
-            }
-            else if (key == IDENTIFYID_ATTR)
-            {
+            } else if (key == IDENTIFYID_ATTR) {
                 m_curr_instance.identify_id = atoi(value.c_str());
-            }
-            else if (key == OBJECT_ID_ATTR)
-            {
+            } else if (key == OBJECT_ID_ATTR) {
                 m_curr_instance.object_id = atoi(value.c_str());
                 /*int obj_id = atoi(value.c_str());
                 m_curr_instance.object_id = -1;
@@ -4352,46 +4356,30 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     return true;
                 }
                 m_curr_instance.object_id = object_item->second;*/
-            }
-            else if (key == PLATE_IDX_ATTR)
-            {
+            } else if (key == PLATE_IDX_ATTR) {
                 int plate_index = atoi(value.c_str());
                 std::map<int, PlateData*>::iterator it = m_plater_data.find(plate_index);
                 if (it != m_plater_data.end())
                     m_curr_plater = it->second;
-            }
-            else if (key == SLICE_PREDICTION_ATTR)
-            {
+            } else if (key == SLICE_PREDICTION_ATTR) {
                 if (m_curr_plater)
                     m_curr_plater->gcode_prediction = value;
-            }
-            else if (key == SLICE_WEIGHT_ATTR)
-            {
+            } else if (key == SLICE_WEIGHT_ATTR) {
                 if (m_curr_plater)
                     m_curr_plater->gcode_weight = value;
-            }
-            else if (key == OUTSIDE_ATTR)
-            {
+            } else if (key == OUTSIDE_ATTR) {
                 if (m_curr_plater)
                     std::istringstream(value) >> std::boolalpha >> m_curr_plater->toolpath_outside;
-            }
-            else if (key == SUPPORT_USED_ATTR)
-            {
+            } else if (key == SUPPORT_USED_ATTR) {
                 if (m_curr_plater)
                     std::istringstream(value) >> std::boolalpha >> m_curr_plater->is_support_used;
-            }
-            else if (key == LABEL_OBJECT_ENABLED_ATTR)
-            {
+            } else if (key == LABEL_OBJECT_ENABLED_ATTR) {
                 if (m_curr_plater)
                     std::istringstream(value) >> std::boolalpha >> m_curr_plater->is_label_object_enabled;
-            }
-            else if (key == PRINTER_MODEL_ID_ATTR)
-            {
+            } else if (key == PRINTER_MODEL_ID_ATTR) {
                 if (m_curr_plater)
                     m_curr_plater->printer_model_id = value;
-            }
-            else if (key == NOZZLE_DIAMETERS_ATTR)
-            {
+            } else if (key == NOZZLE_DIAMETERS_ATTR) {
                 if (m_curr_plater)
                     m_curr_plater->nozzle_diameters = value;
             }
@@ -5716,6 +5704,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         bool _add_model_config_file_to_archive(mz_zip_archive& archive, const Model& model, PlateDataPtrs& plate_data_list, const ObjectToObjectDataMap &objects_data, const DynamicPrintConfig& config, int export_plate_idx = -1, bool save_gcode = true, bool use_loaded_id = false);
         bool _add_cut_information_file_to_archive(mz_zip_archive &archive, Model &model);
         bool _add_slice_info_config_file_to_archive(mz_zip_archive &archive, const Model &model, PlateDataPtrs &plate_data_list, const ObjectToObjectDataMap &objects_data, const DynamicPrintConfig& config);
+        bool _add_first_layer_references_to_archive(mz_zip_archive&           archive,
+                                                    PlateDataPtrs&            plates,
+                                                    const DynamicPrintConfig& config,
+                                                    Export3mfProgressFn       proFn);
         bool _add_gcode_file_to_archive(mz_zip_archive& archive, const Model& model, PlateDataPtrs& plate_data_list, Export3mfProgressFn proFn = nullptr);
         bool _add_custom_gcode_per_print_z_file_to_archive(mz_zip_archive& archive, Model& model, const DynamicPrintConfig* config);
         bool _add_auxiliary_dir_to_archive(mz_zip_archive &archive, const std::string &aux_dir, PackingTemporaryData &data);
@@ -6208,6 +6200,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             }
         }
 
+        // Generate from the final files before _add_gcode_file_to_archive rewrites their paths.
+        // No image cache: re-slicing and importing older sliced files cannot retain stale references.
+        if (!m_skip_static && m_save_gcode && !_add_first_layer_references_to_archive(archive, plate_data_list, *config, proFn))
+            return false;
+
         // Adds gcode files ("Metadata/plate_1.gcode, plate_2.gcode, ...)
         // Before _add_model_config_file_to_archive, because we modify plate_data
         //if (!m_skip_static && !_add_gcode_file_to_archive(archive, model, plate_data_list, proFn)) {
@@ -6324,6 +6321,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         stream << " <Default Extension=\"model\" ContentType=\"application/vnd.ms-package.3dmanufacturing-3dmodel+xml\"/>\n";
         stream << " <Default Extension=\"png\" ContentType=\"image/png\"/>\n";
         stream << " <Default Extension=\"gcode\" ContentType=\"text/x.gcode\"/>\n";
+        stream << " <Default Extension=\"json\" ContentType=\"application/json\"/>\n";
         stream << "</Types>";
 
         std::string out = stream.str();
@@ -7800,6 +7798,12 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << NO_LIGHT_THUMBNAIL_FILE_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha << no_light_thumbnail_file_in_3mf << "\"/>\n";
                 }
 
+                if (save_gcode && !plate_data->first_layer_file.empty())
+                    stream << "    <metadata key=\"first_layer_file\" value=\"" << xml_escape(plate_data->first_layer_file) << "\"/>\n";
+                if (save_gcode && !plate_data->first_layer_metadata_file.empty())
+                    stream << "    <metadata key=\"first_layer_metadata_file\" value=\""
+                           << xml_escape(plate_data->first_layer_metadata_file) << "\"/>\n";
+
                 if (!plate_data->top_file.empty()) {
                     std::string top_file_in_3mf = (boost::format(TOP_FILE_FORMAT) % (plate_data->plate_index + 1)).str();
                     stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << TOP_FILE_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha << top_file_in_3mf << "\"/>\n";
@@ -8016,6 +8020,63 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
         return true;
     }
+    bool _BBS_3MF_Exporter::_add_first_layer_references_to_archive(mz_zip_archive&           archive,
+                                                                   PlateDataPtrs&            plates,
+                                                                   const DynamicPrintConfig& config,
+                                                                   Export3mfProgressFn       proFn)
+    {
+        for (size_t i = 0; i < plates.size(); ++i) {
+            PlateData& plate = *plates[i];
+            plate.first_layer_file.clear();
+            plate.first_layer_metadata_file.clear();
+            if (plate.gcode_file.empty() || !plate.is_sliced_valid || !boost::filesystem::exists(plate.gcode_file))
+                continue;
+            bool cancel = false;
+            if (proFn) {
+                proFn(EXPORT_STAGE_ADD_GCODE, i, plates.size(), cancel);
+                if (cancel)
+                    return false;
+            }
+            try {
+                DynamicPrintConfig plate_config = config;
+                plate_config.apply(plate.config);
+                GCodeProcessor processor;
+                PrintConfig    processor_config;
+                processor_config.apply(plate_config, true);
+                processor.apply_config(processor_config);
+                processor.process_file(plate.gcode_file, [&]() {
+                    if (proFn) {
+                        bool cancel = false;
+                        proFn(EXPORT_STAGE_ADD_GCODE, i, plates.size(), cancel);
+                        if (cancel)
+                            throw Slic3r::RuntimeError("First layer reference export cancelled");
+                    }
+                });
+                FirstLayerReference reference    = render_first_layer_reference(processor.get_result(), plate_config, plate.plate_index + 1,
+                                                                                plate.gcode_file_md5);
+                const std::string   stem         = "Metadata/first_layer_" + std::to_string(plate.plate_index + 1);
+                reference.metadata["gcode_file"] = (boost::format(GCODE_FILE_FORMAT) % (plate.plate_index + 1)).str();
+                if (reference.image.is_valid()) {
+                    if (!_add_thumbnail_file_to_archive(archive, reference.image, "Metadata/first_layer", plate.plate_index))
+                        return false;
+                    plate.first_layer_file           = stem + ".png";
+                    reference.metadata["image_file"] = plate.first_layer_file;
+                }
+                const std::string json          = reference.metadata.dump(2);
+                plate.first_layer_metadata_file = stem + ".json";
+                if (!mz_zip_writer_add_mem(&archive, plate.first_layer_metadata_file.c_str(), json.data(), json.size(),
+                                           MZ_DEFAULT_COMPRESSION)) {
+                    add_error("Unable to add first layer reference metadata to archive");
+                    return false;
+                }
+            } catch (const std::exception& e) {
+                add_error("Unable to generate first layer reference: " + std::string(e.what()));
+                return false;
+            }
+        }
+        return true;
+    }
+
 bool _BBS_3MF_Exporter::_add_gcode_file_to_archive(mz_zip_archive& archive, const Model& model, PlateDataPtrs& plate_data_list, Export3mfProgressFn proFn)
 {
     bool result = true;

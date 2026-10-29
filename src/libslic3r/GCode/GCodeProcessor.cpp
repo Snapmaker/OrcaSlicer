@@ -1898,11 +1898,24 @@ bool GCodeProcessor::get_last_z_from_gcode(const std::string& gcode_str, double&
     return is_z_changed;
 }
 
-void GCodeProcessor::process_tags(const std::string_view comment, bool producers_enabled)
+void GCodeProcessor::process_tags(std::string_view comment, bool producers_enabled)
 {
     // producers tags
     if (producers_enabled && process_producers_tags(comment))
         return;
+
+    // Imported files can use the other Orca tag dialect than the currently
+    // selected printer. Normalize tags locally, without changing global state.
+    std::string normalized_comment;
+    const auto& alternate_tags = s_IsBBLPrinter ? Reserved_Tags_compatible : Reserved_Tags;
+    for (size_t i = 0; i < alternate_tags.size(); ++i) {
+        const std::string& canonical = reserved_tag(static_cast<ETags>(i));
+        if (alternate_tags[i] != canonical && boost::starts_with(comment, alternate_tags[i])) {
+            normalized_comment = canonical + std::string(comment.substr(alternate_tags[i].size()));
+            comment            = normalized_comment;
+            break;
+        }
+    }
 
     // extrusion role tag
     if (boost::starts_with(comment, reserved_tag(ETags::Role))) {
@@ -4791,8 +4804,10 @@ void GCodeProcessor::store_move_vertex(EMoveType type, EMovePathType path_type)
         m_extrusion_role,
         m_extruder_id,
         m_cp_color.current,
-        //BBS: add plate's offset to the rendering vertices
-        Vec3f(m_end_position[X] + m_x_offset, m_end_position[Y] + m_y_offset, m_processing_start_custom_gcode ? m_first_layer_height : m_end_position[Z]- m_z_offset) + m_extruder_offsets[m_extruder_id],
+        // BBS: add plate's offset to the rendering vertices
+        Vec3f(m_end_position[X] + m_x_offset, m_end_position[Y] + m_y_offset,
+              m_processing_start_custom_gcode ? m_first_layer_height : m_end_position[Z] - m_z_offset) +
+            m_extruder_offsets[m_extruder_id],
         static_cast<float>(m_end_position[E] - m_start_position[E]),
         m_feedrate,
         m_width,
@@ -4802,11 +4817,12 @@ void GCodeProcessor::store_move_vertex(EMoveType type, EMovePathType path_type)
         m_fan_speed,
         m_extruder_temps[m_extruder_id],
         static_cast<float>(m_result.moves.size()),
-        static_cast<float>(m_layer_id), //layer_duration: set later
-        //BBS: add arc move related data
+        static_cast<float>(m_layer_id), // layer_duration: set later
+        // BBS: add arc move related data
         path_type,
         Vec3f(m_arc_center(0, 0) + m_x_offset, m_arc_center(1, 0) + m_y_offset, m_arc_center(2, 0)) + m_extruder_offsets[m_extruder_id],
         m_interpolation_points,
+        m_layer_id,
     });
 
     if (type == EMoveType::Seam) {

@@ -238,6 +238,8 @@ set(lisbslic3r_sources
     GCode/SmallAreaInfillFlowCompensator.hpp
     GCode/SpiralVase.cpp
     GCode/SpiralVase.hpp
+    GCode/FirstLayerReference.cpp
+    GCode/FirstLayerReference.hpp
     GCode/ThumbnailData.cpp
     GCode/ThumbnailData.hpp
     GCode/Thumbnails.cpp

@@ -173,6 +173,7 @@ class Print;
             EMovePathType move_path_type{ EMovePathType::Noop_move };
             Vec3f arc_center_position{ Vec3f::Zero() };      // mm
             std::vector<Vec3f> interpolation_points;     // interpolation points of arc for drawing
+            unsigned int       layer_id{0};              // Slicer layer tag; unlike layer_duration, survives finalize().
 
             float volumetric_rate() const { return feedrate * mm3_per_mm; }
             //BBS: new function to support arc move

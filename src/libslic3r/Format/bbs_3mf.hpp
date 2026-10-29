@@ -78,6 +78,8 @@ struct PlateData
     std::string     thumbnail_file;
     std::string     no_light_thumbnail_file;
     ThumbnailData   plate_thumbnail;
+    std::string                        first_layer_file;
+    std::string                        first_layer_metadata_file;
     std::string     top_file;
     std::string     pick_file;
     //ThumbnailData   pattern_thumbnail;

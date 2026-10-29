@@ -771,7 +771,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
 {
     if (new_extruder_id != -1 && new_extruder_id != tcr.new_tool)
         throw Slic3r::InvalidArgument(Slic3r::format(
-            "Error: WipeTowerIntegration::append_tcr unexpected toolchange: layer_idx=%1% tool_change_idx=%2% requested=%3% expected=%4% initial=%5%",
+            "Error: WipeTowerIntegration::append_tcr2 unexpected toolchange: layer_idx=%1% tool_change_idx=%2% requested=%3% expected=%4% initial=%5%",
             m_layer_idx, m_tool_change_idx, new_extruder_id, tcr.new_tool, tcr.initial_tool));
 
     std::string gcode;
@@ -1688,12 +1688,16 @@ bool WipeTowerIntegration::is_empty_wipe_tower_gcode(GCode& gcodegen, int extrud
 std::string WipeTowerIntegration::finalize(GCode& gcodegen)
 {
     std::string gcode;
-    if (!gcodegen.is_BBL_Printer()) {
+    // The trailing unload (final purge) is only meaningful for a tower that performed
+    // at least one real tool change. For a degenerate tower that never changed tools
+    // (e.g. a single raft layer resolving to the object's extruder) m_final_purge is
+    // an empty shell, and emitting it would append a phantom "CP TOOLCHANGE" unload
+    // block after the print, so it is skipped in that case.
+    if (!gcodegen.is_BBL_Printer() && !m_tool_changes.empty()) {
         if (std::abs(gcodegen.writer().get_position().z() - m_final_purge.print_z) > EPSILON)
             gcode += gcodegen.change_layer(m_final_purge.print_z);
         gcode += append_tcr2(gcodegen, m_final_purge, -1);
     }
-
     return gcode;
 }
 
@@ -5433,13 +5437,17 @@ LayerResult GCode::process_layer(const Print& print,
         }
 
         // Reset TRAVEL acceleration and jerk at second layer
+        auto first_layer_travel_accel = m_config.first_layer_travel_acceleration.get_abs_value(
+            this->process_flow_value(m_config.travel_acceleration));
         if (this->process_flow_value(m_config.default_acceleration) > 0 && this->process_flow_value(m_config.travel_acceleration) > 0
-            && m_config.get_abs_value("first_layer_travel_acceleration") > 0) {
+            && first_layer_travel_accel > 0) {
             gcode += m_writer.set_travel_acceleration(
                 (unsigned int) floor(this->process_flow_value(m_config.travel_acceleration) + 0.5));
         }
+        auto first_layer_travel_jerk_val = m_config.first_layer_travel_jerk.get_abs_value(
+            this->process_flow_value(m_config.travel_jerk));
         if (this->process_flow_value(m_config.default_jerk) > 0 && this->process_flow_value(m_config.travel_jerk) > 0
-            && m_config.get_abs_value("first_layer_travel_jerk") > 0) {
+            && first_layer_travel_jerk_val > 0) {
             gcode += m_writer.set_jerk_xy(this->process_flow_value(m_config.travel_jerk));
         }
 
@@ -8718,11 +8726,13 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     double       jerk_to_set         = 0.0;
     unsigned int acceleration_to_set = 0;
     if (this->on_first_layer()) {
-        auto first_layer_travel_accel = m_config.get_abs_value("first_layer_travel_acceleration");
+        auto first_layer_travel_accel = m_config.first_layer_travel_acceleration.get_abs_value(
+            this->process_flow_value(m_config.travel_acceleration));
         if (this->process_flow_value(m_config.default_acceleration) > 0 && first_layer_travel_accel > 0) {
             acceleration_to_set = (unsigned int) floor(first_layer_travel_accel + 0.5);
         }
-        auto first_layer_travel_jerk_val = m_config.get_abs_value("first_layer_travel_jerk");
+        auto first_layer_travel_jerk_val = m_config.first_layer_travel_jerk.get_abs_value(
+            this->process_flow_value(m_config.travel_jerk));
         if (this->process_flow_value(m_config.default_jerk) > 0 && first_layer_travel_jerk_val > 0) {
             jerk_to_set = first_layer_travel_jerk_val;
         }

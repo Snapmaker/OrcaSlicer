@@ -531,8 +531,45 @@ EOF
 # Flatpak
 # ===============================================================
 
+# AppImage stages this inside gitlab_build_linux.sh. Flatpak compiles from the
+# source tree inside flatpak-builder and does not run that script, so stage the
+# same CLI here or /app/share/Snapmaker_Orca will not contain it.
+stage_snapmaker_control() {
+    local platform cli
+    case "$ARCH" in
+        x86_64)
+            platform="linux-x64"
+            cli="snapmaker_control_linux_x64"
+            ;;
+        aarch64)
+            platform="linux-arm64"
+            cli="snapmaker_control_linux_arm64"
+            ;;
+        *)
+            echo -e "${RED}Unsupported architecture for snapmaker_control: $ARCH${NC}"
+            exit 1
+            ;;
+    esac
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${RED}python3 is required to stage snapmaker_control${NC}"
+        exit 1
+    fi
+    echo -e "${YELLOW}Staging snapmaker_control for ${platform}...${NC}"
+    python3 "${REPO_DIR}/scripts/packaging/stage_connect_bundle.py" \
+        --lock "${REPO_DIR}/.github/connect-bundle.lock.json" \
+        --platform "${platform}" \
+        --resources-dir "${REPO_DIR}/resources"
+    if [[ ! -f "${REPO_DIR}/resources/${cli}" ]]; then
+        echo -e "${RED}snapmaker_control was not staged: resources/${cli}${NC}"
+        exit 1
+    fi
+    chmod 755 "${REPO_DIR}/resources/${cli}"
+    echo -e "${GREEN}Staged resources/${cli}${NC}"
+}
+
 pack_flatpak() {
     echo -e "${BLUE}===== Flatpak =====${NC}"
+    stage_snapmaker_control
 
     local MANIFEST_REL="scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.gitlab.yml"
     local MANIFEST="$REPO_DIR/$MANIFEST_REL"

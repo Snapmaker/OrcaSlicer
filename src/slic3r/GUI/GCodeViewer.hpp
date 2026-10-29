@@ -755,6 +755,9 @@ private:
     // held by pointers to keep this header light
     std::unique_ptr<PathLayerStack> _pathStack;
     std::unique_ptr<PathRenderer> _pathRenderer;
+    // pipeline the current toolpath data was built with; set by load(),
+    // cleared by reset()
+    bool m_use_gpu_pipeline{ false };
 
     Layers m_layers;
     std::array<unsigned int, 2> m_layers_z_range;

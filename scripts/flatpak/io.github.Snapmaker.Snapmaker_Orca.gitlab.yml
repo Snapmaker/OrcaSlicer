@@ -325,6 +325,27 @@ modules:
         install -Dm755 entrypoint /app/bin
         install -Dm755 umount /app/bin
 
+      - | # snapmaker_control must be executable where ConnectionProcessManager looks
+        set -eu
+        found=""
+        for cli in resources/snapmaker_control_linux_*; do
+          if [ -f "$cli" ]; then
+            found="$cli"
+            break
+          fi
+        done
+        if [ -z "$found" ]; then
+          echo "error: snapmaker_control CLI was not staged into resources/ before the Flatpak build" >&2
+          exit 1
+        fi
+        installed="/app/share/Snapmaker_Orca/$(basename "$found")"
+        if [ ! -f "$installed" ]; then
+          echo "error: snapmaker_control CLI was not installed to $installed" >&2
+          exit 1
+        fi
+        chmod 755 "$installed"
+        echo "snapmaker_control CLI installed: $installed"
+
     sources:
       # -
       # Section bellow fetches all Snapmaker_Orca dependencies before the build process and stores them in external-packages/*/* .

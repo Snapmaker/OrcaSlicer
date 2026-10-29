@@ -22,7 +22,6 @@
 #include "slic3r/GUI/HttpServer.hpp"
 #include "../Utils/PrintHost.hpp"
 #include "slic3r/GUI/SSWCP.hpp"
-#include "slic3r/Utils/Bonjour.hpp"
 #include "slic3r/GUI/PrinterWebView.hpp"
 #include <wx/app.h>
 #include <wx/colour.h>
@@ -30,6 +29,7 @@
 #include <wx/string.h>
 #include <wx/snglinst.h>
 #include <wx/msgdlg.h>
+#include <wx/timer.h>
 
 #include <atomic>
 #include <cstdint>
@@ -253,10 +253,24 @@ public:
     };
 
     static std::atomic<bool> m_app_alive; // 标记应用是否存活
+    // Version-check Http callbacks run on detached worker threads; ~GUI_App drains
+    // this counter after m_app_alive goes false, closing the check-then-act window
+    // of the guards before any member is destroyed.
+    static std::atomic<int> m_version_check_cbs_inflight;
+
+    // True once Windows began ending the session; close-path dialogs check it
+    // to auto-discard instead of interacting (Sentry SNAPMAKER_ORCA-1H6).
+    bool in_session_end() const { return m_in_session_end; }
+
+    // A queried session end was cancelled: restore interactive close.
+    void reset_session_end();
 
     static void log_version_info();
 
 private:
+    bool m_in_session_end{ false };
+    wxTimer m_session_end_reset_timer; // fallback reset for a cancelled session end
+
     bool            m_initialized { false };
     bool            m_post_initialized { false };
     // Set when a snapmaker-orca:// URL is handed to us after launch (macOS delivers these
@@ -264,9 +278,20 @@ private:
     // post_init must not start a blank project in that case, or it discards the model the
     // URL is in the middle of loading.
     bool            m_url_open_pending { false };
+#ifdef __APPLE__
+    std::vector<wxString> m_pending_mac_open_urls;
+#endif // __APPLE__
     bool            m_app_conf_exists{ false };
     EAppMode        m_app_mode{ EAppMode::Editor };
+    // Short rebuild flag consumed by other components during teardown.
     bool            m_is_recreating_gui{ false };
+    // Covers the whole recreate_GUI() (including the device-page reload tail)
+    // and is used only to defer the version prompt.
+    bool            m_recreate_in_progress{ false };
+    bool            m_pending_version_event{ false };
+    int             m_pending_version_by_user{ 0 };
+    wxString        m_pending_version_url;
+    int             m_updateDialogByUser{ 0 };
     /// Set only for the duration of profile/preset `MsgUpdateConfig::ShowModal()` (atomic: safe vs updater threads + CallAfter).
     std::atomic<bool> m_profile_config_update_dlg_open{ false };
 #ifdef __linux__
@@ -574,6 +599,8 @@ private:
 
     void            check_preset_version();
     void            check_new_version_sf(bool show_tips = false, bool by_user = false);
+    // Main-thread deferral of check_new_version_sf for the HTTP callback paths
+    void            defer_check_new_version_sf(bool show_tips = false, bool by_user = false);
     // Gray release: POST /config/get (snapmaker-config) first, falls back to check_new_version_sf on failure
     void            request_version_from_config(bool show_tips = false, bool by_user = false);
     void            process_network_msg(std::string dev_id, std::string msg);
@@ -737,7 +764,10 @@ public:
     PresetUpdater*  preset_updater{ nullptr };
     MainFrame*      mainframe{ nullptr };
     Plater*         plater_{ nullptr };
+    void create_update_dialog();
+    void destroy_update_dialog();
     UpdateVersionDialog* m_updateDialog{nullptr};
+    wxWindow* m_updateDialogParent{nullptr};
 
 	PresetUpdater*  get_preset_updater() { return preset_updater; }
 

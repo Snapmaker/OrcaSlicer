@@ -20,7 +20,7 @@
 #include <map>
 #include <memory>
 
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 #include "SSWCP.hpp"
 
 #ifdef __WINDOWS__

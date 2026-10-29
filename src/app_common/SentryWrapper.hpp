@@ -2,7 +2,7 @@
 #define slic3r_SentryWrapper_hpp_
 
 #include <string>
-#include "bury_cfg/bury_point.hpp"
+#include "app_common/bury_point.hpp"
 
 namespace Slic3r {
 

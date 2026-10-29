@@ -28,7 +28,6 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
 
-    wxGetApp().start_flutter_wcp_timeout_watch();
     // Load the real URL only in load_url(). Creating with Flutter here races the later
     // missing_connection / path=2 LoadURL and cancels the in-flight document (-999).
     m_browser = WebView::CreateWebView(this, "about:blank");
@@ -73,15 +72,16 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
     if (m_browser == nullptr)
         return;
     m_apikey = apikey;
+    BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [webview] [navigation_requested] view=device url=" << url.ToUTF8().data();
 
-    if (url.find("path=2") != std::string::npos) {
+    if (wxGetApp().is_gateway_url(url)) {
         wxGetApp().fltviews().add_printer_view(this, url, apikey);
     } else {
         wxGetApp().fltviews().remove_printer_view(this);
     }
 
     m_browser->Show();
-    m_browser->LoadURL(url);
+    WebView::LoadUrl(m_browser, url);
 
     UpdateState();
 }
@@ -96,7 +96,7 @@ bool PrinterWebView::isSnapmakerPage()
     if (m_browser == nullptr)
         return false;
     auto url = m_browser->GetCurrentURL();
-    return (url.find("flutter_web") != std::string::npos);
+    return wxGetApp().is_gateway_url(url);
 }
 
 bool PrinterWebView::is_u1_device_page()
@@ -104,7 +104,8 @@ bool PrinterWebView::is_u1_device_page()
     if (m_browser == nullptr)
         return false;
     auto url = m_browser->GetCurrentURL();
-    return url.find("flutter_web") != std::string::npos && url.find("path=2") != std::string::npos;
+    return url.find("flutter_web") != std::string::npos &&
+           (url.find("path=2") != std::string::npos || url.find("/device_control") != std::string::npos);
 }
 
 void PrinterWebView::sendMessage(const std::string& msg) {
@@ -236,6 +237,7 @@ void PrinterWebView::OnLoaded(wxWebViewEvent &evt)
         return;
     if (evt.GetURL() != m_browser->GetCurrentURL())
         return;
+    BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [webview] [navigation_loaded] view=device url=" << evt.GetURL().ToUTF8().data();
     SendAPIKey();
 }
 
@@ -246,7 +248,6 @@ void PrinterWebView::OnScriptMessage(wxWebViewEvent& evt) {
     //     wxLogMessage("Script message received; value = %s, handler = %s", evt.GetString(), evt.GetMessageHandler());
 
     // test
-    wxGetApp().on_flutter_wcp_received();
     SSWCP::handle_web_message(evt.GetString().ToUTF8().data(), m_browser);
 }
 

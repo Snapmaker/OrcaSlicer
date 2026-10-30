@@ -3,6 +3,7 @@
 #include <catch2/matchers/catch_matchers.hpp>
 #include "test_utils.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
+#include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp"
 #include "libslic3r/MixedFilamentConfigRemap.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -15,10 +16,12 @@
 
 #include <algorithm>
 #include <clocale>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <cstdint>
 #include <locale>
+#include <map>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -645,6 +648,251 @@ TEST_CASE("Local-Z plans follow repeated object and part filament changes", "[Mi
     }
 }
 
+TEST_CASE("Local-Z two-color sublayers preserve requested ratios within height bounds", "[MixedFilament][LocalZ][Ratios]")
+{
+    MixedAutoGenerateGuard auto_generate(false);
+    bool                   painted           = false;
+    bool                   independent_rows  = false;
+    bool                   direct_multicolor = true;
+    SECTION("Whole object") {}
+    SECTION("Painted surface") { painted = true; }
+    SECTION("Independent mixed regions") { independent_rows = true; }
+    SECTION("Whole object without direct multicolor") { direct_multicolor = false; }
+
+    struct RatioCase
+    {
+        double layer_height;
+        int    mix_b_percent;
+        double lower_bound;
+        double upper_bound;
+        double total_a;
+        double total_b;
+        size_t pass_count;
+        double preferred_a = 0.0;
+        double preferred_b = 0.0;
+    };
+    const RatioCase cases[] = {
+        {0.20, 67, 0.04, 0.16, 0.066, 0.134, 2},
+        {0.20, 33, 0.04, 0.16, 0.134, 0.066, 2},
+        {0.24, 67, 0.04, 0.16, 0.080, 0.160, 2}, // 67% reaches the upper height limit.
+        {0.24, 33, 0.04, 0.16, 0.160, 0.080, 2},
+        {0.20, 75, 0.04, 0.16, 0.050, 0.150, 2},
+        {0.20, 25, 0.04, 0.16, 0.150, 0.050, 2},
+        {0.24, 50, 0.04, 0.16, 0.120, 0.120, 2},
+        {0.24, 51, 0.04, 0.16, 0.1176, 0.1224, 2}, // Near-equal heights must stay assigned to the correct component.
+        {0.24, 49, 0.04, 0.16, 0.1224, 0.1176, 2},
+        {0.20, 95, 0.04, 0.16, 0.040, 0.160, 2}, // An infeasible ratio must still respect both limits.
+        {0.24, 75, 0.04, 0.16, 0.080, 0.160, 2},
+        {0.24, 75, 0.02, 0.16, 0.060, 0.180, 4},               // Two A/B pairs make 25/75 feasible.
+        {0.20, 67, 0.02, 0.18, 0.066, 0.134, 2},               // Wider limits must not change a feasible ratio.
+        {0.24, 67, 0.04, 0.16, 0.150, 0.090, 3, 0.075, 0.090}, // Explicit A/B heights keep their A-first cadence.
+    };
+    for (const RatioCase& test : cases) {
+        CAPTURE(test.layer_height, test.mix_b_percent, test.lower_bound, test.upper_bound);
+        const std::vector<std::string> colors = {"#FF00FF", "#FFFFFF", "#0000FF", "#FFFF00"};
+        MixedFilamentManager           manager;
+        manager.add_custom_filament(1, 2, test.mix_b_percent, colors);
+        if (independent_rows)
+            manager.add_custom_filament(3, 4, 100 - test.mix_b_percent, colors);
+        for (MixedFilament& row : manager.mixed_filaments()) {
+            row.distribution_mode = int(MixedFilament::Simple);
+            row.manual_pattern.clear();
+        }
+
+        Model        model;
+        ModelObject* object = model.add_object();
+        ModelVolume* volume = object->add_volume(make_cube(10., 10., 5. * test.layer_height));
+        object->add_instance();
+        object->config.set("extruder", painted ? 3 : 5);
+        if (painted) {
+            TriangleSelector selector(volume->mesh());
+            for (size_t facet = 0; facet < volume->mesh().its.indices.size(); ++facet)
+                selector.set_facet(int(facet), EnforcerBlockerType(5));
+            REQUIRE(volume->mmu_segmentation_facets.set(selector));
+        }
+        if (independent_rows) {
+            ModelVolume* other = object->add_volume(make_cube(10., 10., 5. * test.layer_height));
+            other->set_offset(other->get_offset() + Vec3d(15., 0., 0.));
+            other->config.set("extruder", 6);
+        }
+
+        DynamicPrintConfig config = mixed_region_print_config(manager.serialize_custom_entries());
+        config.set("layer_height", test.layer_height);
+        config.set("initial_layer_print_height", test.layer_height);
+        config.set("outer_wall_line_width", 0.4);
+        config.set("dithering_local_z_mode", true);
+        config.set("dithering_local_z_whole_objects", !painted);
+        config.set("dithering_local_z_infill", true);
+        config.set("dithering_local_z_direct_multicolor", direct_multicolor);
+        config.set("mixed_filament_height_lower_bound", test.lower_bound);
+        config.set("mixed_filament_height_upper_bound", test.upper_bound);
+        config.set("mixed_color_layer_height_a", test.preferred_a);
+        config.set("mixed_color_layer_height_b", test.preferred_b);
+        config.set("enable_prime_tower", false);
+
+        Print print;
+        print.set_status_silent();
+        print.apply(model, config);
+        REQUIRE(print.objects().size() == 1);
+        PrintObject* print_object = print.get_object(0);
+        print_object->slice();
+        const auto& intervals = print_object->local_z_intervals();
+        const auto& plans     = print_object->local_z_sublayer_plan();
+        REQUIRE(intervals.size() > 1);
+        for (const LocalZInterval& interval : intervals) {
+            if (interval.layer_id == 0)
+                continue; // The first layer intentionally remains unsplit.
+            CAPTURE(interval.layer_id);
+            REQUIRE(interval.has_mixed_paint);
+            CHECK(interval.sublayer_count == test.pass_count * (independent_rows ? 2 : 1));
+            REQUIRE(interval.first_sublayer_idx + interval.sublayer_count <= plans.size());
+            std::vector<double> component_heights(4, 0.0);
+            for (size_t i = 0; i < interval.sublayer_count; ++i) {
+                const SubLayerPlan& plan = plans[interval.first_sublayer_idx + i];
+                REQUIRE(plan.split_interval);
+                CHECK(plan.flow_height >= test.lower_bound - 1e-6);
+                CHECK(plan.flow_height <= test.upper_bound + 1e-6);
+                CHECK_THAT(plan.flow_height, WithinAbs(plan.z_hi - plan.z_lo, 1e-6));
+                CHECK(plan.z_lo >= interval.z_lo - 1e-6);
+                CHECK(plan.z_hi <= interval.z_hi + 1e-6);
+                REQUIRE(plan.painted_masks_by_extruder.size() == component_heights.size());
+                for (size_t tool = 0; tool < component_heights.size(); ++tool)
+                    if (!plan.painted_masks_by_extruder[tool].empty())
+                        component_heights[tool] += plan.flow_height;
+            }
+            CHECK_THAT(component_heights[0], WithinAbs(test.total_a, 1e-6));
+            CHECK_THAT(component_heights[1], WithinAbs(test.total_b, 1e-6));
+            CHECK_THAT(component_heights[0] + component_heights[1], WithinAbs(interval.base_height, 1e-6));
+            if (independent_rows) {
+                const bool explicit_heights = test.preferred_a > 0.0 || test.preferred_b > 0.0;
+                CHECK_THAT(component_heights[2], WithinAbs(explicit_heights ? test.total_a : test.total_b, 1e-6));
+                CHECK_THAT(component_heights[3], WithinAbs(explicit_heights ? test.total_b : test.total_a, 1e-6));
+            }
+        }
+
+        MixedFilamentPreviewSettings preview;
+        preview.local_z_mode              = true;
+        preview.local_z_direct_multicolor = direct_multicolor;
+        preview.nominal_layer_height      = test.layer_height;
+        preview.mixed_lower_bound         = test.lower_bound;
+        preview.mixed_upper_bound         = test.upper_bound;
+        preview.preferred_a_height        = test.preferred_a;
+        preview.preferred_b_height        = test.preferred_b;
+        CHECK(mixed_filament_effective_local_z_preview_mix_b_percent(manager.mixed_filaments().front(), preview) ==
+              int(std::lround(100. * test.total_b / test.layer_height)));
+    }
+}
+
+static void check_alternating_local_z_pairs(const PrintObject& object)
+{
+    struct LastPass
+    {
+        double z_hi;
+        size_t tool;
+    };
+    std::map<size_t, LastPass> last_by_group;
+    size_t                     checked_transitions = 0;
+    for (const SubLayerPlan& plan : object.local_z_sublayer_plan()) {
+        if (!plan.split_interval || plan.dependency_group == 0)
+            continue;
+        size_t tool = size_t(-1);
+        for (size_t i = 0; i < plan.painted_masks_by_extruder.size(); ++i) {
+            if (plan.painted_masks_by_extruder[i].empty())
+                continue;
+            REQUIRE(tool == size_t(-1));
+            tool = i;
+        }
+        if (tool == size_t(-1))
+            continue;
+        CAPTURE(plan.layer_id, plan.dependency_group, plan.z_lo, plan.z_hi);
+        const auto previous = last_by_group.find(plan.dependency_group);
+        if (previous != last_by_group.end() && std::abs(previous->second.z_hi - plan.z_lo) < 1e-6) {
+            CHECK(tool != previous->second.tool);
+            ++checked_transitions;
+        }
+        last_by_group[plan.dependency_group] = {plan.z_hi, tool};
+    }
+    CHECK(checked_transitions > 0);
+}
+
+TEST_CASE("Local-Z pairs keep alternating when a neighboring mixed region starts or ends", "[MixedFilament][LocalZ][Cadence]")
+{
+    MixedAutoGenerateGuard auto_generate(false);
+    for (int mix_b : {26, 50, 74}) {
+        CAPTURE(mix_b);
+        MixedFilamentManager           manager;
+        const std::vector<std::string> colors = {"#008CB3", "#AC4A74", "#CBAC00", "#F5F4F2"};
+        manager.add_custom_filament(1, 2, mix_b, colors);
+        manager.add_custom_filament(1, 2, 35, colors);
+        Model        model;
+        ModelObject* object = model.add_object();
+        object->add_volume(make_cube(10., 10., 1.6));
+        object->add_instance();
+        object->config.set("extruder", 5);
+        ModelVolume* neighbor = object->add_volume(make_cube(10., 10., 0.8));
+        neighbor->set_offset(neighbor->get_offset() + Vec3d(15., 0., 0.4));
+        neighbor->config.set("extruder", 6);
+
+        DynamicPrintConfig config = mixed_region_print_config(manager.serialize_custom_entries());
+        config.set("layer_height", 0.2);
+        config.set("initial_layer_print_height", 0.2);
+        config.set("dithering_local_z_mode", true);
+        config.set("dithering_local_z_whole_objects", true);
+        config.set("enable_prime_tower", false);
+        Print print;
+        print.set_status_silent();
+        print.apply(model, config);
+        print.get_object(0)->slice();
+        check_alternating_local_z_pairs(*print.get_object(0));
+    }
+}
+
+TEST_CASE("Painted Local-Z pairs keep alternating through the layer 66 transition", "[MixedFilament][LocalZ][Cadence]")
+{
+    MixedAutoGenerateGuard    auto_generate(false);
+    Model                     model;
+    DynamicPrintConfig        config = DynamicPrintConfig::full_print_config();
+    ConfigSubstitutionContext substitutions{ForwardCompatibilitySubstitutionRule::Enable};
+    PlateDataPtrs             plates;
+    std::vector<Preset*>      presets;
+    bool                      is_bbl = false;
+    Semver                    version;
+    const std::string         path = std::string(TEST_DATA_DIR) + "/local_z/CubeLines.3mf";
+    REQUIRE(load_bbs_3mf(path.c_str(), &config, &substitutions, &model, &plates, &presets, &is_bbl, &version, nullptr,
+                         LoadStrategy::LoadModel | LoadStrategy::LoadConfig | LoadStrategy::AddDefaultInstances));
+    release_PlateData_list(plates);
+    for (Preset* preset : presets)
+        delete preset;
+    REQUIRE(model.objects.size() == 1);
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    print.get_object(0)->slice();
+    REQUIRE(print.get_object(0)->layer_count() > 66);
+    check_alternating_local_z_pairs(*print.get_object(0));
+}
+
+TEST_CASE("Unused support interface filament produces no prime tower", "[MixedFilament][PrimeTower]")
+{
+    Model        model;
+    ModelObject* object = model.add_object();
+    object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+    object->config.set("extruder", 1);
+    DynamicPrintConfig config = mixed_region_print_config("");
+    config.set("enable_support", true);
+    config.set("support_interface_filament", 4);
+    config.set("enable_prime_tower", true);
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    print.process();
+    REQUIRE(print.is_step_done(psWipeTower));
+    REQUIRE(print.get_object(0)->support_layers().empty());
+    CHECK(print.wipe_tower_data().tool_changes.empty());
+    CHECK_FALSE(print.wipe_tower_data().wipe_tower_mesh_data);
+}
+
 TEST_CASE("Filament changes retain slices without whole-object Local-Z", "[MixedFilament][LocalZ][Invalidation]")
 {
     Model        model;
@@ -879,6 +1127,153 @@ TEST_CASE("Mixed filament component edits rebuild painted region targets", "[Mix
     print.apply(model, config);
     const std::vector<unsigned int> expected_updated_second_component_extruders {3, 4, mixed_virtual_id};
     CHECK(first_layer_range_painted_extruders(print) == expected_updated_second_component_extruders);
+}
+
+TEST_CASE("Painting the assigned mixed filament preserves a continuous perimeter", "[MixedFilament][Segmentation]")
+{
+    MixedAutoGenerateGuard guard(false);
+
+    Model        model;
+    ModelObject* object = model.add_object();
+    ModelVolume* volume = object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+    object->ensure_on_bed();
+
+    constexpr int      mixed_id = 5;
+    DynamicPrintConfig config   = mixed_region_print_config(single_custom_mixed_definition(2, 3, 4242));
+    config.set("enable_prime_tower", false);
+    config.set("elefant_foot_compensation", 0.);
+    config.set("outer_wall_line_width", 0.4);
+    config.set("wall_loops", 1);
+    config.option<ConfigOptionPercent>("sparse_infill_density")->value = 0.;
+    config.set("top_shell_layers", 0);
+    config.set("bottom_shell_layers", 0);
+    config.option<ConfigOptionEnum<PerimeterGeneratorType>>("wall_generator")->value = PerimeterGeneratorType::Classic;
+
+    bool assign_part = false;
+    bool paint_top   = false;
+    SECTION("Object assignment") {}
+    SECTION("Part assignment") { assign_part = true; }
+    SECTION("Region collapse disabled") { config.set("mixed_filament_region_collapse", false); }
+    SECTION("Painting starts at the top surface")
+    {
+        paint_top = true;
+        config.set("top_shell_layers", 2);
+    }
+    SECTION("Full-domain Local-Z")
+    {
+        config.set("dithering_local_z_mode", true);
+        config.set("dithering_local_z_whole_objects", true);
+    }
+    (assign_part ? volume->config : object->config).set("extruder", mixed_id);
+
+    // Leave the other faces at the assigned mix. Top paint also covers a zone
+    // whose local cadence starts later than the object's first layer.
+    TriangleSelector selector(volume->mesh());
+    selector.set_facet(paint_top ? 2 : 4, EnforcerBlockerType(mixed_id));
+    selector.set_facet(paint_top ? 3 : 5, EnforcerBlockerType(mixed_id));
+    REQUIRE(volume->mmu_segmentation_facets.set(selector));
+
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    REQUIRE(print.objects().size() == 1);
+    PrintObject* print_object = print.get_object(0);
+    print_object->slice();
+    REQUIRE(print_object->layer_count() > 1);
+
+    for (const Layer* layer : print_object->layers()) {
+        size_t populated_regions = 0;
+        for (const LayerRegion* region : layer->regions()) {
+            if (region->slices.empty())
+                continue;
+            ++populated_regions;
+            CHECK(region->region().config().wall_filament.value == mixed_id);
+            REQUIRE(region->slices.surfaces.size() == 1);
+            CHECK_THAT(region->slices.surfaces.front().area() * SCALING_FACTOR * SCALING_FACTOR, Catch::Matchers::WithinAbs(100., 0.001));
+        }
+        CHECK(populated_regions == 1);
+    }
+
+    // With ordinary layer mixing, the painted boundary must not break the wall loop.
+    if (!config.opt_bool("dithering_local_z_mode")) {
+        print.process();
+        for (const Layer* layer : print_object->layers()) {
+            size_t perimeter_count = 0;
+            for (const LayerRegion* region : layer->regions()) {
+                const ExtrusionEntityCollection perimeters = region->perimeters.flatten();
+                perimeter_count += perimeters.size();
+                for (const ExtrusionEntity* perimeter : perimeters.entities)
+                    CHECK(perimeter->is_loop());
+            }
+            CHECK(perimeter_count == 1);
+        }
+    }
+}
+
+TEST_CASE("Same-mix painting preserves other material overrides", "[MixedFilament][Segmentation]")
+{
+    MixedAutoGenerateGuard guard(false);
+
+    Model        model;
+    ModelObject* object = model.add_object();
+    ModelVolume* volume = object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+    object->ensure_on_bed();
+    constexpr int mixed_id = 5;
+    object->config.set("extruder", mixed_id);
+
+    TriangleSelector selector(volume->mesh());
+    selector.set_facet(4, EnforcerBlockerType(mixed_id));
+    selector.set_facet(5, EnforcerBlockerType(mixed_id));
+
+    int expected_physical_id = 1;
+    SECTION("Physical paint over the same mixed parent")
+    {
+        selector.set_facet(8, EnforcerBlockerType(expected_physical_id));
+        selector.set_facet(9, EnforcerBlockerType(expected_physical_id));
+    }
+    SECTION("Same mixed paint over a different part material")
+    {
+        ModelVolume* other_volume = object->add_volume(make_cube(10., 10., 2.));
+        other_volume->set_offset(Vec3d(20., 0., 0.));
+        other_volume->config.set("extruder", 1);
+        TriangleSelector other_selector(other_volume->mesh());
+        other_selector.set_facet(4, EnforcerBlockerType(mixed_id));
+        other_selector.set_facet(5, EnforcerBlockerType(mixed_id));
+        REQUIRE(other_volume->mmu_segmentation_facets.set(other_selector));
+        expected_physical_id = 3;
+    }
+    SECTION("Painting overrides a different infill material")
+    {
+        volume->config.set("sparse_infill_filament", 1);
+        expected_physical_id = 3;
+    }
+    REQUIRE(volume->mmu_segmentation_facets.set(selector));
+
+    DynamicPrintConfig config = mixed_region_print_config(single_custom_mixed_definition(2, 3, 4242));
+    config.set("elefant_foot_compensation", 0.);
+    config.set("outer_wall_line_width", 0.4);
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    REQUIRE(print.objects().size() == 1);
+    PrintObject* print_object = print.get_object(0);
+    print_object->slice();
+
+    bool found_physical_override = false;
+    bool found_mixed_parent      = false;
+    for (const Layer* layer : print_object->layers()) {
+        for (const LayerRegion* region : layer->regions()) {
+            if (region->slices.empty())
+                continue;
+            const int filament_id = region->region().config().wall_filament.value;
+            found_physical_override |= filament_id == expected_physical_id;
+            found_mixed_parent |= filament_id == mixed_id;
+        }
+    }
+    CHECK(found_physical_override);
+    CHECK(found_mixed_parent);
 }
 
 TEST_CASE("ExtrusionPath copies preserve inset index", "[MixedFilament]")
@@ -3330,6 +3725,22 @@ TEST_CASE("Local Z infill subdivision defaults inactive when Subdivide Mix Layer
     full_config.apply(bundle.project_config);
     REQUIRE(full_config.has("dithering_local_z_infill"));
     CHECK_FALSE(full_config.opt_bool("dithering_local_z_infill"));
+}
+
+TEST_CASE("Direct multicolor Local-Z defaults enabled and respects an explicit opt-out", "[MixedFilament][Config]")
+{
+    CHECK(FullPrintConfig::defaults().dithering_local_z_direct_multicolor.value);
+    CHECK(MixedFilamentPreviewSettings{}.local_z_direct_multicolor);
+
+    PresetBundle bundle;
+    REQUIRE(bundle.project_config.has("dithering_local_z_direct_multicolor"));
+    CHECK(bundle.project_config.opt_bool("dithering_local_z_direct_multicolor"));
+
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    CHECK(config.opt_bool("dithering_local_z_direct_multicolor"));
+    bundle.project_config.set("dithering_local_z_direct_multicolor", false);
+    config.apply(bundle.project_config);
+    CHECK_FALSE(config.opt_bool("dithering_local_z_direct_multicolor"));
 }
 
 // --------------------------------------------------------------------------

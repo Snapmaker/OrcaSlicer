@@ -1845,7 +1845,6 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         } else {
             set_print_bool("dithering_local_z_whole_objects", false);
             set_print_bool("dithering_local_z_infill", false);
-            set_project_bool("dithering_local_z_direct_multicolor", false);
         }
 
         if (dependent_config_changed)

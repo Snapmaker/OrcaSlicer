@@ -17,6 +17,8 @@
 #include <thread>
 #include <vector>
 
+namespace boost { namespace asio { class io_context; } }
+
 namespace Slic3r { namespace Gateway {
 
 enum class ConnectionState { Disconnected, Connecting, Connected };
@@ -76,6 +78,7 @@ private:
     mutable std::mutex     mutex_;
     Listener               listener_;
     std::weak_ptr<Session> session_;
+    std::shared_ptr<boost::asio::io_context> io_context_;
     std::thread            io_thread_;
 
     void close_locked();
@@ -100,6 +103,7 @@ public:
         std::string                     region_path{"/api/region"};
         std::chrono::milliseconds       health_poll_interval{std::chrono::milliseconds{100}};
         std::chrono::milliseconds       health_timeout{std::chrono::milliseconds{5000}};
+        std::uint32_t                   stale_owner_grace_attempts{2};
         detail::ReconnectPolicy::Config reconnect;
     };
 
@@ -184,6 +188,8 @@ private:
     HealthInfo              health_;
     bool                    websocket_open_{false};
     std::string             websocket_error_;
+    std::uint16_t           stale_owner_port_{0};
+    std::uint32_t           stale_owner_failures_{0};
     std::atomic<bool>       stop_requested_{false};
     std::thread             worker_;
 

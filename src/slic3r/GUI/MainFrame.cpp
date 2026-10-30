@@ -43,6 +43,7 @@
 #include "Plater.hpp"
 #include "WebViewDialog.hpp"
 #include "../Utils/Process.hpp"
+#include "../Utils/GatewayService.hpp"
 #include "format.hpp"
 // BBS
 #include "PartPlate.hpp"
@@ -4090,12 +4091,13 @@ void MainFrame::load_printer_url()
 
 void MainFrame::reload_gateway_pages()
 {
-    wxString home_url = wxGetApp().gateway_web_url("home_page");
-    if (m_webview != nullptr && wxGetApp().is_gateway_url(home_url))
+    const auto gateway_service = wxGetApp().gateway_service();
+    wxString   home_url        = gateway_service ? wxString::FromUTF8(gateway_service->web_url("home_page")) : wxString{};
+    if (m_webview != nullptr && !home_url.empty())
         m_webview->load_url(home_url);
 
-    wxString device_url = wxGetApp().gateway_web_url("device_control");
-    if (wxGetApp().is_gateway_url(device_url))
+    wxString device_url = gateway_service ? wxString::FromUTF8(gateway_service->web_url("device_control")) : wxString{};
+    if (!device_url.empty())
         load_printer_url(device_url);
 }
 

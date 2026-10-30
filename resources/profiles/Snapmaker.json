@@ -561,6 +561,10 @@
       "sub_path": "filament/Generic PA.json"
     },
     {
+      "name": "AsahiKasei KARAKSA-F PA-CNF DX @U1 0.4 nozzle",
+      "sub_path": "filament/AsahiKasei KARAKSA-F PA-CNF DX @U1 0.4 nozzle.json"
+    },
+    {
       "name": "fdm_filament_pa_cf_category",
       "sub_path": "filament/fdm_filament_pa_cf_category.json"
     },

@@ -1,0 +1,111 @@
+{
+    "type": "filament",
+    "from": "system",
+    "instantiation": "true",
+    "name": "AsahiKasei KARAKSA-F PA-CNF DX @U1 0.4 nozzle",
+    "setting_id": "AK_KARAKSA_DX_U1_04",
+    "filament_id": "AKDX205",
+    "inherits": "Generic PA",
+    "chamber_temperatures": [
+        "0"
+    ],
+    "fan_cooling_layer_time": [
+        "5"
+    ],
+    "fan_max_speed": [
+        "30"
+    ],
+    "fan_min_speed": [
+        "10"
+    ],
+    "filament_max_volumetric_speed": [
+        "12"
+    ],
+    "nozzle_temperature": [
+        "275"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "275"
+    ],
+    "nozzle_temperature_range_high": [
+        "280"
+    ],
+    "nozzle_temperature_range_low": [
+        "260"
+    ],
+    "overhang_fan_speed": [
+        "100"
+    ],
+    "overhang_fan_threshold": [
+        "0%"
+    ],
+    "required_nozzle_HRC": [
+        "0"
+    ],
+    "slow_down_layer_time": [
+        "2"
+    ],
+    "slow_down_min_speed": [
+        "20"
+    ],
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ],
+    "filament_vendor": [
+        "AsahiKasei"
+    ],
+    "filament_type": [
+        "PA"
+    ],
+    "chamber_temperature": [
+        "0"
+    ],
+    "eng_plate_temp": [
+        "65"
+    ],
+    "eng_plate_temp_initial_layer": [
+        "65"
+    ],
+    "filament_density": [
+        "1.16"
+    ],
+    "filament_flow_ratio": [
+        "0.96"
+    ],
+    "filament_notes": [
+        "Asahi Kasei KARAKSA-F PA-CNF DX (DX205) is cellulose-nanofiber reinforced polyamide, not carbon-fiber PA. Use the PA material category. U1 0.4 mm starting profile: nozzle 275 C (manufacturer range 260-280 C), PEI/hot/engineering bed 65 C (DX maximum), flow ratio 0.96, maximum volumetric speed 12 mm3/s. The flow ratio and volumetric limit are carried over from the user's QIDI MAX4 profile at the user's request; they are not U1 measurements or manufacturer-certified flow limits. U1 physical print validation is pending. Dry the filament and use PA-compatible bed adhesive. Retains U1 Generic PA tool-change behavior and high-temperature classification. Standard-flow profile only; other nozzle sizes and high-flow configurations require separate calibration. Manufacturer: https://www.asahi-kasei.co.jp/karaksa/products/pa-filament.html DX205 TDS: https://filament2print.com/en/index.php?controller=attachment&id_attachment=3734"
+    ],
+    "filament_settings_id": [
+        "AsahiKasei KARAKSA-F PA-CNF DX @U1 0.4 nozzle"
+    ],
+    "full_fan_speed_layer": [
+        "2"
+    ],
+    "hot_plate_temp": [
+        "65"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "65"
+    ],
+    "reduce_fan_stop_start_freq": [
+        "1"
+    ],
+    "supertack_plate_temp": [
+        "0"
+    ],
+    "supertack_plate_temp_initial_layer": [
+        "0"
+    ],
+    "textured_cool_plate_temp": [
+        "0"
+    ],
+    "textured_cool_plate_temp_initial_layer": [
+        "0"
+    ],
+    "textured_plate_temp": [
+        "65"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "65"
+    ]
+}

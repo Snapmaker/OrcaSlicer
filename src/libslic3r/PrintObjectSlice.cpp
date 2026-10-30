@@ -1351,8 +1351,10 @@ static inline void compute_local_z_gradient_component_heights(int mix_b_percent,
     const double pct_a = 1.0 - pct_b;
     const double lo    = std::max<double>(0.01, lower_bound);
     const double hi    = std::max<double>(lo, upper_bound);
-    h_a = lo + pct_a * (hi - lo);
-    h_b = lo + pct_b * (hi - lo);
+    // Preserve the requested ratio at the target cycle height. The pass planner
+    // applies the height bounds later; adding lo to each component biases the mix toward 50/50.
+    h_a = pct_a * (lo + hi);
+    h_b = pct_b * (lo + hi);
 }
 
 static bool choose_local_z_start_with_component_a(const std::vector<double> &pass_heights,
@@ -1360,14 +1362,19 @@ static bool choose_local_z_start_with_component_a(const std::vector<double> &pas
                                                   double                     expected_h_b,
                                                   size_t                     cadence_index)
 {
-    double err_ab = 0.0;
-    double err_ba = 0.0;
+    // Match component fractions, since fitting to the nominal layer can change
+    // the absolute pass heights. Absolute errors can tie and swap unequal components.
+    double even_height  = 0.0;
+    double total_height = 0.0;
     for (size_t pass_i = 0; pass_i < pass_heights.size(); ++pass_i) {
-        const double expected_ab = (pass_i % 2) == 0 ? expected_h_a : expected_h_b;
-        const double expected_ba = (pass_i % 2) == 0 ? expected_h_b : expected_h_a;
-        err_ab += std::abs(pass_heights[pass_i] - expected_ab);
-        err_ba += std::abs(pass_heights[pass_i] - expected_ba);
+        total_height += pass_heights[pass_i];
+        if ((pass_i % 2) == 0)
+            even_height += pass_heights[pass_i];
     }
+    const double ratio_a    = expected_h_a / std::max<double>(EPSILON, expected_h_a + expected_h_b);
+    const double ratio_even = even_height / std::max<double>(EPSILON, total_height);
+    const double err_ab     = std::abs(ratio_even - ratio_a);
+    const double err_ba     = std::abs((1.0 - ratio_even) - ratio_a);
 
     if (err_ab + 1e-6 < err_ba)
         return true;
@@ -3497,7 +3504,7 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
         std::vector<double> pass_heights;
         if (interval.has_mixed_paint && !isolated_multi_row_mode) {
             // Local-Z mode should emit an A/B/A/B pattern for mixed regions and
-            // derive relative heights from mixed-filament gradient bounds.
+            // derive relative heights from the requested component ratio within the height bounds.
             if (preferred_a <= EPSILON && preferred_b <= EPSILON) {
                 if (dominant_mixed_idx < mixed_rows.size() &&
                            row_uses_direct_multicolor_solver[dominant_mixed_idx] != 0) {
@@ -3548,16 +3555,15 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
                 pass_heights = build_uniform_local_z_pass_heights(interval.base_height, mixed_lower, mixed_upper);
         }
 
-        // Keep auto local-Z 2-pass cadence order stable across layers even if the
-        // dominant mixed row changes. Per-row phase assignment still controls
-        // which filament gets pass-0 vs pass-1.
-        // Skip for gradient rows, whose pass[0]/pass[1] assignment is intentional.
-        if (!dominant_is_gradient &&
-            interval.has_mixed_paint &&
-            preferred_a <= EPSILON &&
-            preferred_b <= EPSILON &&
-            pass_heights.size() == 2 &&
-            pass_heights[0] > pass_heights[1]) {
+        // Ordinary two-color rows keep the planner's A/B order, just like isolated
+        // rows. Sorting only single-row layers by height reverses their cadence
+        // when a neighboring mixed region starts or ends.
+        // Retain the existing height ordering for multicolor and pair-cycle rows.
+        const bool uses_multicolor_order = dominant_mixed_idx < mixed_rows.size() &&
+                                           (row_uses_direct_multicolor_solver[dominant_mixed_idx] != 0 ||
+                                            row_active_pairs[dominant_mixed_idx].uses_layer_cycle_sequence);
+        if (uses_multicolor_order && !dominant_is_gradient && interval.has_mixed_paint && preferred_a <= EPSILON &&
+            preferred_b <= EPSILON && pass_heights.size() == 2 && pass_heights[0] > pass_heights[1]) {
             std::swap(pass_heights[0], pass_heights[1]);
         }
 

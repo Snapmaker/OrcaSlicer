@@ -105,6 +105,37 @@ HttpResponse LibcurlHttpTransport::post_json(const std::string& url, const std::
     return response;
 }
 
+HttpResponse LibcurlHttpTransport::put_json(const std::string& url, const std::string& body)
+{
+    HttpResponse response;
+    bool         fulfilled = false;
+    // put2() issues CURLOPT_CUSTOMREQUEST "PUT"; the body still rides the
+    // regular POST fields, which is the canonical curl way to PUT a payload.
+    Http request = Http::put2(url);
+    request.remove_header("Origin")
+        .header("Content-Type", "application/json")
+        .timeout_connect(connect_timeout_seconds_)
+        .timeout_max(total_timeout_seconds_)
+        .set_post_body(body);
+    request.on_complete([&](std::string response_body, unsigned status) {
+        if (!fulfilled) {
+            fulfilled       = true;
+            response.status = status;
+            response.body   = std::move(response_body);
+        }
+    });
+    request.on_error([&](std::string response_body, std::string error, unsigned status) {
+        if (!fulfilled) {
+            fulfilled       = true;
+            response.status = status;
+            response.body   = std::move(response_body);
+            response.error  = std::move(error);
+        }
+    });
+    request.perform_sync();
+    return response;
+}
+
 struct GatewayWebSocketTransport::Session : public std::enable_shared_from_this<Session>
 {
     Session(std::shared_ptr<asio::io_context> io_context, std::string host, std::string port, std::string path, Listener listener)
@@ -583,6 +614,26 @@ GatewayService::ApiResult GatewayService::set_region(const std::string& region)
     return result;
 }
 
+GatewayService::ApiResult GatewayService::set_app_config(const std::string& key, const nlohmann::json& value)
+{
+    if (key.empty())
+        return {{GatewayErrorCode::InvalidRequest, "app config key is empty"}, {}};
+
+    ApiResult result = put_json(config_.app_config_path, {{key, value}});
+    if (result.error)
+        return result;
+
+    const auto ok            = result.value.find("ok");
+    const auto legacy_code   = result.value.find("code");
+    const bool documented_ok = ok != result.value.end() && ok->is_boolean() && ok->get<bool>();
+    const bool legacy_ok     = legacy_code != result.value.end() && legacy_code->is_number_integer() && legacy_code->get<int>() == 200;
+    if (!documented_ok && !legacy_ok) {
+        result.error = {GatewayErrorCode::InvalidResponse, "app config endpoint did not report ok"};
+        result.value = nlohmann::json::object();
+    }
+    return result;
+}
+
 PreprintStoreResult GatewayService::store_preprint_context(const std::string& id, const nlohmann::json& payload)
 {
     PreprintStoreResult result;
@@ -922,6 +973,36 @@ GatewayService::ApiResult GatewayService::post_json(const std::string& path, con
         return {{GatewayErrorCode::HealthNotReady, "gateway web base URL is not available"}, {}};
 
     const HttpResponse response = dependencies_.http->post_json(join_url(base_url, path), body.dump());
+    if (!response.error.empty() || response.status < 200 || response.status >= 300) {
+        result.error = {GatewayErrorCode::HttpError,
+                        response.error.empty() ? "request failed with HTTP status " + std::to_string(response.status) : response.error};
+        return result;
+    }
+    const auto parsed = parse_json_object(response.body);
+    if (!parsed.has_value()) {
+        result.error = {GatewayErrorCode::InvalidResponse, "response is not a JSON object"};
+        return result;
+    }
+    result.value = *parsed;
+    return result;
+}
+
+GatewayService::ApiResult GatewayService::put_json(const std::string& path, const nlohmann::json& body)
+{
+    ApiResult   result;
+    std::string base_url;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (state_ != ConnectionState::Connected) {
+            result.error = {GatewayErrorCode::NotConnected, "gateway is not connected"};
+            return result;
+        }
+        base_url = health_.base_url;
+    }
+    if (base_url.empty())
+        return {{GatewayErrorCode::HealthNotReady, "gateway web base URL is not available"}, {}};
+
+    const HttpResponse response = dependencies_.http->put_json(join_url(base_url, path), body.dump());
     if (!response.error.empty() || response.status < 200 || response.status >= 300) {
         result.error = {GatewayErrorCode::HttpError,
                         response.error.empty() ? "request failed with HTTP status " + std::to_string(response.status) : response.error};

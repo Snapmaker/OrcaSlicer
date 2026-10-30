@@ -27,6 +27,7 @@ public:
     virtual ~HttpTransport()                                                        = default;
     virtual HttpResponse get(const std::string& url)                                = 0;
     virtual HttpResponse post_json(const std::string& url, const std::string& body) = 0;
+    virtual HttpResponse put_json(const std::string& url, const std::string& body)  = 0;
 };
 
 class WebSocketTransport
@@ -52,6 +53,7 @@ public:
     explicit LibcurlHttpTransport(long connect_timeout_seconds = 2, long total_timeout_seconds = 5);
     HttpResponse get(const std::string& url) override;
     HttpResponse post_json(const std::string& url, const std::string& body) override;
+    HttpResponse put_json(const std::string& url, const std::string& body) override;
 
 private:
     long connect_timeout_seconds_;
@@ -98,6 +100,7 @@ public:
         std::string                     account_path{"/api/account"};
         std::string                     store_path{"/api/store"};
         std::string                     region_path{"/api/region"};
+        std::string                     app_config_path{"/api/config"};
         std::chrono::milliseconds       health_poll_interval{std::chrono::milliseconds{100}};
         std::chrono::milliseconds       health_timeout{std::chrono::milliseconds{5000}};
         detail::ReconnectPolicy::Config reconnect;
@@ -147,6 +150,10 @@ public:
     ApiResult    get_account();
     PreprintStoreResult store_preprint_context(const std::string& id, const nlohmann::json& payload);
     ApiResult    set_region(const std::string& region);
+    // Push a host app-config key (e.g. enable_model_station) to the CLI. The
+    // CLI serves it to the Flutter pages via GET /api/config and broadcasts
+    // notify.config.changed on its websocket when the value changes.
+    ApiResult    set_app_config(const std::string& key, const nlohmann::json& value);
     std::string  web_url(const std::string& page_key) const;
     std::string  localfile_url(const std::string& file_path) const;
 
@@ -169,6 +176,7 @@ private:
     void         set_websocket_open(bool opened);
     ApiResult    get_json(const std::string& path);
     ApiResult    post_json(const std::string& path, const nlohmann::json& body);
+    ApiResult    put_json(const std::string& path, const nlohmann::json& body);
     std::int64_t next_request_id();
     std::int64_t send_request(const std::string& method, const nlohmann::json& params, RpcCallback callback);
 

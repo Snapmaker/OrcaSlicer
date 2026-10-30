@@ -643,6 +643,8 @@ private:
     // BBS
     Print* m_curr_print = nullptr;
     unsigned int m_toolchange_count;
+    // Extruders already primed by toolchange_prime_gcode, to tell first use apart from a return after parking.
+    std::vector<bool> m_toolchange_primed_extruders;
     coordf_t m_nominal_z;
     bool m_need_change_layer_lift_z = false;
     int m_start_gcode_filament = -1;

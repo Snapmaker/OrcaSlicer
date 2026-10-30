@@ -33,7 +33,13 @@
 #define WEBKIT_API
 struct WebKitWebView;
 struct WebKitJavascriptResult;
+struct WebKitWebContext;
 extern "C" {
+WEBKIT_API WebKitWebContext *
+webkit_web_context_get_default                       (void);
+WEBKIT_API void
+webkit_web_context_set_preferred_languages           (WebKitWebContext          *context,
+                                                      const gchar * const       *languages);
 WEBKIT_API void
 webkit_web_view_run_javascript                       (WebKitWebView             *web_view,
                                                       const gchar               *script,
@@ -412,6 +418,17 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         // And the memory: file system
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
 #else
+#if defined(__linux__)
+        // WebKitGTK derives navigator.languages from the process locale. The Flatpak entrypoint
+        // exports LC_ALL=C.UTF-8, which WebKit reports as "C"; Flutter web passes that to
+        // Intl.Locale(), which throws and aborts engine init ("Load failed"). Use the app's
+        // UI language instead, so the pages always get a valid language tag.
+        {
+            const std::string language = Slic3r::GUI::wxGetApp().current_language_code_safe().ToStdString();
+            const gchar *languages[] = {language.c_str(), nullptr};
+            webkit_web_context_set_preferred_languages(webkit_web_context_get_default(), languages);
+        }
+#endif
         // Handlers must be registered before Create(). Linux (WebKit2): scheme is process-global, register once to avoid "Cannot register URI scheme ... more than once".
         // macOS (WKWebView): scheme is per-view, each WebView needs its own handlers.
 #if defined(__linux__)

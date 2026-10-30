@@ -5,6 +5,7 @@
 #include <boost/asio/bind_executor.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/log/trivial.hpp>
@@ -29,6 +30,8 @@ namespace {
 std::int64_t wall_now_ms()
 { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
 
+constexpr std::chrono::milliseconds websocket_close_timeout{1000};
+
 GatewayError transport_error(const std::string& message) { return {GatewayErrorCode::TransportError, message}; }
 
 std::string make_url(const std::string& host, std::uint16_t port, const std::string& path)
@@ -43,6 +46,25 @@ std::string join_url(const std::string& base_url, const std::string& path)
     if (base_url.back() != '/' && path.front() != '/')
         return base_url + "/" + path;
     return base_url + path;
+}
+
+bool health_urls_match_gateway(const HealthInfo& health, const std::string& host)
+{
+    const std::string expected_prefix = "http://" + host + ":";
+    if (health.base_url.rfind(expected_prefix, 0) != 0)
+        return false;
+    const std::string remainder = health.base_url.substr(expected_prefix.size());
+    const std::size_t slash     = remainder.find('/');
+    const std::string port_text = slash == std::string::npos ? remainder : remainder.substr(0, slash);
+    if (port_text.empty() || !std::all_of(port_text.begin(), port_text.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; }))
+        return false;
+
+    for (const auto& [name, path] : health.pages) {
+        (void) name;
+        if (!path.empty() && path.front() != '/')
+            return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -107,10 +129,11 @@ HttpResponse LibcurlHttpTransport::post_json(const std::string& url, const std::
 
 struct GatewayWebSocketTransport::Session : public std::enable_shared_from_this<Session>
 {
-    Session(std::shared_ptr<asio::io_context> io_context, std::string host, std::string port, std::string path, Listener listener)
-        : io_context(std::move(io_context))
-        , executor(this->io_context->get_executor())
+    Session(std::shared_ptr<asio::io_context> io_context_ptr, std::string host, std::string port, std::string path, Listener listener)
+        : io_context(*io_context_ptr)
+        , executor(io_context.get_executor())
         , resolver(executor)
+        , close_timer(executor)
         , stream(executor)
         , host(std::move(host))
         , port(std::move(port))
@@ -130,6 +153,8 @@ struct GatewayWebSocketTransport::Session : public std::enable_shared_from_this<
 
     void close_from_any_thread()
     {
+        if (closed.load(std::memory_order_acquire))
+            return;
         post([self = shared_from_this()] { self->close(); });
     }
 
@@ -226,11 +251,18 @@ private:
         stream.async_write(asio::buffer(outbox.front()), [self = shared_from_this()](const boost::system::error_code& error, std::size_t) {
             self->writing = false;
             if (error) {
-                self->fail(error.message());
+                if (self->closing)
+                    self->finish_close(error.message());
+                else
+                    self->fail(error.message());
                 return;
             }
             if (!self->outbox.empty())
                 self->outbox.pop_front();
+            if (self->closing) {
+                self->begin_websocket_close();
+                return;
+            }
             if (!self->outbox.empty())
                 self->do_write();
         });
@@ -241,28 +273,57 @@ private:
         if (closed.exchange(true))
             return;
         closing = true;
+        close_timer.expires_after(websocket_close_timeout);
+        close_timer.async_wait([self = shared_from_this()](const boost::system::error_code& error) {
+            if (error == asio::error::operation_aborted)
+                return;
+            boost::system::error_code socket_error;
+            self->stream.next_layer().close(socket_error);
+            self->finish_close("websocket close timed out");
+        });
+        begin_websocket_close();
+    }
+
+    void begin_websocket_close()
+    {
+        if (!connected.load(std::memory_order_acquire)) {
+            finish_close("websocket closed before handshake completed");
+            return;
+        }
+        if (writing)
+            return;
+        stream.async_close(websocket::close_code::normal, [self = shared_from_this()](const boost::system::error_code& error) {
+            self->finish_close(error ? error.message() : std::string{});
+        });
+    }
+
+    void finish_close(const std::string& reason)
+    {
+        if (close_finished)
+            return;
+        closing        = true;
+        close_finished = true;
         boost::system::error_code error;
-        stream.close(websocket::close_code::normal, error);
+        close_timer.cancel(error);
+        resolver.cancel();
+        stream.next_layer().cancel(error);
+        stream.next_layer().close(error);
         if (listener.closed)
-            listener.closed(error ? error.message() : std::string{});
-        io_context->stop();
+            listener.closed(reason);
+        io_context.stop();
     }
 
     void fail(const std::string& reason)
     {
         if (closed.exchange(true))
             return;
-        closing = true;
-        boost::system::error_code error;
-        stream.next_layer().close(error);
-        if (listener.closed)
-            listener.closed(reason);
-        io_context->stop();
+        finish_close(reason);
     }
 
-    std::shared_ptr<asio::io_context>        io_context;
+    asio::io_context&                        io_context; // ownership stays with GatewayWebSocketTransport and send callers
     asio::any_io_executor                    executor;
     asio::ip::tcp::resolver                  resolver;
+    asio::steady_timer                       close_timer;
     websocket::stream<asio::ip::tcp::socket> stream;
     std::string                              host;
     std::string                              port;
@@ -272,6 +333,7 @@ private:
     std::deque<std::string>                  outbox;
     std::atomic<bool>                        connected{false};
     bool                                     writing{false};
+    bool                                     close_finished{false};
     bool                                     closing{false};
     std::atomic<bool>                        closed{false};
 };
@@ -302,6 +364,7 @@ void GatewayWebSocketTransport::connect(std::uint16_t port, const std::string& p
     Listener listener   = listener_;
     auto     session    = std::make_shared<Session>(io_context, host_, std::to_string(port), path, std::move(listener));
     session_            = session;
+    io_context_         = io_context;
     session->run();
     io_thread_ = std::thread([io_context] { io_context->run(); });
 }
@@ -309,11 +372,13 @@ void GatewayWebSocketTransport::connect(std::uint16_t port, const std::string& p
 bool GatewayWebSocketTransport::send(const std::string& message)
 {
     std::shared_ptr<Session> session;
+    std::shared_ptr<asio::io_context> io_context;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         session = session_.lock();
+        io_context = io_context_;
     }
-    if (!session)
+    if (!session || !io_context)
         return false;
     session->send_from_any_thread(message);
     return true;
@@ -333,6 +398,7 @@ void GatewayWebSocketTransport::close_locked()
     if (io_thread_.joinable())
         io_thread_.join();
     session_.reset();
+    io_context_.reset();
 }
 
 GatewayService::GatewayService(Config config, Dependencies dependencies)
@@ -695,11 +761,27 @@ GatewayError GatewayService::connect_once(const std::string& locale)
     }
 
     HealthInfo health;
-    if (const GatewayError health_error = wait_for_health(discovery.port, health))
+    if (const GatewayError health_error = wait_for_health(discovery.port, health)) {
+        if (health_error.code == GatewayErrorCode::HealthNotReady) {
+            if (discovery.port != stale_owner_port_) {
+                stale_owner_port_     = discovery.port;
+                stale_owner_failures_ = 0;
+            }
+            ++stale_owner_failures_;
+            if (dependencies_.process_manager && stale_owner_failures_ >= config_.stale_owner_grace_attempts) {
+                // Every takeover result preserves the reconnect policy; the next attempt rechecks health.
+                dependencies_.process_manager->terminate_port_owner(discovery.port);
+                stale_owner_port_     = 0;
+                stale_owner_failures_ = 0;
+            }
+        }
         return health_error;
+    }
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
         health_ = std::move(health);
+        stale_owner_port_ = 0;
+        stale_owner_failures_ = 0;
     }
 
     if (const GatewayError websocket_error = connect_websocket(discovery.port))
@@ -721,6 +803,8 @@ GatewayError GatewayService::wait_for_health(std::uint16_t port, HealthInfo& hea
         if (response.error.empty() && response.status >= 200 && response.status < 300) {
             if (const GatewayError health_error = parse_health(response.body, health))
                 return health_error;
+            if (!health_urls_match_gateway(health, config_.host))
+                return {GatewayErrorCode::InvalidResponse, "health URLs do not match the gateway endpoint"};
             BOOST_LOG_TRIVIAL(info) << "connection gateway health response: status=" << response.status
                                     << ", device_connected=" << health.device_connected << ", has_device_state=" << health.has_device_state;
             std::string health_pages;

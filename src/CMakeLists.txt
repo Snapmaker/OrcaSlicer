@@ -343,6 +343,9 @@ endif ()
 if (SLIC3R_GUI)
 #    target_link_libraries(Snapmaker_Orca ws2_32 uxtheme setupapi libslic3r_gui ${wxWidgets_LIBRARIES})
 target_link_libraries(Snapmaker_Orca libslic3r_gui)
+# Building this target directly (as IDEs do) must still mirror the Snapmaker
+# profiles into the source resources tree before the app runs.
+add_dependencies(Snapmaker_Orca sync_snapmaker_profiles)
     if (MSVC)
         # Generate debug symbols even in release mode.
         target_link_options(Snapmaker_Orca PUBLIC "$<$<CONFIG:RELEASE>:/DEBUG>")

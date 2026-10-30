@@ -1,0 +1,4 @@
+[submodule "submodules/Profiles"]
+	path = submodules/Profiles
+	url = https://github.com/Snapmaker/snapmaker-profiles.git
+	branch = main

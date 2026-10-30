@@ -8,7 +8,7 @@
 #include "I18N.hpp"
 
 #include <wx/display.h>
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 
 namespace fs = boost::filesystem;
 

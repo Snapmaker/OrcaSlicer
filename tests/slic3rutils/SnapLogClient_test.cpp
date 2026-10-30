@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <deque>
 #include <future>
+#include <string_view>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -47,9 +48,9 @@ TEST_CASE("hmac_sha256_hex empty msg", "[snaplog]")
 
 TEST_CASE("level_str wire strings", "[snaplog]")
 {
-    REQUIRE(level_str(SnapLogLevel::Info) == "INFO");
-    REQUIRE(level_str(SnapLogLevel::Warning) == "WARN");
-    REQUIRE(level_str(SnapLogLevel::Error) == "ERROR");
+    REQUIRE(std::string_view(level_str(SnapLogLevel::Info)) == "INFO");
+    REQUIRE(std::string_view(level_str(SnapLogLevel::Warning)) == "WARN");
+    REQUIRE(std::string_view(level_str(SnapLogLevel::Error)) == "ERROR");
 }
 
 TEST_CASE("normalize_logger takes last segment", "[snaplog]")

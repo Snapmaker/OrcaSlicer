@@ -388,6 +388,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/Preferences.hpp
     GUI/PresetComboBoxes.cpp
     GUI/PresetComboBoxes.hpp
+    GUI/FilamentDropDown.cpp
+    GUI/FilamentDropDown.hpp
+    GUI/FilamentSort.cpp
+    GUI/FilamentSort.hpp
+    GUI/PlaterFilamentComboBox.cpp
+    GUI/PlaterFilamentComboBox.hpp
     GUI/PresetHints.cpp
     GUI/PresetHints.hpp
     GUI/PrinterCloudAuthDialog.cpp
@@ -560,8 +566,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/SMPhysicalPrinterDialog.cpp
     GUI/SSWCP.cpp
     GUI/SSWCP.hpp
-    GUI/WebSocketDebugServer.cpp
-    GUI/WebSocketDebugServer.hpp
     GUI/DownloadManager.cpp
     GUI/DownloadManager.hpp
     GUI/GenericDownloadDialog.cpp
@@ -570,8 +574,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/Timelapse/TimelapseDownloadPopup.hpp
     GUI/WebPresetDialog.hpp
     GUI/WebPresetDialog.cpp
-    GUI/WebSMUserLoginDialog.cpp
-    GUI/WebSMUserLoginDialog.hpp
     GUI/WebDeviceDialog.cpp
     GUI/WebDeviceDialog.hpp
     GUI/WebPreprintDialog.hpp
@@ -593,6 +595,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/CalibUtils.hpp
     Utils/ColorSpaceConvert.cpp
     Utils/ColorSpaceConvert.hpp
+    Utils/ConnectionProcessManager.cpp
+    Utils/ConnectionProcessManager.hpp
     Utils/CrealityPrint.cpp
     Utils/CrealityPrint.hpp
     Utils/Duet.cpp
@@ -617,6 +621,14 @@ set(SLIC3R_GUI_SOURCES
     Utils/FontConfigHelp.hpp
     Utils/Frustum.cpp
     Utils/Frustum.hpp
+    Utils/GatewayProtocol.cpp
+    Utils/GatewayProtocol.hpp
+    Utils/GatewayDevice.cpp
+    Utils/GatewayDevice.hpp
+    Utils/GatewayAccount.cpp
+    Utils/GatewayAccount.hpp
+    Utils/GatewayService.cpp
+    Utils/GatewayService.hpp
     Utils/HexFile.cpp
     Utils/HexFile.hpp
     Utils/Http.cpp
@@ -722,11 +734,18 @@ if(ORCA_UPDATER_SIG_KEY_B64)
     set(ORCA_UPDATER_SIG_KEY_AVAILABLE 1)
 endif()
 
+if(WIN32 AND SLIC3R_WIDGET_INSPECTOR)
+    list(APPEND SLIC3R_GUI_SOURCES GUI/WidgetInspector.cpp GUI/WidgetInspector.hpp)
+endif()
+
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/GeneratedConfig.hpp.in
                ${CMAKE_CURRENT_BINARY_DIR}/GeneratedConfig.hpp
                @ONLY)
 
 add_library(libslic3r_gui STATIC ${SLIC3R_GUI_SOURCES})
+if(WIN32 AND SLIC3R_WIDGET_INSPECTOR)
+    target_compile_definitions(libslic3r_gui PRIVATE ORCA_WIDGET_INSPECTOR)
+endif()
 target_include_directories(libslic3r_gui PRIVATE Utils ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(libslic3r_gui paho-mqttpp3-static)
 
@@ -745,6 +764,21 @@ encoding_check(libslic3r_gui)
 
 find_package(libnoise REQUIRED)
 target_link_libraries(libslic3r_gui libslic3r cereal::cereal imgui imguizmo minilzo GLEW::GLEW OpenGL::GL hidapi ${wxWidgets_LIBRARIES} glfw libcurl OpenSSL::SSL OpenSSL::Crypto noise::noise nanosvg)
+
+# Root fix for the L3 layer: app-layer symbols referenced by the GUI library
+# (sentryReportLog / common::get_flutter_version / common::get_profile_version /
+# CBaseException::set_log_folder / bury-point state) are closed over by
+# app_common, making this library's symbol closure self-contained (no reverse
+# dependency on the app exe/DLL or consumer stub files).
+# Note: all target_link_libraries calls on this target use the plain
+# signature; CMake requires one consistent signature per target, so the
+# PRIVATE keyword must not be used here (otherwise a "plain signature has
+# already been used" configure error occurs). Plain is semantically
+# equivalent to PUBLIC - app_common's usage requirements (src/ header path,
+# Win32 system libs) propagate through this link statement to this target's
+# own compilation and to downstream consumers, satisfying resolution of the
+# "app_common/..." headers.
+target_link_libraries(libslic3r_gui app_common)
 
 if (MSVC)
     target_link_libraries(libslic3r_gui Setupapi.lib)

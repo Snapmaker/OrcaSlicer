@@ -1991,114 +1991,120 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     // BBS popup a message to ask the user to set optimum parameters
     // for support interface if support materials are used
     if (opt_key == "support_interface_filament") {
-        // Guard: suppress dialog during config reload/rollback.
-        if (m_postpone_update_ui)
-            return;
-
-        // Guard: skip if cascaded from programmatic apply().
+        // The two guards only suppress the recommendation dialog; they must
+        // NOT return early. The update() at the end of on_value_change is the
+        // only path that propagates this edit to the plater (background
+        // slicing process -> re-slice prompt), so an early return here makes a
+        // changed support interface filament a silent no-op: the slice button
+        // never lights up even though the config value changed. The reload
+        // case is already handled by the m_postpone_update_ui guard at the end
+        // of on_value_change.
         const t_config_option_keys &applying = m_config_manipulation.applying_keys();
-        if (std::find(applying.begin(), applying.end(),
-                      "support_interface_filament") != applying.end())
-            return;
+        const bool suppress_dialog =
+            // during config reload/rollback
+            m_postpone_update_ui ||
+            // or cascaded from programmatic apply()
+            std::find(applying.begin(), applying.end(),
+                      "support_interface_filament") != applying.end();
 
-        // The config value is 1-based (0 = unset/default).
-        int interface_filament_id =
-            m_config->opt_int("support_interface_filament") - 1;
+        if (!suppress_dialog) {
+            // The config value is 1-based (0 = unset/default).
+            int interface_filament_id =
+                m_config->opt_int("support_interface_filament") - 1;
 
-        // Resolve interface filament type string. Only when a specific
-        // filament is explicitly selected (id >= 0). id == -1 means
-        // "unset" — is_support_filament(-1) returns false via bounds
-        // check, so no dialog is triggered.
-        std::string interface_filament_type;
-        if (interface_filament_id >= 0) {
-            const std::vector<std::string> &filament_presets =
-                wxGetApp().preset_bundle->filament_presets;
-            if (interface_filament_id <
-                static_cast<int>(filament_presets.size())) {
-                const Preset *preset_ptr =
-                    wxGetApp().preset_bundle->filaments.find_preset(
-                        filament_presets[interface_filament_id]);
-                if (preset_ptr != nullptr) {
-                    const ConfigOptionStrings *ft_opt =
-                        preset_ptr->config.option<ConfigOptionStrings>(
-                            "filament_type");
-                    if (ft_opt != nullptr && !ft_opt->values.empty())
-                        interface_filament_type = ft_opt->values[0];
+            // Resolve interface filament type string. Only when a specific
+            // filament is explicitly selected (id >= 0). id == -1 means
+            // "unset" — is_support_filament(-1) returns false via bounds
+            // check, so no dialog is triggered.
+            std::string interface_filament_type;
+            if (interface_filament_id >= 0) {
+                const std::vector<std::string> &filament_presets =
+                    wxGetApp().preset_bundle->filament_presets;
+                if (interface_filament_id <
+                    static_cast<int>(filament_presets.size())) {
+                    const Preset *preset_ptr =
+                        wxGetApp().preset_bundle->filaments.find_preset(
+                            filament_presets[interface_filament_id]);
+                    if (preset_ptr != nullptr) {
+                        const ConfigOptionStrings *ft_opt =
+                            preset_ptr->config.option<ConfigOptionStrings>(
+                                "filament_type");
+                        if (ft_opt != nullptr && !ft_opt->values.empty())
+                            interface_filament_type = ft_opt->values[0];
+                    }
+                }
+            }
+
+            // --- Detection ---
+            bool is_support_material =
+                is_support_filament(interface_filament_id);
+            bool is_pla_petg_pair =
+                !is_support_material &&
+                check_pla_petg_support_pair(interface_filament_id);
+
+            // --- Build recommended params ---
+            DynamicPrintConfig recommended_conf;
+
+            if (is_support_material) {
+                // Original 4-parameter recommendation for support material.
+                // The original already-optimal check is handled by
+                // filtered_conf below — if all params match, no dialog.
+                recommended_conf.set_key_value("support_top_z_distance",
+                    new ConfigOptionFloat(0));
+                recommended_conf.set_key_value("support_interface_spacing",
+                    new ConfigOptionFloat(0));
+                recommended_conf.set_key_value("support_interface_pattern",
+                    new ConfigOptionEnum<SupportMaterialInterfacePattern>(
+                        smipRectilinearInterlaced));
+                recommended_conf.set_key_value(
+                    "independent_support_layer_height",
+                    new ConfigOptionBool(false));
+            } else if (is_pla_petg_pair) {
+                // PLA↔PETG: 5 parameters per process engineer confirmation.
+                recommended_conf.set_key_value("support_top_z_distance",
+                    new ConfigOptionFloat(0));
+                recommended_conf.set_key_value("support_base_pattern",
+                    new ConfigOptionEnum<SupportMaterialPattern>(
+                        smpDefault));
+                recommended_conf.set_key_value("support_interface_top_layers",
+                    new ConfigOptionInt(3));
+                recommended_conf.set_key_value("support_interface_pattern",
+                    new ConfigOptionEnum<SupportMaterialInterfacePattern>(
+                        smipRectilinearInterlaced));
+                recommended_conf.set_key_value("support_interface_spacing",
+                    new ConfigOptionFloat(0));
+            }
+
+            if (!recommended_conf.empty()) {
+                // Filter: only include params that differ from current config.
+                DynamicPrintConfig filtered_conf;
+                for (const t_config_option_key &key : recommended_conf.keys()) {
+                    const ConfigOption *current_opt = m_config->option(key);
+                    const ConfigOption *new_opt     = recommended_conf.option(key);
+                    if (current_opt != nullptr && new_opt != nullptr &&
+                        current_opt->serialize() != new_opt->serialize()) {
+                        filtered_conf.set_key_value(key, new_opt->clone());
+                    }
+                }
+
+                if (!filtered_conf.empty()) {
+                    // Build dialog message via extracted helper.
+                    wxString msg_text = build_support_recommendation_message(
+                        is_support_material,
+                        interface_filament_type,
+                        filtered_conf,
+                        *m_config);
+
+                    MessageDialog dialog(wxGetApp().plater(), msg_text,
+                                         "Suggestion",
+                                         wxICON_WARNING | wxYES | wxNO);
+                    if (dialog.ShowModal() == wxID_YES) {
+                        m_config_manipulation.apply(m_config, &filtered_conf);
+                    }
+                    wxGetApp().plater()->update();
                 }
             }
         }
-
-        // --- Detection ---
-        bool is_support_material =
-            is_support_filament(interface_filament_id);
-        bool is_pla_petg_pair =
-            !is_support_material &&
-            check_pla_petg_support_pair(interface_filament_id);
-
-        // --- Build recommended params ---
-        DynamicPrintConfig recommended_conf;
-
-        if (is_support_material) {
-            // Original 4-parameter recommendation for support material.
-            // The original already-optimal check is handled by
-            // filtered_conf below — if all params match, no dialog.
-            recommended_conf.set_key_value("support_top_z_distance",
-                new ConfigOptionFloat(0));
-            recommended_conf.set_key_value("support_interface_spacing",
-                new ConfigOptionFloat(0));
-            recommended_conf.set_key_value("support_interface_pattern",
-                new ConfigOptionEnum<SupportMaterialInterfacePattern>(
-                    smipRectilinearInterlaced));
-            recommended_conf.set_key_value(
-                "independent_support_layer_height",
-                new ConfigOptionBool(false));
-        } else if (is_pla_petg_pair) {
-            // PLA↔PETG: 5 parameters per process engineer confirmation.
-            recommended_conf.set_key_value("support_top_z_distance",
-                new ConfigOptionFloat(0));
-            recommended_conf.set_key_value("support_base_pattern",
-                new ConfigOptionEnum<SupportMaterialPattern>(
-                    smpDefault));
-            recommended_conf.set_key_value("support_interface_top_layers",
-                new ConfigOptionInt(3));
-            recommended_conf.set_key_value("support_interface_pattern",
-                new ConfigOptionEnum<SupportMaterialInterfacePattern>(
-                    smipRectilinearInterlaced));
-            recommended_conf.set_key_value("support_interface_spacing",
-                new ConfigOptionFloat(0));
-        }
-
-        if (recommended_conf.empty())
-            return;
-
-        // Filter: only include params that differ from current config.
-        DynamicPrintConfig filtered_conf;
-        for (const t_config_option_key &key : recommended_conf.keys()) {
-            const ConfigOption *current_opt = m_config->option(key);
-            const ConfigOption *new_opt     = recommended_conf.option(key);
-            if (current_opt != nullptr && new_opt != nullptr &&
-                current_opt->serialize() != new_opt->serialize()) {
-                filtered_conf.set_key_value(key, new_opt->clone());
-            }
-        }
-
-        if (filtered_conf.empty())
-            return;
-
-        // Build dialog message via extracted helper.
-        wxString msg_text = build_support_recommendation_message(
-            is_support_material,
-            interface_filament_type,
-            filtered_conf,
-            *m_config);
-
-        MessageDialog dialog(wxGetApp().plater(), msg_text,
-                             "Suggestion",
-                             wxICON_WARNING | wxYES | wxNO);
-        if (dialog.ShowModal() == wxID_YES) {
-            m_config_manipulation.apply(m_config, &filtered_conf);
-        }
-        wxGetApp().plater()->update();
     }
 
     if(opt_key == "make_overhang_printable"){
@@ -4184,17 +4190,16 @@ void TabFilament::build()
         optgroup->append_single_option_line("pressure_advance", "pressure-advance-calib");
 
         // Orca: adaptive pressure advance and calibration model
-        // Snapmaker: hidden from UI per product requirement; config and slicing logic are kept
-        // optgroup->append_single_option_line("adaptive_pressure_advance", "adaptive-pressure-advance-calib");
-        // optgroup->append_single_option_line("adaptive_pressure_advance_overhangs", "adaptive-pressure-advance-calib");
-        // optgroup->append_single_option_line("adaptive_pressure_advance_bridges", "adaptive-pressure-advance-calib");
-        //
-        // Option option = optgroup->get_option("adaptive_pressure_advance_model");
-        // option.opt.full_width = true;
-        // option.opt.is_code = true;
-        // option.opt.height = 15;
-        // optgroup->append_single_option_line(option);
-        //
+        optgroup->append_single_option_line("adaptive_pressure_advance", "adaptive-pressure-advance-calib");
+        optgroup->append_single_option_line("adaptive_pressure_advance_overhangs", "adaptive-pressure-advance-calib");
+        optgroup->append_single_option_line("adaptive_pressure_advance_bridges", "adaptive-pressure-advance-calib");
+
+        Option option = optgroup->get_option("adaptive_pressure_advance_model");
+        option.opt.full_width = true;
+        option.opt.is_code = true;
+        option.opt.height = 15;
+        optgroup->append_single_option_line(option);
+
 
         optgroup = page->new_optgroup(L("Print chamber temperature"), L"param_chamber_temp");
         optgroup->append_single_option_line("chamber_temperature", "chamber-temperature");
@@ -4367,7 +4372,7 @@ void TabFilament::build()
             validate_custom_gcode_cb(this, optgroup_title, opt_key, value);
         };
         optgroup->edit_custom_gcode = edit_custom_gcode_fn;
-        Option option = optgroup->get_option("filament_start_gcode");
+        option = optgroup->get_option("filament_start_gcode");
         option.opt.full_width = true;
         option.opt.is_code = true;
         option.opt.height = gcode_field_height;// 150;
@@ -4604,13 +4609,12 @@ void TabFilament::toggle_options()
         // Orca: adaptive pressure advance and calibration model
         // If PA is not enabled, disable adaptive pressure advance and hide the model section
         // If adaptive PA is not enabled, hide the adaptive PA model section
-        // Snapmaker: hidden from UI per product requirement; toggle logic disabled along with the UI lines
-        // toggle_option("adaptive_pressure_advance", pa);
-        // toggle_option("adaptive_pressure_advance_overhangs", pa);
-        // bool has_adaptive_pa = m_config->opt_bool("adaptive_pressure_advance", 0);
-        // toggle_line("adaptive_pressure_advance_overhangs", has_adaptive_pa && pa);
-        // toggle_line("adaptive_pressure_advance_model", has_adaptive_pa && pa);
-        // toggle_line("adaptive_pressure_advance_bridges", has_adaptive_pa && pa);
+        toggle_option("adaptive_pressure_advance", pa);
+        toggle_option("adaptive_pressure_advance_overhangs", pa);
+        bool has_adaptive_pa = m_config->opt_bool("adaptive_pressure_advance", 0);
+        toggle_line("adaptive_pressure_advance_overhangs", has_adaptive_pa && pa);
+        toggle_line("adaptive_pressure_advance_model", has_adaptive_pa && pa);
+        toggle_line("adaptive_pressure_advance_bridges", has_adaptive_pa && pa);
 
         bool is_pellet_printer = cfg.opt_bool("pellet_modded_printer");
         toggle_line("pellet_flow_coefficient", is_pellet_printer);

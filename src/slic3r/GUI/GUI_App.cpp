@@ -5870,6 +5870,11 @@ void GUI_App::stop_gateway_service()
             worker.join();
     m_gateway_account_refresh_workers.clear();
 
+    for (std::thread& worker : m_model_station_push_workers)
+        if (worker.joinable())
+            worker.join();
+    m_model_station_push_workers.clear();
+
     if (m_gateway_service)
         m_gateway_service->stop();
     m_gateway_service.reset();
@@ -7715,26 +7720,37 @@ void GUI_App::user_update_privacy_notify(const bool& res)
 // instances (handled in register_gateway_notifications) consume that broadcast.
 void GUI_App::model_station_notify(const bool& enabled)
 {
-    if (!m_gateway_service) {
-        BOOST_LOG_TRIVIAL(warning) << "model station switch change not delivered: connection gateway is not running";
-        return;
-    }
-
-    const auto result = m_gateway_service->set_app_config("enable_model_station", enabled);
-    if (result.error)
-        BOOST_LOG_TRIVIAL(warning) << "model station switch push failed: " << result.error.message;
+    push_model_station_to_gateway_async(enabled);
 }
 
 // Re-sync the switch to the CLI after every (re)connect so a restarted CLI
 // never serves a stale value and pushes missed while disconnected self-heal.
 void GUI_App::push_model_station_to_gateway()
 {
-    if (!m_gateway_service)
-        return;
+    push_model_station_to_gateway_async(app_config->get_bool("enable_model_station"));
+}
 
-    const bool enabled = app_config->get_bool("enable_model_station");
-    if (m_gateway_service->set_app_config("enable_model_station", enabled).error)
-        BOOST_LOG_TRIVIAL(warning) << "failed to sync model station switch to connection gateway";
+// Gateway HTTP must stay off the wx event thread: a connected-but-unresponsive
+// CLI would otherwise block the UI for the full HTTP timeout (see
+// refresh_gateway_account for the same worker pattern). The mutex serializes
+// pushes so a slow earlier request can never deliver a stale value after a
+// newer one; workers are joined in stop_gateway_service().
+void GUI_App::push_model_station_to_gateway_async(bool enabled)
+{
+    const std::shared_ptr<Gateway::GatewayService> gateway = m_gateway_service;
+    if (!gateway) {
+        BOOST_LOG_TRIVIAL(warning) << "model station switch change not delivered: connection gateway is not running";
+        return;
+    }
+
+    m_model_station_push_workers.emplace_back([this, gateway, enabled]() {
+        std::lock_guard<std::mutex> lock(m_model_station_push_mutex);
+        const auto result = gateway->set_app_config("enable_model_station", enabled);
+        if (result.error)
+            BOOST_LOG_TRIVIAL(warning) << "model station switch push failed: " << result.error.message;
+        else
+            BOOST_LOG_TRIVIAL(info) << "model station switch pushed to connection gateway: " << (enabled ? "true" : "false");
+    });
 }
 
 bool GUI_App::config_wizard_startup()

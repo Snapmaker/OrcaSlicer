@@ -867,6 +867,8 @@ private:
     Gateway::AccountSnapshot   m_gateway_account;
     std::atomic<std::uint64_t> m_gateway_account_refresh_generation{0};
     std::vector<std::thread>   m_gateway_account_refresh_workers;
+    std::vector<std::thread>   m_model_station_push_workers;
+    std::mutex                 m_model_station_push_mutex;
 
 public:
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_recent_file_subscribers;
@@ -883,6 +885,9 @@ public:
     // the CLI relays it to the Flutter pages and the other Orca instances.
     void model_station_notify(const bool& enabled);
     void push_model_station_to_gateway();
+    // Off-thread delivery (gateway HTTP must never run on the wx event thread);
+    // serialized by m_model_station_push_mutex, joined in stop_gateway_service().
+    void push_model_station_to_gateway_async(bool enabled);
 
 public:
     bool sm_disconnect_current_machine(bool need_reload_printerview = true);

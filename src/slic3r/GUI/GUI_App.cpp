@@ -5870,6 +5870,9 @@ void GUI_App::stop_gateway_service()
             worker.join();
     m_gateway_account_refresh_workers.clear();
 
+    // Bump the generation first so queued model station pushes skip the PUT
+    // (the join below then only waits for at most one in-flight request).
+    ++m_model_station_push_generation;
     for (std::thread& worker : m_model_station_push_workers)
         if (worker.joinable())
             worker.join();
@@ -7732,9 +7735,15 @@ void GUI_App::push_model_station_to_gateway()
 
 // Gateway HTTP must stay off the wx event thread: a connected-but-unresponsive
 // CLI would otherwise block the UI for the full HTTP timeout (see
-// refresh_gateway_account for the same worker pattern). The mutex serializes
-// pushes so a slow earlier request can never deliver a stale value after a
-// newer one; workers are joined in stop_gateway_service().
+// refresh_gateway_account for the same worker pattern). std::mutex alone does
+// not guarantee FIFO lock ownership, so every worker carries the generation of
+// its request and re-checks it under the lock before the PUT: only the newest
+// request ever delivers a value (a slow earlier request can never overwrite a
+// newer one, and rapid toggles coalesce into a single PUT). A failed newest
+// push self-heals on the next gateway reconnect, which re-pushes the current
+// value. Workers are joined in stop_gateway_service(); stop first bumps the
+// generation so queued-but-not-started workers skip and the join only waits
+// for at most one in-flight PUT.
 void GUI_App::push_model_station_to_gateway_async(bool enabled)
 {
     const std::shared_ptr<Gateway::GatewayService> gateway = m_gateway_service;
@@ -7743,8 +7752,11 @@ void GUI_App::push_model_station_to_gateway_async(bool enabled)
         return;
     }
 
-    m_model_station_push_workers.emplace_back([this, gateway, enabled]() {
+    const std::uint64_t generation = ++m_model_station_push_generation;
+    m_model_station_push_workers.emplace_back([this, gateway, enabled, generation]() {
         std::lock_guard<std::mutex> lock(m_model_station_push_mutex);
+        if (generation != m_model_station_push_generation.load())
+            return; // superseded by a newer toggle/reconnect push
         const auto result = gateway->set_app_config("enable_model_station", enabled);
         if (result.error)
             BOOST_LOG_TRIVIAL(warning) << "model station switch push failed: " << result.error.message;

@@ -869,6 +869,7 @@ private:
     std::vector<std::thread>   m_gateway_account_refresh_workers;
     std::vector<std::thread>   m_model_station_push_workers;
     std::mutex                 m_model_station_push_mutex;
+    std::atomic<std::uint64_t> m_model_station_push_generation{0};
 
 public:
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_recent_file_subscribers;

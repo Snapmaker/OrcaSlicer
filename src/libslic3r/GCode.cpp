@@ -7983,6 +7983,8 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         _mm3_per_mm *= m_config.bottom_solid_infill_flow_ratio;
     else if (path.role() == erInternalBridgeInfill)
         _mm3_per_mm *= m_config.internal_bridge_flow;
+    else if (path.role() == erBrim)
+        _mm3_per_mm *= m_config.brim_flow_ratio;
     else if (path.role() == erSupportTransition)
         // Apply independent flow ratio for support transition layers
         _mm3_per_mm *= m_config.support_transition_flow_ratio.get_abs_value(1.0f);

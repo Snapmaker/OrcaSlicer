@@ -11,6 +11,7 @@
 #include "EdgeGrid.hpp"
 #include "Geometry/ConvexHull.hpp"
 #include "GCode/PrintExtents.hpp"
+#include "GCode/SnapmakerHeader.hpp"
 #include "GCode/Thumbnails.hpp"
 #include "GCode/WipeTower.hpp"
 #include "GCode/WipeTower2.hpp"
@@ -2638,6 +2639,38 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     // search string for the BTT_TFT label
     bool has_BTT_thumbnail = (thumbnails_value.find("BTT_TFT") != std::string::npos);
 
+    const bool snapmaker_header = !is_bbl_printers && SnapmakerHeader::is_snapmaker_2(print.config().printer_model.value);
+    GCodeThumbnails::GCodeThumbnailDefinitionsList thumbnails;
+    if (!is_bbl_printers && thumbnail_cb != nullptr) {
+        auto [definitions, errors] = GCodeThumbnails::make_and_check_thumbnail_list(print.full_print_config());
+        if (errors != enum_bitmask<ThumbnailError>()) {
+            std::string error_str = format("Invalid thumbnails value:");
+            error_str += GCodeThumbnails::get_error_string(errors);
+            throw Slic3r::ExportError(error_str);
+        }
+        thumbnails = std::move(definitions);
+    }
+
+    if (snapmaker_header) {
+        file.write(SnapmakerHeader::START);
+        file.write_format(";%s\n", GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Snapmaker_Printing_Time_Placeholder).c_str());
+        file.write_format(";layer_height: %.3f\n", print.objects().front()->config().layer_height.value);
+        // The SM2 screen scans the entire file unless the header supplies retraction metadata.
+        for (size_t extruder_id = 0; extruder_id < std::min(size_t(2), m_config.nozzle_diameter.size()); ++extruder_id) {
+            file.write_format(";Extruder %zu Retraction Distance: %.3f\n", extruder_id,
+                              get_value_at(m_config, m_config.retraction_length, ConfigFlowDomain::Filament, extruder_id));
+            file.write_format(";Extruder %zu Switch Retraction Distance: %.3f\n", extruder_id,
+                              m_config.retract_length_toolchange.get_at(extruder_id));
+            file.write_format(extruder_id == 0 ? ";nozzle_temperature(\xC2\xB0" "C): %d\n" : ";nozzle_1_temperature(\xC2\xB0" "C): %d\n",
+                              get_value_at(m_config, m_config.nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, extruder_id));
+        }
+        file.write_format(";build_plate_temperature(\xC2\xB0" "C): %d\n", get_bed_temperature_max(print, true));
+        GCodeThumbnails::export_thumbnails_to_file(
+            thumbnail_cb, print.get_plate_index(), thumbnails, [&file](const char* sz) { file.write(sz); },
+            [&print]() { print.throw_if_canceled(); }, true);
+        file.write(";Header End\n\n");
+    }
+
     if (!has_BTT_thumbnail) {
         file.write_format("; HEADER_BLOCK_START\n");
         // Write information on the generator.
@@ -2710,15 +2743,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
             file.write_format("; first_layer_temperature = %d\n", get_value_at(print.config(), print.config().nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, 0));
             file.write("; CONFIG_BLOCK_END\n\n");
         } else if (thumbnail_cb != nullptr) {
-            // generate the thumbnails
-            auto [thumbnails, errors] = GCodeThumbnails::make_and_check_thumbnail_list(print.full_print_config());
-
-            if (errors != enum_bitmask<ThumbnailError>()) {
-                std::string error_str = format("Invalid thumbnails value:");
-                error_str += GCodeThumbnails::get_error_string(errors);
-                throw Slic3r::ExportError(error_str);
-            }
-
+            // Retain standard thumbnails for G-code import and print-host integrations.
             if (!thumbnails.empty())
                 GCodeThumbnails::export_thumbnails_to_file(
                     thumbnail_cb, print.get_plate_index(), thumbnails, [&file](const char* sz) { file.write(sz); },

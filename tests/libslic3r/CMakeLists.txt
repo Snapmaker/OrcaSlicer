@@ -19,12 +19,14 @@ add_executable(${_TEST_NAME}_tests
 	test_placeholder_parser.cpp
 	test_polygon.cpp
 	test_profile_load_util.cpp
+	test_snapmaker_header.cpp
 	test_mutable_polygon.cpp
 	test_mutable_priority_queue.cpp
 	test_stl.cpp
 	test_meshboolean.cpp
 	test_marchingsquares.cpp
 	test_timeutils.cpp
+	test_thumbnails.cpp
 	test_tree_support_wall.cpp
 	test_voronoi.cpp
     test_optimizers.cpp

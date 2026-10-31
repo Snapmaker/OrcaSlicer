@@ -366,6 +366,14 @@ pushd "%ORCA_ROOT%"
 if not exist "%slicer_build_dir%" mkdir "%slicer_build_dir%"
 pushd "%slicer_build_dir%"
 
+echo Staging snapmaker_connect...
+python "%ORCA_ROOT%\scripts\packaging\stage_connect_bundle.py" --lock "%ORCA_ROOT%\.github\connect-bundle.lock.json" --platform windows-x64 --resources-dir "%ORCA_ROOT%\resources"
+if errorlevel 1 (
+    echo   [ERROR] Failed to stage snapmaker_connect bundle
+    popd & popd
+    goto :restore_exit
+)
+
 cmake .. -G "Visual Studio 17 2022" -A x64 ^
     -DBBL_RELEASE_TO_PUBLIC=1 ^
     -DORCA_TOOLS=ON ^

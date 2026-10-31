@@ -27,7 +27,6 @@
 #include "format.hpp"
 
 #include "WebUserLoginDialog.hpp"
-#include "WebSMUserLoginDialog.hpp"
 
 #include "libslic3r/Print.hpp"
 
@@ -526,12 +525,6 @@ void about()
 {
     AboutDialog dlg;
     dlg.ShowModal();
-}
-
-void login()
-{
-	SMUserLogin dlg;
-    dlg.run();
 }
 
 void desktop_open_datadir_folder()

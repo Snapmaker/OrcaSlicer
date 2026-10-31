@@ -89,6 +89,7 @@ public:
     bool HasDismissLongTime();
     
 protected:
+    bool ProcessLeftDown(wxMouseEvent& event) override;
     void OnDismiss() override;
 
 private:
@@ -100,6 +101,7 @@ private:
     friend class ComboBox;
     void messureSize();
     void autoPosition();
+    bool PointInAnchorGap(const wxPoint& screen_point) const;
 
     // some useful events
     void mouseDown(wxMouseEvent& event);

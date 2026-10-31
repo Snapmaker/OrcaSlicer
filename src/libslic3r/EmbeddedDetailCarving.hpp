@@ -1,30 +1,24 @@
 #ifndef slic3r_EmbeddedDetailCarving_hpp_
 #define slic3r_EmbeddedDetailCarving_hpp_
 
-#include "ClipperUtils.hpp"
-#include "ExPolygon.hpp"
+#include "TriangleMesh.hpp"
 
 namespace Slic3r {
 
-// Overlap-carving ratios used by slices_to_regions(): an earlier-listed region
-// counts as an embedded detail (e.g. embossed text or a color patch imported
-// before its base plate) when the current, larger region covers at least
-// EMBEDDED_DETAIL_COVER_RATIO of it and is at least EMBEDDED_DETAIL_SIZE_RATIO
-// times its area. Anything else keeps the upstream "last listed wins" carving.
-constexpr double EMBEDDED_DETAIL_COVER_RATIO = 0.9;
-constexpr double EMBEDDED_DETAIL_SIZE_RATIO  = 1.1;
+// Overlap-carving: an earlier-listed region counts as an embedded detail (e.g.
+// embossed text or a color patch imported before its base plate) when at least
+// EMBEDDED_DETAIL_CONTAINMENT_RATIO of its volume lies inside the later, larger
+// region. Overlaps without embedding keep the upstream "last listed wins"
+// carving. Measured on real ticket models (TS20261028000011 + seal case): the
+// seal's color detail contains ~0.72 of its volume inside the surrounding part,
+// while a peg crossing a ring's notch stays at ~0.35.
+constexpr double EMBEDDED_DETAIL_CONTAINMENT_RATIO = 0.5;
 
-// True when `earlier` behaves as an embedded detail: `current` is larger and
-// covers (nearly) all of it, so the overlapping slices belong to `earlier`
-// instead of the later-listed `current` region.
-inline bool earlier_is_embedded_detail(const ExPolygons &earlier, const ExPolygons &current)
-{
-    const double area_earlier = area(earlier);
-    const double area_current = area(current);
-    if (area_earlier <= 0. || area_current < EMBEDDED_DETAIL_SIZE_RATIO * area_earlier)
-        return false;
-    return area(intersection_ex(earlier, current)) >= EMBEDDED_DETAIL_COVER_RATIO * area_earlier;
-}
+// True when at least EMBEDDED_DETAIL_CONTAINMENT_RATIO of `earlier`'s volume lies
+// inside `current` and `current` is not smaller than `earlier`. Both meshes must
+// be in the same coordinate space. Returns false when the boolean intersection
+// fails, keeping the upstream semantics.
+bool earlier_is_embedded_detail(const indexed_triangle_set &earlier, const indexed_triangle_set &current);
 
 } // namespace Slic3r
 

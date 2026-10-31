@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <map>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -15,6 +16,7 @@
 #include "ElephantFootCompensation.hpp"
 #include "I18N.hpp"
 #include "Layer.hpp"
+#include "MeshBoolean.hpp"
 #include "MixedFilament.hpp"
 #include "MultiMaterialSegmentation.hpp"
 #include "Print.hpp"
@@ -25,6 +27,26 @@
 
 //! macro used to mark string used at localization, return same string
 #define L(s) Slic3r::I18N::translate(s)
+
+namespace Slic3r {
+
+bool earlier_is_embedded_detail(const indexed_triangle_set &earlier, const indexed_triangle_set &current)
+{
+    const double vol_earlier = its_volume(earlier);
+    if (vol_earlier <= 0. || its_volume(current) <= vol_earlier)
+        // "current" is not larger than the candidate: never treat it as a base.
+        return false;
+    try {
+        TriangleMesh intersection_mesh(earlier);
+        MeshBoolean::cgal::intersect(intersection_mesh, TriangleMesh(current));
+        return its_volume(intersection_mesh.its) >= EMBEDDED_DETAIL_CONTAINMENT_RATIO * vol_earlier;
+    } catch (...) {
+        BOOST_LOG_TRIVIAL(warning) << "Embedded detail containment check failed, keeping last-listed-wins carving";
+        return false;
+    }
+}
+
+} // namespace Slic3r
 
 namespace Slic3r {
 
@@ -342,9 +364,35 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
             for (const PrintObjectRegions::VolumeRegion &region : layer_range.volume_regions)
                 layer_range_regions_to_slices.push_back(&volume_slices_find_by_id(volume_slices, region.model_volume->id()));
         }
+        // Precompute embedded-detail flips once per object: a cross-region volume pair
+        // carves "earlier wins" when the earlier volume is (mostly) contained in the
+        // later one. Stable across layer ranges and layers, so compute up front.
+        std::map<std::pair<const ModelVolume *, const ModelVolume *>, bool> embedded_pair_flip;
+        for (const PrintObjectRegions::LayerRangeRegions &layer_range : print_object_regions.layer_ranges)
+            for (int idx_region = 1; idx_region < int(layer_range.volume_regions.size()); ++ idx_region)
+                for (int idx_region2 = 0; idx_region2 < idx_region; ++ idx_region2) {
+                    const PrintObjectRegions::VolumeRegion &later   = layer_range.volume_regions[idx_region];
+                    const PrintObjectRegions::VolumeRegion &earlier = layer_range.volume_regions[idx_region2];
+                    if (later.model_volume == earlier.model_volume ||
+                        ! later.region || ! earlier.region ||
+                        later.region->print_object_region_id() == earlier.region->print_object_region_id() ||
+                        ! later.model_volume->is_model_part() || ! earlier.model_volume->is_model_part() ||
+                        ! overlap_in_xy(*later.bbox, *earlier.bbox))
+                        continue;
+                    const std::pair key = {earlier.model_volume, later.model_volume};
+                    if (embedded_pair_flip.find(key) != embedded_pair_flip.end())
+                        continue;
+                    indexed_triangle_set earlier_its = earlier.model_volume->mesh().its;
+                    const Transform3d &m_earlier = earlier.model_volume->get_matrix();
+                    for (auto &v : earlier_its.vertices) v = (m_earlier * v.cast<double>()).cast<float>();
+                    indexed_triangle_set later_its = later.model_volume->mesh().its;
+                    const Transform3d &m_later = later.model_volume->get_matrix();
+                    for (auto &v : later_its.vertices) v = (m_later * v.cast<double>()).cast<float>();
+                    embedded_pair_flip.emplace(key, earlier_is_embedded_detail(earlier_its, later_its));
+                }
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, zs_complex.size()),
-            [&slices_by_region, &print_object_regions, &zs_complex, &layer_ranges_regions_to_slices, clip_multipart_objects, &throw_on_cancel_callback]
+            [&slices_by_region, &print_object_regions, &zs_complex, &layer_ranges_regions_to_slices, clip_multipart_objects, &throw_on_cancel_callback, &embedded_pair_flip]
                 (const tbb::blocked_range<size_t> &range) {
                 float z              = zs_complex[range.begin()].second;
                 auto  it_layer_range = layer_range_first(print_object_regions.layer_ranges, z);
@@ -436,10 +484,12 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                                                 temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
                                             } else if (region.region && region2.region && region.region->print_object_region_id() != region2.region->print_object_region_id()) {
                                                 // Different print regions: upstream "last listed wins" by default, except when
-                                                // the earlier region is an embedded detail (nearly fully covered by the larger
-                                                // current region, e.g. embossed text imported before its base plate) - then the
-                                                // earlier detail keeps the overlap.
-                                                if (earlier_is_embedded_detail(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons))
+                                                // the earlier volume is an embedded detail (its volume mostly inside the
+                                                // later volume) - then the earlier detail keeps the overlap.
+                                                bool flip = false;
+                                                if (auto it = embedded_pair_flip.find({region2.model_volume, region.model_volume}); it != embedded_pair_flip.end())
+                                                    flip = it->second;
+                                                if (flip)
                                                     temp_slices[idx_region].expolygons = diff_ex(temp_slices[idx_region].expolygons, temp_slices[idx_region2].expolygons);
                                                 else
                                                     temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);

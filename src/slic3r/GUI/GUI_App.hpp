@@ -30,6 +30,7 @@
 #include <wx/string.h>
 #include <wx/snglinst.h>
 #include <wx/msgdlg.h>
+#include <wx/timer.h>   // ② 最小携带：会话结束回退定时器（SNAPMAKER_ORCA-1H6）
 
 #include <atomic>
 #include <cstdint>
@@ -415,6 +416,9 @@ private:
 
 public:
     HttpServer       m_page_http_server;
+    // ② 最小携带：会话结束状态与回退定时器（bpe GUI_App.hpp:261-262 逐字）
+    bool m_in_session_end{ false };
+    wxTimer m_session_end_reset_timer; // fallback reset for a cancelled session end
     mutable std::shared_ptr<Gateway::GatewayService> m_gateway_service;
     
 private:
@@ -526,6 +530,11 @@ private:
 #endif
     static unsigned get_colour_approx_luma(const wxColour& colour);
     static bool     dark_mode();
+    // ② 最小携带（2.8 勘误）：SNAPMAKER_ORCA-1H6 会话结束标志——carried ProjectSession::close_with_confirm 消费
+    bool in_session_end() const { return m_in_session_end; }
+
+    // A queried session end was cancelled: restore interactive close.
+    void reset_session_end();
     const wxColour  get_label_default_clr_system();
     const wxColour  get_label_default_clr_modified();
     void            init_label_colours();
@@ -655,6 +664,8 @@ private:
     void            stop_page_http_server();
     /// Actual listen port (may differ from PAGE_HTTP_PORT if the default was in use).
     boost::asio::ip::port_type get_page_http_port() const { return m_page_http_server.get_port(); }
+    // ② 携带（2.8 勘误补）：bpe 国际化 URL 工具——Plater::international_url 转发壳与 EventRouter/Sidebar 消费
+    wxString        get_international_url(const wxString& origin_url);
 
     bool            start_gateway_service(bool restart = false);
     void            stop_gateway_service();

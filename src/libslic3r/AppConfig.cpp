@@ -1,4 +1,5 @@
 #include "libslic3r/libslic3r.h"
+#include <algorithm>   // ② 携带：std::find_if（设备注册表）
 #include "libslic3r/Utils.hpp"
 #include "AppConfig.hpp"
 //BBS
@@ -1632,6 +1633,58 @@ void AppConfig::update_filament_names(json& j)
     //    boost::nowide::ofstream ofs(conf_path);
     //    ofs << std::setw(4) << j << std::endl;
     //}
+}
+
+// —— ② 携带（2.8 编译期勘误）：bpe 设备注册表 API，bac6fd5 树无（impls 逐字） ——
+
+void AppConfig::save_device_info(const DeviceInfo& device)
+{
+    // 检查是否已存在该设备
+    auto it = std::find_if(m_device_list.begin(), m_device_list.end(),
+        [&device](const DeviceInfo& d) { return d.dev_id == device.dev_id; });
+
+    if (it != m_device_list.end()) {
+        // 更新已存在的设备信息
+        *it = device;
+    } else {
+        // 添加新设备
+        m_device_list.push_back(device);
+    }
+    m_dirty = true;
+}
+
+std::vector<DeviceInfo> AppConfig::get_devices() const
+{
+    return m_device_list;
+}
+
+bool AppConfig::get_device_info(const std::string& dev_id, DeviceInfo& info) const
+{
+    auto it = std::find_if(m_device_list.begin(), m_device_list.end(),
+        [&dev_id](const DeviceInfo& d) { return d.dev_id == dev_id; });
+
+    if (it != m_device_list.end()) {
+        info = *it;
+        return true;
+    }
+    return false;
+}
+
+void AppConfig::remove_device_info(const std::string& dev_id)
+{
+    auto it = std::find_if(m_device_list.begin(), m_device_list.end(),
+        [&dev_id](const DeviceInfo& d) { return d.dev_id == dev_id; });
+
+    if (it != m_device_list.end()) {
+        m_device_list.erase(it);
+        m_dirty = true;
+    }
+}
+
+void AppConfig::clear_device_info()
+{
+    m_device_list.clear();
+    m_dirty = true;
 }
 
 }; // namespace Slic3r

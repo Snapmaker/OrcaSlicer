@@ -475,38 +475,10 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
                 }
             }
 
-            DeviceInfo info;
-            if (wxGetApp().app_config->get_device_info(m_device_id, info)) {
-                info.model_name   = MSelected.begin().value()["model"].get<std::string>();
-                info.nozzle_sizes = {MSelected.begin().value()["nozzle_diameter"].get<std::string>()};
-                info.preset_name  = info.model_name + " (" + info.nozzle_sizes[0] + " nozzle)";
-                size_t vendor_pos = info.model_name.find_first_of(" ");
-                if (vendor_pos != std::string::npos) {
-                    std::string vendor        = info.model_name.substr(0, vendor_pos);
-                    std::string machine_cover = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/profiles/" + vendor + "/" +
-                                                info.model_name + "_cover.png";
-
-                    info.img = machine_cover;
-                }
-
-                wxGetApp().app_config->save_device_info(info);
-
-                //// 同步卡片
-                //auto devices = wxGetApp().app_config->get_devices();
-                //json param;
-                //param["command"]       = "local_devices_arrived";
-                //param["sequece_id"]    = "10001";
-                //param["data"]          = devices;
-                //std::string logout_cmd = param.dump();
-                //wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-                //GUI::wxGetApp().run_script(strJS);
-
-                // wcp订阅
-                json data = wxGetApp().app_config->get_devices();
-                wxGetApp().device_card_notify(data);
-
-                wxGetApp().layout().sidebar->update_all_preset_comboboxes();
-            }
+            // 2.8 勘误（M-07 改判）：bpe 设备信息块依赖 bpe 侧 AppConfig::get/save_device_info、
+            // GUI_App::device_card_notify、DeviceInfo/m_device_id——main 树无此基础设施，② 口径在此断裂；
+            // 回退 main 版一行（accessor 改写：mainframe->plater()->sidebar() 门面链已删）。
+            wxGetApp().layout().sidebar->update_all_preset_comboboxes();
 
         } else if (strCmd == "save_userguide_filaments") {
             {

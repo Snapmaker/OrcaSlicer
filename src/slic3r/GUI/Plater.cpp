@@ -3045,6 +3045,14 @@ void Plater::schedule_background_process(bool schedule/* = true*/)
     slicing().set_suppress_update(false);
 }
 
+// 2.8 增补（main bac6fd5:19175 语义逐字，priv 溶解后走服务槽）：重置 viewer 强制全量重建，
+// 否则 GCodeViewer::load() 因结果 id 未变早退，另一渲染管线的 buffer 停留为空 → 空预览。
+void Plater::reload_gcode_preview()
+{
+    refresh().reset_gcode_toolpaths();
+    layout().preview->reload_print(false, session().only_gcode_mode());
+}
+
 
 
 

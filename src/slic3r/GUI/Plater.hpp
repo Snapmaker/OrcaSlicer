@@ -321,6 +321,8 @@ public:
     void changed_object(ModelObject &object);
     void changed_object(int obj_idx);
     void schedule_background_process(bool schedule = true);
+    // 2.8 增补：main 独有——GCodeViewer 结果 id 未变时 load() 早退，GPU 加速切换等场景须先重置 viewer 再全量重建（GUI_App 设置对话框调用）
+    void reload_gcode_preview();
     /* -1: send current gcode if not specified
      * -2: send all gcode to target machine */
     int send_gcode(int plate_idx = -1, Export3mfProgressFn proFn = nullptr);

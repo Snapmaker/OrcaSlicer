@@ -92,6 +92,135 @@ namespace GUI {
 
 wxDEFINE_EVENT(EVT_SCHEDULE_BACKGROUND_PROCESS,     SimpleEvent);
 
+// ==== ② 携带（2.8 编译期勘误）：main 匿名命名空间 helper——carried continue_sync_filament_dialog 消费（bac6fd5 671-793 逐字） ====
+namespace {
+
+std::string extract_base_filament_name(const std::string& full_name)
+{
+    std::string base = full_name;
+    size_t at_pos = base.find('@');
+    if (at_pos != std::string::npos) {
+        base = base.substr(0, at_pos);
+        base.erase(0, base.find_first_not_of(" \t\n\r"));
+        base.erase(base.find_last_not_of(" \t\n\r") + 1);
+    }
+    return base;
+}
+
+// Resolve a machine filament name to a matching local filament preset.
+// Filament presets follow the convention "BaseName @Model nozzle",
+// e.g. "Generic PA-CF @U1 0.4 nozzle".  Split by '@' to extract the
+// base name, trim, and compare exactly — so "Generic PA" does NOT
+// accidentally match "Generic PA-CF".
+Preset* resolve_filament_preset(PresetBundle* preset_bundle, 
+    const std::string& filament_name, const std::string& filament_type)
+{
+    if (!preset_bundle || filament_name.empty())
+        return nullptr;
+
+    auto to_lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+        return s;
+    };
+
+    for (auto& preset : preset_bundle->filaments) {
+        if (!preset.is_compatible || !preset.is_system)
+            continue;
+
+        std::string base = extract_base_filament_name(preset.name);
+        if (to_lower(base) == to_lower(filament_name)) {
+            return &preset;
+        }
+    }
+
+    const std::string generic_prefix = "Generic ";
+    std::string generic_base = generic_prefix + filament_type;
+    for (auto& preset : preset_bundle->filaments) {
+        if (!preset.is_compatible || !preset.is_system)
+            continue;
+
+        std::string base = extract_base_filament_name(preset.name);
+        std::string type = preset.config.opt_string("filament_type", static_cast<unsigned int>(0));
+
+        if ((to_lower(type) == to_lower(filament_type)) && 
+                (to_lower(base) == to_lower(generic_base))) {
+            return &preset;
+        }
+    }
+
+    return nullptr;
+}
+
+void build_design_filament_list(PresetBundle* preset_bundle, std::vector<FilamentData>& out_list)
+{
+    if (!preset_bundle)
+        return;
+
+    const auto& filament_presets = preset_bundle->filament_presets;
+    const auto* colors_opt = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+    const auto* multiColorsOpt = preset_bundle->project_config.option<ConfigOptionStrings>("filament_multi_colors");
+    const auto* colorModeOpt   = preset_bundle->project_config.option<ConfigOptionInts>("filament_colour_mode");
+
+    for (size_t i = 0; i < filament_presets.size(); ++i) {
+        FilamentData fd;
+        fd.m_index = i;
+
+        Preset* preset = preset_bundle->filaments.find_preset(filament_presets[i]);
+         if (preset) {
+            fd.m_name = preset->label(false);
+            const auto* type_opt = preset->config.option<ConfigOptionStrings>("filament_type");
+            if (type_opt && !type_opt->values.empty())
+                fd.m_type = type_opt->values[0];
+        } else {
+            fd.m_name = extract_base_filament_name(filament_presets[i]);
+        }
+
+        if (fd.m_type.empty()) {
+            const auto* type_opt = preset_bundle->project_config.option<ConfigOptionStrings>("filament_type");
+            if (type_opt && i < type_opt->values.size())
+                fd.m_type = type_opt->values[i];
+        }
+
+        {
+            std::vector<std::string> filamentColors;
+            FilamentColorMode mode = FilamentColorMode::Segment;
+
+            if (multiColorsOpt && i < multiColorsOpt->values.size() && !multiColorsOpt->values[i].empty())
+                filamentColors = SplitFilamentMultiColors(multiColorsOpt->values[i]);
+            else if (colors_opt && i < colors_opt->values.size())
+                filamentColors = {colors_opt->values[i]};
+
+            if (colorModeOpt && i < colorModeOpt->values.size())
+                mode = FilamentColorModeFromConfig(colorModeOpt->values[i]);
+
+            fd.m_color = FilamentColor::FromColors(filamentColors, mode);
+        }
+
+        out_list.push_back(std::move(fd));
+    }
+}
+
+void build_machine_filament_list(PresetBundle* preset_bundle, std::vector<FilamentData>& out_list)
+{
+    if (!preset_bundle)
+        return;
+
+    for (const auto& info : preset_bundle->m_connect_machine_info_list) {
+        FilamentData fd;
+        fd.m_index = info.index;
+        fd.m_name  = info.filament_info;
+        fd.m_type  = info.filament_type;
+        
+        if (!info.color_info.empty() || !info.multiColors.empty()) {
+            fd.m_color = FilamentColor::FromColors(info.multiColors, info.colorMode, info.color_info);
+        }
+
+        out_list.push_back(std::move(fd));
+    }
+}
+
+} // namespace
+
 // Nozzle diameter selection when multiple diameters are reported (e.g. U1 sync).
 // diameters_raw: list from device (may have duplicates or fewer than 4). Dedup and full-list logic inside.
 namespace {
@@ -982,6 +1111,7 @@ Sidebar::Sidebar(Plater *parent)
                                                    std::move(nozzle_volume_types), std::move(device_name));
                 });
             }).detach();
+        });
         
         p->m_printer_setting = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "settings");
         p->m_printer_setting->SetToolTip(_L("settings"));
@@ -2895,6 +3025,7 @@ void Sidebar::apply_nozzle_sync_result(bool got_machine_info, std::string machin
             MessageDialog dlg(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"), _L("Note"), wxOK);
             dlg.ShowModal();
         });
+}
 
 void Sidebar::show_sync_filament_dialog()
 {

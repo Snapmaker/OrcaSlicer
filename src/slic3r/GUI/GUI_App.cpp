@@ -2562,7 +2562,12 @@ bool GUI_App::on_init_inner()
     CBaseException::set_log_folder(data_dir());
 #endif
 
+    // ② 最小携带（2.8 勘误）：SNAPMAKER_ORCA-1H6 会话结束标志——main veto 流程体保留，
+    // 仅补 carried ProjectSession::close_with_confirm 消费的 in_session_end 状态与 60s 回退定时器
+    m_session_end_reset_timer.SetOwner(this);
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) { reset_session_end(); }, m_session_end_reset_timer.GetId());
     wxGetApp().Bind(wxEVT_QUERY_END_SESSION, [this](auto & e) {
+        m_in_session_end = true;
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< "received wxEVT_QUERY_END_SESSION";
         if (mainframe) {
             wxCloseEvent e2(wxEVT_CLOSE_WINDOW);
@@ -3329,6 +3334,38 @@ unsigned GUI_App::get_colour_approx_luma(const wxColour &colour)
         g * g * .691 +
         b * b * .068
         ));
+}
+
+wxString GUI_App::get_international_url(const wxString& origin_url)
+{
+    wxString baseUrl = origin_url;
+    if (baseUrl.find("?locale=") != std::string::npos) {
+        baseUrl = baseUrl.substr(0, baseUrl.find("?locale="));
+    } else if (baseUrl.find("&locale=") != std::string::npos) {
+        baseUrl = baseUrl.substr(0, baseUrl.find("&locale="));
+    }
+    wxString lang = wxString::FromUTF8(app_config->get_language_code());
+    wxString region = wxString::FromUTF8(app_config->get_country_code());
+    if (region == "Others") {
+        region = "US";
+    }
+
+    string dark_mode = wxGetApp().app_config->get("dark_color_mode");
+
+    if (baseUrl.find("?") != std::string::npos) {
+        return baseUrl + wxString::FromUTF8("&locale=") + lang + wxString::FromUTF8("-") + region +
+               wxString::FromUTF8("&dark_mode=" + dark_mode);
+    } else {
+        return baseUrl + wxString::FromUTF8("?locale=") + lang + wxString::FromUTF8("-") + region +
+               wxString::FromUTF8("&dark_mode=" + dark_mode);
+    }
+}
+
+// ② 最小携带：bpe 会话结束回退（bac6fd5 GUI_App.cpp:3194 逐字）
+void GUI_App::reset_session_end()
+{
+    m_session_end_reset_timer.Stop();
+    m_in_session_end = false;
 }
 
 bool GUI_App::dark_mode()

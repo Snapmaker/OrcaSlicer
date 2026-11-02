@@ -183,6 +183,14 @@ void GLGizmoMmuSegmentation::init_extruders_data()
     init_extruders_data(get_extruders_colors());
 }
 
+// ② 携带（2.8 勘误，bac6fd5 逐字）：palette/涂色改写即使总数不变也须重载选择器状态，
+// 否则陈旧编辑副本会在下一次 update_model_object() 时把旧映射写回模型。
+void GLGizmoMmuSegmentation::refresh_from_model()
+{
+    init_extruders_data();
+    init_model_triangle_selectors();
+}
+
 bool GLGizmoMmuSegmentation::on_init()
 {
     // BBS

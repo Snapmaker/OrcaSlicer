@@ -87,10 +87,6 @@ private:
     bool m_detect_geometry_edge = true;
     std::map<std::string, wxString> m_desc;
 
-    // Mirror of the base-class stroke tracking (whose member is private), used to
-    // intercept the stroke-end events and skip their undo snapshot.
-    Button m_tracked_button_down = Button::None;
-
     static const int MaxSubdivLevel = 3;
     int  m_subdiv_level  = 0;   // wanted subdivision level (slider)
     bool m_preview_dirty = true; // painted facets changed, the caches must be rebuilt

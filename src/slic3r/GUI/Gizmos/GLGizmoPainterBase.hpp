@@ -326,9 +326,16 @@ private:
 
     bool m_internal_stack_active = false;
     bool m_schedule_update = false;
-    Vec2d m_last_mouse_click = Vec2d::Zero();
 
-    Button m_button_down = Button::None;
+protected:
+    // Stroke state, reset when the mouse button is released. Protected so that a
+    // derived gizmo intercepting the button-up event (to skip the base-class
+    // snapshot) can still end the stroke the same way: a stale m_last_mouse_click
+    // makes the next click interpolate paint from the previous click position.
+    Vec2d  m_last_mouse_click = Vec2d::Zero();
+    Button m_button_down      = Button::None;
+
+private:
     EState m_old_state = Off; // to be able to see that the gizmo has just been closed (see on_set_state)
 
     // Following cache holds result of a raycast query. The queries are asked

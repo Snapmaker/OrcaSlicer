@@ -11,12 +11,12 @@
 #include <numeric>
 #include <sstream>
 #include <tbb/parallel_for.h>
+#include "BoundingBox.hpp"
 #include "ClipperUtils.hpp"
 #include "EmbeddedDetailCarving.hpp"
 #include "ElephantFootCompensation.hpp"
 #include "I18N.hpp"
 #include "Layer.hpp"
-#include "MeshBoolean.hpp"
 #include "MixedFilament.hpp"
 #include "MultiMaterialSegmentation.hpp"
 #include "Print.hpp"
@@ -30,20 +30,81 @@
 
 namespace Slic3r {
 
+namespace {
+// Non-axis-aligned direction so sample rays dodge edges and vertices.
+const Vec3f sample_ray_dir = Vec3f(0.501f, 0.577f, 0.647f).normalized();
+
+// Parity ray crossing test: true when the point is inside the closed mesh.
+bool point_inside_mesh(const Vec3f &p, const indexed_triangle_set &its)
+{
+    int crossings = 0;
+    for (const auto &tri : its.indices) {
+        const Vec3f &v0 = its.vertices[tri[0]];
+        const Vec3f e1  = its.vertices[tri[1]] - v0;
+        const Vec3f e2  = its.vertices[tri[2]] - v0;
+        const Vec3f pvec = sample_ray_dir.cross(e2);
+        float det = e1.dot(pvec);
+        if (std::abs(det) < 1e-12f)
+            continue;
+        float inv_det = 1.f / det;
+        Vec3f tvec = p - v0;
+        float u = tvec.dot(pvec) * inv_det;
+        if (u < -1e-6f || u > 1.f + 1e-6f)
+            continue;
+        Vec3f qvec = tvec.cross(e1);
+        float v = sample_ray_dir.dot(qvec) * inv_det;
+        if (v < -1e-6f || u + v > 1.f + 1e-6f)
+            continue;
+        float t = e2.dot(qvec) * inv_det;
+        if (t > 1e-6f)
+            ++ crossings;
+    }
+    return crossings % 2 == 1;
+}
+
+// Fraction of regularly sampled interior points of `earlier` that fall inside
+// `current`. Robust for arbitrary meshes - no boolean, no coplanar-face
+// degeneracies (CGAL corefinement returns an empty intersection for some
+// partially overlapping configurations).
+double volume_containment_fraction(const indexed_triangle_set &earlier, const indexed_triangle_set &current)
+{
+    Vec3f mn = earlier.vertices.front(), mx = earlier.vertices.front();
+    for (const auto &v : earlier.vertices) {
+        mn = mn.cwiseMin(v);
+        mx = mx.cwiseMax(v);
+    }
+    const BoundingBoxf3 bbox(mn.cast<double>(), mx.cast<double>());
+    constexpr int STEPS = 14;
+    const Vec3d diag = (bbox.max - bbox.min);
+    const Vec3d cell = diag / double(STEPS);
+    long total = 0, hits = 0;
+    for (int ix = 0; ix < STEPS; ++ ix)
+        for (int iy = 0; iy < STEPS; ++ iy)
+            for (int iz = 0; iz < STEPS; ++ iz) {
+                Slic3r::Vec3f p(float(bbox.min.x() + (ix + 0.5) * cell.x()),
+                                float(bbox.min.y() + (iy + 0.5) * cell.y()),
+                                float(bbox.min.z() + (iz + 0.5) * cell.z()));
+                if (point_inside_mesh(p, earlier)) {
+                    ++ total;
+                    if (point_inside_mesh(p, current))
+                        ++ hits;
+                }
+            }
+    return total > 0 ? double(hits) / double(total) : 0.;
+}
+} // namespace
+
 bool earlier_is_embedded_detail(const indexed_triangle_set &earlier, const indexed_triangle_set &current)
 {
     const double vol_earlier = its_volume(earlier);
-    if (vol_earlier <= 0. || its_volume(current) <= vol_earlier)
-        // "current" is not larger than the candidate: never treat it as a base.
+    if (vol_earlier <= 0.)
         return false;
-    try {
-        TriangleMesh intersection_mesh(earlier);
-        MeshBoolean::cgal::intersect(intersection_mesh, TriangleMesh(current));
-        return its_volume(intersection_mesh.its) >= EMBEDDED_DETAIL_CONTAINMENT_RATIO * vol_earlier;
-    } catch (...) {
-        BOOST_LOG_TRIVIAL(warning) << "Embedded detail containment check failed, keeping last-listed-wins carving";
-        return false;
-    }
+    const double containment = volume_containment_fraction(earlier, current);
+    // Protruding-detail band: flip only when the later volume contains a
+    // substantial part of the earlier one but not (nearly) all of it. Fully
+    // enclosed volumes are hidden internals and yield to the body; mere
+    // crossings keep the upstream last-listed-wins carving.
+    return containment >= EMBEDDED_DETAIL_PARTIAL_RATIO && containment < EMBEDDED_DETAIL_FULL_RATIO;
 }
 
 } // namespace Slic3r

@@ -11,11 +11,8 @@ add_executable(${_TEST_NAME}_tests
 	test_custom_gcode.cpp
 	test_gcode_layer_count.cpp
 	test_elephant_foot_compensation.cpp
-<<<<<<< HEAD
 	test_extrusion_entity.cpp
-=======
 	test_embedded_detail.cpp
->>>>>>> dba50cb32e (Fix overlap carving regression: embedded details win, otherwise last listed wins)
 	test_geometry.cpp
 	test_icns.cpp
 	test_mixed_filament.cpp

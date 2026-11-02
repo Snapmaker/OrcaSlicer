@@ -864,6 +864,13 @@ public:
 
 	PrinterTechnology	technology() const noexcept override { return ptFFF; }
 
+    // Developer switch (3D volume containment carving): when enabled, overlaps
+    // between different-extruder volumes are carved by 3D volume containment
+    // instead of the upstream last-listed-wins semantics. Not persisted in
+    // presets; the hosting application sets it per developer mode / preference.
+    void set_volume_containment_carving(bool on) { m_volume_containment_carving = on; }
+    bool volume_containment_carving() const noexcept { return m_volume_containment_carving; }
+
     // Methods, which change the state of Print / PrintObject / PrintRegion.
     // The following methods are synchronized with process() and export_gcode(),
     // so that process() and export_gcode() may be called from a background thread.
@@ -1066,6 +1073,9 @@ private:
     
     //SoftFever
     bool m_isBBLPrinter = false;
+    // Developer switch (3D volume containment carving), see
+    // Print::set_volume_containment_carving().
+    bool m_volume_containment_carving { false };
 
     // Ordered collections of extrusion paths to build skirt loops and brim.
     ExtrusionEntityCollection               m_skirt;

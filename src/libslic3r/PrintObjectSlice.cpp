@@ -345,6 +345,7 @@ static std::vector<PrintObjectRegions::LayerRangeRegions>::const_iterator layer_
 
 static std::vector<std::vector<ExPolygons>> slices_to_regions(
     const PrintConfig                                        &print_config,
+    bool                                                      volume_containment_carving,
     const PrintObject                                        &print_object,
     ModelVolumePtrs                                           model_volumes,
     const PrintObjectRegions                                 &print_object_regions,
@@ -429,31 +430,32 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
         // carves "earlier wins" when the earlier volume is (mostly) contained in the
         // later one. Stable across layer ranges and layers, so compute up front.
         std::map<std::pair<const ModelVolume *, const ModelVolume *>, bool> embedded_pair_flip;
-        for (const PrintObjectRegions::LayerRangeRegions &layer_range : print_object_regions.layer_ranges)
-            for (int idx_region = 1; idx_region < int(layer_range.volume_regions.size()); ++ idx_region)
-                for (int idx_region2 = 0; idx_region2 < idx_region; ++ idx_region2) {
-                    const PrintObjectRegions::VolumeRegion &later   = layer_range.volume_regions[idx_region];
-                    const PrintObjectRegions::VolumeRegion &earlier = layer_range.volume_regions[idx_region2];
-                    if (later.model_volume == earlier.model_volume ||
-                        ! later.region || ! earlier.region ||
-                        later.region->print_object_region_id() == earlier.region->print_object_region_id() ||
-                        ! later.model_volume->is_model_part() || ! earlier.model_volume->is_model_part() ||
-                        ! overlap_in_xy(*later.bbox, *earlier.bbox))
-                        continue;
-                    const std::pair key = {earlier.model_volume, later.model_volume};
-                    if (embedded_pair_flip.find(key) != embedded_pair_flip.end())
-                        continue;
-                    indexed_triangle_set earlier_its = earlier.model_volume->mesh().its;
-                    const Transform3d &m_earlier = earlier.model_volume->get_matrix();
-                    for (auto &v : earlier_its.vertices) v = (m_earlier * v.cast<double>()).cast<float>();
-                    indexed_triangle_set later_its = later.model_volume->mesh().its;
-                    const Transform3d &m_later = later.model_volume->get_matrix();
-                    for (auto &v : later_its.vertices) v = (m_later * v.cast<double>()).cast<float>();
-                    embedded_pair_flip.emplace(key, earlier_is_embedded_detail(earlier_its, later_its));
-                }
+        if (volume_containment_carving)
+            for (const PrintObjectRegions::LayerRangeRegions &layer_range : print_object_regions.layer_ranges)
+                for (int idx_region = 1; idx_region < int(layer_range.volume_regions.size()); ++ idx_region)
+                    for (int idx_region2 = 0; idx_region2 < idx_region; ++ idx_region2) {
+                        const PrintObjectRegions::VolumeRegion &later   = layer_range.volume_regions[idx_region];
+                        const PrintObjectRegions::VolumeRegion &earlier = layer_range.volume_regions[idx_region2];
+                        if (later.model_volume == earlier.model_volume ||
+                            ! later.region || ! earlier.region ||
+                            later.region->print_object_region_id() == earlier.region->print_object_region_id() ||
+                            ! later.model_volume->is_model_part() || ! earlier.model_volume->is_model_part() ||
+                            ! overlap_in_xy(*later.bbox, *earlier.bbox))
+                            continue;
+                        const std::pair key = {earlier.model_volume, later.model_volume};
+                        if (embedded_pair_flip.find(key) != embedded_pair_flip.end())
+                            continue;
+                        indexed_triangle_set earlier_its = earlier.model_volume->mesh().its;
+                        const Transform3d &m_earlier = earlier.model_volume->get_matrix();
+                        for (auto &v : earlier_its.vertices) v = (m_earlier * v.cast<double>()).cast<float>();
+                        indexed_triangle_set later_its = later.model_volume->mesh().its;
+                        const Transform3d &m_later = later.model_volume->get_matrix();
+                        for (auto &v : later_its.vertices) v = (m_later * v.cast<double>()).cast<float>();
+                        embedded_pair_flip.emplace(key, earlier_is_embedded_detail(earlier_its, later_its));
+                    }
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, zs_complex.size()),
-            [&slices_by_region, &print_object_regions, &zs_complex, &layer_ranges_regions_to_slices, clip_multipart_objects, &throw_on_cancel_callback, &embedded_pair_flip]
+            [&slices_by_region, &print_object_regions, &zs_complex, &layer_ranges_regions_to_slices, clip_multipart_objects, &throw_on_cancel_callback, &embedded_pair_flip, volume_containment_carving]
                 (const tbb::blocked_range<size_t> &range) {
                 float z              = zs_complex[range.begin()].second;
                 auto  it_layer_range = layer_range_first(print_object_regions.layer_ranges, z);
@@ -548,8 +550,10 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                                                 // the earlier volume is an embedded detail (its volume mostly inside the
                                                 // later volume) - then the earlier detail keeps the overlap.
                                                 bool flip = false;
-                                                if (auto it = embedded_pair_flip.find({region2.model_volume, region.model_volume}); it != embedded_pair_flip.end())
-                                                    flip = it->second;
+                                                if (volume_containment_carving) {
+                                                    const auto it = embedded_pair_flip.find({region2.model_volume, region.model_volume});
+                                                    flip = it != embedded_pair_flip.end() && it->second;
+                                                }
                                                 if (flip)
                                                     temp_slices[idx_region].expolygons = diff_ex(temp_slices[idx_region].expolygons, temp_slices[idx_region2].expolygons);
                                                 else
@@ -5375,7 +5379,7 @@ void PrintObject::slice_volumes()
     firstLayerObjSliceByVolume = objSliceByVolume;
 
     std::vector<std::vector<ExPolygons>> region_slices =
-        slices_to_regions(print->config(), *this, this->model_object()->volumes, *m_shared_regions, slice_zs,
+        slices_to_regions(print->config(), print->volume_containment_carving(), *this, this->model_object()->volumes, *m_shared_regions, slice_zs,
                           std::move(objSliceByVolume), PrintObject::clip_multipart_objects, throw_on_cancel_callback);
 
     for (size_t region_id = 0; region_id < region_slices.size(); ++ region_id) {

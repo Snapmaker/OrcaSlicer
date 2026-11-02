@@ -28,13 +28,13 @@ add_executable(${_TEST_NAME}_tests
 # which are otherwise provided solely by the app targets in src/CMakeLists.txt.
 # Without these the test executable cannot link in a GUI build (SLIC3R_SENTRY=ON).
 target_sources(${_TEST_NAME}_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/src/app_common/SentryWrapper.cpp
-    ${CMAKE_SOURCE_DIR}/src/app_common/bury_point.cpp
+    ${CMAKE_SOURCE_DIR}/src/sentry_wrapper/SentryWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/src/bury_cfg/bury_point.cpp
     ${CMAKE_SOURCE_DIR}/src/common_func/common_func.cpp
-    ${CMAKE_SOURCE_DIR}/src/app_common/BaseException.cpp
-    ${CMAKE_SOURCE_DIR}/src/app_common/StackWalker.cpp
+    ${CMAKE_SOURCE_DIR}/src/dev-utils/BaseException.cpp
+    ${CMAKE_SOURCE_DIR}/src/dev-utils/StackWalker.cpp
     )
-set_source_files_properties(${CMAKE_SOURCE_DIR}/src/app_common/bury_point.cpp
+set_source_files_properties(${CMAKE_SOURCE_DIR}/src/bury_cfg/bury_point.cpp
     PROPERTIES COMPILE_DEFINITIONS BURY_EXPORTS)
 if (SLIC3R_SENTRY AND TARGET sentry::sentry)
     target_link_libraries(${_TEST_NAME}_tests PRIVATE sentry::sentry)

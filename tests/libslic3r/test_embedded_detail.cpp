@@ -24,15 +24,15 @@ TriangleMesh translated(TriangleMesh m, double dx, double dy, double dz)
 
 TEST_CASE("Embedded detail containment decisions", "[embedded_detail]")
 {
-    SECTION("Cube fully enclosed in a larger cube yields to it (hidden internals lose)") {
-        // Seal case: color patches fully hidden inside the body shell must not
-        // carve the body - the enclosing part (blue body) keeps its surface.
+    SECTION("Cube fully enclosed in a larger cube is an embedded pair") {
+        // Seal case: color details fully or nearly fully inside the body are
+        // embedded - per-layer smaller-area arbitration decides them.
         auto earlier = cube(4., 4., 4.);
         auto current = cube(12., 12., 12.);
-        REQUIRE_FALSE(earlier_is_embedded_detail(earlier.its, current.its));
+        REQUIRE(earlier_is_embedded_detail(earlier.its, current.its));
     }
 
-    SECTION("Detail protruding from a larger cube (72% contained) is an embedded detail") {
+    SECTION("Detail protruding from a larger cube (72% contained) is an embedded pair") {
         // The seal ticket scenario: a small color detail whose volume mostly lives
         // inside another part but which pokes out - per-layer 2D coverage dips well
         // below 90%, yet the 3D containment stays high (regression guard for the
@@ -42,11 +42,19 @@ TEST_CASE("Embedded detail containment decisions", "[embedded_detail]")
         REQUIRE(earlier_is_embedded_detail(earlier.its, current.its));
     }
 
-    SECTION("Band lower edge: containment at the 0.4 boundary still flips") {
-        // overlap = (12-9.44)*4*4 / 64 = 0.40
-        auto earlier = translated(cube(4., 4., 4.), 9.44, 0., 0.);
+    SECTION("Containment just above the gate (0.62) is an embedded pair") {
+        // overlap = (12-9.52)*4*4 / 64 = 0.62
+        auto earlier = translated(cube(4., 4., 4.), 9.52, 0., 0.);
         auto current = cube(12., 12., 12.);
         REQUIRE(earlier_is_embedded_detail(earlier.its, current.its));
+    }
+
+    SECTION("Containment just below the gate (0.52) keeps upstream semantics") {
+        // overlap = (12-9.92)*4*4 / 64 = 0.52 - e.g. the plaque relief case (0.45)
+        // must stay a crossing so the later-listed text keeps winning.
+        auto earlier = translated(cube(4., 4., 4.), 9.92, 0., 0.);
+        auto current = cube(12., 12., 12.);
+        REQUIRE_FALSE(earlier_is_embedded_detail(earlier.its, current.its));
     }
 
     SECTION("Partially overlapping cubes keep the upstream last-listed-wins semantics") {
@@ -56,13 +64,13 @@ TEST_CASE("Embedded detail containment decisions", "[embedded_detail]")
         REQUIRE_FALSE(earlier_is_embedded_detail(earlier.its, current.its));
     }
 
-    SECTION("Current smaller than the earlier one is never an embedded detail") {
+    SECTION("Current smaller than the earlier one is never an embedded pair") {
         auto earlier = cube(12., 12., 12.);
         auto current = cube(4., 4., 4.);
         REQUIRE_FALSE(earlier_is_embedded_detail(earlier.its, current.its));
     }
 
-    SECTION("Disjoint cubes are never an embedded detail") {
+    SECTION("Disjoint cubes are never an embedded pair") {
         auto earlier = cube(4., 4., 4.);
         auto current = translated(cube(12., 12., 12.), 50., 0., 0.);
         REQUIRE_FALSE(earlier_is_embedded_detail(earlier.its, current.its));
@@ -133,13 +141,15 @@ TEST_CASE("Overlap carving pipeline assigns overlap to the correct region", "[em
 
     // Developer switch semantics, exercised in both states per scenario:
     //   off (default) : upstream last-listed-wins for every overlap
-    //   on            : protruding embedded details win (partial band),
-    //                   fully hidden volumes still yield to the body
+    //   on            : embedded pairs (3D containment >= gate) are carved by
+    //                   the smaller per-layer slice area; crossings stay upstream
     for (bool containment_on : {false, true}) {
         DYNAMIC_SECTION("fully enclosed volume, containment carving " << (containment_on ? "on" : "off")) {
             // 4x4x2 detail (extruder 2, listed first) fully inside a 12x12x2
-            // base (extruder 1): 3D containment is 1.0 (>= FULL), so the hidden
-            // inner volume yields to the body in both switch states.
+            // base (extruder 1): 3D containment is 1.0 - an embedded pair.
+            // Switch off: upstream last-listed-wins, the detail yields.
+            // Switch on: per-layer smaller-area arbitration keeps the smaller
+            // detail region (its interior slices are invisible on the body).
             Slic3r::Model model;
             Slic3r::ModelObject* object = model.add_object();
             Slic3r::ModelVolume* detail = object->add_volume(Slic3r::make_cube(4., 4., 2.));
@@ -149,7 +159,7 @@ TEST_CASE("Overlap carving pipeline assigns overlap to the correct region", "[em
             object->add_instance();
 
             Slic3r::Print print;
-                        print.set_status_silent();
+            print.set_status_silent();
             print.apply(model, carving_print_config(containment_on));
             REQUIRE(print.objects().size() == 1);
             print.get_object(0)->slice();
@@ -157,8 +167,13 @@ TEST_CASE("Overlap carving pipeline assigns overlap to the correct region", "[em
             const std::vector<double> areas = sorted_region_areas_mm2(print.get_object(0));
             REQUIRE(areas.size() == 2);
             const double total = areas[0] + areas[1];
-            CHECK(areas[0] / total == Approx(0.0).margin(0.01));   // detail yielded
-            CHECK(areas[1] / total == Approx(1.0).margin(0.01));   // body keeps its surface
+            if (containment_on) {
+                CHECK(areas[0] / total == Approx(16.0 / 144.0).margin(0.01));  // smaller detail region wins
+                CHECK(areas[1] / total == Approx(128.0 / 144.0).margin(0.01)); // base carved around it
+            } else {
+                CHECK(areas[0] / total == Approx(0.0).margin(0.01));   // detail yielded
+                CHECK(areas[1] / total == Approx(1.0).margin(0.01));   // body keeps its surface
+            }
         }
 
         DYNAMIC_SECTION("seal-style detail protruding from a later base, containment carving " << (containment_on ? "on" : "off")) {
@@ -176,7 +191,7 @@ TEST_CASE("Overlap carving pipeline assigns overlap to the correct region", "[em
             object->add_instance();
 
             Slic3r::Print print;
-                        print.set_status_silent();
+            print.set_status_silent();
             print.apply(model, carving_print_config(containment_on));
             REQUIRE(print.objects().size() == 1);
             print.get_object(0)->slice();
@@ -210,7 +225,7 @@ TEST_CASE("Overlap carving pipeline assigns overlap to the correct region", "[em
             object->add_instance();
 
             Slic3r::Print print;
-                        print.set_status_silent();
+            print.set_status_silent();
             print.apply(model, carving_print_config(containment_on));
             REQUIRE(print.objects().size() == 1);
             print.get_object(0)->slice();
@@ -220,8 +235,8 @@ TEST_CASE("Overlap carving pipeline assigns overlap to the correct region", "[em
             const double total = areas[0] + areas[1];
             if (containment_on) {
                 // Partial band: the protruding earlier ring wins its full slice.
-                CHECK(areas[0] / total == Approx(400.0 / 1044.0).margin(0.01));  // ring keeps its full slice
-                CHECK(areas[1] / total == Approx(644.0 / 1044.0).margin(0.01)); // peg is carved
+                CHECK(areas[0] / total == Approx(400.0 / 1044.0).margin(0.01));  // ring is the smaller region and keeps its full slice
+                CHECK(areas[1] / total == Approx(644.0 / 1044.0).margin(0.01)); // peg carved where the ring is smaller
             } else {
                 // Upstream last-listed-wins: the later peg carves the ring.
                 CHECK(areas[0] / total == Approx(144.0 / 1044.0).margin(0.01));  // ring yields
@@ -243,7 +258,7 @@ TEST_CASE("Overlap carving pipeline assigns overlap to the correct region", "[em
             object->add_instance();
 
             Slic3r::Print print;
-                        print.set_status_silent();
+            print.set_status_silent();
             print.apply(model, carving_print_config(containment_on));
             REQUIRE(print.objects().size() == 1);
             print.get_object(0)->slice();
@@ -255,4 +270,59 @@ TEST_CASE("Overlap carving pipeline assigns overlap to the correct region", "[em
             CHECK(areas[1] / total == Approx(900.0 / 1236.0).margin(0.01)); // later keeps its full slice
         }
     }
+}
+
+
+// Regression diagnostic for the real seal ticket model (TS20261028000011 follow-up):
+// with containment carving on, the blue body (extruder 1, volume listed before the
+// cream bulk, extruder 4) must own the body silhouette slices. Skipped when the
+// model file is not present on this machine.
+#include "libslic3r/Format/bbs_3mf.hpp"
+#include <boost/filesystem/operations.hpp>
+
+TEST_CASE("Seal regression model ownership with containment carving", "[embedded_detail][seal3mf]")
+{
+    const std::string seal_path = "C:/tmp/e2o/seal_regression_ascii.3mf";
+    if (!boost::filesystem::exists(seal_path)) {
+        WARN("seal_regression.3mf not present on this machine; skipping");
+        return;
+    }
+    Slic3r::Model model;
+    Slic3r::DynamicPrintConfig config;
+    Slic3r::ConfigSubstitutionContext ctxt{Slic3r::ForwardCompatibilitySubstitutionRule::Disable};
+    Slic3r::PlateDataPtrs plate_data;
+    std::vector<Slic3r::Preset*> project_presets;
+    bool is_bbl_3mf = false;
+    Slic3r::Semver file_version;
+    REQUIRE(Slic3r::load_bbs_3mf(seal_path.c_str(), &config, &ctxt, &model, &plate_data, &project_presets,
+        &is_bbl_3mf, &file_version, nullptr, Slic3r::LoadStrategy::LoadModel));
+    REQUIRE(model.objects.size() == 1);
+
+    Slic3r::Print print;
+    print.set_status_silent();
+    if (auto *sw = config.option<Slic3r::ConfigOptionBool>("enable_volume_containment_carving"))
+        sw->value = true;
+    else
+        config.set_key_value("enable_volume_containment_carving", new Slic3r::ConfigOptionBool{true});
+    print.apply(model, config);
+    REQUIRE(print.objects().size() == 1);
+    print.get_object(0)->slice();
+
+    const Slic3r::Layer *layer = print.get_object(0)->layers()[print.get_object(0)->layers().size() / 2];
+    double total = 0.0;
+    std::vector<double> region_areas(layer->region_count(), 0.0);
+    std::vector<int> region_extruders(layer->region_count(), 0);
+    for (size_t r = 0; r < layer->region_count(); ++r) {
+        region_extruders[r] = int(layer->get_region(r)->region().extruder(Slic3r::frExternalPerimeter));
+        for (const Slic3r::Surface &s : layer->get_region(r)->slices.surfaces)
+            region_areas[r] += s.expolygon.area() / (SCALING_FACTOR * SCALING_FACTOR);
+        total += region_areas[r];
+    }
+    for (size_t r = 0; r < layer->region_count(); ++r)
+        INFO("region " << r << " extruder=" << region_extruders[r] << " area=" << region_areas[r] << " share=" << region_areas[r] / total);
+    // The blue body (extruder 1) must own the bulk of the body silhouette.
+    size_t biggest = 0;
+    for (size_t r = 1; r < region_areas.size(); ++r)
+        if (region_areas[r] > region_areas[biggest]) biggest = r;
+    CHECK(region_extruders[biggest] == 1);
 }

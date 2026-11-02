@@ -5,22 +5,23 @@
 
 namespace Slic3r {
 
-// Overlap-carving band for slices_to_regions(): an earlier-listed region counts
-// as an embedded, protruding detail (e.g. embossed text or a color patch imported
-// before its base plate) when the later, larger region contains at least
-// EMBEDDED_DETAIL_PARTIAL_RATIO but less than EMBEDDED_DETAIL_FULL_RATIO of its
-// volume. Measured on real ticket models (TS20261028000011 + seal case): the
-// seal's color detail sits at ~0.72 containment inside the surrounding part,
-// while a peg crossing a ring's notch stays at ~0.35 and color patches fully
-// hidden inside the body shell are at 1.0.
-constexpr double EMBEDDED_DETAIL_PARTIAL_RATIO = 0.4;  // >= : protruding detail flips
-constexpr double EMBEDDED_DETAIL_FULL_RATIO    = 0.95; // >= : fully hidden, body wins
+// Overlap-carving gate for slices_to_regions(): when the developer switch
+// (enable_volume_containment_carving) is on, a cross-region volume pair whose
+// 3D containment c = volume(earlier ∩ later) / volume(earlier) reaches
+// EMBEDDED_AREA_ARBITRATION_RATIO is treated as an embedded pair (an inserted
+// detail, a thin color skin, or decorations on a larger body). For those pairs
+// each layer is carved by the smaller per-layer slice area - the rule 2.4.1
+// applied everywhere, here confined to the embedded domain. Pairs below the
+// ratio (mere crossings like a peg entering a notch, or the plaque-vs-relief
+// case) keep the upstream "last listed wins" carving.
+// Measured on real ticket models: seal body 0.96, seal details ~1.0, peg
+// crossing a ring's notch 0.35, plaque mountain covered by text 0.45.
+constexpr double EMBEDDED_AREA_ARBITRATION_RATIO = 0.6;
 
-// True when the overlap volume is in the partial band [PARTIAL, FULL) x
-// volume(earlier): the earlier region is a protruding detail and keeps the
-// overlap. Outside the band (mere crossing, or fully hidden inside the body)
-// the upstream "last listed wins" carving applies. Both meshes must be in the
-// same coordinate space. Returns false when the boolean intersection fails.
+// True when the overlap containment reaches EMBEDDED_AREA_ARBITRATION_RATIO:
+// the pair is embedded and each layer is carved by the smaller slice area.
+// Below the ratio the upstream "last listed wins" carving applies. Both meshes
+// must be in the same coordinate space. Returns false on measurement failure.
 bool earlier_is_embedded_detail(const indexed_triangle_set &earlier, const indexed_triangle_set &current);
 
 } // namespace Slic3r

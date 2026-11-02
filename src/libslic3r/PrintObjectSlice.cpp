@@ -100,11 +100,9 @@ bool earlier_is_embedded_detail(const indexed_triangle_set &earlier, const index
     if (vol_earlier <= 0.)
         return false;
     const double containment = volume_containment_fraction(earlier, current);
-    // Protruding-detail band: flip only when the later volume contains a
-    // substantial part of the earlier one but not (nearly) all of it. Fully
-    // enclosed volumes are hidden internals and yield to the body; mere
-    // crossings keep the upstream last-listed-wins carving.
-    return containment >= EMBEDDED_DETAIL_PARTIAL_RATIO && containment < EMBEDDED_DETAIL_FULL_RATIO;
+    // Embedded-pair gate: only pairs substantially contained in each other get
+    // the per-layer smaller-area arbitration; crossings keep upstream carving.
+    return containment >= EMBEDDED_AREA_ARBITRATION_RATIO;
 }
 
 } // namespace Slic3r
@@ -546,13 +544,19 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                                                 // Negative volume: always subtract with diff_ex
                                                 temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
                                             } else if (region.region && region2.region && region.region->print_object_region_id() != region2.region->print_object_region_id()) {
-                                                // Different print regions: upstream "last listed wins" by default, except when
-                                                // the earlier volume is an embedded detail (its volume mostly inside the
-                                                // later volume) - then the earlier detail keeps the overlap.
+                                                // Different print regions: upstream "last listed wins" by default. When the
+                                                // developer switch is on and the pair is embedded (3D containment reaches
+                                                // EMBEDDED_AREA_ARBITRATION_RATIO), each layer is carved by the smaller
+                                                // slice area - an embedded detail, color skin, or decorations keep their
+                                                // own slices on the layers where they are the smaller region.
                                                 bool flip = false;
                                                 if (volume_containment_carving) {
                                                     const auto it = embedded_pair_flip.find({region2.model_volume, region.model_volume});
-                                                    flip = it != embedded_pair_flip.end() && it->second;
+                                                    if (it != embedded_pair_flip.end() && it->second) {
+                                                        const double area_earlier = temp_slices[idx_region2].expolygons.empty() ? 0. : area(temp_slices[idx_region2].expolygons);
+                                                        const double area_later   = temp_slices[idx_region].expolygons.empty() ? 0. : area(temp_slices[idx_region].expolygons);
+                                                        flip = area_earlier <= area_later;
+                                                    }
                                                 }
                                                 if (flip)
                                                     temp_slices[idx_region].expolygons = diff_ex(temp_slices[idx_region].expolygons, temp_slices[idx_region2].expolygons);

@@ -1579,6 +1579,9 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionPoint,               bed_mesh_probe_distance))
     ((ConfigOptionFloat,               adaptive_bed_mesh_margin))
 
+    // SoftFever: developer switch for overlap carving arbitration (3D volume containment)
+    ((ConfigOptionBool,                enable_volume_containment_carving))
+
 
 )
 

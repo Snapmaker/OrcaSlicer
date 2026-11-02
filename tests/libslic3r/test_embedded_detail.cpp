@@ -72,8 +72,8 @@ TEST_CASE("Embedded detail containment decisions", "[embedded_detail]")
 // Pipeline-level check: two overlapping volumes with different extruders inside one
 // object, sliced through PrintObject::slice() - the exact path slices_to_regions()
 // arbitrates. Slices are raw layer geometry, so region areas are exact box areas.
-// The developer switch (Print::set_volume_containment_carving) is exercised in
-// both states per scenario.
+// The developer switch (enable_volume_containment_carving, a developer-mode
+// PrintConfig option) is exercised in both states per scenario.
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/Print.hpp"
@@ -89,7 +89,7 @@ static const int _auto_generate_enabler = []() {
     return 0;
 }();
 
-DynamicPrintConfig carving_print_config()
+DynamicPrintConfig carving_print_config(bool containment_carving)
 {
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
     config.set("layer_height", 0.2);
@@ -105,6 +105,9 @@ DynamicPrintConfig carving_print_config()
     // default carries a single entry, which would clamp all extruders to 1.
     if (auto* dia = config.option<ConfigOptionFloats>("filament_diameter"))
         dia->values = {1.75, 1.75, 1.75, 1.75};
+    // The developer switch itself (registered in PrintConfig, developer mode only).
+    if (auto* sw = config.option<ConfigOptionBool>("enable_volume_containment_carving"))
+        sw->value = containment_carving;
     // set_key_value creates the option even though full_print_config() does not
     // carry developer-only keys registered outside its static defaults.
     return config;
@@ -146,9 +149,8 @@ TEST_CASE("Overlap carving pipeline assigns overlap to the correct region", "[em
             object->add_instance();
 
             Slic3r::Print print;
-            print.set_volume_containment_carving(containment_on);
-            print.set_status_silent();
-            print.apply(model, carving_print_config());
+                        print.set_status_silent();
+            print.apply(model, carving_print_config(containment_on));
             REQUIRE(print.objects().size() == 1);
             print.get_object(0)->slice();
 
@@ -174,9 +176,8 @@ TEST_CASE("Overlap carving pipeline assigns overlap to the correct region", "[em
             object->add_instance();
 
             Slic3r::Print print;
-            print.set_volume_containment_carving(containment_on);
-            print.set_status_silent();
-            print.apply(model, carving_print_config());
+                        print.set_status_silent();
+            print.apply(model, carving_print_config(containment_on));
             REQUIRE(print.objects().size() == 1);
             print.get_object(0)->slice();
 
@@ -209,9 +210,8 @@ TEST_CASE("Overlap carving pipeline assigns overlap to the correct region", "[em
             object->add_instance();
 
             Slic3r::Print print;
-            print.set_volume_containment_carving(containment_on);
-            print.set_status_silent();
-            print.apply(model, carving_print_config());
+                        print.set_status_silent();
+            print.apply(model, carving_print_config(containment_on));
             REQUIRE(print.objects().size() == 1);
             print.get_object(0)->slice();
 
@@ -243,9 +243,8 @@ TEST_CASE("Overlap carving pipeline assigns overlap to the correct region", "[em
             object->add_instance();
 
             Slic3r::Print print;
-            print.set_volume_containment_carving(containment_on);
-            print.set_status_silent();
-            print.apply(model, carving_print_config());
+                        print.set_status_silent();
+            print.apply(model, carving_print_config(containment_on));
             REQUIRE(print.objects().size() == 1);
             print.get_object(0)->slice();
 

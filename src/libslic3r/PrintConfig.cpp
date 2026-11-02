@@ -5425,6 +5425,17 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<SlicingMode>(SlicingMode::Regular));
 
+    def = this->add("enable_volume_containment_carving", coBool);
+    def->label = L("Carve overlaps by 3D volume containment");
+    def->category = L("Other");
+    def->tooltip = L("When enabled, overlaps between different-extruder parts are arbitrated by 3D "
+                   "volume containment instead of the default \"last listed wins\" rule: a mostly "
+                   "embedded, still protruding detail keeps its own slice, while mere crossings and "
+                   "fully hidden volumes keep yielding to the later part. Developer option; the "
+                   "default (off) matches upstream behavior.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("z_offset", coFloat);
     def->label = L("Z offset");
     def->tooltip = L("This value will be added (or subtracted) from all the Z coordinates "

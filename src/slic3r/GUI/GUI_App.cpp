@@ -6079,7 +6079,7 @@ static const wxLanguageInfo* linux_get_existing_locale_language(const wxLanguage
         if (! it->empty()) {
             const std::string &locale = *it;
             const wxLanguageInfo* lang = wxLocale::FindLanguageInfo(from_u8(locale));
-            if (wxLocale::IsAvailable(lang->Language))
+            if (lang != nullptr && wxLocale::IsAvailable(lang->Language))
                 return lang;
         }
     return language;
@@ -6280,6 +6280,8 @@ bool GUI_App::load_language(wxString language, bool initial)
     }
 #endif
 
+    // On Linux a missing locale is tolerated by the check below instead of rewriting the requested language.
+#ifndef __linux__
     if (! wxLocale::IsAvailable(language_info->Language)&&initial) {
         language_info = wxLocale::GetLanguageInfo(wxLANGUAGE_ENGLISH_UK);
         app_config->set("language", language_info->CanonicalName.ToUTF8().data());
@@ -6317,27 +6319,35 @@ bool GUI_App::load_language(wxString language, bool initial)
         //        app_config->erase("app", "language");
         //}
     }
+#endif
 
     if (! wxLocale::IsAvailable(language_info->Language)) {
+#ifdef __linux__
+        // Dictionaries ship with the application, so a missing system locale must not
+        // abort startup: keep the current locale and load the bundled dictionary below.
+        // Do not return early: callers ignore the result and expect m_wxLocale set.
+        BOOST_LOG_TRIVIAL(warning) << boost::format("Locale %1% is not available on this system, "
+                                                    "keeping the current locale and loading the bundled dictionary.")
+                                    % language_info->CanonicalName.ToUTF8().data();
+#else
     	// Loading the language dictionary failed.
         wxString message = "Switching Snapmaker Orca to language " + language_info->CanonicalName + " failed.";
-#if !defined(_WIN32) && !defined(__APPLE__)
-        // likely some linux system
-        message += "\nYou may need to reconfigure the missing locales, likely by running the \"locale-gen\" and \"dpkg-reconfigure locales\" commands.\n";
-#endif
         if (initial)
-        	message + "\n\nApplication will close.";
+        	message += "\n\nApplication will close.";
         wxMessageBox(message, "Snapmaker Orca - Switching language failed", wxOK | wxICON_ERROR);
         if (initial)
 			std::exit(EXIT_FAILURE);
 		else
 			return false;
+#endif
     }
 
     // Release the old locales, create new locales.
     //FIXME wxWidgets cause havoc if the current locale is deleted. We just forget it causing memory leaks for now.
     m_wxLocale.release();
     m_wxLocale = Slic3r::make_unique<wxLocale>();
+    // Init may fail when the requested system locale is missing; keep the object anyway: the constructor
+    // installs the instance-owned wxTranslations, and Init() records the canonical name before setlocale.
     m_wxLocale->Init(language_info->Language);
     // Override language at the active wxTranslations class (which is stored in the active m_wxLocale)
     // to load possibly different dictionary, for example, load Czech dictionary for Slovak language.

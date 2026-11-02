@@ -535,8 +535,8 @@ EOF
 # source tree inside flatpak-builder and does not run that script, so stage the
 # same CLI here or /app/share/Snapmaker_Orca will not contain it.
 #
-# -F flatpak never configures CMake on the host. build_all.yml checks out
-# submodules before flatpak-builder; do the same so the sandbox can run
+# -F flatpak never configures CMake on the host. Fetch the profiles branch from
+# .gitmodules before flatpak-builder so the sandbox can run
 # SyncSnapmakerProfiles.cmake against objects already stored in .git.
 init_snapmaker_profiles() {
     if [[ ! -f "$REPO_DIR/.gitmodules" ]] || ! grep -q 'submodules/Profiles' "$REPO_DIR/.gitmodules"; then
@@ -549,7 +549,7 @@ init_snapmaker_profiles() {
     fi
     echo -e "${YELLOW}Fetching Snapmaker profiles submodule...${NC}"
     git -C "$REPO_DIR" submodule sync -- submodules/Profiles
-    git -C "$REPO_DIR" submodule update --init --checkout --recursive -- submodules/Profiles
+    git -C "$REPO_DIR" submodule update --init --remote --checkout --recursive -- submodules/Profiles
     if [[ ! -f "$REPO_DIR/submodules/Profiles/Snapmaker.json" ]]; then
         echo -e "${RED}Profiles submodule is missing Snapmaker.json${NC}"
         exit 1

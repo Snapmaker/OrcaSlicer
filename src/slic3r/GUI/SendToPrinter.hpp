@@ -2,6 +2,8 @@
 #define slic3r_GUI_SendToSDcard_hpp_
 
 #include <wx/wx.h>
+#include "GUI_App.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+namespace Slic3r { namespace GUI { class Plater; } }   // H2 3.1：Plater 仅指针形态——前向声明替代传递包含
 #include <wx/intl.h>
 #include <wx/collpane.h>
 #include <wx/dataview.h>
@@ -28,7 +30,6 @@
 #include "GUI_Utils.hpp"
 #include "wxExtensions.hpp"
 #include "DeviceManager.hpp"
-#include "Plater.hpp"
 #include "BBLStatusBar.hpp"
 #include "BBLStatusBarSend.hpp"
 #include "Widgets/Label.hpp"

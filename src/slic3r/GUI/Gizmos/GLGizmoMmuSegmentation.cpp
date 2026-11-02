@@ -1,4 +1,8 @@
 #include "GLGizmoMmuSegmentation.hpp"
+#include "../GUI_App.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/PlateController.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/ProjectSession.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../PartPlate.hpp"   // H2 3.1 顶部瘦身：PartPlateList 完整型（原经 Plater.hpp 传递链）
 
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -922,7 +926,7 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
 
     if (m_current_tool == ImGui::GapFillIcon) {
         if (m_imgui->button(m_desc.at("perform"))) {
-            Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Gap fill", UndoRedo::SnapshotType::GizmoAction);
+            app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Gap fill", UndoRedo::SnapshotType::GizmoAction);
 
             for (int i = 0; i < m_triangle_selectors.size(); i++) {
                 TriangleSelectorPatch* ts_mm = dynamic_cast<TriangleSelectorPatch*>(m_triangle_selectors[i].get());
@@ -938,7 +942,7 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
     }
 
     if (m_imgui->button(m_desc.at("remove_all"))) {
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Reset selection", UndoRedo::SnapshotType::GizmoAction);
+        app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Reset selection", UndoRedo::SnapshotType::GizmoAction);
         ModelObject *        mo  = m_c->selection_info()->model_object();
         int                  idx = -1;
         for (ModelVolume *mv : mo->volumes)
@@ -998,7 +1002,7 @@ void GLGizmoMmuSegmentation::update_model_object()
         const ModelObjectPtrs &mos = wxGetApp().model().objects;
         size_t obj_idx = std::find(mos.begin(), mos.end(), mo) - mos.begin();
         wxGetApp().obj_list()->update_info_items(obj_idx);
-        wxGetApp().plater()->get_partplate_list().notify_instance_update(obj_idx, 0);
+        wxGetApp().plates().partplate_list().notify_instance_update(obj_idx, 0);
         m_parent.post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
         wxGetApp().plater()->notify_filament_usage_changed();
     }
@@ -1391,7 +1395,7 @@ void GLGizmoMmuSegmentation::remap_filament_assignments()
     if (!any_change)
         return;
 
-    Plater::TakeSnapshot snapshot(wxGetApp().plater(),
+    app::SnapshotService::Scope snapshot(wxGetApp().plater(),
                                   "Remap filament assignments",
                                   UndoRedo::SnapshotType::GizmoAction);
 

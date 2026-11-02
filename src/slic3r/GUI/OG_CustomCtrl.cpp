@@ -1,7 +1,6 @@
 #include "OG_CustomCtrl.hpp"
 #include "OptionsGroup.hpp"
 #include "MarkdownTip.hpp"
-#include "Plater.hpp"
 #include "GUI_App.hpp"
 #include "MsgDialog.hpp"
 #include "libslic3r/AppConfig.hpp"

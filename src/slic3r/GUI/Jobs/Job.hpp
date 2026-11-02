@@ -17,11 +17,6 @@ namespace Slic3r { namespace GUI {
 class Job {
 public:
 
-    enum JobPrepareState {
-        PREPARE_STATE_DEFAULT = 0,
-        PREPARE_STATE_MENU = 1,
-    };
-
     // A controller interface that informs the job about cancellation and
     // makes it possible for the job to advertise its status.
     class Ctl {

@@ -1,5 +1,6 @@
 //#include "stdlib.h"
 #include "libslic3r/libslic3r.h"
+#include "app/PlateController.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "libslic3r/Layer.hpp"
 #include "IMSlider.hpp"
 #include "GUI_Preview.hpp"
@@ -12,6 +13,10 @@
 #include "GLCanvas3D.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "Plater.hpp"
+#include "app/SlicingController.hpp"   // H2 2.4：组合根服务直调
+#include "app/ArrangementService.hpp"   // H2 2.4：组合根服务直调
+#include "app/ProjectSession.hpp"   // H2 2.4：组合根服务直调
+#include "app/FilamentService.hpp"   // H2 2.4：组合根服务直调
 #include "MainFrame.hpp"
 #include "format.hpp"
 #include "MsgDialog.hpp"
@@ -499,8 +504,8 @@ void Preview::update_layers_slider_mode()
 
     // BBS
     if (wxGetApp().filaments_cnt() > 1) {
-        //const ModelObjectPtrs& objects = wxGetApp().plater()->model().objects;
-        auto plate_extruders = wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_extruders_without_support();
+        //const ModelObjectPtrs& objects = wxGetApp().session().model().objects;
+        auto plate_extruders = wxGetApp().plates().partplate_list().get_curr_plate()->get_extruders_without_support();
         for (auto extruder : plate_extruders) {
             if (extruder != plate_extruders[0])
                 can_change_color = false;
@@ -578,7 +583,7 @@ void Preview::update_layers_slider(const std::vector<double>& layers_z, bool kee
     //BBS: replace model custom gcode with current plate custom gcode
     CustomGCode::Info ticks_info_from_curr_plate;
     if (wxGetApp().is_editor())
-        ticks_info_from_curr_plate = plater->model().get_curr_plate_custom_gcodes();
+        ticks_info_from_curr_plate = wxGetApp().session().model().get_curr_plate_custom_gcodes();
     else {
         ticks_info_from_curr_plate.mode   = CustomGCode::Mode::SingleExtruder;
         ticks_info_from_curr_plate.gcodes = m_canvas->get_custom_gcode_per_print_z();
@@ -605,7 +610,7 @@ void Preview::update_layers_slider(const std::vector<double>& layers_z, bool kee
     }
     m_layers_slider->SetSelectionSpan(idx_low, idx_high);
 
-    auto curr_plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+    auto curr_plate = wxGetApp().plates().partplate_list().get_curr_plate();
     auto curr_print_seq = curr_plate->get_real_print_seq();
     bool sequential_print = (curr_print_seq == PrintSequence::ByObject);
     m_layers_slider->SetDrawMode(sequential_print);
@@ -617,7 +622,7 @@ void Preview::update_layers_slider(const std::vector<double>& layers_z, bool kee
 
     // Suggest the auto color change, if model looks like sign
     if (m_layers_slider->IsNewPrint()) {
-        const Print &print = wxGetApp().plater()->fff_print();
+        const Print &print = wxGetApp().slicing().fff_print();
 
         // bool is_possible_auto_color_change = false;
         for (auto object : print.objects()) {
@@ -718,7 +723,7 @@ void Preview::load_print_as_fff(bool keep_z_range, bool only_gcode)
         if (!gcode_preview_data_valid) {
             if (wxGetApp().is_editor())
                 //BBS
-                color_print_values = wxGetApp().plater()->model().get_curr_plate_custom_gcodes().gcodes;
+                color_print_values = wxGetApp().session().model().get_curr_plate_custom_gcodes().gcodes;
             else
                 color_print_values = m_canvas->get_custom_gcode_per_print_z();
             colors.push_back("#808080"); // gray color for pause print or custom G-code
@@ -733,7 +738,7 @@ void Preview::load_print_as_fff(bool keep_z_range, bool only_gcode)
 
     if (IsShown()) {
         m_canvas->set_selected_extruder(0);
-        bool is_slice_result_valid = wxGetApp().plater()->get_partplate_list().get_curr_plate()->is_slice_result_valid();
+        bool is_slice_result_valid = wxGetApp().plates().partplate_list().get_curr_plate()->is_slice_result_valid();
         if (gcode_preview_data_valid && (is_slice_result_valid || only_gcode)) {
             // Load the real G-code preview.
             //BBS: add more log
@@ -767,7 +772,7 @@ void Preview::load_print_as_fff(bool keep_z_range, bool only_gcode)
                 m_canvas->get_gcode_extruders_count();
             std::vector<CustomGCode::Item> gcodes = wxGetApp().is_editor() ?
                 //BBS
-                wxGetApp().plater()->model().get_curr_plate_custom_gcodes().gcodes :
+                wxGetApp().session().model().get_curr_plate_custom_gcodes().gcodes :
                 m_canvas->get_custom_gcode_per_print_z();
             const wxString choice = !gcodes.empty() ?
                 _L("Multicolor Print") :

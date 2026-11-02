@@ -1,4 +1,5 @@
 #include "MixedFilamentBatchDialog.hpp"
+#include "app/PlateController.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "MixedFilamentBadge.hpp"
 #include "MixedColorMatchHelpers.hpp"
 #include "FilamentColorUtils.hpp"
@@ -16,6 +17,7 @@
 #include "wxExtensions.hpp"
 #include "MsgDialog.hpp"
 #include "Plater.hpp"
+#include "app/NotificationHub.hpp"   // H2 2.6：组合根服务直调
 #include "PartPlate.hpp"
 #include "BitmapCache.hpp"
 
@@ -298,7 +300,7 @@ MixedFilamentBatchDialog::MixedFilamentBatchDialog(wxWindow* parent)
         m_manual_filament_count = n > 4 ? 4 : (n >= 2 ? static_cast<int>(n) : 2);
     }
     if (wxGetApp().plater()) {
-        auto& plates = wxGetApp().plater()->get_partplate_list();
+        auto& plates = wxGetApp().plates().partplate_list();
         m_tray_count = plates.get_plate_count();
         if (m_tray_count < 1) m_tray_count = 1;
         // Default the dialog to the plate the user currently has selected in the plater
@@ -360,7 +362,7 @@ MixedFilamentBatchDialog::MixedFilamentBatchDialog(wxWindow* parent)
         auto* self = static_cast<MixedFilamentBatchDialog*>(weak_self.get());
         // Force thumbnail generation for all plates using the existing 3D canvas
         // (works without slicing — uses offscreen FBO rendering)
-        wxGetApp().plater()->update_all_plate_thumbnails(true);
+        wxGetApp().notification_hub().update_all_plate_thumbnails(true);
         self->build_preview_panels();
     });
 }
@@ -440,7 +442,7 @@ void MixedFilamentBatchDialog::build_preview_panels()
     auto* plater = wxGetApp().plater();
     if (!plater) return;
 
-    auto& plates = plater->get_partplate_list();
+    auto& plates = wxGetApp().plates().partplate_list();
     const int count = plates.get_plate_count();
     if (count < 1) return;
 
@@ -600,7 +602,7 @@ void MixedFilamentBatchDialog::rebuild_match_thumb_cache()
 
     // Invalidate all cached match bitmaps across every viewpoint (review item 7); only the
     // current plate is rendered now, others fill lazily on view/plate navigation.
-    const int count = plater->get_partplate_list().get_plate_count();
+    const int count = wxGetApp().plates().partplate_list().get_plate_count();
     for (auto& bucket : m_match_cache_by_view) {
         bucket.clear();
         bucket.resize(count);

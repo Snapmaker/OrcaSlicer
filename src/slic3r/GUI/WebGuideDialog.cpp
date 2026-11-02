@@ -1,4 +1,5 @@
 #include "WebGuideDialog.hpp"
+#include "Plater.hpp"   // H2 3.1 白名单：Plater 完整型解引用（偏离登记）
 #include "ConfigWizard.hpp"
 
 #include <boost/filesystem/operations.hpp>

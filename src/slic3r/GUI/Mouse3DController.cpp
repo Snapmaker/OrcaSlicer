@@ -1,11 +1,12 @@
 #include "libslic3r/libslic3r.h"
+#include "Plater.hpp"   // H2 3.1 白名单：Plater 完整型解引用（偏离登记）
 #include "libslic3r/PresetBundle.hpp"
 #include "Mouse3DController.hpp"
 
 #include "Camera.hpp"
 #include "GUI_App.hpp"
+#include "app/SceneRefreshCoordinator.hpp"   // H2 2.2：set_current_canvas_as_dirty 组合根
 #include "GLCanvas3D.hpp"
-#include "Plater.hpp"
 #include "NotificationManager.hpp"
 
 #include <wx/glcanvas.h>
@@ -493,7 +494,7 @@ void Mouse3DController::render_settings_dialog(GLCanvas3D& canvas) const
     float trasn_zoom_size = imgui.calc_text_size(_L("Translation/Zoom")).x + space_size;
     float max_slider_txt_size = std::max(std::max(trans_size,zoom_size),std::max(rota_size,trasn_zoom_size));
 
-    ImGuiWrapper::push_toolbar_style(wxGetApp().plater()->canvas3D()->get_scale());
+    ImGuiWrapper::push_toolbar_style(wxGetApp().layout().get_current_canvas3D()->get_scale());
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 20.0f));
     static ImVec2 last_win_size(0.0f, 0.0f);
     bool shown = true;
@@ -683,7 +684,7 @@ void Mouse3DController::render_settings_dialog(GLCanvas3D& canvas) const
 
             ImGui::Separator();
             imgui.text_colored(color, "Camera:");
-            Vec3f target = wxGetApp().plater()->get_camera().get_target().cast<float>();
+            Vec3f target = wxGetApp().layout().camera.get_target().cast<float>();
             ImGui::InputFloat3("Target", target.data(), "%.3f", ImGuiInputTextFlags_ReadOnly);
 #endif // ENABLE_3DCONNEXION_DEVICES_DEBUG_OUTPUT
 
@@ -745,13 +746,13 @@ void Mouse3DController::disconnected()
         m_params_by_device[m_device_str] = m_params_ui;
 	    m_device_str.clear();
 	    m_connected = false;
-		wxGetApp().plater()->get_notification_manager()->push_notification(NotificationType::Mouse3dDisconnected);
+		wxGetApp().notification_hub().nm()->push_notification(NotificationType::Mouse3dDisconnected);
 
         wxGetApp().plater()->CallAfter([]() {
         	Plater *plater = wxGetApp().plater();
         	if (plater != nullptr) {
-	        	plater->get_camera().recover_from_free_camera();
-    	   		plater->set_current_canvas_as_dirty();
+	        	wxGetApp().layout().camera.recover_from_free_camera();
+    	   		wxGetApp().refresh().set_current_canvas_as_dirty();
     	   	}
     	});
     }
@@ -793,7 +794,7 @@ bool Mouse3DController::handle_input(const DataPacketAxis& packet)
     }
 
     if (updated) {
-        wxGetApp().plater()->set_current_canvas_as_dirty();
+        wxGetApp().refresh().set_current_canvas_as_dirty();
         // ask for an idle event to update 3D scene
         wxWakeUpIdle();
     }
@@ -1208,8 +1209,8 @@ void Mouse3DController::disconnect_device()
         wxGetApp().plater()->CallAfter([]() {
         	Plater *plater = wxGetApp().plater();
         	if (plater != nullptr) {
-	        	plater->get_camera().recover_from_free_camera();
-    	   		plater->set_current_canvas_as_dirty();
+	        	wxGetApp().layout().camera.recover_from_free_camera();
+    	   		wxGetApp().refresh().set_current_canvas_as_dirty();
     	   	}
     	});
     }
@@ -1254,7 +1255,7 @@ void Mouse3DController::collect_input()
                         m_state.append_button((unsigned int)ev.button.bnum, m_params.input_queue_max_size);
                     break;
             }
-            wxGetApp().plater()->set_current_canvas_as_dirty();
+            wxGetApp().refresh().set_current_canvas_as_dirty();
             // ask for an idle event to update 3D scene
             wxWakeUpIdle();
         }
@@ -1307,7 +1308,7 @@ bool Mouse3DController::handle_input(const DataPacketRaw& packet, const int pack
 #endif // ENABLE_3DCONNEXION_DEVICES_DEBUG_OUTPUT
 
     if (updated) {
-        wxGetApp().plater()->set_current_canvas_as_dirty();
+        wxGetApp().refresh().set_current_canvas_as_dirty();
         // ask for an idle event to update 3D scene
         wxWakeUpIdle();
     }

@@ -4,6 +4,7 @@
 #include "../GUI/DeviceManager.hpp"
 #include "../GUI/Jobs/ProgressIndicator.hpp"
 #include "../GUI/PartPlate.hpp"
+#include "../GUI/Plater.hpp"   // 阶段 H1（路径 A 解环）：原经 PartPlate.hpp:15 传递——消费者显式包含
 #include "libslic3r/CutUtils.hpp"
 
 #include "libslic3r/Model.hpp"

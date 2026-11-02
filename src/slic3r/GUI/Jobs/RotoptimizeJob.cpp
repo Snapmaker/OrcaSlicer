@@ -1,4 +1,7 @@
 #include "RotoptimizeJob.hpp"
+#include "../GUI_App.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/PlateController.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/ProjectSession.hpp"   // H2 3.1：partplate/model accessor 供给
 
 #include "libslic3r/MTUtils.hpp"
 #include "libslic3r/SLA/Rotfinder.hpp"
@@ -62,7 +65,7 @@ void RotoptimizeJob::process(Ctl &ctl)
 
 
     for (ObjRot &objrot : m_selected_object_ids) {
-        ModelObject *o = m_plater->model().objects[size_t(objrot.idx)];
+        ModelObject *o = wxGetApp().session().model().objects[size_t(objrot.idx)];
         if (!o) continue;
 
         if (Methods[m_method_id].findfn)
@@ -85,7 +88,7 @@ void RotoptimizeJob::finalize(bool canceled, std::exception_ptr &eptr)
         return;
 
     for (const ObjRot &objrot : m_selected_object_ids) {
-        ModelObject *o = m_plater->model().objects[size_t(objrot.idx)];
+        ModelObject *o = wxGetApp().session().model().objects[size_t(objrot.idx)];
         if (!o) continue;
 
         for(ModelInstance * oi : o->instances) {

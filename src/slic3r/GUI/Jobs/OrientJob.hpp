@@ -3,6 +3,7 @@
 
 #include "Job.hpp"
 #include "libslic3r/Orient.hpp"
+#include "slic3r/GUI/app/ArrangeRequest.hpp"   // F3：Request 显式传递（纯值头，零 include 纯净）
 
 namespace Slic3r {
 
@@ -19,6 +20,7 @@ class OrientJob : public Job
 
     OrientMeshs m_selected, m_unselected, m_unprintable;
     Plater     *m_plater;
+    app::OrientRequest m_request;   // F3：prepare 分支改读自持 Request（commit ② 落地读点）
 
     // clear m_selected and m_unselected, reserve space for next usage
     void clear_input();
@@ -38,7 +40,7 @@ public:
     
     void process(Ctl &ctl) override;
 
-    OrientJob();
+    OrientJob(app::OrientRequest request);   // F3：prepare 前置语义随调用传入（原 Plater 旧隐式写点）
     
     void finalize(bool canceled, std::exception_ptr &e) override;
 #if 0

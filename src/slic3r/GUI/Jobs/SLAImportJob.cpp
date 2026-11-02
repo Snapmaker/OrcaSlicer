@@ -4,6 +4,7 @@
 
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/app/SlicingController.hpp"   // 阶段 H2 2.1（K1）：sla_print 改走组合根 slicing 服务
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include "slic3r/GUI/NotificationManager.hpp"
 
@@ -79,7 +80,7 @@ void SLAImportJob::reset()
 {
     p->sel     = Sel::modelAndProfile;
     p->mesh    = {};
-    p->profile = p->plater->sla_print().full_print_config();
+    p->profile = wxGetApp().slicing().sla_print().full_print_config();
     p->win     = {2, 2};
     p->path.Clear();
 }
@@ -120,7 +121,7 @@ void SLAImportJob::finalize(bool canceled, std::exception_ptr &eptr)
 
     if (p->sel != Sel::modelOnly) {
         if (p->profile.empty())
-            p->profile = p->plater->sla_print().full_print_config();
+            p->profile = wxGetApp().slicing().sla_print().full_print_config();
 
         const ModelObjectPtrs& objects = p->plater->model().objects;
         for (auto object : objects)

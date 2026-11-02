@@ -2,6 +2,8 @@
 #define slic3r_ModelMall_hpp_
 
 #include "I18N.hpp"
+#include "GUI_Utils.hpp"   // H2 3.1：DPIFrame 基类（原 Plater.hpp 传递）
+namespace Slic3r { namespace GUI { class Plater; } }   // H2 3.1：Plater 仅指针形态——前向声明替代传递包含
 
 #include <wx/font.h>
 #include <wx/colour.h>
@@ -30,7 +32,6 @@
 #include <curl/curl.h>
 #include <wx/webrequest.h>
 #include "wxExtensions.hpp"
-#include "Plater.hpp"
 #include "Widgets/StepCtrl.hpp"
 #include "Widgets/Button.hpp"
 

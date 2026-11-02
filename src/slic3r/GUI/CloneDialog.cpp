@@ -1,7 +1,12 @@
 #include "CloneDialog.hpp"
+#include "GLCanvas3D.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "app/ArrangementService.hpp"   // H2 3.1：真实供给头
+#include "app/LayoutManager.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "Plater.hpp"   // H2 3.1 白名单：Plater 完整型解引用（偏离登记）
 
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
+#include "app/ArrangeRequest.hpp"   // F3：Request 显式传递
 
 namespace Slic3r { namespace GUI {
 
@@ -49,7 +54,7 @@ CloneDialog::CloneDialog(wxWindow *parent)
     dlg_btns->GetNEXT()->SetLabel(_L("Fill"));
     dlg_btns->GetNEXT()->SetToolTip(_L("Fill bed with copies"));
     dlg_btns->GetNEXT()->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
-        m_plater->fill_bed_with_instances();
+        wxGetApp().arrange_svc().fill_bed_with_instances();
         EndModal(wxID_OK);
     });
 
@@ -69,15 +74,15 @@ CloneDialog::CloneDialog(wxWindow *parent)
         v_sizer->Fit(this);
         Refresh();
 
-        Selection& sel = m_plater->canvas3D()->get_selection();
-        m_plater->take_snapshot(std::string("Selection-clone"));
+        Selection& sel = wxGetApp().layout().get_current_canvas3D()->get_selection();
+        wxGetApp().snapshots().take_snapshot(std::string("Selection-clone"));
         m_plater->Freeze(); // Better to stop rendering canvas while processing
         sel.copy_to_clipboard();
         for (int i = 0; i < m_count; i++) { // same method with Selection::clone()
             m_progress->SetValue(static_cast<int>(static_cast<double>(i) / m_count * 100)); // pass 0 / 100
             sel.paste_from_clipboard();
             if(m_cancel_process){
-                m_plater->undo();
+                wxGetApp().snapshots().undo();
                 return;
             }
             wxYield(); // Allow event loop to process updates
@@ -85,8 +90,7 @@ CloneDialog::CloneDialog(wxWindow *parent)
 
         if(!m_cancel_process){
             if (m_arrange_cb->GetValue()){
-                m_plater->set_prepare_state(Job::PREPARE_STATE_MENU);
-                m_plater->arrange();
+                wxGetApp().arrange_svc().arrange(app::ArrangeRequest::current_plate());   // F3：原写点 MENU + 无参 arrange 改随调用 Request
             }
             m_plater->Thaw();
             EndModal(wxID_OK);

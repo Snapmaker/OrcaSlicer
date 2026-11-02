@@ -1,6 +1,8 @@
 // #include "libslic3r/GCodeSender.hpp"
 //#include "slic3r/Utils/Serial.hpp"
 #include "Tab.hpp"
+#include "app/PlateController.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "PartPlate.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "PresetHints.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PresetFlowVariant.hpp"
@@ -40,6 +42,10 @@
 #include "GUI_App.hpp"
 #include "GUI_ObjectList.hpp"
 #include "Plater.hpp"
+#include "app/FilamentService.hpp"   // H2 2.4：组合根服务直调
+#include "app/SceneRefreshCoordinator.hpp"   // H2 2.4：组合根服务直调
+#include "app/ProjectSession.hpp"   // H2 2.4：组合根服务直调
+#include "app/NotificationHub.hpp"   // H2 2.4：组合根服务直调
 #include "MainFrame.hpp"
 #include "format.hpp"
 #include "UnsavedChangesDialog.hpp"
@@ -1869,7 +1875,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         }
 
         if (auto* plater = wxGetApp().plater())
-            plater->notify_vhl_dithering_conflict(local_z_enabled);
+            wxGetApp().notification_hub().notify_vhl_dithering_conflict(local_z_enabled);
     }
 
     if (opt_key == "enable_prime_tower") {
@@ -1883,7 +1889,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 new_conf.set_key_value("enable_prime_tower", new ConfigOptionBool(true));
                 m_config_manipulation.apply(m_config, &new_conf);
             }
-            wxGetApp().plater()->update();
+            wxGetApp().refresh().update_gate(false, false);
         }
         bool is_precise_z_height = m_config->option<ConfigOptionBool>("precise_z_height")->value;
         if (boost::any_cast<bool>(value) && is_precise_z_height) {
@@ -1894,7 +1900,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 new_conf.set_key_value("enable_prime_tower", new ConfigOptionBool(false));
                 m_config_manipulation.apply(m_config, &new_conf);
             }
-            wxGetApp().plater()->update();
+            wxGetApp().refresh().update_gate(false, false);
         }
         update_wiping_button_visibility();
     }
@@ -1920,7 +1926,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 new_conf.set_key_value("enable_prime_tower", new ConfigOptionBool(true));
                 m_config_manipulation.apply(m_config, &new_conf);
             }
-            wxGetApp().plater()->update();
+            wxGetApp().refresh().update_gate(false, false);
         }
         update_wiping_button_visibility();
     }
@@ -1935,10 +1941,10 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 DynamicPrintConfig new_conf = *m_config;
                 new_conf.set_key_value("enable_prime_tower", new ConfigOptionBool(true));
                 m_config_manipulation.apply(m_config, &new_conf);
-                wxGetApp().plater()->update();
+                wxGetApp().refresh().update_gate(false, false);
             }
         } else {
-            wxGetApp().plater()->update();
+            wxGetApp().refresh().update_gate(false, false);
         }
     }
 
@@ -1954,7 +1960,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 DynamicPrintConfig new_conf = *m_config;
                 new_conf.set_key_value("print_sequence", new ConfigOptionEnum<PrintSequence>(PrintSequence::ByLayer));
                 m_config_manipulation.apply(m_config, &new_conf);
-                wxGetApp().plater()->update();
+                wxGetApp().refresh().update_gate(false, false);
             }
         }
     }
@@ -1984,7 +1990,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                                        new ConfigOptionInt(0));
                 m_config_manipulation.apply(m_config, &new_conf);
             }
-            wxGetApp().plater()->update();
+            wxGetApp().refresh().update_gate(false, false);
         }
     }
 
@@ -2105,6 +2111,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 }
             }
         }
+        wxGetApp().refresh().update_gate(false, false);
     }
 
     if(opt_key == "make_overhang_printable"){
@@ -2120,7 +2127,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 DynamicPrintConfig new_conf = *m_config;
                 new_conf.set_key_value("make_overhang_printable", new ConfigOptionBool(false));
                 m_config_manipulation.apply(m_config, &new_conf);
-                wxGetApp().plater()->update();
+                wxGetApp().refresh().update_gate(false, false);
             }
         }
     }
@@ -2149,7 +2156,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 DynamicPrintConfig new_conf = *m_config;
                 new_conf.set_key_value("sparse_infill_rotate_template", new ConfigOptionString(""));
                 m_config_manipulation.apply(m_config, &new_conf);
-                wxGetApp().plater()->update();
+                wxGetApp().refresh().update_gate(false, false);
             }
         }
     }
@@ -2189,7 +2196,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                     m_config_manipulation.apply(m_config, &new_conf);
                 }
             }
-            wxGetApp().plater()->update();
+            wxGetApp().refresh().update_gate(false, false);
         }
 
         // Advisory: Subdivide Mix Layer enabled while layer height is in range but
@@ -2266,7 +2273,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
             }
         } 
         wxGetApp().preset_bundle->set_num_filaments(num_extruder, new_colors);
-        wxGetApp().plater()->on_filaments_change(num_extruder);
+        wxGetApp().filament_svc().on_filaments_change(num_extruder);
         wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
         wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
     }
@@ -2485,15 +2492,15 @@ void Tab::on_presets_changed()
 
     bool is_bbl_vendor_preset = wxGetApp().preset_bundle->is_bbl_vendor();
     if (is_bbl_vendor_preset) {
-        wxGetApp().plater()->get_partplate_list().set_render_option(true, true);
+        wxGetApp().plates().partplate_list().set_render_option(true, true);
         if (wxGetApp().preset_bundle->printers.get_edited_preset().has_cali_lines(wxGetApp().preset_bundle)) {
-            wxGetApp().plater()->get_partplate_list().set_render_cali(true);
+            wxGetApp().plates().partplate_list().set_render_cali(true);
         } else {
-            wxGetApp().plater()->get_partplate_list().set_render_cali(false);
+            wxGetApp().plates().partplate_list().set_render_cali(false);
         }
     } else {
-        wxGetApp().plater()->get_partplate_list().set_render_option(false, true);
-        wxGetApp().plater()->get_partplate_list().set_render_cali(false);
+        wxGetApp().plates().partplate_list().set_render_option(false, true);
+        wxGetApp().plates().partplate_list().set_render_cali(false);
     }
 
     // Printer selected at the Printer tab, update "compatible" marks at the print and filament selectors.
@@ -2510,7 +2517,7 @@ void Tab::on_presets_changed()
     // to avoid needless preset loading from update() function
     m_dependent_tabs.clear();
 
-    wxGetApp().plater()->update_project_dirty_from_presets();
+    wxGetApp().session().update_project_dirty_from_presets();
 }
 
 void Tab::build_preset_description_line(ConfigOptionsGroup* optgroup)
@@ -3271,7 +3278,7 @@ void TabPrint::update()
             toggle_options();
         // update() could be called during undo/redo execution
         // Update of objectList can cause a crash in this case (because m_objects doesn't match ObjectList)
-        if (m_type != Preset::TYPE_MODEL && !wxGetApp().plater()->inside_snapshot_capture())
+        if (m_type != Preset::TYPE_MODEL && !wxGetApp().snapshots().inside_snapshot_capture())
             wxGetApp().obj_list()->update_and_show_object_settings_item();
 
         wxGetApp().mainframe->on_config_changed(m_config);
@@ -3553,7 +3560,7 @@ void TabPrintModel::on_value_change(const std::string& opt_key, const boost::any
     }
     wxGetApp().params_panel()->notify_object_config_changed();
 
-    wxGetApp().plater()->notify_filament_usage_changed();
+    wxGetApp().filament_svc().notify_filament_usage_changed();
 }
 
 void TabPrintModel::reload_config()
@@ -3784,7 +3791,7 @@ void TabPrintPlate::on_value_change(const std::string& opt_key, const boost::any
     if (k == "curr_bed_type")
         validate_filament_hot_bed_nozzle_relation(parent());
     if (k == "print_sequence")
-        wxGetApp().plater()->sync_print_seq_warning_notification();
+        wxGetApp().notification_hub().sync_print_seq_warning_notification();
     update();
 }
 
@@ -6321,7 +6328,7 @@ bool Tab::may_discard_current_dirty_preset(PresetCollection* presets /*= nullptr
             // there are cases when filament comboboxs are updated for old (non-modified) colors,
             // but in full_config a filament_colors option aren't.
             if (presets->type() == Preset::TYPE_FILAMENT && wxGetApp().extruders_edited_cnt() > 1)
-                wxGetApp().plater()->force_filament_colors_update();
+                wxGetApp().filament_svc().force_filament_colors_update();
         }
     }
     else if (dlg.transfer_changes()) // move selected changes
@@ -6743,7 +6750,7 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
      * there are cases when filament comboboxs are updated for old (non-modified) colors,
      * but in full_config a filament_colors option aren't.*/
     if (m_type == Preset::TYPE_FILAMENT && wxGetApp().extruders_edited_cnt() > 1)
-        wxGetApp().plater()->force_filament_colors_update();
+        wxGetApp().filament_svc().force_filament_colors_update();
 
     {
         // Profile compatiblity is updated first when the profile is saved.
@@ -7722,7 +7729,7 @@ void TabSLAPrint::update()
 
         // update() could be called during undo/redo execution
         // Update of objectList can cause a crash in this case (because m_objects doesn't match ObjectList)
-        if (!wxGetApp().plater()->inside_snapshot_capture())
+        if (!wxGetApp().snapshots().inside_snapshot_capture())
             wxGetApp().obj_list()->update_and_show_object_settings_item();
 
         wxGetApp().mainframe->on_config_changed(m_config);

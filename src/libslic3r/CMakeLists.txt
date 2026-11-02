@@ -178,6 +178,7 @@ set(lisbslic3r_sources
     Fill/Lightning/TreeNode.hpp
     Flow.cpp
     Flow.hpp
+    ColorMath.cpp
     FlushVolCalc.cpp
     FlushVolCalc.hpp
     Format/3mf.cpp

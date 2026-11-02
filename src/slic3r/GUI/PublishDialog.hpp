@@ -17,7 +17,7 @@
 #include <wx/icon.h>
 #include <wx/dialog.h>
 #include "wxExtensions.hpp"
-#include "Plater.hpp"
+#include "GUI_Utils.hpp"            // 阶段 E2 头文件解 Plater：DPIDialog 基类真身在此（原经 Plater.hpp 传递，手册 D3 勘误）
 #include "Widgets/StepCtrl.hpp"
 #include "Widgets/ProgressDialog.hpp"
 #include "Widgets/Button.hpp"
@@ -26,6 +26,8 @@
 
 namespace Slic3r {
 namespace GUI {
+
+class Plater;                       // 阶段 E2 头文件解 Plater：成员/形参仅指针（手册 D3；完整类型在 cpp 侧）
 
 enum PublishStep {
     STEP_SLICING = 0,

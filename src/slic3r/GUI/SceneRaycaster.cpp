@@ -3,8 +3,8 @@
 
 #include "Camera.hpp"
 #include "GUI_App.hpp"
+#include "app/SelectionQuery.hpp"   // H2 2.2：get_selection 组合根
 #include "Selection.hpp"
-#include "Plater.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -108,7 +108,7 @@ SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos, const Came
 
     public:
         VolumeKeeper() {
-            const Selection& selection = wxGetApp().plater()->get_selection();
+            const Selection& selection = wxGetApp().selq().get_selection();
             if (selection.is_single_volume() || selection.is_single_modifier()) {
                 const GLVolume* volume = selection.get_first_volume();
                 if (!volume->is_wipe_tower && !volume->is_sla_pad() && !volume->is_sla_support())

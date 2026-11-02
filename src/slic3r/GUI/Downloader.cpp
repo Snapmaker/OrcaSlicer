@@ -1,5 +1,7 @@
 #include "Downloader.hpp"
+#include "app/ProjectSession.hpp"   // H2 3.1：真实供给头
 #include "GUI_App.hpp"
+#include "app/LayoutManager.hpp"   // H2 2.1：select_view 组合根
 #include "NotificationManager.hpp"
 #include "format.hpp"
 #include "MainFrame.hpp"
@@ -198,9 +200,9 @@ void Downloader::start_download(const std::string& full_url)
 
     mainframe->Freeze();
     mainframe->select_tab((size_t)MainFrame::TabPosition::tp3DEditor);
-    plater->select_view_3D("3D");
-    plater->select_view("plate");
-    plater->get_current_canvas3D()->zoom_to_bed();
+    wxGetApp().layout().select_view_3D("3D");
+    wxGetApp().layout().select_view("plate");
+    wxGetApp().layout().get_current_canvas3D()->zoom_to_bed();
     mainframe->Thaw();
 
     // Orca: Replace PS workaround for "mysterious slash" with a more dynamic approach
@@ -224,7 +226,7 @@ void Downloader::start_download(const std::string& full_url)
     // MakerWorld path uses Plater::import_model_id which already splits "&name=".
     if (is_bambustudio_open(full_url) || (is_orca_open(full_url) && is_makerworld_link(full_url))) {        
         const std::string makerworld_arg = payload_parts.name_param.empty() ? escaped_url: (escaped_url + "&name=" + payload_parts.name_param);
-        plater->request_model_download(wxString::FromUTF8(makerworld_arg));
+        wxGetApp().session().request_model_download(wxString::FromUTF8(makerworld_arg));
 
     } else {
         const std::string filename = resolve_download_filename(escaped_url, payload_parts.name_param);
@@ -265,7 +267,7 @@ void Downloader::on_complete(wxCommandEvent& event)
     set_download_state(event.GetInt(), DownloadState::DownloadDone);
 	wxArrayString paths;
 	paths.Add(event.GetString());
-	wxGetApp().plater()->load_files(paths);
+	wxGetApp().session().load_files(paths);
 }
 bool Downloader::user_action_callback(DownloaderUserAction action, int id)
 {

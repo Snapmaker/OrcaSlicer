@@ -6,6 +6,16 @@
 #include "GUI_App.hpp"
 #include "I18N.hpp"
 #include "Plater.hpp"
+#include "app/ObjectEditCommands.hpp"   // H2 2.3：组合根服务直调
+#include "app/SceneRefreshCoordinator.hpp"   // H2 2.3：组合根服务直调
+#include "app/PlateController.hpp"   // H2 2.3：组合根服务直调
+#include "app/ProjectSession.hpp"   // H2 2.3：组合根服务直调
+#include "app/LayoutManager.hpp"   // H2 2.3：组合根服务直调
+#include "app/SlicingController.hpp"   // H2 2.3：组合根服务直调
+#include "app/ArrangementService.hpp"   // H2 2.3：组合根服务直调
+#include "app/SelectionQuery.hpp"   // H2 2.3：组合根服务直调
+#include "app/NotificationHub.hpp"   // H2 2.3：组合根服务直调
+#include "app/FilamentService.hpp"
 #include "BitmapComboBox.hpp"
 #include "MainFrame.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
@@ -228,12 +238,12 @@ ObjectList::ObjectList(wxWindow* parent) :
 
         ObjectDataViewModelNode* sel_node = (ObjectDataViewModelNode*)event.GetItem().GetID();
         if (sel_node && (sel_node->GetType() & ItemType::itPlate)) {
-            if (wxGetApp().plater()->is_preview_shown()) {
-                wxGetApp().plater()->select_sliced_plate(sel_node->GetPlateIdx());
+            if (wxGetApp().layout().is_preview_shown()) {
+                wxGetApp().slicing().select_sliced_plate(sel_node->GetPlateIdx());
             } else {
-                wxGetApp().plater()->select_plate(sel_node->GetPlateIdx());
+                wxGetApp().slicing().select_plate(sel_node->GetPlateIdx(), false);
             }
-            wxGetApp().plater()->deselect_all();
+            wxGetApp().obj_cmds().deselect_all();
         }
         else {
             selection_changed();
@@ -792,7 +802,7 @@ void ObjectList::update_filament_values_for_items(const size_t filaments_count)
     }
 
     // BBS
-    wxGetApp().plater()->update();
+    wxGetApp().refresh().update_gate(false, false);
 }
 
 void ObjectList::update_plate_values_for_items()
@@ -800,7 +810,7 @@ void ObjectList::update_plate_values_for_items()
 #ifdef __WXOSX__
     AssociateModel(nullptr);
 #endif
-    PartPlateList& list = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& list = wxGetApp().plates().partplate_list();
     for (size_t i = 0; i < m_objects->size(); ++i)
     {
         wxDataViewItem item = m_objects_model->GetItemById(i);
@@ -835,7 +845,7 @@ void ObjectList::update_name_for_items()
 {
     m_objects_model->UpdateItemNames();
 
-    wxGetApp().plater()->update();
+    wxGetApp().refresh().update_gate(false, false);
 }
 
 void ObjectList::object_config_options_changed(const ObjectVolumeID& ov_id)
@@ -898,7 +908,7 @@ void ObjectList::printable_state_changed(const std::vector<ObjectVolumeID>& ov_i
     wxGetApp().plater()->get_view3D_canvas3D()->update_instance_printable_state_for_objects(obj_idxs);
 
     // update scene
-    wxGetApp().plater()->update();
+    wxGetApp().refresh().update_gate(false, false);
 }
 
 void ObjectList::assembly_plate_object_name()
@@ -1193,8 +1203,8 @@ void ObjectList::update_filament_in_config(const wxDataViewItem& item)
     }
 
     // update scene
-    wxGetApp().plater()->update();
-    wxGetApp().plater()->notify_filament_usage_changed();
+    wxGetApp().refresh().update_gate(false, false);
+    wxGetApp().filament_svc().notify_filament_usage_changed();
 }
 
 void ObjectList::update_name_in_model(const wxDataViewItem& item) const
@@ -1204,7 +1214,7 @@ void ObjectList::update_name_in_model(const wxDataViewItem& item) const
         int plate_idx = -1;
         const ItemType type0 = m_objects_model->GetItemType(item, plate_idx);
         if (plate_idx >= 0) {
-            auto plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_idx);
+            auto plate = wxGetApp().plates().partplate_list().get_plate(plate_idx);
             if (plate->get_plate_name() != name) {
                 plate->set_plate_name(name);
             }
@@ -1421,7 +1431,7 @@ void ObjectList::paste_objects_into_list(const std::vector<size_t>& object_idxs)
         items.Add(m_objects_model->GetItemById(object));
     }
 
-    wxGetApp().plater()->changed_objects(object_idxs);
+    wxGetApp().refresh().changed_objects(object_idxs);
 
     select_items(items);
     selection_changed();
@@ -1540,7 +1550,7 @@ void ObjectList::list_manipulation(const wxPoint& mouse_pos, bool evt_context_me
             int obj_idx, vol_idx;
             get_selected_item_indexes(obj_idx, vol_idx, item);
             if (obj_idx != -1) {
-                Plater::TakeSnapshot(plater, "Shift objects to bed");
+                app::SnapshotService::Scope(plater, "Shift objects to bed");
                 (*m_objects)[obj_idx]->ensure_on_bed();
                 cnv->reload_scene(true, true);
                 update_info_items(obj_idx);
@@ -1762,7 +1772,7 @@ void ObjectList::key_event(wxKeyEvent& event)
     if (event.GetKeyCode() == WXK_DELETE /*|| event.GetKeyCode() == WXK_BACK*/ )
         remove();
     //else if (event.GetKeyCode() == WXK_F5)
-    //    wxGetApp().plater()->reload_all_from_disk();
+    //    wxGetApp().session().reload_all_from_disk();
     else if (wxGetKeyState(wxKeyCode('A')) && wxGetKeyState(WXK_CONTROL/*WXK_SHIFT*/))
         select_item_all_children();
     else if (wxGetKeyState(wxKeyCode('C')) && wxGetKeyState(WXK_CONTROL))
@@ -1878,7 +1888,7 @@ bool ObjectList::can_drop(const wxDataViewItem& item, int& src_obj_id, int& src_
     if (m_dragged_data.type() & itObject){
         int from_obj_id = m_dragged_data.obj_idx();
         int to_obj_id   = m_objects_model->GetIdByItem(item);
-        PartPlateList& partplate_list = wxGetApp().plater()->get_partplate_list();
+        PartPlateList& partplate_list = wxGetApp().plates().partplate_list();
 
         int from_plate = partplate_list.find_instance(from_obj_id, 0);
         if (from_plate == -1)
@@ -1964,7 +1974,7 @@ void ObjectList::OnDrop(wxDataViewEvent &event)
 
     if(m_dragged_data.type() & itObject){
         int delta = dest_obj_id < src_obj_id ? -1 : 1;
-        PartPlateList& partplate_list = wxGetApp().plater()->get_partplate_list();
+        PartPlateList& partplate_list = wxGetApp().plates().partplate_list();
         /*int cnt = 0, cur_id = src_obj_id, next_id, total = abs(src_obj_id - dest_obj_id);
         //for (cur_id = src_obj_id; cnt < total; id += delta, cnt++)
         next_id = src_obj_id + delta;
@@ -2008,7 +2018,7 @@ void ObjectList::OnDrop(wxDataViewEvent &event)
 
     m_dragged_data.clear();
 
-    wxGetApp().plater()->set_current_canvas_as_dirty();
+    wxGetApp().refresh().set_current_canvas_as_dirty();
 }
 
 void ObjectList::add_category_to_settings_from_selection(const std::vector< std::pair<std::string, bool> >& category_options, wxDataViewItem item)
@@ -2400,7 +2410,7 @@ static TriangleMesh create_mesh(const std::string& type_name, const BoundingBoxf
 void ObjectList::load_generic_subobject(const std::string& type_name, const ModelVolumeType type)
 {
     // BBS: single snapshot
-    Plater::SingleSnapshot single(wxGetApp().plater());
+    app::SnapshotService::SingleScope single(wxGetApp().plater());
 
     if (type == ModelVolumeType::INVALID) {
         load_shape_object(type_name);
@@ -2514,7 +2524,7 @@ void ObjectList::load_shape_object(const std::string &type_name)
     if (obj_idx < 0)
         return;
 
-    Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Add Primitive");
+    app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Add Primitive");
 
     // Create mesh
     BoundingBoxf3 bb;
@@ -2527,7 +2537,7 @@ void ObjectList::load_shape_object(const std::string &type_name)
 void ObjectList::load_mesh_object(const TriangleMesh &mesh, const wxString &name, bool center)
 {
     // Add mesh to model as a new object
-    Model& model = wxGetApp().plater()->model();
+    Model& model = wxGetApp().session().model();
 
 #ifdef _DEBUG
     check_model_ids_validity(model);
@@ -2576,7 +2586,7 @@ void ObjectList::load_mesh_object(const TriangleMesh &mesh, const wxString &name
 //BBS
 bool ObjectList::del_object(const int obj_idx, bool refresh_immediately)
 {
-    return wxGetApp().plater()->delete_object_from_model(obj_idx, refresh_immediately);
+    return wxGetApp().obj_cmds().delete_object_from_model(obj_idx, refresh_immediately);
 }
 
 // Delete subobject
@@ -2630,7 +2640,7 @@ void ObjectList::del_info_item(const int obj_idx, InfoItemType type)
     switch (type) {
     case InfoItemType::CustomSupports:
         cnv->get_gizmos_manager().reset_all_states();
-        Plater::TakeSnapshot(plater, "Remove support painting");
+        app::SnapshotService::Scope(plater, "Remove support painting");
         for (ModelVolume* mv : (*m_objects)[obj_idx]->volumes)
             mv->supported_facets.reset();
         break;
@@ -2646,14 +2656,14 @@ void ObjectList::del_info_item(const int obj_idx, InfoItemType type)
 
     case InfoItemType::MmSegmentation:
         cnv->get_gizmos_manager().reset_all_states();
-        Plater::TakeSnapshot(plater, "Remove color painting");
+        app::SnapshotService::Scope(plater, "Remove color painting");
         for (ModelVolume* mv : (*m_objects)[obj_idx]->volumes)
             mv->mmu_segmentation_facets.reset();
         break;
 
     case InfoItemType::FuzzySkin:
         cnv->get_gizmos_manager().reset_all_states();
-        Plater::TakeSnapshot(plater, _u8L("Remove paint-on fuzzy skin"));
+        app::SnapshotService::Scope(plater, _u8L("Remove paint-on fuzzy skin"));
         for (ModelVolume* mv : (*m_objects)[obj_idx]->volumes)
             mv->fuzzy_skin_facets.reset();
         break;
@@ -2765,7 +2775,7 @@ bool ObjectList::del_subobject_from_object(const int obj_idx, const int idx, con
     assert(idx >= 0);
 
     // BBS: support partplage logic
-    int n_plates = wxGetApp().plater()->get_partplate_list().get_plate_count();
+    int n_plates = wxGetApp().plates().partplate_list().get_plate_count();
 	if ((obj_idx >= 1000 && obj_idx < 1000 + n_plates) || idx<0)
 		// Cannot delete a wipe tower or volume with negative id
 		return false;
@@ -2988,7 +2998,7 @@ void ObjectList::merge(bool to_multipart_object)
         GetSelections(sels);
         assert(!sels.IsEmpty());
 
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Assemble");
+        app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Assemble");
 
         get_object_idxs(obj_idxs, sels);
 
@@ -3123,7 +3133,7 @@ void ObjectList::merge(bool to_multipart_object)
         if (obj_idx == -1)
             return;
 
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Merge parts to an object");
+        app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Merge parts to an object");
 
         ModelObject* model_object = (*m_objects)[obj_idx];
         model_object->merge();
@@ -3217,7 +3227,7 @@ void ObjectList::boolean()
     if (obj_idxs.empty() && vol_idxs.empty())
         return;
 
-    Plater::TakeSnapshot snapshot(wxGetApp().plater(), "boolean");
+    app::SnapshotService::Scope snapshot(wxGetApp().plater(), "boolean");
 
     ModelObject* object = (*m_objects)[obj_idxs.front()];
     TriangleMesh mesh = Plater::combine_mesh_fff(*object, -1, [this](const std::string& msg) {return wxGetApp().notification_manager()->push_plater_error_notification(msg); });
@@ -3422,7 +3432,7 @@ void ObjectList::delete_all_connectors_for_object(int obj_idx)
 
     const CutObjectBase cut_id = init_obj->cut_id;
     // Delete all connectors for related objects (which have the same cut_id)
-    Model& model = wxGetApp().plater()->model();
+    Model& model = wxGetApp().session().model();
     for (int idx = int(m_objects->size())-1; idx >= 0; idx--)
         if (ModelObject* obj = object(idx); obj->cut_id.is_equal(cut_id)) {
             obj->delete_connectors();
@@ -3485,7 +3495,7 @@ bool ObjectList::can_mesh_boolean() const
 // NO_PARAMETERS function call means that changed object index will be determine from Selection()
 void ObjectList::changed_object(const int obj_idx/* = -1*/) const
 {
-    wxGetApp().plater()->changed_object(obj_idx < 0 ? get_selected_obj_idx() : obj_idx);
+    wxGetApp().refresh().changed_object(obj_idx < 0 ? get_selected_obj_idx() : obj_idx);
 }
 
 void ObjectList::part_selection_changed()
@@ -3952,7 +3962,7 @@ void ObjectList::add_object_to_list(size_t obj_idx, bool call_selection_changed,
 {
     auto model_object = (*m_objects)[obj_idx];
     //BBS start add obj_idx for debug
-    PartPlateList& list = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& list = wxGetApp().plates().partplate_list();
     if (notify_partplate) {
         list.notify_instance_update(obj_idx, 0, true);
     }
@@ -4174,8 +4184,8 @@ void ObjectList::delete_from_model_and_list(const std::vector<ItemForDelete>& it
     }
 
     if (need_update) {
-        wxGetApp().plater()->update();
-        wxGetApp().plater()->object_list_changed();
+        wxGetApp().refresh().update_gate(false, false);
+        wxGetApp().refresh().object_list_changed();
     }
 
     for (size_t id : modified_objects_ids) {
@@ -4325,7 +4335,7 @@ void ObjectList::remove()
         UnselectAll();
         update_selection(sels, sels_mode, m_objects_model);
 
-        Plater::TakeSnapshot snapshot = Plater::TakeSnapshot(wxGetApp().plater(), "Delete selected");
+        app::SnapshotService::Scope snapshot = app::SnapshotService::Scope(wxGetApp().plater(), "Delete selected");
 
         for (auto& item : sels)
         {
@@ -4431,7 +4441,7 @@ void ObjectList::add_layer_range_after_current(const t_layer_height_range curren
                     t_layer_height_range new_range = { middle_layer_z, next_range.second };
 
                     // BBS: remove snapshot name "Add Height Range"
-                    Plater::TakeSnapshot snapshot(wxGetApp().plater(), "");
+                    app::SnapshotService::Scope snapshot(wxGetApp().plater(), "");
                     changed = true;
 
                     // create new 2 layers instead of deleted one
@@ -4648,7 +4658,7 @@ void ObjectList::update_selections()
 
 #if 0
     if (m_selection_mode == smUndef) {
-        PartPlate* pp = wxGetApp().plater()->get_partplate_list().get_selected_plate();
+        PartPlate* pp = wxGetApp().plates().partplate_list().get_selected_plate();
         assert(pp != nullptr);
         wxDataViewItem sel_plate = m_objects_model->GetItemByPlateId(pp->get_index());
         sels.Add(sel_plate);
@@ -4954,7 +4964,7 @@ void ObjectList::update_selections_on_canvas()
         volume_idxs = selection.get_missing_volume_idxs_from(volume_idxs);
         if (volume_idxs.size() > 0)
         {
-            Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Remove selected from list", UndoRedo::SnapshotType::Selection);
+            app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Remove selected from list", UndoRedo::SnapshotType::Selection);
             selection.remove_volumes(mode, volume_idxs);
         }
     }
@@ -4966,7 +4976,7 @@ void ObjectList::update_selections_on_canvas()
         // OR there is no single selection
         if (selection.get_mode() == mode || !single_selection)
             volume_idxs = selection.get_unselected_volume_idxs_from(volume_idxs);
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Add selected to list", UndoRedo::SnapshotType::Selection);
+        app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Add selected to list", UndoRedo::SnapshotType::Selection);
         selection.add_volumes(mode, volume_idxs, single_selection);
     }
 
@@ -5065,7 +5075,7 @@ void ObjectList::select_items(const wxDataViewItemArray& sels)
         SetSelections(sels);
     }
     else {
-        int curr_plate_idx = wxGetApp().plater()->get_partplate_list().get_curr_plate_index();
+        int curr_plate_idx = wxGetApp().plates().partplate_list().get_curr_plate_index();
         on_plate_selected(curr_plate_idx);
     }
 
@@ -5583,7 +5593,7 @@ void ObjectList::split_instances()
     if (obj_idx == -1)
         return;
 
-    Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Instances to Separated Objects");
+    app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Instances to Separated Objects");
 
     if (selection.is_single_full_object())
     {
@@ -5684,15 +5694,15 @@ void ObjectList::fix_through_netfabb()
             msg += "\n";
         }
 
-        plater->clear_before_change_mesh(obj_idx);
+        wxGetApp().obj_cmds().clear_before_change_mesh(obj_idx);
         std::string res;
         if (!fix_model_by_win10_sdk_gui(*(object(obj_idx)), vol_idx, progress_dlg, msg, res))
             return false;
-        //wxGetApp().plater()->changed_mesh(obj_idx);
+        //wxGetApp().obj_cmds().changed_mesh(obj_idx);
         object(obj_idx)->ensure_on_bed();
-        plater->changed_mesh(obj_idx);
+        wxGetApp().obj_cmds().changed_mesh(obj_idx);
 
-        plater->get_partplate_list().notify_instance_update(obj_idx, 0);
+        wxGetApp().plates().partplate_list().notify_instance_update(obj_idx, 0);
         plater->sidebar().obj_list()->update_plate_values_for_items();
 
         if (res.empty())
@@ -5706,7 +5716,7 @@ void ObjectList::fix_through_netfabb()
         return true;
     };
 
-    Plater::TakeSnapshot snapshot(plater, "Repairing model object");
+    app::SnapshotService::Scope snapshot(plater, "Repairing model object");
 
     // Open a progress dialog.
     ProgressDialog progress_dlg(_L("Repairing model object"), "", 100, find_toplevel_parent(plater),
@@ -5833,7 +5843,7 @@ void GUI::ObjectList::OnStartEditing(wxDataViewEvent &event)
         if (node->GetType() & itPlate) {
             int plate_idx = node->GetPlateIdx();
             if (plate_idx >= 0) {
-                auto plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_idx);
+                auto plate = wxGetApp().plates().partplate_list().get_plate(plate_idx);
                 m_objects_model->SetName(from_u8(plate->get_plate_name()), GetSelection());
             }
         }
@@ -5878,7 +5888,7 @@ void ObjectList::OnEditingStarted(wxDataViewEvent &event)
     else if (col == colSinking) {
         Plater *    plater = wxGetApp().plater();
         GLCanvas3D *cnv    = plater->canvas3D();
-        Plater::TakeSnapshot(plater, "Shift objects to bed");
+        app::SnapshotService::Scope(plater, "Shift objects to bed");
         int obj_idx, vol_idx;
         get_selected_item_indexes(obj_idx, vol_idx, item);
         (*m_objects)[obj_idx]->ensure_on_bed();
@@ -5920,7 +5930,7 @@ void ObjectList::OnEditingDone(wxDataViewEvent &event)
             int plate_idx = -1;
             m_objects_model->GetItemType(event.GetItem(), plate_idx);
             if (plate_idx >= 0) {
-                auto plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_idx);
+                auto plate = wxGetApp().plates().partplate_list().get_plate(plate_idx);
                 m_objects_model->SetCurSelectedPlateFullName(plate_idx, plate->get_plate_name());
             }
         }
@@ -5942,7 +5952,7 @@ void ObjectList::OnEditingDone(wxDataViewEvent &event)
 
     Plater* plater = wxGetApp().plater();
     if (plater)
-        plater->set_current_canvas_as_dirty();
+        wxGetApp().refresh().set_current_canvas_as_dirty();
 }
 
 // BBS: remove "const" qualifier
@@ -6021,8 +6031,8 @@ void ObjectList::set_extruder_for_selected_items(const int extruder)
     }
 
     // update scene
-    wxGetApp().plater()->update();
-    wxGetApp().plater()->notify_filament_usage_changed();
+    wxGetApp().refresh().update_gate(false, false);
+    wxGetApp().filament_svc().notify_filament_usage_changed();
 
     // BBS: update extruder/filament column
     Refresh();
@@ -6059,7 +6069,7 @@ void ObjectList::reload_all_plates(bool notify_partplate)
     m_objects_model->ResetAll();
     m_prevent_list_events = false;
 
-    PartPlateList& ppl = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& ppl = wxGetApp().plates().partplate_list();
     for (int i = 0; i < ppl.get_plate_count(); i++) {
         PartPlate* pp = ppl.get_plate(i);
         m_objects_model->AddPlate(pp, wxEmptyString);
@@ -6079,10 +6089,10 @@ void ObjectList::reload_all_plates(bool notify_partplate)
     m_prevent_canvas_selection_update = false;
 
     // update scene
-    wxGetApp().plater()->update();
+    wxGetApp().refresh().update_gate(false, false);
     // update printable states on canvas
     wxGetApp().plater()->get_view3D_canvas3D()->update_instance_printable_state_for_objects(obj_idxs);
-    wxGetApp().plater()->notify_filament_usage_changed();
+    wxGetApp().filament_svc().notify_filament_usage_changed();
 }
 
 void ObjectList::on_plate_selected(int plate_index)
@@ -6101,14 +6111,14 @@ void ObjectList::on_plate_selected(int plate_index)
 void ObjectList::notify_instance_updated(int obj_idx)
 {
     const int inst_cnt = (*m_objects)[obj_idx]->instances.size();
-    PartPlateList& list = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& list = wxGetApp().plates().partplate_list();
     for (int index = 0; index < inst_cnt; index ++)
         list.notify_instance_update(obj_idx, index);
 }
 
 void ObjectList::update_after_undo_redo()
 {
-    Plater::SuppressSnapshots suppress(wxGetApp().plater());
+    app::SnapshotService::SuppressScope suppress(wxGetApp().plater());
     //BBS: undo/redo will rebuild all the plates before
     //no need to notify instance to partplate
     reload_all_plates(false);
@@ -6203,7 +6213,7 @@ void ObjectList::toggle_printable_state()
     wxGetApp().plater()->get_view3D_canvas3D()->update_instance_printable_state_for_objects(obj_idxs);
 
     // update scene
-    wxGetApp().plater()->update();
+    wxGetApp().refresh().update_gate(false, false);
     wxGetApp().plater()->reload_paint_after_background_process_apply();
 }
 
@@ -6245,7 +6255,7 @@ void ObjectList::apply_object_instance_transfrom_to_all_volumes(ModelObject *mod
     model_object->translate_instances(original_instance_center);
 
     // update the cache data in selection to keep the data of ModelVolume and GLVolume are consistent
-    wxGetApp().plater()->update();
+    wxGetApp().refresh().update_gate(false, false);
 }
 
 } //namespace GUI

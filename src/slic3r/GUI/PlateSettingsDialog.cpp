@@ -1,4 +1,5 @@
 #include "PlateSettingsDialog.hpp"
+#include "Plater.hpp"   // H2 3.1 白名单：get_extruder_colors 组合体消费（偏离登记）
 #include "MsgDialog.hpp"
 #include "Widgets/DialogButtons.hpp"
 

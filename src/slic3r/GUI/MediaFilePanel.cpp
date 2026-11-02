@@ -1,8 +1,9 @@
 #include "MediaFilePanel.h"
+#include "Plater.hpp"   // H2 3.1 白名单：EVT_PRINT_FROM_SDCARD_VIEW + wxPostEvent 完整型（偏离登记）
 #include "ImageGrid.h"
 #include "I18N.hpp"
 #include "GUI_App.hpp"
-#include "Plater.hpp"
+#include "app/SlicingController.hpp"   // H2 2.6：组合根服务直调
 #include "Widgets/Button.hpp"
 #include "Widgets/SwitchButton.hpp"
 #include "Widgets/Label.hpp"
@@ -571,7 +572,7 @@ void MediaFilePanel::doAction(size_t index, int action)
                         file_path.erase(0, 1);
                     }
 
-                    int gcode_file_count = Slic3r::GUI::wxGetApp().plater()->update_print_required_data(config, model, plate_data_list, file.name, file_path);
+                    int gcode_file_count = Slic3r::GUI::wxGetApp().slicing().update_print_required_data(config, model, plate_data_list, file.name, file_path);
 
                     if (gcode_file_count > 0) {
                         wxPostEvent(Slic3r::GUI::wxGetApp().plater(), SimpleEvent(EVT_PRINT_FROM_SDCARD_VIEW));

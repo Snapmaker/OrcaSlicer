@@ -34,6 +34,9 @@
 #include "2DBed.hpp"
 #include "3DBed.hpp"
 #include "PartPlate.hpp"
+#include "app/FilamentService.hpp"   // H2 2.5：组合根服务直调
+#include "app/SceneRefreshCoordinator.hpp"   // H2 2.5：组合根服务直调
+#include "Plater.hpp"   // 阶段 H1（路径 A 解环）：原经 PartPlate.hpp:15 传递——消费者显式包含
 #include "Camera.hpp"
 #include "GUI_Colors.hpp"
 #include "GUI_ObjectList.hpp"
@@ -3679,9 +3682,9 @@ void PartPlate::clear_filament_map()
 void PartPlate::on_extruder_count_changed(int extruder_count)
 {
     if (extruder_count < 2) {
-        std::vector<int> f_map = wxGetApp().plater()->get_global_filament_map();
+        std::vector<int> f_map = wxGetApp().filament_svc().get_global_filament_map();
         std::fill(f_map.begin(), f_map.end(), 1);
-        wxGetApp().plater()->set_global_filament_map(f_map);
+        wxGetApp().filament_svc().set_global_filament_map(f_map);
         // clear filament map and mode in single extruder mode
         clear_filament_map();
         // clear_filament_map_mode();
@@ -4577,7 +4580,7 @@ int PartPlateList::select_plate(int index)
 	m_current_plate = index;
 	m_plate_list[m_current_plate]->set_selected();
         if (old_plate_index != m_current_plate && wxGetApp().plater())
-            wxGetApp().plater()->notify_filament_usage_changed();
+            wxGetApp().filament_svc().notify_filament_usage_changed();
 
 	//BBS
 	if(m_model)
@@ -5053,7 +5056,7 @@ int PartPlateList::add_to_plate(int obj_id, int instance_id, int plate_id)
 	}
 	ret = plate->add_instance(obj_id, instance_id, true);
 
-    wxGetApp().plater()->notify_filament_usage_changed();
+    wxGetApp().filament_svc().notify_filament_usage_changed();
 
 	return ret;
 }
@@ -5798,7 +5801,7 @@ int PartPlateList::rebuild_plates_after_deserialize(std::vector<bool>& previous_
 					it2->second->reset();
 					print->set_gcode_file_invalidated();
 					if ((i == m_current_plate)&&m_plater)
-						m_plater->reset_gcode_toolpaths();
+						wxGetApp().refresh().reset_gcode_toolpaths();
 				}
 				continue;
 			}

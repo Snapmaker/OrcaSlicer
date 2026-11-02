@@ -1,4 +1,5 @@
 #include "HintNotification.hpp"
+#include "Plater.hpp"   // H2 3.1 白名单：Plater 完整型解引用（偏离登记）
 #include "ImGuiWrapper.hpp"
 #include "format.hpp"
 #include "I18N.hpp"

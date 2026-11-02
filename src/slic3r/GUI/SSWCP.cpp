@@ -1,5 +1,8 @@
 // Implementation of web communication protocol for Slicer Studio
 #include "SSWCP.hpp"
+#include "app/PlateController.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "PartPlate.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "Plater.hpp"   // H2 3.1 白名单：Plater 完整型解引用（偏离登记）
 #include "FilamentColorUtils.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
@@ -2535,7 +2538,7 @@ nlohmann::json SSWCP::build_filament_mapping_json(const std::string& filename, c
         if (filename.empty() || !boost::filesystem::exists(filename) || !boost::filesystem::is_regular_file(filename))
             return response;
 
-        auto* current_plate = wxGetApp().plater() ? wxGetApp().plater()->get_partplate_list().get_curr_plate() : nullptr;
+        auto* current_plate = wxGetApp().plates().partplate_list().get_curr_plate();
         if (current_plate == nullptr)
             return response;
 
@@ -2743,7 +2746,7 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             return;
         }
 
-        auto* current_plate = wxGetApp().plater() ? wxGetApp().plater()->get_partplate_list().get_curr_plate() : nullptr;
+        auto* current_plate = wxGetApp().plates().partplate_list().get_curr_plate();
         if (current_plate == nullptr) {
             handle_general_fail();
             return;
@@ -2770,7 +2773,6 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         auto& config = processor.current_dynamic_config();*/
 
         auto time = result.print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
-        response["estimated_time"] = time;
 
         auto color_to_int = [](const std::string& oriclr) -> long long { return preprint_color_to_int(oriclr); };
 
@@ -2891,7 +2893,7 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         }
 
         //nozzle info
-        PartPlate*  cur_plate        = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+        PartPlate*  cur_plate        = wxGetApp().plates().partplate_list().get_curr_plate();
         if (cur_plate)
         {
             auto*  nozzle_opt = cur_plate->fff_print()->config().option<ConfigOptionFloats>("nozzle_diameter");

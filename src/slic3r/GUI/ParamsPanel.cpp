@@ -12,6 +12,7 @@
 #include "MainFrame.hpp"
 #include "GUI_App.hpp"
 #include "Plater.hpp"
+#include "app/SceneRefreshCoordinator.hpp"   // H2 2.4：组合根服务直调
 
 #include "Widgets/Label.hpp"
 #include "Widgets/SwitchButton.hpp"

@@ -1035,7 +1035,7 @@ void update_volume(TriangleMesh &&mesh, const DataUpdate &data, const Transform3
         // TRN: This is the title of the action appearing in undo/redo stack.
         // It is same for Text and SVG.
         std::string snap_name = _u8L("Emboss attribute change");
-        Plater::TakeSnapshot snapshot(plater, snap_name, UndoRedo::SnapshotType::GizmoAction);
+        app::SnapshotService::Scope snapshot(plater, snap_name, UndoRedo::SnapshotType::GizmoAction);
     }
 
     ModelVolume *volume = get_model_volume(data.volume_id, plater->model().objects);   

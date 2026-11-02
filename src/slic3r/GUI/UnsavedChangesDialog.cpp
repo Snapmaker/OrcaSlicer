@@ -1,4 +1,6 @@
 #include "UnsavedChangesDialog.hpp"
+#include "Search.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "Sidebar.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 
 #include <cstddef>
 #include <string>
@@ -13,7 +15,6 @@
 #include "libslic3r/Color.hpp"
 #include "format.hpp"
 #include "GUI_App.hpp"
-#include "Plater.hpp"
 #include "Tab.hpp"
 #include "ExtraRenderers.hpp"
 #include "wxExtensions.hpp"

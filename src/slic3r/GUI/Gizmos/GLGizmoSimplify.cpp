@@ -1,4 +1,7 @@
 #include "GLGizmoSimplify.hpp"
+#include "../GUI_App.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/PlateController.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/ProjectSession.hpp"   // H2 3.1：partplate/model accessor 供给
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
@@ -147,7 +150,7 @@ void GLGizmoSimplify::on_render_input_window(float x, float y, float bottom_limi
     create_gui_cfg();
 
     const Selection &selection = m_parent.get_selection();
-    const ModelVolume *act_volume = get_model_volume(selection, wxGetApp().plater()->model());
+    const ModelVolume *act_volume = get_model_volume(selection, wxGetApp().session().model());
     if (act_volume == nullptr) {
         stop_worker_thread_request();
         close();

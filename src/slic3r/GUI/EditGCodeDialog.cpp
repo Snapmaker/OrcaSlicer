@@ -1,4 +1,5 @@
 #include "EditGCodeDialog.hpp"
+#include "app/ProjectSession.hpp"   // H2 3.1：真实供给头
 
 #include <vector>
 #include <string>
@@ -17,7 +18,6 @@
 #include "wxExtensions.hpp"
 #include "ExtraRenderers.hpp"
 #include "MsgDialog.hpp"
-#include "Plater.hpp"
 
 #include "Widgets/DialogButtons.hpp"
 
@@ -246,7 +246,7 @@ wxDataViewItem EditGCodeDialog::add_presets_placeholders()
         return std::set(vec.begin(), vec.end());
     };
 
-    const bool  is_fff      = wxGetApp().plater()->printer_technology() == ptFFF;
+    const bool  is_fff      = wxGetApp().session().printer_technology == ptFFF;
     const std::set<std::string> print_options    = get_set_from_vec(is_fff ? Preset::print_options()    : Preset::sla_print_options());
     const std::set<std::string> material_options = get_set_from_vec(is_fff ? Preset::filament_options() : Preset::sla_material_options());
     const std::set<std::string> printer_options  = get_set_from_vec(is_fff ? Preset::printer_options()  : Preset::sla_printer_options());

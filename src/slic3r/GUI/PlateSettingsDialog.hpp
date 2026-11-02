@@ -1,8 +1,9 @@
 #ifndef slic3r_GUI_PlateSettingsDialog_hpp_
 #define slic3r_GUI_PlateSettingsDialog_hpp_
 
-#include "Plater.hpp"
 #include "PartPlate.hpp"
+#include "GUI_Utils.hpp"   // H2 3.1：DPIDialog 基类（原 Plater.hpp 传递）
+namespace Slic3r { namespace GUI { class Plater; } }   // H2 3.1：Plater 仅指针形态——前向声明替代传递包含
 #include "Widgets/Button.hpp"
 #include "Widgets/RadioBox.hpp"
 #include "Widgets/ComboBox.hpp"

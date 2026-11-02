@@ -1,4 +1,6 @@
 #include "SelectMachine.hpp"
+#include "app/PlateController.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "libslic3r/Model.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "I18N.hpp"
 
 #include "libslic3r/Utils.hpp"
@@ -24,6 +26,11 @@
 #include <miniz.h>
 #include <algorithm>
 #include "Plater.hpp"
+#include "app/ExportSendCoordinator.hpp"   // H2 2.6：组合根服务直调
+#include "app/NotificationHub.hpp"   // H2 2.6：组合根服务直调
+#include "app/ProjectSession.hpp"   // H2 2.6：组合根服务直调
+#include "app/SlicingController.hpp"   // H2 2.6：组合根服务直调
+#include "app/FilamentService.hpp"   // H2 2.6：组合根服务直调
 #include "Notebook.hpp"
 #include "BitmapCache.hpp"
 #include "BindDialog.hpp"
@@ -1517,7 +1524,7 @@ void SelectMachineDialog::show_status(PrintDialogStatus status, std::vector<wxSt
         Enable_Refresh_Button(true);
     } else if (status == PrintDialogStatus::PrintStatusTimelapseWarning) {
         wxString   msg_text;
-        PartPlate *plate = m_plater->get_partplate_list().get_curr_plate();
+        PartPlate *plate = wxGetApp().plates().partplate_list().get_curr_plate();
         for (auto warning : plate->get_slice_result()->warnings) {
             if (warning.msg == NOT_GENERATE_TIMELAPSE) {
                 if (warning.error_code == "1001C001") {
@@ -1609,7 +1616,7 @@ bool SelectMachineDialog::is_same_nozzle_diameters(float &tag_nozzle_diameter) c
 
     try
     {
-        auto extruders = wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_used_extruders();
+        auto extruders = wxGetApp().plates().partplate_list().get_curr_plate()->get_used_extruders();
         for (auto i = 0; i < extruders.size(); i++) {
             auto extruder = extruders[i] - 1;
             tag_nozzle_diameter = float(opt_nozzle_diameters->get_at(extruder));
@@ -1744,7 +1751,7 @@ void SelectMachineDialog::on_ok_btn(wxCommandEvent &event)
         }
     }
 
-    PartPlate* plate = m_plater->get_partplate_list().get_curr_plate();
+    PartPlate* plate = wxGetApp().plates().partplate_list().get_curr_plate();
 
     for (auto warning : plate->get_slice_result()->warnings) {
         if (warning.msg == BED_TEMP_TOO_HIGH_THAN_FILAMENT) {
@@ -2033,7 +2040,7 @@ void SelectMachineDialog::on_send_print()
     }
 
     if (m_print_type == PrintFromType::FROM_NORMAL) {
-        result = m_plater->send_gcode(m_print_plate_idx, [this](int export_stage, int current, int total, bool& cancel) {
+        result = wxGetApp().ex().send_gcode(m_print_plate_idx, [this](int export_stage, int current, int total, bool& cancel) {
             if (this->m_is_canceled) return;
             bool     cancelled = false;
             wxString msg = _L("Preparing print job");
@@ -2055,7 +2062,7 @@ void SelectMachineDialog::on_send_print()
 
         // export config 3mf if needed
         if (!obj_->is_lan_mode_printer()) {
-            result = m_plater->export_config_3mf(m_print_plate_idx);
+            result = wxGetApp().ex().export_config_3mf(m_print_plate_idx);
             if (result < 0) {
                 BOOST_LOG_TRIVIAL(trace) << "export_config_3mf failed, result = " << result;
                 return;
@@ -2642,7 +2649,7 @@ void SelectMachineDialog::on_selection_changed(wxCommandEvent &event)
 
 void SelectMachineDialog::update_flow_cali_check(MachineObject* obj)
 {
-    auto bed_type = m_plater->get_partplate_list().get_curr_plate()->get_bed_type(true);
+    auto bed_type = wxGetApp().plates().partplate_list().get_curr_plate()->get_bed_type(true);
     auto show_cali_tips = true;
 
     if (obj && obj->get_printer_arch() == PrinterArch::ARCH_I3) { show_cali_tips = false; }
@@ -2685,7 +2692,7 @@ void SelectMachineDialog::update_show_status()
     }
     if (!dev) return;
     dev->check_pushing();
-    PartPlate* plate = m_plater->get_partplate_list().get_curr_plate();
+    PartPlate* plate = wxGetApp().plates().partplate_list().get_curr_plate();
 
     // blank plate has no valid gcode file
     if (m_print_type == PrintFromType::FROM_NORMAL) {
@@ -2899,7 +2906,7 @@ void SelectMachineDialog::update_show_status()
 
 bool SelectMachineDialog::has_timelapse_warning()
 {
-    PartPlate *plate = m_plater->get_partplate_list().get_curr_plate();
+    PartPlate *plate = wxGetApp().plates().partplate_list().get_curr_plate();
     for (auto warning : plate->get_slice_result()->warnings) {
         if (warning.msg == NOT_GENERATE_TIMELAPSE) {
             return true;
@@ -2944,7 +2951,7 @@ bool SelectMachineDialog::is_show_timelapse()
     };
 
     std::string standard_version = "2.2.0";
-    PartPlate *plate      = m_plater->get_partplate_list().get_curr_plate();
+    PartPlate *plate      = wxGetApp().plates().partplate_list().get_curr_plate();
     fs::path   gcode_path = plate->get_tmp_gcode_path();
 
     std::string   line;
@@ -3116,20 +3123,20 @@ void SelectMachineDialog::set_default()
     //project name
     m_rename_switch_panel->SetSelection(0);
 
-    wxString filename = m_plater->get_export_gcode_filename("", true, m_print_plate_idx == PLATE_ALL_IDX ? true : false);
+    wxString filename = wxGetApp().ex().get_export_gcode_filename("", true, m_print_plate_idx == PLATE_ALL_IDX ? true : false);
     if (m_print_plate_idx == PLATE_ALL_IDX && filename.empty()) {
         filename = _L("Untitled");
     }
 
     if (filename.empty()) {
-        filename = m_plater->get_export_gcode_filename("", true);
+        filename = wxGetApp().ex().get_export_gcode_filename("", true, false);
         if (filename.empty()) filename = _L("Untitled");
     }
 
     fs::path filename_path(filename.c_str());
     std::string file_name  = filename_path.filename().string();
     if (from_u8(file_name).find(_L("Untitled")) != wxString::npos) {
-        PartPlate *part_plate = m_plater->get_partplate_list().get_plate(m_print_plate_idx);
+        PartPlate *part_plate = wxGetApp().plates().partplate_list().get_plate(m_print_plate_idx);
         if (part_plate) {
             if (std::vector<ModelObject *> objects = part_plate->get_objects_on_this_plate(); objects.size() > 0) {
                 file_name = objects[0]->name;
@@ -3205,7 +3212,7 @@ void SelectMachineDialog::set_default()
 
     if (m_print_type == PrintFromType::FROM_NORMAL) {
         reset_and_sync_ams_list();
-        set_default_normal(m_plater->get_partplate_list().get_curr_plate()->thumbnail_data);
+        set_default_normal(wxGetApp().plates().partplate_list().get_curr_plate()->thumbnail_data);
     }
     else if (m_print_type == PrintFromType::FROM_SDCARD_VIEW) {
         update_page_turn_state(true);
@@ -3249,7 +3256,7 @@ void SelectMachineDialog::reset_and_sync_ams_list()
         }
     }
 
-    auto           extruders = wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_used_extruders();
+    auto           extruders = wxGetApp().plates().partplate_list().get_curr_plate()->get_used_extruders();
     BitmapCache    bmcache;
     MaterialHash::iterator iter = m_materialList.begin();
     while (iter != m_materialList.end()) {
@@ -3497,10 +3504,10 @@ void SelectMachineDialog::final_deal_edge_pixels_data(ThumbnailData &data)
 void SelectMachineDialog::updata_thumbnail_data_after_connected_printer()
 {
     // change thumbnail_data
-    ThumbnailData &input_data          = m_plater->get_partplate_list().get_curr_plate()->thumbnail_data;
-    ThumbnailData &no_light_data = m_plater->get_partplate_list().get_curr_plate()->no_light_thumbnail_data;
+    ThumbnailData &input_data          = wxGetApp().plates().partplate_list().get_curr_plate()->thumbnail_data;
+    ThumbnailData &no_light_data = wxGetApp().plates().partplate_list().get_curr_plate()->no_light_thumbnail_data;
     if (input_data.width == 0 || input_data.height == 0 || no_light_data.width == 0 || no_light_data.height == 0) {
-        wxGetApp().plater()->update_all_plate_thumbnails(false);
+        wxGetApp().notification_hub().update_all_plate_thumbnails(false);
     }
     unify_deal_thumbnail_data(input_data, no_light_data);
 }
@@ -3630,9 +3637,9 @@ void SelectMachineDialog::set_default_normal(const ThumbnailData &data)
 
 #endif // __WXOSX_MAC__
     // basic info
-    auto       aprint_stats = m_plater->get_partplate_list().get_current_fff_print().print_statistics();
+    auto       aprint_stats = wxGetApp().plates().partplate_list().get_current_fff_print().print_statistics();
     wxString   time;
-    PartPlate *plate = m_plater->get_partplate_list().get_curr_plate();
+    PartPlate *plate = wxGetApp().plates().partplate_list().get_curr_plate();
     if (plate) {
         if (plate->get_slice_result()) { time = wxString::Format("%s", short_time(get_time_dhms(plate->get_slice_result()->print_statistics.modes[0].time))); }
     }

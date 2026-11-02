@@ -21,13 +21,17 @@
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "Jobs/Job.hpp"
 #include "Jobs/Worker.hpp"
-#include "Search.hpp"
-#include "PartPlate.hpp"
+#include "app/MixingTypes.hpp"   // 阶段 B3：门控类型上提（Plater 类内 using 别名保持公有 API 名）
+#include "app/SnapshotService.hpp"   // 阶段 H2 1.1（§5.3 别名原形）：快照替身类完整型——hpp 禁服务头纪律的注册例外（无 wx 轻头）
 #include "GUI_App.hpp"
+#include "Sidebar.hpp"
 #include "Jobs/PrintJob.hpp"
 #include "Jobs/SendJob.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PrintBase.hpp"
+#include "Camera.hpp"   // H2 3.1 顶部瘦身：Camera::EType（原经 PartPlate.hpp 传递链）
+#include "libslic3r/Print.hpp"   // H2 3.1 顶部瘦身：m_fff_print 值成员（原经 PartPlate.hpp 传递链）
+#include "libslic3r/SLAPrint.hpp"   // 阶段 H1（路径 A）：m_sla_print 值成员上收后消费 TU 需完整类型
 
 #include "libslic3r/calib.hpp"
 #include "libslic3r/CutUtils.hpp"
@@ -69,6 +73,27 @@ namespace UndoRedo {
 
 namespace GUI {
 
+namespace app {
+class ArrangeRequest;
+class OrientRequest;
+class SnapshotService;
+class NotificationHub;
+class PlateController;
+class SlicingController;
+class ProjectSession;
+class ExportSendCoordinator;
+class SelectionQuery;
+class ObjectEditCommands;
+class ArrangementService;
+class MixingGateKeeper;
+class FilamentService;
+class CalibrationFlow;
+class LayoutManager;
+class SceneRefreshCoordinator;
+class PlaterEventRouter;
+}   // F3/G1/G3/G5/H1：前置声明（hpp 禁 include 服务头——调用方 cpp 各自 include；H2 1.1 起唯一例外：
+    // SnapshotService.hpp 直含——§5.3 别名原形所需完整型，无 wx 轻头）
+
 class MainFrame;
 class ConfigOptionsGroup;
 class ObjectSettings;
@@ -83,16 +108,20 @@ struct Camera;
 class GLToolbar;
 class PlaterPresetComboBox;
 class PartPlateList;
+class MenuFactory;
+class BoostThreadWorker;
+class SLAImportDialog;
+template <class T> class PlaterWorker;
 
 using t_optgroups = std::vector <std::shared_ptr<ConfigOptionsGroup>>;
 
 class Plater;
-enum class ActionButtonType : int;
 
 #define EVT_PUBLISHING_START        1
 #define EVT_PUBLISHING_STOP         2
 
 //BBS: add EVT_SLICING_UPDATE declare here
+wxDECLARE_EVENT(EVT_SCHEDULE_BACKGROUND_PROCESS, SimpleEvent);
 wxDECLARE_EVENT(EVT_SLICING_UPDATE, Slic3r::SlicingStatusEvent);
 wxDECLARE_EVENT(EVT_PUBLISH,        wxCommandEvent);
 wxDECLARE_EVENT(EVT_OPEN_PLATESETTINGSDIALOG,        wxCommandEvent);
@@ -113,212 +142,30 @@ using ColorEvent = Event<wxColour>;
 wxDECLARE_EVENT(EVT_ADD_CUSTOM_FILAMENT, ColorEvent);
 const wxString DEFAULT_PROJECT_NAME = "Untitled";
 
-class SidebarProps
-{
-public:
-    static int TitlebarMargin();
-    static int ContentMargin();
-    static int IconSpacing();
-    static int ElementSpacing();
-};
-
-class Sidebar : public wxPanel
-{
-    ConfigOptionMode    m_mode;
-public:
-    enum DockingState
-    {
-        None, Left, Right
-    };
-
-    Sidebar(Plater *parent);
-    Sidebar(Sidebar &&) = delete;
-    Sidebar(const Sidebar &) = delete;
-    Sidebar &operator=(Sidebar &&) = delete;
-    Sidebar &operator=(const Sidebar &) = delete;
-    ~Sidebar();
-
-    void create_printer_preset();
-    void init_filament_combo(PlaterPresetComboBox **combo, const int filament_idx);
-    void remove_unused_filament_combos(const size_t current_extruder_count);
-    void update_all_preset_comboboxes(bool reload_printer_view = true);
-    //void update_partplate(PartPlateList& list);
-    void update_presets(Slic3r::Preset::Type preset_type);
-    //BBS
-    void update_presets_from_to(Slic3r::Preset::Type preset_type, std::string from, std::string to);
-
-    void change_top_border_for_mode_sizer(bool increase_border);
-    void msw_rescale();
-    void sys_color_changed();
-    void search();
-    void jump_to_option(size_t selected);
-    void jump_to_option(const std::string& opt_key, Preset::Type type, const std::wstring& category);
-    // BBS. Add on_filaments_change() method.
-    void on_filaments_change(size_t num_filaments);
-    void change_filament(size_t from_id, size_t to_id);
-    void merge_mixed_filament(size_t from_id, size_t to_id,
-                              bool skip_update = false, bool skip_serialize = false);
-    void add_filament();
-    void delete_filament(size_t filament_id  = size_t(-1), int replace_filament_id = -1,
-                         bool skip_dependency_check = false,
-                         bool skip_update = false); // 0 base, -1 means default
-    // on_progress (optional) is invoked once per physical-filament deletion inside the
-    // batch loop, passing (current, total) where total = redundant physical count.
-    // Callers that show a progress dialog map (current/total) to a percentage and
-    // call progress.Update so the bar reflects real progress during the (potentially
-    // many-second) deletion loop. Default-empty: existing callers see no change.
-    void cleanup_unused_filaments_after_batch_match(const BatchMatchResult& match_result,
-                                                    std::function<void(int /*current*/, int /*total*/)> on_progress = nullptr);
-    void add_custom_filament(wxColour new_col);
-    void edit_filament();
-
-    void on_filaments_delete(size_t filament_id);
-    void init_color_mix_panel(wxWindow* parent, wxSizer* sizer);
-    void update_color_mix_panel();
-    void update_mixed_filament_panel(bool sync_manager = true);
-    std::vector<unsigned int> get_ui_ordered_filament_ids() const;
-    // BBS
-    void on_bed_type_change(BedType bed_type);
-    void load_ams_list(std::string const & device, MachineObject* obj);
-    std::map<int, DynamicPrintConfig> build_filament_ams_list(MachineObject* obj);
-    void sync_ams_list();
-    void show_sync_filament_dialog();
-    // Orca
-    void show_SEMM_buttons(bool bshow);
-    void update_dynamic_filament_list();
-
-    void update_nozzle_settings(bool switch_machine = false);
-
-    ObjectList*             obj_list();
-    ObjectSettings*         obj_settings();
-    ObjectLayers*           obj_layers();
-    wxPanel*                scrolled_panel();
-    wxPanel* print_panel();
-    wxPanel* filament_panel();
-
-    ConfigOptionsGroup*     og_freq_chng_params(const bool is_fff);
-    wxButton*               get_wiping_dialog_button();
-
-    // BBS
-    void                    enable_buttons(bool enable);
-    void                    set_btn_label(const ActionButtonType btn_type, const wxString& label) const;
-    bool                    show_reslice(bool show) const;
-	bool                    show_export(bool show) const;
-	bool                    show_send(bool show) const;
-    bool                    show_eject(bool show)const;
-	bool                    show_export_removable(bool show) const;
-	bool                    get_eject_shown() const;
-    bool                    is_multifilament();
-    void                    update_mode();
-    bool                    is_collapsed();
-    void                    collapse(bool collapse);
-    void                    update_searcher();
-    void                    update_ui_from_settings();
-	bool                    show_object_list(bool show) const;
-    void                    finish_param_edit();
-    void                    auto_calc_flushing_volumes(const int modify_id);
-    void                    jump_to_object(ObjectDataViewModelNode* item);
-    void                    can_search();
-#ifdef _MSW_DARK_MODE
-    void                    show_mode_sizer(bool show);
-#endif
-
-    std::vector<PlaterPresetComboBox*>&   combos_filament();
-    Search::OptionsSearcher&        get_searcher();
-    std::string&                    get_search_line();
-    void                            update_printer_thumbnail();
-    const std::vector<std::string>& get_bed_type_combo_enum_values() const { return m_bed_type_combo_enum_values; }
-
-private:
-    void continue_sync_filament_dialog(bool got_machine_info, const std::string& machine_type);
-
-    // Applies a nozzle sync query result on the UI thread (async sync-button path).
-    void apply_nozzle_sync_result(bool got_machine_info, std::string machine_type,
-                                  std::vector<std::string> nozzle_diameters,
-                                  std::vector<std::string> nozzle_volume_types,
-                                  std::string device_name);
-
-    struct priv;
-    std::unique_ptr<priv> p;
-
-    wxBoxSizer* m_scrolled_sizer = nullptr;
-    ComboBox* m_bed_type_list = nullptr;
-    std::vector<std::string> m_bed_type_combo_enum_values;
-    ScalableButton* connection_btn = nullptr;
-    ScalableButton* machine_connecting_btn = nullptr;
-    ScalableButton* ams_btn = nullptr;
-};
 
 class Plater: public wxPanel
 {
 public:
     using fs_path = boost::filesystem::path;
-    enum class FilamentTempMixingState
-    {
-        Compatible,
-        AllowedWarning,
-        BlockedError
-    };
-
-    // Per-plate breakdown of used filaments that participate in a high/low
-    // temperature mixing conflict. Slot numbers are 1-based to match what the
-    // user sees in the UI. Vectors are sorted ascending and de-duplicated.
-    struct FilamentTempMixingDetail {
-        std::vector<int> high_temp_slots_1based;
-        std::vector<int> low_temp_slots_1based;
-    };
-
-    // One plate's mixing detail, paired with its 1-based plate number.
-    // Used to build the Slice All notification body.
-    struct PlateMixingInfo {
-        int                     plate_index_1based;
-        FilamentTempMixingDetail detail;
-    };
-
-    // Per-plate breakdown of filaments whose flow ratio is 0 and would produce
-    // zero extrusion. Slot numbers are 1-based to match the UI display.
-    struct FlowRatioZeroDetail {
-        std::vector<int> offender_slots_1based;
-    };
-
-    /// \brief Cold plate (CSP) per-plate compatibility state.
-    enum class ColdPlateCompatState
-    {
-        /// \brief All used filaments compatible and no TPU in use.
-        Compatible,
-        /// \brief All used filaments compatible but TPU in use; non-blocking warning.
-        SeriousWarning,
-        /// \brief At least one used filament has zero cold-plate bed temperature; blocks slicing.
-        BlockedError
-    };
-
-    /// \brief Aggregate per-plate cold-plate compatibility result, computed in one pass.
-    /// \details Combines state with the data that produced it (unsupported filament slots,
-    ///          TPU slots) so callers can render notifications without re-querying.
-    ///          Slot lists are 1-based to match filament_display_label / FlowRatioZeroDetail.
-    struct ColdPlateCompatResult
-    {
-        ColdPlateCompatState   state = ColdPlateCompatState::Compatible;
-        std::vector<int>       unsupported_slots_1_based{};
-        std::vector<int>       tpu_slots_1_based{};
-        bool                   uses_tpu = false;
-    };
+    // 阶段 B3：门控类型定义迁 GUI/app/MixingTypes.hpp；以下别名保持 Plater::X 公有 API 名不变
+    using FilamentTempMixingState = app::FilamentTempMixingState;
+    using FilamentTempMixingDetail = app::FilamentTempMixingDetail;
+    using PlateMixingInfo = app::PlateMixingInfo;
+    using FlowRatioZeroDetail = app::FlowRatioZeroDetail;
+    using ColdPlateCompatState = app::ColdPlateCompatState;
+    using ColdPlateCompatResult = app::ColdPlateCompatResult;
 
     Plater(wxWindow *parent, MainFrame *main_frame);
     Plater(Plater &&) = delete;
     Plater(const Plater &) = delete;
     Plater &operator=(Plater &&) = delete;
     Plater &operator=(const Plater &) = delete;
-    ~Plater() = default;
+    ~Plater();
 
     bool Show(bool show = true);
 
-    bool is_project_dirty() const;
-    bool is_presets_dirty() const;
     void set_plater_dirty(bool is_dirty);
     void update_project_dirty_from_presets();
-    int  save_project_if_dirty(const wxString& reason);
-    void reset_project_dirty_after_save();
     void reset_project_dirty_initial_presets();
 #if ENABLE_PROJECT_DIRTY_STATE_DEBUG_WINDOW
     void render_project_state_debug_window() const;
@@ -329,40 +176,20 @@ public:
     Model& model();
     const Print& fff_print() const;
     Print& fff_print();
-    const SLAPrint& sla_print() const;
-    SLAPrint& sla_print();
 
     int new_project(bool skip_confirm = false, bool silent = false, const wxString& project_name = wxString());
     // BBS: save & backup
-    void load_project(wxString const & filename = "", wxString const & originfile = "-");
-    int save_project(bool saveAs = false);
     //BBS download project by project id
     void import_model_id(wxString download_info);
-    void download_project(const wxString& project_id);
     void request_model_download(wxString url);
     void request_download_project(std::string project_id);
     // BBS: check snapshot
     bool up_to_date(bool saved, bool backup);
 
-    bool open_3mf_file(const fs::path &file_path);
-    int  get_3mf_file_count(std::vector<fs::path> paths);
-    void add_file();
-    void add_model(bool imperial_units = false, std::string fname = "");
-    void import_zip_archive();
-    void import_sl1_archive();
-    void extract_config_from_project();
-    void load_gcode();
-    void load_gcode(const wxString& filename);
-    void reload_gcode_from_disk();
-    // rebuild the gcode preview with the current pipeline preference
-    void reload_gcode_preview();
-    void refresh_print();
 
-    void update_nozzle_settings();
 
     // SoftFever
     void calib_pa(const Calib_Params& params);
-    void calib_flowrate(bool is_linear, int pass);
     void calib_temp(const Calib_Params& params);
     void calib_max_vol_speed(const Calib_Params& params);
     void calib_retraction(const Calib_Params& params);
@@ -374,14 +201,10 @@ public:
     BuildVolume_Type get_build_volume_type() const;
 
     //BBS: add only gcode mode
-    bool only_gcode_mode() { return m_only_gcode; }
-    void set_only_gcode(bool only_gcode) { m_only_gcode = only_gcode; }
+    bool only_gcode_mode();
 
     //BBS: add only gcode mode
-    bool using_exported_file() { return m_exported_file; }
-    void set_using_exported_file(bool exported_file) {
-        m_exported_file = exported_file;
-    }
+    bool using_exported_file();
 
     // BBS
     wxString get_project_name();
@@ -392,7 +215,6 @@ public:
     static wxColour get_next_color_for_filament();
     static wxString get_slice_warning_string(GCodeProcessorResult::SliceWarning& warning);
 
-    bool preview_zip_archive(const boost::filesystem::path& archive_path);
 
     // BBS: restore
     std::vector<size_t> load_files(const std::vector<boost::filesystem::path>& input_files, LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig,  bool ask_multi = false);
@@ -401,11 +223,9 @@ public:
     // to be called on drag and drop
     bool load_files(const wxArrayString& filenames);
 
-    const wxString& get_last_loaded_gcode() const { return m_last_loaded_gcode; }
 
     void update(bool conside_update_flag = false, bool force_background_processing_update = false);
     //BBS
-    void object_list_changed();
 
     // Get the worker handling the UI jobs (arrange, fill bed, etc...)
     // Here is an example of starting up an ad-hoc job:
@@ -441,22 +261,15 @@ public:
     Worker& get_ui_job_worker();
     const Worker & get_ui_job_worker() const;
 
-    void select_view(const std::string& direction);
     //BBS: add no_slice logic
     void select_view_3D(const std::string& name, bool no_slice = true);
 
     void reload_paint_after_background_process_apply();
     bool is_preview_shown() const;
-    bool is_preview_loaded() const;
     bool is_view3D_shown() const;
 
-    bool are_view3D_labels_shown() const;
-    void show_view3D_labels(bool show);
 
-    bool is_view3D_overhang_shown() const;
-    void show_view3D_overhang(bool show);
 
-    bool is_sidebar_enabled() const;
     void enable_sidebar(bool enabled);
     bool is_sidebar_collapsed() const;
     void collapse_sidebar(bool collapse);
@@ -466,48 +279,26 @@ public:
 
     // Called after the Preferences dialog is closed and the program settings are saved.
     // Update the UI based on the current preferences.
-    void update_ui_from_settings();
 
     //BBS
     void select_curr_plate_all();
     void remove_curr_plate_all();
 
     void select_all();
-    void deselect_all();
-    void exit_gizmo();
-    void remove(size_t obj_idx);
     void reset(bool apply_presets_change = false);
-    void reset_with_confirm();
     //BBS: return int for various result
-    int close_with_confirm(std::function<bool(bool yes_or_no)> second_check = nullptr); // BBS close project
     //BBS: trigger a restore project event
     void trigger_restore_project(int skip_confirm = 0);
-    bool delete_object_from_model(size_t obj_idx, bool refresh_immediately = true); // BBS support refresh immediately
-    void delete_all_objects_from_model(); //BBS delete all objects from model
-    void set_selected_visible(bool visible);
     void remove_selected();
     void increase_instances(size_t num = 1);
     void decrease_instances(size_t num = 1);
-    void set_number_of_copies(/*size_t num*/);
     void fill_bed_with_instances();
-    bool is_selection_empty() const;
     void scale_selection_to_fit_print_volume();
-    void convert_unit(ConversionType conv_type);
-    // BBS: replace z with plane_points
-    void cut(size_t obj_idx, size_t instance_idx, std::array<Vec3d, 4> plane_points, ModelObjectCutAttributes attributes);
-
-    // BBS: segment model with CGAL
-    void segment(size_t obj_idx, size_t instance_idx, double smoothing_alpha=0.5, int segment_number=5);
     void apply_cut_object_to_model(size_t init_obj_idx, const ModelObjectPtrs& cut_objects);
-    void merge(size_t obj_idx, std::vector<int> &vol_indeces);
 
     void send_to_printer(bool isall = false);
     void export_gcode(bool prefer_removable);
-    void export_gcode_3mf(bool export_all = false);
-    void send_gcode_finish(wxString name);
-    void export_core_3mf();
     static TriangleMesh combine_mesh_fff(const ModelObject& mo, int instance_id, std::function<void(const std::string&)> notify_func = {});
-    void export_stl(bool extended = false, bool selection_only = false, bool multi_stls = false);
     //BBS: remove amf
     //void export_amf();
     //BBS add extra param for exporting 3mf silence
@@ -517,30 +308,22 @@ public:
     //BBS
     void publish_project();
 
-    void reload_from_disk();
-    void replace_with_stl();
     void reload_all_from_disk();
-    bool has_toolpaths_to_export() const;
-    void export_toolpaths_to_obj() const;
     bool reslice();
     void record_slice_preset(std::string action);
     void reslice_SLA_supports(const ModelObject &object, bool postpone_error_messages = false);
     void reslice_SLA_hollowing(const ModelObject &object, bool postpone_error_messages = false);
-    void reslice_SLA_until_step(SLAPrintObjectStep step, const ModelObject &object, bool postpone_error_messages = false);
+    void reslice_SLA_until_step(SLAPrintObjectStep step, const ModelObject &object, bool postpone_error_messages = false);   // H2 2.6 恢复：真逻辑体非纯转发
 
     void clear_before_change_mesh(int obj_idx);
     void changed_mesh(int obj_idx);
 
     void changed_object(ModelObject &object);
     void changed_object(int obj_idx);
-    void changed_objects(const std::vector<size_t>& object_idxs);
     void schedule_background_process(bool schedule = true);
-    bool is_background_process_update_scheduled() const;
-    void suppress_background_process(const bool stop_background_process) ;
     /* -1: send current gcode if not specified
      * -2: send all gcode to target machine */
     int send_gcode(int plate_idx = -1, Export3mfProgressFn proFn = nullptr);
-    void send_gcode_legacy(int plate_idx = -1, Export3mfProgressFn proFn = nullptr, bool use_3mf = false);
     int export_config_3mf(int plate_idx = -1, Export3mfProgressFn proFn = nullptr);
     //BBS jump to nonitor after print job finished
     void send_calibration_job_finished(wxCommandEvent &evt);
@@ -548,7 +331,6 @@ public:
     void send_job_finished(wxCommandEvent& evt);
     void publish_job_finished(wxCommandEvent& evt);
     void open_platesettings_dialog(wxCommandEvent& evt);
-    void on_change_color_mode(SimpleEvent& evt);
 	void eject_drive();
 
     void take_snapshot(const std::string &snapshot_name);
@@ -558,15 +340,10 @@ public:
 
     void undo();
     void redo();
-    void undo_to(int selection);
-    void redo_to(int selection);
     bool undo_redo_string_getter(const bool is_undo, int idx, const char** out_text);
     void undo_redo_topmost_string_getter(const bool is_undo, std::string& out_text);
-    int update_print_required_data(Slic3r::DynamicPrintConfig config, Slic3r::Model model, Slic3r::PlateDataPtrs plate_data_list, std::string file_name, std::string file_path);
     bool search_string_getter(int idx, const char** label, const char** tooltip);
     // For the memory statistics.
-    const Slic3r::UndoRedo::Stack& undo_redo_stack_main() const;
-    void clear_undo_redo_stack_main();
     // Enter / leave the Gizmos specific Undo / Redo stack. To be used by the SLA support point editing gizmo.
     void enter_gizmos_stack();
     // BBS: return false if not changed
@@ -575,43 +352,107 @@ public:
     void on_filaments_change(size_t extruders_count);
     void on_filaments_delete(size_t extruders_count, size_t filament_id, int replace_filament_id = -1, const std::vector<unsigned char>& is_mixed_snapshot = {});
     bool confirm_auto_generated_gradients(size_t num_physical);
-    void set_auto_generated_gradient_decision(size_t num_physical, bool create_auto_gradients);
     // BBS
     void on_bed_type_change(BedType bed_type);
-    bool update_filament_colors_in_full_config();
     void on_config_change(const DynamicPrintConfig &config);
     /// @brief Check whether high-temperature and low-temperature filaments are mixed on the current plate.
     /// @return True if compatible; false if high/low temperature materials are mixed.
-    bool check_filament_temp_mixing();
     /// @brief Check whether high-temperature and low-temperature filaments are mixed on a specific plate.
     /// @param plate_index Plate index to check.
     /// @return True if compatible or plate index is invalid; false if high/low temperature materials are mixed.
-    bool check_filament_temp_mixing(int plate_index);
     /// @brief Same as above, plus fills `detail` with the 1-based used slots on the plate grouped by
     ///        high/low temperature. `detail` is only meaningful when this overload returns false
     ///        (i.e. a mixing conflict exists). On compatible / invalid plates, `detail` is cleared.
-    bool check_filament_temp_mixing(int plate_index, FilamentTempMixingDetail& detail);
     /// @brief Get high/low temperature material mixing state for the current plate.
     /// @return Current plate material mixing state.
-    FilamentTempMixingState get_filament_temp_mixing_state();
     /// @brief Get high/low temperature material mixing state for a specific plate.
     /// @param plate_index Plate index to check.
     /// @return Plate material mixing state.
-    FilamentTempMixingState get_filament_temp_mixing_state(int plate_index);
     /// @brief Check whether a specific plate is blocked by high/low temperature material mixing.
     /// @param plate_index Plate index to check.
     /// @return True if slicing this plate is blocked; otherwise false.
-    bool is_plate_blocked_by_filament_temp_mixing(int plate_index);
     /// @brief Cached variant for hot paths (per-frame plate-thumbnail rendering).
     ///        Refreshed once per sync_filament_temp_mixing_notification() call (which already
     ///        runs at every state-changing event), so reads are O(1). Returns false for any
     ///        index not yet populated by a sync (safe default — same as "not blocked").
     /// @param plate_index Plate index to check.
     /// @return True if the cached state for this plate is BlockedError; otherwise false.
-    bool is_plate_blocked_by_filament_temp_mixing_cached(int plate_index) const;
     /// @brief Check whether slice-all has at least one plate that can be sliced.
     /// @return True if any plate can be sliced and is not blocked by material mixing.
     bool has_sliceable_plate_for_slice_all();
+
+    // —— 阶段 H1 2.1：F3 桥接（服务经 q 调用；一律单行转发，H2 门面瘦身统一评审）——
+    PresetBundle* preset_bundle();
+    AppConfig* app_config();
+    Tab* get_tab(int type);
+    std::string get_mode_str();
+    NetworkAgent* get_agent();
+    void select_tab_3d_editor();
+    void params_panel_switch_to_object();
+    DeviceManager* device_manager();
+    bool is_editor();
+    bool is_gcode_viewer();
+    ParamsDialog* params_dialog();
+    boost::asio::ip::port_type page_http_port();
+    wxString international_url(const wxString& origin_url);
+    void start_download(const std::string& url);
+    PresetUpdater* preset_updater();
+    RemovableDriveManager* removable_drive_manager();
+    void keyboard_shortcuts();
+    void app_update_ui_from_settings();
+    bool dark_mode();
+    void update_frame_dark_ui(wxFrame* frame);
+    wxString inf_dialog_context();
+    bool is_user_login();
+    void show_down_net_plugin_dlg();
+    void publish_model(Model& model, SaveStrategy strategy);
+    int get_process_completed_with_error();
+    void set_show_warning_dialog(bool v);
+    // H1 2.3: ProjectSessionHost 消亡 F3 桥接（单行转发）+ load_auxiliary_files 公有化
+    void run_sla_import_job();
+    int determine_load_type(std::string filename, std::string override_setting);
+    void handle_newer_3mf_schema(DynamicPrintConfig& config_loaded);
+    void read_binary_stl(const std::string& filename, std::string& model_id, std::string& code);
+    int check_and_keep_current_preset_changes(const wxString& caption, const wxString& header, int buttons, bool* postponed);
+    bool check_and_save_current_preset_changes(const wxString& caption, const wxString& header);
+    void load_project_dialog(wxString& input_file);
+    void update_saved_preset_from_current_preset();
+    void import_model_dialog(wxArrayString& files);
+    bool can_load_project();
+    void import_zip_dialog(wxString& input_file);
+    void load_gcode_dialog(wxString& input_file);
+    wxString model_file_wildcards();
+    void load_current_presets(bool show_sure_modification_dialog, bool show_unsaved_dialog);   // 2 参重载；无参版见上
+    void update_nozzle_settings_after();
+    void trigger_restore_project_evt(int skip_confirm);
+    void request_model_download_evt(const wxString& url);
+    void load_auxiliary_files();
+    // H1 2.3: SlicingControllerHost 消亡 F3/成员桥接 + 3 件公有化
+    void set_process_completed_with_error(int v);
+    bool get_show_warning_dialog();
+    bool get_tracking_popup_menu();
+    void set_tracking_popup_menu_error_message(const std::string& msg);
+    void set_plater_drop_target();
+    void notify_filament_compatibility_after_apply();
+    bool background_processing_enabled() const;
+    int start_next_slice();
+    void notify_object_config_changed();
+    bool can_current_plate_be_sliced() const;
+    unsigned int update_background_process(bool force_validation = false, bool postpone_error_messages = false, bool switch_print = true);
+    bool restart_background_process(unsigned int state);
+    void generate_thumbnail(ThumbnailData& data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
+        Camera::EType camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false);
+    void generate_calibration_thumbnail(ThumbnailData& data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params);
+    PlateBBoxData generate_first_layer_bbox();
+    void reset_all_gizmos();
+    unsigned int update_restart_background_process(bool force_scene_update, bool force_preview_update);
+    ConfigOptionMode get_mode();
+    void load_current_presets();
+    void save_mode(int mode);
+    bool single_blocks(bool cond);
+    bool layers_height_allowed() const;
+    void show_delayed_error_message();
+    void get_connect_host(std::shared_ptr<PrintHost>& h);
     /// @brief Unified per-plate sliceability predicate.
     /// @details Combines PartPlate::can_slice() with the GUI-layer blockers
     ///          (filament temp mixing, cold-plate incompatibility, and future
@@ -633,11 +474,9 @@ public:
     bool sync_filament_temp_mixing_notification();
     /// @brief Same as above, plus fills `detail` with the 1-based slots of offending filaments.
     ///        `detail` is only meaningful when this overload returns false. On valid plates, `detail` is cleared.
-    bool check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail);
     /// @brief Check whether a specific plate is blocked because one of its used filaments has flow ratio == 0.
     /// @param plate_index Plate index to check.
     /// @return True if slicing this plate is blocked; otherwise false.
-    bool is_plate_blocked_by_flow_ratio_zero(int plate_index);
     /// Sync notification state with current flow-ratio-zero status.
     /// Returns true if slicing is allowed, false if any used filament has flow ratio == 0.
     bool sync_flow_ratio_zero_notification();
@@ -646,34 +485,19 @@ public:
     ///          {state, unsupported filaments, TPU flag} in one traversal.
     /// @param[in] plate_index 0-based plate index.
     /// @return Result struct; state is Compatible when curr_bed_type != btCSP or plate is empty.
-    ColdPlateCompatResult get_cold_plate_compat_state(int plate_index) const;
     /// @brief Returns true if the plate is blocked from slicing by cold-plate incompatibility.
     /// @param[in] plate_index 0-based plate index.
-    bool is_plate_blocked_by_cold_plate(int plate_index) const;
     /// @brief Sync (close + re-push) cold-plate notifications for the current plate.
     /// @return True if slicing is allowed on current plate after sync.
     bool sync_cold_plate_notification();
-    /// Check and guard filament temp mixing before slicing current plate.
-    bool guard_before_slice_plate();
-    /// Live (non-slice) warning: yellow notification when the CURRENT plate's
-    /// effective print sequence is by-object. Re-evaluated on global/per-plate
-    /// print-sequence edits, on plate switch, and on page switch (prepare
-    /// and preview both render it).
-    void sync_print_seq_warning_notification();
     /// Check and guard filament temp mixing before slicing all plates.
-    bool guard_before_slice_all();
     /// @brief Show confirmation dialog for allowed high/low temperature mixing before slice.
     /// @return True if slicing can proceed; false if blocked or user cancelled.
-    bool confirm_filament_temp_mixing_before_slice();
     /// @brief Confirm warning-level high/low temperature material mixing before slicing all plates.
     /// @return True if slice-all can continue; otherwise false.
-    bool confirm_filament_temp_mixing_before_slice_all();
     /// Queue a single UI sync after filament preset/assignment/plate usage changes.
     void notify_filament_usage_changed();
-    void force_filament_colors_update();
-    void force_print_bed_update();
     // On activating the parent window.
-    void on_activate();
     std::vector<std::string> get_extruder_colors_from_plater_config(const GCodeProcessorResult* const result = nullptr, bool include_mixed = true) const;
     std::vector<std::string> get_colors_for_color_print(const GCodeProcessorResult* const result = nullptr) const;
 
@@ -681,63 +505,42 @@ public:
     // BBS
     //void show_action_buttons(const bool is_ready_to_slice) const;
 
-    void             set_global_filament_map(const std::vector<int>& filament_map);
-    std::vector<int> get_global_filament_map() const;
 
-    wxString get_project_filename(const wxString& extension = wxEmptyString) const;
     wxString get_export_gcode_filename(const wxString& extension = wxEmptyString, bool only_filename = false, bool export_all = false) const;
-    void set_project_filename(const wxString& filename);
     void update_print_error_info(int code, std::string msg, std::string extra);
     void notify_vhl_dithering_conflict(bool local_z_enabled);
     bool has_incompatible_mixed_filament_in_use() const;
 
-    bool is_export_gcode_scheduled() const;
 
     const Selection& get_selection() const;
     int get_selected_object_idx();
-    bool is_single_full_object_selection() const;
     GLCanvas3D* canvas3D();
     const GLCanvas3D * canvas3D() const;
     GLCanvas3D* get_current_canvas3D(bool exclude_preview = false);
     GLCanvas3D* get_view3D_canvas3D();
     GLCanvas3D* get_preview_canvas3D();
     GLCanvas3D* get_assmeble_canvas3D();
-    wxWindow* get_select_machine_dialog();
 
-    void arrange();
-    void orient();
+    void arrange(const app::ArrangeRequest& request);   // F3：原无参 + 旧隐式写点前置，一并消亡（app:: 限定——子命名空间不参与非限定查找）
+    void orient(const app::OrientRequest& request);
     void find_new_position(const ModelInstancePtrs  &instances);
-    //BBS: add job state related functions
-    void set_prepare_state(int state);
-    int get_prepare_state();
     //BBS: add print job releated functions
     void get_print_job_data(PrintPrepareData* data);
     int get_send_calibration_finished_event();
     int get_print_finished_event();
     int get_send_finished_event();
-    int get_publish_finished_event();
 
     void set_current_canvas_as_dirty();
-    void unbind_canvas_event_handlers();
-    void reset_canvas_volumes();
 
     PrinterTechnology   printer_technology() const;
     const DynamicPrintConfig * config() const;
     bool                set_printer_technology(PrinterTechnology printer_technology);
 
     //BBS
-    void cut_selection_to_clipboard();
 
-    void copy_selection_to_clipboard();
-    void paste_from_clipboard();
     //BBS: add clone logic
     void clone_selection();
-    void center_selection();
-    void drop_selection();
     void search(bool plater_is_active, Preset::Type  type, wxWindow *tag, TextInput *etag, wxWindow *stag);
-    void mirror(Axis axis);
-    void split_object();
-    void split_volume();
     void optimize_rotation();
     // find all empty cells on the plate and won't overlap with exclusion areas
     static std::vector<Vec2f> get_empty_cells(const Vec2f step);
@@ -745,36 +548,15 @@ public:
     //BBS:
     void fill_color(int extruder_id);
 
-    bool can_delete() const;
-    bool can_delete_all() const;
     bool can_add_model() const;
     bool can_add_plate() const;
-    bool can_delete_plate() const;
-    bool can_increase_instances() const;
-    bool can_decrease_instances() const;
-    bool can_set_instance_to_object() const;
-    bool can_fix_through_netfabb() const;
-    bool can_simplify() const;
-    bool can_split_to_objects() const;
-    bool can_split_to_volumes() const;
-    bool can_arrange() const;
     //BBS
-    bool can_cut_to_clipboard() const;
-    bool can_layers_editing() const;
-    bool can_paste_from_clipboard() const;
-    bool can_copy_to_clipboard() const;
     bool can_undo() const;
     bool can_redo() const;
-    bool can_reload_from_disk() const;
-    bool can_replace_with_stl() const;
-    bool can_mirror() const;
-    bool can_split(bool to_objects) const;
 #if ENABLE_ENHANCED_PRINT_VOLUME_FIT
-    bool can_scale_to_print_volume() const;
 #endif // ENABLE_ENHANCED_PRINT_VOLUME_FIT
 
     //BBS:
-    bool can_fillcolor() const;
     bool has_assmeble_view() const;
 
     void msw_rescale();
@@ -786,20 +568,16 @@ public:
     void enable_view_toolbar(bool enable);
 #endif
 
-    bool init_collapse_toolbar(const GLTexture* shared_background_texture = nullptr);
 
     const Camera& get_camera() const;
     Camera& get_camera();
 
     //BBS: partplate list related functions
     PartPlateList& get_partplate_list();
-    void validate_current_plate(bool& model_fits, bool& validate_error);
     //BBS: select the plate by index
     int select_plate(int plate_index, bool need_slice = false);
     //BBS: update progress result
-    void apply_background_progress();
     //BBS: select the plate by hover_id
-    int select_plate_by_hover_id(int hover_id, bool right_click = false, bool isModidyPlateName = false);
     //BBS: delete the plate, index= -1 means the current plate
     int delete_plate(int plate_index = -1);
     int duplicate_plate(int plate_index = -1);
@@ -808,13 +586,11 @@ public:
     //BBS: set bed positions
     void set_bed_position(Vec2d& pos);
     //BBS: is the background process slicing currently
-    bool is_background_process_slicing() const;
     //BBS: update slicing context
     void update_slicing_context_to_current_partplate();
     //BBS: show object info
     void show_object_info();
     //BBS
-    bool show_publish_dialog(bool show = true);
     //BBS: post process string object exception strings by warning types
     void post_process_string_object_exception(StringObjectException &err);
 
@@ -832,17 +608,12 @@ public:
     const GLToolbar& get_collapse_toolbar() const;
     GLToolbar& get_collapse_toolbar();
 
-    void update_preview_bottom_toolbar();
-    void update_preview_moves_slider();
-    void enable_preview_moves_slider(bool enable);
 
 #if 0
     void update_partplate();
 #endif
 
-    void reset_gcode_toolpaths();
     void post_slice_state_change_update();
-    void reset_last_loaded_gcode() { m_last_loaded_gcode = ""; }
 
     const Mouse3DController& get_mouse3d_controller() const;
     Mouse3DController& get_mouse3d_controller();
@@ -861,15 +632,12 @@ public:
 
     void bring_instance_forward();
 
-    bool need_update() const;
-    void set_need_update(bool need_update);
     // >0 while cleanup_unused_filaments_after_batch_match is looping physical
     // deletions: suppresses per-deletion panel rebuild + painting remap (both
     // run once after the loop). Single source of truth — Sidebar queries this
     // instead of keeping its own flag.
-    int  batch_physical_deletion() const;
-    void inc_batch_physical_deletion();
-    void dec_batch_physical_deletion();
+    // 阶段 G1：耗材/AMS/批量删除编排服务（Sidebar 门面转发用；唯一实现归属 GUI/app/FilamentService）
+    app::FilamentService& filament_service();
     void update_title_dirty_status();
 
     // RAII guard for batch physical deletion: bumps batch_physical_deletion()
@@ -879,91 +647,21 @@ public:
     {
         Plater &m_plater;
     public:
-        explicit BatchPhysicalDeletionGuard(Plater &p) : m_plater(p) { m_plater.inc_batch_physical_deletion(); }
-        ~BatchPhysicalDeletionGuard() { m_plater.dec_batch_physical_deletion(); }
+        // H2 2.6：inc/dec 门面已删——体走组合根 filament_svc（cpp 定义；q 消费面 BatchMatchCoordinator 保留）
+        explicit BatchPhysicalDeletionGuard(Plater &p);
+        ~BatchPhysicalDeletionGuard();
         BatchPhysicalDeletionGuard(const BatchPhysicalDeletionGuard &) = delete;
         BatchPhysicalDeletionGuard &operator=(const BatchPhysicalDeletionGuard &) = delete;
     };
 
-    // ROII wrapper for suppressing the Undo / Redo snapshot to be taken.
-	class SuppressSnapshots
-	{
-	public:
-		SuppressSnapshots(Plater *plater) : m_plater(plater)
-		{
-			m_plater->suppress_snapshots();
-		}
-		~SuppressSnapshots()
-		{
-			m_plater->allow_snapshots();
-		}
-	private:
-		Plater *m_plater;
-	};
+    // 阶段 H2 1.1（§5.3 形态）：嵌套三件套（原 :795 SuppressSnapshots / :811 TakeSnapshot / :845 SingleSnapshot）
+    // 体迁 app::SnapshotService（token 语义逐字；Plater* 入参不变），别名保持旧调用点语法——
+    // 22 文件 91 引用分簇改写至 SnapshotService:: 原生名前的编译稳定点。
+    using TakeSnapshot      = app::SnapshotService::Scope;          // app:: 限定——子命名空间不参与非限定查找（F3 先例）
+    using SingleSnapshot    = app::SnapshotService::SingleScope;
+    using SuppressSnapshots = app::SnapshotService::SuppressScope;
 
-    // RAII wrapper for taking an Undo / Redo snapshot while disabling the snapshot taking by the methods called from inside this snapshot.
-	class TakeSnapshot
-	{
-	public:
-        TakeSnapshot(Plater *plater, const std::string &snapshot_name) : m_plater(plater)
-        {
-			m_plater->take_snapshot(snapshot_name);
-			m_plater->suppress_snapshots();
-		}
-		/*TakeSnapshot(Plater *plater, const wxString &snapshot_name) : m_plater(plater)
-		{
-			m_plater->take_snapshot(snapshot_name);
-			m_plater->suppress_snapshots();
-		}*/
-        TakeSnapshot(Plater* plater, const std::string& snapshot_name, UndoRedo::SnapshotType snapshot_type) : m_plater(plater)
-        {
-            m_plater->take_snapshot(snapshot_name, snapshot_type);
-            m_plater->suppress_snapshots();
-        }
-        /*TakeSnapshot(Plater *plater, const wxString &snapshot_name, UndoRedo::SnapshotType snapshot_type) : m_plater(plater)
-        {
-            m_plater->take_snapshot(snapshot_name, snapshot_type);
-            m_plater->suppress_snapshots();
-        }*/
 
-		~TakeSnapshot()
-		{
-			m_plater->allow_snapshots();
-		}
-	private:
-		Plater *m_plater;
-	};
-
-    // BBS: limit to single snapshot taking by the methods called from inside
-    // this snapshot.
-    class SingleSnapshot
-    {
-    public:
-        SingleSnapshot(Plater *plater) : m_plater(plater)
-        {
-            m_plater->single_snapshots_enter(this);
-        }
-
-        ~SingleSnapshot() { m_plater->single_snapshots_leave(this); }
-
-        bool check(bool modify)
-        {
-            if (token && (this->modify || !modify)) return false;
-            token = true;
-            this->modify = modify;
-            return true;
-        }
-
-    private:
-        Plater *m_plater;
-        bool    token = false;
-        bool    modify = false;
-    };
-
-    bool inside_snapshot_capture();
-
-    void toggle_render_statistic_dialog();
-    bool is_render_statistic_dialog_visible() const;
 
     void toggle_show_wireframe();
     bool is_show_wireframe() const;
@@ -997,20 +695,76 @@ public:
     static bool has_illegal_filename_characters(const std::string& name);
     static void show_illegal_characters_warning(wxWindow* parent);
 
-    std::string get_preview_only_filename() { return m_preview_only_filename; };
 
-    bool last_arrange_job_is_finished()
-    {
-        bool prevRunning = false;
-        return m_arrange_running.compare_exchange_strong(prevRunning, true);
-    };
-    std::atomic<bool> m_arrange_running{false};
+    // 阶段 F2：抢占锁释放端门面（旗标与 claim 唯一归属 app::ArrangementService）
+    void release_arrange_running();
 
-    bool is_loading_project() const { return m_loading_project; }
+    bool is_loading_project() const;
 
 private:
-    struct priv;
-    std::unique_ptr<priv> p;
+    // —— 阶段 H1（路径 A）：priv 解散——服务/PartPlateList unique_ptr + 前向声明（勘误 13 头链隔离）——
+    // 成员声明序承 priv(:463-848) 原行序，逆序析构次序不变；撞名成员四件 m_ 改名（勘误 14）。
+    MainFrame *main_frame = nullptr;                                                   // priv :463
+    std::atomic<bool> filament_usage_sync_pending{false};                              // priv :464
+    std::unique_ptr<MenuFactory> menus;                                                // priv :467
+    Slic3r::DynamicPrintConfig *m_config = nullptr;   // FIXME: leak?（H1 改名避让公有 config()）  // priv :472
+    Slic3r::Model m_model;                                                             // priv :473
+    std::unique_ptr<PartPlateList> partplate_list;                                     // priv :478
+    // —— 阶段 H2 2.0：15 服务 unique_ptr 所有权迁组合根 GUI_App（design 决策 9；构造留守 plater_init；
+    // ~Plater shutdown_services 复现逆序析构）——服务 accessor 声明保留，cpp 体改 wxGetApp() 转发。——
+    std::unique_ptr<PlaterWorker<BoostThreadWorker>> m_worker;                         // priv :501
+    SLAImportDialog *m_sla_import_dlg = nullptr;                                       // priv :502
+    int process_completed_with_error { -1 }; //-1 means no error                       // priv :800
+    Slic3r::Print m_fff_print;                                                         // priv :828
+    Slic3r::SLAPrint m_sla_print;                                                      // priv :829
+    Slic3r::GCodeProcessorResult gcode_result;                                         // priv :830
+    SingleSnapshot *m_single = nullptr;                                                // priv :844
+    bool show_warning_dialog { false };                                                // priv :848
+
+    // —— 服务 accessor（hpp 仅声明；unique_ptr<前向类型> 不内联解引用——erratum §5.1）——
+    app::SnapshotService& snapshots() const;
+    app::NotificationHub& notification_hub() const;
+    app::PlateController& plates() const;
+    app::SlicingController& slicing() const;
+    app::ProjectSession& session() const;
+    app::ExportSendCoordinator& ex() const;
+    app::SelectionQuery& selq() const;
+    app::ObjectEditCommands& obj_cmds() const;
+    app::ArrangementService& arrange_svc() const;
+    app::MixingGateKeeper& gate_keeper() const;
+    app::FilamentService& filament_svc() const;
+    app::CalibrationFlow& calibration_svc() const;
+    app::LayoutManager& layout() const;
+    app::SceneRefreshCoordinator& refresh() const;
+    app::PlaterEventRouter& router() const;
+    NotificationManager* notification_manager() const;
+
+    // —— priv-only 方法（公有区无同名声明者方入此块；内联体一律 cpp 定义化）——
+    void plater_init();              // 原 priv ctor 整体折叠
+    std::string get_config(const std::string &key) const;
+    BoundingBoxf bed_shape_bb() const;
+    BoundingBox scaled_bed_shape_bb() const;
+    std::vector<size_t> load_model_objects(const ModelObjectPtrs& model_objects, bool allow_negative_z = false, bool split_object = false);
+    fs::path get_export_file_path(GUI::FileType file_type);
+    wxString get_export_file(GUI::FileType file_type);
+    const Selection& get_curr_selection();
+    int get_selected_volume_idx() const;
+    bool is_slicing_in_progress() const;
+    enum UpdateBackgroundProcessReturnState {
+        UPDATE_BACKGROUND_PROCESS_RESTART = 1,
+        UPDATE_BACKGROUND_PROCESS_REFRESH_SCENE = 2,
+        UPDATE_BACKGROUND_PROCESS_INVALID = 4,
+        UPDATE_BACKGROUND_PROCESS_FORCE_RESTART = 8,
+        UPDATE_BACKGROUND_PROCESS_FORCE_EXPORT = 16,
+    };
+    void export_gcode(fs::path output_path, bool output_path_on_removable_media);
+    void export_gcode(fs::path output_path, bool output_path_on_removable_media, PrintHostJob upload_job);
+    bool replace_volume_with_stl(int object_idx, int volume_idx, const fs::path& new_path, const std::string& snapshot = "");
+    bool show_publish_dlg(bool show = true);
+    void update_publish_dialog_status(wxString &msg, int percent = -1);
+    ThumbnailsList generate_thumbnails(const ThumbnailsParams& params, Camera::EType camera_type);
+    bool confirm_auto_generated_gradients(wxWindow *parent, size_t num_physical);   // 2 参私有重载；公有 1 参版见公有区
+    void set_project_name(const wxString& project_name);
 
     // Set true during PopupMenu() tracking to suppress immediate error message boxes.
     // The error messages are collected to m_tracking_popup_menu_error_message instead and these error messages
@@ -1018,14 +772,7 @@ private:
     bool 	 m_tracking_popup_menu = false;
     wxString m_tracking_popup_menu_error_message;
 
-    wxString m_last_loaded_gcode;
-    //BBS: add only gcode mode
-    bool m_only_gcode { false };
-    bool m_exported_file { false };
-    bool skip_thumbnail_invalid { false };
-    bool m_loading_project { false };
-    std::string m_preview_only_filename;
-    int m_valid_plates_count { 0 };
+    // 阶段 G4：skip_thumbnail_invalid 迁 app::SceneRefreshCoordinator（hpp 私有区唯一非 priv 成员——勘误 2）
 
     void suppress_snapshots();
     void allow_snapshots();
@@ -1033,17 +780,17 @@ private:
     void single_snapshots_enter(SingleSnapshot *single);
     void single_snapshots_leave(SingleSnapshot *single);
     // BBS: add project slice related functions
-    int start_next_slice();
 
-    void _calib_pa_pattern(const Calib_Params& params);
-    void _calib_pa_pattern_gen_gcode();
-    void _calib_pa_tower(const Calib_Params& params);
-    void _calib_pa_select_added_objects();
-
-    void cut_horizontal(size_t obj_idx, size_t instance_idx, double z, ModelObjectCutAttributes attributes);
+    // 阶段 G2：_calib_pa_* 辅助与 cut_horizontal 迁 app::CalibrationFlow（私有块删除；
+    // slicing_host._calib_pa_pattern_gen_gcode 改指 calibration_svc()）。
 
     friend class SuppressBackgroundProcessingUpdate;
     friend class PlaterDropTarget;
+    // 阶段 H2 1.1：快照替身 Scope/SingleScope（app::SnapshotService 嵌套）经 Plater* 逐字承接嵌套版语义——
+    // take_snapshot 公有可及；suppress_snapshots/allow_snapshots/single_snapshots_enter/leave 私有面经 friend 放行。
+    friend class app::SnapshotService::Scope;
+    friend class app::SnapshotService::SingleScope;
+    friend class app::SnapshotService::SuppressScope;
 };
 
 class SuppressBackgroundProcessingUpdate

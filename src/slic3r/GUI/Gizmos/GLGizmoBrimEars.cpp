@@ -396,7 +396,7 @@ bool GLGizmoBrimEars::gizmo_event(SLAGizmoEventType action, const Vec2d &mouse_p
                 world_pos[2]     = -0.0001;
                 Vec3d object_pos = trsf.inverse() * world_pos;
                 // brim ear always face up
-                Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Add brim ear");
+                app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Add brim ear");
                 add_point_to_cache(object_pos.cast<float>(), m_new_point_head_diameter / 2.f, false, (inverse_trsf * m_world_normal).cast<float>());
                 m_parent.set_as_dirty();
                 m_wait_for_up_event = true;
@@ -537,7 +537,7 @@ bool GLGizmoBrimEars::gizmo_event(SLAGizmoEventType action, const Vec2d &mouse_p
 
 void GLGizmoBrimEars::delete_selected_points()
 {
-    Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Delete brim ear");
+    app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Delete brim ear");
 
     for (unsigned int idx = 0; idx < m_editing_cache.size(); ++idx) {
         if (m_editing_cache[idx].selected) { m_editing_cache.erase(m_editing_cache.begin() + (idx--)); }
@@ -616,7 +616,7 @@ void GLGizmoBrimEars::apply_radius_change()
             cache_entry.brim_point.head_front_radius = m_old_point_head_diameter / 2.f;
     float backup              = m_new_point_head_diameter;
     m_new_point_head_diameter = m_old_point_head_diameter;
-    Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Change point head diameter");
+    app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Change point head diameter");
     m_new_point_head_diameter = backup;
     update_cache_radius();
     m_old_point_head_diameter = 0.f;
@@ -873,7 +873,7 @@ void GLGizmoBrimEars::on_set_state()
     }
     if (m_state == Off && m_old_state != Off) {
         // the gizmo was just turned Off
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Brim ears edit");
+        app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Brim ears edit");
         update_model_object();
         wxGetApp().plater()->leave_gizmos_stack();
         // wxGetApp().mainframe->update_slice_print_status(MainFrame::SlicePrintEventType::eEventSliceUpdate, true, true);
@@ -900,7 +900,7 @@ void GLGizmoBrimEars::on_stop_dragging()
             && backup.brim_point.pos != m_point_before_drag.brim_point.pos) // and it was moved, not just selected
         {
             m_editing_cache[m_hover_id] = m_point_before_drag;
-            Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Move support point");
+            app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Move support point");
             m_editing_cache[m_hover_id] = backup;
         }
     }
@@ -1015,7 +1015,7 @@ void GLGizmoBrimEars::auto_generate()
         Polygon  out_poly   = ex_poly.contour;
         Polygons inner_poly = ex_poly.holes;
         polygons_reverse(inner_poly);
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Auto generate brim ear");
+        app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Auto generate brim ear");
         Points               out_points = generate_points(out_poly, m_detection_radius, m_max_angle, true);
         for (Point &p : out_points) { add_point(p); }
         for (Polygon &pl : inner_poly) {

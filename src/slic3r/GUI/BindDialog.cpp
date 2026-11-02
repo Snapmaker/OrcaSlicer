@@ -13,7 +13,6 @@
 #include "libslic3r/Polygon.hpp"
 #include "MainFrame.hpp"
 #include "GUI_App.hpp"
-#include "Plater.hpp"
 #include "Jobs/BoostThreadWorker.hpp"
 #include "Jobs/PlaterWorker.hpp"
 #include "Widgets/WebView.hpp"

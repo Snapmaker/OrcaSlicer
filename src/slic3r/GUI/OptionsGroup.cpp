@@ -1,6 +1,7 @@
 #include "OptionsGroup.hpp"
+#include "Search.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "Sidebar.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "ConfigExceptions.hpp"
-#include "Plater.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 #include "OG_CustomCtrl.hpp"

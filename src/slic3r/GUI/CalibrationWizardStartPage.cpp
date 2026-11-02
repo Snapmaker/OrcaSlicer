@@ -1,4 +1,5 @@
 #include "CalibrationWizardStartPage.hpp"
+#include "GUI_App.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "I18N.hpp"
 #include "Widgets/Label.hpp"
 

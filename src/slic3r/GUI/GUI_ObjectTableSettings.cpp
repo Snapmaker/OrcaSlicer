@@ -1,4 +1,6 @@
 #include "libslic3r/PresetBundle.hpp"
+#include "app/SnapshotService.hpp"   // H2 3.1：真实供给头
+#include "app/ProjectSession.hpp"   // H2 3.1：真实供给头
 #include "libslic3r/Model.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Factories.hpp"
@@ -8,7 +10,6 @@
 #include "OptionsGroup.hpp"
 #include "GUI_App.hpp"
 #include "wxExtensions.hpp"
-#include "Plater.hpp"
 
 #include <boost/algorithm/string.hpp>
 
@@ -88,7 +89,7 @@ bool ObjectTableSettings::update_settings_list(bool is_object, bool is_multiple_
     if (!config || is_multiple_selection || !object)
         return false;
 
-    const auto printer_technology   = wxGetApp().plater()->printer_technology();
+    const auto printer_technology   = wxGetApp().session().printer_technology;
 
     // update config values according to configuration hierarchy
     m_current_config   = printer_technology == ptFFF ?
@@ -185,7 +186,7 @@ bool ObjectTableSettings::update_settings_list(bool is_object, bool is_multiple_
             #endif
 
             btn->Bind(wxEVT_BUTTON, [btn, opt_key, this, is_object, object, config, group_category](wxEvent &event) {
-                //wxGetApp().plater()->take_snapshot(from_u8((boost::format(_utf8(L("Reset Option %s"))) % opt_key).str()));
+                //wxGetApp().snapshots().take_snapshot(from_u8((boost::format(_utf8(L("Reset Option %s"))) % opt_key).str()));
                 config->erase(opt_key);
                 //btn->Hide();
                 wxGetApp().obj_list()->changed_object();
@@ -261,7 +262,7 @@ bool ObjectTableSettings::update_settings_list(bool is_object, bool is_multiple_
         for (auto& opt : cat.second)
             optgroup->get_field(opt.name)->m_on_change = [weak_optgroup](const std::string& opt_id, const boost::any& value) {
                 // first of all take a snapshot and then change value in configuration
-                wxGetApp().plater()->take_snapshot((boost::format("Change Option %s") % opt_id).str());
+                wxGetApp().snapshots().take_snapshot((boost::format("Change Option %s") % opt_id).str());
                 weak_optgroup.lock()->on_change_OG(opt_id, value);
             };
 
@@ -319,7 +320,7 @@ bool ObjectTableSettings::update_settings_list(bool is_object, bool is_multiple_
 bool ObjectTableSettings::add_missed_options(ModelConfig* config_to, const DynamicPrintConfig& config_from)
 {
     bool is_added = false;
-    if (wxGetApp().plater()->printer_technology() == ptFFF)
+    if (wxGetApp().session().printer_technology == ptFFF)
     {
         if (config_to->has("sparse_infill_density") && !config_to->has("sparse_infill_pattern"))
         {
@@ -372,7 +373,7 @@ int ObjectTableSettings::update_extra_column_visible_status(ConfigOptionsGroup* 
 void ObjectTableSettings::update_config_values(bool is_object, ModelObject* object, ModelConfig* config, const std::string& category)
 {
     int different_count = 0;
-    const auto printer_technology   = wxGetApp().plater()->printer_technology();
+    const auto printer_technology   = wxGetApp().session().printer_technology;
 
     if (!object || !config)
         return;

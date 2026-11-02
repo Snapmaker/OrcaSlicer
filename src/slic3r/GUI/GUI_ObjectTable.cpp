@@ -1,4 +1,6 @@
 #include "wx/clipbrd.h"
+#include "app/PlateController.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "PartPlate.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "wx/display.h"
 
 #include "SelectMachine.hpp"
@@ -7,7 +9,10 @@
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/PresetBundle.hpp"
 //#include "libslic3r/Model.hpp"
-//#include "Plater.hpp"
+#include "Plater.hpp"   // H2 3.1 白名单：Plater/PartPlateList 完整型解引用（偏离登记；原注释行启用）
+#include "app/ProjectSession.hpp"   // H2 2.3：组合根服务直调
+#include "app/SceneRefreshCoordinator.hpp"   // H2 2.3：组合根服务直调
+#include "app/FilamentService.hpp"   // H2 2.3：组合根服务直调
 #include "Widgets/Label.hpp"
 #include "GUI.hpp"
 #include "GUI_App.hpp"
@@ -1576,7 +1581,7 @@ void ObjectGridTable::SetValue( int row, int col, const wxString& value )
             update_filament_to_config(grid_row->config, grid_col->key, option_value, option_ori_value, (grid_row->row_type == row_object));
             update_volume_values_from_object(row, col);
             wxGetApp().obj_list()->update_filament_values_for_items(m_panel->m_filaments_count);
-            //m_panel->m_plater->update();
+            //wxGetApp().refresh().update_gate(false, false);
         }
     }
     else if (grid_col->type == coBool) {
@@ -1931,7 +1936,7 @@ void ObjectGridTable::construct_object_configs(ObjectGrid *object_grid)
         return;
     }
     int object_count = m_panel->m_model->objects.size();
-    PartPlateList& partplate_list = m_panel->m_plater->get_partplate_list();
+    PartPlateList& partplate_list = wxGetApp().plates().partplate_list();
     DynamicPrintConfig&  global_config   = wxGetApp().preset_bundle->prints.get_edited_preset().config;
     const DynamicPrintConfig* plater_config = m_panel->m_plater->config();
     const DynamicPrintConfig&  filament_config = *plater_config;
@@ -2203,7 +2208,7 @@ void ObjectGridTable::reload_cell_data(int row, const std::string& category)
         dynamic_cast<TabPrintModel*>(wxGetApp().get_model_tab(true))->update_model_config();
     else
         dynamic_cast<TabPrintModel*>(wxGetApp().get_model_tab())->update_model_config();
-    //m_panel->m_plater->update();
+    //wxGetApp().refresh().update_gate(false, false);
 }
 
 void ObjectGridTable::update_row_properties()
@@ -2529,7 +2534,7 @@ bool ObjectGridTable::OnCellLeftClick(int row, int col, ConfigOptionType &type)
                     m_panel->m_side_window->Freeze();
                     m_panel->m_object_settings->ValueChanged(row, is_object, object, grid_row->config, grid_col_2->category, grid_col_2->key);
                     m_panel->m_side_window->Thaw();
-                    //m_panel->m_plater->update();
+                    //wxGetApp().refresh().update_gate(false, false);
                 }
                 else {
                     update_value_to_object(m_panel->m_model, grid_row, col - 1);
@@ -2650,7 +2655,7 @@ void ObjectGridTable::OnCellValueChanged(int row, int col)
                 object_volume_id.object = object;
                 object_volume_id.volume = is_object ? nullptr : object->volumes[grid_row->volume_id];
                 wxGetApp().obj_list()->object_config_options_changed(object_volume_id);
-                //m_panel->m_plater->update();
+                //wxGetApp().refresh().update_gate(false, false);
             }
         }
     }

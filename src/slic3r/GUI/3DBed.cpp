@@ -1,4 +1,5 @@
 #include "libslic3r/libslic3r.h"
+#include "app/LayoutManager.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 
 #include "3DBed.hpp"
 
@@ -12,7 +13,6 @@
 #include "GUI_App.hpp"
 #include "GUI_Colors.hpp"
 #include "GLCanvas3D.hpp"
-#include "Plater.hpp"
 #include "Camera.hpp"
 
 #include <GL/glew.h>
@@ -208,7 +208,7 @@ void Bed3D::load_render_colors()
 void Bed3D::Axes::render()
 {
     auto render_axis = [this](GLShaderProgram* shader, const Transform3d& transform) {
-        const Camera& camera = wxGetApp().plater()->get_camera();
+        const Camera& camera = wxGetApp().layout().camera;
         const Transform3d& view_matrix = camera.get_view_matrix();
         shader->set_uniform("view_model_matrix", view_matrix * transform);
         shader->set_uniform("projection_matrix", camera.get_projection_matrix());
@@ -330,7 +330,7 @@ bool Bed3D::set_shape(const Pointfs& printable_area, const double printable_heig
 
     // unregister from picking
     // BBS: remove the bed picking logic
-    // wxGetApp().plater()->canvas3D()->remove_raycasters_for_picking(SceneRaycaster::EType::Bed);
+    // wxGetApp().layout().get_current_canvas3D()->remove_raycasters_for_picking(SceneRaycaster::EType::Bed);
 
     // Let the calee to update the UI.
     return true;
@@ -541,7 +541,7 @@ void Bed3D::render_system(GLCanvas3D& canvas, const Transform3d& view_matrix, co
         GLShaderProgram* shader = wxGetApp().get_shader("printbed");
         if (shader != nullptr) {
             shader->start_using();
-            const Camera& camera = wxGetApp().plater()->get_camera();
+            const Camera& camera = wxGetApp().layout().camera;
             shader->set_uniform("view_model_matrix", camera.get_view_matrix());
             shader->set_uniform("projection_matrix", camera.get_projection_matrix());
             shader->set_uniform("transparent_background", bottom);
@@ -764,7 +764,7 @@ void Bed3D::register_raycasters_for_picking(const GLModel::Geometry& geometry, c
     }
 
     m_model.mesh_raycaster = std::make_unique<MeshRaycaster>(std::make_shared<const TriangleMesh>(std::move(its)));
-    wxGetApp().plater()->canvas3D()->add_raycaster_for_picking(SceneRaycaster::EType::Bed, 0, *m_model.mesh_raycaster, trafo);
+    wxGetApp().layout().get_current_canvas3D()->add_raycaster_for_picking(SceneRaycaster::EType::Bed, 0, *m_model.mesh_raycaster, trafo);
 }
 */
 } // GUI

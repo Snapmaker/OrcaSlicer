@@ -1,5 +1,8 @@
 // Include GLGizmoBase.hpp before I18N.hpp as it includes some libigl code, which overrides our localization "L" macro.
 #include "GLGizmoAdvancedCut.hpp"
+#include "../GUI_App.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/PlateController.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/ProjectSession.hpp"   // H2 3.1：partplate/model accessor 供给
 #include "slic3r/GUI/GLCanvas3D.hpp"
 
 #include <GL/glew.h>
@@ -435,11 +438,11 @@ void GLGizmoAdvancedCut::on_stop_dragging()
 {
     if (m_hover_id == X || m_hover_id == Y || m_hover_id == Z) {
         m_gizmos[m_hover_id].stop_dragging();
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Rotate cut plane");
+        app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Rotate cut plane");
     } else if (m_hover_id == c_connectors_group_id - 1) {
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Move cut plane");
+        app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Move cut plane");
     } else if (m_hover_id >= c_connectors_group_id) {
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Move connector");
+        app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Move connector");
     }
 }
 
@@ -628,9 +631,9 @@ void GLGizmoAdvancedCut::perform_cut(const Selection& selection)
 
     // perform cut
     {
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Cut by Plane");
+        app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Cut by Plane");
 
-        ModelObject *mo = wxGetApp().plater()->model().objects[object_idx];
+        ModelObject *mo = wxGetApp().session().model().objects[object_idx];
         const bool has_connectors = !mo->cut_connectors.empty();
 
         bool create_dowels_as_separate_object = false;
@@ -1267,7 +1270,7 @@ bool GLGizmoAdvancedCut::add_connector(CutConnectors &connectors, const Vec2d &m
     Vec3d pos;
     Vec3d pos_world;
     if (unproject_on_cut_plane(mouse_position.cast<double>(), pos, pos_world)) {
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Add connector");
+        app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Add connector");
         unselect_all_connectors();
 
         connectors.emplace_back(pos, m_rotate_matrix, m_connector_size * 0.5f, m_connector_depth_ratio, m_connector_size_tolerance, m_connector_depth_ratio_tolerance,
@@ -1288,7 +1291,7 @@ bool GLGizmoAdvancedCut::delete_selected_connectors()
     if (connectors.empty())
         return false;
 
-    Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Delete connector");
+    app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Delete connector");
 
     // remove  connectors
     for (int i = int(connectors.size()) - 1; i >= 0; i--)
@@ -1956,7 +1959,7 @@ bool GLGizmoAdvancedCut::process_cut_line(SLAGizmoEventType action, const Vec2d 
             Vec3d line_dir = m_cut_line_end - m_cut_line_begin;
             if (line_dir.norm() < 3.0)
                 return true;
-            Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Cut by line");
+            app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Cut by line");
 
             Vec3d              cross_dir = line_dir.cross(dir).normalized();
             Eigen::Quaterniond q;

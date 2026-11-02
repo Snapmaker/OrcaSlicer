@@ -1,4 +1,5 @@
 #include "GUI_ObjectLayers.hpp"
+#include "app/LayoutManager.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "GUI_ObjectList.hpp"
 
 #include "OptionsGroup.hpp"
@@ -6,7 +7,6 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Model.hpp"
 #include "GLCanvas3D.hpp"
-#include "Plater.hpp"
 
 #include "Widgets/LabeledStaticBox.hpp"
 
@@ -245,7 +245,7 @@ void ObjectLayers::update_layers_list()
 void ObjectLayers::update_scene_from_editor_selection() const
 {
     // needed to show the visual hints in 3D scene
-    wxGetApp().plater()->canvas3D()->handle_layers_data_focus_event(m_selectable_range, m_selection_type);
+    wxGetApp().layout().get_current_canvas3D()->handle_layers_data_focus_event(m_selectable_range, m_selection_type);
 }
 
 void ObjectLayers::UpdateAndShow(const bool show)

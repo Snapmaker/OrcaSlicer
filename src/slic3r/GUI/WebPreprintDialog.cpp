@@ -1,4 +1,5 @@
 #include "WebPreprintDialog.hpp"
+#include "app/NotificationHub.hpp"   // H2 3.1：真实供给头
 #include "I18N.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
@@ -230,7 +231,7 @@ void WebPreprintDialog::OnScriptMessage(wxWebViewEvent &evt)
 
 void WebPreprintDialog::OnClose(wxCloseEvent& evt)
 {
-    auto noti_manager = wxGetApp().mainframe->plater()->get_notification_manager();
+    auto noti_manager = wxGetApp().notification_hub().nm();
     noti_manager->close_notification_of_type(NotificationType::PrintHostUpload);
     
     // BBS: Use SafeEndModal to prevent duplicate EndModal calls

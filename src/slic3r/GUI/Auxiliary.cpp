@@ -1,4 +1,6 @@
 #include "Tab.hpp"
+#include "app/ProjectSession.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "Plater.hpp"   // H2 3.1 白名单：Plater 完整型解引用（偏离登记）
 #include "Auxiliary.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Model.hpp"
@@ -51,7 +53,7 @@ const std::vector<std::string> license_list = {
 
 static std::shared_ptr<ModelInfo> ensure_model_info()
 {
-    auto& model = wxGetApp().plater()->model();
+    auto& model = wxGetApp().session().model();
     if (model.model_info == nullptr) {
         model.model_info = std::make_shared<ModelInfo>();
     }
@@ -476,7 +478,7 @@ void AuFile::on_set_cover()
 {
     fs::path path(into_path(m_file_name));
     ensure_model_info()->cover_file = path.string();
-    //wxGetApp().plater()->model().model_info->cover_file = m_file_name.ToStdString();
+    //wxGetApp().session().model().model_info->cover_file = m_file_name.ToStdString();
 
     auto full_path          = m_file_path.parent_path();
     auto full_root_path         = full_path.parent_path();
@@ -538,9 +540,9 @@ void AuFile::on_set_delete()
         if (fs::exists(fs::path(middle_img_path))) { fs::remove(fs::path(middle_img_path)); }
     }
 
-    if (wxGetApp().plater()->model().model_info != nullptr) {
-        if (wxGetApp().plater()->model().model_info->cover_file == m_file_name) {
-            wxGetApp().plater()->model().model_info->cover_file = "";
+    if (wxGetApp().session().model().model_info != nullptr) {
+        if (wxGetApp().session().model().model_info->cover_file == m_file_name) {
+            wxGetApp().session().model().model_info->cover_file = "";
         }
     }
 
@@ -718,11 +720,11 @@ AuFolderPanel::~AuFolderPanel()
 
 void AuFolderPanel::update_cover()
 {
-    if (wxGetApp().plater()->model().model_info != nullptr) {
+    if (wxGetApp().session().model().model_info != nullptr) {
         for (auto i = 0; i < m_aufiles_list.GetCount(); i++) {
             AuFiles *aufile = m_aufiles_list[i];
 
-            if (wxString::FromUTF8(wxGetApp().plater()->model().model_info->cover_file) == aufile->file->m_file_name) {
+            if (wxString::FromUTF8(wxGetApp().session().model().model_info->cover_file) == aufile->file->m_file_name) {
                 aufile->file->set_cover(true);
             } else {
                 aufile->file->set_cover(false);
@@ -907,7 +909,7 @@ bool AuxiliaryPanel::Show(bool show) { return wxPanel::Show(show); }
 // core logic
 void AuxiliaryPanel::init_auxiliary()
 {
-    Model &model = wxGetApp().plater()->model();
+    Model &model = wxGetApp().session().model();
     Reload(encode_path(model.get_auxiliary_file_temp_path().c_str()), {});
 }
 
@@ -1155,7 +1157,7 @@ bool DesignerPanel::Show(bool show)
 void DesignerPanel::on_input_enter_designer(wxCommandEvent &evt) 
 { 
     auto text  = evt.GetString();
-    wxGetApp().plater()->model().SetDesigner(std::string(text.ToUTF8().data()), "");
+    wxGetApp().session().model().SetDesigner(std::string(text.ToUTF8().data()), "");
 }
 
 void DesignerPanel::on_input_enter_model(wxCommandEvent &evt) 
@@ -1172,17 +1174,17 @@ void DesignerPanel::on_input_enter_description(wxCommandEvent &evt)
 
 void DesignerPanel::update_info() 
 {
-    if (wxGetApp().plater()->model().design_info != nullptr) {
-        wxString text = wxString::FromUTF8(wxGetApp().plater()->model().design_info->Designer);
+    if (wxGetApp().session().model().design_info != nullptr) {
+        wxString text = wxString::FromUTF8(wxGetApp().session().model().design_info->Designer);
         m_input_designer->GetTextCtrl()->SetValue(text);
     } else {
         m_input_designer->GetTextCtrl()->SetValue(wxEmptyString);
     }
 
-    if (wxGetApp().plater()->model().model_info != nullptr) {
-        m_input_model_name->GetTextCtrl()->SetValue(wxString::FromUTF8(wxGetApp().plater()->model().model_info->model_name));
-        m_input_description->ChangeValue(wxString::FromUTF8(wxGetApp().plater()->model().model_info->description));
-        if (!m_combo_license->SetStringSelection(wxString::FromUTF8(wxGetApp().plater()->model().model_info->license))) {
+    if (wxGetApp().session().model().model_info != nullptr) {
+        m_input_model_name->GetTextCtrl()->SetValue(wxString::FromUTF8(wxGetApp().session().model().model_info->model_name));
+        m_input_description->ChangeValue(wxString::FromUTF8(wxGetApp().session().model().model_info->description));
+        if (!m_combo_license->SetStringSelection(wxString::FromUTF8(wxGetApp().session().model().model_info->license))) {
             m_combo_license->SetSelection(0);
         }
     } else {

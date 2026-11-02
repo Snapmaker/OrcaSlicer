@@ -1,4 +1,5 @@
 #include "Search.hpp"
+#include "Plater.hpp"   // H2 3.1 白名单：Plater 完整型解引用（偏离登记）
 
 #include <vector>
 #include <cstddef>
@@ -14,7 +15,6 @@
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "GUI_App.hpp"
-#include "Plater.hpp"
 #include "Tab.hpp"
 
 #define FTS_FUZZY_MATCH_IMPLEMENTATION

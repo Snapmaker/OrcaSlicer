@@ -1,8 +1,10 @@
 #include "Preferences.hpp"
+#include "Plater.hpp"   // H2 3.1 白名单：Plater 完整型解引用（偏离登记）
 #include "OptionsGroup.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
-#include "Plater.hpp"
+#include "app/ProjectSession.hpp"   // H2 2.4：组合根服务直调
+#include "app/FilamentService.hpp"
 #include "MsgDialog.hpp"
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
@@ -253,12 +255,12 @@ wxBoxSizer *PreferencesDialog::create_item_language_combobox(
         if (e.GetString().mb_str() != app_config->get(param)) {
             {
                 //check if the project has changed
-                if (wxGetApp().plater()->is_project_dirty()) {
+                if (wxGetApp().session().is_project_dirty()) {
                     auto result = MessageDialog(static_cast<wxWindow*>(this), _L("The current project has unsaved changes, save it before continue?"),
                         wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Save"), wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxCENTRE).ShowModal();
 
                     if (result == wxID_YES) {
-                        wxGetApp().plater()->save_project();
+                        wxGetApp().session().save_project();
                     }
                 }
 
@@ -749,7 +751,7 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
         app_config->save();
 
         if (param == "allow_filament_temp_mixing" && wxGetApp().plater())
-            wxGetApp().plater()->notify_filament_usage_changed();
+            wxGetApp().filament_svc().notify_filament_usage_changed();
 
         if (param == "gcode_preview_gpu_accel")
             // Deferred: rebuilding the toolpaths here would freeze the modal

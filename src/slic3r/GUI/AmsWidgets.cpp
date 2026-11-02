@@ -5,7 +5,6 @@
 
 #include "GUI_App.hpp"
 #include "GUI_ObjectList.hpp"
-#include "Plater.hpp"
 #include "MainFrame.hpp"
 #include "Widgets/Label.hpp"
 #include "format.hpp"

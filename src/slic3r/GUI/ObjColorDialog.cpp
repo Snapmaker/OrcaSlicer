@@ -1,4 +1,5 @@
 #include <algorithm>
+#include "Sidebar.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include <map>
 #include <sstream>
 //#include "libslic3r/FlushVolCalc.hpp"

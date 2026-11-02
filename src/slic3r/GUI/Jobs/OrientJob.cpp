@@ -1,4 +1,8 @@
 #include "OrientJob.hpp"
+#include "../GUI_App.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/PlateController.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/ProjectSession.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../PartPlate.hpp"   // H2 3.1 顶部瘦身：PartPlate 完整型（原经 Plater.hpp 传递链）
 
 #include "libslic3r/Model.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -13,7 +17,7 @@ namespace Slic3r { namespace GUI {
 
 void OrientJob::clear_input()
 {
-    const Model &model = m_plater->model();
+    const Model &model = wxGetApp().session().model();
 
     size_t count = 0, cunprint = 0; // To know how much space to reserve
     for (auto obj : model.objects)
@@ -31,8 +35,8 @@ void OrientJob::clear_input()
 //BBS: add only one plate mode and lock logic
 void OrientJob::prepare_selection(std::vector<bool> obj_sel, bool only_one_plate)
 {
-    Model& model = m_plater->model();
-    PartPlateList& plate_list = m_plater->get_partplate_list();
+    Model& model = wxGetApp().session().model();
+    PartPlateList& plate_list = wxGetApp().plates().partplate_list();
     //OrientMeshs selected_in_lock, unselect_in_lock;
     bool selected_is_locked = false;
 
@@ -83,7 +87,7 @@ void OrientJob::prepare_selection(std::vector<bool> obj_sel, bool only_one_plate
 void OrientJob::prepare_selected() {
     clear_input();
 
-    Model &model = m_plater->model();
+    Model &model = wxGetApp().session().model();
 
     std::vector<bool> obj_sel(model.objects.size(), false);
 
@@ -99,7 +103,7 @@ void OrientJob::prepare_selected() {
 void OrientJob::prepare_partplate() {
     clear_input();
 
-    PartPlateList& plate_list = m_plater->get_partplate_list();
+    PartPlateList& plate_list = wxGetApp().plates().partplate_list();
     PartPlate* plate = plate_list.get_curr_plate();
     assert(plate != nullptr);
 
@@ -117,7 +121,7 @@ void OrientJob::prepare_partplate() {
         return;
     }
 
-    Model& model = m_plater->model();
+    Model& model = wxGetApp().session().model();
 
     std::vector<bool> obj_sel(model.objects.size(), false);
 
@@ -137,13 +141,12 @@ void OrientJob::prepare_partplate() {
 //BBS: add partplate logic
 void OrientJob::prepare()
 {
-    int state = m_plater->get_prepare_state();
     m_plater->get_notification_manager()->bbl_close_plateinfo_notification();
-    if (state == Job::JobPrepareState::PREPARE_STATE_DEFAULT) {
+    if (m_request.scope == app::OrientRequest::Scope::Selection) {   // F3：原读旧 prepare-state 的 DEFAULT 分支（选中对象）
         // only_on_partplate = false;
         prepare_selected();
     }
-    else if (state == Job::JobPrepareState::PREPARE_STATE_MENU) {
+    else if (m_request.scope == app::OrientRequest::Scope::CurrentPlate) {   // 原 MENU 分支
         // only_on_partplate = true;   // only arrange items on current plate
         prepare_partplate();
     }
@@ -194,7 +197,7 @@ void OrientJob::process(Ctl &ctl)
     wxGetApp().plater()->show_status_message(ctl.was_canceled() ? "Orienting canceled." : ss.str());
 }
 
-OrientJob::OrientJob() : m_plater{wxGetApp().plater()} {}
+OrientJob::OrientJob(app::OrientRequest request) : m_plater{wxGetApp().plater()}, m_request{std::move(request)} {}
 
 void OrientJob::finalize(bool canceled, std::exception_ptr &eptr)
 {

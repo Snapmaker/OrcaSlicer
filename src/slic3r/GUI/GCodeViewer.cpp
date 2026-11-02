@@ -1,4 +1,7 @@
 #include "libslic3r/libslic3r.h"
+#include "app/PlateController.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "app/ProjectSession.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "PartPlate.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "GCodeViewer.hpp"
 
 #include "libslic3r/BuildVolume.hpp"
@@ -406,7 +409,7 @@ void GCodeViewer::SequentialView::Marker::render(int canvas_width, int canvas_he
     imgui.begin(std::string("ExtruderPosition"), ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
     ImGui::AlignTextToFramePadding();
     //BBS: minus the plate offset when show tool position
-    PartPlateList& partplate_list = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& partplate_list = wxGetApp().plates().partplate_list();
     PartPlate* plate = partplate_list.get_curr_plate();
     const Vec3f position = m_world_position + m_world_offset;
     std::string x = ImGui::ColorMarkerStart + std::string("X: ") + ImGui::ColorMarkerEnd;
@@ -1242,7 +1245,7 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
     }
 
     bool only_gcode_3mf = false;
-    PartPlate* current_plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+    PartPlate* current_plate = wxGetApp().plates().partplate_list().get_curr_plate();
     bool current_has_print_instances = current_plate->has_printable_instances();
     if (current_plate->is_slice_result_valid() && wxGetApp().model().objects.empty() && !current_has_print_instances)
         only_gcode_3mf = true;
@@ -2059,7 +2062,7 @@ void GCodeViewer::update_layers_slider_mode()
 
     // BBS
     if (wxGetApp().filaments_cnt() > 1) {
-        const ModelObjectPtrs &objects = wxGetApp().plater()->model().objects;
+        const ModelObjectPtrs &objects = wxGetApp().session().model().objects;
 
         // check if whole model uses just only one extruder
         if (!objects.empty()) {
@@ -4600,7 +4603,7 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
     ImGui::SameLine();
     // title and item data
     {
-        PartPlateList& plate_list = wxGetApp().plater()->get_partplate_list();
+        PartPlateList& plate_list = wxGetApp().plates().partplate_list();
         for (auto plate : plate_list.get_nonempty_plate_list())
         {
             if (plate == nullptr || plate->get_slice_result() == nullptr)
@@ -5177,7 +5180,7 @@ void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canv
     };
     int displayed_columns = 0;
     std::map<std::string, float> color_print_offsets;
-    const PrintStatistics& ps = wxGetApp().plater()->get_partplate_list().get_current_fff_print().print_statistics();
+    const PrintStatistics& ps = wxGetApp().plates().partplate_list().get_current_fff_print().print_statistics();
     double koef = imperial_units ? GizmoObjectManipulation::in_to_mm : 1000.0;
     double unit_conver = imperial_units ? GizmoObjectManipulation::oz_to_g : 1;
 
@@ -5479,7 +5482,7 @@ void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canv
     case EViewType::ColorPrint:
     {
         //BBS: replace model custom gcode with current plate custom gcode
-        const std::vector<CustomGCode::Item>& custom_gcode_per_print_z = wxGetApp().is_editor() ? wxGetApp().plater()->model().get_curr_plate_custom_gcodes().gcodes : m_custom_gcode_per_print_z;
+        const std::vector<CustomGCode::Item>& custom_gcode_per_print_z = wxGetApp().is_editor() ? wxGetApp().session().model().get_curr_plate_custom_gcodes().gcodes : m_custom_gcode_per_print_z;
         size_t total_items = 1;
         // BBS: no ColorChange type, use ToolChange
         //for (size_t extruder_id : m_extruder_ids) {
@@ -5637,7 +5640,7 @@ void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canv
             PartialTimes items;
 
             //BBS: replace model custom gcode with current plate custom gcode
-            std::vector<CustomGCode::Item> custom_gcode_per_print_z = wxGetApp().is_editor() ? wxGetApp().plater()->model().get_curr_plate_custom_gcodes().gcodes : m_custom_gcode_per_print_z;
+            std::vector<CustomGCode::Item> custom_gcode_per_print_z = wxGetApp().is_editor() ? wxGetApp().session().model().get_curr_plate_custom_gcodes().gcodes : m_custom_gcode_per_print_z;
             // Degenerate results (e.g. gcode whose producer was not recognized) may expose
             // extruders_count == 0 and custom gcode items referencing extruders beyond the
             // available colors/volumes: keep every indexed access below bounds-checked.
@@ -5951,7 +5954,7 @@ void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canv
     }
     // Custom G-code overview
     std::vector<CustomGCode::Item> custom_gcode_per_print_z = wxGetApp().is_editor() ?
-                                                                  wxGetApp().plater()->model().get_curr_plate_custom_gcodes().gcodes :
+                                                                  wxGetApp().session().model().get_curr_plate_custom_gcodes().gcodes :
                                                                   m_custom_gcode_per_print_z;
     if (custom_gcode_per_print_z.size() != 0) {
         float max_len = window_padding + 2 * ImGui::GetStyle().ItemSpacing.x;

@@ -1,4 +1,5 @@
 #include "ObjectDataViewModel.hpp"
+#include "app/PlateController.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "slic3r/GUI/wxExtensions.hpp"
 #include "wxExtensions.hpp"
 #include "BitmapCache.hpp"
@@ -7,6 +8,7 @@
 #include "GUI.hpp"
 #include "I18N.hpp"
 #include "PartPlate.hpp"
+#include "Plater.hpp"   // 阶段 H1（路径 A 解环）：原经 PartPlate.hpp:15 传递——消费者显式包含
 
 #include "libslic3r/Model.hpp"
 
@@ -478,7 +480,7 @@ ObjectDataViewModel::~ObjectDataViewModel()
 
 void ObjectDataViewModel::Init()
 {
-    PartPlateList& list = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& list = wxGetApp().plates().partplate_list();
 
     if (list.get_plate_count() > 0)
         AddPlate(list.get_plate(0));

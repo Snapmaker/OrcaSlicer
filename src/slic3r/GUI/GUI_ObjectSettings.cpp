@@ -1,4 +1,6 @@
 #include "GUI_ObjectSettings.hpp"
+#include "app/PlateController.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "PartPlate.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "GUI_ObjectList.hpp"
 #include "GUI_Factories.hpp"
 #include "Tab.hpp"
@@ -213,7 +215,7 @@ bool ObjectSettings::update_settings_list()
             continue;
         }
         int plate_id = objects_model->GetPlateIdByItem(item);
-        PartPlateList& ppl = wxGetApp().plater()->get_partplate_list();
+        PartPlateList& ppl = wxGetApp().plates().partplate_list();
         if (plate_id < 0 || plate_id >= ppl.get_plate_count()) {
             plate_id = ppl.get_curr_plate_index();
         }

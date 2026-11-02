@@ -2,6 +2,7 @@
 #define slic3r_GUI_SelectMachine_hpp_
 
 #include <wx/wx.h>
+#include "libslic3r/Model.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include <wx/intl.h>
 #include <wx/collpane.h>
 #include <wx/dataview.h>
@@ -29,7 +30,6 @@
 #include "GUI_Utils.hpp"
 #include "wxExtensions.hpp"
 #include "DeviceManager.hpp"
-#include "Plater.hpp"
 #include "BBLStatusBar.hpp"
 #include "BBLStatusBarSend.hpp"
 #include "Widgets/Label.hpp"
@@ -44,6 +44,8 @@
 #include "Jobs/Worker.hpp"
 
 namespace Slic3r { namespace GUI {
+
+class Plater;                       // 阶段 E2 头文件解 Plater：成员/形参仅指针（手册 D3；完整类型在 cpp 侧）
 
 void        print_ams_mapping_result(std::vector<FilamentInfo> &result);
 enum PrintFromType {

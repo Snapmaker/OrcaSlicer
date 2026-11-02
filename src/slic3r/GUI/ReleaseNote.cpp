@@ -21,7 +21,6 @@
 #include <wx/dcgraph.h>
 #include <miniz.h>
 #include <algorithm>
-#include "Plater.hpp"
 #include "BitmapCache.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "sentry_wrapper/SentryWrapper.hpp"

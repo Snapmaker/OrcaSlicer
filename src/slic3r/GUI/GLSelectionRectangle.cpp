@@ -1,10 +1,10 @@
 #include "GLSelectionRectangle.hpp"
+#include "app/LayoutManager.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "Camera.hpp"
 #include "CameraUtils.hpp"
 #include "3DScene.hpp"
 #include "GLCanvas3D.hpp"
 #include "GUI_App.hpp"
-#include "Plater.hpp"
 #include <igl/project.h>
 
 #include <GL/glew.h>
@@ -38,7 +38,7 @@ namespace GUI {
         const BoundingBox rectangle(Points{ Point(m_start_corner.cast<coord_t>()), Point(m_end_corner.cast<coord_t>()) });
 
         // Iterate over all points and determine whether they're in the rectangle.
-        const Camera &camera = wxGetApp().plater()->get_camera();
+        const Camera &camera = wxGetApp().layout().camera;
         Points points_2d = CameraUtils::project(camera, points);
         unsigned int size = static_cast<unsigned int>(points.size());
         for (unsigned int i = 0; i< size; ++i)

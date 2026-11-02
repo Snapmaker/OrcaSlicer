@@ -1,6 +1,6 @@
 #include "GUI_App.hpp"
 #include "InstanceCheck.hpp"
-#include "Plater.hpp"
+#include "common_func/common_func.hpp"
 #include <boost/regex.hpp>
 
 #ifdef _WIN32

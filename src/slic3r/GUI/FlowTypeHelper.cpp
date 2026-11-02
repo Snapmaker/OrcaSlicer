@@ -2,6 +2,8 @@
 
 #include "GUI_App.hpp"
 #include "Plater.hpp"
+#include "PartPlate.hpp"            // 阶段 I：Plater.hpp 瘦身后不再传递 PartPlateList 完整型
+#include "app/ProjectSession.hpp"   // H2 2.6：组合根服务直调
 
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -23,7 +25,7 @@ static void notify_plater()
     Plater *plater = wxGetApp().plater();
     if (plater == nullptr)
         return;
-    plater->update_project_dirty_from_presets();
+    wxGetApp().session().update_project_dirty_from_presets();
     plater->on_config_change(wxGetApp().preset_bundle->full_config());
 }
 

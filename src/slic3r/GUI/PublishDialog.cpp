@@ -1,4 +1,5 @@
 #include "PublishDialog.hpp"
+#include "Plater.hpp"               // 阶段 E2：wxQueueEvent(m_plater) 需完整类型（原经 hpp 传递包含）
 #include "GUI_App.hpp"
 
 #include <wx/wx.h> 

@@ -30,6 +30,7 @@
 #ifdef _MSW_DARK_MODE
 #include <wx/msw/dark_mode.h>
 #endif // _MSW_DARK_MODE
+#include "Plater.hpp"   // H2 3.1 白名单：置于 dark_mode 守卫之后（_MSW_DARK_MODE 时序）
 
 #include "libslic3r/Platform.hpp"
 #include "libslic3r/Utils.hpp"

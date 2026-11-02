@@ -1,4 +1,7 @@
 #include "ArrangeJob.hpp"
+#include "../GUI_App.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/PlateController.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/ProjectSession.hpp"   // H2 3.1：partplate/model accessor 供给
 
 #include "libslic3r/BuildVolume.hpp"
 #include "libslic3r/SVG.hpp"
@@ -79,7 +82,7 @@ arrangement::ArrangePolygon get_wipetower_arrange_poly(WipeTower* tower)
 
 void ArrangeJob::clear_input()
 {
-    const Model &model = m_plater->model();
+    const Model &model = wxGetApp().session().model();
 
     size_t count = 0, cunprint = 0; // To know how much space to reserve
     for (auto obj : model.objects)
@@ -108,11 +111,11 @@ ArrangePolygon ArrangeJob::prepare_arrange_polygon(void* model_instance)
 }
 
 void ArrangeJob::prepare_selected() {
-    PartPlateList& plate_list = m_plater->get_partplate_list();
+    PartPlateList& plate_list = wxGetApp().plates().partplate_list();
 
     clear_input();
 
-    Model& model = m_plater->model();
+    Model& model = wxGetApp().session().model();
     bool selected_is_locked = false;
     //BBS: remove logic for unselected object
     //double stride = bed_stride_x(m_plater);
@@ -188,7 +191,7 @@ void ArrangeJob::prepare_selected() {
 void ArrangeJob::prepare_all() {
     clear_input();
 
-    PartPlateList& plate_list = m_plater->get_partplate_list();    
+    PartPlateList& plate_list = wxGetApp().plates().partplate_list();    
     for (size_t i = 0; i < plate_list.get_plate_count(); i++) {
         PartPlate* plate = plate_list.get_plate(i);
         bool same_as_global_print_seq = true;
@@ -200,7 +203,7 @@ void ArrangeJob::prepare_all() {
     }
 
 
-    Model &model = m_plater->model();
+    Model &model = wxGetApp().session().model();
     bool selected_is_locked = false;
 
     // Go through the objects and check if inside the selection
@@ -253,7 +256,7 @@ void ArrangeJob::prepare_all() {
 
 arrangement::ArrangePolygon estimate_wipe_tower_info(int plate_index, std::set<int>& extruder_ids)
 {
-    PartPlateList& ppl = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& ppl = wxGetApp().plates().partplate_list();
     const auto& full_config = wxGetApp().preset_bundle->full_config();
     int plate_count = ppl.get_plate_count();
     int plate_index_valid = std::min(plate_index, plate_count - 1);
@@ -337,7 +340,7 @@ void ArrangeJob::prepare_wipe_tower()
     const GLCanvas3D* canvas3D = static_cast<const GLCanvas3D*>(m_plater->canvas3D());
 
     std::set<int> extruder_ids;
-    PartPlateList& ppl = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& ppl = wxGetApp().plates().partplate_list();
     int plate_count = ppl.get_plate_count();
     if (!only_on_partplate) {
         extruder_ids = ppl.get_extruders(true);
@@ -374,7 +377,7 @@ void ArrangeJob::prepare_wipe_tower()
 void ArrangeJob::prepare_partplate() {
     clear_input();
 
-    PartPlateList& plate_list = m_plater->get_partplate_list();
+    PartPlateList& plate_list = wxGetApp().plates().partplate_list();
     PartPlate* plate = plate_list.get_curr_plate();
     current_plate_index = plate_list.get_curr_plate_index();
     assert(plate != nullptr);
@@ -393,7 +396,7 @@ void ArrangeJob::prepare_partplate() {
         return;
     }
 
-    Model& model = m_plater->model();
+    Model& model = wxGetApp().session().model();
 
     // Go through the objects and check if inside the selection
     for (size_t oidx = 0; oidx < model.objects.size(); ++oidx)
@@ -440,23 +443,22 @@ void ArrangeJob::prepare()
         NotificationManager::NotificationLevel::RegularNotificationLevel, _u8L("Arranging..."));
     m_plater->get_notification_manager()->bbl_close_plateinfo_notification();
 
-    params = init_arrange_params(m_plater);
+    params = init_arrange_params(m_plater, m_request.scope == app::ArrangeRequest::Scope::CurrentPlate);   // F3 D4：唯一显式传参点
 
     //BBS update extruder params and speed table before arranging
     const Slic3r::DynamicPrintConfig& config = wxGetApp().preset_bundle->full_config();
-    auto& print = wxGetApp().plater()->get_partplate_list().get_current_fff_print();
+    auto& print = wxGetApp().plates().partplate_list().get_current_fff_print();
     auto print_config = print.config();
     int numExtruders = wxGetApp().preset_bundle->filament_presets.size();
 
     Model::setExtruderParams(config, numExtruders);
     Model::setPrintSpeedTable(config, print_config);
 
-    int state = m_plater->get_prepare_state();
-    if (state == Job::JobPrepareState::PREPARE_STATE_DEFAULT) {
+    if (m_request.scope == app::ArrangeRequest::Scope::AllPlates) {   // F3：原读旧 prepare-state 的 DEFAULT 分支
         only_on_partplate = false;
         prepare_all();
     }
-    else if (state == Job::JobPrepareState::PREPARE_STATE_MENU) {
+    else if (m_request.scope == app::ArrangeRequest::Scope::CurrentPlate) {   // 原 MENU 分支
         only_on_partplate = true;   // only arrange items on current plate
         prepare_partplate();
     }
@@ -465,7 +467,7 @@ void ArrangeJob::prepare()
 #if SAVE_ARRANGE_POLY
     if (1)
     { // subtract excluded region and get a polygon bed
-        auto& print = wxGetApp().plater()->get_partplate_list().get_current_fff_print();
+        auto& print = wxGetApp().plates().partplate_list().get_current_fff_print();
         auto print_config = print.config();
         bed_poly.points = get_bed_shape(*m_plater->config());
         Polygons exclude_polys = get_bed_excluded_area(print_config);
@@ -527,7 +529,7 @@ void ArrangeJob::process(Ctl &ctl)
     ctl.update_status(0, arrangestr);
     ctl.call_on_main_thread([this]{ prepare(); }).wait();;
 
-    auto & partplate_list = m_plater->get_partplate_list();
+    auto & partplate_list = wxGetApp().plates().partplate_list();
 
     const Slic3r::DynamicPrintConfig& global_config = wxGetApp().preset_bundle->full_config();
     PresetBundle* preset_bundle = wxGetApp().preset_bundle;
@@ -596,7 +598,7 @@ void ArrangeJob::process(Ctl &ctl)
         we_have_unpackable_items ? _u8L("Arranging is done but there are unpacked items. Reduce spacing and try again.") : _u8L("Arranging done."));
 }
 
-ArrangeJob::ArrangeJob() : m_plater{wxGetApp().plater()} { }
+ArrangeJob::ArrangeJob(app::ArrangeRequest request) : m_plater{wxGetApp().plater()}, m_request{std::move(request)} { }
 
 static std::string concat_strings(const std::set<std::string> &strings,
                                   const std::string &delim = "\n")
@@ -627,7 +629,7 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
     int beds = 0;
 
     //BBS: partplate
-    PartPlateList& plate_list = m_plater->get_partplate_list();
+    PartPlateList& plate_list = wxGetApp().plates().partplate_list();
     //clear all the relations before apply the arrangement results
     if (only_on_partplate) {
         plate_list.clear(false, false, true, current_plate_index);
@@ -734,7 +736,7 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
 
     m_plater->update();
 
-    m_plater->m_arrange_running.store(false);
+    m_plater->release_arrange_running();   // 阶段 F2：旗标唯一归属 app::ArrangementService
 }
 
 std::optional<arrangement::ArrangePolygon>
@@ -759,11 +761,11 @@ double bed_stride_y(const Plater* plater) {
 }
 
 // call before get selected and unselected
-arrangement::ArrangeParams init_arrange_params(Plater *p)
+arrangement::ArrangeParams init_arrange_params(Plater *p, bool current_plate_scope)   // F3 D4：原 prepare-state 读点改形参（默认 false，FillBedJob/ArrangementService 调用零改动）
 {
     arrangement::ArrangeParams         params;
     GLCanvas3D::ArrangeSettings       &settings     = p->canvas3D()->get_arrange_settings();
-    auto                              &print        = wxGetApp().plater()->get_partplate_list().get_current_fff_print();
+    auto                              &print        = wxGetApp().plates().partplate_list().get_current_fff_print();
     const PrintConfig                 &print_config = print.config();
 
     auto [object_skirt_offset, object_skirt_witdh] = print.object_skirt_offset();
@@ -782,8 +784,7 @@ arrangement::ArrangeParams init_arrange_params(Plater *p)
     params.min_obj_distance                    = scaled(settings.distance);
     params.align_to_y_axis                     = settings.align_to_y_axis;
 
-    int state = p->get_prepare_state();
-    if (state == Job::JobPrepareState::PREPARE_STATE_MENU) {
+    if (current_plate_scope) {   // F3：原 MENU 状态分支（盘级 seq 覆盖 is_seq_print/min_obj_distance）
         PartPlateList &plate_list = p->get_partplate_list();
         PartPlate *    plate      = plate_list.get_curr_plate();
         bool plate_same_as_global = true;

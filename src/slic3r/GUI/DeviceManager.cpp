@@ -6,7 +6,6 @@
 
 #include "GUI_App.hpp"
 #include "MsgDialog.hpp"
-#include "Plater.hpp"
 #include "GUI_App.hpp"
 #include "ReleaseNote.hpp"
 #include "slic3r/Utils/SnapLogClient.hpp"

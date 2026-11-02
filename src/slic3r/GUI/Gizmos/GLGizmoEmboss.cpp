@@ -1,4 +1,7 @@
 #include "GLGizmoEmboss.hpp"
+#include "../GUI_App.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/PlateController.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/ProjectSession.hpp"   // H2 3.1：partplate/model accessor 供给
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
@@ -6,6 +9,7 @@
 #include "slic3r/GUI/MainFrame.hpp" // to update title when add text
 #include "slic3r/GUI/NotificationManager.hpp"
 #include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/app/ObjectEditCommands.hpp"   // H2 2.6：remove 组合根
 #include "slic3r/GUI/MsgDialog.hpp"
 #include "slic3r/GUI/format.hpp"
 #include "slic3r/GUI/I18N.hpp"
@@ -1341,7 +1345,7 @@ void GLGizmoEmboss::close()
         // is the text object?
         if (m_volume->is_the_only_one_part()) {
             // delete whole object
-            p.remove(m_parent.get_selection().get_object_idx());
+            wxGetApp().obj_cmds().remove(m_parent.get_selection().get_object_idx());
         } else {
             // delete text volume
             p.remove_selected();
@@ -1895,7 +1899,7 @@ void GLGizmoEmboss::draw_model_type()
     if (m_volume != nullptr && new_type.has_value() && !is_last_solid_part) {
         GUI_App &app    = wxGetApp();
         Plater * plater = app.plater();
-        Plater::TakeSnapshot snapshot(plater, _u8L("Change Text Type"), UndoRedo::SnapshotType::GizmoAction);
+        app::SnapshotService::Scope snapshot(plater, _u8L("Change Text Type"), UndoRedo::SnapshotType::GizmoAction);
         m_volume->set_type(*new_type);
 
         bool is_volume_move_inside  = (type == part);
@@ -1952,7 +1956,7 @@ void GLGizmoEmboss::draw_style_rename_popup() {
 
     if (store) {
         // rename style in all objects and volumes
-        for (const ModelObject *mo :wxGetApp().plater()->model().objects) {
+        for (const ModelObject *mo :wxGetApp().session().model().objects) {
             for (ModelVolume *mv : mo->volumes) { 
                 if (!mv->text_configuration.has_value()) continue;
                 std::string& name = mv->text_configuration->style.name;

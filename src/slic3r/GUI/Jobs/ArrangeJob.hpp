@@ -6,6 +6,7 @@
 
 #include "Job.hpp"
 #include "libslic3r/Arrange.hpp"
+#include "slic3r/GUI/app/ArrangeRequest.hpp"   // F3：Request 显式传递（纯值头，零 include 纯净）
 
 namespace Slic3r {
 
@@ -30,6 +31,7 @@ class ArrangeJob : public Job
     int current_plate_index = 0;
     Polygon bed_poly;
     Plater *m_plater;
+    app::ArrangeRequest m_request;   // F3：prepare 分支改读自持 Request（commit ② 落地读点）
 
     // BBS: add flag for whether on current part plate
     bool only_on_partplate{false};
@@ -59,7 +61,7 @@ public:
 
     void process(Ctl &ctl) override;
 
-    ArrangeJob();
+    ArrangeJob(app::ArrangeRequest request);   // F3：prepare 前置语义随调用传入（原 Plater 旧隐式写点）
 
     int status_range() const
     {
@@ -81,7 +83,7 @@ static const constexpr double LOGICAL_BED_GAP = 1. / 5.;
 double bed_stride_x(const Plater* plater);
 double bed_stride_y(const Plater* plater);
 
-arrangement::ArrangeParams init_arrange_params(Plater *p);
+arrangement::ArrangeParams init_arrange_params(Plater *p, bool current_plate_scope = false);   // F3 D4：盘级 seq 覆盖的状态读取改形参（唯一显式传参点 ArrangeJob prepare）
 
 }} // namespace Slic3r::GUI
 

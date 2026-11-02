@@ -1,4 +1,6 @@
 #include "Tab.hpp"
+#include "app/ProjectSession.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "Plater.hpp"   // H2 3.1 白名单：Plater 完整型解引用（偏离登记）
 #include "Project.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Model.hpp"
@@ -115,7 +117,7 @@ void ProjectPanel::on_reload(wxCommandEvent& evt)
 
         std::map<std::string, std::vector<json>> files;
 
-        Model model = wxGetApp().plater()->model();
+        Model model = wxGetApp().session().model();
 
         auto model_info = model.model_info;
         if (model_info != nullptr) {
@@ -153,7 +155,7 @@ void ProjectPanel::on_reload(wxCommandEvent& evt)
         }
 
         // file info
-        std::string file_path = encode_path(wxGetApp().plater()->model().get_auxiliary_file_temp_path().c_str());
+        std::string file_path = encode_path(wxGetApp().session().model().get_auxiliary_file_temp_path().c_str());
         if (!file_path.empty()) {
             files = Reload(file_path);
             wxGetApp().CallAfter([this, file_path, files] { m_auxiliary->Reload(file_path, files); });
@@ -290,7 +292,7 @@ void ProjectPanel::show_info_editor(bool show)
 
 void ProjectPanel::update_model_data()
 {
-    Model model = wxGetApp().plater()->model();
+    Model model = wxGetApp().session().model();
     show_info_editor(false);
     clear_model_info();
 

@@ -1,4 +1,6 @@
 #include "libslic3r/libslic3r.h"
+#include "app/PlateController.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "PartPlate.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "Selection.hpp"
 
 #include "3DScene.hpp"
@@ -9,6 +11,7 @@
 #include "Gizmos/GLGizmoBase.hpp"
 #include "Camera.hpp"
 #include "Plater.hpp"
+#include "app/SceneRefreshCoordinator.hpp"   // H2 2.2：update 组合根
 #include "slic3r/Utils/UndoRedo.hpp"
 
 #include "libslic3r/LocalesUtils.hpp"
@@ -213,7 +216,7 @@ void Selection::add(unsigned int volume_idx, bool as_single_selection, bool chec
     }
     case Instance:
     {
-        Plater::SuppressSnapshots suppress(wxGetApp().plater());
+        app::SnapshotService::SuppressScope suppress(wxGetApp().plater());
         add_instance(volume->object_idx(), volume->instance_idx(), as_single_selection);
         break;
     }
@@ -444,7 +447,7 @@ void Selection::add_curr_plate()
     m_mode = Instance;
     clear();
 
-    PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+    PartPlate* plate = wxGetApp().plates().partplate_list().get_curr_plate();
     for (int obj_idx = 0; obj_idx < m_model->objects.size(); obj_idx++) {
         if (plate && plate->contain_instance_totally(obj_idx, 0)) {
             std::vector<unsigned int> volume_idxs = get_volume_idxs_from_object(obj_idx);
@@ -477,7 +480,7 @@ void Selection::remove_curr_plate()
     if (!m_valid)
         return;
 
-    PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+    PartPlate* plate = wxGetApp().plates().partplate_list().get_curr_plate();
     if (plate->empty())
         return;
 
@@ -512,7 +515,7 @@ void Selection::clone(int numbers)
 
 void Selection::center()
 {
-    PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_selected_plate();
+    PartPlate* plate = wxGetApp().plates().partplate_list().get_selected_plate();
 
     // calc distance
     Vec3d src_pos = this->get_bounding_box().center();
@@ -532,7 +535,7 @@ void Selection::drop()
 
 void Selection::center_plate(const int plate_idx) {
 
-    PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_idx);
+    PartPlate* plate = wxGetApp().plates().partplate_list().get_plate(plate_idx);
 
 
     Vec3d src_pos = this->get_bounding_box().center();
@@ -575,7 +578,7 @@ void Selection::set_printable(bool printable)
     }
 
     // update scene
-    wxGetApp().plater()->update();
+    wxGetApp().refresh().update_gate(false, false);
 }
 
 void Selection::add_all()
@@ -1191,12 +1194,12 @@ void Selection::translate(const Vec3d &displacement, TransformationType transfor
         } else {
             if (v.is_wipe_tower) {//in world cs
                 int           plate_idx           = v.object_idx() - 1000;
-                BoundingBoxf3 plate_bbox          = wxGetApp().plater()->get_partplate_list().get_plate(plate_idx)->get_bounding_box();
+                BoundingBoxf3 plate_bbox          = wxGetApp().plates().partplate_list().get_plate(plate_idx)->get_bounding_box();
                 BoundingBox plate_bbox2d = BoundingBox(scaled(Vec2f(plate_bbox.min[0], plate_bbox.min[1])), scaled(Vec2f(plate_bbox.max[0], plate_bbox.max[1])));
                 Vec3d         tower_size          = v.bounding_box().size();
                 Vec3d         tower_origin        = m_cache.volumes_data[i].get_volume_position();
                 Vec3d         actual_displacement = displacement;
-                bool show_read_wipe_tower = wxGetApp().plater()->get_partplate_list().get_plate(plate_idx)->fff_print()->is_step_done(psWipeTower);
+                bool show_read_wipe_tower = wxGetApp().plates().partplate_list().get_plate(plate_idx)->fff_print()->is_step_done(psWipeTower);
                 float brim_width = wxGetApp().preset_bundle->prints.get_edited_preset().config.opt_float("prime_tower_brim_width");
 
                 const double margin = show_read_wipe_tower ? WIPE_TOWER_MARGIN : brim_width + 0.5;
@@ -1769,7 +1772,7 @@ void Selection::rotate(unsigned int object_idx, unsigned int instance_idx, unsig
 void Selection::notify_instance_update(int object_idx, int instance_idx)
 {
     //BBS: notify instance updates to part plater list
-    PartPlateList& plate_list = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& plate_list = wxGetApp().plates().partplate_list();
 
     if (object_idx == -1)
     {
@@ -3135,7 +3138,7 @@ void Selection::paste_objects_from_clipboard()
 
     std::vector<size_t> object_idxs;
     const ModelObjectPtrs& src_objects = m_clipboard.get_objects();
-    PartPlate *            plate       = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+    PartPlate *            plate       = wxGetApp().plates().partplate_list().get_curr_plate();
 
     //BBS: if multiple objects are selected, move them as a whole after copy
     Vec2d shift_all = {0, 0};

@@ -35,6 +35,9 @@
 #include "NotificationManager.hpp"
 #include "FilamentColorDialog.hpp"
 #include "Plater.hpp"
+#include "app/FilamentService.hpp"   // H2 2.4：组合根服务直调
+#include "app/ProjectSession.hpp"   // H2 2.4：组合根服务直调
+#include "app/SceneRefreshCoordinator.hpp"   // H2 2.4：组合根服务直调
 #include "MainFrame.hpp"
 #include "format.hpp"
 #include "Tab.hpp"
@@ -1143,7 +1146,7 @@ void PlaterPresetComboBox::ApplyFilamentColor(const FilamentColor& colorData)
     new_config.set_key_value("filament_colour_mode", filament_colour_modes);
 
     config->apply(new_config);
-    wxGetApp().plater()->update_project_dirty_from_presets();
+    wxGetApp().session().update_project_dirty_from_presets();
     if (wxGetApp().app_config != nullptr)
         wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
     update();

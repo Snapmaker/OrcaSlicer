@@ -2,6 +2,23 @@
 #include "libslic3r/AllowlistManager.hpp"
 #include "libslic3r/FilamentHotBedNozzleRules.hpp"
 #include "GUI_App.hpp"
+#include "GUI_Preview.hpp"   // H2 2.1：refresh_print 改走 layout().preview（View3D 完整型）
+// 阶段 H2 2.0：组合根装配——15 服务完整型（unique_ptr 成员析构点所需；hpp 侧仅前向声明）
+#include "app/NotificationHub.hpp"
+#include "app/SnapshotService.hpp"
+#include "app/PlateController.hpp"
+#include "app/SlicingController.hpp"
+#include "app/ProjectSession.hpp"
+#include "app/ExportSendCoordinator.hpp"
+#include "app/SelectionQuery.hpp"
+#include "app/ObjectEditCommands.hpp"
+#include "app/ArrangementService.hpp"
+#include "app/MixingGateKeeper.hpp"
+#include "app/FilamentService.hpp"
+#include "app/CalibrationFlow.hpp"
+#include "app/LayoutManager.hpp"
+#include "app/SceneRefreshCoordinator.hpp"
+#include "app/PlaterEventRouter.hpp"
 #include "GUI_Init.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Factories.hpp"
@@ -1031,7 +1048,7 @@ void GUI_App::post_init()
             if (this->init_params->input_gcode) {
                 mainframe->select_tab(size_t(MainFrame::tp3DEditor));
                 plater_->select_view_3D("3D");
-                this->plater()->load_gcode(from_u8(this->init_params->input_files.front()));
+                wxGetApp().session().load_gcode(from_u8(this->init_params->input_files.front()));
                 m_open_method = "gcode";
             } else {
                 mainframe->select_tab(size_t(MainFrame::tp3DEditor));
@@ -1040,8 +1057,8 @@ void GUI_App::post_init()
                 for (auto& file : this->init_params->input_files) {
                     input_files.push_back(wxString::FromUTF8(file));
                 }
-                this->plater()->set_project_filename(_L("Untitled"));
-                this->plater()->load_files(input_files);
+                wxGetApp().session().set_project_filename(_L("Untitled"));
+                wxGetApp().session().load_files(input_files);
                 try {
                     if (!input_files.empty()) {
                         std::string           file_path = input_files.front().ToStdString();
@@ -1265,6 +1282,45 @@ IMPLEMENT_APP(GUI_App)
 
 //BBS: remove GCodeViewer as seperate APP logic
 //GUI_App::GUI_App(EAppMode mode)
+// —— 阶段 H2 2.0：组合根服务访问面（design 决策 9）——
+// getter：外部消费方 wxGetApp().<svc>()；构造留守 Plater ctor/plater_init（friend 直写成员）。
+// 语义：断言防御（服务仅存在于 Plater 构造后、~Plater shutdown 前——与原成员期窗口一致）。
+app::NotificationHub&         GUI_App::notification_hub() { assert(m_notification_hub); return *m_notification_hub; }
+app::SnapshotService&         GUI_App::snapshots()        { assert(m_snapshots);        return *m_snapshots; }
+app::PlateController&         GUI_App::plates()           { assert(m_plates);           return *m_plates; }
+app::SlicingController&       GUI_App::slicing()          { assert(m_slicing);          return *m_slicing; }
+app::ProjectSession&          GUI_App::session()          { assert(m_session);          return *m_session; }
+app::ExportSendCoordinator&   GUI_App::ex()               { assert(m_export_send);      return *m_export_send; }
+app::SelectionQuery&          GUI_App::selq()             { assert(m_sel_query);        return *m_sel_query; }
+app::ObjectEditCommands&      GUI_App::obj_cmds()         { assert(m_obj_cmds);         return *m_obj_cmds; }
+app::ArrangementService&      GUI_App::arrange_svc()      { assert(m_arrange_svc);      return *m_arrange_svc; }
+app::MixingGateKeeper&        GUI_App::gate_keeper()      { assert(m_gate_keeper);      return *m_gate_keeper; }
+app::FilamentService&         GUI_App::filament_svc()     { assert(m_filament_svc);     return *m_filament_svc; }
+app::CalibrationFlow&         GUI_App::calibration_svc()  { assert(m_calib_svc);        return *m_calib_svc; }
+app::LayoutManager&           GUI_App::layout()           { assert(m_layout);           return *m_layout; }
+app::SceneRefreshCoordinator& GUI_App::refresh()          { assert(m_refresh);          return *m_refresh; }
+app::PlaterEventRouter&       GUI_App::router()           { assert(m_router);           return *m_router; }
+
+/// 服务统一析构：逆构造序 reset（router 最先、hub 最后）——复现原 Plater 成员逆序析构语义。
+void GUI_App::shutdown_services()
+{
+    m_router.reset();
+    m_refresh.reset();
+    m_layout.reset();
+    m_calib_svc.reset();
+    m_filament_svc.reset();
+    m_gate_keeper.reset();
+    m_arrange_svc.reset();
+    m_obj_cmds.reset();
+    m_sel_query.reset();
+    m_export_send.reset();
+    m_session.reset();
+    m_slicing.reset();
+    m_plates.reset();
+    m_snapshots.reset();
+    m_notification_hub.reset();
+}
+
 GUI_App::GUI_App()
     : wxApp()
     //, m_app_mode(mode)
@@ -1966,8 +2022,8 @@ void GUI_App::init_networking_callbacks()
                             }
                         }
                     }
-                    if (wxGetApp().plater()->get_select_machine_dialog()) {
-                        wxPostEvent(wxGetApp().plater()->get_select_machine_dialog(), event);
+                    if (wxGetApp().ex().select_machine_dlg()) {
+                        wxPostEvent(wxGetApp().ex().select_machine_dlg(), event);
                     }
                 });
             }
@@ -4461,15 +4517,15 @@ void GUI_App::request_project_download(std::string project_id)
 
 void GUI_App::request_open_project(std::string project_id)
 {
-    if (plater()->is_background_process_slicing()) {
+    if (wxGetApp().slicing().is_background_process_slicing()) {
         Slic3r::GUI::show_info(nullptr, _L("new or open project file is not allowed during the slicing process!"), _L("Open Project"));
         return;
     }
 
     if (project_id == "<new>")
-        plater()->new_project();
+        wxGetApp().session().new_project();
     else if (project_id.empty())
-        plater()->load_project();
+        wxGetApp().session().load_project();
     else if (std::find_if_not(project_id.begin(), project_id.end(),
         [](char c) { return std::isdigit(c); }) == project_id.end())
         ;
@@ -5461,7 +5517,7 @@ void GUI_App::sync_preset(Preset* preset)
     if (http_code >= 400 && values_map["code"] == "14") { // Limit
         m_create_preset_blocked[preset->type] = true;
         CallAfter([this] {
-            plater()->get_notification_manager()->push_notification(NotificationType::BBLUserPresetExceedLimit);
+            wxGetApp().notification_hub().nm()->push_notification(NotificationType::BBLUserPresetExceedLimit);
             static bool dialog_notified = false;
             if (dialog_notified)
                 return;
@@ -5600,7 +5656,7 @@ void GUI_App::start_sync_user_preset(bool with_progress_dlg)
                         if (total_count == 0) {
                             CallAfter([this] {
                                 if (!m_is_closing)
-                                    plater()->get_notification_manager()->close_notification_of_type(NotificationType::BBLUserPresetExceedLimit);
+                                    wxGetApp().notification_hub().nm()->close_notification_of_type(NotificationType::BBLUserPresetExceedLimit);
                             });
                         }
 
@@ -6511,7 +6567,7 @@ void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_
 #else
         else if (dlg.seq_top_layer_only_changed())
 #endif // ENABLE_GCODE_LINES_ID_IN_H_SLIDER
-            this->plater_->refresh_print();
+            layout().preview->refresh_print();
 #ifdef _WIN32
         if (is_editor()) {
             if (app_config->get("associate_3mf") == "true")
@@ -6781,7 +6837,7 @@ void GUI_App::load_current_presets(bool active_preset_combox/*= false*/, bool ch
 			if (tab->type() == Preset::TYPE_PRINTER) {
 				static_cast<TabPrinter*>(tab)->update_pages();
 				// Mark the plater to update print bed by tab->load_current_preset() from Plater::on_config_change().
-				this->plater()->force_print_bed_update();
+				wxGetApp().filament_svc().force_print_bed_update();
 			}
 			tab->load_current_preset();
 			//BBS: add preset combox re-active logic
@@ -6955,7 +7011,7 @@ void GUI_App::MacOpenFiles(const wxArrayString &fileNames)
         // Load the first G-code into the G-code viewer.
         // Or if no G-codes, send other files to slicer.
         if (! gcode_files.empty())
-            this->plater()->load_gcode(gcode_files.front());
+            wxGetApp().session().load_gcode(gcode_files.front());
         if (!non_gcode_files.empty())
             start_new_slicer(non_gcode_files, true);
     } else*/
@@ -6966,7 +7022,7 @@ void GUI_App::MacOpenFiles(const wxArrayString &fileNames)
                 for (size_t i = 0; i < non_gcode_files.size(); ++i) {
                     input_files.push_back(non_gcode_files[i]);
                 }
-                this->plater()->load_files(input_files);
+                wxGetApp().session().load_files(input_files);
             } else {
                 for (size_t i = 0; i < files.size(); ++i) {
                     this->init_params->input_files.emplace_back(files[i]);
@@ -6974,7 +7030,7 @@ void GUI_App::MacOpenFiles(const wxArrayString &fileNames)
             }
         } else {
             if (m_post_initialized) {
-                this->plater()->load_gcode(gcode_files.front());
+                wxGetApp().session().load_gcode(gcode_files.front());
             } else {
                 this->init_params->input_gcode = true;
                 this->init_params->input_files = { into_u8(gcode_files.front()) };
@@ -7039,7 +7095,7 @@ ParamsDialog* GUI_App::params_dialog()
 
 Model& GUI_App::model()
 {
-    return plater_->model();
+    return wxGetApp().session().model();
 }
 
 Downloader* GUI_App::downloader()
@@ -7900,7 +7956,7 @@ bool has_filaments(const std::vector<std::string> &filament_types)
 
     // Collect 1-based extruder IDs from all model volumes on all plates.
     std::vector<int> raw_extruder_ids;
-    const ModelObjectPtrs &model_objects = plater->model().objects;
+    const ModelObjectPtrs &model_objects = wxGetApp().session().model().objects;
     for (const ModelObject *obj : model_objects) {
         if (obj == nullptr) continue;
         for (const ModelVolume *vol : obj->volumes) {

@@ -2,7 +2,9 @@
 #define slic3r_GUI_NotificationManager_hpp_
 
 #include "GUI_App.hpp"
-#include "Plater.hpp"
+#include "Plater.hpp"   // H2 3.1 白名单：Plater 完整型解引用（偏离登记）
+namespace Slic3r { namespace GUI { class Plater; } }
+#include "app/LayoutManager.hpp"   // H2 3.1：inline get_current_canvas3D 解引用需完整型   // H2 3.1：Plater 仅指针形态——前向声明替代传递包含
 #include "GLCanvas3D.hpp"
 #include "Event.hpp"
 #include "I18N.hpp"
@@ -414,7 +416,7 @@ private:
 		virtual void           render(GLCanvas3D& canvas, float initial_y, bool move_from_overlay, float overlay_width, float right_margin);
         virtual void bbl_render_block_notification(GLCanvas3D &canvas, float initial_y, bool move_from_overlay, float overlay_width, float right_margin);
 		// close will dissapear notification on next render
-		virtual void           close() { m_state = EState::ClosePending; wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0);}
+		virtual void           close() { m_state = EState::ClosePending; wxGetApp().layout().get_current_canvas3D()->schedule_extra_frame(0);}
 		// data from newer notification of same type
 		void                   update(const NotificationData& n);
 		void                   append(const std::string& append_str);
@@ -600,8 +602,8 @@ private:
 	{
 	public:
 		PlaterWarningNotification(const NotificationData& n, NotificationIDProvider& id_provider, wxEvtHandler* evt_handler) : PopNotification(n, id_provider, evt_handler) {}
-		void	     close()  override { if(is_finished()) return; m_state = EState::Hidden; wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0); }
-		void		 real_close()      { m_state = EState::ClosePending; wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0); }
+		void	     close()  override { if(is_finished()) return; m_state = EState::Hidden; wxGetApp().layout().get_current_canvas3D()->schedule_extra_frame(0); }
+		void		 real_close()      { m_state = EState::ClosePending; wxGetApp().layout().get_current_canvas3D()->schedule_extra_frame(0); }
 		void         show()            { m_state = EState::Unknown; }
 	};
 
@@ -615,8 +617,8 @@ private:
 	{
 	public:
 		PlaPetgMixNotification(const NotificationData& n, NotificationIDProvider& id_provider, wxEvtHandler* evt_handler) : PopNotification(n, id_provider, evt_handler) {}
-		void	     close()  override { if(is_finished()) return; m_state = EState::Hidden; wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0); }
-		void		 real_close()      { m_state = EState::ClosePending; wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0); }
+		void	     close()  override { if(is_finished()) return; m_state = EState::Hidden; wxGetApp().layout().get_current_canvas3D()->schedule_extra_frame(0); }
+		void		 real_close()      { m_state = EState::ClosePending; wxGetApp().layout().get_current_canvas3D()->schedule_extra_frame(0); }
 	};
 
 

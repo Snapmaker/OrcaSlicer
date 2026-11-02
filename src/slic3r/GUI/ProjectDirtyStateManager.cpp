@@ -5,7 +5,7 @@
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 #include "I18N.hpp"
-#include "Plater.hpp"
+#include "app/ProjectSession.hpp"   // H2 2.6：组合根服务直调
 
 #include <boost/algorithm/string/predicate.hpp>
 
@@ -27,7 +27,7 @@ void ProjectDirtyStateManager::update_from_presets()
     m_presets_dirty = false;
     // check switching of the presets only for exist/loaded project, but not for new
     GUI_App &app = wxGetApp();
-    if (!app.plater()->get_project_filename().IsEmpty()) {
+    if (!wxGetApp().session().get_project_filename().IsEmpty()) {
         for (const auto &[type, name] : app.get_selected_presets()) { 
             if (type == Preset::Type::TYPE_FILAMENT) { 
                 m_presets_dirty |= m_initial_filament_presets_names != wxGetApp().preset_bundle->filament_presets;
@@ -121,7 +121,7 @@ void ProjectDirtyStateManager::render_debug_window() const
         append_int_item("Current gizmo:", m_last_save.gizmo);
     }
 
-    const UndoRedo::Stack& main_stack = wxGetApp().plater()->undo_redo_stack_main();
+    const UndoRedo::Stack& main_stack = wxGetApp().snapshots().undo_redo_stack_main();
     const UndoRedo::Snapshot* main_active_snapshot = get_active_snapshot(main_stack);
     const UndoRedo::Snapshot* main_last_saveable_snapshot = get_last_saveable_snapshot(EStackType::Main, main_stack, m_state.gizmos, m_last_save.main);
     const std::vector<UndoRedo::Snapshot>& main_snapshots = main_stack.snapshots();

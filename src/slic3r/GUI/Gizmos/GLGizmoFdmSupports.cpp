@@ -423,7 +423,7 @@ void GLGizmoFdmSupports::on_render_input_window(float x, float y, float bottom_l
     // Perform button is for gap fill
     if (m_current_tool == ImGui::GapFillIcon) {
         if (m_imgui->button(m_desc.at("perform"))) {
-            Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Reset selection", UndoRedo::SnapshotType::GizmoAction);
+            app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Reset selection", UndoRedo::SnapshotType::GizmoAction);
 
             for (int i = 0; i < m_triangle_selectors.size(); i++) {
                 TriangleSelectorPatch* ts_mm = dynamic_cast<TriangleSelectorPatch*>(m_triangle_selectors[i].get());
@@ -438,7 +438,7 @@ void GLGizmoFdmSupports::on_render_input_window(float x, float y, float bottom_l
     ImGui::SameLine();
 
     if (m_imgui->button(m_desc.at("remove_all"))) {
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(), "Reset selection", UndoRedo::SnapshotType::GizmoAction);
+        app::SnapshotService::Scope snapshot(wxGetApp().plater(), "Reset selection", UndoRedo::SnapshotType::GizmoAction);
         ModelObject *        mo  = m_c->selection_info()->model_object();
         int                  idx = -1;
         for (ModelVolume *mv : mo->volumes)
@@ -565,7 +565,7 @@ void GLGizmoFdmSupports::select_facets_by_angle(float threshold_deg, bool block)
         }
     }
 
-    Plater::TakeSnapshot snapshot(wxGetApp().plater(), block ? "Block supports by angle"
+    app::SnapshotService::Scope snapshot(wxGetApp().plater(), block ? "Block supports by angle"
                                                     : "Add supports by angle");
     update_model_object();
     m_parent.set_as_dirty();

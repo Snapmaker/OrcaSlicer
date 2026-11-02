@@ -2036,7 +2036,7 @@ void GLGizmoSVG::draw_model_type()
         GUI_App &app    = wxGetApp();
         Plater * plater = app.plater();
         // TRN: This is the name of the action that shows in undo/redo stack (changing part type from SVG to something else).
-        Plater::TakeSnapshot snapshot(plater, _u8L("Change SVG Type"), UndoRedo::SnapshotType::GizmoAction);
+        app::SnapshotService::Scope snapshot(plater, _u8L("Change SVG Type"), UndoRedo::SnapshotType::GizmoAction);
         m_volume->set_type(*new_type);
 
         bool is_volume_move_inside  = (type == part);

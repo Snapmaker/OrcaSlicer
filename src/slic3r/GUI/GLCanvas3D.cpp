@@ -1,4 +1,5 @@
 #include "libslic3r/libslic3r.h"
+#include "PartPlate.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "GLCanvas3D.hpp"
 
 #include <igl/unproject.h>
@@ -24,6 +25,16 @@
 #include "GUI_Preview.hpp"
 #include "OpenGLManager.hpp"
 #include "Plater.hpp"
+#include "app/NotificationHub.hpp"        // H2 2.2：组合根服务直调
+#include "app/LayoutManager.hpp"
+#include "app/SnapshotService.hpp"
+#include "app/ArrangementService.hpp"
+#include "app/ObjectEditCommands.hpp"
+#include "app/PlateController.hpp"
+#include "app/SceneRefreshCoordinator.hpp"
+#include "app/ProjectSession.hpp"
+#include "app/SlicingController.hpp"   // H2 2.2：切片态查询
+#include "app/FilamentService.hpp"     // H2 2.2：耗材色组查询
 #include "MainFrame.hpp"
 #include "GUI_App.hpp"
 #include "GUI_ObjectList.hpp"
@@ -32,6 +43,7 @@
 #include "I18N.hpp"
 #include "NotificationManager.hpp"
 #include "format.hpp"
+#include "app/ArrangeRequest.hpp"   // F3：Orient/Arrange Request 显式传递
 #include "DailyTips.hpp"
 
 #include "slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp"
@@ -1115,7 +1127,7 @@ void GLCanvas3D::Labels::render(const std::vector<const ModelInstance*>& sorted_
     // collect owners world bounding boxes and data from volumes
     std::vector<Owner> owners;
     const GLVolumeCollection& volumes = m_canvas.get_volumes();
-    PartPlate* cur_plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+    PartPlate* cur_plate = wxGetApp().plates().partplate_list().get_curr_plate();
     for (const GLVolume* volume : volumes.volumes) {
         int obj_idx = volume->object_idx();
         if (0 <= obj_idx && obj_idx < (int)model->objects.size()) {
@@ -2305,16 +2317,16 @@ void GLCanvas3D::on_change_color_mode(bool is_dark, bool reinit) {
     // ImGui Style
     wxGetApp().imgui()->on_change_color_mode(is_dark);
     // Notification
-    wxGetApp().plater()->get_notification_manager()->on_change_color_mode(is_dark);
+    wxGetApp().notification_hub().nm()->on_change_color_mode(is_dark);
     // DailyTips Window
-    wxGetApp().plater()->get_dailytips()->on_change_color_mode(is_dark);
+    wxGetApp().notification_hub().get_dailytips()->on_change_color_mode(is_dark);
     // Preview Slider
     IMSlider* m_layers_slider = get_gcode_viewer().get_layers_slider();
     IMSlider* m_moves_slider = get_gcode_viewer().get_moves_slider();
     m_layers_slider->on_change_color_mode(is_dark);
     m_moves_slider->on_change_color_mode(is_dark);
     // Partplate
-    wxGetApp().plater()->get_partplate_list().on_change_color_mode(is_dark);
+    wxGetApp().plates().partplate_list().on_change_color_mode(is_dark);
     // Plates toolbar - Reload All Stats button images
     _init_select_plate_toolbar();
 
@@ -2437,7 +2449,7 @@ void GLCanvas3D::toggle_selected_volume_visibility(bool selected_visible)
         const Selection::IndicesList &idxs = m_selection.get_volume_idxs();
         if (idxs.size() > 0) {
             for (GLVolume *vol : m_volumes.volumes) {
-                if (vol->composite_id.object_id >= 1000 && vol->composite_id.object_id < 1000 + wxGetApp().plater()->get_partplate_list().get_plate_count())
+                if (vol->composite_id.object_id >= 1000 && vol->composite_id.object_id < 1000 + wxGetApp().plates().partplate_list().get_plate_count())
                     continue; // the wipe tower
                 if (vol->composite_id.volume_id >= 0) {
                     vol->is_active = false;
@@ -2450,7 +2462,7 @@ void GLCanvas3D::toggle_selected_volume_visibility(bool selected_visible)
         }
     } else { // show all
         for (GLVolume *vol : m_volumes.volumes) {
-            if (vol->composite_id.object_id >= 1000 && vol->composite_id.object_id < 1000 + wxGetApp().plater()->get_partplate_list().get_plate_count())
+            if (vol->composite_id.object_id >= 1000 && vol->composite_id.object_id < 1000 + wxGetApp().plates().partplate_list().get_plate_count())
                 continue; // the wipe tower
             if (vol->composite_id.volume_id >= 0) {
                 vol->is_active = true;
@@ -2470,7 +2482,7 @@ void GLCanvas3D::toggle_sla_auxiliaries_visibility(bool visible, const ModelObje
 
     for (GLVolume* vol : m_volumes.volumes) {
         if (vol->composite_id.object_id >= 1000 &&
-            vol->composite_id.object_id < 1000 + wxGetApp().plater()->get_partplate_list().get_plate_count())
+            vol->composite_id.object_id < 1000 + wxGetApp().plates().partplate_list().get_plate_count())
             continue; // the wipe tower
       if ((mo == nullptr || m_model->objects[vol->composite_id.object_id] == mo)
             && (instance_idx == -1 || vol->composite_id.instance_id == instance_idx)
@@ -2489,7 +2501,7 @@ void GLCanvas3D::toggle_model_objects_visibility(bool visible, const ModelObject
     for (GLVolume* vol : m_volumes.volumes) {
         // BBS: add partplate logic
         if (vol->composite_id.object_id >= 1000 &&
-            vol->composite_id.object_id < 1000 + wxGetApp().plater()->get_partplate_list().get_plate_count()) { // wipe tower
+            vol->composite_id.object_id < 1000 + wxGetApp().plates().partplate_list().get_plate_count()) { // wipe tower
             vol->is_active = (visible && mo == nullptr);
         }
         else {
@@ -2617,9 +2629,9 @@ BoundingBoxf3 GLCanvas3D::volumes_bounding_box(bool current_plate_only) const
     bool          is_limit = m_canvas_type != ECanvasType::CanvasAssembleView;
     if (is_limit) {
         if (current_plate_only) {
-            expand_part_plate_list_box = wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_bounding_box();
+            expand_part_plate_list_box = wxGetApp().plates().partplate_list().get_curr_plate()->get_bounding_box();
         } else {
-            auto        plate_list_box = wxGetApp().plater()->get_partplate_list().get_bounding_box();
+            auto        plate_list_box = wxGetApp().plates().partplate_list().get_bounding_box();
             auto        horizontal_radius = 0.5 * sqrt(std::pow(plate_list_box.min[0] - plate_list_box.max[0], 2) + std::pow(plate_list_box.min[1] - plate_list_box.max[1], 2));
             const float scale             = 2;
             expand_part_plate_list_box.merge(plate_list_box.min - scale * Vec3d(horizontal_radius, horizontal_radius, 0));
@@ -2648,7 +2660,7 @@ BoundingBoxf3 GLCanvas3D::scene_bounding_box() const
 
     //BBS merge plate scene bounding box
     if (m_canvas_type == ECanvasType::CanvasView3D) {
-        PartPlateList& plate = wxGetApp().plater()->get_partplate_list();
+        PartPlateList& plate = wxGetApp().plates().partplate_list();
         bb.merge(plate.get_bounding_box());
     }
 
@@ -2657,7 +2669,7 @@ BoundingBoxf3 GLCanvas3D::scene_bounding_box() const
 
 BoundingBoxf3 GLCanvas3D::plate_scene_bounding_box(int plate_idx) const
 {
-    PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_idx);
+    PartPlate* plate = wxGetApp().plates().partplate_list().get_plate(plate_idx);
 
     BoundingBoxf3 bb = plate->get_bounding_box(true);
     if (m_config != nullptr) {
@@ -2821,17 +2833,17 @@ void GLCanvas3D::zoom_to_plate(int plate_idx)
 {
     BoundingBoxf3 box;
     if (plate_idx == REQUIRES_ZOOM_TO_ALL_PLATE) {
-        box = wxGetApp().plater()->get_partplate_list().get_bounding_box();
+        box = wxGetApp().plates().partplate_list().get_bounding_box();
         box.min.z() = 0.0;
         box.max.z() = 0.0;
         _zoom_to_box(box, DefaultCameraZoomToPlateMarginFactor);
     } else {
         PartPlate* plate = nullptr;
         if (plate_idx == REQUIRES_ZOOM_TO_CUR_PLATE) {
-            plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+            plate = wxGetApp().plates().partplate_list().get_curr_plate();
         }else {
-            assert(plate_idx >= 0 && plate_idx < wxGetApp().plater()->get_partplate_list().get_plate_count());
-            plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_idx);
+            assert(plate_idx >= 0 && plate_idx < wxGetApp().plates().partplate_list().get_plate_count());
+            plate = wxGetApp().plates().partplate_list().get_plate(plate_idx);
         }
         box = plate->get_bounding_box(true);
         box.min.z() = 0.0;
@@ -2868,7 +2880,7 @@ void GLCanvas3D::select_view(const std::string& direction)
 
 void GLCanvas3D::select_plate()
 {
-    wxGetApp().plater()->get_partplate_list().select_plate_view();
+    wxGetApp().plates().partplate_list().select_plate_view();
     if (m_canvas != nullptr)
         m_canvas->Refresh();
 }
@@ -3100,7 +3112,7 @@ void GLCanvas3D::render(bool only_init)
     // draw overlays
     _render_overlays();
 
-    if (wxGetApp().plater()->is_render_statistic_dialog_visible()) {
+    if (wxGetApp().layout().show_render_statistic_dialog) {
         ImGui::ShowMetricsWindow();
 
         ImGuiWrapper& imgui = *wxGetApp().imgui();
@@ -3119,7 +3131,7 @@ void GLCanvas3D::render(bool only_init)
     }
 
 #if ENABLE_PROJECT_DIRTY_STATE_DEBUG_WINDOW
-    if (wxGetApp().is_editor() && wxGetApp().plater()->is_view3D_shown())
+    if (wxGetApp().is_editor() && wxGetApp().layout().is_view3D_shown())
         wxGetApp().plater()->render_project_state_debug_window();
 #endif // ENABLE_PROJECT_DIRTY_STATE_DEBUG_WINDOW
 
@@ -3180,8 +3192,8 @@ void GLCanvas3D::render(bool only_init)
             right_margin = SLIDER_RIGHT_MARGIN * scale_factor * GCODE_VIEWER_SLIDER_SCALE;
             bottom_margin = SLIDER_BOTTOM_MARGIN * scale_factor * GCODE_VIEWER_SLIDER_SCALE;
         }
-        wxGetApp().plater()->get_notification_manager()->render_notifications(*this, get_overlay_window_width(), bottom_margin, right_margin);
-        wxGetApp().plater()->get_dailytips()->render();
+        wxGetApp().notification_hub().nm()->render_notifications(*this, get_overlay_window_width(), bottom_margin, right_margin);
+        wxGetApp().notification_hub().get_dailytips()->render();
     }
 
     wxGetApp().imgui()->render();
@@ -3230,17 +3242,17 @@ void GLCanvas3D::render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w,
     switch (OpenGLManager::get_framebuffers_type())
     {
     case OpenGLManager::EFramebufferType::Arb:
-        { render_thumbnail_framebuffer(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type,
+        { render_thumbnail_framebuffer(thumbnail_data, w, h, thumbnail_params, wxGetApp().plates().partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type,
                                      use_top_view, for_picking, ban_light);
         break;
     }
     case OpenGLManager::EFramebufferType::Ext:
-        { render_thumbnail_framebuffer_ext(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type,
+        { render_thumbnail_framebuffer_ext(thumbnail_data, w, h, thumbnail_params, wxGetApp().plates().partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type,
                                          use_top_view, for_picking, ban_light);
         break;
     }
     default:
-        { render_thumbnail_legacy(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type);
+        { render_thumbnail_legacy(thumbnail_data, w, h, thumbnail_params, wxGetApp().plates().partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type);
         break;
     }
     }
@@ -3269,17 +3281,17 @@ void GLCanvas3D::render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w,
     switch (OpenGLManager::get_framebuffers_type())
     {
     case OpenGLManager::EFramebufferType::Arb:
-        { render_thumbnail_framebuffer(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type,
+        { render_thumbnail_framebuffer(thumbnail_data, w, h, thumbnail_params, wxGetApp().plates().partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type,
                                      /*use_top_view=*/false, for_picking, ban_light, view);
         break;
     }
     case OpenGLManager::EFramebufferType::Ext:
-        { render_thumbnail_framebuffer_ext(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type,
+        { render_thumbnail_framebuffer_ext(thumbnail_data, w, h, thumbnail_params, wxGetApp().plates().partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type,
                                          /*use_top_view=*/false, for_picking, ban_light, view);
         break;
     }
     default:
-        { render_thumbnail_legacy(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type);
+        { render_thumbnail_legacy(thumbnail_data, w, h, thumbnail_params, wxGetApp().plates().partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type);
         break;
     }
     }
@@ -3289,7 +3301,7 @@ void GLCanvas3D::render_calibration_thumbnail(ThumbnailData& thumbnail_data, uns
 {
     //load current plate gcode
     m_gcode_viewer.render_calibration_thumbnail(thumbnail_data, w, h, thumbnail_params,
-        wxGetApp().plater()->get_partplate_list(), wxGetApp().get_opengl_manager());
+        wxGetApp().plates().partplate_list(), wxGetApp().get_opengl_manager());
 }
 
 //BBS
@@ -3518,7 +3530,7 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
     PrinterTechnology printer_technology = current_printer_technology();
 
     // BBS: support wipe tower for multi-plates
-    PartPlateList& ppl = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& ppl = wxGetApp().plates().partplate_list();
     int n_plates = ppl.get_plate_count();
     std::vector<int> volume_idxs_wipe_tower_old(n_plates, -1);
 
@@ -4001,7 +4013,7 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
 
     // refresh bed raycasters for picking
     if (m_canvas_type == ECanvasType::CanvasView3D) {
-        wxGetApp().plater()->get_partplate_list().register_raycasters_for_picking(*this);
+        wxGetApp().plates().partplate_list().register_raycasters_for_picking(*this);
     }
 
     // refresh volume raycasters for picking
@@ -4041,7 +4053,7 @@ void GLCanvas3D::set_shell_transparence(float alpha){
 //BBS: add only gcode mode
 void GLCanvas3D::load_gcode_preview(const GCodeProcessorResult& gcode_result, const std::vector<std::string>& str_tool_colors, bool only_gcode, bool skip_toolpaths)
 {
-    PartPlateList& partplate_list = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& partplate_list = wxGetApp().plates().partplate_list();
     PartPlate* plate = partplate_list.get_curr_plate();
     const std::vector<BoundingBoxf3>& exclude_bounding_box = plate->get_exclude_areas();
 
@@ -4203,7 +4215,7 @@ void GLCanvas3D::on_idle(wxIdleEvent& evt)
     _update_imgui_select_plate_toolbar();
     bool mouse3d_controller_applied = wxGetApp().plater()->get_mouse3d_controller().apply(wxGetApp().plater()->get_camera());
     m_dirty |= mouse3d_controller_applied;
-    m_dirty |= wxGetApp().plater()->get_notification_manager()->update_notifications(*this);
+    m_dirty |= wxGetApp().notification_hub().nm()->update_notifications(*this);
     auto gizmo = wxGetApp().plater()->get_view3D_canvas3D()->get_gizmos_manager().get_current();
     if (gizmo != nullptr) m_dirty |= gizmo->update_items_state();
 #if ENABLE_ENHANCED_IMGUI_SLIDER_FLOAT
@@ -4421,8 +4433,8 @@ void GLCanvas3D::on_char(wxKeyEvent& evt)
             if (wxGetApp().mainframe->is_printer_view())
                 wxGetApp().mainframe->load_printer_url();
 
-            //if ((wxGetApp().is_editor() && !wxGetApp().plater()->model().objects.empty()) ||
-            //    (wxGetApp().is_gcode_viewer() && !wxGetApp().plater()->get_last_loaded_gcode().empty()))
+            //if ((wxGetApp().is_editor() && !wxGetApp().session().model().objects.empty()) ||
+            //    (wxGetApp().is_gcode_viewer() && !wxGetApp().session().get_last_loaded_gcode().empty()))
             //    post_event(SimpleEvent(EVT_GLCANVAS_RELOAD_FROM_DISK));
             break;
         }
@@ -4505,7 +4517,7 @@ void GLCanvas3D::on_char(wxKeyEvent& evt)
             //if (!m_main_toolbar.is_enabled()) {
             //    m_gcode_viewer.enable_legend(!m_gcode_viewer.is_legend_enabled());
             //    m_dirty = true;
-            //    wxGetApp().plater()->update_preview_bottom_toolbar();
+            //    wxGetApp().refresh().update_preview_bottom_toolbar();
             //}
             //break;
         //}
@@ -4676,7 +4688,7 @@ void GLCanvas3D::on_key(wxKeyEvent& evt)
             if (evt.GetEventType() == wxEVT_KEY_UP) {
                 if (evt.ShiftDown() && evt.ControlDown() && keyCode == WXK_SPACE) {
 #if !BBL_RELEASE_TO_PUBLIC
-                    wxGetApp().plater()->toggle_render_statistic_dialog();
+                    wxGetApp().layout().show_render_statistic_dialog = !wxGetApp().layout().show_render_statistic_dialog;
                     m_dirty = true;
 #endif
                 } else if ((evt.ShiftDown() && evt.ControlDown() && keyCode == WXK_RETURN) ||
@@ -5107,7 +5119,7 @@ void GLCanvas3D::on_gesture(wxGestureEvent &evt)
             zoom_start = camera.get_zoom();
         camera.set_zoom(zoom_start * static_cast<wxZoomGestureEvent&>(evt).GetZoomFactor());
     } else if (evt.GetEventType() == wxEVT_GESTURE_ROTATE) {
-        PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+        PartPlate* plate = wxGetApp().plates().partplate_list().get_curr_plate();
         bool rotate_limit = current_printer_technology() != ptSLA;
         static double last_rotate = 0;
         if (evt.IsGestureStart())
@@ -5129,7 +5141,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
         return;
 
     // BBS: single snapshot
-    Plater::SingleSnapshot single(wxGetApp().plater());
+    app::SnapshotService::SingleScope single(wxGetApp().plater());
 
 #if ENABLE_RETINA_GL
     const float scale = m_retina_helper->get_scale_factor();
@@ -5531,7 +5543,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
                         } else {
                             Vec3d rotate_target = Vec3d::Zero();
                             if (m_canvas_type == ECanvasType::CanvasPreview) {
-                                PartPlate *plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+                                PartPlate *plate = wxGetApp().plates().partplate_list().get_curr_plate();
                                 if (plate)
                                     rotate_target = plate->get_bounding_box().center();
                             }
@@ -5543,7 +5555,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
                                     auto bbox = volumes_bounding_box(true);
                                     if (!bbox.defined) {
                                         // Rotate around current plate center if current plate is empty
-                                        bbox = wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_bounding_box();
+                                        bbox = wxGetApp().plates().partplate_list().get_curr_plate()->get_bounding_box();
                                     }
                                     rotate_target = bbox.center();
                                 }
@@ -5629,8 +5641,8 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
         else if (evt.LeftUp() && !m_mouse.dragging && m_picking_enabled && !m_hover_plate_idxs.empty() && (m_canvas_type == CanvasView3D) && !is_layers_editing_enabled())
         {
                 int hover_idx = m_hover_plate_idxs.front();
-                wxGetApp().plater()->select_plate_by_hover_id(hover_idx);
-                //wxGetApp().plater()->get_partplate_list().select_plate_view();
+                wxGetApp().slicing().select_plate_by_hover_id(hover_idx, false, false);
+                //wxGetApp().plates().partplate_list().select_plate_view();
                 //deselect all the objects
                 if (m_gizmos.get_current_type() != GLGizmosManager::MeshBoolean && m_hover_volume_idxs.empty())
                     deselect_all();
@@ -5664,7 +5676,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
             //BBS change plate selection
             if (!m_hover_plate_idxs.empty() && (m_canvas_type == CanvasView3D) && !m_mouse.dragging) {
                 int hover_idx = m_hover_plate_idxs.front();
-                wxGetApp().plater()->select_plate_by_hover_id(hover_idx, true);
+                wxGetApp().slicing().select_plate_by_hover_id(hover_idx, true, false);
                 if (m_hover_volume_idxs.empty())
                     deselect_all();
                 render();
@@ -5772,7 +5784,7 @@ void GLCanvas3D::on_set_focus(wxFocusEvent& evt)
     m_tooltip_enabled = false;
     if (m_canvas_type == ECanvasType::CanvasPreview) {
         // update thumbnails and update plate toolbar
-        wxGetApp().plater()->update_all_plate_thumbnails();
+        wxGetApp().notification_hub().update_all_plate_thumbnails(false);
         _update_imgui_select_plate_toolbar();
     }
     _refresh_if_shown_on_screen();
@@ -5850,7 +5862,7 @@ void GLCanvas3D::do_move(const std::string& snapshot_type)
     bool object_moved = false;
 
     // BBS: support wipe-tower for multi-plates
-    int n_plates = wxGetApp().plater()->get_partplate_list().get_plate_count();
+    int n_plates = wxGetApp().plates().partplate_list().get_plate_count();
     std::vector<Vec3d> wipe_tower_origins(n_plates, Vec3d::Zero());
 
     Selection::EMode selection_mode = m_selection.get_mode();
@@ -5928,7 +5940,7 @@ void GLCanvas3D::do_move(const std::string& snapshot_type)
         if (wipe_tower_origin == Vec3d::Zero())
             continue;
 
-        PartPlateList& ppl = wxGetApp().plater()->get_partplate_list();
+        PartPlateList& ppl = wxGetApp().plates().partplate_list();
         DynamicConfig& proj_cfg = wxGetApp().preset_bundle->project_config;
         Vec3d plate_origin = ppl.get_plate(plate_id)->get_origin();
         ConfigOptionFloat wipe_tower_x(wipe_tower_origin(0) - plate_origin(0));
@@ -5942,7 +5954,7 @@ void GLCanvas3D::do_move(const std::string& snapshot_type)
 
     reset_sequential_print_clearance();
 
-    wxGetApp().plater()->notify_filament_usage_changed();
+    wxGetApp().filament_svc().notify_filament_usage_changed();
 
     m_dirty = true;
 }
@@ -6219,7 +6231,7 @@ void GLCanvas3D::do_mirror(const std::string& snapshot_type)
         wxGetApp().obj_list()->update_info_items(static_cast<size_t>(i.first));
 
         //BBS: notify instance updates to part plater list
-        PartPlateList &plate_list = wxGetApp().plater()->get_partplate_list();
+        PartPlateList &plate_list = wxGetApp().plates().partplate_list();
         plate_list.notify_instance_update(i.first, i.second);
 
         //BBS: nofity object list to update
@@ -6305,7 +6317,7 @@ GLCanvas3D::WipeTowerInfo GLCanvas3D::get_wipe_tower_info(int plate_idx) const
             wti.m_bb.offset((brim_width));
 
             // BBS: the wipe tower pos might be outside bed
-            PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_idx);
+            PartPlate* plate = wxGetApp().plates().partplate_list().get_plate(plate_idx);
             Vec2d plate_size = plate->get_size();
             wti.m_pos.x() = std::clamp(wti.m_pos.x(), 0.0, plate_size(0) - wti.m_bb.size().x());
             wti.m_pos.y() = std::clamp(wti.m_pos.y(), 0.0, plate_size(1) - wti.m_bb.size().y());
@@ -6335,7 +6347,7 @@ double GLCanvas3D::get_size_proportional_to_max_bed_size(double factor) const
 //BBS
 std::vector<Vec2f> GLCanvas3D::get_empty_cells(const Vec2f start_point, const Vec2f step)
 {
-    PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+    PartPlate* plate = wxGetApp().plates().partplate_list().get_curr_plate();
     BoundingBoxf3 build_volume = plate->get_build_volume();
     Vec2d vmin(build_volume.min.x(), build_volume.min.y()), vmax(build_volume.max.x(), build_volume.max.y());
     BoundingBoxf bbox(vmin, vmax);
@@ -6525,7 +6537,7 @@ void GLCanvas3D::update_sequential_clearance()
 
     // calculates instances 2d hulls (see also: Print::sequential_print_horizontal_clearance_valid())
     //BBS: add the height logic
-    PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+    PartPlate* plate = wxGetApp().plates().partplate_list().get_curr_plate();
     Polygons polygons;
     std::vector<std::pair<Polygon, float>> height_polygons;
     polygons.reserve(instances_count);
@@ -6679,7 +6691,7 @@ bool GLCanvas3D::_is_shown_on_screen() const
 // Getter for the const char*[]
 static bool string_getter(const bool is_undo, int idx, const char** out_text)
 {
-    return wxGetApp().plater()->undo_redo_string_getter(is_undo, idx, out_text);
+    return wxGetApp().snapshots().undo_redo_string_getter(is_undo, idx, out_text);
 }
 
 // Getter for the const char*[] for the search list
@@ -6753,8 +6765,7 @@ bool GLCanvas3D::_render_orient_menu(float left, float right, float bottom, floa
     ImGui::Separator();
 
     if (imgui->button(_L("Orient"))) {
-        wxGetApp().plater()->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
-        wxGetApp().plater()->orient();
+        wxGetApp().arrange_svc().orient(app::OrientRequest::selection());   // F3：原写点 DEFAULT + 无参 orient 改随调用 Request
     }
 
     ImGui::SameLine();
@@ -6898,8 +6909,7 @@ bool GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
     ImGui::Separator();
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(15.0f, 10.0f));
     if (imgui->button(_L("Arrange"))) {
-        wxGetApp().plater()->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
-        wxGetApp().plater()->arrange();
+        wxGetApp().arrange_svc().arrange(app::ArrangeRequest::all_plates());   // F3：原写点 DEFAULT + 无参 arrange 改随调用 Request
     }
 
     ImGui::SameLine();
@@ -7753,14 +7763,13 @@ bool GLCanvas3D::_init_main_toolbar()
     item.tooltip = _utf8(L("Auto orient all/selected objects")) + " [Q]\n" + _utf8(L("Auto orient all objects on current plate")) + " [" + _utf8(L("Shift+")) + "Q]";
     item.sprite_id++;
     item.left.render_callback = nullptr;
-    item.enabling_callback = []()->bool { return wxGetApp().plater()->can_arrange(); };
+    item.enabling_callback = []()->bool { return wxGetApp().arrange_svc().can_arrange(); };
     item.left.toggable = false;  // allow right mouse click
     //BBS: GUI refactor: adjust the main toolbar position
     item.left.action_callback = [this]() {
         if (m_canvas != nullptr)
         {
-            wxGetApp().plater()->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
-            wxGetApp().plater()->orient();
+            wxGetApp().arrange_svc().orient(app::OrientRequest::selection());   // F3：原写点 DEFAULT + 无参 orient 改随调用 Request
             //BBS do not show orient menu
             //_render_orient_menu(left, right, bottom, top);
             NetworkAgent* agent = GUI::wxGetApp().getAgent();
@@ -7775,7 +7784,7 @@ bool GLCanvas3D::_init_main_toolbar()
     item.tooltip = _utf8(L("Arrange all objects")) + " [A]\n" + _utf8(L("Arrange objects on selected plates")) + " [" + _utf8(L("Shift+")) + "A]";
     item.sprite_id++;
     item.left.action_callback = []() {};
-    item.enabling_callback = []()->bool { return wxGetApp().plater()->can_arrange(); };
+    item.enabling_callback = []()->bool { return wxGetApp().arrange_svc().can_arrange(); };
     item.left.toggable = true;
     //BBS: GUI refactor: adjust the main toolbar position
     item.left.render_callback = [this](float left, float right, float bottom, float top) {
@@ -7802,7 +7811,7 @@ bool GLCanvas3D::_init_main_toolbar()
     item.left.action_callback = [this]() { if (m_canvas != nullptr) wxPostEvent(m_canvas, SimpleEvent(EVT_GLTOOLBAR_SPLIT_OBJECTS)); };
     item.visibility_callback = GLToolbarItem::Default_Visibility_Callback;
     item.left.toggable = false;
-    item.enabling_callback = []()->bool { return wxGetApp().plater()->can_split_to_objects(); };
+    item.enabling_callback = []()->bool { return wxGetApp().obj_cmds().can_split_to_objects(); };
     if (!m_main_toolbar.add_item(item))
         return false;
 
@@ -7812,7 +7821,7 @@ bool GLCanvas3D::_init_main_toolbar()
     item.sprite_id++;
     item.left.action_callback = [this]() { if (m_canvas != nullptr) wxPostEvent(m_canvas, SimpleEvent(EVT_GLTOOLBAR_SPLIT_VOLUMES)); };
     item.visibility_callback = GLToolbarItem::Default_Visibility_Callback;
-    item.enabling_callback = []()->bool { return wxGetApp().plater()->can_split_to_volumes(); };
+    item.enabling_callback = []()->bool { return wxGetApp().obj_cmds().can_split_to_volumes(); };
     if (!m_main_toolbar.add_item(item))
         return false;
 
@@ -7830,7 +7839,7 @@ bool GLCanvas3D::_init_main_toolbar()
 
         return res;
     };
-    item.enabling_callback = []()->bool { return wxGetApp().plater()->can_layers_editing(); };
+    item.enabling_callback = []()->bool { return wxGetApp().obj_cmds().can_layers_editing(); };
     if (!m_main_toolbar.add_item(item))
         return false;
 
@@ -7854,7 +7863,7 @@ bool GLCanvas3D::_init_select_plate_toolbar()
 }
 
 void GLCanvas3D::_update_select_plate_toolbar_stats_item(bool force_selected) {
-    PartPlateList& plate_list = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& plate_list = wxGetApp().plates().partplate_list();
     if (plate_list.get_nonempty_plate_list().size() > 1)
         m_sel_plate_toolbar.show_stats_item = true;
     else
@@ -7874,7 +7883,7 @@ bool GLCanvas3D::_update_imgui_select_plate_toolbar()
 
     m_sel_plate_toolbar.del_all_item();
 
-    PartPlateList& plate_list = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& plate_list = wxGetApp().plates().partplate_list();
     for (int i = 0; i < plate_list.get_plate_count(); i++) {
         IMToolbarItem* item = new IMToolbarItem();
         PartPlate* plate = plate_list.get_plate(i);
@@ -8003,7 +8012,8 @@ bool GLCanvas3D::_init_view_toolbar()
 
 bool GLCanvas3D::_init_collapse_toolbar()
 {
-    return wxGetApp().plater()->init_collapse_toolbar(_get_shared_toolbar_background_texture());
+    // 阶段 I：init_collapse_toolbar 归 LayoutManager；上游的共享背景纹理参数随之传入
+    return wxGetApp().layout().init_collapse_toolbar(_get_shared_toolbar_background_texture());
 }
 
 bool GLCanvas3D::_set_current()
@@ -8072,7 +8082,7 @@ BoundingBoxf3 GLCanvas3D::_max_bounding_box(bool include_gizmos, bool include_be
 
     bb.merge(include_bed_model ? m_bed.extended_bounding_box() : m_bed.build_volume().bounding_volume());
     if (include_plates) {
-        bb.merge(wxGetApp().plater()->get_partplate_list().get_bounding_box());
+        bb.merge(wxGetApp().plates().partplate_list().get_bounding_box());
     }
 
     if (!m_main_toolbar.is_enabled()) {
@@ -8085,7 +8095,7 @@ BoundingBoxf3 GLCanvas3D::_max_bounding_box(bool include_gizmos, bool include_be
 
     if ((m_canvas_type == CanvasView3D) && (fff_print()->config().print_sequence == PrintSequence::ByObject)) {
         float height_to_lid, height_to_rod;
-        wxGetApp().plater()->get_partplate_list().get_height_limits(height_to_lid, height_to_rod);
+        wxGetApp().plates().partplate_list().get_height_limits(height_to_lid, height_to_rod);
         bb.max.z() = std::max(bb.max.z(), (double)height_to_lid);
     }
 
@@ -8170,10 +8180,10 @@ void GLCanvas3D::_picking_pass()
             // BBS: add plate picking logic
             int plate_hover_id = hit.raycaster_id;
             if (plate_hover_id >= 0 && plate_hover_id < PartPlateList::MAX_PLATES_COUNT * PartPlate::GRABBER_COUNT) {
-                wxGetApp().plater()->get_partplate_list().set_hover_id(plate_hover_id);
+                wxGetApp().plates().partplate_list().set_hover_id(plate_hover_id);
                 m_hover_plate_idxs.emplace_back(plate_hover_id);
             } else {
-                wxGetApp().plater()->get_partplate_list().reset_hover_id();
+                wxGetApp().plates().partplate_list().reset_hover_id();
             }
             m_gizmos.set_hover_id(-1);
             break;
@@ -8553,7 +8563,7 @@ void GLCanvas3D::_render_bed(const Transform3d& view_matrix, const Transform3d& 
 
 void GLCanvas3D::_render_platelist(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool only_current, bool only_body, int hover_id, bool render_cali, bool show_grid)
 {
-    wxGetApp().plater()->get_partplate_list().render(view_matrix, projection_matrix, bottom, only_current, only_body, hover_id, render_cali, show_grid);
+    wxGetApp().plates().partplate_list().render(view_matrix, projection_matrix, bottom, only_current, only_body, hover_id, render_cali, show_grid);
 }
 
 void GLCanvas3D::_render_plane() const
@@ -8650,8 +8660,8 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
                     m_layers_editing.render_volumes(*this, m_volumes);
                 }
                 else {
-                    /*if (wxGetApp().plater()->is_wireframe_enabled()) {
-                        if (wxGetApp().plater()->is_show_wireframe())
+                    /*if (wxGetApp().layout().wireframe_enabled) {
+                        if (wxGetApp().layout().show_wireframe)
                             shader->set_uniform("show_wireframe", true);
                         else
                             shader->set_uniform("show_wireframe", false);
@@ -8686,8 +8696,8 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
         }
         case GLVolumeCollection::ERenderType::Transparent:
         {
-            /*if (wxGetApp().plater()->is_wireframe_enabled()) {
-                if (wxGetApp().plater()->is_show_wireframe())
+            /*if (wxGetApp().layout().wireframe_enabled) {
+                if (wxGetApp().layout().show_wireframe)
                     shader->set_uniform("show_wireframe", true);
                 else
                     shader->set_uniform("show_wireframe", false);
@@ -8713,7 +8723,7 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
         }
         }
 
-        /*if (wxGetApp().plater()->is_wireframe_enabled()) {
+        /*if (wxGetApp().layout().wireframe_enabled) {
             shader->set_uniform("show_wireframe", false);
         }*/
 
@@ -8791,7 +8801,7 @@ void GLCanvas3D::_check_and_update_toolbar_icon_scale()
     collapse_toolbar.set_enabled(wxGetApp().plater()->get_sidebar_docking_state() != Sidebar::None);
 
     // Don't update a toolbar scale, when we are on a Preview
-    if (wxGetApp().plater()->is_preview_shown()) {
+    if (wxGetApp().layout().is_preview_shown()) {
         IMSlider   *m_layers_slider = get_gcode_viewer().get_layers_slider();
         IMSlider   *m_moves_slider  = get_gcode_viewer().get_moves_slider();
         float sc              = get_scale();
@@ -8804,7 +8814,7 @@ void GLCanvas3D::_check_and_update_toolbar_icon_scale()
         m_moves_slider->set_scale(sc * GCODE_VIEWER_SLIDER_SCALE);
         m_gcode_viewer.set_scale(sc);
 
-        auto *m_notification = wxGetApp().plater()->get_notification_manager();
+        auto *m_notification = wxGetApp().notification_hub().nm();
         m_notification->set_scale(sc);
         return;
     }
@@ -8891,7 +8901,7 @@ void GLCanvas3D::_render_overlays()
     if (m_layers_editing.last_object_id >= 0 && m_layers_editing.object_max_z() > 0.0f)
         m_layers_editing.render_overlay(*this);
 
-	auto curr_plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+	auto curr_plate = wxGetApp().plates().partplate_list().get_curr_plate();
     auto curr_print_seq = curr_plate->get_real_print_seq();
     const Print* print = fff_print();
     bool sequential_print = (curr_print_seq == PrintSequence::ByObject) || print->config().print_order == PrintOrder::AsObjectList;
@@ -9209,7 +9219,7 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
 
     IMToolbarItem* all_plates_stats_item = m_sel_plate_toolbar.m_all_plates_stats_item;
 
-    PartPlateList& plate_list = wxGetApp().plater()->get_partplate_list();
+    PartPlateList& plate_list = wxGetApp().plates().partplate_list();
     size_t         sliced_plates_cnt = 0; // ORCA make it accesable for other conditions
 
     for (int i = 0; i < plate_list.get_plate_count(); i++) {
@@ -9404,7 +9414,7 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
                         m_sel_plate_toolbar.m_items[i]->selected = false;
                     }
                     all_plates_stats_item->selected = true;
-                    wxGetApp().plater()->update(true, true);
+                    wxGetApp().refresh().update_gate(true, true);
                     wxCommandEvent evt = wxCommandEvent(EVT_GLTOOLBAR_SLICE_ALL);
                     wxPostEvent(wxGetApp().plater(), evt);
                 }
@@ -9508,7 +9518,7 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
                 item->selected = true;
                 // begin to slicing plate
                 if (item->slice_state != IMToolbarItem::SliceState::SLICED)
-                    wxGetApp().plater()->update(true, true);
+                    wxGetApp().refresh().update_gate(true, true);
                 wxCommandEvent* evt = new wxCommandEvent(EVT_GLTOOLBAR_SELECT_SLICED_PLATE);
                 evt->SetInt(i);
                 wxQueueEvent(wxGetApp().plater(), evt);
@@ -9780,7 +9790,7 @@ void GLCanvas3D::_render_paint_toolbar() const
     ImU32 arrow_color = IM_COL32(255, 255, 255, 255);
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     ImGuiContext& context = *GImGui;
-    bool disabled = !wxGetApp().plater()->can_fillcolor();
+    bool disabled = !wxGetApp().obj_cmds().can_fillcolor();
     ColorRGBA rgba;
 
     for (int i = 0; i < extruder_num; i++) {
@@ -11089,7 +11099,7 @@ void GLCanvas3D::_update_pla_petg_mix_warning()
                     filament_types.push_back(has_type ? ft_opt->values.front() : std::string("PLA"));
                 }
             }
-            PartPlate *cur_plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+            PartPlate *cur_plate = wxGetApp().plates().partplate_list().get_curr_plate();
             if (cur_plate != nullptr) {
                 std::vector<int> used_filaments = cur_plate->get_extruders(true);
                 for (int filament_idx : used_filaments) {
@@ -11161,8 +11171,8 @@ void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
     //BBS: this may happened when exit the app, plater is null
     if (!wxGetApp().plater())
         return;
-    NotificationManager* notification_managerEx = wxGetApp().plater()->get_notification_manager();
-    auto& notification_manager = *wxGetApp().plater()->get_notification_manager();
+    NotificationManager* notification_managerEx = wxGetApp().notification_hub().nm();
+    auto& notification_manager = *wxGetApp().notification_hub().nm();
 
     if (!notification_managerEx)
     {
@@ -11282,7 +11292,7 @@ void GLCanvas3D::_update_selection_from_hover()
     if (!selection_changed)
         return;
 
-    Plater::SuppressSnapshots suppress(wxGetApp().plater());
+    app::SnapshotService::SuppressScope suppress(wxGetApp().plater());
 
     if ((state == GLSelectionRectangle::Select) && !ctrl_pressed)
         m_selection.clear();
@@ -11383,7 +11393,7 @@ void GLCanvas3D::WipeTowerInfo::apply_wipe_tower() const
 {
     // BBS: add partplate logic
     DynamicConfig& proj_cfg = wxGetApp().preset_bundle->project_config;
-    Vec3d plate_origin = wxGetApp().plater()->get_partplate_list().get_plate(m_plate_idx)->get_origin();
+    Vec3d plate_origin = wxGetApp().plates().partplate_list().get_plate(m_plate_idx)->get_origin();
     ConfigOptionFloat wipe_tower_x(m_pos(X) - plate_origin(0));
     ConfigOptionFloat wipe_tower_y(m_pos(Y) - plate_origin(1));
 

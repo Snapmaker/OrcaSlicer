@@ -9,7 +9,6 @@
 #include "libslic3r/Model.hpp"
 #include "MainFrame.hpp"
 #include "GUI_App.hpp"
-#include "Plater.hpp"
 
 namespace Slic3r {
 namespace GUI {

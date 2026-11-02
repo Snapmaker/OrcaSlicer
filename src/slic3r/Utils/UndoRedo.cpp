@@ -810,6 +810,7 @@ namespace cereal
 #include <slic3r/GUI/Gizmos/GLGizmosManager.hpp>
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/GUI/Plater.hpp"   // 阶段 H1（路径 A 解环）：原经 PartPlate.hpp:15 传递——消费者显式包含
 
 namespace Slic3r {
 namespace UndoRedo {

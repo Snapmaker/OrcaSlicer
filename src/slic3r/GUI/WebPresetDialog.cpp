@@ -1,4 +1,6 @@
 #include "WebPresetDialog.hpp"
+#include "Plater.hpp"   // H2 3.1 白名单：Plater 完整型解引用（偏离登记）
+#include "app/LayoutManager.hpp"   // H2 3.1：真实供给头
 #include "ConfigWizard.hpp"
 
 #include <string.h>
@@ -473,7 +475,38 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
                 }
             }
 
-            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
+            DeviceInfo info;
+            if (wxGetApp().app_config->get_device_info(m_device_id, info)) {
+                info.model_name   = MSelected.begin().value()["model"].get<std::string>();
+                info.nozzle_sizes = {MSelected.begin().value()["nozzle_diameter"].get<std::string>()};
+                info.preset_name  = info.model_name + " (" + info.nozzle_sizes[0] + " nozzle)";
+                size_t vendor_pos = info.model_name.find_first_of(" ");
+                if (vendor_pos != std::string::npos) {
+                    std::string vendor        = info.model_name.substr(0, vendor_pos);
+                    std::string machine_cover = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/profiles/" + vendor + "/" +
+                                                info.model_name + "_cover.png";
+
+                    info.img = machine_cover;
+                }
+
+                wxGetApp().app_config->save_device_info(info);
+
+                //// 同步卡片
+                //auto devices = wxGetApp().app_config->get_devices();
+                //json param;
+                //param["command"]       = "local_devices_arrived";
+                //param["sequece_id"]    = "10001";
+                //param["data"]          = devices;
+                //std::string logout_cmd = param.dump();
+                //wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+                //GUI::wxGetApp().run_script(strJS);
+
+                // wcp订阅
+                json data = wxGetApp().app_config->get_devices();
+                wxGetApp().device_card_notify(data);
+
+                wxGetApp().layout().sidebar->update_all_preset_comboboxes();
+            }
 
         } else if (strCmd == "save_userguide_filaments") {
             {

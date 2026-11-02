@@ -44,15 +44,26 @@ struct SettingsFactory
     static std::map<std::string, std::vector<SimpleSettingData>> get_all_visible_options(const bool is_part);
 };
 
+namespace app {
+class ObjectEditCommands;
+class SelectionQuery;
+}
+
 class MenuFactory
 {
+public:
+	// 阶段 H2 2.3（§8 根治项）：构造注入 ObjectEditCommands&/SelectionQuery&，根治 wxGetApp 全局反查
+	MenuFactory(app::ObjectEditCommands& obj_cmds, app::SelectionQuery& selq);
+	~MenuFactory() = default;
+
+private:
+	app::ObjectEditCommands& m_obj_cmds;
+	app::SelectionQuery&     m_selq;
+
 public:
 	static std::vector<wxBitmap>    get_volume_bitmaps();
 	static std::vector<wxBitmap> get_text_volume_bitmaps();
 	static std::vector<wxBitmap> get_svg_volume_bitmaps();
-
-    MenuFactory();
-    ~MenuFactory() = default;
 
     void    init(wxWindow* parent);
     void    update();

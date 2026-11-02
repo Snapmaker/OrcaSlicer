@@ -1,4 +1,7 @@
 #include "SendToPrinter.hpp"
+#include "app/PlateController.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "PartPlate.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "app/ExportSendCoordinator.hpp"   // H2 3.1：真实供给头
 #include "I18N.hpp"
 
 #include "libslic3r/Utils.hpp"
@@ -724,7 +727,7 @@ void SendToPrinterDialog::on_ok(wxCommandEvent &event)
     // enter sending mode
     sending_mode();
 
-    result = m_plater->send_gcode(m_print_plate_idx, [this](int export_stage, int current, int total, bool &cancel) {
+    result = wxGetApp().ex().send_gcode(m_print_plate_idx, [this](int export_stage, int current, int total, bool &cancel) {
         if (this->m_is_canceled) return;
         bool     cancelled = false;
         wxString msg       = _L("Preparing print job");
@@ -746,7 +749,7 @@ void SendToPrinterDialog::on_ok(wxCommandEvent &event)
 
     // export config 3mf if needed
     if (!obj_->is_lan_mode_printer()) {
-        result = m_plater->export_config_3mf(m_print_plate_idx);
+        result = wxGetApp().ex().export_config_3mf(m_print_plate_idx);
         if (result < 0) {
             BOOST_LOG_TRIVIAL(trace) << "export_config_3mf failed, result = " << result;
             return;
@@ -759,7 +762,7 @@ void SendToPrinterDialog::on_ok(wxCommandEvent &event)
     }
 
    /* std::string  file_name       = "";
-	auto default_output_file    = wxGetApp().plater()->get_export_gcode_filename(".3mf");
+	auto default_output_file    = wxGetApp().ex().get_export_gcode_filename(".3mf");
     if (!default_output_file.empty()) {
 		fs::path default_output_file_path = boost::filesystem::path(default_output_file.c_str());
 		file_name = default_output_file_path.filename().string();
@@ -1262,14 +1265,14 @@ void SendToPrinterDialog::set_default()
     //project name
     m_rename_switch_panel->SetSelection(0);
 
-    wxString filename = m_plater->get_export_gcode_filename("", true, m_print_plate_idx == PLATE_ALL_IDX ? true : false);
+    wxString filename = wxGetApp().ex().get_export_gcode_filename("", true, m_print_plate_idx == PLATE_ALL_IDX ? true : false);
 
     if (m_print_plate_idx == PLATE_ALL_IDX && filename.empty()) {
         filename = _L("Untitled");
     }
 
     if (filename.empty()) {
-        filename = m_plater->get_export_gcode_filename("", true);
+        filename = wxGetApp().ex().get_export_gcode_filename("", true, false);
         if (filename.empty()) filename = _L("Untitled");
     }
 
@@ -1306,7 +1309,7 @@ void SendToPrinterDialog::set_default()
 
     // thumbmail
     //wxBitmap bitmap;
-    ThumbnailData &data   = m_plater->get_partplate_list().get_curr_plate()->thumbnail_data;
+    ThumbnailData &data   = wxGetApp().plates().partplate_list().get_curr_plate()->thumbnail_data;
     if (data.is_valid()) {
         wxImage image(data.width, data.height);
         image.InitAlpha();
@@ -1349,9 +1352,9 @@ void SendToPrinterDialog::set_default()
 
 
     // basic info
-    auto       aprint_stats = m_plater->get_partplate_list().get_current_fff_print().print_statistics();
+    auto       aprint_stats = wxGetApp().plates().partplate_list().get_current_fff_print().print_statistics();
     wxString   time;
-    PartPlate *plate = m_plater->get_partplate_list().get_curr_plate();
+    PartPlate *plate = wxGetApp().plates().partplate_list().get_curr_plate();
     if (plate) {
         if (plate->get_slice_result()) { time = wxString::Format("%s", short_time(get_time_dhms(plate->get_slice_result()->print_statistics.modes[0].time))); }
     }

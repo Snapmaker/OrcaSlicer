@@ -2,6 +2,8 @@
 #define slic3r_GUI_ObjectTable_hpp_
 
 #include <wx/wx.h>
+#include "GUI_Utils.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+namespace Slic3r { namespace GUI { class Plater; } }   // H2 3.1：Plater 仅指针形态——前向声明替代传递包含
 #include <wx/intl.h>
 #include <wx/generic/gridsel.h>
 #include <wx/grid.h>
@@ -16,7 +18,6 @@
 #include <wx/stattext.h>
 #include <wx/popupwin.h>
 
-#include "Plater.hpp"
 #include "libslic3r/Model.hpp"
 //#include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"

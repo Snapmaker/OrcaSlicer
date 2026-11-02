@@ -382,6 +382,49 @@ set(SLIC3R_GUI_SOURCES
     GUI/PhysicalPrinterDialog.hpp
     GUI/Plater.cpp
     GUI/Plater.hpp
+    GUI/Sidebar.cpp
+    GUI/app/SnapshotService.cpp
+    GUI/app/SnapshotService.hpp
+    GUI/app/NotificationHub.cpp
+    GUI/app/NotificationHub.hpp
+    GUI/app/PlateController.cpp
+    GUI/app/PlateController.hpp
+    GUI/app/SlicingController.cpp
+    GUI/app/SlicingController.hpp
+    GUI/app/ProjectSession.cpp
+    GUI/app/ProjectSession.hpp
+    GUI/app/ExportSendCoordinator.cpp
+    GUI/app/ExportSendCoordinator.hpp
+    GUI/app/SelectionQuery.cpp
+    GUI/app/SelectionQuery.hpp
+    GUI/app/ObjectEditCommands.cpp
+    GUI/app/ObjectEditCommands.hpp
+    GUI/app/ArrangementService.cpp
+    GUI/app/ArrangementService.hpp
+    GUI/app/ArrangeRequest.hpp
+    GUI/app/MixingTypes.hpp
+    GUI/app/MixingGateKeeper.cpp
+    GUI/app/MixingGateKeeper.hpp
+    GUI/app/BatchMatchCoordinator.cpp
+    GUI/app/BatchMatchCoordinator.hpp
+    GUI/app/CalibrationFlow.cpp
+    GUI/app/CalibrationFlow.hpp
+    GUI/app/LayoutManager.cpp
+    GUI/app/LayoutManager.hpp
+    GUI/app/SceneRefreshCoordinator.cpp
+    GUI/app/SceneRefreshCoordinator.hpp
+    GUI/app/PlaterEventRouter.cpp
+    GUI/app/PlaterEventRouter.hpp
+    GUI/app/FilamentService.cpp
+    GUI/app/FilamentService.hpp
+    GUI/Mixing/MixingBatchHelpers.cpp
+    GUI/Mixing/MixingColorMatchDialog.cpp
+    GUI/Mixing/MixingGradientWeightsDialog.cpp
+    GUI/Mixing/MixedFilamentConfigPanel.cpp
+    GUI/Mixing/MixedFilamentDragHandle.cpp
+    GUI/Mixing/MixedFilamentsPanel.cpp
+    GUI/Mixing/MixedFilamentsPanel.hpp
+    GUI/Sidebar.hpp
     GUI/PlateSettingsDialog.cpp
     GUI/PlateSettingsDialog.hpp
     GUI/Preferences.cpp
@@ -739,6 +782,36 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/GeneratedConfig.hpp.in
                @ONLY)
 
 add_library(libslic3r_gui STATIC ${SLIC3R_GUI_SOURCES})
+
+# 阶段 D 调试：libslic3r_gui Release 关闭优化（/Od），便于调试服务层代码
+# TODO: 调试完成后移除此设置
+target_compile_options(libslic3r_gui PRIVATE $<$<CONFIG:Release>:/Od>
+                                             $<$<CONFIG:Release>:/Zi>
+                                             $<$<CONFIG:RelWithDebInfo>:/Od>)
+
+# 阶段 A：Sidebar.cpp 退出 PCH（与强制 PCH 的交互导致其自身 include 块被跳过，待查）
+set_source_files_properties(
+    GUI/app/SnapshotService.cpp
+    GUI/app/ProjectSession.cpp
+    GUI/app/ExportSendCoordinator.cpp
+    GUI/app/SelectionQuery.cpp
+    GUI/app/ObjectEditCommands.cpp
+    GUI/app/ArrangementService.cpp
+    GUI/app/MixingGateKeeper.cpp
+    GUI/app/BatchMatchCoordinator.cpp
+    GUI/app/CalibrationFlow.cpp
+    GUI/app/LayoutManager.cpp
+    GUI/app/SceneRefreshCoordinator.cpp
+    GUI/app/PlaterEventRouter.cpp
+    GUI/app/FilamentService.cpp
+    GUI/Sidebar.cpp
+    GUI/Mixing/MixingBatchHelpers.cpp
+    GUI/Mixing/MixingColorMatchDialog.cpp
+    GUI/Mixing/MixingGradientWeightsDialog.cpp
+    GUI/Mixing/MixedFilamentConfigPanel.cpp
+    GUI/Mixing/MixedFilamentDragHandle.cpp
+    GUI/Mixing/MixedFilamentsPanel.cpp
+    PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 target_include_directories(libslic3r_gui PRIVATE Utils ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(libslic3r_gui paho-mqttpp3-static)
 

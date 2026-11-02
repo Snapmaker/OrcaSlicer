@@ -1,4 +1,8 @@
 #include "SendJob.hpp"
+#include "../GUI_App.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/PlateController.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/ProjectSession.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../PartPlate.hpp"   // H2 3.1 顶部瘦身：PartPlate 完整型（原经 Plater.hpp 传递链）
 #include "libslic3r/MTUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -117,15 +121,15 @@ void SendJob::process(Ctl &ctl)
 
     ctl.call_on_main_thread([this] { prepare(); }).wait();
     ctl.update_status(0, msg);
-    int total_plate_num = m_plater->get_partplate_list().get_plate_count();
+    int total_plate_num = wxGetApp().plates().partplate_list().get_plate_count();
 
-    PartPlate* plate = m_plater->get_partplate_list().get_plate(job_data.plate_idx);
+    PartPlate* plate = wxGetApp().plates().partplate_list().get_plate(job_data.plate_idx);
     if (plate == nullptr) {
         if (job_data.plate_idx == PLATE_ALL_IDX) {
             //all plate
             for (int index = 0; index < total_plate_num; index++)
             {
-                PartPlate* plate_n = m_plater->get_partplate_list().get_plate(index);
+                PartPlate* plate_n = wxGetApp().plates().partplate_list().get_plate(index);
                 if (plate_n && plate_n->is_valid_gcode_file())
                 {
                     plate = plate_n;
@@ -134,7 +138,7 @@ void SendJob::process(Ctl &ctl)
             }
         }
         else {
-            plate = m_plater->get_partplate_list().get_curr_plate();
+            plate = wxGetApp().plates().partplate_list().get_curr_plate();
         }
         if (plate == nullptr) {
             BOOST_LOG_TRIVIAL(error) << "can not find plate with valid gcode file when sending to print, plate_index="<< job_data.plate_idx;
@@ -159,7 +163,7 @@ void SendJob::process(Ctl &ctl)
     if (job_data.plate_idx >= 0)
         curr_plate_idx = job_data.plate_idx + 1;
     else if (job_data.plate_idx == PLATE_CURRENT_IDX)
-        curr_plate_idx = m_plater->get_partplate_list().get_curr_plate_index() + 1;
+        curr_plate_idx = wxGetApp().plates().partplate_list().get_curr_plate_index() + 1;
 
     params.dev_id               = m_dev_id;
     params.project_name         = m_project_name + ".gcode.3mf";

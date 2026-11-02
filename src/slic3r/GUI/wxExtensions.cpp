@@ -1,4 +1,6 @@
 #include "wxExtensions.hpp"
+#include "Plater.hpp"   // H2 3.1 白名单：get_extruder_colors 组合体消费（偏离登记）
+#include "app/FilamentService.hpp"   // H2 3.1：真实供给头
 
 #include <stdexcept>
 #include <cmath>
@@ -13,7 +15,6 @@
 #include "GUI_ObjectList.hpp"
 #include "I18N.hpp"
 #include "GUI_Utils.hpp"
-#include "Plater.hpp"
 #include "../Utils/MacDarkMode.hpp"
 #include "BitmapComboBox.hpp"
 #include "Widgets/StaticBox.hpp"
@@ -1265,5 +1266,16 @@ void ImageTransientPopup::OnMouse(wxMouseEvent &event)
 }
 
 
-
-
+// 喷嘴类型 key -> 显示标签（阶段 A 自 Plater.cpp:2101-2112 抽出，去 static）
+wxString nozzle_type_key_to_label(const std::string& key)
+{
+    if (key == "hardened_steel")
+        return _L("Hardened Steel");
+    if (key == "stainless_steel")
+        return _L("Stainless Steel");
+    if (key == "brass")
+        return _L("Brass");
+    if (key == "undefine")
+        return _L("Unknown");
+    return wxString::FromUTF8(key);
+}

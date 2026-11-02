@@ -1,4 +1,5 @@
 #include <wx/button.h>
+#include "app/ProjectSession.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "GUI_AuxiliaryList.hpp"
 #include "I18N.hpp"
 #include "wxExtensions.hpp"
@@ -103,7 +104,7 @@ AuxiliaryList::~AuxiliaryList()
 
 void AuxiliaryList::init_auxiliary()
 {
-	Model& model = wxGetApp().plater()->model();
+	Model& model = wxGetApp().session().model();
 	std::string aux_path = encode_path(model.get_auxiliary_file_temp_path().c_str());
 	m_auxiliary_model->Init(aux_path);
 }

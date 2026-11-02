@@ -1,8 +1,9 @@
 #include "ExtraRenderers.hpp"
+#include "I18N.hpp"   // H2 3.1：_L 宏（GUI 层）
+#include "app/ProjectSession.hpp"   // H2 3.1：has_illegal 静态供给
 #include "wxExtensions.hpp"
 #include "GUI.hpp"
 #include "BitmapComboBox.hpp"
-#include "Plater.hpp"
 #include "Widgets/ComboBox.hpp"
 
 #include <wx/dc.h>
@@ -229,7 +230,7 @@ bool BitmapTextRenderer::GetValueFromEditorCtrl(wxWindow* ctrl, wxVariant& value
     if (!text_editor || (item.IsOk() && text_editor->GetValue().IsEmpty()))
         return false;
 
-    m_was_unusable_symbol = Slic3r::GUI::Plater::has_illegal_filename_characters(text_editor->GetValue());
+    m_was_unusable_symbol = Slic3r::GUI::app::ProjectSession::has_illegal_filename_characters(text_editor->GetValue());
     if (m_was_unusable_symbol)
         return false;
 

@@ -1,4 +1,5 @@
 #include "FilamentGroupDialog.hpp"
+#include "app/PlateController.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 
 #include "FlowTypeHelper.hpp"
 #include "GUI.hpp"
@@ -362,7 +363,7 @@ void FilamentGroupDialog::load_filaments()
     // used set cannot be determined (empty scene), fall back to all filaments.
     std::set<int> used; // 1-based filament ids
     if (Plater *plater = wxGetApp().plater(); plater != nullptr)
-        used = plater->get_partplate_list().get_extruders(true);
+        used = wxGetApp().plates().partplate_list().get_extruders(true);
 
     for (size_t i = 0; i < bundle.filament_presets.size(); ++i) {
         if (!used.empty() && used.find(int(i) + 1) == used.end())

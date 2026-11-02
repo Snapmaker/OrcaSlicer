@@ -1,4 +1,5 @@
 #include "NotificationManager.hpp"
+#include "Plater.hpp"   // H2 3.1 白名单：Plater 完整型解引用（偏离登记）
 
 #include "HintNotification.hpp"
 #include "SlicingProgressNotification.hpp"

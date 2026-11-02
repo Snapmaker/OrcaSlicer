@@ -4,6 +4,7 @@
 #include "wx/display.h"
 #include "I18N.hpp"
 #include "GUI_App.hpp"
+#include "app/ProjectSession.hpp"   // H2 2.1：load_project 组合根
 #include "GUI.hpp"
 #include "wxExtensions.hpp"
 #include "Plater.hpp"
@@ -334,7 +335,7 @@ void BBLTopbar::OnOpenProject(wxAuiToolBarEvent& event)
 {
     MainFrame* main_frame = dynamic_cast<MainFrame*>(m_frame);
     Plater* plater = main_frame->plater();
-    plater->load_project();
+    wxGetApp().session().load_project();
 }
 
 void BBLTopbar::show_publish_button(bool show)
@@ -347,7 +348,7 @@ void BBLTopbar::OnSaveProject(wxAuiToolBarEvent& event)
 {
     MainFrame* main_frame = dynamic_cast<MainFrame*>(m_frame);
     Plater* plater = main_frame->plater();
-    plater->save_project();
+    wxGetApp().session().save_project();
 }
 
 void BBLTopbar::OnUndo(wxAuiToolBarEvent& event)
@@ -407,10 +408,10 @@ void BBLTopbar::OnPublishClicked(wxAuiToolBarEvent& event)
     }
 
     //no more check
-    //if (GUI::wxGetApp().plater()->model().objects.empty()) return;
+    //if (GUI::wxGetApp().session().model().objects.empty()) return;
 
 #ifdef ENABLE_PUBLISHING
-    wxGetApp().plater()->show_publish_dialog();
+    wxGetApp().ex().show_publish_dialog();
 #endif
     wxGetApp().open_publish_page_dialog();
 }

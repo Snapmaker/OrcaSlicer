@@ -13,6 +13,16 @@ Platform helpers such as `build_linux.sh`, `build_release_macos.sh`, and `build_
 ## Coding Style & Naming Conventions
 `.clang-format` enforces 4-space indents, a 140-column limit, aligned initializers, and brace wrapping for classes and functions. Run `clang-format -i <file>` before committing; the CMake `clang-format` target is available when LLVM tools are on your PATH. Prefer `CamelCase` for classes, `snake_case` for functions and locals, and `SCREAMING_CASE` for constants, matching conventions in `src/`. Keep headers self-contained and align include order with the IWYU pragmas.
 
+## Service Layer (`src/slic3r/GUI/app/`)
+
+`src/slic3r/GUI/app/**` hosts extracted GUI services (phase C onward: `SnapshotService`, `NotificationHub`). These files exist to decouple logic from the host classes, so:
+
+- **Do not** `#include "Plater.hpp"` or `"GUI_App.hpp"` from `src/slic3r/GUI/app/**`. Host state enters exclusively through the injected `*Host` structs (`std::function` members assembled in `Plater::priv`'s constructor).
+- Forward-declare host types instead, and double-check the **namespace** of each forward declaration — `BackgroundSlicingProcess` and `BBLStatusBar` live in `Slic3r`, not `Slic3r::GUI`; declaring them in the wrong namespace shadows the real class and breaks unrelated translation units.
+- Keep the corresponding `*.cpp` translation units out of the force-included PCH (`SKIP_PRECOMPILE_HEADERS`) only when they must be self-contained; normal TUs use the PCH.
+
+Verify with: `grep -rn '#include "\(Plater\|GUI_App\).hpp"' src/slic3r/GUI/app/` (must be empty).
+
 ## Testing Guidelines
 Unit tests rely on Catch2 (`tests/catch2/`). Name specs after the component under test—for example `tests/libslic3r/TestPlanarHole.cpp`—and tag long-running cases so `ctest -L fast` remains useful. Cover new algorithms with deterministic fixtures or sample G-code stored in `tests/data/`. Document manual printer validation or regression slicer checks in your PR when automated coverage is insufficient.
 

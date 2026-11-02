@@ -8,7 +8,49 @@ get_filename_component(_TEST_NAME ${CMAKE_CURRENT_LIST_DIR} NAME)
 add_executable(${_TEST_NAME}_tests
     ${_TEST_NAME}_tests_main.cpp
     SnapLogClient_test.cpp
+    SnapshotService_test.cpp
+    PlateController_test.cpp
+    ProjectSession_test.cpp
+    ExportSendCoordinator_test.cpp
+    SelectionQuery_test.cpp
+    ObjectEditCommands_test.cpp
+    ArrangementService_test.cpp
+    MixingGateKeeper_test.cpp
+    FilamentService_test.cpp
+    CalibrationFlow_test.cpp
+    LayoutManager_test.cpp
+    SceneRefreshCoordinator_test.cpp
+    PlaterEventRouter_test.cpp
     )
+
+# Link repair: on Windows libslic3r_gui imports app-only helper symbols
+# (Slic3r::sentryReportLog / bury_point BURY_API / common_func / CBaseException),
+# which are otherwise provided solely by the app targets in src/CMakeLists.txt.
+# Without these the test executable cannot link in a GUI build (SLIC3R_SENTRY=ON).
+target_sources(${_TEST_NAME}_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/app_common/SentryWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/src/app_common/bury_point.cpp
+    ${CMAKE_SOURCE_DIR}/src/common_func/common_func.cpp
+    ${CMAKE_SOURCE_DIR}/src/app_common/BaseException.cpp
+    ${CMAKE_SOURCE_DIR}/src/app_common/StackWalker.cpp
+    )
+set_source_files_properties(${CMAKE_SOURCE_DIR}/src/app_common/bury_point.cpp
+    PROPERTIES COMPILE_DEFINITIONS BURY_EXPORTS)
+if (SLIC3R_SENTRY AND TARGET sentry::sentry)
+    target_link_libraries(${_TEST_NAME}_tests PRIVATE sentry::sentry)
+endif ()
+# This target links libslic3r_gui, whose BitmapCache.cpp already compiles the
+# nanoSVG rasterizer implementation — drop test_nanosvg_impl (headless-only
+# provider) to avoid LNK2005 duplicate-symbol errors in GUI builds.
+list(REMOVE_ITEM TEST_LINK_LIBS test_nanosvg_impl)
+# PlateController_test includes PartPlate.hpp (wx headers); wx include dirs are
+# PRIVATE to libslic3r_gui (find_package runs in src/ scope). Rebuild them from
+# the global findwxWidgets cache entries instead of re-running find_package.
+if (WIN32 AND wxWidgets_ROOT_DIR AND wxWidgets_LIB_DIR)
+    target_include_directories(${_TEST_NAME}_tests PRIVATE
+        "${wxWidgets_ROOT_DIR}/include"
+        "${wxWidgets_LIB_DIR}/mswu")
+endif ()
 
 find_package(JPEG REQUIRED)
 find_package(PNG REQUIRED)

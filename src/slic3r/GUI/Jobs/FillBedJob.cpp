@@ -1,4 +1,8 @@
 #include "FillBedJob.hpp"
+#include "../GUI_App.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/PlateController.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/ProjectSession.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../PartPlate.hpp"   // H2 3.1 顶部瘦身：PartPlate 完整型（原经 Plater.hpp 传递链）
 
 #include "libslic3r/Model.hpp"
 #include "libslic3r/ClipperUtils.hpp"
@@ -16,7 +20,7 @@ namespace GUI {
 //BBS: add partplate related logic
 void FillBedJob::prepare()
 {
-    PartPlateList& plate_list = m_plater->get_partplate_list();
+    PartPlateList& plate_list = wxGetApp().plates().partplate_list();
 
     m_locked.clear();
     m_selected.clear();
@@ -37,12 +41,12 @@ void FillBedJob::prepare()
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(":select plate obj_id %1%, ins_id %2%, ret %3%}") % m_object_idx % sel_id % sel_ret;
 
     PartPlate* plate = plate_list.get_curr_plate();
-    Model& model = m_plater->model();
+    Model& model = wxGetApp().session().model();
     BoundingBox plate_bb = plate->get_bounding_box_crd();
     int plate_cols = plate_list.get_plate_cols();
     int cur_plate_index = plate->get_index();
 
-    ModelObject *model_object = m_plater->model().objects[m_object_idx];
+    ModelObject *model_object = wxGetApp().session().model().objects[m_object_idx];
     if (model_object->instances.empty()) return;
 
     const Slic3r::DynamicPrintConfig& global_config = wxGetApp().preset_bundle->full_config();
@@ -126,7 +130,7 @@ void FillBedJob::prepare()
 
     m_bedpts = get_bed_shape(*m_plater->config());
 
-    auto &objects = m_plater->model().objects;
+    auto &objects = wxGetApp().session().model().objects;
     /*BoundingBox bedbb = get_extents(m_bedpts);
 
     for (size_t idx = 0; idx < objects.size(); ++idx)
@@ -174,11 +178,11 @@ void FillBedJob::prepare()
         ap.bed_idx = PartPlateList::MAX_PLATES_COUNT;
         ap.itemid = -1;
         ap.setter = [this](const ArrangePolygon &p) {
-            ModelObject *mo = m_plater->model().objects[m_object_idx];
-            ModelObject* newObj = m_plater->model().add_object(*mo);
+            ModelObject *mo = wxGetApp().session().model().objects[m_object_idx];
+            ModelObject* newObj = wxGetApp().session().model().add_object(*mo);
             newObj->name = mo->name +" "+ std::to_string(p.itemid);
             for (ModelInstance *newInst : newObj->instances) { newInst->apply_arrange_result(p.translation.cast<double>(), p.rotation); }
-            //m_plater->sidebar().obj_list()->paste_objects_into_list({m_plater->model().objects.size()-1});
+            //m_plater->sidebar().obj_list()->paste_objects_into_list({wxGetApp().session().model().objects.size()-1});
         };
         m_selected.emplace_back(ap);
     }
@@ -206,8 +210,8 @@ void FillBedJob::process(Ctl &ctl)
     update_arrange_params(params, m_plater->config(), m_selected);
     m_bedpts = get_shrink_bedpts(m_plater->config(), params);
 
-    auto &partplate_list               = m_plater->get_partplate_list();
-    auto &print                        = wxGetApp().plater()->get_partplate_list().get_current_fff_print();
+    auto &partplate_list               = wxGetApp().plates().partplate_list();
+    auto &print                        = wxGetApp().plates().partplate_list().get_current_fff_print();
     const Slic3r::DynamicPrintConfig& global_config = wxGetApp().preset_bundle->full_config();
     PresetBundle* preset_bundle = wxGetApp().preset_bundle;
     const bool is_bbl = wxGetApp().preset_bundle->is_bbl_vendor();
@@ -265,11 +269,11 @@ void FillBedJob::finalize(bool canceled, std::exception_ptr &eptr)
 
     if (m_object_idx == -1) return;
 
-    ModelObject *model_object = m_plater->model().objects[m_object_idx];
+    ModelObject *model_object = wxGetApp().session().model().objects[m_object_idx];
     if (model_object->instances.empty()) return;
 
     //BBS: partplate
-    PartPlateList& plate_list = m_plater->get_partplate_list();
+    PartPlateList& plate_list = wxGetApp().plates().partplate_list();
     int plate_cols = plate_list.get_plate_cols();
     int cur_plate = plate_list.get_curr_plate_index();
 
@@ -279,7 +283,7 @@ void FillBedJob::finalize(bool canceled, std::exception_ptr &eptr)
         return s + int(ap.priority == 0 && ap.bed_idx == 0);
     });
 
-    Model& model = m_plater->model();
+    Model& model = wxGetApp().session().model();
     const size_t oldObjectCount = model.objects.size();
 
     if (added_cnt > 0) {

@@ -1,4 +1,5 @@
 #include "WebViewDialog.hpp"
+#include "app/ProjectSession.hpp"   // H2 3.1：真实供给头
 
 #include "I18N.hpp"
 #include "slic3r/GUI/wxExtensions.hpp"
@@ -566,7 +567,7 @@ void WebViewPanel::OnNavigationRequest(wxWebViewEvent& evt)
             else
                 file = "//" + file; // When file from network location
 #endif
-            wxGetApp().plater()->load_files(wxArrayString{1, &file});
+            wxGetApp().session().load_files(wxArrayString{1, &file});
             evt.Veto();
             return;
         }

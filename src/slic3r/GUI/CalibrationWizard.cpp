@@ -1,4 +1,5 @@
 #include "CalibrationWizard.hpp"
+#include "app/LayoutManager.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
 #include "I18N.hpp"
 #include "GUI_App.hpp"
 #include "MsgDialog.hpp"
@@ -289,7 +290,7 @@ bool CalibrationWizard::save_preset(const std::string &old_preset_name, const st
     wxGetApp().preset_bundle->update_compatible(PresetSelectCompatibleType::Never);
 
     // BBS if create a new prset name, preset changed from preset name to new preset name
-    if (!exist_preset) { wxGetApp().plater()->sidebar().update_presets_from_to(Preset::Type::TYPE_FILAMENT, old_preset_name, new_preset->name); }
+    if (!exist_preset) { wxGetApp().layout().sidebar->update_presets_from_to(Preset::Type::TYPE_FILAMENT, old_preset_name, new_preset->name); }
 
     // todo: zhimin
     // wxGetApp().mainframe->update_filament_tab_ui();

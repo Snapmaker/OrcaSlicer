@@ -1,4 +1,7 @@
 #include "SendMultiMachinePage.hpp"
+#include "app/PlateController.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "PartPlate.hpp"   // H2 3.1：真实供给头（Plater.hpp 传递链清算）
+#include "app/ExportSendCoordinator.hpp"   // H2 3.1：真实供给头
 #include "TaskManager.hpp"
 #include "I18N.hpp"
 
@@ -471,7 +474,7 @@ BBL::PrintParams SendMultiMachinePage::request_params(MachineObject* obj)
 
    
     PrintPrepareData job_data;
-    m_plater->get_print_job_data(&job_data);
+    wxGetApp().ex().get_print_job_data(&job_data);
 
     std::string temp_file = Slic3r::resources_dir() + "/check_access_code.txt";
     auto check_access_code_path = temp_file.c_str();
@@ -482,11 +485,11 @@ BBL::PrintParams SendMultiMachinePage::request_params(MachineObject* obj)
     if (job_data.plate_idx >= 0)
         curr_plate_idx = job_data.plate_idx + 1;
     else if (job_data.plate_idx == PLATE_CURRENT_IDX)
-        curr_plate_idx = m_plater->get_partplate_list().get_curr_plate_index() + 1;
+        curr_plate_idx = wxGetApp().plates().partplate_list().get_curr_plate_index() + 1;
     else if (job_data.plate_idx == PLATE_ALL_IDX)
-        curr_plate_idx = m_plater->get_partplate_list().get_curr_plate_index() + 1;
+        curr_plate_idx = wxGetApp().plates().partplate_list().get_curr_plate_index() + 1;
     else
-        curr_plate_idx = m_plater->get_partplate_list().get_curr_plate_index() + 1;
+        curr_plate_idx = wxGetApp().plates().partplate_list().get_curr_plate_index() + 1;
 
     params.dev_ip = obj->dev_ip;
     params.dev_id = obj->dev_id;
@@ -518,14 +521,14 @@ BBL::PrintParams SendMultiMachinePage::request_params(MachineObject* obj)
     params.connection_type = obj->connection_type();
     params.task_use_ams = use_ams;
 
-    PartPlate* curr_plate = m_plater->get_partplate_list().get_curr_plate();
+    PartPlate* curr_plate = wxGetApp().plates().partplate_list().get_curr_plate();
     if (curr_plate) {
         params.task_bed_type = bed_type_to_gcode_string( curr_plate->get_bed_type(true));
     }
 
     wxString filename;
     if (m_current_project_name.IsEmpty()) {
-        filename = m_plater->get_export_gcode_filename("", true, m_print_plate_idx == PLATE_ALL_IDX ? true : false);
+        filename = wxGetApp().ex().get_export_gcode_filename("", true, m_print_plate_idx == PLATE_ALL_IDX ? true : false);
     }
     else {
         filename = m_current_project_name;
@@ -536,7 +539,7 @@ BBL::PrintParams SendMultiMachinePage::request_params(MachineObject* obj)
     }
 
     if (filename.empty()) {
-        filename = m_plater->get_export_gcode_filename("", true);
+        filename = wxGetApp().ex().get_export_gcode_filename("", true, false);
         if (filename.empty()) filename = _L("Untitled");
     }
 
@@ -635,7 +638,7 @@ void SendMultiMachinePage::on_send(wxCommandEvent& event)
     event.Skip();
     BOOST_LOG_TRIVIAL(info) << "SendMultiMachinePage: on_send";
 
-    int result = m_plater->send_gcode(m_print_plate_idx, [this](int export_stage, int current, int total, bool& cancel) {
+    int result = wxGetApp().ex().send_gcode(m_print_plate_idx, [this](int export_stage, int current, int total, bool& cancel) {
         if (m_is_canceled) return;
         bool     cancelled = false;
         wxString msg = _L("Preparing print job");
@@ -656,7 +659,7 @@ void SendMultiMachinePage::on_send(wxCommandEvent& event)
     }
 
     // export config 3mf if needed
-    result = m_plater->export_config_3mf(m_print_plate_idx);
+    result = wxGetApp().ex().export_config_3mf(m_print_plate_idx);
     if (result < 0) {
         BOOST_LOG_TRIVIAL(trace) << "export_config_3mf failed, result = " << result;
         return;
@@ -1379,7 +1382,7 @@ void SendMultiMachinePage::sync_ams_list()
         }
     }
 
-    auto           extruders = wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_used_extruders();
+    auto           extruders = wxGetApp().plates().partplate_list().get_curr_plate()->get_used_extruders();
     BitmapCache    bmcache;
     MaterialHash::iterator iter = m_material_list.begin();
     while (iter != m_material_list.end()) {
@@ -1488,9 +1491,9 @@ void SendMultiMachinePage::set_default_normal(const ThumbnailData& data)
     m_main_scroll->Fit();
 
     // basic info
-    auto aprint_stats = m_plater->get_partplate_list().get_current_fff_print().print_statistics();
+    auto aprint_stats = wxGetApp().plates().partplate_list().get_current_fff_print().print_statistics();
     wxString   time;
-    PartPlate* plate = m_plater->get_partplate_list().get_curr_plate();
+    PartPlate* plate = wxGetApp().plates().partplate_list().get_curr_plate();
     if (plate) {
         if (plate->get_slice_result()) { time = wxString::Format("%s", short_time(get_time_dhms(plate->get_slice_result()->print_statistics.modes[0].time))); }
     }
@@ -1509,20 +1512,20 @@ void SendMultiMachinePage::set_default_normal(const ThumbnailData& data)
 
 void SendMultiMachinePage::set_default()
 {
-    wxString filename = m_plater->get_export_gcode_filename("", true, m_print_plate_idx == PLATE_ALL_IDX ? true : false);
+    wxString filename = wxGetApp().ex().get_export_gcode_filename("", true, m_print_plate_idx == PLATE_ALL_IDX ? true : false);
     if (m_print_plate_idx == PLATE_ALL_IDX && filename.empty()) {
         filename = _L("Untitled");
     }
 
     if (filename.empty()) {
-        filename = m_plater->get_export_gcode_filename("", true);
+        filename = wxGetApp().ex().get_export_gcode_filename("", true, false);
         if (filename.empty()) filename = _L("Untitled");
     }
 
     fs::path filename_path(filename.c_str());
     std::string file_name = filename_path.filename().string();
     if (from_u8(file_name).find(_L("Untitled")) != wxString::npos) {
-        PartPlate* part_plate = m_plater->get_partplate_list().get_plate(m_print_plate_idx);
+        PartPlate* part_plate = wxGetApp().plates().partplate_list().get_plate(m_print_plate_idx);
         if (part_plate) {
             if (std::vector<ModelObject*> objects = part_plate->get_objects_on_this_plate(); objects.size() > 0) {
                 file_name = objects[0]->name;
@@ -1543,7 +1546,7 @@ void SendMultiMachinePage::set_default()
     m_task_name->SetLabel(m_current_project_name);
 
     sync_ams_list();
-    set_default_normal(m_plater->get_partplate_list().get_curr_plate()->thumbnail_data);
+    set_default_normal(wxGetApp().plates().partplate_list().get_curr_plate()->thumbnail_data);
 }
 
 void SendMultiMachinePage::on_rename_enter()

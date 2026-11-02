@@ -5,7 +5,6 @@
 #include "GUI_App.hpp"
 #if ENABLE_CAMERA_STATISTICS
 #include "Mouse3DController.hpp"
-#include "Plater.hpp"
 #endif // ENABLE_CAMERA_STATISTICS
 
 #include <GL/glew.h>
@@ -332,7 +331,7 @@ void Camera::debug_render() const
     imgui.begin(std::string("Camera statistics"), ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
 
     std::string type = get_type_as_string();
-    if (wxGetApp().plater()->get_mouse3d_controller().connected()
+    if (wxGetApp().layout().mouse3d_controller.connected()
         || (wxGetApp().app_config->get_bool("use_free_camera"))
         )
         type += "/free";

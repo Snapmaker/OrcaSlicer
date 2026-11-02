@@ -241,6 +241,25 @@ public:
     }
 };
 
+// 阶段 H2 2.0：组合根装配（design 决策 9）——15 服务前向声明（hpp 侧零服务头 include，勘误 13 教训）
+namespace app {
+class NotificationHub;
+class SnapshotService;
+class PlateController;
+class SlicingController;
+class ProjectSession;
+class ExportSendCoordinator;
+class SelectionQuery;
+class ObjectEditCommands;
+class ArrangementService;
+class MixingGateKeeper;
+class FilamentService;
+class CalibrationFlow;
+class LayoutManager;
+class SceneRefreshCoordinator;
+class PlaterEventRouter;
+}
+
 class GUI_App : public wxApp
 {
 public:
@@ -334,8 +353,47 @@ private:
     // login widget
     ZUserLogin*     login_dlg { nullptr };
 
+    // —— 阶段 H2 2.0：组合根装配（design 决策 9）——15 服务所有权存储。
+    // 构造留守 Plater ctor/plater_init（服务 ctor 以 Plater*/Plater 成员引用为参，接口零改动），
+    // 经 friend Plater 直写成员（单写点纪律）；~Plater 末尾 shutdown_services() 统一析构（逆构造序）。
+    // hpp 侧可空 unique_ptr<前向类型>——完整型在 GUI_App.cpp（析构点），不拖服务头级联。
+    std::unique_ptr<app::NotificationHub>         m_notification_hub;
+    std::unique_ptr<app::SnapshotService>         m_snapshots;
+    std::unique_ptr<app::PlateController>         m_plates;
+    std::unique_ptr<app::SlicingController>       m_slicing;
+    std::unique_ptr<app::ProjectSession>          m_session;
+    std::unique_ptr<app::ExportSendCoordinator>   m_export_send;
+    std::unique_ptr<app::SelectionQuery>          m_sel_query;
+    std::unique_ptr<app::ObjectEditCommands>      m_obj_cmds;
+    std::unique_ptr<app::ArrangementService>      m_arrange_svc;
+    std::unique_ptr<app::MixingGateKeeper>        m_gate_keeper;
+    std::unique_ptr<app::FilamentService>         m_filament_svc;
+    std::unique_ptr<app::CalibrationFlow>         m_calib_svc;
+    std::unique_ptr<app::LayoutManager>           m_layout;
+    std::unique_ptr<app::SceneRefreshCoordinator> m_refresh;
+    std::unique_ptr<app::PlaterEventRouter>       m_router;
 
 public:
+    // —— 组合根服务访问面（H2 2.0）：外部消费方 wxGetApp().<svc>() ——
+    app::NotificationHub&         notification_hub();
+    app::SnapshotService&         snapshots();
+    app::PlateController&         plates();
+    app::SlicingController&       slicing();
+    app::ProjectSession&          session();
+    app::ExportSendCoordinator&   ex();
+    app::SelectionQuery&          selq();
+    app::ObjectEditCommands&      obj_cmds();
+    app::ArrangementService&      arrange_svc();
+    app::MixingGateKeeper&        gate_keeper();
+    app::FilamentService&         filament_svc();
+    app::CalibrationFlow&         calibration_svc();
+    app::LayoutManager&           layout();
+    app::SceneRefreshCoordinator& refresh();
+    app::PlaterEventRouter&       router();
+    /// 服务统一析构（~Plater 末尾调用；逆构造序 reset——复现原 Plater 成员逆序析构语义）。
+    void shutdown_services();
+    friend class Plater;   // H2 2.0：装配写入端（plater_init 直写 m_* 成员）
+
     // device dialog
     WebDeviceDialog* web_device_dialog{ nullptr };
     WebPreprintDialog* web_preprint_dialog{ nullptr };

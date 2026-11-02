@@ -1,4 +1,8 @@
 #include "PrintJob.hpp"
+#include "../GUI_App.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/PlateController.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../app/ProjectSession.hpp"   // H2 3.1：partplate/model accessor 供给
+#include "../PartPlate.hpp"   // H2 3.1 顶部瘦身：PartPlate 完整型（原经 Plater.hpp 传递链）
 #include "libslic3r/MTUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -149,10 +153,10 @@ void PrintJob::process(Ctl &ctl)
 
     int total_plate_num = plate_data.plate_count;
     if (!plate_data.is_valid) {
-        total_plate_num =  m_plater->get_partplate_list().get_plate_count();
-        PartPlate *plate = m_plater->get_partplate_list().get_plate(job_data.plate_idx);
+        total_plate_num =  wxGetApp().plates().partplate_list().get_plate_count();
+        PartPlate *plate = wxGetApp().plates().partplate_list().get_plate(job_data.plate_idx);
         if (plate == nullptr) {
-            plate = m_plater->get_partplate_list().get_curr_plate();
+            plate = wxGetApp().plates().partplate_list().get_curr_plate();
             if (plate == nullptr) return;
         }
 
@@ -177,17 +181,17 @@ void PrintJob::process(Ctl &ctl)
         if (job_data.plate_idx >= 0)
             curr_plate_idx = job_data.plate_idx + 1;
         else if (job_data.plate_idx == PLATE_CURRENT_IDX)
-            curr_plate_idx = m_plater->get_partplate_list().get_curr_plate_index() + 1;
+            curr_plate_idx = wxGetApp().plates().partplate_list().get_curr_plate_index() + 1;
         else if (job_data.plate_idx == PLATE_ALL_IDX)
-            curr_plate_idx = m_plater->get_partplate_list().get_curr_plate_index() + 1;
+            curr_plate_idx = wxGetApp().plates().partplate_list().get_curr_plate_index() + 1;
         else
-            curr_plate_idx = m_plater->get_partplate_list().get_curr_plate_index() + 1;
+            curr_plate_idx = wxGetApp().plates().partplate_list().get_curr_plate_index() + 1;
     }
     else if(m_print_type == "from_sdcard_view") {
         curr_plate_idx = m_print_from_sdc_plate_idx;
     }
 
-    PartPlate* curr_plate = m_plater->get_partplate_list().get_curr_plate();
+    PartPlate* curr_plate = wxGetApp().plates().partplate_list().get_curr_plate();
     if (curr_plate) {
         this->task_bed_type = bed_type_to_gcode_string(plate_data.is_valid ? plate_data.bed_type : curr_plate->get_bed_type(true));
     }

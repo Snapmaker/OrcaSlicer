@@ -1407,7 +1407,7 @@ bool GLGizmosManager::activate_gizmo(EType type)
         old_gizmo.unregister_raycasters_for_picking();
 
         if (!m_serializing && old_gizmo.wants_enter_leave_snapshots())
-            Plater::TakeSnapshot
+            app::SnapshotService::Scope
                 snapshot(wxGetApp().plater(),
                          old_gizmo.get_gizmo_leaving_text(),
                          UndoRedo::SnapshotType::LeavingGizmoWithAction);
@@ -1424,7 +1424,7 @@ bool GLGizmosManager::activate_gizmo(EType type)
     if (!new_gizmo.is_activable()) return false;
 
     if (!m_serializing && new_gizmo.wants_enter_leave_snapshots())
-        Plater::TakeSnapshot snapshot(wxGetApp().plater(),
+        app::SnapshotService::Scope snapshot(wxGetApp().plater(),
                                       new_gizmo.get_gizmo_entering_text(),
                                       UndoRedo::SnapshotType::EnteringGizmo);
 

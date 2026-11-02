@@ -1,4 +1,5 @@
 #include "calib_dlg.hpp"
+#include "app/CalibrationFlow.hpp"   // H2 3.1：真实供给头
 #include "GUI_App.hpp"
 #include "MsgDialog.hpp"
 #include "I18N.hpp"
@@ -235,7 +236,7 @@ void PA_Calibration_Dlg::on_start(wxCommandEvent& event) {
     ParseStringValues(m_tiBMAccels->GetTextCtrl()->GetValue().ToStdString(), m_params.accelerations);
     ParseStringValues(m_tiBMSpeeds->GetTextCtrl()->GetValue().ToStdString(), m_params.speeds);
 
-    m_plater->calib_pa(m_params);
+    wxGetApp().calibration_svc().calib_pa(m_params);
     EndModal(wxID_OK);
 
 }
@@ -398,7 +399,7 @@ void Temp_Calibration_Dlg::on_start(wxCommandEvent& event) {
     m_params.start = start;
     m_params.end = end;
     m_params.mode = CalibMode::Calib_Temp_Tower;
-    m_plater->calib_temp(m_params);
+    wxGetApp().calibration_svc().calib_temp(m_params);
     EndModal(wxID_OK);
 
 }
@@ -537,7 +538,7 @@ void MaxVolumetricSpeed_Test_Dlg::on_start(wxCommandEvent& event) {
     }
 
     m_params.mode = CalibMode::Calib_Vol_speed_Tower;
-    m_plater->calib_max_vol_speed(m_params);
+    wxGetApp().calibration_svc().calib_max_vol_speed(m_params);
     EndModal(wxID_OK);
 
 }
@@ -640,7 +641,7 @@ void VFA_Test_Dlg::on_start(wxCommandEvent& event)
     }
 
     m_params.mode = CalibMode::Calib_VFA_Tower;
-    m_plater->calib_VFA(m_params);
+    wxGetApp().calibration_svc().calib_VFA(m_params);
     EndModal(wxID_OK);
 }
 
@@ -740,7 +741,7 @@ void Retraction_Test_Dlg::on_start(wxCommandEvent& event) {
     }
 
     m_params.mode = CalibMode::Calib_Retraction_tower;
-    m_plater->calib_retraction(m_params);
+    wxGetApp().calibration_svc().calib_retraction(m_params);
     EndModal(wxID_OK);
 
 }
@@ -878,7 +879,7 @@ void Input_Shaping_Freq_Test_Dlg::on_start(wxCommandEvent& event) {
     // Set model type based on selection
     m_params.test_model = m_rbModel->GetSelection() == 0 ? 0 : 1; // 0 = Ringing Tower, 1 = Fast Tower
     
-    m_plater->calib_input_shaping_freq(m_params);
+    wxGetApp().calibration_svc().calib_input_shaping_freq(m_params);
     EndModal(wxID_OK);
 }
 
@@ -998,7 +999,7 @@ void Input_Shaping_Damp_Test_Dlg::on_start(wxCommandEvent& event) {
     // Set model type based on selection
     m_params.test_model = m_rbModel->GetSelection() == 0 ? 0 : 1; // 0 = Ringing Tower, 1 = Fast Tower
     
-    m_plater->calib_input_shaping_damp(m_params);
+    wxGetApp().calibration_svc().calib_input_shaping_damp(m_params);
     EndModal(wxID_OK);
 }
 
@@ -1104,7 +1105,7 @@ void Junction_Deviation_Test_Dlg::on_start(wxCommandEvent& event) {
     // Set model type based on selection
     m_params.test_model = m_rbModel->GetSelection() == 0 ? 0 : 1; // 0 = Ringing Tower, 1 = Fast Tower
     
-    m_plater->calib_junction_deviation(m_params);
+    wxGetApp().calibration_svc().calib_junction_deviation(m_params);
     EndModal(wxID_OK);
 }
 

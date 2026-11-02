@@ -23,7 +23,6 @@
 #include <wx/mstream.h>
 #include <miniz.h>
 #include <algorithm>
-#include "Plater.hpp"
 #include "Notebook.hpp"
 #include "BitmapCache.hpp"
 #include "BindDialog.hpp"

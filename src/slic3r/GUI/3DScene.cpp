@@ -1,6 +1,9 @@
 #include <GL/glew.h>
 
 #include "3DScene.hpp"
+#include "app/ProjectSession.hpp"   // H2 3.1：真实供给头（glew 后置——GL 头序纪律）
+#include "app/PlateController.hpp"
+#include "PartPlate.hpp"
 #include "GLShader.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Colors.hpp"
@@ -217,7 +220,7 @@ void GLVolume::SinkingContours::render()
 void GLVolume::SinkingContours::update()
 {
     const int    object_idx = m_parent.object_idx();
-    const Model& model      = GUI::wxGetApp().plater()->model();
+    const Model& model      = GUI::wxGetApp().session().model();
 
     if (0 <= object_idx && object_idx < int(model.objects.size()) && m_parent.is_sinking() && !m_parent.is_below_printbed()) {
         const BoundingBoxf3& box = m_parent.transformed_convex_hull_bounding_box();
@@ -579,7 +582,7 @@ BoundingBoxf3 GLVolume::transformed_non_sinking_bounding_box(const Transform3d& 
     if (!plater)
         return bounding_box().transformed(trafo);
 
-    const auto& objects = plater->model().objects;
+    const auto& objects = GUI::wxGetApp().session().model().objects;
     int         obj_idx = object_idx();
     if (obj_idx < 0 || obj_idx >= (int) objects.size() || !objects[obj_idx])
         return bounding_box().transformed(trafo);
@@ -1015,7 +1018,7 @@ int GLVolumeCollection::load_wipe_tower_preview(
 
     std::vector<ColorRGBA> extruder_colors = get_extruders_colors();
     std::vector<ColorRGBA> colors;
-    GUI::PartPlateList& ppl = GUI::wxGetApp().plater()->get_partplate_list();
+    GUI::PartPlateList& ppl = GUI::wxGetApp().plates().partplate_list();
     std::vector<int> plate_extruders  = ppl.get_plate(plate_idx)->get_extruders(true);
     TriangleMesh wipe_tower_shell = make_cube(width, depth, height);
     for (int extruder_id : plate_extruders) {
@@ -1058,7 +1061,7 @@ int GLVolumeCollection::load_real_wipe_tower_preview(int obj_idx, float pos_x, f
         return int(this->volumes.size() - 1);
 
     std::vector<Slic3r::ColorRGBA> extruder_colors = get_extruders_colors();
-    GUI::PartPlateList& ppl = GUI::wxGetApp().plater()->get_partplate_list();
+    GUI::PartPlateList& ppl = GUI::wxGetApp().plates().partplate_list();
     std::vector<int> plate_extruders = ppl.get_plate(plate_idx)->get_extruders(true);
     std::vector<Slic3r::ColorRGBA> colors;
     if (!plate_extruders.empty()) {
@@ -1364,7 +1367,7 @@ bool GLVolumeCollection::check_outside_state(const BuildVolume& build_volume, Mo
         return false;
     }
 
-    const Model& model        = GUI::wxGetApp().plater()->model();
+    const Model& model        = GUI::wxGetApp().session().model();
     auto         volume_below = [](GLVolume& volume) -> bool {
         return volume.object_idx() != -1 && volume.volume_idx() != -1 && volume.is_below_printbed();
     };
@@ -1387,7 +1390,7 @@ bool GLVolumeCollection::check_outside_state(const BuildVolume& build_volume, Mo
     // BBS: add instance judge logic, besides to original volume judge logic
     std::map<int64_t, ModelInstanceEPrintVolumeState> model_state;
 
-    GUI::PartPlate*                   curr_plate   = GUI::wxGetApp().plater()->get_partplate_list().get_selected_plate();
+    GUI::PartPlate*                   curr_plate   = GUI::wxGetApp().plates().partplate_list().get_selected_plate();
     const Pointfs&                    pp_bed_shape = curr_plate->get_shape();
     BuildVolume                       plate_build_volume(pp_bed_shape, build_volume.printable_height());
     const std::vector<BoundingBoxf3>& exclude_areas = curr_plate->get_exclude_areas();

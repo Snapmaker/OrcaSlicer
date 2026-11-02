@@ -2,7 +2,7 @@
 #define slic3r_GUI_SingleChoice_hpp_
 
 #include "GUI_Utils.hpp"
-#include "Plater.hpp"
+namespace Slic3r { namespace GUI { class Plater; } }   // H2 3.1：Plater 仅指针形态——前向声明替代传递包含
 #include "Selection.hpp"
 
 #include "Widgets/Button.hpp"

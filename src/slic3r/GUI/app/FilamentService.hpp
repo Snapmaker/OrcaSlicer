@@ -68,7 +68,8 @@ public:
     std::map<int, DynamicPrintConfig> build_filament_ams_list(MachineObject* obj);
     void load_ams_list(std::string const& device, MachineObject* obj);
     void sync_ams_list();
-    void show_sync_filament_dialog();
+    // show_sync_filament_dialog 移除（2.8 ②）：main gateway 异步版落回 Sidebar（UI 强耦合：
+    // 按钮 disable/alive 守卫在 Sidebar::priv），原内日线 SSWCP 同步版废弃，见 body-diff-findings #4/#5
 
 private:
     // 批量物理删除守卫计数（非原子 int，仅 UI 线程；原 Plater::priv 成员逐字迁入）

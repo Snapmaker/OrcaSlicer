@@ -125,6 +125,12 @@ public:
     std::map<int, DynamicPrintConfig> build_filament_ams_list(MachineObject* obj);
     void sync_ams_list();
     void show_sync_filament_dialog();
+    // 2.8 ②：main 版同步对话框续段 + 标题喷嘴同步回 streams（bac6fd5 hpp:236 签名逐字）
+    void continue_sync_filament_dialog(bool got_machine_info, const std::string& machine_type);
+    void apply_nozzle_sync_result(bool got_machine_info, std::string machine_type,
+                                  std::vector<std::string> nozzle_diameters,
+                                  std::vector<std::string> nozzle_volume_types,
+                                  std::string device_name);
     // Orca
     void show_SEMM_buttons(bool bshow);
     void update_dynamic_filament_list();

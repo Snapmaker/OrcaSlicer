@@ -68,6 +68,9 @@
 #include <wx/fontutil.h>
 #include <wx/glcanvas.h>
 #include <wx/utils.h>
+#if wxUSE_SECRETSTORE
+#include <wx/secretstore.h>
+#endif
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
 
@@ -2074,6 +2077,55 @@ void GUI_App::init_webview_runtime()
 }
 #endif
 
+// BBS: the Snapmaker login token lives in the OS credential store (Credential Manager / Keychain / libsecret)
+// rather than in plaintext AppConfig. Without a usable store these return false/empty and callers fall back to AppConfig.
+namespace {
+const wxString SM_TOKEN_SERVICE = "Snapmaker_Orca/sm_user_token";
+const wxString SM_TOKEN_USER    = "snapmaker";
+
+bool sm_secret_save(const std::string &token)
+{
+#if wxUSE_SECRETSTORE
+    wxSecretStore store = wxSecretStore::GetDefault();
+    wxString      errmsg;
+    if (store.IsOk(&errmsg) && store.Save(SM_TOKEN_SERVICE, SM_TOKEN_USER, wxSecretValue(wxString::FromUTF8(token))))
+        return true;
+    BOOST_LOG_TRIVIAL(warning) << "Credential store unavailable for Snapmaker login token: " << errmsg.ToUTF8().data();
+#endif
+    return false;
+}
+
+std::string sm_secret_load()
+{
+#if wxUSE_SECRETSTORE
+    wxSecretStore store = wxSecretStore::GetDefault();
+    wxString      username;
+    wxSecretValue secret;
+    if (store.IsOk() && store.Load(SM_TOKEN_SERVICE, username, secret))
+        return secret.GetAsString().ToUTF8().data();
+#endif
+    return {};
+}
+
+void sm_secret_delete()
+{
+#if wxUSE_SECRETSTORE
+    wxSecretStore store = wxSecretStore::GetDefault();
+    if (store.IsOk())
+        store.Delete(SM_TOKEN_SERVICE);
+#endif
+}
+} // namespace
+
+void GUI_App::sm_store_user_token(const std::string &token)
+{
+    if (!app_config)
+        return;
+    // Keep the plaintext copy only when no credential store is available on this system.
+    app_config->set("sm_user_token", sm_secret_save(token) ? "" : token);
+    app_config->save();
+}
+
 void GUI_App::init_app_config()
 {
 	// Profiles for the alpha are stored into the PrusaSlicer-alpha directory to not mix with the current release.
@@ -2181,7 +2233,15 @@ void GUI_App::init_app_config()
     // BBS: restore Snapmaker login state from AppConfig (issue #116)
     // WebKit on macOS/Linux does not persist session cookies, so we serialise the token ourselves.
     if (app_config) {
-        std::string sm_token = app_config->get("sm_user_token");
+        std::string sm_token = sm_secret_load();
+        if (sm_token.empty()) {
+            sm_token = app_config->get("sm_user_token");
+            // Migrate a plaintext token written by earlier builds into the credential store.
+            if (!sm_token.empty() && sm_secret_save(sm_token)) {
+                app_config->set("sm_user_token", "");
+                app_config->save();
+            }
+        }
         if (!sm_token.empty()) {
             m_login_userinfo.set_user_token(sm_token);
             m_login_userinfo.set_user_login(true);
@@ -4154,6 +4214,7 @@ void GUI_App::sm_request_user_logout()
     if (m_login_userinfo.is_user_login()) {
         m_login_userinfo.clear();
         // BBS: erase persisted login state so credentials are not restored on next launch (issue #116)
+        sm_secret_delete();
         if (app_config) {
             app_config->set("sm_user_token", "");
             app_config->set("sm_user_name", "");

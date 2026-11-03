@@ -196,8 +196,7 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
         info->set_user_token(token);
 
         // BBS: persist login token so it survives app restart (issue #116)
-        if (wxGetApp().app_config)
-            wxGetApp().app_config->set("sm_user_token", token);
+        wxGetApp().sm_store_user_token(token);
 
         this->EndModal(wxID_OK);
 
@@ -237,6 +236,9 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                         sentryReportLog(SENTRY_LOG_TRACE, userInfo, BP_LOGIN);
                         wxGetApp().sm_get_userinfo()->set_user_token(token);
                         wxGetApp().sm_get_userinfo()->set_user_login(true);
+                        // BBS: write the name/icon now rather than relying on the shutdown save (issue #226)
+                        if (wxGetApp().app_config)
+                            wxGetApp().app_config->save();
                     }
                 })
                 .on_error([&](std::string body, std::string error, unsigned status) {

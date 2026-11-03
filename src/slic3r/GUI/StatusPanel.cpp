@@ -1817,8 +1817,8 @@ StatusPanel::StatusPanel(wxWindow *parent, wxWindowID id, const wxPoint &pos, co
     m_bpButton_e_10->Connect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_axis_ctrl_e_up_10), NULL, this);
     m_bpButton_e_down_10->Connect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_axis_ctrl_e_down_10), NULL, this);
     m_button_unload->Connect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_start_unload), NULL, this);
-    m_button_load->Connect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_start_load), NULL, this);
-    m_button_sync_filament->Connect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_sync_filament), NULL, this);
+    if (m_button_load) m_button_load->Connect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_start_load), NULL, this);
+    if (m_button_sync_filament) m_button_sync_filament->Connect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_sync_filament), NULL, this);
     Bind(EVT_AMS_EXTRUSION_CALI, &StatusPanel::on_filament_extrusion_cali, this);
     Bind(EVT_AMS_LOAD, &StatusPanel::on_ams_load, this);
     Bind(EVT_AMS_UNLOAD, &StatusPanel::on_ams_unload, this);
@@ -1881,8 +1881,8 @@ StatusPanel::~StatusPanel()
     m_options_btn->Disconnect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_show_print_options), NULL, this);
     m_parts_btn->Disconnect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_show_parts_options), NULL, this);
     m_button_unload->Disconnect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_start_unload), NULL, this);
-    m_button_load->Disconnect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_start_load), NULL, this);
-    m_button_sync_filament->Disconnect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_sync_filament), NULL, this);
+    if (m_button_load) m_button_load->Disconnect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_start_load), NULL, this);
+    if (m_button_sync_filament) m_button_sync_filament->Disconnect(wxEVT_COMMAND_BUTTON_CLICKED, wxCommandEventHandler(StatusPanel::on_sync_filament), NULL, this);
 
     // remove warning dialogs
     if (m_print_error_dlg != nullptr)
@@ -2219,8 +2219,8 @@ void StatusPanel::update(MachineObject *obj)
 }
 
 void StatusPanel::show_recenter_dialog() {
-    // BBS: issue #66 — use a non-modal (modeless) dialog so the UI remains responsive while
-    // the user decides.  We pass the home command as a callback so no blocking wait is needed.
+    // BBS: issue #66 — use a window-modal dialog (only this window is disabled, the event loop keeps
+    // running) so the rest of the UI stays responsive while the user decides; the home command runs from the close callback.
     RecenterDialog *dlg = new RecenterDialog(this);
     dlg->Bind(wxEVT_WINDOW_MODAL_DIALOG_CLOSED, [this, dlg](wxWindowModalDialogEvent &e) {
         if (e.GetReturnCode() == wxID_OK && obj)

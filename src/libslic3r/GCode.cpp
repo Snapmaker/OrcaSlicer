@@ -263,10 +263,10 @@ std::string OozePrevention::pre_toolchange(GCode& gcodegen)
     const auto&  filament_idle_temp = gcodegen.config().idle_temperature;
 
     // BBS: issue #143 — completely turn off the idle extruder heater when requested.
-    if (gcodegen.config().turn_off_idle_hotend.value) {
-        gcode += gcodegen.writer().set_temperature(0, false, extruder_id);
-        gcode.pop_back();
-        gcode += " ;turn off idle hotend\n";
+    // Only with real independent hotends: without a T parameter M104 S0 would switch off the active nozzle.
+    if (gcodegen.config().turn_off_idle_hotend.value && gcodegen.writer().multiple_extruders &&
+        !gcodegen.config().single_extruder_multi_material.value) {
+        gcode += GCodeWriter::set_temperature(0, gcodegen.config().gcode_flavor.value, false, int(extruder_id), "turn off idle hotend");
     } else if (filament_idle_temp.get_at(extruder_id) == 0) {
         // There is no idle temperature defined in filament settings.
         // Use the delta value from print config.

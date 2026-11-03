@@ -10334,11 +10334,13 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                         from_u8(loaded_printer), from_u8(current_printer), from_u8(loaded_printer));
                                     MessageDialog printer_dlg(q, msg, _L("Printer Mismatch"),
                                                               wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
+                                    // "Yes" needs no extra work: load_config_model() below selects the project's presets.
                                     if (printer_dlg.ShowModal() == wxID_NO) {
-                                        // User wants to keep current printer — strip the printer/process presets
-                                        // from the loaded config so only geometry is imported.
+                                        // User wants to keep current printer — strip the printer/process/filament presets
+                                        // from the loaded config, since the project's filaments may not suit the current printer.
                                         config.erase("printer_settings_id");
                                         config.erase("print_settings_id");
+                                        config.erase("filament_settings_id");
                                     }
                                 }
                             }

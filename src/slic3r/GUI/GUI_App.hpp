@@ -591,6 +591,7 @@ private:
     void            sm_request_login(bool show_user_info = false);
     void            sm_ShowUserLogin(bool show  =  true);
     void            sm_request_user_logout();
+    void            sm_store_user_token(const std::string &token);
   
     void            request_user_logout();
     int             request_user_unbind(std::string dev_id);

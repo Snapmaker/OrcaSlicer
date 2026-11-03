@@ -28,7 +28,8 @@
 #include "LinkedList.h"
 #include "Clients.h"
 
-#ifndef bool
+/* bool is a keyword in C23 and C++, and a macro when <stdbool.h> is included */
+#if !defined(__cplusplus) && !defined(bool) && (!defined(__STDC_VERSION__) || __STDC_VERSION__ < 202311L)
 typedef unsigned int bool;
 #endif
 typedef void* (*pf)(int, unsigned char, char*, size_t);

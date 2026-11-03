@@ -1,6 +1,7 @@
 // Orca: WipeTower2 for all non bbl printers, support all MMU device and toolchanger.
 #include "WipeTower2.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <vector>
@@ -18,6 +19,7 @@
 #include "PrintConfig.hpp"
 #include "Surface.hpp"
 #include "Fill/FillRectilinear.hpp"
+#include "libslic3r/Utils.hpp"
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/log/trivial.hpp>
@@ -1342,6 +1344,7 @@ WipeTower2::WipeTower2(const PrintConfig&                     config,
     BoundingBoxf bb(bed_points);
     m_bed_width  = float(bb.size().x());
     m_bed_height = float(bb.size().y());
+    m_bed_center = bb.center().cast<float>();
     m_bed_shape = (bed_points.size() == 4 ? RectangularBed : CircularBed);
 
     if (m_bed_shape == CircularBed) {
@@ -1560,15 +1563,23 @@ WipeTower::ToolChangeResult WipeTower2::emit_planned_tool_change(const WipeTower
     // BBS: issue #173 - side-by-side mode: place each tool in its own X column
     float cleaning_box_x     = m_perimeter_width / 2.f;
     float cleaning_box_width = m_wipe_tower_width - m_perimeter_width;
-    const float saved_depth_traversed = m_depth_traversed;
-    if (m_build_mode == 1 /*wtbmSideBySide*/ && !m_filpar.empty() && !is_no_tool_sentinel(tool)) {
+    // In side-by-side mode m_depth_traversed temporarily holds the column's cursor (toolchange_Unload reads it);
+    // the guard restores the shared layer cursor on every exit path.
+    ScopeGuard restore_depth_traversed;
+    const bool side_by_side = m_build_mode == 1 /*wtbmSideBySide*/ && !m_filpar.empty() && !is_no_tool_sentinel(tool) &&
+                              !m_per_tool_depth_traversed.empty();
+    if (side_by_side) {
         const size_t num_cols  = m_filpar.size();
-        const float  col_inner = (m_wipe_tower_width - (float(num_cols) + 1.f) * m_perimeter_width) / float(num_cols);
-        const size_t col_idx   = std::min(tool, (unsigned int)(num_cols - 1));
+        const float  col_inner = std::max(m_perimeter_width,
+                                          (m_wipe_tower_width - (float(num_cols) + 1.f) * m_perimeter_width) / float(num_cols));
+        const size_t col_idx   = std::min(tool, std::min(num_cols, m_per_tool_depth_traversed.size()) - 1);
         cleaning_box_x         = m_perimeter_width / 2.f + float(col_idx) * (col_inner + m_perimeter_width);
         cleaning_box_width     = col_inner;
-        if (col_idx < m_per_tool_depth_traversed.size())
-            m_depth_traversed = m_per_tool_depth_traversed[col_idx];
+        restore_depth_traversed = ScopeGuard([this, saved = m_depth_traversed, col_idx, wipe_area]() {
+            m_per_tool_depth_traversed[col_idx] += wipe_area;
+            m_depth_traversed = saved;
+        });
+        m_depth_traversed = m_per_tool_depth_traversed[col_idx];
     }
 
     WipeTower::box_coordinates cleaning_box(Vec2f(cleaning_box_x, m_perimeter_width / 2.f), cleaning_box_width,
@@ -1624,14 +1635,9 @@ WipeTower::ToolChangeResult WipeTower2::emit_planned_tool_change(const WipeTower
                           m_filpar[m_current_tool].temperature);
 
     m_active_tool_change = nullptr;
-    // BBS: issue #173 - in side-by-side mode restore global depth and update per-tool counter
-    if (m_build_mode == 1 /*wtbmSideBySide*/ && !is_no_tool_sentinel(tool) && !m_per_tool_depth_traversed.empty()) {
-        const size_t col_idx = std::min(tool, (unsigned int)(m_per_tool_depth_traversed.size() - 1));
-        m_per_tool_depth_traversed[col_idx] += wipe_area;
-        m_depth_traversed = saved_depth_traversed;
-    } else {
+    // BBS: issue #173 - in side-by-side mode restore_depth_traversed advances the column cursor instead
+    if (!side_by_side)
         m_depth_traversed += wipe_area;
-    }
 
     if (m_set_extruder_trimpot)
         writer.set_extruder_trimpot(550); // Reset the extruder current to a normal value.
@@ -2469,19 +2475,19 @@ void WipeTower2::plan_tower()
         const size_t num_tools = m_filpar.size();
         // Initialise per-tool structures
         m_per_tool_depth_traversed.assign(num_tools, 0.f);
-        std::vector<float> per_tool_max_depth(num_tools, 0.f);
-
-        // Find the maximum required_depth per tool across all layers
-        for (const auto& layer : m_plan) {
-            for (const auto& tc : layer.tool_changes)
-                if (tc.new_tool < num_tools)
-                    per_tool_max_depth[tc.new_tool] = std::max(per_tool_max_depth[tc.new_tool], tc.required_depth);
-        }
-
-        // Global tower depth = max of all per-tool depths (columns are parallel, not stacked)
+        // A column's Y cursor accumulates every change to that tool within a layer, so size each column
+        // by the per-layer sum of its tool's required_depth, then take the max over all layers.
         m_wipe_tower_depth = 0.f;
-        for (float d : per_tool_max_depth)
-            m_wipe_tower_depth = std::max(m_wipe_tower_depth, d + m_perimeter_width);
+        std::vector<float> layer_tool_depth(num_tools, 0.f);
+        for (const auto& layer : m_plan) {
+            std::fill(layer_tool_depth.begin(), layer_tool_depth.end(), 0.f);
+            for (const auto* changes : {&layer.tool_changes, &layer.local_z_tool_changes})
+                for (const auto& tc : *changes)
+                    layer_tool_depth[std::min(tc.new_tool, num_tools - 1)] += tc.required_depth;
+            const float layer_max = *std::max_element(layer_tool_depth.begin(), layer_tool_depth.end());
+            // Global tower depth = max of all per-tool depths (columns are parallel, not stacked)
+            m_wipe_tower_depth = std::max(m_wipe_tower_depth, layer_max + layer.local_z_reserve_depth() + m_perimeter_width);
+        }
 
         // Set each layer's depth to the global tower depth so borders/brim are correct
         for (auto& layer : m_plan)
@@ -2921,18 +2927,17 @@ Polygon WipeTower2::generate_support_cone_wall(
         Vec2f abs_center = m_wipe_tower_pos + center;
         float max_r_bed  = 0.f;
         if (m_bed_shape == CircularBed) {
-            Vec2f bed_center     = m_bed_bottom_left + Vec2f(m_bed_width / 2.f, m_bed_height / 2.f);
-            float dist_to_edge   = m_bed_width / 2.f - (abs_center - bed_center).norm();
+            float dist_to_edge   = m_bed_width / 2.f - (abs_center - m_bed_center).norm();
             max_r_bed            = std::max(0.f, dist_to_edge);
         } else {
-            float max_r_x = std::min(abs_center.x() - m_bed_bottom_left.x(),
-                                     m_bed_bottom_left.x() + m_bed_width - abs_center.x()) * float(support_scale);
-            float max_r_y = std::min(abs_center.y() - m_bed_bottom_left.y(),
-                                     m_bed_bottom_left.y() + m_bed_height - abs_center.y());
-            max_r_bed = std::min(max_r_x, max_r_y);
+            // The cone is an ellipse: its X half-axis is r / support_scale and its Y half-axis is r
+            // (see the arc points below), so the X distance limits r scaled by support_scale.
+            float max_r_x = (m_bed_width / 2.f - std::abs(abs_center.x() - m_bed_center.x())) * float(support_scale);
+            float max_r_y = m_bed_height / 2.f - std::abs(abs_center.y() - m_bed_center.y());
+            max_r_bed = std::max(0.f, std::min(max_r_x, max_r_y));
         }
-        if (max_r_bed > 0.f && r > double(max_r_bed))
-            r = double(max_r_bed);
+        // A tower centre on or outside the bed edge leaves no room for a cone at all.
+        r = std::min(r, double(max_r_bed));
     }
 
     enum Type { Arc, Corner, ArcStart, ArcEnd };

@@ -107,10 +107,17 @@ void WKWebView_allowLocalNetworkAccess(void * web)
     // (the Snapmaker companion service).  The page is loaded from a custom
     // scheme so its origin differs from localhost; WebKit's CORS policy
     // rejects the request.  Setting allowUniversalAccessFromFileURLs via KVC
-    // relaxes this restriction for all content loaded in this webview.
+    // relaxes this restriction; WebKit applies it only to pages loaded from
+    // file:// URLs, so remote https content keeps the normal same-origin policy.
+    // The key is private SPI: if WebKit drops it, KVC raises
+    // NSUnknownKeyException, so catch it rather than crash on webview creation.
     WKWebView *webView = (WKWebView*)web;
-    [webView.configuration.preferences setValue:@YES
-                                         forKey:@"allowUniversalAccessFromFileURLs"];
+    @try {
+        [webView.configuration.preferences setValue:@YES
+                                             forKey:@"allowUniversalAccessFromFileURLs"];
+    } @catch (NSException *e) {
+        NSLog(@"WKWebView: allowUniversalAccessFromFileURLs unavailable: %@", [e reason]);
+    }
 }
 
 void openFolderForFile(wxString const & file)

@@ -12590,6 +12590,10 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 q->select_plate(first_plate_index);
                 //set to 3d tab
                 q->select_view_3D("Preview");
+                // The Preview panel may stay active across project loads; rebuild its plate
+                // toolbar from this project's plates even if no thumbnails were re-rendered.
+                preview->get_canvas3d()->invalidate_select_plate_toolbar();
+                preview->set_as_dirty();
                 wxGetApp().mainframe->select_tab(MainFrame::tpPreview);
             }
             else {

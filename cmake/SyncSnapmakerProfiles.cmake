@@ -1,6 +1,6 @@
-# Check out the profiles branch recorded in .gitmodules and mirror its resources.
+# Check out the profiles revision recorded by the superproject and mirror its resources.
 # Usage: cmake -DSUB=<submodule> -DDST=<profiles> -DVERSION_STAMP=<file> -P <script>
-# submodule update --remote follows submodule.<path>.branch from .gitmodules.
+# Updating to the configured branch's latest commit requires a manual update --remote.
 cmake_minimum_required(VERSION 3.13)
 
 foreach(_required SUB DST VERSION_STAMP)
@@ -42,9 +42,9 @@ function(profiles_git operation output)
     set(${output} "${_stdout}" PARENT_SCOPE)
 endfunction()
 
-# sync copies the .gitmodules branch into .git/config; --remote then checks out that tip.
+# Initialize missing submodules and fetch missing commits, without following the remote branch tip.
 profiles_git(sync _git_output submodule sync -- "${_sub_path}")
-profiles_git(update _git_output submodule update --init --remote --checkout --recursive -- "${_sub_path}")
+profiles_git(update _git_output submodule update --init --checkout --recursive -- "${_sub_path}")
 
 if(NOT EXISTS "${SUB}/Snapmaker.json")
     message(FATAL_ERROR "Missing ${SUB}/Snapmaker.json")

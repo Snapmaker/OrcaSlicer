@@ -1589,8 +1589,16 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
         return emit_local_z_unplanned_toolchange();
 
     assert(m_layer_idx >= 0);
-    if (m_layer_idx >= (int) m_tool_changes.size())
+    if (m_layer_idx >= (int) m_tool_changes.size()) {
+        // Local-Z passes may leave a different tool active after the last
+        // planned tower layer. The remaining object still needs its assigned
+        // filament even though there is no tower G-code left to emit.
+        if (extruder_id >= 0 && gcodegen.writer().need_toolchange(extruder_id)) {
+            const double print_z = gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value;
+            gcode += gcodegen.set_extruder(unsigned(extruder_id), print_z);
+        }
         return gcode;
+    }
     if (!gcodegen.is_BBL_Printer()) {
         if (gcodegen.writer().need_toolchange(extruder_id) || finish_layer) {
             if (m_layer_idx < (int) m_tool_changes.size()) {
@@ -1648,14 +1656,20 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
         }
     }
 
+    // Sparse tower layers may also omit a transition assumed unnecessary by
+    // the preplan. Never let that suppress an actual runtime tool change.
+    if (extruder_id >= 0 && gcodegen.writer().need_toolchange(extruder_id)) {
+        const double print_z = gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value;
+        gcode += gcodegen.set_extruder(unsigned(extruder_id), print_z);
+    }
     return gcode;
 }
-
-
 
 bool WipeTowerIntegration::is_empty_wipe_tower_gcode(GCode& gcodegen, int extruder_id, bool finish_layer)
 {
     assert(m_layer_idx >= 0);
+    if (extruder_id >= 0 && gcodegen.writer().need_toolchange(extruder_id))
+        return false;
     if (m_layer_idx >= (int) m_tool_changes.size())
         return true;
 

@@ -10,7 +10,7 @@
 #include "GUI_App.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
-#include  "sentry_wrapper/SentryWrapper.hpp"
+#include  "app_common/SentryWrapper.hpp"
 #include <boost/beast/core/detail/base64.hpp>
 #ifdef _WIN32
 #include <windows.h>

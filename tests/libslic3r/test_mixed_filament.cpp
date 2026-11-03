@@ -12,12 +12,15 @@
 #include "libslic3r/TriangleSelector.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <clocale>
 #include <cstdio>
 #include <cstdint>
 #include <locale>
+#include <numeric>
 #include <set>
 #include <sstream>
+#include <utility>
 #include <unordered_map>
 #include <vector>
 
@@ -72,6 +75,139 @@ static std::vector<std::string> split_rows(const std::string &serialized)
             rows.push_back(row);
     }
     return rows;
+}
+
+// Mirrors normalize_color_match_weights and
+// clamp_color_match_weights_to_minimum from MixedColorMatchHelpers.cpp. The GUI
+// translation unit cannot be linked into the headless libslic3r test executable;
+// keep these implementations byte-faithful to production so a ratio regression
+// still surfaces here.
+static std::vector<int> normalize_color_match_weights_mirror(const std::vector<int> &weights)
+{
+    std::vector<int> out(weights.size(), 0);
+    if (out.empty())
+        return out;
+
+    int sum = 0;
+    for (size_t idx = 0; idx < out.size(); ++idx) {
+        out[idx] = std::max(0, weights[idx]);
+        sum += out[idx];
+    }
+    if (sum <= 0) {
+        out.assign(out.size(), 0);
+        out[0] = 100;
+        return out;
+    }
+
+    std::vector<double> remainders(out.size(), 0.0);
+    int assigned = 0;
+    for (size_t idx = 0; idx < out.size(); ++idx) {
+        const double exact = 100.0 * double(out[idx]) / double(sum);
+        out[idx] = int(std::floor(exact));
+        remainders[idx] = exact - double(out[idx]);
+        assigned += out[idx];
+    }
+
+    for (int missing = 100 - assigned; missing > 0; --missing) {
+        size_t best_idx = 0;
+        double best_remainder = -1.0;
+        for (size_t idx = 0; idx < remainders.size(); ++idx) {
+            if (remainders[idx] > best_remainder) {
+                best_remainder = remainders[idx];
+                best_idx = idx;
+            }
+        }
+        ++out[best_idx];
+        remainders[best_idx] = 0.0;
+    }
+    return out;
+}
+
+static std::vector<int> clamp_color_match_weights_mirror(const std::vector<int> &weights, int min_component_percent)
+{
+    const int minimum = std::clamp(min_component_percent, 0, 50);
+    std::vector<int> constrained(weights.size(), 0);
+    std::vector<unsigned char> supplied(weights.size(), 0);
+    if (constrained.empty())
+        return constrained;
+
+    size_t supplied_participants = 0;
+    for (size_t idx = 0; idx < weights.size(); ++idx) {
+        if (weights[idx] < 0) {
+            constrained[idx] = minimum;
+            supplied[idx] = 1;
+            ++supplied_participants;
+        } else if (weights[idx] > 0) {
+            constrained[idx] = std::max(weights[idx], minimum);
+            supplied[idx] = 1;
+            ++supplied_participants;
+        }
+    }
+    if (minimum > 0 && supplied_participants < 2) {
+        for (size_t idx = 0; idx < weights.size(); ++idx)
+            if (weights[idx] == 0) {
+                constrained[idx] = minimum;
+                supplied[idx] = 1;
+            }
+    }
+
+    constrained = normalize_color_match_weights_mirror(constrained);
+    if (minimum <= 0)
+        return constrained;
+
+    std::vector<size_t> active;
+    active.reserve(constrained.size());
+    for (size_t idx = 0; idx < constrained.size(); ++idx)
+        if (supplied[idx])
+            active.emplace_back(idx);
+    std::sort(active.begin(), active.end(), [&weights](size_t lhs, size_t rhs) {
+        if (weights[lhs] != weights[rhs])
+            return weights[lhs] > weights[rhs];
+        return lhs < rhs;
+    });
+    const size_t max_active = std::min<size_t>(active.size(), size_t(100 / minimum));
+    if (max_active < 2)
+        return constrained;
+    active.resize(max_active);
+
+    std::vector<unsigned char> participating(constrained.size(), 0);
+    int excess_total = 0;
+    for (const size_t idx : active) {
+        participating[idx] = 1;
+        excess_total += std::max(0, constrained[idx] - minimum);
+    }
+
+    std::vector<double> exact(constrained.size(), 0.0);
+    std::vector<double> remainders(constrained.size(), 0.0);
+    const int budget = 100 - int(max_active) * minimum;
+    int assigned = 0;
+    for (size_t idx = 0; idx < constrained.size(); ++idx) {
+        if (!participating[idx]) {
+            constrained[idx] = 0;
+            continue;
+        }
+        const int excess = std::max(0, constrained[idx] - minimum);
+        exact[idx] = double(minimum) + (excess_total > 0 ? double(budget) * double(excess) / double(excess_total) : 0.0);
+        constrained[idx] = int(std::floor(exact[idx]));
+        remainders[idx] = exact[idx] - double(constrained[idx]);
+        assigned += constrained[idx];
+    }
+
+    for (int missing = 100 - assigned; missing > 0; --missing) {
+        size_t best_idx = size_t(-1);
+        double best_remainder = -1.0;
+        for (const size_t idx : active) {
+            if (remainders[idx] > best_remainder) {
+                best_remainder = remainders[idx];
+                best_idx = idx;
+            }
+        }
+        if (best_idx == size_t(-1))
+            break;
+        ++constrained[best_idx];
+        remainders[best_idx] = 0.0;
+    }
+    return constrained;
 }
 
 static std::string join_rows(const std::vector<std::string> &rows)
@@ -173,6 +309,63 @@ static const int _auto_generate_enabler = []() {
 }();
 
 } // namespace
+
+TEST_CASE("Mixed color match weights enforce the configured minimum", "[MixedFilament][ColorMatch]")
+{
+    using Weights = std::vector<int>;
+
+    SECTION("Clamps outside-triangle barycentric weights")
+    {
+        CHECK(clamp_color_match_weights_mirror({120, -10, -10}, 15) == Weights{70, 15, 15});
+        CHECK(clamp_color_match_weights_mirror({60, 60, -20}, 15) == Weights{43, 42, 15});
+        CHECK(clamp_color_match_weights_mirror({100, 0, 0}, 15) == Weights{70, 15, 15});
+    }
+
+    SECTION("Keeps only enough participants when the minimum is high")
+    {
+        const Weights constrained = clamp_color_match_weights_mirror({-20, 43, 77}, 35);
+        CHECK(constrained == Weights{0, 35, 65});
+        CHECK(clamp_color_match_weights_mirror(constrained, 35) == constrained);
+    }
+
+    SECTION("Preserves excluded zero-weight colors")
+    {
+        CHECK(clamp_color_match_weights_mirror({60, 40, 0}, 15) == Weights{60, 40, 0});
+        CHECK(clamp_color_match_weights_mirror({50, 50, 0}, 15) == Weights{50, 50, 0});
+        CHECK(clamp_color_match_weights_mirror({100, 0, 0}, 15) == Weights{70, 15, 15});
+    }
+
+    SECTION("Supports two-color and four-color inputs")
+    {
+        CHECK(clamp_color_match_weights_mirror({120, -20}, 15) == Weights{85, 15});
+        const Weights four_colors = clamp_color_match_weights_mirror({10, 20, 30, 40}, 15);
+        CHECK(std::accumulate(four_colors.begin(), four_colors.end(), 0) == 100);
+        for (const int weight : four_colors)
+            CHECK((weight == 0 || weight >= 15));
+
+        const Weights four_colors_at_high_minimum = clamp_color_match_weights_mirror({10, 20, 30, 40}, 40);
+        CHECK(four_colors_at_high_minimum == Weights{0, 0, 40, 60});
+    }
+
+    SECTION("Clamping is idempotent and preserves excluded colors")
+    {
+        const std::vector<std::pair<Weights, int>> cases = {
+            {{120, -10, -10}, 15},
+            {{60, 60, -20}, 15},
+            {{100, 0, 0}, 15},
+            {{50, 50, 0}, 15},
+            {{-20, 43, 77}, 35},
+            {{10, 20, 30, 40}, 15},
+            {{10, 20, 30, 40}, 40},
+        };
+        for (const auto &entry : cases) {
+            const Weights &input  = entry.first;
+            const int     &minimum = entry.second;
+            const Weights once = clamp_color_match_weights_mirror(input, minimum);
+            CHECK(clamp_color_match_weights_mirror(once, minimum) == once);
+        }
+    }
+}
 
 TEST_CASE("Mixed filament remap follows stable row ids when same-pair rows reorder", "[MixedFilament]")
 {
@@ -4951,7 +5144,32 @@ static void apply_config_layer_remap_mirror(
         const int           orig_obj_eid = (obj_opt ? obj_opt->getInt() : 0);
         auto                obj_it       = extruder_remap.find(orig_obj_eid);
         const bool          obj_remap    = (orig_obj_eid > 0 && obj_it != extruder_remap.end());
-        bool                object_extruder_written = false;
+        if (obj_remap) {
+            mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_it->second)));
+        } else if (orig_obj_eid <= 0) {
+            const auto default_it = extruder_remap.find(1);
+            if (default_it != extruder_remap.end()) {
+                for (const ModelVolume* mv : mo->volumes) {
+                    const ModelVolumeType vt         = mv->type();
+                    const bool            is_part    = (vt == ModelVolumeType::MODEL_PART);
+                    const bool            is_modifier = (vt == ModelVolumeType::PARAMETER_MODIFIER);
+                    if (!is_part && !is_modifier)
+                        continue;
+
+                    const ConfigOption* vol_opt = mv->config.option("extruder");
+                    if (vol_opt && vol_opt->getInt() > 0) continue;
+
+                    const bool has_default_regions =
+                        !is_part || mv->mmu_segmentation_facets.empty() ||
+                        mv->mmu_segmentation_facets.has_facets_including_implicit_none(*mv);
+                    if (!has_default_regions) continue;
+
+                    mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(default_it->second)));
+                    break;
+                }
+            }
+        }
+
         for (ModelVolume* mv : mo->volumes) {
             const ModelVolumeType vt = mv->type();
             const bool is_part      = (vt == ModelVolumeType::MODEL_PART);
@@ -4963,9 +5181,6 @@ static void apply_config_layer_remap_mirror(
                 auto it = extruder_remap.find(vol_opt->getInt());
                 if (it != extruder_remap.end())
                     mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(it->second)));
-            } else if (obj_remap && !object_extruder_written) {
-                mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_it->second)));
-                object_extruder_written = true;
             }
         }
 
@@ -5032,6 +5247,158 @@ TEST_CASE("apply config remap: inheriting modifier follows object consistently",
     // Neither volume gained its own config entry — they still inherit.
     REQUIRE_FALSE(part->config.has("extruder"));
     REQUIRE_FALSE(mod->config.has("extruder"));
+}
+
+TEST_CASE("FacetsAnnotation::has_facets_including_implicit_none detects implicit and fully painted roots", "[MixedFilament][batch_apply]")
+{
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+
+    TriangleSelector selector(part->mesh());
+    selector.set_facet(0, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector));
+    REQUIRE(part->mmu_segmentation_facets.has_facets_including_implicit_none(*part));
+
+    for (int facet = 0; facet < int(part->mesh().its.indices.size()); ++facet)
+        selector.set_facet(facet, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector));
+    REQUIRE_FALSE(part->mmu_segmentation_facets.has_facets_including_implicit_none(*part));
+}
+
+TEST_CASE("apply config remap: default extruder follows source filament mapping", "[MixedFilament][batch_apply]")
+{
+    // A default object extruder resolves to physical filament 1. When batch
+    // matching maps source filament 1 to a mixed slot, implicit unpainted
+    // regions must follow that mapping without a masking modifier volume.
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+    obj->add_instance();
+    obj->ensure_on_bed();
+
+    TriangleSelector selector(part->mesh());
+    selector.set_facet(0, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector)); // one painted facet, the rest stay implicit default
+
+    // Serialization omits untouched NONE roots, but get_facets() deserializes
+    // the full mesh and must recover those implicit default triangles.
+    REQUIRE_FALSE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType::NONE));
+    REQUIRE_FALSE(part->mmu_segmentation_facets.get_facets(*part, EnforcerBlockerType::NONE).indices.empty());
+
+    const std::unordered_map<int, unsigned int> remap{{1, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE(obj->config.opt_int("extruder") == 5);
+    REQUIRE(part->extruder_id() == 5);
+    REQUIRE_FALSE(part->config.has("extruder"));
+    // Level 1 owns painted-state remapping; this mirror must leave state 2 alone.
+    REQUIRE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType(2)));
+}
+
+TEST_CASE("apply config remap: explicit zero object extruder follows default mapping", "[MixedFilament][batch_apply]")
+{
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+
+    obj->config.set_key_value("extruder", new ConfigOptionInt(0));
+    REQUIRE(obj->config.has("extruder"));
+
+    const std::unordered_map<int, unsigned int> remap{{1, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE(obj->config.opt_int("extruder") == 5);
+    REQUIRE(part->extruder_id() == 5);
+}
+
+TEST_CASE("apply config remap: default object is untouched when source one is not mapped", "[MixedFilament][batch_apply]")
+{
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+
+    const std::unordered_map<int, unsigned int> remap{{2, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE_FALSE(obj->config.has("extruder"));
+    REQUIRE(part->extruder_id() == 0);
+}
+
+TEST_CASE("apply config remap: fully painted default object is not rewritten", "[MixedFilament][batch_apply]")
+{
+    // Color Mapping includes unused palette colours. If every facet is painted,
+    // no geometry actually consumes the default filament, so a 1 -> mixed mapping
+    // must not add a misleading explicit object extruder.
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+    obj->add_instance();
+    obj->ensure_on_bed();
+
+    TriangleSelector selector(part->mesh());
+    for (int facet = 0; facet < int(part->mesh().its.indices.size()); ++facet)
+        selector.set_facet(facet, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector));
+    REQUIRE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType(2)));
+    REQUIRE_FALSE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType::NONE));
+
+    const std::unordered_map<int, unsigned int> remap{{1, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE_FALSE(obj->config.has("extruder"));
+    REQUIRE(part->extruder_id() == 0);
+}
+
+TEST_CASE("apply config remap: explicit object extruder follows match for fully painted part", "[MixedFilament][batch_apply]")
+{
+    // An explicit object assignment is a real mapping source even when every
+    // part facet is painted. Keep the parent row on the matched filament so it
+    // cannot fall back to a stale physical slot after cleanup.
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+    obj->config.set_key_value("extruder", new ConfigOptionInt(1));
+    obj->add_instance();
+    obj->ensure_on_bed();
+
+    TriangleSelector selector(part->mesh());
+    for (int facet = 0; facet < int(part->mesh().its.indices.size()); ++facet)
+        selector.set_facet(facet, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector));
+
+    const std::unordered_map<int, unsigned int> remap{{1, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE(obj->config.opt_int("extruder") == 5);
+    REQUIRE(part->extruder_id() == 5);
+    REQUIRE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType(2)));
+}
+
+TEST_CASE("apply config remap: inheriting modifier consumes fully painted default object mapping", "[MixedFilament][batch_apply]")
+{
+    // Modifiers have no painted facets but still expose the object filament
+    // colour. They must therefore consume a default 1 -> mixed mapping even
+    // when the sibling MODEL_PART is fully painted with another extruder.
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+    ModelVolume* mod  = obj->add_volume(make_cube(20., 20., 20.), ModelVolumeType::PARAMETER_MODIFIER);
+    obj->add_instance();
+    obj->ensure_on_bed();
+
+    TriangleSelector selector(part->mesh());
+    for (int facet = 0; facet < int(part->mesh().its.indices.size()); ++facet)
+        selector.set_facet(facet, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector));
+
+    const std::unordered_map<int, unsigned int> remap{{1, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE(obj->config.opt_int("extruder") == 5);
+    REQUIRE(part->extruder_id() == 5);
+    REQUIRE(mod->extruder_id() == 5);
+    REQUIRE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType(2)));
 }
 
 TEST_CASE("apply config remap: modifier with own extruder is remapped alone", "[MixedFilament][batch_apply]")

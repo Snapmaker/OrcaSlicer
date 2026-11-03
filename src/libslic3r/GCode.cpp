@@ -9294,7 +9294,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         prime_config.set_key_value("layer_z", new ConfigOptionFloat(print_z));
         prime_config.set_key_value("max_layer_z", new ConfigOptionFloat(m_max_layer_z));
         prime_config.set_key_value("previous_extruder", new ConfigOptionInt(previous_extruder_id));
-        prime_config.set_key_value("next_extruder", new ConfigOptionInt((int) extruder_id));
+        prime_config.set_key_value("next_extruder", new ConfigOptionInt(static_cast<int>(extruder_id)));
         prime_config.set_key_value("new_filament_temp", new ConfigOptionInt(new_filament_temp));
         prime_config.set_key_value("prime_length", new ConfigOptionFloat(prime_length));
         prime_config.set_key_value("prime_speed", new ConfigOptionFloat(float(new_filament_e_feedrate)));
@@ -9317,6 +9317,10 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         // nozzle full, so the writer must not unretract it again on the part.
         if (m_writer.extruder() && prime_gcode.find("restore retraction") != std::string::npos)
             m_writer.extruder()->set_retracted(0., 0.);
+        // The prime G-code may switch to relative extrusion (M83), so put an absolute-E print back in its mode.
+        if (!m_config.use_relative_e_distances && m_config.gcode_flavor != gcfMach3 && m_config.gcode_flavor != gcfMakerWare &&
+            m_config.gcode_flavor != gcfSailfish)
+            gcode += "M82 ; use absolute distances for extrusion\n";
         // The prime G-code moves the extruder and the nozzle behind the writer's back.
         gcode += m_writer.reset_e(true);
         m_writer.set_current_position_clear(false);

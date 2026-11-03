@@ -15729,3 +15729,49 @@ msgstr "开启模型站"
 
 msgid "When enabled, online models will be displayed on the Home page."
 msgstr "开启后，将在主页显示在线模型"
+
+msgid "CMYK Palette"
+msgstr "CMYK 调色板"
+
+msgid "Convert to CMYK"
+msgstr "转换为 CMYK"
+
+msgid "Replace every colour of the model with the closest mix of the filaments in this palette, then remove the original filaments so only the palette and the mixed colours are sliced."
+msgstr "将模型的每种颜色替换为此调色板中耗材的最接近混色，然后移除原有耗材，仅切片调色板耗材及混色。"
+
+msgid "+ Add filament"
+msgstr "+ 添加耗材"
+
+msgid "Click to change the colour of this filament"
+msgstr "点击更改此耗材的颜色"
+
+msgid "(keep current preset)"
+msgstr "（保持当前预设）"
+
+msgid "At least two filaments are needed to mix colours."
+msgstr "混色至少需要两种耗材。"
+
+msgid "Convert"
+msgstr "转换"
+
+msgid "The CMYK palette needs at least two filaments."
+msgstr "CMYK 调色板至少需要两种耗材。"
+
+msgid "No model colours were found to convert."
+msgstr "未找到可转换的模型颜色。"
+
+msgid "Unable to match the model colours to the CMYK palette."
+msgstr "无法将模型颜色匹配到 CMYK 调色板。"
+
+msgid "Converting would exceed the maximum number of filaments. Remove unused mixed colours or filaments first."
+msgstr "转换将超出耗材数量上限。请先移除未使用的混色或耗材。"
+
+#, c-format
+msgid "Every model colour will be replaced by the closest mix of the %zu palette filaments (%zu mixed colours will be created). The %zu current filaments are removed from the project. This cannot be undone with Ctrl+Z."
+msgstr "模型的每种颜色将被替换为 %zu 种调色板耗材的最接近混色（将创建 %zu 个混色）。项目中当前的 %zu 种耗材将被移除，且无法使用 Ctrl+Z 撤销。"
+
+msgid "CMYK conversion palette"
+msgstr "CMYK 转换调色板"
+
+msgid "Filaments used by \"Convert to CMYK\". Each entry is \"#RRGGBB|filament preset name\".\n\nEmpty means the default cyan/magenta/yellow/white palette."
+msgstr "“转换为 CMYK”所使用的耗材。每项格式为“#RRGGBB|耗材预设名称”。\n\n为空表示使用默认的青/品红/黄/白调色板。"

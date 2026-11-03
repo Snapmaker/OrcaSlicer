@@ -4472,6 +4472,14 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionString(""));
 
+    def = this->add("color_conversion_palette", coStrings);
+    def->label = L("CMYK conversion palette");
+    def->tooltip = L("Filaments used by \"Convert to CMYK\". Each entry is \"#RRGGBB|filament preset name\".\n\n"
+                     "Empty means the default cyan/magenta/yellow/white palette.");
+    def->gui_flags = "serialized";
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionStrings());
+
     def = this->add("dithering_z_step_size", coFloat);
     def->label = L("Dithering Z step size");
     def->category = L("Others");

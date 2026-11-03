@@ -111,7 +111,6 @@ void CmykPalettePanel::rebuild_rows()
 {
     Freeze();
     m_rows->Clear(true);
-    m_add_button = nullptr;
 
     const int pad = FromDIP(6);
     const bool can_remove = m_entries.size() > kMinColorConversionPalette;
@@ -159,7 +158,6 @@ void CmykPalettePanel::rebuild_rows()
     add->SetStyle(ButtonStyle::Regular, ButtonType::Compact);
     add->Enable(m_entries.size() < kMaxColorConversionPalette);
     add->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { on_add(); });
-    m_add_button = add;
     m_rows->Add(add, 0, wxALL, pad);
 
     Layout();

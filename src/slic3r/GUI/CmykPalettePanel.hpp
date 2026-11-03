@@ -49,7 +49,6 @@ private:
     std::vector<ColorConversionPaletteEntry> m_entries;
     std::vector<std::string>                 m_preset_names; // selectable filament presets, choice item i+1
     wxSizer*                                 m_rows       = nullptr;
-    wxWindow*                                m_add_button = nullptr;
     std::function<void()>                    m_on_layout_changed;
 };
 

@@ -3491,7 +3491,10 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         file.write_format("; total filament cost = %.2lf\n", print.m_print_statistics.total_cost);
         if (print.m_print_statistics.total_toolchanges > 0)
             file.write_format("; total filament change = %i\n", print.m_print_statistics.total_toolchanges);
-        file.write_format("; total layers count = %i\n", m_layer_count);
+        // m_layer_count is a pre-export estimate that still counts empty layers the exporter
+        // skips (e.g. a cone tip landing exactly on a layer boundary), so it can overshoot;
+        // m_layer_index+1 is the real number of layers written to the file.
+        file.write_format("; total layers count = %i\n", m_layer_index + 1);
         file.write_format(";%s\n", GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Estimated_Printing_Time_Placeholder).c_str());
         file.write("\n");
         file.write("; CONFIG_BLOCK_START\n");

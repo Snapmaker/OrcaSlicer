@@ -4616,6 +4616,29 @@ void GCodeProcessor::run_post_process()
         return ret;
     };
 
+    // Rewrite the layer total inside machine statistics lines (e.g. Klipper's
+    // "SET_PRINT_STATS_INFO TOTAL_LAYER=...") with the real layer count counted while
+    // processing. The value rendered by the gcode template comes from the [total_layer_count]
+    // placeholder, which is fed with the pre-export layer estimate; that estimate counts empty
+    // layers (e.g. the zero-area tip of a cone landing exactly on a layer boundary) that the
+    // exporter skips, so it can overshoot the number of layers actually present in the file.
+    auto process_total_layer = [this](std::string& gcode_line) {
+        // Prefilter for parsing speed: the command must start with "SET".
+        if (gcode_line.size() < 13 || gcode_line.compare(0, 3, "SET") != 0)
+            return;
+        const char* tag = "TOTAL_LAYER=";
+        size_t pos = gcode_line.find(tag);
+        if (pos == std::string::npos)
+            return;
+        pos += strlen(tag);
+        size_t end = pos;
+        while (end < gcode_line.length() && gcode_line[end] >= '0' && gcode_line[end] <= '9')
+            ++end;
+        if (end == pos)
+            return;
+        gcode_line.replace(pos, end - pos, std::to_string(m_layer_id));
+    };
+
     // check for temporary lines
     auto is_temporary_decoration = [](const std::string_view gcode_line) {
         // remove trailing '\n'
@@ -4824,6 +4847,8 @@ void GCodeProcessor::run_post_process()
                 if (eol) {
                     ++line_id;
                     const unsigned int internal_g1_lines_counter = export_lines.update(gcode_line, line_id, g1_lines_counter);
+                    // rewrite machine layer statistics with the real layer count
+                    process_total_layer(gcode_line);
                     // replace placeholder lines
                     bool processed = process_placeholders(gcode_line);
                     if (processed)

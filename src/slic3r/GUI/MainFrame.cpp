@@ -507,6 +507,14 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
             event.Skip();
             return;
         }
+        // A modal dialog is still running its nested event loop: destroying the
+        // main frame now tears it down mid-loop and crashes in DestroyChildren
+        // (Sentry 7266288009 / 7154986484). Veto until the dialog is dismissed.
+        if (event.CanVeto() && !dialogStack.empty()) {
+            event.Veto();
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": [MODAL-CLOSE] close vetoed while a modal dialog is open (Sentry 7266288009/7154986484)";
+            return;
+        }
         if (event.CanVeto() && m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true)) {
             // prevents to open the save dirty project dialog
             event.Veto();

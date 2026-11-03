@@ -9513,6 +9513,13 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
                 evt->SetInt(i);
                 wxQueueEvent(wxGetApp().plater(), evt);
             }
+            else {
+                // Clicks are silently dropped while the background process runs;
+                // log why instead of looking like a dead toolbar.
+                BOOST_LOG_TRIVIAL(info) << "select plate click swallowed: plate_idx=" << i
+                    << ", has_process=" << (m_process != nullptr)
+                    << ", state=" << (m_process ? (int) m_process->state() : -1);
+            }
         }
         ImGui::PopStyleColor(4);
         ImGui::PopStyleVar();

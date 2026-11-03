@@ -3,117 +3,223 @@
 ///|/
 // Plater_export_snapmaker_u1.cpp
 //
-// Drop this file into src/slic3r/GUI/ and add it to CMakeLists.txt.
-// It provides Plater::export_snapmaker_u1() which is declared in Plater.hpp.
+// Provides Plater::export_snapmaker_u1() which is declared in Plater.hpp.
 //
 // The function:
 //   1. Reads the currently-loaded model's filament info from the active config.
 //   2. Shows ExportSnapmakerU1Dialog for user confirmation / remapping.
-//   3. Builds a modified DynamicPrintConfig that targets the Snapmaker U1.
-//   4. Calls store_bbs_3mf() to write the output .3mf.
+//   3. Builds a modified DynamicPrintConfig that targets the Snapmaker U1,
+//      taking every per-filament setting from the chosen U1 filament presets.
+//   4. Remaps filament ids on a copy of the model and writes it with store_bbs_3mf().
 
 #include "Plater.hpp"
 #include "ExportSnapmakerU1.hpp"
 #include "GUI_App.hpp"
-#include "format.hpp"
 #include "I18N.hpp"
-#include "NotificationManager.hpp"
+#include "PartPlate.hpp"
 
-// libslic3r headers
 #include "libslic3r/Format/bbs_3mf.hpp"
-#include "libslic3r/PresetBundle.hpp"
-#include "libslic3r/Preset.hpp"
-#include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/Preset.hpp"
+#include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/TriangleSelector.hpp"
 
 #include <wx/filedlg.h>
 #include <wx/msgdlg.h>
-#include <wx/app.h>
-#include <wx/progdlg.h>
+#include <wx/stdpaths.h>
+#include <wx/utils.h>
 
-#include <boost/filesystem.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 #include <boost/log/trivial.hpp>
 
-#include <string>
-#include <vector>
 #include <algorithm>
-#include <sstream>
+#include <array>
+#include <cctype>
+#include <map>
+#include <memory>
+#include <string>
+#include <tuple>
+#include <vector>
 
 namespace Slic3r {
 namespace GUI {
 
-// ---------------------------------------------------------------------------
-// Internal helpers (file scope)
-// ---------------------------------------------------------------------------
-
 namespace {
 
-/// Extract per-filament colour strings ("#RRGGBB") from the active config.
-std::vector<std::string> get_active_filament_colors(const DynamicPrintConfig& cfg)
-{
-    std::vector<std::string> result;
-    const auto* opt = dynamic_cast<const ConfigOptionStrings*>(cfg.option("filament_colour"));
-    if (!opt) return result;
+constexpr size_t TARGET_FILAMENTS = SNAPMAKER_U1_MAX_FILAMENTS;
 
-    for (const std::string& raw : opt->values) {
-        // OrcaSlicer stores colours as "#RRGGBBAA"; trim to "#RRGGBB"
-        std::string c = raw;
-        if (!c.empty() && c[0] == '#') {
-            if (c.size() == 9) c = c.substr(0, 7); // strip alpha
-        } else if (c.size() >= 6) {
-            // No '#' prefix – add one
-            c = "#" + c.substr(0, 6);
-        }
-        // Uppercase hex for consistency
-        std::transform(c.begin(), c.end(), c.begin(), ::toupper);
-        if (c.size() > 1) c[0] = '#'; // keep '#' lowercase
-        result.push_back(c);
+// Preferred preset per type when several U1-compatible presets exist.
+constexpr const char* PREFERRED_PLA_PRESET = "Snapmaker PLA SnapSpeed @U1";
+
+// Filament-id options that can appear on objects, volumes and layer ranges.
+const std::array<const char*, 6> FILAMENT_ID_KEYS = {
+    "extruder", "wall_filament", "sparse_infill_filament",
+    "solid_infill_filament", "support_filament", "support_interface_filament"
+};
+
+std::vector<std::string> get_config_strings(const DynamicPrintConfig& cfg, const std::string& key)
+{
+    const auto* opt = cfg.option<ConfigOptionStrings>(key);
+    return opt ? opt->values : std::vector<std::string>();
+}
+
+/// Normalise "#RRGGBB" / "#RRGGBBAA" / "RRGGBB" to upper-case "#RRGGBB".
+std::string normalize_colour(const std::string& raw)
+{
+    std::string hex = (!raw.empty() && raw[0] == '#') ? raw.substr(1) : raw;
+    if (hex.size() > 6) hex.resize(6);
+    std::transform(hex.begin(), hex.end(), hex.begin(),
+                   [](unsigned char ch) { return char(std::toupper(ch)); });
+    return "#" + hex;
+}
+
+/// Pick the U1 printer preset, preferring the visible 0.4 mm nozzle variant.
+const Preset* find_u1_printer_preset(const PresetCollection& printers)
+{
+    const Preset* best = nullptr;
+    for (const Preset& preset : printers) {
+        const auto* model = preset.config.option<ConfigOptionString>("printer_model");
+        if (model == nullptr || model->value != SNAPMAKER_U1_PRINTER_MODEL)
+            continue;
+        if (preset.is_visible && boost::contains(preset.name, "0.4 nozzle"))
+            return &preset;
+        if (best == nullptr || (preset.is_visible && !best->is_visible))
+            best = &preset;
     }
-    return result;
+    return best;
 }
 
-/// Extract per-filament type strings ("PLA", "PETG", …) from the active config.
-std::vector<std::string> get_active_filament_types(const DynamicPrintConfig& cfg)
+int filament_preset_rank(const Preset& preset)
 {
-    std::vector<std::string> result;
-    const auto* opt = dynamic_cast<const ConfigOptionStrings*>(cfg.option("filament_type"));
-    if (!opt) return result;
-    for (const std::string& t : opt->values)
-        result.push_back(t);
-    return result;
+    if (preset.name == PREFERRED_PLA_PRESET)            return 0;
+    if (boost::starts_with(preset.name, "Snapmaker "))  return 1;
+    if (boost::starts_with(preset.name, "Generic "))    return 2;
+    return 3;
 }
 
-/// Build a "#RRGGBBAA" colour string expected by OrcaSlicer/bbs_3mf from "#RRGGBB".
-static std::string to_bbs_color(const std::string& hex6)
+/// For every filament type, the best installed filament preset compatible with the U1.
+std::map<std::string, const Preset*> find_u1_filament_presets(const PresetBundle& bundle, const Preset& u1_printer)
 {
-    // Accepts "#RRGGBB" and appends "FF" alpha
-    std::string h = hex6;
-    if (!h.empty() && h[0] == '#') h = h.substr(1);
-    if (h.size() == 6) h += "FF";
-    // Ensure uppercase
-    std::transform(h.begin(), h.end(), h.begin(), ::toupper);
-    return "#" + h;
+    const PresetWithVendorProfile printer_with_vendor = bundle.printers.get_preset_with_vendor_profile(u1_printer);
+
+    std::map<std::string, const Preset*> best;
+    for (const Preset& preset : bundle.filaments) {
+        const auto* types = preset.config.option<ConfigOptionStrings>("filament_type");
+        if (types == nullptr || types->values.empty() || types->values.front().empty())
+            continue;
+        if (!is_compatible_with_printer(bundle.filaments.get_preset_with_vendor_profile(preset), printer_with_vendor))
+            continue;
+
+        const Preset*& slot = best[types->values.front()];
+        const auto key = [](const Preset& p) { return std::make_tuple(filament_preset_rank(p), !p.is_visible, p.name); };
+        if (slot == nullptr || key(preset) < key(*slot))
+            slot = &preset;
+    }
+    return best;
 }
 
-/// Pad a vector<string> to exactly `target_size` by repeating `default_val`.
-static void pad_string_vector(std::vector<std::string>& v, size_t target_size,
-                              const std::string& default_val)
+/// Rebuild every per-filament vector option so it has exactly TARGET_FILAMENTS entries,
+/// taking values from the chosen U1 preset of each slot and falling back to the source
+/// filament the slot was mapped from.
+void remap_filament_options(DynamicPrintConfig&               cfg,
+                            size_t                            src_count,
+                            const std::vector<size_t>&        src_index_per_slot,
+                            const std::vector<const Preset*>& preset_per_slot)
 {
-    while (v.size() < target_size)
-        v.push_back(default_val);
-    if (v.size() > target_size)
-        v.resize(target_size);
+    for (const std::string& key : Preset::filament_options()) {
+        auto* dst = dynamic_cast<ConfigOptionVectorBase*>(cfg.option(key));
+        if (dst == nullptr || dst->size() != src_count)
+            continue;
+
+        const std::unique_ptr<ConfigOption> src(dst->clone());
+        dst->resize(TARGET_FILAMENTS);
+        for (size_t slot = 0; slot < TARGET_FILAMENTS; ++slot) {
+            const ConfigOption* from_preset = preset_per_slot[slot] ? preset_per_slot[slot]->config.option(key) : nullptr;
+            const auto*         preset_vec  = dynamic_cast<const ConfigOptionVectorBase*>(from_preset);
+            if (preset_vec != nullptr && !preset_vec->empty() && from_preset->type() == dst->type())
+                dst->set_at(from_preset, slot, 0);
+            else
+                dst->set_at(src.get(), slot, src_index_per_slot[slot]);
+        }
+    }
 }
 
-/// Progress callback compatible with Export3mfProgressFn (bool fn(int, const char*))
-static bool progress_callback(int percent, const char* msg)
+/// Reorder the (possibly per-nozzle, block-stacked) flush volume matrix to the new slots.
+void remap_flush_matrix(DynamicPrintConfig& cfg, size_t src_count, const std::vector<size_t>& src_index_per_slot)
 {
-    // Yield to the wxApp event loop so the UI stays alive during export.
-    // A progress dialog is shown by the caller below.
-    wxYield();
-    (void)percent; (void)msg;
-    return true; // returning false would abort
+    auto*        opt   = cfg.option<ConfigOptionFloats>("flush_volumes_matrix");
+    const size_t block = src_count * src_count;
+    if (opt == nullptr || block == 0 || opt->values.empty() || opt->values.size() % block != 0)
+        return;
+
+    const std::vector<double>& old_values = opt->values;
+    std::vector<double>        new_values;
+    new_values.reserve(old_values.size() / block * TARGET_FILAMENTS * TARGET_FILAMENTS);
+    for (size_t b = 0; b < old_values.size() / block; ++b)
+        for (size_t i = 0; i < TARGET_FILAMENTS; ++i)
+            for (size_t j = 0; j < TARGET_FILAMENTS; ++j)
+                new_values.push_back(i == j ? 0. : old_values[b * block + src_index_per_slot[i] * src_count + src_index_per_slot[j]]);
+    opt->values = std::move(new_values);
 }
+
+/// Map a 1-based source filament id to its U1 slot. Excluded filaments go to slot 1;
+/// 0 ("inherit") is preserved.
+int remap_filament_id(const std::map<int, int>& remap, int old_id)
+{
+    if (old_id <= 0)
+        return old_id;
+    auto it = remap.find(old_id);
+    return it == remap.end() ? 1 : it->second;
+}
+
+void remap_config_filament_ids(ModelConfig& cfg, const std::map<int, int>& remap)
+{
+    for (const char* key : FILAMENT_ID_KEYS) {
+        if (!cfg.has(key))
+            continue;
+        const int old_id = cfg.opt_int(key);
+        const int new_id = remap_filament_id(remap, old_id);
+        if (new_id != old_id)
+            cfg.set(key, new_id);
+    }
+}
+
+/// Remap filament assignments of objects, volumes (incl. modifiers), layer ranges and
+/// painted facets. Operates on the export copy only.
+void remap_model_filament_ids(Model& model, const std::map<int, int>& remap)
+{
+    EnforcerBlockerStateMap state_map;
+    state_map[0] = EnforcerBlockerType::NONE;
+    for (size_t i = 1; i < state_map.size(); ++i)
+        state_map[i] = EnforcerBlockerType(remap_filament_id(remap, int(i)));
+
+    for (ModelObject* obj : model.objects) {
+        remap_config_filament_ids(obj->config, remap);
+        for (auto& [range, range_cfg] : obj->layer_config_ranges)
+            remap_config_filament_ids(range_cfg, remap);
+        for (ModelVolume* vol : obj->volumes) {
+            remap_config_filament_ids(vol->config, remap);
+            vol->remap_extruder_ids(TARGET_FILAMENTS, state_map);
+        }
+    }
+}
+
+void add_embedded_preset(std::vector<Preset*>& presets, const Preset* preset)
+{
+    // System presets are resolved from the profile library on load; only user presets are embedded.
+    if (preset == nullptr || preset->is_system || preset->is_default)
+        return;
+    Preset* mutable_preset = const_cast<Preset*>(preset);
+    if (std::find(presets.begin(), presets.end(), mutable_preset) == presets.end())
+        presets.push_back(mutable_preset);
+}
+
+/// Owns the PlateData allocated by PartPlateList::store_to_3mf_structure().
+struct PlateDataGuard {
+    PlateDataPtrs list;
+    ~PlateDataGuard() { release_PlateData_list(list); }
+};
 
 } // anonymous namespace
 
@@ -123,252 +229,170 @@ static bool progress_callback(int percent, const char* msg)
 
 void Plater::export_snapmaker_u1()
 {
-    // ------------------------------------------------------------------
-    // 0. Basic guards
-    // ------------------------------------------------------------------
-    if (!p || p->model.objects.empty()) {
+    Model& live_model = model();
+    if (live_model.objects.empty()) {
         wxMessageBox(_L("Nothing to export – the build plate is empty."),
-                     _L("Export for Snapmaker U1"), wxOK | wxICON_INFORMATION, q);
+                     _L("Export for Snapmaker U1"), wxOK | wxICON_INFORMATION, this);
         return;
     }
 
     // ------------------------------------------------------------------
-    // 1. Read current filament info from the active preset bundle
+    // 1. Read current filament info and resolve the U1 profiles
     // ------------------------------------------------------------------
-    DynamicPrintConfig active_cfg = wxGetApp().preset_bundle->full_config_secure();
+    PresetBundle&            bundle     = *wxGetApp().preset_bundle;
+    const DynamicPrintConfig active_cfg = bundle.full_config_secure();
 
-    std::vector<std::string> filament_types  = get_active_filament_types(active_cfg);
-    std::vector<std::string> filament_colors = get_active_filament_colors(active_cfg);
-
+    std::vector<std::string> filament_types = get_config_strings(active_cfg, "filament_type");
+    std::vector<std::string> filament_colors;
+    for (const std::string& c : get_config_strings(active_cfg, "filament_colour"))
+        filament_colors.push_back(normalize_colour(c));
     if (filament_types.empty()) {
-        // Fallback: at least one PLA slot
-        filament_types.push_back("PLA");
-        filament_colors.push_back("#FFFFFF");
+        filament_types.push_back(SNAPMAKER_U1_DEFAULT_TYPE);
+        filament_colors.push_back(SNAPMAKER_U1_DEFAULT_COLOR);
+    }
+    const size_t src_count = filament_types.size();
+
+    const Preset* u1_printer = find_u1_printer_preset(bundle.printers);
+    std::map<std::string, const Preset*> u1_filaments;
+    U1FilamentPresetMap                  u1_filament_names;
+    if (u1_printer != nullptr) {
+        u1_filaments = find_u1_filament_presets(bundle, *u1_printer);
+        for (const auto& [type, preset] : u1_filaments)
+            u1_filament_names[type] = preset->name;
+    } else {
+        wxMessageBox(
+            wxString::Format(
+                _L("The Snapmaker U1 printer profile (\"%s\") was not found in your "
+                   "profile library.\n\nThe project will be exported using your current "
+                   "printer and filament settings.\nInstall the Snapmaker profiles via the "
+                   "Printer/Filament wizard for full compatibility."),
+                wxString::FromUTF8(SNAPMAKER_U1_PRINTER_MODEL)),
+            _L("Profile Not Found"), wxOK | wxICON_WARNING, this);
     }
 
     // ------------------------------------------------------------------
     // 2. Show the filament-mapping dialog
     // ------------------------------------------------------------------
-    ExportSnapmakerU1Dialog dlg(q, filament_types, filament_colors);
+    ExportSnapmakerU1Dialog dlg(this, filament_types, filament_colors, u1_filament_names);
     if (dlg.ShowModal() != wxID_OK)
         return;
 
-    std::vector<U1FilamentMapping> mappings = dlg.get_mappings();
+    const std::vector<U1FilamentMapping> mappings = dlg.get_mappings();
     if (mappings.empty()) {
         wxMessageBox(_L("No filaments were selected for export."),
-                     _L("Export for Snapmaker U1"), wxOK | wxICON_WARNING, q);
+                     _L("Export for Snapmaker U1"), wxOK | wxICON_WARNING, this);
         return;
     }
 
     // ------------------------------------------------------------------
     // 3. Ask for output file path
     // ------------------------------------------------------------------
-    wxString default_name = wxT("Snapmaker_U1_Ready.3mf");
-    wxFileDialog save_dlg(q,
+    wxFileDialog save_dlg(this,
         _L("Export for Snapmaker U1"),
         wxStandardPaths::Get().GetDocumentsDir(),
-        default_name,
+        wxT("Snapmaker_U1_Ready.3mf"),
         wxT("3MF files (*.3mf)|*.3mf"),
         wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
-
     if (save_dlg.ShowModal() == wxID_CANCEL)
         return;
 
-    std::string output_path = save_dlg.GetPath().ToStdString();
+    const std::string output_path = save_dlg.GetPath().utf8_str().data();
 
     // ------------------------------------------------------------------
-    // 4. Build modified DynamicPrintConfig targeting Snapmaker U1
+    // 4. Build the U1 config: printer preset + per-slot filament settings
     // ------------------------------------------------------------------
-    DynamicPrintConfig u1_cfg = active_cfg; // start from active settings
-
-    // 4a. Override the printer preset with the Snapmaker U1 settings.
-    //     Look for it by printer_model first, then by preset name.
-    PresetCollection& printer_presets = wxGetApp().preset_bundle->printers;
-    const Preset* u1_printer_preset   = nullptr;
-
-    for (const Preset& p : printer_presets) {
-        if (p.config.has("printer_model")) {
-            const auto* pm = dynamic_cast<const ConfigOptionString*>(
-                p.config.option("printer_model"));
-            if (pm && pm->value == SNAPMAKER_U1_PRINTER_MODEL) {
-                u1_printer_preset = &p;
-                break;
-            }
-        }
+    DynamicPrintConfig u1_cfg = active_cfg;
+    if (u1_printer != nullptr) {
+        u1_cfg.apply(u1_printer->config);
+        u1_cfg.set_key_value("printer_settings_id", new ConfigOptionString(u1_printer->name));
     }
 
-    if (u1_printer_preset == nullptr) {
-        // Preset not installed – warn but still export with current settings.
-        wxMessageBox(
-            wxString::Format(
-                _L("The Snapmaker U1 printer profile (\"%s\") was not found in your "
-                   "profile library.\n\nThe project will be exported using your current "
-                   "printer settings.\nInstall the Snapmaker profiles via the "
-                   "Printer/Filament wizard for full compatibility."),
-                wxString::FromUTF8(SNAPMAKER_U1_PRINTER_MODEL)),
-            _L("Profile Not Found"), wxOK | wxICON_WARNING, q);
-    } else {
-        u1_cfg.apply(u1_printer_preset->config);
-    }
+    // Slot i takes its fallback values from source filament src_index_per_slot[i];
+    // padding slots are white PLA (matches bl2u1 behaviour).
+    const auto    pla_it     = u1_filaments.find(SNAPMAKER_U1_DEFAULT_TYPE);
+    const Preset* pla_preset = pla_it == u1_filaments.end() ? nullptr : pla_it->second;
 
-    // 4b. Build the remapped filament arrays (always 4 slots for U1).
-    constexpr size_t TARGET_FILAMENTS = SNAPMAKER_U1_MAX_FILAMENTS;
-
-    std::vector<std::string> new_colors;
-    std::vector<std::string> new_types;
-    std::vector<std::string> new_profiles;
+    std::vector<size_t>        src_index_per_slot(TARGET_FILAMENTS, 0);
+    std::vector<const Preset*> preset_per_slot(TARGET_FILAMENTS, pla_preset);
+    std::vector<std::string>   new_colors(TARGET_FILAMENTS, SNAPMAKER_U1_DEFAULT_COLOR);
+    std::vector<std::string>   new_types(TARGET_FILAMENTS, SNAPMAKER_U1_DEFAULT_TYPE);
 
     for (const U1FilamentMapping& m : mappings) {
-        new_colors.push_back(to_bbs_color(m.color));
-        new_types.push_back(m.filament_type);
-        new_profiles.push_back(m.snapmaker_profile);
+        const size_t slot        = size_t(m.new_extruder_id - 1);
+        const auto   preset_it   = u1_filaments.find(m.filament_type);
+        src_index_per_slot[slot] = size_t(m.original_extruder_id - 1);
+        preset_per_slot[slot]    = preset_it == u1_filaments.end() ? nullptr : preset_it->second;
+        new_colors[slot]         = m.color;
+        new_types[slot]          = m.filament_type;
     }
 
-    // Pad to exactly 4 with white PLA (matches bl2u1 behaviour)
-    const std::string default_color   = "#FFFFFFFF";
-    const std::string default_type    = "PLA";
-    const std::string default_profile = get_u1_filament_preset("PLA");
-
-    pad_string_vector(new_colors,   TARGET_FILAMENTS, default_color);
-    pad_string_vector(new_types,    TARGET_FILAMENTS, default_type);
-    pad_string_vector(new_profiles, TARGET_FILAMENTS, default_profile);
-
-    // Apply new filament_colour
-    {
-        ConfigOptionStrings* opt = u1_cfg.option<ConfigOptionStrings>("filament_colour", true);
-        opt->values = new_colors;
+    std::vector<std::string>       new_settings_ids(TARGET_FILAMENTS);
+    const std::vector<std::string> src_settings_ids = get_config_strings(active_cfg, "filament_settings_id");
+    for (size_t slot = 0; slot < TARGET_FILAMENTS; ++slot) {
+        if (preset_per_slot[slot] != nullptr)
+            new_settings_ids[slot] = preset_per_slot[slot]->name;
+        else if (src_index_per_slot[slot] < src_settings_ids.size())
+            new_settings_ids[slot] = src_settings_ids[src_index_per_slot[slot]];
     }
 
-    // Apply new filament_type
-    {
-        ConfigOptionStrings* opt = u1_cfg.option<ConfigOptionStrings>("filament_type", true);
-        opt->values = new_types;
-    }
+    remap_filament_options(u1_cfg, src_count, src_index_per_slot, preset_per_slot);
+    remap_flush_matrix(u1_cfg, src_count, src_index_per_slot);
+    u1_cfg.option<ConfigOptionStrings>("filament_colour", true)->values      = new_colors;
+    u1_cfg.option<ConfigOptionStrings>("filament_type", true)->values        = new_types;
+    u1_cfg.option<ConfigOptionStrings>("filament_settings_id", true)->values = new_settings_ids;
 
-    // Apply new filament_settings_id (Snapmaker U1 profiles)
-    {
-        ConfigOptionStrings* opt = u1_cfg.option<ConfigOptionStrings>("filament_settings_id", true);
-        opt->values = new_profiles;
-    }
-
-    // Keep all other filament_* array options consistent in length
-    auto extend_filament_array = [&](const std::string& key) {
-        auto* opt = dynamic_cast<ConfigOptionStrings*>(u1_cfg.option(key));
-        if (!opt || opt->values.empty()) return;
-        while (opt->values.size() < TARGET_FILAMENTS)
-            opt->values.push_back(opt->values.back());
-        opt->values.resize(TARGET_FILAMENTS);
-    };
-    extend_filament_array("filament_id");
-    extend_filament_array("filament_vendor");
-    extend_filament_array("filament_is_support");
-
-    // 4c. Map extruder assignments in the model objects to the new slot IDs.
-    //     Build old_id -> new_id map.
-    std::map<int, int> extruder_remap; // 1-based
+    // ------------------------------------------------------------------
+    // 5. Remap filament ids on a deep copy so the live scene is untouched
+    // ------------------------------------------------------------------
+    std::map<int, int> extruder_remap; // 1-based old id -> 1-based U1 slot
     for (const U1FilamentMapping& m : mappings)
         extruder_remap[m.original_extruder_id] = m.new_extruder_id;
 
-    // Clone the model so we don't mutate the live scene.
-    Model export_model = p->model;
+    Model export_model = live_model;
+    remap_model_filament_ids(export_model, extruder_remap);
 
-    for (ModelObject* obj : export_model.objects) {
-        for (ModelVolume* vol : obj->volumes) {
-            int old_ext = vol->config.option<ConfigOptionInt>("extruder")
-                          ? vol->config.opt_int("extruder") : 1;
-            auto it = extruder_remap.find(old_ext);
-            if (it != extruder_remap.end()) {
-                vol->config.set_key_value("extruder",
-                    new ConfigOptionInt(it->second));
-            }
-        }
-        // Also remap the object-level extruder override if set
-        if (obj->config.has("extruder")) {
-            int old_ext = obj->config.opt_int("extruder");
-            auto it = extruder_remap.find(old_ext);
-            if (it != extruder_remap.end())
-                obj->config.set_key_value("extruder",
-                    new ConfigOptionInt(it->second));
-        }
-    }
+    PlateDataGuard plate_data;
+    get_partplate_list().store_to_3mf_structure(plate_data.list, false, -1);
 
-    // ------------------------------------------------------------------
-    // 5. Collect plate data from the live plater (geometry unchanged)
-    // ------------------------------------------------------------------
-    PlateDataPtrs plate_data_list;
-    p->partplate_list.store_plate_to_model_objects(export_model);
-    for (int i = 0; i < p->partplate_list.get_plate_count(); ++i) {
-        PartPlate* plate = p->partplate_list.get_plate(i);
-        if (!plate) continue;
-        PlateData* pd = new PlateData();
-        plate->get_plate_data(*pd);
-        plate_data_list.emplace_back(pd);
-    }
-
-    // ------------------------------------------------------------------
-    // 6. Gather project presets (process + filament) to embed in the file
-    // ------------------------------------------------------------------
     std::vector<Preset*> project_presets;
-    {
-        PresetBundle& pb = *wxGetApp().preset_bundle;
-        // Embed current process preset
-        if (Preset* pr = pb.prints.find_preset(pb.prints.get_selected_preset_name()))
-            project_presets.push_back(pr);
-        // Embed all filament presets that will be used
-        for (const std::string& prof : new_profiles) {
-            if (Preset* fp = pb.filaments.find_preset(prof))
-                project_presets.push_back(fp);
-        }
-    }
+    add_embedded_preset(project_presets, &bundle.prints.get_selected_preset());
+    add_embedded_preset(project_presets, u1_printer);
+    for (const Preset* preset : preset_per_slot)
+        add_embedded_preset(project_presets, preset);
 
     // ------------------------------------------------------------------
-    // 7. Build StoreParams and write the 3MF
+    // 6. Write the 3MF. Thumbnails are omitted; OrcaSlicer regenerates them on load.
+    //    No progress callback: yielding to the event loop here would allow a second
+    //    export to start while this one is still writing.
     // ------------------------------------------------------------------
     StoreParams store_params;
     store_params.path            = output_path.c_str();
     store_params.model           = &export_model;
-    store_params.plate_data_list = plate_data_list;
+    store_params.plate_data_list = plate_data.list;
     store_params.config          = &u1_cfg;
     store_params.project_presets = project_presets;
-    store_params.strategy        = SaveStrategy::Zip64; // same as normal export
-    store_params.proFn           = progress_callback;
+    store_params.strategy        = SaveStrategy::Zip64;
     store_params.export_plate_idx = -1; // export all plates
 
-    // Thumbnails: omit for now (export_3mf generates them from the GL canvas;
-    // here we keep it simple and let the importer regenerate them).
-    // Users can re-open the file in OrcaSlicer to regenerate a thumbnail.
-
     bool ok = false;
-    try {
-        ok = Slic3r::store_bbs_3mf(store_params);
+    {
+        wxBusyCursor wait;
+        try {
+            ok = Slic3r::store_bbs_3mf(store_params);
+        } catch (const std::exception& ex) {
+            BOOST_LOG_TRIVIAL(error) << "export_snapmaker_u1: " << ex.what();
+        }
     }
-    catch (const std::exception& ex) {
-        BOOST_LOG_TRIVIAL(error) << "export_snapmaker_u1: " << ex.what();
-    }
-
-    // ------------------------------------------------------------------
-    // 8. Cleanup and notify user
-    // ------------------------------------------------------------------
-    for (PlateData* pd : plate_data_list)
-        delete pd;
 
     if (ok) {
-        wxString msg = wxString::Format(
-            _L("Exported successfully:\n%s\n\n"
-               "Open this file in OrcaSlicer or Snapmaker Luban to slice for the U1."),
-            wxString::FromUTF8(output_path));
-        wxMessageBox(msg, _L("Export for Snapmaker U1"), wxOK | wxICON_INFORMATION, q);
-
-        // Show a persistent notification in the status bar as well
-        if (p->notification_manager)
-            p->notification_manager->push_notification(
-                NotificationType::CustomNotification,
-                NotificationManager::NotificationLevel::RegularNotificationLevel,
-                _u8L("Snapmaker U1 export complete: ") + output_path);
-    } else {
         wxMessageBox(
-            _L("Export failed. Check the application log for details."),
-            _L("Export for Snapmaker U1"), wxOK | wxICON_ERROR, q);
+            wxString::Format(_L("Exported successfully:\n%s\n\n"
+                                "Open this file in OrcaSlicer or Snapmaker Luban to slice for the U1."),
+                             wxString::FromUTF8(output_path)),
+            _L("Export for Snapmaker U1"), wxOK | wxICON_INFORMATION, this);
+    } else {
+        wxMessageBox(_L("Export failed. Check the application log for details."),
+                     _L("Export for Snapmaker U1"), wxOK | wxICON_ERROR, this);
     }
 }
 

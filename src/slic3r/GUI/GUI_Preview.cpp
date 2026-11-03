@@ -653,6 +653,68 @@ void Preview::update_layers_slider(const std::vector<double>& layers_z, bool kee
 }
 
 //BBS: add only gcode mode
+bool Preview::skip_toolpath_preview()
+{
+    // Memory load_toolpaths() takes per move. Measured on a 2.79M-move print
+    // with an integrated GPU: available system memory dropped 464 MB (~170 B
+    // per move), while the process grew 463 MB and the GPU's shared memory
+    // 478 MB. Those two may overlap, so their sum (~340 B) is the upper bound
+    // used here. A discrete GPU keeps more of it out of system RAM.
+    static constexpr size_t BYTES_PER_MOVE = 340;
+
+    const unsigned int result_id = m_gcode_result->id;
+    if (m_forced_toolpath_result_id == result_id)
+        return false;
+
+    std::string reason;
+    if (m_skip_toolpath_preview) {
+        // "Generate G-code Only" was chosen in the low-memory dialog.
+        reason = _u8L("The G-code is ready. The toolpath preview was skipped, as chosen in the memory warning.");
+        if (m_low_memory_notified_result_id != result_id)
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping toolpath preview (Generate G-code Only)";
+    } else {
+        // Only second-guess slices that ran low on memory; normal slices
+        // always load the toolpaths.
+        if (! m_low_memory_during_slicing)
+            return false;
+        const size_t available = get_available_physical_memory();
+        if (available == 0) // unknown on this platform
+            return false;
+        // Slicing has finished by now and released its working memory, so this
+        // usually passes even after the memory warning was shown during slicing.
+        const size_t needed = m_gcode_result->moves.size() * BYTES_PER_MOVE + PrintBase::MEM_GUARD_THRESHOLD;
+        if (available >= needed)
+            return false;
+        reason = _u8L("The G-code is ready, but the toolpath preview was skipped because too little memory is free.");
+        if (m_low_memory_notified_result_id != result_id)
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": skipping toolpath preview, available " << (available >> 20)
+                                       << " MB, needed about " << (needed >> 20) << " MB for " << m_gcode_result->moves.size() << " moves";
+    }
+
+    if (m_low_memory_notified_result_id != result_id) {
+        m_low_memory_notified_result_id = result_id;
+        wxGetApp().plater()->get_notification_manager()->push_notification(
+            NotificationType::PreviewSkippedLowMemory, NotificationManager::NotificationLevel::WarningNotificationLevel,
+            reason,
+            _u8L("Load preview anyway"),
+            [this, result_id](wxEvtHandler*) {
+                // Rebuild outside the notification's render pass.
+                CallAfter([this, result_id]() {
+                    if (m_gcode_result->id != result_id)
+                        return; // a newer slice replaced it
+                    m_forced_toolpath_result_id = result_id;
+                    m_canvas->reset_gcode_toolpaths();
+                    m_loaded_print = nullptr;
+                    load_print(true, m_only_gcode);
+                    m_canvas->set_as_dirty();
+                    m_canvas_widget->Refresh();
+                });
+                return true;
+            });
+    }
+    return true;
+}
+
 void Preview::load_print_as_fff(bool keep_z_range, bool only_gcode)
 {
     if (wxGetApp().mainframe == nullptr || wxGetApp().is_recreating_gui())
@@ -739,7 +801,8 @@ void Preview::load_print_as_fff(bool keep_z_range, bool only_gcode)
             //BBS: add more log
             BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": will load gcode_preview from result, moves count %1%") % m_gcode_result->moves.size();
             //BBS: add only gcode mode
-            m_canvas->load_gcode_preview(*m_gcode_result, colors, only_gcode, m_skip_toolpath_preview);
+            m_canvas->load_gcode_preview(*m_gcode_result, colors, only_gcode,
+                skip_toolpath_preview());
             //BBS show sliders
             show_moves_sliders();
 

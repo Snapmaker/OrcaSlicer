@@ -120,7 +120,7 @@ TEST_CASE("bed_temperature_initial_layer_single expands to the max", "[BedTemper
 }
 
 namespace {
-// Two filaments: filament 1 (PLA-like, 60C first layer / 55C later), filament 2 (PETG-like, 80C).
+// Two filaments: filament 1 (PLA-like, 60C first layer / 55C later), filament 2 (PETG-like, 80C / 75C).
 // The object prints with filament 1, support and support interface are assigned to filament 2.
 DynamicPrintConfig support_on_second_filament_config()
 {
@@ -129,7 +129,7 @@ DynamicPrintConfig support_on_second_filament_config()
     config.set_deserialize_strict({
         { "curr_bed_type", "High Temp Plate" },
         { "filament_diameter", "1.75,1.75" }, // two filaments, preset-style
-        { "hot_plate_temp", "55,80" },
+        { "hot_plate_temp", "55,75" },
         { "hot_plate_temp_initial_layer", "60,80" },
         { "wall_filament", 1 },
         { "sparse_infill_filament", 1 },
@@ -171,5 +171,5 @@ TEST_CASE("Support filament with generated support still raises the bed temperat
     REQUIRE(gcode.find("\nT1") != std::string::npos); // support prints with filament 2
     REQUIRE(gcode.find("; bed_single = 80") != std::string::npos);
     REQUIRE(first_layer_bed_temp(gcode) == 80);
-    REQUIRE(later_layer_bed_temp(gcode) == 80);
+    REQUIRE(later_layer_bed_temp(gcode) == 75);
 }

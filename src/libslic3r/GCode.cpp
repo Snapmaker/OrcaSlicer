@@ -1589,8 +1589,16 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
         return emit_local_z_unplanned_toolchange();
 
     assert(m_layer_idx >= 0);
-    if (m_layer_idx >= (int) m_tool_changes.size())
+    if (m_layer_idx >= (int) m_tool_changes.size()) {
+        // Local-Z passes may leave a different tool active after the last
+        // planned tower layer. The remaining object still needs its assigned
+        // filament even though there is no tower G-code left to emit.
+        if (extruder_id >= 0 && gcodegen.writer().need_toolchange(extruder_id)) {
+            const double print_z = gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value;
+            gcode += gcodegen.set_extruder(unsigned(extruder_id), print_z);
+        }
         return gcode;
+    }
     if (!gcodegen.is_BBL_Printer()) {
         if (gcodegen.writer().need_toolchange(extruder_id) || finish_layer) {
             if (m_layer_idx < (int) m_tool_changes.size()) {
@@ -1648,14 +1656,20 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
         }
     }
 
+    // Sparse tower layers may also omit a transition assumed unnecessary by
+    // the preplan. Never let that suppress an actual runtime tool change.
+    if (extruder_id >= 0 && gcodegen.writer().need_toolchange(extruder_id)) {
+        const double print_z = gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value;
+        gcode += gcodegen.set_extruder(unsigned(extruder_id), print_z);
+    }
     return gcode;
 }
-
-
 
 bool WipeTowerIntegration::is_empty_wipe_tower_gcode(GCode& gcodegen, int extruder_id, bool finish_layer)
 {
     assert(m_layer_idx >= 0);
+    if (extruder_id >= 0 && gcodegen.writer().need_toolchange(extruder_id))
+        return false;
     if (m_layer_idx >= (int) m_tool_changes.size())
         return true;
 
@@ -6300,6 +6314,11 @@ LayerResult GCode::process_layer(const Print& print,
         }
     }
 
+    // Object -> its first-layer wall extruder (1-based), the owner of the
+    // object's brim; empty for non-first layers.
+    const std::map<ObjectID, unsigned int> object_extruder_map =
+        first_layer ? getObjectExtruderMap(print) : std::map<ObjectID, unsigned int>();
+
     std::vector<unsigned int> layer_extruders = layer_tools.extruders;
     for (const auto& by_extruder_entry : by_extruder) {
         if (std::find(layer_extruders.begin(), layer_extruders.end(), by_extruder_entry.first) == layer_extruders.end())
@@ -6743,8 +6762,17 @@ LayerResult GCode::process_layer(const Print& print,
             for (const LayerToPrint& layer_to_print : layers)
                 if (layer_to_print.object() != nullptr)
                     objs_printed_in_this_pass.insert(layer_to_print.object()->id());
+            // Each brim is owned by its object's first-layer wall extruder
+            // (object_extruder_map, 1-based). Emit a brim only in its owner's
+            // iteration so every brim is printed with its own filament; brims
+            // of other extruders are left for their own iteration below.
             for (std::set<ObjectID>::iterator brim_it = this->m_objsWithBrim.begin(); brim_it != this->m_objsWithBrim.end(); ) {
                 if (objs_printed_in_this_pass.find(*brim_it) == objs_printed_in_this_pass.end()) {
+                    ++brim_it;
+                    continue;
+                }
+                std::map<ObjectID, unsigned int>::const_iterator obj_extruder_it = object_extruder_map.find(*brim_it);
+                if (obj_extruder_it == object_extruder_map.end() || obj_extruder_it->second != extruder_id + 1) {
                     ++brim_it;
                     continue;
                 }
@@ -6960,7 +6988,10 @@ LayerResult GCode::process_layer(const Print& print,
                     std::set<ObjectID>::iterator brim_it = this->m_objsWithBrim.find(instance_to_print.print_object.id());
                     if (brim_it != this->m_objsWithBrim.end()) {
                         std::map<ObjectID, ExtrusionEntityCollection>::const_iterator brim_map_it = print.m_brimMap.find(instance_to_print.print_object.id());
-                        if (brim_map_it != print.m_brimMap.end() && !brim_map_it->second.empty()) {
+                        std::map<ObjectID, unsigned int>::const_iterator obj_extruder_it =
+                            object_extruder_map.find(instance_to_print.print_object.id());
+                        if (brim_map_it != print.m_brimMap.end() && !brim_map_it->second.empty() &&
+                            (obj_extruder_it == object_extruder_map.end() || obj_extruder_it->second == extruder_id + 1)) {
                             this->set_origin(0., 0.);
                             m_avoid_crossing_perimeters.use_external_mp();
                             for (const ExtrusionEntity* ee : print.m_brimMap.at(instance_to_print.print_object.id()).entities) {

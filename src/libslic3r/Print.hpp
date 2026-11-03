@@ -1065,7 +1065,9 @@ private:
     PrintRegionPtrs                         m_print_regions;
     
     //SoftFever
-    bool m_isBBLPrinter;
+    // Set by the GUI from the active printer preset; defaults to the generic (non-BBL) tower path
+    // so headless use (tests, CLI) is deterministic.
+    bool m_isBBLPrinter = false;
 
     // Ordered collections of extrusion paths to build skirt loops and brim.
     ExtrusionEntityCollection               m_skirt;

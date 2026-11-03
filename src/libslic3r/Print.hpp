@@ -1110,6 +1110,9 @@ public:
     //static float min_skirt_length;
 };
 
+// BBS: map print object with its first layer's first extruder
+std::map<ObjectID, unsigned int> getObjectExtruderMap(const Print& print);
+
 
 } /* slic3r_Print_hpp_ */
 

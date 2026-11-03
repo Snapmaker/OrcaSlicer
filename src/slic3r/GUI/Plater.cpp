@@ -2,8 +2,6 @@
 #include "MixedFilamentDialog.hpp"
 #include "MixedFilamentBatchDialog.hpp"
 #include "CmykPalettePanel.hpp"
-#include <tbb/blocked_range.h>
-#include <tbb/parallel_for.h>
 #include "MixedGradientSelector.hpp"
 #include "MixedColorMatchPanel.hpp"
 #include "MixedFilamentBadge.hpp"
@@ -2796,6 +2794,8 @@ Sidebar::Sidebar(Plater *parent)
         if (p->m_btn_cmyk_convert && e.GetPosition().x > p->m_btn_cmyk_convert->GetPosition().x - FromDIP(12))
             return;
         const bool expanded = p->m_panel_cmyk_content->IsShown();
+        if (!expanded)
+            p->m_panel_cmyk_content->reload(); // reloads are skipped while collapsed
         p->m_panel_cmyk_content->Show(!expanded);
         p->m_panel_cmyk_content->SetMaxSize(expanded ? wxSize(-1, 0) : wxSize(-1, -1));
         m_scrolled_sizer->Layout();
@@ -3564,7 +3564,8 @@ void Sidebar::msw_rescale()
     // the window to a 150% 4K screen), so render() centers the auto-rescaled font with
     // the old-DPI metrics and the label drifts/clips.
     p->m_btn_batch_match->Rescale();
-    if (p->m_btn_cmyk_convert) p->m_btn_cmyk_convert->Rescale();
+    if (p->m_btn_cmyk_convert)
+        p->m_btn_cmyk_convert->Rescale();
     //BBS
     m_bed_type_list->Rescale();
     m_bed_type_list->SetMinSize({-1, 3 * wxGetApp().em_unit()});
@@ -3640,7 +3641,8 @@ void Sidebar::sys_color_changed()
     p->m_flushing_volume_btn->Rescale();
     // Keep the cached text extent in sync with the new DPI, same as above.
     p->m_btn_batch_match->Rescale();
-    if (p->m_btn_cmyk_convert) p->m_btn_cmyk_convert->Rescale();
+    if (p->m_btn_cmyk_convert)
+        p->m_btn_cmyk_convert->Rescale();
 
     // BBS
 #if 0
@@ -8777,7 +8779,9 @@ void Sidebar::apply_batch_match_result(const BatchMatchResult& result)
 
 void Sidebar::reload_cmyk_palette()
 {
-    if (p->m_panel_cmyk_content != nullptr)
+    // The section is collapsed by default; rebuilding hidden rows on every filament change is
+    // wasted work. The expand handler reloads before showing.
+    if (p->m_panel_cmyk_content != nullptr && p->m_panel_cmyk_content->IsShown())
         p->m_panel_cmyk_content->reload();
 }
 
@@ -8879,26 +8883,13 @@ void Sidebar::convert_to_cmyk_palette()
     BatchMatchResult result;
     {
         wxBusyCursor busy;
-        // One independent search per colour, run in parallel (the 4-component search is the
-        // expensive part). check_compatible=false: the palette filaments are not project slots
-        // yet, so the slot-based compatibility matrix would look at the wrong presets.
-        const int                      max_components = K >= 4 ? 4 : 3;
-        std::vector<ColorMappingEntry> per_colour(model_colors.size());
-        std::vector<char>              matched(model_colors.size(), 0);
-        tbb::parallel_for(tbb::blocked_range<size_t>(0, model_colors.size()), [&](const tbb::blocked_range<size_t>& range) {
-            for (size_t i = range.begin(); i < range.end(); ++i) {
-                BatchMatchResult one = batch_match_model_colors({model_colors[i]}, palette_hex, /*min*/ 0, /*max*/ 100, nullptr, nullptr,
-                                                                /*check_compatible*/ false, max_components);
-                if (one.success && !one.mappings.empty()) {
-                    per_colour[i] = std::move(one.mappings.front());
-                    matched[i]    = 1;
-                }
-            }
-        });
-        for (size_t i = 0; i < per_colour.size(); ++i)
-            if (matched[i])
-                result.mappings.push_back(std::move(per_colour[i]));
-        result.success = !result.mappings.empty();
+        // check_compatible=false: the palette filaments are not project slots yet, so the
+        // slot-based compatibility matrix would look at the wrong presets. Runs on the UI
+        // thread: the matcher builds wxColour objects, whose ref-counted data is not safe to
+        // share across threads on GTK/macOS. With a typical palette (<= 8 filaments) the
+        // 4-component search is a few thousand blends per colour.
+        result = batch_match_model_colors(model_colors, palette_hex, /*min*/ 0, /*max*/ 100, nullptr, nullptr,
+                                          /*check_compatible*/ false, /*max_components*/ K >= 4 ? 4 : 3);
     }
     if (!result.success || result.mappings.empty()) {
         show_error(this, _L("Unable to match the model colours to the CMYK palette."));

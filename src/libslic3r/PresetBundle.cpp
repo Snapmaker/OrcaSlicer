@@ -223,6 +223,7 @@ static std::vector<std::string> s_project_options {
     "mixed_filament_surface_indentation",
     "mixed_filament_region_collapse",
     "mixed_filament_definitions",
+    "color_conversion_palette",
     "mixed_color_layer_height_a",
     "mixed_color_layer_height_b",
     "dithering_z_step_size",

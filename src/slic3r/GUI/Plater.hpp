@@ -167,6 +167,11 @@ public:
     // Callers that show a progress dialog map (current/total) to a percentage and
     // call progress.Update so the bar reflects real progress during the (potentially
     // many-second) deletion loop. Default-empty: existing callers see no change.
+    void apply_batch_match_result(const BatchMatchResult& match_result);
+    // CMYK palette conversion: match every model colour to a mix of the palette filaments
+    // (project option color_conversion_palette), recolour the model and drop the old filaments.
+    void convert_to_cmyk_palette();
+    void reload_cmyk_palette();
     void cleanup_unused_filaments_after_batch_match(const BatchMatchResult& match_result,
                                                     std::function<void(int /*current*/, int /*total*/)> on_progress = nullptr);
     void add_custom_filament(wxColour new_col);

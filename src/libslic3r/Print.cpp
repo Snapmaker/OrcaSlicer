@@ -591,6 +591,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "fan_speedup_overhangs",
         "fan_speedup_time",
         "filament_colour",
+        "color_conversion_palette",
         "filament_multi_colors",
         "filament_colour_mode",
         "default_filament_colour",

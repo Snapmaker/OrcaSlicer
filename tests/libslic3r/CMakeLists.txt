@@ -12,7 +12,7 @@ add_executable(${_TEST_NAME}_tests
 	test_gcode_layer_count.cpp
 	test_elephant_foot_compensation.cpp
 	test_extrusion_entity.cpp
-	test_embedded_detail.cpp
+	test_overlap_carving.cpp
 	test_geometry.cpp
 	test_icns.cpp
 	test_mixed_filament.cpp

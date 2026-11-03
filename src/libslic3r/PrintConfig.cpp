@@ -5425,14 +5425,13 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<SlicingMode>(SlicingMode::Regular));
 
-    def = this->add("enable_volume_containment_carving", coBool);
-    def->label = L("Carve overlaps by 3D volume containment");
+    def = this->add("enable_overlap_area_carving", coBool);
+    def->label = L("Carve overlaps by per-layer slice area");
     def->category = L("Other");
-    def->tooltip = L("When enabled, overlaps between different-extruder parts are arbitrated by 3D "
-                   "volume containment instead of the default \"last listed wins\" rule: a mostly "
-                   "embedded, still protruding detail keeps its own slice, while mere crossings and "
-                   "fully hidden volumes keep yielding to the later part. Developer option; the "
-                   "default (off) matches upstream behavior.");
+    def->tooltip = L("Controls how overlaps between different-extruder parts are carved. Enabled: the 2.4.1 "
+                   "rule - on each layer the smaller slice area wins, and while the two areas stay within "
+                   "1.5x the region listed first wins. Disabled (default): the legacy rule - the part "
+                   "listed last always carves the parts before it. Developer option.");
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionBool(false));
 

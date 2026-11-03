@@ -20300,6 +20300,11 @@ void Plater::convert_unit(ConversionType conv_type)
 void Plater::apply_cut_object_to_model(size_t obj_idx, const ModelObjectPtrs& new_objects)
 {
     model().delete_object(obj_idx);
+    // Deleting the object shifts the indices of all objects after it; the plates keep
+    // (obj_id, instance_id) registration sets, so they must be told to shift as well.
+    // Without this the previously registered objects stay registered under stale indices
+    // and get reassigned to wrong plates on the next update/move.
+    p->partplate_list.notify_instance_removed(obj_idx, -1);
     sidebar().obj_list()->delete_object_from_list(obj_idx);
 
     // suppress to call selection update for Object List to avoid call of early Gizmos on/off update

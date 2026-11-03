@@ -457,9 +457,9 @@ struct PlaterEventRouter::Impl {
                     }
                     const bool showing_u1 = mf->m_printer_view->is_u1_device_page();
                     if (is_snapmaker_u1 && !showing_u1) {
-                        wxString u1_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(q->page_http_port()) +
-                                                             "/web/flutter_web/index.html?path=2");
-                        mf->load_printer_url(q->international_url(u1_url));
+                        // 2.8 勘误（③URL 构建器）：恢复 vanilla main 语义——gateway 端口 + device_control 路由
+                        // （bpe 的 page_http+flutter URL 在 main 的 HttpServer 被设计性拒答）
+                        mf->load_printer_url(wxGetApp().gateway_web_url("device_control"));
                     } else if (!is_snapmaker_u1 && showing_u1) {
                         wxString non_u1 = url;
                         if (non_u1.empty()) {

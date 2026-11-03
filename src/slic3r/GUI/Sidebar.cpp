@@ -1849,8 +1849,9 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                                  MainFrame::PrintSelectType::eSendGcode;
 
                 if (url.find("127.0.0.1") != std::string::npos) {
-                    url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                             "/web/flutter_web/index.html?path=3");
+                    // 2.8 勘误（③URL 构建器）：bpe 的 page_http+flutter 语义在 main 树被设计性拒答
+                    // （flutter 由 gateway 伺服）——恢复 vanilla main 正文（bac6fd5 同位逐字）
+                    url = wxGetApp().gateway_web_url("device_control");
                 }
             }
             
@@ -1876,13 +1877,13 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                 if(hasOnlineMachine)
                     p->combo_printer->set_show_machine_connecting_button(true);
     
-                wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                                  "/web/flutter_web/index.html?path=2");
-                auto real_url = wxGetApp().get_international_url(url);
-                
+                // 2.8 勘误（③URL 构建器）：恢复 vanilla main 正文（bac6fd5 同位逐字）——
+                // gateway URL 自带 locale/dark_mode，international_url 包装废弃
+                wxString url = wxGetApp().gateway_web_url("device_control");
+
                 if (reload_printer_view && !showing_u1_device) {
-                    wxGetApp().mainframe->load_printer_url(real_url); 
-                }                   
+                    wxGetApp().mainframe->load_printer_url(url);
+                }
             }
 
             if (!p->combo_printer->get_show_machine_connecting_button() && !is_snapmaker_u1) {

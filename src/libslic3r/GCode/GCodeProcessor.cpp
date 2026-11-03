@@ -101,6 +101,9 @@ const std::string GCodeProcessor::Flush_End_Tag = " FLUSH_END";
 //Orca: External device purge tag
 const std::string GCodeProcessor::External_Purge_Tag = " EXTERNAL_PURGE";
 
+//Orca: layer total key inside machine statistics lines (e.g. SET_PRINT_STATS_INFO)
+const std::string GCodeProcessor::Total_Layer_Tag = "TOTAL_LAYER=";
+
 const float GCodeProcessor::Wipe_Width = 0.05f;
 const float GCodeProcessor::Wipe_Height = 0.05f;
 
@@ -4622,15 +4625,21 @@ void GCodeProcessor::run_post_process()
     // placeholder, which is fed with the pre-export layer estimate; that estimate counts empty
     // layers (e.g. the zero-area tip of a cone landing exactly on a layer boundary) that the
     // exporter skips, so it can overshoot the number of layers actually present in the file.
+    // Template variables are resolved to numbers before the line reaches the file, so the
+    // statistics value is numeric here; a line that still holds a placeholder or other
+    // non-numeric token (mis-spelled variable) is left untouched on purpose.
     auto process_total_layer = [this](std::string& gcode_line) {
-        // Prefilter for parsing speed: the command must start with "SET".
-        if (gcode_line.size() < 13 || gcode_line.compare(0, 3, "SET") != 0)
+        // Prefilter for parsing speed: indentation is allowed (presets keep the
+        // template text box's leading spaces), but the command itself must start
+        // with "SET" so that comments and unrelated lines keep their text.
+        const size_t start = gcode_line.find_first_not_of(" \t");
+        if (start == std::string::npos || gcode_line.compare(start, 3, "SET") != 0)
             return;
-        const char* tag = "TOTAL_LAYER=";
-        size_t pos = gcode_line.find(tag);
+        const std::string& tag = Total_Layer_Tag;
+        size_t pos = gcode_line.find(tag, start);
         if (pos == std::string::npos)
             return;
-        pos += strlen(tag);
+        pos += tag.length();
         size_t end = pos;
         while (end < gcode_line.length() && gcode_line[end] >= '0' && gcode_line[end] <= '9')
             ++end;

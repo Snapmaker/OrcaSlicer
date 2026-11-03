@@ -2925,6 +2925,11 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     this->placeholder_parser().set("retraction_distances_when_cut", new ConfigOptionFloats(m_config.retraction_distances_when_cut));
     this->placeholder_parser().set("long_retractions_when_cut", new ConfigOptionBools(m_config.long_retractions_when_cut));
     // Set variable for total layer count so it can be used in custom gcode.
+    // [total_layer_count] is necessarily the pre-export estimate here: templates are
+    // rendered while streaming, before the real layer count exists. Machine-consumed
+    // renderings of it (e.g. "SET_PRINT_STATS_INFO TOTAL_LAYER=") are rewritten with
+    // the real count by GCodeProcessor::run_post_process; human-readable comment
+    // renderings keep the estimate on purpose.
     this->placeholder_parser().set("total_layer_count", m_layer_count);
     // Useful for sequential prints.
     this->placeholder_parser().set("current_object_idx", 0);

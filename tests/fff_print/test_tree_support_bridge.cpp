@@ -98,7 +98,10 @@ TEST_CASE("Tree support preserves external bridge infill with zero top Z distanc
 
     CHECK(found_bridge == expect_bridge);
 
-    // Preview obtains its feature types from the exported G-code role tags.
+    // Preview obtains its feature types from the exported G-code role tags. reserved_tag() picks its
+    // dialect from a mutable static that do_export() rewrites to the print's BBL flag, so sync it
+    // before building the expectation or the first section compares "; FEATURE: " against ";TYPE:".
+    GCodeProcessor::s_IsBBLPrinter = print.is_BBL_printer();
     const std::string bridge_tag = ";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Role) +
                                    ExtrusionEntity::role_to_string(erBridgeInfill) + "\n";
     const std::string gcode = Test::gcode(print);

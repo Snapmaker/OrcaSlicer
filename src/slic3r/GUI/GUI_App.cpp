@@ -5975,8 +5975,13 @@ wxString GUI_App::gateway_web_url(const wxString& page_key) const
                 pos = end + 1;
             }
         }
-        if (!replaced)
-            themed_url += (query == std::string::npos ? "?" : "&") + theme;
+        if (!replaced) {
+            if (query == std::string::npos)
+                themed_url += '?';
+            else if (themed_url.back() != '?' && themed_url.back() != '&')
+                themed_url += '&';
+            themed_url += theme;
+        }
         if (fragment != std::string::npos)
             themed_url += url.substr(fragment);
         return from_u8(themed_url);

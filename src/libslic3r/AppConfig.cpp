@@ -400,6 +400,10 @@ void AppConfig::set_defaults()
     //     set_bool("staff_pick_switch", false);
     // }
 
+    if (get("enable_model_station").empty()) {
+        set_bool("enable_model_station", true);
+    }
+
     if (get("sync_system_preset").empty()) {
         set_bool("sync_system_preset", true);
     }

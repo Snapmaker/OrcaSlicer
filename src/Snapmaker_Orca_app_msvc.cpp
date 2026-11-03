@@ -7,7 +7,7 @@
 #include <shellapi.h>
 #include <wchar.h>
 #include <shlobj.h>
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 
 #ifdef SLIC3R_GUI
 extern "C" {

@@ -1602,9 +1602,9 @@ int CLI::run(int argc, char **argv)
                     flush_and_exit(CLI_INVALID_PRINTER_TECH);
                 }
                 if (!config_substitutions.substitutions.empty()) {
-                    BOOST_LOG_TRIVIAL(info) << "Found legacy configuration values, substituted when loading " << file << ":\n";
+                    BOOST_LOG_TRIVIAL(warning) << "Found legacy configuration values, substituted when loading " << file << ":\n";
                     for (const ConfigSubstitution &subst : config_substitutions.substitutions)
-                        BOOST_LOG_TRIVIAL(info) << "\tkey = \"" << subst.opt_def->opt_key << "\"\t old_value = \"" << subst.old_value << "\tnew_value = \"" << subst.new_value->serialize() << "\"\n";
+                        BOOST_LOG_TRIVIAL(warning) << "\tkey = \"" << subst.opt_def->opt_key << "\"\t old_value = \"" << subst.old_value << "\"\tnew_value = \"" << subst.new_value->serialize() << "\"\n";
                 }
 
                 // config is applied to m_print_config before the current m_config values.
@@ -1743,9 +1743,9 @@ int CLI::run(int argc, char **argv)
             config.normalize_fdm();
 
             if (! config_substitutions.empty()) {
-                BOOST_LOG_TRIVIAL(info) << "Found legacy configuration values, substituted when loading " << file << ":\n";
+                BOOST_LOG_TRIVIAL(warning) << "Found legacy configuration values, substituted when loading " << file << ":\n";
                 for (const ConfigSubstitution &subst : config_substitutions)
-                    BOOST_LOG_TRIVIAL(info) << "\tkey = \"" << subst.opt_def->opt_key << "\"\t old_value = \"" << subst.old_value << "\tnew_value = \"" << subst.new_value->serialize() << "\"\n";
+                    BOOST_LOG_TRIVIAL(warning) << "\tkey = \"" << subst.opt_def->opt_key << "\"\t old_value = \"" << subst.old_value << "\"\tnew_value = \"" << subst.new_value->serialize() << "\"\n";
             }
             else {
                 BOOST_LOG_TRIVIAL(info) << "no substitutions performed from file " << file << "\n";

@@ -118,3 +118,58 @@ TEST_CASE("bed_temperature_initial_layer_single expands to the max", "[BedTemper
     // start gcode already sets the temperature, so no additional M190 is emitted by the slicer.
     REQUIRE(gcode.find("M190 S65") != std::string::npos);
 }
+
+namespace {
+// Two filaments: filament 1 (PLA-like, 60C first layer / 55C later), filament 2 (PETG-like, 80C).
+// The object prints with filament 1, support and support interface are assigned to filament 2.
+DynamicPrintConfig support_on_second_filament_config()
+{
+    DynamicPrintConfig config = Slic3r::DynamicPrintConfig::full_print_config();
+    config.set_num_extruders(2);
+    config.set_deserialize_strict({
+        { "curr_bed_type", "High Temp Plate" },
+        { "filament_diameter", "1.75,1.75" }, // two filaments, preset-style
+        { "hot_plate_temp", "55,80" },
+        { "hot_plate_temp_initial_layer", "60,80" },
+        { "wall_filament", 1 },
+        { "sparse_infill_filament", 1 },
+        { "solid_infill_filament", 1 },
+        { "enable_support", 1 },
+        { "support_filament", 2 },
+        { "support_interface_filament", 2 },
+        { "enable_prime_tower", 0 },
+        { "machine_start_gcode", "; bed_single = {bed_temperature_initial_layer_single}" }
+    });
+    return config;
+}
+} // namespace
+
+// Regression (Snapmaker/OrcaSlicer#1073): support enabled on another filament, but the model needs no
+// support, so the support filament prints nothing and must not raise the bed temperature.
+TEST_CASE("Support filament without generated support does not raise the bed temperature", "[BedTemperature]")
+{
+    DynamicPrintConfig config = support_on_second_filament_config();
+    std::string gcode = Slic3r::Test::slice({TestMesh::cube_20x20x20}, config);
+    REQUIRE(gcode.find("\nT1") == std::string::npos); // filament 2 never prints
+    REQUIRE(gcode.find("; bed_single = 60") != std::string::npos);
+    REQUIRE(first_layer_bed_temp(gcode) == 60);
+    REQUIRE(later_layer_bed_temp(gcode) == 55);
+}
+
+// Guard: when support is actually generated with the other filament, it is still counted.
+TEST_CASE("Support filament with generated support still raises the bed temperature", "[BedTemperature]")
+{
+    // A 30 x 30 mm cap on a 10 mm tall stem: the cap overhang needs support.
+    TriangleMesh mesh = make_cube(10, 10, 10);
+    mesh.translate(10, 10, 0);
+    TriangleMesh cap = make_cube(30, 30, 2);
+    cap.translate(0, 0, 10);
+    mesh.merge(cap);
+
+    DynamicPrintConfig config = support_on_second_filament_config();
+    std::string gcode = Slic3r::Test::slice({mesh}, config);
+    REQUIRE(gcode.find("\nT1") != std::string::npos); // support prints with filament 2
+    REQUIRE(gcode.find("; bed_single = 80") != std::string::npos);
+    REQUIRE(first_layer_bed_temp(gcode) == 80);
+    REQUIRE(later_layer_bed_temp(gcode) == 80);
+}

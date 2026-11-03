@@ -213,6 +213,9 @@ void AppConfig::set_defaults()
     if (get("zoom_to_mouse").empty())
         set_bool("zoom_to_mouse", false);
 
+    if (get("gcode_preview_gpu_accel").empty())
+        set_bool("gcode_preview_gpu_accel", true);
+
 //#ifdef SUPPORT_SHOW_HINTS
     if (get("show_hints").empty())
         set_bool("show_hints", true);

@@ -723,6 +723,14 @@ GatewayError GatewayService::wait_for_health(std::uint16_t port, HealthInfo& hea
                 return health_error;
             BOOST_LOG_TRIVIAL(info) << "connection gateway health response: status=" << response.status
                                     << ", device_connected=" << health.device_connected << ", has_device_state=" << health.has_device_state;
+            std::string health_pages;
+            for (const auto &page : health.pages) {
+                if (!health_pages.empty())
+                    health_pages += ",";
+                health_pages += page.first + "=" + page.second;
+            }
+            BOOST_LOG_TRIVIAL(warning)
+                << "[FLUTTER_FLOW] [gateway] [health_ready] port=" << port << " base_url=" << health.base_url << " pages=" << health_pages;
             return {};
         }
         std::this_thread::sleep_for(config_.health_poll_interval);
@@ -738,6 +746,7 @@ GatewayError GatewayService::connect_websocket(std::uint16_t port)
         websocket_error_.clear();
     }
     dependencies_.websocket->connect(port, config_.websocket_path);
+    BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway] [websocket_connecting] port=" << port << " path=" << config_.websocket_path;
 
     std::unique_lock<std::mutex> lock(state_mutex_);
     if (!state_condition_.wait_for(lock, config_.health_timeout,

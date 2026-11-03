@@ -77,6 +77,7 @@ struct RpcFrame
 };
 
 nlohmann::json                build_jsonrpc_request(std::int64_t id, std::string_view method, const nlohmann::json& params);
+std::string                   format_cli_version(const nlohmann::json& manifest);
 GatewayError                  parse_health(const std::string& body, HealthInfo& health);
 std::string                   parse_device_sn(const nlohmann::json& params);
 std::optional<CurrentDevice>  parse_current_device(const nlohmann::json& result);

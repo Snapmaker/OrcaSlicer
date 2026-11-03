@@ -507,18 +507,20 @@ static float effective_wipe_tower_volume(const PrintConfig& config, size_t extru
 {
     return std::max<float>(
         (float)config.prime_volume,
-        (float)config.filament_minimal_purge_on_wipe_tower.get_at(extruder_id));
+        (float)get_value_at(config, config.filament_minimal_purge_on_wipe_tower, ConfigFlowDomain::Filament,
+                            static_cast<unsigned int>(extruder_id)));
 }
 
 // Return the effective wipe tower volume as the maximum across all filaments.
 // Used for tower depth estimation where we need to account for the worst case.
 static float effective_max_wipe_tower_volume(const PrintConfig& config)
 {
+    const std::vector<double>& minimal_purges = config.filament_minimal_purge_on_wipe_tower.values;
+    if (minimal_purges.empty())
+        return (float)config.prime_volume;
     return std::max<float>(
         (float)config.prime_volume,
-        (float)*std::max_element(
-            config.filament_minimal_purge_on_wipe_tower.values.begin(),
-            config.filament_minimal_purge_on_wipe_tower.values.end()));
+        (float)*std::max_element(minimal_purges.begin(), minimal_purges.end()));
 }
 
 } // namespace

@@ -3500,6 +3500,17 @@ int GCode::get_bed_temperature(const int extruder_id, const bool is_first_layer,
     return bed_temp_opt->get_at(extruder_id);
 }
 
+// The bed is shared by all extruders, so in a mixed-material print (e.g. PLA + TPU) use the highest
+// bed temperature of the printing extruders rather than the first extruder's value, otherwise the
+// higher-temp material loses adhesion. Seeded from a concrete extruder so the result is never 0.
+int GCode::get_max_bed_temperature(const unsigned int seed_extruder_id, const bool is_first_layer, const BedType bed_type) const
+{
+    int bed_temp = get_bed_temperature(seed_extruder_id, is_first_layer, bed_type);
+    for (const Extruder& extruder : m_writer.extruders())
+        bed_temp = std::max(bed_temp, get_bed_temperature(extruder.id(), is_first_layer, bed_type));
+    return bed_temp;
+}
+
 // Write 1st layer bed temperatures into the G-code.
 // Only do that if the start G-code does not already contain any M-code controlling an extruder temperature.
 // M140 - Set Extruder Temperature
@@ -3507,10 +3518,10 @@ int GCode::get_bed_temperature(const int extruder_id, const bool is_first_layer,
 void GCode::_print_first_layer_bed_temperature(
     GCodeOutputStream& file, Print& print, const std::string& gcode, unsigned int first_printing_extruder_id, bool wait)
 {
-    // Initial bed temperature based on the first extruder.
+    // Initial bed temperature: maximum over the printing extruders.
     // BBS
     std::vector<int> temps_per_bed;
-    int              bed_temp = get_bed_temperature(first_printing_extruder_id, true, print.config().curr_bed_type);
+    int              bed_temp = get_max_bed_temperature(first_printing_extruder_id, true, print.config().curr_bed_type);
 
     // Is the bed temperature set by the provided custom G-code?
     int  temp_by_gcode     = -1;
@@ -4931,13 +4942,8 @@ LayerResult GCode::process_layer(const Print& print,
                 gcode += m_writer.set_temperature(temperature, false, extruder.id());
         }
 
-        // Use the maximum bed temperature across all active extruders so that a mixed-material
-        // print (e.g. PLA + TPU) does not drop the bed temp to the lower-temp material's value
-        // on layer 2, which would cause adhesion failures for the higher-temp material.
-        int bed_temp = 0;
-        for (const Extruder& extruder : m_writer.extruders()) {
-            bed_temp = std::max(bed_temp, get_bed_temperature(extruder.id(), false, print.config().curr_bed_type));
-        }
+        // Bed temperature for the remaining layers: maximum over the printing extruders.
+        int bed_temp = get_max_bed_temperature(first_extruder_id, false, print.config().curr_bed_type);
         gcode += m_writer.set_bed_temperature(bed_temp);
         // Mark the temperature transition from 1st to 2nd layer to be finished.
         m_second_layer_things_done = true;

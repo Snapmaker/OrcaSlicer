@@ -43,6 +43,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           lfs: "true"
+          submodules: recursive
 
       - name: Restore deps tarball
         id: cache_deps

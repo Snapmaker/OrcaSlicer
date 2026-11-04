@@ -15842,8 +15842,8 @@ msgid "Converting would exceed the maximum number of filaments. Remove unused mi
 msgstr "转换将超出耗材数量上限。请先移除未使用的混色或耗材。"
 
 #, c-format
-msgid "Every model colour will be replaced by the closest mix of the %zu palette filaments (%zu mixed colours will be created). The %zu current filaments are removed from the project. This cannot be undone with Ctrl+Z."
-msgstr "模型的每种颜色将被替换为 %zu 种调色板耗材的最接近混色（将创建 %zu 个混色）。项目中当前的 %zu 种耗材将被移除，且无法使用 Ctrl+Z 撤销。"
+msgid "Every model colour will be replaced by the closest mix of the %zu palette filaments (%zu mixed colours will be created). The %zu current filaments are removed from the project. Use Undo (Ctrl+Z) to revert the conversion."
+msgstr "模型的每种颜色将被替换为 %zu 种调色板耗材的最接近混色（将创建 %zu 个混色）。项目中当前的 %zu 种耗材将被移除。可使用撤销（Ctrl+Z）还原此次转换。"
 
 msgid "CMYK conversion palette"
 msgstr "CMYK 转换调色板"

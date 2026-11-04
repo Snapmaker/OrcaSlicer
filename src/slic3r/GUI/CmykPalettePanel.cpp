@@ -244,7 +244,7 @@ CmykConversionPreviewDialog::CmykConversionPreviewDialog(wxWindow*              
 
     wxString summary = wxString::Format(
         _L("Every model colour will be replaced by the closest mix of the %zu palette filaments (%zu mixed colours will be created). "
-           "The %zu current filaments are removed from the project. This cannot be undone with Ctrl+Z."),
+           "The %zu current filaments are removed from the project. Use Undo (Ctrl+Z) to revert the conversion."),
         palette.size(), mixed_to_create, current_filament_count);
     auto* text = new wxStaticText(this, wxID_ANY, summary);
     text->Wrap(FromDIP(460));

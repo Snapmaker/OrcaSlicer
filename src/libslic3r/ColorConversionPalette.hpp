@@ -2,6 +2,7 @@
 #ifndef slic3r_ColorConversionPalette_hpp_
 #define slic3r_ColorConversionPalette_hpp_
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,19 @@ std::vector<ColorConversionPaletteEntry> default_color_conversion_palette(const 
 // (used when palette filaments are appended after N existing physical filaments).
 // Returns "" for an empty/undecodable input.
 std::string shift_gradient_component_ids(const std::string &encoded_ids, unsigned int offset);
+
+// The filament list a conversion rewrites lives outside the Undo / Redo stack, so it has to be
+// restored by hand when a jump in time crosses the conversion.
+struct FilamentRewriteJump
+{
+    size_t index;          // into the snapshot_times passed to resolve_filament_rewrite_jump
+    bool   restore_before; // true: state before that rewrite, false: state after it
+};
+
+// snapshot_times: ascending timestamps of the snapshots taken right before each rewrite, so a
+// rewrite is undone exactly while the active time is <= its timestamp.
+// Returns the state to restore when jumping from time_from to time_to, if any rewrite is crossed.
+std::optional<FilamentRewriteJump> resolve_filament_rewrite_jump(const std::vector<size_t> &snapshot_times, size_t time_from, size_t time_to);
 
 } // namespace Slic3r
 

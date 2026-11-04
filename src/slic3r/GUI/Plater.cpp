@@ -8786,8 +8786,9 @@ void Sidebar::apply_batch_match_result(const BatchMatchResult& result)
     for (size_t i = 0; i < fcombos.size(); ++i) {
         if (fcombos[i]) fcombos[i]->update();
     }
-    // No undo snapshot in this apply path: mark dirty so close-without-save prompts
-    // instead of silently dropping the match result.
+    // No undo snapshot in this apply path (the palette conversion takes its own around
+    // this call): mark dirty so close-without-save prompts instead of silently dropping
+    // the match result.
     wxGetApp().plater()->update_project_dirty_from_presets();
     // §70: wxPD_AUTO_HIDE only fires at 100%, so reach 100 here for a clean
     // dismiss (otherwise the bar visibly aborts when the dialog leaves scope).
@@ -9018,8 +9019,35 @@ void Sidebar::convert_to_cmyk_palette()
     }
 
     // ---- 4. Apply: append palette, create mixed rows, remap painting, delete old filaments ----
-    apply_batch_match_result(result);
+    {
+        Plater::FilamentRewriteSnapshot snapshot(wxGetApp().plater(), "Convert to CMYK");
+        apply_batch_match_result(result);
+    }
     reload_cmyk_palette();
+}
+
+void Sidebar::refresh_after_filament_restore(const std::function<void()>& reapply_state)
+{
+    PresetBundle* pb = wxGetApp().preset_bundle;
+    const size_t  n  = pb->filament_presets.size();
+
+    if (p->editing_filament >= static_cast<int>(n))
+        p->editing_filament = -1;
+    wxGetApp().get_tab(Preset::TYPE_FILAMENT)->select_preset(pb->filament_presets[0], false, "", true);
+    on_filaments_change(n);
+    reapply_state();
+
+    update_mixed_filament_panel(false);
+    update_color_mix_panel();
+    // Sidebar::on_filaments_change only initializes the combos it creates.
+    for (PlaterPresetComboBox* combo : combos_filament())
+        if (combo)
+            combo->update();
+    obj_list()->update_objects_list_filament_column(n);
+    obj_list()->refresh_layer_range_filament_items();
+    wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
+    pb->export_selections(*wxGetApp().app_config);
+    Layout();
 }
 
 void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult &match_result,
@@ -10790,6 +10818,9 @@ struct Plater::priv
     void undo();
     void redo();
     void undo_redo_to(size_t time_to_load);
+    void begin_filament_rewrite(const std::string& snapshot_name);
+    void end_filament_rewrite();
+    void clear_filament_rewrites() { m_filament_rewrites.clear(); m_pending_filament_rewrite.reset(); }
 
     // BBS: backup
     bool up_to_date(bool saved, bool backup);
@@ -11023,6 +11054,28 @@ private:
 
     void undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator it_snapshot);
     void update_after_undo_redo(const UndoRedo::Snapshot& snapshot, bool temp_snapshot_was_taken = false);
+
+    // The filament state outside the Undo / Redo stack that a filament rewrite changes.
+    struct FilamentRewriteState
+    {
+        FilamentProjectState             project;
+        DynamicPrintConfig               feature_filament_ids; // mixed_filament_feature_keys() of Plater::priv::config
+        std::map<int, CustomGCode::Info> plates_custom_gcodes;
+    };
+    struct FilamentRewrite
+    {
+        size_t               snapshot_time; // timestamp of the snapshot taken right before the rewrite
+        FilamentRewriteState before;
+        FilamentRewriteState after;
+        t_config_option_keys changed_project_keys;
+    };
+    FilamentRewriteState capture_filament_rewrite_state() const;
+    void                 restore_filament_rewrite_state(const FilamentRewriteState& state, const FilamentRewrite& rewrite);
+    void                 drop_stale_filament_rewrites();
+    // Rewrites recorded on the main Undo / Redo stack, ascending by snapshot_time.
+    std::vector<FilamentRewrite>   m_filament_rewrites;
+    std::optional<FilamentRewrite> m_pending_filament_rewrite;
+
     void on_action_export_to_sdcard(SimpleEvent&);
     void on_action_export_to_sdcard_all(SimpleEvent&);
     void update_plugin_when_launch(wxCommandEvent& event);
@@ -17658,8 +17711,12 @@ void Plater::priv::take_snapshot(const std::string& snapshot_name, const UndoRed
     
     const GLGizmosManager& gizmos = canvas->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_gizmos_manager() : view3D->get_canvas3d()->get_gizmos_manager();
 
-    if (snapshot_type == UndoRedo::SnapshotType::ProjectSeparator)
+    if (snapshot_type == UndoRedo::SnapshotType::ProjectSeparator) {
         this->undo_redo_stack().clear();
+        this->clear_filament_rewrites();
+    } else {
+        this->drop_stale_filament_rewrites();
+    }
     this->undo_redo_stack().take_snapshot(snapshot_name, model, get_current_canvas3D()->get_canvas_type() == GLCanvas3D::CanvasAssembleView ? assemble_view->get_canvas3d()->get_selection() : view3D->get_canvas3d()->get_selection(), gizmos, partplate_list, snapshot_data);
     if (snapshot_type == UndoRedo::SnapshotType::LeavingGizmoWithAction) {
         // Filter all but the last UndoRedo::SnapshotType::GizmoAction in a row between the last UndoRedo::SnapshotType::EnteringGizmo and UndoRedo::SnapshotType::LeavingGizmoWithAction.
@@ -17681,6 +17738,85 @@ void Plater::priv::take_snapshot(const std::string& snapshot_name, const UndoRed
     // Save the last active preset name of a particular printer technology.
     ((this->printer_technology == ptFFF) ? m_last_fff_printer_profile_name : m_last_sla_printer_profile_name) = wxGetApp().preset_bundle->printers.get_selected_preset_name();
     BOOST_LOG_TRIVIAL(info) << "Undo / Redo snapshot taken: " << snapshot_name << ", Undo / Redo stack memory: " << Slic3r::format_memsize_MB(this->undo_redo_stack().memsize()) << log_memory_info();
+}
+
+// Taking a snapshot erases every snapshot from the active time on, so a redo can no longer reach
+// the rewrites recorded there.
+void Plater::priv::drop_stale_filament_rewrites()
+{
+    if (m_undo_redo_stack_active != &m_undo_redo_stack_main)
+        return;
+    const size_t active_time = m_undo_redo_stack_main.active_snapshot_time();
+    m_filament_rewrites.erase(std::remove_if(m_filament_rewrites.begin(), m_filament_rewrites.end(),
+                                             [active_time](const FilamentRewrite& r) { return r.snapshot_time >= active_time; }),
+                              m_filament_rewrites.end());
+}
+
+Plater::priv::FilamentRewriteState Plater::priv::capture_filament_rewrite_state() const
+{
+    FilamentRewriteState state;
+    state.project = wxGetApp().preset_bundle->capture_filament_project_state();
+    for (const std::string& key : mixed_filament_feature_keys())
+        if (const ConfigOption* opt = config->option(key))
+            state.feature_filament_ids.set_key_value(key, opt->clone());
+    state.plates_custom_gcodes = model.plates_custom_gcodes;
+    return state;
+}
+
+void Plater::priv::restore_filament_rewrite_state(const FilamentRewriteState& state, const FilamentRewrite& rewrite)
+{
+    wxGetApp().preset_bundle->restore_filament_project_state(state.project, rewrite.changed_project_keys);
+    // The plate-level values below are only touched when the rewrite changed them, so edits made
+    // after the rewrite survive a jump that does not depend on them.
+    if (!(rewrite.before.feature_filament_ids == rewrite.after.feature_filament_ids)) {
+        for (const std::string& key : mixed_filament_feature_keys()) {
+            if (const ConfigOption* opt = state.feature_filament_ids.option(key))
+                config->set_key_value(key, opt->clone());
+            else
+                config->erase(key);
+        }
+    }
+    if (rewrite.before.plates_custom_gcodes != rewrite.after.plates_custom_gcodes)
+        model.plates_custom_gcodes = state.plates_custom_gcodes;
+    q->update_filament_colors_in_full_config();
+}
+
+void Plater::priv::begin_filament_rewrite(const std::string& snapshot_name)
+{
+    // Gizmos have their own temporary stack, which is thrown away when they close.
+    if (m_undo_redo_stack_active != &m_undo_redo_stack_main) {
+        if (GLCanvas3D* canvas = get_current_canvas3D())
+            canvas->get_gizmos_manager().reset_all_states();
+    }
+
+    m_pending_filament_rewrite.reset();
+    if (m_undo_redo_stack_active == &m_undo_redo_stack_main) {
+        FilamentRewrite rewrite;
+        rewrite.before = this->capture_filament_rewrite_state();
+        const size_t time_before = m_undo_redo_stack_main.active_snapshot_time();
+        this->take_snapshot(snapshot_name);
+        // take_snapshot may refuse (snapshots suppressed); there is nothing to attach to then.
+        if (m_undo_redo_stack_main.active_snapshot_time() != time_before) {
+            // The active time is the topmost state, right after the snapshot just taken.
+            rewrite.snapshot_time = m_undo_redo_stack_main.active_snapshot_time() - 1;
+            m_pending_filament_rewrite = std::move(rewrite);
+        }
+    } else {
+        BOOST_LOG_TRIVIAL(warning) << "Filament rewrite '" << snapshot_name << "' cannot be undone: a gizmo stack is still active";
+    }
+    this->suppress_snapshots();
+}
+
+void Plater::priv::end_filament_rewrite()
+{
+    this->allow_snapshots();
+    if (!m_pending_filament_rewrite)
+        return;
+    FilamentRewrite rewrite = std::move(*m_pending_filament_rewrite);
+    m_pending_filament_rewrite.reset();
+    rewrite.after                = this->capture_filament_rewrite_state();
+    rewrite.changed_project_keys = PresetBundle::changed_filament_project_keys(rewrite.before.project, rewrite.after.project);
+    m_filament_rewrites.push_back(std::move(rewrite));
 }
 
 void Plater::priv::undo()
@@ -17799,10 +17935,24 @@ void Plater::priv::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator 
 
     // Make a copy of the snapshot, undo/redo could invalidate the iterator
     const UndoRedo::Snapshot snapshot_copy = *it_snapshot;
+
+    // The filament list is not on the stack; find out whether this jump crosses a rewrite of it.
+    std::optional<FilamentRewriteJump> filament_jump;
+    if (m_undo_redo_stack_active == &m_undo_redo_stack_main && !m_filament_rewrites.empty()) {
+        std::vector<size_t> rewrite_times;
+        rewrite_times.reserve(m_filament_rewrites.size());
+        for (const FilamentRewrite& rewrite : m_filament_rewrites)
+            rewrite_times.push_back(rewrite.snapshot_time);
+        filament_jump = resolve_filament_rewrite_jump(rewrite_times, m_undo_redo_stack_main.active_snapshot_time(), it_snapshot->timestamp);
+    }
+    const FilamentRewrite*      filament_rewrite = filament_jump ? &m_filament_rewrites[filament_jump->index] : nullptr;
+    const FilamentRewriteState* filament_state   = !filament_jump ? nullptr :
+                                                   filament_jump->restore_before ? &filament_rewrite->before : &filament_rewrite->after;
+
     // Do the jump in time.
     GLCanvas3D* canvas = get_current_canvas3D();
     if (!canvas) return;
-    
+
     bool is_assemble = canvas->get_canvas_type() == GLCanvas3D::CanvasAssembleView;
     if (it_snapshot->timestamp < this->undo_redo_stack().active_snapshot_time() ?
         this->undo_redo_stack().undo(model, is_assemble ? assemble_view->get_canvas3d()->get_selection() : this->view3D->get_canvas3d()->get_selection(), is_assemble ? assemble_view->get_canvas3d()->get_gizmos_manager() : this->view3D->get_canvas3d()->get_gizmos_manager(), this->partplate_list, top_snapshot_data, it_snapshot->timestamp) :
@@ -17821,6 +17971,9 @@ void Plater::priv::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator 
             // This also switches the printer technology based on the printer technology of the active printer profile.
             wxGetApp().load_current_presets();
         }
+        // Before the scene update below, which reads the filament colours and the mixed rows.
+        if (filament_state != nullptr)
+            this->restore_filament_rewrite_state(*filament_state, *filament_rewrite);
         //FIXME updating the Print config from the Wipe tower config values at the ModelWipeTower.
         // This is a workaround until we refactor the Wipe Tower position / orientation to live solely inside the Model, not in the Print config.
         // BBS: add partplate logic
@@ -17872,6 +18025,13 @@ void Plater::priv::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator 
             this->sidebar->obj_list()->set_selected_layers_range_idx(layer_range_idx);
 
         this->update_after_undo_redo(snapshot_copy, temp_snapshot_was_taken);
+        // After the object list was rebuilt: until then it still refers to the old Model.
+        if (filament_state != nullptr) {
+            this->sidebar->refresh_after_filament_restore([this, filament_state, filament_rewrite]() {
+                this->restore_filament_rewrite_state(*filament_state, *filament_rewrite);
+            });
+            this->update_project_dirty_from_presets();
+        }
         // Enable layer editing after the Undo / Redo jump.
         if (!view3D->is_layers_editing_enabled() && this->layers_height_allowed() && new_variable_layer_editing_active)
             view3D->get_canvas3d()->force_main_toolbar_left_action(view3D->get_canvas3d()->get_main_toolbar_item_id("layersediting"));
@@ -25351,7 +25511,9 @@ bool Plater::can_scale_to_print_volume() const { return p->can_scale_to_print_vo
 #endif // ENABLE_ENHANCED_PRINT_VOLUME_FIT
 
 const UndoRedo::Stack& Plater::undo_redo_stack_main() const { return p->undo_redo_stack_main(); }
-void Plater::clear_undo_redo_stack_main() { p->undo_redo_stack_main().clear(); }
+void Plater::clear_undo_redo_stack_main() { p->undo_redo_stack_main().clear(); p->clear_filament_rewrites(); }
+void Plater::begin_filament_rewrite(const std::string &snapshot_name) { p->begin_filament_rewrite(snapshot_name); }
+void Plater::end_filament_rewrite() { p->end_filament_rewrite(); }
 void Plater::enter_gizmos_stack() { p->enter_gizmos_stack(); }
 bool Plater::leave_gizmos_stack() { return p->leave_gizmos_stack(); } // BBS: return false if not changed
 bool Plater::inside_snapshot_capture() { return p->inside_snapshot_capture(); }

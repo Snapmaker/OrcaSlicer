@@ -4328,6 +4328,38 @@ void PresetBundle::set_filament_preset(size_t idx, const std::string &name)
     filament_presets[idx] = Preset::remove_suffix_modified(name);
 }
 
+FilamentProjectState PresetBundle::capture_filament_project_state() const
+{
+    return {filament_presets, ams_multi_color_filment, mixed_filaments, project_config};
+}
+
+void PresetBundle::restore_filament_project_state(const FilamentProjectState &state, const t_config_option_keys &project_keys)
+{
+    filament_presets        = state.filament_presets;
+    ams_multi_color_filment = state.ams_multi_color_filment;
+    mixed_filaments         = state.mixed_filaments;
+    for (const t_config_option_key &key : project_keys) {
+        if (const ConfigOption *opt = state.project_config.option(key))
+            project_config.set_key_value(key, opt->clone());
+        else
+            project_config.erase(key);
+    }
+    // A remap left over from before the restore must not be applied to the restored ids.
+    m_last_filament_id_remap.clear();
+}
+
+t_config_option_keys PresetBundle::changed_filament_project_keys(const FilamentProjectState &a, const FilamentProjectState &b)
+{
+    t_config_option_keys keys = a.project_config.diff(b.project_config);
+    for (const t_config_option_key &key : a.project_config.keys())
+        if (!b.project_config.has(key))
+            keys.emplace_back(key);
+    for (const t_config_option_key &key : b.project_config.keys())
+        if (!a.project_config.has(key))
+            keys.emplace_back(key);
+    return keys;
+}
+
 void PresetBundle::set_default_suppressed(bool default_suppressed)
 {
     prints.set_default_suppressed(default_suppressed);

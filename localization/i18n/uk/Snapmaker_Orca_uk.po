@@ -4500,6 +4500,12 @@ msgstr "Параметри впорядкування"
 msgid "Spacing"
 msgstr "Відстань"
 
+msgid "Count"
+msgstr "Кількість"
+
+msgid "Gap"
+msgstr "Зазор"
+
 msgid "0 means auto spacing."
 msgstr "0 означає автоматичний інтервал."
 

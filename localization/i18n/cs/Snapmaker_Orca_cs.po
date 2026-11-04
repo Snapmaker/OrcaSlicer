@@ -4432,6 +4432,12 @@ msgstr "Volby uspořádání"
 msgid "Spacing"
 msgstr "Vzdálenost"
 
+msgid "Count"
+msgstr "Počet"
+
+msgid "Gap"
+msgstr "Mezera"
+
 msgid "0 means auto spacing."
 msgstr ""
 

@@ -4535,6 +4535,12 @@ msgstr "Opciones de Organización"
 msgid "Spacing"
 msgstr "Separación"
 
+msgid "Count"
+msgstr "Cantidad"
+
+msgid "Gap"
+msgstr "Espacio"
+
 msgid "0 means auto spacing."
 msgstr "0 significa auto separación."
 

@@ -411,6 +411,10 @@ public:
     //remove instance from plate
     int remove_instance(int obj_id, int instance_id);
 
+    //remove every instance registration of obj_id from this plate
+    //（an object may have instances registered on different plates）
+    void remove_object(int obj_id);
+
     //translate instance on the plate
     void translate_all_instance(Vec3d position);
 

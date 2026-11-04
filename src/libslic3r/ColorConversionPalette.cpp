@@ -82,4 +82,21 @@ std::string shift_gradient_component_ids(const std::string &encoded_ids, unsigne
     return MixedFilamentManager::encode_gradient_component_ids(ids);
 }
 
+std::optional<FilamentRewriteJump> resolve_filament_rewrite_jump(const std::vector<size_t> &snapshot_times, size_t time_from, size_t time_to)
+{
+    // First rewrite with a timestamp >= time_to. Crossed rewrites are in [time_to, time_from) when
+    // undoing and in [time_from, time_to) when redoing.
+    const auto it = std::lower_bound(snapshot_times.begin(), snapshot_times.end(), time_to);
+    if (time_to < time_from) {
+        // Undo: the state before the earliest crossed rewrite.
+        if (it != snapshot_times.end() && *it < time_from)
+            return FilamentRewriteJump{static_cast<size_t>(it - snapshot_times.begin()), true};
+    } else if (time_to > time_from) {
+        // Redo: the state after the latest crossed rewrite.
+        if (it != snapshot_times.begin() && *(it - 1) >= time_from)
+            return FilamentRewriteJump{static_cast<size_t>(it - snapshot_times.begin()) - 1, false};
+    }
+    return std::nullopt;
+}
+
 } // namespace Slic3r

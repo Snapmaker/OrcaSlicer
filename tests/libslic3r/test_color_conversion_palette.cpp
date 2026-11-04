@@ -5,6 +5,7 @@
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/PresetBundle.hpp"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -190,4 +191,123 @@ TEST_CASE("palette conversion: composite painting remap maps kept tail slots to 
     CHECK(remap[6] == 2);
     CHECK(remap[7] == 3);
     CHECK(remap[8] == 4); // the new mixed colour: K physical + first mixed row
+}
+
+TEST_CASE("filament rewrite jump: undo and redo across one rewrite", "[ColorConversionPalette][undo]")
+{
+    const std::vector<size_t> times{5}; // snapshot 5 was taken right before the rewrite
+
+    auto undo = resolve_filament_rewrite_jump(times, 6, 5); // topmost -> the rewrite's snapshot
+    REQUIRE(undo.has_value());
+    CHECK(undo->index == 0);
+    CHECK(undo->restore_before);
+
+    auto redo = resolve_filament_rewrite_jump(times, 5, 6);
+    REQUIRE(redo.has_value());
+    CHECK(redo->index == 0);
+    CHECK_FALSE(redo->restore_before);
+
+    // Jumps that stay on one side of the rewrite leave the filament list alone.
+    CHECK_FALSE(resolve_filament_rewrite_jump(times, 9, 6).has_value());
+    CHECK_FALSE(resolve_filament_rewrite_jump(times, 6, 9).has_value());
+    CHECK_FALSE(resolve_filament_rewrite_jump(times, 5, 2).has_value());
+    CHECK_FALSE(resolve_filament_rewrite_jump(times, 2, 5).has_value());
+    CHECK_FALSE(resolve_filament_rewrite_jump(times, 6, 6).has_value());
+    CHECK_FALSE(resolve_filament_rewrite_jump({}, 6, 5).has_value());
+}
+
+TEST_CASE("filament rewrite jump: a jump across several rewrites lands on the outermost", "[ColorConversionPalette][undo]")
+{
+    const std::vector<size_t> times{3, 7};
+
+    // Undo past both: the state before the earliest.
+    auto undo = resolve_filament_rewrite_jump(times, 9, 1);
+    REQUIRE(undo.has_value());
+    CHECK(undo->index == 0);
+    CHECK(undo->restore_before);
+
+    // Redo past both: the state after the latest.
+    auto redo = resolve_filament_rewrite_jump(times, 1, 9);
+    REQUIRE(redo.has_value());
+    CHECK(redo->index == 1);
+    CHECK_FALSE(redo->restore_before);
+
+    // Between the two rewrites: only the later one is crossed.
+    auto to_middle = resolve_filament_rewrite_jump(times, 9, 5);
+    REQUIRE(to_middle.has_value());
+    CHECK(to_middle->index == 1);
+    CHECK(to_middle->restore_before);
+
+    auto from_middle = resolve_filament_rewrite_jump(times, 5, 1);
+    REQUIRE(from_middle.has_value());
+    CHECK(from_middle->index == 0);
+    CHECK(from_middle->restore_before);
+}
+
+TEST_CASE("filament project state round-trips and keeps unrelated project options", "[ColorConversionPalette][undo]")
+{
+    AutoGenerateOff guard;
+    PresetBundle bundle;
+
+    auto colours = [&bundle]() -> std::vector<std::string>& {
+        return bundle.project_config.option<ConfigOptionStrings>("filament_colour", true)->values;
+    };
+
+    bundle.filament_presets        = {"PLA A", "PLA B"};
+    bundle.ams_multi_color_filment = {{"#111111"}, {"#222222"}};
+    colours()                      = {"#111111", "#222222"};
+    bundle.mixed_filaments.add_custom_filament(1, 2, 50, colours());
+    REQUIRE(bundle.mixed_filaments.mixed_filaments().size() == 1);
+    const uint64_t stable_id = bundle.mixed_filaments.mixed_filaments().front().stable_id;
+
+    const FilamentProjectState before = bundle.capture_filament_project_state();
+
+    // The rewrite: new filament list, new colours, the mixed row is gone.
+    bundle.filament_presets        = {"PLA C", "PLA D", "PLA E"};
+    bundle.ams_multi_color_filment = {{"#333333"}, {"#444444"}, {"#555555"}};
+    colours()                      = {"#333333", "#444444", "#555555"};
+    bundle.mixed_filaments.mixed_filaments().clear();
+    bundle.project_config.set_key_value("color_conversion_palette", new ConfigOptionStrings({"#000000|x", "#FFFFFF|y"}));
+    bundle.set_filament_id_remap({0, 1, 2});
+
+    const FilamentProjectState after = bundle.capture_filament_project_state();
+    const t_config_option_keys keys  = PresetBundle::changed_filament_project_keys(before, after);
+    CHECK(std::find(keys.begin(), keys.end(), "filament_colour") != keys.end());
+
+    // An unrelated option edited after the rewrite is not in the changed keys.
+    bundle.project_config.set_key_value("wipe_tower_rotation_angle", new ConfigOptionFloat(42.));
+    CHECK(std::find(keys.begin(), keys.end(), "wipe_tower_rotation_angle") == keys.end());
+
+    bundle.restore_filament_project_state(before, keys);
+    CHECK(bundle.filament_presets == std::vector<std::string>{"PLA A", "PLA B"});
+    CHECK(bundle.ams_multi_color_filment.size() == 2);
+    CHECK(colours() == std::vector<std::string>{"#111111", "#222222"});
+    REQUIRE(bundle.mixed_filaments.mixed_filaments().size() == 1);
+    CHECK(bundle.mixed_filaments.mixed_filaments().front().stable_id == stable_id);
+    CHECK(bundle.project_config.opt_float("wipe_tower_rotation_angle") == 42.);
+    CHECK(bundle.last_filament_id_remap().empty()); // a stale remap must not hit the restored ids
+
+    // Redo brings the rewrite back with the same keys.
+    bundle.restore_filament_project_state(after, keys);
+    CHECK(bundle.filament_presets == std::vector<std::string>{"PLA C", "PLA D", "PLA E"});
+    CHECK(colours() == std::vector<std::string>{"#333333", "#444444", "#555555"});
+    CHECK(bundle.mixed_filaments.mixed_filaments().empty());
+}
+
+TEST_CASE("changed_filament_project_keys covers keys only one state has", "[ColorConversionPalette][undo]")
+{
+    FilamentProjectState a, b;
+    a.project_config.set_key_value("filament_colour", new ConfigOptionStrings({"#111111"}));
+    b.project_config.set_key_value("filament_colour", new ConfigOptionStrings({"#111111"}));
+    CHECK(PresetBundle::changed_filament_project_keys(a, b).empty());
+
+    b.project_config.set_key_value("color_conversion_palette", new ConfigOptionStrings({"#000000|x"}));
+    const t_config_option_keys only_in_b = PresetBundle::changed_filament_project_keys(a, b);
+    CHECK(only_in_b == t_config_option_keys{"color_conversion_palette"});
+
+    // Restoring a state without the key removes it.
+    PresetBundle bundle;
+    bundle.project_config.set_key_value("color_conversion_palette", new ConfigOptionStrings({"#000000|x"}));
+    bundle.restore_filament_project_state(a, only_in_b);
+    CHECK_FALSE(bundle.project_config.has("color_conversion_palette"));
 }

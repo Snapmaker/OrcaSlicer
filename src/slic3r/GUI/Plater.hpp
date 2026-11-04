@@ -167,6 +167,9 @@ public:
     // (project option color_conversion_palette), recolour the model and drop the old filaments.
     void convert_to_cmyk_palette();
     void reload_cmyk_palette();
+    // Refresh everything that shows the filament list after an undo / redo restored it.
+    // reapply_state runs after the panel sync, which may rewrite the mixed rows from the config.
+    void refresh_after_filament_restore(const std::function<void()>& reapply_state);
     // on_progress (optional) is invoked once per physical-filament deletion inside the
     // batch loop, passing (current, total) where total = redundant physical count.
     // Callers that show a progress dialog map (current/total) to a percentage and
@@ -572,6 +575,9 @@ public:
     // For the memory statistics.
     const Slic3r::UndoRedo::Stack& undo_redo_stack_main() const;
     void clear_undo_redo_stack_main();
+    // Undo / Redo for an action that rewrites the filament list, see FilamentRewriteSnapshot.
+    void begin_filament_rewrite(const std::string &snapshot_name);
+    void end_filament_rewrite();
     // Enter / leave the Gizmos specific Undo / Redo stack. To be used by the SLA support point editing gizmo.
     void enter_gizmos_stack();
     // BBS: return false if not changed
@@ -905,6 +911,20 @@ public:
 	private:
 		Plater *m_plater;
 	};
+
+    // Like TakeSnapshot, for an action that rewrites the filament list. The Undo / Redo stack only
+    // captures the Model and the plates, so the filament state before and after the action is
+    // recorded with the snapshot and restored when an undo or redo crosses it.
+    class FilamentRewriteSnapshot
+    {
+    public:
+        FilamentRewriteSnapshot(Plater *plater, const std::string &snapshot_name) : m_plater(plater) { m_plater->begin_filament_rewrite(snapshot_name); }
+        ~FilamentRewriteSnapshot() { m_plater->end_filament_rewrite(); }
+        FilamentRewriteSnapshot(const FilamentRewriteSnapshot &) = delete;
+        FilamentRewriteSnapshot &operator=(const FilamentRewriteSnapshot &) = delete;
+    private:
+        Plater *m_plater;
+    };
 
     // RAII wrapper for taking an Undo / Redo snapshot while disabling the snapshot taking by the methods called from inside this snapshot.
 	class TakeSnapshot

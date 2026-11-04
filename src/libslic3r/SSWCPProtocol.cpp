@@ -121,6 +121,8 @@ bool select_complete_cached_nozzle_info(const std::vector<std::pair<std::string,
     diameters = std::move(cached_diameters);
     if (flows_complete)
         flows = std::move(cached_flows);
+    else
+        flows.clear();
     return true;
 }
 

@@ -21,6 +21,7 @@ struct FakeHttp final : public HttpTransport
 {
     std::vector<std::string> urls;
     std::vector<std::string> posts;
+    std::vector<std::string> puts;
     std::string              store_response{R"({"ok":true,"data":{"file_exists":true}})"};
     std::atomic<bool>        health_ok{true};
 
@@ -48,6 +49,12 @@ struct FakeHttp final : public HttpTransport
         if (url.find("/api/region") != std::string::npos)
             return {200, R"({"code":200,"data":{"region":"US","locale":"en-US","reload":true}})", {}};
         return {200, store_response, {}};
+    }
+
+    HttpResponse put_json(const std::string& url, const std::string& body) override
+    {
+        puts.push_back(url + "\n" + body);
+        return {200, R"({"ok":true})", {}};
     }
 };
 
@@ -282,6 +289,31 @@ TEST_CASE("GatewayService updates the CLI region", "[gateway][service]")
     const auto invalid_region = service.set_region("");
     REQUIRE(invalid_region.error.code == GatewayErrorCode::InvalidRequest);
     REQUIRE(http->posts.size() == 1);
+
+    service.stop();
+}
+
+TEST_CASE("GatewayService pushes app config keys to the CLI", "[gateway][service]")
+{
+    std::shared_ptr<ConnectionProcessManager> process;
+    std::shared_ptr<FakeHttp>                 http;
+    std::shared_ptr<FakeWebSocket>            websocket;
+    GatewayService                            service(GatewayService::Config{}, make_dependencies(process, http, websocket));
+
+    REQUIRE(service.start("zh-CN"));
+    REQUIRE(wait_for_state(service, ConnectionState::Connected));
+
+    const auto result = service.set_app_config("enable_model_station", true);
+    REQUIRE(!result.error);
+    REQUIRE(http->puts.size() == 1);
+    const auto put_body = nlohmann::json::parse(http->puts[0].substr(http->puts[0].find('\n') + 1));
+    REQUIRE(http->puts[0].substr(0, http->puts[0].find('\n')) == "http://127.0.0.1:8080/api/config");
+    REQUIRE(put_body.at("enable_model_station") == true);
+    REQUIRE(put_body.size() == 1);
+
+    const auto invalid_key = service.set_app_config("", true);
+    REQUIRE(invalid_key.error.code == GatewayErrorCode::InvalidRequest);
+    REQUIRE(http->puts.size() == 1);
 
     service.stop();
 }

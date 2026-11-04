@@ -587,8 +587,7 @@ void PerimeterGenerator::split_top_surfaces(const ExPolygons &orig_polygons, ExP
     last_box.offset(SCALED_EPSILON);
 
     // skip if the exposed area is smaller than "min_width_top_surface"
-    double min_width_top_surface = (config->min_width_top_surface.value / 100) *
-        std::max(ext_perimeter_spacing / 2.0, perimeter_width / 2.0);
+    double min_width_top_surface = std::max(double(ext_perimeter_spacing / 2. + 10), scale_(config->min_width_top_surface.get_abs_value(unscale_(perimeter_width))));
     // get the Polygons upper the polygon this layer
     Polygons upper_polygons_series_clipped;
     if (object_config->interface_shells) {

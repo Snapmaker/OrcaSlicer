@@ -133,8 +133,8 @@ ThickPolylines Fill::fill_surface_arachne(const Surface* surface, const FillPara
 namespace {
 
 constexpr int       kVerticalTol        = 10;          // scaled units: dy to treat the first line as vertical
-constexpr int       kRowJoinTol         = 10;          // x sclae_width: dy below which a segment joins a scan row
-constexpr int       kAdjacentRowTol     = 20;          // x sclae_width: dy within which points belong to one row
+constexpr int       kRowJoinTol         = 10;          // x scale_width: dy below which a segment joins a scan row
+constexpr int       kAdjacentRowTol     = 20;          // x scale_width: dy within which points belong to one row
 constexpr long long kRowSplitGap        = 1800000;     // scaled units: x span excess that splits a scan row
 constexpr long long kRowAsymmetryGap    = 2000000;     // scaled units: end asymmetry that splits a scan row
 constexpr long long kRowEndpointGap     = 2800 * 1000; // scaled units: min x distance to extend the anchor range
@@ -143,6 +143,8 @@ constexpr long long kRowEndpointGap     = 2800 * 1000; // scaled units: min x di
 // the rotated frame, otherwise rotate the scan frame by a quarter turn.
 double top_reorder_scan_angle(const Polylines &polylines, float fill_angle)
 {
+    if (polylines.empty() || polylines.front().points.size() < 2)
+        return fill_angle;
     Eigen::Vector2d point1(polylines[0].points[0][0], polylines[0].points[0][1]);
     Eigen::Vector2d point2(polylines[0].points[1][0], polylines[0].points[1][1]);
     Eigen::Rotation2D rotation(-(double) fill_angle);
@@ -171,11 +173,13 @@ Polylines top_reorder_rotate(const Polylines &polylines, double angle)
 // Split the rotated polylines into near-horizontal scan rows. Segments whose
 // vertical run is small are joined into the current row; a large x gap between
 // consecutive segments starts a new row.
-Polylines top_reorder_split_rows(const Polylines &scan_lines, float sclae_width)
+Polylines top_reorder_split_rows(const Polylines &scan_lines, float scale_width)
 {
     Polylines rows;
     for (const Polyline &line : scan_lines) {
         Polyline &cur = rows.emplace_back();
+        if (line.points.size() < 2)
+            continue;
         for (size_t j = 0; j < line.points.size(); ++j) {
             if (j == 0) {
                 cur.points.push_back(line.points[j]);
@@ -188,7 +192,7 @@ Polylines top_reorder_split_rows(const Polylines &scan_lines, float sclae_width)
             }
 
             long long distY = std::abs(line.points[j].y() - line.points[j + 1].y());
-            if (distY < kRowJoinTol * sclae_width) {
+            if (distY < kRowJoinTol * scale_width) {
                 cur.points.push_back(line.points[j]);
                 cur.points.push_back(line.points[j + 1]);
                 if (cur.points.size() >= 2) {
@@ -214,9 +218,9 @@ Polylines top_reorder_split_rows(const Polylines &scan_lines, float sclae_width)
 // Greedy chaining: starting from row 0 (rows must be sorted by y), repeatedly
 // append the widest unvisited row whose entry point is vertically adjacent to
 // the current row's exit point and x-overlapping; when stuck, start a new chain.
-std::vector<std::vector<int>> top_reorder_chain_rows(const Polylines &rows, float sclae_width)
+std::vector<std::vector<int>> top_reorder_chain_rows(const Polylines &rows, float scale_width)
 {
-    const double row_tol = LINE_WIDTH * sclae_width * 1000.;
+    const double row_tol = LINE_WIDTH * scale_width * 1000.;
     std::vector<bool>          marked(rows.size(), false);
     std::vector<std::vector<int>> chains;
     marked[0] = true;
@@ -231,7 +235,7 @@ std::vector<std::vector<int>> top_reorder_chain_rows(const Polylines &rows, floa
                 continue;
             int pi = 0;
             for (int j = 0; j < int(rows[i].points.size()) - 1; ++j) {
-                if (std::abs(rows[i].points[j].y() - rows[i].points[j + 1].y()) < kAdjacentRowTol * sclae_width) {
+                if (std::abs(rows[i].points[j].y() - rows[i].points[j + 1].y()) < kAdjacentRowTol * scale_width) {
                     pi = j;
                     break;
                 }
@@ -248,7 +252,7 @@ std::vector<std::vector<int>> top_reorder_chain_rows(const Polylines &rows, floa
         long long left  = rows[index_ptr].points.back().x();
         long long right = rows[index_ptr].points[rows[index_ptr].points.size() - 2].x();
         if (p_size >= 4) {
-            if (std::abs(rows[index_ptr].points[p_size - 3].y() - rows[index_ptr].points[p_size - 4].y()) < kAdjacentRowTol * sclae_width) {
+            if (std::abs(rows[index_ptr].points[p_size - 3].y() - rows[index_ptr].points[p_size - 4].y()) < kAdjacentRowTol * scale_width) {
                 std::vector<long long> x1 = { rows[index_ptr].points[p_size - 1].x(), rows[index_ptr].points[p_size - 2].x() };
                 std::sort(x1.begin(), x1.end());
                 std::vector<long long> x2 = { rows[index_ptr].points[p_size - 3].x(), rows[index_ptr].points[p_size - 4].x() };
@@ -316,9 +320,9 @@ std::vector<std::vector<int>> top_reorder_chain_rows(const Polylines &rows, floa
 // Splice chains together: when chain i's row n starts right above the tail of
 // an unconsumed chain j with overlapping x span, insert chain j between the
 // two halves of chain i.
-std::vector<std::vector<int>> top_reorder_merge_chains(const std::vector<std::vector<int>> &chains, const Polylines &rows, float sclae_width)
+std::vector<std::vector<int>> top_reorder_merge_chains(const std::vector<std::vector<int>> &chains, const Polylines &rows, float scale_width)
 {
-    const double row_tol = LINE_WIDTH * sclae_width * 1000.;
+    const double row_tol = LINE_WIDTH * scale_width * 1000.;
     std::vector<std::vector<int>> merged;
     std::vector<bool>             consumed(chains.size(), false);
     for (int i = 0; i < int(chains.size()); ++i) {
@@ -355,16 +359,16 @@ std::vector<std::vector<int>> top_reorder_merge_chains(const std::vector<std::ve
 
 } // namespace
 
-void reorder_top_infill_polylines(Polylines &polylines, float fill_angle, float sclae_width)
+void reorder_top_infill_polylines(Polylines &polylines, float fill_angle, float scale_width)
 {
     const double rot_angle = top_reorder_scan_angle(polylines, fill_angle);
-    Polylines rows = top_reorder_split_rows(top_reorder_rotate(polylines, -rot_angle), sclae_width);
+    Polylines rows = top_reorder_split_rows(top_reorder_rotate(polylines, -rot_angle), scale_width);
     if (rows.empty())
         return;
     std::sort(rows.begin(), rows.end(), [](const Polyline &a, const Polyline &b) { return a.points[0].y() < b.points[0].y(); });
 
-    std::vector<std::vector<int>> chains = top_reorder_chain_rows(rows, sclae_width);
-    std::vector<std::vector<int>> merged = top_reorder_merge_chains(chains, rows, sclae_width);
+    std::vector<std::vector<int>> chains = top_reorder_chain_rows(rows, scale_width);
+    std::vector<std::vector<int>> merged = top_reorder_merge_chains(chains, rows, scale_width);
 
     // Rotate the rows back into the original frame and emit them in chained
     // order, keeping the first occurrence of each row.

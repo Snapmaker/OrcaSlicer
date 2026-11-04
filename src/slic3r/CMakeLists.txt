@@ -348,6 +348,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/MixedFilamentBatchDialog.hpp
     GUI/MixedGradientSelector.hpp
     GUI/MixedGradientSelector.cpp
+    GUI/CmykPalettePanel.cpp
+    GUI/CmykPalettePanel.hpp
     GUI/MixedColorMatchPanel.cpp
     GUI/MixedColorMatchPanel.hpp
     GUI/MixedColorMatchHelpers.hpp

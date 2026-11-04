@@ -465,7 +465,8 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
                                                           const wxColour&                 target_color,
                                                           int                             min_component_percent,
                                                           int                             max_component_percent,
-                                                          bool                            check_compatible)
+                                                          bool                            check_compatible,
+                                                          int                             max_components)
 {
     MixedColorMatchRecipeResult best;
     if (!target_color.IsOk() || physical_colors.size() < 2)
@@ -699,12 +700,104 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
         }
     }
 
+    // ---- Step 8: optional 4-component search (palette mode: e.g. C+M+Y+W / C+M+Y+K) ----
+    // Only runs when the caller allows 4 components, the palette has >= 4 filaments and the
+    // pair/triple result is not already close. Coarse 10% grid over the top-8 candidate pool,
+    // then a +-4% refinement of the best few. Weights are multiples of 10 on the coarse grid,
+    // so every component carries at least 10%.
+    MixedColorMatchRecipeResult best_before_quad = best;
+    bool                        quad_won         = false;
+    if (max_components >= 4 && candidate_pool.size() >= 4 && (!best.valid || best.delta_e > 1.0)) {
+        constexpr int k_quad_coarse_step = 10;
+        constexpr int k_top_quad         = 8;
+        const int     quad_min_weight    = std::max(loop_min_weight, k_quad_coarse_step);
+
+        struct QuadEntry {
+            double       de;
+            unsigned int ids[4];
+            int          w[4];
+            bool operator<(const QuadEntry& o) const { return de < o.de; }
+        };
+        std::priority_queue<QuadEntry> quad_heap;
+
+        auto consider_quad = [&](const unsigned int (&ids)[4], const int (&w)[4], bool push_heap) {
+            CIELab blended = blend_weighted_lab_accurate(palette, {ids[0], ids[1], ids[2], ids[3]}, {w[0], w[1], w[2], w[3]});
+            double de      = delta_e_lab(target_lab, blended);
+            if (!best.valid || de + 1e-6 < best.delta_e) {
+                quad_won           = true;
+                best.valid         = true;
+                best.component_a   = ids[0];
+                best.component_b   = ids[1];
+                best.mix_b_percent = w[0] + w[1] > 0 ? int(std::lround(100.0 * double(w[1]) / double(w[0] + w[1]))) : 50;
+                best.gradient_component_ids     = encode_gradient_ids({ids[0], ids[1], ids[2], ids[3]});
+                best.gradient_component_weights = encode_gradient_weights({w[0], w[1], w[2], w[3]});
+                best.preview_color = blend_multi_filament_mixer(
+                    {palette[ids[0] - 1], palette[ids[1] - 1], palette[ids[2] - 1], palette[ids[3] - 1]},
+                    {double(w[0]), double(w[1]), double(w[2]), double(w[3])});
+                best.delta_e = de;
+                best.manual_pattern.clear();
+            }
+            if (!push_heap) return;
+            QuadEntry qe{de, {ids[0], ids[1], ids[2], ids[3]}, {w[0], w[1], w[2], w[3]}};
+            if (quad_heap.size() < size_t(k_top_quad))
+                quad_heap.push(qe);
+            else if (de < quad_heap.top().de) {
+                quad_heap.pop();
+                quad_heap.push(qe);
+            }
+        };
+
+        const size_t pn = candidate_pool.size();
+        for (size_t i = 0; i + 3 < pn; ++i)
+        for (size_t j = i + 1; j + 2 < pn; ++j)
+        for (size_t k = j + 1; k + 1 < pn; ++k)
+        for (size_t l = k + 1; l < pn; ++l) {
+            const unsigned int ids[4] = {candidate_pool[i], candidate_pool[j], candidate_pool[k], candidate_pool[l]};
+            bool ok = true;
+            for (int x = 0; x < 4 && ok; ++x)
+                for (int y = x + 1; y < 4; ++y)
+                    if (!compat[ids[x] - 1][ids[y] - 1]) { ok = false; break; }
+            if (!ok) continue;
+            for (int wa = quad_min_weight; wa <= max_component_percent; wa += k_quad_coarse_step)
+            for (int wb = quad_min_weight; wa + wb <= 100 - 2 * quad_min_weight && wb <= max_component_percent; wb += k_quad_coarse_step)
+            for (int wc = quad_min_weight; wa + wb + wc <= 100 - quad_min_weight && wc <= max_component_percent; wc += k_quad_coarse_step) {
+                const int wd = 100 - wa - wb - wc;
+                if (wd < quad_min_weight || wd > max_component_percent) continue;
+                const int w[4] = {wa, wb, wc, wd};
+                consider_quad(ids, w, true);
+            }
+        }
+
+        // Refine: +-4% around each of the best coarse entries (weights re-balanced into the 4th).
+        while (!quad_heap.empty()) {
+            QuadEntry qe = quad_heap.top();
+            quad_heap.pop();
+            for (int da = -4; da <= 4; ++da)
+            for (int db = -4; db <= 4; ++db)
+            for (int dc = -4; dc <= 4; ++dc) {
+                if (da == 0 && db == 0 && dc == 0) continue;
+                const int w[4] = {qe.w[0] + da, qe.w[1] + db, qe.w[2] + dc, 100 - (qe.w[0] + da) - (qe.w[1] + db) - (qe.w[2] + dc)};
+                bool in_range = true;
+                for (int x = 0; x < 4; ++x)
+                    if (w[x] < loop_min_weight || w[x] > max_component_percent) { in_range = false; break; }
+                if (!in_range) continue;
+                consider_quad(qe.ids, w, false);
+            }
+        }
+    }
+
     // ---- final normalization: re-evaluate ΔE with consistent color_delta_e00 ----
     // Pair and triple search may use different evaluation paths (LUT vs on-the-fly
     // blend_multi_filament_mixer); re-evaluate both via the same pipeline for a fair
     // comparison, then prefer the simpler (pair) recipe when ΔE gain is negligible.
     if (best.valid)
         best.delta_e = color_delta_e00(target_color, best.preview_color);
+    if (quad_won && best_before_quad.valid) {
+        best_before_quad.delta_e = color_delta_e00(target_color, best_before_quad.preview_color);
+        // Prefer the simpler (<= 3 component) recipe when the 4-component gain is imperceptible.
+        if (best_before_quad.delta_e <= best.delta_e + 0.5)
+            best = std::move(best_before_quad);
+    }
     if (best_pair.valid) {
         best_pair.delta_e = color_delta_e00(target_color, best_pair.preview_color);
         // Pick the true winner under unified evaluation
@@ -1805,7 +1898,8 @@ BatchMatchResult batch_match_model_colors(
     int                                          max_component_percent,
     std::shared_ptr<std::atomic<bool>>           cancel_token,
     std::function<void(int,int)>                 progress_callback,
-    bool                                         check_compatible)
+    bool                                         check_compatible,
+    int                                          max_components)
 {
     BatchMatchResult result;
     result.success = true;
@@ -1849,7 +1943,7 @@ BatchMatchResult batch_match_model_colors(
         const auto& entry = model_colors[i];
         MixedColorMatchRecipeResult recipe =
             build_best_color_match_recipe(physical_colors, entry.color, min_component_percent, max_component_percent,
-                                          check_compatible);
+                                          check_compatible, max_components);
 
         if (!recipe.valid) {
             BOOST_LOG_TRIVIAL(warning)

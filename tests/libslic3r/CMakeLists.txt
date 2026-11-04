@@ -12,6 +12,7 @@ add_executable(${_TEST_NAME}_tests
 	test_extrusion_entity.cpp
 	test_geometry.cpp
 	test_icns.cpp
+	test_color_conversion_palette.cpp
 	test_mixed_filament.cpp
 	test_mixed_filament_color_golden.cpp
 	test_triangle_selector.cpp

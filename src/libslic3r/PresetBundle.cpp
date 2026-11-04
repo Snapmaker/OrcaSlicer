@@ -1069,7 +1069,8 @@ bool PresetBundle::import_json_presets(PresetsConfigSubstitutions &            s
         if (inherits_config) {
             ConfigOptionString *option_str = dynamic_cast<ConfigOptionString *>(inherits_config);
             inherits_value                 = option_str->value;
-            inherit_preset                 = collection->find_preset(inherits_value, false, true);
+            // Orca: try to find if the parent preset has been renamed (renamed_from)
+            inherit_preset                 = collection->find_preset2(inherits_value, false);
         }
         if (inherit_preset) {
             new_config = inherit_preset->config;
@@ -1092,7 +1093,7 @@ bool PresetBundle::import_json_presets(PresetsConfigSubstitutions &            s
             preset.filament_id = key_values[BBL_JSON_KEY_FILAMENT_ID];
         preset.is_external = true;
         preset.version     = *version;
-        inherit_preset     = collection->find_preset(inherits_value, false, true); // pointer maybe wrong after insert, redo find
+        inherit_preset     = collection->find_preset2(inherits_value, false); // pointer maybe wrong after insert, redo find
         if (inherit_preset) preset.base_id = inherit_preset->setting_id;
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " " << __LINE__ << preset.name << " have filament_id: " << preset.filament_id << " and base_id: " << preset.base_id;
         Preset::normalize(preset.config);

@@ -1725,6 +1725,11 @@ void PerimeterGenerator::process_no_bridge(Surfaces& all_surfaces, coord_t perim
             if (!unsupported.empty()) {
                 //remove small overhangs
                 ExPolygons unsupported_filtered = offset2_ex(unsupported, double(-perimeter_spacing), double(perimeter_spacing));
+                // Sacrificial layer mode clears the hole boundaries of the unsupported
+                // area to fill the full counterbore. Keep a copy with the holes still
+                // intact so that, when support is enabled, the fill can be shrunk away
+                // from the wall zone around those holes as well.
+                ExPolygons unsupported_filtered_with_holes;
                 if (!unsupported_filtered.empty()) {
                     //to_draw.insert(to_draw.end(), last.begin(), last.end());
                     //extract only the useful part of the lower layer. The safety offset is really needed here.
@@ -1769,6 +1774,7 @@ void PerimeterGenerator::process_no_bridge(Surfaces& all_surfaces, coord_t perim
                                 unsupported_filtered = intersection_ex(last,
                                                                        offset2_ex(unsupported_filtered, double(-perimeter_spacing / 2), double(bridged_infill_margin + perimeter_spacing / 2)));
                                 if (this->config->counterbore_hole_bridging.value == chbFilled) {
+                                    unsupported_filtered_with_holes = unsupported_filtered;
                                     for (ExPolygon& expol : unsupported_filtered) {
                                         //check if the holes won't be covered by the upper layer
                                         //TODO: if we want to do that, we must modify the geometry before making perimeters.
@@ -1912,12 +1918,20 @@ void PerimeterGenerator::process_no_bridge(Surfaces& all_surfaces, coord_t perim
                             // Support is enabled: keep the model surface intact so that perimeters
                             // and overhang walls are generated normally. Shrink the bridge fill area
                             // inward by the perimeter zone width before appending, to avoid overlap
-                            // with the perimeter walls.
+                            // with the perimeter walls. When sacrificial layer mode cleared the
+                            // hole boundaries of the unsupported area, shrink the variant with
+                            // the holes still intact instead, so the wall zone around the hole is
+                            // excluded from the fill as well; shrinking the cleared area would
+                            // only inset its outer contour and the fill would still be extruded
+                            // over the hole's overhang walls.
                             int wall_loops = std::max(1, this->config->wall_loops.value);
                             coord_t perimeter_zone = ext_perimeter_width / 2
                                 + perimeter_spacing * (wall_loops - 1)
                                 + perimeter_spacing / 2;
-                            ExPolygons fill_safe = offset_ex(unsupported_filtered, -perimeter_zone);
+                            const ExPolygons &fill_area_src = !unsupported_filtered_with_holes.empty()
+                                ? unsupported_filtered_with_holes
+                                : unsupported_filtered;
+                            ExPolygons fill_safe = offset_ex(fill_area_src, -perimeter_zone);
                             if (!fill_safe.empty()) {
                                 this->fill_surfaces->append(fill_safe, stInternal);
                             }

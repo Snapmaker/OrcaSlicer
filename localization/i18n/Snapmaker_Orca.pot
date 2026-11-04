@@ -4235,6 +4235,12 @@ msgstr ""
 msgid "Spacing"
 msgstr ""
 
+msgid "Count"
+msgstr ""
+
+msgid "Gap"
+msgstr ""
+
 msgid "0 means auto spacing."
 msgstr ""
 

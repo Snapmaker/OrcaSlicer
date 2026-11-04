@@ -4510,6 +4510,12 @@ msgstr "Opcions d'ordenació"
 msgid "Spacing"
 msgstr "Espaiat"
 
+msgid "Count"
+msgstr "Quantitat"
+
+msgid "Gap"
+msgstr "Espai"
+
 msgid "0 means auto spacing."
 msgstr "0 significa espaiat automàtic."
 

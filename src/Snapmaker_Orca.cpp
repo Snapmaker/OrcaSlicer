@@ -168,6 +168,8 @@ typedef struct _sliced_info {
     size_t export_time;
     std::vector<std::string> upward_machines;
     std::vector<std::string> downward_machines;
+    // Structured warnings, emitted as the top-level "warnings" array of result.json.
+    nlohmann::json      warnings = nlohmann::json::array();
 }sliced_info_t;
 std::vector<PrintBase::SlicingStatus> g_slicing_warnings;
 
@@ -403,6 +405,29 @@ static PrinterTechnology get_printer_technology(const DynamicConfig &config)
     return(ret);}
 #endif
 
+// Records a warning for result.json. A non-empty "warnings" array does not by itself mean the
+// run failed. result.json is written on Linux only (see the guard in record_exit_reson).
+static void cli_record_warning(sliced_info_t &sliced_info, const std::string &cls, nlohmann::json details = nlohmann::json::object())
+{
+    details["class"] = cls;
+    sliced_info.warnings.push_back(std::move(details));
+}
+
+// Reports each config value that could not be parsed and was replaced. This goes to stderr
+// directly because the CLI's default log level (error) would filter out a logged warning.
+static void cli_report_config_substitutions(const std::string &file, const ConfigSubstitutions &substitutions, sliced_info_t &sliced_info)
+{
+    for (const ConfigSubstitution &subst : substitutions) {
+        const std::string new_value = subst.new_value->serialize();
+        boost::nowide::cerr << "warning: " << file << ": value \"" << subst.old_value << "\" for "
+                            << subst.opt_def->opt_key << " is not valid, using \"" << new_value
+                            << "\" instead" << std::endl;
+        cli_record_warning(sliced_info, "config_value_substituted",
+                           nlohmann::json{{"file", file}, {"key", subst.opt_def->opt_key},
+                                          {"old_value", subst.old_value}, {"new_value", new_value}});
+    }
+}
+
 void record_exit_reson(std::string outputdir, int code, int plate_id, std::string error_message, sliced_info_t& sliced_info, std::map<std::string, std::string> key_values = std::map<std::string, std::string>())
 {
 #if defined(__linux__) || defined(__LINUX__)
@@ -438,9 +463,13 @@ void record_exit_reson(std::string outputdir, int code, int plate_id, std::strin
         for (auto& iter: key_values)
             j[iter.first] = iter.second;
 
+        j["warnings"] = sliced_info.warnings;
+
         boost::nowide::ofstream c;
         c.open(result_file, std::ios::out | std::ios::trunc);
-        c << std::setw(4) << j << std::endl;
+        // Paths can be invalid UTF-8 on Linux: write U+FFFD instead of throwing, which the catch
+        // below would swallow, losing result.json altogether.
+        c << j.dump(4, ' ', false, nlohmann::json::error_handler_t::replace) << std::endl;
         c.close();
 
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" <<__LINE__ << boost::format(", saved config to %1%\n")%result_file;
@@ -1601,11 +1630,7 @@ int CLI::run(int argc, char **argv)
                     record_exit_reson(outfile_dir, CLI_INVALID_PRINTER_TECH, 0, cli_errors[CLI_INVALID_PRINTER_TECH], sliced_info);
                     flush_and_exit(CLI_INVALID_PRINTER_TECH);
                 }
-                if (!config_substitutions.substitutions.empty()) {
-                    BOOST_LOG_TRIVIAL(info) << "Found legacy configuration values, substituted when loading " << file << ":\n";
-                    for (const ConfigSubstitution &subst : config_substitutions.substitutions)
-                        BOOST_LOG_TRIVIAL(info) << "\tkey = \"" << subst.opt_def->opt_key << "\"\t old_value = \"" << subst.old_value << "\tnew_value = \"" << subst.new_value->serialize() << "\"\n";
-                }
+                cli_report_config_substitutions(file, config_substitutions.substitutions, sliced_info);
 
                 // config is applied to m_print_config before the current m_config values.
                 config += std::move(m_print_config);
@@ -1691,7 +1716,7 @@ int CLI::run(int argc, char **argv)
         }
     }
 
-    auto load_config_file = [config_substitution_rule](const std::string& file, DynamicPrintConfig& config, std::string& config_type,
+    auto load_config_file = [config_substitution_rule, &sliced_info](const std::string& file, DynamicPrintConfig& config, std::string& config_type,
                                 std::string& config_name, std::string& filament_id, std::string& config_from) {
         if (! boost::filesystem::exists(file)) {
             boost::nowide::cerr << __FUNCTION__<< ": can not find setting file: " << file << std::endl;
@@ -1743,9 +1768,7 @@ int CLI::run(int argc, char **argv)
             config.normalize_fdm();
 
             if (! config_substitutions.empty()) {
-                BOOST_LOG_TRIVIAL(info) << "Found legacy configuration values, substituted when loading " << file << ":\n";
-                for (const ConfigSubstitution &subst : config_substitutions)
-                    BOOST_LOG_TRIVIAL(info) << "\tkey = \"" << subst.opt_def->opt_key << "\"\t old_value = \"" << subst.old_value << "\tnew_value = \"" << subst.new_value->serialize() << "\"\n";
+                cli_report_config_substitutions(file, config_substitutions, sliced_info);
             }
             else {
                 BOOST_LOG_TRIVIAL(info) << "no substitutions performed from file " << file << "\n";

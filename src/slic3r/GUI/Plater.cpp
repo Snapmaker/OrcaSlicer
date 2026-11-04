@@ -8705,6 +8705,22 @@ void Sidebar::apply_batch_match_result(const BatchMatchResult& result)
             ++k;
             if (vid != 0u) {
                 mapping.target_filament_id = vid;
+            } else if (palette_mode) {
+                // Palette mode deletes the original filaments, so leaving the regions on them
+                // would drop them onto extruder 0 ("default") once cleanup removes their
+                // filament. Fall back to the nearest palette filament instead (the palette
+                // slots are the last K of colors_vec).
+                const size_t K = result.palette_hex.size();
+                const size_t N = colors_vec.size() - std::min(K, colors_vec.size());
+                size_t       best_idx = 0;
+                double       best_de  = std::numeric_limits<double>::infinity();
+                for (size_t i = 0; i < K; ++i) {
+                    const double de = color_delta_e00(mapping.source_color, parse_mixed_color(result.palette_hex[i]));
+                    if (de < best_de) { best_de = de; best_idx = i; }
+                }
+                mapping.is_pure_recipe     = true;
+                mapping.target_filament_id = static_cast<unsigned int>(N + best_idx + 1);
+                ++dropped;
             } else {
                 mapping.target_filament_id = 0;
                 mapping.source_extruder_ids.clear();
@@ -8714,7 +8730,8 @@ void Sidebar::apply_batch_match_result(const BatchMatchResult& result)
         if (dropped > 0)
             BOOST_LOG_TRIVIAL(warning)
                 << "Batch match: " << dropped << " recipe(s) dropped (cap "
-                << "or invalid components); regions left on original filament.";
+                << "or invalid components); "
+                << (palette_mode ? "regions moved to the nearest palette filament." : "regions left on original filament.");
     }
     // Apply matched recipes to model painting data
     set_progress(5);
@@ -8881,16 +8898,28 @@ void Sidebar::convert_to_cmyk_palette()
     const size_t K = palette.size();
 
     BatchMatchResult result;
+    bool             cancelled = false;
     {
-        wxBusyCursor busy;
         // check_compatible=false: the palette filaments are not project slots yet, so the
         // slot-based compatibility matrix would look at the wrong presets. Runs on the UI
         // thread: the matcher builds wxColour objects, whose ref-counted data is not safe to
-        // share across threads on GTK/macOS. With a typical palette (<= 8 filaments) the
-        // 4-component search is a few thousand blends per colour.
-        result = batch_match_model_colors(model_colors, palette_hex, /*min*/ 0, /*max*/ 100, nullptr, nullptr,
+        // share across threads on GTK/macOS. The matcher reports progress once per colour and
+        // ProgressDialog::Update pumps the event loop, so the window keeps repainting and the
+        // Cancel button works without a worker thread.
+        auto cancel_token = std::make_shared<std::atomic<bool>>(false);
+        ProgressDialog progress(_L("Converting to CMYK"), _L("Matching model colours to the CMYK palette..."), 100,
+                                find_toplevel_parent(this), wxPD_APP_MODAL | wxPD_AUTO_HIDE | wxPD_CAN_ABORT);
+        auto on_progress = [&](int current, int total) {
+            const int pct = total > 0 ? std::min(99, current * 100 / total) : 0;
+            if (!progress.Update(pct, _L("Matching model colours to the CMYK palette...")))
+                cancel_token->store(true);
+        };
+        result = batch_match_model_colors(model_colors, palette_hex, /*min*/ 0, /*max*/ 100, cancel_token, on_progress,
                                           /*check_compatible*/ false, /*max_components*/ K >= 4 ? 4 : 3);
+        cancelled = progress.WasCancelled() || result.error_code == 2;
     }
+    if (cancelled)
+        return;
     if (!result.success || result.mappings.empty()) {
         show_error(this, _L("Unable to match the model colours to the CMYK palette."));
         return;

@@ -3601,7 +3601,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Anchor solid infill by X mm");
     def->category = L("Strength");
     def->tooltip  = L("This parameter grows the top/bottom/solid layers by the specified mm to anchor them into the sparse infill and support the perimeters above."
-                       " Put 0 to deactivate it. Can be a %% of the width of the perimeters.");
+                       " Can be a %% of the width of the perimeters.");
     def->sidetext = L("mm or %");
     def->ratio_over  = "line_width";
     def->min      = 0;

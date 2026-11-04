@@ -156,9 +156,13 @@ REM   - Key is on the SafeNet eToken; PIN is cached by the SafeNet client.
 REM     If a PIN prompt appears, enter the value of SIGN_PSW.
 REM   - Update SIGN_SHA1 after a certificate renewal.
 REM ============================================
-REM Dynamically locate the latest signtool.exe (avoid hardcoding SDK version)
+REM Newest x64 signtool.exe. The SDK installs it at bin\<version>\x64\,
+REM not bin\x64\. /on is ascending, so the last x64 hit is the newest.
 set "SIGNTOOL="
-for /f "delims=" %%i in ('dir /b /s /on "C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe" 2^>nul') do set "SIGNTOOL=%%i"
+for /f "delims=" %%i in ('dir /b /s /on "C:\Program Files (x86)\Windows Kits\10\bin\signtool.exe" 2^>nul') do (
+    set "SIGNTOOL_CANDIDATE=%%i"
+    if /i "!SIGNTOOL_CANDIDATE:~-17!"=="\x64\signtool.exe" set "SIGNTOOL=%%i"
+)
 set "SIGN_SHA1=6690289daa949025dae57afbed00d353faf8cd91"
 set "SIGN_TS=http://timestamp.digicert.com"
 

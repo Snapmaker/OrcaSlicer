@@ -5,9 +5,9 @@
 	<key>CFBundleIdentifier</key>
 	<string>com.snapmaker.snapmaker-orca.uninstaller-watcher</string>
 	<key>CFBundleName</key>
-	<string>SnWathcer</string>
+	<string>Snapmaker Orca Monitor</string>
 	<key>CFBundleDisplayName</key>
-	<string>SnWathcer</string>
+	<string>Snapmaker Orca Monitor</string>
 	<key>CFBundleVersion</key>
 	<string>1.0</string>
 	<key>CFBundleShortVersionString</key>

@@ -384,7 +384,7 @@ if (APPLE)
     target_include_directories(UninstallWatcher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_features(UninstallWatcher PRIVATE cxx_std_17)
     set_target_properties(UninstallWatcher PROPERTIES
-        OUTPUT_NAME "SnWathcer"
+        OUTPUT_NAME "Snapmaker Orca Monitor"
         BUILD_RPATH ""
         INSTALL_RPATH "")
     target_link_options(UninstallWatcher PRIVATE
@@ -636,9 +636,9 @@ else ()
     if (APPLE)
         add_dependencies(Snapmaker_Orca UninstallWatcher)
         add_custom_command(TARGET Snapmaker_Orca POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:UninstallWatcher>" "$<TARGET_FILE_DIR:Snapmaker_Orca>/SnWathcer"
-            COMMAND sh -c "codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/SnWathcer' 2>/dev/null || true"
-            COMMENT "Copying SnWathcer next to Snapmaker Orca"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:UninstallWatcher>" "$<TARGET_FILE_DIR:Snapmaker_Orca>/Snapmaker Orca Monitor"
+            COMMAND sh -c "codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/Snapmaker Orca Monitor' 2>/dev/null || true"
+            COMMENT "Copying Snapmaker Orca Monitor next to Snapmaker Orca"
             VERBATIM)
     endif()
 endif ()

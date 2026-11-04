@@ -13,7 +13,7 @@ inline constexpr char kLabel[]        = "com.snapmaker.snapmaker-orca.uninstalle
 inline constexpr char kBundleId[]     = "com.snapmaker.snapmaker-orca";
 inline constexpr char kAppBundleName[] = "Snapmaker Orca.app";
 inline constexpr char kDataDirName[]  = "Snapmaker_Orca";
-inline constexpr char kHelperFileName[] = "SnWathcer";
+inline constexpr char kHelperFileName[] = "Snapmaker Orca Monitor";
 inline constexpr char kWatchFileName[]  = "watch.json";
 
 // Used only while an installer disk image that contains Snapmaker Orca.app is

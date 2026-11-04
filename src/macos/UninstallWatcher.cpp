@@ -91,7 +91,7 @@ CommandResult run_command(const std::vector<std::string>& args, bool capture)
 
 void log_line(const std::string& message)
 {
-    std::fprintf(stderr, "SnWathcer: %s\n", message.c_str());
+    std::fprintf(stderr, "Snapmaker Orca Monitor: %s\n", message.c_str());
     std::fflush(stderr);
 }
 
@@ -147,7 +147,6 @@ struct WatchState {
     std::filesystem::path bundle;
     bool                  seen = false;
     bool                  valid = false;
-    bool                  declined = false;
 };
 
 WatchState load_state()
@@ -162,33 +161,8 @@ WatchState load_state()
         return state;
     state.bundle   = std::filesystem::path(*bundle).lexically_normal();
     state.seen     = json_bool_true(text, "seen_bundle");
-    state.declined = json_bool_true(text, "declined");
     state.valid    = SnapmakerUninstall::is_managed_install_path(state.bundle);
     return state;
-}
-
-std::string json_escape_path(const std::string& text)
-{
-    std::string out;
-    out.reserve(text.size());
-    for (char c : text) {
-        if (c == '\\' || c == '"')
-            out.push_back('\\');
-        out.push_back(c);
-    }
-    return out;
-}
-
-void write_watch_state(const std::filesystem::path& bundle, bool declined)
-{
-    const auto path = SnapmakerUninstall::watch_state_path();
-    if (path.empty())
-        return;
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out)
-        return;
-    out << "{\n  \"bundle_path\": \"" << json_escape_path(bundle.string()) << "\",\n  \"seen_bundle\": true,\n  \"declined\": "
-        << (declined ? "true" : "false") << "\n}\n";
 }
 
 bool bundle_exists(const std::filesystem::path& bundle)
@@ -197,8 +171,8 @@ bool bundle_exists(const std::filesystem::path& bundle)
     return std::filesystem::is_directory(bundle, ec) && !ec;
 }
 
-// Sleep until the install directory changes, or 200ms passes. A 2s sleep can
-// miss a put-back that is trashed again before the next poll, leaving declined set.
+// Sleep until the install directory changes, or 200ms passes. A longer sleep
+// can miss a put-back that is trashed again before the next poll.
 void wait_for_install_dir_change(const std::filesystem::path& bundle)
 {
     const int dirfd = open(bundle.parent_path().c_str(), O_EVTONLY);
@@ -352,10 +326,10 @@ Choice ask_user()
         "nsApp's setActivationPolicy:(current application's NSApplicationActivationPolicyRegular)\n"
         "nsApp's activateIgnoringOtherApps:true\n"
         "set alert to current application's NSAlert's alloc()'s init()\n"
-        "alert's setMessageText:\"Snapmaker Orca 已从「应用程序」移除。\"\n"
-        "alert's setInformativeText:\"勾选「删除个人数据」会清除预设、登录状态、缓存和其他本机配置，且无法恢复。不勾选则不删除任何数据。\"\n"
+        "alert's setMessageText:\"Snapmaker Orca已从「应用程序」中移除。\"\n"
+        "alert's setInformativeText:\"勾选「删除个人数据」将清除预设、登录状态及缓存等本机配置,此操作无法恢复。\"\n"
         "alert's setAlertStyle:(current application's NSAlertStyleWarning)\n"
-        "alert's addButtonWithTitle:\"确定\"\n"
+        "alert's addButtonWithTitle:\"完成\"\n"
         "set row to current application's NSView's alloc()'s initWithFrame:(current application's NSMakeRect(0, 0, 360, 24))\n"
         "set checkbox to current application's NSButton's alloc()'s initWithFrame:(current application's NSMakeRect(4, 0, 340, 24))\n"
         "checkbox's setButtonType:(current application's NSSwitchButton)\n"
@@ -392,10 +366,10 @@ Choice ask_user()
         "nsApp's setActivationPolicy:(current application's NSApplicationActivationPolicyRegular)\n"
         "nsApp's activateIgnoringOtherApps:true\n"
         "set alert to current application's NSAlert's alloc()'s init()\n"
-        "alert's setMessageText:\"Snapmaker Orca has been removed from Applications.\"\n"
-        "alert's setInformativeText:\"Check \\\"Delete personal data\\\" to remove presets, login state, caches, and other local settings. This cannot be undone. Leave it unchecked to delete nothing.\"\n"
+        "alert's setMessageText:\"Snapmaker Orca has been removed from \\\"Applications\\\".\"\n"
+        "alert's setInformativeText:\"Selecting \\\"Delete personal data\\\" will clear slicing presets, login status, and cached local data. This action cannot be undone.\"\n"
         "alert's setAlertStyle:(current application's NSAlertStyleWarning)\n"
-        "alert's addButtonWithTitle:\"OK\"\n"
+        "alert's addButtonWithTitle:\"Done\"\n"
         "set row to current application's NSView's alloc()'s initWithFrame:(current application's NSMakeRect(0, 0, 360, 24))\n"
         "set checkbox to current application's NSButton's alloc()'s initWithFrame:(current application's NSMakeRect(4, 0, 340, 24))\n"
         "checkbox's setButtonType:(current application's NSSwitchButton)\n"
@@ -471,23 +445,42 @@ void remove_plist()
     std::filesystem::remove(plist, ec);
 }
 
+// Removes the watcher's own files: the copy of the binary, watch.json, the log,
+// and the dialog scratch. User data lives beside Helpers in the same support
+// directory and is only touched when delete_user_data is set.
+void remove_helper_dir()
+{
+    const auto dir = SnapmakerUninstall::helper_dir();
+    if (dir.empty())
+        return;
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    if (ec)
+        log_line("failed to remove helper dir: " + ec.message());
+}
+
+// The watcher always removes itself once the prompt is answered: the app is
+// gone, so the launch agent has no reason to stay. The checkbox only decides
+// whether the user data goes with it. Reinstalling and launching Snapmaker
+// Orca registers a fresh watcher.
 [[noreturn]] void finish(bool delete_user_data)
 {
-    std::signal(SIGTERM, SIG_IGN);
-    if (!delete_user_data) {
-        log_line("checkbox off; not deleting anything");
-        _exit(0);
+    std::signal(SIGTERM, SIG_IGN); // bootout delivers SIGTERM; ignore it so cleanup can finish
+    run_command({"/bin/launchctl", "disable", gui_domain() + "/" + SnapmakerUninstall::kLabel}, false);
+
+    if (delete_user_data) {
+        log_line("removing Snapmaker Orca user data: preferences, Application Support, WebKit, caches, HTTP storage, saved state");
+        SnapmakerUninstall::safe_remove_snapmaker_preferences();
+        SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::webkit_data_dir());
+        SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::caches_dir());
+        SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::http_storages_dir());
+        SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::saved_state_dir());
     }
 
-    log_line("removing Snapmaker Orca user data: preferences, Application Support, WebKit, caches, HTTP storage, saved state");
-    run_command({"/bin/launchctl", "disable", gui_domain() + "/" + SnapmakerUninstall::kLabel}, false);
-    SnapmakerUninstall::safe_remove_snapmaker_preferences();
-    SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::webkit_data_dir());
-    SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::caches_dir());
-    SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::http_storages_dir());
-    SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::saved_state_dir());
+    remove_helper_dir();
     remove_plist();
-    SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::support_dir());
+    if (delete_user_data)
+        SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::support_dir());
     bootout_self();
     _exit(0);
 }
@@ -509,42 +502,26 @@ int main()
             continue;
         }
         if (bundle_exists(state.bundle)) {
-            if (state.declined) {
-                log_line("bundle is back; clearing declined so the next removal asks again");
-                write_watch_state(state.bundle, false);
-            }
-            wait_for_install_dir_change(state.bundle);
-            continue;
-        }
-        if (state.declined) {
             wait_for_install_dir_change(state.bundle);
             continue;
         }
         if (!confirm_trashed_uninstall(state.bundle)) {
-            if (bundle_exists(state.bundle) && state.declined)
-                write_watch_state(state.bundle, false);
             wait_for_install_dir_change(state.bundle);
             continue;
         }
 
         for (;;) {
-            if (bundle_exists(state.bundle)) {
-                write_watch_state(state.bundle, false);
+            if (bundle_exists(state.bundle))
                 break;
-            }
             const Choice choice = ask_user();
             if (bundle_exists(state.bundle)) {
                 log_line("bundle returned while the dialog was open; not deleting anything");
-                write_watch_state(state.bundle, false);
                 break;
             }
             if (choice == Choice::DeleteData)
                 finish(true);
-            if (choice == Choice::KeepData) {
-                log_line("checkbox off; not deleting anything");
-                write_watch_state(state.bundle, true);
-                break;
-            }
+            if (choice == Choice::KeepData)
+                finish(false);
             std::this_thread::sleep_for(std::chrono::seconds(30));
         }
     }

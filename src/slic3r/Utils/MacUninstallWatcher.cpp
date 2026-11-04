@@ -232,8 +232,6 @@ void ensure_macos_uninstall_watcher()
             std::filesystem::remove(tmp, ec);
             return;
         }
-        std::filesystem::remove(helper_dir / "UninstallerWatcher", ec);
-        ec.clear();
     }
 
     const std::string state = std::string("{\n  \"bundle_path\": \"") + json_escape(bundle.string()) + "\",\n  \"seen_bundle\": true\n}\n";
@@ -305,12 +303,12 @@ void ensure_macos_uninstall_watcher()
     }
 
     if (replaced) {
-        // bootout first so launchd drops the previous program path. kickstart would
-        // keep running a binary that was still named UninstallerWatcher.
+        // bootout first so launchd drops the previous program path; kickstart would
+        // keep running the previous binary.
         run_quiet({"/bin/launchctl", "bootout", launchd_domain() + "/" + SnapmakerUninstall::kLabel});
         const int rc = run_quiet({"/bin/launchctl", "bootstrap", launchd_domain(), plist_path.string()});
         if (rc != 0 && !service_loaded())
-            BOOST_LOG_TRIVIAL(warning) << "launchctl bootstrap failed for updated SnWathcer, exit " << rc;
+            BOOST_LOG_TRIVIAL(warning) << "launchctl bootstrap failed for updated Snapmaker Orca Monitor, exit " << rc;
         else
             BOOST_LOG_TRIVIAL(info) << "Replaced the existing uninstaller watcher";
     }

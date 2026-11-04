@@ -502,6 +502,25 @@ bool generate_image(const std::string &filename, wxImage &image, wxSize img_size
 
 std::deque<wxDialog*> dialogStack;
 
+void abort_all_modal_dialogs()
+{
+    for (wxDialog* dlg : dialogStack) {
+        if (dlg == nullptr)
+            continue;
+        // Skip stale entries: a dialog can already be deleted while its
+        // ShowModal frame is still on the stack.
+        bool alive = false;
+        for (wxWindowList::compatibility_iterator node = wxTopLevelWindows.GetFirst(); node; node = node->GetNext()) {
+            if (node->GetData() == dlg) {
+                alive = true;
+                break;
+            }
+        }
+        if (alive && dlg->IsModal())
+            dlg->EndModal(wxID_ABORT);
+    }
+}
+
 void fit_in_display(wxTopLevelWindow& window, wxSize desired_size)
 {
     const auto display_size = wxDisplay(window.GetParent()).GetClientArea();

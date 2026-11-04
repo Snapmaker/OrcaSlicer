@@ -71,6 +71,27 @@ endif()
 set(SLIC3R_RC_VERSION "${ORCA_VERSION_MAJOR},${ORCA_VERSION_MINOR},${ORCA_VERSION_PATCH},0")
 
 set(SLIC3R_RESOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+
+# Keep development and packaged resources in sync with the profiles submodule.
+set(SNAPMAKER_PROFILES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/submodules/Profiles")
+set(_profiles_sync_command "${CMAKE_COMMAND}"
+    "-DSUB=${SNAPMAKER_PROFILES_DIR}"
+    "-DDST=${SLIC3R_RESOURCES_DIR}/profiles"
+    "-DVERSION_STAMP=${CMAKE_CURRENT_BINARY_DIR}/snapmaker_profiles_version.txt"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SyncSnapmakerProfiles.cmake")
+
+execute_process(COMMAND ${_profiles_sync_command} RESULT_VARIABLE _profiles_sync_result)
+if(NOT _profiles_sync_result STREQUAL "0")
+    message(FATAL_ERROR "Snapmaker profiles preparation failed (${_profiles_sync_result})")
+endif()
+
+add_custom_target(sync_snapmaker_profiles ALL
+    COMMAND ${_profiles_sync_command}
+    COMMENT "Syncing Snapmaker profiles from submodules/Profiles into resources/profiles"
+    VERBATIM)
+unset(_profiles_sync_command)
+unset(_profiles_sync_result)
+
 file(TO_NATIVE_PATH "${SLIC3R_RESOURCES_DIR}" SLIC3R_RESOURCES_DIR_WIN)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -165,7 +186,9 @@ endif ()
 # Proposal for C++ unit tests and sandboxes
 option(SLIC3R_BUILD_SANDBOXES   "Build development sandboxes" OFF)
 option(BUILD_TESTS       "Build unit tests" OFF)
+option(ORCA_USE_OCCT_LINK_GROUP "Use a Linux OCCT/freetype linker group for Clang sanitizer builds" OFF)
 option(ORCA_TOOLS       "Build Orca tools" OFF)
+option(SLIC3R_WIDGET_INSPECTOR "Build the opt-in wxWidgets widget inspector on Windows" OFF)
 
 if (IS_CROSS_COMPILE)
     message("Detected cross compilation setup. Tests and encoding checks will be forcedly disabled!")
@@ -581,6 +604,43 @@ if (SLIC3R_SENTRY)
     endif()
 endif()
 find_package(Freetype REQUIRED)
+
+# Configure OCCT in top-level scope so the imported targets are visible to both
+# sibling src/ and tests/ directories.
+set(OpenCASCADE_DIR "${CMAKE_PREFIX_PATH}/lib/cmake/occt")
+find_package(OpenCASCADE REQUIRED)
+
+# OCCT archive names are used by libslic3r and by test executables that must
+# explicitly place OCCT and freetype in a linker group. Define them at top-level
+# scope so the sibling src/ and tests/ directories see the same list.
+set(OCCT_LIBS
+    TKXDESTEP
+    TKSTEP
+    TKSTEP209
+    TKSTEPAttr
+    TKSTEPBase
+    TKXCAF
+    TKXSBase
+    TKVCAF
+    TKCAF
+    TKLCAF
+    TKCDF
+    TKV3d
+    TKService
+    TKMesh
+    TKBO
+    TKPrim
+    TKHLR
+    TKShHealing
+    TKTopAlgo
+    TKGeomAlgo
+    TKBRep
+    TKGeomBase
+    TKG3d
+    TKG2d
+    TKMath
+    TKernel
+)
 
 
 add_library(libcurl INTERFACE)

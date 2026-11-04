@@ -3723,6 +3723,17 @@ bool FacetsAnnotation::has_facets(const ModelVolume& mv, EnforcerBlockerType typ
     return TriangleSelector::has_facets(m_data, type);
 }
 
+bool FacetsAnnotation::has_facets_including_implicit_none(const ModelVolume& mv) const
+{
+    // Serialization omits untouched NONE roots. Avoid rebuilding the full mesh selector
+    // when at least one root was omitted; that root is implicitly NONE.
+    if (m_data.triangles_to_split.empty() ||
+        m_data.triangles_to_split.size() < mv.mesh().its.indices.size())
+        return true;
+
+    return TriangleSelector::has_facets(m_data, EnforcerBlockerType::NONE);
+}
+
 bool FacetsAnnotation::set(const TriangleSelector& selector)
 {
     TriangleSelector::TriangleSplittingData sel_map = selector.serialize();

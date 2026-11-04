@@ -78,6 +78,9 @@ struct ProfileConfigUpdateDlgScope {
 
 static const char *INDEX_FILENAME = "index.idx";
 static const char *TMP_EXTENSION = ".data";
+// resources/printers is a flat directory, not a vendor preset bundle. This label selects
+// version.txt validation instead of the machine/filament/process check below.
+static const char *PRINTER_CONFIG_RESOURCE = "printers";
 
 
 void copy_file_fix(const fs::path &source, const fs::path &target)
@@ -150,6 +153,15 @@ struct Update
 	{
 	    if (is_directory) {
             auto validate_staging = [this](const fs::path &staging) -> bool {
+                // resources/printers is a flat directory, not a vendor preset bundle.
+                // Its staging only needs the version marker checked below.
+                if (vendor == PRINTER_CONFIG_RESOURCE) {
+                    if (!fs::exists(staging / "version.txt")) {
+                        BOOST_LOG_TRIVIAL(error) << "Printer config staging is missing version.txt";
+                        return false;
+                    }
+                    return true;
+                }
                 if (vendor.empty())
                     return true;
 
@@ -1480,7 +1492,8 @@ Updates PresetUpdater::priv::get_printer_config_updates(bool update) const
             version.comment = j["description"];
         } catch (...) {}
     }
-    updates.updates.emplace_back(std::move(resc_folder), std::move(config_folder), version, "bbl", change_log, version.comment, false, true);
+    updates.updates.emplace_back(std::move(resc_folder), std::move(config_folder), version, PRINTER_CONFIG_RESOURCE,
+                                 change_log, version.comment, false, true);
     return updates;
 }
 

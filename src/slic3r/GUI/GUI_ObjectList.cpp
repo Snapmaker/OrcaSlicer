@@ -5838,14 +5838,31 @@ void GUI::ObjectList::smooth_mesh()
                 continue;
             }
             ModelObject *obj = model.objects[obj_idx];
-            if (!obj || obj->volumes.empty()) {
+            if (!obj) {
+                continue;
+            }
+            // Object-level subdivision only touches the model parts. The auxiliary
+            // volumes (negative volumes, modifiers, support blockers/enforcers) must
+            // keep their exact geometry: subdividing them would shrink holes and
+            // round off blocker shapes, silently moving the boolean and support
+            // results. The face-count warning counts the same parts, not the whole
+            // object.
+            std::vector<ModelVolume *> model_volumes;
+            size_t                     model_face_count = 0;
+            for (ModelVolume *mv : obj->volumes) {
+                if (mv->type() == ModelVolumeType::MODEL_PART) {
+                    model_volumes.push_back(mv);
+                    model_face_count += mv->mesh().facets_count();
+                }
+            }
+            if (model_volumes.empty()) {
                 continue;
             }
             // Declining a confirmation aborts the whole job before anything is dispatched.
-            if (show_warning_dlg(obj->facets_count() * 4, obj->name, false)) {
+            if (show_warning_dlg(model_face_count * 4, obj->name, false)) {
                 return;
             }
-            for (ModelVolume *mv : obj->volumes) {
+            for (ModelVolume *mv : model_volumes) {
                 inputs->push_back({obj->id(), mv, mv->mesh_ptr(), mv->mesh()});
             }
         }

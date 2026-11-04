@@ -101,6 +101,9 @@ const std::string GCodeProcessor::Flush_End_Tag = " FLUSH_END";
 //Orca: External device purge tag
 const std::string GCodeProcessor::External_Purge_Tag = " EXTERNAL_PURGE";
 
+//Orca: machine statistics command carrying the layer total (Klipper's SET_PRINT_STATS_INFO)
+const std::string GCodeProcessor::Set_Print_Stats_Info_Tag = "SET_PRINT_STATS_INFO";
+
 //Orca: layer total key inside machine statistics lines (e.g. SET_PRINT_STATS_INFO)
 const std::string GCodeProcessor::Total_Layer_Tag = "TOTAL_LAYER=";
 
@@ -4630,10 +4633,11 @@ void GCodeProcessor::run_post_process()
     // non-numeric token (mis-spelled variable) is left untouched on purpose.
     auto process_total_layer = [this](std::string& gcode_line) {
         // Prefilter for parsing speed: indentation is allowed (presets keep the
-        // template text box's leading spaces), but the command itself must start
-        // with "SET" so that comments and unrelated lines keep their text.
+        // template text box's leading spaces), but only the machine statistics
+        // command is rewritten — comments and unrelated commands (e.g. Klipper's
+        // SET_PRESSURE_ADVANCE, which presets also emit) keep their text.
         const size_t start = gcode_line.find_first_not_of(" \t");
-        if (start == std::string::npos || gcode_line.compare(start, 3, "SET") != 0)
+        if (start == std::string::npos || gcode_line.compare(start, Set_Print_Stats_Info_Tag.length(), Set_Print_Stats_Info_Tag) != 0)
             return;
         const std::string& tag = Total_Layer_Tag;
         size_t pos = gcode_line.find(tag, start);

@@ -282,6 +282,8 @@ class Print;
         static const std::string Flush_Start_Tag;
         static const std::string Flush_End_Tag;
         static const std::string External_Purge_Tag;
+        //Orca: layer total key inside machine statistics lines (e.g. SET_PRINT_STATS_INFO)
+        static const std::string Total_Layer_Tag;
     public:
         enum class ETags : unsigned char
         {

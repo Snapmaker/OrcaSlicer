@@ -2925,6 +2925,11 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     this->placeholder_parser().set("retraction_distances_when_cut", new ConfigOptionFloats(m_config.retraction_distances_when_cut));
     this->placeholder_parser().set("long_retractions_when_cut", new ConfigOptionBools(m_config.long_retractions_when_cut));
     // Set variable for total layer count so it can be used in custom gcode.
+    // [total_layer_count] is necessarily the pre-export estimate here: templates are
+    // rendered while streaming, before the real layer count exists. Machine-consumed
+    // renderings of it (e.g. "SET_PRINT_STATS_INFO TOTAL_LAYER=") are rewritten with
+    // the real count by GCodeProcessor::run_post_process; human-readable comment
+    // renderings keep the estimate on purpose.
     this->placeholder_parser().set("total_layer_count", m_layer_count);
     // Useful for sequential prints.
     this->placeholder_parser().set("current_object_idx", 0);
@@ -3505,7 +3510,10 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         file.write_format("; total filament cost = %.2lf\n", print.m_print_statistics.total_cost);
         if (print.m_print_statistics.total_toolchanges > 0)
             file.write_format("; total filament change = %i\n", print.m_print_statistics.total_toolchanges);
-        file.write_format("; total layers count = %i\n", m_layer_count);
+        // m_layer_count is a pre-export estimate that still counts empty layers the exporter
+        // skips (e.g. a cone tip landing exactly on a layer boundary), so it can overshoot;
+        // m_layer_index+1 is the real number of layers written to the file.
+        file.write_format("; total layers count = %i\n", m_layer_index + 1);
         file.write_format(";%s\n", GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Estimated_Printing_Time_Placeholder).c_str());
         file.write("\n");
         file.write("; CONFIG_BLOCK_START\n");

@@ -31,6 +31,11 @@ void FillHoneycomb::_fill_surface_single(
         m.hex_center        = Point(m.hex_width/2, m.hex_side);
     }
     CacheData &m = it_m->second;
+    // Degenerate pattern (zero filler spacing): every step below collapses to zero,
+    // the generation loops would never advance / align_to_grid() would divide by
+    // zero. Emit no infill instead of hanging or crashing.
+    if (m.distance <= 0 || m.hex_width <= 0 || m.pattern_height <= 0)
+        return;
 
     Polylines all_polylines;
     {

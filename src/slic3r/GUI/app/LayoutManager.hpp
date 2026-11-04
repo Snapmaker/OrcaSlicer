@@ -1,12 +1,3 @@
-// LayoutManager — 布局/视图/主题服务（阶段 G3）。
-// 承接：priv 18 成员（Plater.cpp:478-535 原位）+ 9 内联判定族（:574-594）+ 15 函数 +
-// save_window_layout/attach_views 新抽（手册 §2.2）；FloatFrame/AuiMgr 类定义随迁 cpp
-// （FloatFrame 原体调 wxGetApp().UpdateFrameDarkUI —— 宿主能力经 update_frame_dark_ui 槽注入，
-// 维持「服务 cpp 零 wxGetApp」护栏）。
-// 依赖规则（B1/B2/B3/G1/G2 护栏延续）：本 hpp 禁 include 宿主头（Plater/GUI_App/MainFrame）；
-// 宿主能力经 LayoutManagerHost 槽；通知经 NotificationHub& typed 注入（C/G1/G2 先例）。
-// 勘误（手册 §0 / proposal）：路线指引 §4.7 "顶层成员迁移会动 Plater.hpp 私有区" 实测不成立
-// ——18 成员原全在 priv（Plater.cpp），本阶段 hpp 仅加前向声明。
 #pragma once
 
 #include <cstddef>
@@ -62,7 +53,6 @@ public:
     void late_bind(SceneRefreshCoordinator& refresh);   // H1 2.2: refresh declared after this service, bind in plater_init
     ~LayoutManager();                                   // unique_ptr<AuiMgr> 完整类型在 cpp
 
-    // —— 视图/面板成员（原 priv 逐字：指针/容器公有，迁移期最小 diff，G5 收紧；D3）——
     wxPanel*  current_panel{ nullptr };
     std::vector<wxPanel*> panels;
     Sidebar*  sidebar{ nullptr };                       // ctor 接管原 priv init（new Sidebar(q)）
@@ -89,13 +79,10 @@ public:
 #endif
 
     wxAuiManager* aui();                                // m_aui_mgr 接管（基类指针——AuiMgr 完整类型仅在 cpp，
-                                                        // 宿主侧（Plater.cpp 含 wx/aui）经基类调用 SetManagedWindow/AddPane 等即可）
 
-    // —— 新抽（priv ctor/reset 迁出）——
     void attach_views(View3D* v3d, Preview* prev, AssembleView* assemble);   // 原 :1566-1568 panels.push_back×3 + 指针落位
     void save_window_layout();                                               // 原 reset() 尾 :2479-2488
 
-    // —— 视图切换（原 priv 函数逐字，宿主解引用改槽）——
     void select_view(const std::string& direction);
     void select_view_3D(const std::string& name, bool no_slice = true);
     void select_next_view_3D();
@@ -103,25 +90,20 @@ public:
     void set_current_panel(wxPanel* panel, bool no_slice = true);
     GLCanvas3D* get_current_canvas3D(bool exclude_preview = false);
 
-    // —— AUI 侧栏（原 priv 函数逐字）——
     void enable_sidebar(bool enabled);
     void collapse_sidebar(bool collapse);
     void update_sidebar(bool force_update = false);
     void reset_window_layout();
     Sidebar::DockingState get_sidebar_docking_state();
 
-    // —— 主题/rescale（拆分转发的服务体 = 原序列布局前缀；D4）——
     void msw_rescale();
     void sys_color_changed();
     void apply_color_mode();
     void update_ui_from_settings();
 
-    // —— 工具栏/视图查询 ——
     bool init_collapse_toolbar(const GLTexture* shared_background_texture = nullptr);
     bool has_assemble_view() const;
 
-    // —— 原 priv 内联判定族（:574-594 逐字；体在 cpp——View3D/Preview 在本 hpp 仅前向声明，
-    //    指针比较/解引用需完整类型，与原 priv 位于 Plater.cpp 同理）——
     bool is_preview_shown() const;
     bool is_preview_loaded() const;
     bool is_view3D_shown() const;
@@ -132,11 +114,9 @@ public:
     void show_view3D_overhang(bool show);
     bool is_view3D_layers_editing_enabled() const;
 
-    // —— 面板种类（视图切换/画布判定的可测纯核；D7）——
     enum class PanelKind { None, View3D, Preview, Assemble };
     struct SidebarVisPlan { bool should_show{false}; bool change{false}; };
 
-    // 纯函数（无 wx 依赖，无头单测直调；手册 §6 用例 A/B）
     static SidebarVisPlan plan_sidebar_visibility(const SidebarLayout& st, bool pane_shown, bool pane_floating);
     static Sidebar::DockingState docking_state_from(bool is_enabled, bool is_floating, bool docked_right);
     static PanelKind pick_canvas_kind(PanelKind current, bool exclude_preview);

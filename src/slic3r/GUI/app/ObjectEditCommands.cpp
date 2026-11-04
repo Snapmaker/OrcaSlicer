@@ -1,9 +1,4 @@
-// ObjectEditCommands 实现（阶段 F1，手册 §2.2/§3）：删除/变换/剪贴板克隆/网格变更/动作分发 + 谓词组逐字搬移自
-// Plater::priv（2026-10-19 基线）与 Plater 门面体。逐函数体保持原顺序与注释；仅做宿主触点替换：
 //   model.→m_model->、get_selection()→m_selq、sidebar->obj_list()/wxGetApp().obj_list()→m_layout->sidebar->obj_list()、
-//   view3D→m_layout->view3D、get_current_canvas3D()→m_layout->get_current_canvas3D()、update()/object_list_changed()/...→Host 槽、
-//   slicing()→m_slicing.、partplate_list→m_partplate_list、嵌套版 TakeSnapshot→TakeSnapshotScope。
-// 依赖规则：禁直接 include Plater/GUI_App 宿主头（NotificationManager/GUI/MsgDialog 的传递包含与 E1/E2 cpp 同款先例）。
 #include "ObjectEditCommands.hpp"
 #include "../Plater.hpp"
 #include "../GUI_ObjectList.hpp"   // H2 3.1 顶部瘦身：ObjectList 完整型（原经 Plater.hpp→Search.hpp 传递链）        // 阶段 H1 2.2：F1/F3 门面直调（IsShown/notify_filament_usage_changed/preset_bundle/CloneDialog）
@@ -23,7 +18,6 @@
 #include <windows.h>
 #include <winnls.h>              // CP_ACP（WIN32_LEAN_AND_MEAN 下 asio socket_ops.ipp 需要；实测缺失）
 #endif
-// 注意：必须早于 SlicingController.hpp（经 BackgroundSlicingProcess.hpp→Utils/PrintHost.hpp 引入 asio，实测）
 
 #include "SelectionQuery.hpp"
 #include "ProjectSession.hpp"
@@ -71,7 +65,6 @@ void ObjectEditCommands::late_bind(LayoutManager& layout, SceneRefreshCoordinato
     m_refresh = &refresh;
 }
 
-// 原嵌套版 TakeSnapshot 语义逐字：take → suppress（构造），allow（析构）
 ObjectEditCommands::TakeSnapshotScope::TakeSnapshotScope(SnapshotService& snapshots, const std::string& name)
     : m_snapshots(snapshots)
 {
@@ -84,7 +77,6 @@ ObjectEditCommands::TakeSnapshotScope::~TakeSnapshotScope()
     m_snapshots.allow_snapshots();
 }
 
-// ============================ 删除组 ============================
 
 void ObjectEditCommands::remove(size_t obj_idx)
 {
@@ -197,7 +189,6 @@ void ObjectEditCommands::remove_selected()
     }
 }
 
-// ============================ 变换组 ============================
 
 void ObjectEditCommands::center_selection()
 {
@@ -324,7 +315,6 @@ void ObjectEditCommands::exit_gizmo()
     m_layout->view3D->exit_gizmo();
 }
 
-// ============================ 剪贴板/克隆组 ============================
 
 void ObjectEditCommands::cut_selection_to_clipboard()
 {
@@ -389,7 +379,6 @@ void ObjectEditCommands::apply_cut_object_to_model(size_t obj_idx, const std::ve
     // w.wait_for_idle();
 }
 
-// ============================ 网格/gizmo 组 ============================
 
 void ObjectEditCommands::clear_before_change_mesh(int obj_idx)
 {
@@ -428,7 +417,6 @@ void ObjectEditCommands::reset_all_gizmos()
     m_layout->view3D->get_canvas3d()->reset_all_gizmos();
 }
 
-// ============================ 动作分发 ============================
 
 void ObjectEditCommands::select_all()
 {
@@ -475,7 +463,6 @@ void ObjectEditCommands::on_action_layersediting()
     }
 }
 
-// ============================ 谓词组 ============================
 
 bool ObjectEditCommands::can_delete() const
 {

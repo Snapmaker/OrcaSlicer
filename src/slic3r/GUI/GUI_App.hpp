@@ -242,7 +242,6 @@ public:
     }
 };
 
-// 阶段 H2 2.0：组合根装配（design 决策 9）——15 服务前向声明（hpp 侧零服务头 include，勘误 13 教训）
 namespace app {
 class NotificationHub;
 class SnapshotService;
@@ -354,10 +353,6 @@ private:
     // login widget
     ZUserLogin*     login_dlg { nullptr };
 
-    // —— 阶段 H2 2.0：组合根装配（design 决策 9）——15 服务所有权存储。
-    // 构造留守 Plater ctor/plater_init（服务 ctor 以 Plater*/Plater 成员引用为参，接口零改动），
-    // 经 friend Plater 直写成员（单写点纪律）；~Plater 末尾 shutdown_services() 统一析构（逆构造序）。
-    // hpp 侧可空 unique_ptr<前向类型>——完整型在 GUI_App.cpp（析构点），不拖服务头级联。
     std::unique_ptr<app::NotificationHub>         m_notification_hub;
     std::unique_ptr<app::SnapshotService>         m_snapshots;
     std::unique_ptr<app::PlateController>         m_plates;
@@ -375,7 +370,6 @@ private:
     std::unique_ptr<app::PlaterEventRouter>       m_router;
 
 public:
-    // —— 组合根服务访问面（H2 2.0）：外部消费方 wxGetApp().<svc>() ——
     app::NotificationHub&         notification_hub();
     app::SnapshotService&         snapshots();
     app::PlateController&         plates();
@@ -391,7 +385,6 @@ public:
     app::LayoutManager&           layout();
     app::SceneRefreshCoordinator& refresh();
     app::PlaterEventRouter&       router();
-    /// 服务统一析构（~Plater 末尾调用；逆构造序 reset——复现原 Plater 成员逆序析构语义）。
     void shutdown_services();
     friend class Plater;   // H2 2.0：装配写入端（plater_init 直写 m_* 成员）
 
@@ -416,7 +409,6 @@ private:
 
 public:
     HttpServer       m_page_http_server;
-    // ② 最小携带：会话结束状态与回退定时器（bpe GUI_App.hpp:261-262 逐字）
     bool m_in_session_end{ false };
     wxTimer m_session_end_reset_timer; // fallback reset for a cancelled session end
     mutable std::shared_ptr<Gateway::GatewayService> m_gateway_service;
@@ -530,7 +522,6 @@ private:
 #endif
     static unsigned get_colour_approx_luma(const wxColour& colour);
     static bool     dark_mode();
-    // ② 最小携带（2.8 勘误）：SNAPMAKER_ORCA-1H6 会话结束标志——carried ProjectSession::close_with_confirm 消费
     bool in_session_end() const { return m_in_session_end; }
 
     // A queried session end was cancelled: restore interactive close.
@@ -664,7 +655,6 @@ private:
     void            stop_page_http_server();
     /// Actual listen port (may differ from PAGE_HTTP_PORT if the default was in use).
     boost::asio::ip::port_type get_page_http_port() const { return m_page_http_server.get_port(); }
-    // ② 携带（2.8 勘误补）：bpe 国际化 URL 工具——Plater::international_url 转发壳与 EventRouter/Sidebar 消费
     wxString        get_international_url(const wxString& origin_url);
 
     bool            start_gateway_service(bool restart = false);

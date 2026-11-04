@@ -1,14 +1,3 @@
-// PlaterEventRouter — 事件路由服务实现（阶段 G5）。
-// 迁移源：Plater.cpp priv ctor Bind 区 138 处（手册 §2.3）+ 50 个 on_* 处理器 + 3 个 EVT_ 命名
-// 处理器（install_network_plugin/update_plugin_when_launch/show_install_plugin_hint——有 Bind，
-// 壳消亡口径不适用，勘误登记）+ show_right_click_menu helper（§2.2-3 随处理器迁）。
-// 等价改写豁免口径（逐字审计）：①priv accessor 调用（layout()/slicing()/session()/ex()/plates()/
-// obj_cmds()/refresh()）→ typed 引用成员 ②q-> 公有门面保持 ③wxGetApp/main_frame 触点→host 槽
-// （陷阱 8：本 cpp 零 wxGetApp）④priv helper（reset_all_gizmos/filament_usage_sync_pending/menus/
-// partplate_list/model）→host 槽 ⑤&priv::on_x→&Impl::on_x。
-// 边界：wxEVT_TIMER bind（SlicingController 定时器域）与视图构造/AUI/相机/快照初始化**留守 ctor**
-// （手册 §2.3/陷阱——本服务零触碰）。
-// Windows/asio 前置块必须置于一切 include 之前（G2 勘误 10）。
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -84,8 +73,6 @@ namespace GUI {
 
 namespace app {
 
-// —— Impl：事件签名类型（SlicingStatusEvent 困 BackgroundSlicingProcess.hpp、EVT_* 困 Plater.hpp）
-//    全部承载于此——hpp 保持零宿主头（勘误登记：手册 §3 草案处理器入类 → Impl 承载，bodies 逐字不变）——
 struct PlaterEventRouter::Impl {
     Plater* q;
     NotificationHub& hub;
@@ -103,9 +90,7 @@ struct PlaterEventRouter::Impl {
     Model& model;
     std::atomic<bool>& filament_usage_sync_pending;
 
-    // —— on_* 事件处理器（50 + EVT_ 命名 3 + helper 1，逐字迁入；accessor 调用→typed 成员）——
 
-    // 原 priv::on_slicing_update（:2617 一行壳）
     void on_slicing_update(SlicingStatusEvent& evt) { slicing.handle_slicing_update(evt); }
     void on_slicing_completed(wxCommandEvent& evt) { slicing.handle_slicing_completed(evt); }
     void on_export_began(wxCommandEvent& evt) { slicing.handle_export_began(); }
@@ -116,7 +101,6 @@ struct PlaterEventRouter::Impl {
     void on_action_slice_plate(SimpleEvent&) { slicing.on_action_slice_plate(); }
     void on_action_slice_all(SimpleEvent&) { slicing.on_action_slice_all(); }
 
-    // 原 priv::on_action_*（E2 导出/发送族，ex() 壳逐字）
     void on_action_publish(wxCommandEvent& event) { ex.handle_publish(event.GetInt() == EVT_PUBLISHING_START); }
     void on_action_print_plate(SimpleEvent&)
     {
@@ -186,7 +170,6 @@ struct PlaterEventRouter::Impl {
     void update_plugin_when_launch(wxCommandEvent&) { ex.update_plugin_when_launch(); }
     void show_install_plugin_hint(wxCommandEvent&) { ex.show_install_plugin_hint(); }
 
-    // 原 priv::on_action_*（E1 项目族 / D1 多盘族，session()/plates() 壳逐字）
     void on_action_open_project(SimpleEvent&) { if (q != nullptr) session.on_action_open_project(); }
     void on_action_request_model_id(wxCommandEvent& evt) { if (q != nullptr) session.on_action_request_model_id(evt.GetString()); }
     void on_action_download_project(wxCommandEvent& evt) { if (q != nullptr) session.on_action_download_project(evt.GetString()); }
@@ -194,14 +177,12 @@ struct PlaterEventRouter::Impl {
     void on_action_add_plate(SimpleEvent&) { plates.add_plate(); }
     void on_plate_selected(SimpleEvent&) { plates.on_plate_selected(); }
 
-    // 原 priv::on_action_*（F1 对象编辑族，obj_cmds() 壳逐字）
     void on_action_split_objects(SimpleEvent&) { obj_cmds.on_action_split_objects(); }
     void on_action_split_volumes(SimpleEvent&) { obj_cmds.on_action_split_volumes(); }
     void on_object_select(SimpleEvent&) { obj_cmds.on_object_select(); }
     void on_repair_model(wxCommandEvent&) { obj_cmds.on_repair_model(); }
     void on_action_layersediting(SimpleEvent&) { obj_cmds.on_action_layersediting(); }
 
-    // 原 priv::on_action_add/_del_plate/_select_sliced_plate（q 门面逐字）
     void on_action_add(SimpleEvent&)
     {
         if (q != nullptr) {
@@ -222,7 +203,6 @@ struct PlaterEventRouter::Impl {
         q->select_sliced_plate(evt.GetInt());
     }
 
-    // 原 priv::on_combobox_select（:2389-2412 逐字；layout()/互调经 Impl）
     void on_combobox_select(wxCommandEvent& evt)
     {
         PlaterPresetComboBox* preset_combo_box = dynamic_cast<PlaterPresetComboBox*>(evt.GetEventObject());
@@ -240,7 +220,6 @@ struct PlaterEventRouter::Impl {
         }
     }
 
-    // 原 priv::on_select_bed_type（:2414-2475 逐字；wxGetApp→host 槽）
     void on_select_bed_type(wxCommandEvent& evt)
     {
         ComboBox* combo = static_cast<ComboBox*>(evt.GetEventObject());
@@ -295,7 +274,6 @@ struct PlaterEventRouter::Impl {
         }
     }
 
-    // 原 priv::on_select_preset（:2477-2615 逐字；wxGetApp→host 槽、partplate_list/model→host）
     void on_select_preset(wxCommandEvent& evt)
     {
         PlaterPresetComboBox* combo = static_cast<PlaterPresetComboBox*>(evt.GetEventObject());
@@ -418,7 +396,6 @@ struct PlaterEventRouter::Impl {
         }
     }
 
-    // 原 priv::on_tab_selection_changing（:2694-2750 逐字；main_frame/wxGetApp→host）
     void on_tab_selection_changing(wxBookCtrlEvent& e)
     {
         MainFrame* mf = main_frame;
@@ -457,8 +434,6 @@ struct PlaterEventRouter::Impl {
                     }
                     const bool showing_u1 = mf->m_printer_view->is_u1_device_page();
                     if (is_snapmaker_u1 && !showing_u1) {
-                        // 2.8 勘误（③URL 构建器）：恢复 vanilla main 语义——gateway 端口 + device_control 路由
-                        // （bpe 的 page_http+flutter URL 在 main 的 HttpServer 被设计性拒答）
                         mf->load_printer_url(wxGetApp().gateway_web_url("device_control"));
                     } else if (!is_snapmaker_u1 && showing_u1) {
                         wxString non_u1 = url;
@@ -474,7 +449,6 @@ struct PlaterEventRouter::Impl {
         }
     }
 
-    // 原 priv::on_filament_color_changed（:2922-2942 逐字）
     void on_filament_color_changed(wxCommandEvent& event)
     {
         int modify_id = event.GetInt();
@@ -498,7 +472,6 @@ struct PlaterEventRouter::Impl {
             canvas->get_gizmos_manager().update_data();
     }
 
-    // 原 priv::on_apple_change_color_mode（:2965-2974 逐字；m_notification_hub→hub）
     void on_apple_change_color_mode(wxSysColourChangedEvent& evt)
     {
         hub.set_is_dark(wxSystemSettings::GetAppearance().IsDark());
@@ -511,7 +484,6 @@ struct PlaterEventRouter::Impl {
         layout.apply_color_mode();
     }
 
-    // 原 priv::on_change_color_mode（:2976-2984 逐字）
     void on_change_color_mode(SimpleEvent& evt)
     {
         hub.set_is_dark(q->app_config()->get("dark_color_mode") == "1");
@@ -523,7 +495,6 @@ struct PlaterEventRouter::Impl {
         layout.apply_color_mode();
     }
 
-    // 原 Plater.cpp 静态 get_position（:2988-3002 逐字随迁）
     static void get_position(wxWindowBase* child, wxWindowBase* until_parent, int& x, int& y)
     {
         int res_x = 0, res_y = 0;
@@ -541,7 +512,6 @@ struct PlaterEventRouter::Impl {
         y = res_y;
     }
 
-    // 原 priv::show_right_click_menu（:3004-3020 逐字）
     void show_right_click_menu(Vec2d mouse_position, wxMenu* menu)
     {
         int x, y;
@@ -559,7 +529,6 @@ struct PlaterEventRouter::Impl {
         canvas.clear_popup_menu_position();
     }
 
-    // 原 priv::on_right_click（:3022-3084 逐字；判定核抽 plan_right_click_menu_kind——D7）
     void on_right_click(RBtnEvent& evt)
     {
         int obj_idx = q->get_selected_object_idx();
@@ -623,17 +592,14 @@ struct PlaterEventRouter::Impl {
         }
     }
 
-    // 原 priv::on_plate_right_click（:3087-3091 逐字）
     void on_plate_right_click(RBtnPlateEvent& evt)
     {
         wxMenu* menu = menus.plate_menu();
         show_right_click_menu(evt.data.first, menu);
     }
 
-    // 原 priv::on_update_geometry（:3093-3096 空体逐字）
     void on_update_geometry(Vec3dsEvent<2>&) {}
 
-    // 原 priv::on_3dcanvas_mouse_dragging_started/finished（:3098-3113 逐字；G4 D3 consume）
     void on_3dcanvas_mouse_dragging_started(SimpleEvent&)
     {
         layout.view3D->get_canvas3d()->reset_sequential_print_clearance();
@@ -645,7 +611,6 @@ struct PlaterEventRouter::Impl {
         }
     }
 
-    // 原 priv::on_create_filament（:3350-3361 逐字；wxGetApp→host）
     void on_create_filament(SimpleEvent&)
     {
         CreateFilamentPresetDialog dlg(main_frame);
@@ -659,7 +624,6 @@ struct PlaterEventRouter::Impl {
         }
     }
 
-    // 原 priv::on_modify_filament（:3363-3390 逐字）
     void on_modify_filament(SimpleEvent& evt)
     {
         Filamentinformation* filament_info = static_cast<Filamentinformation*>(evt.GetEventObject());
@@ -684,17 +648,14 @@ struct PlaterEventRouter::Impl {
         }
     }
 
-    // 原 priv::on_add_filament/on_delete_filament/on_add_custom_filament（:3392-3403 逐字）
     void on_add_filament(SimpleEvent&) { layout.sidebar->add_filament(); }
     void on_delete_filament(SimpleEvent&) { layout.sidebar->delete_filament(); }
     void on_add_custom_filament(ColorEvent& evt) { layout.sidebar->add_custom_filament(evt.data); }
 
-    // —— install/uninstall/rebind（原 priv ctor Bind 区 :1530-1548/:1549/:1625-1963 逐字平移）——
     void install();
     void uninstall();
 };
 
-// —— install：priv ctor 138 处 Bind 逐字平移（wxEVT_TIMER bind 与视图构造/AUI/相机/快照初始化留守 ctor——定时器域纪律）——
 void PlaterEventRouter::Impl::install()
 {
     MainFrame* mf = main_frame;
@@ -702,7 +663,6 @@ void PlaterEventRouter::Impl::install()
     wxGLCanvas* preview_canvas = layout.preview->get_wxglcanvas();
     wxGLCanvas* assemble_canvas = layout.assemble_view->get_wxglcanvas();
 
-    // 原 :1608-1613（sidebar wxEVT_IDLE 尺寸追踪——pane info 为 aui 管理器所有，引用捕获安全）
     {
         auto& sidebar_pane = layout.aui()->GetPane(layout.sidebar);
         layout.sidebar->Bind(wxEVT_IDLE, [&sidebar_pane](wxIdleEvent& e) {
@@ -713,7 +673,6 @@ void PlaterEventRouter::Impl::install()
         });
     }
 
-    // 原 :1530-1548（q 事件族）
     q->Bind(EVT_SLICING_UPDATE, &Impl::on_slicing_update, this);
     q->Bind(EVT_PUBLISH, &Impl::on_action_publish, this);
     q->Bind(EVT_REPAIR_MODEL, &Impl::on_repair_model, this);
@@ -733,11 +692,9 @@ void PlaterEventRouter::Impl::install()
         q->sync_flow_ratio_zero_notification();
         q->sync_cold_plate_notification();
     });
-    // 原 :1549（tabpanel）
     if (mf && mf->m_tabpanel)
         mf->m_tabpanel->Bind(wxEVT_NOTEBOOK_PAGE_CHANGING, &Impl::on_tab_selection_changing, this);
 
-    // 原 :1625-1639（sidebar + q 编辑器事件族）
     if (q->is_editor()) {
         layout.sidebar->Bind(wxEVT_COMBOBOX, &Impl::on_combobox_select, this);
         layout.sidebar->Bind(EVT_OBJ_LIST_OBJECT_SELECT, [this](wxEvent&) { refresh.selection_changed(); });
@@ -752,7 +709,6 @@ void PlaterEventRouter::Impl::install()
         );
     }
 
-    // 原 :1645-1732（view3D_canvas 事件族）
     if (q->is_editor()) {
         view3D_canvas->Bind(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS, [this](SimpleEvent&) {
             refresh.clear_delayed_error_message();
@@ -825,7 +781,6 @@ void PlaterEventRouter::Impl::install()
     }
     view3D_canvas->Bind(EVT_GLCANVAS_UPDATE_BED_SHAPE, [this](SimpleEvent&) { q->set_bed_shape(); });
 
-    // 原 :1735-1767（Preview 事件族）
     layout.preview->get_wxglcanvas()->Bind(EVT_GLCANVAS_QUESTION_MARK, [this](SimpleEvent&) { q->keyboard_shortcuts(); });
     layout.preview->get_wxglcanvas()->Bind(EVT_GLCANVAS_UPDATE_BED_SHAPE, [this](SimpleEvent&) { q->set_bed_shape(); });
     layout.preview->get_wxglcanvas()->Bind(EVT_GLCANVAS_UPDATE, [this](SimpleEvent&) {
@@ -860,7 +815,6 @@ void PlaterEventRouter::Impl::install()
     if (q->is_gcode_viewer())
         layout.preview->Bind(EVT_GLCANVAS_RELOAD_FROM_DISK, [this](SimpleEvent&) { this->session.reload_gcode_from_disk(); });
 
-    // 原 :1770-1779（assemble_canvas 事件族）
     if (q->is_editor()) {
         assemble_canvas->Bind(EVT_GLTOOLBAR_FILLCOLOR, [this](IntEvent& evt) { q->fill_color(evt.get_data()); });
         assemble_canvas->Bind(EVT_GLCANVAS_OBJECT_SELECT, &Impl::on_object_select, this);
@@ -871,7 +825,6 @@ void PlaterEventRouter::Impl::install()
         assemble_canvas->Bind(EVT_GLCANVAS_REDO, [this](SimpleEvent&) { snapshots.redo(); });
     }
 
-    // 原 :1781-1823（q 编辑器事件族二）
     if (q->is_editor()) {
         q->Bind(EVT_SLICING_COMPLETED, &Impl::on_slicing_completed, this);
         q->Bind(EVT_PROCESS_COMPLETED, &Impl::on_process_completed, this);
@@ -915,7 +868,6 @@ void PlaterEventRouter::Impl::install()
         q->Bind(EVT_OPEN_PLATESETTINGSDIALOG, [this](wxCommandEvent& evt) { q->open_platesettings_dialog(evt); });
     }
 
-    // 原 :1852-1898（HID + 通知点击 + 可移动盘族）
 #ifdef _WIN32
     q->Bind(EVT_HID_DEVICE_ATTACHED, [this](HIDDeviceAttachedEvent& evt) {
         layout.mouse3d_controller.device_attached(evt.data);
@@ -956,7 +908,6 @@ void PlaterEventRouter::Impl::install()
 #endif
     }
 
-    // 原 :1913-1940（restore project；last_backup 由 app_config 槽读取——原 ctor 时点语义保持）
     if (q->is_editor()) {
         auto last_backup = q->app_config()->get_last_backup_dir();
         q->Bind(EVT_RESTORE_PROJECT, [this, last = last_backup](wxCommandEvent& e) {
@@ -982,7 +933,6 @@ void PlaterEventRouter::Impl::install()
             });
     }
 
-    // 原 :1942-1962（跨实例事件族）
     q->Bind(EVT_LOAD_MODEL_OTHER_INSTANCE, [this](LoadFromOtherInstanceEvent& evt) {
         BOOST_LOG_TRIVIAL(trace) << "Received load from other instance event.";
         wxArrayString input_files;
@@ -1007,9 +957,6 @@ void PlaterEventRouter::Impl::install()
     });
 }
 
-// —— uninstall：install 的对称解绑（成员函数指针绑定 Unbind + lambda 绑定以 Unbind(wxEVT_ANY…) 不可行，
-//    wx 语义：lambda Bind 无法具名解绑——uninstall 采用 wxWindow::Unbind 全事件族逐条对称、
-//    lambda 绑定随目标窗口析构自然消亡（install 仅在 ctor 调一次，uninstall/rebind 供视图重挂扩展）——
 void PlaterEventRouter::Impl::uninstall()
 {
     MainFrame* mf = main_frame;
@@ -1031,7 +978,6 @@ void PlaterEventRouter::Impl::uninstall()
     q->Unbind(EVT_ADD_CUSTOM_FILAMENT, &Impl::on_add_custom_filament, this);
 }
 
-// —— Router 公有面（pimpl 委托）——
 
 PlaterEventRouter::PlaterEventRouter(Plater* q, NotificationHub& hub,
                                      SlicingController& slicing, ProjectSession& session,
@@ -1051,7 +997,6 @@ void PlaterEventRouter::install() { m_impl->install(); }
 void PlaterEventRouter::uninstall() { m_impl->uninstall(); }
 void PlaterEventRouter::rebind() { m_impl->uninstall(); m_impl->install(); }
 
-// —— 纯函数两件（D7；判定语义 = 原 on_right_click/on_tab_selection_changing 分支逐字）——
 
 PlaterEventRouter::RightClickMenuKind PlaterEventRouter::plan_right_click_menu_kind(
     bool no_object, bool clicked_empty, bool selection_empty, bool panel_is_assemble,

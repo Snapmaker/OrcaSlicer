@@ -1,6 +1,3 @@
-// ProjectSession — Plater 项目会话服务（阶段 E1 纯搬移，手册《Plater阶段E1-项目ProjectSession抽取实施方案》）。
-// hpp：wx 仅以指针/值类型出现；依赖规则（AGENTS.md）：本目录禁止 include Plater/GUI_App 宿主头，
-// q 与 priv 上下文只能经 Host 进入；SLAImportDialog 因其头文件含 Plater.hpp 同禁（经 Host 槽惰性创建）。
 #pragma once
 
 #include <functional>
@@ -66,19 +63,15 @@ public:
     void late_bind(ExportSendCoordinator& ex, SelectionQuery& selq, LayoutManager& layout,
                    SceneRefreshCoordinator& refresh, MixingGateKeeper& gate_keeper);   // H1 2.3
     ~ProjectSession();
-    // H2 收口（用户授权接口扩展 2026-10-23）：模型对象访问器——消费方脱离 Plater::model() 门面
     Model& model() const;   // cpp 定义（Model 前向声明——解引用需完整型）
 
 
-    // —— 纯函数（单测面；原 Plater 静态组 :609/:615/:625）——
     static bool has_illegal_filename_characters(const wxString& wxs_name);
     static bool has_illegal_filename_characters(const std::string& name);
     static void show_illegal_characters_warning(wxWindow* parent);
 
-    // 公共静态 helper（原 Plater.cpp 文件局部 static；priv::can_reload_from_disk 复用；E1 迁入）
     static std::vector<std::pair<int, int>> reloadable_volumes(const Model &model, const Selection &selection);
 
-    // —— 脏状态组（原 priv :913-943 / up_to_date :6953 / update_title_dirty_status :6384）——
     void set_plater_dirty(bool is_dirty);            // 原 priv:913
     bool is_project_dirty() const;                   // 原 priv:914
     bool is_presets_dirty() const;                   // 原 priv:915
@@ -90,13 +83,11 @@ public:
     void update_dirty_from_stack(bool m);            // snapshot_host.update_dirty_from_stack 改接入口
     void update_title_dirty_status();                // 原 priv:6384
 
-    // —— 文件名/路径组（原 priv :6314/:6403/:6363/:6369）——
     wxString get_project_filename(const wxString& extension = wxEmptyString) const;
     void     set_project_filename(const wxString& filename);   // 尾段写 m_preview_only_filename（手册陷阱 9：commit ① 经 Host，② 后直读）
     wxString get_project_name() const;
     void     set_project_name(const wxString& project_name);
 
-    // —— 模式标志组（hpp 六成员门面；commit ① 经 Host 桥接，② 后直读自有成员）——
     bool        only_gcode_mode() const;
     void        set_only_gcode(bool only_gcode);
     bool        using_exported_file() const;
@@ -109,15 +100,12 @@ public:
     const wxString& get_last_loaded_gcode() const;
     void        reset_last_loaded_gcode();
 
-    // —— 生命周期组（原 Plater 本体 :7098/:7189/:7315/:9595/:9634，门面一行转发）——
     int  new_project(bool skip_confirm = false, bool silent = false, const wxString& project_name = wxEmptyString);
     void load_project(const wxString& filename = wxEmptyString, const wxString& originfile = "-");
     int  save_project(bool saveAs = false);
     int  close_with_confirm(std::function<bool(bool)> second_check = std::function<bool(bool)>());
     void trigger_restore_project(int skip_confirm = 0);
 
-    // —— 加载组（原 priv :2446/:3548 + 门面 :8765/:8789/:9182/:9374/:9411/:9422/:7631/:8798/:8601/:8611/:8730）——
-    // LoadStrategy 完整定义在 libslic3r/Format/bbs_3mf.hpp（hpp 仅前置声明，默认实参由 priv 转发壳给足）
     std::vector<size_t> load_files(const std::vector<boost::filesystem::path>& input_files, LoadStrategy strategy, bool ask_multi);
     std::vector<size_t> load_files(const std::vector<std::string>& input_files, LoadStrategy strategy, bool ask_multi);
     bool load_files(const class wxArrayString& filenames);
@@ -132,7 +120,6 @@ public:
     void load_gcode(const wxString& filename);
     void reload_gcode_from_disk();
 
-    // —— 导入/替换/下载组（原 :8571/:8583/:8592/:7361/:7601/:7606/:4562/:4489/:4632/:5073）——
     void import_zip_archive();
     void import_sl1_archive();
     void extract_config_from_project();
@@ -144,13 +131,11 @@ public:
     void reload_from_disk();
     void reload_all_from_disk();
 
-    // —— Bind handler 函数体（wx 事件签名由 priv 转发壳吸收，载荷以普通参数传入；G 的 Router 收口）——
     void on_action_open_project();
     void on_action_request_model_id(const wxString& model_id);
     void on_action_download_project(const wxString& project_id);
     void show_preview_only_hint();
 
-    // —— 物理迁入成员（唯一归属；priv 侧词边界 grep = 0 守恒）——
     ProjectDirtyStateManager dirty_state;                   // 原 priv:868（自包含状态类，全仓无指针持有）
     PrinterTechnology        printer_technology = ptFFF;    // 原 priv:827（值成员无指针锚定）
     BBLProject               project;                       // 原 priv:1262
@@ -158,17 +143,14 @@ public:
     wxString                 m_project_name;                // 原 priv:1284
     size_t                   m_saved_timestamp  = 0;        // 原 priv:1298（up_to_date 时间戳）
     size_t                   m_backup_timestamp = 0;        // 原 priv:1299
-    // hpp 六成员（commit ② 落位；原 Plater.hpp :880/:882/:883/:885/:886/:887）
     wxString     m_last_loaded_gcode;
     bool         m_only_gcode { false };
     bool         m_exported_file { false };
     bool         m_loading_project { false };
     std::string  m_preview_only_filename;
     int          m_valid_plates_count { 0 };
-    // hpp 六成员于 commit ② 落位于此（m_only_gcode/m_exported_file/m_loading_project/
 
 private:
-    // 文件类型判定 static regex（原 priv:897-901 声明 / :1308-1312 定义，随迁）
     static const std::regex pattern_bundle;
     static const std::regex pattern_3mf;
     static const std::regex pattern_zip_amf;

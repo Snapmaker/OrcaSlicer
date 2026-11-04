@@ -1,6 +1,3 @@
-// ArrangementService — Plater 摆放域服务（阶段 F2 纯搬移，手册《Plater阶段F2-摆放ArrangementService抽取实施方案》）。
-// hpp：wx 零依赖；依赖规则（AGENTS.md）：本目录禁止 include Plater/GUI_App 宿主头，
-// q 与 priv 上下文只能经 Host 进入；已落地服务一律构造注入 typed（design D1/D2）。
 #pragma once
 
 #include <atomic>
@@ -23,12 +20,9 @@ class Worker;
 namespace app {
 class SnapshotService;
 
-// 与 Plater.hpp 的 Slic3r::ModelInstancePtrs 同型（本命名空间别名避免拖入 Model.hpp）
 using ModelInstancePtrs = std::vector<ModelInstance*>;
 
-// 阶段 H1 2.1：ArrangementServiceHost 消亡（唯一槽 build_volume [q] 改 m_q 门面直调）。
 
-// 摆放域 8 函数 + 抢占锁唯一归属；外部调用方经 Plater 门面 / slicing_host 装配点接入。
 class ArrangementService {
 public:
     ArrangementService(Plater* q, Model* model, Worker& worker, SnapshotService& snapshots);

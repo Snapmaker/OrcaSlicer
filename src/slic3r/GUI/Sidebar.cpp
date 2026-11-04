@@ -82,8 +82,6 @@
 namespace Slic3r {
 namespace GUI {
 
-// ==== 自 Plater.cpp 迁入的 Sidebar 专属文件局部物（阶段 A）====
-// 共享宏（Plater.cpp 同名宏保留：两侧均使用）
 #define PRINTER_THUMBNAIL_SIZE (wxSize(FromDIP(48), FromDIP(48)))
 #define PRINTER_THUMBNAIL_SIZE_SMALL (wxSize(FromDIP(32), FromDIP(32)))
 #define PRINTER_PANEL_SIZE_SMALL (wxSize(FromDIP(98), FromDIP(68)))
@@ -92,7 +90,6 @@ namespace GUI {
 
 wxDEFINE_EVENT(EVT_SCHEDULE_BACKGROUND_PROCESS,     SimpleEvent);
 
-// ==== ② 携带（2.8 编译期勘误）：main 匿名命名空间 helper——carried continue_sync_filament_dialog 消费（bac6fd5 671-793 逐字） ====
 namespace {
 
 std::string extract_base_filament_name(const std::string& full_name)
@@ -286,10 +283,7 @@ public:
 } // namespace
 
 
-// 原实现位于 Plater.cpp 的 namespace Slic3r::GUI 内（:216-217 打开）；
-// 阶段 A 搬移后在此重新打开，保持所有符号的命名空间归属不变。
 
-// ==== 以下内容自 Plater.cpp 原样搬移（阶段 A commit ①，顺序保持，禁止改动）====
 int SidebarProps::TitlebarMargin() { return 8; }  // Use as side margins on titlebar. Has less margin on sides to create separation with its content
 int SidebarProps::ContentMargin()  { return 12; } // Use as side margins contents of title
 int SidebarProps::IconSpacing()    { return 10; } // Use on main elements
@@ -445,7 +439,6 @@ protected:
             xPos += tabWidth;
         }
 
-        // 4. 绘制外边框
         dc.SetPen(wxPen(m_borderColor, 1));
         dc.SetBrush(*wxTRANSPARENT_BRUSH);
         dc.DrawRoundedRectangle(GetClientRect(), m_roundRadius);
@@ -611,7 +604,6 @@ private:
 #endif
 };
 
-// nozzle-sync 共享状态（main bac6fd5:Plater.cpp:1234 逐字；线程经 CallAfter 回 UI 前以 alive 判定 Sidebar 存活）
 struct NozzleSyncState
 {
     std::atomic<bool> alive{true};
@@ -656,15 +648,12 @@ struct Sidebar::priv
     wxPanel* m_panel_filament_content;
     wxScrolledWindow* m_scrolledWindow_filament_content;
 
-    // 阶段 B2：混色面板壳（标题栏/内容/色混块 22 成员 + MixedFilamentRowBinding）已迁 GUI/Mixing/MixedFilamentsPanel
     std::unique_ptr<MixedFilamentsPanel> mixed_panel;
-    // 阶段 B3：批量匹配编排（handler 体 + cleanup_unused_filaments_after_batch_match）迁 app::BatchMatchCoordinator
     std::unique_ptr<app::BatchMatchCoordinator> batch_match;
     bool                m_skip_mixed_filament_sync_once = false;  // Local edits already mutated manager in place.
     // Physical filament scrolled window
     wxScrolledWindow* m_scrolled_filaments = nullptr;
     wxPanel*          m_panel_scrolled_filament_content = nullptr;
-    // Color mix panel（阶段 B2：混色成员已迁 MixedFilamentsPanel；物理耗材标题留守）
     StaticBox*      m_panel_physical_filaments_title = nullptr;
 
     wxStaticLine* m_staticline2;
@@ -1002,7 +991,6 @@ Sidebar::Sidebar(Plater *parent)
     auto* scrolled_sizer = m_scrolled_sizer = new wxBoxSizer(wxVERTICAL);
     p->scrolled->SetSizer(scrolled_sizer);
 
-    // 阶段 B2：混色面板构造 + 宿主能力装配（回调捕获 [this]；p 成员惰性解引用——创建晚于本装配点）
     {
         MixedFilamentsPanelHost host;
         host.filament_count = [this]() { return p->combos_filament.size(); };
@@ -1174,7 +1162,6 @@ Sidebar::Sidebar(Plater *parent)
         
         p->combo_printer = combo_printer;
 
-        // 绑定 combo 内部按钮的事件处理（按钮现在在 combo 内部）
         combo_printer->bind_edit_button_handler([this, combo_printer]() {
                 p->editing_filament = -1;
                 if (combo_printer->switch_to_tab())
@@ -1188,18 +1175,13 @@ Sidebar::Sidebar(Plater *parent)
             });
 
         combo_printer->bind_machine_connecting_button_handler([this]() {
-            // machine_connecting_btn 的处理逻辑（如果有的话）
         });
         
-        // 显示编辑按钮（鼠标悬停时原来会显示，现在直接显示）
         combo_printer->set_show_edit_button(true);
         
-        // 设置按钮tooltip
         combo_printer->set_connection_tooltip(_L("Connect to printer"));
         combo_printer->set_machine_connecting_tooltip(_L("The machine has been connected and is currently in working mode"));
 
-        // 外部按钮已集成到 combo 内部，不再需要创建
-        // 保留变量引用以避免编译错误，但设为 nullptr
         connection_btn = nullptr;
         machine_connecting_btn = nullptr;
 
@@ -1209,7 +1191,6 @@ Sidebar::Sidebar(Plater *parent)
         wxBoxSizer* vsizer = new wxBoxSizer(wxVERTICAL);
         wxBoxSizer* hsizer = new wxBoxSizer(wxHORIZONTAL);
 
-        // 简化后的布局：打印机图片 + combo_printer（内含所有按钮）
         combo_printer->SetWindowStyle(combo_printer->GetWindowStyle() & ~wxALIGN_MASK | wxALIGN_LEFT);
 
         hsizer->Add(p->image_printer, 0, wxLEFT | wxALIGN_CENTER, FromDIP(4));
@@ -1234,7 +1215,6 @@ Sidebar::Sidebar(Plater *parent)
         vsizer_printer->Add(hsizer_printer, 0, wxEXPAND, 0);*/
 
         // Bed type selection
-        // 创建一个像打印机选择那样的容器
         p->panel_printer_preset = new StaticBox(p->m_panel_printer_content, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                                                 wxTAB_TRAVERSAL | wxBORDER_NONE);
         p->panel_printer_preset->SetCornerRadius(8);
@@ -1244,7 +1224,6 @@ Sidebar::Sidebar(Plater *parent)
         // p->panel_printer_preset->SetBorderColor(panel_bd_col1);
         // p->panel_printer_preset->SetMinSize(PRINTER_PANEL_SIZE_SMALL);
 
-        // 创建Bed type选择控件
         wxBoxSizer* bed_type_sizer = new wxBoxSizer(wxHORIZONTAL);
         wxStaticText* bed_type_title = new wxStaticText(p->panel_printer_preset, wxID_ANY, _L("Bed type"));
         bed_type_title->Wrap(-1);
@@ -1258,7 +1237,6 @@ Sidebar::Sidebar(Plater *parent)
                 m_bed_type_combo_enum_values.push_back(v);
         }
 
-        // 添加链接事件等
         bed_type_title->Bind(wxEVT_ENTER_WINDOW, [bed_type_title, this](wxMouseEvent &e) {
             e.Skip();
             auto font = bed_type_title->GetFont();
@@ -1289,12 +1267,10 @@ Sidebar::Sidebar(Plater *parent)
         int bed_type_idx = bed_type_value - 1;
         m_bed_type_list->Select(bed_type_idx);
 
-        // 布局Bed type控件
         bed_type_sizer->Add(bed_type_title, 0, wxLEFT | wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(10));
         bed_type_sizer->Add(m_bed_type_list, 1, wxLEFT | wxRIGHT | wxEXPAND, FromDIP(0));
         p->panel_printer_preset->SetSizer(bed_type_sizer);
 
-        // 添加到垂直布局
         vsizer_printer->Add(p->panel_printer_preset, 0, wxEXPAND | wxALL, FromDIP(4));
         vsizer_printer->AddSpacer(FromDIP(8));
 
@@ -1306,22 +1282,18 @@ Sidebar::Sidebar(Plater *parent)
         p->m_panel_printer_content->Layout();
         scrolled_sizer->Add(p->m_panel_printer_content, 0, wxEXPAND, 0);
 
-        // 创建Nozzle notebook的容器
         StaticBox* nozzle_container = new StaticBox(p->m_panel_printer_content, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                                                     wxTAB_TRAVERSAL | wxBORDER_NONE);
         nozzle_container->SetCornerRadius(8);
         // nozzle_container->SetBorderColor(panel_bd_col);
 
-        // 创建notebook
         p->m_nozzle_notebook = new CustomNotebook(nozzle_container, wxID_ANY);
 
-        // 创建nozzle_sizer并添加notebook
         wxBoxSizer* nozzle_sizer = new wxBoxSizer(wxVERTICAL);
         nozzle_sizer->Add(p->m_nozzle_notebook, 1, wxEXPAND | wxALL, FromDIP(0));
         nozzle_container->SetSizer(nozzle_sizer);
         nozzle_container->SetMinSize(wxSize(-1, FromDIP(80)));
 
-        // 添加到主布局
         vsizer_printer->Add(nozzle_container, 0, wxEXPAND | wxALL, FromDIP(4));
 
         // Initialize nozzle settings
@@ -1580,7 +1552,6 @@ Sidebar::Sidebar(Plater *parent)
     scrolled_sizer->Add(p->m_panel_filament_content, 0, wxEXPAND, 0);
     }
 
-    // --- Mixed Filaments Panel (Collapsible) ---（阶段 B2：构建迁 MixedFilamentsPanel）
     p->mixed_panel->init_mixed_filaments_panel(p->scrolled, scrolled_sizer, title_bg);
 
     {
@@ -1849,8 +1820,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                                  MainFrame::PrintSelectType::eSendGcode;
 
                 if (url.find("127.0.0.1") != std::string::npos) {
-                    // 2.8 勘误（③URL 构建器）：bpe 的 page_http+flutter 语义在 main 树被设计性拒答
-                    // （flutter 由 gateway 伺服）——恢复 vanilla main 正文（bac6fd5 同位逐字）
                     url = wxGetApp().gateway_web_url("device_control");
                 }
             }
@@ -1877,8 +1846,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                 if(hasOnlineMachine)
                     p->combo_printer->set_show_machine_connecting_button(true);
     
-                // 2.8 勘误（③URL 构建器）：恢复 vanilla main 正文（bac6fd5 同位逐字）——
-                // gateway URL 自带 locale/dark_mode，international_url 包装废弃
                 wxString url = wxGetApp().gateway_web_url("device_control");
 
                 if (reload_printer_view && !showing_u1_device) {
@@ -2437,19 +2404,16 @@ void Sidebar::on_filaments_change(size_t num_filaments)
 
 void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
 {
-    // 阶段 B2：唯一实现归属 GUI/Mixing/MixedFilamentsPanel（门面一行转发）
     p->mixed_panel->init_color_mix_panel(parent, sizer);
 }
 
 void Sidebar::update_color_mix_panel()
 {
-    // 阶段 B2：唯一实现归属 GUI/Mixing/MixedFilamentsPanel（门面一行转发）
     p->mixed_panel->update_color_mix_panel();
 }
 
 void Sidebar::update_mixed_filament_panel(bool sync_manager)
 {
-    // 阶段 B2：唯一实现归属 GUI/Mixing/MixedFilamentsPanel（门面一行转发）
     p->mixed_panel->update_mixed_filament_panel(sync_manager);
 }
 
@@ -2690,7 +2654,6 @@ void Sidebar::change_filament(size_t from_id, size_t to_id)
 void Sidebar::merge_mixed_filament(size_t from_id, size_t to_id,
                               bool skip_update, bool skip_serialize)
 {
-    // 阶段 B2：唯一实现归属 GUI/Mixing/MixedFilamentsPanel（门面一行转发）
     p->mixed_panel->merge_mixed_filament(from_id, to_id, skip_update, skip_serialize);
 }
 
@@ -2901,7 +2864,6 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id,
 void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult &match_result,
                                                           std::function<void(int, int)> on_progress)
 {
-    // 阶段 B3：唯一实现归属 app::BatchMatchCoordinator（门面一行转发；公有签名不变）
     p->batch_match->cleanup_unused_filaments_after_batch_match(match_result, on_progress);
 }
 

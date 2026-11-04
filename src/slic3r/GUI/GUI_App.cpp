@@ -3,7 +3,6 @@
 #include "libslic3r/FilamentHotBedNozzleRules.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Preview.hpp"   // H2 2.1：refresh_print 改走 layout().preview（View3D 完整型）
-// 阶段 H2 2.0：组合根装配——15 服务完整型（unique_ptr 成员析构点所需；hpp 侧仅前向声明）
 #include "app/NotificationHub.hpp"
 #include "app/SnapshotService.hpp"
 #include "app/PlateController.hpp"
@@ -1282,9 +1281,6 @@ IMPLEMENT_APP(GUI_App)
 
 //BBS: remove GCodeViewer as seperate APP logic
 //GUI_App::GUI_App(EAppMode mode)
-// —— 阶段 H2 2.0：组合根服务访问面（design 决策 9）——
-// getter：外部消费方 wxGetApp().<svc>()；构造留守 Plater ctor/plater_init（friend 直写成员）。
-// 语义：断言防御（服务仅存在于 Plater 构造后、~Plater shutdown 前——与原成员期窗口一致）。
 app::NotificationHub&         GUI_App::notification_hub() { assert(m_notification_hub); return *m_notification_hub; }
 app::SnapshotService&         GUI_App::snapshots()        { assert(m_snapshots);        return *m_snapshots; }
 app::PlateController&         GUI_App::plates()           { assert(m_plates);           return *m_plates; }
@@ -1301,7 +1297,6 @@ app::LayoutManager&           GUI_App::layout()           { assert(m_layout);   
 app::SceneRefreshCoordinator& GUI_App::refresh()          { assert(m_refresh);          return *m_refresh; }
 app::PlaterEventRouter&       GUI_App::router()           { assert(m_router);           return *m_router; }
 
-/// 服务统一析构：逆构造序 reset（router 最先、hub 最后）——复现原 Plater 成员逆序析构语义。
 void GUI_App::shutdown_services()
 {
     m_router.reset();
@@ -2562,8 +2557,6 @@ bool GUI_App::on_init_inner()
     CBaseException::set_log_folder(data_dir());
 #endif
 
-    // ② 最小携带（2.8 勘误）：SNAPMAKER_ORCA-1H6 会话结束标志——main veto 流程体保留，
-    // 仅补 carried ProjectSession::close_with_confirm 消费的 in_session_end 状态与 60s 回退定时器
     m_session_end_reset_timer.SetOwner(this);
     Bind(wxEVT_TIMER, [this](wxTimerEvent&) { reset_session_end(); }, m_session_end_reset_timer.GetId());
     wxGetApp().Bind(wxEVT_QUERY_END_SESSION, [this](auto & e) {
@@ -3361,7 +3354,6 @@ wxString GUI_App::get_international_url(const wxString& origin_url)
     }
 }
 
-// ② 最小携带：bpe 会话结束回退（bac6fd5 GUI_App.cpp:3194 逐字）
 void GUI_App::reset_session_end()
 {
     m_session_end_reset_timer.Stop();

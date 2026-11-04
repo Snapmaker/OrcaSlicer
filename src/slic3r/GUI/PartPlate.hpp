@@ -14,7 +14,6 @@
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Slicing.hpp"
 #include "libslic3r/Arrange.hpp"
-// 阶段 H1（路径 A 解环，erratum §5.3）：删除 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "GLCanvas3D.hpp"

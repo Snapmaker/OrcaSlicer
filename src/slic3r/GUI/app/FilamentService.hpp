@@ -1,8 +1,3 @@
-// FilamentService — 耗材/AMS/批量删除编排服务（阶段 G1）。
-// 承接：Plater 侧 10 函数 + m_batch_physical_deletion + Sidebar AMS 4 函数（自宿主逐字迁入，
-// 宿主解引用改经 FilamentServiceHost）。
-// 依赖规则（B1/B2/B3 护栏延续）：本 hpp 禁 include Plater.hpp / Sidebar.hpp / GUI_App.hpp；
-// 宿主能力经 FilamentServiceHost 回调；通知经 NotificationHub& typed 注入（C 阶段先例）。
 #pragma once
 
 #include <atomic>
@@ -38,9 +33,6 @@ class LayoutManager;
 class NotificationHub;
 class SlicingController;
 
-// 阶段 H1 2.2：FilamentServiceHost 消亡——F2 ctor typed 注入（config/model/partplate_list/main_frame/
-// slicing/usage 旗标）+ layout late_bind（sidebar/combos/panel）；F1（queue_event/confirm）m_q 直调；
-// F3（preset_bundle/plater_alive/app_config/get_connect_host/device_manager/get_tab）q 桥接。
 
 class FilamentService {
 public:
@@ -49,7 +41,6 @@ public:
                              SlicingController& slicing, std::atomic<bool>& filament_usage_sync_pending);
     void late_bind(LayoutManager& layout);   // 阶段 H1 2.2：layout 声明序晚于本服务，plater_init 内补注
 
-    // —— Plater 公有门面一行转发（签名不变）——
     static wxColour get_next_color_for_filament();
     void on_filaments_delete(size_t num_filaments, size_t filament_id, int replace_filament_id,
                              const std::vector<unsigned char>& is_mixed_snapshot);
@@ -64,17 +55,12 @@ public:
     void inc_batch_physical_deletion() { ++m_batch_physical_deletion; }
     void dec_batch_physical_deletion() { --m_batch_physical_deletion; }
 
-    // —— Sidebar AMS 公有门面一行转发（签名不变）——
     std::map<int, DynamicPrintConfig> build_filament_ams_list(MachineObject* obj);
     void load_ams_list(std::string const& device, MachineObject* obj);
     void sync_ams_list();
-    // show_sync_filament_dialog 移除（2.8 ②）：main gateway 异步版落回 Sidebar（UI 强耦合：
-    // 按钮 disable/alive 守卫在 Sidebar::priv），原内日线 SSWCP 同步版废弃，见 body-diff-findings #4/#5
 
 private:
-    // 批量物理删除守卫计数（非原子 int，仅 UI 线程；原 Plater::priv 成员逐字迁入）
     int m_batch_physical_deletion{0};
-    // AMS 设备名（原 Sidebar::priv 成员；仅被 4 个 AMS 函数使用，随功能迁入服务）
     std::string m_ams_list_device;
     NotificationHub& m_hub;
     Plater*                     m_q{nullptr};

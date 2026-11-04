@@ -1,6 +1,3 @@
-// ExportSendCoordinator — Plater 导出/发送/发布编排服务（阶段 E2 纯搬移，手册《Plater阶段E2-导出发送ExportSendCoordinator抽取实施方案》）。
-// 依赖规则（AGENTS.md）：本文件禁止 include Plater/GUI_App 宿主头（护栏 #1，CI grep）；
-// q 与 priv 上下文只能经 ExportSendCoordinatorHost 进入；FileType/file_wildcards/EVT_PUBLISHING_START 困头约束见 hpp 头注（design D2）。
 #include "ExportSendCoordinator.hpp"
 #include "../Plater.hpp"        // H1 2.3: F1/F3 q faces + publicized export faces + publish_model bridge
 #include "SlicingController.hpp" // H1 2.3: typed inject SlicingController&
@@ -51,8 +48,6 @@ namespace Slic3r {
 namespace GUI {
 namespace app {
 
-// update_background_process 返回位常量（cpp-local 镜像：priv:1071-1081 与 SlicingController.cpp:38 各持同名拷贝；
-// EX 镜像值以 priv 版为准——int 桥接 cpp-local enum 的 D2 过渡槽先例（先例槽 prepare_state_facade 已随 F3 删除）
 enum {
     UPDATE_BACKGROUND_PROCESS_RESTART       = 1,
     UPDATE_BACKGROUND_PROCESS_REFRESH_SCENE = 2,
@@ -81,15 +76,9 @@ void ExportSendCoordinator::late_bind(SelectionQuery& selq, LayoutManager& layou
 
 ExportSendCoordinator::~ExportSendCoordinator()
 {
-    // 四对话框以 q 为 wx 父，随 Plater 生命周期销毁（与原 priv 裸指针成员语义一致，此处不 delete）
 }
 
-// —— 2.3 可测核心（design D7）——
 
-// join_gcode_filename：自 priv::get_export_gcode_filename（:4549）分支结构抽取的拼装纯函数，行为逐字对照。
-// plate_index_str 由调用方算好传入（wxString，含前导 '_'，原 std::string 经 from_u8 的转换移至调用方）；
-// folder 空分支的 model 依赖段（objects 非空判定 + 对象名去扩展名）经 untitled_object_name 注入——
-// 调用方约定：objects 非空时传去扩展名对象名（可为空串），为空时传空串（空串即无回退候选）。
 wxString ExportSendCoordinator::join_gcode_filename(const boost::filesystem::path& project_folder, const wxString& project_name,
                                                     const wxString& plate_index_str, const wxString& extension,
                                                     bool only_filename, bool export_all,
@@ -125,7 +114,6 @@ wxString ExportSendCoordinator::join_gcode_filename(const boost::filesystem::pat
     }
 }
 
-// exporting 状态谓词组（原 priv::exporting_status :1227 读写；int 桥接供 slicing_host 改接，design D4）
 bool ExportSendCoordinator::exporting_active() const { return m_exporting_status != ExportingStatus::NOT_EXPORTING; }
 bool ExportSendCoordinator::is_exporting_to_removable() const { return m_exporting_status == ExportingStatus::EXPORTING_TO_REMOVABLE; }
 bool ExportSendCoordinator::is_exporting_to_local() const { return m_exporting_status == ExportingStatus::EXPORTING_TO_LOCAL; }
@@ -137,7 +125,6 @@ void ExportSendCoordinator::set_exporting_status(int status) { m_exporting_statu
 bool ExportSendCoordinator::is_publishing() const { return m_is_publishing; }
 void ExportSendCoordinator::set_is_publishing(bool v) { m_is_publishing = v; }
 
-// —— 3.1 路径推导组（手册 §2.1 表 1/2/4；原 priv::get_export_file_path :2542 / get_export_file :2590 / get_export_gcode_filename :4549）——
 
 boost::filesystem::path ExportSendCoordinator::get_export_file_path(int file_type)
 {
@@ -279,7 +266,6 @@ wxString ExportSendCoordinator::get_export_gcode_filename(const wxString& extens
     else if (m_partplate_list.get_plate_count() > 1)
         plate_index_str = (boost::format("_plate_%1%") % std::to_string(m_partplate_list.get_curr_plate_index() + 1)).str();
 
-    // folder 空分支的 model 依赖段（design D7）：objects 非空时注入去扩展名对象名（调用方约定见 join_gcode_filename 注释）
     wxString untitled_object_name;
     if (!model->objects.empty())
         untitled_object_name = wxString(fs::path(model->objects.front()->name).replace_extension().c_str());
@@ -288,7 +274,6 @@ wxString ExportSendCoordinator::get_export_gcode_filename(const wxString& extens
                                only_filename, export_all, untitled_object_name);
 }
 
-// —— 3.3/3.5 打印与发送组（手册 §2.1 表 8-12；原 priv::on_action_print_* :3857-3900 / on_action_send_to_printer :3958 /
 //      Plater::send_to_printer :6798 / send_gcode :7872 / send_gcode_legacy :7656 / export_config_3mf / send_gcode_finish / get_print_job_data）——
 
 void ExportSendCoordinator::handle_print_plate()
@@ -465,7 +450,6 @@ void ExportSendCoordinator::send_gcode_legacy(int plate_idx, Export3mfProgressFn
         return output_file;
     };
 
-    // 校验机型
     auto devices = q->app_config()->get_devices();
     std::string connect_preset = "";
     for (const auto device : devices) {
@@ -663,12 +647,9 @@ void ExportSendCoordinator::send_gcode_legacy(int plate_idx, Export3mfProgressFn
     }
 }
 
-// —— 3.4 发布组（手册 §2.1；原 priv::on_action_publish :3911 / show_publish_dlg :4916 / update_publish_dialog_status :4910 /
-//      Plater::publish_project :7662 空壳 / show_publish_dialog :10114；publishing_* 谓词供 slicing_host 改接消费）——
 
 void ExportSendCoordinator::publish_project()
 {
-    // 空壳随迁（勘误 2：E1 实测空函数；SlicingController :704 调用点行为不变，是否删除留 G 复核）
     return;
 }
 
@@ -750,7 +731,6 @@ SelectMachineDialog* ExportSendCoordinator::select_machine_dlg()
     return m_select_machine_dlg;
 }
 
-// —— 3.2 导出组 Part 1（手册 §2.1 表 3/导出 gcode 行；原 priv::export_gcode :3141/:3174、Plater::export_gcode :6620、
 //      export_gcode_3mf :6725、export_core_3mf :6808）——
 
 void ExportSendCoordinator::export_gcode(fs::path output_path, bool output_path_on_removable_media)
@@ -1005,7 +985,6 @@ void ExportSendCoordinator::export_core_3mf()
     export_3mf(path_u8, SaveStrategy::Silence);
 }
 
-// —— 3.2 导出组 Part 2（原 Plater::combine_mesh_fff :6817 static / export_stl :6884；注释死块 /*export_amf*/ 不迁随 Plater.cpp 删除）——
 
 TriangleMesh ExportSendCoordinator::combine_mesh_fff(const ModelObject& mo, int instance_id, std::function<void(const std::string&)> notify_func)
 {
@@ -1291,10 +1270,8 @@ void ExportSendCoordinator::export_stl(bool extended, bool selection_only, bool 
     Slic3r::store_stl(path_u8.c_str(), &mesh, true);
 }
 
-// THUMBNAIL_SIZE_3MF 镜像常量（原 Plater.cpp:221 cpp-local static；export_3mf 缩略图生成尺寸，勘误随收口登记）
 static const std::pair<unsigned int, unsigned int> THUMBNAIL_SIZE_3MF = { 512, 512 };
 
-// —— 3.2 导出组 Part 2b（原 Plater::export_3mf :7226 巨体 / has_toolpaths_to_export :7491 / export_toolpaths_to_obj :7496）——
 
 int ExportSendCoordinator::export_3mf(const boost::filesystem::path& output_path, SaveStrategy strategy, int export_plate_idx, Export3mfProgressFn proFn)
 {
@@ -1549,7 +1526,6 @@ void ExportSendCoordinator::export_toolpaths_to_obj() const
     if ((m_session.printer_technology != ptFFF) || !m_layout->is_preview_loaded())
         return;
 
-    // const 方法内走非 const 内部路径（原 priv 同款语义；get_export_file 弹对话框）
     wxString path = const_cast<ExportSendCoordinator*>(this)->get_export_file((int)FT_OBJ);
     if (path.empty())
         return;
@@ -1558,8 +1534,6 @@ void ExportSendCoordinator::export_toolpaths_to_obj() const
     m_layout->preview->get_canvas3d()->export_toolpaths_to_obj(into_u8(path).c_str());
 }
 
-// —— 3.5 job_finished 四件（手册 §2.1；原 Plater::send_calibration_job_finished :8101 / print_job_finished :8115 /
-//      send_job_finished :8137 / publish_job_finished :8152；Bind [q] lambda 走门面转发，wx 触点经 Host/[] 槽）——
 
 void ExportSendCoordinator::handle_send_calibration_job_finished(wxCommandEvent& evt)
 {
@@ -1619,8 +1593,6 @@ void ExportSendCoordinator::handle_publish_job_finished(wxCommandEvent& evt)
    //GUI::wxGetApp().open_publish_page_dialog(evt.GetString());
 }
 
-// —— 3.6 插件/错误/内联壳组（原 priv::install_network_plugin :4258 / update_plugin_when_launch :4264 /
-//      show_install_plugin_hint :4286 / 内联壳 ×3 :966-977；update_print_error_info 门面 :9480）——
 
 void ExportSendCoordinator::install_network_plugin()
 {
@@ -1678,7 +1650,6 @@ void ExportSendCoordinator::notify_sys_color_changed()
     if (m_select_machine_dlg) m_select_machine_dlg->sys_color_changed();
 }
 
-// priv 内联壳 ×3 随迁（原 priv :966-977）
 void ExportSendCoordinator::hide_select_machine_dlg()
 {
     if (m_select_machine_dlg)

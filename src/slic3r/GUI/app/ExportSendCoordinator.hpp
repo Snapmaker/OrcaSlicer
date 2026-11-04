@@ -1,8 +1,3 @@
-// ExportSendCoordinator — Plater 导出/发送/发布编排服务（阶段 E2 纯搬移，手册《Plater阶段E2-导出发送ExportSendCoordinator抽取实施方案》）。
-// hpp：wx 仅以指针/值类型出现；依赖规则（AGENTS.md）：本目录禁止 include Plater/GUI_App 宿主头，
-// q 与 priv 上下文只能经 Host 进入。FileType/file_wildcards 困在 GUI_App.hpp（:102/:126）、
-// EVT_PUBLISHING_START 困在 Plater.hpp（:91）——EX 签名一律以 int 承载 FileType（E1 ask_export_path(int) 先例），
-// EVT 判定由 priv 壳 bool 投影（design D2）；Camera::EType 在缩略图槽同样 int 桥接（Camera.hpp 拖 3DScene/GL）。
 #pragma once
 
 #include <functional>
@@ -76,7 +71,6 @@ public:
     void late_bind(SelectionQuery& selq, LayoutManager& layout, SceneRefreshCoordinator& refresh, CalibrationFlow& calib);   // H1 2.3
     ~ExportSendCoordinator();
 
-    // —— 导出组（手册 §2.1；门面在 Plater 一行转发）——
     void export_gcode(bool prefer_removable);
     void export_gcode(boost::filesystem::path output_path, bool output_path_on_removable_media);                            // 2-arg（原 priv 第一 overload；门面 export_gcode(bool) 尾部调用）
     void export_gcode(boost::filesystem::path output_path, bool output_path_on_removable_media, PrintHostJob upload_job);   // 3-arg 上传重载（原 priv 第二 overload；send_gcode_legacy 上传分支）
@@ -89,7 +83,6 @@ public:
     int  export_3mf(const boost::filesystem::path& output_path = boost::filesystem::path(), SaveStrategy strategy = SaveStrategy::Default, int export_plate_idx = -1, Export3mfProgressFn proFn = nullptr);
     int  export_config_3mf(int plate_idx, Export3mfProgressFn proFn = nullptr);
 
-    // —— 发送组 ——
     int  send_gcode(int plate_idx = -1, Export3mfProgressFn proFn = nullptr);
     void send_gcode_legacy(int plate_idx = -1, Export3mfProgressFn proFn = nullptr, bool use_3mf = false);
     void send_to_printer(bool isall = false);
@@ -97,13 +90,11 @@ public:
     void get_print_job_data(PrintPrepareData* data);
     void update_print_error_info(int code, std::string msg, std::string extra);   // 三路分发（Jobs/PrintJob·SendJob 消费；门面零改动）
 
-    // —— 发布组 ——
     void publish_project();                     // 空壳随迁（勘误 2；SlicingController 调用点行为不变）
     bool show_publish_dialog(bool show);
     void handle_publish(bool publishing_start); // priv 壳 bool 投影入口（design D2）
     void update_publish_dialog_status(wxString& msg, int percent);
 
-    // —— 路径推导（int 承载 GUI::FileType，design D2）——
     boost::filesystem::path get_export_file_path(int file_type);
     wxString get_export_file(int file_type);
     wxString get_export_gcode_filename(const wxString& extension, bool only_filename, bool export_all) const;
@@ -112,7 +103,6 @@ public:
                                         bool only_filename, bool export_all,
                                         const wxString& untitled_object_name = {}); // design D7 纯函数（folder 空分支的 model 依赖段经第 7 参注入）
 
-    // —— 事件处理（priv 壳转发；Bind 接线留守，G 归 Router）——
     void handle_print_plate();
     void handle_print_all();
     void handle_print_plate_from_sdcard();
@@ -127,7 +117,6 @@ public:
     void notify_send_to_sdcard_color_mode();    // priv::on_change_color_mode 触点（执行期补充：SendToPrinterDialog 暗色同步）
     void notify_sys_color_changed();            // priv::sys_color_changed 触点（执行期补充：SelectMachineDialog 主题同步）
 
-    // —— 导出/发布状态与谓词（slicing_host 改接消费；int 桥接见 design D4）——
     bool exporting_active() const;
     bool is_exporting_to_removable() const;
     bool is_exporting_to_local() const;
@@ -160,7 +149,6 @@ private:
     DynamicPrintConfig* config{nullptr};
     app::ProjectSession& m_session;
 
-    // 物理迁入状态（原 priv 成员，手册 §2.1）
     enum ExportingStatus {
         NOT_EXPORTING = 0,
         EXPORTING_TO_REMOVABLE,
@@ -176,7 +164,6 @@ private:
     SendToPrinterDialog*  m_send_to_sdcard_dlg{nullptr};
     PublishDialog*        m_publish_dlg{nullptr};
 
-    // priv 内联壳 ×3 随迁（原 priv :966-977；job_finished 处理消费）
     void hide_select_machine_dlg();
     void enter_prepare_mode();
     void hide_send_to_printer_dlg();

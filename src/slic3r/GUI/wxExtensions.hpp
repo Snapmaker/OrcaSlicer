@@ -87,7 +87,6 @@ void apply_extruder_selector(Slic3r::GUI::BitmapComboBox** ctrl,
                              wxSize size = wxDefaultSize,
                              bool use_thin_icon = false);
 
-// 喷嘴类型 key -> 显示标签（阶段 A 自 Plater.cpp 抽出，Sidebar 与 Plater 共用）
 wxString nozzle_type_key_to_label(const std::string& key);
 
 class wxCheckListBoxComboPopup : public wxCheckListBox, public wxComboPopup

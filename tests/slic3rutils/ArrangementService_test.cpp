@@ -1,5 +1,3 @@
-// ArrangementService 单测（阶段 F2，tasks 2.1-2.3）：无 wx 应用态，Catch2 直构服务 + FakeWorker。
-// 覆盖抢占锁 CAS 三态与 can_arrange 三态；其余摆放域入口由逐字 diff + 手册 §6 手测兜底。
 #include "slic3r/GUI/app/ArrangementService.hpp"
 #include "slic3r/GUI/PartPlate.hpp"   // H1 2.3：PartPlateList 无头构造（typed SnapshotService ctor）
 #include "slic3r/GUI/app/ArrangeRequest.hpp"   // F3：Request 值语义直用
@@ -25,7 +23,6 @@ using namespace Slic3r::GUI::app;
 
 namespace {
 
-// 测试用 Worker：可控 idle 状态，记录 push/cancel_all（不启线程）。
 class FakeWorker : public Worker {
 public:
     bool idle = true;
@@ -44,7 +41,6 @@ public:
 
 } // namespace
 
-// —— 2.1 抢占锁 CAS 三态（原 last_arrange_job_is_finished 内联 / ArrangeJob::finalize 释放端）——
 
 TEST_CASE("ArrangementService claim/release: exclusive claim then release reopens", "[ArrangementService]")
 {
@@ -60,7 +56,6 @@ TEST_CASE("ArrangementService claim/release: exclusive claim then release reopen
     REQUIRE(svc.claim_arrange_running());        // 释放后可再次抢占
 }
 
-// —— 2.2 can_arrange 三态（原 priv 体 :4435-4438）——
 
 TEST_CASE("ArrangementService can_arrange: empty model / busy worker / idle with objects", "[ArrangementService]")
 {
@@ -78,7 +73,6 @@ TEST_CASE("ArrangementService can_arrange: empty model / busy worker / idle with
     REQUIRE(svc.can_arrange());         // idle + 有对象 → true
 }
 
-// —— F3 1.5：ArrangeRequest 缺省值钉 AllPlates（原 DEFAULT 隐式初值语义）——
 
 TEST_CASE("ArrangeRequest default scope is AllPlates", "[ArrangementService]")
 {
@@ -87,7 +81,6 @@ TEST_CASE("ArrangeRequest default scope is AllPlates", "[ArrangementService]")
     REQUIRE(ArrangeRequest::current_plate().scope == ArrangeRequest::Scope::CurrentPlate);
 }
 
-// —— F3 1.5：OrientRequest 缺省值钉 Selection（原 DEFAULT=选中对象；与 Arrange 异构，禁统一——手册陷阱 1）——
 
 TEST_CASE("OrientRequest default scope is Selection", "[ArrangementService]")
 {
@@ -96,7 +89,6 @@ TEST_CASE("OrientRequest default scope is Selection", "[ArrangementService]")
     REQUIRE(OrientRequest::current_plate().scope == OrientRequest::Scope::CurrentPlate);
 }
 
-// —— F3 1.5：worker_idle 双态（原 slicing_host.worker_idle 直读 m_worker.is_idle，F3 改经服务 accessor 消费）——
 
 TEST_CASE("ArrangementService worker_idle mirrors worker state", "[ArrangementService]")
 {
@@ -112,8 +104,6 @@ TEST_CASE("ArrangementService worker_idle mirrors worker state", "[ArrangementSe
     REQUIRE_FALSE(svc.worker_idle());
 }
 
-// —— F3 1.5：arrange/orient(req) busy 守卫（worker busy → 无 push、无快照）；
-//    idle 路径 replace_job 会反查 wxGetApp().plater()，不可无头构造（手册 §0 发现 3）——映射由逐字 diff + 手测兜底。
 
 TEST_CASE("ArrangementService arrange/orient(req): busy guard means no push no snapshot", "[ArrangementService]")
 {

@@ -1,7 +1,3 @@
-// MixedFilamentsPanel — Sidebar 混色面板壳类化（阶段 B2，手册《Plater阶段B2-MixedFilamentsPanel类化实施方案》）。
-// 自 Sidebar::priv / Sidebar.cpp 整体迁入：混色标题栏构造块 + 4 个混色方法 + 22 个成员 + MixedFilamentRowBinding。
-// 依赖规则（B1 护栏延续）：本 hpp 禁 include Sidebar.hpp / Plater.hpp / GUI_App.hpp——宿主能力经 MixedFilamentsPanelHost 回调。
-// 迁移对账：方法体与源逐字节一致（除宿主解引用 / this 前缀 / FromDIP 所有者前缀）。
 #pragma once
 
 #include <cstddef>
@@ -26,8 +22,6 @@ class Button;
 namespace Slic3r {
 namespace GUI {
 
-// 宿主能力（Sidebar 装配一次；全部 lambda 捕获 [this] 指向 Sidebar）。
-// Plater 操作经回调进入——保持本文件零 Plater.hpp 依赖。
 struct MixedFilamentsPanelHost {
     // —— Sidebar ——
     std::function<size_t()>                       filament_count;                        // p->combos_filament.size()
@@ -52,17 +46,13 @@ class MixedFilamentsPanel : public wxTrackable   // 原 wxWeakRef<Sidebar>(this)
 public:
     MixedFilamentsPanel(wxWindow* owner, MixedFilamentsPanelHost host);
 
-    // 原 Sidebar 构造器内「Mixed Filaments Panel (Collapsible)」块（含 Add Gradient/Pattern/Color 按钮与折叠绑定）
     void init_mixed_filaments_panel(wxWindow* scrolled, wxBoxSizer* scrolled_sizer, const wxColour& title_bg);
-    // 原 Sidebar 四方法（签名不变）
     void init_color_mix_panel(wxWindow* parent, wxSizer* sizer);
     void update_color_mix_panel();
     void update_mixed_filament_panel(bool sync_manager = true);
     void merge_mixed_filament(size_t from_id, size_t to_id, bool skip_update = false, bool skip_serialize = false);
 
-    // Sidebar::get_ui_ordered_filament_ids 只读消费（原 Sidebar::priv 共享成员）
     const std::vector<uint64_t>& mixed_filament_ui_order() const { return m_mixed_filament_ui_order; }
-    // Sidebar::msw_rescale / sys_color_changed 的混色控件刷新（原 Sidebar::priv 直接访问）
     void msw_rescale();
     void set_add_color_mix_enabled(bool enabled);
 
@@ -72,7 +62,6 @@ private:
     wxWindow*               m_owner{nullptr};
     MixedFilamentsPanelHost m_host;
 
-    // —— 自 Sidebar::priv 迁入（原序保留；前 16 混色面板壳，后 6 色混块）——
     StaticBox*          m_panel_mixed_filaments_title = nullptr;    // Collapsible title bar
     wxPanel*            m_panel_mixed_filaments_content = nullptr; // Content panel
     wxBoxSizer*         m_sizer_mixed_filaments_content = nullptr; // Content sizer

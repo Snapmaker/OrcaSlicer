@@ -1,8 +1,3 @@
-// MixedFilamentsPanel 实现（阶段 B2，手册 §2/§3）。
-// 迁移纪律：四方法 + 混色标题栏构造块整体自 Sidebar.cpp 剪切粘贴；
-// 宿主解引用改写仅限：p->m_* → m_*、p->combos_filament → m_host、m_bpButton_add_filament → m_host、
-// m_scrolled_sizer → m_host、FromDIP → m_owner->FromDIP、Plater 操作 → m_host 回调。
-// 依赖规则：本 cpp 禁 include Plater.hpp（B1 护栏）；GUI_App.hpp 为 B1 既有先例（wxGetApp）。
 #include "MixedFilamentsPanel.hpp"
 
 #include <algorithm>
@@ -51,21 +46,18 @@ MixedFilamentsPanel::MixedFilamentsPanel(wxWindow* owner, MixedFilamentsPanelHos
 {
 }
 
-// Sidebar::msw_rescale / sys_color_changed 转发（原 Sidebar::priv::m_color_mix_icon 直接访问）
 void MixedFilamentsPanel::msw_rescale()
 {
     if (m_color_mix_icon)
         m_color_mix_icon->msw_rescale();
 }
 
-// Sidebar 侧“组合耗材上限”联动（原 Sidebar::priv::m_btn_add_color_mix 直接访问）
 void MixedFilamentsPanel::set_add_color_mix_enabled(bool enabled)
 {
     if (m_btn_add_color_mix)
         m_btn_add_color_mix->Enable(enabled);
 }
 
-// 原 Sidebar 构造器内「Mixed Filaments Panel (Collapsible)」块逐字迁入
 void MixedFilamentsPanel::init_mixed_filaments_panel(wxWindow* scrolled, wxBoxSizer* scrolled_sizer, const wxColour& title_bg)
 {
     // Create title bar (StaticBox for collapsible header)

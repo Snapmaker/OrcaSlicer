@@ -1,6 +1,3 @@
-// SlicingController — Plater 切片域服务实现（阶段 D2 纯搬移，手册 §3）。
-// ⚠ 本文件禁止 include Plater/GUI_App 宿主头——上下文只能经 Host 进入（AGENTS.md）。
-// 由 generate_controller.py 从 Plater.cpp 机械搬移生成；逐函数 diff 非替换类差异应 = 0。
 #include "SlicingController.hpp"
 #include "../Plater.hpp"                   // H1 2.3: q faces + F3 bridges + publicized faces
 #include "../MainFrame.hpp"                // H1 2.3: m_main_frame->update_slice_print_status
@@ -50,7 +47,6 @@ namespace GUI {
 
 namespace app {
 
-// 原 priv 枚举镜像（Plater.cpp priv::UpdateBackgroundProcessReturnState）——值必须一致（G 阶段收口）
 enum : unsigned int {
     UPDATE_BACKGROUND_PROCESS_INVALID        = 0x0001,
     UPDATE_BACKGROUND_PROCESS_REFRESH_SCENE  = 0x0002,
@@ -59,7 +55,6 @@ enum : unsigned int {
     UPDATE_BACKGROUND_PROCESS_FORCE_EXPORT   = 0x0010,
 };
 
-// EVT_PROCESS_COMPLETED 等事件常量定义于 Plater.cpp（同库链接）——extern 引用
 
 SlicingController::SlicingController(Plater* q, PartPlateList& partplate_list, Model& model, DynamicPrintConfig* config,
                                      NotificationHub& hub, SnapshotService& snapshots, PlateController& plates,
@@ -309,7 +304,6 @@ unsigned int SlicingController::update_background_process(bool force_validation,
             }
         }
 #if 0
-        // 阶段 E2：引用已删按钮文案死状态的注释行一并清除（commit ③）
 
         //const wxString slice_string = m_background_process.running() && wxGetApp().get_mode() == comSimple ?
         //                              _L("Slicing") + dots : _L("Slice now");

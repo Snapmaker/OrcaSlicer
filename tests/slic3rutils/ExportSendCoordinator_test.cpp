@@ -1,6 +1,3 @@
-// ExportSendCoordinator 单测（阶段 E2，手册 §2 / design D7）：无 wx 对话框核心，Catch2 + TypedChain 直构。
-// join_gcode_filename 纯函数用例与 exporting 谓词语义用例随任务 2.1-2.3 落地（TDD：先行红、实现后绿）。
-// H1 2.3 typed 化改造：ExportSendCoordinatorHost 随 Host 消亡移除——TypedChain 无头闭包直构。
 #include "slic3r/GUI/app/ExportSendCoordinator.hpp"
 #include "slic3r/GUI/app/ProjectSession.hpp"
 #include "slic3r/GUI/app/SnapshotService.hpp"
@@ -11,9 +8,7 @@ using namespace Slic3r;
 using namespace Slic3r::GUI;
 using namespace Slic3r::GUI::app;
 
-// ExportSendCoordinator 不可拷贝/移动（ProjectSession& 成员）——各用例直接构造。
 
-// —— 1.4 骨架冒烟：TypedChain 直构服务（EX→PS typed 注入，design D1）——
 
 TEST_CASE("ExportSendCoordinator constructs with TypedChain (smoke)", "[ExportSendCoordinator]")
 {
@@ -23,14 +18,12 @@ TEST_CASE("ExportSendCoordinator constructs with TypedChain (smoke)", "[ExportSe
     REQUIRE_NOTHROW(ex.is_not_exporting());
 }
 
-// —— 2.1 join_gcode_filename 拼装纯函数（手册 §2.1 表 4；原 priv::get_export_gcode_filename :4549 分支结构）——
 
 TEST_CASE("join_gcode_filename: folder + export_all joins folder/project/extension", "[ExportSendCoordinator]")
 {
     boost::filesystem::path folder("d:/ws/proj");
     auto got = ExportSendCoordinator::join_gcode_filename(folder, "MyProject", "_plate_1", ".gcode",
                                                           /*only_filename=*/false, /*export_all=*/true);
-    // 原实现：folder / std::string((project_name + extension).mb_str(wxConvUTF8)) 后 from_path（盘符路径分隔符随平台）
     boost::filesystem::path expected = folder / std::string("MyProject.gcode");
     REQUIRE(got.ToStdString() == expected.string());
 }
@@ -50,7 +43,6 @@ TEST_CASE("join_gcode_filename: empty folder + Untitled falls back to object nam
     REQUIRE(got.ToStdString() == std::string("cube_plate_1.gcode"));
 }
 
-// —— 2.2 exporting 状态谓词（原 priv::exporting_status :1227 + 装配 lambda :1465-1472 语义）——
 
 TEST_CASE("exporting predicates: default state is NOT_EXPORTING", "[ExportSendCoordinator]")
 {

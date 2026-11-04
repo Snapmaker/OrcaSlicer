@@ -8012,7 +8012,6 @@ bool GLCanvas3D::_init_view_toolbar()
 
 bool GLCanvas3D::_init_collapse_toolbar()
 {
-    // 阶段 I：init_collapse_toolbar 归 LayoutManager；上游的共享背景纹理参数随之传入
     return wxGetApp().layout().init_collapse_toolbar(_get_shared_toolbar_background_texture());
 }
 

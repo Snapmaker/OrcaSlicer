@@ -1,7 +1,3 @@
-// FilamentService 实现（阶段 G1）。
-// 迁移纪律：Plater 10 函数 + 批量删除守卫 + Sidebar AMS 4 函数（含 4 个文件级 helper）逐字迁入；
-// 改写仅限宿主解引用（priv 成员 / GUI_App 反查 / 非限定宿主方法）。
-// 依赖规则：hpp 零宿主 include；cpp 级允许 Sidebar/MainFrame/preset 头（B2/B3 cpp-only 先例）。
 #include "FilamentService.hpp"
 #include "../Plater.hpp"
 #include "../GUI_ObjectList.hpp"   // H2 3.1 顶部瘦身：ObjectList 完整型（原经 Plater.hpp→Search.hpp 传递链）        // 阶段 H1 2.2：F1/F3 门面直调（confirm/preset_bundle/app_config/get_tab/device_manager/get_connect_host）
@@ -10,8 +6,6 @@
 #include "PlaterEventRouter.hpp"  // 阶段 H1 2.2：EVT_FILAMENT_USAGE_CHANGED（queue_filament_usage_event）
 #include "libslic3r/MixedFilamentConfigRemap.hpp"  // 阶段 I：上游 2.4.1 的耗材 ID 重映射 helpers
 
-// 与既有服务单测同款 Windows/asio 前置块：GUI_App.hpp → SSWCP.hpp → boost/asio
-// 在 WIN32_LEAN_AND_MEAN 下需要 winnls.h 提供 CP_ACP。
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -68,8 +62,6 @@ namespace app {
 
 namespace {
 
-// —— 以下 4 个 helper 原为 Sidebar.cpp 文件级匿名命名空间函数，仅被
-// Sidebar::show_sync_filament_dialog 使用，随迁入本 TU。逐字保留。——
 
 std::string extract_base_filament_name(const std::string& full_name)
 {
@@ -215,7 +207,6 @@ void FilamentService::late_bind(LayoutManager& layout)
     m_layout = &layout;
 }
 
-// —— Plater 面 ——
 
 // BBS.
 wxColour FilamentService::get_next_color_for_filament()
@@ -582,7 +573,6 @@ std::vector<int> FilamentService::get_global_filament_map() const
     return project_config.option<ConfigOptionInts>("filament_map")->values;
 }
 
-// —— Sidebar AMS 面 ——
 
 std::map<int, DynamicPrintConfig> FilamentService::build_filament_ams_list(MachineObject* obj)
 {
@@ -750,8 +740,6 @@ void FilamentService::sync_ams_list()
 }
 
 
-// show_sync_filament_dialog 移除（2.8 ②）：main gateway 异步版落回 Sidebar::show/continue_sync_filament_dialog，
-// 原内日线 SSWCP 同步内联版废弃；裁决见 audit/body-diff-findings.md #4/#5。
 
 } // namespace app
 } // namespace GUI

@@ -1,6 +1,3 @@
-// SnapshotService — Plater 快照域服务实现（阶段 C 纯搬移，手册 §3.2 / §2.1）。
-// ⚠ 本文件禁止 include Plater/GUI_App 宿主头（陷阱 #1、DoD #6）——
-//   不得照抄 Plater.cpp 的 include 大杂烩，下列为按编译需要收敛的"真实集"：
 #include "SnapshotService.hpp"
 #include "../Plater.hpp"        // 阶段 H1 2.2：F3 q 桥接 + layers_height_allowed/show_delayed_error_message 公有面
 #include "LayoutManager.hpp"     // 阶段 H1 2.1 模式：late_bind 后 view3D/obj_list/assemble_view/preview 直读
@@ -25,8 +22,6 @@ namespace Slic3r {
 namespace GUI {
 namespace app {
 
-// 原 Plater::priv::UpdateParams（Plater.cpp:964-968，priv 私有枚举，服务不可见）——
-// 值逐字保留；G 阶段随 SceneRefreshCoordinator 收口。
 enum class UpdateParams {
     FORCE_FULL_SCREEN_REFRESH          = 1,
     FORCE_BACKGROUND_PROCESSING_UPDATE = 2,
@@ -49,7 +44,6 @@ void SnapshotService::late_bind(SlicingController& slicing, ProjectSession& sess
     m_refresh = &refresh;
 }
 
-// —— 阶段 H2 1.1：Plater 嵌套三件套替身（§5.3 别名原形；体逐字对齐原 Plater.hpp :795/:811/:845 嵌套类）——
 SnapshotService::SuppressScope::SuppressScope(Plater* plater)
     : m_s(plater->snapshots())   // 经 friend 取服务引用（Plater 私有 accessor）——与服务原生形态同一存储
 {
@@ -86,7 +80,6 @@ bool SnapshotService::SingleScope::check(bool modify)
     return true;
 }
 
-// 原 Plater::priv::enter_gizmos_stack（Plater.cpp:7740-7750）。
 void SnapshotService::enter_gizmos_stack()
 {
     assert(m_active == &m_main);
@@ -99,7 +92,6 @@ void SnapshotService::enter_gizmos_stack()
     }
 }
 
-// 原 Plater::priv::leave_gizmos_stack（Plater.cpp:7752-7763）。
 bool SnapshotService::leave_gizmos_stack()
 {
     bool changed = false;
@@ -113,7 +105,6 @@ bool SnapshotService::leave_gizmos_stack()
     return changed;
 }
 
-// 原 Plater::priv::get_active_snapshot_index（Plater.cpp:7765-7771）。
 int SnapshotService::get_active_snapshot_index()
 {
     const size_t active_snapshot_time = this->undo_redo_stack().active_snapshot_time();
@@ -122,15 +113,12 @@ int SnapshotService::get_active_snapshot_index()
     return it - ss_stack.begin();
 }
 
-// 原 Plater::priv::take_snapshot（Plater.cpp:7773-7851）。
 void SnapshotService::take_snapshot(const std::string& snapshot_name, const UndoRedo::SnapshotType snapshot_type)
 {
     if (m_prevent > 0)
         return;
     assert(m_prevent >= 0);
     // BBS: single snapshot
-    // 原 `m_single && !m_single->check(...)`：机制留守 priv，经 Host 门控消费（陷阱 #7——
-    // 整个原表达式作为实参一次传入，短路语义等价）。
     if (m_q->single_blocks(snapshot_modifies_project(snapshot_type) && (snapshot_name.empty() || snapshot_name.back() != '!')))
         return;
     UndoRedo::SnapshotData snapshot_data;
@@ -205,7 +193,6 @@ void SnapshotService::take_snapshot(const std::string& snapshot_name, const Undo
     BOOST_LOG_TRIVIAL(info) << "Undo / Redo snapshot taken: " << snapshot_name << ", Undo / Redo stack memory: " << Slic3r::format_memsize_MB(this->undo_redo_stack().memsize()) << log_memory_info();
 }
 
-// 原 Plater::priv::undo（Plater.cpp:7853-7870）。
 void SnapshotService::undo()
 {
     const std::vector<UndoRedo::Snapshot> &snapshots = this->undo_redo_stack().snapshots();
@@ -225,7 +212,6 @@ void SnapshotService::undo()
     this->undo_redo_to(it_current);
 }
 
-// 原 Plater::priv::redo（Plater.cpp:7872-7882）。
 void SnapshotService::redo()
 {
     const std::vector<UndoRedo::Snapshot> &snapshots = this->undo_redo_stack().snapshots();
@@ -238,8 +224,6 @@ void SnapshotService::redo()
     }
 }
 
-// 原 Plater::priv::undo_redo_to(size_t)（Plater.cpp:7884-7890）。
-// 注：原 :7893-7905 的 up_to_date 留守 Plater（ProjectSession 域，手册 §2.3）。
 void SnapshotService::undo_redo_to(size_t time_to_load)
 {
     const std::vector<UndoRedo::Snapshot> &snapshots = this->undo_redo_stack().snapshots();
@@ -248,11 +232,9 @@ void SnapshotService::undo_redo_to(size_t time_to_load)
     this->undo_redo_to(it_current);
 }
 
-// 原 Plater::priv::undo_redo_to(iterator)（Plater.cpp:7907-8049）。
 void SnapshotService::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator it_snapshot)
 {
     // Make sure that no updating function calls take_snapshot until we are done.
-    // 原 `SuppressSnapshots snapshot_supressor(q);`（:7910）→ 服务原生 RAII 替身（陷阱 #2）。
     SuppressScope snapshot_supressor(*this);
 
     bool 				temp_snapshot_was_taken 	= this->undo_redo_stack().temp_snapshot_active();
@@ -394,7 +376,6 @@ void SnapshotService::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterat
     m_q->update_title_dirty_status();
 }
 
-// 原 Plater::priv::update_after_undo_redo（Plater.cpp:8051-8091）。
 void SnapshotService::update_after_undo_redo(const UndoRedo::Snapshot& snapshot, bool /* temp_snapshot_was_taken */)
 {
     GLCanvas3D* canvas = m_layout->get_current_canvas3D();
@@ -437,7 +418,6 @@ void SnapshotService::update_after_undo_redo(const UndoRedo::Snapshot& snapshot,
     BOOST_LOG_TRIVIAL(info) << "Undo / Redo snapshot reloaded. Undo / Redo stack memory: " << Slic3r::format_memsize_MB(this->undo_redo_stack().memsize()) << log_memory_info();
 }
 
-// 原 Plater::undo_redo_string_getter（Plater.cpp:12666-12677）——本体实现迁服务，门面保留转发。
 bool SnapshotService::undo_redo_string_getter(const bool is_undo, int idx, const char** out_text)
 {
     const std::vector<UndoRedo::Snapshot>& ss_stack = this->undo_redo_stack().snapshots();
@@ -451,7 +431,6 @@ bool SnapshotService::undo_redo_string_getter(const bool is_undo, int idx, const
     return false;
 }
 
-// 原 Plater::undo_redo_topmost_string_getter（Plater.cpp:12680-12690）——同上。
 void SnapshotService::undo_redo_topmost_string_getter(const bool is_undo, std::string& out_text)
 {
     const std::vector<UndoRedo::Snapshot>& ss_stack = this->undo_redo_stack().snapshots();

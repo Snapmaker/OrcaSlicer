@@ -57,7 +57,6 @@
 #include <ctime>
 
 #include "GUI_App.hpp"
-// 阶段 H2 2.1（K1）：删除集调用点改走组合根服务——解引用完整型直含（hpp 侧组合根仅前向声明）
 #include "app/ProjectSession.hpp"
 #include "app/ExportSendCoordinator.hpp"
 #include "app/SlicingController.hpp"

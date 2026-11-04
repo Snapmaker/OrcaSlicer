@@ -1,6 +1,3 @@
-// ObjectEditCommands — Plater 对象编辑命令服务（阶段 F1 纯搬移，手册《Plater阶段F1-对象编辑ObjectEditCommands与SelectionQuery抽取实施方案》）。
-// hpp：wx 零依赖；依赖规则（AGENTS.md）：本目录禁止 include Plater/GUI_App 宿主头，
-// q 与 priv 上下文只能经 Host 进入；已落地服务一律构造注入 typed（design D2）。
 #pragma once
 
 #include <string>
@@ -36,10 +33,7 @@ class SlicingController;
 class NotificationHub;
 class SnapshotService;
 
-// 阶段 H1 2.2：ObjectEditCommandsHost 消亡——F2 ctor typed 注入（partplate_list/worker）+ layout/refresh late_bind；
-// F1（notify_filament_usage_changed/is_shown/dialog_parent/show_clone_dialog）m_q 直调；F3 preset_bundle q 桥接。
 
-// 对象编辑命令 + 谓词唯一归属；选中状态查询经 SelectionQuery&（typed），不重复持有。
 class ObjectEditCommands {
 public:
     ObjectEditCommands(Plater* q, Model* model, DynamicPrintConfig* config,
@@ -48,13 +42,11 @@ public:
                        SnapshotService& snapshots, PartPlateList& partplate_list, Worker& worker);
     void late_bind(LayoutManager& layout, SceneRefreshCoordinator& refresh);   // 阶段 H1 2.2：声明序晚于本服务，plater_init 内补注
 
-    // —— 删除组 ——
     void remove(size_t obj_idx);
     bool delete_object_from_model(size_t obj_idx, bool refresh_immediately = true);
     void delete_all_objects_from_model();
     void remove_selected();
 
-    // —— 变换组 ——
     void center_selection();
     void drop_selection();
     void mirror(Axis axis);
@@ -65,19 +57,16 @@ public:
     void set_selected_visible(bool visible);
     void exit_gizmo();
 
-    // —— 剪贴板/克隆组 ——
     void cut_selection_to_clipboard();
     void copy_selection_to_clipboard();
     void paste_from_clipboard();
     void clone_selection();
     void apply_cut_object_to_model(size_t obj_idx, const std::vector<ModelObject*>& new_objects);
 
-    // —— 网格/gizmo 组 ——
     void clear_before_change_mesh(int obj_idx);
     void changed_mesh(int obj_idx);
     void reset_all_gizmos();
 
-    // —— 动作分发（wx 事件签名由 priv 转发壳吸收，服务不持 wx 类型）——
     void select_all();
     void deselect_all();
     void on_object_select();
@@ -86,7 +75,6 @@ public:
     void on_repair_model();
     void on_action_layersediting();
 
-    // —— 谓词组（19 个）——
     bool can_delete() const;
     bool can_delete_all() const;
     bool can_fix_through_netfabb() const;
@@ -111,7 +99,6 @@ public:
     bool can_reload_from_disk() const;
 
 private:
-    // 原嵌套版 TakeSnapshot 等价 RAII：take_snapshot → suppress_snapshots，析构 allow_snapshots（语义逐字）
     class TakeSnapshotScope {
     public:
         TakeSnapshotScope(SnapshotService& snapshots, const std::string& name);   // 定义在 cpp（hpp 不完整类型）

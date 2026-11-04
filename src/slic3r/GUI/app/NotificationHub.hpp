@@ -1,6 +1,3 @@
-// NotificationHub — Plater 通知域服务（阶段 C 纯搬移，手册 §3.3 / §2.2）。
-// hpp 不含 wx 头：wxWindow 仅作指针出现（前置声明），MessageDialog 等只在 .cpp。
-// 依赖规则（手册 §10.1 / AGENTS.md）：本目录禁止 include Plater/GUI_App 宿主头。
 #pragma once
 
 #include <memory>
@@ -30,9 +27,6 @@ class ProjectSession;
 class SceneRefreshCoordinator;
 class SlicingController;
 
-// 阶段 H1 2.1：NotificationHubHost 消亡——F1（dialog_parent/view3d_canvas/preview_canvas）改 m_q 门面直调；
-// F2 ctor typed 注入（model/partplate_list）+ late_bind（slicing/session/layout/refresh——声明序晚于本服务 :490）；
-// F3 改 q 桥接（select_tab_3d_editor/params_panel_switch_to_object）与既有公有面（sidebar/obj_list）。
 
 class NotificationHub
 {
@@ -76,7 +70,6 @@ private:
     size_t  m_last_auto_gradient_prompt_physical_count = 0;
     bool    m_last_auto_gradient_prompt_accepted = false;
 
-    // —— 阶段 H1 2.1：typed 注入（ctor + late_bind）——
     Plater*             m_q{nullptr};
     Model&              m_model;
     PartPlateList&      m_partplate_list;

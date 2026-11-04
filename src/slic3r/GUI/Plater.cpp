@@ -255,10 +255,7 @@ static void handle_newer_3mf_schema(wxWindow* parent,
               _L("Loading 3MF"));
 }
 
-// 阶段 B3：混色门控 helper 簇（原 :245-571）已迁 GUI/app/MixingGateKeeper.cpp
 
-// 阶段 G5（勘误 8）：10 个 EVT_* 常量外部化声明——先于 define 使其获得外部链接，
-// app/PlaterEventRouter.cpp（事件路由收口）经 PlaterEventRouter.hpp 的同名声明共享同一标签。
 wxDECLARE_EVENT(EVT_SLICING_COMPLETED,               wxCommandEvent);
 wxDECLARE_EVENT(EVT_EXPORT_BEGAN,                    wxCommandEvent);
 wxDECLARE_EVENT(EVT_EXPORT_FINISHED,                 wxCommandEvent);
@@ -312,7 +309,6 @@ wxDEFINE_EVENT(EVT_ADD_CUSTOM_FILAMENT, ColorEvent);
 #define PRINTER_PANEL_SIZE (wxSize(FromDIP(98), FromDIP(98)))
 
 
-// 阶段 E2 勘误收敛（手册陷阱 7）：双实现逐字 diff 等价，Plater 门面改转发 ProjectSession 静态（EX 已直调）
 bool Plater::has_illegal_filename_characters(const wxString& wxs_name)
 {
     return GUI::app::ProjectSession::has_illegal_filename_characters(wxs_name);
@@ -356,7 +352,6 @@ enum class LoadType : unsigned char
     LoadGeometry,
     LoadConfig
 };
-// 阶段 E1：前置声明提前（priv ctor 的 project_session_host.determine_load_type 装配点在定义之前）
 LoadType determine_load_type(std::string filename, std::string override_setting = "");
 void read_binary_stl(const std::string& filename, std::string& model_id, std::string& code);
 
@@ -455,14 +450,11 @@ bool emboss_svg(Plater& plater, const wxString &svg_file, const Vec2d& mouse_dro
 }
 }
 
-// 阶段 E2：ExportingStatus 枚举物理迁 app::ExportSendCoordinator（原 :759-763；int 桥接语义经 slicing_host 改接保持）
 
 
 // TODO: listen on dark ui change
-// 阶段 G3：FloatFrame/AuiMgr 类定义物理迁 app/LayoutManager.cpp（暗色 UI 经 update_frame_dark_ui 槽）
 
 // Plater / private
-// 阶段 H1（路径 A）：priv 解散——声明区上收 Plater.hpp 私有块（unique_ptr 成员，勘误 13 头链隔离）
 
 
 bool PlaterDropTarget::OnDropFiles(wxCoord x, wxCoord y, const wxArrayString &filenames)
@@ -503,15 +495,10 @@ bool PlaterDropTarget::OnDropFiles(wxCoord x, wxCoord y, const wxArrayString &fi
     return res;
 }
 
-// 阶段 E2：publish() 局部自由函数前向声明（定义于下方匿名命名空间；E2 装配块 publish_model 槽引用——匿名保持内部链接）
 namespace {
 void publish(Model &model, SaveStrategy strategy);
 }
 
-// 阶段 H1：原 priv ctor 整体折叠（14 组装配 + 视图构造 + 尾部初始化；erratum §1.5）
-// —— 阶段 H1：服务 accessor 定义（hpp 仅声明；unique_ptr 解引用）——
-// —— 阶段 H2 2.0：服务 accessor 改组合根转发（所有权已迁 GUI_App；声明与调用面零变化）——
-// H2 2.6：BatchPhysicalDeletionGuard（q 消费面保留）——体走组合根 filament_svc
 Plater::BatchPhysicalDeletionGuard::BatchPhysicalDeletionGuard(Plater &p) : m_plater(p) { (void)m_plater; wxGetApp().filament_svc().inc_batch_physical_deletion(); }
 Plater::BatchPhysicalDeletionGuard::~BatchPhysicalDeletionGuard() { wxGetApp().filament_svc().dec_batch_physical_deletion(); }
 
@@ -556,17 +543,13 @@ void Plater::single_snapshots_leave(SingleSnapshot *single) {
 
 void Plater::plater_init()
 {
-// 阶段 H1 2.2：SnapshotHost 消亡——F2 ctor 注入 + late_bind（slicing/session/layout/refresh/m_single 引）+ F3 q 桥接。
-    // 阶段 H2 2.0：服务所有权迁组合根——late_bind 经 accessor（wxGetApp 转发）取兄弟引用，语义不变。
     snapshots().late_bind(slicing(), session(), layout(), refresh());
     ex().late_bind(selq(), layout(), refresh(), calibration_svc());
     session().late_bind(ex(), selq(), layout(), refresh(), gate_keeper());
     slicing().late_bind(session(), ex(), arrange_svc(), gate_keeper(), calibration_svc(), layout(), refresh());
 
-    // 阶段 H1 2.1：NotificationHubHost 消亡——F2 ctor 注入 + late_bind + F1/F3 经 q 直调/桥接。
     notification_hub().late_bind(slicing(), session(), layout(), refresh());
 
-    // 阶段 H1 2.1：PlateControllerHost 消亡——F2 ctor 注入 + slicing/layout/refresh late_bind + F1 直调。
     plates().late_bind(slicing(), layout(), refresh());
     gate_keeper().late_bind(layout());
     calibration_svc().late_bind(layout(), refresh());
@@ -579,14 +562,10 @@ void Plater::plater_init()
 // H1 2.2: LayoutManagerHost removed - F2 ctor inject + refresh late_bind + F3 q bridges.
     layout().late_bind(refresh());
 
- // （G3 layout_host 装配块终）
 
-    // 阶段 G4：刷新调度域服务 Host 装配（手册 §3 草案装配定稿 + printable_height 膨胀槽）。
-    // 捕获纪律同 C 阶段：[this] 指 priv 能力槽（model/partplate_list/slicing()/session()/layout()）。
 // H1 2.3: SceneRefreshHost assembly removed (21 slots typed: all ctor inject, zero late_bind).
     notification_hub().set_is_dark(wxGetApp().app_config->get("dark_color_mode") == "1");
 
-    // 阶段 G3：AUI 管理器随 app::LayoutManager（aui() accessor；原 priv 值成员 m_aui_mgr）
     layout().aui()->SetManagedWindow(this);
     layout().aui()->SetDockSizeConstraint(1, 1);
     //layout().aui()->GetArtProvider()->SetMetric(wxAUI_DOCKART_PANE_BORDER_SIZE, 0);
@@ -622,7 +601,6 @@ void Plater::plater_init()
     slicing().background_process().set_finished_event(EVT_PROCESS_COMPLETED);
     slicing().background_process().set_export_began_event(EVT_EXPORT_BEGAN);
     slicing().background_process().set_export_finished_event(EVT_EXPORT_FINISHED);
-    // 阶段 G5：q 事件族/tabpanel Bind 迁 app::PlaterEventRouter（install 统一挂载——装配点见视图构造后，bind 时点 ctor 内统一后移无事件窗口，等价改写登记）
 
     auto* panel_3d = new wxPanel(this);
     layout().view3D = new View3D(panel_3d, layout().bed, &m_model, m_config, &slicing().background_process());
@@ -679,7 +657,6 @@ void Plater::plater_init()
             layout().sidebar_layout.is_collapsed = !sidebar.IsShown();
         }
 
-        // Keep tracking the current sidebar size——阶段 G5：wxEVT_IDLE 追踪 bind 迁 router（pane info 为 aui 管理器所有）
 
         // Hide sidebar initially, will re-show it after initialization when we got proper window size
         sidebar.Hide();
@@ -689,10 +666,7 @@ void Plater::plater_init()
     menus->init(main_frame);
 
 
-    // Events:（阶段 G5：sidebar/q 编辑器事件族迁 app::PlaterEventRouter）
 
-    // 阶段 G5：事件路由装配点（手册 §2.3/勘误 1）——RouterHost 22 槽 + 事件常量表 + install()。
-    // 原 view3D/preview 画布事件族（:1645-1767）全部迁 router；bind 时点 ctor 内统一后移无事件窗口（等价改写登记）。
 // H1 2.2: PlaterEventRouterHost removed - F2 ctor full inject (last service :842, no late deps) + F3x16 q bridges.
     router().install();   // EVT_* consts shared via PlaterEventRouter.hpp wxDECLARE_EVENT
 
@@ -702,10 +676,8 @@ void Plater::plater_init()
     // Start the background thread to detect and connect to a HID device (Windows and Linux).
     // Connect to a 3DConnextion driver (OSX).
     layout().mouse3d_controller.init();
-// 阶段 G5：HID attach/detach Bind 迁 app::PlaterEventRouter（mouse3d_controller 经 typed layout）
     //notification_manager = new NotificationManager(this);
 
-    // 阶段 G5：通知点击/可移动盘事件族迁 app::PlaterEventRouter（通知经 hub.nm()、removable_drive_manager 经槽）
     if (wxGetApp().is_editor()) {
         // Start the background thread and register this window as a target for update events.
         wxGetApp().removable_drive_manager()->init(this);
@@ -722,7 +694,6 @@ void Plater::plater_init()
     up_to_date(true, true);
     m_model.set_need_backup();
 
-    // BBS: restore project（阶段 G5：EVT_RESTORE_PROJECT Bind 迁 app::PlaterEventRouter——last_backup 快照经 install 时 app_config 槽读取）
     wxGetApp().other_instance_message_handler()->init(this);
 
     // collapse sidebar according to saved value
@@ -734,11 +705,8 @@ void Plater::plater_init()
 
 }
 
-// 阶段 H1：priv dtor 折叠进 ~Plater（m_config 删除 + hints 落盘，实体保留）
 
 
-// 阶段 G4：priv::update 迁 app::SceneRefreshCoordinator（门控经 update_gate；槽消费版逐字）
-// 阶段 G3：select_view 迁 app::LayoutManager
 
 wxColour Plater::get_next_color_for_filament()
 {
@@ -761,14 +729,8 @@ wxString Plater::get_slice_warning_string(GCodeProcessorResult::SliceWarning& wa
     }
 }
 
-// 阶段 G3：apply_free_camera_correction 迁 app::LayoutManager
 
 //BBS: add no slice option
-// 阶段 G3：select_view_3D 迁 app::LayoutManager
-
-// 阶段 G3：select_next_view_3D 迁 app::LayoutManager
-
-// 阶段 G3：enable_sidebar/collapse_sidebar/update_sidebar/reset_window_layout/get_sidebar_docking_state 迁 app::LayoutManager
 
 
 
@@ -778,12 +740,12 @@ wxString Plater::get_slice_warning_string(GCodeProcessorResult::SliceWarning& wa
 
 
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（priv 壳一行转发）
+
+
 void Plater::reset_all_gizmos() { obj_cmds().reset_all_gizmos(); }
 
 // Called after the Preferences dialog is closed and the program settings are saved.
 // Update the UI based on the current preferences.
-// 阶段 G3：update_ui_from_settings 迁 app::LayoutManager（apply_free_camera_correction + 视图/侧栏 UI）
 
 // BBS
 std::string Plater::get_config(const std::string &key) const
@@ -856,10 +818,8 @@ void read_binary_stl(const std::string& filename, std::string& model_id, std::st
 }
 
 // BBS: backup & restore
-// 阶段 E1：唯一归属 app::ProjectSession（priv 壳一行转发；≈1,100 行整块迁入 load_files_core）
 
 
-// 阶段 E1：唯一归属 app::ProjectSession（priv 壳一行转发）
 std::vector<size_t> Plater::load_model_objects(const ModelObjectPtrs& model_objects, bool allow_negative_z, bool split_object) { return session().load_model_objects(model_objects, allow_negative_z, split_object); }
 
 // BBS
@@ -869,19 +829,16 @@ void Plater::load_auxiliary_files()
     //wxGetApp().mainframe->m_project->Reload(auxiliary_path);
 }
 
-// 阶段 E2：路径推导组唯一归属 app::ExportSendCoordinator（priv 壳一行转发；手册 E2 §2.1 表 1）
 fs::path Plater::get_export_file_path(GUI::FileType file_type)
 {
     return ex().get_export_file_path((int)file_type);
 }
 
-// 阶段 E2：路径推导组唯一归属 app::ExportSendCoordinator（priv 壳一行转发；手册 E2 §2.1 表 2）
 wxString Plater::get_export_file(GUI::FileType file_type)
 {
     return ex().get_export_file((int)file_type);
 }
 
-// 阶段 F1：选中状态查询唯一归属 app::SelectionQuery（priv 壳一行转发；手册 F1 §2.1 表 1-5）
 
 
 
@@ -897,8 +854,6 @@ int Plater::get_selected_volume_idx() const
     return selq().get_selected_volume_idx();
 }
 
-// 阶段 G4：priv::selection_changed/object_list_changed 迁 app::SceneRefreshCoordinator
-// （selection_changed 的 layers 工具关闭分支经 ensure_layers_tool_consistency 槽封装——陷阱 9）
 
 void Plater::select_curr_plate_all()
 {
@@ -915,13 +870,11 @@ void Plater::remove_curr_plate_all()
     notify_filament_usage_changed();
 }
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（priv 壳一行转发；手册 F1 §2.2）
 void Plater::select_all()      { obj_cmds().select_all(); }
 
 
 
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（priv 壳一行转发）
 
 
 void Plater::reset(bool apply_presets_change)
@@ -1002,21 +955,17 @@ void Plater::reset(bool apply_presets_change)
     layout().save_window_layout();   // 阶段 G3：窗口布局持久化随服务（原 :2479-2488 块）
 }
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（priv 壳一行转发）
 
 
 
 
-// 阶段 F2：唯一归属 app::ArrangementService（门面一行转发；find_new_position 当前零活调用）
 void Plater::find_new_position(const ModelInstancePtrs &instances) { arrange_svc().find_new_position(instances); }
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（priv 壳一行转发）
 
 
 void Plater::scale_selection_to_fit_print_volume() { obj_cmds().scale_selection_to_fit_print_volume(); }
 
 
-// 阶段 G4：priv::update_print_volume_state 迁 app::SceneRefreshCoordinator（bed 高度经 printable_height 槽）
 
 void Plater::notify_filament_compatibility_after_apply()
 {
@@ -1106,28 +1055,18 @@ unsigned int Plater::update_background_process(bool force_validation, bool postp
 // Restart background processing thread based on a bitmask of UpdateBackgroundProcessReturnState.
 bool Plater::restart_background_process(unsigned int state) { return slicing().restart_background_process(state); }
 
-// 阶段 E2：priv::export_gcode 两重载已删除——实现迁 app::ExportSendCoordinator（调用方：门面 export_gcode(bool) 直指 ex()、send_gcode_legacy EX 内部直调）
-// （3-arg 上传重载随上注释删除）
 unsigned int Plater::update_restart_background_process(bool force_update_scene, bool force_update_preview) { return slicing().update_restart_background_process(force_update_scene, force_update_preview); }
 
-// 阶段 G4：priv::update_fff_scene/update_fff_scene_only_shells/update_sla_scene 迁 app::SceneRefreshCoordinator
-// （update_sla_scene 内 delayed_scene_refresh=false 随服务清零——D3 单源化）
 
-// 阶段 E1：唯一归属 app::ProjectSession（priv 壳一行转发）
 bool Plater::replace_volume_with_stl(int object_idx, int volume_idx, const fs::path& new_path, const std::string& snapshot) { return session().replace_volume_with_stl(object_idx, volume_idx, new_path, snapshot); }
 
-// 阶段 E1：唯一归属 app::ProjectSession（priv 壳一行转发）
 
 
-// 阶段 E1：唯一归属 app::ProjectSession（priv 壳一行转发；reloadable_volumes 静态helper随迁）
-// 阶段 E1：唯一归属 app::ProjectSession（priv 壳一行转发；reloadable_volumes 静态 helper 随迁 session）
 
 
-// 阶段 E1：唯一归属 app::ProjectSession（priv 壳一行转发）
 void Plater::reload_all_from_disk() { session().reload_all_from_disk(); }
 
 //BBS: add no_slice logic
-// 阶段 G3：set_current_panel（≈293 行，含 do_reslice 时序冻结体）迁 app::LayoutManager（切片/会话耦合经 LayoutManagerHost 26 槽）
 
 // BBS
 
@@ -1157,7 +1096,6 @@ void Plater::reload_all_from_disk() { session().reload_all_from_disk(); }
 
 
 //BBS: GUI refactor: GLToolbar
-// 阶段 E1：函数体迁 app::ProjectSession（Bind 接线留守 priv 一行转发，G 的 Router 收口）
 
 
 //BBS: GUI refactor: slice plate
@@ -1166,67 +1104,51 @@ void Plater::reload_all_from_disk() { session().reload_all_from_disk(); }
 //BBS: GUI refactor: slice all
 
 
-// 阶段 E2：函数体迁 app::ExportSendCoordinator::handle_publish（priv 壳 bool 投影——EVT_PUBLISHING_START 常量困 Plater.hpp :91，design D2/手册陷阱 3）
-
-
-// 阶段 E2：函数体迁 app::ExportSendCoordinator（wx 事件签名与日志由转发壳吸收）
-
-
-// 阶段 E2：函数体迁 app::ExportSendCoordinator（priv 壳一行转发）
-
-
-// 阶段 E2：函数体迁 app::ExportSendCoordinator（wx 事件签名与日志由转发壳吸收）
 
 
 
 
 
 
-// 阶段 E2：on_action_send_to_printer 已删除——唯一调用方 send_to_printer 门面改直指 ex().send_to_printer（非事件 handler，无 Bind）
 
 
 
 
-// 阶段 E2：函数体迁 app::ExportSendCoordinator（wx 事件签名与日志由转发壳吸收）
 
 
-// 阶段 E2：函数体迁 app::ExportSendCoordinator（wx 事件签名与日志由转发壳吸收）
 
 
-// 阶段 E2：函数体迁 app::ExportSendCoordinator（wx 事件签名与日志由转发壳吸收）
 
 
-// 阶段 E2：函数体迁 app::ExportSendCoordinator（wx 事件签名与日志由转发壳吸收）
 
 
-// 阶段 E2：函数体迁 app::ExportSendCoordinator（wx 事件签名与日志由转发壳吸收）
 
 
-// 阶段 E2：函数体迁 app::ExportSendCoordinator（wx 事件签名与日志由转发壳吸收）
 
 
-// 阶段 E2：函数体迁 app::ExportSendCoordinator（wx 事件签名与日志由转发壳吸收）
+
+
+
+
+
+
 
 
 //BBS: add plate select logic
 
 
-// 阶段 E1：函数体迁 app::ProjectSession（wx 事件签名由转发壳吸收）
 
 
-// 阶段 E1：函数体迁 app::ProjectSession（wx 事件签名由转发壳吸收）
 
 
 //BBS: add slice button status update logic
 
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（wx 事件签名由转发壳吸收）
 
 
 
 
 //BBS: repair model through netfabb
-// 阶段 F1：唯一归属 app::ObjectEditCommands（wx 事件签名由转发壳吸收）
 
 
 bool Plater::confirm_auto_generated_gradients(size_t num_physical)
@@ -1287,23 +1209,18 @@ bool Plater::confirm_auto_generated_gradients(wxWindow *parent, size_t num_physi
 
 
 
-// 阶段 E2：函数体迁 app::ExportSendCoordinator（priv 壳一行转发；Bind :1739 留守）
-
-
-// 阶段 E2：函数体迁 app::ExportSendCoordinator（priv 壳一行转发；Bind :1740 留守）
-
-
-// 阶段 E2：函数体迁 app::ExportSendCoordinator（priv 壳一行转发）
-
-
-// 阶段 E1：函数体迁 app::ProjectSession（wx 事件签名由转发壳吸收）
 
 
 
 
 
 
-// 阶段 G3：apply_color_mode 迁 app::LayoutManager
+
+
+
+
+
+
 
 
 
@@ -1407,10 +1324,8 @@ PlateBBoxData Plater::generate_first_layer_bbox()
     return bboxdata;
 }
 
-// 阶段 E1：文件名组唯一归属 app::ProjectSession（priv 壳一行转发；手册 E1 §2.1 表 4-5）
 
 
-// 阶段 E2：路径推导组唯一归属 app::ExportSendCoordinator（priv 壳一行转发；手册 E2 §2.1 表 4）
 
 
 
@@ -1421,15 +1336,12 @@ void Plater::set_project_name(const wxString& project_name)
     session().set_project_name(project_name);
 }
 
-// 阶段 E1：标题脏标记唯一归属 app::ProjectSession（priv 壳一行转发；手册 E1 §2.1 表 6）
 
 
 
 
-// 阶段 F2：唯一归属 app::ArrangementService（门面一行转发）
 void Plater::orient(const app::OrientRequest& req) { arrange_svc().orient(req); }   // F3：门面一行转发（原无参版消亡）
 
-// 阶段 E2：实现迁 app::ExportSendCoordinator（门面一行转发；Jobs/PrintJob 消费面零改动）
 void Plater::get_print_job_data(PrintPrepareData* data)
 {
     ex().get_print_job_data(data);
@@ -1451,8 +1363,6 @@ int Plater::get_send_finished_event()
 }
 
 
-// 阶段 G4：priv::set_current_canvas_as_dirty/unbind_canvas_event_handlers/reset_canvas_volumes/
-// update_preview_bottom_toolbar（空体——主文档 §6.3 拆法实测为空，随 G4 收编注销）迁 app::SceneRefreshCoordinator
 
 #if 0
 void Plater::update_partplate()
@@ -1461,59 +1371,45 @@ void Plater::update_partplate()
 }
 #endif
 
-// 阶段 G4：priv::reset_gcode_toolpaths 迁 app::SceneRefreshCoordinator（preview 槽）
-
-// 阶段 F1：唯一归属 app::ObjectEditCommands（priv 壳一行转发）
 
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（priv 壳一行转发）
 
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（priv 壳一行转发）
 
 
-// 阶段 G3：has_assemble_view 迁 app::LayoutManager（model 经槽）
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（priv 壳一行转发）
+
 #if ENABLE_ENHANCED_PRINT_VOLUME_FIT
 
 #endif // ENABLE_ENHANCED_PRINT_VOLUME_FIT
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（priv 壳一行转发）
 
 
 
 
-// 阶段 E2：实现迁 app::ExportSendCoordinator（priv 壳一行转发）
 void Plater::update_publish_dialog_status(wxString &msg, int percent)
 {
     ex().update_publish_dialog_status(msg, percent);
 }
 
-// 阶段 E2：show_publish_dlg 已删除——实现迁 app::ExportSendCoordinator::show_publish_dialog（唯一调用方 Plater 门面/EX 内部改直指）
 
 //BBS: add bed exclude area
 
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（priv 壳一行转发）
-
-
-
-
-// 阶段 F1：唯一归属 app::ObjectEditCommands（priv 壳一行转发）
 
 
 
 
 
 
-// 阶段 F2：can_arrange 实现唯一归属 app::ArrangementService（priv 壳删除，门面直连服务）
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（priv 壳一行转发）
+
+
+
+
 bool Plater::layers_height_allowed() const { return obj_cmds().layers_height_allowed(); }
 
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（wx 事件签名由转发壳吸收）
 
 
 /**
@@ -1524,7 +1420,6 @@ bool Plater::layers_height_allowed() const { return obj_cmds().layers_height_all
  */
 bool Plater::has_incompatible_mixed_filament_in_use() const
 {
-    // 阶段 B3：唯一实现归属 app::MixingGateKeeper（门面一行转发）
     return gate_keeper().has_incompatible_mixed_filament_in_use();
 }
 
@@ -1544,7 +1439,6 @@ void Plater::notify_vhl_dithering_conflict(bool local_z_enabled)
 
 
 // BBS: check need save or backup
-// 阶段 E1：时间戳判定唯一归属 app::ProjectSession（priv 壳一行转发；手册 E1 §2.1 表 7）
 
 
 void Plater::bring_instance_forward()
@@ -1622,8 +1516,6 @@ Plater::Plater(wxWindow *parent, MainFrame *main_frame)
         , partplate_list(std::make_unique<PartPlateList>(this, &m_model))
     , m_sla_import_dlg(new SLAImportDialog{this})
 {
-    // —— 阶段 H2 2.0：组合根装配（design 决策 9）——服务构造留守 Plater（ctor 参数以 this/成员引用为参，接口零改动），
-    // 所有权直写 GUI_App 私有存储（friend）；构造序 = 原 init list 声明序（hub → worker → 12 域服务 → layout/refresh/router）。
     GUI_App& app = wxGetApp();
     app.m_notification_hub = std::make_unique<app::NotificationHub>(this, m_model, *partplate_list);
     m_worker.reset(new PlaterWorker<BoostThreadWorker>(this, std::make_unique<NotificationProgressIndicator>(app.notification_hub().nm()), "ui_worker"));
@@ -1643,7 +1535,6 @@ Plater::Plater(wxWindow *parent, MainFrame *main_frame)
     menus = std::make_unique<MenuFactory>(obj_cmds(), selq());   // H2 2.3：§8 根治项——MenuFactory 构造注入 OE/SQ
     app.m_router = std::make_unique<app::PlaterEventRouter>(this, app.notification_hub(), app.slicing(), app.session(), app.ex(), app.plates(), app.obj_cmds(), app.layout(), app.refresh(), app.snapshots(), main_frame, *menus, *partplate_list, m_model, filament_usage_sync_pending);
 
-    // Initialization performed in the private c-tor（阶段 H1：priv ctor init list 上收；H2 2.0 服务构造序原样保留于体首）
     enable_wireframe(true);
     session().set_only_gcode(false);
     plater_init();
@@ -1651,15 +1542,11 @@ Plater::Plater(wxWindow *parent, MainFrame *main_frame)
 
 Plater::~Plater()
 {
-    // 阶段 H2 2.0：先于服务析构（组合根 shutdown 之前）复位 worker——复现原成员逆序析构相对序
-    // （worker 内在 job 经 NotificationProgressIndicator 触 nm，须在 hub 存活窗口 join）。
     m_worker.reset();
     if (m_config != nullptr)
         delete m_config;
     // Saves the database of visited (already shown) hints into hints.ini.
     notification_manager()->deactivate_loaded_hints();
-    // 阶段 H2 2.0：服务归组合根——在 Plater 成员仍存活窗口统一析构（GUI_App 逆构造序 reset，
-    // 复现原成员逆序析构语义；此后 ~Plater 成员析构阶段不再触及服务）。
     wxGetApp().shutdown_services();
 }
 
@@ -1671,7 +1558,6 @@ bool Plater::Show(bool show)
     return wxPanel::Show(show);
 }
 
-// —— 阶段 E1 commit ②：hpp 六成员落位 session，门面改一行转发（签名零变化；定义移出 hpp——priv 于 hpp 不完整）——
 bool Plater::only_gcode_mode() { return session().only_gcode_mode(); }
 
 bool Plater::using_exported_file() { return session().using_exported_file(); }
@@ -1693,28 +1579,22 @@ Model&          Plater::model()             { return m_model; }
 const Print&    Plater::fff_print() const   { return slicing().fff_print(); }
 Print&          Plater::fff_print()         { return slicing().fff_print(); }
 
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_name) { return session().new_project(skip_confirm, silent, project_name); }
 
 LoadType determine_load_type(std::string filename, std::string override_setting);
 
 // BBS: FIXME, missing resotre logic
 // BBS: FIXME, missing resotre logic
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 
 // BBS: save logic
 // BBS: save logic
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发；export_3mf/get_export_file 缝合走 Host）
 
 
 //BBS import model by model id
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 void Plater::import_model_id(wxString download_info) { session().import_model_id(std::move(download_info)); }
 //BBS download project by project id
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发；实测空函数，勘误 2）
 
 
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 void Plater::request_model_download(wxString url) { session().request_model_download(std::move(url)); }
 
 void Plater::request_download_project(std::string project_id)
@@ -1735,12 +1615,9 @@ bool Plater::up_to_date(bool saved, bool backup)
                                         !Slic3r::has_other_changes(backup));
 }
 
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 
-// 阶段 G2：唯一实现归属 app::CalibrationFlow（门面一行转发；公有签名不变）
 void Plater::calib_pa(const Calib_Params& params) { calibration_svc().calib_pa(params); }
 
-// 阶段 G2：唯一实现归属 app::CalibrationFlow（门面一行转发；公有签名不变）
 
 void Plater::calib_temp(const Calib_Params& params) { calibration_svc().calib_temp(params); }
 
@@ -1758,19 +1635,13 @@ void Plater::calib_junction_deviation(const Calib_Params& params) { calibration_
 
 BuildVolume_Type Plater::get_build_volume_type() const { return layout().bed.get_build_volume_type(); }
 
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
-
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发；流程经 run_sla_import_job 槽）
 
 
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 
 
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
+
 
 //BBS: remove GCodeViewer as seperate APP logic
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发；同文件防重入/切 Preview 时序经 Host 槽冻结）
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发；同文件防重入/切 Preview 时序经 Host 槽冻结）
 
 
 // BBS
@@ -1795,14 +1666,11 @@ void Plater::force_update_all_plate_thumbnails()
     notification_hub().force_update_all_plate_thumbnails();
 }
 
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发；重置/混色同步尾段随迁 session 侧）
 std::vector<size_t> Plater::load_files(const std::vector<fs::path>& input_files, LoadStrategy strategy, bool ask_multi) { return session().load_files(input_files, strategy, ask_multi); }
 
 // To be called when providing a list of files to the GUI slic3r on command line.
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 std::vector<size_t> Plater::load_files(const std::vector<std::string>& input_files, LoadStrategy strategy,  bool ask_multi) { return session().load_files(input_files, strategy, ask_multi); }
 
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 
 #define PROJECT_DROP_DIALOG_SELECT_PLANE_SIZE wxSize(FromDIP(350), FromDIP(120))
 
@@ -2009,7 +1877,6 @@ void ProjectDropDialog::on_dpi_changed(const wxRect& suggested_rect)
 
 //BBS: remove GCodeViewer as seperate APP logic
 
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 bool Plater::load_files(const wxArrayString& filenames) { return session().load_files(filenames); }
 
 LoadType determine_load_type(std::string filename, std::string override_setting)
@@ -2043,19 +1910,14 @@ LoadType determine_load_type(std::string filename, std::string override_setting)
 }
 
 
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 
 
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 
 
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 
 
-// 阶段 G4：门控随服务（手册 §0.1）——update_gate 承接原门控语义（plan_update_gate 纯函数钉住）
 void Plater::update(bool conside_update_flag, bool force_background_processing_update) { refresh().update_gate(conside_update_flag, force_background_processing_update); }
 
-// 阶段 G4：唯一归属 app::SceneRefreshCoordinator（门面一行转发）
 
 
 Worker &Plater::get_ui_job_worker() { return *m_worker; }
@@ -2089,10 +1951,8 @@ void Plater::reset_window_layout() { layout().reset_window_layout(); }
 
 
 // BBS: save logic
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 
 //BBS: trigger a restore project event
-// 阶段 E1：唯一归属 app::ProjectSession（门面一行转发）
 void Plater::trigger_restore_project(int skip_confirm) { session().trigger_restore_project(skip_confirm); }
 
 //BBS
@@ -2101,7 +1961,6 @@ void Plater::trigger_restore_project(int skip_confirm) { session().trigger_resto
 //BBS: delete all from model
 
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（门面一行转发）
 
 void Plater::remove_selected() { obj_cmds().remove_selected(); }
 
@@ -2195,17 +2054,14 @@ static long GetNumberFromUser(  const wxString& msg,
 }
 
 
-// 阶段 F2：唯一归属 app::ArrangementService（门面一行转发；快照名沿用 "Arrange"）
 void Plater::fill_bed_with_instances() { arrange_svc().fill_bed_with_instances(); }
 
 
 
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（门面一行转发）
 
 void Plater::apply_cut_object_to_model(size_t obj_idx, const ModelObjectPtrs& new_objects) { obj_cmds().apply_cut_object_to_model(obj_idx, new_objects); }
 
-// 阶段 E2：实现迁 app::ExportSendCoordinator（门面一行转发）
 void Plater::export_gcode(bool prefer_removable)
 {
     ex().export_gcode(prefer_removable);
@@ -2217,16 +2073,13 @@ void Plater::send_to_printer(bool isall)
 }
 
 //BBS export gcode 3mf to file
-// 阶段 E2：实现迁 app::ExportSendCoordinator（门面一行转发）
 
 
-// 阶段 E2：实现迁 app::ExportSendCoordinator（门面一行转发）
 
 
 
 
 // Following lambda generates a combined mesh for export with normals pointing outwards.
-// 阶段 E2：实现迁 app::ExportSendCoordinator（static 门面一行转发）
 TriangleMesh Plater::combine_mesh_fff(const ModelObject& mo, int instance_id, std::function<void(const std::string&)> notify_func)
 {
     return GUI::app::ExportSendCoordinator::combine_mesh_fff(mo, instance_id, notify_func);
@@ -2234,7 +2087,6 @@ TriangleMesh Plater::combine_mesh_fff(const ModelObject& mo, int instance_id, st
 
 // BBS export with/without boolean, however, stil merge mesh
 #define EXPORT_WITH_BOOLEAN 0
-// 阶段 E2：实现迁 app::ExportSendCoordinator（门面一行转发；相邻注释死块 /*export_amf*/ 原位删除——§6.4 死块纪律）
 
 
 namespace {
@@ -2342,13 +2194,11 @@ void publish(Model &model, SaveStrategy strategy) {
 }
 
 // BBS: backup
-// 阶段 E2：实现迁 app::ExportSendCoordinator（门面一行转发；242 行巨体整块搬移）
 int Plater::export_3mf(const boost::filesystem::path& output_path, SaveStrategy strategy, int export_plate_idx, Export3mfProgressFn proFn)
 {
     return ex().export_3mf(output_path, strategy, export_plate_idx, proFn);
 }
 
-// 阶段 E2：空壳随迁 app::ExportSendCoordinator（勘误 2；门面一行转发）
 void Plater::publish_project()
 {
     ex().publish_project();
@@ -2481,32 +2331,27 @@ int Plater::send_gcode(int plate_idx, Export3mfProgressFn proFn)
     return ex().send_gcode(plate_idx, proFn);
 }
 
-// 阶段 E2：实现迁 app::ExportSendCoordinator（门面一行转发）
 int Plater::export_config_3mf(int plate_idx, Export3mfProgressFn proFn)
 {
     return ex().export_config_3mf(plate_idx, proFn);
 }
 
 //BBS
-// 阶段 E2：实现迁 app::ExportSendCoordinator（门面一行转发；Bind [this] lambda :2041-2044 留守）
 void Plater::send_calibration_job_finished(wxCommandEvent & evt)
 {
     ex().handle_send_calibration_job_finished(evt);
 }
 
-// 阶段 E2：实现迁 app::ExportSendCoordinator（门面一行转发）
 void Plater::print_job_finished(wxCommandEvent &evt)
 {
     ex().handle_print_job_finished(evt);
 }
 
-// 阶段 E2：实现迁 app::ExportSendCoordinator（门面一行转发）
 void Plater::send_job_finished(wxCommandEvent& evt)
 {
     ex().handle_send_job_finished(evt);
 }
 
-// 阶段 E2：实现迁 app::ExportSendCoordinator（门面一行转发）
 void Plater::publish_job_finished(wxCommandEvent &evt)
 {
     ex().handle_publish_job_finished(evt);
@@ -2573,7 +2418,6 @@ void Plater::on_bed_type_change(BedType bed_type)
 
 
 
-// 阶段 B3：唯一实现归属 app::MixingGateKeeper（门面一行转发；公有签名不变）
 
 
 
@@ -2659,7 +2503,6 @@ void Plater::load_current_presets() { wxGetApp().load_current_presets(); }
 void Plater::save_mode(int mode) { wxGetApp().save_mode(mode); }
 bool Plater::single_blocks(bool cond)
 {
-    // 语义等价于原 `m_single && !m_single->check(cond)`：true = 本次快照应被跳过（SnapshotService 槽体逐字）
     return m_single && !m_single->check(cond);
 }
 
@@ -2706,7 +2549,6 @@ int Plater::find_next_sliceable_plate_for_slice_all(int start_plate_index)
     return -1;
 }
 
-// 阶段 B3：唯一实现归属 app::MixingGateKeeper（门面一行转发；公有签名不变）
 bool Plater::sync_filament_temp_mixing_notification()
 {
     return gate_keeper().sync_filament_temp_mixing_notification();
@@ -2919,7 +2761,6 @@ std::vector<std::string> Plater::get_colors_for_color_print(const GCodeProcessor
 
 
 
-// 阶段 E2：实现迁 app::ExportSendCoordinator（门面一行转发；Jobs/PrintJob·SendJob 消费面零改动）
 void Plater::update_print_error_info(int code, std::string msg, std::string extra)
 {
     ex().update_print_error_info(code, msg, extra);
@@ -2933,19 +2774,16 @@ wxString Plater::get_export_gcode_filename(const wxString & extension, bool only
 
 
 
-// 阶段 F1：唯一归属 app::SelectionQuery（门面一行转发）
 const Selection &Plater::get_selection() const
 {
     return selq().get_selection();
 }
 
-// 阶段 F1：唯一归属 app::SelectionQuery（门面一行转发）
 int Plater::get_selected_object_idx()
 {
     return selq().get_selected_object_idx();
 }
 
-// 阶段 F1：唯一归属 app::SelectionQuery（门面一行转发）
 
 
 GLCanvas3D* Plater::canvas3D()
@@ -2982,10 +2820,8 @@ GLCanvas3D* Plater::get_current_canvas3D(bool exclude_preview)
     return layout().get_current_canvas3D(exclude_preview);
 }
 
-// 阶段 F2：唯一归属 app::ArrangementService（门面一行转发）
 void Plater::arrange(const app::ArrangeRequest& req) { arrange_svc().arrange(req); }   // F3：门面一行转发（原无参版消亡）
 
-// 阶段 G4：唯一归属 app::SceneRefreshCoordinator（门面一行转发 ×3）
 void Plater::set_current_canvas_as_dirty() { refresh().set_current_canvas_as_dirty(); }
 
 PrinterTechnology Plater::printer_technology() const
@@ -3011,7 +2847,6 @@ bool Plater::set_printer_technology(PrinterTechnology printer_technology)
         }
     }
 
-    // 阶段 E2 勘误 1：按钮文案写点随成员一并删除（成员与写点同 commit 纪律）
 
     if (wxGetApp().mainframe != nullptr)
         wxGetApp().mainframe->update_menubar();
@@ -3028,11 +2863,9 @@ bool Plater::set_printer_technology(PrinterTechnology printer_technology)
     return ret;
 }
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（门面一行转发）
 void Plater::clear_before_change_mesh(int obj_idx) { obj_cmds().clear_before_change_mesh(obj_idx); }
 void Plater::changed_mesh(int obj_idx)             { obj_cmds().changed_mesh(obj_idx); }
 
-// 阶段 G4：changed_object 族体迁 app::SceneRefreshCoordinator（D6；assert 等价改写 &m_host.model()）
 void Plater::changed_object(ModelObject &object) { refresh().changed_object(object); }
 void Plater::changed_object(int obj_idx)         { refresh().changed_object(obj_idx); }
 
@@ -3045,8 +2878,6 @@ void Plater::schedule_background_process(bool schedule/* = true*/)
     slicing().set_suppress_update(false);
 }
 
-// 2.8 增补（main bac6fd5:19175 语义逐字，priv 溶解后走服务槽）：重置 viewer 强制全量重建，
-// 否则 GCodeViewer::load() 因结果 id 未变早退，另一渲染管线的 buffer 停留为空 → 空预览。
 void Plater::reload_gcode_preview()
 {
     refresh().reset_gcode_toolpaths();
@@ -3060,7 +2891,6 @@ void Plater::reload_gcode_preview()
 
 
 
-// 阶段 F2：唯一归属 app::ArrangementService（门面一行转发）
 void Plater::optimize_rotation() { arrange_svc().optimize_rotation(); }
 void Plater::update_menus()         { menus->update(); }
 // BBS
@@ -3074,11 +2904,9 @@ void Plater::fill_color(int extruder_id)
 }
 
 //BBS
-// 阶段 F1：唯一归属 app::ObjectEditCommands（门面一行转发）
 //BBS: add clone
 void Plater::clone_selection()             { obj_cmds().clone_selection(); }
 
-// 阶段 F2：实现迁 app::ArrangementService（静态门面保持签名，内部委托；FillBedJob 类名调用零改动）
 std::vector<Vec2f> Plater::get_empty_cells(const Vec2f step)
 {
     return app::ArrangementService::get_empty_cells(step, *wxGetApp().plater()->partplate_list);   // 静态门面：经 plater 实例取私有成员
@@ -3360,7 +3188,6 @@ void Plater::show_object_info()
     notify_manager->bbl_show_objectsinfo_notification(info_text, is_windows10()&&(non_manifold_edges > 0), !(layout().current_panel == layout().view3D));
 }
 
-// 阶段 E2：实现迁 app::ExportSendCoordinator（门面一行转发）
 
 
 void Plater::post_process_string_object_exception(StringObjectException &err)
@@ -3444,7 +3271,6 @@ GLToolbar& Plater::get_collapse_toolbar()
     return layout().collapse_toolbar;
 }
 
-// 阶段 G4：唯一归属 app::SceneRefreshCoordinator（门面一行转发）
 
 
 void Plater::post_slice_state_change_update() { slicing().post_slice_state_change_update(); }
@@ -3490,13 +3316,10 @@ bool Plater::can_add_model() const { return !slicing().is_background_process_sli
 bool Plater::can_add_plate() const { return !slicing().is_background_process_slicing() && plates().can_add_plate(); }
 
 
-// 阶段 F2：抢占锁释放端（ArrangeJob::finalize 消费；旗标唯一归属 app::ArrangementService）
 void Plater::release_arrange_running() { arrange_svc().release_arrange_running(); }
 
-// 阶段 F1：唯一归属 app::ObjectEditCommands（门面一行转发）
 
 //BBS support cut
-// 阶段 F1：唯一归属 app::ObjectEditCommands（门面一行转发）
 
 
 bool Plater::can_undo() const { return IsShown() && layout().is_view3D_shown() && snapshots().undo_redo_stack().has_undo_snapshot(); }
@@ -3540,7 +3363,6 @@ bool Plater::is_wireframe_enabled() const
 }
 
 
-// 阶段 H2 1.2：原嵌套三件套类外定义死注释块删除（嵌套类已消亡，§5.3 using 别名落地）
 
 
 // Wrapper around wxWindow::PopupMenu to suppress error messages popping out while tracking the popup menu.
@@ -3563,14 +3385,12 @@ bool Plater::PopupMenu(wxMenu *menu, const wxPoint& pos)
 }
 
 
-// 阶段 G4：唯一归属 app::SceneRefreshCoordinator（门面一行转发；原 priv inline 消亡）
 
 
 
 
 
 
-// 阶段 G1：Sidebar 门面转发入口（服务唯一实例留守 Plater::priv）
 app::FilamentService& Plater::filament_service()
 {
     return filament_svc();

@@ -1,8 +1,3 @@
-// MixingGateKeeper 实现（阶段 B3）。
-// 迁移纪律：门控函数族 + helper 簇自 Plater.cpp 逐字迁入；改写仅限宿主解引用
-// （priv 成员 / 全局反查 / 通知管理器 / 工作配置 → GateKeeperHost / NotificationHub）。
-// 零行为纪律：门控条件、去抖窗口、通知文本逐字保持（close_validate_* 精确文本匹配）。
-// 依赖规则：本 cpp 禁 include Plater.hpp / Sidebar.hpp / GUI_App.hpp。
 #include "MixingGateKeeper.hpp"
 #include "../Plater.hpp"        // 阶段 H1 2.1：F1/F3 门面直调（has_sliceable/preset_bundle/app_config 桥接）
 #include "../MainFrame.hpp"      // 阶段 H1 2.1：update_slice_print_status（typed 注入 MainFrame*）
@@ -54,7 +49,6 @@ void MixingGateKeeper::late_bind(LayoutManager& layout)
     m_layout = &layout;
 }
 
-// ===== 自 Plater.cpp:262-571 迁入的 helper 簇 =====
 static std::string tr_u8(const char* s)
 {
     if (s == nullptr)
@@ -366,7 +360,6 @@ void MixingGateKeeper::collect_used_filament_slots_on_plate(
     }
 }
 
-// ===== 门控函数族（自 Plater.cpp 逐字迁入）=====
 bool MixingGateKeeper::check_filament_temp_mixing(int plate_index)
 {
     FilamentTempMixingDetail unused;

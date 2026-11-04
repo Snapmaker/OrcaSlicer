@@ -1,5 +1,3 @@
-// PlateController — Plater 多盘域服务实现（阶段 D1 纯搬移，手册 §3.2）。
-// ⚠ 本文件禁止 include Plater/GUI_App 宿主头（AGENTS.md 依赖规则）——上下文只能经 Host 进入。
 #include "PlateController.hpp"
 #include "../Plater.hpp"        // 阶段 H1 2.1：F1 门面直调（get_camera zoom_to_all_plates）
 #include "LayoutManager.hpp"     // 阶段 H1 2.1：late_bind 后 sidebar/bed/view3D/preview 直读
@@ -38,26 +36,22 @@ void PlateController::late_bind(SlicingController& slicing, LayoutManager& layou
     m_refresh = &refresh;
 }
 
-// 原 Plater::priv::can_add_plate（Plater.cpp:7417-7420）。
 bool PlateController::can_add_plate() const
 {
     return m_partplate_list.get_plate_count() < PartPlateList::MAX_PLATES_COUNT;
 }
 
-// 原 Plater::priv::can_delete_plate（Plater.cpp:7422-7425）——原判定顺序保留。
 bool PlateController::can_delete_plate() const
 {
     return m_partplate_list.get_plate_count() > 1 && (!(m_slicing && m_slicing->is_slicing()) || (m_slicing && m_slicing->background_process().running()));
 }
 
-// 原 Plater::priv::bed_shape_bb（Plater.cpp:2203-2206）。
 BoundingBoxf PlateController::bed_shape_bb() const
 {
     BoundingBox bb = scaled_bed_shape_bb();
     return BoundingBoxf(unscale(bb.min), unscale(bb.max));
 }
 
-// 原 Plater::priv::scaled_bed_shape_bb（Plater.cpp:2210-2214）。
 BoundingBox PlateController::scaled_bed_shape_bb() const
 {
     const auto *bed_shape_opt = m_config->opt<ConfigOptionPoints>("printable_area");
@@ -65,7 +59,6 @@ BoundingBox PlateController::scaled_bed_shape_bb() const
     return printable_area.bounding_box();
 }
 
-// 原 Plater::duplicate_plate（Plater.cpp:14425-14436）。
 int PlateController::duplicate_plate(int plate_index)
 {
     int index = plate_index, ret;
@@ -79,8 +72,6 @@ int PlateController::duplicate_plate(int plate_index)
     return ret;
 }
 
-// 原 Plater::delete_plate（Plater.cpp:14439-14470）。
-// 切片接触点经 Host 回调隔离：before_plate_removed（防悬垂 CRASH FIX）/ after_plate_removed（D2 改接 SlicingController）。
 int PlateController::delete_plate(int plate_index)
 {
     int index = plate_index, ret;
@@ -114,7 +105,6 @@ int PlateController::delete_plate(int plate_index)
     return ret;
 }
 
-// 原 Plater::priv::on_action_add_plate（Plater.cpp:6157-6171）。
 void PlateController::add_plate()
 {
     if (true) {
@@ -131,7 +121,6 @@ void PlateController::add_plate()
     }
 }
 
-// 原 Plater::priv::on_plate_selected（Plater.cpp:6483-6486）。
 void PlateController::on_plate_selected()
 {
     BOOST_LOG_TRIVIAL(debug) << "PlateController::on_plate_selected:received plate selected event\n";
@@ -139,7 +128,6 @@ void PlateController::on_plate_selected()
     m_hub.sync_print_seq_warning_notification();
 }
 
-// 原 Plater::priv::set_bed_shape（Plater.cpp:7364-7413）。
 void PlateController::set_bed_shape(const Pointfs& shape, const Pointfs& exclude_areas, const double printable_height,
                                     const std::string& custom_texture, const std::string& custom_model, bool force_as_custom)
 {

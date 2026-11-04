@@ -1,6 +1,3 @@
-// ArrangementService 实现（阶段 F2，手册 §2/§3）。commit ① 仅落地骨架与装配：
-// 函数体随 tasks 2.3（claim/release/can_arrange）与 3.1/3.2（摆放域迁移）逐字迁入。
-// 依赖规则：禁直接 include Plater/GUI_App 宿主头（经 Host 解引用；PartPlate.hpp 的传递包含与 E1/E2/F1 cpp 同款先例）。
 #include "ArrangementService.hpp"
 #include "ArrangeRequest.hpp"     // 静态工厂实现宿主（F3 §3：hpp-only，不新建 cpp）
 
@@ -14,7 +11,6 @@
 #include <windows.h>
 #include <winnls.h>              // CP_ACP（WIN32_LEAN_AND_MEAN 下 asio socket_ops.ipp 需要；实测缺失）
 #endif
-// 注意：必须早于 PartPlate.hpp（经 Plater.hpp→... 引入 asio 相关头，E1/F1 实测）
 
 #include <algorithm>              // std::find（find_new_position）
 
@@ -34,7 +30,6 @@ namespace Slic3r {
 namespace GUI {
 namespace app {
 
-// —— ArrangeRequest/OrientRequest 静态工厂（F3 §2.4：一行实现，缺省值钉 AllPlates/Selection）——
 ArrangeRequest ArrangeRequest::all_plates()    { return {}; }
 ArrangeRequest ArrangeRequest::current_plate() { return {Scope::CurrentPlate}; }
 OrientRequest  OrientRequest::selection()      { return {}; }
@@ -45,8 +40,6 @@ ArrangementService::ArrangementService(Plater* q, Model* model, Worker& worker, 
 {
 }
 
-// 原 Plater::arrange（2026-10-19 基线 :7858-7865）逐字：worker idle 守卫 → 快照 → replace_job
-// F3：前置语义由隐式 prepare-state 写点改为随调用 Request 入参
 void ArrangementService::arrange(const ArrangeRequest& req)
 {
     auto &w = m_worker;
@@ -56,7 +49,6 @@ void ArrangementService::arrange(const ArrangeRequest& req)
     }
 }
 
-// 原 Plater::orient（基线 :4205-4212）逐字；F3：Request 显式传递
 void ArrangementService::orient(const OrientRequest& req)
 {
     auto &w = m_worker;
@@ -66,7 +58,6 @@ void ArrangementService::orient(const OrientRequest& req)
     }
 }
 
-// 原 Plater::fill_bed_with_instances（基线 :6096-6103）逐字；快照名沿用 "Arrange"（不改）
 void ArrangementService::fill_bed_with_instances()
 {
     auto &w = m_worker;
@@ -76,8 +67,6 @@ void ArrangementService::fill_bed_with_instances()
     }
 }
 
-// 原 Plater::optimize_rotation（基线 :8001-8008）逐字；复用 OrientJob
-// F3 D6：无写点、原隐式依赖残留 DEFAULT 初值——显式钉死 Selection（误传 CurrentPlate 会使 SLA 菜单摆向变盘级语义）
 void ArrangementService::optimize_rotation()
 {
     auto &w = m_worker;
@@ -87,7 +76,6 @@ void ArrangementService::optimize_rotation()
     }
 }
 
-// 原 Plater::find_new_position（2026-10-19 基线 :2798-2829）逐字；零活调用，仍按主文档迁移
 void ArrangementService::find_new_position(const ModelInstancePtrs &instances)
 {
     arrangement::ArrangePolygons movable, fixed;
@@ -121,7 +109,6 @@ void ArrangementService::find_new_position(const ModelInstancePtrs &instances)
         m.apply();
 }
 
-// 原 Plater::get_empty_cells（基线 :8028-8057）逐字；唯一差异：宿主反查改为调用方传入 PartPlateList&
 std::vector<Vec2f> ArrangementService::get_empty_cells(const Vec2f step, PartPlateList& plates)
 {
     PartPlate* plate = plates.get_curr_plate();
@@ -154,26 +141,22 @@ std::vector<Vec2f> ArrangementService::get_empty_cells(const Vec2f step, PartPla
     return cells;
 }
 
-// 原 Plater::priv::can_arrange（2026-10-19 基线 :4435-4438）逐字
 bool ArrangementService::can_arrange() const
 {
     return !m_model->objects.empty() && m_worker.is_idle();
 }
 
-// F3 新增：worker_idle 槽消费改经服务 accessor（hpp 仅前向声明 Worker，行内定义需完整类型——故落 cpp 一行转发）
 bool ArrangementService::worker_idle() const
 {
     return m_worker.is_idle();
 }
 
-// 原 Plater::last_arrange_job_is_finished 内联（hpp :853-857）逐字：CAS false→true
 bool ArrangementService::claim_arrange_running()
 {
     bool prevRunning = false;
     return m_arrange_running.compare_exchange_strong(prevRunning, true);
 }
 
-// 原 ArrangeJob::finalize（Jobs/ArrangeJob.cpp:737）释放端逐字
 void ArrangementService::release_arrange_running()
 {
     m_arrange_running.store(false);

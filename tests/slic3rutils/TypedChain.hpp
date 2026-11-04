@@ -1,16 +1,5 @@
-// TypedChain — H1 2.3 typed 化后的无头测试构造链（tests 共享）。
-// 用途：批 2/3 typed ctor 注入后，FakeHost 替身模式失效；本链以真实无头对象
 // （Model/DynamicPrintConfig/PartPlateList(nullptr plater)/NotificationHub(nullptr q)/
 //   SnapshotService/PlateController/SelectionQuery/ProjectSession/SlicingController/ObjectEditCommands/CalibrationFlow）
-// 构成服务依赖闭包，供各服务单测直构。
-// 约定：
-//  - FakeWorker 由本头提供（可控 idle/计数，不启线程）——TypedChain ctor 直收。
-//  - LayoutManager/SceneRefreshCoordinator 不可无头构造（Sidebar/wx 依赖）——对应 late_bind
-//    不调用，成员保持 nullptr；消费点已加空守卫（erratum §11 批 3 收口登记）。
-//  - Plater* 全部 nullptr：q 桥接面（preset_bundle/app_config/...）在无头态不可触达，
-//    触达即 AV——依赖 q 桥的用例不得保留（erratum §11 追记：急切求值教训 ⑭）。
-//  - 成员声明序 = 依赖序（C++ 初始化序）；fff_print/sla_print/gcode_result 仅被存引用，
-//    声明在后合法（slicing ctor 体不使用）。
 #pragma once
 
 #include "slic3r/GUI/app/NotificationHub.hpp"
@@ -34,7 +23,6 @@
 namespace Slic3r {
 namespace GUI {
 
-// 测试用 Worker：可控 idle 状态，记录 push/cancel（不启线程）。
 struct FakeWorker : Worker {
     bool idle = true;
     int  push_count = 0;
@@ -52,7 +40,6 @@ struct FakeWorker : Worker {
 namespace app {
 
 struct TypedChain {
-    // —— 依赖序（声明序 = 构造序；引用成员不可空）——
     Model                   model;
     std::atomic<bool>       fusync{false};
     DynamicPrintConfig      config;
@@ -79,7 +66,6 @@ struct TypedChain {
         , calib(hub, nullptr, model, ppl, nullptr, session, slicing, objcmds)
     {}
 
-    // —— 值成员（SlicingController 注入引用的目标；声明序在后——ctor 仅存引用，合法）——
     Print                   fff_print;
     SLAPrint                sla_print;
     GCodeProcessorResult    gcode_result;

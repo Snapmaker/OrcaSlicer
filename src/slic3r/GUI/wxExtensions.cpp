@@ -1266,7 +1266,6 @@ void ImageTransientPopup::OnMouse(wxMouseEvent &event)
 }
 
 
-// 喷嘴类型 key -> 显示标签（阶段 A 自 Plater.cpp:2101-2112 抽出，去 static）
 wxString nozzle_type_key_to_label(const std::string& key)
 {
     if (key == "hardened_steel")

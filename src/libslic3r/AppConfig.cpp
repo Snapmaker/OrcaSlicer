@@ -1635,19 +1635,15 @@ void AppConfig::update_filament_names(json& j)
     //}
 }
 
-// —— ② 携带（2.8 编译期勘误）：bpe 设备注册表 API，bac6fd5 树无（impls 逐字） ——
 
 void AppConfig::save_device_info(const DeviceInfo& device)
 {
-    // 检查是否已存在该设备
     auto it = std::find_if(m_device_list.begin(), m_device_list.end(),
         [&device](const DeviceInfo& d) { return d.dev_id == device.dev_id; });
 
     if (it != m_device_list.end()) {
-        // 更新已存在的设备信息
         *it = device;
     } else {
-        // 添加新设备
         m_device_list.push_back(device);
     }
     m_dirty = true;

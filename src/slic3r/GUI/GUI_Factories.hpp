@@ -52,7 +52,6 @@ class SelectionQuery;
 class MenuFactory
 {
 public:
-	// 阶段 H2 2.3（§8 根治项）：构造注入 ObjectEditCommands&/SelectionQuery&，根治 wxGetApp 全局反查
 	MenuFactory(app::ObjectEditCommands& obj_cmds, app::SelectionQuery& selq);
 	~MenuFactory() = default;
 

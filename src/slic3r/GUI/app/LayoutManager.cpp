@@ -1,10 +1,3 @@
-// LayoutManager — 布局/视图/主题服务实现（阶段 G3）。
-// 迁移源：Plater.cpp priv（手册 §2）；宿主解引用改 LayoutManagerHost 槽 / q / NotificationHub&。
-// 等价改写豁免口径（逐字审计）：宿主解引用外允许 ①GUI_App 全局 plater()→`m_q`（单例同指，
-// :2811 守卫经 plater_alive 槽）②`session()/slicing()/GUI_App 全局`→对应槽 ③`wxAUI_DOCK_RIGHT`
-// 比较提前为 bool（docking_state_from）④视图名 if-链→PanelKind 判定（kind_from_view_name）
-// ⑤priv 内联壳 reset_gcode_toolpaths/get_config 内联展开 ⑥成员唯一化 { nullptr }。
-// Windows/asio 前置块必须置于一切 include 之前（G2 勘误 10：hpp 链 wx/defs.h 先引入 windows.h）。
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -52,8 +45,6 @@
 namespace Slic3r {
 namespace GUI {
 
-// —— 原 Plater.cpp:440-458 逐字随迁；FloatFrame 的 GUI_App 暗色 UI 触点（UpdateFrameDarkUI）
-//    改经 apply_dark_ui 回调（由 LayoutManager 装配到 update_frame_dark_ui 槽）——
 class FloatFrame : public wxAuiFloatingFrame
 {
 public:
@@ -105,7 +96,6 @@ void LayoutManager::late_bind(SceneRefreshCoordinator& refresh)
 
 LayoutManager::~LayoutManager() = default;
 
-// —— 原 priv 内联判定族（:574-594 逐字；hpp 仅声明，完整类型在此）——
 bool LayoutManager::is_preview_shown() const { return current_panel == preview; }
 bool LayoutManager::is_preview_loaded() const { return preview->is_loaded(); }
 bool LayoutManager::is_view3D_shown() const { return current_panel == view3D; }
@@ -124,7 +114,6 @@ bool LayoutManager::is_view3D_layers_editing_enabled() const { return (current_p
 
 wxAuiManager* LayoutManager::aui() { return m_aui_mgr.get(); }   // 基类指针（AuiMgr 完整类型在本 cpp）
 
-// —— 纯函数四件（D7；无头单测直调）——
 
 LayoutManager::SidebarVisPlan LayoutManager::plan_sidebar_visibility(const SidebarLayout& st, bool pane_shown, bool pane_floating)
 {
@@ -177,7 +166,6 @@ LayoutManager::PanelKind LayoutManager::kind_of(const wxPanel* panel) const
     return PanelKind::None;
 }
 
-// —— 新抽（priv ctor / reset 尾迁出）——
 
 void LayoutManager::attach_views(View3D* v3d, Preview* prev, AssembleView* assemble)
 {
@@ -203,7 +191,6 @@ void LayoutManager::save_window_layout()             // 原 reset() 尾 :2479-24
     }
 }
 
-// —— 视图切换（原 priv 函数逐字）——
 
 void LayoutManager::select_view(const std::string& direction)   // 原 :2027-2043
 {
@@ -311,7 +298,6 @@ GLCanvas3D* LayoutManager::get_current_canvas3D(bool exclude_preview)   // 原 :
     return nullptr;
 }
 
-// —— AUI 侧栏（原 priv 函数逐字）——
 
 void LayoutManager::enable_sidebar(bool enabled)     // 原 :2125-2132
 {
@@ -381,7 +367,6 @@ Sidebar::DockingState LayoutManager::get_sidebar_docking_state()   // 原 :2187-
     return docking_state_from(sidebar_layout.is_enabled, pane.IsFloating(), pane.dock_direction == wxAUI_DOCK_RIGHT);
 }
 
-// —— set_current_panel（原 :2657-2949 逐字；切片/会话耦合经槽，时序冻结 D6）——
 
 void LayoutManager::set_current_panel(wxPanel* panel, bool no_slice)
 {
@@ -705,7 +690,6 @@ void LayoutManager::set_current_panel(wxPanel* panel, bool no_slice)
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": successfully, exit");
 }
 
-// —— 主题/rescale（D4：服务体 = 原序列布局前缀；menus/ex/Layout 留 Plater 门面原序）——
 
 void LayoutManager::msw_rescale()                    // 原 Plater::msw_rescale :5865 布局前缀
 {
@@ -745,7 +729,6 @@ void LayoutManager::update_ui_from_settings()        // 原 :2205-2213 逐字
     sidebar->update_ui_from_settings();
 }
 
-// —— 工具栏/视图查询 ——
 
 bool LayoutManager::init_collapse_toolbar(const GLTexture* shared_background_texture)          // 原 :3897-3942（is_gcode_viewer 改槽；plater() 改 q）
 {

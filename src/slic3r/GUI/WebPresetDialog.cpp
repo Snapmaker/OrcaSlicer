@@ -475,9 +475,6 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
                 }
             }
 
-            // 2.8 勘误（M-07 改判）：bpe 设备信息块依赖 bpe 侧 AppConfig::get/save_device_info、
-            // GUI_App::device_card_notify、DeviceInfo/m_device_id——main 树无此基础设施，② 口径在此断裂；
-            // 回退 main 版一行（accessor 改写：mainframe->plater()->sidebar() 门面链已删）。
             wxGetApp().layout().sidebar->update_all_preset_comboboxes();
 
         } else if (strCmd == "save_userguide_filaments") {

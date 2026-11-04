@@ -45,7 +45,6 @@ struct BBLocalMachine
     bool operator!=(const BBLocalMachine& other) const { return !operator==(other); }
 };
 
-// ② 携带（2.8 编译期勘误）：bpe 设备信息注册表——ExportSendCoordinator/Sidebar 的 ② 携带代码消费
 struct DeviceInfo {
     std::string ip;
     std::string dev_id;
@@ -302,7 +301,6 @@ public:
 	std::string         get_region();
 	std::string         get_country_code();
 
-    // ② 携带：bpe 设备注册表 API（bac6fd5 树无，随携带服务代码带入）
     void save_device_info(const DeviceInfo& device);
     void remove_device_info(const std::string& dev_id);
     std::vector<DeviceInfo> get_devices() const;
@@ -429,7 +427,6 @@ private:
 	// 耗材喷嘴映射表
     std::unordered_map<int, int> filament_extruder_map;
 
-    // ② 携带：bpe 设备注册表存储
     std::vector<DeviceInfo> m_device_list;
 };
 

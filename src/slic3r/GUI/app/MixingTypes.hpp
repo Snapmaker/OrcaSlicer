@@ -1,6 +1,3 @@
-// 混色门控类型（阶段 B3，手册《Plater阶段B3-MixingGateKeeper与BatchMatchCoordinator实施方案》§2.2）。
-// 自 Plater.hpp（原 Plater 嵌套类型）上提：GateKeeper / Plater / 消费方共用同一类型定义；
-// Plater 类内保留 using 别名，公有 API 名称（Plater::FilamentTempMixingState 等）不变。
 #pragma once
 
 #include <vector>

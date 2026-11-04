@@ -1,7 +1,3 @@
-// MixingGateKeeper — 混色入口守门服务（阶段 B3）。
-// 承接：去抖状态 12 成员 + 拖拽残值缓存 + 门控判定/通知函数族（自 Plater 逐字迁入）。
-// 依赖规则（B1/B2 护栏延续）：本 hpp 禁 include Plater.hpp / Sidebar.hpp / GUI_App.hpp；
-// 宿主能力经 GateKeeperHost 回调；通知经 NotificationHub& typed 注入（C 阶段先例）。
 #pragma once
 
 #include <atomic>
@@ -30,7 +26,6 @@ namespace app {
 class LayoutManager;
 class NotificationHub;
 
-// 阶段 H1 2.1：GateKeeperHost 消亡——F2 ctor typed 注入（partplate_list/config/model/main_frame）+ layout 经 late_bind（声明序 :840 晚于本服务 :837，不可 ctor 注入）；F1（dialog_parent/has_sliceable）改 m_q 门面直调；F3（preset_bundle/app_config）改 q 桥接。
 
 class MixingGateKeeper {
 public:
@@ -38,7 +33,6 @@ public:
                               const DynamicPrintConfig* config, Model& model, MainFrame* main_frame);
     void late_bind(LayoutManager& layout);   // 阶段 H1 2.1：layout 声明序晚于本服务，plater_init 内补注
 
-    // —— 判定 / 通知（Plater 公有门面一行转发；签名不变）——
     bool check_filament_temp_mixing(int plate_index);
     bool check_filament_temp_mixing(int plate_index, FilamentTempMixingDetail& detail);
     bool check_filament_temp_mixing();
@@ -64,7 +58,6 @@ public:
     bool has_incompatible_mixed_filament_in_use() const;
 
 private:
-    // —— 迁移自 Plater.cpp 的文本/槽位 helper（原 static；宿主依赖故为成员）——
     std::string filament_display_label(int slot_1based);
     std::string format_filament_slot_list(const std::vector<int>& slots_1based);
     void        append_filament_temp_mixing_groups(std::string& out, const FilamentTempMixingDetail& detail);
@@ -88,7 +81,6 @@ private:
     MainFrame*                  m_main_frame;
     LayoutManager*              m_layout{nullptr};   // late_bind
 
-    // —— 自 Plater::priv 迁入（原序；去抖 12 成员）——
     bool filament_temp_mixing_notification_initialized = false;
     int filament_temp_mixing_notification_plate = -1;
     FilamentTempMixingState filament_temp_mixing_notification_state = FilamentTempMixingState::Compatible;
@@ -116,7 +108,6 @@ private:
     std::string          cold_plate_last_error_text;
     std::string          cold_plate_last_serious_warning_text;
 
-    // 原 Plater::priv:1211（第 13 状态）：拖拽期残值缓存（has_incompatible_mixed_filament_in_use）
     mutable std::atomic<bool> m_cached_incompatible_mixed{false};
 };
 

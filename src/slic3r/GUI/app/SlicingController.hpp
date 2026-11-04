@@ -1,10 +1,5 @@
-// SlicingController — Plater 切片域服务（阶段 D2 纯搬移，手册《Plater阶段D2-切片SlicingController抽取实施方案》）。
-// hpp：wx 仅以指针/前向声明出现；依赖规则见 AGENTS.md（禁 include Plater/GUI_App 宿主头）。
-// Host 回调中标注（E/G/B 过渡）者，在对应服务落地后改接新服务——接口不变。
 #pragma once
 
-// 阶段 H1（勘误 13）：头自包含化——windows 前置保护 BSP→PrintHost→asio 链（CP_ACP），
-// 使任意 TU 任意顺序包含本头均安全（ExportSendCoordinator.hpp 同款前置先例）。
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -92,7 +87,6 @@ public:
                    MixingGateKeeper& gate_keeper, CalibrationFlow& calib, LayoutManager& layout,
                    SceneRefreshCoordinator& refresh);   // H1 2.3
 
-    // —— 所有权成员访问器（priv 过渡期/G 前使用）——
     BackgroundSlicingProcess& background_process() { return m_background_process; }
     Print&        fff_print()            { return m_fff_print; }
     SLAPrint&     sla_print()            { return m_sla_print; }
@@ -101,11 +95,9 @@ public:
     bool  slice_all() const               { return m_slice_all; }
     int   cur_slice_plate() const         { return m_cur_slice_plate; }
 
-    // —— 无 wx 决策核心（单测面）——
     bool can_current_plate_be_sliced() const;
     bool guard_before_slice_plate();                  // 阶段 I：页面切换自动切片复用同一前置守卫
 
-    // —— 调度/状态机 ——
     void schedule_background_process();
     void suppress_background_process(const bool stop_background_process);
     void set_suppress_update(bool v)              { m_suppressed_update = v; }
@@ -126,13 +118,11 @@ public:
     bool reslice();
     int  start_next_slice();
 
-    // —— 状态查询 ——
     bool is_background_process_slicing() const { return m_is_slicing; }
     bool is_slicing_in_progress() const        { return m_is_slicing || m_background_process.running(); }
     bool is_export_gcode_scheduled() const;
     void post_slice_state_change_update();
 
-    // —— 事件逻辑（Bind 接线留守 priv，priv 转发壳调用）——
     void handle_slicing_update(SlicingStatusEvent &evt);
     void handle_slicing_completed(wxCommandEvent & evt);
     void handle_slicing_began();
@@ -141,7 +131,6 @@ public:
     void handle_export_finished();
     void handle_slice_button_status(bool enable);
 
-    // —— 切片动作 ——
     void on_action_slice_plate();
     void on_action_slice_all();
     int  select_plate(int plate_index, bool need_slice);
@@ -151,7 +140,6 @@ public:
     void update_slicing_context_to_current_partplate();
     int  update_print_required_data(Slic3r::DynamicPrintConfig config, Slic3r::Model model, Slic3r::PlateDataPtrs plate_data_list, std::string file_name, std::string file_path);
 
-    // —— 缩略图/首层框（渲染经 Host 视图）——
     void generate_thumbnail(class ThumbnailData& data, unsigned int w, unsigned int h, const class ThumbnailsParams& thumbnail_params, int camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false);
     std::vector<ThumbnailData> generate_thumbnails(const class ThumbnailsParams& params, int camera_type);
     void generate_calibration_thumbnail(class ThumbnailData& data, unsigned int w, unsigned int h, const class ThumbnailsParams& thumbnail_params);
@@ -181,7 +169,6 @@ private:
     SceneRefreshCoordinator*    m_refresh{nullptr};         // late_bind
     void call_after_fn(std::function<void()> fn);           // 原 Host 槽转正（§5.1：cpp 定义）
 
-    // —— 原 priv 13 成员 ——
     bool                 m_ignore_event{false};
     bool                 m_slice_all{false};
     bool                 m_is_slicing{false};

@@ -1,6 +1,3 @@
-// ProjectSession — Plater 项目会话服务（阶段 E1 纯搬移，手册《Plater阶段E1-项目ProjectSession抽取实施方案》）。
-// 依赖规则（AGENTS.md）：本文件禁止 include Plater/GUI_App 宿主头（护栏 #1，CI grep）；
-// q 与 priv 上下文只能经 ProjectSessionHost 进入；SLAImportDialog.hpp 因含 Plater.hpp 同禁（Host 槽惰性创建）。
 #include "ProjectSession.hpp"
 
 #include "slic3r/GUI/app/SnapshotService.hpp"
@@ -67,7 +64,6 @@
 
 namespace fs = boost::filesystem;
 
-// 原 GUI_App.hpp 内 static wxString dots（文件局部静态，禁 include 宿主头——本地等值复刻，值语义不变）
 static wxString dots("...", wxConvUTF8);
 
 namespace Slic3r {
@@ -96,18 +92,14 @@ void ProjectSession::late_bind(ExportSendCoordinator& ex, SelectionQuery& selq, 
 }
 
 ProjectSession::~ProjectSession() = default;
-// m_sla_import_dlg 不 delete：wx 父窗口（q）负责销毁（原 priv 同例）；且 SLAImportDialog
-// 头文件含 Plater.hpp 禁 include，complete-type delete 不可行。
 
 
-// —— 文件类型判定 static regex（原 priv :1308-1312 定义随迁）——
 const std::regex ProjectSession::pattern_bundle(".*[.](amf|amf[.]xml|zip[.]amf|3mf)", std::regex::icase);
 const std::regex ProjectSession::pattern_3mf(".*3mf", std::regex::icase);
 const std::regex ProjectSession::pattern_zip_amf(".*[.]zip[.]amf", std::regex::icase);
 const std::regex ProjectSession::pattern_any_amf(".*[.](amf|amf[.]xml|zip[.]amf)", std::regex::icase);
 const std::regex ProjectSession::pattern_prusa(".*bbl", std::regex::icase);
 
-// —— 纯函数（原 Plater::has_illegal_filename_characters :609/:615 / show_illegal_characters_warning :625）——
 
 bool ProjectSession::has_illegal_filename_characters(const wxString& wxs_name)
 {
@@ -130,7 +122,6 @@ void ProjectSession::show_illegal_characters_warning(wxWindow* parent)
     show_error(parent, _L("Invalid name, the following characters are not allowed:") + " <>:/\\|?*\"");
 }
 
-// —— 脏状态组（原 priv :913-943 / up_to_date :6953 / update_title_dirty_status :6384）——
 
 void ProjectSession::set_plater_dirty(bool is_dirty) { dirty_state.set_plater_dirty(is_dirty); }
 bool ProjectSession::is_project_dirty() const { return dirty_state.is_dirty(); }
@@ -203,7 +194,6 @@ void ProjectSession::update_title_dirty_status()
 #endif
 }
 
-// —— 文件名/路径组（原 priv :6314/:6403/:6363/:6369）——
 
 wxString ProjectSession::get_project_filename(const wxString& extension) const
 {
@@ -259,7 +249,6 @@ void ProjectSession::set_project_filename(const wxString& filename)
     wxString project_name = from_u8(full_path.filename().string());
     set_project_name(project_name);
     // record filename for hint when open exported file/.gcode
-    // hpp 六成员经 Host 桥接（commit ② 落位后改直读自有成员，手册 E1 陷阱 9）
     if (only_gcode_mode())
         m_preview_only_filename = std::string((project_name + ".gcode").mb_str());
     if (using_exported_file())
@@ -271,7 +260,6 @@ void ProjectSession::set_project_filename(const wxString& filename)
         m_main_frame->add_to_recent_projects(filename);
 }
 
-// —— 模式标志组（hpp 六成员门面；commit ① 经 Host 桥接，② 后改直读自有成员）——
 
 bool        ProjectSession::only_gcode_mode() const { return m_only_gcode; }
 void        ProjectSession::set_only_gcode(bool only_gcode) { m_only_gcode = only_gcode; }
@@ -285,7 +273,6 @@ void        ProjectSession::set_valid_plates_count(int count) { m_valid_plates_c
 const wxString& ProjectSession::get_last_loaded_gcode() const { return m_last_loaded_gcode; }
 void        ProjectSession::reset_last_loaded_gcode() { m_last_loaded_gcode = ""; }
 
-// —— 生命周期组（原 Plater 本体 :7098/:7189/:7315/:9595/:9634；门面一行转发）——
 
 int ProjectSession::new_project(bool skip_confirm, bool silent, const wxString& project_name)
 {
@@ -336,7 +323,6 @@ int ProjectSession::new_project(bool skip_confirm, bool silent, const wxString& 
     else
         set_project_name(project_name);
 
-    // 原嵌套版 TakeSnapshot（take_snapshot + 抑制至作用域结束；C 阶段 SuppressScope 等价 RAII）
     m_snapshots.take_snapshot("New Project", UndoRedo::SnapshotType::ProjectSeparator);
     app::SnapshotService::SuppressScope suppress_scope(m_snapshots);
 
@@ -427,7 +413,6 @@ void ProjectSession::load_project(const wxString& filename2, const wxString& ori
     } else if (originfile != "-") {
         strategy = strategy | LoadStrategy::Restore;
     } else {
-        // int 桥接（LoadType 为 cpp-local enum）：0 Unknown/1 OpenProject/2 LoadGeometry/3 LoadConfig
         switch (m_q->determine_load_type(filename.ToStdString(), "")) {
             case 1 /*LoadType::OpenProject*/: break; // Do nothing
             case 2 /*LoadType::LoadGeometry*/:; strategy = LoadStrategy::LoadModel; break;
@@ -561,7 +546,6 @@ int ProjectSession::close_with_confirm(std::function<bool(bool)> second_check)
     MessageDialog dlg(m_q, _L("The current project has unsaved changes, save it before continue?"),
         wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Save"), wxYES_NO | wxCANCEL | wxYES_DEFAULT | wxCENTRE);
     dlg.show_dsa_button(_L("Remember my choice."));
-    // [] 全局槽（手册 E1 陷阱 7）：记忆选择读写 wxGetApp().app_config，不得写 [this]（priv 影子）
     auto choise = m_q->app_config()->get("save_project_choise");
     auto result = choise.empty() ? dlg.ShowModal() : choise == "yes" ? wxID_YES : wxID_NO;
     if (result == wxID_CANCEL)
@@ -596,9 +580,6 @@ void ProjectSession::trigger_restore_project(int skip_confirm)
 }
 
 
-// —— 加载组（阶段 E1 自 Plater.cpp 整块搬移；task 3.4，手册 §2.1 表 8-11）——
-// load_files_core = 原 priv::load_files（≈1,100 行按原顺序整块搬移，禁止重排，手册陷阱 8）；
-// load_files(fs::path) = 原 Plater 同名门面（混色同步尾段随迁）。
 std::vector<size_t> ProjectSession::load_files(const std::vector<boost::filesystem::path>& input_files, LoadStrategy strategy, bool ask_multi) {
     //BBS: wish to reset state when load a new file
     m_slicing.set_slice_all_only_has_gcode(false);
@@ -1920,7 +1901,6 @@ bool ProjectSession::load_files(const wxArrayString& filenames)
         }
     }
 
-    //嵌套版 TakeSnapshot snapshot(this, snapshot_label);   // H2 1.2：原嵌套版调用点，C 阶段已由 SuppressScope 承接
     //load_files(normal_paths, LoadStrategy::LoadModel, false);
 
     // BBS: check file types
@@ -2414,9 +2394,7 @@ bool ProjectSession::preview_zip_archive(const boost::filesystem::path& archive_
 }
 
 
-// —— gcode 组（阶段 E1 自 Plater.cpp 整块搬移；task 3.5，手册 §2.1 表 12）——
 
-// 原 Plater.hpp 内 const wxString DEFAULT_PROJECT_NAME（禁 include 宿主头——本地等值复刻，值语义不变）
 static const wxString DEFAULT_PROJECT_NAME = "Untitled";
 
 void ProjectSession::load_gcode()
@@ -2442,8 +2420,6 @@ void ProjectSession::load_gcode(const wxString& filename)
         // have left the UI on another view (e.g. the 3D editor after a
         // drag & drop).
         m_main_frame->select_tab(MainFrame::tpPreview);
-        // 顺序契约（手册 E1 陷阱 4）：先切 Preview 面板再 render，set_current_panel
-        // 内部含 reslice 判定——Host 化后调用时序冻结，勿重排。
         m_layout->set_current_panel(m_layout->preview, true);
         GLCanvas3D* canvas = m_layout->get_current_canvas3D();
         if (canvas)
@@ -2557,7 +2533,6 @@ void ProjectSession::reload_gcode_from_disk()
 }
 
 
-// —— 导入/替换/下载组（阶段 E1 自 Plater.cpp 整块搬移；task 3.6，手册 §2.1 表 13-14）——
 bool ProjectSession::replace_volume_with_stl(int object_idx, int volume_idx, const boost::filesystem::path& new_path, const std::string& snapshot)
 {
     const std::string path = new_path.string();
@@ -2705,7 +2680,6 @@ void ProjectSession::reload_all_from_disk()
 
     m_snapshots.take_snapshot("Reload all");
     app::SnapshotService::SuppressScope suppress_scope(m_snapshots);
-    // 原嵌套版 SuppressSnapshots（并入上方 SuppressScope，抑制语义等价：作用域内 take_snapshot 全被阻塞）
 
     Selection& selection = const_cast<Selection&>(m_selq->get_selection());
     Selection::IndicesList curr_idxs = selection.get_volume_idxs();
@@ -2978,7 +2952,6 @@ void ProjectSession::import_zip_archive()
 }
 void ProjectSession::import_sl1_archive()
 {
-    // SLAImportDialog/SLAImportJob 完整类型依赖 Plater.hpp（session 不可达）——流程槽桥接（登记见 hpp 注）
     m_q->run_sla_import_job();
 }void ProjectSession::extract_config_from_project()
 {
@@ -3433,7 +3406,6 @@ void ProjectSession::reload_from_disk()
 }
 
 
-// —— Bind handler 函数体（原 priv :5657/:5894/:5902/:6060；wx 事件签名由 priv 转发壳吸收）——
 
 void ProjectSession::on_action_open_project()
 {

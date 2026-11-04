@@ -1,12 +1,3 @@
-// SceneRefreshCoordinator — 刷新调度服务实现（阶段 G4）。
-// 迁移源：Plater.cpp priv 14 函数（手册 §2.2，逐字）+ Plater 公有 facade 内联体 changed_object 族
-// （:5168-5225，D6）；宿主解引用改 SceneRefreshHost 槽 / NotificationHub& typed。
-// 等价改写豁免口径（逐字审计）：①宿主解引用→槽 ②q->is_preview_shown→current_panel==preview（LayoutManager
-// 同名内联原体）③q->force_update_all_plate_thumbnails→m_hub（Plater facade 原体一行 p->notification_hub()）④
-// update/changed_object 分支判定抽 plan_update_flags/plan_changed_object_action 纯函数（D7，服务体消费钉语义）
-// ⑤assert &p->model→&m_model（D6）⑥dead 块（#ifdef SUPPORT_AUTOCENTER/#if 0）逐字保留——宏全仓未定义，
-// 预处理消除，零编译影响（手册 §2.4 勘误 6 同批登记）。
-// Windows/asio 前置块必须置于一切 include 之前（G2 勘误 10：hpp 链 wx/defs.h 先引入 windows.h）。
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -51,7 +42,6 @@ SceneRefreshCoordinator::SceneRefreshCoordinator(NotificationHub& hub, Plater* q
 {
 }
 
-// —— 纯函数三件（D7；判定语义 = 原 update/changed_object/update facade 头部分支逐字）——
 
 SceneRefreshCoordinator::UpdateFlagsPlan SceneRefreshCoordinator::plan_update_flags(PrinterTechnology technology, unsigned int flags)
 {
@@ -86,7 +76,6 @@ SceneRefreshCoordinator::UpdateGatePlan SceneRefreshCoordinator::plan_update_gat
     return plan;
 }
 
-// —— 原 priv::update（Plater.cpp:1958-1995 逐字，槽消费）——
 
 void SceneRefreshCoordinator::update(unsigned int flags)
 {
@@ -129,7 +118,6 @@ void SceneRefreshCoordinator::update(unsigned int flags)
     m_layout.update_sidebar();
 }
 
-// —— 原 Plater::update(bool,bool) facade 门控（:4014-4025 语义逐字，门控随服务 §0.1）——
 
 void SceneRefreshCoordinator::update_gate(bool conside_update_flag, bool force_background_processing_update)
 {
@@ -141,7 +129,6 @@ void SceneRefreshCoordinator::update_gate(bool conside_update_flag, bool force_b
         m_need_update = false;                      // 原 p->set_need_update(false)
 }
 
-// —— 原 priv::selection_changed（:2167-2186，槽消费；layers 分支整段封装，陷阱 9）——
 
 void SceneRefreshCoordinator::selection_changed()
 {
@@ -163,7 +150,6 @@ void SceneRefreshCoordinator::selection_changed()
     }
 }
 
-// —— 原 priv::object_list_changed（:2188-2207，槽消费）——
 
 void SceneRefreshCoordinator::object_list_changed()
 {
@@ -186,7 +172,6 @@ void SceneRefreshCoordinator::object_list_changed()
     q->notify_object_config_changed();
 }
 
-// —— 原 priv::update_print_volume_state（:2328-2334，槽消费；bed 高度经 printable_height 膨胀槽）——
 
 void SceneRefreshCoordinator::update_print_volume_state()
 {
@@ -196,7 +181,6 @@ void SceneRefreshCoordinator::update_print_volume_state()
     m_model.update_print_volume_state(build_volume);
 }
 
-// —— 原 priv::update_fff_scene（:2428-2436，槽消费）——
 
 void SceneRefreshCoordinator::update_fff_scene()
 {
@@ -208,7 +192,6 @@ void SceneRefreshCoordinator::update_fff_scene()
     m_layout.assemble_view->reload_scene(true);
 }
 
-// —— 原 priv::update_fff_scene_only_shells（:2439-2455，槽消费）——
 
 void SceneRefreshCoordinator::update_fff_scene_only_shells(bool only_shells)
 {
@@ -228,7 +211,6 @@ void SceneRefreshCoordinator::update_fff_scene_only_shells(bool only_shells)
     }
 }
 
-// —— 原 priv::update_sla_scene（:2457-2463，槽消费；延迟旗标随服务清零，D3）——
 
 void SceneRefreshCoordinator::update_sla_scene()
 {
@@ -238,7 +220,6 @@ void SceneRefreshCoordinator::update_sla_scene()
     q->update_restart_background_process(true, true);
 }
 
-// —— 原 priv::set_current_canvas_as_dirty（:3357-3365，槽消费；指针比较，G3 pick 同款）——
 
 void SceneRefreshCoordinator::set_current_canvas_as_dirty()
 {
@@ -250,7 +231,6 @@ void SceneRefreshCoordinator::set_current_canvas_as_dirty()
         m_layout.assemble_view->set_as_dirty();
 }
 
-// —— 原 priv::unbind_canvas_event_handlers（:3369-3379，槽消费）——
 
 void SceneRefreshCoordinator::unbind_canvas_event_handlers()
 {
@@ -264,7 +244,6 @@ void SceneRefreshCoordinator::unbind_canvas_event_handlers()
         m_layout.assemble_view->get_canvas3d()->unbind_event_handlers();
 }
 
-// —— 原 priv::reset_canvas_volumes（:3381-3388，槽消费）——
 
 void SceneRefreshCoordinator::reset_canvas_volumes()
 {
@@ -275,21 +254,18 @@ void SceneRefreshCoordinator::reset_canvas_volumes()
         m_layout.preview->get_canvas3d()->reset_volumes();
 }
 
-// —— 原 priv::update_preview_bottom_toolbar（:3392-3395，空体逐字——主文档 §6.3 拆法实测为空，随 G4 收编注销）——
 
 void SceneRefreshCoordinator::update_preview_bottom_toolbar()
 {
     ;
 }
 
-// —— 原 priv::reset_gcode_toolpaths（:3404-3407，槽消费）——
 
 void SceneRefreshCoordinator::reset_gcode_toolpaths()
 {
     m_layout.preview->get_canvas3d()->reset_gcode_toolpaths();
 }
 
-// —— 原 Plater::changed_object 族（:5168-5225 公有 facade 内联体体迁，D6）——
 
 void SceneRefreshCoordinator::changed_object(ModelObject& object)
 {

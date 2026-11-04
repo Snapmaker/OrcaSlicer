@@ -1,6 +1,3 @@
-// ColorMath: 颜色空间纯数学（Lab/XYZ/RGB/HSV 变换与 DeltaE 色差）。
-// 阶段 B1 自 GUI/Utils/ColorSpaceConvert 抽出至引擎层，
-// 消除 libslic3r/FlushVolCalc.cpp 对 GUI 头的包含穿透（全局作用域，保持既有调用方式）。
 #ifndef slic3r_ColorMath_hpp_
 #define slic3r_ColorMath_hpp_
 

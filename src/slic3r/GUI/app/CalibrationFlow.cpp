@@ -1,11 +1,3 @@
-// CalibrationFlow 实现（阶段 G2）。
-// 迁移纪律：Plater 9 公有校准流 + 5 私有 PA 辅助（含 F1 移交 cut_horizontal）+
-// priv record_start_print_preset + 自由函数 adjust_settings_for_flowrate_calib 逐字迁入；
-// 改写仅限宿主解引用（priv 成员 / GUI_App 反查 / 非限定宿主方法）。
-// 依赖规则：hpp 零宿主 include；cpp 级允许 Tab/GLCanvas3D/Selection 等（B2/B3/G1 cpp-only 先例）；
-// 切片控制域头不入本 cpp（set_calib_params 走槽），但 MainFrame/GLCanvas3D
-// 链仍触达 boost/asio——Windows 前置块必须置于一切 include 之前（hpp 链中 wx/defs.h 会先以
-// WIN32_LEAN_AND_MEAN 引入 windows.h，winnls 必须在此前定义 CP_ACP）。
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -76,8 +68,6 @@ namespace app {
 
 namespace {
 
-// —— 原 Plater.cpp 自由函数（Slic3r::GUI 命名空间），全仓唯一调用方为
-// calib_flowrate，随迁入本 TU。逐字保留，宿主解引用改经 Host。——
 
 } // namespace
 
@@ -219,7 +209,6 @@ void CalibrationFlow::late_bind(LayoutManager& layout, SceneRefreshCoordinator& 
     m_refresh = &refresh;
 }
 
-// —— 公有校准流 ——
 
 void CalibrationFlow::calib_pa(const Calib_Params& params)
 {
@@ -568,7 +557,6 @@ void CalibrationFlow::_calib_pa_select_added_objects() {
 
 // Adjust settings for flowrate calibration
 // For linear mode, pass 1 means normal version while pass 2 mean "for perfectionists" version
-// （实现见文件顶部匿名命名空间：adjust_settings_for_flowrate_calib）
 
 void CalibrationFlow::calib_flowrate(bool is_linear, int pass) {
     if (pass != 1 && pass != 2)
@@ -980,7 +968,6 @@ void CalibrationFlow::calib_junction_deviation(const Calib_Params& params)
     m_slicing.background_process().fff_print()->set_calib_params(params);
 }
 
-// —— priv 归宿 ——
 
 void CalibrationFlow::record_start_print_preset(std::string action) {
     // record start print preset

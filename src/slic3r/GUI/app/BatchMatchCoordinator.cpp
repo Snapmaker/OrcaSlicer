@@ -1,7 +1,3 @@
-// BatchMatchCoordinator 实现（阶段 B3）。
-// 迁移纪律：Sidebar「Color Mixing Match」handler 体与 cleanup_unused_filaments_after_batch_match
-// 整体剪切粘贴；改写仅限宿主解引用（priv plater / 混色面板方法 / 非限定 Sidebar 方法 / 父窗指针）。
-// 依赖规则：本 cpp 为 Sidebar 侧编排物，cpp 级 include Sidebar/Plater/GUI_App（B2/B1 cpp-only 先例）。
 #include "BatchMatchCoordinator.hpp"
 
 #include <functional>
@@ -42,7 +38,6 @@ BatchMatchCoordinator::BatchMatchCoordinator(Sidebar& sidebar)
 {
 }
 
-// 原 Sidebar 构造器内 m_btn_batch_match 的 Bind lambda 体逐字迁入
 void BatchMatchCoordinator::run_batch_match()
 {
         if (!wxGetApp().preset_bundle) return;
@@ -498,7 +493,6 @@ void BatchMatchCoordinator::run_batch_match()
         set_progress(100);
 }
 
-// 原 Sidebar::cleanup_unused_filaments_after_batch_match 逐字迁入
 void BatchMatchCoordinator::cleanup_unused_filaments_after_batch_match(const BatchMatchResult &match_result,
                                                                       std::function<void(int, int)> on_progress)
 {

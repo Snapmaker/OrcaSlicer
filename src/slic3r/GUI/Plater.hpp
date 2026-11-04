@@ -92,7 +92,6 @@ class LayoutManager;
 class SceneRefreshCoordinator;
 class PlaterEventRouter;
 }   // F3/G1/G3/G5/H1：前置声明（hpp 禁 include 服务头——调用方 cpp 各自 include；H2 1.1 起唯一例外：
-    // SnapshotService.hpp 直含——§5.3 别名原形所需完整型，无 wx 轻头）
 
 class MainFrame;
 class ConfigOptionsGroup;
@@ -147,7 +146,6 @@ class Plater: public wxPanel
 {
 public:
     using fs_path = boost::filesystem::path;
-    // 阶段 B3：门控类型定义迁 GUI/app/MixingTypes.hpp；以下别名保持 Plater::X 公有 API 名不变
     using FilamentTempMixingState = app::FilamentTempMixingState;
     using FilamentTempMixingDetail = app::FilamentTempMixingDetail;
     using PlateMixingInfo = app::PlateMixingInfo;
@@ -321,7 +319,6 @@ public:
     void changed_object(ModelObject &object);
     void changed_object(int obj_idx);
     void schedule_background_process(bool schedule = true);
-    // 2.8 增补：main 独有——GCodeViewer 结果 id 未变时 load() 早退，GPU 加速切换等场景须先重置 viewer 再全量重建（GUI_App 设置对话框调用）
     void reload_gcode_preview();
     /* -1: send current gcode if not specified
      * -2: send all gcode to target machine */
@@ -383,7 +380,6 @@ public:
     /// @return True if any plate can be sliced and is not blocked by material mixing.
     bool has_sliceable_plate_for_slice_all();
 
-    // —— 阶段 H1 2.1：F3 桥接（服务经 q 调用；一律单行转发，H2 门面瘦身统一评审）——
     PresetBundle* preset_bundle();
     AppConfig* app_config();
     Tab* get_tab(int type);
@@ -410,7 +406,6 @@ public:
     void publish_model(Model& model, SaveStrategy strategy);
     int get_process_completed_with_error();
     void set_show_warning_dialog(bool v);
-    // H1 2.3: ProjectSessionHost 消亡 F3 桥接（单行转发）+ load_auxiliary_files 公有化
     void run_sla_import_job();
     int determine_load_type(std::string filename, std::string override_setting);
     void handle_newer_3mf_schema(DynamicPrintConfig& config_loaded);
@@ -429,7 +424,6 @@ public:
     void trigger_restore_project_evt(int skip_confirm);
     void request_model_download_evt(const wxString& url);
     void load_auxiliary_files();
-    // H1 2.3: SlicingControllerHost 消亡 F3/成员桥接 + 3 件公有化
     void set_process_completed_with_error(int v);
     bool get_show_warning_dialog();
     bool get_tracking_popup_menu();
@@ -638,7 +632,6 @@ public:
     // deletions: suppresses per-deletion panel rebuild + painting remap (both
     // run once after the loop). Single source of truth — Sidebar queries this
     // instead of keeping its own flag.
-    // 阶段 G1：耗材/AMS/批量删除编排服务（Sidebar 门面转发用；唯一实现归属 GUI/app/FilamentService）
     app::FilamentService& filament_service();
     void update_title_dirty_status();
 
@@ -649,16 +642,12 @@ public:
     {
         Plater &m_plater;
     public:
-        // H2 2.6：inc/dec 门面已删——体走组合根 filament_svc（cpp 定义；q 消费面 BatchMatchCoordinator 保留）
         explicit BatchPhysicalDeletionGuard(Plater &p);
         ~BatchPhysicalDeletionGuard();
         BatchPhysicalDeletionGuard(const BatchPhysicalDeletionGuard &) = delete;
         BatchPhysicalDeletionGuard &operator=(const BatchPhysicalDeletionGuard &) = delete;
     };
 
-    // 阶段 H2 1.1（§5.3 形态）：嵌套三件套（原 :795 SuppressSnapshots / :811 TakeSnapshot / :845 SingleSnapshot）
-    // 体迁 app::SnapshotService（token 语义逐字；Plater* 入参不变），别名保持旧调用点语法——
-    // 22 文件 91 引用分簇改写至 SnapshotService:: 原生名前的编译稳定点。
     using TakeSnapshot      = app::SnapshotService::Scope;          // app:: 限定——子命名空间不参与非限定查找（F3 先例）
     using SingleSnapshot    = app::SnapshotService::SingleScope;
     using SuppressSnapshots = app::SnapshotService::SuppressScope;
@@ -698,22 +687,17 @@ public:
     static void show_illegal_characters_warning(wxWindow* parent);
 
 
-    // 阶段 F2：抢占锁释放端门面（旗标与 claim 唯一归属 app::ArrangementService）
     void release_arrange_running();
 
     bool is_loading_project() const;
 
 private:
-    // —— 阶段 H1（路径 A）：priv 解散——服务/PartPlateList unique_ptr + 前向声明（勘误 13 头链隔离）——
-    // 成员声明序承 priv(:463-848) 原行序，逆序析构次序不变；撞名成员四件 m_ 改名（勘误 14）。
     MainFrame *main_frame = nullptr;                                                   // priv :463
     std::atomic<bool> filament_usage_sync_pending{false};                              // priv :464
     std::unique_ptr<MenuFactory> menus;                                                // priv :467
     Slic3r::DynamicPrintConfig *m_config = nullptr;   // FIXME: leak?（H1 改名避让公有 config()）  // priv :472
     Slic3r::Model m_model;                                                             // priv :473
     std::unique_ptr<PartPlateList> partplate_list;                                     // priv :478
-    // —— 阶段 H2 2.0：15 服务 unique_ptr 所有权迁组合根 GUI_App（design 决策 9；构造留守 plater_init；
-    // ~Plater shutdown_services 复现逆序析构）——服务 accessor 声明保留，cpp 体改 wxGetApp() 转发。——
     std::unique_ptr<PlaterWorker<BoostThreadWorker>> m_worker;                         // priv :501
     SLAImportDialog *m_sla_import_dlg = nullptr;                                       // priv :502
     int process_completed_with_error { -1 }; //-1 means no error                       // priv :800
@@ -723,7 +707,6 @@ private:
     SingleSnapshot *m_single = nullptr;                                                // priv :844
     bool show_warning_dialog { false };                                                // priv :848
 
-    // —— 服务 accessor（hpp 仅声明；unique_ptr<前向类型> 不内联解引用——erratum §5.1）——
     app::SnapshotService& snapshots() const;
     app::NotificationHub& notification_hub() const;
     app::PlateController& plates() const;
@@ -741,7 +724,6 @@ private:
     app::PlaterEventRouter& router() const;
     NotificationManager* notification_manager() const;
 
-    // —— priv-only 方法（公有区无同名声明者方入此块；内联体一律 cpp 定义化）——
     void plater_init();              // 原 priv ctor 整体折叠
     std::string get_config(const std::string &key) const;
     BoundingBoxf bed_shape_bb() const;
@@ -774,7 +756,6 @@ private:
     bool 	 m_tracking_popup_menu = false;
     wxString m_tracking_popup_menu_error_message;
 
-    // 阶段 G4：skip_thumbnail_invalid 迁 app::SceneRefreshCoordinator（hpp 私有区唯一非 priv 成员——勘误 2）
 
     void suppress_snapshots();
     void allow_snapshots();
@@ -783,13 +764,9 @@ private:
     void single_snapshots_leave(SingleSnapshot *single);
     // BBS: add project slice related functions
 
-    // 阶段 G2：_calib_pa_* 辅助与 cut_horizontal 迁 app::CalibrationFlow（私有块删除；
-    // slicing_host._calib_pa_pattern_gen_gcode 改指 calibration_svc()）。
 
     friend class SuppressBackgroundProcessingUpdate;
     friend class PlaterDropTarget;
-    // 阶段 H2 1.1：快照替身 Scope/SingleScope（app::SnapshotService 嵌套）经 Plater* 逐字承接嵌套版语义——
-    // take_snapshot 公有可及；suppress_snapshots/allow_snapshots/single_snapshots_enter/leave 私有面经 friend 放行。
     friend class app::SnapshotService::Scope;
     friend class app::SnapshotService::SingleScope;
     friend class app::SnapshotService::SuppressScope;

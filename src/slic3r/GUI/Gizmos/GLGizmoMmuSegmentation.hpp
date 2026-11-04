@@ -72,7 +72,6 @@ public:
 
     void data_changed(bool is_serializing) override;
 
-    // ② 携带（2.8 勘误）：批匹配后强制重载 MMU 选择器状态（BatchMatchCoordinator 消费；bac6fd5 hpp:77）
     void refresh_from_model();
 
     // Keep this in sync with the shared triangle-selector state range.

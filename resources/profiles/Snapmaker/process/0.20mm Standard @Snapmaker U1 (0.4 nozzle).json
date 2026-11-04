@@ -28,7 +28,7 @@
     "bridge_density": "100%",
     "bridge_flow": "1",
     "enable_arc_fitting": "0",
-    "internal_solid_infill_pattern": "rectilinear",
+    "internal_solid_infill_pattern": "monotonicline",
     "precise_outer_wall": "0",
     "seam_gap": "15%",
     "support_type": "tree(auto)",

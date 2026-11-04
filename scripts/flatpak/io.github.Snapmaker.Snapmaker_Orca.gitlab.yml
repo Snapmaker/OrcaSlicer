@@ -1,3 +1,7 @@
+# GitLab packaging only. gitlab_pack_linux.sh clones snapmaker_orca_vendor into
+# gitlab_vendor at the repo root before flatpak-builder. DL_CACHE modules below
+# use path: ../../gitlab_vendor/... and fail if that directory is missing.
+# Direct flatpak-builder use belongs on io.github.Snapmaker.Snapmaker_Orca.yml.
 app-id: io.github.Snapmaker.Snapmaker_Orca
 runtime: org.gnome.Platform
 runtime-version: "49"
@@ -191,7 +195,7 @@ modules:
 
       # MPFR
       - type: file
-        url: https://www.mpfr.org/mpfr-4.2.2/mpfr-4.2.2.tar.bz2
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/MPFR/mpfr-4.2.2.tar.bz2
         dest: external-packages/MPFR
         sha256: 9ad62c7dc910303cd384ff8f1f4767a655124980bb6d8650fe62c815a231bb7b
 
@@ -227,9 +231,9 @@ modules:
 
       # OpenSSL
       - type: file
-        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/OpenSSL/OpenSSL_1_1_1w.tar.gz
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/OpenSSL/openssl-3.5.7.tar.gz
         dest: external-packages/OpenSSL
-        sha256: 2130e8c2fb3b79d1086186f78e59e8bc8d1a6aedf17ab3907f4cb9ae20918c41
+        sha256: a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8
 
       # OpenVDB
       - type: file
@@ -320,6 +324,27 @@ modules:
         desktop-file-edit --set-key=Exec --set-value="entrypoint %U" /app/share/applications/${FLATPAK_ID}.desktop
         install -Dm755 entrypoint /app/bin
         install -Dm755 umount /app/bin
+
+      - | # snapmaker_control must be executable where ConnectionProcessManager looks
+        set -eu
+        found=""
+        for cli in resources/snapmaker_control_linux_*; do
+          if [ -f "$cli" ]; then
+            found="$cli"
+            break
+          fi
+        done
+        if [ -z "$found" ]; then
+          echo "error: snapmaker_control CLI was not staged into resources/ before the Flatpak build" >&2
+          exit 1
+        fi
+        installed="/app/share/Snapmaker_Orca/$(basename "$found")"
+        if [ ! -f "$installed" ]; then
+          echo "error: snapmaker_control CLI was not installed to $installed" >&2
+          exit 1
+        fi
+        chmod 755 "$installed"
+        echo "snapmaker_control CLI installed: $installed"
 
     sources:
       # -

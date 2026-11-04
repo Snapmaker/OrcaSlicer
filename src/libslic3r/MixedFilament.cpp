@@ -1484,8 +1484,9 @@ static std::vector<double> build_local_z_preview_pass_heights(double nominal_lay
     const int mix_b = std::clamp(mix_b_percent, 0, 100);
     const double pct_b = double(mix_b) / 100.0;
     const double pct_a = 1.0 - pct_b;
-    const double gradient_h_a = lo + pct_a * (hi - lo);
-    const double gradient_h_b = lo + pct_b * (hi - lo);
+    // Match the slicer's ratio targets; only the pass planner applies the bounds.
+    const double gradient_h_a = pct_a * (lo + hi);
+    const double gradient_h_b = pct_b * (lo + hi);
     return build_alternating(gradient_h_a, gradient_h_b);
 }
 
@@ -1533,27 +1534,32 @@ int mixed_filament_effective_local_z_preview_mix_b_percent(const MixedFilament  
     if (pass_heights.empty())
         return std::clamp(mf.mix_b_percent, 0, 100);
 
-    double expected_h_a = preview_settings.preferred_a_height;
-    double expected_h_b = preview_settings.preferred_b_height;
-    if (expected_h_a <= EPSILON && expected_h_b <= EPSILON) {
-        const int mix_b = std::clamp(mf.mix_b_percent, 0, 100);
+    double     expected_h_a          = preview_settings.preferred_a_height;
+    double     expected_h_b          = preview_settings.preferred_b_height;
+    const bool has_preferred_heights = expected_h_a > EPSILON || expected_h_b > EPSILON;
+    if (!has_preferred_heights) {
+        const int    mix_b = std::clamp(mf.mix_b_percent, 0, 100);
         const double pct_b = double(mix_b) / 100.0;
         const double pct_a = 1.0 - pct_b;
-        const double lo = std::max<double>(0.01, preview_settings.mixed_lower_bound);
-        const double hi = std::max<double>(lo, preview_settings.mixed_upper_bound);
-        expected_h_a = lo + pct_a * (hi - lo);
-        expected_h_b = lo + pct_b * (hi - lo);
+        const double lo    = std::max<double>(0.01, preview_settings.mixed_lower_bound);
+        const double hi    = std::max<double>(lo, preview_settings.mixed_upper_bound);
+        expected_h_a       = pct_a * (lo + hi);
+        expected_h_b       = pct_b * (lo + hi);
     }
 
-    auto choose_start_with_component_a = [](const std::vector<double> &passes, double local_expected_h_a, double local_expected_h_b) {
-        double err_ab = 0.0;
-        double err_ba = 0.0;
+    auto choose_start_with_component_a = [](const std::vector<double>& passes, double local_expected_h_a, double local_expected_h_b) {
+        // Compare fractions as in the slicer, not absolute heights before fitting.
+        double even_height  = 0.0;
+        double total_height = 0.0;
         for (size_t pass_i = 0; pass_i < passes.size(); ++pass_i) {
-            const double expected_ab = (pass_i % 2) == 0 ? local_expected_h_a : local_expected_h_b;
-            const double expected_ba = (pass_i % 2) == 0 ? local_expected_h_b : local_expected_h_a;
-            err_ab += std::abs(passes[pass_i] - expected_ab);
-            err_ba += std::abs(passes[pass_i] - expected_ba);
+            total_height += passes[pass_i];
+            if ((pass_i % 2) == 0)
+                even_height += passes[pass_i];
         }
+        const double ratio_a    = local_expected_h_a / std::max<double>(EPSILON, local_expected_h_a + local_expected_h_b);
+        const double ratio_even = even_height / std::max<double>(EPSILON, total_height);
+        const double err_ab     = std::abs(ratio_even - ratio_a);
+        const double err_ba     = std::abs((1.0 - ratio_even) - ratio_a);
         if (err_ab + 1e-6 < err_ba)
             return true;
         if (err_ba + 1e-6 < err_ab)
@@ -1561,7 +1567,8 @@ int mixed_filament_effective_local_z_preview_mix_b_percent(const MixedFilament  
         return local_expected_h_a >= local_expected_h_b;
     };
 
-    const bool start_with_a = choose_start_with_component_a(pass_heights, expected_h_a, expected_h_b);
+    // Explicit heights retain the slicer's A-first cadence, including odd pass counts.
+    const bool start_with_a = has_preferred_heights || choose_start_with_component_a(pass_heights, expected_h_a, expected_h_b);
     double total_a = 0.0;
     double total_b = 0.0;
     for (size_t pass_i = 0; pass_i < pass_heights.size(); ++pass_i) {

@@ -32,6 +32,8 @@ bool any_filament_supports_high_flow();
 // nothing to group and slicing routes every filament to that one type.
 size_t distinct_nozzle_flow_type_count();
 
+bool any_nozzle_high_flow();
+
 // Per-nozzle flow types from project config, resized to the nozzle count and
 // normalized (unknown entries -> standard; everything standard when the printer
 // preset does not support high flow).

@@ -6250,13 +6250,6 @@ msgstr "打印机是否就绪？打印平台是否在正确的位置、有没有
 msgid "Upload and Print"
 msgstr "上传并打印"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"逐件打印：\n"
-"建议使用自动摆盘避免打印时发生碰撞。"
-
 msgid "Send G-code"
 msgstr "发送 G 代码"
 
@@ -6528,6 +6521,12 @@ msgstr "启用此选项后，您可以同时向多个设备发送任务并管理
 
 msgid "Auto arrange plate after cloning"
 msgstr "克隆后自动排列打印板"
+
+msgid "GPU-accelerated G-code preview"
+msgstr "GPU加速预览G-code"
+
+msgid "Rebuild toolpath geometry on the GPU: much faster preview loading and lower memory on capable graphics cards. If the preview moves slower than before (for example on basic integrated graphics), turn this off to use the compatible renderer. Takes effect when the preview is reloaded."
+msgstr "在 GPU 上重建走线几何，在性能足够的显卡上可显著加快预览加载、降低内存占用。若预览反而变慢（常见于核显较弱的机器），可关闭此项改用兼容渲染，重新加载预览后生效。"
 
 msgid "Auto arrange plate after object cloning"
 msgstr "对象克隆后自动排列打印板"
@@ -7136,12 +7135,6 @@ msgstr "请在打印机屏幕上确认。"
 
 msgid "Log in failed. Please check the Pin Code."
 msgstr "登录失败，请检查Pin码。"
-
-msgid "Log in"
-msgstr "登录"
-
-msgid "Are you sure you want to log in?"
-msgstr "确定要登录吗？"
 
 msgid "Log in printer"
 msgstr "登录打印机"
@@ -15706,6 +15699,12 @@ msgstr "选择\"是\"可尝试切片，但可能出现软件卡顿或无响应�
 msgid "Select \"No\" to terminate the slicing task immediately."
 msgstr "选择\"否\"将立即停止切片任务"
 
+msgid "Don't ask again next time"
+msgstr "下次不再提示"
+
+msgid "Show a dialog asking whether to continue slicing when memory is low"
+msgstr "内存不足时，弹窗提示用户是否执行切片"
+
 msgid "Yes, Continue"
 msgstr "是，继续"
 
@@ -15892,11 +15891,11 @@ msgstr "顶部实心填充"
 
 msgid ""
 "This parameter grows the top/bottom/solid layers by the specified mm to "
-"anchor them into the sparse infill and support the perimeters above. Put 0 "
-"to deactivate it. Can be a %% of the width of the perimeters."
+"anchor them into the sparse infill and support the perimeters above. Can be "
+"a %% of the width of the perimeters."
 msgstr ""
 "该参数会将顶/底/实体层向外扩展指定的毫米数，使其锚固到稀疏填充中，并为上方的"
-"外壁提供支撑。设为 0 可禁用此功能。也可以设为外壁宽度的百分比。"
+"外壁提供支撑。也可以设为外壁宽度的百分比。"
 
 msgid "Speed of 100% overhang wall which has 0 overlap with the lower layer."
 msgstr "100% 悬空墙的速度，与下层无重叠。"

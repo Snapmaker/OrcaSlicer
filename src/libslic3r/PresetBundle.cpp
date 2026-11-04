@@ -4117,7 +4117,7 @@ void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old
         return out;
     };
 
-    BOOST_LOG_TRIVIAL(warning) << "MF_REMAP preset_bundle"
+    BOOST_LOG_TRIVIAL(info) << "MF_REMAP preset_bundle"
                             << " old_physical=" << old_num_filaments
                             << " new_physical=" << new_num_filaments
                             << " deleting=" << (deleting_filament ? 1 : 0)

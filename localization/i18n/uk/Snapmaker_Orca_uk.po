@@ -6723,14 +6723,6 @@ msgstr ""
 msgid "Upload and Print"
 msgstr "Завантажити і друкувати"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Друк за об'єктом: \n"
-"Рекомендовано використовувати автоматичне впорядкування, щоб уникнути "
-"колізій під час друку."
-
 msgid "Send G-code"
 msgstr "Надіслати G-код"
 

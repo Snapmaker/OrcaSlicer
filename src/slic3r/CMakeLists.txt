@@ -50,6 +50,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/BitmapComboBox.hpp
     GUI/BonjourDialog.cpp
     GUI/BonjourDialog.hpp
+    GUI/BufferTexture.cpp
+    GUI/BufferTexture.hpp
     GUI/calib_dlg.cpp
     GUI/calib_dlg.hpp
     GUI/Calibration.cpp
@@ -199,8 +201,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/GLShader.hpp
     GUI/GLShadersManager.cpp
     GUI/GLShadersManager.hpp
+    GUI/GLSubTextureBindRenderer.cpp
+    GUI/GLSubTextureBindRenderer.hpp
     GUI/GLTexture.cpp
     GUI/GLTexture.hpp
+    GUI/GLToolbarBackgroundTextureCache.cpp
+    GUI/GLToolbarBackgroundTextureCache.hpp
     GUI/GLToolbar.cpp
     GUI/GLToolbar.hpp
     GUI/GUI_App.cpp
@@ -368,6 +374,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/ParamsPanel.hpp
     GUI/PartPlate.cpp
     GUI/PartPlate.hpp
+    GUI/PathData.cpp
+    GUI/PathData.hpp
+    GUI/PathRenderer.cpp
+    GUI/PathRenderer.hpp
     GUI/PhysicalPrinterDialog.cpp
     GUI/PhysicalPrinterDialog.hpp
     GUI/Plater.cpp
@@ -378,6 +388,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/Preferences.hpp
     GUI/PresetComboBoxes.cpp
     GUI/PresetComboBoxes.hpp
+    GUI/FilamentDropDown.cpp
+    GUI/FilamentDropDown.hpp
+    GUI/FilamentSort.cpp
+    GUI/FilamentSort.hpp
+    GUI/PlaterFilamentComboBox.cpp
+    GUI/PlaterFilamentComboBox.hpp
     GUI/PresetHints.cpp
     GUI/PresetHints.hpp
     GUI/PrinterCloudAuthDialog.cpp
@@ -550,8 +566,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/SMPhysicalPrinterDialog.cpp
     GUI/SSWCP.cpp
     GUI/SSWCP.hpp
-    GUI/WebSocketDebugServer.cpp
-    GUI/WebSocketDebugServer.hpp
     GUI/DownloadManager.cpp
     GUI/DownloadManager.hpp
     GUI/GenericDownloadDialog.cpp
@@ -560,8 +574,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/Timelapse/TimelapseDownloadPopup.hpp
     GUI/WebPresetDialog.hpp
     GUI/WebPresetDialog.cpp
-    GUI/WebSMUserLoginDialog.cpp
-    GUI/WebSMUserLoginDialog.hpp
     GUI/WebDeviceDialog.cpp
     GUI/WebDeviceDialog.hpp
     GUI/WebPreprintDialog.hpp
@@ -583,6 +595,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/CalibUtils.hpp
     Utils/ColorSpaceConvert.cpp
     Utils/ColorSpaceConvert.hpp
+    Utils/ConnectionProcessManager.cpp
+    Utils/ConnectionProcessManager.hpp
     Utils/CrealityPrint.cpp
     Utils/CrealityPrint.hpp
     Utils/Duet.cpp
@@ -607,6 +621,14 @@ set(SLIC3R_GUI_SOURCES
     Utils/FontConfigHelp.hpp
     Utils/Frustum.cpp
     Utils/Frustum.hpp
+    Utils/GatewayProtocol.cpp
+    Utils/GatewayProtocol.hpp
+    Utils/GatewayDevice.cpp
+    Utils/GatewayDevice.hpp
+    Utils/GatewayAccount.cpp
+    Utils/GatewayAccount.hpp
+    Utils/GatewayService.cpp
+    Utils/GatewayService.hpp
     Utils/HexFile.cpp
     Utils/HexFile.hpp
     Utils/Http.cpp

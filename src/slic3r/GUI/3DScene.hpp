@@ -42,6 +42,7 @@ extern Slic3r::ColorRGBA              adjust_color_for_rendering(const Slic3r::C
 namespace Slic3r {
 namespace GUI {
     class Camera;
+    class Camera;
 }
 
 class SLAPrintObject;

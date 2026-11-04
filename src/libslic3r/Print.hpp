@@ -1089,7 +1089,7 @@ private:
     bool                                    m_support_used {false};
 
     //BBS: plate's origin
-    Vec3d   m_origin;
+    Vec3d   m_origin {Vec3d::Zero()};
     //BBS: modified_count
     int     m_modified_count {0};
     //BBS
@@ -1109,6 +1109,9 @@ public:
     // ORCA: parameter below is now back to being a user option (min_skirt_length)
     //static float min_skirt_length;
 };
+
+// BBS: map print object with its first layer's first extruder
+std::map<ObjectID, unsigned int> getObjectExtruderMap(const Print& print);
 
 
 } /* slic3r_Print_hpp_ */

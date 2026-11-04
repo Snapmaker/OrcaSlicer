@@ -6746,14 +6746,6 @@ msgstr ""
 msgid "Upload and Print"
 msgstr "Cargar e imprimir"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Imprimir por objeto: \n"
-"Se aconseja utilizar el auto-posicionamiento para evitar colisiones al "
-"imprimir."
-
 msgid "Send G-code"
 msgstr "Enviar G-Code"
 

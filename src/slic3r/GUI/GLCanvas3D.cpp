@@ -17,6 +17,8 @@
 #include "3DScene.hpp"
 #include "BackgroundSlicingProcess.hpp"
 #include "GLShader.hpp"
+#include "GLSubTextureBindRenderer.hpp"
+#include "GLToolbarBackgroundTextureCache.hpp"
 #include "GUI.hpp"
 #include "Tab.hpp"
 #include "GUI_Preview.hpp"
@@ -72,6 +74,7 @@
 #include <float.h>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
@@ -110,7 +113,7 @@ namespace {
 constexpr float SELECTION_MASK_SCALE = 0.5f;
 constexpr float SELECTION_GLOW_SCALE = 0.5f;
 constexpr float SELECTION_EDGE_THICKNESS = 1.0f;
-constexpr float SELECTION_GLOW_BLUR_RADIUS = 4.0f;
+constexpr float SELECTION_GLOW_BLUR_RADIUS = 0.0f;
 constexpr int GAUSSIAN_LOGICAL_TAP_COUNT = 4;
 constexpr float GAUSSIAN_MAX_RADIUS = 4.0f; // Larger radii use the original nine-fetch kernel.
 constexpr float GAUSSIAN_EPSILON = 1.0e-6f;
@@ -1329,6 +1332,17 @@ void GLCanvas3D::SequentialPrintClearance::set_polygons(const Polygons& polygons
 
 void GLCanvas3D::SequentialPrintClearance::render()
 {
+    if (!m_visible)
+    {
+        return;
+    }
+
+    const bool hasRenderableData = m_perimeter.is_initialized() || m_fill.is_initialized() || m_height_limit.is_initialized();
+    if (!hasRenderableData)
+    {
+        return;
+    }
+
     const ColorRGBA FILL_COLOR = { 0.7f, 0.7f, 1.0f, 0.5f };
     const ColorRGBA NO_FILL_COLOR = { 0.75f, 0.75f, 0.75f, 0.75f };
 
@@ -2747,6 +2761,11 @@ void GLCanvas3D::enable_select_plate_toolbar(bool enable)
     m_sel_plate_toolbar.set_enabled(enable);
 }
 
+void GLCanvas3D::invalidate_select_plate_toolbar()
+{
+    m_sel_plate_toolbar.is_render_finish = false;
+}
+
 void GLCanvas3D::enable_assemble_view_toolbar(bool enable)
 {
     m_assemble_view_toolbar.set_enabled(enable);
@@ -3857,6 +3876,7 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
         bool need_wipe_tower = timelapse_type ? (timelapse_type->value == TimelapseType::tlSmooth) : false;
 
         if (wt && (need_wipe_tower || filaments_count > 1)) {
+            const DynamicPrintConfig full_cfg = wxGetApp().preset_bundle->full_config();
             for (int plate_id = 0; plate_id < n_plates; plate_id++) {
                 // If print ByObject and there is only one object in the plate, the wipe tower is allowed to be generated.
                 PartPlate* part_plate = ppl.get_plate(plate_id);
@@ -3876,27 +3896,32 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
                 // BBS
                 Vec3d plate_origin = ppl.get_plate(plate_id)->get_origin();
 
-                const Print* print = m_process->fff_print();
                 const Print* current_print = part_plate->fff_print();
+                if (current_print == nullptr)
+                    continue;
+                // Configured support/interface filaments may never be used. Once
+                // slicing has finished, an absent tower is not an estimated tower.
+                const bool tower_generation_done = current_print->is_step_done(psWipeTower);
+                if (tower_generation_done && current_print->wipe_tower_data().tool_changes.empty() &&
+                    current_print->wipe_tower_data().local_z_tool_changes.empty())
+                    continue;
                 int extruder_nums = part_plate->get_extruders(true).size();
                 if (!need_wipe_tower && extruder_nums < 2)
                     continue;
                 if (part_plate->get_objects_on_this_plate().empty())
                     continue;
 
-                const auto& wipe_tower_data = print->wipe_tower_data(extruder_nums);
+                const auto&               wipe_tower_data = current_print->wipe_tower_data(extruder_nums);
                 float brim_width = wipe_tower_data.brim_width;
-                const DynamicPrintConfig &print_cfg   = wxGetApp().preset_bundle->prints.get_edited_preset().config;
-                Vec3d wipe_tower_size = ppl.get_plate(plate_id)->estimate_wipe_tower_size(print_cfg, w, v, extruder_nums);
+                Vec3d wipe_tower_size = ppl.get_plate(plate_id)->estimate_wipe_tower_size(full_cfg, w, v, extruder_nums);
 
-                if (!current_print->is_step_done(psWipeTower) || !current_print->wipe_tower_data().wipe_tower_mesh_data) {
+                if (!tower_generation_done || !current_print->wipe_tower_data().wipe_tower_mesh_data) {
                     int volume_idx_wipe_tower_new = m_volumes.load_wipe_tower_preview(1000 + plate_id, x + plate_origin(0), y + plate_origin(1),
                         (float)wipe_tower_size(0), (float)wipe_tower_size(1), (float)wipe_tower_size(2),a,true, brim_width);
                     int volume_idx_wipe_tower_old = volume_idxs_wipe_tower_old[plate_id];
                     if (volume_idx_wipe_tower_old != -1) 
                         map_glvolume_old_to_new[volume_idx_wipe_tower_old] = volume_idx_wipe_tower_new;
-                }
-                else {
+                } else {
                     int volume_idx_wipe_tower_new = m_volumes.load_real_wipe_tower_preview(1000 + plate_id, x + plate_origin(0), y + plate_origin(1),
                         current_print->wipe_tower_data().wipe_tower_mesh_data->real_wipe_tower_mesh,
                         current_print->wipe_tower_data().wipe_tower_mesh_data->real_brim_mesh,
@@ -7566,6 +7591,29 @@ void GLCanvas3D::render_thumbnail_legacy(ThumbnailData& thumbnail_data, unsigned
 
 //BBS: GUI refractor
 
+const GLTexture* GLCanvas3D::_get_shared_toolbar_background_texture()
+{
+    if (m_canvas_type != ECanvasType::CanvasView3D)
+        return nullptr;
+
+    if (m_toolbarBackgroundTextureCache == nullptr)
+        m_toolbarBackgroundTextureCache.reset(new GLToolbarBackgroundTextureCache());
+
+    if (!m_toolbarBackgroundTextureCache->load(m_is_dark))
+        return nullptr;
+
+    return m_toolbarBackgroundTextureCache->get_texture();
+}
+
+bool GLCanvas3D::_init_toolbar_background(GLToolbar& toolbar, const BackgroundTexture::Metadata& background_data)
+{
+    const GLTexture* shared_texture = _get_shared_toolbar_background_texture();
+    if (shared_texture != nullptr && toolbar.init_shared_background(background_data, shared_texture))
+        return true;
+
+    return toolbar.init(background_data);
+}
+
 void GLCanvas3D::_switch_toolbars_icon_filename()
 {
     BackgroundTexture::Metadata background_data;
@@ -7574,10 +7622,16 @@ void GLCanvas3D::_switch_toolbars_icon_filename()
     background_data.top = 16;
     background_data.right = 16;
     background_data.bottom = 16;
-    m_main_toolbar.init(background_data);
-    m_assemble_view_toolbar.init(background_data);
-    m_separator_toolbar.init(background_data);
-    wxGetApp().plater()->get_collapse_toolbar().init(background_data);
+    _init_toolbar_background(m_main_toolbar, background_data);
+    _init_toolbar_background(m_assemble_view_toolbar, background_data);
+    _init_toolbar_background(wxGetApp().plater()->get_collapse_toolbar(), background_data);
+
+    BackgroundTexture::Metadata separator_background_data = background_data;
+    separator_background_data.left = 0;
+    separator_background_data.top = 0;
+    separator_background_data.right = 0;
+    separator_background_data.bottom = 0;
+    _init_toolbar_background(m_separator_toolbar, separator_background_data);
 
     // main toolbar
     {
@@ -7656,7 +7710,7 @@ bool GLCanvas3D::_init_main_toolbar()
     background_data.right = 16;
     background_data.bottom = 16;
 
-    if (!m_main_toolbar.init(background_data))
+    if (!_init_toolbar_background(m_main_toolbar, background_data))
     {
         // unable to init the toolbar texture, disable it
         m_main_toolbar.set_enabled(false);
@@ -7821,6 +7875,7 @@ bool GLCanvas3D::_update_imgui_select_plate_toolbar()
     bool result = true;
     if (!m_sel_plate_toolbar.is_enabled() || m_sel_plate_toolbar.is_render_finish) return false;
 
+    make_current_for_postinit();
     _update_select_plate_toolbar_stats_item();
 
     m_sel_plate_toolbar.del_all_item();
@@ -7858,7 +7913,7 @@ bool GLCanvas3D::_init_assemble_view_toolbar()
     background_data.right = 16;
     background_data.bottom = 16;
 
-    if (!m_assemble_view_toolbar.init(background_data))
+    if (!_init_toolbar_background(m_assemble_view_toolbar, background_data))
     {
         // unable to init the toolbar texture, disable it
         m_assemble_view_toolbar.set_enabled(false);
@@ -7915,7 +7970,7 @@ bool GLCanvas3D::_init_separator_toolbar()
     background_data.right = 0;
     background_data.bottom = 0;
 
-    if (!m_separator_toolbar.init(background_data))
+    if (!_init_toolbar_background(m_separator_toolbar, background_data))
     {
         // unable to init the toolbar texture, disable it
         m_separator_toolbar.set_enabled(false);
@@ -7954,7 +8009,7 @@ bool GLCanvas3D::_init_view_toolbar()
 
 bool GLCanvas3D::_init_collapse_toolbar()
 {
-    return wxGetApp().plater()->init_collapse_toolbar();
+    return wxGetApp().plater()->init_collapse_toolbar(_get_shared_toolbar_background_texture());
 }
 
 bool GLCanvas3D::_set_current()
@@ -8475,7 +8530,6 @@ void GLCanvas3D::_render_background()
         shader->set_uniform("top_color", bottom_color);
         shader->set_uniform("bottom_color", bottom_color);
         m_background.render();
-        shader->stop_using();
     }
 
     glsafe(::glEnable(GL_DEPTH_TEST));
@@ -8828,11 +8882,7 @@ void GLCanvas3D::_render_overlays()
     _render_assemble_control();
     _render_assemble_info();
 
-    _render_separator_toolbar_right();
-    _render_separator_toolbar_left();
-    _render_main_toolbar();
-    _render_collapse_toolbar();
-    _render_assemble_view_toolbar();
+    _render_prepare_top_toolbars();
     //BBS: GUI refactor: GLToolbar
     _render_imgui_select_plate_toolbar();
     _render_return_toolbar();
@@ -9023,7 +9073,10 @@ void GLCanvas3D::_render_gizmos_overlay()
     const float size = int(GLGizmosManager::Default_Icons_Size * wxGetApp().toolbar_icon_scale());
     m_gizmos.set_overlay_icon_size(size); //! #ys_FIXME_experiment
 #endif */ /* __WXMSW__ */
-    m_gizmos.render_overlay();
+    if (m_subTextureBindRenderer == nullptr)
+        m_subTextureBindRenderer.reset(new GLSubTextureBindRenderer());
+
+    m_gizmos.render_overlay(m_subTextureBindRenderer.get());
 
     if (m_gizmo_highlighter.m_render_arrow)
     {
@@ -9046,6 +9099,91 @@ int GLCanvas3D::get_main_toolbar_offset() const
         const float offset = (cnv_width - toolbar_total_width) / 2;
         return is_collapse_toolbar_on_left() ? offset + collapse_toolbar_width : offset;
     }
+}
+
+void GLCanvas3D::_render_prepare_top_toolbars()
+{
+    struct ToolbarRenderEntry
+    {
+        GLToolbar* toolbar;
+        GLToolbarRenderLayout renderLayout;
+    };
+
+    std::vector<ToolbarRenderEntry> renderEntries;
+    const Size cnv_size = get_canvas_size();
+    const float canvas_width = static_cast<float>(cnv_size.get_width());
+    const float canvas_height = static_cast<float>(cnv_size.get_height());
+    const float top = 0.5f * canvas_height;
+    const float main_toolbar_left = -0.5f * canvas_width + get_main_toolbar_offset();
+
+    auto appendToolbar = [this, &renderEntries](GLToolbar& toolbar, GLToolbarItem::EType itemType) {
+        GLToolbarRenderLayout renderLayout;
+        if (toolbar.prepare_render_layout(*this, itemType, renderLayout))
+            renderEntries.push_back({ &toolbar, renderLayout });
+    };
+
+    if (m_separator_toolbar.is_enabled()) {
+        const float gizmo_width = m_gizmos.get_scaled_total_width();
+        const float separator_width = m_separator_toolbar.get_width();
+        const float left = main_toolbar_left + m_main_toolbar.get_width() + gizmo_width + 0.5f * separator_width;
+        m_separator_toolbar.set_position(top, left);
+        appendToolbar(m_separator_toolbar, GLToolbarItem::SeparatorLine);
+    }
+
+    if (m_separator_toolbar.is_enabled()) {
+        const float left = main_toolbar_left + m_main_toolbar.get_width();
+        m_separator_toolbar.set_position(top, left);
+        appendToolbar(m_separator_toolbar, GLToolbarItem::SeparatorLine);
+    }
+
+    if (m_main_toolbar.is_enabled()) {
+        m_main_toolbar.set_position(top, main_toolbar_left);
+        appendToolbar(m_main_toolbar, GLToolbarItem::Action);
+    }
+
+    auto& plater = *wxGetApp().plater();
+    const auto sidebar_docking_dir = plater.get_sidebar_docking_state();
+    if (sidebar_docking_dir != Sidebar::None) {
+        GLToolbar& collapse_toolbar = plater.get_collapse_toolbar();
+        const float left = sidebar_docking_dir == Sidebar::Right ?
+            0.5f * canvas_width - static_cast<float>(collapse_toolbar.get_width()) : -0.5f * canvas_width;
+        collapse_toolbar.set_position(top, left);
+        appendToolbar(collapse_toolbar, GLToolbarItem::Action);
+    }
+
+    if (m_assemble_view_toolbar.is_enabled()) {
+        const float gizmo_width = m_gizmos.get_scaled_total_width();
+        const float separator_width = m_separator_toolbar.get_width();
+        const float left = main_toolbar_left + m_main_toolbar.get_width() + gizmo_width + separator_width;
+        m_assemble_view_toolbar.set_position(top, left);
+        appendToolbar(m_assemble_view_toolbar, GLToolbarItem::Action);
+    }
+
+    if (renderEntries.empty())
+        return;
+
+    if (m_subTextureBindRenderer == nullptr)
+        m_subTextureBindRenderer.reset(new GLSubTextureBindRenderer());
+
+    if (!GLTexture::BeginSubTextureBind(m_subTextureBindRenderer.get())) {
+        _render_separator_toolbar_right();
+        _render_separator_toolbar_left();
+        _render_main_toolbar();
+        _render_collapse_toolbar();
+        _render_assemble_view_toolbar();
+        return;
+    }
+
+    for (const ToolbarRenderEntry& entry : renderEntries)
+        entry.toolbar->render_prepared_background(entry.renderLayout);
+
+    for (const ToolbarRenderEntry& entry : renderEntries)
+        entry.toolbar->render_prepared_icons(*this, entry.renderLayout);
+
+    GLTexture::EndSubTextureBind();
+
+    if (m_toolbar_highlighter.m_render_arrow)
+        m_main_toolbar.render_arrow(*this, m_toolbar_highlighter.m_toolbar_item);
 }
 
 //BBS: GUI refactor: GLToolbar adjust
@@ -9431,7 +9569,8 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
     }
 
     imgui.end();
-    m_sel_plate_toolbar.is_render_finish = true;
+    if (!m_sel_plate_toolbar.m_items.empty())
+        m_sel_plate_toolbar.is_render_finish = true;
 }
 
 //BBS: GUI refactor: GLToolbar adjust

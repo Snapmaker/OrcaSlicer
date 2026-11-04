@@ -176,7 +176,6 @@ public:
     MixedFilamentManager        mixed_filaments;
 
     // Snapmaker
-    std::map<int, std::pair<std::string, std::string>> machine_filaments;
     std::vector<ConnectMachineInfo>                    m_connect_machine_info_list;
 
     // Calibrate

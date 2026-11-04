@@ -768,7 +768,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
 {
     if (new_extruder_id != -1 && new_extruder_id != tcr.new_tool)
         throw Slic3r::InvalidArgument(Slic3r::format(
-            "Error: WipeTowerIntegration::append_tcr unexpected toolchange: layer_idx=%1% tool_change_idx=%2% requested=%3% expected=%4% initial=%5%",
+            "Error: WipeTowerIntegration::append_tcr2 unexpected toolchange: layer_idx=%1% tool_change_idx=%2% requested=%3% expected=%4% initial=%5%",
             m_layer_idx, m_tool_change_idx, new_extruder_id, tcr.new_tool, tcr.initial_tool));
 
     std::string gcode;
@@ -1589,8 +1589,16 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
         return emit_local_z_unplanned_toolchange();
 
     assert(m_layer_idx >= 0);
-    if (m_layer_idx >= (int) m_tool_changes.size())
+    if (m_layer_idx >= (int) m_tool_changes.size()) {
+        // Local-Z passes may leave a different tool active after the last
+        // planned tower layer. The remaining object still needs its assigned
+        // filament even though there is no tower G-code left to emit.
+        if (extruder_id >= 0 && gcodegen.writer().need_toolchange(extruder_id)) {
+            const double print_z = gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value;
+            gcode += gcodegen.set_extruder(unsigned(extruder_id), print_z);
+        }
         return gcode;
+    }
     if (!gcodegen.is_BBL_Printer()) {
         if (gcodegen.writer().need_toolchange(extruder_id) || finish_layer) {
             if (m_layer_idx < (int) m_tool_changes.size()) {
@@ -1648,14 +1656,20 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
         }
     }
 
+    // Sparse tower layers may also omit a transition assumed unnecessary by
+    // the preplan. Never let that suppress an actual runtime tool change.
+    if (extruder_id >= 0 && gcodegen.writer().need_toolchange(extruder_id)) {
+        const double print_z = gcodegen.writer().get_position().z() - gcodegen.config().z_offset.value;
+        gcode += gcodegen.set_extruder(unsigned(extruder_id), print_z);
+    }
     return gcode;
 }
-
-
 
 bool WipeTowerIntegration::is_empty_wipe_tower_gcode(GCode& gcodegen, int extruder_id, bool finish_layer)
 {
     assert(m_layer_idx >= 0);
+    if (extruder_id >= 0 && gcodegen.writer().need_toolchange(extruder_id))
+        return false;
     if (m_layer_idx >= (int) m_tool_changes.size())
         return true;
 
@@ -1681,16 +1695,9 @@ bool WipeTowerIntegration::is_empty_wipe_tower_gcode(GCode& gcodegen, int extrud
     return true;
 }
 
-// Print is finished. Now it remains to unload the filament safely with ramming over the wipe tower.
 std::string WipeTowerIntegration::finalize(GCode& gcodegen)
 {
     std::string gcode;
-    if (!gcodegen.is_BBL_Printer()) {
-        if (std::abs(gcodegen.writer().get_position().z() - m_final_purge.print_z) > EPSILON)
-            gcode += gcodegen.change_layer(m_final_purge.print_z);
-        gcode += append_tcr2(gcodegen, m_final_purge, -1);
-    }
-
     return gcode;
 }
 
@@ -2918,6 +2925,11 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     this->placeholder_parser().set("retraction_distances_when_cut", new ConfigOptionFloats(m_config.retraction_distances_when_cut));
     this->placeholder_parser().set("long_retractions_when_cut", new ConfigOptionBools(m_config.long_retractions_when_cut));
     // Set variable for total layer count so it can be used in custom gcode.
+    // [total_layer_count] is necessarily the pre-export estimate here: templates are
+    // rendered while streaming, before the real layer count exists. Machine-consumed
+    // renderings of it (e.g. "SET_PRINT_STATS_INFO TOTAL_LAYER=") are rewritten with
+    // the real count by GCodeProcessor::run_post_process; human-readable comment
+    // renderings keep the estimate on purpose.
     this->placeholder_parser().set("total_layer_count", m_layer_count);
     // Useful for sequential prints.
     this->placeholder_parser().set("current_object_idx", 0);
@@ -3498,7 +3510,10 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         file.write_format("; total filament cost = %.2lf\n", print.m_print_statistics.total_cost);
         if (print.m_print_statistics.total_toolchanges > 0)
             file.write_format("; total filament change = %i\n", print.m_print_statistics.total_toolchanges);
-        file.write_format("; total layers count = %i\n", m_layer_count);
+        // m_layer_count is a pre-export estimate that still counts empty layers the exporter
+        // skips (e.g. a cone tip landing exactly on a layer boundary), so it can overshoot;
+        // m_layer_index+1 is the real number of layers written to the file.
+        file.write_format("; total layers count = %i\n", m_layer_index + 1);
         file.write_format(";%s\n", GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Estimated_Printing_Time_Placeholder).c_str());
         file.write("\n");
         file.write("; CONFIG_BLOCK_START\n");
@@ -5430,13 +5445,17 @@ LayerResult GCode::process_layer(const Print& print,
         }
 
         // Reset TRAVEL acceleration and jerk at second layer
+        auto first_layer_travel_accel = m_config.first_layer_travel_acceleration.get_abs_value(
+            this->process_flow_value(m_config.travel_acceleration));
         if (this->process_flow_value(m_config.default_acceleration) > 0 && this->process_flow_value(m_config.travel_acceleration) > 0
-            && m_config.get_abs_value("first_layer_travel_acceleration") > 0) {
+            && first_layer_travel_accel > 0) {
             gcode += m_writer.set_travel_acceleration(
                 (unsigned int) floor(this->process_flow_value(m_config.travel_acceleration) + 0.5));
         }
+        auto first_layer_travel_jerk_val = m_config.first_layer_travel_jerk.get_abs_value(
+            this->process_flow_value(m_config.travel_jerk));
         if (this->process_flow_value(m_config.default_jerk) > 0 && this->process_flow_value(m_config.travel_jerk) > 0
-            && m_config.get_abs_value("first_layer_travel_jerk") > 0) {
+            && first_layer_travel_jerk_val > 0) {
             gcode += m_writer.set_jerk_xy(this->process_flow_value(m_config.travel_jerk));
         }
 
@@ -6300,6 +6319,11 @@ LayerResult GCode::process_layer(const Print& print,
         }
     }
 
+    // Object -> its first-layer wall extruder (1-based), the owner of the
+    // object's brim; empty for non-first layers.
+    const std::map<ObjectID, unsigned int> object_extruder_map =
+        first_layer ? getObjectExtruderMap(print) : std::map<ObjectID, unsigned int>();
+
     std::vector<unsigned int> layer_extruders = layer_tools.extruders;
     for (const auto& by_extruder_entry : by_extruder) {
         if (std::find(layer_extruders.begin(), layer_extruders.end(), by_extruder_entry.first) == layer_extruders.end())
@@ -6736,7 +6760,27 @@ LayerResult GCode::process_layer(const Print& print,
         // even when Local-Z phase-b has consumed all first-layer extrusions
         // and by_extruder is empty for this extruder.
         if (first_layer) {
+            // Sequential (by-object) mode invokes process_layer once per object,
+            // so only brims of the objects printed in this pass may be consumed
+            // here; brims of later objects are emitted when their own pass starts.
+            std::set<ObjectID> objs_printed_in_this_pass;
+            for (const LayerToPrint& layer_to_print : layers)
+                if (layer_to_print.object() != nullptr)
+                    objs_printed_in_this_pass.insert(layer_to_print.object()->id());
+            // Each brim is owned by its object's first-layer wall extruder
+            // (object_extruder_map, 1-based). Emit a brim only in its owner's
+            // iteration so every brim is printed with its own filament; brims
+            // of other extruders are left for their own iteration below.
             for (std::set<ObjectID>::iterator brim_it = this->m_objsWithBrim.begin(); brim_it != this->m_objsWithBrim.end(); ) {
+                if (objs_printed_in_this_pass.find(*brim_it) == objs_printed_in_this_pass.end()) {
+                    ++brim_it;
+                    continue;
+                }
+                std::map<ObjectID, unsigned int>::const_iterator obj_extruder_it = object_extruder_map.find(*brim_it);
+                if (obj_extruder_it == object_extruder_map.end() || obj_extruder_it->second != extruder_id + 1) {
+                    ++brim_it;
+                    continue;
+                }
                 std::map<ObjectID, ExtrusionEntityCollection>::const_iterator brim_map_it = print.m_brimMap.find(*brim_it);
                 if (brim_map_it != print.m_brimMap.end() && !brim_map_it->second.empty()) {
                     this->set_origin(0., 0.);
@@ -6949,7 +6993,10 @@ LayerResult GCode::process_layer(const Print& print,
                     std::set<ObjectID>::iterator brim_it = this->m_objsWithBrim.find(instance_to_print.print_object.id());
                     if (brim_it != this->m_objsWithBrim.end()) {
                         std::map<ObjectID, ExtrusionEntityCollection>::const_iterator brim_map_it = print.m_brimMap.find(instance_to_print.print_object.id());
-                        if (brim_map_it != print.m_brimMap.end() && !brim_map_it->second.empty()) {
+                        std::map<ObjectID, unsigned int>::const_iterator obj_extruder_it =
+                            object_extruder_map.find(instance_to_print.print_object.id());
+                        if (brim_map_it != print.m_brimMap.end() && !brim_map_it->second.empty() &&
+                            (obj_extruder_it == object_extruder_map.end() || obj_extruder_it->second == extruder_id + 1)) {
                             this->set_origin(0., 0.);
                             m_avoid_crossing_perimeters.use_external_mp();
                             for (const ExtrusionEntity* ee : print.m_brimMap.at(instance_to_print.print_object.id()).entities) {
@@ -8741,11 +8788,13 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     double       jerk_to_set         = 0.0;
     unsigned int acceleration_to_set = 0;
     if (this->on_first_layer()) {
-        auto first_layer_travel_accel = m_config.get_abs_value("first_layer_travel_acceleration");
+        auto first_layer_travel_accel = m_config.first_layer_travel_acceleration.get_abs_value(
+            this->process_flow_value(m_config.travel_acceleration));
         if (this->process_flow_value(m_config.default_acceleration) > 0 && first_layer_travel_accel > 0) {
             acceleration_to_set = (unsigned int) floor(first_layer_travel_accel + 0.5);
         }
-        auto first_layer_travel_jerk_val = m_config.get_abs_value("first_layer_travel_jerk");
+        auto first_layer_travel_jerk_val = m_config.first_layer_travel_jerk.get_abs_value(
+            this->process_flow_value(m_config.travel_jerk));
         if (this->process_flow_value(m_config.default_jerk) > 0 && first_layer_travel_jerk_val > 0) {
             jerk_to_set = first_layer_travel_jerk_val;
         }

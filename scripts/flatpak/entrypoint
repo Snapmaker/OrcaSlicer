@@ -4,6 +4,57 @@
 grep -q org.freedesktop.Platform.GL.nvidia /.flatpak-info && export WEBKIT_DISABLE_DMABUF_RENDERER=1
 
 # Work-around https://github.com/bambulab/BambuStudio/issues/3440
-export LC_ALL=C.UTF-8
+canonical_locale() {
+    case "${1%%.*}" in
+        ""|"C"|"POSIX") return 1 ;;
+    esac
+
+    LC_ALL=C locale -a | awk -v requested="$1" '
+        BEGIN {
+            requested = tolower(requested)
+            gsub(/-/, "", requested)
+        }
+        {
+            available = tolower($0)
+            gsub(/-/, "", available)
+            if (available == requested || available == requested ".utf8") {
+                print $0
+                exit
+            }
+        }
+    '
+}
+
+app_locale=
+language=
+for candidate in "${LC_ALL:-}" "${LC_MESSAGES:-}" "${LANG:-}"; do
+    [ -n "$language" ] || language=$candidate
+    app_locale=$(canonical_locale "$candidate")
+    [ -n "$app_locale" ] && break
+done
+
+if [ -n "$app_locale" ]; then
+    export LANG="$app_locale"
+    language=$app_locale
+else
+    export LANG=C.UTF-8
+    language=${LANGUAGE:-$language}
+fi
+
+language=${language%%:*}
+language=${language%%.*}
+language=${language%%@*}
+case "$language" in
+    ""|"C"|"C".*|"POSIX"|"POSIX".*) language=en_US ;;
+esac
+printf '%s\n' "$language" | grep -Eq '^[[:alpha:]]{2,8}(_[[:alpha:]]{2,8})*$' || language=en_US
+export LANGUAGE="$language"
+
+unset LC_ALL LC_COLLATE LC_CTYPE LC_MESSAGES LC_MONETARY LC_NUMERIC
+unset LC_TIME LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT LC_IDENTIFICATION
+
+# Use LC_NUMERIC instead of LC_ALL to prevent decimal separator issues
+# while preserving the user's language/locale for translations.
+export LC_NUMERIC=C
 
 exec /app/bin/snapmaker-orca "$@"

@@ -4,6 +4,7 @@
 #include "3DScene.hpp"
 #include "GUI_App.hpp"
 #include "GLShader.hpp"
+#include "OpenGLManager.hpp"
 
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/Model.hpp"
@@ -430,6 +431,45 @@ void GLModel::init_from(Geometry&& data)
             m_bounding_box.merge(Vec3f(position.x(), position.y(), 0.0f).cast<double>());
         }
     }
+
+    UpdateTexCoordBounds();
+}
+
+bool GLModel::GetTexCoordBounds(Vec2f& minCoord, Vec2f& maxCoord) const
+{
+    if (!m_render_data.texCoordBoundsValid)
+        return false;
+
+    minCoord = m_render_data.texCoordMin;
+    maxCoord = m_render_data.texCoordMax;
+    return true;
+}
+
+void GLModel::UpdateTexCoordBounds()
+{
+    m_render_data.texCoordBoundsValid = false;
+    m_render_data.texCoordMin = Vec2f(0.0f, 0.0f);
+    m_render_data.texCoordMax = Vec2f(0.0f, 0.0f);
+
+    Geometry& data = m_render_data.geometry;
+    if (data.vertices.empty() || !Geometry::has_tex_coord(data.format))
+        return;
+
+    const size_t vertexCount = data.vertices_count();
+    if (vertexCount == 0)
+        return;
+
+    Vec2f minCoord = data.extract_tex_coord_2(0);
+    Vec2f maxCoord = minCoord;
+    for (size_t vertexIndex = 1; vertexIndex < vertexCount; ++vertexIndex) {
+        const Vec2f texCoord = data.extract_tex_coord_2(vertexIndex);
+        minCoord = minCoord.cwiseMin(texCoord).eval();
+        maxCoord = maxCoord.cwiseMax(texCoord).eval();
+    }
+
+    m_render_data.texCoordMin = minCoord;
+    m_render_data.texCoordMax = maxCoord;
+    m_render_data.texCoordBoundsValid = true;
 }
 
 void GLModel::init_from(const TriangleMesh& mesh)
@@ -542,6 +582,8 @@ bool GLModel::init_from_file(const std::string& filename)
 
 void GLModel::reset()
 {
+    DeleteVao();
+
     // release gpu memory
     if (m_render_data.ibo_id > 0) {
         glsafe(::glDeleteBuffers(1, &m_render_data.ibo_id));
@@ -554,6 +596,9 @@ void GLModel::reset()
 
     m_render_data.vertices_count = 0;
     m_render_data.indices_count  = 0;
+    m_render_data.texCoordBoundsValid = false;
+    m_render_data.texCoordMin = Vec2f(0.0f, 0.0f);
+    m_render_data.texCoordMax = Vec2f(0.0f, 0.0f);
     m_render_data.geometry.vertices = std::vector<float>();
     m_render_data.geometry.indices  = std::vector<unsigned int>();
     m_bounding_box = BoundingBoxf3();
@@ -609,6 +654,24 @@ void GLModel::render(const std::pair<size_t, size_t>& range)
             return;
     }
 
+    if (OpenGLManager::VertexArraysSupported()) {
+        if (m_render_data.vao_id == 0)
+            InitVao();
+
+        if (m_render_data.vao_id != 0) {
+            RenderVao(range, shader);
+            return;
+        }
+    }
+
+    RenderLegacy(range, shader);
+}
+
+void GLModel::RenderLegacy(const std::pair<size_t, size_t>& range, GLShaderProgram* shader)
+{
+    if (shader == nullptr)
+        return;
+
     const Geometry& data = m_render_data.geometry;
 
     const GLenum mode = get_primitive_mode(data.format);
@@ -661,6 +724,83 @@ void GLModel::render(const std::pair<size_t, size_t>& range)
         glsafe(::glDisableVertexAttribArray(position_id));
 
     glsafe(::glBindBuffer(GL_ARRAY_BUFFER, 0));
+}
+
+bool GLModel::InitVao()
+{
+    if (!OpenGLManager::VertexArraysSupported())
+        return false;
+
+    if (m_render_data.vbo_id == 0 || m_render_data.ibo_id == 0)
+        return false;
+
+    const Geometry& data = m_render_data.geometry;
+    const size_t vertex_stride_bytes = Geometry::vertex_stride_bytes(data.format);
+
+    glsafe(::glGenVertexArrays(static_cast<GLsizei>(1), &m_render_data.vao_id));
+    if (m_render_data.vao_id == 0)
+        return false;
+
+    glsafe(::glBindVertexArray(m_render_data.vao_id));
+    glsafe(::glBindBuffer(GL_ARRAY_BUFFER, m_render_data.vbo_id));
+    glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_render_data.ibo_id));
+
+    if (Geometry::has_position(data.format)) {
+        glsafe(::glVertexAttribPointer(
+            GLAttributeLocation::POSITION, static_cast<GLint>(Geometry::position_stride_floats(data.format)),
+            GL_FLOAT, GL_FALSE, static_cast<GLsizei>(vertex_stride_bytes),
+            reinterpret_cast<const void*>(Geometry::position_offset_bytes(data.format))));
+        glsafe(::glEnableVertexAttribArray(GLAttributeLocation::POSITION));
+    }
+
+    if (Geometry::has_normal(data.format)) {
+        glsafe(::glVertexAttribPointer(
+            GLAttributeLocation::NORMAL, static_cast<GLint>(Geometry::normal_stride_floats(data.format)),
+            GL_FLOAT, GL_FALSE, static_cast<GLsizei>(vertex_stride_bytes),
+            reinterpret_cast<const void*>(Geometry::normal_offset_bytes(data.format))));
+        glsafe(::glEnableVertexAttribArray(GLAttributeLocation::NORMAL));
+    }
+
+    if (Geometry::has_tex_coord(data.format)) {
+        glsafe(::glVertexAttribPointer(
+            GLAttributeLocation::TEX_COORD, static_cast<GLint>(Geometry::tex_coord_stride_floats(data.format)),
+            GL_FLOAT, GL_FALSE, static_cast<GLsizei>(vertex_stride_bytes),
+            reinterpret_cast<const void*>(Geometry::tex_coord_offset_bytes(data.format))));
+        glsafe(::glEnableVertexAttribArray(GLAttributeLocation::TEX_COORD));
+    }
+
+    glsafe(::glBindVertexArray(0));
+    glsafe(::glBindBuffer(GL_ARRAY_BUFFER, 0));
+
+    return true;
+}
+
+void GLModel::DeleteVao()
+{
+    if (m_render_data.vao_id == 0)
+        return;
+
+    glsafe(::glDeleteVertexArrays(static_cast<GLsizei>(1), &m_render_data.vao_id));
+    m_render_data.vao_id = 0;
+}
+
+void GLModel::RenderVao(const std::pair<size_t, size_t>& range, GLShaderProgram* shader)
+{
+    if (shader == nullptr)
+        return;
+
+    const Geometry& data = m_render_data.geometry;
+    const GLenum mode = get_primitive_mode(data.format);
+    const GLenum index_type = get_index_type(data);
+
+    shader->set_uniform("uniform_color", data.color);
+
+    glsafe(::glBindVertexArray(m_render_data.vao_id));
+
+    glsafe(::glDrawElements(mode, static_cast<GLsizei>(range.second - range.first), index_type,
+                            reinterpret_cast<const void*>(range.first * Geometry::index_stride_bytes(data))));
+
+    glsafe(::glBindVertexArray(0));
 }
 
 void GLModel::render_instanced(unsigned int instances_vbo, unsigned int instances_count)
@@ -759,6 +899,11 @@ bool GLModel::send_to_gpu()
     data.vertices = std::vector<float>();
 
     // indices
+    const bool vertexArraysSupported = OpenGLManager::VertexArraysSupported();
+    GLint previousIbo = 0;
+    if (vertexArraysSupported)
+        glsafe(::glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &previousIbo));
+
     glsafe(::glGenBuffers(1, &m_render_data.ibo_id));
     glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_render_data.ibo_id));
     const size_t indices_count = data.indices.size();
@@ -770,7 +915,6 @@ bool GLModel::send_to_gpu()
         }
         data.index_type = Geometry::EIndexType::UBYTE;
         glsafe(::glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices_count * sizeof(unsigned char), reduced_indices.data(), GL_STATIC_DRAW));
-        glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
     }
     else if (m_render_data.vertices_count <= 65536) {
         // convert indices to unsigned short to save gpu memory
@@ -780,13 +924,14 @@ bool GLModel::send_to_gpu()
         }
         data.index_type = Geometry::EIndexType::USHORT;
         glsafe(::glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices_count * sizeof(unsigned short), reduced_indices.data(), GL_STATIC_DRAW));
-        glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
     }
     else {
         data.index_type = Geometry::EIndexType::UINT;
         glsafe(::glBufferData(GL_ELEMENT_ARRAY_BUFFER, data.indices_size_bytes(), data.indices.data(), GL_STATIC_DRAW));
-        glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
     }
+
+    const GLuint restoredIbo = vertexArraysSupported ? static_cast<GLuint>(previousIbo) : 0;
+    glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, restoredIbo));
     m_render_data.indices_count = indices_count;
     data.indices = std::vector<unsigned int>();
 

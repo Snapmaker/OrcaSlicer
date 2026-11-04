@@ -155,6 +155,12 @@ function pack_deps() {
 }
 
 function build_slicer() {
+    echo "Staging snapmaker_connect..."
+    python3 "${PROJECT_DIR}/scripts/packaging/stage_connect_bundle.py" \
+        --lock "${PROJECT_DIR}/.github/connect-bundle.lock.json" \
+        --platform macos-universal \
+        --resources-dir "${PROJECT_DIR}/resources"
+
     # iterate over two architectures: x86_64 and arm64
     for _ARCH in x86_64 arm64; do
         # if ARCH is universal or equal to _ARCH

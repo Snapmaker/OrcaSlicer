@@ -9,6 +9,7 @@
 #include "libslic3r/FilamentColorLibrary.hpp" // kFullSpectrumSlotCount (recommended slot write-back)
 #include "libslic3r/Config.hpp"
 #include "libslic3r/MixedFilament.hpp"
+#include "libslic3r/MixedFilamentConfigRemap.hpp"
 #include "libslic3r/filament_mixer.h"
 #include "common_func/common_func.hpp"
 #include "slic3r/Utils/SnapLogClient.hpp"
@@ -109,6 +110,7 @@
 
 #include "GUI.hpp"
 #include "GUI_App.hpp"
+#include "FilamentGroupDialog.hpp"
 #include "FlowTypeHelper.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Utils.hpp"
@@ -149,10 +151,13 @@
 #include "../Utils/UndoRedo.hpp"
 #include "../Utils/PresetUpdater.hpp"
 #include "../Utils/Process.hpp"
+#include "../Utils/GatewayProtocol.hpp"
+#include "../Utils/GatewayDevice.hpp"
 #include "RemovableDriveManager.hpp"
 #include "InstanceCheck.hpp"
 #include "NotificationManager.hpp"
 #include "PresetComboBoxes.hpp"
+#include "PlaterFilamentComboBox.hpp"
 #include "MsgDialog.hpp"
 #include "ProjectDirtyStateManager.hpp"
 #include "Gizmos/GLGizmoSimplify.hpp" // create suggestion notification
@@ -952,6 +957,7 @@ public:
         }
 
         UpdateLayout();
+        InvalidateBestSize();
         Refresh();
     }
 
@@ -965,6 +971,7 @@ public:
         m_tabs.clear();
         m_selectedIndex = -1;
         UpdateLayout();
+        InvalidateBestSize();
         Refresh();
     }
 
@@ -1176,9 +1183,30 @@ private:
     {
         if (m_selectedIndex != -1 && m_tabs[m_selectedIndex].page) {
             wxSize size = GetSize();
-            m_tabs[m_selectedIndex].page->SetSize(2, m_tabHeight + 1, size.x - 4, size.y - m_tabHeight - 4);
+            // Clamp to 0: during construction / first OnSize the notebook can still
+            // report a zero height, making the page height negative. GTK rejects the
+            // size request (assertion) and the page keeps a stale geometry.
+            m_tabs[m_selectedIndex].page->SetSize(2, m_tabHeight + 1, wxMax(size.x - 4, 0), wxMax(size.y - m_tabHeight - 4, 0));
             m_tabs[m_selectedIndex].page->Layout();
         }
+    }
+
+    // Include page content so the parent sizer reserves the notebook height instead
+    // of allowing following sidebar panels to overlap it.
+    wxSize DoGetBestSize() const override
+    {
+        int best_width  = m_tabWidth;
+        int best_height = m_tabHeight;
+        for (const auto &tab : m_tabs)
+        {
+            if (tab.page == nullptr)
+                continue;
+
+            const wxSize page_size = tab.page->GetBestSize();
+            best_width             = std::max(best_width, page_size.x);
+            best_height            = std::max(best_height, m_tabHeight + page_size.y + 4);
+        }
+        return wxSize(best_width, best_height);
     }
 
 private:
@@ -1203,9 +1231,16 @@ private:
 #endif
 };
 
+struct NozzleSyncState
+{
+    std::atomic<bool> alive{true};
+    Sidebar*          sidebar{nullptr};
+};
+
 struct Sidebar::priv
 {
     Plater *plater;
+    std::shared_ptr<NozzleSyncState> nozzle_sync_state = std::make_shared<NozzleSyncState>();
 
     wxPanel *scrolled;
     PlaterPresetComboBox *combo_print;
@@ -2114,6 +2149,8 @@ static wxString nozzle_type_key_to_label(const std::string& key)
 Sidebar::Sidebar(Plater *parent)
     : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(42 * wxGetApp().em_unit(), -1)), p(new priv(parent))
 {
+    p->nozzle_sync_state->sidebar = this;
+
     Choice::register_dynamic_list("support_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("support_interface_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("wall_filament", &dynamic_filament_list_1_based);
@@ -2166,146 +2203,39 @@ Sidebar::Sidebar(Plater *parent)
         p->m_printerinfo_syncbtn->SetCursor(wxCURSOR_HAND);
         p->m_printerinfo_syncbtn->SetToolTip(_L("Synchronize nozzle information"));
         p->m_printerinfo_syncbtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
-            bool hasConnectDevice = false;
-            auto devices = wxGetApp().app_config->get_devices();
-            for (const auto& device : devices) {
-                if (device.connected)
-                    hasConnectDevice = true;
-            }
+            // The gateway snapshot fetch is a blocking HTTP call (up to ~5s on a slow link), so run
+            // it on a worker thread and marshal the result back instead of freezing the main UI.
+            if (!p->m_printerinfo_syncbtn->IsEnabled())
+                return;
+            p->m_printerinfo_syncbtn->Disable();
 
-            if (!hasConnectDevice)
-            {
-                // showdialog tips no connect device
-                wxTheApp->CallAfter([this]() {
-                    MessageDialog dlg(wxGetApp().mainframe,
-                                      _L("Printer not connected. Please go to the home page or the device page to connect the printer."),
-                                      _L("Note"), wxOK);
-                    dlg.ShowModal();
-                    });                
-                return;        
-            }
+            const auto gateway = wxGetApp().gateway_service();
+            // wxWeakRef mutates wxTrackable state and must not be copied or destroyed on this worker.
+            const auto sync_state = p->nozzle_sync_state;
+            std::thread([sync_state, gateway]() {
+                std::string              machine_type = "";
+                std::vector<std::string> nozzle_diameters;
+                std::vector<std::string> nozzle_volume_types;
+                std::string              device_name = "";
+                // The gateway device snapshot doubles as the connected-guard: a successful
+                // GET /api/cache/all proves a live device channel (avoids probe + query serial waits).
+                const bool got_machine_info = Gateway::GatewayDevice::query_machine_info(gateway, machine_type, nozzle_diameters, nozzle_volume_types,
+                                                                                          device_name);
 
-            std::shared_ptr<PrintHost> host = nullptr;
-            wxGetApp().get_connect_host(host);
-            SSWCPProtocol::ResolveResult resolve_result = SSWCP::resolve_machine_info(host);
-            MachineInfo&              machine_info      = resolve_result.info;
-            std::vector<std::string>  nozzle_diameters  = machine_info.nozzle_diameters;
-
-            const auto& sync_nozzle_slots = wxGetApp().preset_bundle->m_connect_machine_info_list;
-            if (!sync_nozzle_slots.empty()) {
-                std::vector<std::pair<std::string, std::string>> cached_slots;
-                for (const auto& slot : sync_nozzle_slots)
-                    cached_slots.emplace_back(slot.nozzle_info, slot.nozzle_volume_type);
-                SSWCPProtocol::select_complete_cached_nozzle_info(cached_slots, nozzle_diameters, machine_info.nozzle_volume_types);
-            }
-            if (resolve_result.status != SSWCPProtocol::ResolveStatus::NoResponse && machine_info.model == "Snapmaker U1")
-            {
-                if (nozzle_diameters.size() <= 0)
-                {
-                    wxTheApp->CallAfter([this]() {
-                        MessageDialog dlgEx(wxGetApp().mainframe,
-                                            _L("No nozzle information detected. Please go to the printer settings to configure the nozzle."),
-                                            _L("Note"), wxOK);
-                        dlgEx.ShowModal();
-                    });    
-
-                    return;
-                }
-
-                bool res = false;
-                std::string headNozzleSize = nozzle_diameters[0];
-                for (int i = 1; i < nozzle_diameters.size(); i++)
-                {
-                    if (headNozzleSize != nozzle_diameters[i])
-                    {
-                        res = true;
-                        break;
-                    }
-                }
-
-                if (res)
-                {
-                    std::vector<std::string> diameters_raw = nozzle_diameters;
-                    //std::vector<std::string> diameters_raw = {"0.2", "0.8"};
-                    wxTheApp->CallAfter([this, diameters_raw, nozzle_volume_types = machine_info.nozzle_volume_types]() {
-                        NozzleDiameterSelectDialog dlg(
-                            wxGetApp().mainframe,
-                            _L("Note: Inconsistent nozzle diameters. Current version does not support mixed diameter printing. Please select one nozzle for this print."),
-                            _L("Set Nozzle Diameter"),
-                            diameters_raw);
-                        if (dlg.ShowModal() == wxID_OK) {
-                            std::string sel = dlg.GetSelectedDiameter();
-                            if (!sel.empty()) {
-                                auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, sel);
-                                if (preset) {
-                                    preset->is_visible = true;
-
-                                    auto diameter = sel;
-                                    auto preset   = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
-                                    if (preset == nullptr) {
-                                        BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail";
-                                    } else {
-                                        preset->is_visible = true; // force visible
-
-                                        for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
-                                            p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
-                                        }
-
-                                        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
-                                        wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
-                                    }
-                                }
-                            }
-                        }
-
-                        if (!nozzle_volume_types.empty())
-                            GUI::FlowType::set_nozzle_volume_types(nozzle_volume_types);
-
-                        wxGetApp().plater()->sidebar().update_nozzle_settings(true);
-                    });
-                    return;
-                }
-                else {
-                    // All tool heads report the same diameter: apply it without opening the picker.
-                    std::string diameter = headNozzleSize;
-                    boost::algorithm::trim(diameter);
-                    if (diameter.size() > 2 && boost::iends_with(diameter, "mm")) {
-                        diameter.resize(diameter.size() - 2);
-                        boost::algorithm::trim(diameter);
-                    }
-                    wxTheApp->CallAfter([this, diameter, nozzle_volume_types = machine_info.nozzle_volume_types]() {
-                        auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
-                        if (preset == nullptr) {
-                            BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail (uniform nozzle sync)";
-                            return;
-                        }
-                        preset->is_visible = true;
-
-                        for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i)
-                            p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
-
-                        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
-                        wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
-
-                        // Apply synchronized nozzle flow types BEFORE rebuilding the nozzle
-                        // UI: update_nozzle_settings rebuilds the per-nozzle flow combos by
-                        // reading nozzle_volume_type from config, so the write must land first
-                        // or the combos show stale values.
-                        if (!nozzle_volume_types.empty())
-                            GUI::FlowType::set_nozzle_volume_types(nozzle_volume_types);
-
-                        wxGetApp().plater()->sidebar().update_nozzle_settings(true);
-
-                        wxTheApp->CallAfter([this]() {
-                            MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"),
-                                                 _L("Note"), wxOK);
-                            dlg_Ex.ShowModal();
-                        });
-                    });
-                }
-            }
-            
-            });
+                wxTheApp->CallAfter([sync_state, got_machine_info, machine_type = std::move(machine_type),
+                                     nozzle_diameters = std::move(nozzle_diameters),
+                                     nozzle_volume_types = std::move(nozzle_volume_types),
+                                     device_name = std::move(device_name)]() {
+                    if (!sync_state->alive.load(std::memory_order_acquire))
+                        return;
+                    Sidebar *self = sync_state->sidebar;
+                    if (self->p->m_printerinfo_syncbtn)
+                        self->p->m_printerinfo_syncbtn->Enable();
+                    self->apply_nozzle_sync_result(got_machine_info, std::move(machine_type), std::move(nozzle_diameters),
+                                                   std::move(nozzle_volume_types), std::move(device_name));
+                });
+            }).detach();
+        });
         
         p->m_printer_setting = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "settings");
         p->m_printer_setting->SetToolTip(_L("settings"));
@@ -2329,11 +2259,11 @@ Sidebar::Sidebar(Plater *parent)
 
         // add printer title
         scrolled_sizer->Add(p->m_panel_printer_title, 0, wxEXPAND | wxALL, 0);
-        p->m_panel_printer_title->Bind(wxEVT_LEFT_UP, [this] (auto & e) {
-            if (p->m_panel_printer_content->GetMaxHeight() == 0)
-                p->m_panel_printer_content->SetMaxSize({-1, -1});
-            else
-                p->m_panel_printer_content->SetMaxSize({-1, 0});
+        p->m_panel_printer_title->Bind(wxEVT_LEFT_UP, [this] (auto & e)
+        {
+            const bool expanded = p->m_panel_printer_content->IsShown();
+            p->m_panel_printer_content->Show(!expanded);
+            p->m_panel_printer_content->SetMaxSize(expanded ? wxSize(-1, 0) : wxSize(-1, -1));
             m_scrolled_sizer->Layout();
         });
 
@@ -2527,14 +2457,14 @@ Sidebar::Sidebar(Plater *parent)
     p->m_panel_filament_title = new StaticBox(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE);
     p->m_panel_filament_title->SetBackgroundColor(title_bg);
     p->m_panel_filament_title->SetBackgroundColor2(0xF1F1F1);
-    p->m_panel_filament_title->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &e) {
+    p->m_panel_filament_title->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &e)
+    {
         if (e.GetPosition().x > (p->m_flushing_volume_btn->IsShown()
                 ? p->m_flushing_volume_btn->GetPosition().x : (p->m_bpButton_ams_filament->GetPosition().x - FromDIP(30))))
             return;
-        if (p->m_panel_filament_content->GetMaxHeight() == 0)
-            p->m_panel_filament_content->SetMaxSize({-1, -1});
-        else
-            p->m_panel_filament_content->SetMaxSize({-1, 0});
+        const bool expanded = p->m_panel_filament_content->IsShown();
+        p->m_panel_filament_content->Show(!expanded);
+        p->m_panel_filament_content->SetMaxSize(expanded ? wxSize(-1, 0) : wxSize(-1, -1));
         m_scrolled_sizer->Layout();
     });
 
@@ -3088,7 +3018,7 @@ Sidebar::Sidebar(Plater *parent)
     /* first filament item */
     // init_filament_combo(&p->combos_filament[0], 0);
 
-    p->combos_filament[0] = new PlaterPresetComboBox(p->m_panel_scrolled_filament_content, Preset::TYPE_FILAMENT);
+    p->combos_filament[0] = new PlaterFilamentComboBox(p->m_panel_scrolled_filament_content, Preset::TYPE_FILAMENT);
     auto combo_and_btn_sizer = new wxBoxSizer(wxHORIZONTAL);
     // BBS:  filament double columns
     combo_and_btn_sizer->AddSpacer(FromDIP(SidebarProps::ContentMargin()));
@@ -3352,7 +3282,8 @@ Sidebar::Sidebar(Plater *parent)
     scrolled_sizer->Add(p->m_panel_mixed_filaments_content, 0, wxEXPAND, 0);
 
     // Bind collapse/expand event to title bar
-    p->m_panel_mixed_filaments_title->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& e) {
+    p->m_panel_mixed_filaments_title->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& e)
+    {
         // Exclude button areas from collapse/expand
         int button_left = p->m_panel_mixed_filaments_title->GetClientSize().x;
         auto consider_button = [&button_left](wxWindow *button) {
@@ -3365,10 +3296,9 @@ Sidebar::Sidebar(Plater *parent)
         if (e.GetPosition().x > button_left - FromDIP(12))
             return;
         
-        if (p->m_panel_mixed_filaments_content->GetMaxHeight() == 0)
-            p->m_panel_mixed_filaments_content->SetMaxSize({-1, -1});
-        else
-            p->m_panel_mixed_filaments_content->SetMaxSize({-1, 0});
+        const bool expanded = p->m_panel_mixed_filaments_content->IsShown();
+        p->m_panel_mixed_filaments_content->Show(!expanded);
+        p->m_panel_mixed_filaments_content->SetMaxSize(expanded ? wxSize(-1, 0) : wxSize(-1, -1));
         m_scrolled_sizer->Layout();
     });
 
@@ -3470,7 +3400,7 @@ Sidebar::Sidebar(Plater *parent)
     SetSizer(sizer);
 }
 
-Sidebar::~Sidebar() {}
+Sidebar::~Sidebar() { p->nozzle_sync_state->alive.store(false, std::memory_order_release); }
 
 void Sidebar::create_printer_preset()
 {
@@ -3492,7 +3422,7 @@ void Sidebar::create_printer_preset()
 
 void Sidebar::init_filament_combo(PlaterPresetComboBox **combo, const int filament_idx)
 {
-    *combo = new PlaterPresetComboBox(p->m_panel_scrolled_filament_content, Slic3r::Preset::TYPE_FILAMENT);
+    *combo = new PlaterFilamentComboBox(p->m_panel_scrolled_filament_content, Slic3r::Preset::TYPE_FILAMENT);
     (*combo)->set_filament_idx(filament_idx);
 
     auto combo_and_btn_sizer = new wxBoxSizer(wxHORIZONTAL);
@@ -3595,9 +3525,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
     auto p_mainframe = wxGetApp().mainframe;
     auto cfg = preset_bundle.printers.get_edited_preset().config;
 
-    const auto& appconfig = wxGetApp().app_config;
-
-    bool use_new_connection = appconfig->get("use_new_connect") == "true";
+    const bool use_new_connection = wxGetApp().physical_printer_connected();
 
     auto printer_config     = wxGetApp().preset_bundle->printers.get_edited_preset().config;
     auto printer_model_opt  = printer_config.option<ConfigOptionString>("printer_model");
@@ -3621,7 +3549,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 
         const bool showing_u1_device = p_mainframe->m_printer_view && p_mainframe->m_printer_view->is_u1_device_page();
         // Non-U1: always leave path=2 for missing_connection / print_host. Keep skipping
-        // when use_new_connect already sits on the GIF (connect flow loads path=2 afterwards).
+        // when the physical connection already sits on the GIF (connect flow loads path=2 afterwards).
         const bool load_non_u1_page = !is_snapmaker_u1 && reload_printer_view && (!use_new_connection || showing_u1_device);
 
         if (load_non_u1_page) {
@@ -3643,8 +3571,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                                  MainFrame::PrintSelectType::eSendGcode;
 
                 if (url.find("127.0.0.1") != std::string::npos) {
-                    url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                             "/web/flutter_web/index.html?path=3");
+                    url = wxGetApp().gateway_web_url("device_control");
                 }
             }
             
@@ -3657,26 +3584,14 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
             p_mainframe->set_print_button_to_default(print_btn_type);
 
             if (is_snapmaker_u1) {
-
-                auto        devices     = wxGetApp().app_config->get_devices();
-                bool hasOnlineMachine = false;
-                for (const auto& device : devices) {
-                    if (device.connected) {
-                        hasOnlineMachine = true;
-                        break;
-                    }
-                }
-
-                if(hasOnlineMachine)
+                if (wxGetApp().gateway_device_connected())
                     p->combo_printer->set_show_machine_connecting_button(true);
     
-                wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                                  "/web/flutter_web/index.html?path=2");
-                auto real_url = wxGetApp().get_international_url(url);
+                wxString url = wxGetApp().gateway_web_url("device_control");
                 
                 if (reload_printer_view && !showing_u1_device) {
-                    wxGetApp().mainframe->load_printer_url(real_url); 
-                }                   
+                    wxGetApp().mainframe->load_printer_url(url);
+                }
             }
 
             if (!p->combo_printer->get_show_machine_connecting_button() && !is_snapmaker_u1) {
@@ -3763,7 +3678,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
             
             // Orca: Update proj_config directly to avoid callback context issues
             if (is_snapmaker_u1 && !support_multi_bed_types) {
-                if (bed_type_to_use != btPTE && bed_type_to_use != btPEI && bed_type_to_use != btGESP && bed_type_to_use != btSuperTack) {
+                if (bed_type_to_use != btPTE && bed_type_to_use != btPEI && bed_type_to_use != btGESP) {
                     bed_type_to_use = btPTE;
                     wxGetApp().app_config->set("curr_bed_type", std::to_string(int(bed_type_to_use)));
                     wxGetApp().app_config->set_printer_setting(printer_name, "curr_bed_type", std::to_string(int(bed_type_to_use)));
@@ -3776,7 +3691,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         } else {
             if (is_snapmaker_u1 && !support_multi_bed_types) {
                 BedType curr = wxGetApp().preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
-                if (curr != btPTE && curr != btPEI && curr != btGESP && curr != btSuperTack) {
+                if (curr != btPTE && curr != btPEI && curr != btGESP) {
                     wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(btPTE));
                     m_bed_type_list->SetSelection(0);
                 } else
@@ -3801,7 +3716,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         update_printer_thumbnail();
     }
         
-    p_mainframe->show_device(preset_bundle.use_bbl_device_tab() && !use_new_connection);
+    p_mainframe->show_device(preset_bundle.use_bbl_device_tab() && !wxGetApp().physical_printer_connected());
     p_mainframe->m_tabpanel->SetSelection(p_mainframe->m_tabpanel->GetSelection());
 }
 
@@ -6689,12 +6604,16 @@ void Sidebar::update_color_mix_panel()
     if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_mode"))
         local_z_mode = opt->value;
 
+    bool local_z_direct_multicolor = true;
+    if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_direct_multicolor"))
+        local_z_direct_multicolor = opt->value;
+
     bool component_bias_enabled = false;
     if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("mixed_filament_component_bias_enabled"))
         component_bias_enabled = opt->value;
 
     const MixedFilamentPreviewSettings preview_settings {
-        0.2f, lower_bound, upper_bound, 0.f, 0.f, local_z_mode, false, 1
+        0.2f, lower_bound, upper_bound, 0.f, 0.f, local_z_mode, local_z_direct_multicolor, 1
     };
     const MixedFilamentDisplayContext display_context {
         num_physical, physical_colors, nozzle_diameters, preview_settings, component_bias_enabled
@@ -7422,7 +7341,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         wall_loops = std::max<size_t>(1, size_t(std::max(1, print_cfg->opt_int("wall_loops"))));
     const bool local_z_mode = get_mixed_bool("dithering_local_z_mode", false);
     const bool local_z_direct_multicolor =
-        get_mixed_bool("dithering_local_z_direct_multicolor", false) &&
+        get_mixed_bool("dithering_local_z_direct_multicolor", true) &&
         preferred_local_z_a <= EPSILON &&
         preferred_local_z_b <= EPSILON;
     const bool component_bias_enabled = get_mixed_bool("mixed_filament_component_bias_enabled", false);
@@ -8455,6 +8374,13 @@ void Sidebar::merge_mixed_filament(size_t from_id, size_t to_id,
     
     // Build remap table using PresetBundle method
     pb.build_merge_filament_remap(from_id, to_id, total_filaments);
+    // The remap is 1-based and also accounts for a mixed target shifting down
+    // when it follows the deleted source.
+    const std::vector<unsigned int> merge_remap = pb.last_filament_id_remap();
+    const int merged_target_id =
+        merge_remap.size() > from_id + 1 && merge_remap[from_id + 1] > 0
+            ? int(merge_remap[from_id + 1] - 1)
+            : -1;
     
     // Mark source mixed filament as deleted
     mfs[source_mixed_idx].deleted = true;
@@ -8471,9 +8397,11 @@ void Sidebar::merge_mixed_filament(size_t from_id, size_t to_id,
     if (auto* opt = pb.project_config.option<ConfigOptionBools>("filament_is_mixed"))
         is_mixed_snapshot = opt->values;
     
-    // Update objects to use new filament IDs
+    // Pass the remapped target instead of -1 so ObjectList writes the selected
+    // physical/mixed target to config-level extruder assignments rather than
+    // falling back to filament 1.
     size_t total_after = pb.mixed_filaments.total_filaments(num_physical);
-    wxGetApp().plater()->on_filaments_delete(total_after, from_id, -1, is_mixed_snapshot);
+    wxGetApp().plater()->on_filaments_delete(total_after, from_id, merged_target_id, is_mixed_snapshot);
     
     BOOST_LOG_TRIVIAL(info) << "Mixed filament merge completed. Total filaments after: " << total_after;
     
@@ -8594,16 +8522,51 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id,
         pb.build_merge_filament_remap(filament_id, replace_filament_id, old_total_filaments, old_num_physical);
         
         BOOST_LOG_TRIVIAL(info) << "Built custom remap for physical to mixed merge (accounts for virtual ID changes)";
-        
-        // Call on_filaments_delete with -1 to trigger remap usage
-        // This updates object colors using the remap table
-        wxGetApp().plater()->on_filaments_delete(old_total_filaments, filament_id, -1, is_mixed_snapshot);
-        
-        // Now delete the physical filament
+
+        // Preserve the custom merge target for config-level object/volume extruder
+        // assignments. The count update below replaces PresetBundle's transient
+        // remap with its generic deletion remap, so restore this merge-specific
+        // table before Plater::on_filaments_delete() consumes it.
+        const std::vector<unsigned int> physical_to_mixed_remap = pb.last_filament_id_remap();
+        const int merged_target_id =
+            physical_to_mixed_remap.size() > filament_id + 1 &&
+            physical_to_mixed_remap[filament_id + 1] > 0
+                ? int(physical_to_mixed_remap[filament_id + 1] - 1)
+                : -1;
+
+        // Update PresetBundle before refreshing the sidebar. Sidebar::on_filaments_delete()
+        // first reduces the UI physical count and then reloads custom mixed definitions.
+        // If it runs while the bundle still contains old physical IDs, a row such as
+        // old (3, 5) is temporarily invalid against four UI slots and is discarded.
+        // Updating first renumbers that row to (3, 4) and keeps the merge target alive.
         pb.update_num_filaments(filament_id);
-        pb.consume_last_filament_id_remap(); // discard the remap built by update_num_filaments
+        (void)pb.consume_last_filament_id_remap();
+        pb.set_filament_id_remap(physical_to_mixed_remap);
+
+        const size_t total_after_delete =
+            pb.mixed_filaments.total_filaments(pb.filament_presets.size());
         wxGetApp().plater()->get_partplate_list().on_filament_deleted(
-            pb.filament_presets.size(), filament_id);
+            total_after_delete, filament_id);
+
+        // Pass the post-deletion mixed target so painted states and config-level
+        // object/volume extruder assignments follow the same remap.
+        wxGetApp().plater()->on_filaments_delete(
+            total_after_delete, filament_id, merged_target_id, is_mixed_snapshot);
+
+        // Resynchronize filament_colour from the post-deletion project config;
+        // GLCanvas3D reads this config when updating GLVolume colors.
+        wxGetApp().plater()->update_filament_colors_in_full_config();
+
+        // Refresh controls that may still hold the pre-deletion filament list.
+        for (size_t idx = filament_id; idx < p->combos_filament.size(); ++idx) {
+            if (p->combos_filament[idx])
+                p->combos_filament[idx]->update();
+        }
+        obj_list()->update_objects_list_filament_column(pb.filament_presets.size());
+        update_dynamic_filament_list();
+        update_mixed_filament_panel(false);
+        update_color_mix_panel();
+        Layout();
 
         BOOST_LOG_TRIVIAL(info) << "Physical to mixed merge completed using custom remap mechanism";
 
@@ -9006,10 +8969,12 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     if (auto *opt = pb->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
         opt->value = pb->mixed_filaments.serialize_custom_entries();
 
-    // Rebuild panels once (skipped per-deletion in the loop above).
+    // Rebuild panels once (skipped per-deletion in the loop above). The object-list
+    // refresh performs the single final Plater update through its model sync path.
     update_mixed_filament_panel();
     update_color_mix_panel();
-    wxGetApp().plater()->update();
+    obj_list()->update_objects_list_filament_column(pb->filament_presets.size());
+    obj_list()->refresh_layer_range_filament_items();
 }
 
 void Sidebar::add_custom_filament(wxColour new_col) {
@@ -9176,6 +9141,7 @@ void Sidebar::sync_ams_list()
     wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
     update_dynamic_filament_list();
     // Expand filament list
+    p->m_panel_filament_content->Show();
     p->m_panel_filament_content->SetMaxSize({-1, -1});
     // BBS:Synchronized consumables information
     // auto calculation of flushing volumes
@@ -9199,26 +9165,122 @@ void Sidebar::sync_ams_list()
     Layout();
 }
 
+void Sidebar::apply_nozzle_sync_result(bool got_machine_info, std::string machine_type,
+                                       std::vector<std::string> nozzle_diameters,
+                                       std::vector<std::string> nozzle_volume_types,
+                                       std::string device_name)
+{
+    if (!got_machine_info) {
+        MessageDialog dlg(wxGetApp().mainframe,
+                          _L("Printer not connected. Please go to the home page or the device page to connect the printer."),
+                          _L("Note"), wxOK);
+        dlg.ShowModal();
+        return;
+    }
+
+    MachineInfo machine_info;
+    machine_info.model                = SSWCPProtocol::normalize_machine_model(machine_type);
+    machine_info.device_name          = device_name;
+    machine_info.nozzle_diameters     = nozzle_diameters;
+    machine_info.nozzle_volume_types = nozzle_volume_types;
+    const auto& sync_nozzle_slots = wxGetApp().preset_bundle->m_connect_machine_info_list;
+    if (!sync_nozzle_slots.empty()) {
+        std::vector<std::pair<std::string, std::string>> cached_slots;
+        for (const auto& slot : sync_nozzle_slots)
+            cached_slots.emplace_back(slot.nozzle_info, slot.nozzle_volume_type);
+        SSWCPProtocol::select_complete_cached_nozzle_info(cached_slots, nozzle_diameters, machine_info.nozzle_volume_types);
+    }
+    if (machine_info.model != "Snapmaker U1")
+        return;
+
+    if (nozzle_diameters.empty()) {
+        MessageDialog dlg(wxGetApp().mainframe,
+                          _L("No nozzle information detected. Please go to the printer settings to configure the nozzle."),
+                          _L("Note"), wxOK);
+        dlg.ShowModal();
+        return;
+    }
+
+    auto apply_nozzle_preset = [this](const std::string& diameter) {
+        auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
+        if (preset == nullptr) {
+            BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail";
+            return false;
+        }
+        preset->is_visible = true;
+        for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i)
+            p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
+        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+        wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
+        return true;
+    };
+
+    const std::string& first_diameter = nozzle_diameters.front();
+    const bool         mixed_diameters = std::any_of(nozzle_diameters.begin() + 1,
+                                                     nozzle_diameters.end(),
+                                                     [&](const std::string& diameter) { return diameter != first_diameter; });
+    if (mixed_diameters) {
+        NozzleDiameterSelectDialog dlg(wxGetApp().mainframe,
+                                       _L("Note: Inconsistent nozzle diameters. Current version does not support mixed diameter printing. Please select one nozzle for this print."),
+                                       _L("Set Nozzle Diameter"),
+                                       nozzle_diameters);
+        if (dlg.ShowModal() == wxID_OK) {
+            std::string selected_diameter = dlg.GetSelectedDiameter();
+            if (!selected_diameter.empty())
+                apply_nozzle_preset(selected_diameter);
+        }
+    } else {
+        std::string diameter = first_diameter;
+        boost::algorithm::trim(diameter);
+        if (diameter.size() > 2 && boost::iends_with(diameter, "mm")) {
+            diameter.resize(diameter.size() - 2);
+            boost::algorithm::trim(diameter);
+        }
+        if (!apply_nozzle_preset(diameter))
+            return;
+    }
+
+    if (!machine_info.nozzle_volume_types.empty())
+        GUI::FlowType::set_nozzle_volume_types(machine_info.nozzle_volume_types);
+    wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+    if (!mixed_diameters)
+        wxTheApp->CallAfter([this]() {
+            MessageDialog dlg(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"), _L("Note"), wxOK);
+            dlg.ShowModal();
+        });
+}
 void Sidebar::show_sync_filament_dialog()
 {
     if (!wxGetApp().plater())
         return;
 
-    std::shared_ptr<PrintHost> host = nullptr;
-    wxGetApp().get_connect_host(host);
-    
-    MachineObject* device_machine = nullptr;
-    {
-        Slic3r::DeviceManager* dev = wxGetApp().getDeviceManager();
-        if (dev) {
-            MachineObject* obj = dev->get_selected_machine();
-            if (obj && obj->is_connected()) {
-                device_machine = obj;
-            }
-        }
-    }
+    if (p->m_bpButton_sync_filament == nullptr || !p->m_bpButton_sync_filament->IsEnabled())
+        return;
 
-    if (!host && !device_machine) {
+    p->m_bpButton_sync_filament->Disable();
+    const auto      gateway    = wxGetApp().gateway_service();
+    const auto      sync_state = p->nozzle_sync_state;
+    ScalableButton* button      = p->m_bpButton_sync_filament;
+    std::thread([gateway, sync_state, button]() {
+        std::string              machine_type;
+        std::string              device_name;
+        std::vector<std::string> nozzle_diameters;
+        std::vector<std::string> nozzle_volume_types;
+        const bool got_machine_info = Gateway::GatewayDevice::query_machine_info(gateway, machine_type, nozzle_diameters, nozzle_volume_types, device_name);
+
+        wxTheApp->CallAfter([sync_state, button, got_machine_info, machine_type = std::move(machine_type)]() {
+            if (!sync_state->alive.load(std::memory_order_acquire))
+                return;
+            if (button != nullptr)
+                button->Enable();
+            sync_state->sidebar->continue_sync_filament_dialog(got_machine_info, machine_type);
+        });
+    }).detach();
+}
+
+void Sidebar::continue_sync_filament_dialog(bool got_machine_info, const std::string& machine_type)
+{
+    if (!got_machine_info) {
         SyncRichConfirmDialog dlg(this,
             _L("No printer is connected. Please connect your U1 from the Device page before syncing."),
             wxYES_NO);
@@ -9235,26 +9297,11 @@ void Sidebar::show_sync_filament_dialog()
             "Snapmaker U1"
         };
         MachineInfo machine_info;
-        bool got_machine_info = false;
-
-        if (host) {
-            SSWCPProtocol::ResolveResult resolve_result = SSWCP::resolve_machine_info(host);
-            if (resolve_result.status != SSWCPProtocol::ResolveStatus::NoResponse) {
-                machine_info     = resolve_result.info;
-                got_machine_info = true;
-            }
-        }
-
-        if (!got_machine_info || machine_info.model.empty()) {
-            if (device_machine) {
-                machine_info.model = SSWCPProtocol::normalize_machine_model(device_machine->printer_type);
-                got_machine_info = !machine_info.model.empty();
-            }
-        }
+        machine_info.model            = SSWCPProtocol::normalize_machine_model(machine_type);
 
         bool is_white_listed_type = white_list_machine_types.find(machine_info.model) != white_list_machine_types.end();
 
-        if (got_machine_info && !machine_info.model.empty() && !is_white_listed_type) {
+        if (!machine_info.model.empty() && !is_white_listed_type) {
             SyncRichConfirmDialog dlg(this,
                 _L("The connected printer is not U1. Unable to sync filament information. Please switch to U1 and try again."),
                 wxYES_NO);
@@ -9621,6 +9668,15 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
     p->m_nozzle_notebook->Layout();
     p->m_nozzle_notebook->Thaw();
+    p->m_nozzle_notebook->InvalidateBestSize();
+    if (p->m_nozzle_notebook->GetParent() != nullptr)
+    {
+        p->m_nozzle_notebook->GetParent()->InvalidateBestSize();
+    }
+    p->m_panel_printer_content->InvalidateBestSize();
+    p->scrolled->InvalidateBestSize();
+    p->m_panel_printer_content->Layout();
+    m_scrolled_sizer->Layout();
 
     if (switch_machine) {
         p->combo_printer->SetFocus();
@@ -10239,7 +10295,7 @@ struct Plater::priv
     void reset_canvas_volumes();
 
     // BBS
-    bool init_collapse_toolbar();
+    bool init_collapse_toolbar(const GLTexture* shared_background_texture = nullptr);
 
     // BBS
     void hide_select_machine_dlg()
@@ -12141,30 +12197,6 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         }
                     }
                     if (!silence) wxGetApp().app_config->update_config_dir(path.parent_path().string());
-
-                    // BBS: Check for Snapmaker U1 + Print by Object warning after loading 3mf config
-                    if (load_config && is_project_file) {
-                        auto print_config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
-                        auto printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-
-                        auto print_seq_opt = print_config.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
-                        auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
-
-                        if (print_seq_opt && printer_model_opt &&
-                            print_seq_opt->value == PrintSequence::ByObject &&
-                            !printer_model_opt->value.empty()) {
-                            std::string printer_model = printer_model_opt->value;
-                            bool is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") &&
-                                                   boost::icontains(printer_model, "U1");
-
-                            if (is_snapmaker_u1) {
-                                if (q->get_notification_manager()) {
-                                    wxString warning_text = _L("Printing by object with caution. This function may cause the print head to collide with printed parts during switching.");
-                                    q->get_notification_manager()->push_plater_error_notification(warning_text.ToStdString());
-                                }
-                            }
-                        }
-                    }
                 }
             } else {
                 // BBS: add plate data related logic
@@ -14505,6 +14537,13 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
     if (std::find(panels.begin(), panels.end(), panel) == panels.end())
         return;
 
+    // Prepare and preview both render the by-object yellow warning; re-evaluate
+    // it against the current plate on every page switch. Skip the initial call
+    // from the priv constructor: Plater::p is not assigned until that ctor
+    // returns, and the sync dereferences it.
+    if (current_panel != nullptr)
+        q->sync_print_seq_warning_notification();
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": current_panel %1%, new_panel %2%")%current_panel%panel;
 #ifdef __WXMAC__
     bool force_render = (current_panel != nullptr);
@@ -14533,13 +14572,32 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                 //BBS: add more judge for slicing
                 if (!this->background_process.running() && !this->m_is_slicing)
                 {
-                   this->m_slice_all = false;
-                    slice_cancelled = !(this->q->reslice());
+                    this->m_slice_all = false;
+                    // Page-switch auto-slice runs the same pre-slice guard as the
+                    // slice button so blocking errors (filament temp mixing, cold
+                    // plate) surface here too.
+                    bool guard_passed = this->q->guard_before_slice_plate();
+                    bool grouping_confirmed = true;
+                    if (guard_passed && GUI::FlowType::any_nozzle_high_flow()) {
+                        bool all_high_flow = GUI::FlowType::distinct_nozzle_flow_type_count() < 2;
+                        GUI::FilamentGroupDialog dlg(q, all_high_flow);
+                        grouping_confirmed = dlg.ShowModal() == wxID_OK;
+                    } else if (guard_passed) {
+                        GUI::FlowType::sync_filament_volume_types_for_slice();
+                    }
+                    if (guard_passed && grouping_confirmed)
+                        slice_cancelled = !(this->q->reslice());
+                    else {
+                        slice_cancelled = true;
+                        if (wxGetApp().mainframe != nullptr)
+                            wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventSliceUpdate, true);
+                    }
                }
                 else {
                     //reset current plate to the slicing plate
                     int plate_index = this->background_process.get_current_plate()->get_index();
                     this->partplate_list.select_plate(plate_index);
+                    this->q->sync_print_seq_warning_notification();
                 }
             }
             else if (only_has_gcode_need_preview)
@@ -15440,6 +15498,7 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         if (!has_error && !evt.cancelled() && evt.success()) {
             SNAP_LOG_BATCH(Info, "slice completed", {"eventName","slice_completed"});
         }
+        m_slice_all = false;
         m_is_slicing = false;
         this->preview->reload_print(false);
         /* BBS if in publishing progress */
@@ -15503,6 +15562,7 @@ void Plater::priv::on_action_add_plate(SimpleEvent&)
         this->partplate_list.create_plate();
         int new_plate = this->partplate_list.get_plate_count() - 1;
         this->partplate_list.select_plate(new_plate);
+        q->sync_print_seq_warning_notification();
         update();
 
         // BBS set default view
@@ -15680,7 +15740,7 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
     update_sidebar();
     int old_sel = e.GetOldSelection();
     if (wxGetApp().preset_bundle && wxGetApp().preset_bundle->use_bbl_device_tab() && new_sel == MainFrame::tpMonitor &&
-        wxGetApp().app_config->get("use_new_connect") != "true") {
+        !wxGetApp().physical_printer_connected()) {
         if (!wxGetApp().getAgent()) {
             e.Veto();
             BOOST_LOG_TRIVIAL(info) << boost::format("skipped tab switch from %1% to %2%, lack of network plugins") % old_sel % new_sel;
@@ -15708,9 +15768,7 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
                 }
                 const bool showing_u1 = main_frame->m_printer_view->is_u1_device_page();
                 if (is_snapmaker_u1 && !showing_u1) {
-                    wxString u1_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                                         "/web/flutter_web/index.html?path=2");
-                    main_frame->load_printer_url(wxGetApp().get_international_url(u1_url));
+                    main_frame->load_printer_url(wxGetApp().gateway_web_url("device_control"));
                 } else if (!is_snapmaker_u1 && showing_u1) {
                     wxString non_u1 = url;
                     if (non_u1.empty()) {
@@ -15826,6 +15884,7 @@ void Plater::priv::on_plate_selected(SimpleEvent&)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received plate selected event\n" ;
     sidebar->obj_list()->on_plate_selected(partplate_list.get_curr_plate_index());
+    q->sync_print_seq_warning_notification();
 }
 
 void Plater::priv::on_action_request_model_id(wxCommandEvent& evt)
@@ -15964,6 +16023,9 @@ void Plater::priv::on_filament_color_changed(wxCommandEvent &event)
     wxGetApp().preset_bundle->update_multi_material_filament_presets();
     sidebar->update_mixed_filament_panel();
     sidebar->update_color_mix_panel();
+
+    if (GLCanvas3D* canvas = q->get_view3D_canvas3D())
+        canvas->get_gizmos_manager().update_data();
 }
 
 void Plater::priv::install_network_plugin(wxCommandEvent &event)
@@ -16498,13 +16560,9 @@ void Plater::priv::reset_canvas_volumes()
         preview->get_canvas3d()->reset_volumes();
 }
 
-bool Plater::priv::init_collapse_toolbar()
+bool Plater::priv::init_collapse_toolbar(const GLTexture* shared_background_texture)
 {
     if (wxGetApp().is_gcode_viewer())
-        return true;
-
-    if (collapse_toolbar.get_items_count() > 0)
-        // already initialized
         return true;
 
     BackgroundTexture::Metadata background_data;
@@ -16514,8 +16572,17 @@ bool Plater::priv::init_collapse_toolbar()
     background_data.right = 16;
     background_data.bottom = 16;
 
-    if (!collapse_toolbar.init(background_data))
-        return false;
+    if (collapse_toolbar.get_items_count() > 0) {
+        if (shared_background_texture != nullptr)
+            collapse_toolbar.init_shared_background(background_data, shared_background_texture);
+        // already initialized
+        return true;
+    }
+
+    if (shared_background_texture == nullptr || !collapse_toolbar.init_shared_background(background_data, shared_background_texture)) {
+        if (!collapse_toolbar.init(background_data))
+            return false;
+    }
 
     collapse_toolbar.set_layout_type(GLToolbar::Layout::Vertical);
     collapse_toolbar.set_horizontal_orientation(GLToolbar::Layout::HO_Right);
@@ -19069,16 +19136,25 @@ void Plater::load_gcode(const wxString& filename)
     current_print.apply(this->model(), wxGetApp().preset_bundle->full_config());
 
     //BBS: add cost info when drag in gcode
+    //Snapmaker: add weight, filament length info
     auto& ps = current_result->print_statistics;
     double total_cost = 0.0;
+    double total_used_filament = 0.0;
+    double total_weight = 0.0;
     for (auto volume : ps.total_volumes_per_extruder) {
         size_t extruder_id = volume.first;
         double density = current_result->filament_densities.at(extruder_id);
         double cost = current_result->filament_costs.at(extruder_id);
+        double diameter = current_result->filament_diameters.at(extruder_id);
+        double s        = PI * sqr(0.5 * diameter);
+        total_used_filament += volume.second / s;
         double weight = volume.second * density * 0.001;
+        total_weight += weight;
         total_cost += weight * cost * 0.001;
     }
     current_print.print_statistics().total_cost = total_cost;
+    current_print.print_statistics().total_used_filament = total_used_filament;
+    current_print.print_statistics().total_weight = total_weight;
 
     current_print.set_gcode_file_ready();
 
@@ -19109,6 +19185,17 @@ void Plater::reload_gcode_from_disk()
     load_gcode(filename);
 }
 
+void Plater::reload_gcode_preview()
+{
+    // GCodeViewer::load() early-returns when the result id is unchanged, so
+    // a plain reload_print() would never rebuild the toolpaths for the
+    // other pipeline (legacy buffers stay empty -> blank preview). Reset
+    // the viewer first to force a full reload. Keep the gcode-import mode:
+    // the editor path would skip the parsed gcode and blank it as well.
+    p->reset_gcode_toolpaths();
+    p->preview->reload_print(false, this->only_gcode_mode());
+}
+
 void Plater::refresh_print()
 {
     p->preview->refresh_print();
@@ -19122,17 +19209,22 @@ wxString Plater::get_project_name()
 
 void Plater::update_all_plate_thumbnails(bool force_update)
 {
+    get_view3D_canvas3D()->make_current_for_postinit();
+    bool rendered = false;
     for (int i = 0; i < get_partplate_list().get_plate_count(); i++) {
         PartPlate* plate = get_partplate_list().get_plate(i);
         ThumbnailsParams thumbnail_params = { {}, false, true, true, true, i};
         if (force_update || !plate->thumbnail_data.is_valid()) {
             get_view3D_canvas3D()->render_thumbnail(plate->thumbnail_data, plate->plate_thumbnail_width, plate->plate_thumbnail_height, thumbnail_params, Camera::EType::Ortho);
+            rendered = true;
         }
         if (force_update || !plate->no_light_thumbnail_data.is_valid()) {
             get_view3D_canvas3D()->render_thumbnail(plate->no_light_thumbnail_data, plate->plate_thumbnail_width, plate->plate_thumbnail_height, thumbnail_params,
                                                     Camera::EType::Ortho,false,false,true);
         }
     }
+    if (rendered)
+        get_preview_canvas3D()->invalidate_select_plate_toolbar();
 }
 
 //invalid all plate's thumbnails
@@ -21164,6 +21256,7 @@ void Plater::export_toolpaths_to_obj() const
 //BBS: add multiple plate reslice logic
 bool Plater::reslice()
 {
+    p->partplate_list.set_filament_group_dirty(false);
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: enter, process_completed_with_error=%2%")%__LINE__ %p->process_completed_with_error;
     // There is "invalid data" button instead "slice now"
     if (p->process_completed_with_error == p->partplate_list.get_curr_plate_index())
@@ -21221,6 +21314,12 @@ bool Plater::reslice()
     if (printer_technology() == ptFFF) {
         Print* print_ptr = p->background_process.fff_print();
         if (print_ptr) {
+            // "Don't ask again next time" (dialog checkbox) or the Preferences toggle
+            // disables the memory guard entirely for subsequent slicing runs, matching
+            // the pre-guard behavior. Snapshotted on the main thread; the guard
+            // callback itself would run on TBB workers.
+            bool show_mem_warning = wxGetApp().app_config->get_bool("show_memory_usage_warning");
+            print_ptr->set_memory_guard_enabled(show_mem_warning);
             print_ptr->set_memory_guard_callback([this]() -> bool {
                 auto promise = std::make_shared<std::promise<bool>>();
                 auto future  = promise->get_future();
@@ -21238,8 +21337,13 @@ bool Plater::reslice()
                     RichMessageDialog dlg(this, msg,
                         _L("Memory Usage Warning"), wxYES_NO | wxNO_DEFAULT | wxICON_WARNING);
                     dlg.SetYesNoLabels(_L("Yes, Continue"), _L("No, Stop"));
+                    dlg.ShowCheckBox(_L("Don't ask again next time"), false);
 
                     bool result = (dlg.ShowModal() == wxID_YES);
+                    if (dlg.IsCheckBoxChecked())
+                        // Keep in sync with the Preferences checkbox, which is bound to the
+                        // same key with inverted polarity (checked there = dialog shows).
+                        wxGetApp().app_config->set_bool("show_memory_usage_warning", false);
                     if (result) {
                         // Skip toolpath preview to reduce memory usage on
                         // the subsequent load_toolpaths / load_shells phase.
@@ -21556,18 +21660,8 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         return output_file;
     };
 
-    // 校验机型
-    auto devices = wxGetApp().app_config->get_devices();
-    std::string connect_preset = "";
-    for (const auto device : devices) {
-        if (device.connected) {
-            connect_preset = device.preset_name;
-        }
-    }
-
     auto current_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
 
-    bool islegal = true;
     std::string c_preset = "";
     if (current_preset.is_system) {
         c_preset = current_preset.name;
@@ -21578,11 +21672,6 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
 
     c_preset.erase(std::remove(c_preset.begin(), c_preset.end(), '('), c_preset.end());
     c_preset.erase(std::remove(c_preset.begin(), c_preset.end(), ')'), c_preset.end());
-
-    connect_preset.erase(std::remove(connect_preset.begin(), connect_preset.end(), '('), connect_preset.end());
-    connect_preset.erase(std::remove(connect_preset.begin(), connect_preset.end(), ')'), connect_preset.end());
-
-    islegal = (c_preset == connect_preset);
 
     DynamicPrintConfig* physical_printer_config = &Slic3r::GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
     if (! physical_printer_config || p->model.objects.empty())
@@ -21600,7 +21689,7 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         is_snapmaker_u1           = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
     }
 
-    if (wxGetApp().app_config->get("use_new_connect") == "true" || is_snapmaker_u1) {
+    if (wxGetApp().physical_printer_connected() || is_snapmaker_u1) {
         // firstly upload and open upload download dialog,
         // get default name       
         // Obtain default output path
@@ -21655,6 +21744,36 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         dialog->set_send_page(dlg.post_action() == PrintHostPostUploadAction::None);
         dialog->set_gcode_file_name(upload_job.upload_data.source_path.string());
         dialog->set_display_file_name(upload_job.upload_data.upload_path.string());
+
+        const std::string source_path = upload_job.upload_data.source_path.string();
+        const std::string display_name = upload_job.upload_data.upload_path.string();
+
+        nlohmann::json payload;
+        payload["file_path"] = source_path;
+        payload["file_name"] = display_name;
+        payload["active_file"] = SSWCP::build_active_file_json(source_path, display_name, false);
+        payload["filament_mapping"] = SSWCP::build_filament_mapping_json(source_path, display_name);
+
+        std::string store_id = boost::uuids::to_string(boost::uuids::random_generator()());
+        const auto store_result = wxGetApp().gateway_store_preprint_context(store_id, payload);
+        if (!store_result.ok) {
+            BOOST_LOG_TRIVIAL(error) << "preprint store failed: " << store_result.error.message;
+            MessageDialog confirm_dialog(this, _L("Failed to upload pre-print context. Open anyway?"), _L("Note"), wxYES_NO | wxICON_WARNING);
+            if (confirm_dialog.ShowModal() != wxID_YES) {
+                delete dialog;
+                return;
+            }
+            store_id.clear();
+        } else if (!store_result.file_exists) {
+            BOOST_LOG_TRIVIAL(warning) << "preprint store reported that the G-code path does not exist";
+            MessageDialog confirm_dialog(this, _L("The G-code path is invalid. Continue anyway?"), _L("Note"), wxYES_NO | wxICON_WARNING);
+            if (confirm_dialog.ShowModal() != wxID_YES) {
+                delete dialog;
+                return;
+            }
+        }
+
+        dialog->set_store_id(store_id);
         bool res = dialog->run();
 
         if (dialog->is_finish()) {
@@ -22023,21 +22142,44 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     // update UI
     sidebar().on_filaments_delete(filament_id);
 
-    // update global feature filament selections
-    static const char* keys[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament",
-                                 "support_filament", "support_interface_filament"};
-    for (auto key : keys)
-        if (p->config->has(key)) {
-            if (p->config->opt_int(key) == filament_id + 1)
-                (*(p->config)).erase(key);
-            else {
-                int new_value = p->config->opt_int(key) > filament_id ? p->config->opt_int(key) - 1 : p->config->opt_int(key);
-                (*(p->config)).set_key_value(key, new ConfigOptionInt(new_value));
+    // An explicit remap also covers mixed-row deletion/cascade cases that cannot
+    // be expressed by the naive decrement path below.
+    if (should_remap_states) {
+        remap_dynamic_config_feature_filament_ids(*p->config, id_remap, num_filaments);
+    } else {
+        for (const std::string &key : mixed_filament_feature_keys()) {
+            if (!p->config->has(key))
+                continue;
+
+            if (p->config->opt_int(key) == static_cast<int>(filament_id + 1)) {
+                p->config->erase(key);
+            } else {
+                const int old_id = p->config->opt_int(key);
+                const int new_id = old_id > static_cast<int>(filament_id) ? old_id - 1 : old_id;
+                p->config->set(key, new_id);
             }
         }
+    }
 
     // update object/volume/support(object and volume) filament id
-    sidebar().obj_list()->update_objects_list_filament_column_when_delete_filament(filament_id, num_filaments, replace_filament_id);
+    if (should_remap_states) {
+        for (ModelObject* mo : wxGetApp().model().objects) {
+            remap_model_config_filament_ids(mo->config, id_remap, num_filaments);
+            for (ModelVolume* mv : mo->volumes)
+                remap_model_config_filament_ids(mv->config, id_remap, num_filaments);
+            for (auto &layer_range : mo->layer_config_ranges)
+                remap_model_config_filament_ids(layer_range.second, id_remap, num_filaments);
+        }
+        // Batch physical deletion defers list and scene refresh until its final
+        // composite rebuild; other deletion paths refresh immediately.
+        if (p->m_batch_physical_deletion == 0) {
+            sidebar().obj_list()->update_objects_list_filament_column(
+                std::max<size_t>(sidebar().combos_filament().size(), 1));
+            sidebar().obj_list()->refresh_layer_range_filament_items();
+        }
+    } else {
+        sidebar().obj_list()->update_objects_list_filament_column_when_delete_filament(filament_id, num_filaments, replace_filament_id);
+    }
 
     // update customize gcode
     for (auto item = p->model.plates_custom_gcodes.begin(); item != p->model.plates_custom_gcodes.end(); ++item) {
@@ -22214,24 +22356,6 @@ bool Plater::update_filament_colors_in_full_config()
 
     p->config->option<ConfigOptionStrings>("filament_colour")->values = color_opt->values;
     return true;
-}
-
-void Plater::config_change_notification(const DynamicPrintConfig &config, const std::string& key)
-{
-    GLCanvas3D* view3d_canvas = get_view3D_canvas3D();
-    if (key == std::string("print_sequence")) {
-        auto seq_print = config.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
-        if (seq_print && view3d_canvas && view3d_canvas->is_initialized() && view3d_canvas->is_rendering_enabled()) {
-            NotificationManager* notify_manager = get_notification_manager();
-            if (seq_print->value == PrintSequence::ByObject) {
-                std::string info_text = _u8L("Print By Object: \nSuggest to use auto-arrange to avoid collisions when printing.");
-                notify_manager->bbl_show_seqprintinfo_notification(info_text);
-            }
-            else
-                notify_manager->bbl_close_seqprintinfo_notification();
-        }
-    }
-    // notification for more options
 }
 
 bool Plater::check_filament_temp_mixing(int plate_index)
@@ -22870,6 +22994,34 @@ bool Plater::sync_cold_plate_notification()
     return slicing_allowed;
 }
 
+void Plater::sync_print_seq_warning_notification()
+{
+    NotificationManager* notify_manager = get_notification_manager();
+    if (notify_manager == nullptr)
+        return;
+
+    // Suppress during startup / preset loading, before the 3D view is live.
+    GLCanvas3D* view3d_canvas = get_view3D_canvas3D();
+    if (view3d_canvas == nullptr || !view3d_canvas->is_initialized() || !view3d_canvas->is_rendering_enabled()) {
+        notify_manager->bbl_close_seqprintinfo_notification();
+        return;
+    }
+
+    // Effective sequence: an explicit per-plate value overrides the global
+    // one (PartPlate::get_real_print_seq falls back to global on ByDefault).
+    PartPlate* curr_plate = get_partplate_list().get_curr_plate();
+    const bool by_object = curr_plate != nullptr &&
+        curr_plate->get_real_print_seq() == PrintSequence::ByObject;
+
+    if (by_object) {
+        std::string info_text = _u8L("Warning:") + "\n" +
+            _u8L("Printing by object with caution. This function may cause the print head to collide with printed parts during switching.");
+        notify_manager->bbl_show_seqprintinfo_notification(info_text);
+    } else {
+        notify_manager->bbl_close_seqprintinfo_notification();
+    }
+}
+
 bool Plater::guard_before_slice_plate()
 {
     sync_filament_temp_mixing_notification();
@@ -22970,7 +23122,7 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
 {
     bool update_scheduled = false;
     bool bed_shape_changed = false;
-    //bool print_sequence_changed = false;
+    bool print_sequence_changed = false;
     t_config_option_keys diff_keys = p->config->diff(config);
     for (auto opt_key : diff_keys) {
         if (opt_key == "filament_colour") {
@@ -23027,7 +23179,7 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         }
         else if (opt_key == "print_sequence") {
             update_scheduled = true;
-            //print_sequence_changed = true;
+            print_sequence_changed = true;
         }
         else if (opt_key == "printer_model") {
             p->reset_gcode_toolpaths();
@@ -23045,8 +23197,6 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
     if (bed_shape_changed)
         set_bed_shape();
 
-    config_change_notification(config, std::string("print_sequence"));
-
     if (update_scheduled)
         update();
 
@@ -23054,6 +23204,11 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         this->p->schedule_background_process();
         update_title_dirty_status();
     }
+
+    // Gate on the diff so unrelated option edits never resurrect the yellow
+    // by-object warning once the slice guard has retired it.
+    if (print_sequence_changed)
+        sync_print_seq_warning_notification();
 
     notify_filament_usage_changed();
 
@@ -23139,7 +23294,7 @@ void Plater::on_activate()
 // Get vector of extruder colors considering filament color, if extruder color is undefined.
 std::vector<std::string> Plater::get_extruder_colors_from_plater_config(const GCodeProcessorResult* const result, bool include_mixed) const
 {
-    if (wxGetApp().is_gcode_viewer() && result != nullptr)
+    if (result != nullptr && (wxGetApp().is_gcode_viewer() || m_only_gcode))
         return result->extruder_colors;
     else {
         if (wxGetApp().preset_bundle == nullptr)
@@ -23172,7 +23327,7 @@ std::vector<std::string> Plater::get_colors_for_color_print(const GCodeProcessor
 {
     std::vector<std::string> colors = get_extruder_colors_from_plater_config(result);
 
-    if (wxGetApp().is_gcode_viewer() && result != nullptr) {
+    if (result != nullptr && (wxGetApp().is_gcode_viewer() || m_only_gcode)) {
         for (const CustomGCode::Item& code : result->custom_gcode_per_print_z) {
             if (code.type == CustomGCode::ColorChange)
                 colors.emplace_back(code.color);
@@ -23527,35 +23682,72 @@ void Plater::clone_selection()
     dlg.ShowModal();
 }
 
-std::vector<Vec2f> Plater::get_empty_cells(const Vec2f step)
+std::vector<Vec2f> Plater::get_empty_cells(const Vec2f step, const BoundingBoxf& safe_area_2d)
 {
     PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
-    BoundingBoxf3 build_volume = plate->get_build_volume();
-    Vec2d vmin(build_volume.min.x(), build_volume.min.y()), vmax(build_volume.max.x(), build_volume.max.y());
-    BoundingBoxf bbox(vmin, vmax);
+
+    // Prefer the "safe placement area" passed in by the caller (already shrunk by
+    // bed_shrink + brim_skirt_distance/2) to align with the NFP path; fall back to the
+    // original build_volume (of the current plate) when not provided.
+    BoundingBoxf bbox;
+    if (safe_area_2d.defined) {
+        bbox = safe_area_2d;
+    }
+    else {
+        BoundingBoxf3 build_volume = plate->get_build_volume();
+        bbox = BoundingBoxf(Vec2d(build_volume.min.x(), build_volume.min.y()),
+                            Vec2d(build_volume.max.x(), build_volume.max.y()));
+    }
+
     std::vector<Vec2f> cells;
-    auto min_x = step(0)/2;// start_point.x() - step(0) * int((start_point.x() - bbox.min.x()) / step(0));
-    auto min_y = step(1)/2;// start_point.y() - step(1) * int((start_point.y() - bbox.min.y()) / step(1));
+    if (step(0) <= 0.f || step(1) <= 0.f)
+        return cells;
+
+    const double width  = bbox.max.x() - bbox.min.x();
+    const double height = bbox.max.y() - bbox.min.y();
+    if (width < step(0) || height < step(1))
+        return cells;
+
+    // Distribute the division remainder ("edge margin") symmetrically to both sides, so the
+    // leftmost/bottom column does not hug the bed edge while a wide strip is wasted on the
+    // right/top. floor guarantees at least one full cell per row/column; the early return above
+    // already ensures width >= step(0) && height >= step(1), so cols/rows >= 1.
+    const int    cols    = int(std::floor(width  / step(0)));
+    const int    rows    = int(std::floor(height / step(1)));
+    const double half_x  = step(0) / 2.0;
+    const double half_y  = step(1) / 2.0;
+    const double pad_x   = (width  - cols * step(0)) / 2.0;
+    const double pad_y   = (height - rows * step(1)) / 2.0;
+    const double start_x = bbox.min.x() + pad_x + half_x;
+    const double start_y = bbox.min.y() + pad_y + half_y;
+
     auto& exclude_box3s = plate->get_exclude_areas();
     std::vector<BoundingBoxf> exclude_boxs;
+    exclude_boxs.reserve(exclude_box3s.size());
     for (auto& box : exclude_box3s) {
         Vec2d vmin(box.min.x(), box.min.y()), vmax(box.max.x(), box.max.y());
         exclude_boxs.emplace_back(vmin, vmax);
     }
-    for (float x = min_x + bbox.min.x(); x < bbox.max.x() - step(0) / 2; x += step(0))
-        for (float y = min_y + bbox.min.y(); y < bbox.max.y() - step(1) / 2; y += step(1)) {
+
+    cells.reserve(size_t(cols) * size_t(rows));
+    for (int i = 0; i < cols; ++i) {
+        const double x = start_x + i * step(0);
+        for (int j = 0; j < rows; ++j) {
+            const double y = start_y + j * step(1);
+            BoundingBoxf cell(Vec2d(x - half_x, y - half_y),
+                              Vec2d(x + half_x, y + half_y));
             bool in_exclude = false;
-            BoundingBoxf cell(Vec2d(x - step(0) / 2, y - step(1) / 2), Vec2d(x + step(0) / 2, y + step(1) / 2));
             for (auto& box : exclude_boxs) {
                 if (box.overlap(cell)) {
                     in_exclude = true;
                     break;
                 }
             }
-            if(in_exclude)
+            if (in_exclude)
                 continue;
-            cells.emplace_back(x, y);
+            cells.emplace_back(float(x), float(y));
         }
+    }
     return cells;
 }
 
@@ -23618,9 +23810,9 @@ void Plater::enable_view_toolbar(bool enable)
 }
 #endif
 
-bool Plater::init_collapse_toolbar()
+bool Plater::init_collapse_toolbar(const GLTexture* shared_background_texture)
 {
-    return p->init_collapse_toolbar();
+    return p->init_collapse_toolbar(shared_background_texture);
 }
 
 const Camera& Plater::get_camera() const
@@ -23830,6 +24022,17 @@ int Plater::select_sliced_plate(int plate_index)
     int ret = 0;
     BOOST_LOG_TRIVIAL(info) << "select_sliced_plate plate_idx=" << plate_index;
 
+    if (GUI::FlowType::any_nozzle_high_flow()) {
+        if (p->partplate_list.is_filament_group_dirty()) {
+            bool all_high_flow = GUI::FlowType::distinct_nozzle_flow_type_count() < 2;
+            GUI::FilamentGroupDialog dlg(this, all_high_flow);
+            if (dlg.ShowModal() != wxID_OK)
+                return 0;
+        }
+    } else {
+        GUI::FlowType::sync_filament_volume_types_for_slice();
+    }
+
     Freeze();
     ret = select_plate(plate_index, true);
     if (ret)
@@ -23966,6 +24169,8 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
         else
             curr_plate->set_print_seq(PrintSequence::ByDefault);
 
+        sync_print_seq_warning_notification();
+
         int spiral_sel = dlg.get_spiral_mode_choice();
         if (spiral_sel == 1) {
             curr_plate->set_spiral_vase_mode(true, false);
@@ -23980,8 +24185,6 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
         update_project_dirty_from_presets();
         set_plater_dirty(true);
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format("select print sequence %1% for plate %2% at plate side") % ps_sel % plate_index;
-        auto plate_config = *(curr_plate->config());
-        wxGetApp().plater()->config_change_notification(plate_config, std::string("print_sequence"));
         update();
         wxGetApp().obj_list()->update_selections();
         });
@@ -24176,6 +24379,7 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
         p->partplate_list.update_plates();
         update();
         p->partplate_list.select_plate(0);
+        sync_print_seq_warning_notification();
     }
 
     else
@@ -24219,6 +24423,10 @@ int Plater::delete_plate(int plate_index)
     p->background_process.set_fff_print(nullptr);
 
     ret = p->partplate_list.delete_plate(index);
+    // Deleting can reselect another plate (PartPlateList::delete_plate),
+    // so re-evaluate the by-object warning against the new current plate.
+    if (!ret)
+        sync_print_seq_warning_notification();
 
     //BBS: update the current print to the current plate
     p->partplate_list.update_slice_context_to_current_plate(p->background_process);

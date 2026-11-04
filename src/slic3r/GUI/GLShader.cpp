@@ -14,6 +14,16 @@
 
 namespace Slic3r {
 
+static void bind_default_attrib_locations(unsigned int program_id)
+{
+    glsafe(::glBindAttribLocation(program_id, GLAttributeLocation::POSITION, "v_position"));
+    glsafe(::glBindAttribLocation(program_id, GLAttributeLocation::NORMAL, "v_normal"));
+    glsafe(::glBindAttribLocation(program_id, GLAttributeLocation::TEX_COORD, "v_tex_coord"));
+    glsafe(::glBindAttribLocation(program_id, GLAttributeLocation::BARYCENTRIC, "v_barycentric"));
+    glsafe(::glBindAttribLocation(program_id, GLAttributeLocation::INSTANCE_OFFSET, "i_offset"));
+    glsafe(::glBindAttribLocation(program_id, GLAttributeLocation::INSTANCE_SCALES, "i_scales"));
+}
+
 GLShaderProgram::~GLShaderProgram()
 {
     if (m_id > 0)
@@ -168,6 +178,9 @@ bool GLShaderProgram::init_from_texts(const std::string& name, const ShaderSourc
         if (shader_ids[i] > 0)
             glsafe(::glAttachShader(m_id, shader_ids[i]));
     }
+
+    if (shader_ids[static_cast<size_t>(EShaderType::Vertex)] > 0)
+        bind_default_attrib_locations(m_id);
 
     glsafe(::glLinkProgram(m_id));
     GLint params;

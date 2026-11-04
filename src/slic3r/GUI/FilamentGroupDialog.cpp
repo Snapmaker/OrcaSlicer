@@ -215,7 +215,7 @@ void update_group_scroll(wxScrolledWindow *scroll, wxFlexGridSizer *grid)
 
 } // anonymous namespace
 
-FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
+FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent, bool default_all_high_flow)
     : DPIDialog(parent ? parent : static_cast<wxWindow *>(wxGetApp().mainframe), wxID_ANY,
                 _L("Custom Filament Grouping"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
 {
@@ -229,6 +229,8 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
     load_filaments();
     m_mapping = wxGetApp().preset_bundle->get_filament_volume_types();
     m_mapping.resize(wxGetApp().preset_bundle->filament_presets.size(), fvtStandard);
+    if (default_all_high_flow)
+        m_mapping.assign(m_mapping.size(), fvtHighFlow);
 
     auto *v_sizer = new wxBoxSizer(wxVERTICAL);
 

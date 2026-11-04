@@ -7168,18 +7168,11 @@ static std::string serialize_gcode_config_option(const DynamicPrintConfig &confi
     if (source == nullptr || source->is_scalar() || !is_filament_flow_variant_option(key))
         return config.opt_serialize(key);
 
-    // filament_volume_type and filament_flow_step_size may hold a single entry for a multi-filament
-    // print (get_config_idx() defaults the missing ones), so count the filaments themselves too.
-    const auto *volume_types = config.option<ConfigOptionEnumsGeneric>("filament_volume_type");
-    const auto *step_sizes   = config.option<ConfigOptionInts>("filament_flow_step_size");
-    const auto *diameters    = config.option<ConfigOptionFloats>("filament_diameter");
-    size_t filament_count = 0;
-    if (volume_types != nullptr)
-        filament_count = std::max(filament_count, volume_types->values.size());
-    if (step_sizes != nullptr)
-        filament_count = std::max(filament_count, step_sizes->values.size());
-    if (diameters != nullptr)
-        filament_count = std::max(filament_count, diameters->values.size());
+    // Write one value per filament, counted by filament_diameter as in Print and ToolOrdering. Don't count
+    // filament_volume_type or filament_flow_step_size: they may hold a single entry for a multi-filament
+    // print, and get_config_idx() defaults the entries they lack.
+    const auto  *diameters      = config.option<ConfigOptionFloats>("filament_diameter");
+    const size_t filament_count = diameters != nullptr ? diameters->values.size() : 0;
     if (filament_count == 0)
         return config.opt_serialize(key);
 

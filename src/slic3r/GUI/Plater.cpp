@@ -6625,12 +6625,16 @@ void Sidebar::update_color_mix_panel()
     if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_mode"))
         local_z_mode = opt->value;
 
+    bool local_z_direct_multicolor = true;
+    if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_direct_multicolor"))
+        local_z_direct_multicolor = opt->value;
+
     bool component_bias_enabled = false;
     if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("mixed_filament_component_bias_enabled"))
         component_bias_enabled = opt->value;
 
     const MixedFilamentPreviewSettings preview_settings {
-        0.2f, lower_bound, upper_bound, 0.f, 0.f, local_z_mode, false, 1
+        0.2f, lower_bound, upper_bound, 0.f, 0.f, local_z_mode, local_z_direct_multicolor, 1
     };
     const MixedFilamentDisplayContext display_context {
         num_physical, physical_colors, nozzle_diameters, preview_settings, component_bias_enabled
@@ -7358,7 +7362,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         wall_loops = std::max<size_t>(1, size_t(std::max(1, print_cfg->opt_int("wall_loops"))));
     const bool local_z_mode = get_mixed_bool("dithering_local_z_mode", false);
     const bool local_z_direct_multicolor =
-        get_mixed_bool("dithering_local_z_direct_multicolor", false) &&
+        get_mixed_bool("dithering_local_z_direct_multicolor", true) &&
         preferred_local_z_a <= EPSILON &&
         preferred_local_z_b <= EPSILON;
     const bool component_bias_enabled = get_mixed_bool("mixed_filament_component_bias_enabled", false);
@@ -19217,16 +19221,25 @@ void Plater::load_gcode(const wxString& filename)
     current_print.apply(this->model(), wxGetApp().preset_bundle->full_config());
 
     //BBS: add cost info when drag in gcode
+    //Snapmaker: add weight, filament length info
     auto& ps = current_result->print_statistics;
     double total_cost = 0.0;
+    double total_used_filament = 0.0;
+    double total_weight = 0.0;
     for (auto volume : ps.total_volumes_per_extruder) {
         size_t extruder_id = volume.first;
         double density = current_result->filament_densities.at(extruder_id);
         double cost = current_result->filament_costs.at(extruder_id);
+        double diameter = current_result->filament_diameters.at(extruder_id);
+        double s        = PI * sqr(0.5 * diameter);
+        total_used_filament += volume.second / s;
         double weight = volume.second * density * 0.001;
+        total_weight += weight;
         total_cost += weight * cost * 0.001;
     }
     current_print.print_statistics().total_cost = total_cost;
+    current_print.print_statistics().total_used_filament = total_used_filament;
+    current_print.print_statistics().total_weight = total_weight;
 
     current_print.set_gcode_file_ready();
 
@@ -21395,6 +21408,12 @@ bool Plater::reslice()
     if (printer_technology() == ptFFF) {
         Print* print_ptr = p->background_process.fff_print();
         if (print_ptr) {
+            // "Don't ask again next time" (dialog checkbox) or the Preferences toggle
+            // disables the memory guard entirely for subsequent slicing runs, matching
+            // the pre-guard behavior. Snapshotted on the main thread; the guard
+            // callback itself would run on TBB workers.
+            bool show_mem_warning = wxGetApp().app_config->get_bool("show_memory_usage_warning");
+            print_ptr->set_memory_guard_enabled(show_mem_warning);
             print_ptr->set_memory_guard_callback([this]() -> bool {
                 auto promise = std::make_shared<std::promise<bool>>();
                 auto future  = promise->get_future();
@@ -21412,8 +21431,13 @@ bool Plater::reslice()
                     RichMessageDialog dlg(this, msg,
                         _L("Memory Usage Warning"), wxYES_NO | wxNO_DEFAULT | wxICON_WARNING);
                     dlg.SetYesNoLabels(_L("Yes, Continue"), _L("No, Stop"));
+                    dlg.ShowCheckBox(_L("Don't ask again next time"), false);
 
                     bool result = (dlg.ShowModal() == wxID_YES);
+                    if (dlg.IsCheckBoxChecked())
+                        // Keep in sync with the Preferences checkbox, which is bound to the
+                        // same key with inverted polarity (checked there = dialog shows).
+                        wxGetApp().app_config->set_bool("show_memory_usage_warning", false);
                     if (result) {
                         // Skip toolpath preview to reduce memory usage on
                         // the subsequent load_toolpaths / load_shells phase.
@@ -23761,35 +23785,72 @@ void Plater::clone_selection()
     dlg.ShowModal();
 }
 
-std::vector<Vec2f> Plater::get_empty_cells(const Vec2f step)
+std::vector<Vec2f> Plater::get_empty_cells(const Vec2f step, const BoundingBoxf& safe_area_2d)
 {
     PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
-    BoundingBoxf3 build_volume = plate->get_build_volume();
-    Vec2d vmin(build_volume.min.x(), build_volume.min.y()), vmax(build_volume.max.x(), build_volume.max.y());
-    BoundingBoxf bbox(vmin, vmax);
+
+    // Prefer the "safe placement area" passed in by the caller (already shrunk by
+    // bed_shrink + brim_skirt_distance/2) to align with the NFP path; fall back to the
+    // original build_volume (of the current plate) when not provided.
+    BoundingBoxf bbox;
+    if (safe_area_2d.defined) {
+        bbox = safe_area_2d;
+    }
+    else {
+        BoundingBoxf3 build_volume = plate->get_build_volume();
+        bbox = BoundingBoxf(Vec2d(build_volume.min.x(), build_volume.min.y()),
+                            Vec2d(build_volume.max.x(), build_volume.max.y()));
+    }
+
     std::vector<Vec2f> cells;
-    auto min_x = step(0)/2;// start_point.x() - step(0) * int((start_point.x() - bbox.min.x()) / step(0));
-    auto min_y = step(1)/2;// start_point.y() - step(1) * int((start_point.y() - bbox.min.y()) / step(1));
+    if (step(0) <= 0.f || step(1) <= 0.f)
+        return cells;
+
+    const double width  = bbox.max.x() - bbox.min.x();
+    const double height = bbox.max.y() - bbox.min.y();
+    if (width < step(0) || height < step(1))
+        return cells;
+
+    // Distribute the division remainder ("edge margin") symmetrically to both sides, so the
+    // leftmost/bottom column does not hug the bed edge while a wide strip is wasted on the
+    // right/top. floor guarantees at least one full cell per row/column; the early return above
+    // already ensures width >= step(0) && height >= step(1), so cols/rows >= 1.
+    const int    cols    = int(std::floor(width  / step(0)));
+    const int    rows    = int(std::floor(height / step(1)));
+    const double half_x  = step(0) / 2.0;
+    const double half_y  = step(1) / 2.0;
+    const double pad_x   = (width  - cols * step(0)) / 2.0;
+    const double pad_y   = (height - rows * step(1)) / 2.0;
+    const double start_x = bbox.min.x() + pad_x + half_x;
+    const double start_y = bbox.min.y() + pad_y + half_y;
+
     auto& exclude_box3s = plate->get_exclude_areas();
     std::vector<BoundingBoxf> exclude_boxs;
+    exclude_boxs.reserve(exclude_box3s.size());
     for (auto& box : exclude_box3s) {
         Vec2d vmin(box.min.x(), box.min.y()), vmax(box.max.x(), box.max.y());
         exclude_boxs.emplace_back(vmin, vmax);
     }
-    for (float x = min_x + bbox.min.x(); x < bbox.max.x() - step(0) / 2; x += step(0))
-        for (float y = min_y + bbox.min.y(); y < bbox.max.y() - step(1) / 2; y += step(1)) {
+
+    cells.reserve(size_t(cols) * size_t(rows));
+    for (int i = 0; i < cols; ++i) {
+        const double x = start_x + i * step(0);
+        for (int j = 0; j < rows; ++j) {
+            const double y = start_y + j * step(1);
+            BoundingBoxf cell(Vec2d(x - half_x, y - half_y),
+                              Vec2d(x + half_x, y + half_y));
             bool in_exclude = false;
-            BoundingBoxf cell(Vec2d(x - step(0) / 2, y - step(1) / 2), Vec2d(x + step(0) / 2, y + step(1) / 2));
             for (auto& box : exclude_boxs) {
                 if (box.overlap(cell)) {
                     in_exclude = true;
                     break;
                 }
             }
-            if(in_exclude)
+            if (in_exclude)
                 continue;
-            cells.emplace_back(x, y);
+            cells.emplace_back(float(x), float(y));
         }
+    }
     return cells;
 }
 

@@ -2222,7 +2222,7 @@ Vec3d PartPlate::estimate_wipe_tower_size(const DynamicPrintConfig & config, con
     double filament_change_volume = 0.5;
     {
         std::vector<double> filament_change_volumes;
-        auto filament_change_opt = m_print->config().option<ConfigOptionFloats>("filament_multitool_ramming_volume");
+        auto filament_change_opt = config.option<ConfigOptionFloats>("filament_multitool_ramming_volume");
         if (filament_change_opt) {
             filament_change_volumes = filament_change_opt->values;
         }
@@ -2231,12 +2231,15 @@ Vec3d PartPlate::estimate_wipe_tower_size(const DynamicPrintConfig & config, con
         }
     }
     double volume = wipe_volume * plate_extruder_size + filament_change_volume * (plate_extruder_size - 1);
-    
+
     if (use_rib_wall) {
         depth = std::sqrt(volume / layer_height * extra_spacing);
         if (need_wipe_tower || plate_extruder_size > 1) {
             rib_width = std::min(rib_width, depth / 2);
-            depth = rib_width + std::max(depth + m_print->config().wipe_tower_extra_rib_length.value, depth);
+            double extra_rib_length = 0.;
+            if (auto* extra_rib_length_opt = config.option<ConfigOptionFloat>("wipe_tower_extra_rib_length"))
+                extra_rib_length = extra_rib_length_opt->value;
+            depth = rib_width + std::max(depth + extra_rib_length, depth);
             wipe_tower_size(0) = wipe_tower_size(1) = depth;
         }
     }

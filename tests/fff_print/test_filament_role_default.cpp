@@ -218,3 +218,43 @@ TEST_CASE("Feature filaments: defaults are Default", "[FilamentRoles]")
     CHECK(config.opt_int("sparse_infill_filament") == 0);
     CHECK(config.opt_int("solid_infill_filament") == 0);
 }
+
+TEST_CASE("New objects created through Model::add_object get filament 1", "[FilamentRoles]")
+{
+    SECTION("lvalue-mesh overload stamps extruder 1 when absent")
+    {
+        Model model;
+        const TriangleMesh mesh = make_cube(20., 20., 20.);
+        ModelObject *object = model.add_object("TestObject", "test.stl", mesh);
+        REQUIRE(object->config.has("extruder"));
+        REQUIRE(object->config.opt_int("extruder") == 1);
+    }
+
+    SECTION("rvalue-mesh overload stamps extruder 1 when absent")
+    {
+        Model model;
+        ModelObject *object = model.add_object("TestObject", "test.stl", make_cube(20., 20., 20.));
+        REQUIRE(object->config.has("extruder"));
+        REQUIRE(object->config.opt_int("extruder") == 1);
+    }
+
+    SECTION("copy overload replaces a missing or default extruder with 1 and keeps an explicit one")
+    {
+        Model model;
+        ModelObject *original = model.add_object();
+
+        // No extruder at all -> the copy is assigned filament 1.
+        ModelObject *copy = model.add_object(*original);
+        REQUIRE(copy->config.opt_int("extruder") == 1);
+
+        // Explicit "Default" (0) -> the copy is assigned filament 1.
+        original->config.set_key_value("extruder", new ConfigOptionInt(0));
+        ModelObject *copy2 = model.add_object(*original);
+        REQUIRE(copy2->config.opt_int("extruder") == 1);
+
+        // An explicit filament is preserved by the copy.
+        original->config.set_key_value("extruder", new ConfigOptionInt(3));
+        ModelObject *copy3 = model.add_object(*original);
+        REQUIRE(copy3->config.opt_int("extruder") == 3);
+    }
+}

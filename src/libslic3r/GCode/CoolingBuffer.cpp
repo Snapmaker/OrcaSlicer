@@ -87,9 +87,6 @@ struct CoolingLine
         // ORCA: Add support for ironing fan speed control
         TYPE_IRONING_FAN_START         = 1 << 19,
         TYPE_IRONING_FAN_END           = 1 << 20,
-        // internal perimeter types for 'Consistent surface' cooling logic
-        TYPE_INTERNAL_PERIMETER        = 1 << 21,
-        TYPE_FIRST_INTERNAL_PERIMETER  = 1 << 22,
     };
 
     CoolingLine(unsigned int type, size_t  line_start, size_t  line_end) :
@@ -113,9 +110,6 @@ struct CoolingLine
 
         if (this->type & TYPE_EXTERNAL_PERIMETER)
             return (additional_slowdown_features & AdjustableFeatureType::ExternalPerimeters) != AdjustableFeatureType::None;
-
-        if (this->type & TYPE_FIRST_INTERNAL_PERIMETER)
-            return (additional_slowdown_features & AdjustableFeatureType::FirstInternalPerimeters) != AdjustableFeatureType::None;
 
         return true;
     }

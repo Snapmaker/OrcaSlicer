@@ -327,7 +327,7 @@ Choice ask_user()
         "nsApp's activateIgnoringOtherApps:true\n"
         "set alert to current application's NSAlert's alloc()'s init()\n"
         "alert's setMessageText:\"Snapmaker Orca已从「应用程序」中移除。\"\n"
-        "alert's setInformativeText:\"勾选「删除个人数据」将清除预设、登录状态及缓存等本机配置,此操作无法恢复。\"\n"
+        "alert's setInformativeText:\"勾选「删除个人数据」将清除预设、登录状态及缓存等本机配置，此操作无法恢复。\"\n"
         "alert's setAlertStyle:(current application's NSAlertStyleWarning)\n"
         "alert's addButtonWithTitle:\"完成\"\n"
         "set row to current application's NSView's alloc()'s initWithFrame:(current application's NSMakeRect(0, 0, 360, 24))\n"
@@ -367,7 +367,7 @@ Choice ask_user()
         "nsApp's activateIgnoringOtherApps:true\n"
         "set alert to current application's NSAlert's alloc()'s init()\n"
         "alert's setMessageText:\"Snapmaker Orca has been removed from \\\"Applications\\\".\"\n"
-        "alert's setInformativeText:\"Selecting \\\"Delete personal data\\\" will clear slicing presets, login status, and cached local data. This action cannot be undone.\"\n"
+        "alert's setInformativeText:\"Selecting \\\"Delete personal data\\\" will clear slicing presets, login status, cached local data, and other local settings. This action cannot be undone.\"\n"
         "alert's setAlertStyle:(current application's NSAlertStyleWarning)\n"
         "alert's addButtonWithTitle:\"Done\"\n"
         "set row to current application's NSView's alloc()'s initWithFrame:(current application's NSMakeRect(0, 0, 360, 24))\n"
@@ -448,15 +448,44 @@ void remove_plist()
 // Removes the watcher's own files: the copy of the binary, watch.json, the log,
 // and the dialog scratch. User data lives beside Helpers in the same support
 // directory and is only touched when delete_user_data is set.
+// Entries are removed one by one so watcher.log stays in place until the end:
+// failures of earlier removals are then logged while the log can still record them.
 void remove_helper_dir()
 {
     const auto dir = SnapmakerUninstall::helper_dir();
     if (dir.empty())
         return;
+
+    const std::string log_name = "watcher.log";
     std::error_code ec;
-    std::filesystem::remove_all(dir, ec);
+    std::filesystem::directory_iterator it(dir, ec), end;
+    if (ec) {
+        log_line("failed to list helper dir " + dir.string() + ": " + ec.message());
+        return;
+    }
+
+    for (; it != end; it.increment(ec)) {
+        const std::filesystem::path entry = it->path();
+        if (entry.filename().string() == log_name)
+            continue;
+        std::error_code remove_ec;
+        std::filesystem::remove_all(entry, remove_ec);
+        if (remove_ec)
+            log_line("failed to remove helper file " + entry.string() + ": " + remove_ec.message());
+    }
     if (ec)
-        log_line("failed to remove helper dir: " + ec.message());
+        log_line("failed to enumerate helper dir " + dir.string() + ": " + ec.message());
+
+    const auto log_path = dir / log_name;
+    std::error_code log_ec;
+    std::filesystem::remove(log_path, log_ec);
+    if (log_ec)
+        log_line("failed to remove helper log " + log_path.string() + ": " + log_ec.message());
+
+    std::error_code dir_ec;
+    std::filesystem::remove(dir, dir_ec);
+    if (dir_ec)
+        log_line("failed to remove helper dir " + dir.string() + ": " + dir_ec.message());
 }
 
 // The watcher always removes itself once the prompt is answered: the app is

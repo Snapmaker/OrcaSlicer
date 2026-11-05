@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -22,6 +23,12 @@ enum class ProcessDiscoveryError {
     NoPortFrame,
     InvalidPortFrame,
     MultiplePortFrames,
+};
+
+enum class PortOwnerTakeoverResult {
+    Unsupported,
+    NotTakenOver,
+    TakenOver,
 };
 
 class ConnectionProcessManager
@@ -62,11 +69,17 @@ public:
     // used or no process has been spawned yet.
     virtual void terminate();
 
+    // Takes over a stale shared CLI instance that owns the discovered loopback port. Windows
+    // validates the TCP listener PID; POSIX validates the PID from the shared CLI lock. Both
+    // paths also validate the executable name before terminating the process.
+    virtual PortOwnerTakeoverResult terminate_port_owner(std::uint16_t port);
+
     const boost::filesystem::path& executable() const { return config_.executable; }
     const Config&                  config() const { return config_; }
 
-    static ProcessDiscoveryError    parse_port_frame(const std::string& output, std::uint16_t& port);
-    static std::vector<std::string> build_arguments(const std::string& locale);
+    static ProcessDiscoveryError        parse_port_frame(const std::string& output, std::uint16_t& port);
+    static std::vector<std::string>     build_arguments(const std::string& locale);
+    static std::optional<std::uint64_t> owner_pid_from_lock(const boost::filesystem::path& lock_path, std::uint16_t port);
     // File name of the snapmaker_connection CLI binary expected next to the resources directory
     // for the current platform and architecture. The binary itself is placed locally and not tracked in git.
     static std::string_view cli_executable_name();
@@ -76,8 +89,8 @@ private:
 
     static ProcessRunner default_runner(Config config, const std::shared_ptr<ChildProcessTracker>& tracker);
 
-    Config                         config_;
-    ProcessRunner                  runner_;
+    Config                               config_;
+    ProcessRunner                        runner_;
     std::shared_ptr<ChildProcessTracker> tracker_;
 };
 

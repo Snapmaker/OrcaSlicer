@@ -809,7 +809,11 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         z = current_z;
 
     const bool will_go_down = !is_approx(z, current_z);
-    if (!tcr.priming && (tcr.is_finish_first || will_go_down)) {
+    // The final purge (new_extruder_id == -1) is not a real tool change: its G-code has no
+    // [change_filament_gcode], so nothing else lifts before its first move. Travel here
+    // with retract + lift, as v2.4.0 did.
+    const bool is_final_purge = new_extruder_id < 0;
+    if (!tcr.priming && (tcr.is_finish_first || will_go_down || is_final_purge)) {
         // Move over the wipe tower.
         gcode += gcodegen.retract();
         gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();

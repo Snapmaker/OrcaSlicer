@@ -211,7 +211,9 @@ Polylines top_reorder_split_rows(const Polylines &scan_lines, float scale_width)
             }
         }
     }
-    rows.erase(std::remove_if(rows.begin(), rows.end(), [](const Polyline &p) { return p.points.empty(); }), rows.end());
+    // A row needs at least one segment; drop point-only leftovers so the
+    // chaining and merging stages below can index points[size() - 2] / points[1] safely.
+    rows.erase(std::remove_if(rows.begin(), rows.end(), [](const Polyline &p) { return p.points.size() < 2; }), rows.end());
     return rows;
 }
 
@@ -223,9 +225,21 @@ std::vector<std::vector<int>> top_reorder_chain_rows(const Polylines &rows, floa
     const double row_tol = LINE_WIDTH * scale_width * 1000.;
     std::vector<bool>          marked(rows.size(), false);
     std::vector<std::vector<int>> chains;
-    marked[0] = true;
-    chains.push_back({ 0 });
-    int index_ptr = 0;
+    // Defensive: rows with fewer than two points cannot be chained; mark them as
+    // consumed so they are never selected as candidates or chain anchors.
+    for (size_t i = 0; i < rows.size(); ++i)
+        if (rows[i].points.size() < 2)
+            marked[i] = true;
+    int index_ptr = -1;
+    for (size_t i = 0; i < rows.size(); ++i)
+        if (!marked[i]) {
+            index_ptr = int(i);
+            break;
+        }
+    if (index_ptr < 0)
+        return chains;
+    marked[index_ptr] = true;
+    chains.push_back({ index_ptr });
     while (1) {
         // Collect unvisited rows whose first flat segment is vertically adjacent to the current row's tail.
         std::vector<int> candidates;
@@ -328,8 +342,11 @@ std::vector<std::vector<int>> top_reorder_merge_chains(const std::vector<std::ve
     for (int i = 0; i < int(chains.size()); ++i) {
         bool spliced = false;
         for (int n = 0; n < int(chains[i].size()) && !spliced; ++n) {
+            // Defensive: single-point rows carry no segment to splice on.
+            if (rows[chains[i][n]].points.size() < 2)
+                continue;
             for (int j = 0; j < int(chains.size()); ++j) {
-                if (i == j || consumed[j])
+                if (i == j || consumed[j] || rows[chains[j].back()].points.size() < 2)
                     continue;
                 float by = rows[chains[i][n]].points[0].y();
                 float ty = rows[chains[j].back()].points.back().y();

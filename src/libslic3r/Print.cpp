@@ -1267,16 +1267,19 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
                 print_info.height = instance.print_object->height();
                 print_info.object_index = find_object_index(print.model(), print_object->model_object());
                 print_info.has_above_rod = above_rod_y_range(instance, print_info.rod_min_y, print_info.rod_max_y);
+                const BoundingBox footprint = print_info.bounding_box.inflated(-scale_(0.5 * print.config().extruder_clearance_radius.value + object_skirt_offset));
                 if (print_info.has_above_rod && !skirt_reaches_rod) {
-                    // The other instance's footprint is grown by half of extruder_clearance_radius, which is how far
-                    // the rod reaches here: shrink this range by the same 0.1 mm tolerance the footprint test uses.
-                    print_info.rod_min_y += scaled<coord_t>(0.1);
-                    print_info.rod_max_y -= scaled<coord_t>(0.1);
+                    // The other instance's footprint is grown by half of extruder_clearance_radius, but the rod
+                    // can reach as far as extruder_clearance_dist_to_rod: widen this range by the difference, then
+                    // shrink it by the same 0.1 mm tolerance the footprint test uses. Never past the footprint
+                    // itself, so plates that pass the footprint test still validate.
+                    const coord_t extra = scaled<coord_t>(std::max(0., print.config().extruder_clearance_dist_to_rod.value - 0.5 * print.config().extruder_clearance_radius.value));
+                    print_info.rod_min_y = std::max(print_info.rod_min_y + scaled<coord_t>(0.1) - extra, footprint.min.y());
+                    print_info.rod_max_y = std::min(print_info.rod_max_y - scaled<coord_t>(0.1) + extra, footprint.max.y());
                 } else {
                     // Below the rod, or with a skirt that reaches it, test the footprint as before. On printers whose
                     // lid clearance is lower than the rod's, overlapping a later instance is what lets an
                     // object below the rod use the rod height instead of the lid height.
-                    const BoundingBox footprint = print_info.bounding_box.inflated(-scale_(0.5 * print.config().extruder_clearance_radius.value + object_skirt_offset));
                     print_info.rod_min_y = footprint.min.y();
                     print_info.rod_max_y = footprint.max.y();
                 }

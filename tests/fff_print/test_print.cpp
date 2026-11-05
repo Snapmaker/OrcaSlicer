@@ -355,6 +355,8 @@ TEST_CASE("Sequential printing counts only the part of an object above the rod h
     config.set_deserialize_strict({
         { "print_sequence",                   "by object" },
         { "extruder_clearance_height_to_rod", 25 },
+        // The rod reaches half of the default 40 mm radius; the fins are 18 mm clear when facing away.
+        { "extruder_clearance_dist_to_rod",   20 },
         { "skirt_loops",                      0 },
         { "layer_change_gcode",               "G92 E0\n" } // validate() relative-E reset
     });
@@ -427,6 +429,66 @@ static void init_slabs_with_fins_facing_away(double fin_height, double low_fin_h
     print.apply(model, config);
 }
 
+TEST_CASE("Sequential printing checks the part above the rod against the rod's full reach", "[Print]")
+{
+    // Bambu Lab A1 mini values: half the toolhead radius is 36.5 mm, but the rod reaches 56.5 mm from the
+    // nozzle. The facing-away fins are farther apart than the first and closer than the second, so they only
+    // clear when the rod's reach is the smaller of the two.
+    const double dist_to_rod = GENERATE(0., 56.5);
+    CAPTURE(dist_to_rod);
+
+    DynamicPrintConfig config = Test::default_print_config();
+    config.set_deserialize_strict({
+        { "print_sequence",                   "by object" },
+        { "extruder_clearance_radius",        73 },
+        { "extruder_clearance_height_to_rod", 25 },
+        { "extruder_clearance_dist_to_rod",   dist_to_rod },
+        { "skirt_loops",                      0 },
+        { "layer_change_gcode",               "G92 E0\n" } // validate() relative-E reset
+    });
+    Print print;
+    Model model;
+    init_slabs_with_fins_facing_away(29.5, 0., print, model, config);
+
+    const std::string error = print.validate().string;
+    INFO(error);
+    CHECK((error.find("too tall") != std::string::npos) == (dist_to_rod > 36.5));
+}
+
+TEST_CASE("Sequential printing keeps the rod's reach within the object", "[Print]")
+{
+    // Snapmaker U1 values, which leave Distance to rod at its default. The boxes clear the radius in X and
+    // are 38 mm apart in Y, more than half the radius but less than Distance to rod. The reach past half
+    // the radius only widens the part above the rod up to the object's own footprint, so they still validate.
+    DynamicPrintConfig config = Test::default_print_config();
+    config.set_deserialize_strict({
+        { "print_sequence",                   "by object" },
+        { "extruder_clearance_radius",        72.5 },
+        { "extruder_clearance_height_to_rod", 27.5 },
+        { "skirt_loops",                      0 },
+        { "layer_change_gcode",               "G92 E0\n" } // validate() relative-E reset
+    });
+    REQUIRE(config.opt_float("extruder_clearance_dist_to_rod") > 38.);
+
+    std::vector<TriangleMesh> meshes;
+    meshes.emplace_back(its_make_cube(32, 32, 32));
+    meshes.emplace_back(its_make_cube(32, 32, 32));
+    Print print;
+    Model model;
+    Test::init_print(std::move(meshes), print, model, config);
+    // init_print() arranges the objects, so place them and re-apply.
+    const Vec2d centers[] = { Vec2d(36, 56), Vec2d(146, 126) };
+    for (size_t i = 0; i < 2; ++i) {
+        ModelInstance *instance = model.objects[i]->instances.front();
+        instance->set_offset(Vec3d(centers[i].x(), centers[i].y(), instance->get_offset().z()));
+    }
+    print.apply(model, config);
+
+    const std::string error = print.validate().string;
+    INFO(error);
+    CHECK(error.empty());
+}
+
 TEST_CASE("Sequential printing counts a raft toward what reaches the rod", "[Print]")
 {
     // Each slab has a tall fin facing away from the other slab and a lower fin facing it. Without a raft
@@ -439,6 +501,7 @@ TEST_CASE("Sequential printing counts a raft toward what reaches the rod", "[Pri
     config.set_deserialize_strict({
         { "print_sequence",                   "by object" },
         { "extruder_clearance_height_to_rod", 25 },
+        { "extruder_clearance_dist_to_rod",   20 },
         { "skirt_loops",                      0 },
         { "raft_layers",                      raft ? 3 : 0 },
         { "layer_change_gcode",               "G92 E0\n" } // validate() relative-E reset
@@ -465,6 +528,7 @@ TEST_CASE("Sequential printing keeps the rod height for an object only its raft 
         { "print_sequence",                   "by object" },
         { "extruder_clearance_height_to_lid", 20 },
         { "extruder_clearance_height_to_rod", 25 },
+        { "extruder_clearance_dist_to_rod",   20 },
         { "skirt_loops",                      0 },
         { "raft_layers",                      3 },
         { "layer_change_gcode",               "G92 E0\n" } // validate() relative-E reset
@@ -487,6 +551,7 @@ TEST_CASE("Sequential printing applies an instance's rotation to the part above 
     config.set_deserialize_strict({
         { "print_sequence",                   "by object" },
         { "extruder_clearance_height_to_rod", 25 },
+        { "extruder_clearance_dist_to_rod",   20 },
         { "skirt_loops",                      0 },
         { "layer_change_gcode",               "G92 E0\n" } // validate() relative-E reset
     });

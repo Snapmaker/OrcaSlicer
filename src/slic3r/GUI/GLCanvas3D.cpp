@@ -9569,7 +9569,13 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
     }
 
     imgui.end();
-    if (!m_sel_plate_toolbar.m_items.empty())
+    // Only confirm render completion when the rendered items match the current
+    // plate list. The items may be stale from an earlier project state (e.g. the
+    // single-plate toolbar rebuilt for an empty "New Project"); confirming on
+    // stale items makes _update_imgui_select_plate_toolbar() skip the rebuild
+    // that should follow a plate list change (e.g. reopening a gcode.3mf).
+    const int rendered_items = static_cast<int>(m_sel_plate_toolbar.m_items.size());
+    if (!m_sel_plate_toolbar.m_items.empty() && rendered_items == plate_list.get_plate_count())
         m_sel_plate_toolbar.is_render_finish = true;
 }
 

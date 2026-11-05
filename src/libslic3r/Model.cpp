@@ -3299,6 +3299,7 @@ bool Model::obj_import_vertex_color_deal(const std::vector<unsigned char> &verte
             auto volume = obj->volumes[0];
             volume->config.set("extruder", first_extruder_id);
             auto face_count = volume->mesh().its.indices.size();
+            volume->mmu_segmentation_facets.reset();
             volume->mmu_segmentation_facets.reserve(face_count);
             if (volume->mesh().its.vertices.size() != vertex_filament_ids.size()) {
                 return false;
@@ -3308,7 +3309,7 @@ bool Model::obj_import_vertex_color_deal(const std::vector<unsigned char> &verte
                 auto filament_id0 = vertex_filament_ids[face[0]];
                 auto filament_id1 = vertex_filament_ids[face[1]];
                 auto filament_id2 = vertex_filament_ids[face[2]];
-                if (filament_id0 <= 1 && filament_id1 <= 1 && filament_id2 <= 2) {
+                if (filament_id0 == first_extruder_id && filament_id1 == first_extruder_id && filament_id2 == first_extruder_id) {
                     continue;
                 }
                 if (i == 0) {
@@ -3392,12 +3393,13 @@ bool Model::obj_import_face_color_deal(const std::vector<unsigned char> &face_fi
             auto volume        = obj->volumes[0];
             volume->config.set("extruder", first_extruder_id);
             auto face_count    = volume->mesh().its.indices.size();
+            volume->mmu_segmentation_facets.reset();
             volume->mmu_segmentation_facets.reserve(face_count);
             if (volume->mesh().its.indices.size() != face_filament_ids.size()) { return false; }
             for (size_t i = 0; i < volume->mesh().its.indices.size(); i++) {
                 auto face         = volume->mesh().its.indices[i];
                 auto filament_id = face_filament_ids[i];
-                if (filament_id <= 1) { continue; }
+                if (filament_id == first_extruder_id) { continue; }
                 std::string result;
                 get_real_filament_id(filament_id, result);
                 volume->mmu_segmentation_facets.set_triangle_from_string(i, result);

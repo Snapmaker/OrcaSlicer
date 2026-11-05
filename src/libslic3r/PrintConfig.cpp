@@ -1840,6 +1840,17 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt{0});
 
+    // Orca: already carried by the BBL A1 and Geeetech machine profiles, which inherited it from the
+    // BambuStudio import; without a definition here it was parsed as an unknown key and dropped.
+    def = this->add("extruder_clearance_dist_to_rod", coFloat);
+    def->label = L("Distance to rod");
+    def->tooltip = L("Horizontal distance of the nozzle tip to the rod's farther edge. "
+        "Used for collision avoidance in by-object printing.");
+    def->sidetext = "mm";	// milimeters, don't need translation
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(40));
+
     def = this->add("extruder_clearance_height_to_rod", coFloat);
     def->label = L("Height to rod");
     def->tooltip = L("Distance of the nozzle tip to the lower rod. "

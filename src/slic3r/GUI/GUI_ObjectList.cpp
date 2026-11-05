@@ -6095,6 +6095,9 @@ void ObjectList::on_plate_selected(int plate_index)
 
     UnselectAll();
     Select(item);
+
+    // Refresh settings explicitly when selection is changed programmatically.
+    part_selection_changed();
 }
 
 //BBS: notify partplate the instance added/updated

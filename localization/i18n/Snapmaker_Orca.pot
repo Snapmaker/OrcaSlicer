@@ -5866,10 +5866,7 @@ msgid ""
 "front door and/or remove the upper glass."
 msgstr ""
 
-msgid ""
-"The nozzle hardness required by the filament is higher than the default "
-"nozzle hardness of the printer. Please replace the hardened nozzle or "
-"filament, otherwise, the nozzle will be attrited or damaged."
+msgid "The filament is too hard for the current nozzle. Please use a harder nozzle or a softer filament to avoid nozzle wear."
 msgstr ""
 
 msgid ""

@@ -2833,7 +2833,8 @@ void TabPrint::build()
         optgroup->append_single_option_line("ensure_vertical_shell_thickness", "strength_settings_advanced#ensure-vertical-shell-thickness");
 
     page = add_options_page(L("Speed"), "custom-gcode_speed"); // ORCA: icon only visible on placeholders
-        if (m_type == Preset::TYPE_PRINT)
+        // Snapmaker: flow variant
+        if (m_type == Preset::TYPE_PRINT || m_type == Preset::TYPE_MODEL)
         {
             register_flow_variant_view(
                 ConfigFlowDomain::Process,
@@ -3586,7 +3587,32 @@ void TabPrintModel::reload_config()
 void TabPrintModel::update_custom_dirty()
 {
     for (auto k : m_null_keys) m_options_list[k] = 0;
-    for (auto k : m_all_keys) m_options_list[k] &= ~osSystemValue;
+    for (auto k : m_all_keys) {
+        // Snapmaker: flow variant
+        if (m_flow_variant_view && m_flow_variant_view->is_option(k)) {
+            const auto *edited_vec = dynamic_cast<const ConfigOptionVectorBase *>(m_config->option(k, false));
+            const auto *base_vec   = dynamic_cast<const ConfigOptionVectorBase *>(m_prints.get_selected_preset().config.option(k));
+            if (edited_vec != nullptr && base_vec != nullptr && !edited_vec->empty() && !base_vec->empty()) {
+                const std::vector<std::string> edited_vals = edited_vec->vserialize();
+                const std::vector<std::string> base_vals   = base_vec->vserialize();
+                auto slot_at = [](const std::vector<std::string> &vals, size_t i) -> const std::string & {
+                    return vals[std::min(i, vals.size() - 1)]; // same out-of-range fallback as get_at()
+                };
+                for (size_t i = 0; i < m_flow_variant_view->modes.size(); ++i) {
+                    const std::string idx_key = k + "#" + std::to_string(i);
+                    if (m_options_list.find(idx_key) == m_options_list.end())
+                        m_options_list.emplace(idx_key, m_opt_status_value);
+                    if (slot_at(edited_vals, i) != slot_at(base_vals, i))
+                        m_options_list[idx_key] &= ~osSystemValue;
+                }
+                const auto current = m_options_list.find(k + "#" + std::to_string(flow_variant_view_index()));
+                if (current != m_options_list.end())
+                    m_options_list[k] = current->second;
+                continue;
+            }
+        }
+        m_options_list[k] &= ~osSystemValue;
+    }
 }
 
 //BBS: GUI refactor

@@ -1069,7 +1069,8 @@ bool PresetBundle::import_json_presets(PresetsConfigSubstitutions &            s
         if (inherits_config) {
             ConfigOptionString *option_str = dynamic_cast<ConfigOptionString *>(inherits_config);
             inherits_value                 = option_str->value;
-            inherit_preset                 = collection->find_preset(inherits_value, false, true);
+            // Orca: try to find if the parent preset has been renamed (renamed_from)
+            inherit_preset                 = collection->find_preset2(inherits_value, false);
         }
         if (inherit_preset) {
             new_config = inherit_preset->config;
@@ -1092,7 +1093,7 @@ bool PresetBundle::import_json_presets(PresetsConfigSubstitutions &            s
             preset.filament_id = key_values[BBL_JSON_KEY_FILAMENT_ID];
         preset.is_external = true;
         preset.version     = *version;
-        inherit_preset     = collection->find_preset(inherits_value, false, true); // pointer maybe wrong after insert, redo find
+        inherit_preset     = collection->find_preset2(inherits_value, false); // pointer maybe wrong after insert, redo find
         if (inherit_preset) preset.base_id = inherit_preset->setting_id;
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " " << __LINE__ << preset.name << " have filament_id: " << preset.filament_id << " and base_id: " << preset.base_id;
         Preset::normalize(preset.config);
@@ -1265,6 +1266,9 @@ int PresetBundle::validate_presets(const std::string &file_name, DynamicPrintCon
     for(unsigned int index = 0; index < filament_count; index ++)
     {
         std::string filament_preset = filament_preset_name[index];
+        // An empty name marks an unused filament slot (3mf arrays are padded to the machine's slot count), not a customized preset
+        if (filament_preset.empty())
+            continue;
         std::string filament_inherits = inherits_values[index+1];
 
         validated = this->filaments.validate_preset(filament_preset, filament_inherits);
@@ -1719,28 +1723,6 @@ const std::string& PresetBundle::get_preset_name_by_alias( const Preset::Type& p
                                       sla_materials;
 
     return presets.get_preset_name_by_alias(alias);
-}
-
-//BBS: get filament required hrc by filament type
-const int PresetBundle::get_required_hrc_by_filament_type(const std::string& filament_type) const
-{
-    static std::unordered_map<std::string, int>filament_type_to_hrc;
-    if (filament_type_to_hrc.empty()) {
-        for (auto iter = filaments.m_presets.begin(); iter != filaments.m_presets.end(); iter++) {
-            if (iter->vendor && iter->vendor->id == "BBL") {
-                if (iter->config.has("filament_type") && iter->config.has("required_nozzle_HRC")) {
-                    auto type = iter->config.opt_string("filament_type", 0);
-                    auto hrc = iter->config.opt_int("required_nozzle_HRC", 0);
-                    filament_type_to_hrc[type] = hrc;
-                }
-            }
-        }
-    }
-    auto iter = filament_type_to_hrc.find(filament_type);
-    if (iter != filament_type_to_hrc.end())
-        return iter->second;
-    else
-        return 0;
 }
 
 //BBS: add project embedded preset logic
@@ -3896,6 +3878,9 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
             };
 
             color_opt->values.resize(num_filaments, "#26A69A");
+            // filament_colour was just resized to the physical count; multi_colors / colour_mode
+            // must follow
+            EnsureFilamentColorFieldsAligned(this->project_config);
             this->mixed_filaments.auto_generate(color_opt->values);
 
             int   gradient_mode = get_mixed_mode(false) ? 1 : 0;

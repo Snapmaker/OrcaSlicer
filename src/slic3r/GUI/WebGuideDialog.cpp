@@ -38,7 +38,7 @@
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
 #include "ProfileLoadUtil.hpp"
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 
 using namespace nlohmann;
 
@@ -489,7 +489,6 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
                 std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
                 oldregion = m_ProfileJson["region"];
             }
-            bool        bLogin    = false;
             if (m_Region != oldregion) {
                 AppConfig* config = GUI::wxGetApp().app_config;
                 std::string country_code = config->get_country_code();
@@ -497,12 +496,9 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
                 if (agent) {
                     agent->set_country_code(country_code);
                     if (wxGetApp().is_user_login()) {
-                        bLogin = true;
                         agent->user_logout();
                     }
                 }
-
-                wxGetApp().fltviews().reload_all();
             }
 
             this->EndModal(wxID_OK);
@@ -510,8 +506,6 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
             if (InstallNetplugin)
                 GUI::wxGetApp().CallAfter([this] { GUI::wxGetApp().ShowDownNetPluginDlg(); });
 
-            if (bLogin)
-                GUI::wxGetApp().CallAfter([this] { login(); });
         }
         else if (strCmd == "user_guide_cancel") {
             this->EndModal(wxID_CANCEL);
@@ -827,6 +821,10 @@ bool GuideFrame::apply_config(AppConfig *app_config, PresetBundle *preset_bundle
         for (const auto& model_it: model_maps) {
             if (model_it.second.size() > 0) {
                 variant = *model_it.second.begin();
+                // Prefer the default nozzle when enabling U1 instead of the smallest sorted variant.
+                if (bundle_name == PresetBundle::SM_BUNDLE && model_it.first == PresetBundle::SM_DEFAULT_PRINTER_MODEL &&
+                    model_it.second.count(PresetBundle::SM_DEFAULT_PRINTER_VARIANT) > 0)
+                    variant = PresetBundle::SM_DEFAULT_PRINTER_VARIANT;
                 const auto config_old = old_enabled_vendors.find(bundle_name);
                 if (config_old == old_enabled_vendors.end())
                     return model_it.first;

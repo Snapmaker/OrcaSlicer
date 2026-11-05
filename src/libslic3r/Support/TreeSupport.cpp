@@ -950,11 +950,24 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                 ExPolygons enforced_overhangs;
                 if (layer_nr < enforcers.size() && !enforcers[layer_nr].empty())
                     enforced_overhangs = intersection_ex(diff_ex(layer->lslices_extrudable, lower_layer->lslices_extrudable), enforcers[layer_nr]);
-                overhangs_all_layers[layer_nr] = std::move(diff_ex(curr_polys, lower_layer_offseted));
-                if (!enforced_overhangs.empty()) {
-                    // STUDIO-7538: expand enforcers a bit so they work on steep overhangs.
-                    enforced_overhangs = diff_ex(offset_ex(enforced_overhangs, enforcer_overhang_offset), lower_layer->lslices_extrudable);
-                    overhangs_all_layers[layer_nr] = union_ex(overhangs_all_layers[layer_nr], enforced_overhangs);
+                // Keep the auto/manual split of Bambu c03e13340 (STUDIO-11484): manual mode must
+                // never run the full-layer auto overhang diff, otherwise every painted layer
+                // leaks supports over unpainted overhangs (bug 7131842245). The original port
+                // flattened this if/else into an unconditional diff + union, dropping the else.
+                if (is_auto(stype)) {
+                    overhangs_all_layers[layer_nr] = std::move(diff_ex(curr_polys, lower_layer_offseted));
+                    if (!enforced_overhangs.empty()) {
+                        // STUDIO-7538: expand enforcers a bit so they work on steep overhangs.
+                        enforced_overhangs =
+                            diff_ex(offset_ex(enforced_overhangs, enforcer_overhang_offset), lower_layer->lslices_extrudable);
+                        overhangs_all_layers[layer_nr] = union_ex(overhangs_all_layers[layer_nr], enforced_overhangs);
+                    }
+                } else if (lower_layer) {
+                    // Manual mode: keep only the painted overhangs (expanded per STUDIO-7538),
+                    // never the full-layer auto diff. Mirrors Bambu's native else branch.
+                    overhangs_all_layers[layer_nr] = (!enforced_overhangs.empty())
+                        ? diff_ex(offset_ex(enforced_overhangs, enforcer_overhang_offset), lower_layer->lslices_extrudable)
+                        : ExPolygons{};
                 }
 
                 double duration{ std::chrono::duration_cast<second_>(clock_::now() - t0).count() };
@@ -1801,10 +1814,16 @@ void TreeSupport::generate_toolpaths()
                         std::shared_ptr<Fill> filler_support =
                             std::shared_ptr<Fill>(Fill::new_from_type(base_fill_pattern));
                         filler_support->set_bounding_box(bbox_object);
-                        filler_support->spacing = support_base_on_bed
-                            ? flow.spacing()
-                            : (object_config.support_base_pattern_spacing.value * support_density);
-                        filler_support->angle = Geometry::deg2rad(object_config.support_angle.value);
+                        // A zero (or negative) configured base pattern spacing collapses the
+                        // filler pattern steps to zero and used to hang (FillConcentric) or
+                        // crash (FillHoneycomb / FillRectilinear) on non-bed layers. Fall back
+                        // to the flow spacing, mirroring the bed-layer handling above and the
+                        // upstream fix for Tree Slim (OrcaSlicer #11084).
+                        const coordf_t base_pattern_spacing = object_config.support_base_pattern_spacing.value;
+                        filler_support->spacing             = (support_base_on_bed || base_pattern_spacing <= 0.) ?
+                                                                  flow.spacing() :
+                                                                  base_pattern_spacing * support_density;
+                        filler_support->angle               = Geometry::deg2rad(object_config.support_angle.value);
 
                         Polygons loops = to_polygons(poly);
                         if (layer_id == 0) {

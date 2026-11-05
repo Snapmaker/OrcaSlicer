@@ -507,18 +507,20 @@ static float effective_wipe_tower_volume(const PrintConfig& config, size_t extru
 {
     return std::max<float>(
         (float)config.prime_volume,
-        (float)config.filament_minimal_purge_on_wipe_tower.get_at(extruder_id));
+        (float)get_value_at(config, config.filament_minimal_purge_on_wipe_tower, ConfigFlowDomain::Filament,
+                            static_cast<unsigned int>(extruder_id)));
 }
 
 // Return the effective wipe tower volume as the maximum across all filaments.
 // Used for tower depth estimation where we need to account for the worst case.
 static float effective_max_wipe_tower_volume(const PrintConfig& config)
 {
+    const std::vector<double>& minimal_purges = config.filament_minimal_purge_on_wipe_tower.values;
+    if (minimal_purges.empty())
+        return (float)config.prime_volume;
     return std::max<float>(
         (float)config.prime_volume,
-        (float)*std::max_element(
-            config.filament_minimal_purge_on_wipe_tower.values.begin(),
-            config.filament_minimal_purge_on_wipe_tower.values.end()));
+        (float)*std::max_element(minimal_purges.begin(), minimal_purges.end()));
 }
 
 } // namespace
@@ -563,7 +565,10 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "enable_overhang_bridge_fan",
         "overhang_fan_speed",
         "overhang_fan_threshold",
+        "overhang_threshold_participating_cooling",
         "slow_down_for_layer_cooling",
+        "cooling_slowdown_logic",
+        "cooling_perimeter_transition_distance",
         "default_acceleration",
         "deretraction_speed",
         "close_fan_the_first_x_layers",
@@ -601,6 +606,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "top_surface_acceleration",
         "bridge_acceleration",
         "travel_acceleration",
+        "travel_short_distance_acceleration",
         "sparse_infill_acceleration",
         "internal_solid_infill_acceleration",
         // BBS
@@ -1665,59 +1671,6 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
         //FIXME It is quite expensive to generate object layers just to get the print height!
         if (auto layers = generate_object_layers(print_object.slicing_parameters(), layer_height_profile(print_object_idx), print_object.config().precise_z_height.value);
             !layers.empty()) {
-
-            // Shell layers may not exceed the total layer count (halved, see Slicing.cpp).
-            const int total_layers = int(layers.size() / 2);
-            {
-                int max_top_shell = 0, max_bottom_shell = 0;
-                for (size_t region_idx = 0; region_idx < print_object.num_printing_regions(); ++ region_idx) {
-                    const PrintRegionConfig &region_config = print_object.printing_region(region_idx).config();
-                    max_top_shell    = std::max(max_top_shell, region_config.top_shell_layers.value);
-                    max_bottom_shell = std::max(max_bottom_shell, region_config.bottom_shell_layers.value);
-                }
-                if (max_top_shell > total_layers)
-                    return StringObjectException{
-                        Slic3r::format(_u8L("The shell layers (current: %1%) exceed the model layers (total: %2%). "
-                                            "Please reduce the top shell layers."),
-                            max_top_shell, total_layers),
-                        print_object.model_object(),
-                        "top_shell_layers"
-                    };
-                if (max_bottom_shell > total_layers)
-                    return StringObjectException{
-                        Slic3r::format(_u8L("The shell layers (current: %1%) exceed the model layers (total: %2%). "
-                                            "Please reduce the bottom shell layers."),
-                            max_bottom_shell, total_layers),
-                        print_object.model_object(),
-                        "bottom_shell_layers"
-                    };
-            }
-
-            // PEN-015: penetration may not exceed the total layer count (halved, see Slicing.cpp).
-            {
-                int max_top_penetration = 0, max_bottom_penetration = 0;
-                for (size_t region_idx = 0; region_idx < print_object.num_printing_regions(); ++ region_idx) {
-                    const PrintRegionConfig &region_config = print_object.printing_region(region_idx).config();
-                    max_top_penetration    = std::max(max_top_penetration, region_config.top_color_penetration_layers.value);
-                    max_bottom_penetration = std::max(max_bottom_penetration, region_config.bottom_color_penetration_layers.value);
-                }
-                if (max_top_penetration > total_layers)
-                    return StringObjectException{
-                        Slic3r::format(_u8L("The paint penetration layers (current: %1%) exceed the model layers (total: %2%). "
-                                            "Please reduce the top paint penetration layers."),
-                            max_top_penetration, total_layers),
-                        print_object.model_object(),
-                        "top_color_penetration_layers"
-                    };
-                if (max_bottom_penetration > total_layers)
-                    return StringObjectException{
-                        Slic3r::format(_u8L("The paint penetration layers (current: %1%) exceed the model layers (total: %2%). "
-                                            "Please reduce the bottom paint penetration layers."),
-                            max_bottom_penetration, total_layers),
-                        print_object.model_object(),
-                        "bottom_color_penetration_layers"
-                    };
-            }
 
             Vec3d test =this->shrinkage_compensation();
             const double shrinkage_compensation_z = this->shrinkage_compensation().z();

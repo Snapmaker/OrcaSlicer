@@ -489,30 +489,31 @@ public:
         }
     }
 
-    // Snapmaker: flow variant — speed keys became vector options (values ordered by
-    // process_flow_support) while the grid keeps editing a scalar: the standard (first) value.
-    ConfigOptionFloat get_global_speed_value(const DynamicPrintConfig& global_config, const std::string& config_option)
+    // Snapmaker: flow variant
+    static size_t speed_flow_index(bool volume_row);
+
+    ConfigOptionFloat get_global_speed_value(const DynamicPrintConfig& global_config, const std::string& config_option, size_t flow_index)
     {
         const auto* floats = global_config.option<ConfigOptionFloats>(config_option);
-        return ConfigOptionFloat(floats != nullptr && !floats->values.empty() ? floats->values.front() : 0.);
+        return ConfigOptionFloat(floats != nullptr && !floats->values.empty() ? floats->get_at(flow_index) : 0.);
     }
 
-    ConfigOptionFloat get_object_speed_value(const DynamicPrintConfig& global_config, ModelConfig* obj_config, const std::string& config_option)
+    ConfigOptionFloat get_object_speed_value(const DynamicPrintConfig& global_config, ModelConfig* obj_config, const std::string& config_option, size_t flow_index)
     {
         if (obj_config->has(config_option)) {
             const auto* floats = dynamic_cast<const ConfigOptionFloats*>(obj_config->option(config_option));
-            return ConfigOptionFloat(floats != nullptr && !floats->values.empty() ? floats->values.front() : 0.);
+            return ConfigOptionFloat(floats != nullptr && !floats->values.empty() ? floats->get_at(flow_index) : 0.);
         }
-        return get_global_speed_value(global_config, config_option);
+        return get_global_speed_value(global_config, config_option, flow_index);
     }
 
-    ConfigOptionFloat get_volume_speed_value(const DynamicPrintConfig& global_config, ModelConfig* obj_config, ModelConfig* volume_config, const std::string& config_option)
+    ConfigOptionFloat get_volume_speed_value(const DynamicPrintConfig& global_config, ModelConfig* obj_config, ModelConfig* volume_config, const std::string& config_option, size_t flow_index)
     {
         if (volume_config->has(config_option)) {
             const auto* floats = dynamic_cast<const ConfigOptionFloats*>(volume_config->option(config_option));
-            return ConfigOptionFloat(floats != nullptr && !floats->values.empty() ? floats->values.front() : 0.);
+            return ConfigOptionFloat(floats != nullptr && !floats->values.empty() ? floats->get_at(flow_index) : 0.);
         }
-        return get_object_speed_value(global_config, obj_config, config_option);
+        return get_object_speed_value(global_config, obj_config, config_option, flow_index);
     }
 
     int get_row_count() { return m_grid_data.size() + 1; }
@@ -520,7 +521,7 @@ public:
     ObjectGridCol* get_grid_col(int col) { return m_col_data[col]; }
     ObjectGridRow* get_grid_row(int row) { return m_grid_data[row]; }
     void           construct_object_configs(ObjectGrid* object_grid);
-    void update_value_to_config(ModelConfig* config, std::string& key, ConfigOption& new_value,  ConfigOption& ori_value);
+    void update_value_to_config(ModelConfig* config, std::string& key, ConfigOption& new_value,  ConfigOption& ori_value, size_t flow_index = 0);
     void update_filament_to_config(ModelConfig* config, std::string& key, ConfigOption& new_value,  ConfigOption& ori_value, bool is_object);
     void update_volume_values_from_object(int row, int col);
     void update_value_to_object(Model* model, ObjectGridRow* grid_row, int col);

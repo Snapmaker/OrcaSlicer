@@ -12,6 +12,7 @@
 # On MSVC: coverage is not supported; enabling emits a warning and is a no-op.
 
 option(ENABLE_COVERAGE "Enable code coverage instrumentation (GCC/Clang only)" OFF)
+option(COVERAGE_IGNORE_TEST_FAILURES "Let the coverage target continue after test failures (used by CI reporting)" OFF)
 
 if(NOT ENABLE_COVERAGE)
     return()
@@ -27,7 +28,7 @@ endif()
 message(STATUS "Code coverage (gcov/lcov) enabled")
 
 # Compiler and linker flags for coverage instrumentation
-add_compile_options(--coverage)
+add_compile_options(--coverage -fprofile-update=atomic)
 add_link_options(--coverage)
 
 # Find required tools
@@ -71,12 +72,13 @@ if(LCOV_EXECUTABLE AND GENHTML_EXECUTABLE)
         # Reset counters (in case of incremental builds)
         COMMAND ${LCOV_EXECUTABLE} --directory . --zerocounters --quiet
 
-        # Run tests (re-run to collect fresh coverage data)
-        # -E \[trace\]: skip ghost test names created by Catch2 v3 discovery
-        # stdout pollution (see .github/workflows/coverage.yml "Run tests" step).
-        # VERBATIM ensures the regex is properly quoted in generated Makefile
-        # rules (without it, the backslashes are consumed by the shell).
-        COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR} --output-on-failure -E "\\[trace\\]"
+        # Run tests (re-run to collect fresh coverage data). CI callers can set
+        # COVERAGE_IGNORE_TEST_FAILURES so lcov still runs when existing tests fail.
+        COMMAND ${CMAKE_COMMAND}
+            -DCOVERAGE_CTEST_COMMAND=${CMAKE_CTEST_COMMAND}
+            -DCOVERAGE_BINARY_DIR=${CMAKE_BINARY_DIR}
+            -DCOVERAGE_IGNORE_TEST_FAILURES=${COVERAGE_IGNORE_TEST_FAILURES}
+            -P ${CMAKE_SOURCE_DIR}/cmake/RunCoverageTests.cmake
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
             VERBATIM
 
@@ -86,17 +88,22 @@ if(LCOV_EXECUTABLE AND GENHTML_EXECUTABLE)
             --capture
             --output-file ${COVERAGE_INFO}.raw
             --gcov-tool ${GCOV_TOOL}
+            --rc lcov_branch_coverage=1
+            --ignore-errors source,mismatch
             --quiet
 
         # Strip system headers and third-party deps
         COMMAND ${LCOV_EXECUTABLE}
             --remove ${COVERAGE_INFO}.raw
-            '/usr/*'
-            '*/deps/*'
-            '*/deps_src/*'
-            '*/build/*'
-            '*/tests/*'
+            /usr/*
+            */deps/*
+            */deps_src/*
+            */build/*
+            */build-coverage/*
+            */tests/*
             --output-file ${COVERAGE_INFO}
+            --rc lcov_branch_coverage=1
+            --ignore-errors unused
             --quiet
 
         # Generate HTML report
@@ -106,11 +113,13 @@ if(LCOV_EXECUTABLE AND GENHTML_EXECUTABLE)
             --title "${PROJECT_NAME} Coverage"
             --legend
             --show-details
+            --branch-coverage
             --quiet
 
         # Print summary
         COMMAND ${LCOV_EXECUTABLE}
             --list ${COVERAGE_INFO}
+            --rc lcov_branch_coverage=1
             --quiet
 
         COMMENT "Code coverage report: ${COVERAGE_DIR}/index.html"

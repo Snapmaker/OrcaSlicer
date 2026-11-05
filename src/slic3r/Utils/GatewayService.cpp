@@ -412,6 +412,8 @@ bool GatewayWebSocketTransport::send(const std::string& message)
     if (!session || !io_context)
         return false;
     session->send_from_any_thread(message);
+    // Keep io_context alive through post, but release Session before io_context can be destroyed.
+    session.reset();
     return true;
 }
 
@@ -429,6 +431,8 @@ void GatewayWebSocketTransport::close_locked()
     if (io_thread_.joinable())
         io_thread_.join();
     session_.reset();
+    // Beast websocket streams must unregister from Asio services before io_context is destroyed.
+    session.reset();
     io_context_.reset();
 }
 

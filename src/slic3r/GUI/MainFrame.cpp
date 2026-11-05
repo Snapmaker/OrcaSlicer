@@ -867,11 +867,11 @@ WXLRESULT MainFrame::MSWWindowProc(WXUINT nMsg, WXWPARAM wParam, WXLPARAM lParam
     case WM_WTSSESSION_CHANGE: {
         switch (wParam) {
         case WTS_SESSION_LOCK:
-            BOOST_LOG_TRIVIAL(warning) << "[ACTIVATE_EVT] Windows session locked";
+            BOOST_LOG_TRIVIAL(debug) << "[ACTIVATE_EVT] Windows session locked";
             wxGetApp().notify_foreground_change(false);
             break;
         case WTS_SESSION_UNLOCK:
-            BOOST_LOG_TRIVIAL(warning) << "[ACTIVATE_EVT] Windows session unlocked";
+            BOOST_LOG_TRIVIAL(debug) << "[ACTIVATE_EVT] Windows session unlocked";
             wxGetApp().notify_foreground_change(true);
             break;
         }
@@ -884,7 +884,7 @@ WXLRESULT MainFrame::MSWWindowProc(WXUINT nMsg, WXWPARAM wParam, WXLPARAM lParam
                 // GUID_CONSOLE_DISPLAY_STATE Data: 0x0=off, 0x1=on, 0x2=dimmed
                 DWORD display_state = power_settings->Data[0];
                 bool is_screen_on = (display_state == 0x1);
-                BOOST_LOG_TRIVIAL(warning) << "[ACTIVATE_EVT] Console display state changed: "
+                BOOST_LOG_TRIVIAL(debug) << "[ACTIVATE_EVT] Console display state changed: "
                                            << (is_screen_on ? "on" : (display_state == 0x2 ? "dimmed" : "off"));
                 wxGetApp().notify_foreground_change(is_screen_on);
             }
@@ -4118,7 +4118,7 @@ void MainFrame::RunScript(wxString js)
 
 void MainFrame::NotifyActivateChange(bool active)
 {
-    BOOST_LOG_TRIVIAL(warning) << "[ACTIVATE_EVT] OrcaSlicer switched to " << (active ? "foreground" : "background");
+    BOOST_LOG_TRIVIAL(debug) << "[ACTIVATE_EVT] OrcaSlicer switched to " << (active ? "foreground" : "background");
     wxGetApp().notify_foreground_change(active);
 }
 

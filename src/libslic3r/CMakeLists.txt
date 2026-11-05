@@ -212,6 +212,7 @@ set(lisbslic3r_sources
     GCode/CoolingBuffer.cpp
     GCode/CoolingBuffer.hpp
     GCode.cpp
+    GCode/ExtrusionProcessor.cpp
     GCode/ExtrusionProcessor.hpp
     GCode/FanMover.cpp
     GCode/FanMover.hpp
@@ -454,6 +455,8 @@ set(lisbslic3r_sources
     Timer.hpp
     TriangleMesh.cpp
     TriangleMesh.hpp
+    TriangleMeshDeal.hpp
+    TriangleMeshDeal.cpp
     TriangleMeshSlicer.cpp
     TriangleMeshSlicer.hpp
     TriangleSelector.cpp

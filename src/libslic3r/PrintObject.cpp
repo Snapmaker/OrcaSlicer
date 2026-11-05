@@ -929,6 +929,7 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "inner_wall_line_width"
             || opt_key == "infill_wall_overlap"
             || opt_key == "top_bottom_infill_wall_overlap"
+            || opt_key == "external_infill_margin"
             || opt_key == "seam_gap"
             || opt_key == "role_based_wipe_speed"
             || opt_key == "wipe_on_loops"
@@ -1232,6 +1233,7 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "overhang_2_4_speed"
             || opt_key == "overhang_3_4_speed"
             || opt_key == "overhang_4_4_speed"
+            || opt_key == "overhang_totally_speed"
             || opt_key == "bridge_speed"
             || opt_key == "internal_bridge_speed"
             || opt_key == "outer_wall_speed"
@@ -1680,11 +1682,17 @@ void PrintObject::process_external_surfaces()
 	if (has_voids && m_layers.size() > 1) {
 	    // All but stInternal fill surfaces will get expanded and possibly trimmed.
 	    std::vector<unsigned char> layer_expansions_and_voids(m_layers.size(), false);
+	    float external_infill_margin = 0.f;
 	    for (size_t layer_idx = 1; layer_idx < m_layers.size(); ++ layer_idx) {
 	    	const Layer *layer = m_layers[layer_idx];
 	    	bool expansions = false;
 	    	bool voids      = false;
 	    	for (const LayerRegion *layerm : layer->regions()) {
+	    		const double perimeter_width = layerm->region().config().wall_loops.value == 0 ?
+	    										   0. : (layerm->flow(frExternalPerimeter).width() +
+	    											layerm->flow(frPerimeter).spacing() * (layerm->region().config().wall_loops.value - 1));
+	    		if (layerm->region().config().external_infill_margin.get_abs_value(perimeter_width) > 0.f)
+	    			external_infill_margin = layerm->region().config().external_infill_margin.get_abs_value(perimeter_width);
 	    		for (const Surface &surface : layerm->fill_surfaces.surfaces) {
 	    			if (surface.surface_type == stInternal)
 	    				voids = true;
@@ -1700,7 +1708,7 @@ void PrintObject::process_external_surfaces()
 		}
 	    BOOST_LOG_TRIVIAL(debug) << "Collecting surfaces covered with extrusions in parallel - start";
 	    surfaces_covered.resize(m_layers.size() - 1, Polygons());
-    	auto unsupported_width = - float(scale_(0.3 * EXTERNAL_INFILL_MARGIN));
+    	auto unsupported_width = - float(scale_(0.3 * external_infill_margin));
 	    tbb::parallel_for(
 	        tbb::blocked_range<size_t>(0, m_layers.size() - 1),
 	        [this, &surfaces_covered, &layer_expansions_and_voids, unsupported_width](const tbb::blocked_range<size_t>& range) {
@@ -2972,6 +2980,11 @@ void PrintObject::bridge_over_infill()
                     bridging_area          = closing(bridging_area, flow.scaled_spacing());
                     bridging_area          = intersection(bridging_area, limiting_area);
                     bridging_area          = intersection(bridging_area, total_fill_area);
+                    // Snapmaker: on multi-region (multi-material) layers, keep the bridge expansion
+                    // inside the candidate's own region, otherwise anchoring onto another region's
+                    // walls can produce a bridge printed in the wrong color.
+                    if (layer->regions().size() > 1)
+                        bridging_area = intersection(bridging_area, to_polygons(candidate.region->fill_expolygons));
                     bridging_area          = diff(bridging_area, total_top_area);
                     expansion_area         = diff(expansion_area, bridging_area);
 

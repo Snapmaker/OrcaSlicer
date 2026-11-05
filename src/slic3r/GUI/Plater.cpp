@@ -287,13 +287,16 @@ static std::string filament_display_label(int slot_1based)
 
 // Compose a single comma-separated line of "[n] Preset" labels from a list
 // of 1-based slot numbers. Used inside High/Low temperature group lines.
-static std::string format_filament_slot_list(const std::vector<int>& slots_1based)
+// The separator defaults to the plain English comma; callers that need a
+// locale-aware comma pass a translated separator (e.g. tr_u8(", "), which
+// resolves to the full-width comma in zh_CN).
+static std::string format_filament_slot_list(const std::vector<int>& slots_1based, const std::string& separator = ", ")
 {
     std::string out;
     for (size_t i = 0; i < slots_1based.size(); ++i)
     {
         if (i != 0)
-            out += ", ";
+            out += separator;
         out += filament_display_label(slots_1based[i]);
     }
     return out;
@@ -463,7 +466,7 @@ static void collect_filament_slots_from_config(
 }
 
 static void collect_filament_slots_from_model_config(
-    const ModelConfigObject& config,
+    const ModelConfig& config,
     int num_filaments, std::set<int>& used_slots_0_based)
 {
     // Primary filament (extruder)
@@ -497,7 +500,8 @@ static void collect_filament_slots_from_model_config(
 /// \brief Collect the 0-based filament slots actually used by objects on the given plate.
 /// \details Mirrors the slot-collection block of Plater::check_filament_temp_mixing so that
 ///          cold-plate incompatibility checking uses the same definition of "used filament".
-///          Includes: plate config, per-object/volume configs, plus Plater working config
+///          Includes: plate config, per-object/volume configs, height-range modifier configs
+///          (layer_config_ranges), plus Plater working config
 ///          (wipe_tower / support / wall / infill defaults when any object uses extruder=0).
 /// \param[in]  plate                 Non-null target plate.
 /// \param[in]  num_filaments         Total number of filaments in the current configuration.
@@ -524,6 +528,12 @@ static void collect_used_filament_slots_on_plate(
         if (!model_object_is_on_plate(plate, obj_idx, model_object))
             continue;
         collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based);
+
+        // Height range modifiers override the extruder / feature filaments for
+        // a z band; their configs live in layer_config_ranges, not in
+        // object/volume configs.
+        for (const auto& layer_range : model_object->layer_config_ranges)
+            collect_filament_slots_from_model_config(layer_range.second, num_filaments, used_slots_0_based);
 
         if (!model_object->config.has("extruder") || model_object->config.extruder() == 0)
             uses_default_extruder = true;
@@ -4067,6 +4077,10 @@ void Sidebar::on_filaments_change(size_t num_filaments)
         const bool sync_manager = !p->m_skip_mixed_filament_sync_once;
         p->m_skip_mixed_filament_sync_once = false;
         update_ui_from_settings();
+        // Colors may be replaced in place without a count change (e.g. 3MF import): repaint the combos.
+        for (PlaterPresetComboBox* choice : choices)
+            if (choice)
+                choice->update();
         update_dynamic_filament_list();
         update_mixed_filament_panel(sync_manager);
 
@@ -4091,6 +4105,11 @@ void Sidebar::on_filaments_change(size_t num_filaments)
         choices[0]->GetDropDown().Invalidate();
 
     wxWindowUpdateLocker noUpdates_scrolled_panel(this);
+
+    // The import may also recolor existing slots: repaint them before appending new combos.
+    for (PlaterPresetComboBox* choice : choices)
+        if (choice)
+            choice->update();
 
     size_t i = choices.size();
     while (i < num_filaments)
@@ -6625,12 +6644,16 @@ void Sidebar::update_color_mix_panel()
     if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_mode"))
         local_z_mode = opt->value;
 
+    bool local_z_direct_multicolor = true;
+    if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_direct_multicolor"))
+        local_z_direct_multicolor = opt->value;
+
     bool component_bias_enabled = false;
     if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("mixed_filament_component_bias_enabled"))
         component_bias_enabled = opt->value;
 
     const MixedFilamentPreviewSettings preview_settings {
-        0.2f, lower_bound, upper_bound, 0.f, 0.f, local_z_mode, false, 1
+        0.2f, lower_bound, upper_bound, 0.f, 0.f, local_z_mode, local_z_direct_multicolor, 1
     };
     const MixedFilamentDisplayContext display_context {
         num_physical, physical_colors, nozzle_diameters, preview_settings, component_bias_enabled
@@ -7358,7 +7381,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         wall_loops = std::max<size_t>(1, size_t(std::max(1, print_cfg->opt_int("wall_loops"))));
     const bool local_z_mode = get_mixed_bool("dithering_local_z_mode", false);
     const bool local_z_direct_multicolor =
-        get_mixed_bool("dithering_local_z_direct_multicolor", false) &&
+        get_mixed_bool("dithering_local_z_direct_multicolor", true) &&
         preferred_local_z_a <= EPSILON &&
         preferred_local_z_b <= EPSILON;
     const bool component_bias_enabled = get_mixed_bool("mixed_filament_component_bias_enabled", false);
@@ -10586,6 +10609,7 @@ struct Plater::priv
     bool can_layers_editing() const;
     bool can_fix_through_netfabb() const;
     bool can_simplify() const;
+    bool can_smooth_mesh() const;
     bool can_set_instance_to_object() const;
     bool can_mirror() const;
     bool can_reload_from_disk() const;
@@ -11356,7 +11380,7 @@ wxString Plater::get_slice_warning_string(GCodeProcessorResult::SliceWarning& wa
     if (warning.msg == BED_TEMP_TOO_HIGH_THAN_FILAMENT) {
         return _L("The current hot bed temperature is relatively high. The nozzle may be clogged when printing this filament in a closed enclosure. Please open the front door and/or remove the upper glass.");
     } else if (warning.msg == NOZZLE_HRC_CHECKER) {
-        return _L("The nozzle hardness required by the filament is higher than the default nozzle hardness of the printer. Please replace the hardened nozzle or filament, otherwise, the nozzle will be attrited or damaged.");
+        return _L("The filament is too hard for the current nozzle. Please use a harder nozzle or a softer filament to avoid nozzle wear.");
     } else if (warning.msg == NOT_SUPPORT_TRADITIONAL_TIMELAPSE) {
         return _L("Enabling traditional timelapse photography may cause surface imperfections. It is recommended to change to smooth mode.");
     } else if (warning.msg == NOT_GENERATE_TIMELAPSE) {
@@ -11815,7 +11839,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         PresetBundle *preset_bundle = wxGetApp().preset_bundle;
                         if (geometry_only_project_import && preset_bundle != nullptr) {
                             const size_t current_num_filaments = preset_bundle->filament_presets.size();
-                            const bool current_project_empty = this->model.objects.empty();
+                            const bool   current_project_empty = this->model.objects.empty();
                             if (current_project_empty) {
                                 static const t_config_option_keys imported_project_option_keys = {
                                     "filament_colour",
@@ -11837,10 +11861,18 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     preset_bundle->set_num_filaments(unsigned(desired_physical_filaments));
                                 } else
                                     preset_bundle->update_multi_material_filament_presets();
-                                BOOST_LOG_TRIVIAL(info) << "3MF geometry import applied imported project config"
-                                                        << " current_num_filaments=" << current_num_filaments
-                                                        << " desired_physical_filaments=" << desired_physical_filaments
-                                                        << " mixed_enabled=" << preset_bundle->mixed_filaments.enabled_count();
+                                // Swatches render multi_colors/mode first. Both branches above ran
+                                // EnsureFilamentColorFieldsAligned(), so multi-color arrays that the
+                                // 3MF lacked, truncated, or left stale/oversized (e.g. auto-palette
+                                // leftovers saved by older builds) are healed against the imported
+                                // plain colors — nothing left to rebuild here.
+                                const auto *aligned_multi_colors = preset_bundle->project_config.option<ConfigOptionStrings>("filament_multi_colors");
+                                const auto *aligned_color_modes  = preset_bundle->project_config.option<ConfigOptionInts>("filament_colour_mode");
+                                BOOST_LOG_TRIVIAL(info) << "3MF geometry import adopted filament colors"
+                                                        << " current=" << current_num_filaments
+                                                        << " desired=" << desired_physical_filaments
+                                                        << " multi_count=" << (aligned_multi_colors ? aligned_multi_colors->values.size() : size_t(0))
+                                                        << " mode_count=" << (aligned_color_modes ? aligned_color_modes->values.size() : size_t(0));
                                 wxGetApp().plater()->on_filaments_change(desired_physical_filaments);
                             } else if (current_num_filaments < desired_physical_filaments) {
                                 std::vector<std::string> new_colors;
@@ -12611,6 +12643,10 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 q->select_plate(first_plate_index);
                 //set to 3d tab
                 q->select_view_3D("Preview");
+                // The Preview panel may stay active across project loads; rebuild its plate
+                // toolbar from this project's plates even if no thumbnails were re-rendered.
+                preview->get_canvas3d()->invalidate_select_plate_toolbar();
+                preview->set_as_dirty();
                 wxGetApp().mainframe->select_tab(MainFrame::tpPreview);
             }
             else {
@@ -13178,6 +13214,9 @@ void Plater::priv::reset(bool apply_presets_change)
     Plater::TakeSnapshot snapshot(q, "Reset Project", UndoRedo::SnapshotType::ProjectSeparator);
 
     clear_warnings();
+    // The nozzle-HRC toast manages its own lifecycle (its type is not part of
+    // the slicing warning sweep) and must not outlive the project it described.
+    notification_manager->close_notification_of_type(NotificationType::NozzleHrcWarning);
     first_enter_assemble = true;
 
     set_project_filename("");
@@ -15331,6 +15370,56 @@ bool Plater::priv::warnings_dialog()
 
 }
 
+// Post-slice toast for the nozzle-HRC (hardness) mismatch. Filament prompt
+// follows the filament_temp_mixing / cold_plate / flow_ratio_zero banners:
+// translated issue sentence, then a "Filament(s): [n] Preset" line naming the
+// offending slots. warning.params holds 0-based print extruder ids; converted
+// to 1-based slot numbers for filament_display_label.
+// Sync semantics: this toast is pushed at WarningNotificationLevel (duration 0)
+// and its type is not swept by close_slicing_errors_and_warnings(), so only
+// this function can retire it. Always close the previous toast first, then
+// re-push only if the plate's latest slice result still reports an HRC
+// mismatch; otherwise a fixed config or a clean re-slice would leave the
+// stale warning on screen with nothing to clear it.
+static void sync_nozzle_hrc_warning_notification(NotificationManager* nm, PartPlate* plate)
+{
+    if (nm == nullptr)
+        return;
+
+    std::string text;
+    if (plate != nullptr) {
+        GCodeProcessorResult* result = plate->get_slice_result();
+        if (result != nullptr) {
+            for (GCodeProcessorResult::SliceWarning& warning : result->warnings) {
+                if (warning.msg != NOZZLE_HRC_CHECKER)
+                    continue;
+                const wxString base = Plater::get_slice_warning_string(warning);
+                if (base.empty())
+                    continue;
+
+                std::vector<int> offender_slots_1based;
+                for (const std::string& param : warning.params)
+                    offender_slots_1based.push_back(atoi(param.c_str()) + 1);
+
+                std::string line = into_u8(base);
+                if (!offender_slots_1based.empty()) {
+                    line += "\n";
+                    line += tr_u8("Filament(s):");
+                    line += " ";
+                    line += format_filament_slot_list(offender_slots_1based, tr_u8(", "));
+                }
+                text += line + "\n";
+            }
+        }
+    }
+
+    nm->close_notification_of_type(NotificationType::NozzleHrcWarning);
+    if (!text.empty())
+        nm->push_notification(NotificationType::NozzleHrcWarning,
+            NotificationManager::NotificationLevel::WarningNotificationLevel,
+            text);
+}
+
 //BBS: add project slice logic
 void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 {
@@ -15504,6 +15593,9 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         }else
         if (exporting_status == ExportingStatus::EXPORTING_TO_LOCAL && !has_error)
             notification_manager->push_exporting_finished_notification(last_output_path, last_output_dir_path, false);
+
+        if (!has_error && exporting_status == ExportingStatus::NOT_EXPORTING)
+            sync_nozzle_hrc_warning_notification(notification_manager.get(), background_process.get_current_plate());
 
         // BBS, Generate calibration thumbnail for current plate
         if (!has_error && preview) {
@@ -15935,6 +16027,9 @@ void Plater::priv::on_plate_selected(SimpleEvent&)
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received plate selected event\n" ;
     sidebar->obj_list()->on_plate_selected(partplate_list.get_curr_plate_index());
     q->sync_print_seq_warning_notification();
+    // Re-evaluate the nozzle-HRC toast against the newly selected plate's
+    // slice result, so it always describes the current plate (or is gone).
+    sync_nozzle_hrc_warning_notification(notification_manager.get(), partplate_list.get_curr_plate());
 }
 
 void Plater::priv::on_action_request_model_id(wxCommandEvent& evt)
@@ -16933,6 +17028,36 @@ bool Plater::priv::can_simplify() const
     if (q->get_view3D_canvas3D()->get_gizmos_manager().get_current_type() ==
         GLGizmosManager::EType::Simplify)
         return false;
+    return true;
+}
+
+bool Plater::priv::can_smooth_mesh() const
+{
+    std::vector<int> obj_idxs, vol_idxs;
+    sidebar->obj_list()->get_selection_indexes(obj_idxs, vol_idxs);
+    if (obj_idxs.empty()) {
+        return false;
+    }
+    if (vol_idxs.empty()) {
+        for (auto obj_idx : obj_idxs) {
+            if (obj_idx < 0 || obj_idx >= (int) model.objects.size())
+                return false;
+            if (model.objects[obj_idx]->get_object_stl_stats().open_edges > 0)
+                return false;
+        }
+        return true;
+    }
+
+    int obj_idx = obj_idxs.front();
+    if (obj_idx < 0 || obj_idx >= (int) model.objects.size())
+        return false;
+    const ModelObject *obj = model.objects[obj_idx];
+    for (auto vol_idx : vol_idxs) {
+        if (vol_idx < 0 || vol_idx >= (int) obj->volumes.size())
+            return false;
+        if (obj->volumes[vol_idx]->mesh().stats().open_edges > 0)
+            return false;
+    }
     return true;
 }
 
@@ -19186,16 +19311,25 @@ void Plater::load_gcode(const wxString& filename)
     current_print.apply(this->model(), wxGetApp().preset_bundle->full_config());
 
     //BBS: add cost info when drag in gcode
+    //Snapmaker: add weight, filament length info
     auto& ps = current_result->print_statistics;
     double total_cost = 0.0;
+    double total_used_filament = 0.0;
+    double total_weight = 0.0;
     for (auto volume : ps.total_volumes_per_extruder) {
         size_t extruder_id = volume.first;
         double density = current_result->filament_densities.at(extruder_id);
         double cost = current_result->filament_costs.at(extruder_id);
+        double diameter = current_result->filament_diameters.at(extruder_id);
+        double s        = PI * sqr(0.5 * diameter);
+        total_used_filament += volume.second / s;
         double weight = volume.second * density * 0.001;
+        total_weight += weight;
         total_cost += weight * cost * 0.001;
     }
     current_print.print_statistics().total_cost = total_cost;
+    current_print.print_statistics().total_used_filament = total_used_filament;
+    current_print.print_statistics().total_weight = total_weight;
 
     current_print.set_gcode_file_ready();
 
@@ -20388,6 +20522,11 @@ void Plater::convert_unit(ConversionType conv_type)
 void Plater::apply_cut_object_to_model(size_t obj_idx, const ModelObjectPtrs& new_objects)
 {
     model().delete_object(obj_idx);
+    // Deleting the object shifts the indices of all objects after it; the plates keep
+    // (obj_id, instance_id) registration sets, so they must be told to shift as well.
+    // Without this the previously registered objects stay registered under stale indices
+    // and get reassigned to wrong plates on the next update/move.
+    p->partplate_list.notify_instance_removed(obj_idx, -1);
     sidebar().obj_list()->delete_object_from_list(obj_idx);
 
     // suppress to call selection update for Object List to avoid call of early Gizmos on/off update
@@ -21359,6 +21498,12 @@ bool Plater::reslice()
     if (printer_technology() == ptFFF) {
         Print* print_ptr = p->background_process.fff_print();
         if (print_ptr) {
+            // "Don't ask again next time" (dialog checkbox) or the Preferences toggle
+            // disables the memory guard entirely for subsequent slicing runs, matching
+            // the pre-guard behavior. Snapshotted on the main thread; the guard
+            // callback itself would run on TBB workers.
+            bool show_mem_warning = wxGetApp().app_config->get_bool("show_memory_usage_warning");
+            print_ptr->set_memory_guard_enabled(show_mem_warning);
             print_ptr->set_memory_guard_callback([this]() -> bool {
                 auto promise = std::make_shared<std::promise<bool>>();
                 auto future  = promise->get_future();
@@ -21376,8 +21521,13 @@ bool Plater::reslice()
                     RichMessageDialog dlg(this, msg,
                         _L("Memory Usage Warning"), wxYES_NO | wxNO_DEFAULT | wxICON_WARNING);
                     dlg.SetYesNoLabels(_L("Yes, Continue"), _L("No, Stop"));
+                    dlg.ShowCheckBox(_L("Don't ask again next time"), false);
 
                     bool result = (dlg.ShowModal() == wxID_YES);
+                    if (dlg.IsCheckBoxChecked())
+                        // Keep in sync with the Preferences checkbox, which is bound to the
+                        // same key with inverted polarity (checked there = dialog shows).
+                        wxGetApp().app_config->set_bool("show_memory_usage_warning", false);
                     if (result) {
                         // Skip toolpath preview to reduce memory usage on
                         // the subsequent load_toolpaths / load_shells phase.
@@ -22454,6 +22604,12 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
                 continue;
             collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based);
 
+            // Height range modifiers override the extruder / feature filaments
+            // for a z band; their configs live in layer_config_ranges, not in
+            // object/volume configs.
+            for (const auto& layer_range : model_object->layer_config_ranges)
+                collect_filament_slots_from_model_config(layer_range.second, num_filaments, used_slots_0_based);
+
             if (!model_object->config.has("extruder") || model_object->config.extruder() == 0)
                 uses_default_extruder = true;
 
@@ -22724,6 +22880,14 @@ bool Plater::sync_filament_temp_mixing_notification()
     p->filament_temp_mixing_notification_plate = curr_plate_index;
     p->filament_temp_mixing_notification_state = mixing_state;
 
+    // Flipping the mixing preference changes the verdict without touching
+    // the print config, so the invalidation-driven reset of
+    // process_completed_with_error (priv::update_background_process) never
+    // runs and reslice() keeps early-returning as if the plate were still
+    // failing. Clear the stranded marker once this plate is allowed again.
+    if (slicing_allowed && p->process_completed_with_error == curr_plate_index)
+        p->process_completed_with_error = -1;
+
     const bool can_slice = curr_plate->can_slice() && slicing_allowed;
     p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, can_slice);
     return slicing_allowed;
@@ -22773,6 +22937,12 @@ bool Plater::check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail)
             if (!model_object_is_on_plate(plate, obj_idx, model_object))
                 continue;
             collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based);
+
+            // Height range modifiers override the extruder / feature filaments
+            // for a z band; their configs live in layer_config_ranges, not in
+            // object/volume configs.
+            for (const auto& layer_range : model_object->layer_config_ranges)
+                collect_filament_slots_from_model_config(layer_range.second, num_filaments, used_slots_0_based);
 
             if (!model_object->config.has("extruder") || model_object->config.extruder() == 0)
                 uses_default_extruder = true;
@@ -23725,35 +23895,72 @@ void Plater::clone_selection()
     dlg.ShowModal();
 }
 
-std::vector<Vec2f> Plater::get_empty_cells(const Vec2f step)
+std::vector<Vec2f> Plater::get_empty_cells(const Vec2f step, const BoundingBoxf& safe_area_2d)
 {
     PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
-    BoundingBoxf3 build_volume = plate->get_build_volume();
-    Vec2d vmin(build_volume.min.x(), build_volume.min.y()), vmax(build_volume.max.x(), build_volume.max.y());
-    BoundingBoxf bbox(vmin, vmax);
+
+    // Prefer the "safe placement area" passed in by the caller (already shrunk by
+    // bed_shrink + brim_skirt_distance/2) to align with the NFP path; fall back to the
+    // original build_volume (of the current plate) when not provided.
+    BoundingBoxf bbox;
+    if (safe_area_2d.defined) {
+        bbox = safe_area_2d;
+    }
+    else {
+        BoundingBoxf3 build_volume = plate->get_build_volume();
+        bbox = BoundingBoxf(Vec2d(build_volume.min.x(), build_volume.min.y()),
+                            Vec2d(build_volume.max.x(), build_volume.max.y()));
+    }
+
     std::vector<Vec2f> cells;
-    auto min_x = step(0)/2;// start_point.x() - step(0) * int((start_point.x() - bbox.min.x()) / step(0));
-    auto min_y = step(1)/2;// start_point.y() - step(1) * int((start_point.y() - bbox.min.y()) / step(1));
+    if (step(0) <= 0.f || step(1) <= 0.f)
+        return cells;
+
+    const double width  = bbox.max.x() - bbox.min.x();
+    const double height = bbox.max.y() - bbox.min.y();
+    if (width < step(0) || height < step(1))
+        return cells;
+
+    // Distribute the division remainder ("edge margin") symmetrically to both sides, so the
+    // leftmost/bottom column does not hug the bed edge while a wide strip is wasted on the
+    // right/top. floor guarantees at least one full cell per row/column; the early return above
+    // already ensures width >= step(0) && height >= step(1), so cols/rows >= 1.
+    const int    cols    = int(std::floor(width  / step(0)));
+    const int    rows    = int(std::floor(height / step(1)));
+    const double half_x  = step(0) / 2.0;
+    const double half_y  = step(1) / 2.0;
+    const double pad_x   = (width  - cols * step(0)) / 2.0;
+    const double pad_y   = (height - rows * step(1)) / 2.0;
+    const double start_x = bbox.min.x() + pad_x + half_x;
+    const double start_y = bbox.min.y() + pad_y + half_y;
+
     auto& exclude_box3s = plate->get_exclude_areas();
     std::vector<BoundingBoxf> exclude_boxs;
+    exclude_boxs.reserve(exclude_box3s.size());
     for (auto& box : exclude_box3s) {
         Vec2d vmin(box.min.x(), box.min.y()), vmax(box.max.x(), box.max.y());
         exclude_boxs.emplace_back(vmin, vmax);
     }
-    for (float x = min_x + bbox.min.x(); x < bbox.max.x() - step(0) / 2; x += step(0))
-        for (float y = min_y + bbox.min.y(); y < bbox.max.y() - step(1) / 2; y += step(1)) {
+
+    cells.reserve(size_t(cols) * size_t(rows));
+    for (int i = 0; i < cols; ++i) {
+        const double x = start_x + i * step(0);
+        for (int j = 0; j < rows; ++j) {
+            const double y = start_y + j * step(1);
+            BoundingBoxf cell(Vec2d(x - half_x, y - half_y),
+                              Vec2d(x + half_x, y + half_y));
             bool in_exclude = false;
-            BoundingBoxf cell(Vec2d(x - step(0) / 2, y - step(1) / 2), Vec2d(x + step(0) / 2, y + step(1) / 2));
             for (auto& box : exclude_boxs) {
                 if (box.overlap(cell)) {
                     in_exclude = true;
                     break;
                 }
             }
-            if(in_exclude)
+            if (in_exclude)
                 continue;
-            cells.emplace_back(x, y);
+            cells.emplace_back(float(x), float(y));
         }
+    }
     return cells;
 }
 
@@ -24727,6 +24934,7 @@ bool Plater::can_decrease_instances() const { return p->can_decrease_instances()
 bool Plater::can_set_instance_to_object() const { return p->can_set_instance_to_object(); }
 bool Plater::can_fix_through_netfabb() const { return p->can_fix_through_netfabb(); }
 bool Plater::can_simplify() const { return p->can_simplify(); }
+bool Plater::can_smooth_mesh() const { return p->can_smooth_mesh(); }
 bool Plater::can_split_to_objects() const { return p->can_split_to_objects(); }
 bool Plater::can_split_to_volumes() const { return p->can_split_to_volumes(); }
 bool Plater::can_arrange() const { return p->can_arrange(); }

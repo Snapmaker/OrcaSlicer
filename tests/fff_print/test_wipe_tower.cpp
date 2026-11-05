@@ -30,7 +30,10 @@ static void init_degenerate_raft_print(Print& print)
         { "enable_prime_tower", true },
         { "raft_layers", 1 },
         { "support_filament", 2 },
-        { "machine_start_gcode", "" }
+        { "machine_start_gcode", "" },
+        // Relative-E Marlin flavor for a non-BBL printer requires G92 E0 at each layer
+        // (Print::validate), while the wipe tower itself requires relative addressing.
+        { "layer_change_gcode", "G92 E0" }
         });
 
     Model model;
@@ -45,6 +48,7 @@ static void init_degenerate_raft_print(Print& print)
     print.is_BBL_printer() = false; // make sure the WipeTower2 code path is taken
     print.apply(model, config);
     const StringObjectException validation = print.validate();
+    INFO("validate() error: " << validation.string);
     REQUIRE(validation.string.empty());
 }
 
@@ -67,7 +71,9 @@ static void init_multi_extruder_print(Print& print, const std::string& adhesiven
         { "enable_prime_tower",             true },
         { "filament_adhesiveness_category", adhesiveness_categories },
         { "wipe_tower_filament",            wall_filament },
-        { "machine_start_gcode",            "" }
+        { "machine_start_gcode",            "" },
+        // Same validation constraint as above: relative-E Marlin needs G92 E0 per layer.
+        { "layer_change_gcode",             "G92 E0" }
         });
 
     Model model;
@@ -86,6 +92,7 @@ static void init_multi_extruder_print(Print& print, const std::string& adhesiven
     print.is_BBL_printer() = false; // make sure the WipeTower2 code path is taken
     print.apply(model, config);
     const StringObjectException validation = print.validate();
+    INFO("validate() error: " << validation.string);
     REQUIRE(validation.string.empty());
 }
 

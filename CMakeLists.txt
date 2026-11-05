@@ -71,6 +71,27 @@ endif()
 set(SLIC3R_RC_VERSION "${ORCA_VERSION_MAJOR},${ORCA_VERSION_MINOR},${ORCA_VERSION_PATCH},0")
 
 set(SLIC3R_RESOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+
+# Keep development and packaged resources in sync with the profiles submodule.
+set(SNAPMAKER_PROFILES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/submodules/Profiles")
+set(_profiles_sync_command "${CMAKE_COMMAND}"
+    "-DSUB=${SNAPMAKER_PROFILES_DIR}"
+    "-DDST=${SLIC3R_RESOURCES_DIR}/profiles"
+    "-DVERSION_STAMP=${CMAKE_CURRENT_BINARY_DIR}/snapmaker_profiles_version.txt"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SyncSnapmakerProfiles.cmake")
+
+execute_process(COMMAND ${_profiles_sync_command} RESULT_VARIABLE _profiles_sync_result)
+if(NOT _profiles_sync_result STREQUAL "0")
+    message(FATAL_ERROR "Snapmaker profiles preparation failed (${_profiles_sync_result})")
+endif()
+
+add_custom_target(sync_snapmaker_profiles ALL
+    COMMAND ${_profiles_sync_command}
+    COMMENT "Syncing Snapmaker profiles from submodules/Profiles into resources/profiles"
+    VERBATIM)
+unset(_profiles_sync_command)
+unset(_profiles_sync_result)
+
 file(TO_NATIVE_PATH "${SLIC3R_RESOURCES_DIR}" SLIC3R_RESOURCES_DIR_WIN)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)

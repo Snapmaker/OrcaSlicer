@@ -49,13 +49,9 @@ public:
     bool is_nozzle_filament_forbidden(const std::string& nozzle_key, const std::string& filament_preset_name,
                                       NozzleType nozzle_type = NozzleType::ntUndefine) const;
     /// Match rule entry to filament preset by exact name (case-insensitive) on the base preset name
-    /// (text before optional " @..." suffix); does not block slicing (see evaluate_nozzle_filament_mismatch).
+    /// (text before optional " @..." suffix); does not block slicing (see evaluate_nozzle_filament_mismatch_detail).
     bool is_nozzle_filament_warning(const std::string& nozzle_key, const std::string& filament_preset_name,
                                     NozzleType nozzle_type = NozzleType::ntUndefine) const;
-    
-    std::string evaluate_nozzle_filament_mismatch(const PrintConfig& cfg,
-                                                  const std::vector<unsigned int>& used_filament_indices,
-                                                  const PresetBundle* preset_bundle = nullptr) const;
 
     /// @return true if a forbidden nozzle+filament combination was found (fills @p out).
     bool evaluate_nozzle_filament_mismatch_detail(const PrintConfig& cfg, const std::vector<unsigned int>& used_filament_indices,

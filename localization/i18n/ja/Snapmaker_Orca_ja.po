@@ -4293,6 +4293,12 @@ msgstr "レイアウト設定"
 msgid "Spacing"
 msgstr "間隔"
 
+msgid "Count"
+msgstr "数"
+
+msgid "Gap"
+msgstr "隙間"
+
 msgid "0 means auto spacing."
 msgstr ""
 

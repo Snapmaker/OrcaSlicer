@@ -2889,9 +2889,12 @@ void PartPlate::update_object_index(int obj_idx_removed, int obj_idx_max)
 	std::set<std::pair<int, int>> temp_set;
 	std::set<std::pair<int, int>>::iterator it;
 	//update the obj_to_instance_set
+	//the caller must have removed every instance of obj_idx_removed beforehand, so only
+	//objects AFTER it shift back (a leftover == entry would be mis-attributed to the
+	//previous object and corrupted into a negative index when obj_idx_removed is 0)
 	for (it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); ++it)
 	{
-		if (it->first >= obj_idx_removed)
+		if (it->first > obj_idx_removed)
 			temp_set.insert(std::pair(it->first-1, it->second));
 		else
 			temp_set.insert(std::pair(it->first, it->second));
@@ -2903,7 +2906,7 @@ void PartPlate::update_object_index(int obj_idx_removed, int obj_idx_max)
 	temp_set.clear();
 	for (it = instance_outside_set.begin(); it != instance_outside_set.end(); ++it)
 	{
-		if (it->first >= obj_idx_removed)
+		if (it->first > obj_idx_removed)
 			temp_set.insert(std::pair(it->first - 1, it->second));
 		else
 			temp_set.insert(std::pair(it->first, it->second));
@@ -2911,6 +2914,26 @@ void PartPlate::update_object_index(int obj_idx_removed, int obj_idx_max)
 	instance_outside_set.clear();
 	instance_outside_set = temp_set;
 
+}
+
+void PartPlate::remove_object(int obj_id)
+{
+	//remove every instance registration of obj_id from this plate: an object may
+	//have several instances spread over this plate (and over different plates)
+	for (auto it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); )
+	{
+		if (it->first == obj_id)
+			it = obj_to_instance_set.erase(it);
+		else
+			++it;
+	}
+	for (auto it = instance_outside_set.begin(); it != instance_outside_set.end(); )
+	{
+		if (it->first == obj_id)
+			it = instance_outside_set.erase(it);
+		else
+			++it;
+	}
 }
 
 void PartPlate::set_vase_mode_related_object_config(int obj_id) {
@@ -5005,6 +5028,24 @@ int PartPlateList::notify_instance_removed(int obj_id, int instance_id)
 	}
 
 	if (instance_id == -1) {
+		//the whole object is gone: drop every instance registration of obj_id (an
+		//object may have instances registered on different plates, and instance_id
+		//-1 only removed the (obj_id, 0) pair above), invalidate the plates, then
+		//shift back the registration indices of all objects after obj_id
+		for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
+		{
+			PartPlate* plate = m_plate_list[i];
+			assert(plate != NULL);
+
+			plate->remove_object(obj_id);
+			plate->update_slice_result_valid_state();
+			plate->thumbnail_data.reset();
+			plate->no_light_thumbnail_data.reset();
+			plate->top_thumbnail_data.reset();
+			plate->pick_thumbnail_data.reset();
+		}
+		unprintable_plate.remove_object(obj_id);
+
 		//update all the obj_ids which is bigger
 		for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
 		{

@@ -281,3 +281,28 @@ TEST_CASE("Changing the object extruder re-triggers slicing", "[FilamentRoles]")
     const bool invalidated = print.apply(model, config);
     REQUIRE(invalidated);
 }
+
+TEST_CASE("Changing the object extruder does not re-slice when all feature filaments are explicit", "[FilamentRoles]")
+{
+    // With every feature filament explicitly overridden, the object extruder is the
+    // fallback for none of them, so changing it changes no effective config value
+    // and the print is not invalidated.
+    Model model;
+    ModelVolume *volume = build_single_part_model(model, 1, 0);
+    volume->get_object()->add_instance();
+    volume->get_object()->ensure_on_bed();
+    volume->get_object()->config.set_key_value("wall_filament", new ConfigOptionInt(1));
+    volume->get_object()->config.set_key_value("sparse_infill_filament", new ConfigOptionInt(2));
+    volume->get_object()->config.set_key_value("solid_infill_filament", new ConfigOptionInt(1));
+
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_key_value("filament_diameter", new ConfigOptionFloats{1.75, 1.75});
+
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+
+    volume->get_object()->config.set("extruder", 2);
+    const bool invalidated = print.apply(model, config);
+    REQUIRE_FALSE(invalidated);
+}

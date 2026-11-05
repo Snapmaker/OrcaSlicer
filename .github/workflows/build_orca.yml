@@ -364,6 +364,61 @@ jobs:
           asset_content_type: application/octet-stream
           max_releases: 1
 
+      # Same runner that just produced the dSYM. A follow-up job would have to
+      # acquire another macos-15 VM after this one is destroyed.
+      - name: "[macOS] Install sentry-cli"
+        if: inputs.os == 'macos-15'
+        run: |
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "Installing sentry-cli via official script..."
+            curl -sL https://sentry.io/get-cli/ | bash || true
+          fi
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "Official script failed, trying npm..."
+            npm install -g @sentry/cli || true
+          fi
+          if ! command -v sentry-cli &> /dev/null; then
+            echo "npm failed, downloading binary directly..."
+            SENTRY_CLI_VERSION=$(curl -s https://api.github.com/repos/getsentry/sentry-cli/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+            curl -sL "https://github.com/getsentry/sentry-cli/releases/download/${SENTRY_CLI_VERSION}/sentry-cli-Darwin-universal" -o /usr/local/bin/sentry-cli
+            chmod +x /usr/local/bin/sentry-cli
+          fi
+          if command -v sentry-cli &> /dev/null; then
+            echo "sentry-cli installed successfully:"
+            sentry-cli --version
+          else
+            echo "::error::Failed to install sentry-cli via all methods"
+            exit 1
+          fi
+
+      - name: "[macOS] Upload dSYM to Sentry"
+        if: inputs.os == 'macos-15'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          SYMBOL_DIR="build/universal/Snapmaker_Orca/dSYM"
+          echo "Checking for dSYM files in ${SYMBOL_DIR}..."
+          if [ ! -d "${SYMBOL_DIR}" ]; then
+            echo "::error::dSYM directory not found: ${SYMBOL_DIR}"
+            exit 1
+          fi
+          dsymCount=$(find "${SYMBOL_DIR}" -name "*.dSYM" -type d | wc -l | tr -d ' ')
+          if [ "$dsymCount" -gt 0 ]; then
+            echo "Found $dsymCount dSYM file(s):"
+            find "${SYMBOL_DIR}" -name "*.dSYM" -type d
+            sentry-cli --log-level=debug --auth-token "$SENTRY_AUTH_TOKEN" upload-dif --org "${{ secrets.SENTRY_ORG }}" --project "${{ secrets.SENTRY_PROJECT }}" "${SYMBOL_DIR}"
+            UPLOAD_EXIT_CODE=$?
+            if [ $UPLOAD_EXIT_CODE -ne 0 ]; then
+              echo "::error::Sentry upload failed with exit code $UPLOAD_EXIT_CODE"
+              exit 1
+            fi
+          else
+            echo "::error::No dSYM files found in ${SYMBOL_DIR}"
+            find "${SYMBOL_DIR}" -type d -o -type f | head -20
+            exit 1
+          fi
+
 # Windows
       - name: setup MSVC
         if: inputs.os == 'windows-2022'

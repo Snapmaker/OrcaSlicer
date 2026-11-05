@@ -177,11 +177,12 @@ jobs:
   upload_symbols:
     name: Upload Debug Symbols to Sentry
     needs: [build_orca]
-    if: ${{ !cancelled() && needs.build_orca.result == 'success' }}
+    # macOS dSYM is uploaded from the build job, on the same macos-15 runner.
+    # This job only handles Windows PDB, which is produced as an artifact.
+    if: ${{ !cancelled() && needs.build_orca.result == 'success' && inputs.os == 'windows-2022' }}
     uses: ./.github/workflows/sentry_cli.yml
     with:
       os: ${{ inputs.os }}
       pdb-artifact-name: PDB
-      dsym-artifact-name: ${{ inputs.os == 'macos-15' && format('dSYM_Mac_{0}', needs.build_orca.outputs.release) || '' }}
       release: ${{ needs.build_orca.outputs.release || github.sha }}
     secrets: inherit

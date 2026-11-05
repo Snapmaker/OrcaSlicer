@@ -400,6 +400,10 @@ void AppConfig::set_defaults()
     //     set_bool("staff_pick_switch", false);
     // }
 
+    if (get("enable_model_station").empty()) {
+        set_bool("enable_model_station", true);
+    }
+
     if (get("sync_system_preset").empty()) {
         set_bool("sync_system_preset", true);
     }
@@ -453,6 +457,9 @@ void AppConfig::set_defaults()
 
     if (get("enable_step_mesh_setting").empty()) {
         set_bool("enable_step_mesh_setting", true);
+    }
+    if (get("show_memory_usage_warning").empty()) {
+        set_bool("show_memory_usage_warning", true);
     }
     if (get("linear_defletion", "angle_defletion").empty()) {
         set("linear_defletion", "0.003");

@@ -540,16 +540,6 @@ bool FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch_detail(const P
     return false;
 }
 
-std::string FilamentHotBedNozzleRules::evaluate_nozzle_filament_mismatch(const PrintConfig& cfg,
-                                                                          const std::vector<unsigned int>& used_filament_indices,
-                                                                          const PresetBundle* preset_bundle) const
-{
-    NozzleFilamentRuleMismatch d;
-    if (!evaluate_nozzle_filament_mismatch_detail(cfg, used_filament_indices, preset_bundle, d) || !d.has_mismatch)
-        return "";
-    return d.filament_preset_name.empty() ? "nozzle filament preset warning" : d.filament_preset_name;
-}
-
 bool FilamentHotBedNozzleRules::evaluate_graphic_effect_bed_filament_mismatch(const PrintConfig& cfg, const std::vector<unsigned int>& used_filament_indices) const
 {
     std::scoped_lock<std::recursive_mutex> lock(m_mutex);

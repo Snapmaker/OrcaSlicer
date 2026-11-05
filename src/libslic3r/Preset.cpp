@@ -383,37 +383,39 @@ std::string Preset::remove_suffix_modified(const std::string &name)
 // Update new extruder fields at the printer profile.
 void Preset::normalize(DynamicPrintConfig &config)
 {
-    size_t n = 1;
     if (config.option("single_extruder_multi_material") == nullptr || config.opt_bool("single_extruder_multi_material")) {
         // BBS
         auto* filament_diameter = dynamic_cast<const ConfigOptionFloats*>(config.option("filament_diameter"));
         if (filament_diameter != nullptr) {
-            n = filament_diameter->values.size();
+            const size_t num_filaments = filament_diameter->values.size();
             // Loaded the FFF Printer settings. Verify, that all extruder dependent values have enough values.
-            config.set_num_filaments((unsigned int) n);
+            config.set_num_filaments((unsigned int) num_filaments);
         }
     } else {
         auto* nozzle_diameter = dynamic_cast<const ConfigOptionFloats*>(config.option("nozzle_diameter"));
         if (nozzle_diameter != nullptr) {
-            n = nozzle_diameter->values.size();
+            const size_t num_extruders = nozzle_diameter->values.size();
             // Loaded the FFF Printer settings. Verify, that all extruder dependent values have enough values.
-            config.set_num_extruders((unsigned int) n);
+            config.set_num_extruders((unsigned int) num_extruders);
         }
     }
 
     const auto &defaults = FullPrintConfig::defaults();
 
-    if (config.option("filament_diameter") != nullptr) {
+    if (const auto *filament_diameter = config.option<ConfigOptionFloats>("filament_diameter")) {
         // This config contains single or multiple filament presets.
+        // Tool count and filament count may differ. Keep filament vectors and flow
+        // segments sized by the filaments, independently of the printer's nozzles.
+        const size_t num_filaments = filament_diameter->values.size();
         // Ensure that the filament preset vector options contain the correct number of values.
         const auto *filament_flow_support = config.option<ConfigOptionStrings>("filament_flow_support");
         const auto *filament_flow_step_sizes = config.option<ConfigOptionInts>("filament_flow_step_size");
-        size_t flow_variant_value_count = n;
-        if (n == 1 && filament_flow_support != nullptr && !filament_flow_support->values.empty()) {
+        size_t flow_variant_value_count = num_filaments;
+        if (num_filaments == 1 && filament_flow_support != nullptr && !filament_flow_support->values.empty()) {
             // A standalone filament preset is declaration-driven. Its default
             // step-size option is not composed-config segment metadata.
             flow_variant_value_count = filament_flow_support->values.size();
-        } else if (filament_flow_step_sizes != nullptr && filament_flow_step_sizes->values.size() == n) {
+        } else if (filament_flow_step_sizes != nullptr && filament_flow_step_sizes->values.size() == num_filaments) {
             flow_variant_value_count = 0;
             for (int step_size : filament_flow_step_sizes->values)
                 flow_variant_value_count += size_t(std::max(1, step_size));
@@ -431,15 +433,15 @@ void Preset::normalize(DynamicPrintConfig &config)
                 }
             }
             if (opt != nullptr && opt->is_vector()) {
-                const size_t expected_size = is_filament_flow_variant_option(key) ? flow_variant_value_count : n;
+                const size_t expected_size = is_filament_flow_variant_option(key) ? flow_variant_value_count : num_filaments;
                 if (static_cast<ConfigOptionVectorBase*>(opt)->size() < expected_size)
                     static_cast<ConfigOptionVectorBase*>(opt)->resize(expected_size, defaults.option(key));
             }
         }
         for (const std::string key : {"filament_settings_id"}) {
             auto *opt = config.option(key, false);
-            if (opt != nullptr && opt->type() == coStrings && static_cast<ConfigOptionStrings*>(opt)->values.size() < n)
-                static_cast<ConfigOptionStrings*>(opt)->values.resize(n, std::string());
+            if (opt != nullptr && opt->type() == coStrings && static_cast<ConfigOptionStrings*>(opt)->values.size() < num_filaments)
+                static_cast<ConfigOptionStrings*>(opt)->values.resize(num_filaments, std::string());
         }
     } else if (config.option("layer_height") != nullptr) {
         // Print config: ensure all expected options exist in the loaded profile.
@@ -954,7 +956,7 @@ static std::vector<std::string> s_Preset_print_options {
     "ooze_prevention", "standby_temperature_delta", "preheat_time","delta_temperature","preheat_steps", "toolchange_prime_enable", "toolchange_prime_length_min", "toolchange_prime_length_max", "toolchange_prime_idle_time", "toolchange_prime_skip_time", "toolchange_prime_on_printer", "interface_shells", "line_width", "initial_layer_line_width", "inner_wall_line_width",
     "outer_wall_line_width", "sparse_infill_line_width", "internal_solid_infill_line_width",
     "skin_infill_line_width","skeleton_infill_line_width",
-    "top_surface_line_width", "support_line_width", "infill_wall_overlap","top_bottom_infill_wall_overlap", "bridge_flow", "internal_bridge_flow",
+    "top_surface_line_width", "support_line_width", "infill_wall_overlap","top_bottom_infill_wall_overlap", "external_infill_margin", "bridge_flow", "internal_bridge_flow",
     "elefant_foot_compensation", "elefant_foot_compensation_layers", "xy_contour_compensation", "xy_hole_compensation", "resolution", "enable_prime_tower",
     "prime_tower_width", "prime_tower_brim_width", "prime_volume", "prime_tower_brim_chamfer", "prime_tower_brim_chamfer_max_width", "enable_tower_interface_features", "enable_tower_interface_cooldown_during_tower",
     "wipe_tower_no_sparse_layers", "compatible_printers", "compatible_printers_condition", "inherits",
@@ -963,12 +965,12 @@ static std::vector<std::string> s_Preset_print_options {
      "tree_support_branch_diameter", "tree_support_branch_diameter_angle",
      "detect_narrow_internal_solid_infill",
      "gcode_add_line_number", "enable_arc_fitting", "precise_z_height", "infill_combination","infill_combination_max_layer_height", /*"adaptive_layer_height",*/
-     "support_bottom_interface_spacing", "enable_overhang_speed", "slowdown_for_curled_perimeters", "overhang_1_4_speed", "overhang_2_4_speed", "overhang_3_4_speed", "overhang_4_4_speed",
+     "support_bottom_interface_spacing", "enable_overhang_speed", "slowdown_for_curled_perimeters", "overhang_1_4_speed", "overhang_2_4_speed", "overhang_3_4_speed", "overhang_4_4_speed", "overhang_totally_speed",
      "initial_layer_infill_speed", "only_one_wall_top", 
      "timelapse_type",
      "wall_generator", "wall_transition_length", "wall_transition_filter_deviation", "wall_transition_angle",
      "wall_distribution_count", "min_feature_size", "min_bead_width", "post_process", "min_length_factor",
-     "small_perimeter_speed", "small_perimeter_threshold","bridge_angle","internal_bridge_angle", "filter_out_gap_fill", "travel_acceleration","first_layer_travel_acceleration","inner_wall_acceleration", "min_width_top_surface",
+     "small_perimeter_speed", "small_perimeter_threshold","bridge_angle","internal_bridge_angle", "filter_out_gap_fill", "travel_acceleration","first_layer_travel_acceleration", "travel_short_distance_acceleration","inner_wall_acceleration", "min_width_top_surface",
      "default_jerk", "outer_wall_jerk", "inner_wall_jerk", "infill_jerk", "top_surface_jerk", "initial_layer_jerk","travel_jerk","first_layer_travel_jerk","default_junction_deviation",
      "top_solid_infill_flow_ratio","bottom_solid_infill_flow_ratio","only_one_wall_first_layer", "print_flow_ratio", "seam_gap",
      "role_based_wipe_speed", "wipe_speed", "accel_to_decel_enable", "accel_to_decel_factor", "wipe_on_loops", "wipe_before_external_loop",
@@ -1006,8 +1008,8 @@ static std::vector<std::string> s_Preset_filament_options {
     // "bed_type",
     //BBS:temperature_vitrification
     "temperature_vitrification", "filament_is_high_temperature", "reduce_fan_stop_start_freq", "dont_slow_down_outer_wall",
-    "slow_down_for_layer_cooling", "fan_min_speed",
-    "fan_max_speed", "enable_overhang_bridge_fan", "overhang_fan_speed", "overhang_fan_threshold", "close_fan_the_first_x_layers", "full_fan_speed_layer", "fan_cooling_layer_time", "slow_down_layer_time", "slow_down_min_speed",
+    "slow_down_for_layer_cooling", "cooling_slowdown_logic", "cooling_perimeter_transition_distance", "fan_min_speed",
+    "fan_max_speed", "enable_overhang_bridge_fan", "overhang_fan_speed", "overhang_fan_threshold", "overhang_threshold_participating_cooling", "close_fan_the_first_x_layers", "full_fan_speed_layer", "fan_cooling_layer_time", "slow_down_layer_time", "slow_down_min_speed",
     "filament_start_gcode", "filament_end_gcode",
     //exhaust fan control
     "activate_air_filtration","during_print_exhaust_fan_speed","complete_print_exhaust_fan_speed",

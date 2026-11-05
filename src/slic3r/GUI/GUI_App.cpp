@@ -3,6 +3,7 @@
 #include "libslic3r/FilamentHotBedNozzleRules.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Init.hpp"
+#include "WidgetInspector.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Factories.hpp"
 #include "slic3r/GUI/UserManager.hpp"
@@ -135,7 +136,7 @@
 #include "PrivacyUpdateDialog.hpp"
 #include "ModelMall.hpp"
 #include "HintNotification.hpp"
-#include "bury_cfg/bury_point.hpp"
+#include "app_common/bury_point.hpp"
 //#ifdef WIN32
 //#include "BaseException.h"
 //#endif
@@ -166,7 +167,7 @@ typedef BOOL (WINAPI *LPFN_ISWOW64PROCESS2)(
 #endif
 
 #ifdef WIN32
-#include "dev-utils/BaseException.h"
+#include "app_common/BaseException.h"
 #endif
 
 #if ENABLE_THUMBNAIL_GENERATOR_DEBUG
@@ -981,6 +982,7 @@ static void generic_exception_handle()
 }
 
 std::atomic<bool> GUI_App::m_app_alive{true};
+std::atomic<int>  GUI_App::m_version_check_cbs_inflight{0};
 
 void GUI_App::toggle_show_gcode_window()
 {
@@ -1259,6 +1261,7 @@ void GUI_App::post_init()
 
 wxDEFINE_EVENT(EVT_ENTER_FORCE_UPGRADE, wxCommandEvent);
 wxDEFINE_EVENT(EVT_SHOW_NO_NEW_VERSION, wxCommandEvent);
+wxDEFINE_EVENT(EVT_CHECK_NEW_VERSION_SF, wxCommandEvent);
 wxDEFINE_EVENT(EVT_SHOW_DIALOG, wxCommandEvent);
 wxDEFINE_EVENT(EVT_CONNECT_LAN_MODE_PRINT, wxCommandEvent);
 IMPLEMENT_APP(GUI_App)
@@ -1323,13 +1326,13 @@ void GUI_App::shutdown(bool isRecreate)
 
     if (web_device_dialog != nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": web device dialog");
-        delete web_device_dialog;
+        web_device_dialog->Destroy();
         web_device_dialog = nullptr;
     }
 
     if (web_preprint_dialog != nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": web preprint dialog");
-        delete web_preprint_dialog;
+        web_preprint_dialog->Destroy();
         web_preprint_dialog = nullptr;
     }
 
@@ -2063,6 +2066,14 @@ void GUI_App::init_networking_callbacks()
 GUI_App::~GUI_App()
 {
     GUI_App::m_app_alive.store(false);
+    // Close the check-then-act window of the m_app_alive guards in the
+    // version-check Http callbacks: drain every callback that already passed
+    // its guard before any member is destroyed. Bounded wait — the guarded
+    // sections only queue an event or copy strings, so 2s is ample.
+    for (int i = 0; i < 2000 && GUI_App::m_version_check_cbs_inflight.load() > 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (GUI_App::m_version_check_cbs_inflight.load() > 0)
+        BOOST_LOG_TRIVIAL(warning) << "~GUI_App: version-check callbacks still in flight, proceeding with teardown";
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter");
     if (app_config != nullptr) {
@@ -2400,6 +2411,8 @@ bool GUI_App::OnInit()
 
 int GUI_App::OnExit()
 {
+    WidgetInspector::disable();
+
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().shutdown();
 
     stop_gateway_service();
@@ -2506,6 +2519,19 @@ bool GUI_App::on_init_inner()
     CBaseException::set_log_folder(data_dir());
 #endif
 
+#ifdef __WINDOWS__
+    m_session_end_reset_timer.SetOwner(this);
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) { reset_session_end(); }, m_session_end_reset_timer.GetId());
+
+    // wxApp::OnEndSession deletes all top-level windows under open modal dialogs and corrupts the heap (Sentry SNAPMAKER_ORCA-1H6).
+    wxGetApp().Bind(wxEVT_QUERY_END_SESSION, [this](wxCloseEvent&) {
+        m_in_session_end = true;
+        GUI::abort_all_modal_dialogs();
+        m_session_end_reset_timer.StartOnce(60000);
+    });
+
+    wxGetApp().Bind(wxEVT_END_SESSION, [this](wxCloseEvent&) { ::ExitProcess(0); });
+#else
     wxGetApp().Bind(wxEVT_QUERY_END_SESSION, [this](auto & e) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< "received wxEVT_QUERY_END_SESSION";
         if (mainframe) {
@@ -2520,6 +2546,7 @@ bool GUI_App::on_init_inner()
         for (auto d : dialogStack)
             d->EndModal(wxID_ABORT);
     });
+#endif
 
     // Verify resources path
     const wxString resources_dir = from_u8(Slic3r::resources_dir());
@@ -2717,6 +2744,17 @@ bool GUI_App::on_init_inner()
         preset_updater = new PresetUpdater();
         // filament_hot_bed_nozzles.json is copied here; FilamentHotBedNozzleRules reloads in load_current_presets() (startup, recreate_GUI, preset UI sync).
         Bind(EVT_SLIC3R_VERSION_ONLINE, [this](const wxCommandEvent& evt) {
+            if (m_is_closing)
+                return;
+            if (m_recreate_in_progress) {
+                // Defer the update prompt until recreate_GUI() finishes; creating
+                // a dialog against the old frame would lose it with that frame.
+                m_pending_version_event = true;
+                m_pending_version_by_user = evt.GetInt();
+                m_pending_version_url = evt.GetString();
+                return;
+            }
+            m_updateDialogByUser = evt.GetInt();
             if (this->plater_ != nullptr) {
 
                 std::string skip_version_str = this->app_config->get("app", "skip_version");
@@ -2732,14 +2770,21 @@ bool GUI_App::on_init_inner()
                 }
                 if (!skip_this_version || evt.GetInt() != 0) {
                     wxString            extmsg = wxString::FromUTF8(version_info.description);
-                    if(!m_updateDialog)
-                        return;
+                    // The dialog is cached by wx; on macOS re-showing it after Hide()
+                    // leaves a blank zombie window, so always build a fresh one.
+                    destroy_update_dialog();
+                    create_update_dialog();
                     m_updateDialog->update_version_info(extmsg, version_info.version_str);
                     if (evt.GetInt() != 0) {
                         m_updateDialog->m_button_skip_version->Hide();
                     }
-                    m_updateDialog->Raise();
                     m_updateDialog->Show();
+#ifndef __WXOSX__
+                    // On macOS Show() already attaches the dialog as a child window
+                    // of the fullscreen parent; Raise() would make it key outside the
+                    // fullscreen space and pull the app out of fullscreen.
+                    m_updateDialog->Raise();
+#endif
                     m_updateDialog->setUrl(version_info.url);
 
                 }
@@ -2747,6 +2792,16 @@ bool GUI_App::on_init_inner()
             });
 
         Bind(EVT_ENTER_FORCE_UPGRADE, [this](const wxCommandEvent& evt) {
+                if (m_is_closing)
+                    return;
+                // The upgrade payload is written to AppConfig here on the main thread;
+                // the HTTP callbacks only queue this event because AppConfig is
+                // main-thread-only data (concurrent set/save races the map walk).
+                wxGetApp().app_config->set_bool("force_upgrade", version_info.force_upgrade);
+                wxGetApp().app_config->set("upgrade", "force_upgrade", true);
+                wxGetApp().app_config->set("upgrade", "description", version_info.description);
+                wxGetApp().app_config->set("upgrade", "version", version_info.version_str);
+                wxGetApp().app_config->set("upgrade", "url", version_info.url);
                 wxString      version_str = wxString::FromUTF8(this->app_config->get("upgrade", "version"));
                 wxString      description_text = wxString::FromUTF8(this->app_config->get("upgrade", "description"));
                 std::string   download_url = this->app_config->get("upgrade", "url");
@@ -2780,6 +2835,15 @@ bool GUI_App::on_init_inner()
             wxString msg = _L("This is the newest version.");
             InfoDialog dlg(nullptr, _L("Info"), msg);
             dlg.ShowModal();
+        });
+
+        // Static version.json fallback, deferred from the config/get HTTP callback:
+        // check_new_version_sf reads AppConfig on entry, which must stay on the main thread.
+        Bind(EVT_CHECK_NEW_VERSION_SF, [this](const wxCommandEvent& evt) {
+            if (m_is_closing)
+                return;
+            const int flags = evt.GetInt();
+            this->check_new_version_sf((flags & 0x1) != 0, (flags & 0x2) != 0);
         });
 
         Bind(EVT_SHOW_DIALOG, [this](const wxCommandEvent& evt) {
@@ -2877,15 +2941,6 @@ bool GUI_App::on_init_inner()
 
     BOOST_LOG_TRIVIAL(info) << "create the main window";
     mainframe = new MainFrame();
-    if (!m_updateDialog)
-    {
-        m_updateDialog = new UpdateVersionDialog(mainframe);
-        m_updateDialog->Hide();
-        m_updateDialog->Bind(EVT_DOWN_URL_PACK, [this](wxCommandEvent& event) {
-            auto downloadUlr = m_updateDialog->getUrl();
-            wxLaunchDefaultBrowser(downloadUlr);
-        });
-    }
     profiler.mark("mainframe construction");
 
     // hide settings tabs after first Layout
@@ -2981,6 +3036,12 @@ bool GUI_App::on_init_inner()
 #endif
             this->post_init();
 
+#ifdef __APPLE__
+            for (const auto& url : m_pending_mac_open_urls)
+                start_download(into_u8(url));
+            m_pending_mac_open_urls.clear();
+#endif // __APPLE__
+
             update_publish_status();
         }
 
@@ -2988,6 +3049,8 @@ bool GUI_App::on_init_inner()
             app_config->save();
 
     });
+
+    WidgetInspector::enable();
 
     m_initialized = true;
 
@@ -3749,10 +3812,48 @@ void GUI_App::schedule_recreate_gui_when_no_modal(const wxString &msg_name)
     });
 }
 
+void GUI_App::reset_session_end()
+{
+    m_session_end_reset_timer.Stop();
+    m_in_session_end = false;
+}
+
+void GUI_App::create_update_dialog()
+{
+    m_updateDialog = new UpdateVersionDialog(mainframe);
+    m_updateDialogParent = mainframe;
+    m_updateDialog->Hide();
+}
+
+void GUI_App::destroy_update_dialog()
+{
+    if (m_updateDialog) {
+        m_updateDialog->Destroy();
+        m_updateDialog = nullptr;
+    }
+    m_updateDialogParent = nullptr;
+    if (m_recreate_in_progress) {
+        // The user closed the prompt while the GUI was rebuilding; do not
+        // re-post the deferred event and resurrect a dialog they dismissed.
+        m_pending_version_event = false;
+    }
+}
+
 void GUI_App::recreate_GUI(const wxString &msg_name)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "recreate_GUI enter";
     m_is_recreating_gui = true;
+    m_recreate_in_progress = true;
+
+    if (m_updateDialog && m_updateDialog->IsShown()) {
+        // The open dialog is a child of the old mainframe and will be destroyed
+        // with it; remember to show a fresh one after the rebuild.
+        m_pending_version_event = true;
+        m_pending_version_by_user = m_updateDialogByUser;
+        // Read the URL cached by the dialog on the main thread; version_info is
+        // also written by Http worker threads, so reading it here would race.
+        m_pending_version_url = wxString::FromUTF8(m_updateDialog->getUrl());
+    }
 
     update_http_extra_header();
 
@@ -3773,14 +3874,6 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
     switch_window_pools();
     mainframe = new MainFrame();
 
-    if (!m_updateDialog) {
-        m_updateDialog = new UpdateVersionDialog(mainframe);
-        m_updateDialog->Hide();
-        m_updateDialog->Bind(EVT_DOWN_URL_PACK, [this](wxCommandEvent& event) {
-            auto downloadUlr = m_updateDialog->getUrl();
-            wxLaunchDefaultBrowser(downloadUlr);
-        });
-    }
     if (is_editor())
         // hide settings tabs after first Layout
         mainframe->select_tab(size_t(MainFrame::tp3DEditor));
@@ -3790,6 +3883,14 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     dlg.Update(30, _L("Rebuild") + dots);
     old_main_frame->Destroy();
+    // Defensive: the version event is deferred for the whole rebuild, so in
+    // practice the dialog should not be created against the new frame mid-rebuild.
+    // If it was created against the old frame, it was destroyed with it; drop the
+    // stale pointer. A dialog created against the new frame stays valid/closable.
+    if (m_updateDialogParent == static_cast<wxWindow*>(old_main_frame)) {
+        m_updateDialog = nullptr;
+        m_updateDialogParent = nullptr;
+    }
 
     dlg.Update(80, _L("Loading current presets") + dots);
     m_printhost_job_queue.reset(new PrintHostJobQueue(mainframe->printhost_queue_dlg()));
@@ -3832,6 +3933,15 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
             auto url = wxString::Format("%s/web/orca/missing_connection.html", from_u8(base_url));
             mainframe->load_printer_url(url);
         }
+    }
+
+    m_recreate_in_progress = false;
+    if (m_pending_version_event) {
+        m_pending_version_event = false;
+        wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
+        evt->SetInt(m_pending_version_by_user);
+        evt->SetString(m_pending_version_url);
+        QueueEvent(evt);
     }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "recreate_GUI exit";
@@ -4869,6 +4979,16 @@ void GUI_App::check_preset_version()
     if (preset_updater != nullptr)
         preset_updater->sync_config_async();
 }
+namespace {
+// Counts a version-check Http callback as in-flight for its whole body, so that
+// ~GUI_App can drain callbacks that already passed the m_app_alive guard
+// before destroying members (the flag alone is check-then-act).
+struct VersionCheckCbScope {
+    VersionCheckCbScope()  { GUI_App::m_version_check_cbs_inflight.fetch_add(1); }
+    ~VersionCheckCbScope() { GUI_App::m_version_check_cbs_inflight.fetch_sub(1); }
+};
+} // namespace
+
 void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
 {
     std::string update_url = app_config->get_version_upgrade_url();
@@ -4876,7 +4996,10 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
     AppConfig* app_config = wxGetApp().app_config;
 
     Http::get(update_url)
-        .on_error([&, by_user](std::string body, std::string error, unsigned http_status) {
+        .on_error([by_user](std::string body, std::string error, unsigned http_status) {
+          VersionCheckCbScope inflight_cb;
+          if (!GUI_App::m_app_alive.load())
+              return;
           (void)body;
 
             wxCommandEvent* evt = new wxCommandEvent(EVT_REQUEST_SERVER_FAIL);
@@ -4891,6 +5014,9 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
         .timeout_connect(TIMEOUT_CONNECT)
         .on_complete([this,by_user](std::string body, unsigned http_status) {
         // Http response OK
+        VersionCheckCbScope inflight_cb;
+        if (!GUI_App::m_app_alive.load())
+            return;
         if (http_status != 200) {
             BOOST_LOG_TRIVIAL(error) << format("status not 200 with: `%1%`: HTTP %2%", "check_new_version_sf", http_status);
             return;
@@ -4988,11 +5114,9 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
 
             if (isForceUpgrade)
             {
-                wxGetApp().app_config->set_bool("force_upgrade", version_info.force_upgrade);
-                wxGetApp().app_config->set("upgrade", "force_upgrade", true);
-                wxGetApp().app_config->set("upgrade", "description", version_info.description);
-                wxGetApp().app_config->set("upgrade", "version", version_info.version_str);
-                wxGetApp().app_config->set("upgrade", "url", version_info.url);
+                // The "upgrade" section is persisted by the EVT_ENTER_FORCE_UPGRADE handler
+                // on the main thread; writing AppConfig from this HTTP callback would race
+                // concurrent main-thread set/save on the same map.
                 GUI::wxGetApp().enter_force_upgrade();
                 return;
             }
@@ -5008,6 +5132,16 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
           }
         })
         .perform();
+}
+
+// Queues the static version.json fallback for execution on the main thread.
+// The config/get HTTP callback must not call check_new_version_sf directly:
+// it reads AppConfig on entry, which is main-thread-only data.
+void GUI_App::defer_check_new_version_sf(bool show_tips, bool by_user)
+{
+    wxCommandEvent* evt = new wxCommandEvent(EVT_CHECK_NEW_VERSION_SF);
+    evt->SetInt((show_tips ? 0x1 : 0) | (by_user ? 0x2 : 0));
+    GUI::wxGetApp().QueueEvent(evt);
 }
 
 void GUI_App::request_version_from_config(bool show_tips, bool by_user)
@@ -5086,14 +5220,20 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
         // trigger the static fallback (CURLOPT_TIMEOUT defaults to unlimited).
         .timeout_max(30)
         .on_error([this, show_tips, by_user](std::string body, std::string error, unsigned http_status) {
+            VersionCheckCbScope inflight_cb;
+            if (!GUI_App::m_app_alive.load())
+                return;
             (void)body;
             BOOST_LOG_TRIVIAL(warning) << format("Error posting: `%1%`: HTTP %2%, %3%, fallback to static version.json", "config/get", http_status, error);
-            check_new_version_sf(show_tips, by_user);
+            this->defer_check_new_version_sf(show_tips, by_user);
         })
         .on_complete([this, show_tips, by_user, str_field, flag_field, obj_field, client_platform_type](std::string body, unsigned http_status) {
+            VersionCheckCbScope inflight_cb;
+            if (!GUI_App::m_app_alive.load())
+                return;
             if (http_status != 200) {
                 BOOST_LOG_TRIVIAL(warning) << format("status not 200 with: `%1%`: HTTP %2%, fallback to static version.json", "config/get", http_status);
-                check_new_version_sf(show_tips, by_user);
+                this->defer_check_new_version_sf(show_tips, by_user);
                 return;
             }
             // allow_exceptions = false: a malformed or non-UTF-8 body yields a discarded value
@@ -5102,7 +5242,7 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
             json jsonObj = json::parse(body, nullptr, false);
             if (jsonObj.is_discarded() || !jsonObj.is_object()) {
                 BOOST_LOG_TRIVIAL(warning) << "config/get body is not valid JSON/UTF-8, fallback to static version.json";
-                check_new_version_sf(show_tips, by_user);
+                this->defer_check_new_version_sf(show_tips, by_user);
                 return;
             }
 
@@ -5113,7 +5253,7 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
                 errCode = code_it->get<int>();
             if (errCode != 200 || !jsonObj.contains("data") || !jsonObj["data"].is_object()) {
                 BOOST_LOG_TRIVIAL(warning) << format("config/get rejected: code %1%, msg %2%, fallback to static version.json", errCode, str_field(jsonObj, "msg"));
-                check_new_version_sf(show_tips, by_user);
+                this->defer_check_new_version_sf(show_tips, by_user);
                 return;
             }
 
@@ -5123,7 +5263,7 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
             // misconfigured gray release may never be worse than static-only behavior.
             auto reject_payload = [this, show_tips, by_user](const char* reason) {
                 BOOST_LOG_TRIVIAL(warning) << format("config/get payload rejected: %1%, fallback to static version.json", reason);
-                check_new_version_sf(show_tips, by_user);
+                this->defer_check_new_version_sf(show_tips, by_user);
             };
 
             const json dataObj = jsonObj["data"];
@@ -5210,11 +5350,9 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
 
             if (isForceUpgrade)
             {
-                wxGetApp().app_config->set_bool("force_upgrade", version_info.force_upgrade);
-                wxGetApp().app_config->set("upgrade", "force_upgrade", true);
-                wxGetApp().app_config->set("upgrade", "description", version_info.description);
-                wxGetApp().app_config->set("upgrade", "version", version_info.version_str);
-                wxGetApp().app_config->set("upgrade", "url", version_info.url);
+                // The "upgrade" section is persisted by the EVT_ENTER_FORCE_UPGRADE handler
+                // on the main thread; writing AppConfig from this HTTP callback would race
+                // concurrent main-thread set/save on the same map.
                 GUI::wxGetApp().enter_force_upgrade();
                 return;
             }
@@ -5732,6 +5870,14 @@ void GUI_App::stop_gateway_service()
             worker.join();
     m_gateway_account_refresh_workers.clear();
 
+    // Bump the generation first so queued model station pushes skip the PUT
+    // (the join below then only waits for at most one in-flight request).
+    ++m_model_station_push_generation;
+    for (std::thread& worker : m_model_station_push_workers)
+        if (worker.joinable())
+            worker.join();
+    m_model_station_push_workers.clear();
+
     if (m_gateway_service)
         m_gateway_service->stop();
     m_gateway_service.reset();
@@ -5921,6 +6067,27 @@ void GUI_App::register_gateway_notifications()
         if (serial_number.empty() || m_gateway_device.serial_number == serial_number)
             clear_gateway_device();
     });
+    // The CLI broadcasts config changes to every connected client (all Orca
+    // instances and the Flutter pages they host). Mirror the switch into the
+    // in-memory config so this instance reads the fresh value without a
+    // restart; the instance that changed it has already saved the shared
+    // config file, so there is nothing to persist here.
+    m_gateway_service->set_notification_handler("notify.config.changed", [this](const nlohmann::json& params) {
+        const auto apply = [this](const nlohmann::json& scope) {
+            const auto flag = scope.find("enable_model_station");
+            if (flag == scope.end() || !flag->is_boolean())
+                return false;
+            app_config->set_bool("enable_model_station", flag->get<bool>());
+            return true;
+        };
+        if (apply(params))
+            return;
+        for (const char* container : {"data", "config"}) {
+            const auto nested = params.find(container);
+            if (nested != params.end() && nested->is_object() && apply(*nested))
+                return;
+        }
+    });
 
     m_gateway_service->set_state_callback([this](Gateway::ConnectionState state, const Gateway::GatewayError& error) {
         if (state == Gateway::ConnectionState::Disconnected) {
@@ -5936,6 +6103,7 @@ void GUI_App::register_gateway_notifications()
             return;
 
         refresh_gateway_account();
+        push_model_station_to_gateway();
 
         const std::string base_url         = m_gateway_service->base_url();
         BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway] [connected] base_url=" << base_url;
@@ -6079,7 +6247,7 @@ static const wxLanguageInfo* linux_get_existing_locale_language(const wxLanguage
         if (! it->empty()) {
             const std::string &locale = *it;
             const wxLanguageInfo* lang = wxLocale::FindLanguageInfo(from_u8(locale));
-            if (wxLocale::IsAvailable(lang->Language))
+            if (lang != nullptr && wxLocale::IsAvailable(lang->Language))
                 return lang;
         }
     return language;
@@ -6280,6 +6448,8 @@ bool GUI_App::load_language(wxString language, bool initial)
     }
 #endif
 
+    // On Linux a missing locale is tolerated by the check below instead of rewriting the requested language.
+#ifndef __linux__
     if (! wxLocale::IsAvailable(language_info->Language)&&initial) {
         language_info = wxLocale::GetLanguageInfo(wxLANGUAGE_ENGLISH_UK);
         app_config->set("language", language_info->CanonicalName.ToUTF8().data());
@@ -6317,27 +6487,35 @@ bool GUI_App::load_language(wxString language, bool initial)
         //        app_config->erase("app", "language");
         //}
     }
+#endif
 
     if (! wxLocale::IsAvailable(language_info->Language)) {
+#ifdef __linux__
+        // Dictionaries ship with the application, so a missing system locale must not
+        // abort startup: keep the current locale and load the bundled dictionary below.
+        // Do not return early: callers ignore the result and expect m_wxLocale set.
+        BOOST_LOG_TRIVIAL(warning) << boost::format("Locale %1% is not available on this system, "
+                                                    "keeping the current locale and loading the bundled dictionary.")
+                                    % language_info->CanonicalName.ToUTF8().data();
+#else
     	// Loading the language dictionary failed.
         wxString message = "Switching Snapmaker Orca to language " + language_info->CanonicalName + " failed.";
-#if !defined(_WIN32) && !defined(__APPLE__)
-        // likely some linux system
-        message += "\nYou may need to reconfigure the missing locales, likely by running the \"locale-gen\" and \"dpkg-reconfigure locales\" commands.\n";
-#endif
         if (initial)
-        	message + "\n\nApplication will close.";
+        	message += "\n\nApplication will close.";
         wxMessageBox(message, "Snapmaker Orca - Switching language failed", wxOK | wxICON_ERROR);
         if (initial)
 			std::exit(EXIT_FAILURE);
 		else
 			return false;
+#endif
     }
 
     // Release the old locales, create new locales.
     //FIXME wxWidgets cause havoc if the current locale is deleted. We just forget it causing memory leaks for now.
     m_wxLocale.release();
     m_wxLocale = Slic3r::make_unique<wxLocale>();
+    // Init may fail when the requested system locale is missing; keep the object anyway: the constructor
+    // installs the instance-owned wxTranslations, and Init() records the canonical name before setlocale.
     m_wxLocale->Init(language_info->Language);
     // Override language at the active wxTranslations class (which is stored in the active m_wxLocale)
     // to load possibly different dictionary, for example, load Czech dictionary for Slovak language.
@@ -6598,6 +6776,9 @@ std::vector<std::pair<unsigned int, std::string>> GUI_App::get_selected_presets(
 // - Taking snapshot
 bool GUI_App::check_and_save_current_preset_changes(const wxString& caption, const wxString& header, bool remember_choice/* = true*/, bool dont_save_insted_of_discard/* = false*/)
 {
+    if (m_in_session_end)
+        return true;
+
     if (has_current_preset_changes()) {
         int act_buttons = ActionButtons::SAVE;
         if (dont_save_insted_of_discard)
@@ -6730,6 +6911,9 @@ bool GUI_App::can_load_project()
 
 bool GUI_App::check_print_host_queue()
 {
+    if (m_in_session_end)
+        return true;
+
     wxString dirty;
     std::vector<std::pair<std::string, std::string>> jobs;
     // Get ongoing jobs from dialog
@@ -6918,7 +7102,10 @@ void GUI_App::MacOpenURL(const wxString& url)
     // which is always empty here: macOS launches the app first and delivers the URL afterwards.
     // Without this flag post_init resets the project that this download is about to load.
     m_url_open_pending = true;
-    start_download(into_u8(url));
+    if (!m_post_initialized)
+        m_pending_mac_open_urls.push_back(url);
+    else
+        start_download(into_u8(url));
 }
 
 // wxWidgets override to get an event on open files.
@@ -7538,6 +7725,54 @@ void GUI_App::user_update_privacy_notify(const bool& res)
         }
     }
 
+}
+
+// Push the model station switch to the connect CLI. The CLI serves the value
+// to the Flutter pages via GET /api/config and broadcasts notify.config.changed
+// on its websocket when it changes; both the pages and the other Orca
+// instances (handled in register_gateway_notifications) consume that broadcast.
+void GUI_App::model_station_notify(const bool& enabled)
+{
+    push_model_station_to_gateway_async(enabled);
+}
+
+// Re-sync the switch to the CLI after every (re)connect so a restarted CLI
+// never serves a stale value and pushes missed while disconnected self-heal.
+void GUI_App::push_model_station_to_gateway()
+{
+    push_model_station_to_gateway_async(app_config->get_bool("enable_model_station"));
+}
+
+// Gateway HTTP must stay off the wx event thread: a connected-but-unresponsive
+// CLI would otherwise block the UI for the full HTTP timeout (see
+// refresh_gateway_account for the same worker pattern). std::mutex alone does
+// not guarantee FIFO lock ownership, so every worker carries the generation of
+// its request and re-checks it under the lock before the PUT: only the newest
+// request ever delivers a value (a slow earlier request can never overwrite a
+// newer one, and rapid toggles coalesce into a single PUT). A failed newest
+// push self-heals on the next gateway reconnect, which re-pushes the current
+// value. Workers are joined in stop_gateway_service(); stop first bumps the
+// generation so queued-but-not-started workers skip and the join only waits
+// for at most one in-flight PUT.
+void GUI_App::push_model_station_to_gateway_async(bool enabled)
+{
+    const std::shared_ptr<Gateway::GatewayService> gateway = m_gateway_service;
+    if (!gateway) {
+        BOOST_LOG_TRIVIAL(warning) << "model station switch change not delivered: connection gateway is not running";
+        return;
+    }
+
+    const std::uint64_t generation = ++m_model_station_push_generation;
+    m_model_station_push_workers.emplace_back([this, gateway, enabled, generation]() {
+        std::lock_guard<std::mutex> lock(m_model_station_push_mutex);
+        if (generation != m_model_station_push_generation.load())
+            return; // superseded by a newer toggle/reconnect push
+        const auto result = gateway->set_app_config("enable_model_station", enabled);
+        if (result.error)
+            BOOST_LOG_TRIVIAL(warning) << "model station switch push failed: " << result.error.message;
+        else
+            BOOST_LOG_TRIVIAL(info) << "model station switch pushed to connection gateway: " << (enabled ? "true" : "false");
+    });
 }
 
 bool GUI_App::config_wizard_startup()

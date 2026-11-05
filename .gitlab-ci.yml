@@ -6,7 +6,7 @@
 #   FEISHU_WEBHOOK_URL      - optional: feishu group bot webhook (owner ping)
 # dev-guidelines source: internal repo snapmaker_orca/dev-guidelines (the public
 # GitHub copy is generic-only). Clone uses DG_CLONE_TOKEN instead of
-# CI_JOB_TOKEN: the job token carries the pipeline user's identity, which 403s
+# CI_JOB_TOKEN: the pipeline user's identity carries through the token, which 403s
 # for users who are not members of that repo.
 ai_review:
   tags: [ai-review]
@@ -19,15 +19,491 @@ ai_review:
     GIT_STRATEGY: none
     GITLAB_HOST: "gitlab.s.com"
     AI_REVIEW_LLM_BASE_URL: "https://api.deepseek.com"
-    AI_REVIEW_MODEL: "deepseek-v4-pro"
-    AI_REVIEW_LLM_EFFORT: "medium"
+    AI_REVIEW_MODEL: "deepseek-flash"
+    AI_REVIEW_LLM_EFFORT: "high"
     AI_REVIEW_PROJECT_STANDARDS: "projects/snapmaker-orca"
     DG_REF: "project/snapmaker-orca"
-    # per-user Python on the runner box; absolute path is the only form the
-    # service account can execute (py launcher cannot see per-user installs)
-    PYEXE: "C:/Users/snapmaker/AppData/Local/Programs/Python/Python311/python.exe"
+    # Per-user Python on the runner box; absolute path is the only form the
+    # runner process reliably executes (py launcher cannot see per-user installs).
+    PYEXE: "C:/Users/snapmaker/AppData/Local/Programs/Python/Python312/python.exe"
   script:
     - '& $env:PYEXE -m pip install --quiet pyyaml==6.0.3'
     - if (Test-Path dg) { Remove-Item -Recurse -Force dg }
     - git clone --depth 1 --branch $env:DG_REF "http://oauth2:$($env:DG_CLONE_TOKEN)@gitlab.s.com/snapmaker_orca/dev-guidelines.git" dg
     - '& $env:PYEXE dg/scripts/ai_review_gitlab.py'
+
+
+# Full non-GUI Release suite. Test failures gate this job; JUnit drives the
+# GitLab Tests tab and the HTML artifact is for human review.
+weekly_linux_tests:
+  tags: [orca-linux-test]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $ORCA_WEEKLY_TESTS == "true"'
+    - if: '$CI_PIPELINE_SOURCE == "web" && $ORCA_RUN_LINUX_TESTS == "true"'
+  resource_group: orca-linux-tests
+  interruptible: false
+  timeout: 6h
+  variables:
+    GIT_DEPTH: "1"
+    GIT_LFS_SKIP_SMUDGE: "1"
+    ORCA_BUILD_JOBS: "4"
+    DEPS_CACHE_ROOT: "/data/orca-cache/orcaslicer/deps"
+    CCACHE_DIR: "/data/orca-cache/orcaslicer/ccache/weekly-linux-tests"
+
+  before_script:
+    - |
+      set -euo pipefail
+      echo "runner=$(uname -a)"
+      echo "user=$(id)"
+      echo "cmake=$(cmake --version | head -n 1)"
+      echo "ninja=$(ninja --version)"
+      mkdir -p "$DEPS_CACHE_ROOT" "$CCACHE_DIR"
+
+  script:
+    - |
+      set -euo pipefail
+
+      # Share the GCC dependency bundle with the sanitizer smoke job.
+      DEPS_KEY="$(
+        {
+          sha256sum build_linux.sh deps/CMakeLists.txt
+          find deps -maxdepth 2 -type f \( -name '*.cmake' -o -name '*.patch' \) -print \
+            | LC_ALL=C sort | xargs -r sha256sum
+        } | sha256sum | awk '{print $1}'
+      )"
+      export ORCA_DEPS_TAR="${DEPS_CACHE_ROOT}/${DEPS_KEY}/deps-destdir.tar.zst"
+
+      if [ ! -f "$ORCA_DEPS_TAR" ]; then
+        echo "Building dependencies: $ORCA_DEPS_TAR"
+        rm -rf deps/build
+        ./build_linux.sh -dr
+        mkdir -p "$(dirname "$ORCA_DEPS_TAR")"
+        TMP_TAR="${ORCA_DEPS_TAR}.tmp.$$"
+        trap 'rm -f "$TMP_TAR"' EXIT
+        tar --zstd -cf "$TMP_TAR" -C deps/build destdir
+        mv "$TMP_TAR" "$ORCA_DEPS_TAR"
+        trap - EXIT
+      else
+        echo "Dependency cache hit: $ORCA_DEPS_TAR"
+        rm -rf deps/build
+        mkdir -p deps/build
+        tar --zstd -xf "$ORCA_DEPS_TAR" -C deps/build
+      fi
+
+      ccache -M 50G
+      ccache -z
+
+      cmake -S . -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_PREFIX_PATH="$CI_PROJECT_DIR/deps/build/destdir/usr/local" \
+        -DSLIC3R_STATIC=ON \
+        -DOPENVDB_USE_STATIC_LIBS=ON \
+        -DSLIC3R_GUI=OFF \
+        -DBUILD_TESTS=ON \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      cmake --build build --target tests --parallel "$ORCA_BUILD_JOBS"
+
+      echo "[weekly-linux-tests] running the full non-GUI suite"
+      ctest -N --test-dir build
+      LD_LIBRARY_PATH="$CI_PROJECT_DIR/deps/build/destdir/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+        ctest --test-dir build --output-on-failure \
+          --output-junit "$CI_PROJECT_DIR/build/test-results.xml" \
+          --timeout 3600 -E '\[trace\]'
+
+  after_script:
+    - |
+      if [ -f build/test-results.xml ]; then
+        node scripts/junit-to-html.js build/test-results.xml \
+          -t "OrcaSlicer GitLab Linux Tests" \
+          -o build/test-report.html || true
+      fi
+
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - build/test-results.xml
+      - build/test-report.html
+    reports:
+      junit: build/test-results.xml
+
+# Full non-GUI coverage report. Preserve the report even when existing tests
+# fail, but retain the original CTest status as the job result.
+weekly_coverage:
+  tags: [orca-linux-test]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $ORCA_WEEKLY_TESTS == "true"'
+    - if: '$CI_PIPELINE_SOURCE == "web" && $ORCA_RUN_COVERAGE == "true"'
+  resource_group: orca-linux-tests
+  interruptible: false
+  timeout: 8h
+  variables:
+    GIT_DEPTH: "1"
+    GIT_LFS_SKIP_SMUDGE: "1"
+    ORCA_BUILD_JOBS: "4"
+    DEPS_CACHE_ROOT: "/data/orca-cache/orcaslicer/deps"
+    CCACHE_DIR: "/data/orca-cache/orcaslicer/ccache/weekly-coverage"
+
+  before_script:
+    - |
+      set -euo pipefail
+      echo "runner=$(uname -a)"
+      echo "user=$(id)"
+      echo "cmake=$(cmake --version | head -n 1)"
+      echo "lcov=$(lcov --version | head -n 1)"
+      echo "ninja=$(ninja --version)"
+      mkdir -p "$DEPS_CACHE_ROOT" "$CCACHE_DIR"
+
+  script:
+    - |
+      set -euo pipefail
+
+      DEPS_KEY="$(
+        {
+          sha256sum build_linux.sh deps/CMakeLists.txt
+          find deps -maxdepth 2 -type f \( -name '*.cmake' -o -name '*.patch' \) -print \
+            | LC_ALL=C sort | xargs -r sha256sum
+        } | sha256sum | awk '{print $1}'
+      )"
+      export ORCA_DEPS_TAR="${DEPS_CACHE_ROOT}/${DEPS_KEY}/deps-destdir.tar.zst"
+
+      if [ ! -f "$ORCA_DEPS_TAR" ]; then
+        echo "Building dependencies: $ORCA_DEPS_TAR"
+        rm -rf deps/build
+        ./build_linux.sh -dr
+        mkdir -p "$(dirname "$ORCA_DEPS_TAR")"
+        TMP_TAR="${ORCA_DEPS_TAR}.tmp.$$"
+        trap 'rm -f "$TMP_TAR"' EXIT
+        tar --zstd -cf "$TMP_TAR" -C deps/build destdir
+        mv "$TMP_TAR" "$ORCA_DEPS_TAR"
+        trap - EXIT
+      else
+        echo "Dependency cache hit: $ORCA_DEPS_TAR"
+        rm -rf deps/build
+        mkdir -p deps/build
+        tar --zstd -xf "$ORCA_DEPS_TAR" -C deps/build
+      fi
+
+      ccache -M 50G
+      ccache -z
+
+      cmake -S . -B build-coverage -G Ninja \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DCMAKE_PREFIX_PATH="$CI_PROJECT_DIR/deps/build/destdir/usr/local" \
+        -DSLIC3R_STATIC=ON \
+        -DOPENVDB_USE_STATIC_LIBS=ON \
+        -DSLIC3R_GUI=OFF \
+        -DBUILD_TESTS=ON \
+        -DENABLE_COVERAGE=ON \
+        -DCOVERAGE_IGNORE_TEST_FAILURES=ON \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      cmake --build build-coverage --target tests --parallel "$ORCA_BUILD_JOBS"
+
+      echo "[weekly-coverage] running the full non-GUI suite for JUnit reporting"
+      ctest -N --test-dir build-coverage
+      set +e
+      LD_LIBRARY_PATH="$CI_PROJECT_DIR/deps/build/destdir/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+        ctest --test-dir build-coverage --output-on-failure \
+          --output-junit "$CI_PROJECT_DIR/build-coverage/test-results.xml" \
+          --timeout 3600 -E '\[trace\]' \
+          2>&1 | tee build-coverage/ctest-runtime.log
+      TEST_STATUS="${PIPESTATUS[0]}"
+      set -e
+
+      echo "[weekly-coverage] generating lcov line/function/branch report"
+      set +e
+      LD_LIBRARY_PATH="$CI_PROJECT_DIR/deps/build/destdir/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+        cmake --build build-coverage --target coverage \
+        2>&1 | tee build-coverage/coverage-summary.txt
+      COVERAGE_STATUS="${PIPESTATUS[0]}"
+      set -e
+
+      if [ "$COVERAGE_STATUS" -ne 0 ]; then
+        echo "ERROR: coverage report generation failed"
+        exit "$COVERAGE_STATUS"
+      fi
+
+      if [ "$TEST_STATUS" -ne 0 ]; then
+        echo "ERROR: full test suite failed; coverage artifacts are still uploaded"
+      fi
+
+      exit "$TEST_STATUS"
+
+  after_script:
+    - |
+      if [ -f build-coverage/test-results.xml ]; then
+        node scripts/junit-to-html.js build-coverage/test-results.xml \
+          -t "OrcaSlicer GitLab Coverage Tests" \
+          -o build-coverage/test-report.html || true
+      fi
+
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - build-coverage/test-results.xml
+      - build-coverage/test-report.html
+      - build-coverage/coverage-summary.txt
+      - build-coverage/coverage/
+      - build-coverage/ctest-runtime.log
+    reports:
+      junit: build-coverage/test-results.xml
+# Full non-GUI ASan/UBSan suite. CTest failures gate the job; sanitizer output
+# is archived for review. UBSan remains recoverable and non-gating while the
+# diagnostic baseline is being cleaned up.
+
+weekly_full_sanitizer_tests:
+  tags: [orca-linux-test]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $ORCA_WEEKLY_TESTS == "true"'
+    - if: '$CI_PIPELINE_SOURCE == "web" && $ORCA_RUN_FULL_SANITIZER_TESTS == "true"'
+  resource_group: orca-linux-tests
+  interruptible: false
+  timeout: 8h
+  variables:
+    GIT_DEPTH: "1"
+    GIT_LFS_SKIP_SMUDGE: "1"
+    ORCA_BUILD_JOBS: "4"
+    DEPS_CACHE_ROOT: "/data/orca-cache/orcaslicer/deps"
+    TBB_CACHE_ROOT: "/data/orca-cache/orcaslicer/tbb-clang"
+    CCACHE_DIR: "/data/orca-cache/orcaslicer/ccache/weekly-full-sanitizer-tests"
+
+  before_script:
+    - |
+      set -euo pipefail
+      echo "runner=$(uname -a)"
+      echo "user=$(id)"
+      echo "clang=$(clang --version | head -n 1)"
+      echo "cmake=$(cmake --version | head -n 1)"
+      echo "ninja=$(ninja --version)"
+      mkdir -p "$DEPS_CACHE_ROOT" "$TBB_CACHE_ROOT" "$CCACHE_DIR"
+
+  script:
+    - |
+      set -euo pipefail
+
+      mkdir -p build-full-sanitizer
+      bash scripts/build_tbb_clang.sh | tee build-full-sanitizer/tbb-clang.log
+      TBB_INSTALL="$(sed -n 's/^TBB_PREFIX:://p' build-full-sanitizer/tbb-clang.log | tail -n 1)"
+      export TBB_INSTALL
+      export TBBROOT="$TBB_INSTALL"
+      export TBB_INSTALL_DIR="$TBB_INSTALL"
+      test -f "$TBB_INSTALL/lib/cmake/TBB/TBBConfig.cmake"
+
+      DEPS_KEY="$(
+        {
+          sha256sum build_linux.sh deps/CMakeLists.txt
+          find deps -maxdepth 2 -type f \( -name '*.cmake' -o -name '*.patch' \) -print \
+            | LC_ALL=C sort | xargs -r sha256sum
+        } | sha256sum | awk '{print $1}'
+      )"
+      export ORCA_DEPS_TAR="${DEPS_CACHE_ROOT}/${DEPS_KEY}/deps-destdir.tar.zst"
+
+      if [ ! -f "$ORCA_DEPS_TAR" ]; then
+        echo "Building dependencies: $ORCA_DEPS_TAR"
+        rm -rf deps/build
+        ./build_linux.sh -dr
+        mkdir -p "$(dirname "$ORCA_DEPS_TAR")"
+        TMP_TAR="${ORCA_DEPS_TAR}.tmp.$$"
+        trap 'rm -f "$TMP_TAR"' EXIT
+        tar --zstd -cf "$TMP_TAR" -C deps/build destdir
+        mv "$TMP_TAR" "$ORCA_DEPS_TAR"
+        trap - EXIT
+      else
+        echo "Dependency cache hit: $ORCA_DEPS_TAR"
+        rm -rf deps/build
+        mkdir -p deps/build
+        tar --zstd -xf "$ORCA_DEPS_TAR" -C deps/build
+      fi
+
+      rm -rf deps/build/destdir/usr/local/lib/cmake/TBB
+      ccache -M 50G
+      ccache -z
+
+      cmake -S . -B build-full-sanitizer -G Ninja \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_PREFIX_PATH="$CI_PROJECT_DIR/deps/build/destdir/usr/local" \
+        -DTBB_DIR="${TBB_INSTALL}/lib/cmake/TBB" \
+        -DSLIC3R_STATIC=ON \
+        -DOPENVDB_USE_STATIC_LIBS=ON \
+        -DSLIC3R_GUI=OFF \
+        -DBUILD_TESTS=ON \
+        -DENABLE_ASAN=ON \
+        -DENABLE_UBSAN=ON \
+        -DORCA_USE_OCCT_LINK_GROUP=ON
+
+      cmake --build build-full-sanitizer --target tests --parallel "$ORCA_BUILD_JOBS"
+
+      echo "[weekly-full-sanitizer-tests] running the full non-GUI suite"
+      ctest -N --test-dir build-full-sanitizer
+      set +e
+      ASAN_OPTIONS=detect_leaks=0 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=0 \
+      LD_LIBRARY_PATH="$CI_PROJECT_DIR/deps/build/destdir/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+        ctest --test-dir build-full-sanitizer --output-on-failure \
+          --output-junit "$CI_PROJECT_DIR/build-full-sanitizer/test-results.xml" \
+          --timeout 3600 -E '\[trace\]' \
+          2>&1 | tee build-full-sanitizer/sanitizer-runtime.log
+      TEST_STATUS="${PIPESTATUS[0]}"
+      set -e
+
+      if grep -qE 'ERROR: AddressSanitizer|SUMMARY: AddressSanitizer' build-full-sanitizer/sanitizer-runtime.log; then
+        echo "ERROR: AddressSanitizer diagnostics found"
+        TEST_STATUS=1
+      fi
+
+      if grep -qE 'runtime error:|SUMMARY: UndefinedBehaviorSanitizer' build-full-sanitizer/sanitizer-runtime.log; then
+        echo "WARNING: UBSan diagnostics found; see sanitizer-runtime.log artifact"
+      fi
+
+      exit "$TEST_STATUS"
+
+  after_script:
+    - |
+      if [ -f build-full-sanitizer/test-results.xml ]; then
+        node scripts/junit-to-html.js build-full-sanitizer/test-results.xml \
+          -t "OrcaSlicer GitLab Full Sanitizer Tests" \
+          -o build-full-sanitizer/test-report.html || true
+      fi
+
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - build-full-sanitizer/test-results.xml
+      - build-full-sanitizer/test-report.html
+      - build-full-sanitizer/sanitizer-runtime.log
+      - build-full-sanitizer/tbb-clang.log
+    reports:
+      junit: build-full-sanitizer/test-results.xml
+weekly_sanitizer_smoke:
+  tags: [orca-linux-test]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $ORCA_RUN_SANITIZER_SMOKE == "true"'
+  # A fresh dependency key can require a full dependency build; allow time to reseed the local cache.
+  timeout: 3h
+  variables:
+    GIT_DEPTH: "1"
+    GIT_LFS_SKIP_SMUDGE: "1"
+    ORCA_BUILD_JOBS: "4"
+    DEPS_CACHE_ROOT: "/data/orca-cache/orcaslicer/deps"
+    TBB_CACHE_ROOT: "/data/orca-cache/orcaslicer/tbb-clang"
+    CCACHE_DIR: "/data/orca-cache/orcaslicer/ccache/weekly-sanitizer-smoke"
+
+  before_script:
+    - |
+      set -euo pipefail
+      echo "runner=$(uname -a)"
+      echo "user=$(id)"
+      echo "clang=$(clang --version | head -n 1)"
+      echo "cmake=$(cmake --version | head -n 1)"
+      echo "ninja=$(ninja --version)"
+      mkdir -p "$DEPS_CACHE_ROOT" "$TBB_CACHE_ROOT" "$CCACHE_DIR"
+
+  script:
+    - |
+      set -euo pipefail
+
+      # Prepare Clang-built oneTBB (static, LTO off). Keep the build log, but
+      # TBB_PREFIX:: sentinel that identifies the install path.
+      bash scripts/build_tbb_clang.sh | tee build-tbb-clang.log
+      TBB_INSTALL="$(sed -n 's/^TBB_PREFIX:://p' build-tbb-clang.log | tail -n 1)"
+      export TBB_INSTALL
+      export TBBROOT="$TBB_INSTALL"
+      export TBB_INSTALL_DIR="$TBB_INSTALL"
+      test -f "$TBB_INSTALL/lib/cmake/TBB/TBBConfig.cmake"
+
+      # Reuse the GCC-built deps bundle used by weekly_small_tests.
+      DEPS_KEY="$(
+        {
+          sha256sum build_linux.sh deps/CMakeLists.txt
+          find deps -maxdepth 2 -type f \( -name '*.cmake' -o -name '*.patch' \) -print \
+            | LC_ALL=C sort | xargs -r sha256sum
+        } | sha256sum | awk '{print $1}'
+      )"
+      export ORCA_DEPS_TAR="${DEPS_CACHE_ROOT}/${DEPS_KEY}/deps-destdir.tar.zst"
+
+      if [ ! -f "$ORCA_DEPS_TAR" ]; then
+        echo "Building dependencies: $ORCA_DEPS_TAR"
+        rm -rf deps/build
+        ./build_linux.sh -dr
+        mkdir -p "$(dirname "$ORCA_DEPS_TAR")"
+        TMP_TAR="${ORCA_DEPS_TAR}.tmp.$$"
+        trap 'rm -f "$TMP_TAR"' EXIT
+        tar --zstd -cf "$TMP_TAR" -C deps/build destdir
+        mv "$TMP_TAR" "$ORCA_DEPS_TAR"
+      else
+        echo "Dependency cache hit: $ORCA_DEPS_TAR"
+        rm -rf deps/build
+        mkdir -p deps/build
+        tar --zstd -xf "$ORCA_DEPS_TAR" -C deps/build
+      fi
+
+      # The GCC deps tarball contains GCC-LTO TBB archives that Clang cannot
+      # link. Remove only the temporary copy's TBB package config so every
+      # find_package(TBB) resolves the Clang-built TBB passed via TBB_DIR.
+      rm -rf deps/build/destdir/usr/local/lib/cmake/TBB
+
+      ccache -M 50G
+      ccache -z
+
+      # Clang + RelWithDebInfo + ASan/UBSan, using the Clang-built oneTBB.
+      cmake -S . -B build-sanitizer -G Ninja \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_PREFIX_PATH="$CI_PROJECT_DIR/deps/build/destdir/usr/local" \
+        -DTBB_DIR="${TBB_INSTALL}/lib/cmake/TBB" \
+        -DSLIC3R_STATIC=ON \
+        -DSLIC3R_GUI=OFF \
+        -DBUILD_TESTS=ON \
+        -DENABLE_ASAN=ON \
+        -DENABLE_UBSAN=ON \
+        -DORCA_USE_OCCT_LINK_GROUP=ON
+
+      # LSan is disabled for the initial smoke because the application has
+      # known program-lifetime globals that produce false positives. Enable it
+      # after a curated suppression file is added. UBSan is recoverable and its
+      # diagnostics are preserved in sanitizer-runtime.log for review; smoke
+      # status is determined by the Catch2/JUnit test result.
+
+      cmake --build build-sanitizer \
+        --target libnest2d_tests fff_print_tests \
+        --parallel "$ORCA_BUILD_JOBS"
+
+      # libnest2d_tests is intentionally build-only: it checks sanitizer
+      # compilation and static linking while the selected fff_print cases run.
+      set +e
+      ASAN_OPTIONS=detect_leaks=0 \
+      UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=0 \
+        build-sanitizer/tests/fff_print/fff_print_tests \
+        "Scenario: init_print functionality,Scenario: Extrusion width specifics,Scenario: Model construction,Scenario: PrintObject: Perimeter generation" \
+        --reporter JUnit --out build-sanitizer/fff-print-sanitizer-smoke.xml \
+        2>&1 | tee build-sanitizer/sanitizer-runtime.log
+      TEST_STATUS="${PIPESTATUS[0]}"
+      set -e
+
+      if grep -qE 'runtime error:|ERROR: AddressSanitizer|SUMMARY: (UndefinedBehaviorSanitizer|AddressSanitizer)' build-sanitizer/sanitizer-runtime.log; then
+        echo "WARNING: sanitizer diagnostics found; see sanitizer-runtime.log artifact"
+      fi
+
+      exit "$TEST_STATUS"
+
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - build-sanitizer/fff-print-sanitizer-smoke.xml
+      - build-sanitizer/sanitizer-runtime.log
+    reports:
+      junit: build-sanitizer/fff-print-sanitizer-smoke.xml

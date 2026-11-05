@@ -258,3 +258,26 @@ TEST_CASE("New objects created through Model::add_object get filament 1", "[Fila
         REQUIRE(copy3->config.opt_int("extruder") == 3);
     }
 }
+
+TEST_CASE("Changing the object extruder re-triggers slicing", "[FilamentRoles]")
+{
+    // With feature filaments left at "Default" (0), the resolved region config follows
+    // the object extruder, so changing it must invalidate the print (re-slice).
+    Model model;
+    ModelVolume *volume = build_single_part_model(model, 1, 0);
+    volume->get_object()->add_instance();
+    volume->get_object()->ensure_on_bed();
+
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_key_value("filament_diameter", new ConfigOptionFloats{1.75, 1.75});
+
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+
+    // Change the object's filament 1 -> 2: this must invalidate steps so that
+    // re-slicing is triggered.
+    volume->get_object()->config.set("extruder", 2);
+    const bool invalidated = print.apply(model, config);
+    REQUIRE(invalidated);
+}

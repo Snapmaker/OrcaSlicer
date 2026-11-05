@@ -1,4 +1,5 @@
---- a/BGL/include/CGAL/boost/graph/iterator.h	2022-10-07 19:04:41 UTC
+diff --git a/BGL/include/CGAL/boost/graph/iterator.h b/BGL/include/CGAL/boost/graph/iterator.h
+--- a/BGL/include/CGAL/boost/graph/iterator.h
 +++ b/BGL/include/CGAL/boost/graph/iterator.h
 @@ -213,18 +213,7 @@ class Halfedge_around_source_iterator { (public)
    {}

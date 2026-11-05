@@ -249,12 +249,6 @@ void ensure_macos_uninstall_watcher()
                     "    <string>") +
         SnapmakerUninstall::kLabel +
         "</string>\n"
-        "    <key>AssociatedBundleIdentifiers</key>\n"
-        "    <array>\n"
-        "        <string>" +
-        std::string(SnapmakerUninstall::kBundleId) +
-        "</string>\n"
-        "    </array>\n"
         "    <key>ProgramArguments</key>\n"
         "    <array>\n"
         "        <string>" +

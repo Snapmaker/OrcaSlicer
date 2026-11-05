@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.snapmaker.snapmaker-orca.uninstaller-watcher</string>
+	<string>com.snapmaker.orca-monitor</string>
 	<key>CFBundleName</key>
 	<string>Snapmaker Orca Monitor</string>
 	<key>CFBundleDisplayName</key>

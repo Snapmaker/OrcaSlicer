@@ -9,7 +9,7 @@
 
 namespace SnapmakerUninstall {
 
-inline constexpr char kLabel[]        = "com.snapmaker.snapmaker-orca.uninstaller-watcher";
+inline constexpr char kLabel[]        = "com.snapmaker.orca-monitor";
 inline constexpr char kBundleId[]     = "com.snapmaker.snapmaker-orca";
 inline constexpr char kAppBundleName[] = "Snapmaker Orca.app";
 inline constexpr char kDataDirName[]  = "Snapmaker_Orca";

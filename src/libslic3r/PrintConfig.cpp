@@ -3552,12 +3552,12 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("sparse_infill_filament", coInt);
     def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
-    def->label = L("Infill");
+    def->label = L("Sparse infill");
     def->category = L("Extruders");
     def->tooltip = L("Filament to print internal sparse infill.");
-    def->min = 1;
+    def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(1));
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("sparse_infill_line_width", coFloatOrPercent);
     def->label = L("Sparse infill");
@@ -4392,9 +4392,9 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Walls");
     def->category = L("Extruders");
     def->tooltip = L("Filament to print walls.");
-    def->min = 1;
+    def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(1));
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("inner_wall_line_width", coFloatOrPercent);
     def->label = L("Inner wall");
@@ -5188,9 +5188,9 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Solid infill");
     def->category = L("Extruders");
     def->tooltip = L("Filament to print solid infill.");
-    def->min = 1;
+    def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(1));
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("internal_solid_infill_line_width", coFloatOrPercent);
     def->label = L("Internal solid infill");
@@ -7972,6 +7972,31 @@ double min_object_distance(const ConfigBase &cfg)
 
     return ret;
 }
+
+// Feature-filament keys that carry the legacy "1 = default" ambiguity; see the declaration
+// in PrintConfig.hpp. Invoked from the 3MF project-open flow only (version-gated), so an
+// explicit "1" written by the current semantics survives save/load round trips.
+static const std::vector<std::string> legacy_feature_filament_keys()
+{
+    static const std::vector<std::string> keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
+    return keys;
+}
+
+template<typename ConfigT>
+static bool migrate_legacy_feature_filament_default_impl(ConfigT &config)
+{
+    bool changed = false;
+    for (const std::string &key : legacy_feature_filament_keys()) {
+        if (config.has(key) && config.opt_int(key) == 1) {
+            config.set(key, 0);
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+bool migrate_legacy_feature_filament_default(DynamicPrintConfig &config) { return migrate_legacy_feature_filament_default_impl(config); }
+bool migrate_legacy_feature_filament_default(ModelConfig &config) { return migrate_legacy_feature_filament_default_impl(config); }
 
 void DynamicPrintConfig::normalize_fdm(int used_filaments)
 {

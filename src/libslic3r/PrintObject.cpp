@@ -3226,7 +3226,7 @@ void PrintObject::bridge_over_infill()
 // (physical + virtual/mixed) back to the default extruder.
 static void clamp_exturder_to_default(ConfigOptionInt &opt, size_t num_total_filaments)
 {
-    if (opt.value > (int)num_total_filaments)
+    if (opt.value < 1 || opt.value > (int)num_total_filaments)
         // assign the default extruder
         opt.value = 1;
 }
@@ -3250,24 +3250,15 @@ static constexpr const std::initializer_list<const std::string_view> keys_extrud
 
 static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPrintConfig &in)
 {
-    // 1) Copy the "extruder key to sparse_infill_filament and wall_filament.
-    auto *opt_extruder = in.opt<ConfigOptionInt>(key_extruder);
-    if (opt_extruder)
-        if (int extruder = opt_extruder->value; extruder != 0) {
-            // Not a default extruder.
-            out.sparse_infill_filament.value = extruder;
-            out.solid_infill_filament.value  = extruder;
-            out.wall_filament.value          = extruder;
-        }
-    // 2) Copy the rest of the values.
+    // Copy the rest of the values.
     for (auto it = in.cbegin(); it != in.cend(); ++ it)
         if (it->first != key_extruder)
             if (ConfigOption* my_opt = out.option(it->first, false); my_opt != nullptr) {
                 if (one_of(it->first, keys_extruders)) {
-                    // Ignore "default" extruders.
-                    int extruder = static_cast<const ConfigOptionInt*>(it->second.get())->value;
-                    if (extruder > 0)
-                        my_opt->setInt(extruder);
+                    // Ignore "default" filaments.
+                    int filament = static_cast<const ConfigOptionInt*>(it->second.get())->value;
+                    if (filament > 0)
+                        my_opt->setInt(filament);
                 } else
                     my_opt->set(it->second.get());
             }

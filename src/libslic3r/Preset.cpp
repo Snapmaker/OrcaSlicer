@@ -383,37 +383,39 @@ std::string Preset::remove_suffix_modified(const std::string &name)
 // Update new extruder fields at the printer profile.
 void Preset::normalize(DynamicPrintConfig &config)
 {
-    size_t n = 1;
     if (config.option("single_extruder_multi_material") == nullptr || config.opt_bool("single_extruder_multi_material")) {
         // BBS
         auto* filament_diameter = dynamic_cast<const ConfigOptionFloats*>(config.option("filament_diameter"));
         if (filament_diameter != nullptr) {
-            n = filament_diameter->values.size();
+            const size_t num_filaments = filament_diameter->values.size();
             // Loaded the FFF Printer settings. Verify, that all extruder dependent values have enough values.
-            config.set_num_filaments((unsigned int) n);
+            config.set_num_filaments((unsigned int) num_filaments);
         }
     } else {
         auto* nozzle_diameter = dynamic_cast<const ConfigOptionFloats*>(config.option("nozzle_diameter"));
         if (nozzle_diameter != nullptr) {
-            n = nozzle_diameter->values.size();
+            const size_t num_extruders = nozzle_diameter->values.size();
             // Loaded the FFF Printer settings. Verify, that all extruder dependent values have enough values.
-            config.set_num_extruders((unsigned int) n);
+            config.set_num_extruders((unsigned int) num_extruders);
         }
     }
 
     const auto &defaults = FullPrintConfig::defaults();
 
-    if (config.option("filament_diameter") != nullptr) {
+    if (const auto *filament_diameter = config.option<ConfigOptionFloats>("filament_diameter")) {
         // This config contains single or multiple filament presets.
+        // Tool count and filament count may differ. Keep filament vectors and flow
+        // segments sized by the filaments, independently of the printer's nozzles.
+        const size_t num_filaments = filament_diameter->values.size();
         // Ensure that the filament preset vector options contain the correct number of values.
         const auto *filament_flow_support = config.option<ConfigOptionStrings>("filament_flow_support");
         const auto *filament_flow_step_sizes = config.option<ConfigOptionInts>("filament_flow_step_size");
-        size_t flow_variant_value_count = n;
-        if (n == 1 && filament_flow_support != nullptr && !filament_flow_support->values.empty()) {
+        size_t flow_variant_value_count = num_filaments;
+        if (num_filaments == 1 && filament_flow_support != nullptr && !filament_flow_support->values.empty()) {
             // A standalone filament preset is declaration-driven. Its default
             // step-size option is not composed-config segment metadata.
             flow_variant_value_count = filament_flow_support->values.size();
-        } else if (filament_flow_step_sizes != nullptr && filament_flow_step_sizes->values.size() == n) {
+        } else if (filament_flow_step_sizes != nullptr && filament_flow_step_sizes->values.size() == num_filaments) {
             flow_variant_value_count = 0;
             for (int step_size : filament_flow_step_sizes->values)
                 flow_variant_value_count += size_t(std::max(1, step_size));
@@ -431,15 +433,15 @@ void Preset::normalize(DynamicPrintConfig &config)
                 }
             }
             if (opt != nullptr && opt->is_vector()) {
-                const size_t expected_size = is_filament_flow_variant_option(key) ? flow_variant_value_count : n;
+                const size_t expected_size = is_filament_flow_variant_option(key) ? flow_variant_value_count : num_filaments;
                 if (static_cast<ConfigOptionVectorBase*>(opt)->size() < expected_size)
                     static_cast<ConfigOptionVectorBase*>(opt)->resize(expected_size, defaults.option(key));
             }
         }
         for (const std::string key : {"filament_settings_id"}) {
             auto *opt = config.option(key, false);
-            if (opt != nullptr && opt->type() == coStrings && static_cast<ConfigOptionStrings*>(opt)->values.size() < n)
-                static_cast<ConfigOptionStrings*>(opt)->values.resize(n, std::string());
+            if (opt != nullptr && opt->type() == coStrings && static_cast<ConfigOptionStrings*>(opt)->values.size() < num_filaments)
+                static_cast<ConfigOptionStrings*>(opt)->values.resize(num_filaments, std::string());
         }
     } else if (config.option("layer_height") != nullptr) {
         // Print config: ensure all expected options exist in the loaded profile.

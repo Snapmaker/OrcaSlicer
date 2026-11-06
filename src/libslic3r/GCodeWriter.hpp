@@ -143,6 +143,7 @@ public:
     double          m_max_jerk_z;
     double          m_max_jerk_e;
     double          m_max_junction_deviation;
+    double          m_max_speed_z = 0.;
 
     unsigned int  m_travel_acceleration;
     unsigned int  m_travel_jerk;
@@ -179,6 +180,8 @@ public:
         Print
     };
 
+    double      z_travel_speed() const;
+    double      xyz_travel_speed(const Vec3d &from, const Vec3d &to, double speed) const;
     std::string _travel_to_z(double z, const std::string &comment);
     std::string _spiral_travel_to_z(double z, const Vec2d &ij_offset, const std::string &comment);
     std::string _retract(double length, double restart_extra, const std::string &comment);

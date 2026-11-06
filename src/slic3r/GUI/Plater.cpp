@@ -10408,7 +10408,7 @@ struct Plater::priv
 
     int get_selected_object_idx() const;
     int get_selected_volume_idx() const;
-    void selection_changed();
+    void selection_changed(bool renderCanvas = true);
     void object_list_changed();
 
     // BBS
@@ -13047,13 +13047,16 @@ int Plater::priv::get_selected_volume_idx() const
     return -1;
 }
 
-void Plater::priv::selection_changed()
+void Plater::priv::selection_changed(bool renderCanvas)
 {
     // if the selection is not valid to allow for layer editing, we need to turn off the tool if it is running
     if (!layers_height_allowed() && view3D->is_layers_editing_enabled()) {
         SimpleEvent evt(EVT_GLTOOLBAR_LAYERSEDITING);
         on_action_layersediting(evt);
     }
+
+    if (!renderCanvas)
+        return;
 
     // forces a frame render to update the view (to avoid a missed update if, for example, the context menu appears)
     GLCanvas3D* canvas = get_current_canvas3D();
@@ -16069,7 +16072,9 @@ void Plater::priv::on_action_split_volumes(SimpleEvent&)
 void Plater::priv::on_object_select(SimpleEvent& evt)
 {
     wxGetApp().obj_list()->update_selections();
-    selection_changed();
+    // View3D selection producers already schedule or present the required canvas update.
+    const bool renderCanvas = view3D == nullptr || evt.GetEventObject() != view3D->get_wxglcanvas();
+    selection_changed(renderCanvas);
 }
 
 //BBS: repair model through netfabb
@@ -23633,7 +23638,7 @@ const GLCanvas3D* Plater::canvas3D() const
 
 GLCanvas3D* Plater::get_view3D_canvas3D()
 {
-    return p->view3D->get_canvas3d();
+    return p->view3D != nullptr ? p->view3D->get_canvas3d() : nullptr;
 }
 
 GLCanvas3D* Plater::get_preview_canvas3D()

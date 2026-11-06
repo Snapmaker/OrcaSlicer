@@ -441,6 +441,9 @@ private:
             	// Non-owned references to LayerRegion::perimeters::entities
             	// std::vector<const ExtrusionEntity*> would be better here, but there is no way in C++ to convert from std::vector<T*> std::vector<const T*> without copying.
                 ExtrusionEntitiesPtr perimeters;
+                // One id per entity of perimeters. Entities with the same id come from one island level collection,
+                // so they hold one wall sequence and have to stay together in their order.
+                std::vector<unsigned int> perimeter_groups;
             	// Non-owned references to LayerRegion::fills::entities
                 ExtrusionEntitiesPtr infills;
 

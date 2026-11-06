@@ -485,12 +485,16 @@ set "WindowsSdkDir=%WindowsSdkDir:~0,-1%"
 set "WindowsSDKVersion=%WindowsSDKVersion:~0,-1%"
 :win10_sdk_check
 set "WIN10SDK_INCLUDE=%WindowsSdkDir%Include\%WindowsSDKVersion%"
-if not exist "%WIN10SDK_INCLUDE%winrt\windows.graphics.printing3d.h" (
-    echo   [ERROR] Missing "%WIN10SDK_INCLUDE%winrt\windows.graphics.printing3d.h"
+REM vcvars leaves a trailing backslash. Inside -DWIN10SDK_PATH="...", that
+REM backslash escapes the closing quote and CMake stores the quote in the path.
+set "WIN10SDK_MARK=!WIN10SDK_INCLUDE!."
+if "!WIN10SDK_MARK:~-2!"=="\." set "WIN10SDK_INCLUDE=!WIN10SDK_INCLUDE:~0,-1!"
+if not exist "%WIN10SDK_INCLUDE%\winrt\windows.graphics.printing3d.h" (
+    echo   [ERROR] Missing "%WIN10SDK_INCLUDE%\winrt\windows.graphics.printing3d.h"
     echo   [ERROR] Refusing to configure without HAS_WIN10SDK. Model repair would be dropped.
     exit /b 1
 )
-echo   WIN10SDK_PATH: %WIN10SDK_INCLUDE%
+echo   WIN10SDK_PATH: [%WIN10SDK_INCLUDE%]
 exit /b 0
 
 :set_clean_from_value

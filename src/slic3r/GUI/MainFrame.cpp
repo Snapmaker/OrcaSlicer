@@ -1049,6 +1049,11 @@ void MainFrame::shutdown(bool isRecreate)
     if (m_plater != nullptr) {
         m_plater->get_ui_job_worker().cancel_all();
 
+        // Release painter buffers while the view canvas can still make the shared context current.
+        GLCanvas3D* painterCanvas = m_plater->get_view3D_canvas3D();
+        if (painterCanvas != nullptr)
+            painterCanvas->ReleasePainterGlResources();
+
         // Unbinding of wxWidgets event handling in canvases needs to be done here because on MAC,
         // when closing the application using Command+Q, a mouse event is triggered after this lambda is completed,
         // causing a crash
@@ -3013,6 +3018,11 @@ void MainFrame::init_menubar_as_editor()
             else if (dlg.seq_top_layer_only_changed())
 #endif
                 plater()->refresh_print();
+            // GPU accel toggle: applied once after the dialog closes (mirrors
+            // GUI_App::open_preferences; this Apple-menu entry shows its own
+            // PreferencesDialog)
+            if (dlg.gcode_gpu_accel_changed())
+                plater()->reload_gcode_preview();
         },
         "", nullptr, []() { return true; }, this, 1);
     //parent_menu->Insert(1, preference_item);

@@ -8,6 +8,7 @@ These settings control how G-code is generated and formatted. They impact readab
 - [Label Objects](#label-objects)
 - [Exclude Objects](#exclude-objects)
 - [Filename Format](#filename-format)
+- [Snapmaker 2.0 thumbnails](#snapmaker-20-thumbnails)
 
 ## Reduce Infill Retraction
 
@@ -50,3 +51,16 @@ Can be used to generate filenames like `OrcaCube_PLA_1h15m.gcode`.
 
 > [!TIP]
 > Check [Built in placeholders variables](built-in-placeholders-variables) for available tokens and their meanings.
+
+## Snapmaker 2.0 thumbnails
+
+Snapmaker A250 and A350 profiles, including dual-extruder and upgrade-kit variants, export a Luban-compatible header for the
+Snapmaker 2.0 touchscreen. The header contains the estimated print time in seconds, the final file line count, and a single
+PNG thumbnail encoded as a data URL. The first configured thumbnail size is used; its image is encoded as PNG regardless of
+the configured image format. Standard thumbnail blocks are also retained for G-code import and print-host compatibility.
+An empty thumbnail setting disables the image without removing the header metadata.
+
+The header also supplies normal and tool-change retraction distances, initial nozzle and bed temperatures, and print bounds.
+The touchscreen requires retraction metadata as well as a line count to avoid scanning the entire file for 3D prints.
+
+Other printer models retain their existing thumbnail formats. Re-slice and export existing projects to generate the new header.

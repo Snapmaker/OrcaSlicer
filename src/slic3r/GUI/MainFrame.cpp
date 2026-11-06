@@ -507,10 +507,13 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
             event.Skip();
             return;
         }
-        if (event.CanVeto() && m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true)) {
+        // A modal dialog or gizmo task is still active: destroying the main
+        // frame now would crash the nested modal loop.
+        if (event.CanVeto() && (m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true) || any_modal_dialog_showing())) {
             // prevents to open the save dirty project dialog
             event.Veto();
-            BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< "cancelled by gizmo in editing";
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                << ": [MODAL-CLOSE] close vetoed, task still active";
             return;
         }
 

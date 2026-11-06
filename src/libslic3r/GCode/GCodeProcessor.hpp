@@ -287,6 +287,9 @@ class Print;
         //Orca: layer total key inside machine statistics lines (e.g. SET_PRINT_STATS_INFO)
         static const std::string Total_Layer_Tag;
     public:
+        // Wrap the tool change prime block emitted by GCode::set_extruder.
+        static const std::string Toolchange_Prime_Start_Tag;
+        static const std::string Toolchange_Prime_End_Tag;
         enum class ETags : unsigned char
         {
             Role,
@@ -749,6 +752,9 @@ class Print;
         float m_preheat_time;
         int m_delta_temperature;
         int m_preheat_steps;
+        float m_toolchange_prime_length_min;
+        float m_toolchange_prime_idle_time;
+        float m_toolchange_prime_skip_time;
         bool m_disable_m73;
 #if ENABLE_GCODE_VIEWER_STATISTICS
         std::chrono::time_point<std::chrono::high_resolution_clock> m_start_time;

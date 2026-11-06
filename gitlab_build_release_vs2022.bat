@@ -362,6 +362,15 @@ if "%1"=="slicer" (
     if not defined DEPS set "DEPS=%DEPS_DIR%\%deps_build_dir%\OrcaSlicer_dep"
 )
 
+REM build_release_vs2022.bat is run from a VS developer prompt, which already
+REM exports WindowsSdkDir and WindowsSDKVersion. This script is run from a
+REM plain cmd, so those variables expand empty and CMake receives
+REM -DWIN10SDK_PATH=Include\. CMake then skips HAS_WIN10SDK and the repair
+REM link is compiled out. Load vcvars here and refuse to configure without
+REM the Printing3D header.
+call :ensure_win10_sdk
+if errorlevel 1 goto :restore_exit
+
 pushd "%ORCA_ROOT%"
 if not exist "%slicer_build_dir%" mkdir "%slicer_build_dir%"
 pushd "%slicer_build_dir%"
@@ -382,7 +391,7 @@ cmake .. -G "Visual Studio 17 2022" -A x64 ^
     -DCMAKE_PREFIX_PATH="%DEPS%/usr/local" ^
     -DCMAKE_INSTALL_PREFIX="./Snapmaker_Orca" ^
     -DCMAKE_BUILD_TYPE=%build_type% ^
-    -DWIN10SDK_PATH="%WindowsSdkDir%Include\%WindowsSDKVersion%\"
+    -DWIN10SDK_PATH="%WIN10SDK_INCLUDE%"
 
 if errorlevel 1 (
     echo   [ERROR] CMake configure failed for slicer
@@ -441,6 +450,48 @@ if exist "%VENDOR_DIR%\.git" (
 )
 
 exit /b %EC%
+
+:ensure_win10_sdk
+if defined WindowsSdkDir if defined WindowsSDKVersion goto :win10_sdk_check
+set "VCVARS="
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if exist "%VSWHERE%" (
+    for /f "usebackq delims=" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+        if exist "%%I\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=%%I\VC\Auxiliary\Build\vcvars64.bat"
+    )
+)
+if not defined VCVARS if exist "%ProgramFiles%\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=%ProgramFiles%\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+if not defined VCVARS if exist "%ProgramFiles%\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=%ProgramFiles%\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat"
+if not defined VCVARS if exist "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+if not defined VCVARS if exist "%ProgramFiles%\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=%ProgramFiles%\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+if not defined VCVARS (
+    echo   [ERROR] WindowsSdkDir is unset and vcvars64.bat was not found.
+    echo   [ERROR] Refusing to configure without HAS_WIN10SDK. Model repair would be dropped.
+    exit /b 1
+)
+echo   Loading Visual Studio environment: !VCVARS!
+REM vcvars breaks when delayed expansion is on. Keep its PATH inside this
+REM setlocal so the Strawberry Perl entry at the front of PATH stays put.
+setlocal DisableDelayedExpansion
+call "%VCVARS%"
+if errorlevel 1 (
+    endlocal
+    echo   [ERROR] vcvars64.bat failed
+    exit /b 1
+)
+REM A trailing backslash would escape the closing quote. Park a dot, then drop it.
+endlocal & set "WindowsSdkDir=%WindowsSdkDir%." & set "WindowsSDKVersion=%WindowsSDKVersion%."
+set "WindowsSdkDir=%WindowsSdkDir:~0,-1%"
+set "WindowsSDKVersion=%WindowsSDKVersion:~0,-1%"
+:win10_sdk_check
+set "WIN10SDK_INCLUDE=%WindowsSdkDir%Include\%WindowsSDKVersion%"
+if not exist "%WIN10SDK_INCLUDE%winrt\windows.graphics.printing3d.h" (
+    echo   [ERROR] Missing "%WIN10SDK_INCLUDE%winrt\windows.graphics.printing3d.h"
+    echo   [ERROR] Refusing to configure without HAS_WIN10SDK. Model repair would be dropped.
+    exit /b 1
+)
+echo   WIN10SDK_PATH: %WIN10SDK_INCLUDE%
+exit /b 0
 
 :set_clean_from_value
 if /I "%~1"=="1" set "DO_CLEAN=1"

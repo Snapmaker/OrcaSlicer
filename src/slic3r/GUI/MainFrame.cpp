@@ -508,9 +508,10 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
             return;
         }
         // Tasks still active (gizmo editing, or a modal dialog running its nested
-        // event loop): destroying the main frame now would tear the dialog down
-        // mid-loop and crash in DestroyChildren (Sentry 7266288009 / 7154986484).
-        if (event.CanVeto() && (m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true) || !dialogStack.empty())) {
+        // event loop, tracked or not): destroying the main frame now would tear
+        // the dialog down mid-loop and crash in DestroyChildren (Sentry
+        // 7266288009 / 7154986484).
+        if (event.CanVeto() && (m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true) || any_modal_dialog_showing())) {
             // prevents to open the save dirty project dialog
             event.Veto();
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__

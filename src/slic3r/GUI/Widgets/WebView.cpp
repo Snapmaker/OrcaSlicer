@@ -17,13 +17,14 @@
 #include "wx/private/jsscriptwrapper.h"
 #endif
 
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 
 #if defined(__linux__)
 #include <mutex>
 #endif
 
 #ifdef __WIN32__
+#include <objbase.h>
 #include <WebView2.h>
 #include <Shellapi.h>
 #include <slic3r/Utils/Http.hpp>
@@ -105,6 +106,17 @@ DWORD DownloadAndInstallWV2RT() {
   return returnCode;
 }
 
+static wxString PreserveWebViewEngineUserAgent(const wxString &requestedUserAgent, const wxString &currentUserAgent)
+{
+  const int requestedMarker = requestedUserAgent.Find(" Mozilla/5.0");
+  if (!requestedUserAgent.StartsWith("SM-Slicer/") || requestedMarker == wxNOT_FOUND)
+    return requestedUserAgent;
+
+  const int        currentMarker    = currentUserAgent.Find(" Mozilla/5.0");
+  const wxString   engineUserAgent  = currentMarker == wxNOT_FOUND ? currentUserAgent : currentUserAgent.Mid(currentMarker + 1);
+  return requestedUserAgent.Left(requestedMarker) + " " + engineUserAgent;
+}
+
 class WebViewEdge : public wxWebViewEdge
 {
 public:
@@ -121,10 +133,17 @@ public:
                 ICoreWebView2Settings2 *settings2;
                 hr = settings->QueryInterface(&settings2);
                 if (hr == S_OK) {
-                    settings2->put_UserAgent(userAgent.wc_str());
+                    wchar_t *currentUserAgent = nullptr;
+                    wxString userAgentToSet   = userAgent;
+                    if (settings2->get_UserAgent(&currentUserAgent) == S_OK && currentUserAgent) {
+                        userAgentToSet = PreserveWebViewEngineUserAgent(userAgent, currentUserAgent);
+                        CoTaskMemFree(currentUserAgent);
+                    }
+                    hr = settings2->put_UserAgent(userAgentToSet.wc_str());
                     settings2->Release();
-                    return true;
                 }
+                settings->Release();
+                return hr == S_OK;
             }
             settings->Release();
             return false;
@@ -183,6 +202,37 @@ class WebViewWebKit : public wxWebViewWebKit
 public:
     explicit WebViewWebKit(const wxString &initialUrl) : m_pendingUrl(initialUrl) {}
 
+    // wxWebViewWebKit::AddScriptMessageHandler() registers a native handler and a user script,
+    // then evaluates the bridge script in the current document through synchronous RunScript().
+    // Keep only that internal evaluation asynchronous: its synchronous event-loop pump can process
+    // quit during startup and destroy this view while the handler installation is still active.
+    // All other RunScript() calls retain the wxWidgets behavior.
+    bool RunScript(const wxString &javascript, wxString *output = nullptr) const override
+    {
+        if (output || !m_installingScriptMessageHandler)
+            return wxWebViewWebKit::RunScript(javascript, output);
+
+        WKWebView *wkWebView = static_cast<WKWebView *>(GetNativeBackend());
+        if (!wkWebView)
+            return false;
+
+        Slic3r::GUI::WKWebView_evaluateJavaScript(wkWebView, javascript, nullptr);
+        return true;
+    }
+
+    bool InstallScriptMessageHandler()
+    {
+        m_installingScriptMessageHandler = true;
+        const bool added = AddScriptMessageHandler("wx");
+        m_installingScriptMessageHandler = false;
+
+        // AddScriptMessageHandler() has already registered the native handler and WKUserScript.
+        // The initial document is about:blank, so flushing the pending URL does not depend on
+        // completion of the asynchronous current-document bridge evaluation.
+        SetScriptMessageHandlerInstalled();
+        return added;
+    }
+
     ~WebViewWebKit() override
     {
         RemoveScriptMessageHandler("wx");
@@ -213,6 +263,8 @@ public:
     }
 
 private:
+    mutable bool m_installingScriptMessageHandler = false;
+
     static bool IsBlankUrl(const wxString &url)
     {
         return url.empty() || url == wxString("about:blank");
@@ -371,7 +423,8 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
     url2.Replace("\\", "/");
 #endif
     if (!url2.empty()) { url2 = wxURI(url2).BuildURI(); }
-    BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << ": " << url2.ToUTF8();
+    if (!url2.empty())
+        BOOST_LOG_TRIVIAL(info) << "webview create url=" << url2.ToUTF8().data();
 
 #ifdef __WIN32__
     wxWebView* webView = new WebViewEdge;
@@ -422,13 +475,15 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         auto addScriptMessageHandler = [] (wxWebView *webView) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": begin to add script message handler for wx.";
             Slic3r::GUI::wxGetApp().set_adding_script_handler(true);
-            if (!webView->AddScriptMessageHandler("wx"))
+#ifdef __WXMAC__
+            const bool added = static_cast<WebViewWebKit *>(webView)->InstallScriptMessageHandler();
+#else
+            const bool added = webView->AddScriptMessageHandler("wx");
+#endif
+            if (!added)
                 wxLogError("Could not add script message handler");
             Slic3r::GUI::wxGetApp().set_adding_script_handler(false);
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": finished add script message handler for wx.";
-#ifdef __WXMAC__
-            static_cast<WebViewWebKit *>(webView)->SetScriptMessageHandlerInstalled();
-#endif
         };
 #ifndef __WIN32__
         webView->CallAfter([webView, addScriptMessageHandler] {
@@ -485,7 +540,8 @@ void WebView::LoadUrl(wxWebView * webView, wxString const &url)
     url2.Replace("\\", "/");
 #endif
     if (!url2.empty()) { url2 = wxURI(url2).BuildURI(); }
-    BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << url2.ToUTF8();
+    if (!url2.empty())
+        BOOST_LOG_TRIVIAL(info) << "webview load url=" << url2.ToUTF8().data();
     webView->LoadURL(url2);
 }
 

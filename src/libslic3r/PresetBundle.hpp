@@ -176,7 +176,6 @@ public:
     MixedFilamentManager        mixed_filaments;
 
     // Snapmaker
-    std::map<int, std::pair<std::string, std::string>> machine_filaments;
     std::vector<ConnectMachineInfo>                    m_connect_machine_info_list;
 
     // Calibrate
@@ -402,7 +401,6 @@ public:
 
     const std::string&          get_preset_name_by_alias(const Preset::Type& preset_type, const std::string& alias) const;
 
-    const int                   get_required_hrc_by_filament_type(const std::string& filament_type) const;
     // Save current preset of a provided type under a new name. If the name is different from the old one,
     // Unselected option would be reverted to the beginning values
     //BBS: add project embedded preset logic

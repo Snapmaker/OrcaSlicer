@@ -21,7 +21,7 @@
 #include <map>
 #include <memory>
 
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 #include "SSWCP.hpp"
 
 #ifdef __WINDOWS__
@@ -343,36 +343,17 @@ wxBoxSizer *PreferencesDialog::create_item_region_combobox(wxString title, wxWin
         // snapmaker
         AppConfig* config = GUI::wxGetApp().app_config;
         combobox->SetSelection(region_index);
-        auto info = wxGetApp().sm_get_userinfo();
-        if (info && info->is_user_login()) {
-            MessageDialog msg_wingow(this, _L("Changing the region will log out your account and restart.\n") + "\n" + _L("Do you want to continue?"),
-                                     L("Region selection"), wxICON_QUESTION | wxOK | wxCANCEL);
-
-            if (msg_wingow.ShowModal() == wxID_CANCEL) {
-                combobox->SetSelection(current_region);
-                return;
-            } else {
-                wxGetApp().sm_request_user_logout();
-                config->set("region", region.ToStdString());
-                EndModal(wxID_CANCEL);
-            }
-
-            Close();
-            GetParent()->RemoveChild(this);
-            wxGetApp().recreate_GUI(_L("Change Region"));
-        } else {
-            MessageDialog msg_wingow(nullptr,
-                                     _L("Switching the region requires application restart.\n") + "\n" + _L("Do you want to continue?"),
-                                     L("Region selection"), wxICON_QUESTION | wxOK | wxCANCEL);
-            if (msg_wingow.ShowModal() == wxID_CANCEL) {
-                combobox->SetSelection(current_region);
-                return;
-            }
-            config->set("region", region.ToStdString());
-            Close();
-            GetParent()->RemoveChild(this);
-            wxGetApp().recreate_GUI(_L("Change Region"));
+        MessageDialog msg_wingow(nullptr,
+                                 _L("Switching the region requires application restart.\n") + "\n" + _L("Do you want to continue?"),
+                                 L("Region selection"), wxICON_QUESTION | wxOK | wxCANCEL);
+        if (msg_wingow.ShowModal() == wxID_CANCEL) {
+            combobox->SetSelection(current_region);
+            return;
         }
+        config->set("region", region.ToStdString());
+        Close();
+        GetParent()->RemoveChild(this);
+        wxGetApp().recreate_GUI(_L("Change Region"));
 
         wxGetApp().update_publish_status();
         e.Skip();
@@ -791,6 +772,10 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
                 BOOST_LOG_TRIVIAL(warning) <<"create_item_checkbox changed the privacy policy with: "<<(checkbox->GetValue()?"true" : "false");
                 wxGetApp().user_update_privacy_notify(checkbox->GetValue());
             }
+
+        if (param == "enable_model_station") {
+            wxGetApp().model_station_notify(checkbox->GetValue());
+        }
         // if (param == "staff_pick_switch") {
         //     bool pbool = app_config->get("staff_pick_switch") == "true";
         //     wxGetApp().switch_staff_pick(pbool);
@@ -1294,8 +1279,14 @@ wxWindow* PreferencesDialog::create_general_page()
     auto item_multi_machine = create_item_checkbox(_L("Multi-device Management (Take effect after restarting Snapmaker Orca)."), page, _L("With this option enabled, you can send a task to multiple devices at the same time and manage multiple devices."), 50, "enable_multi_machine");
     auto item_auto_arrange  = create_item_checkbox(_L("Auto arrange plate after cloning"), page, _L("Auto arrange plate after object cloning"), 50, "auto_arrange");
 
-    auto item_gcode_gpu_accel = create_item_checkbox(_L("GPU acceleration for G-code preview"), page,
+    auto item_gcode_gpu_accel = create_item_checkbox(_L("GPU-accelerated G-code preview"), page,
         _L("Rebuild toolpath geometry on the GPU: much faster preview loading and lower memory on capable graphics cards. If the preview moves slower than before (for example on basic integrated graphics), turn this off to use the compatible renderer. Takes effect when the preview is reloaded."), 50, "gcode_preview_gpu_accel");
+    auto item_model_station = create_item_checkbox(_L("Enable Snapmaker Space"), page, _L("When enabled, online models will be displayed on the Home page."), 50, "enable_model_station");
+#ifndef __APPLE__
+    // macOS has no memory-warning dialog: get_available_physical_memory() returns 0
+    // there by product decision, so the guard never fires and the toggle is dead UI.
+    auto item_memory_warning = create_item_checkbox(_L("Show a dialog asking whether to continue slicing when memory is low"), page, _L("Show a dialog asking whether to continue slicing when memory is low"), 50, "show_memory_usage_warning");
+#endif
     auto title_presets = create_item_title(_L("Presets"), page, _L("Presets"));
     //auto title_network = create_item_title(_L("Network"), page, _L("Network"));
     auto item_user_sync        = create_item_checkbox(_L("Auto sync user presets (Printer/Filament/Process)"), page, _L("User Sync"), 50, "sync_user_preset");
@@ -1401,6 +1392,10 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(item_step_mesh_setting, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_auto_arrange, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_gcode_gpu_accel, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_model_station, 0, wxTOP, FromDIP(3));
+#ifndef __APPLE__
+    sizer_page->Add(item_memory_warning, 0, wxTOP, FromDIP(3));
+#endif
     sizer_page->Add(title_presets, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_calc_mode, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_user_sync, 0, wxTOP, FromDIP(3));
@@ -1546,7 +1541,6 @@ wxWindow* PreferencesDialog::create_debug_page()
     page->SetBackgroundColour(*wxWHITE);
 
     m_internal_developer_mode_def = app_config->get("internal_developer_mode");
-    m_websocket_debug_def = app_config->get("websocket_debug");
     m_backup_interval_def = app_config->get("backup_interval");
     m_iot_environment_def = app_config->get("iot_environment");
 

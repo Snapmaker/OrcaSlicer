@@ -1845,7 +1845,6 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         } else {
             set_print_bool("dithering_local_z_whole_objects", false);
             set_print_bool("dithering_local_z_infill", false);
-            set_project_bool("dithering_local_z_direct_multicolor", false);
         }
 
         if (dependent_config_changed)
@@ -1991,114 +1990,120 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     // BBS popup a message to ask the user to set optimum parameters
     // for support interface if support materials are used
     if (opt_key == "support_interface_filament") {
-        // Guard: suppress dialog during config reload/rollback.
-        if (m_postpone_update_ui)
-            return;
-
-        // Guard: skip if cascaded from programmatic apply().
+        // The two guards only suppress the recommendation dialog; they must
+        // NOT return early. The update() at the end of on_value_change is the
+        // only path that propagates this edit to the plater (background
+        // slicing process -> re-slice prompt), so an early return here makes a
+        // changed support interface filament a silent no-op: the slice button
+        // never lights up even though the config value changed. The reload
+        // case is already handled by the m_postpone_update_ui guard at the end
+        // of on_value_change.
         const t_config_option_keys &applying = m_config_manipulation.applying_keys();
-        if (std::find(applying.begin(), applying.end(),
-                      "support_interface_filament") != applying.end())
-            return;
+        const bool suppress_dialog =
+            // during config reload/rollback
+            m_postpone_update_ui ||
+            // or cascaded from programmatic apply()
+            std::find(applying.begin(), applying.end(),
+                      "support_interface_filament") != applying.end();
 
-        // The config value is 1-based (0 = unset/default).
-        int interface_filament_id =
-            m_config->opt_int("support_interface_filament") - 1;
+        if (!suppress_dialog) {
+            // The config value is 1-based (0 = unset/default).
+            int interface_filament_id =
+                m_config->opt_int("support_interface_filament") - 1;
 
-        // Resolve interface filament type string. Only when a specific
-        // filament is explicitly selected (id >= 0). id == -1 means
-        // "unset" — is_support_filament(-1) returns false via bounds
-        // check, so no dialog is triggered.
-        std::string interface_filament_type;
-        if (interface_filament_id >= 0) {
-            const std::vector<std::string> &filament_presets =
-                wxGetApp().preset_bundle->filament_presets;
-            if (interface_filament_id <
-                static_cast<int>(filament_presets.size())) {
-                const Preset *preset_ptr =
-                    wxGetApp().preset_bundle->filaments.find_preset(
-                        filament_presets[interface_filament_id]);
-                if (preset_ptr != nullptr) {
-                    const ConfigOptionStrings *ft_opt =
-                        preset_ptr->config.option<ConfigOptionStrings>(
-                            "filament_type");
-                    if (ft_opt != nullptr && !ft_opt->values.empty())
-                        interface_filament_type = ft_opt->values[0];
+            // Resolve interface filament type string. Only when a specific
+            // filament is explicitly selected (id >= 0). id == -1 means
+            // "unset" — is_support_filament(-1) returns false via bounds
+            // check, so no dialog is triggered.
+            std::string interface_filament_type;
+            if (interface_filament_id >= 0) {
+                const std::vector<std::string> &filament_presets =
+                    wxGetApp().preset_bundle->filament_presets;
+                if (interface_filament_id <
+                    static_cast<int>(filament_presets.size())) {
+                    const Preset *preset_ptr =
+                        wxGetApp().preset_bundle->filaments.find_preset(
+                            filament_presets[interface_filament_id]);
+                    if (preset_ptr != nullptr) {
+                        const ConfigOptionStrings *ft_opt =
+                            preset_ptr->config.option<ConfigOptionStrings>(
+                                "filament_type");
+                        if (ft_opt != nullptr && !ft_opt->values.empty())
+                            interface_filament_type = ft_opt->values[0];
+                    }
+                }
+            }
+
+            // --- Detection ---
+            bool is_support_material =
+                is_support_filament(interface_filament_id);
+            bool is_pla_petg_pair =
+                !is_support_material &&
+                check_pla_petg_support_pair(interface_filament_id);
+
+            // --- Build recommended params ---
+            DynamicPrintConfig recommended_conf;
+
+            if (is_support_material) {
+                // Original 4-parameter recommendation for support material.
+                // The original already-optimal check is handled by
+                // filtered_conf below — if all params match, no dialog.
+                recommended_conf.set_key_value("support_top_z_distance",
+                    new ConfigOptionFloat(0));
+                recommended_conf.set_key_value("support_interface_spacing",
+                    new ConfigOptionFloat(0));
+                recommended_conf.set_key_value("support_interface_pattern",
+                    new ConfigOptionEnum<SupportMaterialInterfacePattern>(
+                        smipRectilinearInterlaced));
+                recommended_conf.set_key_value(
+                    "independent_support_layer_height",
+                    new ConfigOptionBool(false));
+            } else if (is_pla_petg_pair) {
+                // PLA↔PETG: 5 parameters per process engineer confirmation.
+                recommended_conf.set_key_value("support_top_z_distance",
+                    new ConfigOptionFloat(0));
+                recommended_conf.set_key_value("support_base_pattern",
+                    new ConfigOptionEnum<SupportMaterialPattern>(
+                        smpDefault));
+                recommended_conf.set_key_value("support_interface_top_layers",
+                    new ConfigOptionInt(3));
+                recommended_conf.set_key_value("support_interface_pattern",
+                    new ConfigOptionEnum<SupportMaterialInterfacePattern>(
+                        smipRectilinearInterlaced));
+                recommended_conf.set_key_value("support_interface_spacing",
+                    new ConfigOptionFloat(0));
+            }
+
+            if (!recommended_conf.empty()) {
+                // Filter: only include params that differ from current config.
+                DynamicPrintConfig filtered_conf;
+                for (const t_config_option_key &key : recommended_conf.keys()) {
+                    const ConfigOption *current_opt = m_config->option(key);
+                    const ConfigOption *new_opt     = recommended_conf.option(key);
+                    if (current_opt != nullptr && new_opt != nullptr &&
+                        current_opt->serialize() != new_opt->serialize()) {
+                        filtered_conf.set_key_value(key, new_opt->clone());
+                    }
+                }
+
+                if (!filtered_conf.empty()) {
+                    // Build dialog message via extracted helper.
+                    wxString msg_text = build_support_recommendation_message(
+                        is_support_material,
+                        interface_filament_type,
+                        filtered_conf,
+                        *m_config);
+
+                    MessageDialog dialog(wxGetApp().plater(), msg_text,
+                                         "Suggestion",
+                                         wxICON_WARNING | wxYES | wxNO);
+                    if (dialog.ShowModal() == wxID_YES) {
+                        m_config_manipulation.apply(m_config, &filtered_conf);
+                    }
+                    wxGetApp().plater()->update();
                 }
             }
         }
-
-        // --- Detection ---
-        bool is_support_material =
-            is_support_filament(interface_filament_id);
-        bool is_pla_petg_pair =
-            !is_support_material &&
-            check_pla_petg_support_pair(interface_filament_id);
-
-        // --- Build recommended params ---
-        DynamicPrintConfig recommended_conf;
-
-        if (is_support_material) {
-            // Original 4-parameter recommendation for support material.
-            // The original already-optimal check is handled by
-            // filtered_conf below — if all params match, no dialog.
-            recommended_conf.set_key_value("support_top_z_distance",
-                new ConfigOptionFloat(0));
-            recommended_conf.set_key_value("support_interface_spacing",
-                new ConfigOptionFloat(0));
-            recommended_conf.set_key_value("support_interface_pattern",
-                new ConfigOptionEnum<SupportMaterialInterfacePattern>(
-                    smipRectilinearInterlaced));
-            recommended_conf.set_key_value(
-                "independent_support_layer_height",
-                new ConfigOptionBool(false));
-        } else if (is_pla_petg_pair) {
-            // PLA↔PETG: 5 parameters per process engineer confirmation.
-            recommended_conf.set_key_value("support_top_z_distance",
-                new ConfigOptionFloat(0));
-            recommended_conf.set_key_value("support_base_pattern",
-                new ConfigOptionEnum<SupportMaterialPattern>(
-                    smpDefault));
-            recommended_conf.set_key_value("support_interface_top_layers",
-                new ConfigOptionInt(3));
-            recommended_conf.set_key_value("support_interface_pattern",
-                new ConfigOptionEnum<SupportMaterialInterfacePattern>(
-                    smipRectilinearInterlaced));
-            recommended_conf.set_key_value("support_interface_spacing",
-                new ConfigOptionFloat(0));
-        }
-
-        if (recommended_conf.empty())
-            return;
-
-        // Filter: only include params that differ from current config.
-        DynamicPrintConfig filtered_conf;
-        for (const t_config_option_key &key : recommended_conf.keys()) {
-            const ConfigOption *current_opt = m_config->option(key);
-            const ConfigOption *new_opt     = recommended_conf.option(key);
-            if (current_opt != nullptr && new_opt != nullptr &&
-                current_opt->serialize() != new_opt->serialize()) {
-                filtered_conf.set_key_value(key, new_opt->clone());
-            }
-        }
-
-        if (filtered_conf.empty())
-            return;
-
-        // Build dialog message via extracted helper.
-        wxString msg_text = build_support_recommendation_message(
-            is_support_material,
-            interface_filament_type,
-            filtered_conf,
-            *m_config);
-
-        MessageDialog dialog(wxGetApp().plater(), msg_text,
-                             "Suggestion",
-                             wxICON_WARNING | wxYES | wxNO);
-        if (dialog.ShowModal() == wxID_YES) {
-            m_config_manipulation.apply(m_config, &filtered_conf);
-        }
-        wxGetApp().plater()->update();
     }
 
     if(opt_key == "make_overhang_printable"){
@@ -2814,6 +2819,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("gap_fill_target", "strength_settings_infill#apply-gap-fill");
         optgroup->append_single_option_line("filter_out_gap_fill", "strength_settings_infill#filter-out-tiny-gaps");
         optgroup->append_single_option_line("infill_wall_overlap", "strength_settings_infill#infill-wall-overlap");
+        optgroup->append_single_option_line("external_infill_margin");
 
         optgroup = page->new_optgroup(L("Advanced"), L"param_advanced");
         optgroup->append_single_option_line("align_infill_direction_to_model", "strength_settings_advanced#align-infill-direction-to-model");
@@ -2827,7 +2833,8 @@ void TabPrint::build()
         optgroup->append_single_option_line("ensure_vertical_shell_thickness", "strength_settings_advanced#ensure-vertical-shell-thickness");
 
     page = add_options_page(L("Speed"), "custom-gcode_speed"); // ORCA: icon only visible on placeholders
-        if (m_type == Preset::TYPE_PRINT)
+        // Snapmaker: flow variant
+        if (m_type == Preset::TYPE_PRINT || m_type == Preset::TYPE_MODEL)
         {
             register_flow_variant_view(
                 ConfigFlowDomain::Process,
@@ -2861,6 +2868,7 @@ void TabPrint::build()
         line.append_option(optgroup->get_option("overhang_2_4_speed"));
         line.append_option(optgroup->get_option("overhang_3_4_speed"));
         line.append_option(optgroup->get_option("overhang_4_4_speed"));
+        line.append_option(optgroup->get_option("overhang_totally_speed"));
         optgroup->append_line(line);
         optgroup->append_separator();
         line = { L("Bridge"), L("Set speed for external and internal bridges") };
@@ -2882,6 +2890,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("first_layer_travel_acceleration", "speed_settings_acceleration#first-layer-travel");
         optgroup->append_single_option_line("top_surface_acceleration", "speed_settings_acceleration#top-surface");
         optgroup->append_single_option_line("travel_acceleration", "speed_settings_acceleration#travel");
+        optgroup->append_single_option_line("travel_short_distance_acceleration", "speed_settings_acceleration#travel");
         optgroup->append_single_option_line("accel_to_decel_enable", "speed_settings_acceleration");
         optgroup->append_single_option_line("accel_to_decel_factor", "speed_settings_acceleration");
 
@@ -3580,7 +3589,32 @@ void TabPrintModel::reload_config()
 void TabPrintModel::update_custom_dirty()
 {
     for (auto k : m_null_keys) m_options_list[k] = 0;
-    for (auto k : m_all_keys) m_options_list[k] &= ~osSystemValue;
+    for (auto k : m_all_keys) {
+        // Snapmaker: flow variant
+        if (m_flow_variant_view && m_flow_variant_view->is_option(k)) {
+            const auto *edited_vec = dynamic_cast<const ConfigOptionVectorBase *>(m_config->option(k, false));
+            const auto *base_vec   = dynamic_cast<const ConfigOptionVectorBase *>(m_prints.get_selected_preset().config.option(k));
+            if (edited_vec != nullptr && base_vec != nullptr && !edited_vec->empty() && !base_vec->empty()) {
+                const std::vector<std::string> edited_vals = edited_vec->vserialize();
+                const std::vector<std::string> base_vals   = base_vec->vserialize();
+                auto slot_at = [](const std::vector<std::string> &vals, size_t i) -> const std::string & {
+                    return vals[std::min(i, vals.size() - 1)]; // same out-of-range fallback as get_at()
+                };
+                for (size_t i = 0; i < m_flow_variant_view->modes.size(); ++i) {
+                    const std::string idx_key = k + "#" + std::to_string(i);
+                    if (m_options_list.find(idx_key) == m_options_list.end())
+                        m_options_list.emplace(idx_key, m_opt_status_value);
+                    if (slot_at(edited_vals, i) != slot_at(base_vals, i))
+                        m_options_list[idx_key] &= ~osSystemValue;
+                }
+                const auto current = m_options_list.find(k + "#" + std::to_string(flow_variant_view_index()));
+                if (current != m_options_list.end())
+                    m_options_list[k] = current->second;
+                continue;
+            }
+        }
+        m_options_list[k] &= ~osSystemValue;
+    }
 }
 
 //BBS: GUI refactor
@@ -4330,9 +4364,12 @@ void TabFilament::build()
         optgroup->append_single_option_line("slow_down_for_layer_cooling");
         optgroup->append_single_option_line("dont_slow_down_outer_wall");
         optgroup->append_single_option_line("slow_down_min_speed");
+        optgroup->append_single_option_line("cooling_slowdown_logic");
+        optgroup->append_single_option_line("cooling_perimeter_transition_distance");
 
         optgroup->append_single_option_line("enable_overhang_bridge_fan");
         optgroup->append_single_option_line("overhang_fan_threshold");
+        optgroup->append_single_option_line("overhang_threshold_participating_cooling");
         optgroup->append_single_option_line("overhang_fan_speed");
         optgroup->append_single_option_line("internal_bridge_fan_speed"); // ORCA: Add support for separate internal bridge fan speed control
         optgroup->append_single_option_line("support_material_interface_fan_speed");
@@ -4514,6 +4551,15 @@ void TabFilament::toggle_options()
       // Orca: toggle dont slow down for external perimeters if
       bool has_slow_down_for_layer_cooling = m_config->opt_bool("slow_down_for_layer_cooling", 0);
       toggle_option("dont_slow_down_outer_wall", has_slow_down_for_layer_cooling);
+      // cooling slowdown logic and its companion option
+      toggle_option("cooling_slowdown_logic", has_slow_down_for_layer_cooling);
+      bool consistent_surface = false;
+      if (has_slow_down_for_layer_cooling) {
+          auto *opt = m_config->option<ConfigOptionEnumsGeneric>("cooling_slowdown_logic");
+          if (opt && !opt->values.empty())
+              consistent_surface = opt->values[0] == (int)cslConsistentSurface;
+      }
+      toggle_option("cooling_perimeter_transition_distance", consistent_surface);
     }
     if (m_active_page->title() == L("Filament"))
     {

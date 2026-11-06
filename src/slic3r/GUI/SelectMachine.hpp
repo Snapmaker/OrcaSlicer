@@ -361,7 +361,6 @@ public:
     bool is_same_printer_model();
     bool is_blocking_printing(MachineObject* obj_);
     bool is_same_nozzle_diameters(float& tag_nozzle_diameter) const;
-    bool is_same_nozzle_type(const Extder& extruder, std::string& filament_type) const;
     bool has_tips(MachineObject* obj);
     bool is_timeout();
     int  update_print_required_data(Slic3r::DynamicPrintConfig config, Slic3r::Model model, Slic3r::PlateDataPtrs plate_data_list, std::string file_name, std::string file_path);
@@ -374,7 +373,6 @@ public:
     std::string get_print_status_info(PrintDialogStatus status);
 
     PrintFromType get_print_type() {return m_print_type;};
-    wxString    format_steel_name(NozzleType type);
     wxString    format_text(wxString &m_msg);
     wxWindow*   create_ams_checkbox(wxString title, wxWindow* parent, wxString tooltip);
     wxWindow*   create_item_checkbox(wxString title, wxWindow* parent, wxString tooltip, std::string param);

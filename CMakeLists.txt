@@ -71,6 +71,27 @@ endif()
 set(SLIC3R_RC_VERSION "${ORCA_VERSION_MAJOR},${ORCA_VERSION_MINOR},${ORCA_VERSION_PATCH},0")
 
 set(SLIC3R_RESOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+
+# Keep development and packaged resources in sync with the profiles submodule.
+set(SNAPMAKER_PROFILES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/submodules/Profiles")
+set(_profiles_sync_command "${CMAKE_COMMAND}"
+    "-DSUB=${SNAPMAKER_PROFILES_DIR}"
+    "-DDST=${SLIC3R_RESOURCES_DIR}/profiles"
+    "-DVERSION_STAMP=${CMAKE_CURRENT_BINARY_DIR}/snapmaker_profiles_version.txt"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SyncSnapmakerProfiles.cmake")
+
+execute_process(COMMAND ${_profiles_sync_command} RESULT_VARIABLE _profiles_sync_result)
+if(NOT _profiles_sync_result STREQUAL "0")
+    message(FATAL_ERROR "Snapmaker profiles preparation failed (${_profiles_sync_result})")
+endif()
+
+add_custom_target(sync_snapmaker_profiles ALL
+    COMMAND ${_profiles_sync_command}
+    COMMENT "Syncing Snapmaker profiles from submodules/Profiles into resources/profiles"
+    VERBATIM)
+unset(_profiles_sync_command)
+unset(_profiles_sync_result)
+
 file(TO_NATIVE_PATH "${SLIC3R_RESOURCES_DIR}" SLIC3R_RESOURCES_DIR_WIN)
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -165,7 +186,9 @@ endif ()
 # Proposal for C++ unit tests and sandboxes
 option(SLIC3R_BUILD_SANDBOXES   "Build development sandboxes" OFF)
 option(BUILD_TESTS       "Build unit tests" OFF)
+option(ORCA_USE_OCCT_LINK_GROUP "Use a Linux OCCT/freetype linker group for Clang sanitizer builds" OFF)
 option(ORCA_TOOLS       "Build Orca tools" OFF)
+option(SLIC3R_WIDGET_INSPECTOR "Build the opt-in wxWidgets widget inspector on Windows" OFF)
 
 if (IS_CROSS_COMPILE)
     message("Detected cross compilation setup. Tests and encoding checks will be forcedly disabled!")
@@ -582,6 +605,43 @@ if (SLIC3R_SENTRY)
 endif()
 find_package(Freetype REQUIRED)
 
+# Configure OCCT in top-level scope so the imported targets are visible to both
+# sibling src/ and tests/ directories.
+set(OpenCASCADE_DIR "${CMAKE_PREFIX_PATH}/lib/cmake/occt")
+find_package(OpenCASCADE REQUIRED)
+
+# OCCT archive names are used by libslic3r and by test executables that must
+# explicitly place OCCT and freetype in a linker group. Define them at top-level
+# scope so the sibling src/ and tests/ directories see the same list.
+set(OCCT_LIBS
+    TKXDESTEP
+    TKSTEP
+    TKSTEP209
+    TKSTEPAttr
+    TKSTEPBase
+    TKXCAF
+    TKXSBase
+    TKVCAF
+    TKCAF
+    TKLCAF
+    TKCDF
+    TKV3d
+    TKService
+    TKMesh
+    TKBO
+    TKPrim
+    TKHLR
+    TKShHealing
+    TKTopAlgo
+    TKGeomAlgo
+    TKBRep
+    TKGeomBase
+    TKG3d
+    TKG2d
+    TKMath
+    TKernel
+)
+
 
 add_library(libcurl INTERFACE)
 target_link_libraries(libcurl INTERFACE CURL::libcurl)
@@ -938,7 +998,9 @@ endif()
 
 # Resources install target, configure fhs.hpp on UNIX
 if (WIN32)
-    install(DIRECTORY "${SLIC3R_RESOURCES_DIR}/" DESTINATION "./resources")
+    install(DIRECTORY "${SLIC3R_RESOURCES_DIR}/" DESTINATION "./resources"
+        PATTERN "*/gw_cache" EXCLUDE
+    )
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
     include(InstallRequiredSystemLibraries)
     install (PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION ".")
@@ -947,6 +1009,7 @@ elseif (SLIC3R_FHS)
     set(SLIC3R_FHS_RESOURCES "${CMAKE_INSTALL_FULL_DATAROOTDIR}/Snapmaker_Orca")
     install(DIRECTORY ${SLIC3R_RESOURCES_DIR}/ DESTINATION ${SLIC3R_FHS_RESOURCES}
         PATTERN "*/udev" EXCLUDE
+        PATTERN "snapmaker_control_linux_*" PERMISSIONS OWNER_READ OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
     )
     install(FILES src/dev-utils/platform/unix/Snapmaker_Orca.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
     foreach(SIZE 32 128 192)
@@ -994,15 +1057,31 @@ set (CPACK_NSIS_DEFINES "!define MUI_STARTMENUPAGE_DEFAULTFOLDER \"${CPACK_PACKA
 # .nsi template must stay ASCII -- the Chinese/English prompt texts therefore
 # live in the separate UTF-8 BOM .nsh instead of this inline block.
 file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh" CPACK_NSIS_EXTRA_INSTALL_COMMANDS)
+file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerConnectFirewall_install.nsh" _snapmaker_connect_firewall_install)
+string(APPEND CPACK_NSIS_EXTRA_INSTALL_COMMANDS "\n${_snapmaker_connect_firewall_install}")
 file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh" _snapmaker_nsis_uninst_url)
 set(_snapmaker_nsis_uninst_kill [=[
-  nsExec::Exec 'taskkill /F /IM snapmaker-orca.exe /T'
+  nsExec::Exec 'taskkill /F /T /IM snapmaker-orca.exe'
   Pop $0
-  nsExec::Exec 'taskkill /F /IM Snapmaker_Orca.exe /T'
+  nsExec::Exec 'taskkill /F /T /IM Snapmaker_Orca.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM snapmaker_control_windows_x64.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM snapmaker_control_windows_arm64.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM snapmaker_connection_windows_x64.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM snapmaker_connection_windows_arm64.exe'
   Pop $0
 ]=])
 string(CONCAT CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
        "${_snapmaker_nsis_uninst_kill}" "${_snapmaker_nsis_uninst_url}")
+# Wait briefly for the connect CLI to release its executable after the forced
+# termination above before generated files are removed.
+file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerConnect_uninstall.nsh" _snapmaker_connect_uninstall)
+string(APPEND CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "\n${_snapmaker_connect_uninstall}")
+file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerConnectFirewall_uninstall.nsh" _snapmaker_connect_firewall_uninstall)
+string(APPEND CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "\n${_snapmaker_connect_firewall_uninstall}")
 # Auto-close the uninstall details page so the wizard advances to the custom
 # finish page as soon as the uninstall section finishes (no extra click).
 string(APPEND CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "  SetAutoClose true\n")

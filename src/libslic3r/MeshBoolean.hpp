@@ -70,6 +70,11 @@ TriangleMesh merge(std::vector<TriangleMesh> meshes);
 
 bool does_bound_a_volume(const CGALMesh &mesh);
 bool empty(const CGALMesh &mesh);
+
+// Repair a mesh using CGAL. Returns true on success. Optionally returns a summary of repairs and an error string.
+// Orca: Also optionally returns whether the repaired mesh still intersects itself, e.g. because its shells overlap in a
+// way the mesh booleans cannot resolve.
+bool repair(TriangleMesh &mesh, RepairedMeshErrors *repaired_errors = nullptr, std::string *error = nullptr, bool *self_intersections_remain = nullptr);
 }
 
 namespace mcut {

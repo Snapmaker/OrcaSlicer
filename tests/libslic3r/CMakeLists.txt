@@ -26,6 +26,7 @@ add_executable(${_TEST_NAME}_tests
 	test_stl.cpp
 	test_fill_spacing_zero.cpp
 	test_meshboolean.cpp
+	test_model_object_repair.cpp
 	test_marchingsquares.cpp
 	test_timeutils.cpp
 	test_tree_support_wall.cpp

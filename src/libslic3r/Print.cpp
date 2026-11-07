@@ -951,8 +951,19 @@ std::vector<unsigned int> Print::object_extruders() const
     return extruders;
 }
 
+// Whether support or raft extrusions were generated for the object (as opposed to support being enabled).
+static bool object_has_generated_support(const PrintObject *object)
+{
+    for (const SupportLayer *layer : object->support_layers())
+        if (layer->has_extrusions())
+            return true;
+    return false;
+}
+
 // returns 0-based indices of used extruders
-std::vector<unsigned int> Print::support_material_extruders() const
+// If only_generated is set, an object's support filaments are only counted when support extrusions were
+// actually generated for it, e.g. support enabled on a model that needs none does not count its support filament.
+std::vector<unsigned int> Print::support_material_extruders(bool only_generated) const
 {
     std::vector<unsigned int> extruders;
     bool support_uses_current_extruder = false;
@@ -960,7 +971,7 @@ std::vector<unsigned int> Print::support_material_extruders() const
     auto num_extruders = (unsigned int)m_config.filament_diameter.size();
 
     for (PrintObject *object : m_objects) {
-        if (object->has_support_material()) {
+        if (object->has_support_material() && (!only_generated || object_has_generated_support(object))) {
         	assert(object->config().support_filament >= 0);
             if (object->config().support_filament == 0)
                 support_uses_current_extruder = true;
@@ -987,10 +998,12 @@ std::vector<unsigned int> Print::support_material_extruders() const
 }
 
 // returns 0-based indices of used extruders
-std::vector<unsigned int> Print::extruders(bool conside_custom_gcode) const
+// If only_generated_support is set, support filaments only count when support extrusions were generated
+// (see support_material_extruders()). Use it for decisions taken after slicing, such as the bed temperature.
+std::vector<unsigned int> Print::extruders(bool conside_custom_gcode, bool only_generated_support) const
 {
     std::vector<unsigned int> extruders = this->object_extruders();
-    append(extruders, this->support_material_extruders());
+    append(extruders, this->support_material_extruders(only_generated_support));
     sort_remove_duplicates(extruders);
 
     if (conside_custom_gcode) {

@@ -255,3 +255,7 @@ Run individual test suites:
 - **Performance benchmarks** help catch performance regressions
 - **Memory leak** detection important for long-running GUI application
 - **Cross-platform** testing required before releases
+
+## Linear
+
+Linear: team ADA, project P-ADA-7 (3D Printing)

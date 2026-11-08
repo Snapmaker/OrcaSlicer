@@ -930,6 +930,7 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "inner_wall_line_width"
             || opt_key == "infill_wall_overlap"
             || opt_key == "top_bottom_infill_wall_overlap"
+            || opt_key == "external_infill_margin"
             || opt_key == "seam_gap"
             || opt_key == "role_based_wipe_speed"
             || opt_key == "wipe_on_loops"
@@ -1243,6 +1244,7 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "overhang_2_4_speed"
             || opt_key == "overhang_3_4_speed"
             || opt_key == "overhang_4_4_speed"
+            || opt_key == "overhang_totally_speed"
             || opt_key == "bridge_speed"
             || opt_key == "internal_bridge_speed"
             || opt_key == "outer_wall_speed"
@@ -1374,22 +1376,11 @@ void PrintObject::detect_surfaces_type()
             		// In non-spiral vase mode, go over all layers.
             		m_layers.size()),
             [this, region_id, interface_shells, &surfaces_new](const tbb::blocked_range<size_t>& range) {
-                // If we have soluble support material, don't bridge. The overhang will be squished against a soluble layer separating
-                // the support from the print.
-                // BBS: the above logic only applys for normal(auto) support. Complete logic:
-                // 1. has support, top z distance=0 (soluble material), auto support
-                // 2. for normal(auto), bridge_no_support is off
-                // 3. for tree(auto), interface top layers=0, max bridge length=0, support_critical_regions_only=false (only in this way the bridge is fully supported)
-                bool bottom_is_fully_supported = this->has_support() && m_config.support_top_z_distance.value == 0 && is_auto(m_config.support_type.value);
-                if (m_config.support_type.value == stNormalAuto)
-                    bottom_is_fully_supported &= !m_config.bridge_no_support.value;
-                else if (m_config.support_type.value == stTreeAuto) {
-                    bottom_is_fully_supported &= ((m_config.support_type.value == stFins ?
-                                                       m_config.support_fin_interface_layers.value :
-                                                       m_config.support_interface_top_layers.value) > 0 &&
-                                                  m_config.max_bridge_length.value == 0 &&
-                                                  m_config.support_critical_regions_only.value == false);
-                }
+                // Only normal automatic support may replace bridge infill with bottom infill
+                // on a zero-gap interface. Tree support contacts may be filtered or reduced,
+                // so even max_bridge_length == 0 does not guarantee full bottom coverage.
+                const bool bottom_is_fully_supported = this->has_support() && m_config.support_top_z_distance.value == 0 &&
+                                                       m_config.support_type.value == stNormalAuto && !m_config.bridge_no_support.value;
                 SurfaceType surface_type_bottom_other = bottom_is_fully_supported ? stBottom : stBottomBridge;
                 for (size_t idx_layer = range.begin(); idx_layer < range.end(); ++ idx_layer) {
                     m_print->throw_if_canceled();
@@ -1702,11 +1693,17 @@ void PrintObject::process_external_surfaces()
 	if (has_voids && m_layers.size() > 1) {
 	    // All but stInternal fill surfaces will get expanded and possibly trimmed.
 	    std::vector<unsigned char> layer_expansions_and_voids(m_layers.size(), false);
+	    float external_infill_margin = 0.f;
 	    for (size_t layer_idx = 1; layer_idx < m_layers.size(); ++ layer_idx) {
 	    	const Layer *layer = m_layers[layer_idx];
 	    	bool expansions = false;
 	    	bool voids      = false;
 	    	for (const LayerRegion *layerm : layer->regions()) {
+	    		const double perimeter_width = layerm->region().config().wall_loops.value == 0 ?
+	    										   0. : (layerm->flow(frExternalPerimeter).width() +
+	    											layerm->flow(frPerimeter).spacing() * (layerm->region().config().wall_loops.value - 1));
+	    		if (layerm->region().config().external_infill_margin.get_abs_value(perimeter_width) > 0.f)
+	    			external_infill_margin = layerm->region().config().external_infill_margin.get_abs_value(perimeter_width);
 	    		for (const Surface &surface : layerm->fill_surfaces.surfaces) {
 	    			if (surface.surface_type == stInternal)
 	    				voids = true;
@@ -1722,7 +1719,7 @@ void PrintObject::process_external_surfaces()
 		}
 	    BOOST_LOG_TRIVIAL(debug) << "Collecting surfaces covered with extrusions in parallel - start";
 	    surfaces_covered.resize(m_layers.size() - 1, Polygons());
-    	auto unsupported_width = - float(scale_(0.3 * EXTERNAL_INFILL_MARGIN));
+    	auto unsupported_width = - float(scale_(0.3 * external_infill_margin));
 	    tbb::parallel_for(
 	        tbb::blocked_range<size_t>(0, m_layers.size() - 1),
 	        [this, &surfaces_covered, &layer_expansions_and_voids, unsupported_width](const tbb::blocked_range<size_t>& range) {
@@ -2994,6 +2991,11 @@ void PrintObject::bridge_over_infill()
                     bridging_area          = closing(bridging_area, flow.scaled_spacing());
                     bridging_area          = intersection(bridging_area, limiting_area);
                     bridging_area          = intersection(bridging_area, total_fill_area);
+                    // Snapmaker: on multi-region (multi-material) layers, keep the bridge expansion
+                    // inside the candidate's own region, otherwise anchoring onto another region's
+                    // walls can produce a bridge printed in the wrong color.
+                    if (layer->regions().size() > 1)
+                        bridging_area = intersection(bridging_area, to_polygons(candidate.region->fill_expolygons));
                     bridging_area          = diff(bridging_area, total_top_area);
                     expansion_area         = diff(expansion_area, bridging_area);
 

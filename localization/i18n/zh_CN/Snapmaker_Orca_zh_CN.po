@@ -17,6 +17,21 @@ msgstr ""
 "Plural-Forms: nplurals=1; plural=0;\n"
 "X-Generator: Poedit 3.8\n"
 
+msgid "Enable model shadows"
+msgstr "显示模型阴影"
+
+msgid "Subdivision mesh"
+msgstr "细分网格"
+
+msgid "(Lost color)"
+msgstr "（丢失颜色）"
+
+msgid "\"%s\" will exceed 1 million faces after this subdivision, which may increase slicing time. Do you want to continue?"
+msgstr "\"%s\" 细分后面数将超过 100 万，可能增加切片时间。是否继续？"
+
+msgid "\"%s\" part's mesh contains errors. Please repair it first."
+msgstr "\"%s\" 零件的网格存在错误，请先修复。"
+
 msgid "Current AMS humidity"
 msgstr "当前AMS湿度"
 
@@ -4197,6 +4212,12 @@ msgstr "自动摆放选项"
 msgid "Spacing"
 msgstr "间距"
 
+msgid "Count"
+msgstr "数量"
+
+msgid "Gap"
+msgstr "间隙"
+
 msgid "0 means auto spacing."
 msgstr "0 表示自动间距。"
 
@@ -5855,8 +5876,8 @@ msgstr "恢复"
 msgid "The current hot bed temperature is relatively high. The nozzle may be clogged when printing this filament in a closed enclosure. Please open the front door and/or remove the upper glass."
 msgstr "当前热床温度相对较高。在封闭式外壳中打印这种丝可能会导致喷嘴堵塞。请打开前门和/或取下上部玻璃。"
 
-msgid "The nozzle hardness required by the filament is higher than the default nozzle hardness of the printer. Please replace the hardened nozzle or filament, otherwise, the nozzle will be attrited or damaged."
-msgstr "打印丝所要求的喷嘴硬度高于打印机默认的喷嘴硬度。请更换硬化的喷嘴或打印丝，否则喷嘴可能被磨损或损坏。"
+msgid "The filament is too hard for the current nozzle. Please use a harder nozzle or a softer filament to avoid nozzle wear."
+msgstr "耗材丝所要求的喷嘴硬度高于打印机的喷嘴硬度。请更换更高硬度的喷嘴或者更低硬度的耗材丝，否则可能导致喷嘴磨损。"
 
 msgid "Enabling traditional timelapse photography may cause surface imperfections. It is recommended to change to smooth mode."
 msgstr "启用传统的延时摄影可能会导致表面瑕疵。建议更改为平滑模式。"
@@ -6522,6 +6543,12 @@ msgstr "启用此选项后，您可以同时向多个设备发送任务并管理
 msgid "Auto arrange plate after cloning"
 msgstr "克隆后自动排列打印板"
 
+msgid "GPU-accelerated G-code preview"
+msgstr "GPU加速预览G-code"
+
+msgid "Rebuild toolpath geometry on the GPU: much faster preview loading and lower memory on capable graphics cards. If the preview moves slower than before (for example on basic integrated graphics), turn this off to use the compatible renderer. Takes effect when the preview is reloaded."
+msgstr "在 GPU 上重建走线几何，在性能足够的显卡上可显著加快预览加载、降低内存占用。若预览反而变慢（常见于核显较弱的机器），可关闭此项改用兼容渲染，重新加载预览后生效。"
+
 msgid "Auto arrange plate after object cloning"
 msgstr "对象克隆后自动排列打印板"
 
@@ -7129,12 +7156,6 @@ msgstr "请在打印机屏幕上确认。"
 
 msgid "Log in failed. Please check the Pin Code."
 msgstr "登录失败，请检查Pin码。"
-
-msgid "Log in"
-msgstr "登录"
-
-msgid "Are you sure you want to log in?"
-msgstr "确定要登录吗？"
 
 msgid "Log in printer"
 msgstr "登录打印机"
@@ -15386,11 +15407,8 @@ msgstr "\n合并该耗材将导致这些混色耗材配置失效。是否继续�
 msgid "Filament %d ratio is too high. Mix may be affected."
 msgstr "耗材%d参与混色的比例过高，可能会影响混色效果。"
 
-msgid ""
-"The mix ratios for %s in the Color Mapping list are outside the recommended %d"
-"%%–%d%% range. Adjust the mix ratios manually for better results."
-msgstr ""
-"颜色映射列表中 %s 混色比例超出推荐范围 %d%%–%d%%。建议手动调整混色比例，以获得更好的颜色效果。"
+msgid "The mix ratios for %s in the Color Mapping list are outside the recommended ranges. Adjust the mix ratios manually for better results."
+msgstr "颜色映射列表中 %s 混色比例超出推荐范围。建议手动调整混色比例，以获得更好的颜色效果。"
 
 msgid "Cannot enable both Variable Layer Height and Subdivide Mix Layer."
 msgstr "可变层高与混色细分层高功能互斥，请勿同时开启。"
@@ -15433,6 +15451,9 @@ msgstr "流量比例为 0%，挤出量为零，无法生成有效打印路径。
 
 msgid "Filament(s):"
 msgstr "耗材："
+
+msgid ", "
+msgstr "，"
 
 msgid "Please set the flow ratio to a value greater than 0."
 msgstr "请将其设置为大于 0 的值。"
@@ -15547,6 +15568,12 @@ msgstr "选择\"是\"可尝试切片，但可能出现软件卡顿或无响应�
 msgid "Select \"No\" to terminate the slicing task immediately."
 msgstr "选择\"否\"将立即停止切片任务"
 
+msgid "Don't ask again next time"
+msgstr "下次不再提示"
+
+msgid "Show a dialog asking whether to continue slicing when memory is low"
+msgstr "内存不足时，弹窗提示用户是否执行切片"
+
 msgid "Yes, Continue"
 msgstr "是，继续"
 
@@ -15616,8 +15643,8 @@ msgstr "开始匹配"
 msgid "Rematch"
 msgstr "重新匹配"
 
-msgid "Automatically select an official filament set for color mixing match. Mix ratio for each color: 0%–70%."
-msgstr "自动选择官方混色耗材套装进行混色匹配。单色混色比例范围：0%–70%。"
+msgid "Automatically select an official filament set for color mixing match. Two-color ratios: 15%–85%; three-color ratios: 15%–70%."
+msgstr "自动选择官方混色耗材套装进行混色匹配。双色混色比例：15%-85%；三色混色比例：15%-70%。"
 
 msgid "Manually select filaments from the current list for color mixing."
 msgstr "手动选择当前列表中的耗材进行混色匹配。"
@@ -15677,6 +15704,7 @@ msgstr "启用擦拭塔接触层功能"
 
 msgid "Enable optimized prime tower interface behavior when different materials meet."
 msgstr "启用优化后的擦拭塔接触层行为，用于不同耗材丝相遇时。"
+
 msgid ""
 "Switch to rectilinear pattern?\n"
 "Yes - switch to rectilinear pattern automatically\n"
@@ -15726,3 +15754,53 @@ msgstr "  • 接触面图案 → 交叠直线\n"
 #, c-format, boost-format
 msgid "  • Interface spacing: %.2f → 0 mm\n"
 msgstr "  • 接触面间距：%.2f → 0 mm\n"
+
+msgid "Enable Snapmaker Space"
+msgstr "开启模型站"
+
+msgid "When enabled, online models will be displayed on the Home page."
+msgstr "开启后，将在主页显示在线模型"
+
+msgid "Anchor solid infill by X mm"
+msgstr "顶部实心填充"
+
+msgid ""
+"This parameter grows the top/bottom/solid layers by the specified mm to "
+"anchor them into the sparse infill and support the perimeters above. Can be "
+"a %% of the width of the perimeters."
+msgstr ""
+"该参数会将顶/底/实体层向外扩展指定的毫米数，使其锚固到稀疏填充中，并为上方的"
+"外壁提供支撑。也可以设为外壁宽度的百分比。"
+
+msgid "Speed of 100% overhang wall which has 0 overlap with the lower layer."
+msgstr "100% 悬空墙的速度，与下层无重叠。"
+
+msgid "Short travel"
+msgstr "短程移动"
+
+msgid "Acceleration used for short travel moves near external perimeters. Short travels are moves shorter than the 'Retraction minimum travel' distance.\n\nLower values (e.g., 250-500 mm/s²) reduce ringing artifacts on sharp corners without significantly impacting print time.\n\nSet to 0 to disable (uses normal travel acceleration)."
+msgstr "外墙附近短距离空走使用的加速度。短空走指短于“回抽最小空走距离”的移动。\n\n较低的值（如 250-500 mm/s²）可减少尖角处的振纹，且几乎不影响打印时间。\n\n设为 0 表示禁用（使用普通空走加速度）。"
+
+msgid "Cooling slowdown logic"
+msgstr "冷却减速逻辑"
+
+msgid "Determines how the printer slows down when minimum layer time isn't reached.\n\n'Uniform cooling' slows down all print features equally (current default behavior).\n\n'Consistent surface' prioritizes slowing infill and internal perimeters first, preserving external perimeter speed for better surface finish on glossy filaments. This helps reduce VFA (Vertical Fine Artifacts) and maintains consistent surface shine."
+msgstr "决定打印机在未达到最短层时间时如何降速。\n\n“均匀冷却”对所有打印特征同等降速（当前默认行为）。\n\n“表面一致性”优先降低填充和内壁的打印速度，保持外墙速度以获得更好的表面光洁度（尤其是光面耗材）。有助于减少 VFA（垂直细纹）并保持表面光泽一致。"
+
+msgid "Uniform cooling"
+msgstr "均匀冷却"
+
+msgid "Consistent surface"
+msgstr "表面一致性"
+
+msgid "Perimeter transition distance"
+msgstr "外围过渡距离"
+
+msgid "Distance in millimeters before the end of slowed perimeters where the original print speed is gradually restored. This prevents visible speed transitions at the end of perimeters.\n\nOnly applies when 'Consistent surface' cooling logic is selected."
+msgstr "在降速外壁结束前的一段距离内逐渐恢复原始打印速度（毫米），避免外壁末端出现可见的速度突变。\n\n仅在冷却减速逻辑选择“表面一致性”时生效。"
+
+msgid "Overhang threshold for participating cooling"
+msgstr "参与冷却降速的悬垂阈值"
+
+msgid "Decide which overhang part join the cooling function to slow down the speed. Expressed as percentage which indicates how much width of the line is without support from the lower layer. 100% means forcing cooling for all outer wall no matter how much overhang degree."
+msgstr "决定哪部分悬垂结构参与冷却降速。以线宽无下层支撑的比例表示。100% 表示无论悬垂程度如何，所有外墙都强制参与冷却降速。"

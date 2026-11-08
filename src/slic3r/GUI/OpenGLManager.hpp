@@ -3,6 +3,8 @@
 
 #include "GLShadersManager.hpp"
 
+#include <vector>
+
 class wxWindow;
 class wxGLCanvas;
 class wxGLContext;
@@ -77,6 +79,7 @@ private:
     bool m_gl_initialized{ false };
     wxGLContext* m_context{ nullptr };
     GLShadersManager m_shaders_manager;
+    std::vector<unsigned int> m_pendingBufferDeletes;
     static GLInfo s_gl_info;
 #ifdef __APPLE__
     // Part of hack to remove crash when closing the application on OSX 10.9.5 when building against newer wxWidgets
@@ -95,6 +98,8 @@ public:
 
     bool init_gl(bool popup_error = true);
     wxGLContext* init_glcontext(wxGLCanvas& canvas);
+    void EnqueueBufferDeletes(std::vector<unsigned int>&& bufferIds);
+    void FlushPendingBufferDeletes();
 
     GLShaderProgram* get_shader(const std::string& shader_name) { return m_shaders_manager.get_shader(shader_name); }
     GLShaderProgram* get_current_shader() { return m_shaders_manager.get_current_shader(); }

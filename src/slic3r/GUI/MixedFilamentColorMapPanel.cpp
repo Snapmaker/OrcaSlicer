@@ -116,6 +116,17 @@ void MixedFilamentColorMapPanel::set_min_component_percent(int min_component_per
     if (m_min_component_percent == clamped)
         return;
     m_min_component_percent = clamped;
+
+    // A drag is constrained to the selected minimum. Keep an already-selected
+    // ratio constrained as well when the minimum is raised; otherwise the old
+    // out-of-range cursor could remain selected in the shaded forbidden area.
+    const GeometryMode mode = geometry_mode();
+    if (mode == GeometryMode::Line || mode == GeometryMode::Triangle) {
+        const std::vector<int> constrained = clamp_color_match_weights_to_minimum(m_weights, m_min_component_percent);
+        if (constrained != m_weights)
+            set_normalized_weights(constrained, false);
+    }
+
     invalidate_cached_bitmap();
     Refresh();
 }
@@ -407,6 +418,10 @@ std::vector<int> MixedFilamentColorMapPanel::normalized_weights_from_pos(double 
     raw_weights.reserve(raw.size());
     for (const double value : raw)
         raw_weights.emplace_back(std::max(0, int(std::lround(value * 100.0))));
+
+    const GeometryMode mode = geometry_mode();
+    if (mode == GeometryMode::Line || mode == GeometryMode::Triangle)
+        return clamp_color_match_weights_to_minimum(raw_weights, m_min_component_percent);
     return normalize_color_match_weights(raw_weights, raw.size());
 }
 
@@ -456,6 +471,14 @@ void MixedFilamentColorMapPanel::update_from_mouse(const wxMouseEvent& evt, bool
     m_cursor_x       = point.x;
     m_cursor_y       = point.y;
     m_weights        = normalized_weights_from_pos(m_cursor_x, m_cursor_y);
+
+    // For line/triangle geometries the constrained ratio may map back to a
+    // different normalized point. Move the cursor with the ratio so it cannot
+    // remain visually parked in the forbidden (shaded) region.
+    const GeometryMode mode = geometry_mode();
+    if (mode == GeometryMode::Line || mode == GeometryMode::Triangle)
+        initialize_cursor_from_weights();
+
     Refresh();
     if (notify)
         emit_changed();

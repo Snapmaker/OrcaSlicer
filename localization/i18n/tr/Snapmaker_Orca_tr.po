@@ -4468,6 +4468,12 @@ msgstr "Hizalama seçenekleri"
 msgid "Spacing"
 msgstr "Boşluk"
 
+msgid "Count"
+msgstr "Adet"
+
+msgid "Gap"
+msgstr "Aralık"
+
 msgid "0 means auto spacing."
 msgstr "0 otomatik aralık anlamına gelir."
 
@@ -6198,10 +6204,7 @@ msgstr ""
 "muhafaza içinde bastırırken nozzle tıkanabilir. Lütfen ön kapağı açın ve/"
 "veya üst camı çıkarın."
 
-msgid ""
-"The nozzle hardness required by the filament is higher than the default "
-"nozzle hardness of the printer. Please replace the hardened nozzle or "
-"filament, otherwise, the nozzle will be attrited or damaged."
+msgid "The filament is too hard for the current nozzle. Please use a harder nozzle or a softer filament to avoid nozzle wear."
 msgstr ""
 "Filamentin gerektirdiği nozul sertliği, yazıcının varsayılan nozul "
 "sertliğinden daha yüksektir. Lütfen sertleşmiş nozulu veya filamenti "

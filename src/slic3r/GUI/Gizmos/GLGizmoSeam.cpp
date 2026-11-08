@@ -85,18 +85,28 @@ void GLGizmoSeam::render_painter_gizmo()
 }
 
 // BBS
-bool GLGizmoSeam::on_key_down_select_tool_type(int keyCode) {
+bool GLGizmoSeam::on_key_down_select_tool_type(int keyCode)
+{
+    wchar_t selectedTool = 0;
     switch (keyCode)
     {
     case 'S':
-        m_current_tool = ImGui::SphereButtonIcon;
+        selectedTool = ImGui::SphereButtonIcon;
         break;
     case 'C':
-        m_current_tool = ImGui::CircleButtonIcon;
+        selectedTool = ImGui::CircleButtonIcon;
         break;
     default:
         return false;
-        break;
+    }
+
+    if (selectedTool != m_current_tool)
+    {
+        const wchar_t oldTool = m_current_tool;
+        // Keep the drag painting with the new tool as a separate stroke.
+        SplitPaintingStroke();
+        m_current_tool = selectedTool;
+        tool_changed(oldTool, m_current_tool);
     }
     return true;
 }
@@ -218,11 +228,8 @@ void GLGizmoSeam::on_render_input_window(float x, float y, float bottom_limit)
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(1);
         if (btn_clicked && m_current_tool != tool_ids[i]) {
+            FinishPaintingInteraction();
             m_current_tool = tool_ids[i];
-            for (auto& triangle_selector : m_triangle_selectors) {
-                triangle_selector->seed_fill_unselect_all_triangles();
-                triangle_selector->request_update_render_data();
-            }
         }
 
         if (ImGui::IsItemHovered()) {
@@ -350,6 +357,9 @@ void GLGizmoSeam::update_from_model_object(bool first_update)
     wxBusyCursor wait;
 
     const ModelObject* mo = m_c->selection_info()->model_object();
+    // Model data replaces these selectors, so drop the active stroke instead of writing it back.
+    ResetPaintingStroke();
+    DetachTriangleSelectorGlResources();
     m_triangle_selectors.clear();
 
     int volume_id = -1;

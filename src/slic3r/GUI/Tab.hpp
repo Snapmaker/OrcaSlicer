@@ -409,6 +409,9 @@ public:
     PresetCollection *  get_presets() { return m_presets; }
     TabPresetComboBox *  get_combo_box() { return m_presets_choice; }
 
+    // Snapmaker: flow variant
+    size_t flow_variant_view_index() const;
+
 	virtual void    on_value_change(const std::string& opt_key, const boost::any& value);
 
     void            update_wiping_button_visibility();
@@ -449,7 +452,6 @@ protected:
     }
     void refresh_flow_variant_view();
     void update_flow_variant_view_visibility();
-    size_t flow_variant_view_index() const;
 
 	void			create_line_with_widget(ConfigOptionsGroup* optgroup, const std::string& opt_key, const std::string& path, widget_t widget);
 	wxSizer*		compatible_widget_create(wxWindow* parent, PresetDependencies &deps);

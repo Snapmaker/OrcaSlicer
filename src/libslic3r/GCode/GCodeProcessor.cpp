@@ -101,6 +101,12 @@ const std::string GCodeProcessor::Flush_End_Tag = " FLUSH_END";
 //Orca: External device purge tag
 const std::string GCodeProcessor::External_Purge_Tag = " EXTERNAL_PURGE";
 
+//Orca: machine statistics command carrying the layer total (Klipper's SET_PRINT_STATS_INFO)
+const std::string GCodeProcessor::Set_Print_Stats_Info_Tag = "SET_PRINT_STATS_INFO";
+
+//Orca: layer total key inside machine statistics lines (e.g. SET_PRINT_STATS_INFO)
+const std::string GCodeProcessor::Total_Layer_Tag = "TOTAL_LAYER=";
+
 const float GCodeProcessor::Wipe_Width = 0.05f;
 const float GCodeProcessor::Wipe_Height = 0.05f;
 
@@ -573,6 +579,7 @@ void GCodeProcessorResult::reset() {
     filament_densities = std::vector<float>(MIN_EXTRUDERS_COUNT, DEFAULT_FILAMENT_DENSITY);
     custom_gcode_per_print_z = std::vector<CustomGCode::Item>();
     spiral_vase_layers = std::vector<std::pair<float, std::pair<size_t, size_t>>>();
+    layer_endpoints = std::vector<std::pair<float, std::pair<size_t, size_t>>>();
     time = 0;
 
     //BBS: add mutex for protection of gcode result
@@ -605,6 +612,7 @@ void GCodeProcessorResult::reset() {
     filament_costs = std::vector<float>(MIN_EXTRUDERS_COUNT, DEFAULT_FILAMENT_COST);
     custom_gcode_per_print_z = std::vector<CustomGCode::Item>();
     spiral_vase_layers = std::vector<std::pair<float, std::pair<size_t, size_t>>>();
+    layer_endpoints = std::vector<std::pair<float, std::pair<size_t, size_t>>>();
     bed_match_result = BedMatchResult(true);
     warnings.clear();
 
@@ -1036,7 +1044,7 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
         if (machine_max_jerk_y != nullptr)
             m_time_processor.machine_limits.machine_max_jerk_y.values = machine_max_jerk_y->values;
 
-        const ConfigOptionFloats* machine_max_jerk_z = config.option<ConfigOptionFloats>("machine_max_jerkz");
+        const ConfigOptionFloats* machine_max_jerk_z = config.option<ConfigOptionFloats>("machine_max_jerk_z");
         if (machine_max_jerk_z != nullptr)
             m_time_processor.machine_limits.machine_max_jerk_z.values = machine_max_jerk_z->values;
 
@@ -1179,6 +1187,7 @@ void GCodeProcessor::reset()
     m_processing_start_custom_gcode = false;
     m_g1_line_id = 0;
     m_layer_id = 0;
+    m_layer_change_line_ids.clear();
     m_cp_color.reset();
 
     m_producer = EProducer::Unknown;
@@ -1358,6 +1367,97 @@ void GCodeProcessor::finalize(bool post_process)
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
     //BBS: update slice warning
     update_slice_warnings();
+
+    // Rebuild the main-layer endpoint move spans on the final moves array. The
+    // streaming indices recorded earlier are unreliable because OptionsZCorrector
+    // relocates custom-gcode moves mid-stream; gcode_id (line number) is stable.
+    if (!m_layer_change_line_ids.empty() && m_result.layer_endpoints.size() == m_layer_change_line_ids.size()) {
+        constexpr size_t unset = size_t(-1);
+        for (auto& layer : m_result.layer_endpoints)
+            layer.second = { unset, 0 };
+        size_t seams = 0;
+        size_t layer_idx = 0;
+        float first_layer_move_z = 0.0f;
+        for (size_t i = 0; i < m_result.moves.size(); ++i) {
+            const GCodeProcessorResult::MoveVertex& move = m_result.moves[i];
+            if (move.type == EMoveType::Seam) {
+                ++seams;
+                continue;
+            }
+            while (layer_idx < m_layer_change_line_ids.size() && move.gcode_id >= m_layer_change_line_ids[layer_idx])
+                ++layer_idx;
+            const size_t move_id = i - seams;
+            // Moves preceding the first layer tag (prime line, wipe line, initial
+            // travel) fold into the first layer span so they stay visible at the
+            // slider and in the GPU layer window, matching the legacy z-step scan.
+            auto& span = m_result.layer_endpoints[layer_idx == 0 ? 0 : layer_idx - 1].second;
+            // first-layer z fallback candidate: the first of the layer's own moves
+            // with a positive z (the span's opening vertex may be the z==0
+            // initial position vertex, so probe every first-layer move)
+            if (layer_idx <= 1 && first_layer_move_z <= 0.0f && move.position.z() > 0.0f)
+                first_layer_move_z = move.position.z();
+            if (span.first == unset) {
+                span.first = move_id;
+                span.second = move_id;
+            } else
+                span.second = move_id;
+        }
+        // Layers without any move get a first > last sentinel span: the GPU side
+        // skips them via its existing lastSid < firstSid guard, and the closed
+        // interval checks on the slider side render them empty, so a layer-less
+        // entry can never light up moves belonging to another layer. The sentinel
+        // is neighbour-clamped so a slider range ending on an empty layer still
+        // shows the geometry of the layer below it.
+        for (size_t i = 0; i < m_result.layer_endpoints.size(); ++i) {
+            auto& layer = m_result.layer_endpoints[i];
+            if (layer.second.first != unset)
+                continue;
+            bool clamped = false;
+            for (size_t p = i; p-- > 0;) {
+                const auto& prev = m_result.layer_endpoints[p].second;
+                if (prev.first != unset && prev.first <= prev.second) {
+                    layer.second = { prev.second + 1, prev.second };
+                    clamped = true;
+                    break;
+                }
+            }
+            if (clamped)
+                continue;
+            for (size_t n = i + 1; n < m_result.layer_endpoints.size(); ++n) {
+                const auto& next = m_result.layer_endpoints[n].second;
+                if (next.first != unset && next.first <= next.second && next.first > 0) {
+                    layer.second = { next.first, next.first - 1 };
+                    clamped = true;
+                    break;
+                }
+            }
+            if (!clamped)
+                layer.second = { unset, 0 };
+        }
+        // A layer whose ";Z:" / " Z_HEIGHT:" tag is missing or failed to parse
+        // keeps z == 0. Both consumers drop z <= 0 entries, which would silently
+        // hide that layer's geometry and desync the slider count from the gcode
+        // header - the very bug this table fixes, in a sneakier form. Instead the
+        // z is repaired: inherit the previous valid z (the first layer falls back
+        // to the z of one of its own moves), so the worst failure mode is an
+        // inaccurate slider z label, never invisible geometry.
+        float last_valid_z = 0.0f;
+        for (size_t i = 0; i < m_result.layer_endpoints.size(); ++i) {
+            auto& layer = m_result.layer_endpoints[i];
+            if (layer.first > 0.0f) {
+                last_valid_z = layer.first;
+                continue;
+            }
+            const float fallback = (i == 0 && first_layer_move_z > 0.0f) ? first_layer_move_z : last_valid_z;
+            if (fallback > 0.0f) {
+                BOOST_LOG_TRIVIAL(warning) << "GCodeProcessor: layer " << (i + 1) << " has no parsable z tag, layer table falls back to z " << fallback;
+                layer.first = fallback;
+                last_valid_z = fallback;
+            } else if (layer.second.first <= layer.second.second) {
+                BOOST_LOG_TRIVIAL(warning) << "GCodeProcessor: layer " << (i + 1) << " has no parsable z tag and no fallback z; the entry will be dropped by the layer table consumers";
+            }
+        }
+    }
 
     if (post_process)
         run_post_process();
@@ -2081,6 +2181,11 @@ void GCodeProcessor::process_tags(const std::string_view comment, bool producers
     // layer change tag
     if (comment == reserved_tag(ETags::Layer_Change)) {
         ++m_layer_id;
+        // Record the main-layer boundary for the viewer endpoint table. Only the line
+        // anchor is stored here; the move span is rebuilt in finalize() on the final
+        // moves array (OptionsZCorrector may relocate moves mid-stream).
+        m_layer_change_line_ids.push_back(m_line_id);
+        m_result.layer_endpoints.push_back({ 0.0f, { 0, 0 } });
         if (m_detect_layer_based_on_tag) {
             if (m_result.moves.empty() || m_result.spiral_vase_layers.empty())
                 // add a placeholder for layer height. the actual value will be set inside process_G1() method
@@ -2094,6 +2199,18 @@ void GCodeProcessor::process_tags(const std::string_view comment, bool producers
             }
         }
         return;
+    }
+
+    // layer z tag: the generator writes the nominal layer z right after each layer
+    // change tag (";Z:" on Marlin-flavour, "; Z_HEIGHT:" on BBL flavour). Feed the
+    // main-layer endpoint table so the viewer can fold sublayer travel z into it.
+    {
+        const std::string z_tag = s_IsBBLPrinter ? " Z_HEIGHT: " : "Z:";
+        if (boost::starts_with(comment, z_tag) && !m_result.layer_endpoints.empty() && m_result.layer_endpoints.back().first == 0.0f) {
+            float z = 0.0f;
+            if (parse_number(comment.substr(z_tag.size()), z) && z > 0.0f)
+                m_result.layer_endpoints.back().first = z;
+        }
     }
 
 #if ENABLE_GCODE_VIEWER_DATA_CHECKING
@@ -4505,6 +4622,36 @@ void GCodeProcessor::run_post_process()
         return ret;
     };
 
+    // Rewrite the layer total inside machine statistics lines (e.g. Klipper's
+    // "SET_PRINT_STATS_INFO TOTAL_LAYER=...") with the real layer count counted while
+    // processing. The value rendered by the gcode template comes from the [total_layer_count]
+    // placeholder, which is fed with the pre-export layer estimate; that estimate counts empty
+    // layers (e.g. the zero-area tip of a cone landing exactly on a layer boundary) that the
+    // exporter skips, so it can overshoot the number of layers actually present in the file.
+    // Template variables are resolved to numbers before the line reaches the file, so the
+    // statistics value is numeric here; a line that still holds a placeholder or other
+    // non-numeric token (mis-spelled variable) is left untouched on purpose.
+    auto process_total_layer = [this](std::string& gcode_line) {
+        // Prefilter for parsing speed: indentation is allowed (presets keep the
+        // template text box's leading spaces), but only the machine statistics
+        // command is rewritten — comments and unrelated commands (e.g. Klipper's
+        // SET_PRESSURE_ADVANCE, which presets also emit) keep their text.
+        const size_t start = gcode_line.find_first_not_of(" \t");
+        if (start == std::string::npos || gcode_line.compare(start, Set_Print_Stats_Info_Tag.length(), Set_Print_Stats_Info_Tag) != 0)
+            return;
+        const std::string& tag = Total_Layer_Tag;
+        size_t pos = gcode_line.find(tag, start);
+        if (pos == std::string::npos)
+            return;
+        pos += tag.length();
+        size_t end = pos;
+        while (end < gcode_line.length() && gcode_line[end] >= '0' && gcode_line[end] <= '9')
+            ++end;
+        if (end == pos)
+            return;
+        gcode_line.replace(pos, end - pos, std::to_string(m_layer_id));
+    };
+
     // check for temporary lines
     auto is_temporary_decoration = [](const std::string_view gcode_line) {
         // remove trailing '\n'
@@ -4713,6 +4860,8 @@ void GCodeProcessor::run_post_process()
                 if (eol) {
                     ++line_id;
                     const unsigned int internal_g1_lines_counter = export_lines.update(gcode_line, line_id, g1_lines_counter);
+                    // rewrite machine layer statistics with the real layer count
+                    process_total_layer(gcode_line);
                     // replace placeholder lines
                     bool processed = process_placeholders(gcode_line);
                     if (processed)

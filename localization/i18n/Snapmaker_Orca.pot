@@ -4235,6 +4235,12 @@ msgstr ""
 msgid "Spacing"
 msgstr ""
 
+msgid "Count"
+msgstr ""
+
+msgid "Gap"
+msgstr ""
+
 msgid "0 means auto spacing."
 msgstr ""
 
@@ -5866,10 +5872,7 @@ msgid ""
 "front door and/or remove the upper glass."
 msgstr ""
 
-msgid ""
-"The nozzle hardness required by the filament is higher than the default "
-"nozzle hardness of the printer. Please replace the hardened nozzle or "
-"filament, otherwise, the nozzle will be attrited or damaged."
+msgid "The filament is too hard for the current nozzle. Please use a harder nozzle or a softer filament to avoid nozzle wear."
 msgstr ""
 
 msgid ""
@@ -16315,3 +16318,12 @@ msgstr ""
 
 msgid "Incompatible filament types cannot be mixed. Please correct the selection."
 msgstr ""
+
+#: src/slic3r/GUI/Preferences.cpp
+msgid "GPU-accelerated G-code preview"
+msgstr ""
+
+#: src/slic3r/GUI/Preferences.cpp
+msgid "Rebuild toolpath geometry on the GPU: much faster preview loading and lower memory on capable graphics cards. If the preview moves slower than before (for example on basic integrated graphics), turn this off to use the compatible renderer. Takes effect when the preview is reloaded."
+msgstr ""
+

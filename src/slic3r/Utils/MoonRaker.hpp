@@ -43,9 +43,6 @@ public:
     // Send G-code commands to printer
     bool send_gcodes(const std::vector<std::string>& codes, std::string& extraInfo) override;
 
-    // Get printer information
-    bool get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, nlohmann::json& response) override;
-
     // Configuration getters
     bool has_auto_discovery() const override { return true; }
     bool can_test() const override { return true; }
@@ -61,15 +58,8 @@ public:
     virtual bool connect(wxString& msg, const nlohmann::json& params) override;
     virtual bool disconnect(wxString& msg, const nlohmann::json& params) override { return true; }
 
-    // Async printer information methods
-    virtual void async_get_system_info(std::function<void(const nlohmann::json& response)> callback) override {}
     virtual void async_server_files_get_status(std::function<void(const nlohmann::json& response)> callback) override {}
-    virtual void async_get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, std::function<void(const nlohmann::json& response)>) override  {}
-    virtual void async_get_device_info(std::function<void(const nlohmann::json& response)>) override  {}
     virtual void async_subscribe_machine_info(const std::string& hash, std::function<void(const nlohmann::json&)>) override {}
-    virtual void async_get_machine_objects(std::function<void(const nlohmann::json& response)>)override {}
-    virtual void async_set_machine_subscribe_filter(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets,
-                                                    std::function<void(const nlohmann::json& response)>                  callback) override {}
     virtual void async_unsubscribe_machine_info(const std::string& hash, std::function<void(const nlohmann::json&)>) override {}
     virtual void async_send_gcodes(const std::vector<std::string>& scripts, std::function<void(const nlohmann::json&)>) override{}
 
@@ -239,18 +229,10 @@ public:
     virtual bool connect(wxString& msg, const nlohmann::json& params) override;
     virtual bool disconnect(wxString& msg, const nlohmann::json& params) override;
 
-    // Override async information methods
-    virtual void async_get_system_info(std::function<void(const nlohmann::json& response)> callback) override;
     virtual void async_server_files_get_status(std::function<void(const nlohmann::json& response)> callback) override;
-    virtual void async_get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, std::function<void(const nlohmann::json& response)> callback) override;
-    virtual void async_get_device_info(std::function<void(const nlohmann::json& response)> callback) override;
     virtual void async_subscribe_machine_info(const std::string& hash, std::function<void(const nlohmann::json&)>) override;
-    virtual void async_get_machine_objects(std::function<void(const nlohmann::json& response)> callback) override;
-    virtual void async_set_machine_subscribe_filter(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets,
-                                                    std::function<void(const nlohmann::json& response)>                  callback) override;
     virtual void async_unsubscribe_machine_info(const std::string& hash, std::function<void(const nlohmann::json&)>) override;
     virtual void async_send_gcodes(const std::vector<std::string>& scripts, std::function<void(const nlohmann::json&)>) override;
-    virtual void async_get_printer_info(std::function<void(const nlohmann::json& response)> callback) override;
 
     virtual void async_start_print_job(const std::string& filename, std::function<void(const nlohmann::json&)> cb) override;
 

@@ -4545,6 +4545,21 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
         Transform3d transform = bbs_get_transform_from_3mf_specs_string(bbs_get_attribute_value_string(attributes, num_attributes, TRANSFORM_ATTR));
         Vec3d ofs2ass = bbs_get_offset_from_3mf_specs_string(bbs_get_attribute_value_string(attributes, num_attributes, OFFSET_ATTR));
+        // BBS: drop corrupted assemble data. The feedback-amplification defect of
+        // Model::InitializeAssemblyPositions once produced translations up to
+        // ~1e15 mm, which blanked the assembly view (astronomic scene bbox broke
+        // camera fitting and float32 vertex transforms). Leaving the instance
+        // uninitialized lets the load path fall back to the (clean) plate
+        // transformation, so damaged projects self-heal on load.
+        if (!assemble_transform_is_sane(transform) || !ofs2ass.allFinite() ||
+            ofs2ass.cwiseAbs().maxCoeff() > ASSEMBLY_TRANSFORM_SANITY_LIMIT) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__
+                << ": dropped insane assemble_item, object_id=" << object_id
+                << ", instance_id=" << instance_id
+                << ", tx=" << transform.translation().x()
+                << ", ofs2ass_x=" << ofs2ass.x();
+            return true;
+        }
         if (object_id < m_model->objects.size()) {
             if (instance_id < m_model->objects[object_id]->instances.size()) {
                 m_model->objects[object_id]->instances[instance_id]->set_assemble_from_transform(transform);
@@ -7870,6 +7885,22 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             if (obj != nullptr) {
                 for (int instance_idx = 0; instance_idx < obj->instances.size(); ++instance_idx) {
                     if (obj->instances[instance_idx]->is_assemble_initialized()) {
+                        // BBS: never persist corrupted assemble data. Skipping the item
+                        // equals "not initialized", so the next load re-initializes the
+                        // instance from its (clean) plate transformation.
+                        if (!assemble_transform_is_sane(obj->instances[instance_idx]->get_assemble_transformation().get_matrix())) {
+                            BOOST_LOG_TRIVIAL(error) << __FUNCTION__
+                                << ": skipped writing insane assemble_item, object_id=" << object_data.object_id
+                                << ", instance_id=" << instance_idx;
+                            continue;
+                        }
+                        const Vec3d ofs2ass_check = obj->instances[instance_idx]->get_offset_to_assembly();
+                        if (!ofs2ass_check.allFinite() || ofs2ass_check.cwiseAbs().maxCoeff() > ASSEMBLY_TRANSFORM_SANITY_LIMIT) {
+                            BOOST_LOG_TRIVIAL(error) << __FUNCTION__
+                                << ": skipped writing insane offset_to_assembly, object_id=" << object_data.object_id
+                                << ", instance_id=" << instance_idx;
+                            continue;
+                        }
                         stream << "   <" << ASSEMBLE_ITEM_TAG << " " << OBJECT_ID_ATTR << "=\"" << object_data.object_id << "\" ";
                         stream << INSTANCEID_ATTR << "=\"" << instance_idx << "\" " << TRANSFORM_ATTR << "=\"";
                             for (unsigned c = 0; c < 4; ++c) {
@@ -8218,8 +8249,22 @@ public:
     }
 
     void set_post_callback(std::function<void(int)> c) {
-        boost::lock_guard lock(m_mutex);
-        m_post_callback = c;
+        // serialize the swap with in-flight invocation in operator()()
+        {
+            boost::lock_guard post_lock(m_post_callback_mutex);
+            m_post_callback = c;
+        }
+        // catch-up: a task queued while the callback was null missed its
+        // size()==1 notification; re-announce it or backup stalls until exit
+        if (c) {
+            bool pending;
+            {
+                boost::lock_guard lock(m_mutex);
+                pending = !m_ui_tasks.empty();
+            }
+            if (pending)
+                c(0); // outside m_mutex: only this thread drains m_ui_tasks
+        }
     }
 
     void run_ui_tasks() {
@@ -8513,14 +8558,17 @@ public:
                     continue;
             }
             m_tasks.pop_front();
-            auto callback = m_post_callback;
             lock.unlock();
             process_task(t);
             lock.lock();
             if (t.type > None) {
                 m_ui_tasks.push_back(t);
-                if (m_ui_tasks.size() == 1 && callback)
-                    callback(0);
+                if (m_ui_tasks.size() == 1) {
+                    // re-read under lock: shutdown may swap in nullptr during process_task()
+                    boost::lock_guard post_lock(m_post_callback_mutex);
+                    if (m_post_callback)
+                        m_post_callback(0);
+                }
             }
         }
     }
@@ -8558,6 +8606,9 @@ private:
     size_t m_task_seq = 0;
     // param 0: should call run_ui_tasks
     // param 1: should backup current project
+    // contract: invoked with m_mutex held (worker); must not re-enter this
+    // manager. duplicate param-0 calls are fine: run_ui_tasks() drains the
+    // whole queue, extras are no-ops
     std::function<void(int)> m_post_callback;
     long m_interval = 1 * 60;
     boost::system_time m_next_backup;
@@ -8565,6 +8616,9 @@ private:
     bool m_other_changes = false; // visit only in main thread
     bool m_other_changes_backup = false; // visit only in main thread
     std::vector<std::pair<ModelObject*, size_t>> m_gaurd_objects;
+    // serializes m_post_callback swap vs worker invocation; lock order: m_mutex -> m_post_callback_mutex
+    // boost primitives to match the class's existing synchronization (m_cond waits need boost locks)
+    boost::mutex m_post_callback_mutex;
     boost::thread m_thread;
 };
 

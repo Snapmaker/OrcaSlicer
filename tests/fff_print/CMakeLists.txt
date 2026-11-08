@@ -14,9 +14,18 @@ add_executable(${_TEST_NAME}_tests
 	test_printobject.cpp
 	test_skirt_brim.cpp
 	test_support_material.cpp
+	test_tree_support_bridge.cpp
 	test_support_overrides.cpp
 	test_bed_temperature.cpp
 	test_trianglemesh.cpp
+	test_pressure_equalizer.cpp
+	test_fanmover.cpp
+	test_small_area_infill_flow_compensator.cpp
+	test_spiral_vase.cpp
+	test_cooling_buffer.cpp
+	test_gcode_processor.cpp
+	test_adaptive_pa.cpp
+	test_wipe_tower.cpp
 	)
 find_package(JPEG REQUIRED)
 find_package(PNG REQUIRED)

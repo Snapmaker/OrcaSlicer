@@ -36,6 +36,7 @@ add_executable(${_TEST_NAME}_tests
     test_indexed_triangle_set.cpp
 	TestMD5.cpp
 	test_flush_vol_calc.cpp
+	test_split_painting.cpp
     ../libnest2d/printer_parts.cpp
 	)
 

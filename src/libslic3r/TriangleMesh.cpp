@@ -403,6 +403,26 @@ std::vector<TriangleMesh> TriangleMesh::split() const
     return out;
 }
 
+std::vector<TriangleMesh> TriangleMesh::split_and_save_relationship(std::vector<std::unordered_map<int, int>> &ships) const
+{
+    auto                      itss_and_ships = its_split_and_save_relationship(this->its);
+    std::vector<TriangleMesh> out;
+    out.reserve(itss_and_ships.itses.size());
+    ships.reserve(itss_and_ships.ships.size());
+    size_t index = 0;
+    for (indexed_triangle_set &m : itss_and_ships.itses) {
+        // The TriangleMesh constructor shall fill in the mesh statistics including volume.
+        TriangleMesh triangle_mesh(std::move(m));
+        if (triangle_mesh.volume() < 0)
+            // Some source mesh parts may be incorrectly oriented. Correct them.
+            triangle_mesh.flip_triangles();
+        out.emplace_back(std::move(triangle_mesh));
+        ships.emplace_back(std::move(itss_and_ships.ships[index]));
+        ++index;
+    }
+    return out;
+}
+
 void TriangleMesh::merge(const TriangleMesh &mesh)
 {
     its_merge(this->its, mesh.its);

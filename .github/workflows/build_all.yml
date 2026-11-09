@@ -2,7 +2,7 @@ name: Build all
 
 on:
   schedule:
-    - cron: '0 18 * * *' # everyday 2:00(beijing time UTC+8)
+    - cron: '17 20 * * *' # everyday 4:17 (Beijing time, UTC+8)
 
   workflow_dispatch:
     inputs:

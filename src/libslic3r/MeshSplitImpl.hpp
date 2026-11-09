@@ -11,9 +11,6 @@
 #include "libnest2d/tools/benchmark.h"
 #include "Execution/ExecutionTBB.hpp"
 
-#include <algorithm>
-#include <unordered_map>
-
 namespace Slic3r {
 
 template<class ExPolicy>
@@ -193,18 +190,17 @@ std::vector<indexed_triangle_set> its_split(const Its &its)
     return ret;
 }
 
-// BBS: split() variant that also reports, for every split part, the mapping from the
-// new face index to the source face index, so per-face facet annotations (mmu
-// painting, seam, supports, fuzzy skin) can be carried over the split.
+// split() variant that also reports, for every split part, the mapping from the
+// new face index to the source face index
 template<class Its, class OutputIt, class OutputItShip>
 void its_split_and_keep_relationship(const Its &m, OutputIt out_it, OutputItShip out_ship)
 {
     using namespace meshsplit_detail;
 
-    const indexed_triangle_set &its = ItsWithNeighborsIndex_<Its>::get_its(m);
+    const indexed_triangle_set& its = ItsWithNeighborsIndex_<Its>::get_its(m);
 
     struct VertexConv {
-        size_t part_id      = std::numeric_limits<size_t>::max();
+        size_t part_id = std::numeric_limits<size_t>::max();
         size_t vertex_image;
     };
     std::vector<VertexConv> vidx_conv(its.vertices.size());
@@ -227,7 +223,7 @@ void its_split_and_keep_relationship(const Its &m, OutputIt out_it, OutputItShip
         // Assign the facets to the new mesh.
         for (size_t face_id : facets) {
             const auto &face = its.indices[face_id];
-            Vec3i32       new_face;
+            Vec3i32 new_face;
             for (size_t v = 0; v < 3; ++v) {
                 auto vi = face(v);
 
@@ -242,7 +238,7 @@ void its_split_and_keep_relationship(const Its &m, OutputIt out_it, OutputItShip
             mesh.indices.emplace_back(new_face);
         }
 
-        *out_it   = std::move(mesh);
+        *out_it = std::move(mesh);
         *out_ship = std::move(relationship);
         ++out_it;
         ++out_ship;
@@ -252,14 +248,14 @@ void its_split_and_keep_relationship(const Its &m, OutputIt out_it, OutputItShip
 class MeshAndShip
 {
 public:
-    std::vector<indexed_triangle_set>         itses;
+    std::vector<indexed_triangle_set> itses;
     std::vector<std::unordered_map<int, int>> ships;
 };
 
 template<class Its>
-MeshAndShip its_split_and_save_relationship(const Its &its)
+MeshAndShip its_split_and_save_relationship(const Its& its)
 {
-    auto ret      = reserve_vector<indexed_triangle_set>(3);
+    auto ret = reserve_vector<indexed_triangle_set>(3);
     auto ret_ship = reserve_vector<std::unordered_map<int, int>>(3);
 
     its_split_and_keep_relationship(its, std::back_inserter(ret), std::back_inserter(ret_ship));

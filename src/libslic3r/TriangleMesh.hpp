@@ -120,10 +120,7 @@ public:
     void align_to_origin();
     void rotate(double angle, Point* center);
     std::vector<TriangleMesh> split() const;
-    // BBS: split() variant that also reports, for every split part, the mapping from
-    // the new face index to the source face index, so per-face facet annotations
-    // (mmu painting, seam, supports, fuzzy skin) can be carried over the split.
-    std::vector<TriangleMesh> split_and_save_relationship(std::vector<std::unordered_map<int, int>> &ships) const;
+    std::vector<TriangleMesh> split_and_save_relationship(std::vector<std::unordered_map<int, int>>& ships) const;
     void merge(const TriangleMesh &mesh);
     ExPolygons horizontal_projection() const;
     // 2D convex hull of a 3D mesh projected into the Z=0 plane.

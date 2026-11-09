@@ -403,9 +403,9 @@ std::vector<TriangleMesh> TriangleMesh::split() const
     return out;
 }
 
-std::vector<TriangleMesh> TriangleMesh::split_and_save_relationship(std::vector<std::unordered_map<int, int>> &ships) const
+std::vector<TriangleMesh> TriangleMesh::split_and_save_relationship(std::vector<std::unordered_map<int, int>>& ships) const
 {
-    auto                      itss_and_ships = its_split_and_save_relationship(this->its);
+    auto itss_and_ships = its_split_and_save_relationship(this->its);
     std::vector<TriangleMesh> out;
     out.reserve(itss_and_ships.itses.size());
     ships.reserve(itss_and_ships.ships.size());

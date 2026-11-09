@@ -2108,8 +2108,7 @@ void ModelObject::split(ModelObjectPtrs* new_objects)
     std::vector<Transform3d> all_transfos;
     std::vector<std::pair<int, int>> volume_mesh_counts;
     all_meshes.reserve(this->volumes.size() * 5);
-    // BBS: new-face -> source-face mapping per entry of all_meshes (empty for meshes that
-    // were not split), so per-face facet annotations can be carried over the split.
+    // new-face -> source-face mapping per entry of all_meshes.
     std::vector<std::unordered_map<int, int>> all_ships;
     // Per source volume, the serialized per-face facet annotations of the four paintable
     // types, captured before the mesh split re-indexes the faces.
@@ -2174,7 +2173,7 @@ void ModelObject::split(ModelObjectPtrs* new_objects)
                 paint.sup.reserve(face_count);
                 paint.seam.reserve(face_count);
                 paint.fuzzy.reserve(face_count);
-                for (size_t i = 0; i < face_count; ++ i) {
+                for (size_t i = 0; i < face_count; ++i) {
                     paint.mmu.emplace_back(volume->mmu_segmentation_facets.get_triangle_as_string(int(i)));
                     paint.sup.emplace_back(volume->supported_facets.get_triangle_as_string(int(i)));
                     paint.seam.emplace_back(volume->seam_facets.get_triangle_as_string(int(i)));
@@ -2228,7 +2227,7 @@ void ModelObject::split(ModelObjectPtrs* new_objects)
                 ++ mesh_entry;
                 continue;
             }
-            const std::unordered_map<int, int> &ship = *mesh_ships[mesh_entry];
+            const std::unordered_map<int, int>& ship = *mesh_ships[mesh_entry];
             ++ mesh_entry;
 
             // Bounding box of this part in the object coordinate system, needed to decide
@@ -2265,13 +2264,12 @@ void ModelObject::split(ModelObjectPtrs* new_objects)
                 if (new_vol->mmu_segmentation_facets.timestamp() == volume->mmu_segmentation_facets.timestamp())
                     new_vol->mmu_segmentation_facets.reset(); // BBS: let next assign take effect
                 new_vol->mmu_segmentation_facets.assign(volume->mmu_segmentation_facets);
-            } else if (! ship.empty()) {
-                // BBS: the mesh was split, so carry the facet annotations over from the
-                // source faces through the new-face -> source-face mapping. Walk the new
-                // faces in ascending order: set_triangle_from_string() requires strictly
-                // increasing triangle ids.
+            }
+            else if (! ship.empty()) {
+                // the mesh was split, so carry the facet annotations over from the
+                // source faces through the new-face -> source-face mapping
                 const VolumePaintStrings &paint = volume_paints[mesh_info.first];
-                for (int i = 0; i < int(new_vol->mesh().its.indices.size()); ++ i) {
+                for (int i = 0; i < int(new_vol->mesh().its.indices.size()); ++i) {
                     auto it = ship.find(i);
                     if (it == ship.end())
                         continue;
@@ -3001,16 +2999,13 @@ std::string ModelVolume::type_to_string(const ModelVolumeType t)
 // This is useful to assign different materials to different volumes of an object.
 size_t ModelVolume::split(unsigned int max_extruders)
 {
-    // BBS: serialize the per-face facet annotations before the split, so they can be
-    // carried over to the split parts through the new-face -> source-face mapping
-    // (ships) recorded by split_and_save_relationship().
     const size_t face_count = this->mesh().its.indices.size();
     std::vector<std::string> tris_mmu_strs, tris_sup_strs, tris_seam_strs, tris_fuzzy_strs;
     tris_mmu_strs.reserve(face_count);
     tris_sup_strs.reserve(face_count);
     tris_seam_strs.reserve(face_count);
     tris_fuzzy_strs.reserve(face_count);
-    for (size_t i = 0; i < face_count; ++ i) {
+    for (size_t i = 0; i < face_count; ++i) {
         tris_mmu_strs.emplace_back(mmu_segmentation_facets.get_triangle_as_string(int(i)));
         tris_sup_strs.emplace_back(supported_facets.get_triangle_as_string(int(i)));
         tris_seam_strs.emplace_back(seam_facets.get_triangle_as_string(int(i)));
@@ -3021,7 +3016,7 @@ size_t ModelVolume::split(unsigned int max_extruders)
     auto restore_facets = [&tris_mmu_strs, &tris_sup_strs, &tris_seam_strs, &tris_fuzzy_strs]
         (FacetsAnnotation &mmu, FacetsAnnotation &sup, FacetsAnnotation &seam, FacetsAnnotation &fuzzy,
          size_t new_face_count, const std::unordered_map<int, int> &ship) {
-        for (int i = 0; i < int(new_face_count); ++ i) {
+        for (int i = 0; i < int(new_face_count); ++i) {
             auto it = ship.find(i);
             if (it == ship.end())
                 continue;
@@ -3053,8 +3048,8 @@ size_t ModelVolume::split(unsigned int max_extruders)
     unsigned int extruder_counter = 0;
     const Vec3d offset = this->get_offset();
 
-    for (size_t part = 0; part < meshes.size(); ++ part) {
-        TriangleMesh &mesh = meshes[part];
+    for (size_t part = 0; part < meshes.size(); ++part) {
+        TriangleMesh& mesh = meshes[part];
         if (mesh.empty())
             // Repair may have removed unconnected triangles, thus emptying the mesh.
             continue;
@@ -3079,7 +3074,7 @@ size_t ModelVolume::split(unsigned int max_extruders)
                            this->mesh().its.indices.size(), ships[part]);
         }
         else {
-            ModelVolume *new_mv = new ModelVolume(object, *this, std::move(mesh));
+            ModelVolume* new_mv = new ModelVolume(object, *this, std::move(mesh));
             this->object->volumes.insert(this->object->volumes.begin() + (++ivolume), new_mv);
             // BBS: carry the painting over from the source faces.
             restore_facets(new_mv->mmu_segmentation_facets, new_mv->supported_facets, new_mv->seam_facets, new_mv->fuzzy_skin_facets,

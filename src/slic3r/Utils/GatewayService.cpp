@@ -2,6 +2,8 @@
 
 #include "Http.hpp"
 
+#include "app_common/SentryWrapper.hpp"
+
 #include <boost/asio/bind_executor.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/post.hpp>
@@ -11,6 +13,7 @@
 #include <boost/log/trivial.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <deque>
 #include <exception>
@@ -33,6 +36,18 @@ std::int64_t wall_now_ms()
 constexpr std::chrono::milliseconds websocket_close_timeout{1000};
 
 GatewayError transport_error(const std::string& message) { return {GatewayErrorCode::TransportError, message}; }
+
+std::atomic<bool> gateway_takeover_reported{false};
+
+std::string takeover_result_name(PortOwnerTakeoverResult result)
+{
+    switch (result) {
+    case PortOwnerTakeoverResult::TakenOver: return "taken_over";
+    case PortOwnerTakeoverResult::NotTakenOver: return "not_taken_over";
+    case PortOwnerTakeoverResult::Unsupported: return "unsupported";
+    }
+    return "unknown";
+}
 
 std::string make_url(const std::string& host, std::uint16_t port, const std::string& path)
 { return "http://" + host + ":" + std::to_string(port) + path; }
@@ -791,7 +806,7 @@ void GatewayService::run(const std::string locale)
         // would otherwise linger forever while the next attempt spawns yet another instance.
         // Force-kill the stale process before retrying (TerminateProcess / SIGKILL) so every
         // reconnect starts from a clean single-instance state.
-        BOOST_LOG_TRIVIAL(warning) << "connection gateway reconnect attempt failed: " << error.message
+        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW][gateway]connection gateway reconnect attempt failed: " << error.message
                                    << "; force-restarting the snapmaker_connection CLI";
         if (dependencies_.process_manager)
             dependencies_.process_manager->terminate();
@@ -825,9 +840,16 @@ GatewayError GatewayService::connect_once(const std::string& locale)
             ++stale_owner_failures_;
             if (dependencies_.process_manager && stale_owner_failures_ >= config_.stale_owner_grace_attempts) {
                 // Every takeover result preserves the reconnect policy; the next attempt rechecks health.
-                dependencies_.process_manager->terminate_port_owner(discovery.port);
-                stale_owner_port_     = 0;
-                stale_owner_failures_ = 0;
+                const PortOwnerTakeoverResult takeover_result = dependencies_.process_manager->terminate_port_owner(discovery.port);
+                stale_owner_port_                             = 0;
+                stale_owner_failures_                         = 0;
+                bool report_expected                          = false;
+                if (gateway_takeover_reported.compare_exchange_strong(report_expected, true)) {
+                    sentryReportLog(SENTRY_LOG_WARNING,
+                                    "orca gateway health timeout triggered stale owner takeover: port=" + std::to_string(discovery.port) +
+                                        ", result=" + takeover_result_name(takeover_result),
+                                    BP_GATEWAY_TAKEOVER);
+                }
             }
         }
         return health_error;

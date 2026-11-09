@@ -7649,7 +7649,7 @@ msgid "Tree supports"
 msgstr ""
 
 msgid "Multimaterial"
-msgstr ""
+msgstr "マルチマテリアル"
 
 msgid "Prime tower"
 msgstr "プライムタワー"
@@ -17725,7 +17725,7 @@ msgstr ""
 #~ msgid "Orient the model"
 #~ msgstr "モデルの向きを調整"
 msgid "Filament flow assignment"
-msgstr "フィラメントの流量割り当て"
+msgstr "印刷用フィラメント設定"
 
 msgid "Choose the flow settings for each filament used by the model."
 msgstr "使用するフィラメントごとに流量設定を選択します"
@@ -17771,3 +17771,75 @@ msgstr "注意：%1%mmのHFノズルは%2%には推奨されていません"
 
 msgid "Using Standard preset values for filaments without High Flow settings: %1%."
 msgstr "HF用の設定がないため、標準の値を使用します：フィラメント%1%"
+
+msgid "Physical nozzle configuration (printer settings)"
+msgstr "物理ノズル構成（プリンター設定）"
+
+msgid "Print settings: filament flow"
+msgstr "この印刷の設定：フィラメント流量"
+
+msgid "Print flow mode"
+msgstr "印刷の流量モード"
+
+msgid "Applied filament settings"
+msgstr "実際に適用する素材設定"
+
+msgid "Standard flow"
+msgstr "標準流量"
+
+msgid "High flow (HF)"
+msgstr "高流量（HF）"
+
+msgid "Standard (no HF preset)"
+msgstr "標準値（HF未設定）"
+
+msgid "High Flow preset values"
+msgstr "HF用の設定値"
+
+msgid "Standard preset values"
+msgstr "標準の設定値"
+
+msgid "Filaments: %1% Standard, %2% High Flow"
+msgstr "素材：標準 %1% ／ HF %2%"
+
+msgid "Hotend type"
+msgstr "ホットエンド"
+
+msgid "Physical nozzle configuration"
+msgstr "物理ノズル構成"
+
+msgid "Phaetus HF"
+msgstr "Phaetus HF"
+
+msgid "HF: Phaetus HF hotend. STD: Standard hotend. Match these settings to the installed hardware."
+msgstr "HF：Phaetus HFホットエンド、STD：標準ホットエンド。装着したノズルに合わせて設定してください"
+
+msgid "Match this setting to the hotend installed on this toolhead."
+msgstr "このツールヘッドに装着したホットエンドに合わせて設定してください"
+
+msgid "Filament Management"
+msgstr "フィラメント管理"
+
+msgid "Color Mixing Match"
+msgstr "混色マッチング"
+
+msgid "Color Mixing"
+msgstr "混色"
+
+msgid "[Standard flow]"
+msgstr "［標準流量］"
+
+msgid "[High flow]"
+msgstr "［高流量］"
+
+msgid "Got it"
+msgstr "確認"
+
+msgid "No model detected. Import a multi-color model to continue."
+msgstr "モデルがありません。多色モデルを読み込んでください"
+
+msgid "Color Mixing Match is unavailable when only one filament is added to Filament Management."
+msgstr "混色マッチングを使うには、フィラメント管理に2種類以上のフィラメントを追加してください"
+
+msgid "Automatically calculate the color mixing scheme that best matches the original model colors and complete color mapping.\nNote:\n1. Color mixing match is based on the official recommended filaments. The matched colors may differ from the original model.\n2. The order of the Color Mapping list may differ from that of the Color Mixing list."
+msgstr "モデルの色に最も近い混色の組み合わせを自動計算し、色を割り当てます。\n注意：\n1. 公式推奨フィラメントを基準に計算するため、元の色と差が出る場合があります。\n2. 色の割り当てリストと混色リストでは、表示順が異なる場合があります。"

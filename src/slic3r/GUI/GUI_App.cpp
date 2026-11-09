@@ -6522,6 +6522,8 @@ bool GUI_App::load_language(wxString language, bool initial)
     // to load possibly different dictionary, for example, load Czech dictionary for Slovak language.
     wxTranslations::Get()->SetLanguage(language_dict);
     m_wxLocale->AddCatalog(SLIC3R_APP_KEY);
+    // Cached label fonts must follow the selected UI language, not only the OS locale.
+    ::Label::initSysFont();
     m_imgui->set_language(into_u8(language_info->CanonicalName));
 
     //FIXME This is a temporary workaround, the correct solution is to switch to "C" locale during file import / export only.

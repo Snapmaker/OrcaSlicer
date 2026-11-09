@@ -4,34 +4,52 @@
 #include <wx/intl.h> // For wxLocale
 #include <wx/dcclient.h>
 #include <wx/settings.h>
+#include <wx/fontenum.h>
 #include <boost/log/trivial.hpp>
-
 
 wxFont Label::sysFont(int size, bool bold)
 {
-//#ifdef __linux__
-//    return wxFont{};
-//#endif
+// #ifdef __linux__
+//     return wxFont{};
+// #endif
 #ifndef __APPLE__
     size = size * 4 / 5;
 #endif
 
     wxString face = "HarmonyOS Sans SC";
 
-    // Check if the current locale is Korean
-    if (wxLocale::GetSystemLanguage() == wxLANGUAGE_KOREAN) {
+    const wxLocale* locale   = wxGetLocale();
+    const int       language = locale ? locale->GetLanguage() : wxLocale::GetSystemLanguage();
+    if (language == wxLANGUAGE_JAPANESE) {
+        // The bundled SC face uses simplified-Chinese glyph forms for shared kanji.
+        size = std::max(size, 9);
+        face = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT).GetFaceName();
+#ifdef __WXMSW__
+        const wxString candidates[] = {"Meiryo UI", "Yu Gothic UI", "Meiryo"};
+#elif defined(__APPLE__)
+        const wxString candidates[] = {"Hiragino Sans", "Hiragino Kaku Gothic ProN"};
+#else
+        const wxString candidates[] = {"Noto Sans CJK JP", "Noto Sans JP", "IPAexGothic"};
+#endif
+        for (const wxString& candidate : candidates) {
+            if (wxFontEnumerator::IsValidFacename(candidate)) {
+                face = candidate;
+                break;
+            }
+        }
+    } else if (language == wxLANGUAGE_KOREAN) {
         face = "NanumGothic";
     }
 
     wxFont font{size, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, bold ? wxFONTWEIGHT_BOLD : wxFONTWEIGHT_NORMAL, false, face};
     font.SetFaceName(face);
     if (!font.IsOk()) {
-      BOOST_LOG_TRIVIAL(warning) << boost::format("Can't find %1% font") % face;
-      font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
-      BOOST_LOG_TRIVIAL(warning) << boost::format("Use system font instead: %1%") % font.GetFaceName();
-      if (bold)
-        font.MakeBold();
-      font.SetPointSize(size);
+        BOOST_LOG_TRIVIAL(warning) << boost::format("Can't find %1% font") % face;
+        font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
+        BOOST_LOG_TRIVIAL(warning) << boost::format("Use system font instead: %1%") % font.GetFaceName();
+        if (bold)
+            font.MakeBold();
+        font.SetPointSize(size);
     }
     return font;
 }
@@ -61,24 +79,28 @@ wxFont Label::Body_8;
 void Label::initSysFont()
 {
 #if defined(__linux__) || defined(_WIN32)
-    const std::string &resource_path = Slic3r::resources_dir();
-    wxString font_path = wxString::FromUTF8(resource_path + "/fonts/HarmonyOS_Sans_SC_Bold.ttf");
-    bool result = wxFont::AddPrivateFont(font_path);
-    // BOOST_LOG_TRIVIAL(info) << boost::format("add font of HarmonyOS_Sans_SC_Bold returns %1%")%result;
-    printf("add font of HarmonyOS_Sans_SC_Bold returns %d\n", result);
-    font_path = wxString::FromUTF8(resource_path + "/fonts/HarmonyOS_Sans_SC_Regular.ttf");
-    result = wxFont::AddPrivateFont(font_path);
-    // BOOST_LOG_TRIVIAL(info) << boost::format("add font of HarmonyOS_Sans_SC_Regular returns %1%")%result;
-    printf("add font of HarmonyOS_Sans_SC_Regular returns %d\n", result);
-    // Adding NanumGothic Regular and Bold
-    font_path = wxString::FromUTF8(resource_path + "/fonts/NanumGothic-Regular.ttf");
-    result = wxFont::AddPrivateFont(font_path);
-    // BOOST_LOG_TRIVIAL(info) << boost::format("add font of NanumGothic-Regular returns %1%")%result;
-    printf("add font of NanumGothic-Regular returns %d\n", result);
-    font_path = wxString::FromUTF8(resource_path + "/fonts/NanumGothic-Bold.ttf");
-    result = wxFont::AddPrivateFont(font_path);
-    // BOOST_LOG_TRIVIAL(info) << boost::format("add font of NanumGothic-Bold returns %1%")%result;
-    printf("add font of NanumGothic-Bold returns %d\n", result);
+    static bool private_fonts_loaded = false;
+    if (!private_fonts_loaded) {
+        const std::string& resource_path = Slic3r::resources_dir();
+        wxString           font_path     = wxString::FromUTF8(resource_path + "/fonts/HarmonyOS_Sans_SC_Bold.ttf");
+        bool               result        = wxFont::AddPrivateFont(font_path);
+        // BOOST_LOG_TRIVIAL(info) << boost::format("add font of HarmonyOS_Sans_SC_Bold returns %1%")%result;
+        printf("add font of HarmonyOS_Sans_SC_Bold returns %d\n", result);
+        font_path = wxString::FromUTF8(resource_path + "/fonts/HarmonyOS_Sans_SC_Regular.ttf");
+        result    = wxFont::AddPrivateFont(font_path);
+        // BOOST_LOG_TRIVIAL(info) << boost::format("add font of HarmonyOS_Sans_SC_Regular returns %1%")%result;
+        printf("add font of HarmonyOS_Sans_SC_Regular returns %d\n", result);
+        // Adding NanumGothic Regular and Bold
+        font_path = wxString::FromUTF8(resource_path + "/fonts/NanumGothic-Regular.ttf");
+        result    = wxFont::AddPrivateFont(font_path);
+        // BOOST_LOG_TRIVIAL(info) << boost::format("add font of NanumGothic-Regular returns %1%")%result;
+        printf("add font of NanumGothic-Regular returns %d\n", result);
+        font_path = wxString::FromUTF8(resource_path + "/fonts/NanumGothic-Bold.ttf");
+        result    = wxFont::AddPrivateFont(font_path);
+        // BOOST_LOG_TRIVIAL(info) << boost::format("add font of NanumGothic-Bold returns %1%")%result;
+        printf("add font of NanumGothic-Bold returns %d\n", result);
+        private_fonts_loaded = true;
+    }
 #endif
     Head_48 = Label::sysFont(48, true);
     Head_32 = Label::sysFont(32, true);
@@ -111,7 +133,7 @@ public:
 
     // win is used for getting the font, text is the text to wrap, width is the
     // max line width or -1 to disable wrapping
-    void Wrap(wxWindow *win, const wxString &text, int widthMax)
+    void Wrap(wxWindow* win, const wxString& text, int widthMax)
     {
         const wxClientDC dc(win);
         Wrap(dc, text, widthMax);

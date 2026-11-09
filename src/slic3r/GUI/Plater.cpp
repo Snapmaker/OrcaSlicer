@@ -938,11 +938,14 @@ public:
     CustomNotebook(wxWindow* parent, wxWindowID id = wxID_ANY, const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxDefaultSize)
         : wxControl(parent, id, pos, size, wxBORDER_NONE), m_selectedIndex(-1)
     {
-        // Figma 27551-61181: each segment is a fixed 70x24 button with 13 px inner
+        // Each segment is at least 70 px wide with room for the localized font.
+        // Keep enough vertical space for both the tab text and the nozzle controls.
+        // The tabs use 13 px inner
         // padding, centered text and square corners. The outer radius matches the
         // parent nozzle card (StaticBox::SetCornerRadius(8), raw pixels).
         m_tabWidth    = FromDIP(70);
-        m_tabHeight   = FromDIP(24);
+        SetFont(Label::Body_14);
+        m_tabHeight   = std::max(FromDIP(32), GetCharHeight() + FromDIP(12));
         m_tabPadding  = FromDIP(13);
         m_roundRadius = 8;
 
@@ -1040,15 +1043,7 @@ protected:
         dc.DrawRoundedRectangle(0, 0, trackW, 2 * rh, rh);
         dc.DrawRectangle(0, rh, trackW, m_tabHeight - rh);
 
-        wxFont font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
-        font.SetPointSize(m_textSize);
-        dc.SetFont(font);
-
-        auto height = dc.GetCharHeight();
-        if (height > m_tabHeight - 2) {
-            m_tabHeight = height + 2;
-            Layout();
-        }
+        dc.SetFont(GetFont());
 
         int xPos = 0;
         for (size_t i = 0; i < m_tabs.size(); ++i) {
@@ -1127,7 +1122,8 @@ private:
     // localized label (e.g. "Left Nozzle") does not fit.
     int GetTabWidth(int textWidth) const
     {
-        return std::max(m_tabWidth, textWidth + 2 * m_tabPadding);
+        const int equal_width = m_tabs.empty() ? 0 : GetClientSize().x / int(m_tabs.size());
+        return std::max({m_tabWidth, textWidth + 2 * m_tabPadding, equal_width});
     }
 
     wxRect GetTabRect(size_t index) const
@@ -1136,9 +1132,7 @@ private:
             return wxRect();
 
         wxClientDC dc(const_cast<CustomNotebook*>(this));
-        wxFont     font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
-        font.SetPointSize(m_textSize);
-        dc.SetFont(font);
+        dc.SetFont(GetFont());
 
         int textWidth, textHeight;
         dc.GetTextExtent(m_tabs[index].text, &textWidth, &textHeight);
@@ -1159,9 +1153,7 @@ private:
             return -1;
 
         wxClientDC dc(const_cast<CustomNotebook*>(this));
-        wxFont     font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
-        font.SetPointSize(m_textSize);
-        dc.SetFont(font);
+        dc.SetFont(GetFont());
 
         int xPos = 0;
         for (size_t i = 0; i < m_tabs.size(); ++i) {
@@ -1245,11 +1237,6 @@ private:
     int m_tabHeight;
     int m_tabPadding;
     int m_roundRadius;
-#ifdef _WIN32
-    int m_textSize = 10;
-#else
-    int m_textSize = 13;
-#endif
 };
 
 struct NozzleSyncState
@@ -2463,20 +2450,24 @@ Sidebar::Sidebar(Plater *parent)
 
         // 创建nozzle_sizer并添加notebook
         wxBoxSizer* nozzle_sizer = new wxBoxSizer(wxVERTICAL);
-        nozzle_sizer->Add(p->m_nozzle_notebook, 1, wxEXPAND | wxALL, FromDIP(0));
-        p->m_flow_assignment_button = new Button(nozzle_container, _L("Filament flow assignment"));
-        p->m_flow_assignment_button->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+        auto* hardware_title = new Label(nozzle_container, _L("Physical nozzle configuration"));
+        hardware_title->SetFont(Label::Head_14);
+        nozzle_sizer->Add(hardware_title, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(12));
+        nozzle_sizer->Add(p->m_nozzle_notebook, 0, wxEXPAND);
+        p->m_flow_assignment_button = new Button(p->m_panel_printer_content, _L("Filament flow assignment"));
+        p->m_flow_assignment_button->SetStyle(ButtonStyle::Regular, ButtonType::Expanded);
+        p->m_flow_assignment_button->SetMinSize(wxSize(-1, FromDIP(36)));
         p->m_flow_assignment_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
             const bool all_high_flow = GUI::FlowType::any_nozzle_high_flow() && GUI::FlowType::distinct_nozzle_flow_type_count() < 2;
             GUI::FilamentGroupDialog dialog(this, all_high_flow);
             dialog.ShowModal();
         });
-        nozzle_sizer->Add(p->m_flow_assignment_button, 0, wxEXPAND | wxALL, FromDIP(8));
         nozzle_container->SetSizer(nozzle_sizer);
         nozzle_container->SetMinSize(wxSize(-1, FromDIP(80)));
 
         // 添加到主布局
         vsizer_printer->Add(nozzle_container, 0, wxEXPAND | wxALL, FromDIP(4));
+        vsizer_printer->Add(p->m_flow_assignment_button, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
 
         // Initialize nozzle settings
         update_nozzle_settings();
@@ -9612,6 +9603,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
         ComboBox* diameter_combo = new ComboBox(nozzle_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, {-1, FromDIP(32)}, 0,
                                                 nullptr, wxCB_READONLY);
+        diameter_combo->SetMinSize(wxSize(FromDIP(100), FromDIP(32)));
         
 
         for (auto& diameter : diameters) {
@@ -9688,22 +9680,22 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
         p->m_nozzle_diameter_lists.push_back(diameter_combo);
 
-        diameter_sizer->AddSpacer(15);
-        diameter_sizer->Add(diameter_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(5));
-        diameter_sizer->AddSpacer(10);
-        diameter_sizer->Add(diameter_combo, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(15));
+        diameter_sizer->Add(diameter_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+        diameter_sizer->Add(diameter_combo, 1, wxEXPAND | wxRIGHT, FromDIP(16));
 
         // Snapmaker: per-nozzle flow type (standard / high flow), requirement 7.1
-        wxStaticText* flow_label = new wxStaticText(nozzle_panel, wxID_ANY, _L("Flow"));
+        wxStaticText* flow_label = new wxStaticText(nozzle_panel, wxID_ANY, _L("Hotend type"));
+        flow_label->SetToolTip(_L("Match this setting to the hotend installed on this toolhead."));
         flow_label->SetForegroundColour(is_dark ? wxColor(194, 194, 194) : wxColor(0, 0, 0));
         flow_label->SetFont(Label::Body_14);
 
         ComboBox* flow_combo = new ComboBox(nozzle_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, {-1, FromDIP(32)}, 0,
                                             nullptr, wxCB_READONLY);
+        flow_combo->SetMinSize(wxSize(FromDIP(120), FromDIP(32)));
         const bool supports_high_flow = GUI::FlowType::printer_supports_high_flow();
         flow_combo->AppendString(_L("Standard"));
         if (supports_high_flow)
-            flow_combo->AppendString(_L("High Flow"));
+            flow_combo->AppendString(_L("Phaetus HF"));
         else
             flow_combo->Enable(false);
         const std::vector<std::string> nozzle_flows = GUI::FlowType::nozzle_volume_types();
@@ -9718,12 +9710,10 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         });
         p->m_nozzle_flow_lists.push_back(flow_combo);
 
-        diameter_sizer->AddSpacer(10);
-        diameter_sizer->Add(flow_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(5));
-        diameter_sizer->AddSpacer(10);
-        diameter_sizer->Add(flow_combo, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(15));
+        diameter_sizer->Add(flow_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+        diameter_sizer->Add(flow_combo, 1, wxEXPAND);
 
-        tab_sizer->Add(diameter_sizer, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL);
+        tab_sizer->Add(diameter_sizer, 1, wxEXPAND | wxALL, FromDIP(12));
 
         nozzle_panel->SetSizer(tab_sizer);
 
@@ -9755,14 +9745,18 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         p->m_nozzle_notebook->AddPage(nozzle_panel, tab_name);
     }
 
-    p->m_nozzle_notebook->SetToolTip(_L("HF: High Flow. STD: Standard. Select a nozzle to change its settings."));
+    p->m_nozzle_notebook->SetToolTip(_L("HF: Phaetus HF hotend. STD: Standard hotend. Match these settings to the installed hardware."));
     if (p->m_flow_assignment_button != nullptr)
         p->m_flow_assignment_button->Show(GUI::FlowType::printer_supports_high_flow());
     p->m_nozzle_notebook->Layout();
     p->m_nozzle_notebook->Thaw();
     p->m_nozzle_notebook->InvalidateBestSize();
     if (p->m_nozzle_notebook->GetParent() != nullptr) {
-        p->m_nozzle_notebook->GetParent()->InvalidateBestSize();
+        wxWindow* container = p->m_nozzle_notebook->GetParent();
+        if (wxSizer* sizer = container->GetSizer())
+            container->SetMinSize(wxSize(-1, sizer->CalcMin().y));
+        container->InvalidateBestSize();
+        container->Layout();
     }
     p->m_panel_printer_content->InvalidateBestSize();
     p->scrolled->InvalidateBestSize();

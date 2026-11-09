@@ -24,7 +24,7 @@
 namespace Slic3r { namespace GUI {
 
 FilamentGroupDialog::FilamentGroupDialog(wxWindow* parent, bool default_all_high_flow)
-    : DPIDialog(parent ? parent : static_cast<wxWindow*>(wxGetApp().mainframe),
+    : DPIDialog(parent ? wxGetTopLevelParent(parent) : static_cast<wxWindow*>(wxGetApp().mainframe),
                 wxID_ANY,
                 _L("Filament flow assignment"),
                 wxDefaultPosition,
@@ -45,7 +45,8 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow* parent, bool default_all_high
             m_mapping[info.filament_idx] = fvtHighFlow;
 
     auto* layout = new wxBoxSizer(wxVERTICAL);
-    auto* intro  = new wxStaticText(this, wxID_ANY, _L("Choose the flow settings for each filament used by the model."));
+    auto* intro  = new wxStaticText(this, wxID_ANY, _L("Physical nozzle configuration (printer settings)"));
+    intro->SetFont(Label::Head_14);
     layout->Add(intro, 0, wxALL, FromDIP(16));
 
     auto*                          nozzles      = new wxBoxSizer(wxHORIZONTAL);
@@ -55,7 +56,7 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow* parent, bool default_all_high
         card->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F4F4F4")));
         auto* contents = new wxBoxSizer(wxVERTICAL);
         auto* name     = new wxStaticText(card, wxID_ANY, _L("Nozzle") + wxString::Format(" %zu", i + 1));
-        auto* type     = new wxStaticText(card, wxID_ANY, nozzle_types[i] == FLOW_MODE_HIGH_FLOW ? _L("High Flow") : _L("Standard"));
+        auto* type     = new wxStaticText(card, wxID_ANY, nozzle_types[i] == FLOW_MODE_HIGH_FLOW ? _L("Phaetus HF") : _L("Standard"));
         name->SetBackgroundColour(card->GetBackgroundColour());
         type->SetBackgroundColour(card->GetBackgroundColour());
         type->SetFont(Label::Body_14);
@@ -66,6 +67,9 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow* parent, bool default_all_high
     }
     layout->Add(nozzles, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
 
+    auto* print_intro = new wxStaticText(this, wxID_ANY, _L("Print settings: filament flow"));
+    print_intro->SetFont(Label::Head_14);
+    layout->Add(print_intro, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
     auto* actions = new wxBoxSizer(wxHORIZONTAL);
     m_summary     = new wxStaticText(this, wxID_ANY, wxEmptyString);
     actions->Add(m_summary, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
@@ -85,31 +89,40 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow* parent, bool default_all_high
     m_list->SetBackgroundColour(background);
     m_list->SetScrollRate(0, FromDIP(24));
     const int visible_rows = std::clamp(int(m_filaments.size()), 1, 4);
-    m_list->SetMinSize(wxSize(-1, FromDIP(40 + visible_rows * 48)));
+    m_list->SetMinSize(wxSize(-1, FromDIP(40 + visible_rows * 68)));
     auto* rows = new wxFlexGridSizer(0, 4, FromDIP(12), FromDIP(12));
     rows->AddGrowableCol(1);
     rows->AddSpacer(FromDIP(28));
     rows->Add(new wxStaticText(m_list, wxID_ANY, _L("Filament")), 0, wxALIGN_CENTER_VERTICAL);
-    rows->Add(new wxStaticText(m_list, wxID_ANY, _L("Flow settings")), 0, wxALIGN_CENTER_VERTICAL);
-    auto* flow_heading = new wxStaticText(m_list, wxID_ANY, _L("Max volumetric speed"));
-    flow_heading->Wrap(FromDIP(136));
+    rows->Add(new wxStaticText(m_list, wxID_ANY, _L("Print flow mode")), 0, wxALIGN_CENTER_VERTICAL);
+    auto* flow_heading = new wxStaticText(m_list, wxID_ANY, _L("Applied filament settings"), wxDefaultPosition, wxDefaultSize,
+                                          wxALIGN_RIGHT);
+    flow_heading->Wrap(FromDIP(180));
     rows->Add(flow_heading, 0, wxALIGN_CENTER_VERTICAL);
     std::vector<wxStaticText*> numbers;
     for (const FilamentInfo& info : m_filaments) {
-        auto* number = new wxStaticText(m_list, wxID_ANY, wxString::Format("%zu", info.filament_idx + 1), wxDefaultPosition,
-                                        wxSize(FromDIP(28), FromDIP(28)), wxALIGN_CENTER);
+        auto* badge  = new wxPanel(m_list, wxID_ANY, wxDefaultPosition, FromDIP(wxSize(28, 28)));
+        auto* number = new wxStaticText(badge, wxID_ANY, wxString::Format("%zu", info.filament_idx + 1), wxDefaultPosition, wxDefaultSize,
+                                        wxALIGN_CENTER);
+        auto* badge_layout = new wxBoxSizer(wxVERTICAL);
+        badge_layout->AddStretchSpacer();
+        badge_layout->Add(number, 0, wxEXPAND);
+        badge_layout->AddStretchSpacer();
+        badge->SetSizer(badge_layout);
         numbers.push_back(number);
-        rows->Add(number, 0, wxALIGN_CENTER_VERTICAL);
+        rows->Add(badge, 0, wxALIGN_CENTER_VERTICAL);
 
         auto* name = new wxStaticText(m_list, wxID_ANY, from_u8(info.preset_name), wxDefaultPosition, wxSize(FromDIP(288), -1),
                                       wxST_ELLIPSIZE_END);
         name->SetToolTip(from_u8(info.preset_name));
-        rows->Add(name, 1, wxEXPAND);
+        auto* name_layout = new wxBoxSizer(wxHORIZONTAL);
+        name_layout->Add(name, 1, wxALIGN_CENTER_VERTICAL);
+        rows->Add(name_layout, 1, wxEXPAND);
 
         auto* choice = new ComboBox(m_list, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
-        choice->Append(_L("Standard"));
-        choice->Append(_L("High Flow"));
-        choice->SetMinSize(wxSize(FromDIP(136), -1));
+        choice->Append(_L("Standard flow"));
+        choice->Append(_L("High flow (HF)"));
+        choice->SetMinSize(wxSize(FromDIP(144), FromDIP(32)));
         choice->SetName(format_wxstr(_L("Filament %1% flow settings"), info.filament_idx + 1));
         if (!info.has_high_flow_settings)
             choice->SetToolTip(_L("This filament has no High Flow preset. Its Standard settings will be used."));
@@ -118,7 +131,7 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow* parent, bool default_all_high
         m_choices.push_back(choice);
         rows->Add(choice, 0, wxALIGN_CENTER_VERTICAL);
 
-        auto* detail = new wxStaticText(m_list, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(136), -1));
+        auto* detail = new wxStaticText(m_list, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(180), -1), wxALIGN_RIGHT);
         m_details.push_back(detail);
         rows->Add(detail, 0, wxALIGN_CENTER_VERTICAL);
     }
@@ -144,12 +157,13 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow* parent, bool default_all_high
     layout->Add(buttons, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
 
     SetSizer(layout);
-    SetMinSize(FromDIP(wxSize(760, 420)));
+    SetMinSize(FromDIP(wxSize(820, 540)));
     update_assignments();
     Fit();
     CenterOnParent();
     wxGetApp().UpdateDlgDarkUI(this);
     intro->SetBackgroundColour(background);
+    print_intro->SetBackgroundColour(background);
     m_summary->SetBackgroundColour(background);
     for (wxWindow* child : m_list->GetChildren())
         if (auto* text = dynamic_cast<wxStaticText*>(child))
@@ -158,6 +172,7 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow* parent, bool default_all_high
     for (size_t row = 0; row < m_filaments.size(); ++row) {
         const wxColour& color = m_filaments[row].color;
         numbers[row]->SetBackgroundColour(color);
+        numbers[row]->GetParent()->SetBackgroundColour(color);
         const double luminance = 0.299 * color.Red() + 0.587 * color.Green() + 0.114 * color.Blue();
         numbers[row]->SetForegroundColour(luminance < 160.0 ? *wxWHITE : *wxBLACK);
     }
@@ -212,15 +227,19 @@ void FilamentGroupDialog::update_assignments()
         const bool         high  = m_mapping[index] == fvtHighFlow;
         high_count += high;
         m_choices[row]->SetSelection(high ? 1 : 0);
-        wxString detail = max_flow ?
-                              wxString::Format(L"%.1f mm\u00b3/s", get_value_at(preview, *max_flow, ConfigFlowDomain::Filament, index)) :
-                              wxString();
+        const bool fallback = high && !m_filaments[row].has_high_flow_settings;
+        wxString   detail = fallback ? _L("Standard (no HF preset)") : high ? _L("High Flow preset values") : _L("Standard preset values");
+        if (max_flow)
+            detail += "\n" + wxString::Format(L"%.1f mm\u00b3/s", get_value_at(preview, *max_flow, ConfigFlowDomain::Filament, index));
         if (ratio)
             detail += "\n" + _L("Flow ratio") +
                       wxString::Format(": %.3f", get_value_at(preview, *ratio, ConfigFlowDomain::Filament, index));
         m_details[row]->SetLabel(detail);
+        m_details[row]->Wrap(FromDIP(180));
+        m_details[row]->SetForegroundColour(StateColor::darkModeColorFor(wxColour(fallback ? "#FF842D" : "#242424")));
+        m_details[row]->Refresh();
     }
-    m_summary->SetLabel(format_wxstr(_L("Standard: %1%   High Flow: %2%"), m_filaments.size() - high_count, high_count));
+    m_summary->SetLabel(format_wxstr(_L("Filaments: %1% Standard, %2% High Flow"), m_filaments.size() - high_count, high_count));
     m_list->FitInside();
     update_warnings();
 }

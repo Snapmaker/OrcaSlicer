@@ -3715,10 +3715,11 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                 wxGetApp().app_config->set("curr_bed_type", std::to_string(int(bed_type_to_use)));
                 wxGetApp().app_config->set_printer_setting(printer_name, "curr_bed_type", std::to_string(int(bed_type_to_use)));
             }
-            
+
             // Orca: Update proj_config directly to avoid callback context issues
             if (is_snapmaker_u1 && !support_multi_bed_types) {
-                if (bed_type_to_use != btPTE && bed_type_to_use != btPEI && bed_type_to_use != btGESP) {
+                if (bed_type_to_use != btPTE && bed_type_to_use != btPEI && bed_type_to_use != btGESP && bed_type_to_use != btPC &&
+                    bed_type_to_use != btSuperTack) {
                     bed_type_to_use = btPTE;
                     wxGetApp().app_config->set("curr_bed_type", std::to_string(int(bed_type_to_use)));
                     wxGetApp().app_config->set_printer_setting(printer_name, "curr_bed_type", std::to_string(int(bed_type_to_use)));
@@ -3731,7 +3732,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         } else {
             if (is_snapmaker_u1 && !support_multi_bed_types) {
                 BedType curr = wxGetApp().preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
-                if (curr != btPTE && curr != btPEI && curr != btGESP) {
+                if (curr != btPTE && curr != btPEI && curr != btGESP && curr != btPC && curr != btSuperTack) {
                     wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(btPTE));
                     m_bed_type_list->SetSelection(0);
                 } else
@@ -8254,6 +8255,18 @@ void Sidebar::edit_filament() {
         p->editing_filament = p->m_menu_filament_id; // sync with TabPresetComboxBox's m_filament_idx
 }
 
+void Sidebar::show_physical_nozzle_settings()
+{
+    if (!p->m_nozzle_notebook || p->m_nozzle_flow_lists.empty())
+        return;
+    const auto   nozzles  = GUI::FlowType::nozzle_volume_types();
+    const auto   standard = std::find(nozzles.begin(), nozzles.end(), FLOW_MODE_STANDARD);
+    const size_t index    = standard == nozzles.end() ? 0 : size_t(std::distance(nozzles.begin(), standard));
+    p->m_nozzle_notebook->SetSelection(index);
+    if (index < p->m_nozzle_flow_lists.size())
+        p->m_nozzle_flow_lists[index]->SetFocus();
+}
+
 // Helper function: Check if target mixed filament depends on source physical filament
 static bool mixed_filament_uses_physical(const MixedFilament* target_mf, unsigned int source_physical_1based)
 {
@@ -9704,7 +9717,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             const bool high_flow = flow_combo->GetSelection() == 1;
             GUI::FlowType::set_nozzle_volume_type(i, high_flow ? FLOW_MODE_HIGH_FLOW : FLOW_MODE_STANDARD);
             if (p->m_nozzle_notebook->GetPageCount() > 2 && i < p->m_nozzle_notebook->GetPageCount())
-                p->m_nozzle_notebook->SetPageText(i, wxString::Format("%zu %s", i + 1, high_flow ? "HF" : "STD"));
+                p->m_nozzle_notebook->SetPageText(i, wxString::Format("%zu %s", i + 1, high_flow ? wxString("HF") : _L("Standard")));
             // Do not event.Skip(): the sidebar-level wxEVT_COMBOBOX handler would treat this
             // combo as the bed-type combo (same reason as the diameter combo above).
         });
@@ -9719,15 +9732,12 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
         // Add tab
         wxString tab_name = "";
-        switch (new_nozzle_count)
-        {
-        case 1:
-        {
+        switch (new_nozzle_count) {
+        case 1: {
             tab_name = _L("Nozzle");
             break;
         }
-        case 2:
-        {
+        case 2: {
             if (i == 0)
                 tab_name = _L("Left Nozzle");
             else
@@ -9735,17 +9745,16 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
             break;
         }
-        default:
-        {
+        default: {
             tab_name = wxString(_L("Nozzle")) + wxString::Format(" %d", i + 1);
         }
         }
         if (supports_high_flow && new_nozzle_count > 2)
-            tab_name = wxString::Format("%zu %s", i + 1, flow_combo->GetSelection() == 1 ? "HF" : "STD");
+            tab_name = wxString::Format("%zu %s", i + 1, flow_combo->GetSelection() == 1 ? wxString("HF") : _L("Standard"));
         p->m_nozzle_notebook->AddPage(nozzle_panel, tab_name);
     }
 
-    p->m_nozzle_notebook->SetToolTip(_L("HF: Phaetus HF hotend. STD: Standard hotend. Match these settings to the installed hardware."));
+    p->m_nozzle_notebook->SetToolTip(_L("Standard / Phaetus HF: match each nozzle to the hotend physically installed."));
     if (p->m_flow_assignment_button != nullptr)
         p->m_flow_assignment_button->Show(GUI::FlowType::printer_supports_high_flow());
     p->m_nozzle_notebook->Layout();
@@ -15058,15 +15067,19 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
         return;
     }
 
-    auto idx = combo->get_filament_idx();
+    auto              idx               = combo->get_filament_idx();
+    const auto&       old_names         = wxGetApp().preset_bundle->filament_presets;
+    const std::string previous_filament = preset_type == Preset::TYPE_FILAMENT && idx >= 0 && size_t(idx) < old_names.size() ?
+                                              old_names[size_t(idx)] :
+                                              std::string();
 
     // BBS:Save the plate parameters before switching
     PartPlateList& old_plate_list = this->partplate_list;
-    PartPlate* old_plate = old_plate_list.get_selected_plate();
-    Vec3d old_plate_pos = old_plate->get_center_origin();
+    PartPlate*     old_plate      = old_plate_list.get_selected_plate();
+    Vec3d          old_plate_pos  = old_plate->get_center_origin();
 
     // BBS: Save the model in the current platelist
-    std::vector<vector<int> > plate_object;
+    std::vector<vector<int>> plate_object;
     for (size_t i = 0; i < old_plate_list.get_plate_count(); ++i) {
         PartPlate* plate = old_plate_list.get_plate(i);
         std::vector<int> obj_idxs;
@@ -15130,14 +15143,19 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
         wxGetApp().get_tab(preset_type)->select_preset(preset_name);
     }
 
+    if (preset_type == Preset::TYPE_FILAMENT && idx >= 0)
+        q->CallAfter([idx, preset_name, previous_filament]() {
+            GUI::FlowType::check_selected_filament(size_t(idx), preset_name, previous_filament);
+        });
+
     // update plater with new config
     q->on_config_change(wxGetApp().preset_bundle->full_config());
     if (preset_type == Preset::TYPE_PRINTER) {
-    /* Settings list can be changed after printer preset changing, so
-     * update all settings items for all item had it.
-     * Furthermore, Layers editing is implemented only for FFF printers
-     * and for SLA presets they should be deleted
-     */
+        /* Settings list can be changed after printer preset changing, so
+         * update all settings items for all item had it.
+         * Furthermore, Layers editing is implemented only for FFF printers
+         * and for SLA presets they should be deleted
+         */
         wxGetApp().obj_list()->update_object_list_by_printer_technology();
 
         // BBS:Model reset by plate center
@@ -18892,12 +18910,21 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
     if (params.mode != CalibMode::Calib_Vol_speed_Tower)
         return;
 
+    // Keep the original volumetric units for entering the measured tower height
+    // later; the G-code calibration parameters below are converted to mm/s.
+    if (FlowType::printer_supports_high_flow()) {
+        auto* app_config = wxGetApp().app_config;
+        app_config->set("max_flow_test", "start", into_u8(wxString::FromDouble(params.start, 6)));
+        app_config->set("max_flow_test", "step", into_u8(wxString::FromDouble(params.step, 6)));
+        app_config->set("max_flow_test", "filament", wxGetApp().preset_bundle->filaments.get_edited_preset().name);
+    }
+
     add_model(false, Slic3r::resources_dir() + "/calib/volumetric_speed/SpeedTestStructure.step");
 
-    auto print_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
-    auto filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
-    auto printer_config = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
-    auto obj = model().objects[0];
+    auto  print_config    = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
+    auto  filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
+    auto  printer_config  = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    auto  obj             = model().objects[0];
     auto& obj_cfg = obj->config;
 
     auto bed_shape = printer_config->option<ConfigOptionPoints>("printable_area")->values;

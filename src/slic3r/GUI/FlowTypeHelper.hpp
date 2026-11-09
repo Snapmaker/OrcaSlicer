@@ -79,6 +79,15 @@ void sync_filament_volume_types_for_slice();
 bool prepare_for_slice(wxWindow* parent);
 void remember_assignment();
 
+enum class MissingHighFlowChoice { ReviewHardware, UseStandard, CopyHighFlow, Cancel };
+MissingHighFlowChoice resolve_missing_high_flow(wxWindow* parent, const std::string& preset_name);
+std::string           create_high_flow_preset(wxWindow* parent, const std::string& source_name);
+std::string           copy_high_flow_for_standard(wxWindow* parent, const std::string& source_name);
+// Annotation only: copied values are ordinary Standard preset parameters.
+std::string high_flow_copy_source(const std::string& preset_name);
+void        check_selected_filament(size_t filament_idx, const std::string& expected_name, const std::string& previous_name);
+void        show_filament_flow_comparison(wxWindow* parent, const DynamicPrintConfig& config, const std::string& preset_name);
+
 }}} // namespace Slic3r::GUI::FlowType
 
 #endif // slic3r_GUI_FlowTypeHelper_hpp_

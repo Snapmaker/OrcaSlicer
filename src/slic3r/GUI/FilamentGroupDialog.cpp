@@ -89,7 +89,7 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow* parent, bool default_all_high
     m_list->SetBackgroundColour(background);
     m_list->SetScrollRate(0, FromDIP(24));
     const int visible_rows = std::clamp(int(m_filaments.size()), 1, 4);
-    m_list->SetMinSize(wxSize(-1, FromDIP(40 + visible_rows * 68)));
+    m_list->SetMinSize(wxSize(-1, FromDIP(40 + visible_rows * 92)));
     auto* rows = new wxFlexGridSizer(0, 4, FromDIP(12), FromDIP(12));
     rows->AddGrowableCol(1);
     rows->AddSpacer(FromDIP(28));
@@ -115,25 +115,46 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow* parent, bool default_all_high
         auto* name = new wxStaticText(m_list, wxID_ANY, from_u8(info.preset_name), wxDefaultPosition, wxSize(FromDIP(288), -1),
                                       wxST_ELLIPSIZE_END);
         name->SetToolTip(from_u8(info.preset_name));
+        m_names.push_back(name);
         auto* name_layout = new wxBoxSizer(wxHORIZONTAL);
         name_layout->Add(name, 1, wxALIGN_CENTER_VERTICAL);
         rows->Add(name_layout, 1, wxEXPAND);
 
         auto* choice = new ComboBox(m_list, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
-        choice->Append(_L("Standard flow"));
+        choice->Append(info.copied_from.empty() ? _L("Standard flow") : _L("HF values on Standard"));
         choice->Append(_L("High flow (HF)"));
-        choice->SetMinSize(wxSize(FromDIP(144), FromDIP(32)));
+        choice->SetMinSize(wxSize(std::max(FromDIP(144), choice->GetTextExtent(_L("HF values on Standard")).x + FromDIP(36)), FromDIP(32)));
         choice->SetName(format_wxstr(_L("Filament %1% flow settings"), info.filament_idx + 1));
         if (!info.has_high_flow_settings)
             choice->SetToolTip(_L("This filament has no High Flow preset. Its Standard settings will be used."));
         choice->Bind(wxEVT_COMBOBOX,
                      [this, index = info.filament_idx, choice](wxCommandEvent&) { move_filament(index, choice->GetSelection() == 1); });
         m_choices.push_back(choice);
-        rows->Add(choice, 0, wxALIGN_CENTER_VERTICAL);
+        auto* choice_layout = new wxBoxSizer(wxVERTICAL);
+        choice_layout->Add(choice, 0, wxEXPAND);
+        auto* add = new Button(m_list, info.has_high_flow_settings ? _L("Apply calibration result") : _L("Add HF settings"));
+        add->SetStyle(ButtonStyle::Regular, ButtonType::Compact);
+        add->Bind(wxEVT_BUTTON, [this, index = info.filament_idx](wxCommandEvent&) { add_high_flow_settings(index); });
+        m_add_buttons.push_back(add);
+        choice_layout->Add(add, 0, wxEXPAND | wxTOP, FromDIP(4));
+        rows->Add(choice_layout, 0, wxALIGN_CENTER_VERTICAL);
 
         auto* detail = new wxStaticText(m_list, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(180), -1), wxALIGN_RIGHT);
         m_details.push_back(detail);
-        rows->Add(detail, 0, wxALIGN_CENTER_VERTICAL);
+        auto* detail_layout = new wxBoxSizer(wxVERTICAL);
+        detail_layout->Add(detail, 0, wxEXPAND);
+        auto* compare = new Button(m_list, _L("Compare settings"));
+        compare->SetStyle(ButtonStyle::Regular, ButtonType::Compact);
+        compare->Bind(wxEVT_BUTTON, [this, row = m_details.size() - 1](wxCommandEvent&) {
+            const auto&   name    = m_filaments[row].preset_name;
+            const auto&   presets = wxGetApp().preset_bundle->filaments;
+            const Preset* preset  = presets.get_edited_preset().name == name ? &presets.get_edited_preset() :
+                                                                               presets.find_preset(name, false);
+            if (preset)
+                FlowType::show_filament_flow_comparison(this, preset->config, name);
+        });
+        detail_layout->Add(compare, 0, wxALIGN_RIGHT | wxTOP, FromDIP(4));
+        rows->Add(detail_layout, 0, wxALIGN_CENTER_VERTICAL);
     }
     m_list->SetSizer(rows);
     layout->Add(m_list, 1, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
@@ -149,7 +170,12 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow* parent, bool default_all_high
         // Automatic uniform mapping continues to use the existing standard mode.
         if (FlowType::distinct_nozzle_flow_type_count() > 1 && FlowType::grouping_mode() != FILAMENT_GROUPING_CUSTOM)
             FlowType::set_grouping_mode(FILAMENT_GROUPING_CUSTOM);
+        for (const auto& info : m_filaments)
+            wxGetApp().preset_bundle->set_filament_preset(info.filament_idx, info.preset_name);
         FlowType::apply_custom_mapping(m_mapping);
+        wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
+        if (auto* plater = wxGetApp().plater())
+            plater->sidebar().update_all_preset_comboboxes(false);
         FlowType::remember_assignment();
         EndModal(wxID_OK);
     });
@@ -195,7 +221,8 @@ void FilamentGroupDialog::load_filaments()
         m_filaments.push_back(
             {i, colors && i < colors->values.size() ? wxColour(from_u8(colors->values[i])) : *wxWHITE,
              preset ? preset->config.opt_string("filament_type", 0u) : std::string(), name,
-             support && std::find(support->values.begin(), support->values.end(), FLOW_MODE_HIGH_FLOW) != support->values.end()});
+             support && std::find(support->values.begin(), support->values.end(), FLOW_MODE_HIGH_FLOW) != support->values.end(),
+             FlowType::high_flow_copy_source(name)});
     }
 }
 
@@ -203,43 +230,115 @@ void FilamentGroupDialog::move_filament(size_t filament_idx, bool high_flow)
 {
     if (filament_idx >= m_mapping.size())
         return;
+    if (high_flow && !FlowType::any_nozzle_high_flow()) {
+        const auto row = std::find_if(m_filaments.begin(), m_filaments.end(),
+                                      [filament_idx](const FilamentInfo& info) { return info.filament_idx == filament_idx; });
+        if (row != m_filaments.end()) {
+            const auto result = FlowType::resolve_missing_high_flow(this, row->preset_name);
+            if (result == FlowType::MissingHighFlowChoice::ReviewHardware) {
+                EndModal(wxID_CANCEL);
+                if (auto* plater = wxGetApp().plater())
+                    plater->CallAfter([plater]() { plater->sidebar().show_physical_nozzle_settings(); });
+                return;
+            }
+            if (result == FlowType::MissingHighFlowChoice::CopyHighFlow) {
+                if (!row->has_high_flow_settings) {
+                    add_high_flow_settings(filament_idx);
+                    return;
+                }
+                const auto name = FlowType::copy_high_flow_for_standard(this, row->preset_name);
+                if (!name.empty())
+                    change_preset(size_t(std::distance(m_filaments.begin(), row)), name);
+            } else if (result == FlowType::MissingHighFlowChoice::Cancel) {
+                update_assignments();
+                return;
+            }
+            high_flow = false;
+        }
+    }
     m_mapping[filament_idx] = high_flow ? fvtHighFlow : fvtStandard;
     update_assignments();
 }
 
 void FilamentGroupDialog::assign_all(bool high_flow)
 {
-    for (const FilamentInfo& info : m_filaments)
+    for (size_t row = 0; row < m_filaments.size(); ++row) {
+        const auto& info = m_filaments[row];
+        if (!high_flow && !info.copied_from.empty() && wxGetApp().preset_bundle->filaments.find_preset(info.copied_from, false))
+            change_preset(row, info.copied_from);
         m_mapping[info.filament_idx] = high_flow ? fvtHighFlow : fvtStandard;
+    }
     update_assignments();
+}
+
+void FilamentGroupDialog::change_preset(size_t row, std::string name)
+{
+    auto&         info   = m_filaments[row];
+    const Preset* preset = wxGetApp().preset_bundle->filaments.find_preset(name, false);
+    if (!preset)
+        return;
+    info.preset_name            = name;
+    const auto* support         = preset->config.option<ConfigOptionStrings>("filament_flow_support");
+    info.has_high_flow_settings = support &&
+                                  std::find(support->values.begin(), support->values.end(), FLOW_MODE_HIGH_FLOW) != support->values.end();
+    info.copied_from = FlowType::high_flow_copy_source(name);
+    m_names[row]->SetLabel(from_u8(name));
+    m_names[row]->SetToolTip(from_u8(name));
+    m_choices[row]->SetString(0, info.copied_from.empty() ? _L("Standard flow") : _L("HF values on Standard"));
+    m_add_buttons[row]->SetLabel(info.has_high_flow_settings ? _L("Apply calibration result") : _L("Add HF settings"));
+}
+
+void FilamentGroupDialog::add_high_flow_settings(size_t filament_idx)
+{
+    for (size_t row = 0; row < m_filaments.size(); ++row) {
+        if (m_filaments[row].filament_idx != filament_idx)
+            continue;
+        const auto name = FlowType::create_high_flow_preset(this, m_filaments[row].preset_name);
+        if (!name.empty()) {
+            change_preset(row, name);
+            move_filament(filament_idx, true);
+        }
+        return;
+    }
 }
 
 void FilamentGroupDialog::update_assignments()
 {
-    DynamicPrintConfig preview = wxGetApp().preset_bundle->full_config();
-    auto*              types   = preview.option<ConfigOptionEnumsGeneric>("filament_volume_type", true);
-    types->values.assign(m_mapping.begin(), m_mapping.end());
-    const auto* max_flow   = preview.option<ConfigOptionFloats>("filament_max_volumetric_speed");
-    const auto* ratio      = preview.option<ConfigOptionFloats>("filament_flow_ratio");
-    size_t      high_count = 0;
+    size_t high_count   = 0;
+    size_t copied_count = 0;
     for (size_t row = 0; row < m_filaments.size(); ++row) {
-        const unsigned int index = static_cast<unsigned int>(m_filaments[row].filament_idx);
-        const bool         high  = m_mapping[index] == fvtHighFlow;
+        const unsigned int index      = static_cast<unsigned int>(m_filaments[row].filament_idx);
+        const bool         high       = m_mapping[index] == fvtHighFlow;
+        const auto&        collection = wxGetApp().preset_bundle->filaments;
+        const Preset*      preset     = collection.get_edited_preset().name == m_filaments[row].preset_name ?
+                                            &collection.get_edited_preset() :
+                                            collection.find_preset(m_filaments[row].preset_name, false);
+        const auto*        support    = preset ? preset->config.option<ConfigOptionStrings>("filament_flow_support") : nullptr;
+        const size_t       variant    = support ? flow_variant_index(support->values, high ? FLOW_MODE_HIGH_FLOW : FLOW_MODE_STANDARD) : 0;
+        const auto*        max_flow   = preset ? preset->config.option<ConfigOptionFloats>("filament_max_volumetric_speed") : nullptr;
+        const auto*        ratio      = preset ? preset->config.option<ConfigOptionFloats>("filament_flow_ratio") : nullptr;
         high_count += high;
+        copied_count += !high && !m_filaments[row].copied_from.empty();
         m_choices[row]->SetSelection(high ? 1 : 0);
         const bool fallback = high && !m_filaments[row].has_high_flow_settings;
-        wxString   detail = fallback ? _L("Standard (no HF preset)") : high ? _L("High Flow preset values") : _L("Standard preset values");
+        const bool copied   = !high && !m_filaments[row].copied_from.empty();
+        wxString   detail   = copied   ? _L("HF values copied to Standard") :
+                              fallback ? _L("Standard (no HF preset)") :
+                              high     ? _L("High Flow preset values") :
+                                         _L("Standard preset values");
         if (max_flow)
-            detail += "\n" + wxString::Format(L"%.1f mm\u00b3/s", get_value_at(preview, *max_flow, ConfigFlowDomain::Filament, index));
+            detail += "\n" + wxString::Format(L"%.1f mm\u00b3/s", max_flow->get_at(variant));
         if (ratio)
-            detail += "\n" + _L("Flow ratio") +
-                      wxString::Format(": %.3f", get_value_at(preview, *ratio, ConfigFlowDomain::Filament, index));
+            detail += "\n" + _L("Flow ratio") + wxString::Format(": %.3f", ratio->get_at(variant));
         m_details[row]->SetLabel(detail);
         m_details[row]->Wrap(FromDIP(180));
-        m_details[row]->SetForegroundColour(StateColor::darkModeColorFor(wxColour(fallback ? "#FF842D" : "#242424")));
+        m_details[row]->SetForegroundColour(StateColor::darkModeColorFor(wxColour(fallback || copied ? "#FF842D" : "#242424")));
         m_details[row]->Refresh();
     }
-    m_summary->SetLabel(format_wxstr(_L("Filaments: %1% Standard, %2% High Flow"), m_filaments.size() - high_count, high_count));
+    m_summary->SetLabel(copied_count ?
+                            format_wxstr(_L("Filaments: %1% Standard, %2% High Flow, %3% Standard with HF values"),
+                                         m_filaments.size() - high_count - copied_count, high_count, copied_count) :
+                            format_wxstr(_L("Filaments: %1% Standard, %2% High Flow"), m_filaments.size() - high_count, high_count));
     m_list->FitInside();
     update_warnings();
 }

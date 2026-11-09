@@ -13,6 +13,7 @@
 #include "Search.hpp"
 #include "OG_CustomCtrl.hpp"
 #include "Widgets/SegmentedToggle.hpp"
+#include "FlowTypeHelper.hpp"
 
 #include <wx/app.h>
 #include <wx/button.h>
@@ -892,24 +893,24 @@ void Tab::decorate()
         m_active_page->refresh();
 }
 
-void Tab::register_flow_variant_view(ConfigFlowDomain domain,
-                                     const std::vector<PageShp>& pages,
+void Tab::register_flow_variant_view(ConfigFlowDomain                                 domain,
+                                     const std::vector<PageShp>&                      pages,
                                      std::function<const std::vector<std::string>&()> options,
-                                     std::function<bool(const std::string&)> is_option)
+                                     std::function<bool(const std::string&)>          is_option)
 {
     // A previously-registered view's selector lives in the shared page header (the
     // filament and printer tabs share one ParamsPanel); destroy it before replacing
     // the view so re-registration (e.g. TabPrinter's kinematics-page rebuild) does
     // not leave orphaned selectors stacked in the header.
-    if (m_flow_variant_view && m_flow_variant_view->selector) {
+    if (m_flow_variant_view && m_flow_variant_view->controls) {
         if (auto* header_sizer = m_parent->get_page_header_sizer())
-            header_sizer->Detach(m_flow_variant_view->selector);
-        m_flow_variant_view->selector->Destroy();
+            header_sizer->Detach(m_flow_variant_view->controls);
+        m_flow_variant_view->controls->Destroy();
     }
-    m_flow_variant_view = std::make_unique<FlowVariantView>();
-    m_flow_variant_view->domain = domain;
-    m_flow_variant_view->pages = pages;
-    m_flow_variant_view->options = std::move(options);
+    m_flow_variant_view            = std::make_unique<FlowVariantView>();
+    m_flow_variant_view->domain    = domain;
+    m_flow_variant_view->pages     = pages;
+    m_flow_variant_view->options   = std::move(options);
     m_flow_variant_view->is_option = std::move(is_option);
 
     refresh_flow_variant_view();
@@ -920,12 +921,8 @@ size_t Tab::flow_variant_view_index() const
     if (!m_flow_variant_view || m_flow_variant_view->modes.empty())
         return 0;
 
-    const auto mode = std::find(m_flow_variant_view->modes.begin(),
-                                m_flow_variant_view->modes.end(),
-                                m_flow_variant_view->selected_mode);
-    return mode == m_flow_variant_view->modes.end()
-        ? 0
-        : size_t(std::distance(m_flow_variant_view->modes.begin(), mode));
+    const auto mode = std::find(m_flow_variant_view->modes.begin(), m_flow_variant_view->modes.end(), m_flow_variant_view->selected_mode);
+    return mode == m_flow_variant_view->modes.end() ? 0 : size_t(std::distance(m_flow_variant_view->modes.begin(), mode));
 }
 
 void Tab::refresh_flow_variant_view()
@@ -934,55 +931,55 @@ void Tab::refresh_flow_variant_view()
         return;
 
     std::vector<std::string> modes;
-    const auto* support = m_config->option<ConfigOptionStrings>(flow_support_key(m_flow_variant_view->domain));
+    const auto*              support = m_config->option<ConfigOptionStrings>(flow_support_key(m_flow_variant_view->domain));
     if (support != nullptr)
         modes = support->values;
     if (modes.empty())
         modes.emplace_back(FLOW_MODE_STANDARD);
 
-    if (std::find(modes.begin(), modes.end(), m_flow_variant_view->selected_mode) == modes.end())
-    {
-        const auto standard = std::find(modes.begin(), modes.end(), FLOW_MODE_STANDARD);
+    if (std::find(modes.begin(), modes.end(), m_flow_variant_view->selected_mode) == modes.end()) {
+        const auto standard                = std::find(modes.begin(), modes.end(), FLOW_MODE_STANDARD);
         m_flow_variant_view->selected_mode = (standard == modes.end()) ? modes.front() : *standard;
     }
 
-    if (m_flow_variant_view->selector == nullptr || modes != m_flow_variant_view->modes)
-    {
-        if (m_flow_variant_view->selector != nullptr)
-        {
-            m_parent->get_page_header_sizer()->Detach(m_flow_variant_view->selector);
-            m_flow_variant_view->selector->Destroy();
+    if (m_flow_variant_view->selector == nullptr || modes != m_flow_variant_view->modes) {
+        if (m_flow_variant_view->selector != nullptr) {
+            m_parent->get_page_header_sizer()->Detach(m_flow_variant_view->controls);
+            m_flow_variant_view->controls->Destroy();
         }
 
         m_flow_variant_view->modes = modes;
-        // The brackets are part of the localized label (ASCII "[High flow]" by
-        // default, CJK "【高流量】" in Chinese), so the glyph choice lives in the
-        // translation catalog rather than being switched on the UI language here.
         std::vector<wxString> labels;
         labels.reserve(modes.size());
-        for (const std::string& mode : modes)
-        {
+        for (const std::string& mode : modes) {
             if (mode == FLOW_MODE_STANDARD)
-                labels.emplace_back(_L("[Standard flow]"));
+                labels.emplace_back(_L("Standard"));
             else if (mode == FLOW_MODE_HIGH_FLOW)
-                labels.emplace_back(_L("[High flow]"));
-            else
-            {
+                labels.emplace_back(_L("High flow (HF)"));
+            else {
                 std::string label = mode;
                 std::replace(label.begin(), label.end(), '_', ' ');
-                labels.emplace_back(wxString("[") + from_u8(label) + "]");
+                labels.emplace_back(from_u8(label));
             }
         }
 
-        // Plain style = borderless teal/grey text (Figma), hosted in the frozen page header.
-        m_flow_variant_view->selector = new SegmentedToggle(m_parent->get_page_header(),
-                                                            labels,
-                                                            int(flow_variant_view_index()),
-                                                            SegmentedToggle::Style::Plain);
-        m_parent->get_page_header_sizer()->Add(m_flow_variant_view->selector,
-                                               0,
-                                               wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT | wxTOP | wxBOTTOM,
-                                               FromDIP(10));
+        m_flow_variant_view->controls = new wxPanel(m_parent->get_page_header());
+        auto* controls                = new wxBoxSizer(wxHORIZONTAL);
+        m_flow_variant_view->selector = new SegmentedToggle(m_flow_variant_view->controls, labels, int(flow_variant_view_index()),
+                                                            SegmentedToggle::Style::Boxed);
+        controls->Add(m_flow_variant_view->selector, 0, wxALIGN_CENTER_VERTICAL);
+        if (m_flow_variant_view->domain == ConfigFlowDomain::Filament &&
+            std::find(modes.begin(), modes.end(), FLOW_MODE_STANDARD) != modes.end() &&
+            std::find(modes.begin(), modes.end(), FLOW_MODE_HIGH_FLOW) != modes.end()) {
+            auto* compare = new Button(m_flow_variant_view->controls, _L("Compare settings"));
+            compare->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+            compare->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+                FlowType::show_filament_flow_comparison(this, *m_config, m_presets->get_edited_preset().name);
+            });
+            controls->Add(compare, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
+        }
+        m_flow_variant_view->controls->SetSizer(controls);
+        m_parent->get_page_header_sizer()->Add(m_flow_variant_view->controls, 0, wxALIGN_CENTER_VERTICAL | wxALL, FromDIP(4));
         m_flow_variant_view->selector->bindSelectionCallback([this](int index) {
             if (!m_flow_variant_view || index < 0 || size_t(index) >= m_flow_variant_view->modes.size())
                 return;
@@ -996,21 +993,16 @@ void Tab::refresh_flow_variant_view()
             m_parent->Layout();
         });
         m_parent->get_page_header()->Layout();
-    }
-    else
-    {
+    } else {
         m_flow_variant_view->selector->setSelected(int(flow_variant_view_index()));
     }
 
     update_flow_variant_view_visibility();
 
     const int flow_index = int(flow_variant_view_index());
-    for (const PageShp& page : m_flow_variant_view->pages)
-    {
-        for (const ConfigOptionsGroupShp& group : page->m_optgroups)
-        {
-            for (const auto& option : group->opt_map())
-            {
+    for (const PageShp& page : m_flow_variant_view->pages) {
+        for (const ConfigOptionsGroupShp& group : page->m_optgroups) {
+            for (const auto& option : group->opt_map()) {
                 const std::string& key = option.second.first;
                 if (m_flow_variant_view->is_option(key))
                     group->set_option_index(key, flow_index);
@@ -1026,25 +1018,24 @@ void Tab::update_flow_variant_view_visibility()
     // reload) must not stomp the active tab's header or show a stale selector.
     if (m_parent->get_current_tab() != this) {
         if (m_flow_variant_view && m_flow_variant_view->selector)
-            m_flow_variant_view->selector->Hide();
+            m_flow_variant_view->controls->Hide();
         return;
     }
 
     const bool active_page_supports_flow_variants = m_flow_variant_view &&
-        std::any_of(m_flow_variant_view->pages.begin(), m_flow_variant_view->pages.end(),
-                    [this](const PageShp& page) { return m_active_page == page.get(); });
-    const bool show = active_page_supports_flow_variants && m_flow_variant_view->selector
-                      && m_flow_variant_view->modes.size() > 1;
+                                                    std::any_of(m_flow_variant_view->pages.begin(), m_flow_variant_view->pages.end(),
+                                                                [this](const PageShp& page) { return m_active_page == page.get(); });
+    const bool show = active_page_supports_flow_variants && m_flow_variant_view->selector && m_flow_variant_view->modes.size() > 1;
 
     if (m_flow_variant_view && m_flow_variant_view->selector) {
         // Reveal only this tab's selector; hide any sibling selector left visible by
         // the other tab that shares this header.
         if (show) {
             for (wxWindow* sibling : m_parent->get_page_header()->GetChildren())
-                if (sibling != m_flow_variant_view->selector)
+                if (sibling != m_flow_variant_view->controls)
                     sibling->Hide();
         }
-        m_flow_variant_view->selector->Show(show);
+        m_flow_variant_view->controls->Show(show);
     }
     m_parent->show_page_header(show);
 }
@@ -4594,12 +4585,15 @@ void TabFilament::toggle_options()
                 : _L("Cool Plate (SuperTack)");
             supertack_line->label_tooltip = _L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.");
         }
+        if (Line* cool_plate_line = get_line("cool_plate_temp_initial_layer")) {
+            cool_plate_line->label = is_snapmaker_u1 ? _L("Smooth Cool Plate") : _L("Cool Plate");
+        }
         if (is_snapmaker_u1 && !support_multi_bed_types) {
-            // U1 default show 3 plates; Cool Steel Plate only appears with support_multi_bed_types
-            toggle_line("supertack_plate_temp_initial_layer", false);
-            toggle_line("supertack_plate_temp", false);
-            toggle_line("cool_plate_temp_initial_layer", false);
-            toggle_line("cool_plate_temp", false);
+            // U1 includes both existing low-temperature plates without an advanced toggle.
+            toggle_line("supertack_plate_temp_initial_layer", true);
+            toggle_line("supertack_plate_temp", true);
+            toggle_line("cool_plate_temp_initial_layer", true);
+            toggle_line("cool_plate_temp", true);
             toggle_line("textured_cool_plate_temp_initial_layer", false);
             toggle_line("textured_cool_plate_temp", false);
             toggle_line("eng_plate_temp_initial_layer", false);

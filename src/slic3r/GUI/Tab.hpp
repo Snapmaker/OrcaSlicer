@@ -282,6 +282,7 @@ protected:
     {
         ConfigFlowDomain domain { ConfigFlowDomain::Process };
         std::vector<PageShp> pages;
+        wxPanel* controls { nullptr };
         SegmentedToggle* selector { nullptr };
         std::vector<std::string> modes;
         std::string selected_mode;

@@ -35,17 +35,22 @@ private:
         std::string type_raw;
         std::string preset_name;
         bool        has_high_flow_settings;
+        std::string copied_from;
     };
 
     void load_filaments();
     void assign_all(bool high_flow);
     void update_assignments();
     void update_warnings();
+    void add_high_flow_settings(size_t filament_idx);
+    void change_preset(size_t row, std::string name);
 
     std::vector<FilamentInfo>       m_filaments;
     std::vector<FilamentVolumeType> m_mapping;
     std::vector<ComboBox*>          m_choices;
     std::vector<wxStaticText*>      m_details;
+    std::vector<wxStaticText*>      m_names;
+    std::vector<Button*>            m_add_buttons;
     wxScrolledWindow*               m_list{nullptr};
     wxStaticText*                   m_summary{nullptr};
     wxBoxSizer*                     m_warning_sizer{nullptr};

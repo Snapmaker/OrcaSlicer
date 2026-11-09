@@ -4846,7 +4846,7 @@ msgid "Flow rate"
 msgstr ""
 
 msgid "Pressure advance"
-msgstr ""
+msgstr "プレッシャーアドバンス"
 
 msgid "Retraction test"
 msgstr ""
@@ -5792,7 +5792,7 @@ msgid "View all object's settings"
 msgstr "全てのオブジェクトの設定"
 
 msgid "Material settings"
-msgstr ""
+msgstr "素材設定"
 
 msgid "Remove current plate (if not last one)"
 msgstr ""
@@ -9609,7 +9609,7 @@ msgid "Bed types supported by the printer."
 msgstr "適応ベッド種類"
 
 msgid "Smooth Cool Plate"
-msgstr ""
+msgstr "低温プレート（平滑）"
 
 msgid "Smooth High Temp Plate"
 msgstr ""
@@ -10573,7 +10573,7 @@ msgid ""
 msgstr ""
 
 msgid "Enable pressure advance"
-msgstr ""
+msgstr "プレッシャーアドバンスを有効化"
 
 msgid ""
 "Enable pressure advance, auto calibration result will be overwritten once "
@@ -12578,7 +12578,7 @@ msgid ""
 msgstr ""
 
 msgid "Z-hop type"
-msgstr ""
+msgstr "Zホップ方式"
 
 msgid "Type of Z-hop."
 msgstr ""
@@ -17754,9 +17754,6 @@ msgstr "標準ノズルが設定されていません。フィラメントをHF�
 msgid "No High Flow nozzle is configured. Assign these filaments to Standard or update the nozzle settings."
 msgstr "HFノズルが設定されていません。フィラメントを標準に割り当てるか、ノズル設定を見直してください"
 
-msgid "HF: High Flow. STD: Standard. Select a nozzle to change its settings."
-msgstr "HF：高流量、STD：標準。ノズルを選択すると設定を変更できます"
-
 msgid "High Flow"
 msgstr "高流量"
 
@@ -17811,8 +17808,8 @@ msgstr "物理ノズル構成"
 msgid "Phaetus HF"
 msgstr "Phaetus HF"
 
-msgid "HF: Phaetus HF hotend. STD: Standard hotend. Match these settings to the installed hardware."
-msgstr "HF：Phaetus HFホットエンド、STD：標準ホットエンド。装着したノズルに合わせて設定してください"
+msgid "Standard / Phaetus HF: match each nozzle to the hotend physically installed."
+msgstr "標準／Phaetus HF：各ノズルに実際に装着したホットエンドを設定してください"
 
 msgid "Match this setting to the hotend installed on this toolhead."
 msgstr "このツールヘッドに装着したホットエンドに合わせて設定してください"
@@ -17841,5 +17838,149 @@ msgstr "モデルがありません。多色モデルを読み込んでくださ
 msgid "Color Mixing Match is unavailable when only one filament is added to Filament Management."
 msgstr "混色マッチングを使うには、フィラメント管理に2種類以上のフィラメントを追加してください"
 
+msgid "Add High Flow filament settings"
+msgstr "HF用フィラメント設定を追加"
+
+msgid "Start with the Standard values and enter calibrated HF values. Standard settings and the original preset are preserved."
+msgstr "標準設定を初期値にして、校正したHF用の値を入力してください。標準側の設定と元のプリセットは保持されます。"
+
+msgid "Save user preset"
+msgstr "ユーザー設定として保存"
+
+msgid "Choose a new preset name without filename symbols or an existing preset name."
+msgstr "既存の設定と重複せず、ファイル名に使えない記号を含まない名前を入力してください。"
+
+msgid "Enter valid positive flow values and whole-number temperatures within the allowed range."
+msgstr "流量・流量比は正の数、温度は許容範囲内の整数で入力してください。"
+
+msgid "Could not save filament preset"
+msgstr "フィラメント設定を保存できませんでした"
+
+msgid "HF settings on Standard hotends"
+msgstr "標準ホットエンドでHF設定を使用"
+
+msgid "Change hotend / review physical setup"
+msgstr "ホットエンドを交換して物理構成を見直す"
+
+msgid "Use Standard settings"
+msgstr "標準設定で使用する"
+
+msgid "Use HF values anyway"
+msgstr "HF設定をそのまま使用する"
+
+msgid "Add HF settings"
+msgstr "HF設定を追加"
+
+msgid "HF values on Standard"
+msgstr "標準でHF値を使用"
+
+msgid "HF values copied to Standard"
+msgstr "HF値をコピーした標準設定"
+
+msgid "Filaments: %1% Standard, %2% High Flow, %3% Standard with HF values"
+msgstr "素材：標準 %1% ／ HF %2% ／ 標準でHF値を使用 %3%"
+
+msgid "Preset name"
+msgstr "設定名"
+
+msgid "Cool Steel Plate"
+msgstr "低温スチールプレート"
+
 msgid "Automatically calculate the color mixing scheme that best matches the original model colors and complete color mapping.\nNote:\n1. Color mixing match is based on the official recommended filaments. The matched colors may differ from the original model.\n2. The order of the Color Mapping list may differ from that of the Color Mixing list."
 msgstr "モデルの色に最も近い混色の組み合わせを自動計算し、色を割り当てます。\n注意：\n1. 公式推奨フィラメントを基準に計算するため、元の色と差が出る場合があります。\n2. 色の割り当てリストと混色リストでは、表示順が異なる場合があります。"
+
+msgid "Calculate flow from test height"
+msgstr "テストの高さから流量を計算"
+
+msgid "Enter the height from the base where print quality started to fail. Match the start flow and increase per mm to the test you printed."
+msgstr "造形が崩れ始めた位置を底面からの高さで入力してください。開始流量と1 mmあたりの増分は、印刷したテストの設定に合わせてください。"
+
+msgid "Last test settings: %1%"
+msgstr "前回のテスト設定：%1%"
+
+msgid "Start volumetric speed"
+msgstr "開始流量"
+
+msgid "Flow increase per mm"
+msgstr "1 mmあたりの増分"
+
+msgid "Height where quality starts to fail"
+msgstr "造形が崩れ始めた高さ"
+
+msgid "Flow to subtract"
+msgstr "差し引く流量"
+
+msgid "Use calculated flow"
+msgstr "計算した流量を使用"
+
+msgid "%1% + %2% x %3% - %4% = %5% mm³/s"
+msgstr "%1% ＋ %2% × %3% − %4% ＝ %5% mm³/s"
+
+msgid "Enter valid test values. The flow after subtraction must be greater than zero."
+msgstr "テスト条件と高さを入力してください。差し引き後の流量は0より大きい値が必要です。"
+
+msgid "Calculate from test height"
+msgstr "テストの高さから計算"
+
+msgid "Save calibrated HF settings"
+msgstr "校正したHF設定を保存"
+
+msgid "Enter calibrated HF values. Standard settings and the original preset are preserved."
+msgstr "校正したHF用の値を入力してください。標準側の設定と元のプリセットは保持されます。"
+
+msgid "Apply calibration result"
+msgstr "校正結果を反映"
+
+msgid "All physical hotends are set to Standard. Choose how to use this filament's HF settings."
+msgstr "物理ホットエンドはすべて標準です。\nこの素材のHF設定をどのように使用しますか？"
+
+msgid "Using HF values anyway saves a separate Standard preset with the HF parameters.\nExcessive flow may cause under-extrusion."
+msgstr "HF設定を使う場合は、その値をコピーした標準用プリセットを保存します。\n流量が高すぎると、押出不足が起きることがあります。"
+
+msgid "Smooth PEI Plate"
+msgstr "平滑PEIプレート"
+
+msgid "Graphic Effect Plate"
+msgstr "模様転写プレート"
+
+msgid "Compare Standard and High Flow settings"
+msgstr "標準と高流量の設定を比較"
+
+msgid "Highlighted rows differ between Standard and High Flow. Shared settings are unchanged."
+msgstr "標準と高流量で異なる項目をハイライトしています。共通の設定は変更されません。"
+
+msgid "Parameter"
+msgstr "設定項目"
+
+msgid "Comparison"
+msgstr "比較"
+
+msgid "Different"
+msgstr "差分あり"
+
+msgid "Same"
+msgstr "同じ"
+
+msgid "Not configured"
+msgstr "未設定"
+
+msgid "Use printer setting"
+msgstr "プリンター設定を使用"
+
+msgid "Compare settings"
+msgstr "設定を比較"
+
+msgid " - HF on Standard"
+msgstr " - 標準用HF値"
+
+msgid "Retraction Length (Toolchange)"
+msgstr "ツール交換時のリトラクション長さ"
+
+msgid "Part cooling fan minimum speed"
+msgstr "パーツ冷却ファンの最小速度"
+
+msgid "Part cooling fan maximum speed"
+msgstr "パーツ冷却ファンの最大速度"
+
+msgid "Auxiliary cooling fan speed"
+msgstr "補助冷却ファンの速度"

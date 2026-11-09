@@ -171,6 +171,7 @@ public:
                                                     std::function<void(int /*current*/, int /*total*/)> on_progress = nullptr);
     void add_custom_filament(wxColour new_col);
     void edit_filament();
+    void show_physical_nozzle_settings();
 
     void on_filaments_delete(size_t filament_id);
     void init_color_mix_panel(wxWindow* parent, wxSizer* sizer);

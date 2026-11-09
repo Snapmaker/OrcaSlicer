@@ -17724,3 +17724,50 @@ msgstr ""
 
 #~ msgid "Orient the model"
 #~ msgstr "モデルの向きを調整"
+msgid "Filament flow assignment"
+msgstr "フィラメントの流量割り当て"
+
+msgid "Choose the flow settings for each filament used by the model."
+msgstr "使用するフィラメントごとに流量設定を選択します"
+
+msgid "All Standard"
+msgstr "すべて標準"
+
+msgid "All High Flow"
+msgstr "すべてHF"
+
+msgid "Flow settings"
+msgstr "流量設定"
+
+msgid "Filament %1% flow settings"
+msgstr "フィラメント%1%の流量設定"
+
+msgid "This filament has no High Flow preset. Its Standard settings will be used."
+msgstr "このフィラメントにはHF用プリセットがないため、標準用の設定値を使用します"
+
+msgid "Standard: %1%   High Flow: %2%"
+msgstr "標準：%1%　HF：%2%"
+
+msgid "No Standard nozzle is configured. Assign these filaments to High Flow or update the nozzle settings."
+msgstr "標準ノズルが設定されていません。フィラメントをHFに割り当てるか、ノズル設定を見直してください"
+
+msgid "No High Flow nozzle is configured. Assign these filaments to Standard or update the nozzle settings."
+msgstr "HFノズルが設定されていません。フィラメントを標準に割り当てるか、ノズル設定を見直してください"
+
+msgid "HF: High Flow. STD: Standard. Select a nozzle to change its settings."
+msgstr "HF：高流量、STD：標準。ノズルを選択すると設定を変更できます"
+
+msgid "High Flow"
+msgstr "高流量"
+
+msgid "CF/GF filaments"
+msgstr "CF/GF系フィラメント"
+
+msgid "These filaments cannot be printed with the %1%mm high flow nozzle: %2%"
+msgstr "これらのフィラメントは%1%mmのHFノズルでは印刷できません：%2%"
+
+msgid "Warning:%1%mm High Flow nozzles are not recommended for %2%"
+msgstr "注意：%1%mmのHFノズルは%2%には推奨されていません"
+
+msgid "Using Standard preset values for filaments without High Flow settings: %1%."
+msgstr "HF用の設定がないため、標準の値を使用します：フィラメント%1%"

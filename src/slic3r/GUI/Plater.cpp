@@ -991,6 +991,15 @@ public:
 
     wxWindow* GetPage(size_t index) const { return (index < m_tabs.size()) ? m_tabs[index].page : nullptr; }
 
+    void SetPageText(size_t index, const wxString& text)
+    {
+        if (index >= m_tabs.size() || m_tabs[index].text == text)
+            return;
+        m_tabs[index].text = text;
+        InvalidateBestSize();
+        Refresh();
+    }
+
     int GetSelection() const { return m_selectedIndex; }
 
     void SetSelection(size_t index)
@@ -1338,7 +1347,8 @@ struct Sidebar::priv
     wxPanel* m_panel_printer_content = nullptr;
 
     // nozzle notebook  and related controls
-    CustomNotebook*                  m_nozzle_notebook{nullptr};
+    CustomNotebook*              m_nozzle_notebook{nullptr};
+    Button*                      m_flow_assignment_button{nullptr};
     std::vector<ComboBox*>       m_nozzle_diameter_lists;
     std::vector<ComboBox*>       m_nozzle_flow_lists;
     std::vector<ScalableButton*> m_nozzle_edit_btns;
@@ -2454,6 +2464,14 @@ Sidebar::Sidebar(Plater *parent)
         // 创建nozzle_sizer并添加notebook
         wxBoxSizer* nozzle_sizer = new wxBoxSizer(wxVERTICAL);
         nozzle_sizer->Add(p->m_nozzle_notebook, 1, wxEXPAND | wxALL, FromDIP(0));
+        p->m_flow_assignment_button = new Button(nozzle_container, _L("Filament flow assignment"));
+        p->m_flow_assignment_button->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+        p->m_flow_assignment_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            const bool all_high_flow = GUI::FlowType::any_nozzle_high_flow() && GUI::FlowType::distinct_nozzle_flow_type_count() < 2;
+            GUI::FilamentGroupDialog dialog(this, all_high_flow);
+            dialog.ShowModal();
+        });
+        nozzle_sizer->Add(p->m_flow_assignment_button, 0, wxEXPAND | wxALL, FromDIP(8));
         nozzle_container->SetSizer(nozzle_sizer);
         nozzle_container->SetMinSize(wxSize(-1, FromDIP(80)));
 
@@ -9690,8 +9708,11 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             flow_combo->Enable(false);
         const std::vector<std::string> nozzle_flows = GUI::FlowType::nozzle_volume_types();
         flow_combo->SetSelection(i < nozzle_flows.size() && nozzle_flows[i] == FLOW_MODE_HIGH_FLOW ? 1 : 0);
-        flow_combo->Bind(wxEVT_COMBOBOX, [flow_combo, i](wxCommandEvent&) {
-            GUI::FlowType::set_nozzle_volume_type(i, flow_combo->GetSelection() == 1 ? FLOW_MODE_HIGH_FLOW : FLOW_MODE_STANDARD);
+        flow_combo->Bind(wxEVT_COMBOBOX, [this, flow_combo, i](wxCommandEvent&) {
+            const bool high_flow = flow_combo->GetSelection() == 1;
+            GUI::FlowType::set_nozzle_volume_type(i, high_flow ? FLOW_MODE_HIGH_FLOW : FLOW_MODE_STANDARD);
+            if (p->m_nozzle_notebook->GetPageCount() > 2 && i < p->m_nozzle_notebook->GetPageCount())
+                p->m_nozzle_notebook->SetPageText(i, wxString::Format("%zu %s", i + 1, high_flow ? "HF" : "STD"));
             // Do not event.Skip(): the sidebar-level wxEVT_COMBOBOX handler would treat this
             // combo as the bed-type combo (same reason as the diameter combo above).
         });
@@ -9728,16 +9749,19 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         {
             tab_name = wxString(_L("Nozzle")) + wxString::Format(" %d", i + 1);
         }
-            
         }
+        if (supports_high_flow && new_nozzle_count > 2)
+            tab_name = wxString::Format("%zu %s", i + 1, flow_combo->GetSelection() == 1 ? "HF" : "STD");
         p->m_nozzle_notebook->AddPage(nozzle_panel, tab_name);
     }
 
+    p->m_nozzle_notebook->SetToolTip(_L("HF: High Flow. STD: Standard. Select a nozzle to change its settings."));
+    if (p->m_flow_assignment_button != nullptr)
+        p->m_flow_assignment_button->Show(GUI::FlowType::printer_supports_high_flow());
     p->m_nozzle_notebook->Layout();
     p->m_nozzle_notebook->Thaw();
     p->m_nozzle_notebook->InvalidateBestSize();
-    if (p->m_nozzle_notebook->GetParent() != nullptr)
-    {
+    if (p->m_nozzle_notebook->GetParent() != nullptr) {
         p->m_nozzle_notebook->GetParent()->InvalidateBestSize();
     }
     p->m_panel_printer_content->InvalidateBestSize();
@@ -14664,13 +14688,8 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                     // plate) surface here too.
                     bool guard_passed = this->q->guard_before_slice_plate();
                     bool grouping_confirmed = true;
-                    if (guard_passed && GUI::FlowType::any_nozzle_high_flow()) {
-                        bool all_high_flow = GUI::FlowType::distinct_nozzle_flow_type_count() < 2;
-                        GUI::FilamentGroupDialog dlg(q, all_high_flow);
-                        grouping_confirmed = dlg.ShowModal() == wxID_OK;
-                    } else if (guard_passed) {
-                        GUI::FlowType::sync_filament_volume_types_for_slice();
-                    }
+                    if (guard_passed)
+                        grouping_confirmed = GUI::FlowType::prepare_for_slice(q);
                     if (guard_passed && grouping_confirmed)
                         slice_cancelled = !(this->q->reslice());
                     else {
@@ -24240,16 +24259,11 @@ int Plater::select_sliced_plate(int plate_index)
     int ret = 0;
     BOOST_LOG_TRIVIAL(info) << "select_sliced_plate plate_idx=" << plate_index;
 
-    if (GUI::FlowType::any_nozzle_high_flow()) {
-        if (p->partplate_list.is_filament_group_dirty()) {
-            bool all_high_flow = GUI::FlowType::distinct_nozzle_flow_type_count() < 2;
-            GUI::FilamentGroupDialog dlg(this, all_high_flow);
-            if (dlg.ShowModal() != wxID_OK)
-                return 0;
-        }
-    } else {
-        GUI::FlowType::sync_filament_volume_types_for_slice();
-    }
+    // A valid cached slice already carries its reviewed assignment. Only a
+    // dirty result needs the shared pre-slice check.
+    if ((!GUI::FlowType::any_nozzle_high_flow() || p->partplate_list.is_filament_group_dirty()) &&
+        !GUI::FlowType::prepare_for_slice(this))
+        return 0;
 
     Freeze();
     ret = select_plate(plate_index, true);

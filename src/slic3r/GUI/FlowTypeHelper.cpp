@@ -1,6 +1,9 @@
 #include "FlowTypeHelper.hpp"
 
 #include "GUI_App.hpp"
+#include "FilamentGroupDialog.hpp"
+#include "HighFlowCompat.hpp"
+#include "PartPlate.hpp"
 #include "Plater.hpp"
 
 #include "libslic3r/PresetBundle.hpp"
@@ -9,8 +12,48 @@
 #include <boost/algorithm/string.hpp>
 
 #include <algorithm>
+#include <optional>
+#include <set>
 
 namespace Slic3r { namespace GUI { namespace FlowType {
+namespace {
+
+struct ReviewedAssignment
+{
+    DynamicPrintConfig       config;
+    std::vector<std::string> filament_names;
+    std::set<int>            used_filaments;
+    std::vector<int>         compatibility;
+};
+
+std::optional<ReviewedAssignment> reviewed_assignment;
+
+ReviewedAssignment current_assignment()
+{
+    const PresetBundle& bundle = *wxGetApp().preset_bundle;
+    ReviewedAssignment  state;
+    state.filament_names = bundle.filament_presets;
+    state.config.apply_only(bundle.full_config(),
+                            {"printer_model", "nozzle_diameter", "nozzle_volume_type", "filament_settings_id", "filament_type",
+                             "filament_flow_support", "filament_volume_type", "filament_grouping_mode", "filament_flow_ratio",
+                             "filament_max_volumetric_speed"},
+                            true);
+    if (Plater* plater = wxGetApp().plater(); plater != nullptr)
+        state.used_filaments = plater->get_partplate_list().get_extruders(true);
+    for (size_t i = 0; i < bundle.filament_presets.size(); ++i) {
+        if (!state.used_filaments.empty() && state.used_filaments.count(int(i) + 1) == 0)
+            continue;
+        const std::string& name   = bundle.filament_presets[i];
+        const Preset*      preset = bundle.filaments.get_edited_preset().name == name ? &bundle.filaments.get_edited_preset() :
+                                                                                        bundle.filaments.find_preset(name, false);
+        const auto         result = HighFlowCompat::check(preset ? preset->config.opt_string("filament_type", 0u) : std::string(), name);
+        state.compatibility.push_back(static_cast<int>(result.level));
+    }
+    return state;
+}
+
+} // namespace
+
 
 static size_t nozzle_count()
 {
@@ -201,6 +244,22 @@ void sync_filament_volume_types_for_slice()
         return; // already uniform at the target type
     const size_t n = wxGetApp().preset_bundle->filament_presets.size();
     apply_custom_mapping(std::vector<FilamentVolumeType>(std::max<size_t>(n, size_t(1)), type));
+}
+
+void remember_assignment() { reviewed_assignment = current_assignment(); }
+
+bool prepare_for_slice(wxWindow* parent)
+{
+    if (!any_nozzle_high_flow()) {
+        sync_filament_volume_types_for_slice();
+        return true;
+    }
+    const ReviewedAssignment state = current_assignment();
+    if (reviewed_assignment && reviewed_assignment->config == state.config && reviewed_assignment->filament_names == state.filament_names &&
+        reviewed_assignment->used_filaments == state.used_filaments && reviewed_assignment->compatibility == state.compatibility)
+        return true;
+    FilamentGroupDialog dialog(parent, distinct_nozzle_flow_type_count() < 2);
+    return dialog.ShowModal() == wxID_OK;
 }
 
 }}} // namespace Slic3r::GUI::FlowType

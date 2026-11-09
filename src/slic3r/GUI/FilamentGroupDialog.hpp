@@ -8,58 +8,48 @@
 #include <vector>
 
 class Button;
-class StaticBox;
-class wxFlexGridSizer;
+class ComboBox;
 class wxScrolledWindow;
+class wxStaticText;
 
 namespace Slic3r { namespace GUI {
 
-// Requirement 7.1 custom filament grouping dialog (Figma node 27673:62092):
-// drag filament chips between the standard and the high flow nozzle group, or
-// swap both groups at once with the round button in the middle. Only filaments
-// actually used by objects in the scene are listed.
-// OK writes the mapping through FlowType::apply_custom_mapping() and returns
-// wxID_OK so the caller can continue slicing; Cancel changes nothing.
+// Edit the flow settings for the filaments used by the model. Changes remain
+// local until Confirm; entries for unused filaments are preserved.
 class FilamentGroupDialog : public DPIDialog
 {
 public:
-    explicit FilamentGroupDialog(wxWindow *parent, bool default_all_high_flow = false);
+    explicit FilamentGroupDialog(wxWindow* parent, bool default_all_high_flow = false);
 
-    // One FLOW_MODE_* entry per filament (all filaments, in filament order --
-    // entries of unused filaments are left untouched).
-    const std::vector<FilamentVolumeType> &mapping() const { return m_mapping; }
-
-    // Called by the drop targets; |filament_idx| is the 0-based filament index.
-    void move_filament(size_t filament_idx, bool to_high_flow);
+    const std::vector<FilamentVolumeType>& mapping() const { return m_mapping; }
+    void                                   move_filament(size_t filament_idx, bool to_high_flow);
 
 protected:
-    void on_dpi_changed(const wxRect &suggested_rect) override;
+    void on_dpi_changed(const wxRect& suggested_rect) override;
 
 private:
-    struct FilamentInfo {
-        size_t      filament_idx; // 0-based index into the sidebar filament list
+    struct FilamentInfo
+    {
+        size_t      filament_idx;
         wxColour    color;
-        wxString    label;        // material name shown under the chip
-        std::string type_raw;     // filament_type for compatibility checks
-        std::string preset_name;  // preset display name, extra compatibility hint
+        std::string type_raw;
+        std::string preset_name;
+        bool        has_high_flow_settings;
     };
 
     void load_filaments();
-    void swap_groups();
-    void rebuild_chips();
+    void assign_all(bool high_flow);
+    void update_assignments();
     void update_warnings();
 
-    std::vector<FilamentInfo>      m_filaments; // only the filaments used by the model
-    std::vector<FilamentVolumeType> m_mapping;   // full-length, indexed by filament_idx
-
-    StaticBox       *m_std_box   { nullptr };
-    StaticBox       *m_high_box  { nullptr };
-    wxScrolledWindow *m_std_scroll  { nullptr };
-    wxScrolledWindow *m_high_scroll { nullptr };
-    wxFlexGridSizer *m_std_grid  { nullptr };
-    wxFlexGridSizer *m_high_grid { nullptr };
-    wxBoxSizer      *m_warning_sizer { nullptr };
-    Button          *m_confirm_button { nullptr };
+    std::vector<FilamentInfo>       m_filaments;
+    std::vector<FilamentVolumeType> m_mapping;
+    std::vector<ComboBox*>          m_choices;
+    std::vector<wxStaticText*>      m_details;
+    wxScrolledWindow*               m_list{nullptr};
+    wxStaticText*                   m_summary{nullptr};
+    wxBoxSizer*                     m_warning_sizer{nullptr};
+    Button*                         m_confirm_button{nullptr};
 };
 
 }} // namespace Slic3r::GUI

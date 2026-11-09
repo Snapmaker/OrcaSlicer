@@ -1,7 +1,6 @@
 #include "FilamentGroupDialog.hpp"
 
 #include "FlowTypeHelper.hpp"
-#include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "HighFlowCompat.hpp"
 #include "I18N.hpp"
@@ -9,519 +8,296 @@
 #include "PartPlate.hpp"
 #include "Plater.hpp"
 #include "format.hpp"
-#include "wxExtensions.hpp"
+#include "Widgets/ComboBox.hpp"
 #include "Widgets/DialogButtons.hpp"
 #include "Widgets/Label.hpp"
-#include "Widgets/StaticBox.hpp"
 
 #include "libslic3r/PresetBundle.hpp"
-#include "libslic3r/PrintConfig.hpp"
 
-#include <wx/dcbuffer.h>
-#include <wx/dcgraph.h>
-#include <wx/dnd.h>
 #include <wx/scrolwin.h>
-#include <wx/settings.h>
 #include <wx/sizer.h>
-#include <wx/statbmp.h>
 #include <wx/stattext.h>
 
 #include <algorithm>
-#include <functional>
 #include <set>
 
 namespace Slic3r { namespace GUI {
 
-namespace {
-
-const char *DRAG_PREFIX = "sm_filament:";
-
-// Colour-chip grid geometry, shared by the group boxes and the scroll sizing.
-constexpr int kChipCols    = 8;   // chips per row
-constexpr int kChipCellW   = 39;  // chip cell width  (DIP)
-constexpr int kChipCellH   = 38;  // chip cell height (DIP)
-constexpr int kChipVGap    = 8;   // gap between chip rows (DIP)
-constexpr int kVisibleRows = 3;   // rows visible before the group scrolls
-
-// 20x20 colour block with the filament number inside and the material name below.
-class FilamentChip : public wxPanel
+FilamentGroupDialog::FilamentGroupDialog(wxWindow* parent, bool default_all_high_flow)
+    : DPIDialog(parent ? parent : static_cast<wxWindow*>(wxGetApp().mainframe),
+                wxID_ANY,
+                _L("Filament flow assignment"),
+                wxDefaultPosition,
+                wxDefaultSize,
+                wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
 {
-public:
-    FilamentChip(wxWindow *parent, size_t filament_idx, const wxColour &color, const wxString &label)
-        : wxPanel(parent, wxID_ANY, wxDefaultPosition,
-                  wxSize(parent->FromDIP(kChipCellW), parent->FromDIP(kChipCellH)))
-        , m_idx(filament_idx)
-        , m_color(color)
-        , m_label(label)
-    {
-        SetBackgroundStyle(wxBG_STYLE_PAINT);
-        SetCursor(wxCursor(wxCURSOR_HAND));
-        Bind(wxEVT_PAINT, &FilamentChip::on_paint, this);
-        Bind(wxEVT_LEFT_DOWN, &FilamentChip::on_left_down, this);
-    }
-
-private:
-    void on_paint(wxPaintEvent &)
-    {
-        wxAutoBufferedPaintDC dc(this);
-        dc.SetBackground(wxBrush(GetParent()->GetBackgroundColour()));
-        dc.Clear();
-
-        const int block = FromDIP(20);
-        const int x     = (GetSize().x - block) / 2;
-        dc.SetPen(wxPen(wxColour("#DBDBDA")));
-        dc.SetBrush(wxBrush(m_color));
-        dc.DrawRectangle(x, 0, block, block);
-
-        // White number on dark colours, black on light ones.
-        const double lum = 0.299 * m_color.Red() + 0.587 * m_color.Green() + 0.114 * m_color.Blue();
-        dc.SetTextForeground(lum < 160.0 ? *wxWHITE : *wxBLACK);
-        dc.SetFont(Label::Body_13);
-        const wxString num  = wxString::Format("%zu", m_idx + 1);
-        const wxSize   next = dc.GetTextExtent(num);
-        dc.DrawText(num, x + (block - next.x) / 2, (block - next.y) / 2);
-
-        // Material label. #242424 is the registered "primary text" dark-map key
-        // (-> #E4E4E7 in dark); the previous #333333 had no dark mapping and stayed
-        // near-invisible on the dark card. Figma dark node 29771:88711.
-        dc.SetTextForeground(StateColor::darkModeColorFor(wxColour("#242424")));
-        dc.SetFont(Label::Body_10);
-        wxSize lext = dc.GetTextExtent(m_label);
-        if (lext.x > GetSize().x)
-        {
-            dc.SetFont(Label::Body_9);
-            lext = dc.GetTextExtent(m_label);
-        }
-        if (lext.x > GetSize().x)
-        {
-            dc.SetFont(Label::Body_8);
-            lext = dc.GetTextExtent(m_label);
-        }
-        dc.DrawText(m_label, (GetSize().x - lext.x) / 2, block + FromDIP(2));
-    }
-
-    void on_left_down(wxMouseEvent &)
-    {
-        wxTextDataObject data(wxString(DRAG_PREFIX) + wxString::Format("%zu", m_idx));
-        wxDropSource     source(data, GetParent());
-        source.DoDragDrop(wxDrag_CopyOnly);
-    }
-
-    size_t   m_idx;
-    wxColour m_color;
-    wxString m_label;
-};
-
-// 20x20 swap button that swaps the contents of the standard and high flow groups.
-class SwapButton : public wxPanel
-{
-public:
-    SwapButton(wxWindow *parent, std::function<void()> on_click)
-        : wxPanel(parent, wxID_ANY, wxDefaultPosition,
-                  wxSize(parent->FromDIP(20), parent->FromDIP(20)))
-        , m_on_click(std::move(on_click))
-    {
-        SetBackgroundStyle(wxBG_STYLE_PAINT);
-        SetCursor(wxCursor(wxCURSOR_HAND));
-        SetToolTip(_L("Swap the two groups"));
-        m_bitmap = ScalableBitmap(this, "icon_swap_groups", 14);
-        Bind(wxEVT_PAINT, &SwapButton::on_paint, this);
-        Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &) {
-            if (m_on_click)
-                m_on_click();
-        });
-    }
-
-private:
-    void on_paint(wxPaintEvent &)
-    {
-        wxAutoBufferedPaintDC dc(this);
-        dc.SetBackground(wxBrush(GetParent()->GetBackgroundColour()));
-        dc.Clear();
-
-        // Figma node 29771:88805: the icon sits on a circular #36363d card (light
-        // mode: #F4F4F4). GDI has no anti-aliasing, so on MSW draw the circle onto an
-        // off-screen bitmap through a wxGCDC and blit it, matching StaticBox::render.
-        const wxSize   size      = GetSize();
-        const int      d         = std::min(size.x, size.y);
-        const wxColour circle_bg = StateColor::darkModeColorFor(wxColour("#F4F4F4"));
-        const wxPoint  origin((size.x - d) / 2, (size.y - d) / 2);
-#ifdef __WXMSW__
-        wxMemoryDC memdc(&dc);
-        if (memdc.IsOk()) {
-            wxBitmap layer(size.x, size.y);
-            memdc.SelectObject(layer);
-            memdc.SetBackground(wxBrush(GetParent()->GetBackgroundColour()));
-            memdc.Clear();
-            {
-                wxGCDC gcdc(memdc);
-                gcdc.SetPen(*wxTRANSPARENT_PEN);
-                gcdc.SetBrush(wxBrush(circle_bg));
-                gcdc.DrawEllipse(origin.x, origin.y, d, d);
-            }
-            memdc.SelectObject(wxNullBitmap);
-            dc.DrawBitmap(layer, 0, 0);
-        } else {
-            dc.SetPen(*wxTRANSPARENT_PEN);
-            dc.SetBrush(wxBrush(circle_bg));
-            dc.DrawEllipse(origin.x, origin.y, d, d);
-        }
-#else
-        dc.SetPen(*wxTRANSPARENT_PEN);
-        dc.SetBrush(wxBrush(circle_bg));
-        dc.DrawEllipse(origin.x, origin.y, d, d);
-#endif
-        const wxBitmap &bmp = m_bitmap.bmp();
-        dc.DrawBitmap(bmp, (size.x - bmp.GetWidth()) / 2, (size.y - bmp.GetHeight()) / 2);
-    }
-
-    ScalableBitmap       m_bitmap;
-    std::function<void()> m_on_click;
-};
-
-class GroupDropTarget : public wxTextDropTarget
-{
-public:
-    GroupDropTarget(FilamentGroupDialog *dialog, bool high_flow) : m_dialog(dialog), m_high_flow(high_flow) {}
-
-    bool OnDropText(wxCoord, wxCoord, const wxString &text) override
-    {
-        const wxString prefix = wxString(DRAG_PREFIX);
-        if (!text.StartsWith(prefix))
-            return false;
-        unsigned long idx = 0;
-        if (!text.Mid(prefix.size()).ToULong(&idx))
-            return false;
-        m_dialog->move_filament(size_t(idx), m_high_flow);
-        return true;
-    }
-
-private:
-    FilamentGroupDialog *m_dialog;
-    bool                 m_high_flow;
-};
-
-// Resize the scrollable region's virtual area to the chip grid so the vertical
-// scrollbar appears once the colours overflow the fixed visible height.
-void update_group_scroll(wxScrolledWindow *scroll, wxFlexGridSizer *grid)
-{
-    scroll->Layout();
-    const int count     = int(grid->GetItemCount());
-    const int rows      = (count + kChipCols - 1) / kChipCols;
-    const int grid_w    = scroll->FromDIP(kChipCellW) * kChipCols;
-    const int content_h = rows > 0 ? scroll->FromDIP(kChipCellH) * rows + scroll->FromDIP(kChipVGap) * (rows - 1) : 0;
-    scroll->SetVirtualSize(grid_w, content_h);
-}
-
-} // anonymous namespace
-
-FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent, bool default_all_high_flow)
-    : DPIDialog(parent ? parent : static_cast<wxWindow *>(wxGetApp().mainframe), wxID_ANY,
-                _L("Custom Filament Grouping"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
-{
-    const wxColour dlg_bg = StateColor::darkModeColorFor(*wxWHITE);
-    SetBackgroundColour(dlg_bg);
-    SetFont(Label::Body_14);
-    // Figma dark spec (node 29771:88711) uses pure-white text and a bright teal
-    // Confirm button; the app's normal dark theme differs, so branch on the theme.
-    const bool is_dark = wxGetApp().dark_mode();
+    const wxColour background = StateColor::darkModeColorFor(*wxWHITE);
+    const wxColour foreground = StateColor::darkModeColorFor(wxColour("#242424"));
+    SetBackgroundColour(background);
+    SetForegroundColour(foreground);
+    SetFont(Label::Body_13);
 
     load_filaments();
     m_mapping = wxGetApp().preset_bundle->get_filament_volume_types();
     m_mapping.resize(wxGetApp().preset_bundle->filament_presets.size(), fvtStandard);
     if (default_all_high_flow)
-        m_mapping.assign(m_mapping.size(), fvtHighFlow);
+        for (const FilamentInfo& info : m_filaments)
+            m_mapping[info.filament_idx] = fvtHighFlow;
 
-    auto *v_sizer = new wxBoxSizer(wxVERTICAL);
+    auto* layout = new wxBoxSizer(wxVERTICAL);
+    auto* intro  = new wxStaticText(this, wxID_ANY, _L("Choose the flow settings for each filament used by the model."));
+    layout->Add(intro, 0, wxALL, FromDIP(16));
 
-    auto *intro = new wxStaticText(this, wxID_ANY, _L("Slicing will follow the nozzle assignment below:"));
-    // The hint is plain text on the dialog (no card). Match the dialog background so
-    // wxMSW does not fill the static-text rectangle with the system face colour.
-    intro->SetBackgroundColour(dlg_bg);
-    intro->SetForegroundColour(is_dark ? wxColour("#FFFFFF") : wxColour("#4A4A4A"));
-    v_sizer->Add(intro, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+    auto*                          nozzles      = new wxBoxSizer(wxHORIZONTAL);
+    const std::vector<std::string> nozzle_types = FlowType::nozzle_volume_types();
+    for (size_t i = 0; i < nozzle_types.size(); ++i) {
+        auto* card = new wxPanel(this, wxID_ANY);
+        card->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F4F4F4")));
+        auto* contents = new wxBoxSizer(wxVERTICAL);
+        auto* name     = new wxStaticText(card, wxID_ANY, _L("Nozzle") + wxString::Format(" %zu", i + 1));
+        auto* type     = new wxStaticText(card, wxID_ANY, nozzle_types[i] == FLOW_MODE_HIGH_FLOW ? _L("High Flow") : _L("Standard"));
+        name->SetBackgroundColour(card->GetBackgroundColour());
+        type->SetBackgroundColour(card->GetBackgroundColour());
+        type->SetFont(Label::Body_14);
+        contents->Add(name, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(12));
+        contents->Add(type, 0, wxALL, FromDIP(12));
+        card->SetSizer(contents);
+        nozzles->Add(card, 1, wxEXPAND | (i + 1 < nozzle_types.size() ? wxRIGHT : 0), FromDIP(8));
+    }
+    layout->Add(nozzles, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
 
-    // Group panel per Figma 27673:62102: #F3F3F3 rounded-8 background box,
-    // title with 16px inset, chip grid with 8px inset. The chip grid lives in a
-    // fixed-height scrolled window: with many filaments the colours overflow into
-    // a scrollable region instead of being clipped (previously the box height was
-    // pinned by SetMinSize, so any row past the ~2 that fit was cut off). A
-    // vertical-scrollbar gutter is reserved so the 8-column grid still fits once
-    // the scrollbar appears.
-    auto make_group = [this, is_dark](const wxString &title, wxFlexGridSizer *&grid,
-                             wxScrolledWindow *&scroll, bool high_flow) -> StaticBox * {
-        const int grid_w = FromDIP(kChipCellW) * kChipCols;
-        int       sb_w   = wxSystemSettings::GetMetric(wxSYS_VSCROLL_X, this);
-        if (sb_w <= 0)
-            sb_w = FromDIP(16);
-        const int scroll_w = grid_w + sb_w;
-        const int scroll_h = FromDIP(kChipCellH) * kVisibleRows + FromDIP(kChipVGap) * (kVisibleRows - 1);
-        const int box_w    = scroll_w + FromDIP(16); // 8px inset on each side
-
-        StaticBox *box = new StaticBox(this, wxID_ANY, wxDefaultPosition, wxSize(box_w, -1));
-        box->SetCornerRadius(FromDIP(8));
-        box->SetBorderWidth(0);
-        // Figma dark node 29771:88711: the nozzle cards are #36363d. #F4F4F4 is the
-        // registered dark-map key that resolves to #36363D; the bare #F3F3F3 had no
-        // dark mapping, so the cards previously stayed light grey in dark mode.
-        const wxColour box_bg = StateColor::darkModeColorFor(wxColour("#F4F4F4"));
-        box->SetBackgroundColorNormal(box_bg);
-        // Also set the plain wx background so children (title / chips) inherit it.
-        box->SetBackgroundColour(box_bg);
-
-        auto *box_sizer = new wxBoxSizer(wxVERTICAL);
-        auto *label     = new wxStaticText(box, wxID_ANY, title);
-        label->SetFont(Label::Body_14);
-        label->SetBackgroundColour(box_bg);
-        // Card title is white in the Figma dark design (node 29771:88711).
-        label->SetForegroundColour(is_dark ? wxColour("#FFFFFF") : wxColour("#242424"));
-        box_sizer->Add(label, 0, wxLEFT | wxTOP | wxRIGHT, FromDIP(16));
-        box_sizer->AddSpacer(FromDIP(16));
-
-        scroll = new wxScrolledWindow(box, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
-        scroll->SetBackgroundColour(box_bg);
-        scroll->SetMinSize(wxSize(scroll_w, scroll_h));
-        scroll->SetMaxSize(wxSize(scroll_w, scroll_h));
-        scroll->EnableScrolling(false, true);
-        scroll->ShowScrollbars(wxSHOW_SB_NEVER, wxSHOW_SB_DEFAULT);
-        scroll->SetScrollRate(0, FromDIP(10));
-        grid = new wxFlexGridSizer(0, kChipCols, FromDIP(kChipVGap), 0);
-        scroll->SetSizer(grid); // chips left-aligned, matching the original layout
-        box_sizer->Add(scroll, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
-
-        box->SetSizer(box_sizer);
-        // Pin the width only; the height follows the fixed-height chip area so the
-        // box (and thus the dialog) keeps a constant size regardless of chip count.
-        box->SetMinSize(wxSize(box_w, wxDefaultCoord));
-        // Accept chip drops anywhere on the card (title strip and chip area).
-        box->SetDropTarget(new GroupDropTarget(this, high_flow));
-        scroll->SetDropTarget(new GroupDropTarget(this, high_flow));
-        return box;
+    auto* actions = new wxBoxSizer(wxHORIZONTAL);
+    m_summary     = new wxStaticText(this, wxID_ANY, wxEmptyString);
+    actions->Add(m_summary, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
+    auto add_bulk_button = [this, actions, &nozzle_types](const wxString& label, bool high_flow) {
+        auto* button = new Button(this, label);
+        button->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+        button->Enable(std::find(nozzle_types.begin(), nozzle_types.end(), high_flow ? FLOW_MODE_HIGH_FLOW : FLOW_MODE_STANDARD) !=
+                       nozzle_types.end());
+        button->Bind(wxEVT_BUTTON, [this, high_flow](wxCommandEvent&) { assign_all(high_flow); });
+        actions->Add(button, 0, wxLEFT, FromDIP(8));
     };
+    add_bulk_button(_L("All Standard"), false);
+    add_bulk_button(_L("All High Flow"), true);
+    layout->Add(actions, 0, wxEXPAND | wxALL, FromDIP(16));
 
-    auto *groups_sizer = new wxBoxSizer(wxHORIZONTAL);
-    m_std_box          = make_group(_L("Standard Nozzle"), m_std_grid, m_std_scroll, false);
-    m_high_box         = make_group(_L("High Flow Nozzle"), m_high_grid, m_high_scroll, true);
+    m_list = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL | wxTAB_TRAVERSAL);
+    m_list->SetBackgroundColour(background);
+    m_list->SetScrollRate(0, FromDIP(24));
+    const int visible_rows = std::clamp(int(m_filaments.size()), 1, 4);
+    m_list->SetMinSize(wxSize(-1, FromDIP(40 + visible_rows * 48)));
+    auto* rows = new wxFlexGridSizer(0, 4, FromDIP(12), FromDIP(12));
+    rows->AddGrowableCol(1);
+    rows->AddSpacer(FromDIP(28));
+    rows->Add(new wxStaticText(m_list, wxID_ANY, _L("Filament")), 0, wxALIGN_CENTER_VERTICAL);
+    rows->Add(new wxStaticText(m_list, wxID_ANY, _L("Flow settings")), 0, wxALIGN_CENTER_VERTICAL);
+    auto* flow_heading = new wxStaticText(m_list, wxID_ANY, _L("Max volumetric speed"));
+    flow_heading->Wrap(FromDIP(136));
+    rows->Add(flow_heading, 0, wxALIGN_CENTER_VERTICAL);
+    std::vector<wxStaticText*> numbers;
+    for (const FilamentInfo& info : m_filaments) {
+        auto* number = new wxStaticText(m_list, wxID_ANY, wxString::Format("%zu", info.filament_idx + 1), wxDefaultPosition,
+                                        wxSize(FromDIP(28), FromDIP(28)), wxALIGN_CENTER);
+        numbers.push_back(number);
+        rows->Add(number, 0, wxALIGN_CENTER_VERTICAL);
 
-    auto *swap = new SwapButton(this, [this]() { swap_groups(); });
+        auto* name = new wxStaticText(m_list, wxID_ANY, from_u8(info.preset_name), wxDefaultPosition, wxSize(FromDIP(288), -1),
+                                      wxST_ELLIPSIZE_END);
+        name->SetToolTip(from_u8(info.preset_name));
+        rows->Add(name, 1, wxEXPAND);
 
-    groups_sizer->Add(m_std_box, 0, wxALIGN_TOP);
-    groups_sizer->Add(swap, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, FromDIP(16));
-    groups_sizer->Add(m_high_box, 0, wxALIGN_TOP);
-    v_sizer->Add(groups_sizer, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+        auto* choice = new ComboBox(m_list, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
+        choice->Append(_L("Standard"));
+        choice->Append(_L("High Flow"));
+        choice->SetMinSize(wxSize(FromDIP(136), -1));
+        choice->SetName(format_wxstr(_L("Filament %1% flow settings"), info.filament_idx + 1));
+        if (!info.has_high_flow_settings)
+            choice->SetToolTip(_L("This filament has no High Flow preset. Its Standard settings will be used."));
+        choice->Bind(wxEVT_COMBOBOX,
+                     [this, index = info.filament_idx, choice](wxCommandEvent&) { move_filament(index, choice->GetSelection() == 1); });
+        m_choices.push_back(choice);
+        rows->Add(choice, 0, wxALIGN_CENTER_VERTICAL);
 
-    auto *tip = new wxStaticText(this, wxID_ANY, _L("Tip: Drag and drop filaments to assign them to a different nozzle."));
-    tip->SetBackgroundColour(dlg_bg);
-    tip->SetForegroundColour(is_dark ? wxColour("#FFFFFF") : wxColour("#4A4A4A"));
-    v_sizer->Add(tip, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+        auto* detail = new wxStaticText(m_list, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(136), -1));
+        m_details.push_back(detail);
+        rows->Add(detail, 0, wxALIGN_CENTER_VERTICAL);
+    }
+    m_list->SetSizer(rows);
+    layout->Add(m_list, 1, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
 
     m_warning_sizer = new wxBoxSizer(wxVERTICAL);
-    v_sizer->Add(m_warning_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
-
-    auto *dlg_btns = new DialogButtons(this, {"Cancel", "Confirm"});
-    m_confirm_button = dlg_btns->GetCONFIRM();
-    // Figma dark spec (node 29771:88711) keeps the Confirm button at the bright ORCA
-    // teal instead of the app's muted dark accent. StateColor dark-maps #009688 ->
-    // #00675b for every Button, so to brighten only this dialog we override the fill
-    // with teals the dark map does not contain (perceptually the Figma #009688). This
-    // modal is short-lived, so the default style is never re-applied over it.
-    if (is_dark) {
-        const wxColour teal(0, 150, 137);          // ~#009688, not a dark-map key
-        const wxColour teal_hover(0, 170, 155);    // hover, slightly lighter
-        const wxColour teal_pressed(0, 128, 116);  // pressed, slightly darker
-        m_confirm_button->SetBackgroundColor(StateColor(
-            std::make_pair(teal,                (int) StateColor::NotHovered),
-            std::make_pair(wxColour("#DFDFDF"), (int) StateColor::Disabled),
-            std::make_pair(teal_pressed,        (int) StateColor::Pressed),
-            std::make_pair(teal_hover,          (int) StateColor::Hovered),
-            std::make_pair(teal,                (int) StateColor::Normal),
-            std::make_pair(teal,                (int) StateColor::Enabled)));
-    }
-    m_confirm_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
+    layout->Add(m_warning_sizer, 0, wxEXPAND | wxALL, FromDIP(16));
+    auto* buttons    = new DialogButtons(this, {"Cancel", "Confirm"});
+    m_confirm_button = buttons->GetCONFIRM();
+    m_confirm_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        if (!m_confirm_button->IsEnabled())
+            return;
+        // A deliberate assignment must survive the mixed-nozzle slice path.
+        // Automatic uniform mapping continues to use the existing standard mode.
+        if (FlowType::distinct_nozzle_flow_type_count() > 1 && FlowType::grouping_mode() != FILAMENT_GROUPING_CUSTOM)
+            FlowType::set_grouping_mode(FILAMENT_GROUPING_CUSTOM);
         FlowType::apply_custom_mapping(m_mapping);
+        FlowType::remember_assignment();
         EndModal(wxID_OK);
     });
-    dlg_btns->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { EndModal(wxID_CANCEL); });
-    v_sizer->Add(dlg_btns, 0, wxEXPAND | wxALL, FromDIP(8));
+    buttons->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
+    layout->Add(buttons, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
 
-    SetSizer(v_sizer);
-    rebuild_chips();
-    update_warnings();
+    SetSizer(layout);
+    SetMinSize(FromDIP(wxSize(760, 420)));
+    update_assignments();
     Fit();
     CenterOnParent();
     wxGetApp().UpdateDlgDarkUI(this);
+    intro->SetBackgroundColour(background);
+    m_summary->SetBackgroundColour(background);
+    for (wxWindow* child : m_list->GetChildren())
+        if (auto* text = dynamic_cast<wxStaticText*>(child))
+            text->SetBackgroundColour(background);
+    // Filament colors must not be changed by the generic dark-mode color walk.
+    for (size_t row = 0; row < m_filaments.size(); ++row) {
+        const wxColour& color = m_filaments[row].color;
+        numbers[row]->SetBackgroundColour(color);
+        const double luminance = 0.299 * color.Red() + 0.587 * color.Green() + 0.114 * color.Blue();
+        numbers[row]->SetForegroundColour(luminance < 160.0 ? *wxWHITE : *wxBLACK);
+    }
 }
 
 void FilamentGroupDialog::load_filaments()
 {
-    PresetBundle &bundle = *wxGetApp().preset_bundle;
-    const auto   *colors = bundle.project_config.option<ConfigOptionStrings>("filament_colour");
-
-    // Requirement: list only the filaments actually used by objects in the scene
-    // (across all plates), not every filament configured in the sidebar. When the
-    // used set cannot be determined (empty scene), fall back to all filaments.
-    std::set<int> used; // 1-based filament ids
-    if (Plater *plater = wxGetApp().plater(); plater != nullptr)
+    const PresetBundle& bundle = *wxGetApp().preset_bundle;
+    const auto*         colors = bundle.project_config.option<ConfigOptionStrings>("filament_colour");
+    std::set<int>       used;
+    if (Plater* plater = wxGetApp().plater(); plater != nullptr)
         used = plater->get_partplate_list().get_extruders(true);
-
     for (size_t i = 0; i < bundle.filament_presets.size(); ++i) {
         if (!used.empty() && used.find(int(i) + 1) == used.end())
             continue;
-        FilamentInfo info;
-        info.filament_idx = i;
-        info.color = colors != nullptr && i < colors->values.size() ? wxColour(from_u8(colors->values[i])) : *wxWHITE;
-        const Preset *preset = bundle.filaments.find_preset(bundle.filament_presets[i], false);
-        info.type_raw    = preset != nullptr ? preset->config.opt_string("filament_type", 0u) : std::string("PLA");
-        info.preset_name = bundle.filament_presets[i];
-        info.label       = from_u8(info.type_raw);
-        m_filaments.push_back(info);
+        const std::string& name    = bundle.filament_presets[i];
+        const Preset*      preset  = bundle.filaments.get_edited_preset().name == name ? &bundle.filaments.get_edited_preset() :
+                                                                                         bundle.filaments.find_preset(name, false);
+        const auto*        support = preset ? preset->config.option<ConfigOptionStrings>("filament_flow_support") : nullptr;
+        m_filaments.push_back(
+            {i, colors && i < colors->values.size() ? wxColour(from_u8(colors->values[i])) : *wxWHITE,
+             preset ? preset->config.opt_string("filament_type", 0u) : std::string(), name,
+             support && std::find(support->values.begin(), support->values.end(), FLOW_MODE_HIGH_FLOW) != support->values.end()});
     }
 }
 
-void FilamentGroupDialog::move_filament(size_t filament_idx, bool to_high_flow)
+void FilamentGroupDialog::move_filament(size_t filament_idx, bool high_flow)
 {
     if (filament_idx >= m_mapping.size())
         return;
-    const FilamentVolumeType target = to_high_flow ? fvtHighFlow : fvtStandard;
-    if (m_mapping[filament_idx] == target)
-        return;
-    m_mapping[filament_idx] = target;
-    // The rebuild destroys and recreates every chip in both grids; freezing
-    // the dialog keeps those intermediate empty/partial states off screen so
-    // dropping a chip does not flash.
-    Freeze();
-    rebuild_chips();
-    update_warnings();
-    Thaw();
+    m_mapping[filament_idx] = high_flow ? fvtHighFlow : fvtStandard;
+    update_assignments();
 }
 
-void FilamentGroupDialog::swap_groups()
+void FilamentGroupDialog::assign_all(bool high_flow)
 {
-    for (const FilamentInfo &info : m_filaments)
-        m_mapping[info.filament_idx] =
-            m_mapping[info.filament_idx] == fvtHighFlow ? fvtStandard : fvtHighFlow;
-    // Same flash concern as move_filament(): rebuild invisibly, repaint once.
-    Freeze();
-    rebuild_chips();
-    update_warnings();
-    Thaw();
+    for (const FilamentInfo& info : m_filaments)
+        m_mapping[info.filament_idx] = high_flow ? fvtHighFlow : fvtStandard;
+    update_assignments();
 }
 
-void FilamentGroupDialog::rebuild_chips()
+void FilamentGroupDialog::update_assignments()
 {
-    m_std_grid->Clear(true);
-    m_high_grid->Clear(true);
-    for (const FilamentInfo &info : m_filaments) {
-        const bool        high   = m_mapping[info.filament_idx] == fvtHighFlow;
-        wxScrolledWindow *parent = high ? m_high_scroll : m_std_scroll;
-        wxFlexGridSizer  *grid   = high ? m_high_grid : m_std_grid;
-        grid->Add(new FilamentChip(parent, info.filament_idx, info.color, info.label));
+    DynamicPrintConfig preview = wxGetApp().preset_bundle->full_config();
+    auto*              types   = preview.option<ConfigOptionEnumsGeneric>("filament_volume_type", true);
+    types->values.assign(m_mapping.begin(), m_mapping.end());
+    const auto* max_flow   = preview.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    const auto* ratio      = preview.option<ConfigOptionFloats>("filament_flow_ratio");
+    size_t      high_count = 0;
+    for (size_t row = 0; row < m_filaments.size(); ++row) {
+        const unsigned int index = static_cast<unsigned int>(m_filaments[row].filament_idx);
+        const bool         high  = m_mapping[index] == fvtHighFlow;
+        high_count += high;
+        m_choices[row]->SetSelection(high ? 1 : 0);
+        wxString detail = max_flow ?
+                              wxString::Format(L"%.1f mm\u00b3/s", get_value_at(preview, *max_flow, ConfigFlowDomain::Filament, index)) :
+                              wxString();
+        if (ratio)
+            detail += "\n" + _L("Flow ratio") +
+                      wxString::Format(": %.3f", get_value_at(preview, *ratio, ConfigFlowDomain::Filament, index));
+        m_details[row]->SetLabel(detail);
     }
-    update_group_scroll(m_std_scroll, m_std_grid);
-    update_group_scroll(m_high_scroll, m_high_grid);
-    m_std_box->Layout();
-    m_high_box->Layout();
-    Layout();
-    Fit();
+    m_summary->SetLabel(format_wxstr(_L("Standard: %1%   High Flow: %2%"), m_filaments.size() - high_count, high_count));
+    m_list->FitInside();
+    update_warnings();
 }
 
 void FilamentGroupDialog::update_warnings()
 {
     m_warning_sizer->Clear(true);
-
-    std::vector<HighFlowCompat::CompatibilityResult> warnings;
-    bool has_unsupported = false;
-    for (const FilamentInfo &info : m_filaments)
-    {
-        if (m_mapping[info.filament_idx] != fvtHighFlow)
+    const std::vector<std::string> nozzles            = FlowType::nozzle_volume_types();
+    const bool                     standard_available = std::find(nozzles.begin(), nozzles.end(), FLOW_MODE_STANDARD) != nozzles.end();
+    const bool                     high_available     = std::find(nozzles.begin(), nozzles.end(), FLOW_MODE_HIGH_FLOW) != nozzles.end();
+    bool                           missing_standard   = false;
+    bool                           missing_high       = false;
+    bool                           unsupported        = false;
+    wxString                       standard_fallback;
+    std::set<std::pair<bool, std::string>> messages;
+    for (const FilamentInfo& info : m_filaments) {
+        const bool high = m_mapping[info.filament_idx] == fvtHighFlow;
+        missing_high |= high && !high_available;
+        missing_standard |= !high && !standard_available;
+        if (!high)
             continue;
-
-        const HighFlowCompat::CompatibilityResult result = HighFlowCompat::check(info.type_raw, info.preset_name);
-        if (result.level == HighFlowCompat::CompatibilityLevel::Compatible)
-            continue;
-
-        has_unsupported |= result.level == HighFlowCompat::CompatibilityLevel::Unsupported;
-        const auto duplicate = std::find_if(warnings.begin(), warnings.end(), [&result](const auto &warning) {
-            return warning.level == result.level && warning.material == result.material;
-        });
-        if (duplicate == warnings.end())
-            warnings.push_back(result);
+        if (!info.has_high_flow_settings) {
+            if (!standard_fallback.empty())
+                standard_fallback += ", ";
+            standard_fallback += wxString::Format("%zu", info.filament_idx + 1);
+        }
+        const auto result = HighFlowCompat::check(info.type_raw, info.preset_name);
+        if (result.level != HighFlowCompat::CompatibilityLevel::Compatible) {
+            const bool error = result.level == HighFlowCompat::CompatibilityLevel::Unsupported;
+            unsupported |= error;
+            messages.emplace(error, result.material);
+        }
     }
-
-    const std::string diameter =
-        wxGetApp().preset_bundle->printers.get_edited_preset().config.opt_string("printer_variant");
-    wxString not_recommended_materials;
-    wxString unsupported_materials;
-    for (const HighFlowCompat::CompatibilityResult &warning : warnings)
-    {
-        wxString material;
-        if (warning.material == "CF/GF filaments")
-            material = _L("CF/GF filaments");
-        else
-            material = from_u8(warning.material);
-
-        wxString &materials = warning.level == HighFlowCompat::CompatibilityLevel::Unsupported ?
-                                  unsupported_materials :
-                                  not_recommended_materials;
-        if (!materials.empty())
-            materials += ", ";
-        materials += material;
-    }
-
-    auto add_warning = [this](const wxString &message, bool is_error) {
-        // Warning (non-error) colours use the registered dark-map keys #FFF3EB /
-        // #FF842D; the previous #FFFAF2 / #FF8400 had no dark mapping and leaked
-        // their light values into dark mode.
-        const wxColour background = StateColor::darkModeColorFor(wxColour(is_error ? "#FDE8E8" : "#FFF3EB"));
-        const wxColour foreground = StateColor::darkModeColorFor(wxColour(is_error ? "#D32F2F" : "#FF842D"));
-        // Non-error ("not recommended") warnings use the orange round exclamation
-        // from Figma 27673-62209 — not the triangle icon.
-        const char *icon_name = is_error ? "error_icon_red_exclamation" : "warning_icon_orange_exclamation";
-
-        StaticBox *bar = new StaticBox(this, wxID_ANY);
-        bar->SetCornerRadius(FromDIP(4));
-        bar->SetBorderWidth(0);
-        bar->SetBackgroundColorNormal(background);
-        bar->SetBackgroundColour(background);
-        bar->SetMinSize(wxSize(-1, FromDIP(34)));
-
-        auto *bar_sizer = new wxBoxSizer(wxHORIZONTAL);
-        auto *icon = new wxStaticBitmap(bar, wxID_ANY, create_scaled_bitmap(icon_name, bar, 14));
-        auto *text = new wxStaticText(bar, wxID_ANY, message);
-        text->Wrap(FromDIP(660));
-        icon->SetBackgroundColour(background);
-        text->SetBackgroundColour(background);
-        text->SetForegroundColour(foreground);
-        bar_sizer->Add(icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxTOP | wxBOTTOM, FromDIP(8));
-        bar_sizer->AddSpacer(FromDIP(10));
-        bar_sizer->Add(text, 1, wxALIGN_CENTER_VERTICAL | wxTOP | wxBOTTOM | wxRIGHT, FromDIP(8));
-        bar->SetSizer(bar_sizer);
-        m_warning_sizer->Add(bar, 0, wxEXPAND | wxBOTTOM, FromDIP(4));
+    auto add_warning = [this](const wxString& message, bool error) {
+        auto* text = new wxStaticText(this, wxID_ANY, message);
+        text->SetBackgroundColour(GetBackgroundColour());
+        text->SetForegroundColour(StateColor::darkModeColorFor(wxColour(error ? "#D32F2F" : "#FF842D")));
+        text->Wrap(FromDIP(704));
+        m_warning_sizer->Add(text, 0, wxEXPAND | wxBOTTOM, FromDIP(8));
     };
-
-    if (!not_recommended_materials.empty())
-    {
-        add_warning(format_wxstr(_L("Warning:%1%mm High Flow nozzles are not recommended for %2%"),
-                                 from_u8(diameter), not_recommended_materials),
+    if (missing_standard)
+        add_warning(_L("No Standard nozzle is configured. Assign these filaments to High Flow or update the nozzle settings."), true);
+    if (missing_high)
+        add_warning(_L("No High Flow nozzle is configured. Assign these filaments to Standard or update the nozzle settings."), true);
+    if (!standard_fallback.empty())
+        add_warning(format_wxstr(_L("Using Standard preset values for filaments without High Flow settings: %1%."), standard_fallback),
                     false);
+    const std::string diameter = wxGetApp().preset_bundle->printers.get_edited_preset().config.opt_string("printer_variant");
+    for (bool error : {false, true}) {
+        wxString materials;
+        for (const auto& [is_error, material] : messages) {
+            if (is_error != error)
+                continue;
+            if (!materials.empty())
+                materials += ", ";
+            materials += material == "CF/GF filaments" ? _L("CF/GF filaments") : from_u8(material);
+        }
+        if (!materials.empty())
+            add_warning(error ?
+                            format_wxstr(_L("These filaments cannot be printed with the %1%mm high flow nozzle: %2%"), from_u8(diameter),
+                                         materials) :
+                            format_wxstr(_L("Warning:%1%mm High Flow nozzles are not recommended for %2%"), from_u8(diameter), materials),
+                        error);
     }
-    if (!unsupported_materials.empty())
-    {
-        add_warning(format_wxstr(_L("These filaments cannot be printed with the %1%mm high flow nozzle: %2%"),
-                                 from_u8(diameter), unsupported_materials),
-                    true);
-    }
-
-    m_confirm_button->Enable(!has_unsupported);
+    const bool ready = !unsupported && !missing_standard && !missing_high;
+    m_confirm_button->SetStyle(ready ? ButtonStyle::Confirm : ButtonStyle::Disabled, ButtonType::Choice);
+    m_confirm_button->Enable(ready);
+    wxSize size = GetSize();
+    size.IncTo(GetSizer()->ComputeFittingWindowSize(this));
+    SetSize(size);
     Layout();
-    Fit();
-    Refresh();
 }
 
-void FilamentGroupDialog::on_dpi_changed(const wxRect &)
+void FilamentGroupDialog::on_dpi_changed(const wxRect&)
 {
+    Layout();
     Fit();
-    Refresh();
 }
 
 }} // namespace Slic3r::GUI

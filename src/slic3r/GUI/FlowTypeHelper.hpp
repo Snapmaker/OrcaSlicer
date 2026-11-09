@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+class wxWindow;
+
 namespace Slic3r { namespace GUI { namespace FlowType {
 
 // Snapmaker requirement 7.1: all functions read/write wxGetApp().preset_bundle state.
@@ -40,7 +42,7 @@ bool any_nozzle_high_flow();
 std::vector<std::string> nozzle_volume_types();
 
 // Writes one nozzle's flow type and marks the project dirty.
-void set_nozzle_volume_type(size_t nozzle_idx, const std::string &volume_type);
+void set_nozzle_volume_type(size_t nozzle_idx, const std::string& volume_type);
 
 // Resets every nozzle's flow type to standard (one entry per nozzle), sized to the
 // current nozzle count. Used on New Project: the printer preset carries no nozzle
@@ -50,7 +52,7 @@ void reset_nozzle_volume_types_to_standard();
 
 // Batch-writes all nozzle flow types from connected machine data.
 // Silently ignores mismatches between the vector size and the nozzle count.
-void set_nozzle_volume_types(const std::vector<std::string> &volume_types);
+void set_nozzle_volume_types(const std::vector<std::string>& volume_types);
 
 // Restores the flow types saved by the setters above ("nozzle_volume_types"
 // section, keyed by printer preset). No-op without memory; callers rebuild the UI.
@@ -60,10 +62,10 @@ void restore_nozzle_volume_types_from_app_config();
 std::string grouping_mode();
 
 // Writes the grouping mode and marks the project dirty.
-void set_grouping_mode(const std::string &mode);
+void set_grouping_mode(const std::string& mode);
 
 // Writes the dialog's per-filament mapping and invalidates the slice result.
-void apply_custom_mapping(const std::vector<FilamentVolumeType> &mapping);
+void apply_custom_mapping(const std::vector<FilamentVolumeType>& mapping);
 
 // Normalizes the per-filament flow mapping for slicing when the custom grouping
 // does not apply: when the nozzles are not mixing flow types every filament follows
@@ -71,6 +73,11 @@ void apply_custom_mapping(const std::vector<FilamentVolumeType> &mapping);
 // standard mode with mixed nozzles everything falls back to standard. No-op when the
 // mapping already matches. Only meaningful outside the custom+mixed case.
 void sync_filament_volume_types_for_slice();
+
+// Reuse an explicit review only while the nozzle setup, used filaments,
+// compatibility and flow settings still match. Cancel stops the slice.
+bool prepare_for_slice(wxWindow* parent);
+void remember_assignment();
 
 }}} // namespace Slic3r::GUI::FlowType
 

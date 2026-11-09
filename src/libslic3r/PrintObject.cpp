@@ -3264,10 +3264,6 @@ static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPr
             }
 }
 
-// Feature-filament keys (wall/sparse/solid): 0 ("Default") resolves to the object/part
-// filament (the "extruder" key of the layer range / volume / object, or filament 1).
-// Out-of-range values (e.g. after a filament was deleted) also fall back to "Default".
-// After this the region config always holds 1..num_total_filaments.
 static void resolve_feature_filament_to_default(ConfigOptionInt &opt, int default_filament, size_t num_total_filaments)
 {
     if (default_filament < 1 || default_filament > (int)num_total_filaments)
@@ -3298,10 +3294,11 @@ PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &defau
     // (layer-range "extruder" -> volume "extruder" -> object "extruder" -> 1), so downstream
     // consumers always see 1..num_extruders for these keys.
     int default_feature_filament = std::max(1, volume.extruder_id());
-    if (layer_range_config != nullptr)
+    if (layer_range_config != nullptr) {
         if (const ConfigOptionInt *range_extruder = layer_range_config->opt<ConfigOptionInt>(key_extruder);
             range_extruder != nullptr && range_extruder->value > 0)
             default_feature_filament = range_extruder->value;
+    }
     resolve_feature_filament_to_default(config.sparse_infill_filament, default_feature_filament, num_extruders);
     resolve_feature_filament_to_default(config.wall_filament,          default_feature_filament, num_extruders);
     resolve_feature_filament_to_default(config.solid_infill_filament,  default_feature_filament, num_extruders);

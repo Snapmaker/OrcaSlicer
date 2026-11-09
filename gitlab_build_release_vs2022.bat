@@ -362,12 +362,13 @@ if "%1"=="slicer" (
     if not defined DEPS set "DEPS=%DEPS_DIR%\%deps_build_dir%\OrcaSlicer_dep"
 )
 
-REM build_release_vs2022.bat is run from a VS developer prompt, which already
-REM exports WindowsSdkDir and WindowsSDKVersion. This script is run from a
-REM plain cmd, so those variables expand empty and CMake receives
-REM -DWIN10SDK_PATH=Include\. CMake then skips HAS_WIN10SDK and the repair
-REM link is compiled out. Load vcvars here and refuse to configure without
-REM the Printing3D header.
+REM Same Windows SDK contract as build_release_vs2022.bat:
+REM   -DWIN10SDK_PATH="%WindowsSdkDir%Include\%WindowsSDKVersion%"
+REM That script is launched from a VS developer prompt, so WindowsSdkDir and
+REM WindowsSDKVersion are already set. This one starts from plain cmd. Load
+REM vcvars, then pass a path that really contains the Printing3D header.
+REM A trailing backslash would escape the closing quote and CMake would drop
+REM HAS_WIN10SDK, which removes model repair from the package.
 call :ensure_win10_sdk
 if errorlevel 1 goto :restore_exit
 
@@ -389,6 +390,7 @@ cmake .. -G "Visual Studio 17 2022" -A x64 ^
     %SIG_FLAG% ^
     -DDEPS_SRC_DIR=gitlab_deps_src ^
     -DCMAKE_PREFIX_PATH="%DEPS%/usr/local" ^
+    -DOPENSSL_ROOT_DIR="%DEPS%/usr/local" ^
     -DCMAKE_INSTALL_PREFIX="./Snapmaker_Orca" ^
     -DCMAKE_BUILD_TYPE=%build_type% ^
     -DWIN10SDK_PATH="%WIN10SDK_INCLUDE%"
@@ -452,7 +454,43 @@ if exist "%VENDOR_DIR%\.git" (
 exit /b %EC%
 
 :ensure_win10_sdk
-if defined WindowsSdkDir if defined WindowsSDKVersion goto :win10_sdk_check
+call :load_vcvars_for_sdk
+if errorlevel 1 exit /b 1
+set "WIN10SDK_INCLUDE="
+if defined WindowsSdkDir if defined WindowsSDKVersion (
+    call :accept_sdk_include "%WindowsSdkDir%Include\%WindowsSDKVersion%"
+)
+if defined WIN10SDK_INCLUDE goto :ensure_win10_sdk_ok
+
+REM Windows 11 images often select a newer SDK that no longer has this header.
+REM Use the newest installed SDK that still ships Printing3D, same feature the
+REM GitHub Windows package compiles in.
+set "SDK_INCLUDE_ROOT="
+if defined WindowsSdkDir set "SDK_INCLUDE_ROOT=%WindowsSdkDir%Include"
+if not exist "%SDK_INCLUDE_ROOT%\." set "SDK_INCLUDE_ROOT=%ProgramFiles(x86)%\Windows Kits\10\Include"
+echo   Active SDK has no Printing3D header. Searching %SDK_INCLUDE_ROOT%
+for /f "delims=" %%D in ('dir /b /ad /o:n "%SDK_INCLUDE_ROOT%" 2^>nul') do (
+    if exist "%SDK_INCLUDE_ROOT%\%%D\winrt\windows.graphics.printing3d.h" set "WIN10SDK_INCLUDE=%SDK_INCLUDE_ROOT%\%%D"
+)
+if not defined WIN10SDK_INCLUDE (
+    echo   [ERROR] winrt\windows.graphics.printing3d.h was not found under "%SDK_INCLUDE_ROOT%".
+    echo   [ERROR] Refusing to configure without HAS_WIN10SDK. Model repair would be dropped.
+    exit /b 1
+)
+
+:ensure_win10_sdk_ok
+echo   WIN10SDK_PATH: [%WIN10SDK_INCLUDE%]
+exit /b 0
+
+:accept_sdk_include
+set "CAND=%~1"
+set "CAND_MARK=!CAND!."
+if "!CAND_MARK:~-2!"=="\." set "CAND=!CAND:~0,-1!"
+if exist "!CAND!\winrt\windows.graphics.printing3d.h" set "WIN10SDK_INCLUDE=!CAND!"
+exit /b 0
+
+:load_vcvars_for_sdk
+if defined WindowsSdkDir if defined WindowsSDKVersion exit /b 0
 set "VCVARS="
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if exist "%VSWHERE%" (
@@ -465,9 +503,8 @@ if not defined VCVARS if exist "%ProgramFiles%\Microsoft Visual Studio\2022\Prof
 if not defined VCVARS if exist "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
 if not defined VCVARS if exist "%ProgramFiles%\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS=%ProgramFiles%\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 if not defined VCVARS (
-    echo   [ERROR] WindowsSdkDir is unset and vcvars64.bat was not found.
-    echo   [ERROR] Refusing to configure without HAS_WIN10SDK. Model repair would be dropped.
-    exit /b 1
+    echo   [WARN] vcvars64.bat was not found. Searching the default Windows SDK.
+    exit /b 0
 )
 echo   Loading Visual Studio environment: !VCVARS!
 REM vcvars breaks when delayed expansion is on. Keep its PATH inside this
@@ -483,18 +520,6 @@ REM A trailing backslash would escape the closing quote. Park a dot, then drop i
 endlocal & set "WindowsSdkDir=%WindowsSdkDir%." & set "WindowsSDKVersion=%WindowsSDKVersion%."
 set "WindowsSdkDir=%WindowsSdkDir:~0,-1%"
 set "WindowsSDKVersion=%WindowsSDKVersion:~0,-1%"
-:win10_sdk_check
-set "WIN10SDK_INCLUDE=%WindowsSdkDir%Include\%WindowsSDKVersion%"
-REM vcvars leaves a trailing backslash. Inside -DWIN10SDK_PATH="...", that
-REM backslash escapes the closing quote and CMake stores the quote in the path.
-set "WIN10SDK_MARK=!WIN10SDK_INCLUDE!."
-if "!WIN10SDK_MARK:~-2!"=="\." set "WIN10SDK_INCLUDE=!WIN10SDK_INCLUDE:~0,-1!"
-if not exist "%WIN10SDK_INCLUDE%\winrt\windows.graphics.printing3d.h" (
-    echo   [ERROR] Missing "%WIN10SDK_INCLUDE%\winrt\windows.graphics.printing3d.h"
-    echo   [ERROR] Refusing to configure without HAS_WIN10SDK. Model repair would be dropped.
-    exit /b 1
-)
-echo   WIN10SDK_PATH: [%WIN10SDK_INCLUDE%]
 exit /b 0
 
 :set_clean_from_value

@@ -73,4 +73,11 @@ if (WIN32)
 endif()
 
 catch_discover_tests(${_TEST_NAME}_tests TEST_PREFIX "${_TEST_NAME}: " EXTRA_ARGS ${CATCH_EXTRA_ARGS})
+
+add_executable(filament_variant_tests test_filament_variant_compat.cpp)
+target_link_libraries(filament_variant_tests PRIVATE ${TEST_LINK_LIBS})
+if (WIN32)
+    target_link_libraries(filament_variant_tests PRIVATE bcrypt.lib crypt32.lib)
+endif()
+catch_discover_tests(filament_variant_tests TEST_PREFIX "filament_variants: " DISCOVERY_MODE PRE_TEST)
 # add_test(${_TEST_NAME}_tests ${_TEST_NAME}_tests ${CATCH_EXTRA_ARGS})

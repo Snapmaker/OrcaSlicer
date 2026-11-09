@@ -964,15 +964,18 @@ void Tab::refresh_flow_variant_view()
         }
 
         m_flow_variant_view->controls = new wxPanel(m_parent->get_page_header());
+        m_flow_variant_view->controls->SetBackgroundColour(m_parent->get_page_header()->GetBackgroundColour());
         auto* controls                = new wxBoxSizer(wxHORIZONTAL);
         m_flow_variant_view->selector = new SegmentedToggle(m_flow_variant_view->controls, labels, int(flow_variant_view_index()),
-                                                            SegmentedToggle::Style::Boxed);
+                                                            SegmentedToggle::Style::Buttons);
         controls->Add(m_flow_variant_view->selector, 0, wxALIGN_CENTER_VERTICAL);
         if (m_flow_variant_view->domain == ConfigFlowDomain::Filament &&
             std::find(modes.begin(), modes.end(), FLOW_MODE_STANDARD) != modes.end() &&
             std::find(modes.begin(), modes.end(), FLOW_MODE_HIGH_FLOW) != modes.end()) {
             auto* compare = new Button(m_flow_variant_view->controls, _L("Compare settings"));
-            compare->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+            compare->SetStyle(ButtonStyle::Regular, ButtonType::Parameter);
+            compare->SetMinSize(FromDIP(wxSize(120, 32)));
+            compare->SetBackgroundColour(m_flow_variant_view->controls->GetBackgroundColour());
             compare->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
                 FlowType::show_filament_flow_comparison(this, *m_config, m_presets->get_edited_preset().name);
             });

@@ -16,6 +16,7 @@
 #include <wx/stattext.h>
 
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/PresetFlowVariant.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Print.hpp"
 
@@ -87,6 +88,7 @@ void copy_variant_values(Preset& target, size_t count, size_t destination, size_
 
 void save_user_copy(Preset candidate, const std::string& name)
 {
+    normalize_filament_variant_metadata(candidate.config, true);
     auto&             bundle   = *wxGetApp().preset_bundle;
     auto&             presets  = bundle.filaments;
     const std::string selected = presets.get_selected_preset_name();

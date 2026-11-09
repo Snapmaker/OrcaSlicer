@@ -4,6 +4,7 @@
 #include "Exception.hpp"
 #include "Preset.hpp"
 #include "PresetBundle.hpp"
+#include "PresetFlowVariant.hpp"
 #include "AppConfig.hpp"
 
 #ifdef _MSC_VER
@@ -209,6 +210,11 @@ static const char* preset_flow_support_key(Preset::Type type)
 
 static void keep_flow_support_in_differential_save(const Preset &preset, std::vector<std::string> &dirty_options)
 {
+    if (preset.type == Preset::TYPE_FILAMENT) {
+        if (!filament_extruder_variants(preset.config).empty())
+            dirty_options.emplace_back("filament_extruder_variant");
+        return;
+    }
     const char *support_key = preset_flow_support_key(preset.type);
     if (support_key == nullptr)
         return;
@@ -383,6 +389,7 @@ std::string Preset::remove_suffix_modified(const std::string &name)
 // Update new extruder fields at the printer profile.
 void Preset::normalize(DynamicPrintConfig &config)
 {
+    normalize_filament_variant_metadata(config);
     if (config.option("single_extruder_multi_material") == nullptr || config.opt_bool("single_extruder_multi_material")) {
         // BBS
         auto* filament_diameter = dynamic_cast<const ConfigOptionFloats*>(config.option("filament_diameter"));
@@ -421,7 +428,8 @@ void Preset::normalize(DynamicPrintConfig &config)
                 flow_variant_value_count += size_t(std::max(1, step_size));
         }
         for (const std::string &key : Preset::filament_options()) {
-            if (key == "compatible_prints" || key == "compatible_printers" || key == "filament_flow_support")
+            if (key == "compatible_prints" || key == "compatible_printers" || key == "filament_flow_support" ||
+                key == "filament_extruder_variant" || key == "filament_self_index")
                 continue;
 
             auto *opt = config.option(key, false);
@@ -625,6 +633,8 @@ void Preset::save(DynamicPrintConfig* parent_config)
     //BBS: add project embedded preset logic
     if (this->is_project_embedded)
         return;
+    if (type == TYPE_FILAMENT)
+        normalize_filament_variant_metadata(config, true);
     //BBS: change to json format
     //this->config.save(this->file);
     std::string from_str;
@@ -995,44 +1005,46 @@ static std::vector<std::string> s_Preset_print_options {
      "process_flow_support",
 };
 
-static std::vector<std::string> s_Preset_filament_options {
-    /*"filament_colour", */ "default_filament_colour","required_nozzle_HRC","filament_diameter", "pellet_flow_coefficient", "filament_type", "filament_soluble", "filament_is_support",
-    "filament_max_volumetric_speed",
-    "filament_flow_ratio", "filament_density", "filament_adhesiveness_category", "filament_cost", "filament_minimal_purge_on_wipe_tower",
-    "nozzle_temperature", "nozzle_temperature_initial_layer",
+static std::vector<std::string> s_Preset_filament_options{
+    /*"filament_colour", */ "default_filament_colour", "required_nozzle_HRC", "filament_diameter", "pellet_flow_coefficient",
+    "filament_type", "filament_soluble", "filament_is_support", "filament_max_volumetric_speed", "filament_flow_ratio", "filament_density",
+    "filament_adhesiveness_category", "filament_cost", "filament_minimal_purge_on_wipe_tower", "nozzle_temperature",
+    "nozzle_temperature_initial_layer",
     // BBS
     "cool_plate_temp", "textured_cool_plate_temp", "eng_plate_temp", "hot_plate_temp", "textured_plate_temp",
     "cool_plate_temp_initial_layer", "textured_cool_plate_temp_initial_layer", "eng_plate_temp_initial_layer",
     "hot_plate_temp_initial_layer", "textured_plate_temp_initial_layer", "supertack_plate_temp_initial_layer", "supertack_plate_temp",
     "graphic_effect_plate_temp", "graphic_effect_plate_temp_initial_layer",
     // "bed_type",
-    //BBS:temperature_vitrification
+    // BBS:temperature_vitrification
     "temperature_vitrification", "filament_is_high_temperature", "reduce_fan_stop_start_freq", "dont_slow_down_outer_wall",
-    "slow_down_for_layer_cooling", "cooling_slowdown_logic", "cooling_perimeter_transition_distance", "fan_min_speed",
-    "fan_max_speed", "enable_overhang_bridge_fan", "overhang_fan_speed", "overhang_fan_threshold", "overhang_threshold_participating_cooling", "close_fan_the_first_x_layers", "full_fan_speed_layer", "fan_cooling_layer_time", "slow_down_layer_time", "slow_down_min_speed",
+    "slow_down_for_layer_cooling", "cooling_slowdown_logic", "cooling_perimeter_transition_distance", "fan_min_speed", "fan_max_speed",
+    "enable_overhang_bridge_fan", "overhang_fan_speed", "overhang_fan_threshold", "overhang_threshold_participating_cooling",
+    "close_fan_the_first_x_layers", "full_fan_speed_layer", "fan_cooling_layer_time", "slow_down_layer_time", "slow_down_min_speed",
     "filament_start_gcode", "filament_end_gcode",
-    //exhaust fan control
-    "activate_air_filtration","during_print_exhaust_fan_speed","complete_print_exhaust_fan_speed",
+    // exhaust fan control
+    "activate_air_filtration", "during_print_exhaust_fan_speed", "complete_print_exhaust_fan_speed",
     // Retract overrides
-    "filament_retraction_length", "filament_z_hop", "filament_z_hop_types", "filament_retract_lift_above", "filament_retract_lift_below", "filament_retract_lift_enforce", "filament_retraction_speed", "filament_deretraction_speed", "filament_retract_restart_extra", "filament_retraction_minimum_travel",
-    "filament_retract_when_changing_layer", "filament_wipe", "filament_retract_before_wipe", "filament_retract_length_toolchange", "filament_retract_restart_extra_toolchange",
+    "filament_retraction_length", "filament_z_hop", "filament_z_hop_types", "filament_retract_lift_above", "filament_retract_lift_below",
+    "filament_retract_lift_enforce", "filament_retraction_speed", "filament_deretraction_speed", "filament_retract_restart_extra",
+    "filament_retraction_minimum_travel", "filament_retract_when_changing_layer", "filament_wipe", "filament_retract_before_wipe",
+    "filament_retract_length_toolchange", "filament_retract_restart_extra_toolchange",
     // Profile compatibility
-    "filament_vendor", "compatible_prints", "compatible_prints_condition", "compatible_printers", "compatible_printers_condition", "inherits",
-    //BBS
-    "filament_wipe_distance", "additional_cooling_fan_speed",
-    "nozzle_temperature_range_low", "nozzle_temperature_range_high",
-    //SoftFever
-    "enable_pressure_advance", "pressure_advance","adaptive_pressure_advance","adaptive_pressure_advance_model","adaptive_pressure_advance_overhangs", "adaptive_pressure_advance_bridges","chamber_temperature", "filament_shrink","filament_shrinkage_compensation_z", "support_material_interface_fan_speed","internal_bridge_fan_speed", "filament_notes" /*,"filament_seam_gap"*/,
-    "ironing_fan_speed",
-    "filament_loading_speed", "filament_loading_speed_start",
-    "filament_unloading_speed", "filament_unloading_speed_start", "filament_toolchange_delay", "filament_cooling_moves", "filament_stamping_loading_speed", "filament_stamping_distance",
-    "filament_cooling_initial_speed", "filament_cooling_final_speed", "filament_ramming_parameters",
-    "filament_multitool_ramming", "filament_multitool_ramming_volume", "filament_multitool_ramming_flow", "activate_chamber_temp_control",
-    "filament_long_retractions_when_cut","filament_retraction_distances_when_cut", "idle_temperature",
-    "filament_tower_ironing_area", "filament_tower_interface_pre_extrusion_dist",
-    "filament_tower_interface_pre_extrusion_length", "filament_tower_interface_print_temp",
-    "filament_flow_support"
-    };
+    "filament_vendor", "compatible_prints", "compatible_prints_condition", "compatible_printers", "compatible_printers_condition",
+    "inherits",
+    // BBS
+    "filament_wipe_distance", "additional_cooling_fan_speed", "nozzle_temperature_range_low", "nozzle_temperature_range_high",
+    // SoftFever
+    "enable_pressure_advance", "pressure_advance", "adaptive_pressure_advance", "adaptive_pressure_advance_model",
+    "adaptive_pressure_advance_overhangs", "adaptive_pressure_advance_bridges", "chamber_temperature", "filament_shrink",
+    "filament_shrinkage_compensation_z", "support_material_interface_fan_speed", "internal_bridge_fan_speed",
+    "filament_notes" /*,"filament_seam_gap"*/, "ironing_fan_speed", "filament_loading_speed", "filament_loading_speed_start",
+    "filament_unloading_speed", "filament_unloading_speed_start", "filament_toolchange_delay", "filament_cooling_moves",
+    "filament_stamping_loading_speed", "filament_stamping_distance", "filament_cooling_initial_speed", "filament_cooling_final_speed",
+    "filament_ramming_parameters", "filament_multitool_ramming", "filament_multitool_ramming_volume", "filament_multitool_ramming_flow",
+    "activate_chamber_temp_control", "filament_long_retractions_when_cut", "filament_retraction_distances_when_cut", "idle_temperature",
+    "filament_tower_ironing_area", "filament_tower_interface_pre_extrusion_dist", "filament_tower_interface_pre_extrusion_length",
+    "filament_tower_interface_print_temp", "filament_flow_support", "filament_extruder_variant"};
 
 static std::vector<std::string> s_Preset_machine_limits_options {
     "machine_max_acceleration_extruding", "machine_max_acceleration_retracting", "machine_max_acceleration_travel",
@@ -1391,7 +1403,12 @@ void PresetCollection::load_presets(
                     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(", preset type %1%, name %2%, path %3%, is_system %4%, is_default %5% is_visible %6%")%Preset::get_type_string(m_type) %preset.name %preset.file %preset.is_system %preset.is_default %preset.is_visible;
                     // add alias for custom filament preset
                     set_custom_preset_alias(preset);
-                } catch (const std::ifstream::failure &err) {
+                } catch (const FilamentVariantLayoutError& err) {
+                    ++m_errors;
+                    BOOST_LOG_TRIVIAL(error) << "Unsupported filament variant layout in " << preset.file << ": " << err.what();
+                    // Keep valid JSON intact for a newer slicer or manual correction.
+                    continue;
+                } catch (const std::ifstream::failure& err) {
                     ++m_errors;
                     BOOST_LOG_TRIVIAL(error) << boost::format("The user-config cannot be loaded: %1%. Reason: %2%")%preset.file %err.what();
                     fs::path file_path(preset.file);
@@ -1401,7 +1418,7 @@ void PresetCollection::load_presets(
                     if (fs::exists(file_path))
                         fs::remove(file_path);
                     //throw Slic3r::RuntimeError(std::string("The selected preset cannot be loaded: ") + preset.file + "\n\tReason: " + err.what());
-                } catch (const std::runtime_error &err) {
+                } catch (const std::runtime_error& err) {
                     ++m_errors;
                     BOOST_LOG_TRIVIAL(error) << boost::format("Failed loading the user-config file: %1%. Reason: %2%")%preset.file %err.what();
                     //throw Slic3r::RuntimeError(std::string("Failed loading the preset file: ") + preset.file + "\n\tReason: " + err.what());
@@ -2111,6 +2128,14 @@ std::pair<Preset*, bool> PresetCollection::load_external_preset(
                keys.end());
     cfg.apply_only(combined_config, keys, true);
     std::string                 &inherits = Preset::inherits(cfg);
+    auto                         effective_differences = different_settings_list;
+    if (m_type == Preset::TYPE_FILAMENT &&
+        (effective_differences.count("filament_flow_support") || effective_differences.count("filament_extruder_variant"))) {
+        // Both keys describe the same declaration. Older projects only mark
+        // the legacy key dirty; inheritance must keep the converted key too.
+        effective_differences.insert("filament_flow_support");
+        effective_differences.insert("filament_extruder_variant");
+    }
 
     //BBS: add different settings check logic, replace the old system preset's default value with new system preset's default values
     std::deque<Preset>::iterator it       = this->find_preset_internal(original_name);
@@ -2125,7 +2150,7 @@ std::pair<Preset*, bool> PresetCollection::load_external_preset(
         if (iter != m_presets.end() && iter->name == inherits) {
             //std::vector<std::string> dirty_options = cfg.diff(iter->config);
             for (auto &opt : keys) {
-                if (different_settings_list.find(opt) != different_settings_list.end())
+                if (effective_differences.count(opt))
                     continue;
                 ConfigOption *opt_src = iter->config.option(opt);
                 ConfigOption *opt_dst = cfg.option(opt);
@@ -2139,7 +2164,7 @@ std::pair<Preset*, bool> PresetCollection::load_external_preset(
     }
     else if (found && it->is_system && (different_settings_list.size() > 0)) {
         for (auto &opt : keys) {
-            if (different_settings_list.find(opt) != different_settings_list.end())
+            if (effective_differences.count(opt))
                 continue;
             ConfigOption *opt_src = it->config.option(opt);
             ConfigOption *opt_dst = cfg.option(opt);

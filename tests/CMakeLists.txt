@@ -16,7 +16,7 @@ target_compile_definitions(test_common INTERFACE TEST_DATA_DIR=R"\(${TEST_DATA_D
 target_include_directories(test_common INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test_common INTERFACE Catch2::Catch2WithMain)
 if (MSVC)
-    target_compile_options(test_common INTERFACE /FI"${CMAKE_CURRENT_SOURCE_DIR}/catch_main.hpp")
+    target_compile_options(test_common INTERFACE "/FI${CMAKE_CURRENT_SOURCE_DIR}/catch_main.hpp")
 else()
     target_compile_options(test_common INTERFACE -include "${CMAKE_CURRENT_SOURCE_DIR}/catch_main.hpp")
 endif()

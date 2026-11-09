@@ -1,8 +1,21 @@
 #pragma once
 
 #include "PrintConfig.hpp"
+#include "Exception.hpp"
 
 namespace Slic3r {
+
+class FilamentVariantLayoutError : public RuntimeError
+{
+public:
+    using RuntimeError::RuntimeError;
+};
+
+// Persist the same variant names and positional arrays as Orca/Bambu. The
+// legacy flow declarations/segment lengths are an in-memory compatibility view.
+std::vector<std::string> filament_extruder_variants(const ConfigBase& config);
+void                     normalize_filament_variant_metadata(ConfigBase& config, bool legacy_source = false);
+void                     set_filament_flow_modes(ConfigBase& config, const std::vector<std::string>& modes);
 
 // Read the per-extruder nozzle flow type from a printer preset; missing or invalid values are standard.
 FilamentVolumeType get_nozzle_volume_type(const ConfigBase &printer_config, unsigned int extruder_id = 0);

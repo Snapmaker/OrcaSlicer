@@ -3,6 +3,7 @@
 #include "Utils.hpp"
 #include "LocalesUtils.hpp"
 #include "Preset.hpp"
+#include "PresetFlowVariant.hpp"
 
 #include <assert.h>
 #include <fstream>
@@ -837,6 +838,7 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
     std::string is_infill_first;
     std::string get_wall_sequence;
     bool is_project_settings = false;
+    bool                   parsed              = false;
 
     CNumericLocalesSetter locales_setter;
 
@@ -1087,7 +1089,7 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
         // Do legacy conversion on a completely loaded dictionary.
         // Perform composite conversions, for example merging multiple keys into one key.
         this->handle_legacy_composite();
-        return 0;
+        parsed = true;
     }
     catch (const std::ifstream::failure &err)  {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": parse "<<file<<" got a ifstream error, reason = " << err.what();
@@ -1102,6 +1104,13 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
     catch(std::exception &err) {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< ": parse "<<file<<" got a generic exception, reason = " << err.what();
         reason = std::string("std::exception: ") + err.what();
+    }
+    // Keep metadata errors outside the JSON parse-error path. Callers must not
+    // delete a valid source file merely because its variant layout is unsupported.
+    if (parsed) {
+        if (j.contains("filament_extruder_variant") || j.contains("filament_flow_support"))
+            normalize_filament_variant_metadata(*this, !j.contains("filament_extruder_variant"));
+        return 0;
     }
     return -1;
 }
@@ -1179,6 +1188,7 @@ ConfigSubstitutions ConfigBase::load(const boost::property_tree::ptree &tree, Fo
     // Do legacy conversion on a completely loaded dictionary.
     // Perform composite conversions, for example merging multiple keys into one key.
     this->handle_legacy_composite();
+    normalize_filament_variant_metadata(*this, !tree.get_child_optional("filament_extruder_variant"));
     return std::move(substitutions_ctxt.substitutions);
 }
 
@@ -1341,6 +1351,11 @@ private:
 // Load the config keys from the tail of a G-code file.
 ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, ForwardCompatibilitySubstitutionRule compatibility_rule)
 {
+    // The file's declarations must win over defaults already applied by callers.
+    if (auto* variants = option<ConfigOptionStrings>("filament_extruder_variant"))
+        variants->values.clear();
+    if (auto* owners = option<ConfigOptionInts>("filament_self_index"))
+        owners->values.clear();
     // Read a 64k block from the end of the G-code.
 	boost::nowide::ifstream ifs(file);
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":  before parse_file %1%") % file.c_str();
@@ -1521,6 +1536,7 @@ ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, Fo
     this->handle_legacy_composite();
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":  finished to parse_file %1%") % file.c_str();
+    normalize_filament_variant_metadata(*this);
     return std::move(substitutions_ctxt.substitutions);
 }
 
@@ -1559,6 +1575,40 @@ void ConfigBase::save_to_json(const std::string &file, const std::string &name, 
 
             json j_array(string_values);
             j[opt_key] = j_array;
+        }
+    }
+
+    const auto variants = filament_extruder_variants(*this);
+    if (!variants.empty()) {
+        j["filament_extruder_variant"] = variants;
+        // These aliases belong to the legacy runtime, not the saved format.
+        j.erase("filament_flow_support");
+        j.erase("filament_flow_step_size");
+        const auto* self     = option<ConfigOptionInts>("filament_self_index");
+        const bool  composed = name == "project_settings" ||
+                              (self && std::any_of(self->values.begin(), self->values.end(), [](int owner) { return owner > 1; }));
+        if (!composed) {
+            // Owner indices are project metadata, not part of a material preset.
+            j.erase("filament_self_index");
+        } else if (self && !self->values.empty()) {
+            std::vector<std::string> indices;
+            for (int owner : self->values)
+                indices.push_back(std::to_string(owner));
+            j["filament_self_index"] = indices;
+        } else if (has("filament_flow_step_size")) {
+            const auto*              steps = option<ConfigOptionInts>("filament_flow_step_size");
+            std::vector<std::string> indices;
+            for (size_t i = 0; i < steps->values.size(); ++i)
+                indices.insert(indices.end(), size_t(std::max(1, steps->values[i])), std::to_string(i + 1));
+            if (indices.size() != variants.size()) {
+                if (steps->values.size() == 1)
+                    indices.assign(variants.size(), "1");
+                else
+                    throw RuntimeError("Cannot save mismatched filament variant segments.");
+            }
+            j["filament_self_index"] = indices;
+        } else {
+            j.erase("filament_self_index");
         }
     }
 

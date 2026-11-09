@@ -59,18 +59,17 @@ SegmentedToggle::SegmentedToggle(wxWindow* parent,
           : StateColor(std::pair(wxColour(g_selectedBg), (int)StateColor::Normal)))
     , m_selectedFg(StateColor(std::pair(wxColour(style == Style::Plain ? g_plainSelectedFg : g_selectedFg), (int)StateColor::Normal)))
 {
-    SetBackgroundColour(style == Style::Plain
-        ? parent->GetBackgroundColour()
-        : StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+    SetBackgroundColour(style != Style::Boxed ? parent->GetBackgroundColour() : StateColor::darkModeColorFor(wxColour("#FFFFFF")));
 
     auto* outerSizer = new wxBoxSizer(wxVERTICAL);
 
     const bool plain = (m_style == Style::Plain);
+    const bool buttons = (m_style == Style::Buttons);
 
     // Boxed style parents the buttons inside a rounded container; plain style
     // has no container and lays the text buttons directly on the panel.
     wxWindow* btnParent = this;
-    if (!plain) {
+    if (!plain && !buttons) {
         m_pContainer = new StaticBox(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         m_pContainer->SetCornerRadius(FromDIP(g_containerRadius));
         m_pContainer->SetBorderWidth(0);
@@ -87,11 +86,15 @@ SegmentedToggle::SegmentedToggle(wxWindow* parent,
 
     for (int i = 0; i < (int)options.size(); ++i) {
         if (i > 0)
-            btnSizer->AddSpacer(FromDIP(plain ? g_plainButtonGap : g_buttonGap));
+            btnSizer->AddSpacer(FromDIP(plain || buttons ? g_plainButtonGap : g_buttonGap));
 
         auto* btn = new Button(btnParent, options[i]);
         btn->SetBorderWidth(0);
-        if (plain) {
+        if (buttons) {
+            btn->SetBackgroundColour(GetBackgroundColour());
+            btn->SetStyle(ButtonStyle::Regular, ButtonType::Parameter);
+            btn->SetMinSize(FromDIP(wxSize(112, 32)));
+        } else if (plain) {
             btn->SetFont(plainFont);
             btn->SetPaddingSize(wxSize(0, 0));
             btn->SetCornerRadius(0);
@@ -109,13 +112,13 @@ SegmentedToggle::SegmentedToggle(wxWindow* parent,
             onButtonClicked(i);
         });
 
-        if (plain)
+        if (plain || buttons)
             btnSizer->Add(btn, 0, wxALIGN_CENTER_VERTICAL);
         else
             btnSizer->Add(btn, 1, wxEXPAND | wxTOP | wxBOTTOM, FromDIP(g_buttonMarginV));
     }
 
-    if (plain) {
+    if (plain || buttons) {
         outerSizer->Add(btnSizer, 0, wxALL, FromDIP(g_buttonPaddingH));
     } else {
         m_pContainer->SetSizer(btnSizer);
@@ -130,8 +133,17 @@ void SegmentedToggle::applyButtonColors(int index, bool selected)
     if (index < 0 || index >= (int)m_buttons.size())
         return;
     Button* btn = m_buttons[index];
-    btn->SetBackgroundColor(selected ? m_selectedBg : m_unselectedBg);
-    btn->SetTextColor(selected ? m_selectedFg : m_unselectedFg);
+    if (m_style == Style::Buttons) {
+        btn->SetStyle(selected ? ButtonStyle::Confirm : ButtonStyle::Regular, ButtonType::Parameter);
+        btn->SetMinSize(FromDIP(wxSize(112, 32)));
+        btn->SetBackgroundColour(GetBackgroundColour());
+        if (!selected)
+            btn->SetBorderColor(StateColor(std::pair(wxColour("#009688"), int(StateColor::Focused)),
+                                           std::pair(wxColour("#ACACAC"), int(StateColor::Normal))));
+    } else {
+        btn->SetBackgroundColor(selected ? m_selectedBg : m_unselectedBg);
+        btn->SetTextColor(selected ? m_selectedFg : m_unselectedFg);
+    }
     btn->SetCanFocus(!selected);
 }
 

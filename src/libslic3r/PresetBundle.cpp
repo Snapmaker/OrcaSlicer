@@ -1,6 +1,7 @@
 #include <cassert>
 
 #include "PresetBundle.hpp"
+#include "PresetFlowVariant.hpp"
 #include "FilamentColorLibrary.hpp"
 #include "PrintConfig.hpp"
 #include "libslic3r.h"
@@ -2675,7 +2676,7 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
                 const ConfigOption *opt_src = filament_configs.front()->option(key);
                 if (opt_src != nullptr)
                     opt_dst->set(opt_src);
-            } else if (is_filament_flow_variant_option(key) || key == "filament_flow_support") {
+            } else if (is_filament_flow_variant_option(key) || key == "filament_flow_support" || key == "filament_extruder_variant") {
                 ConfigOptionVectorBase* opt_vec_dst = static_cast<ConfigOptionVectorBase*>(opt_dst);
                 opt_vec_dst->resize(flow_total_size);
                 size_t segment_start = 0;
@@ -2703,6 +2704,11 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
         }
         out.option<ConfigOptionInts>("filament_flow_step_size", true)->values = flow_step_sizes;
     }
+
+    // Compose common owner indices from the legacy segments without disturbing
+    // the declared order of any material's variants.
+    out.option<ConfigOptionInts>("filament_self_index", true)->values.clear();
+    normalize_filament_variant_metadata(out, true);
 
     //BBS: add logic for settings check between different system presets
     std::string printer_inherits = this->printers.get_edited_preset().inherits();
@@ -2905,6 +2911,7 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
     // filament_flow_step_size describes the composed config only. It must not be copied into an
     // individual filament preset; full_fff_config() will regenerate it after presets are restored.
     config.erase("filament_flow_step_size");
+    config.erase("filament_self_index");
 
     //BBS: add config related logs
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": , name_or_path %1%, is_external %2%, num_filaments %3%") % name_or_path % is_external % num_filaments;
@@ -3052,9 +3059,11 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
                 }
                 else if (key != "compatible_printers" && key != "compatible_prints") {
                     const bool uses_flow_variant_segment = has_filament_flow_segments &&
-                        (is_filament_flow_variant_option(key) || key == "filament_flow_support") &&
-                        static_cast<const ConfigOptionVectorBase*>(other_opt)->size() ==
-                            filament_flow_segment_starts.back() + size_t(filament_flow_step_sizes.back());
+                                                           (is_filament_flow_variant_option(key) || key == "filament_flow_support" ||
+                                                            key == "filament_extruder_variant") &&
+                                                           static_cast<const ConfigOptionVectorBase*>(other_opt)->size() ==
+                                                               filament_flow_segment_starts.back() +
+                                                                   size_t(filament_flow_step_sizes.back());
                     for (size_t i = 0; i < configs.size(); ++i) {
                         auto *dst = static_cast<ConfigOptionVectorBase*>(configs[i].option(key, false));
                         if (uses_flow_variant_segment) {

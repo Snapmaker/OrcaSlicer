@@ -1377,6 +1377,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionString,              filament_grouping_mode))
     ((ConfigOptionInt,                 project_schema_version))
     ((ConfigOptionStrings,             filament_flow_support))
+    ((ConfigOptionStrings,             filament_extruder_variant))
+    ((ConfigOptionInts,                filament_self_index))
     ((ConfigOptionStrings,             process_flow_support))
     ((ConfigOptionStrings,             printer_flow_support))
     ((ConfigOptionInts,                filament_flow_step_size))

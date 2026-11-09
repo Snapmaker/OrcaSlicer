@@ -4247,6 +4247,18 @@ void PrintConfigDef::init_fff_params()
     def->cli = ConfigOptionDef::nocli;
     def->set_default_value(new ConfigOptionStrings { FLOW_MODE_STANDARD });
 
+    // Orca/Bambu filament format and defaults. Legacy JSON declarations are
+    // converted before inheritance, so a parent's default cannot mask them.
+    def        = this->add("filament_extruder_variant", coStrings);
+    def->label = "Filament's extruder variant";
+    def->set_default_value(new ConfigOptionStrings{"Direct Drive Standard"});
+    def->cli = ConfigOptionDef::nocli;
+
+    def        = this->add("filament_self_index", coInts);
+    def->label = "Filament self index";
+    def->set_default_value(new ConfigOptionInts{1});
+    def->cli = ConfigOptionDef::nocli;
+
     def = this->add("process_flow_support", coStrings);
     def->label = L("Process flow support");
     def->tooltip = L("Flow variants this process preset provides values for. Multi-valued process "
@@ -7528,6 +7540,8 @@ size_t flow_variant_index(const std::vector<std::string> &flow_support, const st
         return 0;
 
     auto it = std::find(flow_support.begin(), flow_support.end(), mode);
+    if (it == flow_support.end())
+        it = std::find(flow_support.begin(), flow_support.end(), FLOW_MODE_STANDARD);
     return it == flow_support.end() ? 0 : size_t(it - flow_support.begin());
 }
 
@@ -7704,7 +7718,11 @@ size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigne
                 return segment_start + pos;
         }
 
-        // The flow type is not declared by this filament -> its standard (first) value.
+        // A missing flow falls back to the declared Standard variant, which
+        // common-format profiles do not have to place first.
+        for (size_t pos = 0; pos < segment_size && segment_start + pos < declarations.size(); ++pos)
+            if (declarations[segment_start + pos] == FLOW_MODE_STANDARD)
+                return segment_start + pos;
         return segment_start;
     }
     } // switch
@@ -8186,7 +8204,7 @@ void DynamicPrintConfig::set_num_extruders(unsigned int num_extruders)
 {
     const auto &defaults = FullPrintConfig::defaults();
     for (const std::string &key : print_config_def.extruder_option_keys()) {
-        if (key == "default_filament_profile")
+        if (key == "default_filament_profile" || key == "filament_extruder_variant" || key == "filament_self_index")
             // Don't resize this field, as it is presented to the user at the "Dependencies" page of the Printer profile and we don't want to present
             // empty fields there, if not defined by the system profile.
             continue;
@@ -8203,8 +8221,8 @@ void DynamicPrintConfig::set_num_filaments(unsigned int num_filaments)
 {
     const auto& defaults = FullPrintConfig::defaults();
     for (const std::string& key : print_config_def.filament_option_keys()) {
-        if (key == "default_filament_profile" || key == "filament_flow_support" ||
-            key == "filament_flow_step_size" || is_filament_flow_variant_option(key))
+        if (key == "default_filament_profile" || key == "filament_flow_support" || key == "filament_extruder_variant" ||
+            key == "filament_self_index" || key == "filament_flow_step_size" || is_filament_flow_variant_option(key))
             // Flow-variant options use declaration-driven segmented storage and are
             // normalized separately by Preset::normalize().
             continue;

@@ -7186,6 +7186,27 @@ void GCode::apply_print_config(const PrintConfig& print_config)
 
 static std::string serialize_gcode_config_option(const DynamicPrintConfig &config, const std::string &key)
 {
+    if (key == "filament_extruder_variant" || key == "filament_self_index") {
+        // G-code comments describe the values actually selected for printing,
+        // one row per material, rather than all the editable preset variants.
+        const auto*  types = config.option<ConfigOptionEnumsGeneric>("filament_volume_type");
+        const size_t count = types ? types->values.size() : 0;
+        if (count > 0) {
+            if (key == "filament_self_index") {
+                ConfigOptionInts owners;
+                for (size_t i = 0; i < count; ++i)
+                    owners.values.push_back(int(i + 1));
+                return owners.serialize();
+            }
+            const auto* variants = config.option<ConfigOptionStrings>(key);
+            if (variants && !variants->values.empty()) {
+                ConfigOptionStrings selected;
+                for (size_t i = 0; i < count; ++i)
+                    selected.values.push_back(variants->get_at(get_config_idx(config, ConfigFlowDomain::Filament, unsigned(i))));
+                return selected.serialize();
+            }
+        }
+    }
     if (key == "filament_flow_support" || key == "process_flow_support" || key == "printer_flow_support") {
         const auto *support = config.option<ConfigOptionStrings>(key);
         if (support == nullptr)
@@ -7239,9 +7260,9 @@ void GCode::append_full_config(const Print& print, std::string& str)
 {
     const DynamicPrintConfig& cfg = print.full_print_config();
     // Sorted list of config keys, which shall not be stored into the G-code. Initializer list.
-    static const std::set<std::string_view> banned_keys({"compatible_printers"sv, "compatible_prints"sv, "print_host"sv,
-                                                         "print_host_webui"sv, "printhost_apikey"sv, "printhost_cafile"sv,
-                                                         "printhost_user"sv, "printhost_password"sv, "printhost_port"sv});
+    static const std::set<std::string_view> banned_keys(
+        {"compatible_printers"sv, "compatible_prints"sv, "print_host"sv, "print_host_webui"sv, "printhost_apikey"sv, "printhost_cafile"sv,
+         "printhost_user"sv, "printhost_password"sv, "printhost_port"sv, "filament_flow_support"sv, "filament_flow_step_size"sv});
     auto                                    is_banned = [](const std::string& key) { return banned_keys.find(key) != banned_keys.end(); };
     std::ostringstream                      ss;
     for (const std::string& key : cfg.keys()) {

@@ -91,6 +91,10 @@ public:
 
 private:
     GUI_App*  m_MainPtr;
+    // Set when the user refuses the clause on the web side; run() closes the
+    // app after ShowModal() returns instead of the web callback closing it
+    // inside the modal loop.
+    bool m_clause_refused = false;
     AppConfig m_appconfig_new;
 
     wxWebView* m_browser;

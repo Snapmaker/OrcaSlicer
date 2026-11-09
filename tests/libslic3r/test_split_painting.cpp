@@ -71,3 +71,33 @@ TEST_CASE("Split without painting keeps the previous behavior", "[SplitPainting]
             CHECK(part->mmu_segmentation_facets.get_triangle_as_string(i).empty());
     }
 }
+
+TEST_CASE("Split to objects carries the mmu painting", "[SplitPainting]")
+{
+    Model model;
+    ModelVolume *volume = make_two_patch_volume(model);
+    volume->mmu_segmentation_facets.set_triangle_from_string(1, "2");
+    volume->mmu_segmentation_facets.set_triangle_from_string(13, "3");
+
+    ModelObjectPtrs new_objects;
+    model.objects[0]->split(&new_objects);
+    REQUIRE(new_objects.size() == 2);
+
+    ModelVolume *part1 = new_objects[0]->volumes[0];
+    ModelVolume *part2 = new_objects[1]->volumes[0];
+    REQUIRE(part1->mesh().its.indices.size() == 12);
+    REQUIRE(part2->mesh().its.indices.size() == 12);
+
+    // Same expectation as the split-to-parts case: the face order inside each part is
+    // ascending in the source face ids, so source face 1 stays index 1 of part 1 and
+    // source face 13 becomes index 1 of part 2.
+    REQUIRE(part1->mmu_segmentation_facets.get_triangle_as_string(1) == "2");
+    REQUIRE(part2->mmu_segmentation_facets.get_triangle_as_string(1) == "3");
+
+    for (int i = 0; i < 12; ++ i) {
+        if (i != 1) {
+            CHECK(part1->mmu_segmentation_facets.get_triangle_as_string(i).empty());
+            CHECK(part2->mmu_segmentation_facets.get_triangle_as_string(i).empty());
+        }
+    }
+}

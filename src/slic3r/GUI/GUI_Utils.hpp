@@ -104,6 +104,11 @@ extern std::deque<wxDialog*> dialogStack;
 // first, wx may already have deleted a dialog under a running modal loop.
 void abort_all_modal_dialogs();
 
+// True while any modal wxDialog loop is running, in dialogStack or not.
+// GUI thread only: walks wxTopLevelWindows, which is not thread-safe
+// from other threads.
+bool any_modal_dialog_showing();
+
 template<class P> class DPIAware : public P
 {
 public:

@@ -7804,6 +7804,12 @@ void GUI_App::check_updates(const bool verbose)
 	try {
 		updater_result = preset_updater->config_update(app_config->orig_version(), verbose ? PresetUpdater::UpdateParams::SHOW_TEXT_BOX : PresetUpdater::UpdateParams::SHOW_NOTIFICATION);
 		if (updater_result == PresetUpdater::R_INCOMPAT_EXIT) {
+			// This close may be vetoed by the modal-dialog guard when the
+			// update check completes while a dialog is open (CallAfter
+			// dispatches inside modal loops too); the user must then dismiss
+			// the dialog and quit again.
+			BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+				<< ": [R_INCOMPAT_EXIT] requesting app close after incompatible config update";
 			mainframe->Close();
 		}
 		else if (updater_result == PresetUpdater::R_INCOMPAT_CONFIGURED) {

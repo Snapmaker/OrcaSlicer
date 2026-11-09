@@ -396,10 +396,11 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
             wxString strAction = j["data"]["action"];
 
             if (strAction == "refuse") {
-                // CloseTheApp
+                // Refuse Clause, App quit immediately: only mark it here and
+                // end the modal loop; the app close is issued after ShowModal()
+                // returns (run()), once no modal loop is running anymore.
+                m_clause_refused = true;
                 this->EndModal(wxID_OK);
-
-                m_MainPtr->mainframe->Close(); // Refuse Clause, App quit immediately
             }
         } else if (strCmd == "user_private_choice") {
             wxString strAction = j["data"]["action"];
@@ -904,6 +905,11 @@ bool GuideFrame::run()
     }
 
     int result = this->ShowModal();
+    if (m_clause_refused) {
+        BOOST_LOG_TRIVIAL(info) << "GuideFrame: user clause refused, closing app";
+        m_MainPtr->mainframe->Close();
+        return false;
+    }
     if (result == wxID_OK) {
         bool apply_keeped_changes = false;
         BOOST_LOG_TRIVIAL(info) << "GuideFrame returned ok";

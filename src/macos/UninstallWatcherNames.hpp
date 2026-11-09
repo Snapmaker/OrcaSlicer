@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <system_error>
 
 // Shared by Snapmaker Orca and the user-level UninstallWatcher.
 // The running helper lives outside the .app; the copy inside Contents/MacOS is only the seed.
@@ -15,13 +16,6 @@ inline constexpr char kAppBundleName[] = "Snapmaker Orca.app";
 inline constexpr char kDataDirName[]  = "Snapmaker_Orca";
 inline constexpr char kHelperFileName[] = "Snapmaker Orca Monitor";
 inline constexpr char kWatchFileName[]  = "watch.json";
-
-// Used only while an installer disk image that contains Snapmaker Orca.app is
-// mounted. A replace copy can leave /Applications empty for the whole copy.
-// With no such image mounted, disappearance is treated as a Trash uninstall immediately.
-inline constexpr int kSteadyMissingSeconds = 45;
-// Give up this disappearance episode if the bundle has not stayed missing long enough.
-inline constexpr int kMaxWaitSeconds = 180;
 
 inline std::filesystem::path home_path()
 {
@@ -109,59 +103,22 @@ inline bool is_managed_install_path(const std::filesystem::path& bundle)
     return !home.empty() && parent == (home / "Applications").lexically_normal();
 }
 
-inline bool is_removable_snapmaker_dir(const std::filesystem::path& path)
+inline bool is_unredirected_user_path(const std::filesystem::path& path)
 {
-    const auto name   = path.filename().string();
-    const auto parent = path.parent_path().filename().string();
-    const bool data_dir = name == kDataDirName && parent == "Application Support";
-    const bool web_dir  = name == kBundleId && (parent == "WebKit" || parent == "Caches" || parent == "HTTPStorages");
-    const bool saved_state = name == std::string(kBundleId) + ".savedState" && parent == "Saved Application State";
-    return data_dir || web_dir || saved_state;
-}
-
-inline std::filesystem::path saved_state_dir()
-{
-    const auto home = home_path();
-    if (home.empty())
-        return {};
-    return home / "Library" / "Saved Application State" / (std::string(kBundleId) + ".savedState");
-}
-
-inline bool is_snapmaker_preference_file(const std::filesystem::path& path)
-{
-    const auto name   = path.filename().string();
-    const auto parent = path.parent_path().filename().string();
-    const std::string bundle_plist = std::string(kBundleId) + ".plist";
-    const std::string bundle_dot   = std::string(kBundleId) + ".";
-    if (parent == "Preferences" && name == bundle_plist)
-        return true;
-    if (parent != "ByHost" || path.parent_path().parent_path().filename() != "Preferences")
+    namespace fs    = std::filesystem;
+    const auto home = home_path().lexically_normal();
+    if (!home.is_absolute() || !path.is_absolute())
         return false;
-    return name.rfind(bundle_dot, 0) == 0 && name.size() > bundle_dot.size() + 5 &&
-           name.compare(name.size() - 6, 6, ".plist") == 0;
-}
+    const auto relative = path.lexically_normal().lexically_relative(home);
+    if (relative.empty() || relative == "." || *relative.begin() == "..")
+        return false;
 
-inline void safe_remove_snapmaker_preferences()
-{
-    namespace fs = std::filesystem;
-    const auto home = home_path();
-    if (home.empty())
-        return;
-    const fs::path prefs = (home / "Library" / "Preferences").lexically_normal();
     std::error_code ec;
-    const fs::path direct = prefs / (std::string(kBundleId) + ".plist");
-    if (is_snapmaker_preference_file(direct))
-        fs::remove(direct, ec);
-
-    const fs::path byhost = prefs / "ByHost";
-    if (!fs::is_directory(byhost, ec) || ec)
-        return;
-    for (fs::directory_iterator it(byhost, ec), end; !ec && it != end; it.increment(ec)) {
-        if (!is_snapmaker_preference_file(it->path()))
-            continue;
-        std::error_code remove_ec;
-        fs::remove(it->path(), remove_ec);
-    }
+    const auto      canonical_home = fs::canonical(home, ec);
+    if (ec)
+        return false;
+    const auto actual = fs::weakly_canonical(path, ec);
+    return !ec && actual == canonical_home / relative;
 }
 
 // Removes `expected` only when it is exactly one of the Snapmaker Orca library
@@ -169,26 +126,18 @@ inline void safe_remove_snapmaker_preferences()
 inline bool safe_remove_exact(const std::filesystem::path& expected)
 {
     namespace fs = std::filesystem;
-    const auto home = home_path();
-    if (expected.empty() || home.empty() || !is_removable_snapmaker_dir(expected.lexically_normal()))
+    if (expected.empty() ||
+        (expected != support_dir() && expected != webkit_data_dir() && expected != caches_dir() && expected != http_storages_dir()))
         return false;
 
     std::error_code ec;
-    if (!fs::exists(expected, ec) || ec)
-        return !ec;
-
-    const fs::path actual = fs::weakly_canonical(expected, ec);
-    if (ec || !is_removable_snapmaker_dir(actual))
+    const auto      status = fs::symlink_status(expected, ec);
+    if (status.type() == fs::file_type::not_found)
+        return !ec || ec == std::errc::no_such_file_or_directory;
+    if (ec || !fs::is_directory(status) || !is_unredirected_user_path(expected))
         return false;
 
-    const fs::path library = fs::weakly_canonical(home / "Library", ec);
-    if (ec)
-        return false;
-    const auto relative = actual.lexically_relative(library).generic_string();
-    if (relative.empty() || relative == "." || relative.compare(0, 2, "..") == 0)
-        return false;
-
-    fs::remove_all(actual, ec);
+    fs::remove_all(expected, ec);
     return !ec;
 }
 

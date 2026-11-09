@@ -20,10 +20,11 @@
 #include <vector>
 
 #include <fcntl.h>
-#include <libproc.h>
+#include <fnmatch.h>
 #include <signal.h>
 #include <sys/event.h>
 #include <sys/wait.h>
+#include <syslog.h>
 #include <unistd.h>
 
 extern char** environ;
@@ -165,10 +166,11 @@ WatchState load_state()
     return state;
 }
 
-bool bundle_exists(const std::filesystem::path& bundle)
+bool bundle_missing(const std::filesystem::path& bundle)
 {
     std::error_code ec;
-    return std::filesystem::is_directory(bundle, ec) && !ec;
+    const auto      status = std::filesystem::symlink_status(bundle, ec);
+    return status.type() == std::filesystem::file_type::not_found && (!ec || ec == std::errc::no_such_file_or_directory);
 }
 
 // Sleep until the install directory changes, or 200ms passes. A longer sleep
@@ -196,89 +198,6 @@ void wait_for_install_dir_change(const std::filesystem::path& bundle)
     kevent(queue, &change, 1, &event, 1, &timeout);
     close(queue);
     close(dirfd);
-}
-
-bool slicer_still_running()
-{
-    int bytes = proc_listpids(PROC_ALL_PIDS, 0, nullptr, 0);
-    if (bytes <= 0 || bytes > 4 * 1024 * 1024)
-        bytes = 256 * 1024;
-    std::vector<pid_t> pids(static_cast<size_t>(bytes / static_cast<int>(sizeof(pid_t))) + 64);
-    bytes = proc_listpids(PROC_ALL_PIDS, 0, pids.data(), static_cast<int>(pids.size() * sizeof(pid_t)));
-    const int buffer_bytes = static_cast<int>(pids.size() * sizeof(pid_t));
-    if (bytes <= 0)
-        return false;
-    if (bytes > buffer_bytes)
-        bytes = buffer_bytes;
-
-    const std::string marker = std::string("/") + SnapmakerUninstall::kAppBundleName + "/Contents/MacOS/Snapmaker_Orca";
-    const int count = bytes / static_cast<int>(sizeof(pid_t));
-    for (int i = 0; i < count; ++i) {
-        if (pids[static_cast<size_t>(i)] <= 0)
-            continue;
-        char path[PROC_PIDPATHINFO_MAXSIZE] = {};
-        if (proc_pidpath(pids[static_cast<size_t>(i)], path, sizeof(path)) <= 0)
-            continue;
-        const std::string executable(path);
-        if (executable.size() >= marker.size() &&
-            executable.compare(executable.size() - marker.size(), marker.size(), marker) == 0)
-            return true;
-    }
-    return false;
-}
-
-// Finder mounts the installer image before a drag-replace. The volume root
-// holds Snapmaker Orca.app. An unrelated disk image does not count.
-bool installer_dmg_mounted()
-{
-    const CommandResult info = run_command({"/usr/bin/hdiutil", "info"}, true);
-    if (info.exit_code != 0 || info.output.empty())
-        return false;
-
-    const std::string marker = "/Volumes/";
-    for (size_t pos = 0; (pos = info.output.find(marker, pos)) != std::string::npos;) {
-        const size_t end = info.output.find_first_of("\r\n", pos);
-        std::string mount = info.output.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
-        while (!mount.empty() && (mount.back() == ' ' || mount.back() == '\t'))
-            mount.pop_back();
-        std::error_code ec;
-        const bool has_app = std::filesystem::is_directory(std::filesystem::path(mount) / SnapmakerUninstall::kAppBundleName, ec) && !ec;
-        if (has_app)
-            return true;
-        pos += marker.size();
-    }
-    return false;
-}
-
-// No installer image: the app left /Applications, so ask immediately.
-// An installer image is mounted: wait out a replace copy. If the .app returns, this was an update.
-// Restoring the trashed app afterwards is ignored; wiped data stays wiped.
-bool confirm_trashed_uninstall(const std::filesystem::path& bundle)
-{
-    if (!installer_dmg_mounted()) {
-        log_line("no Snapmaker Orca installer image mounted; asking whether to remove leftovers");
-        return true;
-    }
-
-    log_line("installer image is mounted; waiting before treating a missing app as an uninstall");
-    int steady_missing = 0;
-    for (int waited = 0; waited < SnapmakerUninstall::kMaxWaitSeconds; ++waited) {
-        if (bundle_exists(bundle)) {
-            log_line("bundle is back; treating this as an update, not an uninstall");
-            return false;
-        }
-        if (slicer_still_running())
-            steady_missing = 0;
-        else
-            ++steady_missing;
-        if (steady_missing >= SnapmakerUninstall::kSteadyMissingSeconds) {
-            log_line("installed app stayed missing and is not running; asking whether to remove leftovers");
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-    log_line("installed app is missing but Snapmaker Orca is still running; keeping watch");
-    return false;
 }
 
 enum class Choice { DeleteData, KeepData, Retry };
@@ -315,10 +234,6 @@ bool prompt_in_chinese()
 
 Choice ask_user()
 {
-    const auto script_path = SnapmakerUninstall::helper_dir() / "uninstall-prompt.applescript";
-    if (SnapmakerUninstall::helper_dir().empty())
-        return Choice::Retry;
-
     const char* script_zh =
         "use framework \"AppKit\"\n"
         "use scripting additions\n"
@@ -354,7 +269,7 @@ Choice ask_user()
         "set originY to (item 2 of scrOrigin) + freeY / 2 + freeY * 0.08\n"
         "alertWindow's setFrameOrigin:(current application's NSMakePoint(originX, originY))\n"
         "alertWindow's orderFrontRegardless()\n"
-        "alert's runModal()\n"
+        "if (alert's runModal() as integer) is not (current application's NSAlertFirstButtonReturn as integer) then return \"retry\"\n"
         "if (checkbox's state() as integer) is 1 then\n"
         "return \"delete\"\n"
         "end if\n"
@@ -394,28 +309,24 @@ Choice ask_user()
         "set originY to (item 2 of scrOrigin) + freeY / 2 + freeY * 0.08\n"
         "alertWindow's setFrameOrigin:(current application's NSMakePoint(originX, originY))\n"
         "alertWindow's orderFrontRegardless()\n"
-        "alert's runModal()\n"
+        "if (alert's runModal() as integer) is not (current application's NSAlertFirstButtonReturn as integer) then return \"retry\"\n"
         "if (checkbox's state() as integer) is 1 then\n"
         "return \"delete\"\n"
         "end if\n"
         "return \"keep\"\n";
     const char* script = prompt_in_chinese() ? script_zh : script_en;
 
-    {
-        std::ofstream out(script_path, std::ios::binary | std::ios::trunc);
-        if (!out)
-            return Choice::Retry;
-        out << script;
+    const auto result = run_command({"/usr/bin/osascript", "-e", script}, true);
+    const auto end    = result.output.find_last_not_of("\r\n");
+    if (result.exit_code == 0 && end != std::string::npos) {
+        const auto separator = result.output.find_last_of("\r\n", end);
+        const auto start     = separator == std::string::npos ? 0 : separator + 1;
+        const auto choice    = result.output.substr(start, end - start + 1);
+        if (choice == "delete")
+            return Choice::DeleteData;
+        if (choice == "keep")
+            return Choice::KeepData;
     }
-
-    const auto result = run_command({"/usr/bin/osascript", script_path.string()}, true);
-    std::error_code ec;
-    std::filesystem::remove(script_path, ec);
-
-    if (result.exit_code == 0 && result.output.find("delete") != std::string::npos)
-        return Choice::DeleteData;
-    if (result.exit_code == 0 && result.output.find("keep") != std::string::npos)
-        return Choice::KeepData;
     log_line("dialog failed: " + result.output);
     return Choice::Retry;
 }
@@ -439,21 +350,49 @@ void bootout_self()
 void remove_plist()
 {
     const auto plist = SnapmakerUninstall::launch_agent_plist_path();
-    if (plist.empty())
+    if (!SnapmakerUninstall::is_unredirected_user_path(plist))
         return;
     std::error_code ec;
     std::filesystem::remove(plist, ec);
 }
 
-// Removes the watcher's own files: the copy of the binary, watch.json, the log,
-// and the dialog scratch. User data lives beside Helpers in the same support
-// directory and is only touched when delete_user_data is set.
+void remove_http_cookie_files()
+{
+    namespace fs          = std::filesystem;
+    const auto legacy_dir = SnapmakerUninstall::http_storages_dir();
+    if (legacy_dir.empty())
+        return;
+
+    const auto      dir = legacy_dir.parent_path();
+    std::error_code ec;
+    if (!fs::is_directory(fs::symlink_status(dir, ec)) || !SnapmakerUninstall::is_unredirected_user_path(dir))
+        return;
+
+    const std::string cookie_name  = std::string(SnapmakerUninstall::kBundleId) + ".binarycookies";
+    const std::string temp_pattern = cookie_name + "_tmp_*.dat";
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        const auto name = it->path().filename().string();
+        if (name != cookie_name && fnmatch(temp_pattern.c_str(), name.c_str(), 0) != 0)
+            continue;
+
+        std::error_code file_ec;
+        if (fs::is_regular_file(it->symlink_status(file_ec)) && ::unlink(it->path().c_str()) != 0)
+            file_ec = std::error_code(errno, std::generic_category());
+        if (file_ec)
+            log_line("failed to clean up cookie file " + it->path().string() + ": " + file_ec.message());
+    }
+    if (ec)
+        log_line("failed to enumerate HTTP storage " + dir.string() + ": " + ec.message());
+}
+
+// Removes the watcher's own files: the copy of the binary, watch.json and the log.
+// User data lives beside Helpers and is only touched when delete_user_data is set.
 // Entries are removed one by one so watcher.log stays in place until the end:
 // failures of earlier removals are then logged while the log can still record them.
 void remove_helper_dir()
 {
     const auto dir = SnapmakerUninstall::helper_dir();
-    if (dir.empty())
+    if (!SnapmakerUninstall::is_unredirected_user_path(dir))
         return;
 
     const std::string log_name = "watcher.log";
@@ -488,6 +427,12 @@ void remove_helper_dir()
         log_line("failed to remove helper dir " + dir.string() + ": " + dir_ec.message());
 }
 
+void remove_user_data_dir(const std::filesystem::path& path)
+{
+    if (!SnapmakerUninstall::safe_remove_exact(path))
+        syslog(LOG_ERR, "Snapmaker Orca Monitor: could not safely remove %s", path.c_str());
+}
+
 // The watcher always removes itself once the prompt is answered: the app is
 // gone, so the launch agent has no reason to stay. The checkbox only decides
 // whether the user data goes with it. Reinstalling and launching Snapmaker
@@ -498,18 +443,17 @@ void remove_helper_dir()
     run_command({"/bin/launchctl", "disable", gui_domain() + "/" + SnapmakerUninstall::kLabel}, false);
 
     if (delete_user_data) {
-        log_line("removing Snapmaker Orca user data: preferences, Application Support, WebKit, caches, HTTP storage, saved state");
-        SnapmakerUninstall::safe_remove_snapmaker_preferences();
-        SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::webkit_data_dir());
-        SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::caches_dir());
-        SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::http_storages_dir());
-        SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::saved_state_dir());
+        log_line("removing Snapmaker Orca user data: Application Support, WebKit, caches, HTTP storage");
+        remove_user_data_dir(SnapmakerUninstall::webkit_data_dir());
+        remove_user_data_dir(SnapmakerUninstall::caches_dir());
+        remove_user_data_dir(SnapmakerUninstall::http_storages_dir());
+        remove_http_cookie_files();
     }
 
     remove_helper_dir();
     remove_plist();
     if (delete_user_data)
-        SnapmakerUninstall::safe_remove_exact(SnapmakerUninstall::support_dir());
+        remove_user_data_dir(SnapmakerUninstall::support_dir());
     bootout_self();
     _exit(0);
 }
@@ -530,28 +474,21 @@ int main()
             std::this_thread::sleep_for(std::chrono::seconds(2));
             continue;
         }
-        if (bundle_exists(state.bundle)) {
-            wait_for_install_dir_change(state.bundle);
-            continue;
-        }
-        if (!confirm_trashed_uninstall(state.bundle)) {
+        if (!bundle_missing(state.bundle)) {
             wait_for_install_dir_change(state.bundle);
             continue;
         }
 
-        for (;;) {
-            if (bundle_exists(state.bundle))
-                break;
-            const Choice choice = ask_user();
-            if (bundle_exists(state.bundle)) {
-                log_line("bundle returned while the dialog was open; not deleting anything");
-                break;
-            }
-            if (choice == Choice::DeleteData)
-                finish(true);
-            if (choice == Choice::KeepData)
-                finish(false);
-            std::this_thread::sleep_for(std::chrono::seconds(30));
+        const Choice     choice  = ask_user();
+        const WatchState current = load_state();
+        if (!current.valid || !current.seen || current.bundle != state.bundle || !bundle_missing(state.bundle)) {
+            log_line("installation state changed while the dialog was open; skipping cleanup");
+            continue;
         }
+        if (choice == Choice::DeleteData)
+            finish(true);
+        if (choice == Choice::KeepData)
+            finish(false);
+        std::this_thread::sleep_for(std::chrono::seconds(30));
     }
 }

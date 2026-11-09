@@ -36,6 +36,9 @@ using namespace nlohmann;
 
 #include "app_common/SentryWrapper.hpp"
 
+#include <atomic>
+#include <new>
+
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
@@ -6410,10 +6413,29 @@ __declspec(dllexport) int __stdcall Snapmaker_Orca_get_privacy_policy() { return
         for (size_t i = 0; i < argc; ++ i)
             argv_ptrs[i] = argv_narrow[i].data();
 
+        // Out of memory: report it to Sentry as a tagged event, then let the standard
+        // std::bad_alloc propagation take over so the exception handling inherited from
+        // upstream can run (main thread: "out of memory" message box + terminate;
+        // background slicing: recoverable per-plate error; CLI: exit code). The previous
+        // handler deliberately dereferenced null to raise a native crash for Sentry;
+        // that turned every OOM into a hard crash and left the whole recovery chain dead.
+        // The report itself allocates: a re-entrant failure skips the report and just
+        // throws, and any exception escaping the report is swallowed so the bad_alloc
+        // owed to the caller is never displaced.
         std::set_new_handler([]() {
-            int *a = nullptr;
-            *a     = 0;
-            });
+            static std::atomic<bool> report_in_progress{false};
+            if (!report_in_progress.exchange(true)) {
+                try {
+                    Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,
+                                            "memory allocation failed (out of memory)",
+                                            "std::set_new_handler",
+                                            "out_of_memory", "true");
+                } catch (...) {
+                }
+                report_in_progress = false;
+            }
+            throw std::bad_alloc();
+        });
         // Call the UTF8 main.
         return CLI().run(argc, argv_ptrs.data());
     }

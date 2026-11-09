@@ -15476,6 +15476,36 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
             this->update_sla_scene();
     }
 
+    // A failed run (e.g. out of memory while slicing a huge model) can leave
+    // gigabytes of data behind: the partially collected toolpath in the shared
+    // gcode result, and — when the failure hit the slicing stage, before any
+    // gcode existed — the per-layer polygons held by the print objects. The
+    // process survived the failure, so give the memory back before the user
+    // retries with a smaller workload; otherwise the next trivial GUI
+    // allocation still runs into the memory ceiling and turns fatal. An empty
+    // moves vector also marks the result as not finished for preview consumers;
+    // the print data is rebuilt by the next slice's apply().
+    if (evt.error() && is_finished) {
+        if (auto *gcode_result = this->background_process.get_current_gcode_result())
+            gcode_result->reset();
+        bool out_of_memory = false;
+        try {
+            evt.rethrow_exception();
+        } catch (const std::bad_alloc&) {
+            out_of_memory = true;
+        } catch (...) {
+        }
+        if (out_of_memory) {
+            if (this->printer_technology == ptFFF) {
+                if (this->background_process.m_fff_print)
+                    this->background_process.m_fff_print->clear();
+            } else {
+                if (this->background_process.m_sla_print)
+                    this->background_process.m_sla_print->clear();
+            }
+        }
+    }
+
     //BBS: add slice&&print status update logic
     if (evt.cancelled()) {
         /*if (wxGetApp().get_mode() == comSimple)
@@ -19342,7 +19372,16 @@ std::vector<size_t> Plater::load_files(const std::vector<fs::path>& input_files,
     p->m_slice_all_only_has_gcode = false;
     //BBS: wish to reset all plates stats item selected state when load a new file
     p->preview->get_canvas3d()->reset_select_plate_toolbar_selection();
-    std::vector<size_t> loaded = p->load_files(input_files, strategy, ask_multi);
+    std::vector<size_t> loaded;
+    try {
+        loaded = p->load_files(input_files, strategy, ask_multi);
+    } catch (const std::bad_alloc& ex) {
+        // Importing a too large model is recoverable: report and keep the app
+        // alive instead of letting the bad_alloc escape to OnExceptionInMainLoop,
+        // whose generic handler terminates the process.
+        BOOST_LOG_TRIVIAL(error) << "load_files: out of memory: " << ex.what();
+        show_error(this, _L("Your project may be too large for the available memory. The operation has been automatically terminated. Try closing other applications, reducing the model complexity or plate count, then retry."));
+    }
     if (!loaded.empty())
     {
         // After loading a project, initialize the filament temp mixing state

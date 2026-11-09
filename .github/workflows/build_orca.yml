@@ -145,6 +145,93 @@ jobs:
           echo "block return out quick proto udp from any to any port 443" | sudo pfctl -f -
           sudo pfctl -E
 
+      # build/arm64, build/x86_64 and deps/build are unused once the universal
+      # bundle exists. hdiutil writes its scratch image on this same volume.
+      # Keep build/universal (app, profile validator, dSYM) for signing, DMG and upload.
+      - name: Free disk space before DMG packaging
+        if: inputs.os == 'macos-15'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ROOT="${GITHUB_WORKSPACE}"
+          BUNDLE_ROOT="${ROOT}/build/universal/Snapmaker_Orca"
+          APP="${BUNDLE_ROOT}/Snapmaker Orca.app"
+          EXEC="${APP}/Contents/MacOS/Snapmaker_Orca"
+
+          if [ ! -f "$EXEC" ]; then
+            echo "error: universal executable missing: ${EXEC}"
+            echo "Refusing to delete single-arch build trees."
+            exit 1
+          fi
+          lipo -info "$EXEC"
+
+          echo "Disk usage before reclaim:"
+          df -h
+
+          CANDIDATES=(
+            "${ROOT}/build/arm64"
+            "${ROOT}/build/x86_64"
+            "${ROOT}/deps/build"
+          )
+
+          echo "Directory sizes:"
+          du -sh "$BUNDLE_ROOT" "${CANDIDATES[@]}" 2>/dev/null || true
+
+          BLOCKED_FILE="$(mktemp "${RUNNER_TEMP}/dmg-cleanup-blocked.XXXXXX")"
+          : > "$BLOCKED_FILE"
+
+          # Skip a tree when the universal bundle still points into it.
+          while IFS= read -r -d '' link; do
+            dest="$(readlink "$link" || true)"
+            [ -n "$dest" ] || continue
+            if [ "${dest#/}" = "$dest" ]; then
+              dest="$(dirname "$link")/${dest}"
+            fi
+            dest_real="$(realpath "$dest" 2>/dev/null || true)"
+            [ -n "$dest_real" ] || continue
+            for tree in "${CANDIDATES[@]}"; do
+              [ -d "$tree" ] || continue
+              tree_real="$(cd "$tree" && pwd -P)"
+              case "$dest_real" in
+                "$tree_real"|"$tree_real"/*)
+                  echo "$tree" >> "$BLOCKED_FILE"
+                  echo "Keeping ${tree} because ${link} -> ${dest_real}"
+                  ;;
+              esac
+            done
+          done < <(find "$BUNDLE_ROOT" -type l -print0)
+
+          for tree in "${CANDIDATES[@]}"; do
+            if [ ! -d "$tree" ]; then
+              echo "Already absent: ${tree}"
+              continue
+            fi
+            tree_real="$(cd "$tree" && pwd -P)"
+            case "$tree_real" in
+              "${ROOT}/"*) ;;
+              *)
+                echo "error: refusing to delete ${tree_real} outside ${ROOT}"
+                exit 1
+                ;;
+            esac
+            if [ -s "$BLOCKED_FILE" ] && grep -Fxq "$tree" "$BLOCKED_FILE"; then
+              echo "Skip ${tree}"
+              continue
+            fi
+            echo "Removing ${tree}"
+            rm -rf "$tree"
+          done
+
+          if [ ! -f "$EXEC" ]; then
+            echo "error: universal executable missing after cleanup: ${EXEC}"
+            exit 1
+          fi
+          rm -f "$BLOCKED_FILE"
+
+          echo "Disk usage after reclaim:"
+          df -h
+
  # Thanks to RaySajuuk, it's working now
       - name: Sign app and notary
         if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release_') || github.ref == 'refs/heads/2.3.0-final') && inputs.os == 'macos-15'

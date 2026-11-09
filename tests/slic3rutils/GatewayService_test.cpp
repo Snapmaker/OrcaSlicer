@@ -2,6 +2,10 @@
 
 #include "slic3r/Utils/GatewayService.hpp"
 
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/beast/core.hpp>
+#include <boost/beast/websocket.hpp>
 #include <nlohmann/json.hpp>
 
 #include <atomic>
@@ -11,9 +15,14 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace Slic3r::Gateway;
+
+namespace asio      = boost::asio;
+namespace beast     = boost::beast;
+namespace websocket = beast::websocket;
 
 namespace {
 
@@ -139,6 +148,37 @@ struct BlockingFirstWebSocket final : public WebSocketTransport
         if (listener.closed)
             listener.closed("closed");
     }
+};
+
+struct UnresponsiveWebSocketServer
+{
+    asio::io_context                         io_context;
+    asio::ip::tcp::acceptor                  acceptor{io_context, asio::ip::tcp::endpoint{asio::ip::tcp::v4(), 0}};
+    websocket::stream<asio::ip::tcp::socket> stream{io_context};
+    std::thread                              thread{[this] { io_context.run(); }};
+
+    UnresponsiveWebSocketServer()
+    {
+        acceptor.async_accept(stream.next_layer(), [this](const boost::system::error_code& error) {
+            if (error)
+                return;
+            stream.async_accept([this](const boost::system::error_code& handshake_error) {
+                if (handshake_error)
+                    stream.next_layer().close();
+            });
+        });
+    }
+
+    ~UnresponsiveWebSocketServer()
+    {
+        boost::system::error_code error;
+        acceptor.close(error);
+        stream.next_layer().close(error);
+        io_context.stop();
+        thread.join();
+    }
+
+    std::uint16_t port() const { return acceptor.local_endpoint().port(); }
 };
 
 bool wait_for_state(const GatewayService& service, ConnectionState expected)
@@ -336,6 +376,43 @@ TEST_CASE("GatewayService concurrent stops are idempotent", "[gateway][service][
         stopper.join();
 
     REQUIRE(service.state() == ConnectionState::Disconnected);
+}
+
+TEST_CASE("GatewayWebSocketTransport teardown destroys the stream before io_context", "[gateway][service][lifecycle]")
+{
+    std::atomic<bool>         closed{false};
+    GatewayWebSocketTransport transport;
+    transport.set_listener({{}, {}, [&closed](const std::string&) { closed = true; }});
+
+    transport.connect(1, "/ws");
+    transport.close();
+
+    REQUIRE(closed.load());
+}
+
+TEST_CASE("GatewayWebSocketTransport drains a connected websocket before teardown", "[gateway][service][lifecycle]")
+{
+    UnresponsiveWebSocketServer server;
+    std::promise<void>          opened;
+    auto                        opened_future = opened.get_future();
+    std::atomic<bool>           closed{false};
+    GatewayWebSocketTransport   transport;
+    transport.set_listener({[&opened] { opened.set_value(); }, {}, [&closed](const std::string&) { closed = true; }});
+
+    transport.connect(server.port(), "/ws");
+    REQUIRE(opened_future.wait_for(std::chrono::seconds{2}) == std::future_status::ready);
+
+    std::thread sender([&transport, &closed] {
+        while (!closed.load(std::memory_order_relaxed)) {
+            if (!transport.send(std::string(128, 'x')))
+                break;
+            std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        }
+    });
+    transport.close();
+    sender.join();
+
+    REQUIRE(closed.load());
 }
 
 TEST_CASE("GatewayService reconnects after the first websocket failure", "[gateway][service]")

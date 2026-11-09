@@ -821,6 +821,10 @@ bool GuideFrame::apply_config(AppConfig *app_config, PresetBundle *preset_bundle
         for (const auto& model_it: model_maps) {
             if (model_it.second.size() > 0) {
                 variant = *model_it.second.begin();
+                // Prefer the default nozzle when enabling U1 instead of the smallest sorted variant.
+                if (bundle_name == PresetBundle::SM_BUNDLE && model_it.first == PresetBundle::SM_DEFAULT_PRINTER_MODEL &&
+                    model_it.second.count(PresetBundle::SM_DEFAULT_PRINTER_VARIANT) > 0)
+                    variant = PresetBundle::SM_DEFAULT_PRINTER_VARIANT;
                 const auto config_old = old_enabled_vendors.find(bundle_name);
                 if (config_old == old_enabled_vendors.end())
                     return model_it.first;

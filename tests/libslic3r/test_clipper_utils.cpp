@@ -1,15 +1,21 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <algorithm>
 #include <numeric>
+#include <set>
 #include <iostream>
 #include <boost/filesystem.hpp>
 
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/ClipperZUtils.hpp"
 #include "libslic3r/ExPolygon.hpp"
 #include "libslic3r/SVG.hpp"
 
 using namespace Slic3r;
+using Catch::Matchers::WithinRel;
 
 // Clipper may start an output polygon at any of its vertices.
 static Polygon start_at_min(Polygon polygon)
@@ -291,4 +297,61 @@ TEST_CASE("Top level expolygons of an even-odd union", "[ClipperUtils]") {
     REQUIRE(nested.size() == 2);
     REQUIRE(area_sum == Catch::Approx(area(top_level) + area(nested)));
     REQUIRE(top_level_expolygons(reference).size() == 1);
+}
+
+TEST_CASE("Top level contours of an even-odd Z-union", "[ClipperUtils]") {
+    // Islands of nested objects carrying the Z index of their source object, like Brim.cpp does.
+    const auto square = [](coord_t lo, coord_t hi, coord_t z) {
+        ClipperZUtils::ZPath path;
+        path.emplace_back(lo, lo, z);
+        path.emplace_back(hi, lo, z);
+        path.emplace_back(hi, hi, z);
+        path.emplace_back(lo, hi, z);
+        return path;
+    };
+    const auto max_zfill = [](const ClipperZUtils::ZPoint &e1bot, const ClipperZUtils::ZPoint &e1top, const ClipperZUtils::ZPoint &e2bot,
+                              const ClipperZUtils::ZPoint &e2top, ClipperZUtils::ZPoint &pt) {
+        pt.z() = std::max(std::max(e1bot.z(), e1top.z()), std::max(e2bot.z(), e2top.z()));
+    };
+    std::vector<std::pair<unsigned, std::set<coord_t>>> contours;
+    const auto collect = [&contours](const ClipperZUtils::ZPath &path, unsigned depth) {
+        std::set<coord_t> zs;
+        for (const ClipperZUtils::ZPoint &p : path)
+            zs.insert(p.z());
+        contours.emplace_back(depth, std::move(zs));
+    };
+
+    SECTION("Fully nested islands: only the outermost island is top level") {
+        ClipperZUtils::ZPaths islands;
+        islands.emplace_back(square(0, 3000, 1));
+        islands.emplace_back(square(1000, 2000, 2));
+        islands.emplace_back(square(1300, 1700, 3));
+        ClipperZUtils::clip_zpaths_polytree(ctUnion, islands, false, {}, max_zfill, collect, false, pftEvenOdd);
+
+        // The even-odd union of nested contours is a ring: the middle island becomes a hole
+        // of the outer island, the innermost island re-emerges inside that hole. Only the
+        // outer island stays top level, matching the Clipper1 PolyTree ChildCount() walk.
+        REQUIRE(contours.size() == 3);
+        std::sort(contours.begin(), contours.end());
+        REQUIRE(contours[0] == std::make_pair(0u, std::set<coord_t>{1}));
+        REQUIRE(contours[1] == std::make_pair(1u, std::set<coord_t>{2}));
+        REQUIRE(contours[2] == std::make_pair(2u, std::set<coord_t>{3}));
+    }
+
+    SECTION("Partially overlapping islands: both are top level") {
+        ClipperZUtils::ZPaths islands;
+        islands.emplace_back(square(0, 2000, 1));
+        islands.emplace_back(square(1000, 3000, 2));
+        ClipperZUtils::clip_zpaths_polytree(ctUnion, islands, false, {}, max_zfill, collect, false, pftEvenOdd);
+
+        // Overlapping islands do not nest: no contour of the result is a hole, and both
+        // objects appear on the top level contours (here corner-touching L shapes).
+        REQUIRE(! contours.empty());
+        std::set<coord_t> zs;
+        for (const auto &contour : contours) {
+            REQUIRE(contour.first == 0u);
+            zs.insert(contour.second.begin(), contour.second.end());
+        }
+        REQUIRE(zs == std::set<coord_t>{1, 2});
+    }
 }

@@ -126,18 +126,21 @@ static ConstPrintObjectPtrs get_top_level_objects_with_brim(const Print &print, 
     // Union the islands; the result outline carries the Z index of its source island.
     // Even-odd rule keeps the ClipperLib_Z semantics this code was written against: two
     // islands of different objects overlapping each other do not merge into one outline.
-    ClipperZUtils::ZPaths union_out = ClipperZUtils::clip_zpaths(ctUnion, islands_clip, false, {}, zfill, false, pftEvenOdd);
-
+    // Only top level (depth 0) contours attribute an object, matching the ClipperLib_Z
+    // PolyTree ChildCount() walk: an island fully nested inside another object's island
+    // becomes a hole contour and gets no outer brim.
     std::unordered_set<size_t> processed_objects_idx;
     ConstPrintObjectPtrs       top_level_objects_with_brim;
-    for (const ClipperZUtils::ZPath &path : union_out) {
-        for (const ClipperZUtils::ZPoint &point : path) {
-            if (point.z() != 0 && processed_objects_idx.find(island_to_object[point.z() - 1]->id().id) == processed_objects_idx.end()) {
-                top_level_objects_with_brim.emplace_back(island_to_object[point.z() - 1]);
-                processed_objects_idx.insert(island_to_object[point.z() - 1]->id().id);
-            }
-        }
-    }
+    auto collect_objects_at_top_level = [&island_to_object, &processed_objects_idx, &top_level_objects_with_brim]
+            (const ClipperZUtils::ZPath &path, unsigned depth) {
+        if (depth == 0)
+            for (const ClipperZUtils::ZPoint &point : path)
+                if (point.z() != 0 && processed_objects_idx.find(island_to_object[point.z() - 1]->id().id) == processed_objects_idx.end()) {
+                    top_level_objects_with_brim.emplace_back(island_to_object[point.z() - 1]);
+                    processed_objects_idx.insert(island_to_object[point.z() - 1]->id().id);
+                }
+    };
+    ClipperZUtils::clip_zpaths_polytree(ctUnion, islands_clip, false, {}, zfill, collect_objects_at_top_level, false, pftEvenOdd);
     return top_level_objects_with_brim;
 }
 

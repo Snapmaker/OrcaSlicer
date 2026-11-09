@@ -42,9 +42,24 @@ double area(const ZPath &path)
     return -a * 0.5;
 }
 
-ZPaths clip_zpaths(ClipType clip_type, const ZPaths &subject, bool subject_open, const ZPaths &clip, const ZFillCallback &zfill, bool preserve_collinear, PolyFillType fill)
+static C2::ClipType to_c2(ClipType clip_type)
 {
-    C2::Clipper64 clipper;
+    return clip_type == ctIntersection ? C2::ClipType::Intersection :
+           clip_type == ctUnion        ? C2::ClipType::Union :
+           clip_type == ctDifference   ? C2::ClipType::Difference : C2::ClipType::Xor;
+}
+
+static C2::FillRule to_c2(PolyFillType fill)
+{
+    return fill == pftEvenOdd  ? C2::FillRule::EvenOdd :
+           fill == pftPositive ? C2::FillRule::Positive :
+           fill == pftNegative ? C2::FillRule::Negative : C2::FillRule::NonZero;
+}
+
+// Shared setup of the Clipper2 engine for the boolean helpers below.
+static void setup_clipper(C2::Clipper64 &clipper, bool preserve_collinear, const ZFillCallback &zfill,
+    const ZPaths &subject, bool subject_open, const ZPaths &clip)
+{
     clipper.PreserveCollinear(preserve_collinear);
     if (zfill)
         clipper.SetZCallback([&zfill](const C2::Point64 &e1bot, const C2::Point64 &e1top, const C2::Point64 &e2bot, const C2::Point64 &e2top, C2::Point64 &pt) {
@@ -62,18 +77,43 @@ ZPaths clip_zpaths(ClipType clip_type, const ZPaths &subject, bool subject_open,
     else
         clipper.AddSubject(to_paths64(subject));
     clipper.AddClip(to_paths64(clip));
-    const C2::ClipType type = clip_type == ctIntersection ? C2::ClipType::Intersection :
-                              clip_type == ctUnion        ? C2::ClipType::Union :
-                              clip_type == ctDifference   ? C2::ClipType::Difference : C2::ClipType::Xor;
-    const C2::FillRule fill_rule = fill == pftEvenOdd  ? C2::FillRule::EvenOdd :
-                                   fill == pftPositive ? C2::FillRule::Positive :
-                                   fill == pftNegative ? C2::FillRule::Negative : C2::FillRule::NonZero;
+}
+
+ZPaths clip_zpaths(ClipType clip_type, const ZPaths &subject, bool subject_open, const ZPaths &clip, const ZFillCallback &zfill, bool preserve_collinear, PolyFillType fill)
+{
+    C2::Clipper64 clipper;
+    setup_clipper(clipper, preserve_collinear, zfill, subject, subject_open, clip);
     C2::Paths64 closed, open;
-    clipper.Execute(type, fill_rule, closed, open);
+    clipper.Execute(to_c2(clip_type), to_c2(fill), closed, open);
     ZPaths out;
     append_zpaths(closed, out);
     append_zpaths(open, out);
     return out;
+}
+
+static void walk_polytree(const C2::PolyPath64 &node, unsigned depth, const std::function<void(const ZPath &, unsigned)> &callback)
+{
+    ZPath contour;
+    const C2::Path64 &polygon = node.Polygon();
+    contour.reserve(polygon.size());
+    for (const C2::Point64 &pt : polygon)
+        contour.emplace_back(pt.x, pt.y, pt.z);
+    callback(contour, depth);
+    for (const auto &child : node)
+        walk_polytree(*child, depth + 1, callback);
+}
+
+void clip_zpaths_polytree(ClipType clip_type, const ZPaths &subject, bool subject_open, const ZPaths &clip, const ZFillCallback &zfill,
+    const std::function<void(const ZPath &contour, unsigned depth)> &callback, bool preserve_collinear, PolyFillType fill)
+{
+    C2::Clipper64 clipper;
+    setup_clipper(clipper, preserve_collinear, zfill, subject, subject_open, clip);
+    C2::PolyTree64 polytree;
+    C2::Paths64    open;
+    clipper.Execute(to_c2(clip_type), to_c2(fill), polytree, open);
+    // The root node carries no contour; its children are the top level contours.
+    for (const auto &child : polytree)
+        walk_polytree(*child, 0, callback);
 }
 
 } // namespace ClipperZUtils

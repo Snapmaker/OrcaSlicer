@@ -113,6 +113,13 @@ double area(const ZPath &path);
 // Execute semantics where a caller relied on even-odd.
 ZPaths clip_zpaths(ClipType clip_type, const ZPaths &subject, bool subject_open, const ZPaths &clip, const ZFillCallback &zfill, bool preserve_collinear = false, PolyFillType fill = pftNonZero);
 
+// Boolean with a polygon tree result: the callback receives every closed contour of the
+// result with its depth. Depth 0 contours are top level (outer contours of the result islands),
+// odd depths are holes of their parent, even depths above 0 are islands inside holes. Use it
+// where the Clipper1 PolyTree hierarchy mattered, e.g. to keep only top level contours.
+void clip_zpaths_polytree(ClipType clip_type, const ZPaths &subject, bool subject_open, const ZPaths &clip, const ZFillCallback &zfill,
+    const std::function<void(const ZPath &contour, unsigned depth)> &callback, bool preserve_collinear = false, PolyFillType fill = pftNonZero);
+
 class ClipperZIntersectionVisitor {
 public:
     using Intersection  = std::pair<coord_t, coord_t>;

@@ -7973,9 +7973,7 @@ double min_object_distance(const ConfigBase &cfg)
     return ret;
 }
 
-// Feature-filament keys that carry the legacy "1 = default" ambiguity; see the declaration
-// in PrintConfig.hpp. Invoked from the 3MF project-open flow only (version-gated), so an
-// explicit "1" written by the current semantics survives save/load round trips.
+// Feature-filament keys that carry the legacy "1 = default"
 static const std::vector<std::string> legacy_feature_filament_keys()
 {
     static const std::vector<std::string> keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};

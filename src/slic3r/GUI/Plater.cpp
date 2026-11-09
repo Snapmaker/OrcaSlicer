@@ -506,8 +506,8 @@ static void collect_feature_filament_slots_from_global_config(
     int num_filaments,
     std::set<int>& used_slots_0_based)
 {
-    static const std::vector<const char*> feature_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
-    for (const char* key : feature_keys) {
+    const std::vector<std::string> feature_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
+    for (const std::string& key : feature_keys) {
         const ConfigOptionInt* option = global_config.option<ConfigOptionInt>(key);
         if (option == nullptr)
             continue;

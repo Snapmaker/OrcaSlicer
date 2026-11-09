@@ -3296,12 +3296,13 @@ PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &defau
     int default_feature_filament = std::max(1, volume.extruder_id());
     if (layer_range_config != nullptr) {
         if (const ConfigOptionInt *range_extruder = layer_range_config->opt<ConfigOptionInt>(key_extruder);
-            range_extruder != nullptr && range_extruder->value > 0)
-            default_feature_filament = range_extruder->value;
+            range_extruder != nullptr && range_extruder->value > 0){
+                default_feature_filament = range_extruder->value;
+            }
     }
     resolve_feature_filament_to_default(config.sparse_infill_filament, default_feature_filament, num_extruders);
-    resolve_feature_filament_to_default(config.wall_filament,          default_feature_filament, num_extruders);
-    resolve_feature_filament_to_default(config.solid_infill_filament,  default_feature_filament, num_extruders);
+    resolve_feature_filament_to_default(config.wall_filament, default_feature_filament, num_extruders);
+    resolve_feature_filament_to_default(config.solid_infill_filament, default_feature_filament, num_extruders);
     if (config.sparse_infill_density.value < 0.00011f)
         // Switch of infill for very low infill rates, also avoid division by zero in infill generator for these very low rates.
         // See GH issue #5910.

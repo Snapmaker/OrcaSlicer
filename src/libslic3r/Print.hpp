@@ -651,11 +651,6 @@ private:
     static bool infill_only_where_needed;
 };
 
-// Build the PrintRegionConfig of a ModelVolume: start from the print's (or a parent region's)
-// config, override with the ModelObject / ModelVolume / material / layer-range configs, then
-// resolve the feature-filament keys (wall/sparse/solid): "Default" (0) or an out-of-range value
-// falls back to the object/part filament (layer-range "extruder" -> volume "extruder" ->
-// object "extruder" -> 1), so the returned config always holds 1..num_extruders for these keys.
 PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders);
 
 struct FakeWipeTower

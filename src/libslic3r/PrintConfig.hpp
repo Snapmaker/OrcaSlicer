@@ -2049,9 +2049,6 @@ private:
     static uint64_t             s_last_timestamp;
 };
 
-// Legacy-project migration: map the pre-2.5.0 default "1" of the feature-filament keys
-// (wall/sparse_infill/solid_infill_filament) to "0" ("Default"); explicit values are kept.
-// Called from the version-gated 3MF project-open flow only. Returns true if anything changed.
 bool migrate_legacy_feature_filament_default(DynamicPrintConfig &config);
 bool migrate_legacy_feature_filament_default(ModelConfig &config);
 

@@ -25,6 +25,7 @@ add_executable(${_TEST_NAME}_tests
 	test_gcode_processor.cpp
 	test_adaptive_pa.cpp
 	test_wipe_tower.cpp
+	test_triangle_mesh_slicer.cpp
 	)
 find_package(JPEG REQUIRED)
 find_package(PNG REQUIRED)

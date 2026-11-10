@@ -16,6 +16,7 @@ inline constexpr char kAppBundleName[] = "Snapmaker Orca.app";
 inline constexpr char kDataDirName[]  = "Snapmaker_Orca";
 inline constexpr char kHelperFileName[] = "Snapmaker Orca Monitor";
 inline constexpr char kWatchFileName[]  = "watch.json";
+inline constexpr char kLogFileName[]    = "watcher.log";
 
 inline std::filesystem::path home_path()
 {

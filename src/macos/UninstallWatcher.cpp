@@ -4,6 +4,7 @@
 
 #include "macos/UninstallWatcherNames.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
@@ -30,6 +31,19 @@
 extern char** environ;
 
 namespace {
+
+// Track the helper child so a SIGTERM from launchctl bootout can close a pending
+// dialog before the watcher exits; otherwise osascript may outlive its parent
+// and leave a modal window whose answer nobody reads.
+volatile sig_atomic_t g_running_child = 0;
+
+void terminate_running_child(int)
+{
+    const pid_t pid = static_cast<pid_t>(g_running_child);
+    if (pid > 0)
+        ::kill(pid, SIGKILL);
+    _exit(0);
+}
 
 struct CommandResult {
     int         exit_code = -1;
@@ -64,9 +78,25 @@ CommandResult run_command(const std::vector<std::string>& args, bool capture)
         argv.push_back(const_cast<char*>(arg.c_str()));
     argv.push_back(nullptr);
 
-    pid_t pid = 0;
-    const int rc = posix_spawn(&pid, argv[0], &actions, nullptr, argv.data(), environ);
+    pid_t    pid = 0;
+    sigset_t blocked;
+    sigset_t previous;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGTERM);
+    ::sigprocmask(SIG_BLOCK, &blocked, &previous);
+
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setsigmask(&attr, &previous);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGMASK);
+
+    const int rc = posix_spawn(&pid, argv[0], &actions, &attr, argv.data(), environ);
+    posix_spawnattr_destroy(&attr);
     posix_spawn_file_actions_destroy(&actions);
+    if (rc == 0)
+        g_running_child = static_cast<sig_atomic_t>(pid);
+    ::sigprocmask(SIG_SETMASK, &previous, nullptr);
+
     if (capture)
         close(pipefd[1]);
     if (rc != 0) {
@@ -83,8 +113,10 @@ CommandResult run_command(const std::vector<std::string>& args, bool capture)
         close(pipefd[0]);
     }
 
-    int status = 0;
-    if (waitpid(pid, &status, 0) < 0)
+    int         status = 0;
+    const pid_t waited = waitpid(pid, &status, 0);
+    g_running_child    = 0;
+    if (waited < 0)
         return result;
     result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     return result;
@@ -214,6 +246,26 @@ bool language_is_chinese(const std::string& tag)
     return ascii_lower(tag).rfind("zh", 0) == 0;
 }
 
+// Old-style plist output is `( en, "zh-Hans", ... )`: plain language codes are
+// unquoted, so use the first array element rather than the first quoted string.
+std::string first_apple_language(const std::string& output)
+{
+    const auto open = output.find('(');
+    std::size_t pos = open == std::string::npos ? 0 : open + 1;
+    while (pos < output.size() && std::isspace(static_cast<unsigned char>(output[pos])))
+        ++pos;
+    if (pos >= output.size())
+        return {};
+    if (output[pos] == '"') {
+        const auto close = output.find('"', pos + 1);
+        if (close == std::string::npos)
+            return {};
+        return output.substr(pos + 1, close - pos - 1);
+    }
+    const auto end = output.find_first_of(",)\r\n", pos);
+    return output.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+}
+
 // Software language wins when Snapmaker Orca.conf has one. Otherwise use the macOS preferred language.
 bool prompt_in_chinese()
 {
@@ -225,11 +277,7 @@ bool prompt_in_chinese()
     }
 
     const CommandResult languages = run_command({"/usr/bin/defaults", "read", "-g", "AppleLanguages"}, true);
-    const auto open = languages.output.find('"');
-    const auto close = open == std::string::npos ? std::string::npos : languages.output.find('"', open + 1);
-    if (open == std::string::npos || close == std::string::npos)
-        return false;
-    return language_is_chinese(languages.output.substr(open + 1, close - open - 1));
+    return language_is_chinese(first_apple_language(languages.output));
 }
 
 Choice ask_user()
@@ -395,7 +443,7 @@ void remove_helper_dir()
     if (!SnapmakerUninstall::is_unredirected_user_path(dir))
         return;
 
-    const std::string log_name = "watcher.log";
+    const std::string log_name = SnapmakerUninstall::kLogFileName;
     std::error_code ec;
     std::filesystem::directory_iterator it(dir, ec), end;
     if (ec) {
@@ -462,12 +510,15 @@ void remove_user_data_dir(const std::filesystem::path& path)
 
 int main()
 {
+    std::signal(SIGTERM, terminate_running_child);
+
     if (geteuid() == 0) {
         log_line("refusing to run as root");
         return 0;
     }
 
     log_line("watching for a Trash uninstall");
+    unsigned retry_delay = 30;
     for (;;) {
         const WatchState state = load_state();
         if (!state.valid || !state.seen) {
@@ -489,6 +540,8 @@ int main()
             finish(true);
         if (choice == Choice::KeepData)
             finish(false);
-        std::this_thread::sleep_for(std::chrono::seconds(30));
+        // Bound the retry log growth when the dialog keeps failing.
+        std::this_thread::sleep_for(std::chrono::seconds(retry_delay));
+        retry_delay = std::min(retry_delay * 2, 300u);
     }
 }

@@ -7,12 +7,17 @@
 
 #include <wx/stdpaths.h>
 
+#include <algorithm>
+#include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <fcntl.h>
+#include <signal.h>
 #include <spawn.h>
 #include <sys/file.h>
 #include <sys/wait.h>
@@ -23,9 +28,10 @@ extern char** environ;
 namespace Slic3r { namespace GUI {
 namespace {
 
-int run_quiet(const std::vector<std::string>& args)
+// launchctl is not critical for startup: bound every wait and degrade on timeout.
+int run_quiet(const std::vector<std::string>& args, std::chrono::steady_clock::time_point deadline)
 {
-    if (args.empty())
+    if (args.empty() || std::chrono::steady_clock::now() >= deadline)
         return -1;
 
     posix_spawn_file_actions_t actions;
@@ -45,10 +51,37 @@ int run_quiet(const std::vector<std::string>& args)
     if (rc != 0)
         return -1;
 
+    for (;;) {
+        int         status = 0;
+        const pid_t waited = ::waitpid(pid, &status, WNOHANG);
+        if (waited == pid)
+            return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        if (waited < 0)
+            return -1;
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+            break;
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+        std::this_thread::sleep_for(std::min(remaining, std::chrono::milliseconds(10)));
+    }
+
+    BOOST_LOG_TRIVIAL(warning) << "Timed out waiting for " << args.front();
+    ::kill(pid, SIGTERM);
+
+    const auto grace_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+    while (std::chrono::steady_clock::now() < grace_deadline) {
+        int         status = 0;
+        const pid_t waited = ::waitpid(pid, &status, WNOHANG);
+        if (waited == pid || waited < 0)
+            return -1;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    ::kill(pid, SIGKILL);
     int status = 0;
-    if (waitpid(pid, &status, 0) < 0)
-        return -1;
-    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    ::waitpid(pid, &status, 0);
+    return -1;
 }
 
 std::string xml_escape(const std::string& text)
@@ -86,8 +119,12 @@ bool write_text_atomic(const std::filesystem::path& path, const std::string& tex
         if (!out)
             return false;
         out << text;
-        if (!out)
+        out.close();
+        if (!out) {
+            std::error_code remove_ec;
+            std::filesystem::remove(tmp, remove_ec);
             return false;
+        }
     }
     std::error_code ec;
     std::filesystem::rename(tmp, path, ec);
@@ -126,24 +163,39 @@ bool files_equal(const boost::filesystem::path& left, const boost::filesystem::p
 class FileLock
 {
 public:
-    explicit FileLock(const std::filesystem::path& path)
+    FileLock(const std::filesystem::path& path, std::chrono::steady_clock::time_point deadline)
     {
         fd_ = ::open(path.c_str(), O_CREAT | O_RDWR, 0644);
-        if (fd_ >= 0)
-            ::flock(fd_, LOCK_EX);
+        if (fd_ < 0)
+            return;
+        for (;;) {
+            if (::flock(fd_, LOCK_EX | LOCK_NB) == 0) {
+                locked_ = true;
+                return;
+            }
+            if (errno != EWOULDBLOCK && errno != EINTR)
+                return;
+            if (std::chrono::steady_clock::now() >= deadline)
+                return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
     }
     ~FileLock()
     {
         if (fd_ >= 0) {
-            ::flock(fd_, LOCK_UN);
+            if (locked_)
+                ::flock(fd_, LOCK_UN);
             ::close(fd_);
         }
     }
     FileLock(const FileLock&) = delete;
     FileLock& operator=(const FileLock&) = delete;
 
+    bool locked() const { return locked_; }
+
 private:
-    int fd_ = -1;
+    int  fd_     = -1;
+    bool locked_ = false;
 };
 
 std::filesystem::path current_bundle_path()
@@ -160,10 +212,10 @@ std::string launchd_domain()
     return std::string("gui/") + std::to_string(getuid());
 }
 
-bool service_loaded()
+bool service_loaded(std::chrono::steady_clock::time_point deadline)
 {
     const std::string target = launchd_domain() + "/" + SnapmakerUninstall::kLabel;
-    return run_quiet({"/bin/launchctl", "print", target}) == 0;
+    return run_quiet({"/bin/launchctl", "print", target}, deadline) == 0;
 }
 
 } // namespace
@@ -197,7 +249,12 @@ void ensure_macos_uninstall_watcher()
         return;
     }
 
-    FileLock lock(helper_dir / ".register.lock");
+    const auto lock_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    FileLock   lock(helper_dir / ".register.lock", lock_deadline);
+    if (!lock.locked()) {
+        BOOST_LOG_TRIVIAL(warning) << "Could not acquire the uninstaller registration lock";
+        return;
+    }
 
     const std::string executable = wxStandardPaths::Get().GetExecutablePath().ToUTF8().data();
     const boost::filesystem::path seed = boost::filesystem::path(executable).parent_path() / SnapmakerUninstall::kHelperFileName;
@@ -269,12 +326,13 @@ void ensure_macos_uninstall_watcher()
         "    <integer>10</integer>\n"
         "    <key>StandardErrorPath</key>\n"
         "    <string>" +
-        xml_escape((helper_dir / "watcher.log").string()) +
+        xml_escape((helper_dir / SnapmakerUninstall::kLogFileName).string()) +
         "</string>\n"
         "</dict>\n"
         "</plist>\n";
 
-    const bool loaded = service_loaded();
+    const auto launchctl_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    const bool loaded             = service_loaded(launchctl_deadline);
     if (!loaded || replaced) {
         if (!write_text_atomic(plist_path, plist)) {
             BOOST_LOG_TRIVIAL(error) << "Failed to write LaunchAgent plist";
@@ -285,11 +343,11 @@ void ensure_macos_uninstall_watcher()
                                      ec);
     }
 
-    run_quiet({"/bin/launchctl", "enable", launchd_domain() + "/" + SnapmakerUninstall::kLabel});
+    run_quiet({"/bin/launchctl", "enable", launchd_domain() + "/" + SnapmakerUninstall::kLabel}, launchctl_deadline);
 
     if (!loaded) {
-        const int rc = run_quiet({"/bin/launchctl", "bootstrap", launchd_domain(), plist_path.string()});
-        if (rc != 0 && !service_loaded())
+        const int rc = run_quiet({"/bin/launchctl", "bootstrap", launchd_domain(), plist_path.string()}, launchctl_deadline);
+        if (rc != 0 && !service_loaded(launchctl_deadline))
             BOOST_LOG_TRIVIAL(error) << "launchctl bootstrap failed for " << SnapmakerUninstall::kLabel << ", exit " << rc;
         else
             BOOST_LOG_TRIVIAL(info) << "Registered uninstaller watcher " << SnapmakerUninstall::kLabel;
@@ -299,9 +357,9 @@ void ensure_macos_uninstall_watcher()
     if (replaced) {
         // bootout first so launchd drops the previous program path; kickstart would
         // keep running the previous binary.
-        run_quiet({"/bin/launchctl", "bootout", launchd_domain() + "/" + SnapmakerUninstall::kLabel});
-        const int rc = run_quiet({"/bin/launchctl", "bootstrap", launchd_domain(), plist_path.string()});
-        if (rc != 0 && !service_loaded())
+        run_quiet({"/bin/launchctl", "bootout", launchd_domain() + "/" + SnapmakerUninstall::kLabel}, launchctl_deadline);
+        const int rc = run_quiet({"/bin/launchctl", "bootstrap", launchd_domain(), plist_path.string()}, launchctl_deadline);
+        if (rc != 0 && !service_loaded(launchctl_deadline))
             BOOST_LOG_TRIVIAL(warning) << "launchctl bootstrap failed for updated Snapmaker Orca Monitor, exit " << rc;
         else
             BOOST_LOG_TRIVIAL(info) << "Replaced the existing uninstaller watcher";

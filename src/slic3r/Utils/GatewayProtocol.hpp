@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace Slic3r { namespace Gateway {
 
@@ -50,6 +51,22 @@ struct CurrentDevice
     std::string serial_number;
 };
 
+// One entry of the CLI's query.device.list result.
+struct KnownDevice
+{
+    std::string serial_number;
+    std::string ip;
+    bool        is_lan{true};
+    bool        connected{false};
+};
+
+struct DeviceList
+{
+    std::vector<KnownDevice> devices;
+    // Device the CLI considers current (last selected), even when it is not connected.
+    std::string current_serial_number;
+};
+
 struct HttpResponse
 {
     unsigned    status{0};
@@ -82,6 +99,13 @@ GatewayError                  parse_health(const std::string& body, HealthInfo& 
 std::string                   parse_device_sn(const nlohmann::json& params);
 std::optional<CurrentDevice>  parse_current_device(const nlohmann::json& result);
 std::optional<nlohmann::json> parse_device_object_query_result(const nlohmann::json& result);
+std::optional<DeviceList>     parse_device_list(const nlohmann::json& result);
+// Picks the device to reconnect at startup: the CLI's current device first, then the device the
+// slicer last saw connected. Only LAN devices with a known IP qualify, and nothing is picked while
+// any device is already connected.
+std::optional<KnownDevice>    select_auto_connect_device(const DeviceList& list, const std::string& remembered_serial_number);
+// Params for action.device.connect, matching what the Device page sends for a LAN device.
+nlohmann::json                build_device_connect_params(const KnownDevice& device);
 RpcFrame                      classify_jsonrpc_message(const nlohmann::json& message);
 std::optional<nlohmann::json> parse_json_object(const std::string& body);
 

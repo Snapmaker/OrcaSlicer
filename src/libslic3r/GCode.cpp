@@ -9356,6 +9356,9 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
             gcode += prime_gcode;
             gcode += ";" + GCodeProcessor::Toolchange_Prime_End_Tag + "\n";
         }
+        // The prime G-code may run the part fan (the U1 one cools the strand at full speed before cutting it), so have the
+        // CoolingBuffer set the fan back to the speed it had before the block.
+        gcode += ";_FORCE_RESUME_FAN_SPEED\n";
         // A block that restores the tool's retraction in the purge chute (a line marked "restore retraction") leaves the
         // nozzle full, so the writer must not unretract it again on the part.
         if (m_writer.extruder() && prime_gcode.find("restore retraction") != std::string::npos)

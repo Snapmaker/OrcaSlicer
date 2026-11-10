@@ -373,6 +373,13 @@ encoding_check(app_common)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/Snapmaker_Orca.rc.in ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/Snapmaker_Orca.manifest.in ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.manifest @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/osx/Info.plist.in ${CMAKE_CURRENT_BINARY_DIR}/Info.plist @ONLY)
+if (APPLE)
+    # The watcher copy step needs the main executable's directory without depending on the executable.
+    if (CMAKE_VERSION VERSION_LESS 3.19)
+        message(FATAL_ERROR "macOS builds require CMake 3.19 or newer to stage the uninstall watcher")
+    endif()
+    cmake_policy(SET CMP0112 NEW)
+endif()
 if (WIN32)
     add_library(Snapmaker_Orca SHARED Snapmaker_Orca.cpp Snapmaker_Orca.hpp)
 else ()
@@ -385,10 +392,39 @@ if (APPLE)
     target_compile_features(UninstallWatcher PRIVATE cxx_std_17)
     set_target_properties(UninstallWatcher PROPERTIES
         OUTPUT_NAME "Snapmaker Orca Monitor"
+        MACOSX_BUNDLE FALSE
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/uninstall-watcher"
         BUILD_RPATH ""
         INSTALL_RPATH "")
     target_link_options(UninstallWatcher PRIVATE
         "LINKER:-sectcreate,__TEXT,__info_plist,${CMAKE_CURRENT_SOURCE_DIR}/macos/UninstallWatcher-Info.plist")
+    add_custom_command(TARGET UninstallWatcher POST_BUILD
+        COMMAND /usr/bin/codesign --force --sign - "$<TARGET_FILE:UninstallWatcher>"
+        COMMENT "Signing Snapmaker Orca Monitor"
+        VERBATIM)
+
+    if (XCODE AND CMAKE_MACOSX_BUNDLE)
+        # Let Xcode copy the watcher so it also re-signs the bundle when the watcher changes.
+        set(watcher_stage_dir "${CMAKE_CURRENT_BINARY_DIR}/watcher-stage")
+        set(watcher_stage_file "${watcher_stage_dir}/Snapmaker Orca Monitor")
+        add_custom_command(OUTPUT "${watcher_stage_file}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${watcher_stage_dir}"
+            COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:UninstallWatcher>" "${watcher_stage_file}"
+            DEPENDS UninstallWatcher
+            VERBATIM)
+        set_source_files_properties("${watcher_stage_file}" PROPERTIES MACOSX_PACKAGE_LOCATION MacOS)
+        target_sources(Snapmaker_Orca PRIVATE "${watcher_stage_file}")
+    else()
+        # Refresh the copy even when only the watcher was rebuilt.
+        add_custom_target(StageUninstallWatcher
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Snapmaker_Orca>"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:UninstallWatcher>" "$<TARGET_FILE_DIR:Snapmaker_Orca>/Snapmaker Orca Monitor"
+            DEPENDS UninstallWatcher
+            COMMENT "Copying Snapmaker Orca Monitor next to Snapmaker Orca"
+            VERBATIM)
+        add_dependencies(Snapmaker_Orca StageUninstallWatcher)
+    endif()
 endif ()
 
 if (MINGW)
@@ -632,14 +668,6 @@ else ()
                 COMMENT "Updating rpath for libsentry.dylib"
                 VERBATIM)
         endif()
-    endif()
-    if (APPLE)
-        add_dependencies(Snapmaker_Orca UninstallWatcher)
-        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:UninstallWatcher>" "$<TARGET_FILE_DIR:Snapmaker_Orca>/Snapmaker Orca Monitor"
-            COMMAND sh -c "codesign --force --sign - '$<TARGET_FILE_DIR:Snapmaker_Orca>/Snapmaker Orca Monitor' 2>/dev/null || true"
-            COMMENT "Copying Snapmaker Orca Monitor next to Snapmaker Orca"
-            VERBATIM)
     endif()
 endif ()
 

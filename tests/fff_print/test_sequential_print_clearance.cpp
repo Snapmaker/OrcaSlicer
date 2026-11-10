@@ -82,6 +82,20 @@ bool reports_too_tall(const Print &print)
     return Print::sequential_print_clearance_valid(print).string.find("too tall") != std::string::npos;
 }
 
+// A slab carrying a fin of the given Y width above the rod, at its back (+Y) or front (-Y) edge.
+TriangleMesh slab_with_fin_width(bool fin_at_back, double fin_y)
+{
+    const double slab_x = 40, slab_y = 30, slab_z = 2;
+    const double fin_x = 8, fin_z = 32;
+
+    TriangleMesh slab = box(slab_x, slab_y, slab_z);
+    TriangleMesh fin  = box(fin_x, fin_y, fin_z);
+    fin.translate(static_cast<float>(slab_x / 2 - fin_x / 2),
+                  static_cast<float>(fin_at_back ? slab_y - fin_y : 0.0), 0.0f);
+    slab.merge(fin);
+    return slab;
+}
+
 } // namespace
 
 SCENARIO("Sequential print clearance: a valid order is searched for, not assumed", "[SequentialClearance]")
@@ -175,6 +189,88 @@ SCENARIO("Sequential print clearance: short objects are never constrained", "[Se
         THEN("no error is reported")
         {
             REQUIRE_FALSE(reports_too_tall(print));
+        }
+    }
+}
+
+SCENARIO("Sequential print clearance: only one object may claim the last slot", "[SequentialClearance]")
+{
+    GIVEN("two objects taller than height_to_lid sharing a Y band")
+    {
+        // TC-04: each object needs the single "last" slot (height > hc1). One of them must
+        // print earlier and is then capped below its own height, so no order works and the
+        // check must still refuse to slice.
+        Print print;
+        Model model;
+        DynamicPrintConfig config = sequential_config();
+        init_print({ box(40, 40, 150), box(40, 40, 150) }, print, model, config);
+        place(print, model, config, { Vec2d(60, 130), Vec2d(190, 130) });
+
+        THEN("the error is still reported")
+        {
+            REQUIRE(reports_too_tall(print));
+        }
+    }
+}
+
+SCENARIO("Sequential print clearance: baseline - narrow above-rod material is missed", "[SequentialClearance]")
+{
+    GIVEN("two slabs whose 0.15 mm fins face each other")
+    {
+        // BL-02 baseline (known limitation, do not file): the +-0.1 mm tolerance hollows out
+        // any above-rod interval narrower than 0.2 mm, so a genuinely colliding thin fin
+        // passes the check today.
+        Print print;
+        Model model;
+        DynamicPrintConfig config = sequential_config();
+        init_print({ slab_with_fin_width(false, 0.15), slab_with_fin_width(true, 0.15) }, print, model, config);
+        place(print, model, config, { Vec2d(60, 100), Vec2d(190, 60) });
+
+        THEN("no error is reported (known miss)")
+        {
+            REQUIRE_FALSE(reports_too_tall(print));
+        }
+    }
+
+    GIVEN("the same slabs with fins exactly 0.2 mm wide")
+    {
+        // BL-04 baseline: at exactly the tolerance width the interval shrinks to zero and
+        // the strict > 0 overlap test treats it as no collision, so the boundary case is
+        // not detected today either.
+        Print print;
+        Model model;
+        DynamicPrintConfig config = sequential_config();
+        init_print({ slab_with_fin_width(false, 0.2), slab_with_fin_width(true, 0.2) }, print, model, config);
+        place(print, model, config, { Vec2d(60, 100), Vec2d(190, 60) });
+
+        THEN("no error is reported (boundary case)")
+        {
+            REQUIRE_FALSE(reports_too_tall(print));
+        }
+    }
+}
+
+SCENARIO("Sequential print clearance: baseline - sunk over-lid object forces a false error", "[SequentialClearance]")
+{
+    GIVEN("a 150 mm object next to one sunk so far that its world top stays under the rod")
+    {
+        // BL-03 baseline (known limitation, do not file): must_be_last uses each object's
+        // LOCAL height, so the sunk 150 mm object (world top z = 20 < 27.5 rod) still claims
+        // the single "last" slot beside the other 150 mm object. The ordering becomes
+        // unsolvable, the list order is kept, and the tall first-printed object is then
+        // capped by the sunk object's FULL footprint even though the rod can never reach it
+        // - a false "too tall" error today.
+        Print print;
+        Model model;
+        DynamicPrintConfig config = sequential_config();
+        init_print({ box(40, 40, 150), box(40, 40, 150) }, print, model, config);
+        model.objects[0]->instances.front()->set_offset(Vec3d(190, 130, 0));
+        model.objects[1]->instances.front()->set_offset(Vec3d(60, 130, -130));
+        print.apply(model, config);
+
+        THEN("the tall object is reported too tall (known false positive)")
+        {
+            REQUIRE(reports_too_tall(print));
         }
     }
 }

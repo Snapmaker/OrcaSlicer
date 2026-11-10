@@ -33,6 +33,13 @@ add_executable(${_TEST_NAME}_tests
     test_indexed_triangle_set.cpp
 	TestMD5.cpp
 	test_flush_vol_calc.cpp
+	test_triangulation.cpp
+	test_tesselate.cpp
+	test_arc_fitter.cpp
+	test_wipe_tower2.cpp
+	test_calib.cpp
+	test_variable_width.cpp
+	test_arachne.cpp
     ../libnest2d/printer_parts.cpp
 	)
 

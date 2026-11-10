@@ -373,6 +373,13 @@ encoding_check(app_common)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/Snapmaker_Orca.rc.in ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/Snapmaker_Orca.manifest.in ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.manifest @ONLY)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/osx/Info.plist.in ${CMAKE_CURRENT_BINARY_DIR}/Info.plist @ONLY)
+if (APPLE AND NOT (XCODE AND CMAKE_MACOSX_BUNDLE))
+    if (CMAKE_VERSION VERSION_LESS 3.19)
+        message(FATAL_ERROR "Staging the macOS uninstall watcher requires CMake 3.19 or newer for this build")
+    endif()
+    # Set this before creating Snapmaker_Orca so TARGET_FILE_DIR does not add a dependency on it.
+    cmake_policy(SET CMP0112 NEW)
+endif()
 if (WIN32)
     add_library(Snapmaker_Orca SHARED Snapmaker_Orca.cpp Snapmaker_Orca.hpp)
 else ()
@@ -408,11 +415,6 @@ if (APPLE)
         set_source_files_properties("${watcher_stage_file}" PROPERTIES MACOSX_PACKAGE_LOCATION MacOS)
         target_sources(Snapmaker_Orca PRIVATE "${watcher_stage_file}")
     else()
-        # The watcher copy step needs the main executable's directory without depending on the executable.
-        if (CMAKE_VERSION VERSION_LESS 3.19)
-            message(FATAL_ERROR "macOS builds without Xcode require CMake 3.19 or newer to stage the uninstall watcher")
-        endif()
-        cmake_policy(SET CMP0112 NEW)
         # Refresh the copy even when only the watcher was rebuilt.
         add_custom_target(StageUninstallWatcher
             COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Snapmaker_Orca>"

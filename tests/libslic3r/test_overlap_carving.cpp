@@ -311,3 +311,34 @@ TEST_CASE("Seal regression model ownership follows the carving switch", "[overla
         }
     }
 }
+
+TEST_CASE("Toggling the carving switch invalidates the object slice cache", "[overlap_carving]")
+{
+    // GUI regression: flipping enable_overlap_area_carving goes through
+    // Print::apply as a print-config diff. The invalidation must tear down
+    // posSlice (where slices_to_regions consumes the switch) and its dependent
+    // steps; otherwise the stale region slices survive and re-slicing returns
+    // the previous result until the user moves geometry.
+    Slic3r::Model model;
+    Slic3r::ModelObject* object = model.add_object();
+    Slic3r::ModelVolume* base   = object->add_volume(Slic3r::make_cube(12., 12., 2.));
+    base->config.set("extruder", 1);
+    Slic3r::ModelVolume* detail = object->add_volume(Slic3r::make_cube(4., 4., 2.));
+    detail->config.set("extruder", 2);
+    object->add_instance();
+
+    Slic3r::Print print;
+    print.set_status_silent();
+    print.apply(model, carving_print_config(/*area_carving_on=*/false));
+    REQUIRE(print.objects().size() == 1);
+    print.get_object(0)->slice();
+    REQUIRE(print.get_object(0)->is_step_done(posSlice));
+
+    // Same entry point the GUI toggle uses: a config diff through Print::apply.
+    // Geometry is untouched, so without explicit invalidation every object step
+    // stays DONE and Print::process re-exports the cached slices.
+    print.apply(model, carving_print_config(/*area_carving_on=*/true));
+
+    CHECK_FALSE(print.get_object(0)->is_step_done(posSlice));
+    CHECK_FALSE(print.get_object(0)->is_step_done(posPerimeters));
+}

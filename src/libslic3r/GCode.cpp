@@ -2568,6 +2568,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     m_fan_mover.release();
 
     m_writer.set_is_bbl_machine(is_bbl_printers);
+    m_bed_temperature_extruders = first_layer_extruders(print);
 
     // How many times will be change_layer() called?
     // change_layer() in turn increments the progress bar status.
@@ -3072,10 +3073,10 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         this->placeholder_parser().set("bbl_bed_temperature_gcode", new ConfigOptionBool(false));
         this->placeholder_parser().set("bed_temperature_initial_layer", new ConfigOptionInts(*first_bed_temp_opt));
         this->placeholder_parser().set("bed_temperature", new ConfigOptionInts(*bed_temp_opt));
-        // BBS: the single bed temperature value accommodates the highest-temperature filament of the print
-        // (max over all used extruders instead of the initial extruder only).
+        // BBS: the single bed temperature value accommodates the highest-temperature filament printed on the
+        // first layer (max over those extruders instead of the initial extruder only).
         int bed_temp_single = 0;
-        for (const unsigned int extruder_id : print.extruders())
+        for (const unsigned int extruder_id : m_bed_temperature_extruders.empty() ? print.extruders() : m_bed_temperature_extruders)
             bed_temp_single = std::max(bed_temp_single, first_bed_temp_opt->get_at(extruder_id));
         this->placeholder_parser().set("bed_temperature_initial_layer_single", new ConfigOptionInt(bed_temp_single));
         this->placeholder_parser().set("bed_temperature_initial_layer_vector", new ConfigOptionString());
@@ -4017,14 +4018,45 @@ int GCode::get_bed_temperature(const int extruder_id, const bool is_first_layer,
     return bed_temp_opt->get_at(extruder_id);
 }
 
+// Filaments printed on the first layer (object, support, brim, skirt and wipe tower), the only ones touching the bed.
+// A print by object collects the first layer of every object. Empty if no layer prints anything.
+std::vector<unsigned int> GCode::first_layer_extruders(const Print& print)
+{
+    std::vector<unsigned int> extruders;
+    auto collect = [&extruders](const ToolOrdering& ordering) {
+        for (const LayerTools& layer_tools : ordering)
+            if (!layer_tools.extruders.empty()) {
+                append(extruders, layer_tools.extruders);
+                break;
+            }
+    };
+    if (print.config().print_sequence == PrintSequence::ByObject) {
+        for (const PrintObject* object : print.objects())
+            collect(ToolOrdering(*object, (unsigned int) -1));
+    } else {
+        collect(print.tool_ordering());
+    }
+    // A brim is printed by its object's wall filament (1-based extruder map). Count it explicitly so a printed brim
+    // always raises the bed temperature, whatever the tool ordering of the first layer.
+    for (const auto& [object_id, extruder] : getObjectExtruderMap(print)) {
+        auto brim = print.m_brimMap.find(object_id);
+        if (brim != print.m_brimMap.end() && !brim->second.empty() && extruder > 0)
+            extruders.push_back(extruder - 1);
+    }
+    sort_remove_duplicates(extruders);
+    return extruders;
+}
+
 // BBS
-// Max bed temperature over all used extruders (object/support/wipe tower/brim-introduced extruders),
-// so a compatible mixed print (e.g. PLA 65C + TPU 35C) always runs the highest bed temperature.
+// Max bed temperature over the extruders printing the first layer (object/support/wipe tower/brim-introduced
+// extruders), so a compatible mixed print (e.g. PLA 65C + TPU 35C) runs the highest bed temperature of the
+// filaments touching the bed. A filament that starts above the first layer, such as a PETG support interface
+// on a PLA part, does not count: heating the bed for it would soften the filament the part stands on.
 // A value of 0 means the filament does not support the current bed type, and is naturally skipped by max().
 int GCode::get_bed_temperature_max(const Print& print, const bool is_first_layer) const
 {
     int max_bed_temp = 0;
-    for (const unsigned int extruder_id : print.extruders())
+    for (const unsigned int extruder_id : m_bed_temperature_extruders.empty() ? print.extruders() : m_bed_temperature_extruders)
         max_bed_temp = std::max(
             max_bed_temp, get_bed_temperature(extruder_id, is_first_layer, print.config().curr_bed_type));
     return max_bed_temp;
@@ -4037,8 +4069,8 @@ int GCode::get_bed_temperature_max(const Print& print, const bool is_first_layer
 void GCode::_print_first_layer_bed_temperature(
     GCodeOutputStream& file, Print& print, const std::string& gcode, bool wait)
 {
-    // BBS: bed temperature accommodates the highest-temperature filament of the print
-    // (max over all used extruders instead of the first printing extruder only).
+    // BBS: bed temperature accommodates the highest-temperature filament of the first layer
+    // (max over its extruders instead of the first printing extruder only).
     int bed_temp = get_bed_temperature_max(print, true);
 
     // Is the bed temperature set by the provided custom G-code?
@@ -5471,8 +5503,8 @@ LayerResult GCode::process_layer(const Print& print,
                 gcode += m_writer.set_temperature(temperature, false, extruder.id());
         }
 
-        // BBS: bed temperature accommodates the highest-temperature filament of the print
-        // (max over all used extruders instead of the first extruder of this layer only).
+        // BBS: bed temperature accommodates the highest-temperature filament of the first layer
+        // (max over its extruders instead of the first extruder of this layer only).
         int bed_temp = get_bed_temperature_max(print, false);
         gcode += m_writer.set_bed_temperature(bed_temp);
         // Mark the temperature transition from 1st to 2nd layer to be finished.

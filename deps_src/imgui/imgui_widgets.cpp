@@ -4872,6 +4872,10 @@ bool ImGui::InputTextEx(const char* label, const char* hint, char* buf, int buf_
         state->InitialTextA.resize(buf_len + 1);    // UTF-8. we use +1 to make sure that .Data is always pointing to at least an empty string.
         memcpy(state->InitialTextA.Data, buf, buf_len + 1);
 
+        // Whether the live buffer still matches the text left in the state must be evaluated
+        // before the edition buffers below are reset (they invalidate TextA/TextAIsValid).
+        const bool state_text_matches_buf = (state->ID == id && state->TextAIsValid && strcmp(state->TextA.Data, buf) == 0);
+
         // Start edition
         const char* buf_end = NULL;
         state->TextW.resize(buf_size + 1);          // wchar count <= UTF-8 count. we use +1 to make sure that .Data is always pointing to at least an empty string.
@@ -4882,7 +4886,12 @@ bool ImGui::InputTextEx(const char* label, const char* hint, char* buf, int buf_
 
         // Preserve cursor position and undo/redo stack if we come back to same widget
         // FIXME: For non-readonly widgets we might be able to require that TextAIsValid && TextA == buf ? (untested) and discard undo stack if user buffer has changed.
-        const bool recycle_state = (state->ID == id && !init_changed_specs);
+        // Implement the FIXME above: recycle only when the buffer still matches the text we left in
+        // the state. Numeric inputs (BBLInputDouble/InputScalar) reformat their buffer (e.g. "%.2f")
+        // after a value is committed, so recycled stb undo records could reference positions past the
+        // new, shorter text; replaying them via Ctrl+Z text-undo then computes a negative length in
+        // STB_TEXTEDIT_INSERTCHARS' memmove and corrupts memory.
+        const bool recycle_state = (state_text_matches_buf && !init_changed_specs);
         if (recycle_state)
         {
             // Recycle existing cursor/selection/undo stack but clamp position

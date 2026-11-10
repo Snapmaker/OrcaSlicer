@@ -222,11 +222,20 @@ GatewayService::Dependencies make_dependencies(std::shared_ptr<ConnectionProcess
 
 struct RecordingProcessManager final : public ConnectionProcessManager
 {
-    std::atomic<int> terminate_calls{0};
+    std::atomic<int>           terminate_calls{0};
+    std::atomic<int>           takeover_calls{0};
+    std::atomic<std::uint16_t> takeover_port{0};
 
     using ConnectionProcessManager::ConnectionProcessManager;
 
     void terminate() override { terminate_calls.fetch_add(1); }
+
+    PortOwnerTakeoverResult terminate_port_owner(std::uint16_t port) override
+    {
+        takeover_calls.fetch_add(1);
+        takeover_port.store(port);
+        return PortOwnerTakeoverResult::TakenOver;
+    }
 };
 
 } // namespace
@@ -496,9 +505,13 @@ TEST_CASE("GatewayService force-kills the stale CLI process when a reconnect att
     GatewayService service(config, std::move(dependencies));
 
     REQUIRE(service.start("zh-CN"));
-    for (int i = 0; i < 1000 && manager->terminate_calls.load() == 0; ++i)
+    // The default grace window is two failed health checks, so takeover lands on the second timeout.
+    for (int i = 0; i < 2000 && manager->takeover_calls.load() == 0; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    // The first reconnect attempt terminates before the takeover happens, so terminate is already observable here.
     REQUIRE(manager->terminate_calls.load() >= 1);
+    REQUIRE(manager->takeover_port.load() == 8888);
+    REQUIRE(manager->takeover_calls.load() >= 1);
     service.stop();
 }
 

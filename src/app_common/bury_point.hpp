@@ -58,6 +58,7 @@
 #define BP_LOCAL_SERVER_STATUS "bury_point_local_server_status"
 #define BP_LOCAL_SERVER_ERROR_CODE "bury_point_local_server_error_code"
 
+#define BP_GATEWAY_TAKEOVER "bury_point_gateway_takeover"
 
 //device connect error info
 #define DEVICE_CONNECT_ERR "error_device_connect"

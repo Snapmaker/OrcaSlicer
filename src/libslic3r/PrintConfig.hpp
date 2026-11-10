@@ -2049,6 +2049,9 @@ private:
     static uint64_t             s_last_timestamp;
 };
 
+bool migrate_legacy_feature_filament_default(DynamicPrintConfig &config);
+bool migrate_legacy_feature_filament_default(ModelConfig &config);
+
 } // namespace Slic3r
 
 // Serialization through the Cereal library

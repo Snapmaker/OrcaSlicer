@@ -490,9 +490,8 @@ void ObjectList::create_objects_ctrl()
         return m_objects_model->GetDefaultExtruderIdx(GetSelection());
     });
     bmp_choice_renderer->set_has_default_extruder([this]() {
-        return true;
-        //return m_objects_model->GetVolumeType(GetSelection()) == ModelVolumeType::PARAMETER_MODIFIER ||
-        //       m_objects_model->GetItemType(GetSelection()) == itLayer;
+        return m_objects_model->GetVolumeType(GetSelection()) == ModelVolumeType::PARAMETER_MODIFIER ||
+               m_objects_model->GetItemType(GetSelection()) == itLayer;
     });
     AppendColumn(new wxDataViewColumn(_L("Fila."), bmp_choice_renderer,
         colFilament, m_columns_width[colFilament] * em, wxALIGN_CENTER_HORIZONTAL, 0));
@@ -761,8 +760,8 @@ void ObjectList::update_filament_values_for_items(const size_t filaments_count)
         auto object = (*m_objects)[i];
         wxString extruder;
         if (!object->config.has("extruder") || size_t(object->config.extruder()) > filaments_count) {
-            extruder = "0";
-            object->config.set_key_value("extruder", new ConfigOptionInt(0));
+            extruder = "1";
+            object->config.set_key_value("extruder", new ConfigOptionInt(1));
         }
         else {
             extruder = wxString::Format("%d", object->config.extruder());
@@ -1789,7 +1788,7 @@ void ObjectList::key_event(wxKeyEvent& event)
     //else if (event.GetUnicodeKey() == 'p')
     //    toggle_printable_state();
     else if (filaments_count() > 1) {
-        std::vector<wxChar> numbers = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' };
+        std::vector<wxChar> numbers = { '1', '2', '3', '4', '5', '6', '7', '8', '9' };
         wxChar key_char = event.GetUnicodeKey();
         if (std::find(numbers.begin(), numbers.end(), key_char) != numbers.end()) {
             long extruder_number;
@@ -2549,7 +2548,7 @@ void ObjectList::load_mesh_object(const TriangleMesh &mesh, const wxString &name
     new_volume->name = into_u8(name);
     // set a default extruder value, since user can't add it manually
     // BBS
-    new_object->config.set_key_value("extruder", new ConfigOptionInt(0));
+    new_object->config.set_key_value("extruder", new ConfigOptionInt(1));
     new_object->invalidate_bounding_box();
     new_object->translate(-bb.center());
 
@@ -6208,8 +6207,7 @@ void ObjectList::set_extruder_for_selected_items(const int extruder)
         int new_extruder = extruder;
         if (extruder == 0) {
             if (type & itObject) {
-                // 跟全局保持一致
-                new_extruder = 0;
+                new_extruder = 1;
             }
             else if ((type & itVolume) && (m_objects_model->GetVolumeType(sel_item) == ModelVolumeType::MODEL_PART)) {
                 new_extruder = m_objects_model->GetExtruderNumber(m_objects_model->GetParent(sel_item));

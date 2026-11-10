@@ -33,6 +33,7 @@ namespace Slic3r {
 class GCode;
 class Layer;
 class ModelObject;
+class ModelVolume;
 class Print;
 class PrintObject;
 class SupportLayer;
@@ -649,6 +650,8 @@ private:
     static bool clip_multipart_objects;
     static bool infill_only_where_needed;
 };
+
+PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders);
 
 struct FakeWipeTower
 {

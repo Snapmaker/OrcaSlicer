@@ -2742,19 +2742,19 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
         opt->value = boost::algorithm::clamp<int>(opt->value, 0, int(num_filaments));
     }
 
-    static const char* keys_1based[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
-    for (size_t i = 0; i < sizeof(keys_1based) / sizeof(keys_1based[0]); ++ i) {
-        std::string key = std::string(keys_1based[i]);
+    static const char* keys_feature_filament[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
+    for (size_t i = 0; i < sizeof(keys_feature_filament) / sizeof(keys_feature_filament[0]); ++ i) {
+        std::string key = std::string(keys_feature_filament[i]);
         auto *opt = dynamic_cast<ConfigOptionInt*>(out.option(key, false));
         assert(opt != nullptr);
         if (opt == nullptr) {
-            // Same defensive re-cast as above; these keys are 1-based.
+            // Same defensive re-cast as above; 0 = "Default" (object/part filament).
             out.erase(key);
-            out.set_key_value(key, new ConfigOptionInt(1));
+            out.set_key_value(key, new ConfigOptionInt(0));
             continue;
         }
-        if(opt->value < 1 || opt->value > int(num_filaments))
-            opt->value = 1;
+        if (opt->value < 0 || opt->value > int(num_filaments))
+            opt->value = 0;
     }
     out.option<ConfigOptionString >("print_settings_id",    true)->value  = this->prints.get_selected_preset_name();
     out.option<ConfigOptionStrings>("filament_settings_id", true)->values = this->filament_presets;

@@ -3250,27 +3250,26 @@ static constexpr const std::initializer_list<const std::string_view> keys_extrud
 
 static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPrintConfig &in)
 {
-    // 1) Copy the "extruder key to sparse_infill_filament and wall_filament.
-    auto *opt_extruder = in.opt<ConfigOptionInt>(key_extruder);
-    if (opt_extruder)
-        if (int extruder = opt_extruder->value; extruder != 0) {
-            // Not a default extruder.
-            out.sparse_infill_filament.value = extruder;
-            out.solid_infill_filament.value  = extruder;
-            out.wall_filament.value          = extruder;
-        }
-    // 2) Copy the rest of the values.
+    // Copy the rest of the values.
     for (auto it = in.cbegin(); it != in.cend(); ++ it)
         if (it->first != key_extruder)
             if (ConfigOption* my_opt = out.option(it->first, false); my_opt != nullptr) {
                 if (one_of(it->first, keys_extruders)) {
-                    // Ignore "default" extruders.
-                    int extruder = static_cast<const ConfigOptionInt*>(it->second.get())->value;
-                    if (extruder > 0)
-                        my_opt->setInt(extruder);
+                    // Ignore "default" filaments.
+                    int filament = static_cast<const ConfigOptionInt*>(it->second.get())->value;
+                    if (filament > 0)
+                        my_opt->setInt(filament);
                 } else
                     my_opt->set(it->second.get());
             }
+}
+
+static void resolve_feature_filament_to_default(ConfigOptionInt &opt, int default_filament, size_t num_total_filaments)
+{
+    if (default_filament < 1 || default_filament > (int)num_total_filaments)
+        default_filament = 1;
+    if (opt.value < 1 || opt.value > (int)num_total_filaments)
+        opt.value = default_filament;
 }
 
 PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders)
@@ -3291,10 +3290,19 @@ PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &defau
         assert(volume.is_model_part());
     	apply_to_print_region_config(config, *layer_range_config);
     }
-    // Clamp invalid extruders to the default extruder (with index 1).
-    clamp_exturder_to_default(config.sparse_infill_filament,       num_extruders);
-    clamp_exturder_to_default(config.wall_filament,    num_extruders);
-    clamp_exturder_to_default(config.solid_infill_filament, num_extruders);
+    // Resolve "Default" (0) and out-of-range feature filaments to the object/part filament
+    // (layer-range "extruder" -> volume "extruder" -> object "extruder" -> 1), so downstream
+    // consumers always see 1..num_extruders for these keys.
+    int default_feature_filament = std::max(1, volume.extruder_id());
+    if (layer_range_config != nullptr) {
+        if (const ConfigOptionInt *range_extruder = layer_range_config->opt<ConfigOptionInt>(key_extruder);
+            range_extruder != nullptr && range_extruder->value > 0){
+                default_feature_filament = range_extruder->value;
+            }
+    }
+    resolve_feature_filament_to_default(config.sparse_infill_filament, default_feature_filament, num_extruders);
+    resolve_feature_filament_to_default(config.wall_filament, default_feature_filament, num_extruders);
+    resolve_feature_filament_to_default(config.solid_infill_filament, default_feature_filament, num_extruders);
     if (config.sparse_infill_density.value < 0.00011f)
         // Switch of infill for very low infill rates, also avoid division by zero in infill generator for these very low rates.
         // See GH issue #5910.

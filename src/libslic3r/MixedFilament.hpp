@@ -487,7 +487,12 @@ public:
     // Persist mixed rows, including auto/deleted state, into the compact
     // project-settings string.
     std::string serialize_custom_entries();
-    void        load_custom_entries(const std::string& serialized, const std::vector<std::string>& filament_colours);
+    // Exact is for persistence: retain stored auto rows without merging newly
+    // generated pairs or depending on the user's auto-generation preference.
+    enum class LoadMode { MergeGenerated, Exact };
+    void load_custom_entries(const std::string&              serialized,
+                             const std::vector<std::string>& filament_colours,
+                             LoadMode                        mode = LoadMode::MergeGenerated);
 
     // ---- Pattern string functions -------------------------------------------
     // Normalize a manual mixed-pattern string into canonical form.

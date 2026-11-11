@@ -1,6 +1,8 @@
 # Mixed-filament refactor in the product port
 
-Branch: `product_proposal_merge_with_mf_refactor`. Product-port baseline: `687192c8ce` on `product_proposal_merge`. The implementation is adapted from FullSpectrum snapshot `ba00f1d661`, including its typed weighted-blend model and separation of mixed-filament responsibilities.
+The current development is grouped into seven requirements in [Mixed-Filament-Requirements.md](Mixed-Filament-Requirements.md).
+
+Branch: `refactor/mixed-filament-local-z-3mf`. Product-port baseline: `687192c8ce` on `product_proposal_merge`. The implementation is adapted from FullSpectrum snapshot `ba00f1d661`, including its typed weighted-blend model and separation of mixed-filament responsibilities.
 
 ## Model and ownership
 
@@ -21,6 +23,7 @@ Code lives in `src/libslic3r/MixedFilament/`:
 | `Common.cpp` | Numeric, cadence, and shared helpers |
 | `Definition.cpp` | Typed recipes and legacy adapters |
 | `LegacyRow.cpp` | Existing compact-row parsing and normalization |
+| `Serialization.cpp` | Typed recipe JSON and project-config compatibility adapters |
 | `Pattern.cpp` | Grouped manual filament sequences |
 | `Gradient.cpp` | Weighted component parsing and normalization |
 | `GradientPreview.cpp` | Product gradient stops, widths, sampling, and blended preview |
@@ -56,9 +59,9 @@ This port retains Snorca's multi-digit filament and manual-pattern encoding, fil
 
 Legacy compatibility is tested through repeated string loading/saving and the production Snorca 3MF exporter/importer. Static component IDs use the original compact encoding for IDs 1?9 and the existing slash-delimited encoding for higher IDs; manual patterns retain bracketed IDs. The tested 3MF round trip preserves stable IDs, component weights, gradient order/stops/widths, unavailable rows, object assignments, and painted triangles.
 
-Simple-mode rows retain their A/B cadence even when an old project also contains inactive multi-component weights. Legacy rows in either distribution mode keep their independent A/B percentage when the weighted recipe is unchanged. An explicit typed weight edit clears a stale compatibility value, so subsequent edits cannot resurrect it. The exporter uses the existing percentage field; no new serialized token or 3MF schema is introduced.
+Simple-mode rows retain their A/B cadence even when an old project also contains inactive multi-component weights. Legacy rows in either distribution mode keep their independent A/B percentage when the weighted recipe is unchanged. An explicit typed weight edit clears a stale compatibility value, so subsequent edits cannot resurrect it. The legacy adapter continues to use the existing percentage field.
 
-The refactor does not introduce FS image mapping, perimeter modulation, component-bias controls, descriptive color names, or the FS vNext 3MF package format. Existing project persistence is retained.
+The refactor does not introduce FS image mapping, perimeter modulation, component-bias controls, descriptive color names, or the FS vNext 3MF package format. The focused persistence follow-up adds authoritative `Metadata/mixed_filaments.json` alongside the legacy project-setting rows; see [Mixed-Filament-3MF.md](Mixed-Filament-3MF.md) for the schema, precedence rules, and older-version behavior. Image-map persistence remains documented for a later feature port.
 
 ## Validation
 

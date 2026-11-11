@@ -571,8 +571,12 @@ std::string MixedFilamentManager::serialize_custom_entries()
     return ss.str();
 }
 
-void MixedFilamentManager::load_custom_entries(const std::string& serialized, const std::vector<std::string>& filament_colours)
+void MixedFilamentManager::load_custom_entries(const std::string&              serialized,
+                                               const std::vector<std::string>& filament_colours,
+                                               LoadMode                        mode)
 {
+    if (mode == LoadMode::Exact)
+        set_mixed_filament_definitions({}, {});
     std::vector<MixedFilament> m_mixed = mixed_filament_legacy_rows();
     const size_t               n       = filament_colours.size();
     if (serialized.empty() || n < 2) {
@@ -664,7 +668,7 @@ void MixedFilamentManager::load_custom_entries(const std::string& serialized, co
             continue;
         }
 
-        if (!custom) {
+        if (!custom && mode == LoadMode::MergeGenerated) {
             const uint64_t key = canonical_pair_key(a, b);
             if (consumed_auto_pairs.count(key) != 0) {
                 ++skipped_rows;

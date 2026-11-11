@@ -48,6 +48,7 @@ namespace pt = boost::property_tree;
 #include <Eigen/Dense>
 #include "miniz_extension.hpp"
 #include "nlohmann/json.hpp"
+#include "libslic3r/MixedFilament/Serialization.hpp"
 
 #include "TextConfiguration.hpp"
 #include "EmbossShape.hpp"
@@ -1146,6 +1147,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
         //BBS: add plate data related logic
         // add backup & restore logic
+        void _extract_mixed_filaments_from_archive(mz_zip_archive& archive, DynamicPrintConfig& config);
         bool _load_model_from_file(std::string filename, Model& model, PlateDataPtrs& plate_data_list, std::vector<Preset*>& project_presets, DynamicPrintConfig& config, ConfigSubstitutionContext& config_substitutions, Import3mfProgressFn proFn = nullptr,
             BBLProject* project = nullptr, int plate_id = 0);
         bool _is_svg_shape_file(const std::string &filename) const;
@@ -1564,6 +1566,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             }
         }
 
+        _extract_mixed_filaments_from_archive(archive, config);
+
         //BBS: load the plate info into plate_data_list
         std::map<int, PlateData*>::iterator it = m_plater_data.begin();
         plate_data_list.clear();
@@ -1944,16 +1948,20 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 else if (!dont_load_config && boost::algorithm::istarts_with(name, METADATA_DIR) && boost::algorithm::iends_with(name, THUMBNAIL_EXTENSION)) {
                     //BBS parsing pattern thumbnail and plate thumbnails
                     _extract_file_from_archive(archive, stat);
-                }
-                else if (!dont_load_config && boost::algorithm::istarts_with(name, METADATA_DIR) && boost::algorithm::iends_with(name, CALIBRATION_INFO_EXTENSION)) {
+                } else if (boost::algorithm::iequals(name, MIXED_FILAMENTS_3MF_PATH)) {
+                    // Read after project settings, regardless of ZIP entry order.
+                } else if (!dont_load_config && boost::algorithm::istarts_with(name, METADATA_DIR) &&
+                           boost::algorithm::iends_with(name, CALIBRATION_INFO_EXTENSION)) {
                     //BBS parsing pattern config files
                     _extract_file_from_archive(archive, stat);
-                }
-                else {
+                } else {
                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" << __LINE__ << boost::format(", %1% skipped, already parsed or a directory or not supported\n")%name;
                 }
             }
         }
+
+        if (!dont_load_config)
+            _extract_mixed_filaments_from_archive(archive, config);
 
         lock.close();
 
@@ -2581,6 +2589,41 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 return;
             }
             ConfigBase::load_from_gcode_string_legacy(config, buffer.data(), config_substitutions);
+        }
+    }
+
+    void _BBS_3MF_Importer::_extract_mixed_filaments_from_archive(mz_zip_archive& archive, DynamicPrintConfig& config)
+    {
+        try {
+            std::optional<mz_uint> entry;
+            for (mz_uint i = 0; i < mz_zip_reader_get_num_files(&archive); ++i) {
+                mz_zip_archive_file_stat stat;
+                if (!mz_zip_reader_file_stat(&archive, i, &stat))
+                    throw std::runtime_error("Cannot read archive directory");
+                std::string name(stat.m_filename);
+                std::replace(name.begin(), name.end(), '\\', '/');
+                if (!boost::algorithm::iequals(name, MIXED_FILAMENTS_3MF_PATH))
+                    continue;
+                if (entry)
+                    throw std::runtime_error("Duplicate mixed-filament JSON entries");
+                entry = i;
+            }
+            if (!entry)
+                return; // Old project: keep its legacy recipes unchanged.
+
+            mz_zip_archive_file_stat stat;
+            if (!mz_zip_reader_file_stat(&archive, *entry, &stat))
+                throw std::runtime_error("Cannot read mixed-filament JSON entry");
+            std::string json(static_cast<size_t>(stat.m_uncomp_size), '\0');
+            if (!mz_zip_reader_extract_to_mem(&archive, *entry, json.data(), json.size(), 0))
+                throw std::runtime_error("Cannot extract mixed-filament JSON");
+            const auto definitions = deserialize_mixed_filaments_json(json, physical_filament_count_from_project_config(config));
+            // The existing GUI/config pipeline consumes compact rows. Replace
+            // that transport value only after the authoritative JSON validates.
+            config.set_key_value("mixed_filament_definitions", new ConfigOptionString(mixed_filaments_to_legacy(definitions)));
+        } catch (const std::exception& e) {
+            // Preserve the reason through Model::read_from_archive to the GUI.
+            throw Slic3r::RuntimeError(std::string("Unable to load ") + MIXED_FILAMENTS_3MF_PATH + ": " + e.what());
         }
     }
 
@@ -6356,6 +6399,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         stream << " <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\n";
         stream << " <Default Extension=\"model\" ContentType=\"application/vnd.ms-package.3dmanufacturing-3dmodel+xml\"/>\n";
         stream << " <Default Extension=\"png\" ContentType=\"image/png\"/>\n";
+        stream << " <Default Extension=\"json\" ContentType=\"application/json\"/>\n";
         stream << " <Default Extension=\"gcode\" ContentType=\"text/x.gcode\"/>\n";
         stream << "</Types>";
 
@@ -7567,10 +7611,26 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
     //BBS: add project config file logic for new json format
     bool _BBS_3MF_Exporter::_add_project_config_file_to_archive(mz_zip_archive& archive, const DynamicPrintConfig &config, Model& model)
     {
-        const std::string& temp_path = model.get_backup_path();
-        std::string temp_file = temp_path + std::string("/") + "_temp_1.config";
-        config.save_to_json(temp_file, std::string("project_settings"), std::string("project"), std::string(Snapmaker_VERSION));
-        return _add_file_to_archive(archive, BBS_PROJECT_CONFIG_FILE, temp_file);
+        try {
+            const size_t       physical_count = physical_filament_count_from_project_config(config);
+            const auto         definitions    = mixed_filaments_from_project_config(config, physical_count);
+            const auto         json           = serialize_mixed_filaments_json(definitions, physical_count);
+            DynamicPrintConfig compatible_config(config);
+            compatible_config.set_key_value("mixed_filament_definitions", new ConfigOptionString(mixed_filaments_to_legacy(definitions)));
+
+            const std::string temp_file = model.get_backup_path() + "/_temp_1.config";
+            compatible_config.save_to_json(temp_file, "project_settings", "project", Snapmaker_VERSION);
+            if (!_add_file_to_archive(archive, BBS_PROJECT_CONFIG_FILE, temp_file))
+                return false;
+            if (!mz_zip_writer_add_mem(&archive, MIXED_FILAMENTS_3MF_PATH, json.data(), json.size(), MZ_DEFAULT_COMPRESSION)) {
+                add_error(std::string("Unable to write ") + MIXED_FILAMENTS_3MF_PATH);
+                return false;
+            }
+            return true;
+        } catch (const std::exception& e) {
+            add_error(std::string("Unable to save mixed filaments: ") + e.what());
+            return false;
+        }
     }
 
     //BBS: add project embedded preset files

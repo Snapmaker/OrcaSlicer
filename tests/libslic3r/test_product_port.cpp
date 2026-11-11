@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include "libslic3r/MixedFilament.hpp"
+#include "libslic3r/MixedFilament/Serialization.hpp"
 #include "libslic3r/FullSpectrumKSPairResidual.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/GCode.hpp"
@@ -1116,7 +1117,8 @@ TEST_CASE("Legacy 3MF recipes and painted assignments survive refactored resaves
         CHECK(loaded_model.objects.front()->config.opt_int("extruder") == 13);
         CHECK(loaded_model.objects.front()->volumes.front()->mmu_segmentation_facets.get_triangle_as_string(0) == painted_triangle);
         REQUIRE(loaded_config.option<ConfigOptionString>("mixed_filament_definitions"));
-        CHECK(loaded_config.opt_string("mixed_filament_definitions") == config.opt_string("mixed_filament_definitions"));
+        CHECK(loaded_config.opt_string("mixed_filament_definitions") ==
+              mixed_filaments_to_legacy(mixed_filaments_from_project_config(config, colors.size())));
         MixedFilamentManager manager;
         manager.load_custom_entries(loaded_config.opt_string("mixed_filament_definitions"), colors);
         manager.apply_gradient_settings(0, .04f, .16f, false);

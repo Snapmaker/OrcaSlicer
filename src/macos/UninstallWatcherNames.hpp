@@ -90,6 +90,14 @@ inline std::filesystem::path http_storages_dir()
     return home / "Library" / "HTTPStorages" / kBundleId;
 }
 
+inline std::filesystem::path preferences_plist_path()
+{
+    const auto home = home_path();
+    if (home.empty())
+        return {};
+    return home / "Library" / "Preferences" / (std::string(kBundleId) + ".plist");
+}
+
 inline bool is_managed_install_path(const std::filesystem::path& bundle)
 {
     if (bundle.empty() || !bundle.is_absolute())

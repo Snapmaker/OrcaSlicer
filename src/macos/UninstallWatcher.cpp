@@ -433,6 +433,26 @@ void remove_http_cookie_files()
         log_line("failed to enumerate HTTP storage " + dir.string() + ": " + ec.message());
 }
 
+void remove_preferences_plist()
+{
+    namespace fs = std::filesystem;
+    const auto path = SnapmakerUninstall::preferences_plist_path();
+    if (path.empty())
+        return;
+
+    std::error_code ec;
+    const auto status = fs::symlink_status(path, ec);
+    if (status.type() == fs::file_type::not_found && (!ec || ec == std::errc::no_such_file_or_directory))
+        return;
+    if (ec || !fs::is_regular_file(status) || !SnapmakerUninstall::is_unredirected_user_path(path)) {
+        log_line("could not safely remove preferences file " + path.string());
+        return;
+    }
+
+    if (::unlink(path.c_str()) != 0)
+        log_line("failed to remove preferences file " + path.string() + ": " + std::strerror(errno));
+}
+
 // Removes the watcher's own files: the copy of the binary, watch.json and the log.
 // User data lives beside Helpers and is only touched when delete_user_data is set.
 // Entries are removed one by one so watcher.log stays in place until the end:
@@ -491,11 +511,12 @@ void remove_user_data_dir(const std::filesystem::path& path)
     run_command({"/bin/launchctl", "disable", gui_domain() + "/" + SnapmakerUninstall::kLabel}, false);
 
     if (delete_user_data) {
-        log_line("removing Snapmaker Orca user data: Application Support, WebKit, caches, HTTP storage");
+        log_line("removing Snapmaker Orca user data: Application Support, WebKit, caches, HTTP storage, preferences");
         remove_user_data_dir(SnapmakerUninstall::webkit_data_dir());
         remove_user_data_dir(SnapmakerUninstall::caches_dir());
         remove_user_data_dir(SnapmakerUninstall::http_storages_dir());
         remove_http_cookie_files();
+        remove_preferences_plist();
     }
 
     remove_helper_dir();

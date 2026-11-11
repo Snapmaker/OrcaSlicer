@@ -12649,37 +12649,6 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     nullptr, 0);
                 }
 
-                // Texture-to-color: a mesh that arrived with UVs and a decoded texture gets its
-                // faces clustered into printable colours and matched against the filament list,
-                // before the objects are handed to the plater. Inert for every other model.
-                if (model.texture_mesh && has_importable_texture(*model.texture_mesh)) {
-                    TextureImportResult texture_import_result;
-                    auto cancel_cb = [&dlg]() { return dlg.WasCancelled(); };
-                    auto progress_cb = [&dlg, &progress_percent](int percent) {
-                        progress_percent = std::clamp(percent, 0, 100);
-                        return dlg.Update(progress_percent, _L("Matching textures to filaments"));
-                    };
-                    if (!run_textured_mesh_import_dialog(model, texture_import_result, cancel_cb, progress_cb)) {
-                        q->skip_thumbnail_invalid = false;
-                        return empty_result;
-                    }
-                    if (texture_import_result.fallback_to_geometry_only && !texture_import_result.fallback_warning.empty()) {
-                        MessageDialog(q, texture_import_result.fallback_warning,
-                                      _L("Texture Import Warning"),
-                                      wxOK | wxICON_WARNING).ShowModal();
-                    }
-                    if (!texture_import_result.painted.face_colors.empty()) {
-                        std::vector<size_t> texture_object_idxs(model.objects.size());
-                        std::iota(texture_object_idxs.begin(), texture_object_idxs.end(), 0);
-                        auto apply_progress_cb = [&dlg](int percent, const wxString& msg) {
-                            dlg.Update(std::clamp(percent, 0, 100), msg);
-                            return true;
-                        };
-                        apply_textured_mesh_import_result(model, texture_object_idxs, texture_import_result,
-                                                          apply_progress_cb, false);
-                    }
-                }
-
                 if (designer_model_id.empty() && boost::algorithm::iends_with(path.string(), ".stl")) {
                     read_binary_stl(path.string(), designer_model_id, designer_country_code);
                 }
@@ -12730,7 +12699,12 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
             return empty_result;
         }
 
-        if (load_model) {
+        // Model-load prompts (unit conversion + multipart detection). For a single-file textured
+        // import they are deferred until after the texture dialog (see the one_by_one branch):
+        // the painted mesh replaces the volume in the file's original units there, and scaling
+        // afterwards keeps both frames consistent. Every other path runs them here, unchanged.
+        const bool defer_load_prompts = load_model && one_by_one && model.texture_mesh && has_importable_texture(*model.texture_mesh);
+        auto run_model_load_prompts = [&]() {
             // The model should now be initialized
             auto convert_from_imperial_units = [](Model &model, bool only_small_volumes) { model.convert_from_imperial_units(only_small_volumes); };
 
@@ -12794,6 +12768,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     model.convert_multipart_object(filaments_cnt);
                 }
             }
+        };
+        if (load_model && !defer_load_prompts) {
+            run_model_load_prompts();
         }
         // else if ((wxGetApp().get_mode() == comSimple) && (type_3mf || type_any_amf) && model_has_advanced_features(model)) {
         //    MessageDialog msg_dlg(q, _L("This file cannot be loaded in a simple mode. Do you want to switch to an advanced mode?")+"\n",
@@ -12851,6 +12828,42 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 q->model().load_from(model);
                 load_auxiliary_files();
             }
+            // Texture-to-color: a mesh that arrived with UVs and a decoded texture gets its
+            // faces clustered into printable colours and matched against the filament list,
+            // before the objects are handed to the plater. Inert for every other model.
+            // Inside one_by_one only (same as upstream): a multi-file batch add never opens
+            // the per-model texture dialog and imports geometry-only.
+            if (model.texture_mesh && has_importable_texture(*model.texture_mesh)) {
+                TextureImportResult texture_import_result;
+                auto cancel_cb = [&dlg]() { return dlg.WasCancelled(); };
+                auto progress_cb = [&dlg, &progress_percent](int percent) {
+                    progress_percent = std::clamp(percent, 0, 100);
+                    return dlg.Update(progress_percent, _L("Matching textures to filaments"));
+                };
+                if (!run_textured_mesh_import_dialog(model, texture_import_result, cancel_cb, progress_cb)) {
+                    q->skip_thumbnail_invalid = false;
+                    return empty_result;
+                }
+                if (texture_import_result.fallback_to_geometry_only && !texture_import_result.fallback_warning.empty()) {
+                    MessageDialog(q, texture_import_result.fallback_warning,
+                                  _L("Texture Import Warning"),
+                                  wxOK | wxICON_WARNING).ShowModal();
+                }
+                if (!texture_import_result.painted.face_colors.empty()) {
+                    std::vector<size_t> texture_object_idxs(model.objects.size());
+                    std::iota(texture_object_idxs.begin(), texture_object_idxs.end(), 0);
+                    auto apply_progress_cb = [&dlg](int percent, const wxString& msg) {
+                        dlg.Update(std::clamp(percent, 0, 100), msg);
+                        return true;
+                    };
+                        apply_textured_mesh_import_result(model, texture_object_idxs, texture_import_result,
+                                                          apply_progress_cb, false);
+                    }
+                }
+            if (defer_load_prompts)
+                // Same prompts as the non-textured path, but after the texture dialog so the
+                // painted mesh and the unit conversion never meet in different unit frames.
+                run_model_load_prompts();
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" << __LINE__ << boost::format(", before load_model_objects, count %1%")%model.objects.size();
             auto loaded_idxs = load_model_objects(model.objects, is_project_file);
             obj_idxs.insert(obj_idxs.end(), loaded_idxs.begin(), loaded_idxs.end());
@@ -14656,27 +14669,61 @@ void Plater::priv::reload_from_disk()
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << "canvas is nullptr";
             continue;
         }
-        wxBusyInfo info(_L("Reload from:") + " " + from_u8(path), canvas->get_wxglcanvas());
+        
 
         Model new_model;
         try
         {
-            //BBS: add plate data related logic
+            // BBS: add plate data related logic
             PlateDataPtrs plate_data;
-            //BBS: project embedded settings
+            // BBS: project embedded settings
             std::vector<Preset*> project_presets;
-
-            // BBS: backup
-            if (boost::iends_with(path, ".stp") ||
-                boost::iends_with(path, ".step")) {
-                double linear = string_to_double_decimal_point(wxGetApp().app_config->get("linear_defletion"));
-                double angle = string_to_double_decimal_point(wxGetApp().app_config->get("angle_defletion"));
-                bool   is_split = wxGetApp().app_config->get_bool("is_split_compound");
-                new_model       = Model::read_from_step(path, LoadStrategy::AddDefaultInstances | LoadStrategy::LoadModel, nullptr, nullptr, nullptr, linear, angle, is_split);
-            }else {
-                new_model = Model::read_from_file(path, nullptr, nullptr, LoadStrategy::AddDefaultInstances | LoadStrategy::LoadModel, &plate_data, &project_presets, nullptr, nullptr, nullptr, nullptr, nullptr, 0);
+            {
+                wxBusyInfo info(_L("Reload from:") + " " + from_u8(path), canvas->get_wxglcanvas());
+                
+                // BBS: backup
+                if (boost::iends_with(path, ".stp") || boost::iends_with(path, ".step")) {
+                    double linear   = string_to_double_decimal_point(wxGetApp().app_config->get("linear_defletion"));
+                    double angle    = string_to_double_decimal_point(wxGetApp().app_config->get("angle_defletion"));
+                    bool   is_split = wxGetApp().app_config->get_bool("is_split_compound");
+                    new_model = Model::read_from_step(path, LoadStrategy::AddDefaultInstances | LoadStrategy::LoadModel, nullptr, nullptr,
+                                                      nullptr, linear, angle, is_split);
+                } else {
+                    new_model = Model::read_from_file(path, nullptr, nullptr, LoadStrategy::AddDefaultInstances | LoadStrategy::LoadModel,
+                                                      &plate_data, &project_presets, nullptr, nullptr, nullptr, nullptr, nullptr, 0);
+                }
             }
-
+            
+            // Texture-to-color: reload goes through the same read_from_file as load_files, so a
+            // textured OBJ/GLB/glTF/FBX arrives with new_model.texture_mesh set. Run the import
+            // dialog here, before any centering, so the painted mesh stays aligned with the raw
+            // file geometry exactly like the load_files path. Inert for every other model.
+            if (new_model.texture_mesh && has_importable_texture(*new_model.texture_mesh)) {
+                TextureImportResult texture_import_result;
+                const auto  loading = _L("Loading") + dots;
+                ProgressDialog  dlg(loading, "", 100, find_toplevel_parent(q), wxPD_AUTO_HIDE | wxPD_CAN_ABORT | wxPD_APP_MODAL);
+                int progress_percent = 0;
+                auto    cancel_cb   = [&dlg]() { return dlg.WasCancelled(); };
+                auto    progress_cb = [&dlg, &progress_percent](int percent) {
+                    progress_percent = std::clamp(percent, 0, 100);
+                    return dlg.Update(progress_percent, _L("Matching textures to filaments"));
+                };
+                if (!run_textured_mesh_import_dialog(new_model, texture_import_result, [] { return false; }, {})) {
+                    // user cancelled: abort this reload like the load-error path below
+                    return;
+                }
+                if (texture_import_result.fallback_to_geometry_only && !texture_import_result.fallback_warning.empty()) {
+                    MessageDialog(q, texture_import_result.fallback_warning,
+                                  _L("Texture Import Warning"),
+                                  wxOK | wxICON_WARNING).ShowModal();
+                }
+                if (!texture_import_result.painted.face_colors.empty()) {
+                    std::vector<size_t> texture_object_idxs(new_model.objects.size());
+                    std::iota(texture_object_idxs.begin(), texture_object_idxs.end(), 0);
+                    apply_textured_mesh_import_result(new_model, texture_object_idxs, texture_import_result,
+                                                      nullptr, false);
+                }
+            }
 
             for (ModelObject* model_object : new_model.objects)
             {
@@ -20164,7 +20211,7 @@ void ProjectDropDialog::on_dpi_changed(const wxRect& suggested_rect)
 //BBS: remove GCodeViewer as seperate APP logic
 bool Plater::load_files(const wxArrayString& filenames)
 {
-    const std::regex pattern_drop(".*[.](stp|step|stl|oltp|obj|amf|3mf|svg|zip)", std::regex::icase);
+    const std::regex pattern_drop(".*[.](stp|step|stl|oltp|obj|amf|3mf|svg|zip|gltf|glb|fbx)", std::regex::icase);
     const std::regex pattern_gcode_drop(".*[.](gcode|g)", std::regex::icase);
 
     std::vector<fs::path> normal_paths;

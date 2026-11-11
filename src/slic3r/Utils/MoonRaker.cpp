@@ -356,6 +356,10 @@ bool Moonraker::test(wxString& msg) const
     wcp_loger.add_log(name + std::string(": fetching version info, URL: ") + url, false, "", "Moonraker_Mqtt", "info");
     // Here we do not have to add custom "Host" header - the url contains host filled by user and libCurl will set the header by itself.
     auto http = Http::get(std::move(url));
+    // printer/info is a trivial request: cap the total time so a peer that accepts TCP
+    // but never answers cannot hang this sync call forever (sw_Test_connect runs it on
+    // an SSWCP instance worker, which GUI_App::OnExit joins at exit).
+    http.timeout_max(30);
     set_auth(http);
     http.on_error([&](std::string body, std::string error, unsigned status) {
             BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] " << boost::format("%1%: failed to fetch version info: %2%, HTTP status: %3%, response body: `%4%`") % name % error % status %
@@ -803,6 +807,12 @@ bool Moonraker::connect(wxString& msg, const nlohmann::json& params) {
 std::shared_ptr<MqttClient> Moonraker_Mqtt::m_mqtt_client = nullptr;
 std::shared_ptr<MqttClient> Moonraker_Mqtt::m_mqtt_client_tls = nullptr;
 TimeoutMap<int64_t, Moonraker_Mqtt::RequestCallback> Moonraker_Mqtt::m_request_cb_map;
+
+void Moonraker_Mqtt::shutdown_timeout_workers()
+{
+    m_request_cb_map.stop();
+}
+
 std::string Moonraker_Mqtt::m_response_topic = "/response";
 std::string Moonraker_Mqtt::m_status_topic = "/status";
 std::string Moonraker_Mqtt::m_notification_topic = "/notification";

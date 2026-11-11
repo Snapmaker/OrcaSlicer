@@ -6,6 +6,7 @@
 #include <chrono>
 #include <memory>
 #include <thread>
+#include <atomic>
 #include <functional>
 #include <type_traits>
 
@@ -64,12 +65,25 @@ public:
         m_check_thread = std::thread([this]() { check_timeouts(); });
     }
 
-    // Destructor ensures background thread is stopped and joined
-    ~TimeoutMap() {
-        m_running = false;
+    /// \brief Stop the background check thread and join it.
+    ///
+    /// Once stop() returns no timeout callback can be in flight anymore, so
+    /// owners whose callbacks dereference wxGetApp() can call this from
+    /// application teardown while the app object is still alive (Sentry
+    /// SNAPMAKER_ORCA-MG). Idempotent; the destructor calls it as well.
+    /// Entries already in the map stay (they simply stop expiring). The
+    /// worker sleeps 1 s between iterations, so stop() may block for up to
+    /// about a second.
+    void stop() {
+        m_running.store(false);
         if (m_check_thread.joinable()) {
             m_check_thread.join();
         }
+    }
+
+    // Destructor ensures background thread is stopped and joined
+    ~TimeoutMap() {
+        stop();
     }
 
     // Add an item that never expires
@@ -200,8 +214,8 @@ public:
         std::lock_guard<std::mutex> lock(m_mutex);
         std::vector<std::pair<K, V>> snapshot;
         snapshot.reserve(m_items.size());
-        for (const auto& [key, item] : m_items) {
-            snapshot.emplace_back(key, item->value);
+        for (const auto& kv : m_items) {
+            snapshot.emplace_back(kv.first, kv.second->value);
         }
         return snapshot;
     }
@@ -209,9 +223,11 @@ public:
 private:
     // Background thread function to check for expired items
     void check_timeouts() {
-        while (m_running) {
+        while (m_running.load()) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
-            
+            if (!m_running.load()) // stop() ran while we slept: exit without another expiry pass
+                break;
+
             std::lock_guard<std::mutex> lock(m_mutex);
             auto now = clock_type::now();
             
@@ -246,7 +262,7 @@ private:
     mutable std::mutex m_mutex;                        // Mutex for thread safety
     std::chrono::milliseconds m_default_timeout;       // Default timeout duration
     std::thread m_check_thread;                        // Background check thread
-    bool m_running;                                    // Thread control flag
+    std::atomic<bool> m_running;                       // Thread control flag (read by worker, cleared by owner)
 };
 
 }

@@ -355,6 +355,15 @@ public:
     // set engine
     bool set_engine(const std::shared_ptr<MqttClient>& engine, std::string& msg);
 
+    /// \brief Join the static request-callback TimeoutMap worker.
+    ///
+    /// Called from GUI_App::OnExit while the app is still alive, so pending
+    /// request timeouts cannot fire (and dereference GUI state) after the app
+    /// object is destroyed (Sentry SNAPMAKER_ORCA-MG family). Entries stay in
+    /// the map: late MQTT responses are still matched, they simply stop
+    /// expiring.
+    static void shutdown_timeout_workers();
+
     // Callback structure for MQTT requests
     struct RequestCallback {
         std::function<void(const nlohmann::json&)> success_cb;  // Success callback

@@ -4,6 +4,19 @@ Target branch: `product_proposal_merge`. Source: FullSpectrum 0.9.13. This is a 
 
 Source snapshot: `ba00f1d661`. Target baseline: `5970fea62d`.
 
+## UI source credit
+
+The mixed-filament gradient interface and theme adapted by selective port
+`687192c8ce` build on **Hanno Witzleb (Xipit)**'s FullSpectrum UI work, integrated
+there as `6f5417ce54` ("@Xipit Refactor of Mixed Filament UI and Enhance Gradient
+Support"). This includes the gradient-stop interaction and layered/blended
+preview design; the subsequent `184cf26cdb` restoration continues that port.
+His original FullSpectrum commits were not imported into this branch's ancestry.
+His verified commit identity is `Hanno Witzleb <hannowitzleb@gmail.com>`.
+
+The later Manage port preserves his accordion/subsection organization and records
+its individual source commits in [Mixed-Filament-Manage.md](Mixed-Filament-Manage.md).
+
 ## Included behavior
 
 - Calibrated KM/K-S predictions for Full Spectrum CMYK materials, including recipe matching, recommendations, mixed-material badges, and gradient previews. The picker identifies the supported bundle automatically; the process checkbox is removed. The legacy checkbox cannot disable pack calibration.

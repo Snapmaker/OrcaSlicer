@@ -1609,6 +1609,12 @@ void TexturePreviewCanvas::render_mesh()
 // TextureImportDialog
 // ============================================================
 
+static int unique_face_color_count(const std::vector<std::array<std::size_t, 3>>& colors)
+{
+    std::set<std::array<std::size_t, 3>> unique_colors(colors.begin(), colors.end());
+    return (int)unique_colors.size();
+}
+
 wxBEGIN_EVENT_TABLE(TextureImportDialog, DPIDialog)
     EVT_BUTTON(TextureImportDialog::ID_COLOR_4,    TextureImportDialog::on_color_preset_clicked)
     EVT_BUTTON(TextureImportDialog::ID_COLOR_8,    TextureImportDialog::on_color_preset_clicked)
@@ -1667,6 +1673,7 @@ TextureImportDialog::TextureImportDialog(
     // Pre-computed face colors (OBJ vertex colors / MTL face colors):
     // use them directly as the Original preview, skip texture decode.
     if (!m_textured_mesh.precomputed_face_colors.empty()) {
+        m_original_color_count = unique_face_color_count(m_textured_mesh.precomputed_face_colors);
         m_preview_canvas->set_original_face_colors(m_textured_mesh.precomputed_face_colors);
     } else if (!m_textured_mesh.textures.empty()) {
         std::vector<std::vector<unsigned char>> tex_pixels_rgb;
@@ -1736,8 +1743,10 @@ TextureImportDialog::TextureImportDialog(
 
         // Still sample per-face colors as fallback
         std::vector<std::array<std::size_t, 3>> orig_colors;
-        if (Slic3r::sample_original_face_colors(m_textured_mesh, orig_colors))
+        if (Slic3r::sample_original_face_colors(m_textured_mesh, orig_colors)) {
+            m_original_color_count = unique_face_color_count(orig_colors);
             m_preview_canvas->set_original_face_colors(orig_colors);
+        }
     }
 
     set_state(TextureImportState::Idle);
@@ -1755,7 +1764,7 @@ TextureImportDialog::~TextureImportDialog()
 int TextureImportDialog::ShowModal()
 {
     if (m_state == TextureImportState::Idle && m_painted.face_colors.empty()) {
-        start_computation(true, true);
+        start_computation(get_original_color_count() <= 4, true);
 
         while (m_initial_computation_pending) {
             if (auto* event_loop = wxEventLoopBase::GetActive())
@@ -3905,6 +3914,11 @@ std::vector<Slic3r::FilamentMatch> TextureImportDialog::get_matches() const
     if (!m_current_matches.empty())
         return m_current_matches;
     return build_matches_from_rows();
+}
+
+int TextureImportDialog::get_simplified_color_count() const
+{
+    return (int)m_painted.cluster_colors.size();
 }
 
 void TextureImportDialog::on_dpi_changed(const wxRect&)

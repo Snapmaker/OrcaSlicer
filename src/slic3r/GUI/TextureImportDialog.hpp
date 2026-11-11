@@ -218,6 +218,12 @@ public:
     const std::vector<TextureNewMixedFilament>& get_new_mixed_filaments() const { return m_new_mixed_filaments; }
     const std::vector<TextureFilamentEntry>& get_filament_entries() const { return m_filament_entries; }
     size_t get_existing_filament_count() const { return m_existing_filament_count; }
+    // Unique colors of the source model: per-face texture sampling for UV-textured meshes,
+    // loader-baked precomputed_face_colors for vertex/MTL-colored ones. 0 until sampled.
+    int get_original_color_count() const { return m_original_color_count; }
+    // Unique colors of the current simplified result (= m_painted.cluster_colors.size()).
+    // Updates with every recomputation; 0 before the first computation completes.
+    int get_simplified_color_count() const;
 
 private:
     void build_ui();
@@ -339,6 +345,9 @@ private:
 
     Slic3r::PaintedMesh               m_painted;
     std::vector<Slic3r::FilamentMatch> m_current_matches;
+    // Unique source-model colors, counted once in the constructor (precomputed
+    // face colors or per-face texture sampling, whichever branch runs).
+    int                                m_original_color_count = 0;
 
     std::unique_ptr<std::thread>       m_worker;
     std::atomic<bool>                  m_cancel_flag{false};

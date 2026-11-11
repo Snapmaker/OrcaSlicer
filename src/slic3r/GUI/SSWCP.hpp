@@ -113,6 +113,16 @@ public:
             m_work_thread.detach();
     }
 
+    /// \brief Join the instance worker thread (shutdown path only).
+    ///
+    /// The destructor merely detaches, which would leave wxGetApp()-touching
+    /// code running past app teardown; SSWCP::shutdown_timeout_workers()
+    /// calls this for every live instance while the app is still alive.
+    void join_worker() {
+        if (m_work_thread.joinable())
+            m_work_thread.join();
+    }
+
     // Process the command
     virtual void process();
 
@@ -510,6 +520,13 @@ class SSWCP
 public:
     // Handle incoming web messages
     static void handle_web_message(std::string message, wxWebView* webview);
+
+    /// \brief Join the static TimeoutMap worker and all instance workers.
+    ///
+    /// Called from GUI_App::OnExit while the app is still alive, so that no
+    /// SSWCP timeout/completion callback can dereference wxGetApp() after
+    /// the app object is destroyed (Sentry SNAPMAKER_ORCA-MG).
+    static void shutdown_timeout_workers();
 
     // Create new SSWCP instance
     static std::shared_ptr<SSWCP_Instance> create_sswcp_instance(

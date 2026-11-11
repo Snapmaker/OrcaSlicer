@@ -3948,6 +3948,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Maximum junction deviation (M205 J, only apply if JD > 0 for Marlin Firmware)");
     def->sidetext = "mm";	// milimeters, don't need translation
     def->min = 0;
+    def->readonly = true;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats{0. ,0. });
 
@@ -4003,7 +4004,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Maximum acceleration for travel (M204 T), it only applies to Marlin 2.");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
-    def->readonly = false;
+    def->readonly = true;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats{ 0., 0. });
 
